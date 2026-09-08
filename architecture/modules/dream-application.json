@@ -8,6 +8,7 @@
     {"path": "internal/dream/contract/types.go", "issue": 365},
     {"path": "internal/dream/postgres/evaluation_hypothesis.go", "issue": 365},
     {"path": "internal/dream/postgres/adapter_test.go", "issue": 365},
+    {"path": "internal/dream/postgres/dream_repository_validation_integration.e2e", "issue": 365},
     {"path": "internal/dream/postgres/helpers.go", "issue": 365},
     {"path": "internal/dream/postgres/locks.go", "issue": 365},
     {"path": "internal/dream/postgres/store.go", "issue": 365},

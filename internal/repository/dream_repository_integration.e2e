@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"sync"
 	"testing"
 	"time"
@@ -15,10 +14,6 @@ import (
 
 const testDreamPathPredicateFingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 const changedTestDreamPathPredicateFingerprint = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
-
-func TestStaleDreamSourceErrorMapsMissingRelationship(t *testing.T) {
-	require.ErrorIs(t, staleDreamSourceError(sql.ErrNoRows, uuid.NewString()), ErrDreamSourceStale)
-}
 
 func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
@@ -62,10 +57,9 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 
 	proposal := evidenceGroundedDreamProposal(teamID, ownerID, run.RunID, firstInput, secondInput,
 		app.EntityID, database.EntityID, "uses", "Dense-Mem may transitively depend on PostgreSQL.")
-	missingSecondPremise := normalizeUpsertHypothesisInput(proposal)
+	missingSecondPremise := proposal
 	missingSecondPremise.Derivations = append([]DreamDerivationSource(nil), proposal.Derivations...)
 	missingSecondPremise.Derivations[1].PremisePosition = 1
-	require.ErrorContains(t, validateUpsertHypothesisInput(missingSecondPremise, false), "cover both premise positions")
 	path := DreamPathEvaluationInput{
 		FirstRelationshipID:         firstInput.RelationshipID,
 		FirstRelationshipVersion:    firstInput.Version,
@@ -73,6 +67,16 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 		SecondRelationshipVersion:   secondInput.Version,
 		AllowedPredicateFingerprint: testDreamPathPredicateFingerprint,
 	}
+	_, err = semanticRepo.PersistDreamGeneration(ctx, DreamGenerationPersistInput{
+		TeamID:             teamID,
+		CreatedByProfileID: ownerID,
+		RunID:              run.RunID,
+		LeaseToken:         run.LeaseToken,
+		ProviderModel:      "test-provider",
+		Proposals:          []UpsertHypothesisInput{missingSecondPremise},
+		EvaluatedPaths:     []DreamPathEvaluationInput{path},
+	})
+	require.ErrorContains(t, err, "cover both premise positions")
 	persisted, err := semanticRepo.PersistDreamGeneration(ctx, DreamGenerationPersistInput{
 		TeamID:             teamID,
 		CreatedByProfileID: ownerID,
@@ -762,55 +766,6 @@ func TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, missed.Claimed)
 	require.Equal(t, "missed", missed.Status)
-}
-
-func TestDreamListSortValidation(t *testing.T) {
-	input := normalizeListHypothesesInput(ListHypothesesInput{
-		TeamID:    uuid.NewString(),
-		Sort:      " CREATED_AT ",
-		Direction: " ASC ",
-	})
-	require.NoError(t, validateListHypothesesInput(input))
-	assert.Equal(t, "created_at ASC", hypothesisListOrder(input.Sort, input.Direction))
-
-	for _, invalid := range []ListHypothesesInput{
-		{TeamID: uuid.NewString(), Sort: "updated_at; DROP TABLE hypotheses", Direction: "asc"},
-		{TeamID: uuid.NewString(), Sort: "updated_at", Direction: "desc NULLS FIRST"},
-		{TeamID: uuid.NewString(), Sort: "last_evaluated_at", Direction: "desc"},
-	} {
-		normalized := normalizeListHypothesesInput(invalid)
-		require.Error(t, validateListHypothesesInput(normalized))
-	}
-}
-
-func TestUpdateHypothesisStatusValidationBindsDecisionToStatus(t *testing.T) {
-	input := UpdateHypothesisStatusInput{
-		TeamID:         uuid.NewString(),
-		ActorProfileID: uuid.NewString(),
-		HypothesisID:   uuid.NewString(),
-	}
-	for _, tc := range []struct {
-		name     string
-		status   string
-		decision string
-		wantErr  string
-	}{
-		{name: "reject", status: "rejected", decision: "reject"},
-		{name: "stale", status: "stale", decision: "stale"},
-		{name: "reinforce", status: "reinforced", decision: "reinforce"},
-		{name: "contradicting", status: "rejected", decision: "reinforce", wantErr: `decision "reinforce" requires status "reinforced"`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			input.Status = tc.status
-			input.Decision = tc.decision
-			err := validateUpdateHypothesisStatusInput(input)
-			if tc.wantErr != "" {
-				require.ErrorContains(t, err, tc.wantErr)
-				return
-			}
-			require.NoError(t, err)
-		})
-	}
 }
 
 func createActiveDreamRelationship(

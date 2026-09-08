@@ -8,6 +8,8 @@ import (
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
+const dreamConfirmationLockAdmissionLimit = dreampostgres.ConfirmationLockAdmissionLimit
+
 func discardDreamConfirmationLockConnection(lockConn *sql.Conn) error {
 	return storagepostgres.DiscardAdvisoryLockConnection(lockConn)
 }

@@ -25,10 +25,10 @@
     },
     {
       "id": "repository/TestDreamListSortValidation",
-      "package": "./internal/repository",
+      "package": "./internal/dream/postgres",
       "run": "^TestDreamListSortValidation$",
       "phase": "precheck",
-      "source": "internal/repository/dream_repository_integration.e2e"
+      "source": "internal/dream/postgres/dream_repository_validation_integration.e2e"
     },
     {
       "id": "repository/TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment",
@@ -221,17 +221,17 @@
     },
     {
       "id": "repository/TestStaleDreamSourceErrorMapsMissingRelationship",
-      "package": "./internal/repository",
+      "package": "./internal/dream/postgres",
       "run": "^TestStaleDreamSourceErrorMapsMissingRelationship$",
       "phase": "precheck",
-      "source": "internal/repository/dream_repository_integration.e2e"
+      "source": "internal/dream/postgres/dream_repository_validation_integration.e2e"
     },
     {
       "id": "repository/TestUpdateHypothesisStatusValidationBindsDecisionToStatus",
-      "package": "./internal/repository",
+      "package": "./internal/dream/postgres",
       "run": "^TestUpdateHypothesisStatusValidationBindsDecisionToStatus$",
       "phase": "precheck",
-      "source": "internal/repository/dream_repository_integration.e2e"
+      "source": "internal/dream/postgres/dream_repository_validation_integration.e2e"
     }
   ]
 }

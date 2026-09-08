@@ -17,6 +17,7 @@ const (
 	dreamConfirmationLockCleanupTimeout = 5 * time.Second
 	// Keep a small session budget so provider work cannot exhaust the application pool.
 	dreamConfirmationLockAdmissionLimit = 4
+	ConfirmationLockAdmissionLimit      = dreamConfirmationLockAdmissionLimit
 )
 
 // WithHypothesisConfirmationLock admits one confirmation workflow for a
