@@ -95,7 +95,7 @@ function copyManifestFixture() {
 test("loads the complete independently owned architecture inventory", () => {
   assert.equal(productionManifest.load_diagnostics.length, 0);
   assert.equal(productionManifest.fragments.length, 61);
-  assert.equal(productionManifest.go.units.length, 69);
+  assert.equal(productionManifest.go.units.length, 71);
   assert.equal(productionManifest.browser.units.length, 40);
   assert.equal(productionManifest.exceptions.length, 26);
   assert.equal(productionManifest.workers.length, 52);
@@ -492,7 +492,7 @@ test("enforces private visibility and narrow PostgreSQL infrastructure reuse", (
 
 test("retains precise replacement owners and lifecycle obligations", () => {
   const exceptionOwners = [...new Set(productionManifest.exceptions.map((entry) => entry.removal_issue))].sort((a, b) => a - b);
-  assert.deepEqual(exceptionOwners, [363, 366, 367, 368, 370, 375, 376, 377, 379, 380, 382]);
+  assert.deepEqual(exceptionOwners, [366, 367, 368, 370, 375, 376, 377, 379, 380, 382]);
   assert.equal(productionManifest.exceptions.some((entry) => entry.removal_issue === 276), false);
   assert.equal(productionManifest.exceptions.some((entry) => entry.removal_issue === 280), false);
   assert.ok(productionManifest.workers.every((entry) => entry.lifecycle_issue === 381));

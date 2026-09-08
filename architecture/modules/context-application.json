@@ -5,14 +5,90 @@
     {"path": "cmd/internal/serverapp/trace_composition.go", "issue": 363},
     {"path": "internal/tools/registry/trace_bindings.go", "issue": 363},
     {"path": "internal/repository/evidence_duplicate_trace_integration.e2e", "issue": 363},
-    {"path": "internal/repository/evidence_lifecycle_trace_repository.go", "issue": 363},
-    {"path": "internal/repository/semantic_read_search_repository.go", "issue": 363},
-    {"path": "internal/repository/semantic_read_repository_test.go", "issue": 363},
-    {"path": "internal/repository/semantic_trace_occurrence.go", "issue": 363},
     {"path": "internal/repository/semantic_trace_repository.go", "issue": 363},
     {"path": "internal/service/contextservice/context.go", "issue": 363},
     {"path": "internal/service/contextservice/semantic_trace.go", "issue": 363},
-    {"path": "internal/service/contextservice/semantic_trace_test.go", "issue": 363}
+    {"path": "internal/service/contextservice/semantic_trace_test.go", "issue": 363},
+    {"path": "internal/trace/contract/errors.go", "issue": 363},
+    {"path": "internal/trace/postgres/evidence_lifecycle_trace_repository.go", "issue": 363},
+    {"path": "internal/trace/postgres/helpers.go", "issue": 363},
+    {"path": "internal/trace/postgres/semantic_read_repository_test.go", "issue": 363},
+    {"path": "internal/trace/postgres/semantic_read_search_repository.go", "issue": 363},
+    {"path": "internal/trace/postgres/semantic_trace_occurrence.go", "issue": 363},
+    {"path": "internal/trace/postgres/semantic_trace_repository.go", "issue": 363},
+    {"path": "internal/trace/postgres/store.go", "issue": 363},
+    {"path": "internal/trace/postgres/types.go", "issue": 363},
+    {"path": "internal/trace/service.go", "issue": 363},
+    {"path": "internal/trace/types.go", "issue": 363}
+  ],
+  "compatibility_bridges": [
+    {
+      "source_path": "internal/repository/semantic_trace_repository.go",
+      "fields": [
+        "SemanticRepositoryImpl.TraceRelationship",
+        "ErrTraceRelationshipNotFound",
+        "ErrTraceRelationshipIDInvalid"
+      ],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/trace_composition.go", "symbol": "buildContextApplication"},
+        {"path": "internal/service/skillpackservice/memory_pack.go", "symbol": "memoryPackService.Export"},
+        {"path": "internal/repository/evidence_duplicate_trace_integration.e2e", "symbol": "assertDuplicateTraceOccurrences"},
+        {"path": "internal/repository/evidence_lifecycle_repository_integration.e2e", "symbol": "TestLedgerRetractEvidenceRevokesOnlyItsSupportAndReplaysAtomically"},
+        {"path": "internal/repository/evidence_lifecycle_repository_integration.e2e", "symbol": "TestLedgerDirectEvidenceSupersessionRetiresTargetWhenReplacementIsQuarantined"},
+        {"path": "internal/repository/evidence_lifecycle_repository_integration.e2e", "symbol": "TestTraceRelationshipMarksLifecycleEventLimitAsTruncated"},
+        {"path": "internal/repository/known_evidence_support_integration.e2e", "symbol": "TestKnownEvidenceSupportPreservesABCOwnershipAndIsolation"},
+        {"path": "internal/repository/private_memory_semantic_lineage_integration.e2e", "symbol": "TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage"},
+        {"path": "internal/repository/recall_alias_support_integration.e2e", "symbol": "TestRecallExpansionFollowsHistoricalAliasSupportToCanonicalEvidence"},
+        {"path": "internal/repository/relationship_correction_occurrence_integration.e2e", "symbol": "TestRelationshipCorrectionPreservesOccurrenceSupport"},
+        {"path": "internal/repository/relationship_identity_integration.e2e", "symbol": "TestSemanticValidToDisagreementFailsAtomicallyWithoutMutatingCanonicalRelationship"},
+        {"path": "internal/repository/semantic_lifecycle_integration.e2e", "symbol": "TestSemanticSupportDecisionsRecomputeEffectiveState"},
+        {"path": "internal/repository/semantic_lifecycle_integration.e2e", "symbol": "TestSourceRevisionAdvanceRevokesAdoptedSupportAndRecomputesRelationships"},
+        {"path": "internal/repository/semantic_trace_graph_integration.e2e", "symbol": "TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams"},
+        {"path": "internal/repository/semantic_trace_graph_integration.e2e", "symbol": "TestSemanticTraceRelationshipHydratesLineageAndBoundedGraph"},
+        {"path": "internal/service/contextservice/semantic_trace_test.go", "symbol": "semanticTraceStoreStub.TraceRelationship"},
+        {"path": "internal/service/contextservice/semantic_trace_test.go", "symbol": "TestSemanticTraceMapsMissingRelationship"},
+        {"path": "internal/service/contextservice/semantic_trace_test.go", "symbol": "TestSemanticTracePreservesRepositoryFailures"},
+        {"path": "internal/service/skillpackservice/memory_pack_export_test.go", "symbol": "exportSemanticStub.TraceRelationship"},
+        {"path": "internal/service/skillpackservice/memory_pack_export_test.go", "symbol": "TestMemoryPackExportRejectsMissingInputsAndUnavailableRelationships"},
+        {"path": "internal/tools/registry/contract_result_errors.go", "symbol": "ActionableErrorData"},
+        {"path": "internal/tools/registry/contract_result_errors_test.go", "symbol": "TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance"},
+        {"path": "internal/tools/registry/contract_result_errors_test.go", "symbol": "TestActionableErrorDataMapsHTTPStatusesAndBudgetMeasurements"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/trace/postgres/semantic_trace_repository.go", "symbol": "Store.TraceRelationship"},
+      "removal_condition": "Remove the repository trace forwarder after all trace and export callers use the trace capability port."
+    },
+    {
+      "source_path": "internal/service/contextservice/context.go",
+      "fields": [
+        "Service",
+        "TraceRequest",
+        "TraceResult",
+        "SemanticTrace",
+        "SemanticTraceStore",
+        "NewSemantic",
+        "ErrTraceAuthContext",
+        "ErrTraceRelationshipNotFound",
+        "ErrTraceRepositoryTeamMismatch"
+      ],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/application_composition.go", "symbol": "buildApplicationBundle"},
+        {"path": "internal/tools/registry/capability_bindings.go", "symbol": "Dependencies.withCapabilityBindings"},
+        {"path": "internal/tools/registry/toolset.go", "symbol": "BuildActive"},
+        {"path": "internal/tools/registry/contract_outputs.go", "symbol": "traceContractOutput"},
+        {"path": "internal/tools/registry/contract_result_errors.go", "symbol": "ActionableErrorData"},
+        {"path": "internal/tools/registry/contract_outputs_trace_test.go", "symbol": "TestTraceContractOutputPreservesPublicSubmissionAndLineageIDs"},
+        {"path": "internal/tools/registry/contract_test_helpers_test.go", "symbol": "stubTraceContext.Trace"},
+        {"path": "internal/service/contextservice/semantic_trace_test.go", "symbol": "TestSemanticTraceMapsMissingRelationship"},
+        {"path": "internal/service/contextservice/semantic_trace_test.go", "symbol": "TestSemanticTracePreservesRepositoryFailures"},
+        {"path": "internal/service/contextservice/semantic_trace_test.go", "symbol": "TestSemanticTraceRejectsMismatchedConflictTeam"},
+        {"path": "internal/service/contextservice/semantic_trace_test.go", "symbol": "TestSemanticTraceAllowsMatchingConflictTeam"},
+        {"path": "internal/service/skillpackservice/memory_pack_export_test.go", "symbol": "TestMemoryPackExportRejectsMissingInputsAndUnavailableRelationships"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/trace/service.go", "symbol": "NewSemantic"},
+      "removal_condition": "Remove the contextservice aliases after all application, registry, transport, and test callers use the trace capability API directly."
+    }
   ],
   "completed_issues": [],
   "go": {
@@ -21,6 +97,16 @@
         "id": "github.com/markhuangai/dense-mem/internal/service/contextservice",
         "role": "application_api",
         "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/trace",
+        "role": "application_api",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/trace/postgres",
+        "role": "postgres_adapter",
+        "visibility": "private"
       }
     ]
   },
@@ -29,10 +115,11 @@
   },
   "exceptions": [
     {
-      "source": "github.com/markhuangai/dense-mem/internal/service/contextservice",
-      "target": "github.com/markhuangai/dense-mem/internal/repository",
-      "removal_issue": 363,
-      "reason": "Context application code still consumes the legacy repository until trace ownership is isolated."
+      "source_path": "internal/repository/semantic_trace_repository.go",
+      "source": "github.com/markhuangai/dense-mem/internal/repository",
+      "target": "github.com/markhuangai/dense-mem/internal/trace/postgres",
+      "removal_issue": 382,
+      "reason": "The legacy repository trace entry point forwards to the trace PostgreSQL owner until the final facade cleanup."
     }
   ],
   "workers": []

@@ -1,27 +1,21 @@
-// Package contextservice builds bounded relationship traces from Dense-Mem's semantic graph.
+// Package contextservice preserves the legacy trace application API while the
+// implementation is owned by the trace capability.
 package contextservice
 
-import "context"
+import traceapp "github.com/markhuangai/dense-mem/internal/trace"
 
-// Service exposes the supported read-only relationship trace operation.
-type Service interface {
-	Trace(ctx context.Context, profileID string, req TraceRequest) (*TraceResult, error)
-}
+type Service = traceapp.Service
+type TraceRequest = traceapp.TraceRequest
+type TraceResult = traceapp.TraceResult
+type SemanticTrace = traceapp.SemanticTrace
+type SemanticTraceStore = traceapp.SemanticTraceStore
 
-// TraceRequest selects one Relationship to expand.
-type TraceRequest struct {
-	RelationshipID         string   `json:"relationship_id"`
-	IncludeEvidenceContent *bool    `json:"include_evidence_content,omitempty"`
-	IncludeVerification    *bool    `json:"include_verification,omitempty"`
-	IncludeTransitions     *bool    `json:"include_transitions,omitempty"`
-	MaxDepth               int      `json:"max_depth,omitempty"`
-	MaxEdges               int      `json:"max_edges,omitempty"`
-	PredicateKeys          []string `json:"predicate_keys,omitempty"`
-	Topic                  string   `json:"topic,omitempty"`
-	MinRelevance           *float64 `json:"min_relevance,omitempty"`
-}
+var (
+	ErrTraceAuthContext            = traceapp.ErrTraceAuthContext
+	ErrTraceRelationshipNotFound   = traceapp.ErrTraceRelationshipNotFound
+	ErrTraceRepositoryTeamMismatch = traceapp.ErrTraceRepositoryTeamMismatch
+)
 
-// TraceResult holds the public semantic lineage response.
-type TraceResult struct {
-	Semantic *SemanticTrace `json:"semantic,omitempty"`
+func NewSemantic(store SemanticTraceStore) Service {
+	return traceapp.NewSemantic(store)
 }

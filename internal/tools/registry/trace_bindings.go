@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/markhuangai/dense-mem/internal/service/contextservice"
+	traceapp "github.com/markhuangai/dense-mem/internal/trace"
 )
 
 func bindTraceTool(tool Tool, deps Dependencies) Tool {
@@ -18,7 +18,7 @@ func bindTraceTool(tool Tool, deps Dependencies) Tool {
 		if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
 			return nil, fmt.Errorf("trace_memory: invalid input: %w", err)
 		}
-		var req contextservice.TraceRequest
+		var req traceapp.TraceRequest
 		if err := remapInput(input, &req); err != nil {
 			return nil, fmt.Errorf("trace_memory: invalid input: %w", err)
 		}
