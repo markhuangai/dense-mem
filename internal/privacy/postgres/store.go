@@ -1,4 +1,4 @@
-package repository
+package postgres
 
 import (
 	"context"
@@ -16,19 +16,20 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/storage/postgres"
+	privacycontract "github.com/markhuangai/dense-mem/internal/privacy/contract"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 var (
-	ErrPrivateMemoryNotFound          = errors.New("private memory target not found")
-	ErrPrivateMemoryLegalHold         = errors.New("private memory is under legal hold")
-	ErrPrivateMemoryIdempotency       = errors.New("private memory idempotency conflict")
-	ErrPrivateMemoryOperationConflict = errors.New("private memory erasure is already in progress")
-	ErrPrivateMemoryManifest          = errors.New("private memory erasure manifest mismatch")
-	ErrPrivateMemoryClaimLost         = errors.New("private memory erasure claim lost")
-	ErrPrivateMemoryRetentionDisabled = errors.New("private memory retention is disabled")
-	ErrPrivateMemoryHoldConflict      = errors.New("private memory legal hold conflict")
-	ErrPrivateMemoryInternal          = errors.New("private memory storage operation failed")
+	ErrPrivateMemoryNotFound          = privacycontract.ErrPrivateMemoryNotFound
+	ErrPrivateMemoryLegalHold         = privacycontract.ErrPrivateMemoryLegalHold
+	ErrPrivateMemoryIdempotency       = privacycontract.ErrPrivateMemoryIdempotency
+	ErrPrivateMemoryOperationConflict = privacycontract.ErrPrivateMemoryOperationConflict
+	ErrPrivateMemoryManifest          = privacycontract.ErrPrivateMemoryManifest
+	ErrPrivateMemoryClaimLost         = privacycontract.ErrPrivateMemoryClaimLost
+	ErrPrivateMemoryRetentionDisabled = privacycontract.ErrPrivateMemoryRetentionDisabled
+	ErrPrivateMemoryHoldConflict      = privacycontract.ErrPrivateMemoryHoldConflict
+	ErrPrivateMemoryInternal          = privacycontract.ErrPrivateMemoryInternal
 )
 
 const (
@@ -87,55 +88,14 @@ var privateMemoryExternalDependencies = map[string]struct {
 	},
 }
 
-type PrivateMemoryErasureRequest struct {
-	TeamID                    uuid.UUID
-	OwnerID                   uuid.UUID
-	CredentialID              uuid.UUID
-	IdempotencyScopeHash      string
-	RequestHash               string
-	ReasonCode                string
-	CredentialRevocationAudit *PrivateMemoryCredentialRevocationAudit
-}
-
-type PrivateMemoryCredentialRevocationAudit struct {
-	ActorProfileID    *string
-	ActorCredentialID *string
-	ActorRole         string
-	ClientIP          string
-	CorrelationID     string
-}
-
-type PrivateMemoryRetentionRequest struct {
-	ActorClass           domain.PrivateMemoryActorClass
-	IdempotencyScopeHash string
-	RequestHash          string
-	RetentionDays        int
-	BatchSize            int
-	Now                  time.Time
-}
-
-type PrivateMemoryRepository interface {
-	Prepare(ctx context.Context) error
-	RequestProfileErasure(ctx context.Context, input PrivateMemoryErasureRequest) (*domain.PrivateMemoryErasureOperation, bool, error)
-	RequestCredentialErasure(ctx context.Context, input PrivateMemoryErasureRequest) (*domain.PrivateMemoryErasureOperation, bool, error)
-	RequestControlErasure(ctx context.Context, spaceID uuid.UUID, idempotencyScopeHash, requestHash, reasonCode string) (*domain.PrivateMemoryErasureOperation, bool, error)
-	DisableSSOCredential(ctx context.Context, input PrivateMemoryErasureRequest) (*domain.PrivateMemoryErasureOperation, bool, error)
-	GetOwnerOperation(ctx context.Context, teamID, operationID uuid.UUID, identityID, credentialID *uuid.UUID) (*domain.PrivateMemoryErasureOperation, error)
-	GetOperation(ctx context.Context, operationID uuid.UUID) (*domain.PrivateMemoryErasureOperation, error)
-	ListOperations(ctx context.Context, limit, offset int) ([]domain.PrivateMemoryErasureOperation, error)
-	ListSpaces(ctx context.Context, limit, offset int) ([]domain.PrivateMemorySpaceMetadata, error)
-	PlaceLegalHold(ctx context.Context, spaceID uuid.UUID, reasonCode string) (*domain.PrivateMemoryLegalHold, bool, error)
-	ReleaseLegalHold(ctx context.Context, spaceID uuid.UUID) (*domain.PrivateMemoryLegalHold, bool, error)
-	RunRetention(ctx context.Context, input PrivateMemoryRetentionRequest) (*domain.PrivateMemoryRetentionRun, bool, error)
-	ListRetentionRuns(ctx context.Context, limit, offset int) ([]domain.PrivateMemoryRetentionRun, error)
-	ClaimNext(ctx context.Context, workerID string, lease time.Duration) (*domain.PrivateMemoryErasureOperation, error)
-	ExecuteClaim(ctx context.Context, operationID uuid.UUID, workerID string, fence int64) (*domain.PrivateMemoryErasureOperation, error)
-	ReleaseClaim(ctx context.Context, operationID uuid.UUID, workerID string, fence int64, errorCode string) error
-}
+type PrivateMemoryErasureRequest = privacycontract.PrivateMemoryErasureRequest
+type PrivateMemoryCredentialRevocationAudit = privacycontract.PrivateMemoryCredentialRevocationAudit
+type PrivateMemoryRetentionRequest = privacycontract.PrivateMemoryRetentionRequest
+type PrivateMemoryRepository = privacycontract.PrivateMemoryRepository
 
 type PrivateMemoryRepositoryImpl struct {
 	db  *gorm.DB
-	rls postgres.RLSHelper
+	rls storagepostgres.RLSHelper
 	now func() time.Time
 
 	manifestMu sync.RWMutex
@@ -144,7 +104,7 @@ type PrivateMemoryRepositoryImpl struct {
 
 var _ PrivateMemoryRepository = (*PrivateMemoryRepositoryImpl)(nil)
 
-func NewPrivateMemoryRepository(db *gorm.DB, rls postgres.RLSHelper) *PrivateMemoryRepositoryImpl {
+func NewPrivateMemoryRepository(db *gorm.DB, rls storagepostgres.RLSHelper) *PrivateMemoryRepositoryImpl {
 	return &PrivateMemoryRepositoryImpl{
 		db:  db,
 		rls: rls,

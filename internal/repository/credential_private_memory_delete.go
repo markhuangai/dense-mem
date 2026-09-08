@@ -6,25 +6,11 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	"github.com/markhuangai/dense-mem/internal/domain"
+	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 )
 
+// queueCredentialPrivateErasureTx is retained for legacy repository fixtures;
+// the privacy PostgreSQL owner performs the queueing policy and transaction.
 func queueCredentialPrivateErasureTx(ctx context.Context, tx *gorm.DB, teamID, credentialID uuid.UUID) error {
-	return withSystemModeInTx(ctx, tx, teamID.String(), teamID.String(), func(systemTx *gorm.DB) error {
-		space, err := privateMemorySpaceForCredentialTx(ctx, systemTx, teamID, credentialID, false)
-		if err != nil {
-			return err
-		}
-		_, err = queuePrivateMemorySpaceTx(ctx, systemTx, space, queuePrivateMemoryInput{
-			Action:               domain.PrivateMemoryRetireCredential,
-			ActorClass:           domain.PrivateMemoryActorControl,
-			ReasonCode:           "credential_deleted",
-			TargetCredentialID:   &credentialID,
-			RetireSpace:          true,
-			QueueWhileHeld:       true,
-			IdempotencyScopeHash: privateMemoryHash("team-credential-delete", teamID.String(), credentialID.String()),
-			RequestHash:          privateMemoryHash("retire-credential", teamID.String(), credentialID.String()),
-		})
-		return err
-	})
+	return privacypostgres.QueueCredentialPrivateErasureTx(ctx, tx, teamID, credentialID)
 }
