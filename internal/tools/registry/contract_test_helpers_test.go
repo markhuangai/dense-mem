@@ -49,12 +49,16 @@ func contractInvokeContext(scopes ...string) context.Context {
 }
 
 type stubRememberService struct {
-	req memoryservice.RememberRequest
-	err error
+	req            memoryservice.RememberRequest
+	err            error
+	inspectContext func(context.Context)
 }
 
-func (s *stubRememberService) Remember(_ context.Context, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
+func (s *stubRememberService) Remember(ctx context.Context, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
 	s.req = req
+	if s.inspectContext != nil {
+		s.inspectContext(ctx)
+	}
 	if s.err != nil {
 		return nil, s.err
 	}

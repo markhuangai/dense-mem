@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,6 +21,35 @@ import (
 
 type truncatedResponseReader struct {
 	done bool
+}
+
+type embeddingExchangeRecorder struct {
+	exchanges []modelprovider.ProviderExchange
+}
+
+func (r *embeddingExchangeRecorder) RecordProviderExchange(_ context.Context, exchange modelprovider.ProviderExchange) {
+	r.exchanges = append(r.exchanges, exchange)
+}
+
+func TestOpenAIProviderRecordsBoundedExchange(t *testing.T) {
+	const response = `{"data":[{"embedding":[0.1,0.2]}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, response)
+	}))
+	defer srv.Close()
+
+	p := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL: srv.URL, AIAPIKey: "key", AIEmbeddingModel: "embedding-model", AIEmbeddingDimensions: 2,
+	}, srv.Client())
+	recorder := &embeddingExchangeRecorder{}
+	ctx := modelprovider.WithExchangeRecorder(context.Background(), recorder)
+	_, _, err := p.Embed(ctx, "capture me")
+	require.NoError(t, err)
+	require.Len(t, recorder.exchanges, 1)
+	require.Equal(t, "embedding", recorder.exchanges[0].Component)
+	require.Equal(t, response, string(recorder.exchanges[0].ResponseBody))
+	require.Contains(t, string(recorder.exchanges[0].RequestBody), "embedding-model")
 }
 
 func (r *truncatedResponseReader) Read(p []byte) (int, error) {

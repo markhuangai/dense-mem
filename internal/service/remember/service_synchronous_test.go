@@ -57,6 +57,8 @@ func TestRememberServiceSynchronousPassesAuthenticatedRequestToProcessor(t *test
 	}}
 	service := NewService(Dependencies{Synchronous: processor})
 	ctx := rememberServiceTestContext(teamID, ownerID, credentialID)
+	capture := NewDiagnosticCapture([]byte(`{"name":"remember","arguments":{"captured":true}}`))
+	ctx = WithDiagnosticCapture(ctx, capture)
 
 	req := RememberRequest{
 		IdempotencyKey: "remember-sync-1",
@@ -78,6 +80,7 @@ func TestRememberServiceSynchronousPassesAuthenticatedRequestToProcessor(t *test
 	require.Equal(t, ownerID.String(), processor.request.OwnerProfileID)
 	require.Equal(t, "remember-sync-1", processor.request.IdempotencyKey)
 	require.NotEmpty(t, processor.request.RequestHash)
+	require.Equal(t, `{"name":"remember","arguments":{"captured":true}}`, string(processor.request.OriginalRequest))
 	require.Equal(t, "document://notes", processor.request.SourceSummary)
 	require.False(t, processor.request.SecurityRejected)
 	require.Len(t, processor.request.Evidence, 1)

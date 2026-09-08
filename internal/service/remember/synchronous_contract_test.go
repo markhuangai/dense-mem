@@ -1,6 +1,7 @@
 package remember
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -34,6 +35,44 @@ func TestTerminalStatusErrorWithDetailsBoundsActionableContext(t *testing.T) {
 	require.Equal(t, TerminalNextActionContactOperator, TerminalNextAction(error.NextAction))
 	require.Equal(t, serverOwnedInputBudgetRemediation, error.Remediation)
 	require.NoError(t, ValidateTerminalStatusError(error))
+}
+
+func TestValidateTerminalStatusErrorRejectsInconsistentProjection(t *testing.T) {
+	canonical := TerminalStatusErrorWithDetails(
+		TerminalErrorProviderUnavailable,
+		"provider_unavailable",
+		map[string]any{"component": "assessor", "server_owned": true},
+	)
+	cases := []struct {
+		name   string
+		mutate func(*SubmissionStatusError)
+	}{
+		{"unknown code", func(value *SubmissionStatusError) { value.Code = "unknown" }},
+		{"unknown action", func(value *SubmissionStatusError) { value.NextAction = "unknown" }},
+		{"retryability", func(value *SubmissionStatusError) { value.Retryable = !value.Retryable }},
+		{"message", func(value *SubmissionStatusError) { value.Message = "unbounded" }},
+		{"remediation", func(value *SubmissionStatusError) { value.Remediation = "unbounded" }},
+		{"reason without details", func(value *SubmissionStatusError) { value.Details = nil }},
+		{"unbounded details", func(value *SubmissionStatusError) {
+			value.Details = map[string]any{"secret": strings.Repeat("x", 2000)}
+		}},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			value := canonical
+			testCase.mutate(&value)
+			require.Error(t, ValidateTerminalStatusError(value))
+		})
+	}
+
+	budget := TerminalStatusErrorWithDetails(
+		TerminalErrorInputBudgetExceeded,
+		"budget",
+		map[string]any{"component": "assessor", "observed": 20, "limit": 10, "server_owned": true},
+	)
+	require.NoError(t, ValidateTerminalStatusError(budget))
+	budget.Remediation = "client remediation"
+	require.Error(t, ValidateTerminalStatusError(budget))
 }
 
 func TestValidateTerminalRememberResultRejectsUnclosedErrorProjection(t *testing.T) {
@@ -93,6 +132,14 @@ func TestTerminalResultWithErrorForcesTerminalFailureKind(t *testing.T) {
 	require.NoError(t, ValidateTerminalStatusError(failure.Result.Errors[0]))
 }
 
+func TestTerminalResultWithErrorCreatesNilResultAndNilUnwrapIsSafe(t *testing.T) {
+	failure := TerminalResultWithError(nil, TerminalErrorProviderUnavailable)
+	require.NotNil(t, failure)
+	require.NotNil(t, failure.Result)
+	var nilFailure *RememberProcessError
+	require.Nil(t, nilFailure.Unwrap())
+}
+
 func TestRememberProcessErrorDoesNotExposeOperationalCause(t *testing.T) {
 	cause := errors.New("database password and provider payload")
 	failure := &RememberProcessError{Err: cause}
@@ -102,6 +149,10 @@ func TestRememberProcessErrorDoesNotExposeOperationalCause(t *testing.T) {
 
 func TestDiagnosticCaptureProjectsAndCopiesCallerResponse(t *testing.T) {
 	capture := NewDiagnosticCapture([]byte(`{"name":"remember","arguments":{}}`))
+	require.Equal(t, `{"name":"remember","arguments":{}}`, string(capture.RequestBody()))
+	requestCopy := capture.RequestBody()
+	requestCopy[0] = '['
+	require.Equal(t, `{"name":"remember","arguments":{}}`, string(capture.RequestBody()))
 	capture.SetResponseProjector(func(result map[string]any, isError bool) ([]byte, error) {
 		return json.Marshal(map[string]any{"structuredContent": result, "isError": isError})
 	})
@@ -109,6 +160,32 @@ func TestDiagnosticCaptureProjectsAndCopiesCallerResponse(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(projected), `"isError":true`)
 	require.Equal(t, `{"isError":true,"structuredContent":{"code":"provider_unavailable"}}`, string(projected))
+}
+
+func TestDiagnosticCaptureContextAndUnconfiguredResponse(t *testing.T) {
+	capture := NewDiagnosticCapture(nil)
+	require.Empty(t, capture.RequestBody())
+	require.Nil(t, DiagnosticCaptureFromContext(context.Background()))
+	require.Same(t, capture, DiagnosticCaptureFromContext(WithDiagnosticCapture(context.Background(), capture)))
+	require.Equal(t, context.Background(), WithDiagnosticCapture(context.Background(), nil))
+	projected, err := capture.ProjectResponse(map[string]any{"ignored": true}, false)
+	require.NoError(t, err)
+	require.Nil(t, projected)
+}
+
+func TestDiagnosticCaptureNilReceiverAndNilProjectorAreSafe(t *testing.T) {
+	var capture *DiagnosticCapture
+	require.Nil(t, capture.RequestBody())
+	capture.SetResponseProjector(func(map[string]any, bool) ([]byte, error) { return nil, nil })
+	projected, err := capture.ProjectResponse(nil, false)
+	require.NoError(t, err)
+	require.Nil(t, projected)
+
+	unconfigured := NewDiagnosticCapture([]byte("request"))
+	unconfigured.SetResponseProjector(nil)
+	projected, err = unconfigured.ProjectResponse(nil, false)
+	require.NoError(t, err)
+	require.Nil(t, projected)
 }
 
 func TestTerminalNextActionsAreClosedAndCopied(t *testing.T) {
