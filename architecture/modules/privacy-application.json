@@ -3,27 +3,123 @@
   "capability": "privacy-application",
   "source_ownership": [
     {"path": "cmd/internal/serverapp/private_memory.go", "issue": 364},
+    {"path": "internal/privacy/contract/private_memory.go", "issue": 364},
+    {"path": "internal/privacy/postgres/compat_exports.go", "issue": 364},
+    {"path": "internal/privacy/postgres/credential_delete.go", "issue": 364},
+    {"path": "internal/privacy/postgres/idempotency.go", "issue": 364},
+    {"path": "internal/privacy/postgres/store.go", "issue": 364},
+    {"path": "internal/privacy/postgres/store_errors_test.go", "issue": 364},
+    {"path": "internal/privacy/postgres/store_sqlmock_test.go", "issue": 364},
+    {"path": "internal/privacy/postgres/store_operations.go", "issue": 364},
+    {"path": "internal/privacy/service/service.go", "issue": 364},
+    {"path": "internal/privacy/service/service_test.go", "issue": 364},
     {"path": "internal/repository/credential_deletion_audit.go", "issue": 364},
     {"path": "internal/repository/credential_private_memory_delete.go", "issue": 364},
     {"path": "internal/repository/private_memory_audit_integration.e2e", "issue": 364},
+    {"path": "internal/repository/private_memory_compat.go", "issue": 364},
     {"path": "internal/repository/private_memory_conflict_fixture_test.go", "issue": 364},
     {"path": "internal/repository/private_memory_credential_retirement_integration.e2e", "issue": 364},
-    {"path": "internal/repository/private_memory_idempotency.go", "issue": 364},
+    {"path": "internal/repository/private_memory_compat_test.go", "issue": 364},
     {"path": "internal/repository/private_memory_remember_assessment_integration.e2e", "issue": 364},
-    {"path": "internal/repository/private_memory_repository.go", "issue": 364},
-    {"path": "internal/repository/private_memory_repository_errors_test.go", "issue": 364},
     {"path": "internal/repository/private_memory_repository_integration.e2e", "issue": 364},
-    {"path": "internal/repository/private_memory_repository_operations.go", "issue": 364},
     {"path": "internal/repository/private_memory_semantic_lineage_integration.e2e", "issue": 364},
-    {"path": "internal/service/private_memory_service.go", "issue": 364},
-    {"path": "internal/service/private_memory_service_test.go", "issue": 364}
+    {"path": "internal/service/private_memory_service.go", "issue": 364}
+  ],
+  "compatibility_bridges": [
+    {
+      "source_path": "internal/service/private_memory_service.go",
+      "fields": ["NewPrivateMemoryService", "PrivateMemoryRuntimeConfigProvider", "PrivateMemoryService", "PrivateMemoryServiceConfig", "PrivateMemoryCommand", "PrivateMemoryAuditContext", "ErrPrivateMemoryAcknowledgementRequired", "ErrPrivateMemoryIdempotencyKeyRequired", "ErrPrivateMemoryInvalidReason", "ErrPrivateMemoryAuditUnavailable", "ErrPrivateMemoryRuntimeConfigUnavailable"],
+      "consumers": [
+        {"path": "internal/http/private_memory.go", "symbol": "privateMemoryCommand"},
+        {"path": "internal/http/private_memory.go", "symbol": "privateMemoryHTTPError"},
+        {"path": "internal/http/private_memory.go", "symbol": "userPortalHandler.deleteSSOCredential"},
+        {"path": "internal/http/private_memory_test.go", "symbol": "privateMemoryHTTPServiceStub.DeleteSSOCredential"},
+        {"path": "internal/http/private_memory_test.go", "symbol": "privateMemoryHTTPServiceStub.RequestSSOProfileErasure"},
+        {"path": "internal/http/private_memory_test.go", "symbol": "privateMemoryHTTPServiceStub.RequestCredentialErasure"},
+        {"path": "internal/http/private_memory_test.go", "symbol": "privateMemoryHTTPServiceStub.RequestControlErasure"},
+        {"path": "internal/http/private_memory_test.go", "symbol": "privateMemoryHTTPServiceStub.RunRetention"},
+        {"path": "internal/http/private_memory_test.go", "symbol": "TestPrivateMemoryHTTPErrorsAreBounded"},
+        {"path": "internal/http/private_memory_test.go", "symbol": "TestPrivateMemoryRetentionConfigErrorsAreBounded"},
+        {"path": "internal/http/private_memory_test.go", "symbol": "TestPrivateMemoryResponseHelpersAndBoundedErrors"},
+        {"path": "internal/http/sso_portal_personal_key_test.go", "symbol": "privateMemoryServiceStub.DeleteSSOCredential"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/privacy/service/service.go", "symbol": "NewPrivateMemoryService"},
+      "removal_condition": "Remove the legacy service aliases after all transport and composition callers consume the privacy service contract directly."
+    },
+    {
+      "source_path": "internal/repository/private_memory_compat.go",
+      "fields": ["NewPrivateMemoryRepository", "PrivateMemoryRepositoryImpl", "PrivateMemoryRepository", "PrivateMemoryErasureRequest", "PrivateMemoryCredentialRevocationAudit", "PrivateMemoryRetentionRequest", "PrivateMemoryErasureManifest", "privateMemoryHash", "privateMemoryRetryDelay", "wrapPrivateMemoryError", "ErrPrivateMemoryNotFound", "ErrPrivateMemoryLegalHold", "ErrPrivateMemoryIdempotency", "ErrPrivateMemoryOperationConflict", "ErrPrivateMemoryManifest", "ErrPrivateMemoryClaimLost", "ErrPrivateMemoryRetentionDisabled", "ErrPrivateMemoryHoldConflict", "ErrPrivateMemoryInternal", "privateMemoryMaximumAttempts", "privateMemoryAuditMetadataJSON", "syncClock"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"},
+        {"path": "internal/repository/canonical_credentials_integration.e2e", "symbol": "TestDeleteForTeamRetiresPromotedSSOCredentialPrivateSpace"},
+        {"path": "internal/repository/canonical_credentials_integration.e2e", "symbol": "TestDeleteForTeamWithAuditCommitsBeforePrivateErasureQueue"},
+        {"path": "internal/repository/conflict_review_private_space_integration.e2e", "symbol": "TestClaimedPrivateConflictDerivedEvidenceCannotStageAfterErasureReopensSpace"},
+        {"path": "internal/repository/private_memory_audit_integration.e2e", "symbol": "TestPrivateMemorySSOCredentialRevocationAuditFailureRollsBackDisable"},
+        {"path": "internal/repository/private_memory_audit_integration.e2e", "symbol": "TestPrivateMemorySSOCredentialRevocationAuditStoresProfileAndCredentialActors"},
+        {"path": "internal/repository/private_memory_credential_retirement_integration.e2e", "symbol": "TestPrivateMemoryCredentialRetirementUpgradesActiveErasure"},
+        {"path": "internal/repository/private_memory_compat_test.go", "symbol": "TestPrivateMemoryCompatibilityClockSyncIsSafeConcurrently"},
+        {"path": "internal/repository/private_memory_remember_assessment_integration.e2e", "symbol": "TestPrivateMemoryErasureCleansSynchronousAssessmentAfterAttemptOrder"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemoryManifestMatchesCatalog"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemoryManifestMismatchBlocksPrepare"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemoryRetentionSelectsExpiredSpacesAndExcludesLegalHolds"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemoryExpiredLeaseIsReclaimedWithNewFence"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemoryFailureRetriesAreBackedOffAndBounded"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemoryMissingRetiredCredentialLosesClaim"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemoryErasureRemovesInboundCrossSpaceReferences"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemoryIdempotencyConcurrentReplay"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemorySSOCredentialDeletePreservesSharedActorMembership"},
+        {"path": "internal/repository/private_memory_semantic_lineage_integration.e2e", "symbol": "TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage"},
+        {"path": "internal/repository/remember_artifact_hold_rollback_integration.e2e", "symbol": "TestRememberFailureArtifactHoldTransactionRollback"},
+        {"path": "internal/repository/remember_primitives_integration.e2e", "symbol": "TestRememberPolicyArtifactLegalHoldReleaseAndErasure"},
+        {"path": "internal/repository/remember_primitives_integration.e2e", "symbol": "TestRememberFailureArtifactHoldSkipsNoopUpdates"},
+        {"path": "internal/repository/remember_primitives_integration.e2e", "symbol": "TestRememberFailureArtifactHoldAndPurgeSerializeOnPrivateSpace"},
+        {"path": "internal/http/private_memory.go", "symbol": "privateMemoryHTTPError"},
+        {"path": "internal/http/private_memory_test.go", "symbol": "TestPrivateMemoryResponseHelpersAndBoundedErrors"},
+        {"path": "internal/http/private_memory_test.go", "symbol": "TestPrivateMemoryOwnerHandlersRejectUnavailableOrWrongPrincipals"},
+        {"path": "internal/http/private_memory_test.go", "symbol": "TestPrivateMemoryControlHandlersPropagateRepositoryFailures"},
+        {"path": "internal/http/sso_portal_personal_key_test.go", "symbol": "privateMemoryServiceStub.DeleteSSOCredential"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/privacy/postgres/store.go", "symbol": "NewPrivateMemoryRepository"},
+      "removal_condition": "Remove the repository facade after production, evaluation, demo, transport, and privacy fixtures use the privacy PostgreSQL owner directly."
+    },
+    {
+      "source_path": "internal/repository/credential_deletion_audit.go",
+      "fields": ["CredentialDeletionAuditInput"],
+      "consumers": [
+        {"path": "internal/service/access/credential_service.go", "symbol": "CredentialServiceImpl.DeleteForTeam"},
+        {"path": "internal/repository/canonical_credentials_integration.e2e", "symbol": "TestDeleteForTeamWithAuditCommitsBeforePrivateErasureQueue"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/privacy/postgres/credential_delete.go", "symbol": "AppendCredentialDeletionAuditTx"},
+      "removal_condition": "Remove the repository input alias after Access and credential fixtures consume the privacy credential-deletion contract directly."
+    },
+    {
+      "source_path": "internal/repository/credential_private_memory_delete.go",
+      "fields": ["queueCredentialPrivateErasureTx"],
+      "consumers": [
+        {"path": "internal/repository/credential_deletion_audit.go", "symbol": "CredentialRepositoryImpl.deleteForTeam"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/privacy/postgres/credential_delete.go", "symbol": "QueueCredentialPrivateErasureTx"},
+      "removal_condition": "Remove the repository queue alias after credential deletion consumes the privacy erasure port directly."
+    }
   ],
   "completed_issues": [],
-  "go": {"units": []},
+  "go": {
+    "units": [
+      {"id": "github.com/markhuangai/dense-mem/internal/privacy/contract", "role": "port", "visibility": "public"},
+      {"id": "github.com/markhuangai/dense-mem/internal/privacy/postgres", "role": "postgres_adapter", "visibility": "private"},
+      {"id": "github.com/markhuangai/dense-mem/internal/privacy/service", "role": "application_api", "visibility": "public"}
+    ]
+  },
   "browser": {"units": []},
   "exceptions": [],
   "workers": [
-    {"path": "internal/service/private_memory_service.go", "function": "Start", "kind": "goroutine", "ordinal": 1, "role": "worker", "lifecycle_issue": 381},
-    {"path": "internal/service/private_memory_service.go", "function": "Start", "kind": "goroutine", "ordinal": 2, "role": "worker", "lifecycle_issue": 381}
+    {"path": "internal/privacy/service/service.go", "function": "Start", "kind": "goroutine", "ordinal": 1, "role": "worker", "lifecycle_issue": 381},
+    {"path": "internal/privacy/service/service.go", "function": "Start", "kind": "goroutine", "ordinal": 2, "role": "worker", "lifecycle_issue": 381}
   ]
 }

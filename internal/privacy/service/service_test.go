@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,20 +12,36 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/observability"
+	privacycontract "github.com/markhuangai/dense-mem/internal/privacy/contract"
 )
 
+type activityLogger struct {
+	mu       sync.Mutex
+	warnings []string
+}
+
+func (*activityLogger) Info(string, ...observability.LogAttr)         {}
+func (*activityLogger) Error(string, error, ...observability.LogAttr) {}
+func (l *activityLogger) Warn(message string, _ ...observability.LogAttr) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.warnings = append(l.warnings, message)
+}
+func (*activityLogger) Debug(string, ...observability.LogAttr)                    {}
+func (l *activityLogger) With(...observability.LogAttr) observability.LogProvider { return l }
+
 type privateMemoryRepositoryStub struct {
-	repository.PrivateMemoryRepository
+	privacycontract.PrivateMemoryRepository
 
 	prepareErr error
 	operation  *domain.PrivateMemoryErasureOperation
 	requestErr error
 
-	profileRequest       repository.PrivateMemoryErasureRequest
-	credentialRequest    repository.PrivateMemoryErasureRequest
-	disableRequest       repository.PrivateMemoryErasureRequest
-	disableAudit         *repository.PrivateMemoryCredentialRevocationAudit
+	profileRequest       privacycontract.PrivateMemoryErasureRequest
+	credentialRequest    privacycontract.PrivateMemoryErasureRequest
+	disableRequest       privacycontract.PrivateMemoryErasureRequest
+	disableAudit         *privacycontract.PrivateMemoryCredentialRevocationAudit
 	disableRequestHashes map[string]string
 	controlSpaceID       uuid.UUID
 	controlScopeHash     string
@@ -41,7 +58,7 @@ type privateMemoryRepositoryStub struct {
 	holdChanged       bool
 	holdSpaceID       uuid.UUID
 	holdReason        string
-	retentionInput    repository.PrivateMemoryRetentionRequest
+	retentionInput    privacycontract.PrivateMemoryRetentionRequest
 	retentionRun      *domain.PrivateMemoryRetentionRun
 	retentionRuns     []domain.PrivateMemoryRetentionRun
 	runtimeErr        error
@@ -62,12 +79,12 @@ func (r *privateMemoryRepositoryStub) Prepare(context.Context) error {
 	return r.prepareErr
 }
 
-func (r *privateMemoryRepositoryStub) RequestProfileErasure(_ context.Context, input repository.PrivateMemoryErasureRequest) (*domain.PrivateMemoryErasureOperation, bool, error) {
+func (r *privateMemoryRepositoryStub) RequestProfileErasure(_ context.Context, input privacycontract.PrivateMemoryErasureRequest) (*domain.PrivateMemoryErasureOperation, bool, error) {
 	r.profileRequest = input
 	return r.operation, true, r.requestErr
 }
 
-func (r *privateMemoryRepositoryStub) RequestCredentialErasure(_ context.Context, input repository.PrivateMemoryErasureRequest) (*domain.PrivateMemoryErasureOperation, bool, error) {
+func (r *privateMemoryRepositoryStub) RequestCredentialErasure(_ context.Context, input privacycontract.PrivateMemoryErasureRequest) (*domain.PrivateMemoryErasureOperation, bool, error) {
 	r.credentialRequest = input
 	return r.operation, true, r.requestErr
 }
@@ -80,13 +97,13 @@ func (r *privateMemoryRepositoryStub) RequestControlErasure(_ context.Context, s
 	return r.operation, true, r.requestErr
 }
 
-func (r *privateMemoryRepositoryStub) DisableSSOCredential(_ context.Context, input repository.PrivateMemoryErasureRequest) (*domain.PrivateMemoryErasureOperation, bool, error) {
+func (r *privateMemoryRepositoryStub) DisableSSOCredential(_ context.Context, input privacycontract.PrivateMemoryErasureRequest) (*domain.PrivateMemoryErasureOperation, bool, error) {
 	r.disableRequest = input
 	r.disableAudit = input.CredentialRevocationAudit
 	if r.disableRequestHashes != nil {
 		if previous, exists := r.disableRequestHashes[input.IdempotencyScopeHash]; exists {
 			if previous != input.RequestHash {
-				return nil, false, repository.ErrPrivateMemoryIdempotency
+				return nil, false, privacycontract.ErrPrivateMemoryIdempotency
 			}
 			return r.operation, false, r.requestErr
 		}
@@ -126,7 +143,7 @@ func (r *privateMemoryRepositoryStub) ReleaseLegalHold(_ context.Context, spaceI
 	return r.hold, r.holdChanged, r.requestErr
 }
 
-func (r *privateMemoryRepositoryStub) RunRetention(_ context.Context, input repository.PrivateMemoryRetentionRequest) (*domain.PrivateMemoryRetentionRun, bool, error) {
+func (r *privateMemoryRepositoryStub) RunRetention(_ context.Context, input privacycontract.PrivateMemoryRetentionRequest) (*domain.PrivateMemoryRetentionRun, bool, error) {
 	r.retentionInput = input
 	return r.retentionRun, true, r.runtimeErr
 }
@@ -320,7 +337,7 @@ func TestPrivateMemoryServiceCredentialDeletionReasonBindsRequestHash(t *testing
 
 	command.ReasonCode = "privacy_request"
 	_, err = svc.DeleteSSOCredential(ctx, teamID, identityID, credentialID, command, PrivateMemoryAuditContext{})
-	require.ErrorIs(t, err, repository.ErrPrivateMemoryIdempotency)
+	require.ErrorIs(t, err, privacycontract.ErrPrivateMemoryIdempotency)
 	require.Equal(t, repo.disableRequest.IdempotencyScopeHash, privateMemoryServiceHash("owner_sso_credential_delete", teamID.String(), identityID.String(), credentialID.String(), command.IdempotencyKey))
 	require.NotEqual(t, firstHash, repo.disableRequest.RequestHash)
 }
@@ -456,7 +473,7 @@ func TestPrivateMemoryServiceWorkerAndAutomaticRetentionPolicy(t *testing.T) {
 	repo.execute = completed
 	require.True(t, svc.processOne(ctx))
 
-	repo.executeErr = repository.ErrPrivateMemoryLegalHold
+	repo.executeErr = privacycontract.ErrPrivateMemoryLegalHold
 	repo.releaseErr = errors.New("release failed")
 	require.False(t, svc.processOne(ctx))
 	require.Equal(t, 1, repo.releases)
@@ -465,7 +482,7 @@ func TestPrivateMemoryServiceWorkerAndAutomaticRetentionPolicy(t *testing.T) {
 	require.Equal(t, int64(7), repo.releaseFence)
 	require.Equal(t, "legal_hold", repo.releaseCode)
 
-	repo.executeErr = repository.ErrPrivateMemoryClaimLost
+	repo.executeErr = privacycontract.ErrPrivateMemoryClaimLost
 	repo.releaseErr = nil
 	require.False(t, svc.processOne(ctx))
 	require.Equal(t, 1, repo.releases)
@@ -477,7 +494,7 @@ func TestPrivateMemoryServiceWorkerAndAutomaticRetentionPolicy(t *testing.T) {
 	runtime.config.RetentionDays = 0
 	svc.runAutomaticRetention(ctx, time.Now())
 	runtime.config.RetentionDays = 14
-	repo.runtimeErr = repository.ErrPrivateMemoryManifest
+	repo.runtimeErr = privacycontract.ErrPrivateMemoryManifest
 	now := time.Date(2026, 8, 18, 12, 34, 0, 0, time.UTC)
 	svc.runAutomaticRetention(ctx, now)
 	require.Equal(t, domain.PrivateMemoryActorRetention, repo.retentionInput.ActorClass)
@@ -495,12 +512,12 @@ func TestPrivateMemoryServiceWorkerAndAutomaticRetentionPolicy(t *testing.T) {
 	NewPrivateMemoryService(PrivateMemoryServiceConfig{}).Start(ctx)
 
 	for err, expected := range map[error]string{
-		repository.ErrPrivateMemoryLegalHold: "legal_hold",
-		repository.ErrPrivateMemoryManifest:  "manifest_mismatch",
-		repository.ErrPrivateMemoryClaimLost: "claim_lost",
-		context.Canceled:                     "canceled",
-		context.DeadlineExceeded:             "timeout",
-		errors.New("database unavailable"):   "database_operation",
+		privacycontract.ErrPrivateMemoryLegalHold: "legal_hold",
+		privacycontract.ErrPrivateMemoryManifest:  "manifest_mismatch",
+		privacycontract.ErrPrivateMemoryClaimLost: "claim_lost",
+		context.Canceled:                   "canceled",
+		context.DeadlineExceeded:           "timeout",
+		errors.New("database unavailable"): "database_operation",
 	} {
 		require.Equal(t, expected, privateMemoryServiceErrorCode(err))
 	}

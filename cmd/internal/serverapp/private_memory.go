@@ -5,8 +5,8 @@ import (
 	"errors"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service"
+	privacycontract "github.com/markhuangai/dense-mem/internal/privacy/contract"
+	privacyservice "github.com/markhuangai/dense-mem/internal/privacy/service"
 )
 
 var errPrivateMemoryPrepareFailed = errors.New("private-memory erasure preparation failed")
@@ -20,13 +20,13 @@ func privateMemoryPrepareBootError(err error) error {
 
 func preparePrivateMemoryService(
 	ctx context.Context,
-	repo repository.PrivateMemoryRepository,
-	runtimeConfig service.PrivateMemoryRuntimeConfigProvider,
-	invalidator service.CredentialSessionInvalidator,
-	auditService service.AuditService,
+	repo privacycontract.PrivateMemoryRepository,
+	runtimeConfig privacyservice.PrivateMemoryRuntimeConfigProvider,
+	invalidator privacyservice.CredentialSessionInvalidator,
+	auditService privacyservice.AuditService,
 	logger observability.LogProvider,
-) (*service.PrivateMemoryService, error) {
-	privateMemoryService := service.NewPrivateMemoryService(service.PrivateMemoryServiceConfig{
+) (*privacyservice.PrivateMemoryService, error) {
+	privateMemoryService := privacyservice.NewPrivateMemoryService(privacyservice.PrivateMemoryServiceConfig{
 		Repository:         repo,
 		RuntimeConfig:      runtimeConfig,
 		SessionInvalidator: invalidator,

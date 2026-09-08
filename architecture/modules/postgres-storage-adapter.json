@@ -587,9 +587,7 @@
       "source_path": "internal/repository/remember_artifact_hold.go",
       "fields": ["setRememberFailureArtifactHoldStateTx"],
       "consumers": [
-        {"path": "internal/repository/remember_artifact_hold.go", "symbol": "LedgerRepositoryImpl.synchronizeRememberFailureArtifactHold"},
-        {"path": "internal/repository/private_memory_repository_operations.go", "symbol": "PrivateMemoryRepositoryImpl.PlaceLegalHold"},
-        {"path": "internal/repository/private_memory_repository_operations.go", "symbol": "PrivateMemoryRepositoryImpl.ReleaseLegalHold"}
+        {"path": "internal/repository/remember_artifact_hold.go", "symbol": "LedgerRepositoryImpl.synchronizeRememberFailureArtifactHold"}
       ],
       "removal_issue": 382,
       "implementation_owner": {"path": "internal/storage/postgres/remember_artifact_hold.go", "symbol": "SetRememberFailureArtifactHoldStateTx"},
@@ -620,6 +618,12 @@
     "units": []
   },
   "exceptions": [
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/repository",
+      "target": "github.com/markhuangai/dense-mem/internal/privacy/postgres",
+      "removal_issue": 382,
+      "reason": "The legacy repository privacy facade forwards to the new private PostgreSQL owner until the final compatibility-facade cleanup."
+    },
     {
       "source": "github.com/markhuangai/dense-mem/internal/repository",
       "target": "github.com/markhuangai/dense-mem/internal/knowledge/postgres",

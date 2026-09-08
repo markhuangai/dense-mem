@@ -1,4 +1,4 @@
-package repository
+package postgres
 
 import (
 	"context"
@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 func (r *PrivateMemoryRepositoryImpl) GetOwnerOperation(ctx context.Context, teamID, operationID uuid.UUID, identityID, credentialID *uuid.UUID) (*domain.PrivateMemoryErasureOperation, error) {
@@ -168,7 +169,7 @@ func (r *PrivateMemoryRepositoryImpl) PlaceLegalHold(ctx context.Context, spaceI
 	}
 	var hold *domain.PrivateMemoryLegalHold
 	created := false
-	now := r.now().UTC()
+	now := r.currentTime()
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		space, err := privateMemorySpaceByIDTx(ctx, tx, spaceID)
 		if err != nil {
@@ -195,7 +196,7 @@ func (r *PrivateMemoryRepositoryImpl) PlaceLegalHold(ctx context.Context, spaceI
 		`, hold.ID, hold.TeamID, hold.SpaceID, hold.ReasonCode, hold.PlacedAt).Error; err != nil {
 			return err
 		}
-		if err := setRememberFailureArtifactHoldStateTx(ctx, tx, space.ID, true); err != nil {
+		if err := storagepostgres.SetRememberFailureArtifactHoldStateTx(ctx, tx, space.ID, true); err != nil {
 			return err
 		}
 		created = true
@@ -210,7 +211,7 @@ func (r *PrivateMemoryRepositoryImpl) ReleaseLegalHold(ctx context.Context, spac
 	}
 	var hold *domain.PrivateMemoryLegalHold
 	released := false
-	now := r.now().UTC()
+	now := r.currentTime()
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		if _, err := privateMemorySpaceByIDTx(ctx, tx, spaceID); err != nil {
 			return err
@@ -229,7 +230,7 @@ func (r *PrivateMemoryRepositoryImpl) ReleaseLegalHold(ctx context.Context, spac
 			return result.Error
 		}
 		if result.RowsAffected == 1 {
-			if err := setRememberFailureArtifactHoldStateTx(ctx, tx, spaceID, false); err != nil {
+			if err := storagepostgres.SetRememberFailureArtifactHoldStateTx(ctx, tx, spaceID, false); err != nil {
 				return err
 			}
 			hold.ReleasedAt = &now
@@ -300,7 +301,7 @@ func (r *PrivateMemoryRepositoryImpl) RunRetention(ctx context.Context, input Pr
 	}
 	now := input.Now.UTC()
 	if now.IsZero() {
-		now = r.now().UTC()
+		now = r.currentTime()
 	}
 	cutoff := now.AddDate(0, 0, -input.RetentionDays)
 	var run *domain.PrivateMemoryRetentionRun
@@ -471,7 +472,7 @@ func (r *PrivateMemoryRepositoryImpl) ClaimNext(ctx context.Context, workerID st
 	if lease <= 0 {
 		lease = defaultPrivateMemoryLease
 	}
-	now := r.now().UTC()
+	now := r.currentTime()
 	leaseUntil := now.Add(lease)
 	var operation *domain.PrivateMemoryErasureOperation
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
@@ -656,7 +657,7 @@ func (r *PrivateMemoryRepositoryImpl) ExecuteClaim(ctx context.Context, operatio
 			}
 		}
 
-		now := r.now().UTC()
+		now := r.currentTime()
 		lifecycle := domain.MemorySpaceActive
 		var retiredAt any
 		var sealedAt any
@@ -830,7 +831,7 @@ func deletePrivateMemoryInboundCrossReferencesTx(ctx context.Context, tx *gorm.D
 
 func (r *PrivateMemoryRepositoryImpl) ReleaseClaim(ctx context.Context, operationID uuid.UUID, workerID string, fence int64, errorCode string) error {
 	errorCode = boundedPrivateMemoryErrorCode(errorCode)
-	now := r.now().UTC()
+	now := r.currentTime()
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		var attemptCount int
 		err := tx.WithContext(ctx).Raw(`
