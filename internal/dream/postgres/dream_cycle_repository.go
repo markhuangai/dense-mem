@@ -39,9 +39,7 @@ func (r *Store) claimDreamCycle(ctx context.Context, input DreamCycleClaimInput,
 			    NULLIF(?, '')::uuid, ?, ?, ?, ?, 'running', ?::uuid, ?, 1,
 			    ?::jsonb
 			)
-			ON CONFLICT (team_id, lane, window_key)
-			WHERE canonical_run_id IS NULL
-			DO NOTHING
+			ON CONFLICT DO NOTHING
 			RETURNING ` + dreamCycleRunSelectColumns
 		rows, err := tx.WithContext(ctx).Raw(query, input.TeamID, input.TeamID, input.TeamID, input.InitiatedByProfileID,
 			input.RunDate, input.WindowKey, input.Lane, input.ScheduledFor, input.LeaseToken,
@@ -272,9 +270,7 @@ func (r *Store) RecordMissedScheduledDreamCycle(ctx context.Context, input Dream
 			    ?::uuid, dense_mem_team_shared_space(?::uuid), dense_mem_team_shared_generation(?::uuid), ?, ?, ?, ?, 'missed', ?::jsonb, now(),
 			    'scheduler was not running during the configured window'
 			)
-			ON CONFLICT (team_id, lane, window_key)
-			WHERE canonical_run_id IS NULL
-			DO NOTHING
+			ON CONFLICT DO NOTHING
 			RETURNING ` + dreamCycleRunSelectColumns
 		rows, err := tx.WithContext(ctx).Raw(query, input.TeamID, input.TeamID, input.TeamID, input.RunDate,
 			input.WindowKey, input.Lane, input.ScheduledFor, string(snapshot)).Rows()

@@ -593,28 +593,40 @@ func TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited(t *testing.T) {
 		WindowKey:  "2026-07-31",
 		LeaseUntil: time.Now().UTC().Add(time.Minute),
 	}
-	results := make([]*DreamCycleRun, 2)
-	errs := make([]error, 2)
+	const claimers = 8
+	results := make([]*DreamCycleRun, claimers)
+	errs := make([]error, claimers)
+	ready := make(chan struct{}, claimers)
+	start := make(chan struct{})
 	var group sync.WaitGroup
 	for i := range results {
 		group.Add(1)
 		go func(index int) {
 			defer group.Done()
+			ready <- struct{}{}
+			<-start
 			results[index], errs[index] = semanticRepo.ClaimScheduledDreamCycle(ctx, claim)
 		}(i)
 	}
+	for range results {
+		<-ready
+	}
+	close(start)
 	group.Wait()
-	require.NoError(t, errs[0])
-	require.NoError(t, errs[1])
-	require.Equal(t, results[0].RunID, results[1].RunID)
-	require.NotEqual(t, results[0].Claimed, results[1].Claimed)
+	for _, err := range errs {
+		require.NoError(t, err)
+	}
 
 	var runID string
+	claimed := 0
 	for _, result := range results {
+		require.Equal(t, results[0].RunID, result.RunID)
 		if result.Claimed {
+			claimed++
 			runID = result.RunID
 		}
 	}
+	require.Equal(t, 1, claimed)
 	require.NotEmpty(t, runID)
 
 	hypothesis, inserted, err := semanticRepo.UpsertScheduledHypothesis(ctx, UpsertHypothesisInput{
