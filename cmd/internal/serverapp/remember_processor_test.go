@@ -132,6 +132,17 @@ func TestRememberCallerResponseDeliveryUsesRequestContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	require.False(t, rememberCallerResponseDelivered(ctx, rememberapp.ErrRememberRequestCancelled))
+	requestCtx := context.Background()
+	require.True(t, rememberCallerResponseDelivered(
+		rememberapp.WithCallerResponseRequestContext(context.Background(), requestCtx),
+		rememberapp.ErrRememberRequestTimeout,
+	))
+	requestCtx, requestCancel := context.WithCancel(context.Background())
+	requestCancel()
+	require.False(t, rememberCallerResponseDelivered(
+		rememberapp.WithCallerResponseRequestContext(context.Background(), requestCtx),
+		rememberapp.ErrRememberRequestTimeout,
+	))
 }
 
 func TestRememberFailureDiagnosticsPreservesTruncationState(t *testing.T) {

@@ -200,6 +200,9 @@ func rememberFailureDiagnosticsWithCapture(
 }
 
 func rememberCallerResponseDelivered(ctx context.Context, _ error) bool {
+	if requestCtx := rememberapp.CallerResponseRequestContextFromContext(ctx); requestCtx != nil {
+		return requestCtx.Err() == nil
+	}
 	return ctx == nil || ctx.Err() == nil
 }
 

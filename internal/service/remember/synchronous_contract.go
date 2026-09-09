@@ -23,6 +23,27 @@ type DiagnosticCapture struct {
 	projectFn func(map[string]any, bool) ([]byte, error)
 }
 
+type callerResponseRequestContextKey struct{}
+
+// WithCallerResponseRequestContext preserves the transport request context for
+// delivery classification when an adapter uses a detached handler context.
+func WithCallerResponseRequestContext(ctx, requestCtx context.Context) context.Context {
+	if ctx == nil || requestCtx == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, callerResponseRequestContextKey{}, requestCtx)
+}
+
+// CallerResponseRequestContextFromContext returns the original transport
+// context used to determine whether a caller response could be delivered.
+func CallerResponseRequestContextFromContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return nil
+	}
+	requestCtx, _ := ctx.Value(callerResponseRequestContextKey{}).(context.Context)
+	return requestCtx
+}
+
 func NewDiagnosticCapture(request []byte) *DiagnosticCapture {
 	return &DiagnosticCapture{request: append([]byte(nil), request...)}
 }
