@@ -1,4 +1,4 @@
-package communityservice
+package service
 
 import (
 	"context"

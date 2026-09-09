@@ -3,8 +3,32 @@
   "capability": "community-application",
   "source_ownership": [
     {"path": "cmd/internal/serverapp/community_composition.go", "issue": 367},
+    {"path": "cmd/internal/serverapp/community_composition_test.go", "issue": 367},
+    {"path": "internal/community/contract/community_record.go", "issue": 367},
+    {"path": "internal/community/contract/metrics.go", "issue": 367},
+    {"path": "internal/community/contract/types.go", "issue": 367},
     {"path": "internal/community/detector.go", "issue": 367},
     {"path": "internal/community/detector_test.go", "issue": 367},
+    {"path": "internal/community/postgres/community_discovery_repository.go", "issue": 367},
+    {"path": "internal/community/postgres/community_recall_coverage_repository.go", "issue": 367},
+    {"path": "internal/community/postgres/community_recall_repository.go", "issue": 367},
+    {"path": "internal/community/postgres/community_repository.go", "issue": 367},
+    {"path": "internal/community/postgres/community_repository_helpers.go", "issue": 367},
+    {"path": "internal/community/postgres/community_repository_read_helpers.go", "issue": 367},
+    {"path": "internal/community/postgres/community_repository_write_helpers.go", "issue": 367},
+    {"path": "internal/community/postgres/community_summary_repository.go", "issue": 367},
+    {"path": "internal/community/postgres/types.go", "issue": 367},
+    {"path": "internal/community/postgres/adapter_test.go", "issue": 367},
+    {"path": "internal/community/postgres/adapter_coverage_test.go", "issue": 367},
+    {"path": "internal/community/postgres/adapter_methods_test.go", "issue": 367},
+    {"path": "internal/community/postgres/adapter_recall_test.go", "issue": 367},
+    {"path": "internal/community/provider/community_summary.go", "issue": 367},
+    {"path": "internal/community/provider/community_summary_test.go", "issue": 367},
+    {"path": "internal/community/service/scheduler.go", "issue": 367},
+    {"path": "internal/community/service/scheduler_test.go", "issue": 367},
+    {"path": "internal/community/service/service.go", "issue": 367},
+    {"path": "internal/community/service/service_test.go", "issue": 367},
+    {"path": "internal/community/service/types.go", "issue": 367},
     {"path": "internal/repository/community_discovery_repository.go", "issue": 367},
     {"path": "internal/repository/community_recall_coverage_repository.go", "issue": 367},
     {"path": "internal/repository/community_recall_repository.go", "issue": 367},
@@ -14,49 +38,98 @@
     {"path": "internal/repository/community_repository_read_helpers.go", "issue": 367},
     {"path": "internal/repository/community_repository_write_helpers.go", "issue": 367},
     {"path": "internal/repository/community_summary_repository.go", "issue": 367},
-    {"path": "internal/service/communityservice/scheduler.go", "issue": 367},
-    {"path": "internal/service/communityservice/scheduler_test.go", "issue": 367},
-    {"path": "internal/service/communityservice/service.go", "issue": 367},
-    {"path": "internal/service/communityservice/service_test.go", "issue": 367},
-    {"path": "internal/service/communityservice/types.go", "issue": 367}
+    {"path": "internal/service/communityservice/compat.go", "issue": 367},
+    {"path": "internal/verifier/community_summary.go", "issue": 367},
+    {"path": "internal/observability/community_metrics.go", "issue": 367}
   ],
   "completed_issues": [],
   "go": {
     "units": [
-      {
-        "id": "github.com/markhuangai/dense-mem/internal/service/communityservice",
-        "role": "application_api",
-        "visibility": "public"
-      }
+      {"id": "github.com/markhuangai/dense-mem/internal/community/provider", "role": "port", "visibility": "public"},
+      {"id": "github.com/markhuangai/dense-mem/internal/community/contract", "role": "port", "visibility": "public"},
+      {"id": "github.com/markhuangai/dense-mem/internal/community/postgres", "role": "postgres_adapter", "visibility": "private"},
+      {"id": "github.com/markhuangai/dense-mem/internal/community/service", "role": "application_api", "visibility": "public"},
+      {"id": "github.com/markhuangai/dense-mem/internal/service/communityservice", "role": "application_api", "visibility": "public"}
     ]
   },
-  "browser": {
-    "units": []
-  },
+  "browser": {"units": []},
+  "compatibility_bridges": [
+    {
+      "source_path": "internal/repository/community_repository.go",
+      "fields": ["CommunityStore", "ClaimCommunityRun", "CompleteCommunityRun", "RenewCommunityRunLease", "ListCommunityInputs", "PublishCommunitySnapshot", "RefreshCommunityStaleness", "ListCommunities", "CountCurrentCommunities", "GetCommunity", "LatestCommunityRun", "ListCurrentCommunityLineage", "RecallCommunityDiscovery", "RecallCommunities", "ListCommunitySemanticGroups", "RecordCommunitySummaryAttempt"],
+      "consumers": [
+        {"path": "internal/service/memoryservice/recall.go", "symbol": "recallService.recallWithExecution"},
+        {"path": "internal/repository/community_repository_integration.e2e", "symbol": "TestCommunityRepositorySnapshotLifecycleAndRecallExpansion"},
+        {"path": "internal/service/memoryservice/recall_test.go", "symbol": "TestRecallAddsCommunityDiscoveryWhenEnabledAndPrimaryHasRoom"},
+        {"path": "internal/service/memoryservice/recall_test.go", "symbol": "TestRecallSkipsCommunityDiscoveryWhenPrimaryResultsFillLimit"},
+        {"path": "internal/service/memoryservice/recall_test.go", "symbol": "recallCommunityStub.RefreshCommunityStaleness"},
+        {"path": "internal/service/memoryservice/recall_test.go", "symbol": "recallCommunityStub.RecallCommunityDiscovery"},
+        {"path": "internal/service/memoryservice/recall_space_test.go", "symbol": "TestRecallPrivateBranchDoesNotExpandTeamGraph"},
+        {"path": "internal/service/memoryservice/recall_space_test.go", "symbol": "TestRecallSingleSharedSpaceRecordsCommunityMetric"},
+        {"path": "internal/service/memoryservice/recall_community_snapshot_test.go", "symbol": "TestRecallUsesCurrentCommunitySnapshotAndCoverage"},
+        {"path": "internal/service/memoryservice/recall_community_snapshot_test.go", "symbol": "TestRecallCommunitiesReportsTemporalDegradation"},
+        {"path": "internal/service/memoryservice/recall_community_snapshot_test.go", "symbol": "TestRecallCommunitiesReportsTerminalRunStatuses"},
+        {"path": "internal/service/memoryservice/recall_community_snapshot_test.go", "symbol": "TestRecallCommunitiesRejectsIncompatibleCompletedSnapshot"},
+        {"path": "internal/service/memoryservice/recall_community_snapshot_test.go", "symbol": "recallCommunityRunStub.LatestCommunityRun"},
+        {"path": "internal/service/memoryservice/recall_community_snapshot_test.go", "symbol": "recallCommunitySnapshotStub.ListCommunitySemanticGroups"},
+        {"path": "internal/service/memoryservice/recall_community_snapshot_test.go", "symbol": "recallCommunitySnapshotStub.RecallCommunities"},
+        {"path": "internal/tools/registry/evaluation_bindings.go", "symbol": "Dependencies.withEvaluationBindings"},
+        {"path": "internal/tools/registry/toolset.go", "symbol": "BuildActive"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/community/postgres/community_repository.go", "symbol": "Store.ClaimCommunityRun"},
+      "removal_condition": "Remove the legacy repository Community methods after composition, recall, control, registry, evaluation and retained fixtures consume the Community contract or PostgreSQL owner directly."
+    },
+    {
+      "source_path": "internal/service/communityservice/compat.go",
+      "fields": ["AppConfig", "TeamService", "SummaryProvider", "Dependencies", "Service", "RunResult", "StatusResult", "Scheduler", "New", "NewScheduler"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/application_composition.go", "symbol": "buildApplicationBundle"},
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"},
+        {"path": "internal/http/control_portal.go", "symbol": "NewControlPortalServerWithMetricsAndTelemetry"},
+        {"path": "internal/http/control_portal_observability.go", "symbol": "controlPortalHandler.getTeamCommunityStatus"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/community/service/service.go", "symbol": "New"},
+      "removal_condition": "Remove the compatibility package after all named composition, transport and retained fixture consumers import internal/community directly."
+    },
+    {
+      "source_path": "internal/verifier/community_summary.go",
+      "fields": ["OpenAIVerifier.SummarizeCommunity"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/application_composition.go", "symbol": "buildApplicationBundle"},
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"},
+        {"path": "internal/verifier/community_summary_test.go", "symbol": "TestSummarizeCommunityValidatesInputAndResponse"},
+        {"path": "internal/verifier/community_summary_test.go", "symbol": "TestSummarizeCommunityRejectsUnavailableEmptyAndMalformed"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/community/provider/community_summary.go", "symbol": "SummarizeCommunity"},
+      "removal_condition": "Remove the verifier forwarding method after Community composition and provider transport callers consume the Community summary provider directly."
+    },
+    {
+      "source_path": "internal/observability/community_metrics.go",
+      "fields": ["CommunityMetrics", "RecordCommunityRun", "RecordCommunitySummary", "RecordCommunityRecall"],
+      "consumers": [
+        {"path": "internal/service/memoryservice/recall.go", "symbol": "recordRecallCommunityMetric"},
+        {"path": "internal/service/memoryservice/recall_space_test.go", "symbol": "TestRecallPrivateBranchDoesNotExpandTeamGraph"},
+        {"path": "internal/service/memoryservice/recall_space_test.go", "symbol": "TestRecallSingleSharedSpaceRecordsCommunityMetric"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/community/contract/metrics.go", "symbol": "RecordCommunityRecall"},
+      "removal_condition": "Remove the observability compatibility helpers after recall and retained metric callers consume the Community metric contract directly."
+    }
+  ],
   "exceptions": [
     {
-      "source": "github.com/markhuangai/dense-mem/internal/service/communityservice",
-      "target": "github.com/markhuangai/dense-mem/internal/repository",
+      "source": "github.com/markhuangai/dense-mem/internal/repository",
+      "target": "github.com/markhuangai/dense-mem/internal/community/postgres",
+      "source_path": "internal/repository/community_repository.go",
       "removal_issue": 367,
-      "reason": "Community application code still consumes the legacy repository until community storage ownership is isolated."
+      "reason": "Community cutover keeps the legacy repository entry point as a bounded forwarder while native consumers migrate; #382 removes the final facade."
     }
   ],
   "workers": [
-    {
-      "path": "internal/service/communityservice/scheduler.go",
-      "function": "runDue",
-      "kind": "goroutine",
-      "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
-    },
-    {
-      "path": "internal/service/communityservice/service.go",
-      "function": "RunScheduled",
-      "kind": "goroutine",
-      "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
-    }
+    {"path": "internal/community/service/scheduler.go", "function": "runDue", "kind": "goroutine", "ordinal": 1, "role": "worker", "lifecycle_issue": 381},
+    {"path": "internal/community/service/service.go", "function": "RunScheduled", "kind": "goroutine", "ordinal": 1, "role": "worker", "lifecycle_issue": 381}
   ]
 }

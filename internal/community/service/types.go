@@ -1,12 +1,13 @@
-package repository
+package service
 
 import (
 	"context"
+	"time"
 
+	"github.com/google/uuid"
 	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
-	communitypostgres "github.com/markhuangai/dense-mem/internal/community/postgres"
-	"github.com/markhuangai/dense-mem/internal/storage/postgres"
-	"gorm.io/gorm"
+	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 type (
@@ -26,6 +27,7 @@ type (
 	CommunityCoverageInput         = communitycontract.CommunityCoverageInput
 	CommunityRecallTopEntity       = communitycontract.CommunityRecallTopEntity
 	CommunityRecallRecord          = communitycontract.CommunityRecallRecord
+	RecallRelationshipHit          = communitycontract.RecallRelationshipHit
 	CommunitySummaryAttemptInput   = communitycontract.CommunitySummaryAttemptInput
 	CommunityStalenessInput        = communitycontract.CommunityStalenessInput
 	CommunityListInput             = communitycontract.CommunityListInput
@@ -35,23 +37,6 @@ type (
 	CommunityDiscoveryRelationship = communitycontract.CommunityDiscoveryRelationship
 	CommunityRecord                = communitycontract.CommunityRecord
 )
-
-// CommunityDatabase and CommunityRLS are the private composition seam used to
-// construct the native adapter. Application contracts never expose either
-// handle; the legacy methods below remain forwarding-only compatibility.
-func (r *SemanticRepositoryImpl) CommunityDatabase() *gorm.DB {
-	if r == nil {
-		return nil
-	}
-	return r.db
-}
-
-func (r *SemanticRepositoryImpl) CommunityRLS() postgres.RLSHelper {
-	if r == nil {
-		return nil
-	}
-	return r.rls
-}
 
 const (
 	CommunityAlgorithmKind    = communitycontract.CommunityAlgorithmKind
@@ -65,43 +50,55 @@ var (
 	ErrCommunitySourceStale       = communitycontract.ErrCommunitySourceStale
 )
 
-// CommunityStore is the native construction seam. The legacy repository
-// surface remains a single-hop compatibility facade until #382 removes it.
-func (r *SemanticRepositoryImpl) CommunityStore() communitycontract.CommunityRepository {
-	if r == nil || r.db == nil || r.rls == nil {
-		return nil
-	}
-	return communitypostgres.NewStore(r.db, r.rls)
+type AppConfig interface {
+	CommunityDetectionRuntimeConfig(context.Context) (domain.CommunityDetectionRuntimeConfig, error)
 }
 
-func (r *SemanticRepositoryImpl) communityOwner() *communitypostgres.Store {
-	store := r.CommunityStore()
-	owner, _ := store.(*communitypostgres.Store)
-	return owner
+type TeamService interface {
+	List(context.Context, int, int) ([]*domain.Team, error)
 }
 
-func (r *SemanticRepositoryImpl) ClaimCommunityRun(ctx context.Context, input CommunityRunClaimInput) (*CommunityRun, error) {
-	return r.communityOwner().ClaimCommunityRun(ctx, input)
+type SummaryProvider interface {
+	ModelName() string
+	SummarizeCommunity(context.Context, domain.CommunitySummaryInput) (domain.CommunitySummary, error)
 }
 
-func (r *SemanticRepositoryImpl) CompleteCommunityRun(ctx context.Context, input CommunityRunCompleteInput) error {
-	return r.communityOwner().CompleteCommunityRun(ctx, input)
+type Dependencies struct {
+	Store     CommunityRepository
+	AppConfig AppConfig
+	Summary   SummaryProvider
+	Metrics   observability.DiscoverabilityMetrics
+	Now       func() time.Time
 }
 
-func (r *SemanticRepositoryImpl) RenewCommunityRunLease(ctx context.Context, input CommunityRunLeaseInput) error {
-	return r.communityOwner().RenewCommunityRunLease(ctx, input)
+type Service interface {
+	RunScheduled(context.Context, string, time.Time) (*RunResult, error)
+	Status(context.Context, string) (*StatusResult, error)
 }
 
-func (r *SemanticRepositoryImpl) ListCommunityInputs(ctx context.Context, input CommunityInputListInput) ([]CommunityInput, error) {
-	return r.communityOwner().ListCommunityInputs(ctx, input)
+type RunResult struct {
+	RunID             string    `json:"run_id"`
+	TeamID            string    `json:"team_id"`
+	WindowKey         string    `json:"window_key"`
+	Status            string    `json:"status"`
+	NodeCount         int       `json:"node_count"`
+	EdgeCount         int       `json:"edge_count"`
+	CommunityCount    int       `json:"community_count"`
+	SourceFingerprint string    `json:"source_fingerprint,omitempty"`
+	ProviderModel     string    `json:"provider_model,omitempty"`
+	ProviderAttempts  int       `json:"provider_attempts,omitempty"`
+	Error             string    `json:"error,omitempty"`
+	StartedAt         time.Time `json:"started_at,omitempty"`
+	CompletedAt       time.Time `json:"completed_at,omitempty"`
 }
 
-func (r *SemanticRepositoryImpl) PublishCommunitySnapshot(ctx context.Context, input CommunitySnapshotPublishInput) error {
-	return r.communityOwner().PublishCommunitySnapshot(ctx, input)
+type StatusResult struct {
+	EffectiveConfig       domain.CommunityDetectionRuntimeConfig `json:"effective_config"`
+	LatestRun             *RunResult                             `json:"latest_run,omitempty"`
+	CurrentCommunityCount int                                    `json:"current_community_count"`
 }
 
-func (r *SemanticRepositoryImpl) RefreshCommunityStaleness(ctx context.Context, input CommunityStalenessInput) (int, error) {
-	return r.communityOwner().RefreshCommunityStaleness(ctx, input)
+func uuidString(value string) uuid.UUID {
+	parsed, _ := uuid.Parse(value)
+	return parsed
 }
-
-var _ CommunityRepository = (*SemanticRepositoryImpl)(nil)

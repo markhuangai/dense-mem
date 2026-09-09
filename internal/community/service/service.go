@@ -1,4 +1,4 @@
-package communityservice
+package service
 
 import (
 	"context"
@@ -14,15 +14,15 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/markhuangai/dense-mem/internal/community"
+	communitydomain "github.com/markhuangai/dense-mem/internal/community"
+	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 const (
 	runLease                        = 15 * time.Minute
-	inputLimit                      = community.MaxNodes + 1
+	inputLimit                      = communitydomain.MaxNodes + 1
 	maxSummaryRunAttempts           = 3
 	maxSummaryRelationships         = 100
 	maxSummaryEvidenceIDs           = 200
@@ -33,7 +33,7 @@ const (
 )
 
 type service struct {
-	store   repository.CommunityRepository
+	store   CommunityRepository
 	config  AppConfig
 	summary SummaryProvider
 	metrics interface{}
@@ -60,11 +60,11 @@ func (s *service) RunScheduled(ctx context.Context, teamID string, windowAt time
 		windowAt = s.now()
 	}
 	windowKey := windowAt.UTC().Format("2006-01-02")
-	inputs, err := s.store.ListCommunityInputs(ctx, repository.CommunityInputListInput{TeamID: teamID, Limit: inputLimit})
+	inputs, err := s.store.ListCommunityInputs(ctx, CommunityInputListInput{TeamID: teamID, Limit: inputLimit})
 	if err != nil {
 		return nil, fmt.Errorf("community: list graph inputs: %w", err)
 	}
-	configurationHash := community.ConfigurationHash(community.DefaultSeed)
+	configurationHash := communitydomain.ConfigurationHash(communitydomain.DefaultSeed)
 	providerModel := ""
 	if s.summary != nil {
 		providerModel = s.summary.ModelName()
@@ -81,17 +81,17 @@ func (s *service) RunScheduled(ctx context.Context, teamID string, windowAt time
 	if err != nil {
 		return nil, fmt.Errorf("community: list current lineage: %w", err)
 	}
-	run, err := s.store.ClaimCommunityRun(ctx, repository.CommunityRunClaimInput{
+	run, err := s.store.ClaimCommunityRun(ctx, CommunityRunClaimInput{
 		TeamID:            teamID,
 		WindowKey:         windowKey,
 		LeaseUntil:        s.now().Add(runLease),
-		AlgorithmKind:     community.AlgorithmKind,
-		AlgorithmVersion:  community.AlgorithmVersion,
-		ProfileVersion:    repository.CommunityProfileVersion,
+		AlgorithmKind:     communitydomain.AlgorithmKind,
+		AlgorithmVersion:  communitydomain.AlgorithmVersion,
+		ProfileVersion:    CommunityProfileVersion,
 		ConfigurationHash: configurationHash,
 		SourceFingerprint: sourceFingerprint,
-		MaxNodes:          community.MaxNodes,
-		MaxEdges:          community.MaxEdges,
+		MaxNodes:          communitydomain.MaxNodes,
+		MaxEdges:          communitydomain.MaxEdges,
 	})
 	if err != nil {
 		return nil, err
@@ -115,7 +115,7 @@ func (s *service) RunScheduled(ctx context.Context, teamID string, windowAt time
 			case <-leaseCtx.Done():
 				return
 			case <-ticker.C:
-				if renewErr := s.store.RenewCommunityRunLease(leaseCtx, repository.CommunityRunLeaseInput{
+				if renewErr := s.store.RenewCommunityRunLease(leaseCtx, CommunityRunLeaseInput{
 					TeamID: teamID, RunID: run.RunID, LeaseUntil: s.now().Add(runLease),
 				}); renewErr != nil {
 					select {
@@ -143,7 +143,7 @@ func (s *service) RunScheduled(ctx context.Context, teamID string, windowAt time
 		result.Status = status
 		result.Error = boundedError(message)
 		result.CompletedAt = s.now()
-		completeErr := s.store.CompleteCommunityRun(ctx, repository.CommunityRunCompleteInput{
+		completeErr := s.store.CompleteCommunityRun(ctx, CommunityRunCompleteInput{
 			TeamID: teamID, RunID: run.RunID, Status: status,
 			NodeCount: result.NodeCount, EdgeCount: result.EdgeCount,
 			CommunityCount: result.CommunityCount, Error: result.Error,
@@ -152,18 +152,18 @@ func (s *service) RunScheduled(ctx context.Context, teamID string, windowAt time
 			return nil, completeErr
 		}
 		if metrics, ok := s.metrics.(observability.DiscoverabilityMetrics); ok {
-			observability.RecordCommunityRun(ctx, metrics, status, result.NodeCount, result.EdgeCount, result.CommunityCount)
+			communitycontract.RecordCommunityRun(ctx, metrics, status, result.NodeCount, result.EdgeCount, result.CommunityCount)
 		}
 		return result, nil
 	}
-	graphResult := community.Detect(toCommunityInputs(inputs), community.DefaultSeed)
+	graphResult := communitydomain.Detect(toCommunityInputs(inputs), communitydomain.DefaultSeed)
 	result.NodeCount = len(graphResult.Nodes)
 	result.EdgeCount = len(graphResult.Edges)
 	if graphResult.TooLarge {
 		return finish("too_large", "community graph exceeds the fixed node or edge bound")
 	}
 	logicalIDs := matchLogicalIDs(graphResult.Clusters, lineage)
-	previousByLogicalID := make(map[string]repository.CommunityLineageRecord, len(lineage))
+	previousByLogicalID := make(map[string]CommunityLineageRecord, len(lineage))
 	for _, record := range lineage {
 		previousByLogicalID[record.LogicalCommunityID] = record
 	}
@@ -177,7 +177,7 @@ func (s *service) RunScheduled(ctx context.Context, teamID string, windowAt time
 	if renewErr := leaseFailure(); renewErr != nil {
 		return finish("failed", "community run lease renewal failed")
 	}
-	latestInputs, latestErr := s.store.ListCommunityInputs(ctx, repository.CommunityInputListInput{TeamID: teamID, Limit: inputLimit})
+	latestInputs, latestErr := s.store.ListCommunityInputs(ctx, CommunityInputListInput{TeamID: teamID, Limit: inputLimit})
 	if latestErr != nil {
 		return finish("failed", "community source refresh failed")
 	}
@@ -188,10 +188,10 @@ func (s *service) RunScheduled(ctx context.Context, teamID string, windowAt time
 	if renewErr := leaseFailure(); renewErr != nil {
 		return finish("failed", "community run lease renewal failed")
 	}
-	if err := s.store.PublishCommunitySnapshot(ctx, repository.CommunitySnapshotPublishInput{
+	if err := s.store.PublishCommunitySnapshot(ctx, CommunitySnapshotPublishInput{
 		TeamID: teamID, RunID: run.RunID,
-		AlgorithmKind: community.AlgorithmKind, AlgorithmVersion: community.AlgorithmVersion,
-		ProfileVersion: repository.CommunityProfileVersion, ConfigurationHash: configurationHash,
+		AlgorithmKind: communitydomain.AlgorithmKind, AlgorithmVersion: communitydomain.AlgorithmVersion,
+		ProfileVersion: CommunityProfileVersion, ConfigurationHash: configurationHash,
 		SourceFingerprint: sourceFingerprint, SourceSnapshot: sourceSnapshot(inputs),
 		NodeCount: result.NodeCount, EdgeCount: result.EdgeCount, Communities: communities,
 	}); err != nil {
@@ -200,7 +200,7 @@ func (s *service) RunScheduled(ctx context.Context, teamID string, windowAt time
 	result.Status = "completed"
 	result.CompletedAt = s.now()
 	if metrics, ok := s.metrics.(observability.DiscoverabilityMetrics); ok {
-		observability.RecordCommunityRun(ctx, metrics, "completed", result.NodeCount, result.EdgeCount, result.CommunityCount)
+		communitycontract.RecordCommunityRun(ctx, metrics, "completed", result.NodeCount, result.EdgeCount, result.CommunityCount)
 	}
 	return result, nil
 }
@@ -230,16 +230,16 @@ func (s *service) Status(ctx context.Context, teamID string) (*StatusResult, err
 	return status, nil
 }
 
-func (s *service) buildPublishRecords(ctx context.Context, teamID, runID string, inputs []repository.CommunityInput, detected community.Result, logicalIDs map[string]string, previousByLogicalID map[string]repository.CommunityLineageRecord, sourceFingerprint, configuredProviderModel string) ([]repository.CommunityPublishRecord, string, int, error) {
-	byGroup := make(map[string][]repository.CommunityInput)
+func (s *service) buildPublishRecords(ctx context.Context, teamID, runID string, inputs []CommunityInput, detected communitydomain.Result, logicalIDs map[string]string, previousByLogicalID map[string]CommunityLineageRecord, sourceFingerprint, configuredProviderModel string) ([]CommunityPublishRecord, string, int, error) {
+	byGroup := make(map[string][]CommunityInput)
 	for _, input := range inputs {
 		byGroup[input.SemanticGroupKey] = append(byGroup[input.SemanticGroupKey], input)
 	}
-	records := make([]repository.CommunityPublishRecord, 0, len(detected.Clusters))
+	records := make([]CommunityPublishRecord, 0, len(detected.Clusters))
 	providerModel := configuredProviderModel
 	attempts := 0
 	for ordinal, cluster := range detected.Clusters {
-		clusterInputs := make([]repository.CommunityInput, 0)
+		clusterInputs := make([]CommunityInput, 0)
 		for _, group := range cluster.GroupKeys {
 			clusterInputs = append(clusterInputs, byGroup[group]...)
 		}
@@ -247,7 +247,7 @@ func (s *service) buildPublishRecords(ctx context.Context, teamID, runID string,
 		if len(clusterInputs) == 0 {
 			continue
 		}
-		record := repository.CommunityPublishRecord{
+		record := CommunityPublishRecord{
 			CommunityID: uuid.NewString(), LogicalCommunityID: logicalIDs[strings.Join(cluster.GroupKeys, "\x00")],
 			Ordinal: ordinal, MemberCount: len(uniqueEntityEndpoints(clusterInputs)), SourceCount: len(clusterInputs),
 			SummaryVersion: "community-louvain-v2", SourceFingerprint: sourceFingerprint,
@@ -257,10 +257,10 @@ func (s *service) buildPublishRecords(ctx context.Context, teamID, runID string,
 		}
 		record.TopEntities, record.Memberships = topEntitiesAndMemberships(clusterInputs)
 		record.TopPredicates = topPredicates(clusterInputs)
-		record.Sources = make([]repository.CommunitySourceInput, 0, len(clusterInputs))
+		record.Sources = make([]CommunitySourceInput, 0, len(clusterInputs))
 		for sourceRank, input := range clusterInputs {
 			sourceHash := sourceStateHash(input)
-			record.Sources = append(record.Sources, repository.CommunitySourceInput{
+			record.Sources = append(record.Sources, CommunitySourceInput{
 				RelationshipID: input.RelationshipID, OwnerProfileID: input.OwnerProfileID,
 				RelationshipVersion: input.Version, SourceRank: sourceRank,
 				SemanticGroupKey: input.SemanticGroupKey, SourceStateHash: sourceHash,
@@ -291,12 +291,12 @@ func (s *service) buildPublishRecords(ctx context.Context, teamID, runID string,
 		attempts += usedAttempts
 		if summaryErr != nil {
 			if metrics, ok := s.metrics.(observability.DiscoverabilityMetrics); ok {
-				observability.RecordCommunitySummary(ctx, metrics, "failed", usedAttempts)
+				communitycontract.RecordCommunitySummary(ctx, metrics, "failed", usedAttempts)
 			}
 			return nil, providerModel, attempts, summaryErr
 		}
 		if metrics, ok := s.metrics.(observability.DiscoverabilityMetrics); ok {
-			observability.RecordCommunitySummary(ctx, metrics, "ok", usedAttempts)
+			communitycontract.RecordCommunitySummary(ctx, metrics, "ok", usedAttempts)
 		}
 		record.SummaryProviderModel = provider
 		record.SummaryPromptHash = summaryPromptHash(record.SummaryInputHash)
@@ -319,7 +319,7 @@ func (s *service) summarize(ctx context.Context, teamID, runID, versionCommunity
 	for attempt := 1; attempt <= maxSummaryRunAttempts; attempt++ {
 		response, err := s.summary.SummarizeCommunity(ctx, domain.CommunitySummaryInput{CommunityID: logicalCommunityID, SummaryInputHash: inputHash, Relationships: relationships})
 		if err != nil {
-			if recordErr := s.store.RecordCommunitySummaryAttempt(ctx, repository.CommunitySummaryAttemptInput{
+			if recordErr := s.store.RecordCommunitySummaryAttempt(ctx, CommunitySummaryAttemptInput{
 				TeamID: teamID, RunID: runID, CommunityID: versionCommunityID, Attempt: attempt,
 				ProviderModel: providerModel, PromptHash: promptHash, InputHash: inputHash, ErrorCode: "provider_error",
 			}); recordErr != nil {
@@ -331,7 +331,7 @@ func (s *service) summarize(ctx context.Context, teamID, runID, versionCommunity
 			continue
 		}
 		if validationError := validateCommunitySummaryResponse(response, inputHash, relationships); validationError != "" {
-			if recordErr := s.store.RecordCommunitySummaryAttempt(ctx, repository.CommunitySummaryAttemptInput{
+			if recordErr := s.store.RecordCommunitySummaryAttempt(ctx, CommunitySummaryAttemptInput{
 				TeamID: teamID, RunID: runID, CommunityID: versionCommunityID, Attempt: attempt,
 				ProviderModel: firstNonEmpty(response.ProviderModel, providerModel), PromptHash: promptHash,
 				ResponseHash: response.ResponseHash, InputHash: inputHash,
@@ -348,7 +348,7 @@ func (s *service) summarize(ctx context.Context, teamID, runID, versionCommunity
 			continue
 		}
 		response.Summary = strings.TrimSpace(response.Summary)
-		if recordErr := s.store.RecordCommunitySummaryAttempt(ctx, repository.CommunitySummaryAttemptInput{
+		if recordErr := s.store.RecordCommunitySummaryAttempt(ctx, CommunitySummaryAttemptInput{
 			TeamID: teamID, RunID: runID, CommunityID: versionCommunityID, Attempt: attempt,
 			ProviderModel: firstNonEmpty(response.ProviderModel, providerModel), PromptHash: promptHash,
 			ResponseHash: response.ResponseHash, InputHash: inputHash,
@@ -364,7 +364,7 @@ func (s *service) summarize(ctx context.Context, teamID, runID, versionCommunity
 	return domain.CommunitySummary{}, providerModel, maxSummaryRunAttempts, errors.New("community summary unavailable")
 }
 
-func boundedSummaryRelationships(inputs []repository.CommunityInput) []domain.CommunitySummaryRelationship {
+func boundedSummaryRelationships(inputs []CommunityInput) []domain.CommunitySummaryRelationship {
 	out := make([]domain.CommunitySummaryRelationship, 0, summaryMinInt(len(inputs), maxSummaryRelationships))
 	seenEvidence := map[string]struct{}{}
 	seenQuotes := map[string]struct{}{}
@@ -475,18 +475,18 @@ func validateCommunitySummaryResponse(response domain.CommunitySummary, inputHas
 	}
 }
 
-func toCommunityInputs(inputs []repository.CommunityInput) []community.Input {
-	out := make([]community.Input, 0, len(inputs))
+func toCommunityInputs(inputs []CommunityInput) []communitydomain.Input {
+	out := make([]communitydomain.Input, 0, len(inputs))
 	for _, input := range inputs {
-		out = append(out, community.Input{RelationshipID: input.RelationshipID, SemanticGroupKey: input.SemanticGroupKey,
+		out = append(out, communitydomain.Input{RelationshipID: input.RelationshipID, SemanticGroupKey: input.SemanticGroupKey,
 			SubjectEntityID: input.SubjectEntityID, ObjectEntityID: input.ObjectEntityID, ObjectValueID: input.ObjectValueID,
 			EvidenceIDs: input.EvidenceIDs, PredicateKey: input.PredicateKey, SubjectName: input.SubjectName, ObjectName: input.ObjectName})
 	}
 	return out
 }
 
-func fingerprintInputs(inputs []repository.CommunityInput, configurationHash, providerModel string) (string, error) {
-	copyInputs := append([]repository.CommunityInput(nil), inputs...)
+func fingerprintInputs(inputs []CommunityInput, configurationHash, providerModel string) (string, error) {
+	copyInputs := append([]CommunityInput(nil), inputs...)
 	sort.Slice(copyInputs, func(i, j int) bool {
 		if copyInputs[i].SemanticGroupKey != copyInputs[j].SemanticGroupKey {
 			return copyInputs[i].SemanticGroupKey < copyInputs[j].SemanticGroupKey
@@ -494,13 +494,13 @@ func fingerprintInputs(inputs []repository.CommunityInput, configurationHash, pr
 		return copyInputs[i].RelationshipID < copyInputs[j].RelationshipID
 	})
 	return hashJSON(struct {
-		ConfigurationHash string                      `json:"configuration_hash"`
-		ProviderModel     string                      `json:"provider_model"`
-		Inputs            []repository.CommunityInput `json:"inputs"`
+		ConfigurationHash string           `json:"configuration_hash"`
+		ProviderModel     string           `json:"provider_model"`
+		Inputs            []CommunityInput `json:"inputs"`
 	}{configurationHash, strings.TrimSpace(providerModel), copyInputs}), nil
 }
 
-func sourceSnapshot(inputs []repository.CommunityInput) []map[string]any {
+func sourceSnapshot(inputs []CommunityInput) []map[string]any {
 	out := make([]map[string]any, 0, len(inputs))
 	for _, input := range inputs {
 		out = append(out, map[string]any{"relationship_id": input.RelationshipID, "version": input.Version, "semantic_group_key": input.SemanticGroupKey, "source_state_hash": sourceStateHash(input)})
@@ -511,7 +511,7 @@ func sourceSnapshot(inputs []repository.CommunityInput) []map[string]any {
 	return out
 }
 
-func sourceStateHash(input repository.CommunityInput) string {
+func sourceStateHash(input CommunityInput) string {
 	return hashJSON([]any{input.RelationshipID, input.Version, input.SemanticGroupKey, input.EvidenceIDs, input.ObjectEntityID, input.ObjectValueID})
 }
 func hashString(value string) string {
@@ -528,7 +528,7 @@ func hashJSON(value any) string {
 	return hashString(string(encoded))
 }
 
-func runResultFromRecord(record *repository.CommunityRun, status string) *RunResult {
+func runResultFromRecord(record *CommunityRun, status string) *RunResult {
 	if record == nil {
 		return nil
 	}
@@ -692,7 +692,7 @@ func mapKeys(values map[string]struct{}) []string {
 	sort.Strings(keys)
 	return keys
 }
-func uniqueEntityEndpoints(inputs []repository.CommunityInput) []string {
+func uniqueEntityEndpoints(inputs []CommunityInput) []string {
 	set := map[string]struct{}{}
 	for _, input := range inputs {
 		for _, id := range []string{input.SubjectEntityID, input.ObjectEntityID} {
@@ -708,7 +708,7 @@ func uniqueEntityEndpoints(inputs []repository.CommunityInput) []string {
 	sort.Strings(out)
 	return out
 }
-func topEntitiesAndMemberships(inputs []repository.CommunityInput) ([]string, []repository.CommunityMembershipInput) {
+func topEntitiesAndMemberships(inputs []CommunityInput) ([]string, []CommunityMembershipInput) {
 	type count struct {
 		id, name string
 		n        int
@@ -740,17 +740,17 @@ func topEntitiesAndMemberships(inputs []repository.CommunityInput) ([]string, []
 		}
 		return items[i].id < items[j].id
 	})
-	memberships := make([]repository.CommunityMembershipInput, 0, len(items))
+	memberships := make([]CommunityMembershipInput, 0, len(items))
 	names := make([]string, 0, 5)
 	for rank, item := range items {
-		memberships = append(memberships, repository.CommunityMembershipInput{EntityID: item.id, Rank: rank, MembershipScore: 1, SourceCount: item.n})
+		memberships = append(memberships, CommunityMembershipInput{EntityID: item.id, Rank: rank, MembershipScore: 1, SourceCount: item.n})
 		if len(names) < 5 {
 			names = append(names, firstNonEmpty(item.name, item.id))
 		}
 	}
 	return names, memberships
 }
-func topPredicates(inputs []repository.CommunityInput) []string {
+func topPredicates(inputs []CommunityInput) []string {
 	counts := map[string]int{}
 	for _, input := range inputs {
 		counts[input.PredicateKey]++
@@ -770,11 +770,11 @@ func topPredicates(inputs []repository.CommunityInput) []string {
 	}
 	return values
 }
-func matchLogicalIDs(clusters []community.Cluster, previous []repository.CommunityLineageRecord) map[string]string {
+func matchLogicalIDs(clusters []communitydomain.Cluster, previous []CommunityLineageRecord) map[string]string {
 	used := map[string]bool{}
 	out := map[string]string{}
 	for _, cluster := range clusters {
-		best := repository.CommunityLineageRecord{}
+		best := CommunityLineageRecord{}
 		bestScore := 0.0
 		for _, candidate := range previous {
 			if used[candidate.LogicalCommunityID] {
