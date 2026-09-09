@@ -184,6 +184,64 @@ partition_precheck_capabilities "${sourceRoot}"
   }
 });
 
+test("weighted precheck partition spreads large capability fragments", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-weighted-"));
+  try {
+    const sourceRoot = join(fixture, "repo");
+    const casesDir = join(sourceRoot, "scripts/e2e-db-cases");
+    await mkdir(casesDir, { recursive: true });
+    const fragments = [
+      ["access", 80],
+      ["audit", 1],
+      ["community", 1],
+      ["dream", 80],
+      ["graph", 1],
+      ["http", 1],
+      ["knowledge", 80],
+      ["migration", 1],
+      ["operations", 1],
+      ["postgres", 80],
+      ["privacy", 1],
+      ["remember", 1],
+      ["repository", 80],
+      ["search", 1],
+      ["settings", 1],
+      ["trace", 80],
+    ];
+    for (const [capability, count] of fragments) {
+      const cases = Array.from({ length: count }, (_, index) => ({
+        id: `${capability}/Test${capability}${index}`,
+        package: "./fixture",
+        run: `^Test${capability}${index}$`,
+        phase: "precheck",
+      }));
+      await writeFile(join(casesDir, `${capability}.json`), JSON.stringify({
+        version: 1,
+        capability,
+        cases,
+      }));
+    }
+    const start = controller.indexOf("\ndatabase_case_capabilities()") + 1;
+    const end = controller.indexOf("\nprecheck() {", start);
+    const helper = controller.slice(start, end);
+    const script = `#!/usr/bin/env bash
+set -euo pipefail
+${helper}
+fail() { printf '%s\\n' "$*" >&2; return 1; }
+partition_precheck_capabilities "${sourceRoot}"
+`;
+    const scriptPath = join(fixture, "weighted-registry-test.sh");
+    await executable(scriptPath, script);
+    const { stdout } = await run("bash", [scriptPath]);
+    const groups = stdout.trim().split(/\r?\n/).map((group) => group.split(","));
+    assert.equal(groups.length, 3);
+    const heavy = new Set(["access", "dream", "knowledge", "postgres", "repository", "trace"]);
+    assert.deepEqual(groups.map((group) => group.filter((capability) => heavy.has(capability)).length), [2, 2, 2]);
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
 test("capability-specific precheck project names stay bounded and distinct", async () => {
   const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-project-name-"));
   try {

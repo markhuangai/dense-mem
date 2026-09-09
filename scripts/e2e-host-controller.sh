@@ -464,23 +464,73 @@ NODE
 
 partition_precheck_capabilities() {
   local source_dir="$1"
-  local -a capabilities=()
-  mapfile -t capabilities < <(database_case_capabilities "$source_dir" precheck)
-  ((${#capabilities[@]} > 0)) || fail "no populated precheck database capability fragments"
-  local -a groups=("" "" "")
-  local index capability group
-  for index in "${!capabilities[@]}"; do
-    capability="${capabilities[index]}"
-    group=$((index % 3))
-    if [[ -n "${groups[group]}" ]]; then
-      groups[group]+=",${capability}"
-    else
-      groups[group]="${capability}"
-    fi
-  done
-  for group in "${groups[@]}"; do
-    [[ -n "$group" ]] && printf '%s\n' "$group"
-  done
+  node - "$source_dir/scripts/e2e-db-cases" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const directory = process.argv[2];
+const batchSize = 40;
+const groups = Array.from({ length: 3 }, () => ({
+  cases: 0,
+  packageCounts: new Map(),
+  capabilities: [],
+}));
+const records = [];
+
+for (const entry of fs.readdirSync(directory).filter((item) => item.endsWith(".json")).sort()) {
+  const capability = path.basename(entry, ".json");
+  const fragment = JSON.parse(fs.readFileSync(path.join(directory, entry), "utf8"));
+  if (fragment.version !== 1 || fragment.capability !== capability) {
+    throw new Error(`invalid database case registry ${entry}`);
+  }
+  const packageCounts = new Map();
+  for (const item of fragment.cases) {
+    if (item.phase !== "precheck") continue;
+    packageCounts.set(item.package, (packageCounts.get(item.package) || 0) + 1);
+  }
+  if (packageCounts.size === 0) continue;
+  const cases = [...packageCounts.values()].reduce((total, count) => total + count, 0);
+  const weight = [...packageCounts.values()].reduce((total, count) => total + Math.ceil(count / batchSize), 0);
+  records.push({ capability, cases, packageCounts, weight });
+}
+
+if (records.length === 0) throw new Error("no populated precheck database capability fragments");
+
+records.sort((left, right) =>
+  right.weight - left.weight ||
+  right.cases - left.cases ||
+  (left.capability < right.capability ? -1 : left.capability > right.capability ? 1 : 0),
+);
+
+function batchWeight(packageCounts) {
+  return [...packageCounts.values()].reduce((total, count) => total + Math.ceil(count / batchSize), 0);
+}
+
+for (const record of records) {
+  let selected = null;
+  for (let index = 0; index < groups.length; index += 1) {
+    const projected = new Map(groups[index].packageCounts);
+    for (const [packageName, count] of record.packageCounts) {
+      projected.set(packageName, (projected.get(packageName) || 0) + count);
+    }
+    const candidate = [batchWeight(projected), groups[index].cases + record.cases, index];
+    if (!selected || candidate[0] < selected[0] ||
+        (candidate[0] === selected[0] && candidate[1] < selected[1])) {
+      selected = candidate;
+    }
+  }
+  const group = groups[selected[2]];
+  group.capabilities.push(record.capability);
+  group.cases += record.cases;
+  for (const [packageName, count] of record.packageCounts) {
+    group.packageCounts.set(packageName, (group.packageCounts.get(packageName) || 0) + count);
+  }
+}
+
+for (const group of groups) {
+  if (group.capabilities.length > 0) process.stdout.write(`${group.capabilities.join(",")}\n`);
+}
+NODE
 }
 
 precheck() {

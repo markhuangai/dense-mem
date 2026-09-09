@@ -1,11 +1,13 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -253,6 +255,8 @@ func TestDatabaseCaseFragmentsPreserveInventoryAndWave6Partition(t *testing.T) {
 		t.Fatal(err)
 	}
 	seen := make(map[string]bool)
+	tuples := make([]string, 0, 391)
+	capabilities := make(map[string]int)
 	for _, phase := range []string{"precheck", "scenario"} {
 		cases, err := loadCases(root, phase, "", "", "")
 		if err != nil {
@@ -266,10 +270,34 @@ func TestDatabaseCaseFragmentsPreserveInventoryAndWave6Partition(t *testing.T) {
 			if strings.TrimSpace(item.Capability) == "" {
 				t.Fatalf("database case %s has no capability", item.ID)
 			}
+			tuples = append(tuples, strings.Join([]string{
+				item.ID,
+				item.Package,
+				item.Run,
+				item.Phase,
+				item.Scenario,
+				item.Source,
+			}, "\t"))
+			capabilities[item.Capability]++
 		}
 	}
-	if len(seen) == 0 {
-		t.Fatal("database case inventory is empty")
+	if len(seen) != 391 {
+		t.Fatalf("database case inventory contains %d cases, want 391", len(seen))
+	}
+	sort.Strings(tuples)
+	baselineHash := sha256.Sum256([]byte(strings.Join(tuples, "\n") + "\n"))
+	if got := fmt.Sprintf("%x", baselineHash); got != "660c62a2328976249aef1c93e21c73ff104f14e52b58bc50227e9eea02e4dab4" {
+		t.Fatalf("database case inventory changed: %s", got)
+	}
+	for capability, want := range map[string]int{
+		"access": 33, "audit": 9, "community": 1, "dream": 33,
+		"graph": 2, "http": 1, "knowledge": 56, "migration": 2,
+		"operations": 6, "postgres": 112, "privacy": 20, "remember": 8,
+		"repository": 90, "search": 12, "settings": 3, "trace": 3,
+	} {
+		if capabilities[capability] != want {
+			t.Fatalf("capability %s contains %d cases, want %d", capability, capabilities[capability], want)
+		}
 	}
 	for _, capability := range []string{"access", "operations", "remember", "search", "lifecycle", "memorypack"} {
 		path := filepath.Join(root, "scripts", "e2e-db-cases", capability+".json")
