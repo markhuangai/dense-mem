@@ -9,12 +9,25 @@
 -- retiring hash-only failure artifacts; no runtime dual-write remains afterward.
 -- The legacy table remains so previous-version replicas can finish a rolling
 -- deployment without failed writes or legal-hold updates.
+-- Its attempt foreign key is changed to CASCADE so private-memory erasure can
+-- remove compatibility rows with the owning attempt without an external
+-- manifest dependency.
 -- Rollback: irreversible because retained diagnostics are not copied back into
 -- the legacy schema; restore from backup or roll forward instead of reporting a
 -- successful Down migration.
 
 -- Failure diagnostics are stored as ordered exchanges so the control portal can
 -- show the original request, provider traffic, and caller response together.
+
+-- Keep compatibility writes valid during rollout while allowing private-memory
+-- erasure to cascade through rows written by an older replica.
+ALTER TABLE remember_failure_artifacts
+    DROP CONSTRAINT IF EXISTS remember_failure_artifacts_team_id_attempt_id_owner_profil_fkey;
+ALTER TABLE remember_failure_artifacts
+    ADD CONSTRAINT remember_failure_artifacts_team_id_attempt_id_owner_profil_fkey
+        FOREIGN KEY (team_id, attempt_id, owner_profile_id)
+        REFERENCES remember_attempts(team_id, attempt_id, owner_profile_id) ON DELETE CASCADE;
+
 CREATE TABLE IF NOT EXISTS remember_attempt_diagnostics (
     team_id UUID NOT NULL,
     diagnostic_id UUID NOT NULL DEFAULT gen_random_uuid(),

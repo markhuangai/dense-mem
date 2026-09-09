@@ -63,6 +63,8 @@ func TestRememberAttemptDiagnosticsMigrationContract(t *testing.T) {
 		"private_memory_legal_holds",
 		"digest(artifact.content_bytes, 'sha256')",
 		"previous-version replicas can still",
+		"remember_failure_artifacts_team_id_attempt_id_owner_profil_fkey",
+		"ON DELETE CASCADE",
 		"RAISE EXCEPTION 'remember attempt diagnostics migration is irreversible",
 	} {
 		require.Contains(t, migration, required)

@@ -73,6 +73,13 @@ func TestRememberAttemptDiagnosticsMigrationCopiesRetainedLegacyBytesAndHidesHas
 	runGooseUpTo(t, ctx, db, diagnosticsMigration)
 	require.True(t, tableExists(t, ctx, db, "remember_failure_artifacts"))
 	require.True(t, tableExists(t, ctx, db, "remember_attempt_diagnostics"))
+	var legacyDeleteAction string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT confdeltype::text
+		FROM pg_constraint
+		WHERE conname = 'remember_failure_artifacts_team_id_attempt_id_owner_profil_fkey'
+	`).Scan(&legacyDeleteAction))
+	require.Equal(t, "c", legacyDeleteAction)
 
 	var activeHashBody, activeHashState, activeHashOutcome string
 	require.NoError(t, db.QueryRowContext(ctx, `
