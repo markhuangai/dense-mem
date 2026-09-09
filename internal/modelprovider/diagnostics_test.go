@@ -62,6 +62,14 @@ func TestProjectProviderExchangeBodiesOmitsEmbeddingInputsAndVectors(t *testing.
 	require.Contains(t, string(response), `"embedding_dimensions":3`)
 }
 
+func TestProjectEmbeddingProviderResponseUsesDecodedDimensions(t *testing.T) {
+	response := ProjectEmbeddingProviderResponse(
+		[]byte(`{"model":"embedding-model","data":[{"index":4,"object":"embedding","embedding":[0.1,0.2]}]}`),
+		[]int{2},
+	)
+	require.Equal(t, `{"data":[{"embedding_dimensions":2,"index":4,"object":"embedding"}],"model":"embedding-model"}`, string(response))
+}
+
 func TestProjectProviderExchangeBodiesMarksMalformedPayloadWithoutRetainingIt(t *testing.T) {
 	request, response := ProjectProviderExchangeBodies("assessor", []byte("private prompt"), []byte("private provider response"))
 	require.Equal(t, `{"byte_count":14,"format":"non_json"}`, string(request))

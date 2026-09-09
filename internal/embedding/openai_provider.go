@@ -158,7 +158,7 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		recordEmbeddingExchange(ctx, p.model, bodyBytes, nil, "", 0, "no_response")
+		recordEmbeddingExchange(ctx, p.model, bodyBytes, nil, "", 0, "no_response", nil)
 		return nil, "", &ProviderError{
 			Provider: "openai",
 			Message:  "request failed",
@@ -169,7 +169,7 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 
 	rawBody, err := io.ReadAll(io.LimitReader(resp.Body, openAIEmbeddingMaxResponseBytes+1))
 	if err != nil {
-		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "response_read_failed")
+		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "response_read_failed", nil)
 		return nil, "", &ProviderError{
 			Provider:     "openai",
 			Message:      "failed to read response",
@@ -179,13 +179,12 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 		}
 	}
 	if len(rawBody) > openAIEmbeddingMaxResponseBytes {
-		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "response_too_large")
+		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "response_too_large", nil)
 		return nil, "", &ProviderError{Provider: "openai", Message: "provider response exceeds transport limit", FailureCode: "provider_response_invalid", FailureClass: "provider_action_required"}
 	}
-	recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "captured")
-
 	var respBody openAIEmbeddingResponse
 	if err := json.Unmarshal(rawBody, &respBody); err != nil {
+		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "captured", nil)
 		if resp.StatusCode != http.StatusOK {
 			return nil, "", &ProviderHTTPError{
 				Status:     resp.StatusCode,
@@ -204,6 +203,11 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 			FailureClass: "provider_action_required",
 		}
 	}
+	dimensions := make([]int, len(respBody.Data))
+	for index, item := range respBody.Data {
+		dimensions[index] = len(item.Embedding)
+	}
+	recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "captured", dimensions)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", &ProviderHTTPError{
@@ -244,7 +248,7 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	return result, p.model, nil
 }
 
-func recordEmbeddingExchange(ctx context.Context, model string, requestBody, responseBody []byte, responseContentType string, statusCode int, outcome string) {
+func recordEmbeddingExchange(ctx context.Context, model string, requestBody, responseBody []byte, responseContentType string, statusCode int, outcome string, embeddingDimensions []int) {
 	recorder := modelprovider.ExchangeRecorderFromContext(ctx)
 	if recorder == nil {
 		return
@@ -254,12 +258,16 @@ func recordEmbeddingExchange(ctx context.Context, model string, requestBody, res
 		captureState = "truncated"
 	}
 	now := time.Now()
-	recorder.RecordProviderExchange(ctx, modelprovider.ProviderExchange{
+	exchange := modelprovider.ProviderExchange{
 		Component: "embedding", Model: model,
 		RequestBody: append([]byte(nil), requestBody...), ResponseBody: append([]byte(nil), responseBody...),
 		RequestContentType: "application/json", ResponseContentType: responseContentType,
 		StatusCode: statusCode, Outcome: outcome, CaptureState: captureState, StartedAt: now, CompletedAt: now,
-	})
+	}
+	if embeddingDimensions != nil {
+		exchange.ResponseBodyProjection = modelprovider.ProjectEmbeddingProviderResponse(responseBody, embeddingDimensions)
+	}
+	recorder.RecordProviderExchange(ctx, exchange)
 }
 
 func (p *OpenAIEmbeddingProvider) recordEmbeddingUsage(ctx context.Context, usage *openAIEmbeddingUsage, itemCount int) {

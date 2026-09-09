@@ -1,13 +1,17 @@
 -- +goose Up
 
 -- Lock/rewrite impact: creates one append-only diagnostics table and indexes;
--- the legacy artifact table is read during migration and then removed.
+-- the legacy artifact table is read during migration and retained as an
+-- inert compatibility surface until a stopped-service cleanup.
 -- RLS impact: enables FORCE RLS with system, migration, and owner-scoped policies.
 -- Backfill: copies still-retained legacy artifact rows once; expired bytes are omitted.
 -- Backward compatibility: the new table preserves the control read model while
 -- retiring hash-only failure artifacts; no runtime dual-write remains afterward.
--- Rollback: irreversible after the legacy table is removed; restore from backup
--- or roll forward instead of reporting a successful Down migration.
+-- The legacy table remains so previous-version replicas can finish a rolling
+-- deployment without failed writes or legal-hold updates.
+-- Rollback: irreversible because retained diagnostics are not copied back into
+-- the legacy schema; restore from backup or roll forward instead of reporting a
+-- successful Down migration.
 
 -- Failure diagnostics are stored as ordered exchanges so the control portal can
 -- show the original request, provider traffic, and caller response together.
@@ -223,13 +227,15 @@ LEFT JOIN private_memory_legal_holds AS hold
 WHERE (artifact.expires_at > clock_timestamp() OR hold.id IS NOT NULL)
 ON CONFLICT (team_id, attempt_id, sequence_no) DO NOTHING;
 
--- The diagnostic table is now the sole authority. This irreversible cleanup
--- removes the legacy hash-bearing artifact surface after verified migration.
-DROP TABLE IF EXISTS remember_failure_artifacts;
+-- The diagnostic table is now the sole runtime authority. Keep the legacy
+-- table through this rolling migration so previous-version replicas can still
+-- complete failure and legal-hold writes. A stopped-service cleanup may remove
+-- it after all previous binaries have been retired.
 
 -- +goose Down
--- The Up migration drops the legacy artifact authority after copying retained
--- rows. A Down migration cannot restore the dropped table and its data safely.
+-- The Up migration creates a new diagnostic authority without a reverse data
+-- conversion. A Down migration cannot restore the previous runtime contract
+-- and therefore fails explicitly.
 -- +goose StatementBegin
 DO $$
 BEGIN

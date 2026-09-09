@@ -251,7 +251,12 @@ func (r *rememberExchangeRecorder) RecordProviderExchange(_ context.Context, exc
 		return
 	}
 	originalRequestBytes, originalResponseBytes := len(exchange.RequestBody), len(exchange.ResponseBody)
-	exchange.RequestBody, exchange.ResponseBody = modelprovider.ProjectProviderExchangeBodies(exchange.Component, exchange.RequestBody, exchange.ResponseBody)
+	exchange.RequestBody, _ = modelprovider.ProjectProviderExchangeBodies(exchange.Component, exchange.RequestBody, nil)
+	if len(exchange.ResponseBodyProjection) > 0 {
+		exchange.ResponseBody = append([]byte(nil), exchange.ResponseBodyProjection...)
+	} else {
+		_, exchange.ResponseBody = modelprovider.ProjectProviderExchangeBodies(exchange.Component, nil, exchange.ResponseBody)
+	}
 	var requestTruncated, responseTruncated bool
 	exchange.RequestBody, requestTruncated = boundedRememberDiagnosticBody(exchange.RequestBody)
 	exchange.ResponseBody, responseTruncated = boundedRememberDiagnosticBody(exchange.ResponseBody)

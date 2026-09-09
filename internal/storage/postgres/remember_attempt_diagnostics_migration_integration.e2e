@@ -68,9 +68,10 @@ func TestRememberAttemptDiagnosticsMigrationCopiesRetainedLegacyBytesAndHidesHas
 	}))
 
 	// The foundation table intentionally permits legacy hash metadata; the new
-	// migration verifies each retained row before dropping that table.
+	// migration verifies each retained row while keeping the table for old
+	// replicas during the rolling deployment.
 	runGooseUpTo(t, ctx, db, diagnosticsMigration)
-	require.False(t, tableExists(t, ctx, db, "remember_failure_artifacts"))
+	require.True(t, tableExists(t, ctx, db, "remember_failure_artifacts"))
 	require.True(t, tableExists(t, ctx, db, "remember_attempt_diagnostics"))
 
 	var activeHashBody, activeHashState, activeHashOutcome string

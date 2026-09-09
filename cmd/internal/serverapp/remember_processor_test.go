@@ -157,6 +157,22 @@ func TestRememberExchangeRecorderProjectsProviderExchangeOnce(t *testing.T) {
 	require.Contains(t, string(exchanges[0].ResponseBody), `"embedding_dimensions":2`)
 }
 
+func TestRememberExchangeRecorderUsesPrecomputedProviderProjection(t *testing.T) {
+	recorder := &rememberExchangeRecorder{}
+	rawResponse := []byte(`{"model":"embedding-model","data":[{"index":0,"embedding":[0.1,0.2]}]}`)
+	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
+		Component:              "embedding",
+		ResponseBody:           rawResponse,
+		ResponseBodyProjection: modelprovider.ProjectEmbeddingProviderResponse(rawResponse, []int{2}),
+		Outcome:                "captured",
+	})
+
+	exchanges := recorder.Snapshot()
+	require.Len(t, exchanges, 1)
+	require.Contains(t, string(exchanges[0].ResponseBody), `"embedding_dimensions":2`)
+	require.NotContains(t, string(exchanges[0].ResponseBody), "0.1")
+}
+
 func TestRememberExchangeRecorderRetainsLaterMetadataAfterAggregateLimit(t *testing.T) {
 	recorder := &rememberExchangeRecorder{}
 	body := []byte(strings.Repeat("x", rememberDiagnosticMaxAttemptBytes/2))

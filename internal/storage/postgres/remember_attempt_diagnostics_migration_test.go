@@ -62,10 +62,11 @@ func TestRememberAttemptDiagnosticsMigrationContract(t *testing.T) {
 		"OLD.expires_at <= clock_timestamp()",
 		"private_memory_legal_holds",
 		"digest(artifact.content_bytes, 'sha256')",
-		"DROP TABLE IF EXISTS remember_failure_artifacts",
+		"previous-version replicas can still",
 		"RAISE EXCEPTION 'remember attempt diagnostics migration is irreversible",
 	} {
 		require.Contains(t, migration, required)
 	}
 	require.Equal(t, 1, strings.Count(migration, "CREATE TABLE IF NOT EXISTS remember_attempt_diagnostics"))
+	require.NotContains(t, migration, "DROP TABLE IF EXISTS remember_failure_artifacts")
 }

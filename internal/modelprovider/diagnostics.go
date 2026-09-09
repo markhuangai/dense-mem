@@ -13,17 +13,18 @@ const MaxProviderDiagnosticBodyBytes = 16 << 20
 // request and the response observed by the transport. It intentionally omits
 // headers so credentials and cookies cannot enter diagnostics.
 type ProviderExchange struct {
-	Component           string
-	Model               string
-	RequestBody         []byte
-	ResponseBody        []byte
-	RequestContentType  string
-	ResponseContentType string
-	StatusCode          int
-	Outcome             string
-	CaptureState        string
-	StartedAt           time.Time
-	CompletedAt         time.Time
+	Component              string
+	Model                  string
+	RequestBody            []byte
+	ResponseBody           []byte
+	ResponseBodyProjection []byte
+	RequestContentType     string
+	ResponseContentType    string
+	StatusCode             int
+	Outcome                string
+	CaptureState           string
+	StartedAt              time.Time
+	CompletedAt            time.Time
 }
 
 // ExchangeRecorder receives provider exchanges for the current Remember
@@ -58,6 +59,64 @@ func ExchangeRecorderFromContext(ctx context.Context) ExchangeRecorder {
 // status and usage fields remain available for troubleshooting.
 func ProjectProviderExchangeBodies(component string, requestBody, responseBody []byte) ([]byte, []byte) {
 	return projectProviderRequest(component, requestBody), projectProviderResponse(component, responseBody)
+}
+
+// ProjectEmbeddingProviderResponse keeps the safe response metadata while
+// using already-decoded vector dimensions. This avoids allocating one JSON
+// value per embedding element just to count dimensions.
+func ProjectEmbeddingProviderResponse(body []byte, dimensions []int) []byte {
+	if len(body) == 0 {
+		return nil
+	}
+	var envelope struct {
+		ID                json.RawMessage `json:"id"`
+		Object            json.RawMessage `json:"object"`
+		Model             json.RawMessage `json:"model"`
+		SystemFingerprint json.RawMessage `json:"system_fingerprint"`
+		Usage             json.RawMessage `json:"usage"`
+		Error             json.RawMessage `json:"error"`
+		Data              *[]struct {
+			Index  json.RawMessage `json:"index"`
+			Object json.RawMessage `json:"object"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return providerDiagnosticFormatMarker("non_json", len(body))
+	}
+	raw := make(map[string]json.RawMessage, 6)
+	for key, value := range map[string]json.RawMessage{
+		"id": envelope.ID, "object": envelope.Object, "model": envelope.Model,
+		"system_fingerprint": envelope.SystemFingerprint, "usage": envelope.Usage, "error": envelope.Error,
+	} {
+		if len(value) > 0 {
+			raw[key] = value
+		}
+	}
+	projection := providerResponseMetadata(raw)
+	if envelope.Data != nil {
+		items := make([]map[string]any, 0, len(*envelope.Data))
+		for index, item := range *envelope.Data {
+			object := ""
+			_ = json.Unmarshal(item.Object, &object)
+			projectionItem := map[string]any{
+				"object":               object,
+				"embedding_dimensions": 0,
+			}
+			if index < len(dimensions) {
+				projectionItem["embedding_dimensions"] = dimensions[index]
+			}
+			var itemIndex int
+			if json.Unmarshal(item.Index, &itemIndex) == nil {
+				projectionItem["index"] = itemIndex
+			}
+			items = append(items, projectionItem)
+		}
+		projection["data"] = items
+	}
+	if len(projection) == 0 {
+		projection["field_count"] = 0
+	}
+	return marshalProviderProjection(projection)
 }
 
 func projectProviderRequest(component string, body []byte) []byte {
@@ -170,9 +229,9 @@ func projectProviderResponse(component string, body []byte) []byte {
 		}
 	case "embedding":
 		var data []struct {
-			Index     *int              `json:"index"`
-			Object    string            `json:"object"`
-			Embedding []json.RawMessage `json:"embedding"`
+			Index     *int      `json:"index"`
+			Object    string    `json:"object"`
+			Embedding []float32 `json:"embedding"`
 		}
 		if value, ok := raw["data"]; ok && json.Unmarshal(value, &data) == nil {
 			items := make([]map[string]any, 0, len(data))

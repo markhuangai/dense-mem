@@ -221,13 +221,19 @@ function RememberAttemptDetailView({ detail }: { detail: RememberAttemptDiagnost
 
 function RememberDiagnosticSection({ detail }: { detail: RememberAttemptDiagnosticDetail }) {
   const diagnostics = detail.diagnostics ?? { original_request: null, provider_exchanges: [], caller_response: null };
+  const callerResponseState = diagnostics.caller_response?.capture_state || diagnostics.caller_response?.outcome || "";
+  const callerResponseHeading = callerResponseState === "not_delivered"
+    ? "Caller response (not delivered)"
+    : callerResponseState === "captured" || callerResponseState === "truncated"
+      ? "Response returned to caller"
+      : "Caller response";
   return (
     <section className="remember-diagnostics" aria-label="Remember diagnostic exchanges">
       <h3>Original request</h3>
       {diagnostics.original_request ? <DiagnosticExchange exchange={diagnostics.original_request} requestOnly /> : <DiagnosticUnavailable message="The original request was not captured for this attempt." />}
       <h3>AI provider exchanges</h3>
       {diagnostics.provider_exchanges.length === 0 ? <DiagnosticUnavailable message="No provider exchange was captured; the provider was not called or capture ended before dispatch." /> : diagnostics.provider_exchanges.map((exchange) => <DiagnosticExchange exchange={exchange} key={exchange.diagnostic_id} />)}
-      <h3>Response returned to caller</h3>
+      <h3>{callerResponseHeading}</h3>
       {diagnostics.caller_response ? <DiagnosticExchange exchange={diagnostics.caller_response} responseOnly /> : <DiagnosticUnavailable message="The caller response was not captured for this attempt." />}
     </section>
   );
