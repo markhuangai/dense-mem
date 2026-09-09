@@ -5,20 +5,86 @@
     {"path": "cmd/internal/serverapp/audit_composition.go", "issue": 368},
     {"path": "cmd/internal/serverapp/security_rejection_audit.go", "issue": 368},
     {"path": "cmd/internal/serverapp/security_rejection_audit_test.go", "issue": 368},
+    {"path": "internal/audit/contract/ports.go", "issue": 368},
+    {"path": "internal/audit/postgres/store.go", "issue": 368},
+    {"path": "internal/audit/postgres/store_test.go", "issue": 368},
+    {"path": "internal/audit/security_rejection.go", "issue": 368},
+    {"path": "internal/audit/security_rejection_test.go", "issue": 368},
+    {"path": "internal/audit/service.go", "issue": 368},
+    {"path": "internal/audit/service_test.go", "issue": 368},
     {"path": "internal/service/audit_service.e2e", "issue": 368},
     {"path": "internal/service/audit_service.go", "issue": 368},
     {"path": "internal/service/audit_service_unit_test.go", "issue": 368}
   ],
+  "compatibility_bridges": [
+    {
+      "source_path": "internal/service/audit_service.go",
+      "fields": [
+        "AuditLogEntry",
+        "AuditService",
+        "AuditServiceImpl",
+        "NewAuditService",
+        "NewAuditServiceWithLogger",
+        "redactPayload",
+        "auditClientIPValue"
+      ],
+      "consumers": [
+        {"path": "internal/service/audit_service.e2e", "symbol": "TestAuditServiceAppend"},
+        {"path": "internal/service/audit_service_unit_test.go", "symbol": "TestAuditAppendRedactsPayloadsAndWritesInsert"},
+        {"path": "internal/service/team_service.e2e", "symbol": "TestTeamServiceCreate"},
+        {"path": "internal/service/access_compat.go", "symbol": "NewTeamService"},
+        {"path": "internal/service/access_compat.go", "symbol": "NewCredentialService"},
+        {"path": "internal/service/app_config_service.go", "symbol": "NewAppConfigService"},
+        {"path": "internal/service/security_service.go", "symbol": "NewSecurityService"},
+        {"path": "internal/service/invariant_scan_service.go", "symbol": "NewInvariantScanService"},
+        {"path": "internal/service/access_compat_test_helpers_test.go", "symbol": "MockAuditService.Append"},
+        {"path": "internal/service/app_config_service_audit_test.go", "symbol": "appConfigAuditStub.Append"},
+        {"path": "cmd/internal/serverapp/security_rejection_audit_test.go", "symbol": "securityRejectionAuditAppenderStub.Append"},
+        {"path": "cmd/internal/serverapp/access_composition.go", "symbol": "buildAccessApplication"},
+        {"path": "cmd/internal/serverapp/configuration_composition.go", "symbol": "buildConfigurationApplication"},
+        {"path": "cmd/internal/serverapp/security_composition.go", "symbol": "buildSecurityApplication"},
+        {"path": "cmd/internal/serverapp/security_rejection_audit.go", "symbol": "newRememberSecurityRejectionAuditAdapter"},
+        {"path": "internal/http/handler/audit_handler.go", "symbol": "AuditHandler.Get"},
+        {"path": "internal/http/handler/audit_handler_unit_test.go", "symbol": "TestAuditHandlerGetReturnsPaginatedAuditEntries"},
+        {"path": "internal/http/middleware/auth.go", "symbol": "AuthMiddleware"},
+        {"path": "internal/http/middleware/team_authorization.go", "symbol": "NewTeamAuthorizationService"},
+        {"path": "internal/http/middleware/rate_limit.go", "symbol": "RateLimitMiddleware"},
+        {"path": "internal/http/middleware/auth_test.go", "symbol": "TestAuthMiddleware_MissingHeader"},
+        {"path": "internal/http/router_protected.go", "symbol": "ProtectedDeps.GetAuditService"},
+        {"path": "internal/http/mcp_bindings.go", "symbol": "ProtectedDeps.withMCPBindings"},
+        {"path": "internal/http/user_portal_routes.go", "symbol": "RegisterUserPortal"},
+        {"path": "internal/tools/registry/evaluation_tools.go", "symbol": "auditEvaluationTool"},
+        {"path": "internal/tools/registry/toolset.go", "symbol": "BuildActive"},
+        {"path": "internal/tools/registry/test_helpers_test.go", "symbol": "evaluationAuditStub.Append"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/audit/service.go", "symbol": "New"},
+      "removal_condition": "Remove the legacy audit facade after all named producers, transports, and fixtures consume internal/audit contracts directly."
+    }
+  ],
   "completed_issues": [],
-  "go": {"units": []},
+  "go": {
+    "units": [
+      {"id": "github.com/markhuangai/dense-mem/internal/audit", "role": "application_api", "visibility": "public"},
+      {"id": "github.com/markhuangai/dense-mem/internal/audit/contract", "role": "port", "visibility": "private"},
+      {"id": "github.com/markhuangai/dense-mem/internal/audit/postgres", "role": "postgres_adapter", "visibility": "private"}
+    ]
+  },
   "browser": {"units": []},
   "exceptions": [
     {
       "source_path": "internal/service/audit_service.go",
       "source": "github.com/markhuangai/dense-mem/internal/service",
+      "target": "github.com/markhuangai/dense-mem/internal/audit/postgres",
+      "removal_issue": 382,
+      "reason": "The legacy service constructor forwards to the audit PostgreSQL adapter until final compatibility-facade cleanup."
+    },
+    {
+      "source_path": "internal/service/audit_service.go",
+      "source": "github.com/markhuangai/dense-mem/internal/service",
       "target": "github.com/markhuangai/dense-mem/internal/storage/postgres",
-      "removal_issue": 368,
-      "reason": "The operations audit service still uses PostgreSQL directly until operations ownership is isolated."
+      "removal_issue": 382,
+      "reason": "The legacy service facade retains the RLS helper seam for existing compatibility tests until final facade cleanup."
     }
   ],
   "workers": []

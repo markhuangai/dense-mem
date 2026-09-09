@@ -57,6 +57,13 @@
       "run": "^TestAuditServiceRedactsSecrets$",
       "phase": "precheck",
       "source": "internal/service/audit_service.e2e"
+    },
+    {
+      "id": "service/TestAuditServiceListIsolatesTeamsForNonSuperuser",
+      "package": "./internal/service",
+      "run": "^TestAuditServiceListIsolatesTeamsForNonSuperuser$",
+      "phase": "precheck",
+      "source": "internal/service/audit_service.e2e"
     }
   ]
 }
