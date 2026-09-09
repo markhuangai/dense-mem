@@ -313,10 +313,12 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		exchanges = recorder.Snapshot()
 	}
 	var callerResponse []byte
+	callerResponseCaptureAvailable := false
 	if capture := rememberapp.DiagnosticCaptureFromContext(ctx); capture != nil {
+		callerResponseCaptureAvailable = true
 		callerResponse, _ = capture.ProjectResponse(publicResult, true)
 	}
-	diagnostics := rememberFailureDiagnostics(input, publicResult, exchanges, callerResponse, rememberCallerResponseDelivered(ctx, failure), phase)
+	diagnostics := rememberFailureDiagnosticsWithCapture(input, publicResult, exchanges, callerResponse, rememberCallerResponseDelivered(ctx, failure), callerResponseCaptureAvailable)
 	recoveryCtx, cancel := rememberFailureRecoveryContext(ctx)
 	defer cancel()
 	recordErr := p.ledger.RecordRememberFailure(recoveryCtx, repository.RememberFailureRecordInput{

@@ -103,6 +103,15 @@ func TestRememberFailureDiagnosticsMarksUndeliveredCallerResponseOnCancellation(
 	require.Empty(t, items[2].ResponseBody)
 }
 
+func TestRememberFailureDiagnosticsDoesNotFabricateInternalCallerResponse(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{OriginalRequest: []byte(`{"evidence":[]}`)}
+	items := rememberFailureDiagnosticsWithCapture(input, map[string]any{"processing_state": "failed"}, nil, nil, true, false)
+	require.Len(t, items, 3)
+	require.Equal(t, "not_captured", items[2].Outcome)
+	require.Equal(t, "not_captured", items[2].CaptureState)
+	require.Empty(t, items[2].ResponseBody)
+}
+
 func TestRememberFailureDiagnosticsUsesHashOnlyRequestForSecurityRejection(t *testing.T) {
 	input := rememberapp.RememberProcessRequest{
 		OriginalRequest:  []byte(`{"evidence":[{"content":"my production password is hunter2"}]}`),

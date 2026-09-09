@@ -18,6 +18,7 @@ type ProviderExchange struct {
 	RequestBody            []byte
 	ResponseBody           []byte
 	ResponseBodyProjection []byte
+	ResponseBodySize       int
 	RequestContentType     string
 	ResponseContentType    string
 	StatusCode             int

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
@@ -72,26 +73,11 @@ func rememberDiagnosticBodyState(body []byte) ([]byte, bool) {
 }
 
 func rememberDiagnosticCaptureStateForExchange(exchange modelprovider.ProviderExchange) string {
-	if exchange.CaptureState != "" {
-		return exchange.CaptureState
+	responseBytes := exchange.ResponseBodySize
+	if responseBytes == 0 {
+		responseBytes = len(exchange.ResponseBody)
 	}
-	switch exchange.Outcome {
-	case "provider_not_called":
-		return "provider_not_called"
-	case "no_response":
-		return "no_response"
-	case "response_read_failed":
-		return "interrupted"
-	case "response_too_large":
-		return "truncated"
-	case "not_captured":
-		return "not_captured"
-	default:
-		if len(exchange.RequestBody) == 0 && len(exchange.ResponseBody) == 0 {
-			return "not_captured"
-		}
-		return "captured"
-	}
+	return knowledgecontract.DiagnosticCaptureState(exchange.CaptureState, exchange.Outcome, len(exchange.RequestBody), responseBytes)
 }
 
 func rememberFailureDiagnostics(
@@ -102,7 +88,20 @@ func rememberFailureDiagnostics(
 	callerResponseDelivered bool,
 	_ string,
 ) []repository.RememberAttemptDiagnosticInput {
-	if !callerResponseDelivered {
+	return rememberFailureDiagnosticsWithCapture(input, publicResult, exchanges, callerResponse, callerResponseDelivered, true)
+}
+
+func rememberFailureDiagnosticsWithCapture(
+	input rememberapp.RememberProcessRequest,
+	publicResult map[string]any,
+	exchanges []modelprovider.ProviderExchange,
+	callerResponse []byte,
+	callerResponseDelivered bool,
+	callerResponseCaptureAvailable bool,
+) []repository.RememberAttemptDiagnosticInput {
+	if !callerResponseCaptureAvailable {
+		callerResponse = nil
+	} else if !callerResponseDelivered {
 		callerResponse = nil
 	} else if len(callerResponse) == 0 && publicResult != nil {
 		if encoded, err := json.Marshal(registry.ToolCallerResponse(publicResult, true)); err == nil {
@@ -175,7 +174,11 @@ func rememberFailureDiagnostics(
 		})
 		sequence++
 	}
-	if !callerResponseDelivered {
+	if !callerResponseCaptureAvailable {
+		items = append(items, repository.RememberAttemptDiagnosticInput{
+			SequenceNo: sequence, Kind: "caller_response", Component: "mcp", Outcome: "not_captured", CaptureState: "not_captured",
+		})
+	} else if !callerResponseDelivered {
 		items = append(items, repository.RememberAttemptDiagnosticInput{
 			SequenceNo: sequence, Kind: "caller_response", Component: "mcp", Outcome: "not_delivered", CaptureState: "not_delivered",
 		})
@@ -250,7 +253,10 @@ func (r *rememberExchangeRecorder) RecordProviderExchange(_ context.Context, exc
 	if r == nil {
 		return
 	}
-	originalRequestBytes, originalResponseBytes := len(exchange.RequestBody), len(exchange.ResponseBody)
+	originalRequestBytes, originalResponseBytes := len(exchange.RequestBody), exchange.ResponseBodySize
+	if originalResponseBytes == 0 {
+		originalResponseBytes = len(exchange.ResponseBody)
+	}
 	exchange.RequestBody, _ = modelprovider.ProjectProviderExchangeBodies(exchange.Component, exchange.RequestBody, nil)
 	if len(exchange.ResponseBodyProjection) > 0 {
 		exchange.ResponseBody = append([]byte(nil), exchange.ResponseBodyProjection...)

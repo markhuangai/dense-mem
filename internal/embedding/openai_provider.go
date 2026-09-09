@@ -260,7 +260,7 @@ func recordEmbeddingExchange(ctx context.Context, model string, requestBody, res
 	now := time.Now()
 	exchange := modelprovider.ProviderExchange{
 		Component: "embedding", Model: model,
-		RequestBody: append([]byte(nil), requestBody...), ResponseBody: append([]byte(nil), responseBody...),
+		RequestBody: append([]byte(nil), requestBody...), ResponseBody: responseBody, ResponseBodySize: len(responseBody),
 		RequestContentType: "application/json", ResponseContentType: responseContentType,
 		StatusCode: statusCode, Outcome: outcome, CaptureState: captureState, StartedAt: now, CompletedAt: now,
 	}

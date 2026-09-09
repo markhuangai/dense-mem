@@ -64,23 +64,7 @@ func validRememberDiagnosticCaptureState(value string) bool {
 }
 
 func rememberDiagnosticCaptureState(outcome string, requestBody, responseBody []byte) string {
-	switch strings.TrimSpace(outcome) {
-	case "provider_not_called":
-		return "provider_not_called"
-	case "no_response":
-		return "no_response"
-	case "response_read_failed":
-		return "interrupted"
-	case "response_too_large":
-		return "truncated"
-	case "not_captured":
-		return "not_captured"
-	default:
-		if len(requestBody) == 0 && len(responseBody) == 0 {
-			return "not_captured"
-		}
-		return "captured"
-	}
+	return knowledgecontract.DiagnosticCaptureState("", outcome, len(requestBody), len(responseBody))
 }
 
 func lockRememberIdempotencyKeyInTx(ctx context.Context, tx *gorm.DB, teamID, ownerProfileID, key string) error {
@@ -747,6 +731,9 @@ func (r *Store) purgeExpiredRememberAttemptDiagnostics(ctx context.Context, batc
 		if err := tx.Exec("SELECT set_config('app.remember_attempt_diagnostic_purge', 'true', true)").Error; err != nil {
 			return err
 		}
+		if err := tx.Exec("SELECT set_config('app.remember_failure_artifact_purge', 'true', true)").Error; err != nil {
+			return err
+		}
 		privateRows, err := tx.WithContext(ctx).Raw(`
 			SELECT diagnostic.team_id::text, diagnostic.diagnostic_id::text, attempt.space_id::text
 			FROM remember_attempt_diagnostics AS diagnostic
@@ -837,6 +824,33 @@ func (r *Store) purgeExpiredRememberAttemptDiagnostics(ctx context.Context, batc
 			}
 			deleted += result.RowsAffected
 		}
+		legacyResult := tx.WithContext(ctx).Exec(`
+			WITH candidates AS (
+				SELECT artifact.team_id, artifact.artifact_id
+				FROM remember_failure_artifacts AS artifact
+				JOIN remember_attempts AS attempt
+				  ON attempt.team_id = artifact.team_id
+				 AND attempt.attempt_id = artifact.attempt_id
+				 AND attempt.owner_profile_id = artifact.owner_profile_id
+				WHERE artifact.expires_at <= clock_timestamp()
+				  AND NOT EXISTS (
+					SELECT 1
+					FROM private_memory_legal_holds AS hold
+					WHERE hold.space_id = attempt.space_id AND hold.released_at IS NULL
+				  )
+				ORDER BY artifact.expires_at ASC, artifact.team_id ASC, artifact.artifact_id ASC
+				LIMIT ?
+				FOR UPDATE OF artifact SKIP LOCKED
+			)
+			DELETE FROM remember_failure_artifacts AS artifact
+			USING candidates
+			WHERE artifact.team_id = candidates.team_id
+			  AND artifact.artifact_id = candidates.artifact_id
+		`, batchSize)
+		if legacyResult.Error != nil {
+			return legacyResult.Error
+		}
+		deleted += legacyResult.RowsAffected
 		return nil
 	})
 	if err != nil {

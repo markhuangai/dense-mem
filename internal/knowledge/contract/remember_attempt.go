@@ -2,8 +2,34 @@ package contract
 
 import (
 	"context"
+	"strings"
 	"time"
 )
+
+// DiagnosticCaptureState derives the bounded state used by both the capture
+// recorder and durable repository when a caller did not provide one.
+func DiagnosticCaptureState(captureState, outcome string, requestBodyBytes, responseBodyBytes int) string {
+	if state := strings.TrimSpace(captureState); state != "" {
+		return state
+	}
+	switch strings.TrimSpace(outcome) {
+	case "provider_not_called":
+		return "provider_not_called"
+	case "no_response":
+		return "no_response"
+	case "response_read_failed":
+		return "interrupted"
+	case "response_too_large":
+		return "truncated"
+	case "not_captured":
+		return "not_captured"
+	default:
+		if requestBodyBytes == 0 && responseBodyBytes == 0 {
+			return "not_captured"
+		}
+		return "captured"
+	}
+}
 
 type RememberAttemptRecordInput struct {
 	TeamID, OwnerProfileID, AttemptID string

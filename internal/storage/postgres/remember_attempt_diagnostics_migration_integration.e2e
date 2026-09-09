@@ -19,8 +19,9 @@ func TestRememberAttemptDiagnosticsMigrationCopiesRetainedLegacyBytesAndHidesHas
 	runGooseUpTo(t, ctx, db, beforeDiagnosticsMigration)
 	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
 	spaceID := uuid.NewString()
-	activeAttemptID, heldAttemptID := uuid.NewString(), uuid.NewString()
-	activeHashArtifactID, activeFailureArtifactID, heldHashArtifactID, quarantineArtifactID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	cascadeSpaceID := uuid.NewString()
+	activeAttemptID, heldAttemptID, cascadeAttemptID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	activeHashArtifactID, activeFailureArtifactID, heldHashArtifactID, quarantineArtifactID, cascadeArtifactID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	capturedAt := time.Now().UTC().Add(-time.Hour)
 	heldCapturedAt := time.Now().UTC().Add(-8 * 24 * time.Hour)
 	heldExpiresAt := heldCapturedAt.Add(7 * 24 * time.Hour)
@@ -29,6 +30,12 @@ func TestRememberAttemptDiagnosticsMigrationCopiesRetainedLegacyBytesAndHidesHas
 			INSERT INTO memory_spaces (id, team_id, kind, owner_profile_id, generation)
 			VALUES ($1::uuid, $2::uuid, 'profile_private', $3::uuid, 1)
 		`, spaceID, teamID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO memory_spaces (id, team_id, kind, owner_profile_id, generation)
+			VALUES ($1::uuid, $2::uuid, 'profile_private', $3::uuid, 1)
+		`, cascadeSpaceID, teamID, profileID); err != nil {
 			return err
 		}
 		for _, attempt := range []string{activeAttemptID, heldAttemptID} {
@@ -41,6 +48,15 @@ func TestRememberAttemptDiagnosticsMigrationCopiesRetainedLegacyBytesAndHidesHas
 			`, teamID, attempt, profileID, spaceID, "legacy-"+attempt, "legacy-hash-"+attempt); err != nil {
 				return err
 			}
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO remember_attempts (
+				team_id, attempt_id, owner_profile_id, space_id, space_generation,
+				idempotency_key, request_hash, contract_version, submission_kind, outcome, public_result, completed_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 1, 'legacy-cascade', 'legacy-cascade-hash',
+			          'dense-mem.v2.6', 'remember', 'failed', '{}'::jsonb, now())
+		`, teamID, cascadeAttemptID, profileID, cascadeSpaceID); err != nil {
+			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO private_memory_legal_holds (id, team_id, space_id, reason_code, actor_class, placed_at)
@@ -62,6 +78,15 @@ func TestRememberAttemptDiagnosticsMigrationCopiesRetainedLegacyBytesAndHidesHas
 				($1::uuid, $8::uuid, $9::uuid, $4::uuid, 'request', 'application/json',
 				 convert_to('{"request_hash":"sha256:held"}', 'UTF8'), octet_length(convert_to('{"request_hash":"sha256:held"}', 'UTF8')), 'sha256:' || encode(digest(convert_to('{"request_hash":"sha256:held"}', 'UTF8'), 'sha256'), 'hex'), $10, $11)
 		`, teamID, activeHashArtifactID, activeAttemptID, profileID, capturedAt, capturedAt.Add(24*time.Hour), activeFailureArtifactID, heldHashArtifactID, heldAttemptID, heldCapturedAt, heldExpiresAt, quarantineArtifactID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO remember_failure_artifacts (
+				team_id, artifact_id, attempt_id, owner_profile_id, artifact_kind, content_type,
+				content_bytes, byte_count, content_sha256, captured_at, expires_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'failure', 'application/json',
+			          convert_to('{"legacy":"cascade"}', 'UTF8'), octet_length(convert_to('{"legacy":"cascade"}', 'UTF8')), 'sha256:' || encode(digest(convert_to('{"legacy":"cascade"}', 'UTF8'), 'sha256'), 'hex'), $5, $6)
+		`, teamID, cascadeArtifactID, cascadeAttemptID, profileID, capturedAt, capturedAt.Add(24*time.Hour)); err != nil {
 			return err
 		}
 		return nil
@@ -121,6 +146,22 @@ func TestRememberAttemptDiagnosticsMigrationCopiesRetainedLegacyBytesAndHidesHas
 	require.Equal(t, "not_captured", heldState)
 	require.Equal(t, "legacy_hash_summary", heldOutcome)
 	require.True(t, held)
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.private_erasure_space_id', $1, true)`, cascadeSpaceID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM remember_attempt_diagnostics WHERE team_id = $1::uuid AND attempt_id = $2::uuid`, teamID, cascadeAttemptID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM remember_attempts WHERE team_id = $1::uuid AND attempt_id = $2::uuid`, teamID, cascadeAttemptID)
+		return err
+	}))
+	var legacyCascadeRows int
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT count(*) FROM remember_failure_artifacts
+		WHERE team_id = $1::uuid AND artifact_id = $2::uuid
+	`, teamID, cascadeArtifactID).Scan(&legacyCascadeRows))
+	require.Zero(t, legacyCascadeRows)
 }
 
 func TestRememberAttemptDiagnosticsMigrationRejectsCorruptLegacyRows(t *testing.T) {

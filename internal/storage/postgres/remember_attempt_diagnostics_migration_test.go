@@ -65,6 +65,7 @@ func TestRememberAttemptDiagnosticsMigrationContract(t *testing.T) {
 		"previous-version replicas can still",
 		"remember_failure_artifacts_team_id_attempt_id_owner_profil_fkey",
 		"ON DELETE CASCADE",
+		"pg_trigger_depth() > 1",
 		"RAISE EXCEPTION 'remember attempt diagnostics migration is irreversible",
 	} {
 		require.Contains(t, migration, required)

@@ -28,6 +28,55 @@ ALTER TABLE remember_failure_artifacts
         FOREIGN KEY (team_id, attempt_id, owner_profile_id)
         REFERENCES remember_attempts(team_id, attempt_id, owner_profile_id) ON DELETE CASCADE;
 
+-- A foreign-key cascade fires the legacy child trigger after the parent row is
+-- no longer visible. Permit that child delete only inside the system erasure
+-- transaction; ordinary legacy purges still require their explicit setting.
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION prevent_append_only_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'DELETE'
+       AND current_setting('app.tx_mode', true) = 'system'
+       AND (
+           NULLIF(current_setting('app.private_erasure_space_id', true), '')::uuid
+               = NULLIF(to_jsonb(OLD)->>'space_id', '')::uuid
+           OR (
+               TG_TABLE_NAME IN ('remember_attempt_events', 'remember_failure_artifacts', 'semantic_assessments')
+               AND EXISTS (
+                   SELECT 1
+                   FROM remember_attempts AS attempt
+                   WHERE attempt.team_id = NULLIF(to_jsonb(OLD)->>'team_id', '')::uuid
+                     AND attempt.attempt_id = NULLIF(to_jsonb(OLD)->>'attempt_id', '')::uuid
+                     AND attempt.owner_profile_id = NULLIF(to_jsonb(OLD)->>'owner_profile_id', '')::uuid
+                     AND attempt.space_id = NULLIF(current_setting('app.private_erasure_space_id', true), '')::uuid
+               )
+           )
+           OR (
+               TG_TABLE_NAME = 'remember_failure_artifacts'
+               AND current_setting('app.remember_failure_artifact_purge', true) = 'true'
+           )
+           OR (
+               TG_TABLE_NAME = 'remember_failure_artifacts'
+               AND pg_trigger_depth() > 1
+               AND NULLIF(current_setting('app.private_erasure_space_id', true), '') IS NOT NULL
+           )
+           OR (
+               TG_TABLE_NAME = 'relationship_cross_references'
+               AND NULLIF(current_setting('app.private_erasure_space_id', true), '')::uuid = (
+                   SELECT target.space_id
+                   FROM relationship_records AS target
+                   WHERE target.team_id = NULLIF(to_jsonb(OLD)->>'team_id', '')::uuid
+                     AND target.relationship_id = NULLIF(to_jsonb(OLD)->>'target_relationship_id', '')::uuid
+               )
+           )
+       ) THEN
+        RETURN OLD;
+    END IF;
+    RAISE EXCEPTION '% is append-only: % operations are not allowed', TG_TABLE_NAME, TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+-- +goose StatementEnd
+
 CREATE TABLE IF NOT EXISTS remember_attempt_diagnostics (
     team_id UUID NOT NULL,
     diagnostic_id UUID NOT NULL DEFAULT gen_random_uuid(),
