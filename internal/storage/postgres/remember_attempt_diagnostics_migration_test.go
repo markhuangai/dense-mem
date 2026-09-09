@@ -56,6 +56,7 @@ func TestRememberAttemptDiagnosticsMigrationContract(t *testing.T) {
 		"CREATE POLICY remember_attempt_diagnostics_insert",
 		"CREATE POLICY remember_attempt_diagnostics_update",
 		"CREATE POLICY remember_attempt_diagnostics_delete",
+		"SELECT set_config('app.tx_mode', 'migration', true)",
 		"CREATE OR REPLACE FUNCTION prevent_remember_attempt_diagnostics_mutation()",
 		"CREATE TRIGGER remember_attempt_diagnostics_append_only",
 		"to_jsonb(NEW) - ARRAY['retained_by_legal_hold']",

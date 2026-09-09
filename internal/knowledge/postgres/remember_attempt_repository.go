@@ -824,7 +824,7 @@ func (r *Store) purgeExpiredRememberAttemptDiagnostics(ctx context.Context, batc
 			}
 			deleted += result.RowsAffected
 		}
-		legacyResult := tx.WithContext(ctx).Exec(`
+		legacyPrivateResult := tx.WithContext(ctx).Exec(`
 			WITH candidates AS (
 				SELECT artifact.team_id, artifact.artifact_id
 				FROM remember_failure_artifacts AS artifact
@@ -832,6 +832,8 @@ func (r *Store) purgeExpiredRememberAttemptDiagnostics(ctx context.Context, batc
 				  ON attempt.team_id = artifact.team_id
 				 AND attempt.attempt_id = artifact.attempt_id
 				 AND attempt.owner_profile_id = artifact.owner_profile_id
+				JOIN memory_spaces AS space
+				  ON space.team_id = attempt.team_id AND space.id = attempt.space_id
 				WHERE artifact.expires_at <= clock_timestamp()
 				  AND NOT EXISTS (
 					SELECT 1
@@ -841,16 +843,43 @@ func (r *Store) purgeExpiredRememberAttemptDiagnostics(ctx context.Context, batc
 				ORDER BY artifact.expires_at ASC, artifact.team_id ASC, artifact.artifact_id ASC
 				LIMIT ?
 				FOR UPDATE OF artifact SKIP LOCKED
+				FOR KEY SHARE OF space SKIP LOCKED
 			)
 			DELETE FROM remember_failure_artifacts AS artifact
 			USING candidates
 			WHERE artifact.team_id = candidates.team_id
 			  AND artifact.artifact_id = candidates.artifact_id
 		`, batchSize)
-		if legacyResult.Error != nil {
-			return legacyResult.Error
+		if legacyPrivateResult.Error != nil {
+			return legacyPrivateResult.Error
 		}
-		deleted += legacyResult.RowsAffected
+		deleted += legacyPrivateResult.RowsAffected
+		remainingLegacy := batchSize - int(legacyPrivateResult.RowsAffected)
+		if remainingLegacy > 0 {
+			legacyGlobalResult := tx.WithContext(ctx).Exec(`
+				WITH candidates AS (
+					SELECT artifact.team_id, artifact.artifact_id
+					FROM remember_failure_artifacts AS artifact
+					JOIN remember_attempts AS attempt
+					  ON attempt.team_id = artifact.team_id
+					 AND attempt.attempt_id = artifact.attempt_id
+					 AND attempt.owner_profile_id = artifact.owner_profile_id
+					WHERE attempt.space_id IS NULL
+					  AND artifact.expires_at <= clock_timestamp()
+					ORDER BY artifact.expires_at ASC, artifact.team_id ASC, artifact.artifact_id ASC
+					LIMIT ?
+					FOR UPDATE OF artifact SKIP LOCKED
+				)
+				DELETE FROM remember_failure_artifacts AS artifact
+				USING candidates
+				WHERE artifact.team_id = candidates.team_id
+				  AND artifact.artifact_id = candidates.artifact_id
+			`, remainingLegacy)
+			if legacyGlobalResult.Error != nil {
+				return legacyGlobalResult.Error
+			}
+			deleted += legacyGlobalResult.RowsAffected
+		}
 		return nil
 	})
 	if err != nil {

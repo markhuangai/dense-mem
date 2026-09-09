@@ -324,7 +324,7 @@
     },
     {
       "source_path": "internal/repository/knowledge_write_owner.go",
-      "fields": ["LedgerRepositoryImpl.knowledgeWriteOwner", "SemanticRepositoryImpl.knowledgeWriteOwner"],
+      "fields": ["LedgerRepositoryImpl.knowledgeWriteOwner", "LedgerRepositoryImpl.StartRememberAttemptDiagnosticPurger", "SemanticRepositoryImpl.knowledgeWriteOwner"],
       "consumers": [
         {"path": "internal/repository/conflict_context_repository.go", "symbol": "LedgerRepositoryImpl.ValidateRelationshipConflictContext"},
         {"path": "internal/repository/conflict_derived_evidence_task_repository.go", "symbol": "LedgerRepositoryImpl.StageConflictDerivedEvidence"},
@@ -354,6 +354,7 @@
         {"path": "internal/repository/remember_attempt_repository.go", "symbol": "LedgerRepositoryImpl.ListRememberAttemptDiagnostics"},
         {"path": "internal/repository/remember_attempt_repository.go", "symbol": "LedgerRepositoryImpl.GetRememberAttemptDiagnostic"},
         {"path": "internal/repository/remember_attempt_repository.go", "symbol": "LedgerRepositoryImpl.PurgeExpiredRememberAttemptDiagnostics"},
+        {"path": "internal/repository/remember_attempt_repository.go", "symbol": "LedgerRepositoryImpl.StartRememberAttemptDiagnosticPurger"},
         {"path": "internal/repository/remember_commit.go", "symbol": "LedgerRepositoryImpl.CommitRememberWithEmbeddings"},
         {"path": "internal/repository/remember_embedding_plan.go", "symbol": "LedgerRepositoryImpl.PlanRememberEmbeddings"},
         {"path": "internal/repository/relationship_correction_embedding_plan.go", "symbol": "SemanticRepositoryImpl.PlanRelationshipCorrectionEmbeddings"},
@@ -472,7 +473,7 @@
     },
     {
       "source_path": "internal/repository/remember_attempt_repository.go",
-      "fields": ["LedgerRepositoryImpl.LoadRememberAttempt", "LedgerRepositoryImpl.RecordRememberAttempt", "LedgerRepositoryImpl.RecordRememberFailure", "LedgerRepositoryImpl.ListRememberAttemptDiagnostics", "LedgerRepositoryImpl.GetRememberAttemptDiagnostic", "LedgerRepositoryImpl.PurgeExpiredRememberAttemptDiagnostics", "normalizeRememberAttemptRecord", "validateRememberAttemptRecord", "rememberAttemptPhase", "rememberAttemptEventKind", "ErrRememberAttemptDiagnosticNotFound"],
+      "fields": ["LedgerRepositoryImpl.LoadRememberAttempt", "LedgerRepositoryImpl.RecordRememberAttempt", "LedgerRepositoryImpl.RecordRememberFailure", "LedgerRepositoryImpl.ListRememberAttemptDiagnostics", "LedgerRepositoryImpl.GetRememberAttemptDiagnostic", "LedgerRepositoryImpl.PurgeExpiredRememberAttemptDiagnostics", "LedgerRepositoryImpl.StartRememberAttemptDiagnosticPurger", "normalizeRememberAttemptRecord", "validateRememberAttemptRecord", "rememberAttemptPhase", "rememberAttemptEventKind", "ErrRememberAttemptDiagnosticNotFound"],
       "consumers": [
         {"path": "cmd/internal/serverapp/remember_processor.go", "symbol": "rememberSynchronousProcessor.processRememberUnlocked"},
         {"path": "internal/service/remember_attempt_diagnostics_service.go", "symbol": "RememberAttemptDiagnosticsService.ListRememberAttemptDiagnostics"},

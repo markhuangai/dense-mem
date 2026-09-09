@@ -252,6 +252,7 @@ CREATE TRIGGER remember_attempt_diagnostics_append_only
 
 -- Preserve still-retained legacy bytes while the old artifact table is being
 -- retired. Hash-only request summaries remain unavailable by design.
+SELECT set_config('app.tx_mode', 'migration', true);
 -- +goose StatementBegin
 DO $$
 DECLARE invalid_rows BIGINT;
