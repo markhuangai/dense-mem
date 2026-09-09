@@ -15,6 +15,7 @@ const {
   decidePreviewEvent,
   decideRcPreview,
   parseSuccessfulPolicyStatus,
+  resolvePreviewAttempt,
   selectMergedPull,
   validatePinnedProductionImageReference,
   validateProductionImageReference,
@@ -783,6 +784,78 @@ test("owner-admin PR pushes run automatically without an approval label", () => 
     }),
     { mode: "attempt", reason: "owner_admin_pr" },
   );
+});
+
+test("preview resolver falls back to GraphQL after a too-many-files REST response", async () => {
+  const headSHA = "a".repeat(40);
+  const error = Object.assign(new Error("Request failed"), {
+    status: 422,
+    response: { data: { message: "The request could not be processed because too many files changed" } },
+  });
+  let graphQLCalled = false;
+  const resolved = await resolvePreviewAttempt({
+    github: {
+      rest: { pulls: { get: async () => { throw error; } } },
+      graphql: async (_query, variables) => {
+        graphQLCalled = true;
+        assert.deepEqual(variables, { owner: "markhuangai", repo: "dense-mem", number: 42 });
+        return {
+          repository: {
+            pullRequest: {
+              number: 42,
+              state: "OPEN",
+              baseRefName: "main",
+              headRefOid: headSHA,
+              author: { login: "Z-M-Huang" },
+              headRepository: { nameWithOwner: "markhuangai/dense-mem" },
+              labels: { nodes: [{ name: "deploy-test-image" }] },
+            },
+          },
+        };
+      },
+    },
+    context: {
+      repo: { owner: "markhuangai", repo: "dense-mem" },
+      payload: { action: "synchronize", pull_request: { number: 42, head: { sha: headSHA } } },
+    },
+    actorPermission: "admin",
+    authorPermission: "admin",
+  });
+
+  assert.equal(graphQLCalled, true);
+  assert.deepEqual(resolved, {
+    mode: "attempt",
+    reason: "owner_admin_pr",
+    removeLabel: true,
+    pullNumber: 42,
+    headSha: headSHA,
+    headRepository: "markhuangai/dense-mem",
+  });
+});
+
+test("preview resolver does not mask unrelated pull-request API failures", async () => {
+  const error = Object.assign(new Error("service unavailable"), { status: 503 });
+  let graphQLCalled = false;
+
+  await assert.rejects(
+    resolvePreviewAttempt({
+      github: {
+        rest: { pulls: { get: async () => { throw error; } } },
+        graphql: async () => {
+          graphQLCalled = true;
+          return null;
+        },
+      },
+      context: {
+        repo: { owner: "markhuangai", repo: "dense-mem" },
+        payload: { action: "synchronize", pull_request: { number: 42, head: { sha: "b".repeat(40) } } },
+      },
+      actorPermission: "admin",
+      authorPermission: "admin",
+    }),
+    /service unavailable/,
+  );
+  assert.equal(graphQLCalled, false);
 });
 
 test("non-owner pushes wait for a fresh approval", () => {

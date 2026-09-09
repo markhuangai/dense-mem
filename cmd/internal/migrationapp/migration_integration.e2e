@@ -23,7 +23,12 @@ import (
 
 var migrationWorkingDirectoryMu sync.Mutex
 
-const migrationTestSafetyTimeout = 30 * time.Second
+const (
+	migrationTestSetupTimeout     = 30 * time.Second
+	migrationTestOperationTimeout = 5 * time.Minute
+	migrationTestSafetyTimeout    = 30 * time.Second
+	migrationTestLockProbeTimeout = time.Second
+)
 
 func TestRunUpTimeoutRollsBackBlockedMigrationAndReleasesLock(t *testing.T) {
 	db := openMigrationIntegrationDB(t)
@@ -48,7 +53,7 @@ func TestRunUpTimeoutRollsBackBlockedMigrationAndReleasesLock(t *testing.T) {
 	require.NoError(t, err)
 
 	err = runBlockedMigrationUntilDeadline(t, sqlDB, func(parent context.Context) error {
-		return RunUp(parent, db, migrationTestSafetyTimeout, newRecordingLogger())
+		return RunUp(parent, db, migrationTestOperationTimeout, newRecordingLogger())
 	})
 	require.Error(t, err)
 	require.True(t, errors.Is(err, context.DeadlineExceeded), "migration error = %v, want context deadline exceeded", err)
@@ -56,7 +61,7 @@ func TestRunUpTimeoutRollsBackBlockedMigrationAndReleasesLock(t *testing.T) {
 
 	require.NoError(t, blockerTx.Rollback())
 	require.NoError(t, blockerConn.Close())
-	require.NoError(t, RunUp(context.Background(), db, migrationTestSafetyTimeout, newRecordingLogger()))
+	require.NoError(t, RunUp(context.Background(), db, migrationTestSetupTimeout, newRecordingLogger()))
 	require.True(t, migrationTimeoutProbeExists(t, sqlDB), "retry must acquire the migration lock and apply the migration")
 }
 
@@ -68,7 +73,7 @@ func TestRunDownTimeoutRollsBackBlockedMigration(t *testing.T) {
 	useBlockedMigrationDirectory(t)
 	_, err = sqlDB.Exec(`CREATE TABLE migration_timeout_blocker (id integer PRIMARY KEY)`)
 	require.NoError(t, err)
-	require.NoError(t, RunUp(context.Background(), db, migrationTestSafetyTimeout, newRecordingLogger()))
+	require.NoError(t, RunUp(context.Background(), db, migrationTestSetupTimeout, newRecordingLogger()))
 	require.True(t, migrationTimeoutProbeExists(t, sqlDB), "setup must apply the probe migration")
 
 	blockerConn, err := sqlDB.Conn(context.Background())
@@ -85,7 +90,7 @@ func TestRunDownTimeoutRollsBackBlockedMigration(t *testing.T) {
 	require.NoError(t, err)
 
 	err = runBlockedMigrationUntilDeadline(t, sqlDB, func(parent context.Context) error {
-		return RunDown(parent, db, migrationTestSafetyTimeout, newRecordingLogger())
+		return RunDown(parent, db, migrationTestOperationTimeout, newRecordingLogger())
 	})
 	require.Error(t, err)
 	require.True(t, errors.Is(err, context.DeadlineExceeded), "migration error = %v, want context deadline exceeded", err)
@@ -93,7 +98,7 @@ func TestRunDownTimeoutRollsBackBlockedMigration(t *testing.T) {
 
 	require.NoError(t, blockerTx.Rollback())
 	require.NoError(t, blockerConn.Close())
-	require.NoError(t, RunDown(context.Background(), db, migrationTestSafetyTimeout, newRecordingLogger()))
+	require.NoError(t, RunDown(context.Background(), db, migrationTestSetupTimeout, newRecordingLogger()))
 	require.False(t, migrationTimeoutProbeExists(t, sqlDB), "retry must complete the rollback")
 }
 
@@ -210,7 +215,7 @@ func waitForBlockedMigrationLock(t *testing.T, db *sql.DB) {
 	t.Helper()
 	deadline := time.Now().Add(migrationTestSafetyTimeout)
 	for {
-		probeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		probeCtx, cancel := context.WithTimeout(context.Background(), migrationTestLockProbeTimeout)
 		var waiting bool
 		err := db.QueryRowContext(probeCtx, `
 			SELECT EXISTS (
@@ -223,8 +228,10 @@ func waitForBlockedMigrationLock(t *testing.T, db *sql.DB) {
 			)
 		`).Scan(&waiting)
 		cancel()
-		require.NoError(t, err)
-		if waiting {
+		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+			require.NoError(t, err)
+		}
+		if err == nil && waiting {
 			return
 		}
 		if time.Now().After(deadline) {

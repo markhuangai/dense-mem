@@ -261,6 +261,60 @@ function resolvePullRequestEvent(payload, actorPermission) {
   };
 }
 
+function isTooManyFilesPullError(error) {
+  if (error?.status !== 422) return false;
+  const message = `${error.message || ""} ${error.response?.data?.message || ""}`;
+  return /too many files changed/i.test(message);
+}
+
+function graphQLPullRequest(pull) {
+  if (!pull) {
+    throw new Error("Could not resolve the current pull request.");
+  }
+  return {
+    number: pull.number,
+    state: String(pull.state || "").toLowerCase(),
+    base: { ref: pull.baseRefName || "" },
+    labels: (pull.labels?.nodes || []).map(({ name }) => name),
+    user: { login: pull.author?.login || "" },
+    head: {
+      sha: pull.headRefOid || "",
+      repo: pull.headRepository ? { full_name: pull.headRepository.nameWithOwner || "" } : null,
+    },
+  };
+}
+
+async function loadPullRequest({ github, owner, repo, pullNumber }) {
+  try {
+    const { data: pull } = await github.rest.pulls.get({
+      owner,
+      repo,
+      pull_number: pullNumber,
+    });
+    return pull;
+  } catch (error) {
+    if (!isTooManyFilesPullError(error)) throw error;
+  }
+
+  const data = await github.graphql(
+    `query PullRequest($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          number
+          state
+          baseRefName
+          headRefOid
+          author { login }
+          headRepository { nameWithOwner }
+          labels(first: 100) { nodes { name } }
+        }
+      }
+    }`,
+    { owner, repo, number: pullNumber },
+  );
+  return graphQLPullRequest(data.repository?.pullRequest);
+}
+
 async function resolvePreviewAttempt({
   github,
   context,
@@ -268,10 +322,11 @@ async function resolvePreviewAttempt({
   authorPermission,
 }) {
   const event = resolvePullRequestEvent(context.payload, actorPermission);
-  const { data: pull } = await github.rest.pulls.get({
+  const pull = await loadPullRequest({
+    github,
     owner: context.repo.owner,
     repo: context.repo.repo,
-    pull_number: event.pullNumber,
+    pullNumber: event.pullNumber,
   });
 
   if (pull.state !== "open" || pull.base.ref !== "main") {
@@ -312,10 +367,11 @@ async function resolveRcPreview({ github, context, mainCommit }) {
     return { eligible: false, reason: selected.reason };
   }
 
-  const { data: pull } = await github.rest.pulls.get({
+  const pull = await loadPullRequest({
+    github,
     owner: context.repo.owner,
     repo: context.repo.repo,
-    pull_number: selected.pull.number,
+    pullNumber: selected.pull.number,
   });
   const statuses = await github.paginate(
     github.rest.repos.listCommitStatusesForRef,
