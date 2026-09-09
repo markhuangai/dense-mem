@@ -1,7 +1,17 @@
 package serverapp
 
-import "github.com/markhuangai/dense-mem/internal/service/graphview"
+import (
+	graphapp "github.com/markhuangai/dense-mem/internal/graph"
+	graphcontract "github.com/markhuangai/dense-mem/internal/graph/contract"
+)
 
-func buildGraphApplication(store graphview.SemanticStore) graphview.Service {
-	return graphview.NewSemantic(store)
+type graphStoreSource interface {
+	GraphStore() graphcontract.Store
+}
+
+func buildGraphApplication(source graphStoreSource) graphapp.Service {
+	if source == nil {
+		return graphapp.New(nil)
+	}
+	return graphapp.New(source.GraphStore())
 }

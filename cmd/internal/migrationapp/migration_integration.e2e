@@ -23,6 +23,13 @@ import (
 
 var migrationWorkingDirectoryMu sync.Mutex
 
+const (
+	migrationTestSetupTimeout     = 30 * time.Second
+	migrationTestOperationTimeout = 5 * time.Minute
+	migrationTestSafetyTimeout    = 30 * time.Second
+	migrationTestLockProbeTimeout = time.Second
+)
+
 func TestRunUpTimeoutRollsBackBlockedMigrationAndReleasesLock(t *testing.T) {
 	db := openMigrationIntegrationDB(t)
 	sqlDB, err := db.DB()
@@ -45,16 +52,16 @@ func TestRunUpTimeoutRollsBackBlockedMigrationAndReleasesLock(t *testing.T) {
 	_, err = blockerTx.Exec(`LOCK TABLE migration_timeout_blocker IN ACCESS SHARE MODE`)
 	require.NoError(t, err)
 
-	startedAt := time.Now()
-	err = RunUp(context.Background(), db, 2*time.Second, newRecordingLogger())
+	err = runBlockedMigrationUntilDeadline(t, sqlDB, func(parent context.Context) error {
+		return RunUp(parent, db, migrationTestOperationTimeout, newRecordingLogger())
+	})
 	require.Error(t, err)
 	require.True(t, errors.Is(err, context.DeadlineExceeded), "migration error = %v, want context deadline exceeded", err)
-	require.GreaterOrEqual(t, time.Since(startedAt), time.Second)
 	require.False(t, migrationTimeoutProbeExists(t, sqlDB), "timed-out migration must roll back its probe table")
 
 	require.NoError(t, blockerTx.Rollback())
 	require.NoError(t, blockerConn.Close())
-	require.NoError(t, RunUp(context.Background(), db, 5*time.Second, newRecordingLogger()))
+	require.NoError(t, RunUp(context.Background(), db, migrationTestSetupTimeout, newRecordingLogger()))
 	require.True(t, migrationTimeoutProbeExists(t, sqlDB), "retry must acquire the migration lock and apply the migration")
 }
 
@@ -66,7 +73,7 @@ func TestRunDownTimeoutRollsBackBlockedMigration(t *testing.T) {
 	useBlockedMigrationDirectory(t)
 	_, err = sqlDB.Exec(`CREATE TABLE migration_timeout_blocker (id integer PRIMARY KEY)`)
 	require.NoError(t, err)
-	require.NoError(t, RunUp(context.Background(), db, 5*time.Second, newRecordingLogger()))
+	require.NoError(t, RunUp(context.Background(), db, migrationTestSetupTimeout, newRecordingLogger()))
 	require.True(t, migrationTimeoutProbeExists(t, sqlDB), "setup must apply the probe migration")
 
 	blockerConn, err := sqlDB.Conn(context.Background())
@@ -82,16 +89,16 @@ func TestRunDownTimeoutRollsBackBlockedMigration(t *testing.T) {
 	_, err = blockerTx.Exec(`LOCK TABLE migration_timeout_blocker IN ACCESS SHARE MODE`)
 	require.NoError(t, err)
 
-	startedAt := time.Now()
-	err = RunDown(context.Background(), db, 2*time.Second, newRecordingLogger())
+	err = runBlockedMigrationUntilDeadline(t, sqlDB, func(parent context.Context) error {
+		return RunDown(parent, db, migrationTestOperationTimeout, newRecordingLogger())
+	})
 	require.Error(t, err)
 	require.True(t, errors.Is(err, context.DeadlineExceeded), "migration error = %v, want context deadline exceeded", err)
-	require.GreaterOrEqual(t, time.Since(startedAt), time.Second)
 	require.True(t, migrationTimeoutProbeExists(t, sqlDB), "timed-out rollback must restore its probe table")
 
 	require.NoError(t, blockerTx.Rollback())
 	require.NoError(t, blockerConn.Close())
-	require.NoError(t, RunDown(context.Background(), db, 5*time.Second, newRecordingLogger()))
+	require.NoError(t, RunDown(context.Background(), db, migrationTestSetupTimeout, newRecordingLogger()))
 	require.False(t, migrationTimeoutProbeExists(t, sqlDB), "retry must complete the rollback")
 }
 
@@ -113,6 +120,9 @@ func openMigrationIntegrationDB(t *testing.T) *gorm.DB {
 	}
 	container, err := tcpostgres.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", containerOptions...)
 	if err != nil {
+		if os.Getenv("DENSE_MEM_REQUIRE_POSTGRES_TESTS") == "1" {
+			t.Fatalf("Postgres is required for this test run: %v", err)
+		}
 		t.Skipf("Postgres not available: %v", err)
 	}
 	t.Cleanup(func() {
@@ -180,4 +190,92 @@ func migrationTimeoutProbeExists(t *testing.T, db *sql.DB) bool {
 	var exists bool
 	require.NoError(t, db.QueryRow(`SELECT to_regclass('public.migration_timeout_probe') IS NOT NULL`).Scan(&exists))
 	return exists
+}
+
+func runBlockedMigrationUntilDeadline(t *testing.T, db *sql.DB, run func(context.Context) error) error {
+	t.Helper()
+	parent := newControlledDeadlineContext()
+	t.Cleanup(parent.expire)
+
+	result := make(chan error, 1)
+	go func() {
+		result <- run(parent)
+	}()
+
+	waitForBlockedMigrationLock(t, db)
+	parent.expire()
+
+	select {
+	case err := <-result:
+		return err
+	case <-time.After(migrationTestSafetyTimeout):
+		t.Fatal("migration did not stop after the test deadline expired")
+		return nil
+	}
+}
+
+func waitForBlockedMigrationLock(t *testing.T, db *sql.DB) {
+	t.Helper()
+	deadline := time.Now().Add(migrationTestSafetyTimeout)
+	for {
+		probeCtx, cancel := context.WithTimeout(context.Background(), migrationTestLockProbeTimeout)
+		var waiting bool
+		err := db.QueryRowContext(probeCtx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_locks AS lock
+				JOIN pg_class AS relation ON relation.oid = lock.relation
+				WHERE relation.relname = 'migration_timeout_blocker'
+					AND lock.mode = 'AccessExclusiveLock'
+					AND NOT lock.granted
+			)
+		`).Scan(&waiting)
+		cancel()
+		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+			require.NoError(t, err)
+		}
+		if err == nil && waiting {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("migration did not reach the blocked exclusive lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+type controlledDeadlineContext struct {
+	context.Context
+	done chan struct{}
+	once sync.Once
+}
+
+func newControlledDeadlineContext() *controlledDeadlineContext {
+	return &controlledDeadlineContext{
+		Context: context.Background(),
+		done:    make(chan struct{}),
+	}
+}
+
+func (ctx *controlledDeadlineContext) Deadline() (time.Time, bool) {
+	return time.Time{}, false
+}
+
+func (ctx *controlledDeadlineContext) Done() <-chan struct{} {
+	return ctx.done
+}
+
+func (ctx *controlledDeadlineContext) Err() error {
+	select {
+	case <-ctx.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+func (ctx *controlledDeadlineContext) expire() {
+	ctx.once.Do(func() {
+		close(ctx.done)
+	})
 }

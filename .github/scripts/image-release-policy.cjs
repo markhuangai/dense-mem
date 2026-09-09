@@ -261,6 +261,82 @@ function resolvePullRequestEvent(payload, actorPermission) {
   };
 }
 
+function isTooManyFilesPullError(error) {
+  if (error?.status !== 422) return false;
+  const message = `${error.message || ""} ${error.response?.data?.message || ""}`;
+  return /too many files changed/i.test(message);
+}
+
+function graphQLPullRequest(pull, labels = pull?.labels?.nodes || []) {
+  if (!pull) {
+    throw new Error("Could not resolve the current pull request.");
+  }
+  return {
+    number: pull.number,
+    state: String(pull.state || "").toLowerCase(),
+    base: { ref: pull.baseRefName || "" },
+    labels: labels.map(({ name }) => name),
+    user: { login: pull.author?.login || "" },
+    head: {
+      sha: pull.headRefOid || "",
+      repo: pull.headRepository ? { full_name: pull.headRepository.nameWithOwner || "" } : null,
+    },
+  };
+}
+
+async function loadPullRequest({ github, owner, repo, pullNumber }) {
+  try {
+    const { data: pull } = await github.rest.pulls.get({
+      owner,
+      repo,
+      pull_number: pullNumber,
+    });
+    return pull;
+  } catch (error) {
+    if (!isTooManyFilesPullError(error)) throw error;
+  }
+
+  const labels = [];
+  const seenCursors = new Set();
+  let cursor = null;
+  let pull;
+  for (;;) {
+    const data = await github.graphql(
+      `query PullRequest($owner: String!, $repo: String!, $number: Int!, $labelCursor: String) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $number) {
+            number
+            state
+            baseRefName
+            headRefOid
+            author { login }
+            headRepository { nameWithOwner }
+            labels(first: 100, after: $labelCursor) {
+              nodes { name }
+              pageInfo { hasNextPage endCursor }
+            }
+          }
+        }
+      }`,
+      { owner, repo, number: pullNumber, labelCursor: cursor },
+    );
+    pull = data.repository?.pullRequest;
+    if (!pull) {
+      throw new Error("Could not resolve the current pull request.");
+    }
+    const labelPage = pull.labels;
+    labels.push(...(labelPage?.nodes || []));
+    if (!labelPage?.pageInfo?.hasNextPage) break;
+    const nextCursor = labelPage.pageInfo.endCursor;
+    if (typeof nextCursor !== "string" || nextCursor === "" || seenCursors.has(nextCursor)) {
+      throw new Error("Could not paginate pull request labels.");
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+  return graphQLPullRequest(pull, labels);
+}
+
 async function resolvePreviewAttempt({
   github,
   context,
@@ -268,10 +344,11 @@ async function resolvePreviewAttempt({
   authorPermission,
 }) {
   const event = resolvePullRequestEvent(context.payload, actorPermission);
-  const { data: pull } = await github.rest.pulls.get({
+  const pull = await loadPullRequest({
+    github,
     owner: context.repo.owner,
     repo: context.repo.repo,
-    pull_number: event.pullNumber,
+    pullNumber: event.pullNumber,
   });
 
   if (pull.state !== "open" || pull.base.ref !== "main") {
@@ -312,10 +389,11 @@ async function resolveRcPreview({ github, context, mainCommit }) {
     return { eligible: false, reason: selected.reason };
   }
 
-  const { data: pull } = await github.rest.pulls.get({
+  const pull = await loadPullRequest({
+    github,
     owner: context.repo.owner,
     repo: context.repo.repo,
-    pull_number: selected.pull.number,
+    pullNumber: selected.pull.number,
   });
   const statuses = await github.paginate(
     github.rest.repos.listCommitStatusesForRef,

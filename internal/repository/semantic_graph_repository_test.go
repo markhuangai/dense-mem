@@ -1,20 +1,37 @@
 package repository
 
 import (
+	"context"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
-func TestNormalizeSemanticGraphQueryDefaultsAndBounds(t *testing.T) {
-	defaults := normalizeSemanticGraphQuery(SemanticGraphQuery{})
-	assert.Equal(t, defaultSemanticGraphDepth, defaults.Depth)
-	assert.Equal(t, defaultSemanticGraphLimit, defaults.Limit)
+func TestSemanticGraphFacadeValidatesBeforeConfiguration(t *testing.T) {
+	ctx := context.Background()
+	repo := &SemanticRepositoryImpl{}
 
-	explicit := normalizeSemanticGraphQuery(SemanticGraphQuery{Depth: 99, Limit: 181})
-	assert.Equal(t, maxSemanticGraphDepth, explicit.Depth)
-	assert.Equal(t, 181, explicit.Limit)
+	_, err := repo.SemanticGraph(ctx, SemanticGraphQuery{TeamID: "not-a-uuid"})
+	require.ErrorContains(t, err, "team_id is required")
 
-	large := normalizeSemanticGraphQuery(SemanticGraphQuery{Limit: 1_000_000})
-	assert.Equal(t, 1_000_000, large.Limit)
+	_, err = repo.SemanticGraphNodeDetail(ctx, SemanticGraphNodeDetailInput{TeamID: "not-a-uuid"})
+	require.ErrorContains(t, err, "team_id is required")
+}
+
+func TestSemanticGraphFacadePreservesRLSConfigurationError(t *testing.T) {
+	ctx := context.Background()
+	repo := &SemanticRepositoryImpl{db: &gorm.DB{}}
+	teamID := uuid.NewString()
+
+	_, err := repo.SemanticGraph(ctx, SemanticGraphQuery{TeamID: teamID})
+	require.EqualError(t, err, "semantic graph: semantic: rls helper is required")
+
+	_, err = repo.SemanticGraphNodeDetail(ctx, SemanticGraphNodeDetailInput{
+		TeamID:   teamID,
+		NodeType: "entity",
+		NodeID:   uuid.NewString(),
+	})
+	require.EqualError(t, err, "semantic graph node: semantic: rls helper is required")
 }

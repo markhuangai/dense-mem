@@ -1,4 +1,4 @@
-package graphview
+package graph
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/markhuangai/dense-mem/internal/repository"
+	graphcontract "github.com/markhuangai/dense-mem/internal/graph/contract"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -49,23 +49,23 @@ func TestNormalizeSemanticQueryDefaultsAndBounds(t *testing.T) {
 
 func TestSemanticServiceGraphNormalizesAndMapsSnapshot(t *testing.T) {
 	recordedAt := time.Date(2026, time.August, 10, 12, 0, 0, 0, time.UTC)
-	store := &semanticStoreStub{snapshot: &repository.SemanticGraphSnapshot{
+	store := &semanticStoreStub{snapshot: &graphcontract.Snapshot{
 		Scope: ScopeLocal, Query: "project", Depth: MaxDepth, Limit: 181, Truncated: true,
-		Anchor: &repository.SemanticGraphAnchor{Type: "entity", ID: "entity-1", Key: "entity:entity-1"},
-		Nodes: []repository.SemanticGraphNode{
+		Anchor: &graphcontract.Anchor{Type: "entity", ID: "entity-1", Key: "entity:entity-1"},
+		Nodes: []graphcontract.Node{
 			{Key: "entity:entity-1", ID: "entity-1", Type: "entity", Title: strings.Repeat("t", 170), Body: strings.Repeat("b", 430), Status: "active", RecordedAt: &recordedAt},
 			{Key: "value:value-1", ID: "value-1", Type: "value"},
 		},
-		Edges: []repository.SemanticGraphEdge{{ID: "relationship-1", Source: "entity:entity-1", Target: "value:value-1", Relationship: "USES", Directed: true}},
+		Edges: []graphcontract.Edge{{ID: "relationship-1", Source: "entity:entity-1", Target: "value:value-1", Relationship: "USES", Directed: true}},
 	}}
-	service := NewSemantic(store)
+	service := New(store)
 
 	snapshot, err := service.Graph(context.Background(), " team-1 ", Query{
 		Scope: " LOCAL ", Query: " Project ", Types: []string{"entities", "value", "entity"},
 		AnchorType: "entities", AnchorID: " entity-1 ", Depth: 99, Limit: 181,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, repository.SemanticGraphQuery{
+	assert.Equal(t, graphcontract.Query{
 		TeamID: "team-1", Scope: ScopeLocal, Query: "project", Types: []string{"entity", "value"},
 		AnchorType: "entity", AnchorID: "entity-1", Depth: MaxDepth, Limit: 181,
 	}, store.graphInput)
@@ -90,13 +90,13 @@ func TestSemanticServiceGraphErrorsAndEmptySnapshot(t *testing.T) {
 
 	storeErr := errors.New("store unavailable")
 	store := &semanticStoreStub{graphErr: storeErr}
-	_, err = NewSemantic(store).Graph(context.Background(), "team", Query{})
+	_, err = New(store).Graph(context.Background(), "team", Query{})
 	assert.ErrorIs(t, err, storeErr)
 	assert.ErrorContains(t, err, "semantic graph view")
 
 	store.graphErr = nil
 	store.snapshot = nil
-	snapshot, err := NewSemantic(store).Graph(context.Background(), "team", Query{})
+	snapshot, err := New(store).Graph(context.Background(), "team", Query{})
 	require.NoError(t, err)
 	assert.Empty(t, snapshot.Nodes)
 	assert.Empty(t, snapshot.Edges)
@@ -104,14 +104,14 @@ func TestSemanticServiceGraphErrorsAndEmptySnapshot(t *testing.T) {
 
 func TestSemanticServiceNodeDetail(t *testing.T) {
 	recordedAt := time.Date(2026, time.August, 10, 13, 0, 0, 0, time.UTC)
-	store := &semanticStoreStub{detail: &repository.SemanticGraphNode{
+	store := &semanticStoreStub{detail: &graphcontract.Node{
 		Key: "entity:entity-1", ID: "entity-1", Type: "entity", Title: "Dense-Mem", Body: "project", Status: "active", RecordedAt: &recordedAt,
 	}}
-	service := NewSemantic(store)
+	service := New(store)
 
 	detail, err := service.NodeDetail(context.Background(), " team-1 ", " Entities ", " entity-1 ")
 	require.NoError(t, err)
-	assert.Equal(t, repository.SemanticGraphNodeDetailInput{TeamID: "team-1", NodeType: "entity", NodeID: "entity-1"}, store.detailInput)
+	assert.Equal(t, graphcontract.NodeDetailInput{TeamID: "team-1", NodeType: "entity", NodeID: "entity-1"}, store.detailInput)
 	assert.Equal(t, "Dense-Mem", detail.Title)
 	assert.Equal(t, "project", detail.Body)
 	assert.Equal(t, recordedAt, *detail.RecordedAt)
@@ -136,7 +136,7 @@ func TestSemanticServiceNodeDetailValidation(t *testing.T) {
 	_, err := nilService.NodeDetail(context.Background(), "team", "entity", "id")
 	assert.ErrorContains(t, err, "not configured")
 
-	service := NewSemantic(&semanticStoreStub{})
+	service := New(&semanticStoreStub{})
 	_, err = service.NodeDetail(context.Background(), "team", "evidence", "id")
 	assert.ErrorIs(t, err, ErrInvalidNodeType)
 	_, err = service.NodeDetail(context.Background(), "team", "entity", "")
@@ -146,20 +146,20 @@ func TestSemanticServiceNodeDetailValidation(t *testing.T) {
 }
 
 type semanticStoreStub struct {
-	graphInput  repository.SemanticGraphQuery
-	snapshot    *repository.SemanticGraphSnapshot
+	graphInput  graphcontract.Query
+	snapshot    *graphcontract.Snapshot
 	graphErr    error
-	detailInput repository.SemanticGraphNodeDetailInput
-	detail      *repository.SemanticGraphNode
+	detailInput graphcontract.NodeDetailInput
+	detail      *graphcontract.Node
 	detailErr   error
 }
 
-func (s *semanticStoreStub) SemanticGraph(_ context.Context, input repository.SemanticGraphQuery) (*repository.SemanticGraphSnapshot, error) {
+func (s *semanticStoreStub) SemanticGraph(_ context.Context, input graphcontract.Query) (*graphcontract.Snapshot, error) {
 	s.graphInput = input
 	return s.snapshot, s.graphErr
 }
 
-func (s *semanticStoreStub) SemanticGraphNodeDetail(_ context.Context, input repository.SemanticGraphNodeDetailInput) (*repository.SemanticGraphNode, error) {
+func (s *semanticStoreStub) SemanticGraphNodeDetail(_ context.Context, input graphcontract.NodeDetailInput) (*graphcontract.Node, error) {
 	s.detailInput = input
 	return s.detail, s.detailErr
 }
