@@ -27,13 +27,13 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
   await expect(page.getByRole("heading", { name: "Event spine" })).toBeVisible();
   await expect(page.locator(".remember-event-metadata").filter({ hasText: "<script>bad()</script>" })).toHaveCount(1);
   await expect(page.locator(".remember-event-metadata script")).toHaveCount(0);
-  const failureArtifact = page.locator(".remember-artifact").filter({ hasText: /^failure/ });
-  await expect(failureArtifact).toHaveCount(1);
-  await expect(failureArtifact).toContainText("sha256:");
-  await expect(failureArtifact).toContainText("Expires");
-  await failureArtifact.getByRole("button", { name: "View", exact: true }).click();
-  await expect(page.locator(".remember-artifact-content")).toContainText("provider_unavailable");
-  await expect(page.locator(".remember-artifact-content")).not.toContainText("<script>");
+  await expect(page.getByRole("heading", { name: "Original request" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AI provider exchanges" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Response returned to caller" })).toBeVisible();
+  await expect(page.locator(".remember-diagnostic-body pre").first()).toContainText('"name":"remember"');
+  await expect(page.locator(".remember-diagnostic-body pre").filter({ hasText: '"isError":true' })).toHaveCount(1);
+  await page.locator(".remember-diagnostic-body").first().getByRole("button", { name: "Copy" }).click();
+  await expect(page.locator(".remember-diagnostic-body").first().getByRole("button", { name: "Copied" })).toBeVisible();
 });
 
 function requiredEnv(name: string): string {

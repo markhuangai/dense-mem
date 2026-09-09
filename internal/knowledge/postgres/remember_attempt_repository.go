@@ -23,21 +23,19 @@ import (
 // key. Callers reload its public result instead of reconstructing it.
 var (
 	ErrRememberAttemptDiagnosticNotFound = errors.New("remember attempt diagnostic not found")
-	ErrRememberFailureArtifactNotFound   = errors.New("remember failure artifact not found")
 )
 
 type RememberAttemptRecordInput = knowledgecontract.RememberAttemptRecordInput
 type RememberAttempt = knowledgecontract.RememberAttempt
 type RememberAttemptLookupInput = knowledgecontract.RememberAttemptLookupInput
 type RememberAttemptLookup = knowledgecontract.RememberAttemptLookup
-type RememberFailureArtifactInput = knowledgecontract.RememberFailureArtifactInput
 type RememberFailureRecordInput = knowledgecontract.RememberFailureRecordInput
+type RememberAttemptDiagnosticInput = knowledgecontract.RememberAttemptDiagnosticInput
 
 type RememberAttemptDiagnosticFilter = knowledgecontract.RememberAttemptDiagnosticFilter
 type RememberAttemptDiagnosticRecord = knowledgecontract.RememberAttemptDiagnosticRecord
 type RememberAttemptDiagnosticEvent = knowledgecontract.RememberAttemptDiagnosticEvent
-type RememberFailureArtifactDescriptor = knowledgecontract.RememberFailureArtifactDescriptor
-type RememberFailureArtifact = knowledgecontract.RememberFailureArtifact
+type RememberAttemptDiagnosticRecordItem = knowledgecontract.RememberAttemptDiagnosticRecordItem
 type RememberAttemptDiagnosticRecordPage = knowledgecontract.RememberAttemptDiagnosticRecordPage
 
 // RememberAttemptDiagnosticsRepository is the narrow application port for
@@ -45,17 +43,29 @@ type RememberAttemptDiagnosticRecordPage = knowledgecontract.RememberAttemptDiag
 type RememberAttemptDiagnosticsRepository interface {
 	ListRememberAttemptDiagnostics(context.Context, RememberAttemptDiagnosticFilter) (*RememberAttemptDiagnosticRecordPage, error)
 	GetRememberAttemptDiagnostic(context.Context, string, string) (*RememberAttemptDiagnosticRecord, error)
-	GetRememberFailureArtifact(context.Context, string, string, string) (*RememberFailureArtifact, error)
-	PurgeExpiredRememberFailureArtifacts(context.Context, int) (int, error)
 }
 
 var _ RememberAttemptDiagnosticsRepository = (*Store)(nil)
 
 const (
-	maxRememberFailureArtifactBytes       = 256 * 1024
-	maxRememberFailureArtifactRetention   = 7 * 24 * time.Hour
-	rememberFailureArtifactPurgeBatchSize = 100
+	maxRememberDiagnosticBodyBytes    = 16 * 1024 * 1024
+	maxRememberDiagnosticAttemptBytes = 64 * 1024 * 1024
+	rememberDiagnosticPurgeBatchSize  = 100
+	rememberDiagnosticRetention       = 7 * 24 * time.Hour
 )
+
+func validRememberDiagnosticCaptureState(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "captured", "truncated", "not_captured", "hash_only", "provider_not_called", "no_response", "interrupted", "not_delivered":
+		return true
+	default:
+		return false
+	}
+}
+
+func rememberDiagnosticCaptureState(outcome string, requestBody, responseBody []byte) string {
+	return knowledgecontract.DiagnosticCaptureState("", outcome, len(requestBody), len(responseBody))
+}
 
 func lockRememberIdempotencyKeyInTx(ctx context.Context, tx *gorm.DB, teamID, ownerProfileID, key string) error {
 	digest := sha256.Sum256([]byte(teamID + "\x00" + ownerProfileID + "\x00" + key))
@@ -183,60 +193,117 @@ func (r *Store) RecordRememberFailure(ctx context.Context, input RememberFailure
 	if input.Attempt.ErrorCode == "" {
 		input.Attempt.ErrorCode = "internal_failure"
 	}
-	for index := range input.Artifacts {
-		artifact := &input.Artifacts[index]
-		artifact.ArtifactID, artifact.ArtifactKind, artifact.ContentType = strings.TrimSpace(artifact.ArtifactID), strings.TrimSpace(artifact.ArtifactKind), strings.TrimSpace(artifact.ContentType)
-		if artifact.ArtifactID == "" {
-			artifact.ArtifactID = uuid.NewString()
+	for index := range input.Diagnostics {
+		diagnostic := &input.Diagnostics[index]
+		diagnostic.Kind = strings.TrimSpace(diagnostic.Kind)
+		diagnostic.Component = strings.TrimSpace(diagnostic.Component)
+		diagnostic.Model = strings.TrimSpace(diagnostic.Model)
+		diagnostic.RequestContentType = strings.TrimSpace(diagnostic.RequestContentType)
+		diagnostic.ResponseContentType = strings.TrimSpace(diagnostic.ResponseContentType)
+		diagnostic.Outcome = strings.TrimSpace(diagnostic.Outcome)
+		if diagnostic.SequenceNo < 1 {
+			return fmt.Errorf("remember failure: diagnostic[%d] sequence is required", index)
 		}
-		if _, err := uuid.Parse(artifact.ArtifactID); err != nil {
-			return fmt.Errorf("remember failure: artifact[%d] id is invalid: %w", index, err)
+		switch diagnostic.Kind {
+		case "original_request", "provider_exchange", "caller_response":
+		default:
+			return fmt.Errorf("remember failure: diagnostic[%d] kind is unsupported", index)
 		}
-		if artifact.ArtifactKind == "" || artifact.ContentType == "" {
-			return fmt.Errorf("remember failure: artifact[%d] kind and content type are required", index)
+		if len(diagnostic.RequestBody) > maxRememberDiagnosticBodyBytes || len(diagnostic.ResponseBody) > maxRememberDiagnosticBodyBytes {
+			return fmt.Errorf("remember failure: diagnostic[%d] body exceeds %d bytes", index, maxRememberDiagnosticBodyBytes)
 		}
-		if len(artifact.Content) > maxRememberFailureArtifactBytes {
-			return fmt.Errorf("remember failure: artifact[%d] exceeds %d bytes", index, maxRememberFailureArtifactBytes)
+		if diagnostic.Outcome == "" {
+			diagnostic.Outcome = "captured"
 		}
-		if !artifact.CapturedAt.IsZero() && !artifact.ExpiresAt.IsZero() &&
-			(artifact.ExpiresAt.Before(artifact.CapturedAt) || artifact.ExpiresAt.After(artifact.CapturedAt.Add(maxRememberFailureArtifactRetention))) {
-			return fmt.Errorf("remember failure: artifact[%d] expiry is outside retention", index)
+		if diagnostic.CaptureState == "" {
+			diagnostic.CaptureState = rememberDiagnosticCaptureState(diagnostic.Outcome, diagnostic.RequestBody, diagnostic.ResponseBody)
 		}
+		if !validRememberDiagnosticCaptureState(diagnostic.CaptureState) {
+			return fmt.Errorf("remember failure: diagnostic[%d] capture state %q is unsupported", index, diagnostic.CaptureState)
+		}
+		if len(diagnostic.RequestBody) > maxRememberDiagnosticBodyBytes {
+			diagnostic.RequestBody = diagnostic.RequestBody[:maxRememberDiagnosticBodyBytes]
+			diagnostic.CaptureState = "truncated"
+		}
+		if len(diagnostic.ResponseBody) > maxRememberDiagnosticBodyBytes {
+			diagnostic.ResponseBody = diagnostic.ResponseBody[:maxRememberDiagnosticBodyBytes]
+			diagnostic.CaptureState = "truncated"
+		}
+	}
+	remainingDiagnosticBytes := maxRememberDiagnosticAttemptBytes
+	for index := range input.Diagnostics {
+		diagnostic := &input.Diagnostics[index]
+		if remainingDiagnosticBytes <= 0 {
+			diagnostic.RequestBody = nil
+			diagnostic.ResponseBody = nil
+			diagnostic.CaptureState = "truncated"
+			continue
+		}
+		if len(diagnostic.RequestBody) > remainingDiagnosticBytes {
+			diagnostic.RequestBody = diagnostic.RequestBody[:remainingDiagnosticBytes]
+			diagnostic.ResponseBody = nil
+			diagnostic.CaptureState = "truncated"
+			remainingDiagnosticBytes = 0
+			continue
+		}
+		remainingDiagnosticBytes -= len(diagnostic.RequestBody)
+		if len(diagnostic.ResponseBody) > remainingDiagnosticBytes {
+			diagnostic.ResponseBody = diagnostic.ResponseBody[:remainingDiagnosticBytes]
+			diagnostic.CaptureState = "truncated"
+			remainingDiagnosticBytes = 0
+			continue
+		}
+		remainingDiagnosticBytes -= len(diagnostic.ResponseBody)
 	}
 	if err := r.withAtomicRememberTx(ctx, input.Attempt.TeamID, input.Attempt.OwnerProfileID, func(txCtx context.Context) error {
 		tx := transactionFromContext(txCtx)
 		var databaseNow time.Time
-		for index := range input.Artifacts {
-			artifact := &input.Artifacts[index]
-			if artifact.CapturedAt.IsZero() || artifact.ExpiresAt.IsZero() {
+		for index := range input.Diagnostics {
+			diagnostic := &input.Diagnostics[index]
+			if diagnostic.CapturedAt.IsZero() {
 				if databaseNow.IsZero() {
 					if err := tx.WithContext(txCtx).Raw(`SELECT clock_timestamp()`).Row().Scan(&databaseNow); err != nil {
 						return fmt.Errorf("remember failure: database clock: %w", err)
 					}
 					databaseNow = databaseNow.UTC()
 				}
-				if artifact.CapturedAt.IsZero() {
-					artifact.CapturedAt = databaseNow
-				}
-				if artifact.ExpiresAt.IsZero() {
-					artifact.ExpiresAt = artifact.CapturedAt.Add(maxRememberFailureArtifactRetention)
-				}
+				diagnostic.CapturedAt = databaseNow
 			}
-			if artifact.ExpiresAt.Before(artifact.CapturedAt) || artifact.ExpiresAt.After(artifact.CapturedAt.Add(maxRememberFailureArtifactRetention)) {
-				return fmt.Errorf("remember failure: artifact[%d] expiry is outside retention", index)
+			if diagnostic.ExpiresAt.IsZero() {
+				diagnostic.ExpiresAt = diagnostic.CapturedAt.Add(rememberDiagnosticRetention)
+			}
+			if diagnostic.ExpiresAt.Before(diagnostic.CapturedAt) || diagnostic.ExpiresAt.After(diagnostic.CapturedAt.Add(rememberDiagnosticRetention)) {
+				return fmt.Errorf("remember failure: diagnostic[%d] expiry is outside retention", index)
 			}
 		}
 		if err := insertRememberAttemptInTx(txCtx, tx, input.Attempt); err != nil {
 			return err
 		}
-		for _, artifact := range input.Artifacts {
-			digest := sha256.Sum256(artifact.Content)
+		for _, diagnostic := range input.Diagnostics {
+			if diagnostic.DiagnosticID == "" {
+				diagnostic.DiagnosticID = uuid.NewString()
+			}
+			if _, err := uuid.Parse(diagnostic.DiagnosticID); err != nil {
+				return fmt.Errorf("remember failure: diagnostic ID is invalid: %w", err)
+			}
+			requestBody := diagnostic.RequestBody
+			if requestBody == nil {
+				requestBody = []byte{}
+			}
+			responseBody := diagnostic.ResponseBody
+			if responseBody == nil {
+				responseBody = []byte{}
+			}
 			if err := tx.WithContext(txCtx).Exec(`
-				INSERT INTO remember_failure_artifacts (team_id, artifact_id, attempt_id, owner_profile_id, artifact_kind,
-				 content_type, content_bytes, byte_count, content_sha256, captured_at, expires_at)
-				VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?, ?)
-			`, input.Attempt.TeamID, artifact.ArtifactID, input.Attempt.AttemptID, input.Attempt.OwnerProfileID,
-				artifact.ArtifactKind, artifact.ContentType, artifact.Content, len(artifact.Content), "sha256:"+fmt.Sprintf("%x", digest[:]), artifact.CapturedAt.UTC(), artifact.ExpiresAt.UTC()).Error; err != nil {
+				INSERT INTO remember_attempt_diagnostics (
+				 team_id, diagnostic_id, attempt_id, owner_profile_id, sequence_no, kind, component, model,
+				 request_bytes, response_bytes, request_content_type, response_content_type,
+				 status_code, outcome, capture_state, captured_at, expires_at)
+				VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				`, input.Attempt.TeamID, diagnostic.DiagnosticID, input.Attempt.AttemptID, input.Attempt.OwnerProfileID,
+				diagnostic.SequenceNo, diagnostic.Kind, diagnostic.Component, diagnostic.Model,
+				requestBody, responseBody, diagnostic.RequestContentType, diagnostic.ResponseContentType,
+				diagnostic.StatusCode, diagnostic.Outcome, diagnostic.CaptureState, diagnostic.CapturedAt.UTC(), diagnostic.ExpiresAt.UTC()).Error; err != nil {
 				return err
 			}
 		}
@@ -245,7 +312,7 @@ func (r *Store) RecordRememberFailure(ctx context.Context, input RememberFailure
 		return err
 	}
 	if strings.TrimSpace(input.Attempt.SpaceID) != "" {
-		if err := r.synchronizeRememberFailureArtifactHold(ctx, input.Attempt.SpaceID); err != nil {
+		if err := r.synchronizeRememberAttemptDiagnosticHold(ctx, input.Attempt.SpaceID); err != nil {
 			return fmt.Errorf("%w: %v", ErrRememberFailureRetentionDegraded, err)
 		}
 	}
@@ -463,7 +530,7 @@ func (r *Store) GetRememberAttemptDiagnostic(ctx context.Context, teamID, attemp
 		if err != nil {
 			return err
 		}
-		value.Artifacts, err = loadRememberFailureArtifactDescriptors(ctx, tx, teamID, attemptID)
+		value.Diagnostics, err = loadRememberAttemptDiagnostics(ctx, tx, teamID, attemptID)
 		if err != nil {
 			return err
 		}
@@ -477,6 +544,82 @@ func (r *Store) GetRememberAttemptDiagnostic(ctx context.Context, teamID, attemp
 		return nil, fmt.Errorf("get remember attempt diagnostic: %w", err)
 	}
 	return record, nil
+}
+
+func loadRememberAttemptDiagnostics(ctx context.Context, tx *gorm.DB, teamID, attemptID string) ([]RememberAttemptDiagnosticRecordItem, error) {
+	rows, err := tx.WithContext(ctx).Raw(`
+		SELECT diagnostic_id::text, sequence_no, kind, component, model,
+		       CASE WHEN expires_at > clock_timestamp() OR (retained_by_legal_hold AND EXISTS (
+				SELECT 1 FROM private_memory_legal_holds AS active_hold
+				JOIN remember_attempts AS held_attempt ON held_attempt.space_id = active_hold.space_id
+				WHERE held_attempt.team_id = remember_attempt_diagnostics.team_id
+				  AND held_attempt.attempt_id = remember_attempt_diagnostics.attempt_id
+				  AND held_attempt.owner_profile_id = remember_attempt_diagnostics.owner_profile_id
+				  AND active_hold.released_at IS NULL
+			)) THEN request_bytes ELSE ''::bytea END,
+		       CASE WHEN expires_at > clock_timestamp() OR (retained_by_legal_hold AND EXISTS (
+				SELECT 1 FROM private_memory_legal_holds AS active_hold
+				JOIN remember_attempts AS held_attempt ON held_attempt.space_id = active_hold.space_id
+				WHERE held_attempt.team_id = remember_attempt_diagnostics.team_id
+				  AND held_attempt.attempt_id = remember_attempt_diagnostics.attempt_id
+				  AND held_attempt.owner_profile_id = remember_attempt_diagnostics.owner_profile_id
+				  AND active_hold.released_at IS NULL
+			)) THEN response_bytes ELSE ''::bytea END,
+		       CASE WHEN expires_at > clock_timestamp() OR (retained_by_legal_hold AND EXISTS (
+				SELECT 1 FROM private_memory_legal_holds AS active_hold
+				JOIN remember_attempts AS held_attempt ON held_attempt.space_id = active_hold.space_id
+				WHERE held_attempt.team_id = remember_attempt_diagnostics.team_id
+				  AND held_attempt.attempt_id = remember_attempt_diagnostics.attempt_id
+				  AND held_attempt.owner_profile_id = remember_attempt_diagnostics.owner_profile_id
+				  AND active_hold.released_at IS NULL
+			)) THEN request_content_type ELSE '' END,
+		       CASE WHEN expires_at > clock_timestamp() OR (retained_by_legal_hold AND EXISTS (
+				SELECT 1 FROM private_memory_legal_holds AS active_hold
+				JOIN remember_attempts AS held_attempt ON held_attempt.space_id = active_hold.space_id
+				WHERE held_attempt.team_id = remember_attempt_diagnostics.team_id
+				  AND held_attempt.attempt_id = remember_attempt_diagnostics.attempt_id
+				  AND held_attempt.owner_profile_id = remember_attempt_diagnostics.owner_profile_id
+				  AND active_hold.released_at IS NULL
+			)) THEN response_content_type ELSE '' END,
+		       status_code, outcome,
+		       CASE WHEN expires_at > clock_timestamp() OR (retained_by_legal_hold AND EXISTS (
+				SELECT 1 FROM private_memory_legal_holds AS active_hold
+				JOIN remember_attempts AS held_attempt ON held_attempt.space_id = active_hold.space_id
+				WHERE held_attempt.team_id = remember_attempt_diagnostics.team_id
+				  AND held_attempt.attempt_id = remember_attempt_diagnostics.attempt_id
+				  AND held_attempt.owner_profile_id = remember_attempt_diagnostics.owner_profile_id
+				  AND active_hold.released_at IS NULL
+				)) THEN capture_state ELSE 'expired' END,
+		       captured_at, expires_at,
+		       (retained_by_legal_hold AND EXISTS (
+				SELECT 1 FROM private_memory_legal_holds AS hold
+				JOIN remember_attempts AS attempt ON attempt.space_id = hold.space_id
+				WHERE attempt.team_id = remember_attempt_diagnostics.team_id
+				  AND attempt.attempt_id = remember_attempt_diagnostics.attempt_id
+				  AND attempt.owner_profile_id = remember_attempt_diagnostics.owner_profile_id
+				  AND hold.released_at IS NULL
+			))
+		FROM remember_attempt_diagnostics
+		WHERE team_id = ?::uuid AND attempt_id = ?::uuid
+		ORDER BY sequence_no ASC
+	`, teamID, attemptID).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]RememberAttemptDiagnosticRecordItem, 0)
+	for rows.Next() {
+		var item RememberAttemptDiagnosticRecordItem
+		if err := rows.Scan(
+			&item.DiagnosticID, &item.SequenceNo, &item.Kind, &item.Component, &item.Model,
+			&item.RequestBody, &item.ResponseBody, &item.RequestContentType, &item.ResponseContentType,
+			&item.StatusCode, &item.Outcome, &item.CaptureState, &item.CapturedAt, &item.ExpiresAt, &item.RetainedByLegalHold,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 type rememberAttemptDiagnosticScanner interface {
@@ -570,85 +713,119 @@ func loadRememberAttemptDiagnosticEvents(ctx context.Context, tx *gorm.DB, teamI
 	return events, rows.Err()
 }
 
-func loadRememberFailureArtifactDescriptors(ctx context.Context, tx *gorm.DB, teamID, attemptID string) ([]RememberFailureArtifactDescriptor, error) {
-	rows, err := tx.WithContext(ctx).Raw(`
-			SELECT artifact.artifact_id::text, artifact.artifact_kind, artifact.content_type, artifact.byte_count,
-			       artifact.content_sha256, artifact.captured_at, artifact.expires_at,
-			       (artifact.retained_by_legal_hold AND hold.id IS NOT NULL)
-			FROM remember_failure_artifacts AS artifact
-			JOIN remember_attempts AS attempt
-			  ON attempt.team_id = artifact.team_id
-			 AND attempt.attempt_id = artifact.attempt_id
-			 AND attempt.owner_profile_id = artifact.owner_profile_id
-			LEFT JOIN private_memory_legal_holds AS hold
-			  ON hold.space_id = attempt.space_id AND hold.released_at IS NULL
-			WHERE artifact.team_id = ?::uuid AND artifact.attempt_id = ?::uuid
-			  AND (artifact.expires_at > clock_timestamp() OR hold.id IS NOT NULL)
-			ORDER BY artifact.captured_at ASC, artifact.artifact_id ASC
-		`, teamID, attemptID).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := make([]RememberFailureArtifactDescriptor, 0)
-	for rows.Next() {
-		var item RememberFailureArtifactDescriptor
-		if err := rows.Scan(&item.ArtifactID, &item.ArtifactKind, &item.ContentType, &item.ByteCount, &item.ContentSHA256, &item.CapturedAt, &item.ExpiresAt, &item.RetainedByLegalHold); err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	return items, rows.Err()
+func (r *Store) PurgeExpiredRememberAttemptDiagnostics(ctx context.Context, batchSize int) (int, error) {
+	deleted, err := r.purgeExpiredRememberAttemptDiagnostics(ctx, batchSize)
+	return deleted, err
 }
 
-func (r *Store) GetRememberFailureArtifact(ctx context.Context, teamID, attemptID, artifactID string) (*RememberFailureArtifact, error) {
-	teamID, attemptID, artifactID = strings.TrimSpace(teamID), strings.TrimSpace(attemptID), strings.TrimSpace(artifactID)
-	for label, value := range map[string]string{"team_id": teamID, "attempt_id": attemptID, "artifact_id": artifactID} {
-		if _, err := uuid.Parse(value); err != nil {
-			return nil, fmt.Errorf("remember artifact: %s is invalid: %w", label, err)
-		}
-	}
-	var artifact RememberFailureArtifact
-	err := r.withSystemReadOnlyRepeatableTx(ctx, func(tx *gorm.DB) error {
-		return tx.WithContext(ctx).Raw(`
-				SELECT artifact.team_id::text, artifact.artifact_id::text, artifact.attempt_id::text, artifact.artifact_kind,
-				       artifact.content_type, artifact.content_bytes, artifact.byte_count, artifact.content_sha256, artifact.captured_at, artifact.expires_at,
-			       (artifact.retained_by_legal_hold AND hold.id IS NOT NULL)
-			FROM remember_failure_artifacts AS artifact
-			JOIN remember_attempts AS attempt
-			  ON attempt.team_id = artifact.team_id
-			 AND attempt.attempt_id = artifact.attempt_id
-			 AND attempt.owner_profile_id = artifact.owner_profile_id
-			LEFT JOIN private_memory_legal_holds AS hold
-			  ON hold.space_id = attempt.space_id AND hold.released_at IS NULL
-			WHERE artifact.team_id = ?::uuid AND artifact.attempt_id = ?::uuid AND artifact.artifact_id = ?::uuid
-			  AND (artifact.expires_at > clock_timestamp() OR hold.id IS NOT NULL)
-		`, teamID, attemptID, artifactID).Row().Scan(
-			&artifact.TeamID, &artifact.ArtifactID, &artifact.AttemptID, &artifact.ArtifactKind,
-			&artifact.ContentType, &artifact.Content, &artifact.ByteCount, &artifact.ContentSHA256,
-			&artifact.CapturedAt, &artifact.ExpiresAt, &artifact.RetainedByLegalHold,
-		)
-	})
-	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, ErrRememberFailureArtifactNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &artifact, nil
-}
-
-func (r *Store) PurgeExpiredRememberFailureArtifacts(ctx context.Context, batchSize int) (int, error) {
-	if batchSize <= 0 || batchSize > rememberFailureArtifactPurgeBatchSize {
-		batchSize = rememberFailureArtifactPurgeBatchSize
+func (r *Store) purgeExpiredRememberAttemptDiagnostics(ctx context.Context, batchSize int) (int, error) {
+	if batchSize <= 0 || batchSize > rememberDiagnosticPurgeBatchSize {
+		batchSize = rememberDiagnosticPurgeBatchSize
 	}
 	var deleted int64
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		if err := tx.Exec("SELECT set_config('app.remember_failure_artifact_purge', 'true', true)").Error; err != nil {
-			return fmt.Errorf("remember failure artifact purge guard: %w", err)
+		type purgeCandidate struct {
+			teamID, diagnosticID, spaceID string
 		}
-		privateResult := tx.WithContext(ctx).Exec(`
-			WITH expired AS (
+		candidates := make([]purgeCandidate, 0, batchSize)
+		if err := tx.Exec("SELECT set_config('app.remember_attempt_diagnostic_purge', 'true', true)").Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("SELECT set_config('app.remember_failure_artifact_purge', 'true', true)").Error; err != nil {
+			return err
+		}
+		privateRows, err := tx.WithContext(ctx).Raw(`
+			SELECT diagnostic.team_id::text, diagnostic.diagnostic_id::text, attempt.space_id::text
+			FROM remember_attempt_diagnostics AS diagnostic
+			JOIN remember_attempts AS attempt
+			  ON attempt.team_id = diagnostic.team_id
+			 AND attempt.attempt_id = diagnostic.attempt_id
+			 AND attempt.owner_profile_id = diagnostic.owner_profile_id
+			JOIN memory_spaces AS space
+			  ON space.team_id = attempt.team_id AND space.id = attempt.space_id
+			WHERE diagnostic.expires_at <= clock_timestamp()
+			  AND NOT EXISTS (
+				SELECT 1 FROM private_memory_legal_holds AS hold
+				WHERE hold.space_id = attempt.space_id AND hold.released_at IS NULL
+			  )
+			ORDER BY diagnostic.expires_at ASC, diagnostic.team_id ASC, diagnostic.diagnostic_id ASC
+			LIMIT ?
+			FOR UPDATE OF diagnostic SKIP LOCKED
+			FOR KEY SHARE OF space SKIP LOCKED
+		`, batchSize).Rows()
+		if err != nil {
+			return err
+		}
+		for privateRows.Next() {
+			var candidate purgeCandidate
+			if err := privateRows.Scan(&candidate.teamID, &candidate.diagnosticID, &candidate.spaceID); err != nil {
+				_ = privateRows.Close()
+				return err
+			}
+			candidates = append(candidates, candidate)
+		}
+		if err := privateRows.Err(); err != nil {
+			_ = privateRows.Close()
+			return err
+		}
+		if err := privateRows.Close(); err != nil {
+			return err
+		}
+		if remaining := batchSize - len(candidates); remaining > 0 {
+			globalRows, err := tx.WithContext(ctx).Raw(`
+				SELECT diagnostic.team_id::text, diagnostic.diagnostic_id::text, ''
+				FROM remember_attempt_diagnostics AS diagnostic
+				JOIN remember_attempts AS attempt
+				  ON attempt.team_id = diagnostic.team_id
+				 AND attempt.attempt_id = diagnostic.attempt_id
+				 AND attempt.owner_profile_id = diagnostic.owner_profile_id
+				WHERE attempt.space_id IS NULL
+				  AND diagnostic.expires_at <= clock_timestamp()
+				ORDER BY diagnostic.expires_at ASC, diagnostic.team_id ASC, diagnostic.diagnostic_id ASC
+				LIMIT ?
+				FOR UPDATE OF diagnostic SKIP LOCKED
+			`, remaining).Rows()
+			if err != nil {
+				return err
+			}
+			for globalRows.Next() {
+				var candidate purgeCandidate
+				if err := globalRows.Scan(&candidate.teamID, &candidate.diagnosticID, &candidate.spaceID); err != nil {
+					_ = globalRows.Close()
+					return err
+				}
+				candidates = append(candidates, candidate)
+			}
+			if err := globalRows.Err(); err != nil {
+				_ = globalRows.Close()
+				return err
+			}
+			if err := globalRows.Close(); err != nil {
+				return err
+			}
+		}
+		for _, candidate := range candidates {
+			result := tx.WithContext(ctx).Exec(`
+				DELETE FROM remember_attempt_diagnostics AS diagnostic
+				WHERE diagnostic.team_id = ?::uuid AND diagnostic.diagnostic_id = ?::uuid
+				  AND diagnostic.expires_at <= clock_timestamp()
+				  AND NOT EXISTS (
+					SELECT 1
+					FROM remember_attempts AS attempt
+					JOIN private_memory_legal_holds AS hold
+					  ON hold.space_id = attempt.space_id AND hold.released_at IS NULL
+					WHERE attempt.team_id = diagnostic.team_id
+					  AND attempt.attempt_id = diagnostic.attempt_id
+					  AND attempt.owner_profile_id = diagnostic.owner_profile_id
+				  )
+			`, candidate.teamID, candidate.diagnosticID)
+			if result.Error != nil {
+				return result.Error
+			}
+			deleted += result.RowsAffected
+		}
+		legacyPrivateResult := tx.WithContext(ctx).Exec(`
+			WITH candidates AS (
 				SELECT artifact.team_id, artifact.artifact_id
 				FROM remember_failure_artifacts AS artifact
 				JOIN remember_attempts AS attempt
@@ -657,67 +834,69 @@ func (r *Store) PurgeExpiredRememberFailureArtifacts(ctx context.Context, batchS
 				 AND attempt.owner_profile_id = artifact.owner_profile_id
 				JOIN memory_spaces AS space
 				  ON space.team_id = attempt.team_id AND space.id = attempt.space_id
-				LEFT JOIN private_memory_legal_holds AS hold
-				  ON hold.space_id = space.id AND hold.released_at IS NULL
 				WHERE artifact.expires_at <= clock_timestamp()
-				  AND hold.id IS NULL
-				ORDER BY space.id, artifact.expires_at ASC, artifact.team_id ASC, artifact.artifact_id ASC
-				LIMIT ?
-				FOR UPDATE OF space, artifact SKIP LOCKED
-			)
-			DELETE FROM remember_failure_artifacts AS artifact
-			USING expired
-			WHERE artifact.team_id = expired.team_id
-			  AND artifact.artifact_id = expired.artifact_id
-		`, batchSize)
-		if privateResult.Error != nil {
-			return privateResult.Error
-		}
-		deleted = privateResult.RowsAffected
-		if deleted >= int64(batchSize) {
-			return nil
-		}
-		remaining := batchSize - int(deleted)
-		unscopedResult := tx.WithContext(ctx).Exec(`
-			WITH expired AS (
-				SELECT artifact.team_id, artifact.artifact_id
-				FROM remember_failure_artifacts AS artifact
-				JOIN remember_attempts AS attempt
-				  ON attempt.team_id = artifact.team_id
-				 AND attempt.attempt_id = artifact.attempt_id
-				 AND attempt.owner_profile_id = artifact.owner_profile_id
-				WHERE attempt.space_id IS NULL
-				  AND artifact.expires_at <= clock_timestamp()
+				  AND NOT EXISTS (
+					SELECT 1
+					FROM private_memory_legal_holds AS hold
+					WHERE hold.space_id = attempt.space_id AND hold.released_at IS NULL
+				  )
 				ORDER BY artifact.expires_at ASC, artifact.team_id ASC, artifact.artifact_id ASC
 				LIMIT ?
 				FOR UPDATE OF artifact SKIP LOCKED
+				FOR KEY SHARE OF space SKIP LOCKED
 			)
 			DELETE FROM remember_failure_artifacts AS artifact
-			USING expired
-			WHERE artifact.team_id = expired.team_id
-			  AND artifact.artifact_id = expired.artifact_id
-		`, remaining)
-		if unscopedResult.Error != nil {
-			return unscopedResult.Error
+			USING candidates
+			WHERE artifact.team_id = candidates.team_id
+			  AND artifact.artifact_id = candidates.artifact_id
+		`, batchSize)
+		if legacyPrivateResult.Error != nil {
+			return legacyPrivateResult.Error
 		}
-		deleted += unscopedResult.RowsAffected
+		deleted += legacyPrivateResult.RowsAffected
+		remainingLegacy := batchSize - int(legacyPrivateResult.RowsAffected)
+		if remainingLegacy > 0 {
+			legacyGlobalResult := tx.WithContext(ctx).Exec(`
+				WITH candidates AS (
+					SELECT artifact.team_id, artifact.artifact_id
+					FROM remember_failure_artifacts AS artifact
+					JOIN remember_attempts AS attempt
+					  ON attempt.team_id = artifact.team_id
+					 AND attempt.attempt_id = artifact.attempt_id
+					 AND attempt.owner_profile_id = artifact.owner_profile_id
+					WHERE attempt.space_id IS NULL
+					  AND artifact.expires_at <= clock_timestamp()
+					ORDER BY artifact.expires_at ASC, artifact.team_id ASC, artifact.artifact_id ASC
+					LIMIT ?
+					FOR UPDATE OF artifact SKIP LOCKED
+				)
+				DELETE FROM remember_failure_artifacts AS artifact
+				USING candidates
+				WHERE artifact.team_id = candidates.team_id
+				  AND artifact.artifact_id = candidates.artifact_id
+			`, remainingLegacy)
+			if legacyGlobalResult.Error != nil {
+				return legacyGlobalResult.Error
+			}
+			deleted += legacyGlobalResult.RowsAffected
+		}
 		return nil
 	})
 	if err != nil {
-		return 0, fmt.Errorf("remember failure artifact purge: %w", err)
+		return 0, fmt.Errorf("remember attempt diagnostic purge: %w", err)
 	}
 	return int(deleted), nil
 }
 
-func drainExpiredRememberFailureArtifacts(ctx context.Context, repo *Store) (int, error) {
+func drainExpiredRememberAttemptDiagnostics(ctx context.Context, repo *Store) (int, error) {
 	deletedTotal := 0
 	for {
-		deleted, err := repo.PurgeExpiredRememberFailureArtifacts(ctx, rememberFailureArtifactPurgeBatchSize)
+		deleted, err := repo.purgeExpiredRememberAttemptDiagnostics(ctx, rememberDiagnosticPurgeBatchSize)
 		deletedTotal += deleted
 		if err != nil {
 			return deletedTotal, err
 		}
-		if deleted < rememberFailureArtifactPurgeBatchSize {
+		if deleted < rememberDiagnosticPurgeBatchSize {
 			return deletedTotal, nil
 		}
 		if err := ctx.Err(); err != nil {
@@ -726,10 +905,9 @@ func drainExpiredRememberFailureArtifacts(ctx context.Context, repo *Store) (int
 	}
 }
 
-// StartRememberFailureArtifactPurger exposes the capability-owned retention
-// worker for the future T09 production lifecycle. T07 deliberately does not
-// call it from normal server startup.
-func (r *Store) StartRememberFailureArtifactPurger(ctx context.Context, interval time.Duration, logger *slog.Logger) {
+// StartRememberAttemptDiagnosticPurger exposes the capability-owned diagnostic
+// retention worker.
+func (r *Store) StartRememberAttemptDiagnosticPurger(ctx context.Context, interval time.Duration, logger *slog.Logger) {
 	if interval <= 0 {
 		interval = time.Hour
 	}
@@ -744,11 +922,11 @@ func (r *Store) StartRememberFailureArtifactPurger(ctx context.Context, interval
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				deleted, err := drainExpiredRememberFailureArtifacts(ctx, r)
+				deleted, err := drainExpiredRememberAttemptDiagnostics(ctx, r)
 				if err != nil && ctx.Err() == nil {
-					logger.Warn("remember failure artifact purge failed", "error_code", "artifact_purge_failed")
+					logger.Warn("remember attempt diagnostic purge failed", "error_code", "diagnostic_purge_failed")
 				} else if deleted > 0 {
-					logger.Info("remember failure artifacts purged", "count", deleted)
+					logger.Info("remember attempt diagnostics purged", "count", deleted)
 				}
 			}
 		}

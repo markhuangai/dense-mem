@@ -11,7 +11,7 @@ import (
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-func (r *Store) synchronizeRememberFailureArtifactHold(ctx context.Context, rawSpaceID string) error {
+func (r *Store) synchronizeRememberAttemptDiagnosticHold(ctx context.Context, rawSpaceID string) error {
 	spaceID, err := uuid.Parse(rawSpaceID)
 	if err != nil {
 		return fmt.Errorf("space_id is invalid: %w", err)
@@ -32,13 +32,12 @@ func (r *Store) synchronizeRememberFailureArtifactHold(ctx context.Context, rawS
 		var held bool
 		if err := tx.WithContext(ctx).Raw(`
 			SELECT EXISTS (
-				SELECT 1
-				FROM private_memory_legal_holds
+				SELECT 1 FROM private_memory_legal_holds
 				WHERE space_id = $1 AND released_at IS NULL
 			)
-		`, lockedSpace).Row().Scan(&held); err != nil {
+			`, lockedSpace).Row().Scan(&held); err != nil {
 			return err
 		}
-		return storagepostgres.SetRememberFailureArtifactHoldStateTx(ctx, tx, lockedSpace, held)
+		return storagepostgres.SetRememberAttemptDiagnosticHoldStateTx(ctx, tx, lockedSpace, held)
 	})
 }

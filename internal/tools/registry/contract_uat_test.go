@@ -77,6 +77,30 @@ func TestBuildActiveWiresExecutableRemember(t *testing.T) {
 	}
 }
 
+func TestBuildActiveRememberCapturesCallerEnvelope(t *testing.T) {
+	var requestBody []byte
+	var callerResponse []byte
+	stub := &stubRememberService{inspectContext: func(ctx context.Context) {
+		capture := rememberapp.DiagnosticCaptureFromContext(ctx)
+		require.NotNil(t, capture)
+		requestBody = capture.RequestBody()
+		var err error
+		callerResponse, err = capture.ProjectResponse(map[string]any{"code": "provider_unavailable"}, true)
+		require.NoError(t, err)
+	}}
+	reg, err := BuildActive(Dependencies{Remember: stub})
+	require.NoError(t, err)
+	remember, ok := reg.Get(ToolRemember)
+	require.True(t, ok)
+	input := validFlatRelationshipSubmission()
+	input["idempotency_key"] = "diagnostic-capture"
+	_, err = remember.Invoke(contractInvokeContext("write"), "ignored-profile", input)
+	require.NoError(t, err)
+	require.Contains(t, string(requestBody), `"name":"remember"`)
+	require.Contains(t, string(callerResponse), `"isError":true`)
+	require.Contains(t, string(callerResponse), `"structuredContent"`)
+}
+
 func TestBuildActiveRememberRejectsTenantOverride(t *testing.T) {
 	reg, err := BuildActive(Dependencies{Remember: &stubRememberService{}})
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
@@ -27,6 +28,37 @@ type assessorErrorReader struct{}
 
 func (assessorErrorReader) Read([]byte) (int, error) {
 	return 0, errors.New("read failed")
+}
+
+type assessorExchangeRecorder struct {
+	exchanges []modelprovider.ProviderExchange
+}
+
+func (r *assessorExchangeRecorder) RecordProviderExchange(_ context.Context, exchange modelprovider.ProviderExchange) {
+	r.exchanges = append(r.exchanges, exchange)
+}
+
+func TestOpenAIAssessorRecordsProviderExchange(t *testing.T) {
+	response := semanticAssessmentTestResponse()
+	content, err := json.Marshal(response)
+	require.NoError(t, err)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": string(content)}}},
+		}))
+	}))
+	defer srv.Close()
+
+	provider := NewOpenAIAssessor(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	request, _ := semanticAssessmentTestRequest(t)
+	recorder := &assessorExchangeRecorder{}
+	ctx := modelprovider.WithExchangeRecorder(context.Background(), recorder)
+	_, _, err = provider.Assess(ctx, request)
+	require.NoError(t, err)
+	require.Len(t, recorder.exchanges, 1)
+	require.Equal(t, "assessor", recorder.exchanges[0].Component)
+	require.Contains(t, string(recorder.exchanges[0].ResponseBody), "choices")
+	require.Contains(t, string(recorder.exchanges[0].RequestBody), "assessor-model")
 }
 
 func runSemanticAssessmentSessionForTest(

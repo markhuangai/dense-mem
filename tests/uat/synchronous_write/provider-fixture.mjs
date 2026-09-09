@@ -65,6 +65,14 @@ const server = createServer(async (request, response) => {
     response.destroy();
     return;
   }
+  if (routeFault === "status-429") {
+    sendJSON(response, 429, { error: { message: "fixture rate limited", code: "rate_limit" } });
+    return;
+  }
+  if (routeFault === "status-500") {
+    sendJSON(response, 500, { error: { message: "fixture provider failure", code: "provider_failure" } });
+    return;
+  }
 
   if (request.url?.endsWith("/embeddings")) {
     const inputs = Array.isArray(payload.input) ? payload.input : [payload.input || ""];
@@ -424,6 +432,7 @@ function faultForRoute(value, route) {
   if (route === "embedding" && (
     normalized === "unavailable" || normalized === "malformed" || normalized === "timeout" || normalized.startsWith("assessment-") ||
     normalized === "repair" || normalized === "repair-exhausted" || normalized === "security" || normalized === "no-supported" ||
+    normalized === "status-429" || normalized === "status-500" ||
     normalized === "mixed"
   )) return "";
   if (route === "assessment" && (normalized.startsWith("embedding-") || normalized === "embedding-only-timeout")) return "";

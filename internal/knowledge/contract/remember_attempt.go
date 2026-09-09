@@ -2,8 +2,34 @@ package contract
 
 import (
 	"context"
+	"strings"
 	"time"
 )
+
+// DiagnosticCaptureState derives the bounded state used by both the capture
+// recorder and durable repository when a caller did not provide one.
+func DiagnosticCaptureState(captureState, outcome string, requestBodyBytes, responseBodyBytes int) string {
+	if state := strings.TrimSpace(captureState); state != "" {
+		return state
+	}
+	switch strings.TrimSpace(outcome) {
+	case "provider_not_called":
+		return "provider_not_called"
+	case "no_response":
+		return "no_response"
+	case "response_read_failed":
+		return "interrupted"
+	case "response_too_large":
+		return "truncated"
+	case "not_captured":
+		return "not_captured"
+	default:
+		if requestBodyBytes == 0 && responseBodyBytes == 0 {
+			return "not_captured"
+		}
+		return "captured"
+	}
+}
 
 type RememberAttemptRecordInput struct {
 	TeamID, OwnerProfileID, AttemptID string
@@ -37,18 +63,29 @@ type RememberAttemptLookup interface {
 	LoadRememberAttempt(context.Context, RememberAttemptLookupInput) (*RememberAttempt, error)
 }
 
-// RememberFailureArtifactInput is intentionally failure-only. Its content must
-// already be scrubbed of credentials, prompts, provider responses, and database
-// errors by the application service.
-type RememberFailureArtifactInput struct {
-	ArtifactID, ArtifactKind, ContentType string
-	Content                               []byte
-	CapturedAt, ExpiresAt                 time.Time
+type RememberFailureRecordInput struct {
+	Attempt     RememberAttemptRecordInput
+	Diagnostics []RememberAttemptDiagnosticInput
 }
 
-type RememberFailureRecordInput struct {
-	Attempt   RememberAttemptRecordInput
-	Artifacts []RememberFailureArtifactInput
+// RememberAttemptDiagnosticInput is an operator-only, failure-scoped exchange
+// captured for one terminal Remember attempt. It contains bodies only; request
+// headers and transport credentials are never part of the record.
+type RememberAttemptDiagnosticInput struct {
+	DiagnosticID        string
+	SequenceNo          int
+	Kind                string
+	Component           string
+	Model               string
+	RequestBody         []byte
+	ResponseBody        []byte
+	RequestContentType  string
+	ResponseContentType string
+	StatusCode          int
+	Outcome             string
+	CaptureState        string
+	CapturedAt          time.Time
+	ExpiresAt           time.Time
 }
 
 // RememberAttemptDiagnosticFilter is the normalized filter supplied by the
@@ -63,8 +100,8 @@ type RememberAttemptDiagnosticFilter struct {
 }
 
 // RememberAttemptDiagnosticRecord is a control-only projection. PublicResult,
-// Events, and Artifacts are populated only by the single-attempt detail read;
-// list records contain scalar metadata only.
+// Events, and Diagnostics are populated only by the single-attempt detail
+// read; list records contain scalar metadata only.
 type RememberAttemptDiagnosticRecord struct {
 	TeamID, TeamName, OwnerProfileID, AttemptID string
 	SpaceID, CanonicalAttemptID                 string
@@ -80,7 +117,25 @@ type RememberAttemptDiagnosticRecord struct {
 	CompletedAt                                 *time.Time
 	PublicResult                                map[string]any
 	Events                                      []RememberAttemptDiagnosticEvent
-	Artifacts                                   []RememberFailureArtifactDescriptor
+	Diagnostics                                 []RememberAttemptDiagnosticRecordItem
+}
+
+type RememberAttemptDiagnosticRecordItem struct {
+	DiagnosticID        string
+	SequenceNo          int
+	Kind                string
+	Component           string
+	Model               string
+	RequestBody         []byte
+	ResponseBody        []byte
+	RequestContentType  string
+	ResponseContentType string
+	StatusCode          int
+	Outcome             string
+	CaptureState        string
+	CapturedAt          time.Time
+	ExpiresAt           time.Time
+	RetainedByLegalHold bool
 }
 
 type RememberAttemptDiagnosticEvent struct {
@@ -90,31 +145,6 @@ type RememberAttemptDiagnosticEvent struct {
 	Outcome    string
 	Metadata   map[string]any
 	CreatedAt  time.Time
-}
-
-type RememberFailureArtifactDescriptor struct {
-	ArtifactID          string
-	ArtifactKind        string
-	ContentType         string
-	ByteCount           int64
-	ContentSHA256       string
-	CapturedAt          time.Time
-	ExpiresAt           time.Time
-	RetainedByLegalHold bool
-}
-
-type RememberFailureArtifact struct {
-	TeamID              string
-	ArtifactID          string
-	AttemptID           string
-	ArtifactKind        string
-	ContentType         string
-	Content             []byte
-	ByteCount           int64
-	ContentSHA256       string
-	CapturedAt          time.Time
-	ExpiresAt           time.Time
-	RetainedByLegalHold bool
 }
 
 type RememberAttemptDiagnosticRecordPage struct {

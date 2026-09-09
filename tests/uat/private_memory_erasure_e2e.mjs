@@ -86,10 +86,10 @@ async function runScenario() {
 
   await assertStrictErasureContract(ownerA.apiKey);
   await placeHold(ownerASpace.id, "owner_hold");
-  assertPolicyArtifactRetention(ownerAFixture, true);
+  assertDiagnosticRetention(ownerAFixture, true);
   await expectStatus(ownerRequest(ownerA.apiKey, "owner-held"), 409, "owner erasure bypassed legal hold");
   await releaseHold(ownerASpace.id);
-  assertPolicyArtifactRetention(ownerAFixture, false);
+  assertDiagnosticRetention(ownerAFixture, false);
   const ownerQueued = await ownerRequest(ownerA.apiKey, "owner-erase-1");
   assert(ownerQueued.status === 202, "credential owner erasure did not return 202");
   assertOwnerOperationShape(ownerQueued.payload.data);
@@ -242,7 +242,7 @@ async function runScenario() {
   setPrivateContentAge(retentionEligibleSpace.id, 60);
   setPrivateContentAge(retentionHeldSpace.id, 60);
   await placeHold(retentionHeldSpace.id, "retention_hold");
-  assertPolicyArtifactRetention(retentionHeldFixture, true);
+  assertDiagnosticRetention(retentionHeldFixture, true);
   await updateRetentionDays(30);
   const retentionRun = await runRetention("retention-run-1");
   assert(retentionRun.status === 202 && retentionRun.payload.data?.queued_count === 1, "retention did not queue only the eligible space");
@@ -255,7 +255,7 @@ async function runScenario() {
   assertSpaceState(retentionHeldSpace.id, "active", 1);
 
   await releaseHold(retentionHeldSpace.id);
-  assertPolicyArtifactRetention(retentionHeldFixture, false);
+  assertDiagnosticRetention(retentionHeldFixture, false);
   const heldRetentionRun = await runRetention("retention-run-2");
   assert(heldRetentionRun.status === 202 && heldRetentionRun.payload.data?.queued_count === 1, "released retention hold did not queue the expired space");
   const heldOperationID = waitForSpaceOperationID(retentionHeldSpace.id, "retention");
@@ -658,14 +658,14 @@ function assertSpaceState(spaceID, lifecycle, generation) {
   assert(state[0] === lifecycle && Number(state[1]) === generation, `memory space state was ${state.join("/")}; expected ${lifecycle}/${generation}`);
 }
 
-function assertPolicyArtifactRetention(fixture, retained) {
+function assertDiagnosticRetention(fixture, retained) {
   const row = postgresRow(`
     SELECT retained_by_legal_hold, expires_at <= clock_timestamp()
-    FROM remember_failure_artifacts
+    FROM remember_attempt_diagnostics
     WHERE team_id = ${sqlLiteral(fixture.teamID)}::uuid
-      AND artifact_id = ${sqlLiteral(fixture.failureArtifactID)}::uuid
+      AND diagnostic_id = ${sqlLiteral(fixture.diagnosticID)}::uuid
   `);
-  assert(row.length === 2 && row[0] === (retained ? "t" : "f") && row[1] === "t", `policy rejection artifact retention state was ${row.join("/")}; expected ${retained ? "held" : "released"}`);
+  assert(row.length === 2 && row[0] === (retained ? "t" : "f") && row[1] === "t", `policy rejection diagnostic retention state was ${row.join("/")}; expected ${retained ? "held" : "released"}`);
 }
 
 function assertPreserved(spaceID, fixture) {
@@ -724,11 +724,9 @@ function seedSpaceContent({ teamID, ownerID, keyID, spaceID, label, rich = false
     relationshipID: randomUUID(), observationID: randomUUID(), verificationID: randomUUID(), supportID: randomUUID(),
     conflictID: randomUUID(), positionID: randomUUID(), dreamRunID: randomUUID(), hypothesisID: randomUUID(),
     communityRunID: randomUUID(), communityID: randomUUID(), logicalCommunityID: randomUUID(), searchDocumentID: randomUUID(),
-    evidenceSearchDocumentID: randomUUID(), failureArtifactID: randomUUID(), recallID: `${runID}-${label}-${randomUUID()}`,
+    evidenceSearchDocumentID: randomUUID(), diagnosticID: randomUUID(), recallID: `${runID}-${label}-${randomUUID()}`,
   };
   const sentinel = `${runID}-${label}-private-content`;
-  const policyArtifactContent = JSON.stringify({ submission_id: ids.ingestID, evidence: [] });
-  const policyArtifactHash = createHash("sha256").update(policyArtifactContent).digest("hex");
   if (label !== "team-shared") privateSentinels.add(sentinel);
   const sql = [
     "BEGIN",
@@ -754,14 +752,14 @@ function seedSpaceContent({ teamID, ownerID, keyID, spaceID, label, rich = false
          'dense-mem.v2.6.1', 'remember', 'failed', 'preflight', 'submission_policy_rejected',
          '{}'::jsonb, 0, 0, 0, 0, 0, now() - interval '8 days', now() - interval '8 days'
        )`,
-      `INSERT INTO remember_failure_artifacts (
-         team_id, artifact_id, attempt_id, owner_profile_id, artifact_kind,
-         content_type, content_bytes, byte_count, content_sha256, captured_at, expires_at
+      `INSERT INTO remember_attempt_diagnostics (
+         team_id, diagnostic_id, attempt_id, owner_profile_id, sequence_no, kind, component,
+         request_bytes, request_content_type, outcome, captured_at, expires_at
        ) VALUES (
-         ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(ids.failureArtifactID)}::uuid, ${sqlLiteral(ids.ingestID)}::uuid,
-         ${sqlLiteral(ownerID)}::uuid, 'policy_rejected_request', 'application/json',
-         convert_to(${sqlLiteral(policyArtifactContent)}, 'UTF8'), ${Buffer.byteLength(policyArtifactContent)},
-         ${sqlLiteral(`sha256:${policyArtifactHash}`)}, now() - interval '8 days', now() - interval '1 day'
+         ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(ids.diagnosticID)}::uuid, ${sqlLiteral(ids.ingestID)}::uuid,
+         ${sqlLiteral(ownerID)}::uuid, 1, 'original_request', 'fixture',
+         convert_to(${sqlLiteral(JSON.stringify({ name: 'remember', arguments: {} }))}, 'UTF8'), 'application/json', 'captured',
+         now() - interval '8 days', now() - interval '1 day'
        )`,
     ]),
     `INSERT INTO evidence_fragments (
@@ -931,7 +929,7 @@ function privateMemoryManifestTables() {
         FROM information_schema.tables
         WHERE table_schema = 'public'
           AND table_type = 'BASE TABLE'
-          AND table_name IN ('remember_attempt_events', 'remember_failure_artifacts', 'semantic_assessments')
+          AND table_name IN ('remember_attempt_events', 'remember_attempt_diagnostics', 'semantic_assessments')
       ) AS catalog
   `);
   manifestTables = value ? value.split(",") : [];

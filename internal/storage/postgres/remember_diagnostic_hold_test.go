@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestSetRememberFailureArtifactHoldStateTxUsesCallerTransaction(t *testing.T) {
+func TestSetRememberAttemptDiagnosticHoldStateTxUsesCallerTransaction(t *testing.T) {
 	sqlDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -23,20 +23,20 @@ func TestSetRememberFailureArtifactHoldStateTxUsesCallerTransaction(t *testing.T
 	require.NoError(t, err)
 
 	spaceID := uuid.New()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.remember_failure_artifact_retention_space_id', $1, true), set_config('app.remember_failure_artifact_retention_value', $2, true)")).
-		WithArgs(spaceID.String(), "true").
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.remember_attempt_diagnostic_retention_space_id', $1, true)")).
+		WithArgs(spaceID.String()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE remember_failure_artifacts AS artifact")).
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE remember_attempt_diagnostics AS diagnostic")).
 		WithArgs(true, spaceID, true).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.remember_failure_artifact_retention_space_id', '', true), set_config('app.remember_failure_artifact_retention_value', '', true)")).
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.remember_attempt_diagnostic_retention_space_id', '', true)")).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	require.NoError(t, SetRememberFailureArtifactHoldStateTx(context.Background(), db, spaceID, true))
+	require.NoError(t, SetRememberAttemptDiagnosticHoldStateTx(context.Background(), db, spaceID, true))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestSetRememberFailureArtifactHoldStateTxSkipsNilSpace(t *testing.T) {
+func TestSetRememberAttemptDiagnosticHoldStateTxSkipsNilSpace(t *testing.T) {
 	sqlDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -46,6 +46,6 @@ func TestSetRememberFailureArtifactHoldStateTxSkipsNilSpace(t *testing.T) {
 	db, err := gorm.Open(gormpostgres.New(gormpostgres.Config{Conn: sqlDB}), &gorm.Config{})
 	require.NoError(t, err)
 
-	require.NoError(t, SetRememberFailureArtifactHoldStateTx(context.Background(), db, uuid.Nil, true))
+	require.NoError(t, SetRememberAttemptDiagnosticHoldStateTx(context.Background(), db, uuid.Nil, true))
 	require.NoError(t, mock.ExpectationsWereMet())
 }

@@ -2,7 +2,6 @@ package http
 
 import (
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -56,49 +55,18 @@ func (h *controlPortalHandler) getRememberAttemptDiagnostic(c echo.Context) erro
 	if err != nil {
 		return err
 	}
-	return response.SuccessOK(c, detail)
-}
-
-func (h *controlPortalHandler) getRememberFailureArtifact(c echo.Context) error {
-	if h.rememberAttempts == nil {
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "remember attempt diagnostics unavailable")
-	}
-	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
-	if err != nil {
-		return err
-	}
-	attemptID, err := parseControlUUID(c.Param("attemptId"), "attempt ID")
-	if err != nil {
-		return err
-	}
-	artifactID, err := parseControlUUID(c.Param("artifactId"), "artifact ID")
-	if err != nil {
-		return err
-	}
-	artifact, err := h.rememberAttempts.GetRememberFailureArtifact(c.Request().Context(), teamID.String(), attemptID.String(), artifactID.String())
-	if errors.Is(err, service.ErrRememberFailureArtifactNotFound) {
-		return httperr.New(httperr.NOT_FOUND, "remember failure artifact not found")
-	}
-	if errors.Is(err, service.ErrRememberAttemptDiagnosticsUnavailable) {
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "remember attempt diagnostics unavailable")
-	}
-	if err != nil {
-		return err
-	}
 	if h.logger != nil {
-		h.logger.Info("control_remember_failure_artifact_access",
+		h.logger.Info("control_remember_attempt_diagnostic_access",
 			observability.String("actor", controlPortalActorFromContext(c.Request().Context())),
 			observability.String("actor_identity_id", controlPortalActorIdentityFromContext(c.Request().Context())),
 			observability.String("team_id", teamID.String()),
 			observability.String("attempt_id", attemptID.String()),
-			observability.String("artifact_id", artifactID.String()),
 			observability.String("correlation_id", httpmw.GetCorrelationID(c.Request().Context())),
 		)
 	}
 	c.Response().Header().Set("Cache-Control", "no-store")
-	c.Response().Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"remember-failure-%s\"", artifact.ArtifactID))
 	c.Response().Header().Set("X-Content-Type-Options", "nosniff")
-	return c.Blob(200, artifact.ContentType, artifact.Content)
+	return response.SuccessOK(c, detail)
 }
 
 func controlRememberAttemptDiagnosticFilter(c echo.Context) (service.RememberAttemptDiagnosticFilter, error) {

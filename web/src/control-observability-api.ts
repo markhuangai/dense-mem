@@ -69,15 +69,28 @@ export type RememberAttemptDiagnosticEvent = {
   created_at: string;
 };
 
-export type RememberFailureArtifactDescriptor = {
-  artifact_id: string;
-  artifact_kind: string;
-  content_type: string;
-  byte_count: number;
-  content_sha256: string;
+export type RememberDiagnosticExchange = {
+  diagnostic_id: string;
+  sequence_no: number;
+  kind: "original_request" | "provider_exchange" | "caller_response" | string;
+  component: string;
+  model?: string;
+  request_body?: string;
+  response_body?: string;
+  request_content_type?: string;
+  response_content_type?: string;
+  status_code?: number;
+  outcome: string;
+  capture_state: string;
   captured_at: string;
   expires_at: string;
   retained_by_legal_hold: boolean;
+};
+
+export type RememberAttemptDiagnostics = {
+  original_request: RememberDiagnosticExchange | null;
+  provider_exchanges: RememberDiagnosticExchange[];
+  caller_response: RememberDiagnosticExchange | null;
 };
 
 export type RememberAttemptPublicResult = {
@@ -107,7 +120,7 @@ export type RememberAttemptPublicResult = {
 export type RememberAttemptDiagnosticDetail = RememberAttemptDiagnosticSummary & {
   public_result: RememberAttemptPublicResult;
   events: RememberAttemptDiagnosticEvent[];
-  artifacts: RememberFailureArtifactDescriptor[];
+  diagnostics: RememberAttemptDiagnostics;
 };
 
 export type RememberAttemptDiagnosticQuery = {
@@ -144,10 +157,6 @@ export function buildRememberAttemptDiagnosticsPath(query: RememberAttemptDiagno
 
 export function buildRememberAttemptDiagnosticPath(teamId: string, attemptId: string): string {
   return `/teams/${encodeURIComponent(teamId)}/remember-attempts/${encodeURIComponent(attemptId)}`;
-}
-
-export function buildRememberFailureArtifactPath(teamId: string, attemptId: string, artifactId: string): string {
-  return `${buildRememberAttemptDiagnosticPath(teamId, attemptId)}/artifacts/${encodeURIComponent(artifactId)}`;
 }
 
 function appendParam(params: URLSearchParams, key: string, value: string | number | undefined): void {

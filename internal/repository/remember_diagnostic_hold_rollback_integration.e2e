@@ -13,7 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func TestRememberFailureArtifactHoldTransactionRollback(t *testing.T) {
+func TestRememberAttemptDiagnosticHoldTransactionRollback(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 
@@ -27,7 +27,7 @@ func TestRememberFailureArtifactHoldTransactionRollback(t *testing.T) {
 	privateRepo := NewPrivateMemoryRepository(appDB, rls)
 	require.NoError(t, privateRepo.Prepare(ctx))
 
-	attemptID, artifactID := uuid.NewString(), uuid.NewString()
+	attemptID, diagnosticID := uuid.NewString(), uuid.NewString()
 	require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
 		Attempt: RememberAttemptRecordInput{
 			TeamID: teamID, OwnerProfileID: ownerID, AttemptID: attemptID,
@@ -36,9 +36,10 @@ func TestRememberFailureArtifactHoldTransactionRollback(t *testing.T) {
 			ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed",
 			FailedPhase: "preflight", ErrorCode: "provider_unavailable", PublicResult: map[string]any{},
 		},
-		Artifacts: []RememberFailureArtifactInput{{
-			ArtifactID: artifactID, ArtifactKind: "failure", ContentType: "application/json",
-			Content: []byte(`{"rollback":true}`), CapturedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
+		Diagnostics: []RememberAttemptDiagnosticInput{{
+			DiagnosticID: diagnosticID, SequenceNo: 1, Kind: "original_request", Component: "remember",
+			RequestBody: []byte(`{"rollback":true}`), RequestContentType: "application/json",
+			CapturedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
 		}},
 	}))
 	_, created, err := privateRepo.PlaceLegalHold(ctx, credential.MemorySpaceID, "remember-primitives-hold-rollback")
@@ -53,14 +54,14 @@ func TestRememberFailureArtifactHoldTransactionRollback(t *testing.T) {
 		if result.RowsAffected != 1 {
 			return errors.New("expected one legal hold to release")
 		}
-		require.NoError(t, setRememberFailureArtifactHoldStateTx(ctx, tx, credential.MemorySpaceID, false))
-		return errors.New("force artifact-hold rollback")
+		require.NoError(t, setRememberAttemptDiagnosticHoldStateTx(ctx, tx, credential.MemorySpaceID, false))
+		return errors.New("force diagnostic-hold rollback")
 	})
-	require.ErrorContains(t, err, "force artifact-hold rollback")
+	require.ErrorContains(t, err, "force diagnostic-hold rollback")
 
 	var retained bool
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Raw(`SELECT retained_by_legal_hold FROM remember_failure_artifacts WHERE team_id = ?::uuid AND artifact_id = ?::uuid`, teamID, artifactID).Row().Scan(&retained)
+		return tx.Raw(`SELECT retained_by_legal_hold FROM remember_attempt_diagnostics WHERE team_id = ?::uuid AND diagnostic_id = ?::uuid`, teamID, diagnosticID).Row().Scan(&retained)
 	}))
-	require.True(t, retained, "rolled-back writer must leave the legal-hold state unchanged")
+	require.True(t, retained, "rolled-back writer must leave the diagnostic legal-hold state unchanged")
 }

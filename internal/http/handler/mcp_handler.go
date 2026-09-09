@@ -17,6 +17,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/mcp"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
@@ -76,6 +77,8 @@ func (h *MCPHandler) HandlePost(c echo.Context) error {
 
 func (h *MCPHandler) handleSDKPost(c echo.Context, teamID uuid.UUID, principal *middleware.Principal) error {
 	request := c.Request()
+	requestContext := request.Context()
+	request = request.WithContext(rememberapp.WithCallerResponseRequestContext(requestContext, requestContext))
 	if err := validateSDKProtocolHeader(request.Header.Get("MCP-Protocol-Version")); err != nil {
 		return writeSDKProtocolError(c, http.StatusBadRequest, nil, err.Error())
 	}

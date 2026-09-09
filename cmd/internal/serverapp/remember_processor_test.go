@@ -1,9 +1,7 @@
 package serverapp
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,6 +13,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
@@ -63,47 +62,155 @@ func TestMergeInlineEmbeddingResultsDeduplicatesDocumentHashes(t *testing.T) {
 	require.Equal(t, "other", results[1].DocumentHash)
 }
 
-func TestRememberFailureRequestArtifactIsCanonicalAndRedacted(t *testing.T) {
+func TestRememberFailureDiagnosticsCapturesBodiesAndRedactsSecrets(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{OriginalRequest: []byte(`{"evidence":[{"content":"safe"}],"authorization":"Bearer secret-token"}`)}
+	publicResult := map[string]any{"processing_state": "failed", "errors": []any{map[string]any{"code": "provider_unavailable"}}}
+	items := rememberFailureDiagnostics(input, publicResult, []modelprovider.ProviderExchange{{
+		Component: "assessor", Model: "test-model", RequestBody: []byte(`{"messages":[{"content":"safe"}],"api_key":"secret-token"}`), ResponseBody: []byte(`{"error":{"message":"Authorization: Bearer sk-live-secret","stack_trace":"goroutine 1 [running]","database_error":"sql password=secret"}}`), StatusCode: 500, Outcome: "captured",
+	}}, nil, true, "assessment")
+	require.Len(t, items, 3)
+	require.Equal(t, "original_request", items[0].Kind)
+	require.Equal(t, "provider_exchange", items[1].Kind)
+	require.Equal(t, "caller_response", items[2].Kind)
+	require.NotContains(t, string(items[0].RequestBody), "secret-token")
+	require.NotContains(t, string(items[1].RequestBody), "secret-token")
+	require.NotContains(t, string(items[1].ResponseBody), "sk-live-secret")
+	require.NotContains(t, string(items[1].ResponseBody), "goroutine 1")
+	require.NotContains(t, string(items[1].ResponseBody), "sql password=secret")
+	require.Contains(t, string(items[2].ResponseBody), `"isError":true`)
+	require.Equal(t, "captured", items[1].Outcome)
+	require.Equal(t, "captured", items[1].CaptureState)
+	plain, _ := boundedRememberDiagnosticBody([]byte("api_key=plain-secret pq: password authentication failed for user dense"))
+	require.NotContains(t, string(plain), "plain-secret")
+	require.NotContains(t, string(plain), "password authentication failed")
+	stack, _ := boundedRememberDiagnosticBody([]byte("goroutine 1 [running]:\nmain.main()\n\t/app/main.go:12\nprovider status"))
+	require.NotContains(t, string(stack), "main.main")
+	require.NotContains(t, string(stack), "/app/main.go")
+	database, _ := boundedRememberDiagnosticBody([]byte("FATAL: password authentication failed for user dense"))
+	require.NotContains(t, string(database), "password authentication failed")
+	sqlState, _ := boundedRememberDiagnosticBody([]byte(`ERROR: duplicate key value violates unique constraint "accounts_pkey" (SQLSTATE 23505)`))
+	require.NotContains(t, string(sqlState), "duplicate key value violates unique constraint")
+	boundary, _ := boundedRememberDiagnosticBody(append([]byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes-20)), []byte(" api_key=boundary-secret")...))
+	require.NotContains(t, string(boundary), "boundary-secret")
+}
+
+func TestRememberFailureDiagnosticsMarksUndeliveredCallerResponseOnCancellation(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{OriginalRequest: []byte(`{"evidence":[]}`)}
+	items := rememberFailureDiagnostics(input, map[string]any{"processing_state": "failed"}, nil, []byte(`{"isError":true}`), false, "embedding")
+	require.Len(t, items, 3)
+	require.Equal(t, "not_delivered", items[2].Outcome)
+	require.Equal(t, "not_delivered", items[2].CaptureState)
+	require.Empty(t, items[2].ResponseBody)
+}
+
+func TestRememberFailureDiagnosticsDoesNotFabricateInternalCallerResponse(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{OriginalRequest: []byte(`{"evidence":[]}`)}
+	items := rememberFailureDiagnosticsWithCapture(input, map[string]any{"processing_state": "failed"}, nil, nil, true, false)
+	require.Len(t, items, 3)
+	require.Equal(t, "not_captured", items[2].Outcome)
+	require.Equal(t, "not_captured", items[2].CaptureState)
+	require.Empty(t, items[2].ResponseBody)
+}
+
+func TestRememberFailureDiagnosticsUsesHashOnlyRequestForSecurityRejection(t *testing.T) {
 	input := rememberapp.RememberProcessRequest{
-		RequestHash:    "sha256:" + strings.Repeat("a", 64),
-		IdempotencyKey: "client-key-that-must-not-be-retained",
-		Proposal: map[string]any{
-			"entity_hints": []map[string]any{{"name": "private entity name", "entity_kind": "project"}},
-			"relationship_hints": []map[string]any{{
-				"ref":              "relationship-ref",
-				"evidence_indices": []any{1, 0, 1, 99},
-				"subject":          map[string]any{"name": "private subject", "entity_kind": "project"},
-				"predicate":        map[string]any{"proposed_key": "uses"},
-				"object":           map[string]any{"value": map[string]any{"type": "string", "value": "private object", "display": "private display", "unit": "private unit"}},
-				"polarity":         "+",
-				"client_comment":   "provider prompt and secret should not be retained",
-				"metadata":         map[string]any{"authorization": "Bearer secret-token"},
-			}},
-			"provider_response": "raw provider response must not be retained",
-		},
+		OriginalRequest:  []byte(`{"evidence":[{"content":"my production password is hunter2"}]}`),
+		RequestHash:      "sha256:request-hash",
+		SecurityRejected: true,
+		Evidence:         []rememberapp.EvidenceInput{{Content: "my production password is hunter2"}},
 	}
-	evidence := []repository.EvidenceFragment{{EvidenceIndex: 0, Content: "evidence content with secret-token"}}
+	items := rememberFailureDiagnostics(input, nil, nil, nil, true, "assessment")
+	require.Equal(t, "hash_only", items[0].Outcome)
+	require.Equal(t, "hash_only", items[0].CaptureState)
+	require.Contains(t, string(items[0].RequestBody), "sha256:request-hash")
+	require.NotContains(t, string(items[0].RequestBody), "hunter2")
+}
 
-	first, ok := rememberFailureRequestArtifact(input, "11111111-1111-4111-8111-111111111111", evidence)
-	require.True(t, ok)
-	second, ok := rememberFailureRequestArtifact(input, "11111111-1111-4111-8111-111111111111", evidence)
-	require.True(t, ok)
-	require.True(t, bytes.Equal(first.Content, second.Content), "artifact JSON must be deterministic")
-	require.LessOrEqual(t, len(first.Content), rememberFailureArtifactMaxBytes)
+func TestRememberCallerResponseDeliveryUsesRequestContext(t *testing.T) {
+	require.True(t, rememberCallerResponseDelivered(context.Background(), rememberapp.ErrRememberRequestTimeout))
+	require.True(t, rememberCallerResponseDelivered(context.Background(), context.DeadlineExceeded))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.False(t, rememberCallerResponseDelivered(ctx, rememberapp.ErrRememberRequestCancelled))
+	requestCtx := context.Background()
+	require.True(t, rememberCallerResponseDelivered(
+		rememberapp.WithCallerResponseRequestContext(context.Background(), requestCtx),
+		rememberapp.ErrRememberRequestTimeout,
+	))
+	requestCtx, requestCancel := context.WithCancel(context.Background())
+	requestCancel()
+	require.False(t, rememberCallerResponseDelivered(
+		rememberapp.WithCallerResponseRequestContext(context.Background(), requestCtx),
+		rememberapp.ErrRememberRequestTimeout,
+	))
+}
 
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal(first.Content, &payload))
-	require.NotContains(t, string(first.Content), evidence[0].Content)
-	for _, secret := range []string{"client-key-that-must-not-be-retained", "provider prompt", "secret-token", "private entity name", "private subject", "private object", "private display", "private unit", "authorization", "provider_response", "client_comment", "metadata"} {
-		require.NotContains(t, string(first.Content), secret)
+func TestRememberFailureDiagnosticsPreservesTruncationState(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{OriginalRequest: []byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes+1))}
+	items := rememberFailureDiagnostics(input, nil, nil, nil, true, "assessment")
+	require.Equal(t, "truncated", items[0].CaptureState)
+	require.Len(t, items[0].RequestBody, rememberDiagnosticMaxBodyBytes)
+}
+
+func TestRememberExchangeRecorderBoundsBodiesAndAggregate(t *testing.T) {
+	recorder := &rememberExchangeRecorder{}
+	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
+		Component: "assessor", RequestBody: []byte("request"), ResponseBody: []byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes+1)), Outcome: "captured",
+	})
+	exchanges := recorder.Snapshot()
+	require.Len(t, exchanges, 1)
+	require.Equal(t, "captured", exchanges[0].Outcome)
+	require.Equal(t, "truncated", exchanges[0].CaptureState)
+	require.LessOrEqual(t, len(exchanges[0].ResponseBody), rememberDiagnosticMaxBodyBytes)
+}
+
+func TestRememberExchangeRecorderProjectsProviderExchangeOnce(t *testing.T) {
+	recorder := &rememberExchangeRecorder{}
+	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
+		Component:    "embedding",
+		RequestBody:  []byte(`{"model":"embedding-model","input":["private evidence"],"dimensions":2}`),
+		ResponseBody: []byte(`{"model":"embedding-model","data":[{"index":0,"embedding":[0.1,0.2]}]}`),
+		Outcome:      "captured",
+	})
+	exchanges := recorder.Snapshot()
+	require.Len(t, exchanges, 1)
+	require.Contains(t, string(exchanges[0].RequestBody), `"input_count":1`)
+	require.Contains(t, string(exchanges[0].ResponseBody), `"embedding_dimensions":2`)
+}
+
+func TestRememberExchangeRecorderUsesPrecomputedProviderProjection(t *testing.T) {
+	recorder := &rememberExchangeRecorder{}
+	rawResponse := []byte(`{"model":"embedding-model","data":[{"index":0,"embedding":[0.1,0.2]}]}`)
+	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
+		Component:              "embedding",
+		ResponseBody:           rawResponse,
+		ResponseBodyProjection: modelprovider.ProjectEmbeddingProviderResponse(rawResponse, []int{2}),
+		Outcome:                "captured",
+	})
+
+	exchanges := recorder.Snapshot()
+	require.Len(t, exchanges, 1)
+	require.Contains(t, string(exchanges[0].ResponseBody), `"embedding_dimensions":2`)
+	require.NotContains(t, string(exchanges[0].ResponseBody), "0.1")
+}
+
+func TestRememberExchangeRecorderRetainsLaterMetadataAfterAggregateLimit(t *testing.T) {
+	recorder := &rememberExchangeRecorder{}
+	body := []byte(strings.Repeat("x", rememberDiagnosticMaxAttemptBytes/2))
+	for index := 0; index < 3; index++ {
+		recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
+			Component: fmt.Sprintf("provider-%d", index), Model: "test-model", RequestBody: body,
+			ResponseBody: body, StatusCode: 500 + index, Outcome: "captured",
+		})
 	}
-	require.Equal(t, input.RequestHash, payload["request_hash"])
-	require.NotEmpty(t, payload["idempotency_key_hash"])
-	require.Len(t, payload["evidence"], 1)
-	require.Len(t, payload["relationships"], 1)
-	relationship := payload["relationships"].([]any)[0].(map[string]any)
-	require.Equal(t, []any{float64(0), float64(1)}, relationship["evidence_indices"])
-	require.NotEmpty(t, relationship["ref_hash"])
+	exchanges := recorder.Snapshot()
+	require.Len(t, exchanges, 3)
+	require.Equal(t, "provider-2", exchanges[2].Component)
+	require.Equal(t, 502, exchanges[2].StatusCode)
+	require.Equal(t, "captured", exchanges[2].Outcome)
+	require.Equal(t, "truncated", exchanges[2].CaptureState)
+	require.Contains(t, string(exchanges[2].RequestBody), `"format":"non_json"`)
+	require.Contains(t, string(exchanges[2].ResponseBody), `"format":"non_json"`)
 }
 
 func TestRememberFailureCodeMapsAssessmentDatabaseFailure(t *testing.T) {

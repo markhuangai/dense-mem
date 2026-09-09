@@ -7,12 +7,94 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
+
+// DiagnosticCapture carries the logical MCP request and finalized result
+// across the transport/application boundary without exposing transport headers.
+type DiagnosticCapture struct {
+	mu        sync.Mutex
+	request   []byte
+	projectFn func(map[string]any, bool) ([]byte, error)
+}
+
+type callerResponseRequestContextKey struct{}
+
+// WithCallerResponseRequestContext preserves the transport request context for
+// delivery classification when an adapter uses a detached handler context.
+func WithCallerResponseRequestContext(ctx, requestCtx context.Context) context.Context {
+	if ctx == nil || requestCtx == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, callerResponseRequestContextKey{}, requestCtx)
+}
+
+// CallerResponseRequestContextFromContext returns the original transport
+// context used to determine whether a caller response could be delivered.
+func CallerResponseRequestContextFromContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return nil
+	}
+	requestCtx, _ := ctx.Value(callerResponseRequestContextKey{}).(context.Context)
+	return requestCtx
+}
+
+func NewDiagnosticCapture(request []byte) *DiagnosticCapture {
+	return &DiagnosticCapture{request: append([]byte(nil), request...)}
+}
+
+func (c *DiagnosticCapture) RequestBody() []byte {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]byte(nil), c.request...)
+}
+
+func (c *DiagnosticCapture) SetResponseProjector(project func(map[string]any, bool) ([]byte, error)) {
+	if c == nil || project == nil {
+		return
+	}
+	c.mu.Lock()
+	c.projectFn = project
+	c.mu.Unlock()
+}
+
+func (c *DiagnosticCapture) ProjectResponse(result map[string]any, isError bool) ([]byte, error) {
+	if c == nil {
+		return nil, nil
+	}
+	c.mu.Lock()
+	project := c.projectFn
+	c.mu.Unlock()
+	if project == nil {
+		return nil, nil
+	}
+	return project(result, isError)
+}
+
+type diagnosticCaptureContextKey struct{}
+
+func WithDiagnosticCapture(ctx context.Context, capture *DiagnosticCapture) context.Context {
+	if capture == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, diagnosticCaptureContextKey{}, capture)
+}
+
+func DiagnosticCaptureFromContext(ctx context.Context) *DiagnosticCapture {
+	if ctx == nil {
+		return nil
+	}
+	capture, _ := ctx.Value(diagnosticCaptureContextKey{}).(*DiagnosticCapture)
+	return capture
+}
 
 // ResultKind identifies a terminal result for internal transport composition.
 type ResultKind string
@@ -61,6 +143,9 @@ type RememberProcessRequest struct {
 	SecuritySignalsTruncated bool
 	SecurityRejected         bool
 	SecurityRejectionAudit   *SecurityRejectionAuditInput
+	// OriginalRequest is the bounded public Remember body captured for an
+	// operator diagnostic record. It never contains transport headers.
+	OriginalRequest []byte
 }
 
 type TerminalRememberResult struct {

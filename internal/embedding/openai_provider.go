@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
@@ -26,6 +28,13 @@ type OpenAIEmbeddingProvider struct {
 	sem        chan struct{}
 	metrics    observability.DiscoverabilityMetrics
 }
+
+const (
+	// Providers may use long decimal spellings for values that decode to float32;
+	// this explicit JSON wire budget is independent of the in-memory type size.
+	openAIEmbeddingMaxValueBytes    = 128
+	openAIEmbeddingMaxResponseBytes = domain.MaxEmbeddingBatchDocuments*domain.MaxEmbeddingDimensions*openAIEmbeddingMaxValueBytes + (4 << 20)
+)
 
 // Compile-time assertion that OpenAIEmbeddingProvider implements EmbeddingProviderInterface.
 var _ EmbeddingProviderInterface = (*OpenAIEmbeddingProvider)(nil)
@@ -148,6 +157,7 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
+		recordEmbeddingExchange(ctx, p.model, bodyBytes, nil, "", 0, "no_response", nil)
 		return nil, "", &ProviderError{
 			Provider: "openai",
 			Message:  "request failed",
@@ -156,8 +166,9 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	}
 	defer resp.Body.Close()
 
-	rawBody, err := io.ReadAll(resp.Body)
+	rawBody, err := io.ReadAll(io.LimitReader(resp.Body, openAIEmbeddingMaxResponseBytes+1))
 	if err != nil {
+		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "response_read_failed", nil)
 		return nil, "", &ProviderError{
 			Provider:     "openai",
 			Message:      "failed to read response",
@@ -166,9 +177,13 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 			FailureClass: "transient",
 		}
 	}
-
+	if len(rawBody) > openAIEmbeddingMaxResponseBytes {
+		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "response_too_large", nil)
+		return nil, "", &ProviderError{Provider: "openai", Message: "provider response exceeds transport limit", FailureCode: "provider_response_invalid", FailureClass: "provider_action_required"}
+	}
 	var respBody openAIEmbeddingResponse
 	if err := json.Unmarshal(rawBody, &respBody); err != nil {
+		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "captured", nil)
 		if resp.StatusCode != http.StatusOK {
 			return nil, "", &ProviderHTTPError{
 				Status:     resp.StatusCode,
@@ -187,6 +202,11 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 			FailureClass: "provider_action_required",
 		}
 	}
+	dimensions := make([]int, len(respBody.Data))
+	for index, item := range respBody.Data {
+		dimensions[index] = len(item.Embedding)
+	}
+	recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "captured", dimensions)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", &ProviderHTTPError{
@@ -225,6 +245,28 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	}
 
 	return result, p.model, nil
+}
+
+func recordEmbeddingExchange(ctx context.Context, model string, requestBody, responseBody []byte, responseContentType string, statusCode int, outcome string, embeddingDimensions []int) {
+	recorder := modelprovider.ExchangeRecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	captureState := ""
+	if len(requestBody) > modelprovider.MaxProviderDiagnosticBodyBytes || len(responseBody) > modelprovider.MaxProviderDiagnosticBodyBytes {
+		captureState = "truncated"
+	}
+	now := time.Now()
+	exchange := modelprovider.ProviderExchange{
+		Component: "embedding", Model: model,
+		RequestBody: append([]byte(nil), requestBody...), ResponseBody: responseBody, ResponseBodySize: len(responseBody),
+		RequestContentType: "application/json", ResponseContentType: responseContentType,
+		StatusCode: statusCode, Outcome: outcome, CaptureState: captureState, StartedAt: now, CompletedAt: now,
+	}
+	if embeddingDimensions != nil {
+		exchange.ResponseBodyProjection = modelprovider.ProjectEmbeddingProviderResponse(responseBody, embeddingDimensions)
+	}
+	recorder.RecordProviderExchange(ctx, exchange)
 }
 
 func (p *OpenAIEmbeddingProvider) recordEmbeddingUsage(ctx context.Context, usage *openAIEmbeddingUsage, itemCount int) {

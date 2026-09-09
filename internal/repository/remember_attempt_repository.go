@@ -15,36 +15,26 @@ var (
 	ErrRememberAttemptNotFound           = knowledgecontract.ErrRememberAttemptNotFound
 	ErrRememberFailureRetentionDegraded  = knowledgecontract.ErrRememberFailureRetentionDegraded
 	ErrRememberAttemptDiagnosticNotFound = knowledgepostgres.ErrRememberAttemptDiagnosticNotFound
-	ErrRememberFailureArtifactNotFound   = knowledgepostgres.ErrRememberFailureArtifactNotFound
 )
 
 type RememberAttemptRecordInput = knowledgecontract.RememberAttemptRecordInput
 type RememberAttempt = knowledgecontract.RememberAttempt
 type RememberAttemptLookupInput = knowledgecontract.RememberAttemptLookupInput
 type RememberAttemptLookup = knowledgecontract.RememberAttemptLookup
-type RememberFailureArtifactInput = knowledgecontract.RememberFailureArtifactInput
 type RememberFailureRecordInput = knowledgecontract.RememberFailureRecordInput
+type RememberAttemptDiagnosticInput = knowledgecontract.RememberAttemptDiagnosticInput
 type RememberAttemptDiagnosticFilter = knowledgecontract.RememberAttemptDiagnosticFilter
 type RememberAttemptDiagnosticRecord = knowledgecontract.RememberAttemptDiagnosticRecord
 type RememberAttemptDiagnosticEvent = knowledgecontract.RememberAttemptDiagnosticEvent
-type RememberFailureArtifactDescriptor = knowledgecontract.RememberFailureArtifactDescriptor
-type RememberFailureArtifact = knowledgecontract.RememberFailureArtifact
+type RememberAttemptDiagnosticRecordItem = knowledgecontract.RememberAttemptDiagnosticRecordItem
 type RememberAttemptDiagnosticRecordPage = knowledgecontract.RememberAttemptDiagnosticRecordPage
 
 type RememberAttemptDiagnosticsRepository interface {
 	ListRememberAttemptDiagnostics(context.Context, RememberAttemptDiagnosticFilter) (*RememberAttemptDiagnosticRecordPage, error)
 	GetRememberAttemptDiagnostic(context.Context, string, string) (*RememberAttemptDiagnosticRecord, error)
-	GetRememberFailureArtifact(context.Context, string, string, string) (*RememberFailureArtifact, error)
-	PurgeExpiredRememberFailureArtifacts(context.Context, int) (int, error)
 }
 
 var _ RememberAttemptDiagnosticsRepository = (*LedgerRepositoryImpl)(nil)
-
-const (
-	maxRememberFailureArtifactBytes       = 256 * 1024
-	maxRememberFailureArtifactRetention   = 7 * 24 * time.Hour
-	rememberFailureArtifactPurgeBatchSize = 100
-)
 
 func (r *LedgerRepositoryImpl) LoadRememberAttempt(ctx context.Context, input RememberAttemptLookupInput) (*RememberAttempt, error) {
 	owner := r.knowledgeWriteOwner()
@@ -86,28 +76,20 @@ func (r *LedgerRepositoryImpl) GetRememberAttemptDiagnostic(ctx context.Context,
 	return owner.GetRememberAttemptDiagnostic(ctx, teamID, attemptID)
 }
 
-func (r *LedgerRepositoryImpl) GetRememberFailureArtifact(ctx context.Context, teamID, attemptID, artifactID string) (*RememberFailureArtifact, error) {
-	owner := r.knowledgeWriteOwner()
-	if owner == nil {
-		return nil, errors.New("ledger: knowledge write owner is required")
-	}
-	return owner.GetRememberFailureArtifact(ctx, teamID, attemptID, artifactID)
-}
-
-func (r *LedgerRepositoryImpl) PurgeExpiredRememberFailureArtifacts(ctx context.Context, batchSize int) (int, error) {
+func (r *LedgerRepositoryImpl) PurgeExpiredRememberAttemptDiagnostics(ctx context.Context, batchSize int) (int, error) {
 	owner := r.knowledgeWriteOwner()
 	if owner == nil {
 		return 0, errors.New("ledger: knowledge write owner is required")
 	}
-	return owner.PurgeExpiredRememberFailureArtifacts(ctx, batchSize)
+	return owner.PurgeExpiredRememberAttemptDiagnostics(ctx, batchSize)
 }
 
-func (r *LedgerRepositoryImpl) StartRememberFailureArtifactPurger(ctx context.Context, interval time.Duration, logger *slog.Logger) {
+func (r *LedgerRepositoryImpl) StartRememberAttemptDiagnosticPurger(ctx context.Context, interval time.Duration, logger *slog.Logger) {
 	owner := r.knowledgeWriteOwner()
 	if owner == nil {
 		return
 	}
-	owner.StartRememberFailureArtifactPurger(ctx, interval, logger)
+	owner.StartRememberAttemptDiagnosticPurger(ctx, interval, logger)
 }
 
 func normalizeRememberAttemptRecord(input RememberAttemptRecordInput) RememberAttemptRecordInput {

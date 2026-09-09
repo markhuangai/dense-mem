@@ -11,7 +11,7 @@ import (
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-func (r *LedgerRepositoryImpl) synchronizeRememberFailureArtifactHold(ctx context.Context, rawSpaceID string) error {
+func (r *LedgerRepositoryImpl) synchronizeRememberAttemptDiagnosticHold(ctx context.Context, rawSpaceID string) error {
 	spaceID, err := uuid.Parse(rawSpaceID)
 	if err != nil {
 		return fmt.Errorf("space_id is invalid: %w", err)
@@ -39,10 +39,10 @@ func (r *LedgerRepositoryImpl) synchronizeRememberFailureArtifactHold(ctx contex
 		`, lockedSpace).Row().Scan(&held); err != nil {
 			return err
 		}
-		return setRememberFailureArtifactHoldStateTx(ctx, tx, lockedSpace, held)
+		return setRememberAttemptDiagnosticHoldStateTx(ctx, tx, lockedSpace, held)
 	})
 }
 
-func setRememberFailureArtifactHoldStateTx(ctx context.Context, tx *gorm.DB, spaceID uuid.UUID, retained bool) error {
-	return storagepostgres.SetRememberFailureArtifactHoldStateTx(ctx, tx, spaceID, retained)
+func setRememberAttemptDiagnosticHoldStateTx(ctx context.Context, tx *gorm.DB, spaceID uuid.UUID, retained bool) error {
+	return storagepostgres.SetRememberAttemptDiagnosticHoldStateTx(ctx, tx, spaceID, retained)
 }

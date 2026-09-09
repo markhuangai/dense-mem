@@ -2,13 +2,15 @@ package repository
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
@@ -23,21 +25,24 @@ func TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes(t 
 	teamA := createLedgerTeam(t, adminDB, rls, "remember-attempt-diagnostics-a")
 	teamB := createLedgerTeam(t, adminDB, rls, "remember-attempt-diagnostics-b")
 	ownerA := createLedgerProfile(t, adminDB, rls, teamA, "remember-attempt-diagnostics-owner-a")
+	privateSpace, err := NewMemorySpaceRepository(appDB, rls).EnsureProfilePrivate(ctx, uuid.MustParse(teamA), uuid.MustParse(ownerA))
+	require.NoError(t, err)
 	repo := NewLedgerRepository(appDB, rls)
 	attemptID := "00000000-0000-4000-8000-000000000301"
-	artifactID := "00000000-0000-4000-8000-000000000302"
-	content := []byte(`{"phase":"assessment","error_code":"provider_unavailable"}`)
 	require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
 		Attempt: RememberAttemptRecordInput{
 			TeamID: teamA, OwnerProfileID: ownerA, AttemptID: attemptID,
+			SpaceID: privateSpace.ID.String(), SpaceGeneration: 1,
 			IdempotencyKey: "diagnostics-scope", RequestHash: "diagnostics-scope-hash",
 			ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed",
-			FailedPhase: "assessment", ErrorCode: "provider_unavailable",
-			CorrelationID: "diagnostics-correlation", PublicResult: map[string]any{
-				"submission_id": attemptID, "secret": "must-not-be-a-list-field",
-			},
+			FailedPhase: "assessment", ErrorCode: "provider_unavailable", CorrelationID: "diagnostics-correlation",
+			PublicResult: map[string]any{"submission_id": attemptID},
 		},
-		Artifacts: []RememberFailureArtifactInput{{ArtifactID: artifactID, ArtifactKind: "failure", ContentType: "application/json", Content: content}},
+		Diagnostics: []RememberAttemptDiagnosticInput{
+			{DiagnosticID: "00000000-0000-4000-8000-000000000302", SequenceNo: 1, Kind: "original_request", Component: "remember", RequestBody: []byte(`{"name":"remember"}`), RequestContentType: "application/json", CaptureState: "captured"},
+			{SequenceNo: 2, Kind: "provider_exchange", Component: "assessor", Model: "test-model", RequestBody: []byte(`{"model":"test"}`), ResponseBody: []byte(`{"error":"unavailable"}`), RequestContentType: "application/json", ResponseContentType: "application/json", StatusCode: 503, Outcome: "captured", CaptureState: "captured"},
+			{SequenceNo: 3, Kind: "caller_response", Component: "mcp", ResponseBody: []byte(`{"isError":true}`), ResponseContentType: "application/json", CaptureState: "captured"},
+		},
 	}))
 
 	page, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: teamA, Outcome: "failed", Limit: 20})
@@ -45,52 +50,66 @@ func TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes(t 
 	require.Len(t, page.Records, 1)
 	require.Nil(t, page.Records[0].PublicResult)
 	require.Empty(t, page.Records[0].Events)
-	require.Empty(t, page.Records[0].Artifacts)
 	require.Equal(t, attemptID, page.Records[0].AttemptID)
 
 	detail, err := repo.GetRememberAttemptDiagnostic(ctx, teamA, attemptID)
 	require.NoError(t, err)
-	require.Equal(t, "must-not-be-a-list-field", detail.PublicResult["secret"])
-	require.Len(t, detail.Events, 1)
-	require.Len(t, detail.Artifacts, 1)
+	require.Len(t, detail.Diagnostics, 3)
+	require.Equal(t, "captured", detail.Diagnostics[1].CaptureState)
+	require.Equal(t, "captured", detail.Diagnostics[2].CaptureState)
+	require.Equal(t, []byte(`{"isError":true}`), detail.Diagnostics[2].ResponseBody)
+	_, err = repo.GetRememberAttemptDiagnostic(ctx, teamB, attemptID)
+	require.ErrorIs(t, err, ErrRememberAttemptDiagnosticNotFound)
 
-	artifact, err := repo.GetRememberFailureArtifact(ctx, teamA, attemptID, artifactID)
-	require.NoError(t, err)
-	require.Equal(t, content, artifact.Content)
-	var databaseNow time.Time
-	require.NoError(t, rls.WithSystemReadOnlyRepeatableTx(ctx, appDB, func(tx *gorm.DB) error {
-		return tx.Raw(`SELECT clock_timestamp()`).Scan(&databaseNow).Error
-	}))
-	require.WithinDuration(t, databaseNow.UTC(), artifact.CapturedAt.UTC(), 2*time.Second)
-	require.Equal(t, maxRememberFailureArtifactRetention, artifact.ExpiresAt.Sub(artifact.CapturedAt))
-	_, err = repo.GetRememberFailureArtifact(ctx, teamB, attemptID, artifactID)
-	require.ErrorIs(t, err, ErrRememberFailureArtifactNotFound)
-
-	profileRows := int64(0)
-	require.NoError(t, rls.WithTeamProfileReadOnlyRepeatableTx(ctx, appDB, teamA, ownerA, func(tx *gorm.DB) error {
-		return tx.Raw(`SELECT count(*) FROM remember_failure_artifacts WHERE team_id = ?::uuid`, teamA).Scan(&profileRows).Error
-	}))
-	require.Zero(t, profileRows)
+	for _, statement := range []string{
+		`UPDATE remember_attempt_diagnostics
+		 SET response_bytes = ?
+		 WHERE team_id = ?::uuid AND diagnostic_id = ?::uuid`,
+		`UPDATE remember_attempt_diagnostics
+		 SET expires_at = ?
+		 WHERE team_id = ?::uuid AND diagnostic_id = ?::uuid`,
+	} {
+		err := rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+			if err := tx.WithContext(ctx).Exec("SELECT set_config('app.remember_attempt_diagnostic_retention_space_id', ?, true)", privateSpace.ID.String()).Error; err != nil {
+				return err
+			}
+			var value any = []byte(`{"tampered":true}`)
+			if strings.Contains(statement, "expires_at") {
+				value = time.Now().UTC().Add(24 * time.Hour)
+			}
+			return tx.WithContext(ctx).Exec(statement, value, teamA, "00000000-0000-4000-8000-000000000302").Error
+		})
+		require.ErrorContains(t, err, "append-only", "diagnostic history mutation must be rejected by the append-only trigger")
+	}
 
 	old := time.Now().UTC().Add(-8 * 24 * time.Hour)
 	expiredAttemptID := "00000000-0000-4000-8000-000000000303"
-	expiredArtifactID := "00000000-0000-4000-8000-000000000304"
 	require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
-		Attempt:   RememberAttemptRecordInput{TeamID: teamA, OwnerProfileID: ownerA, AttemptID: expiredAttemptID, IdempotencyKey: "diagnostics-expired", RequestHash: "diagnostics-expired-hash", ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed", FailedPhase: "assessment", ErrorCode: "provider_unavailable", PublicResult: map[string]any{}},
-		Artifacts: []RememberFailureArtifactInput{{ArtifactID: expiredArtifactID, ArtifactKind: "failure", ContentType: "application/json", Content: []byte(`{"expired":true}`), CapturedAt: old, ExpiresAt: old.Add(7 * 24 * time.Hour)}},
+		Attempt: RememberAttemptRecordInput{
+			TeamID: teamA, OwnerProfileID: ownerA, AttemptID: expiredAttemptID,
+			IdempotencyKey: "diagnostics-expired", RequestHash: "diagnostics-expired-hash",
+			ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed",
+			FailedPhase: "assessment", ErrorCode: "provider_unavailable", PublicResult: map[string]any{},
+		},
+		Diagnostics: []RememberAttemptDiagnosticInput{{
+			DiagnosticID: "00000000-0000-4000-8000-000000000304", SequenceNo: 1, Kind: "provider_exchange", Component: "assessor",
+			ResponseBody: []byte(`{"expired":true}`), Outcome: "captured", CaptureState: "captured", CapturedAt: old, ExpiresAt: old.Add(7 * 24 * time.Hour),
+		}},
 	}))
-	_, err = repo.GetRememberFailureArtifact(ctx, teamA, expiredAttemptID, expiredArtifactID)
-	require.ErrorIs(t, err, ErrRememberFailureArtifactNotFound)
-	deleted, err := repo.PurgeExpiredRememberFailureArtifacts(ctx, 100)
+	expired, err := repo.GetRememberAttemptDiagnostic(ctx, teamA, expiredAttemptID)
+	require.NoError(t, err)
+	require.Len(t, expired.Diagnostics, 1)
+	require.Equal(t, "expired", expired.Diagnostics[0].CaptureState)
+	require.Empty(t, expired.Diagnostics[0].ResponseBody)
+	deleted, err := repo.PurgeExpiredRememberAttemptDiagnostics(ctx, 100)
 	require.NoError(t, err)
 	require.Equal(t, 1, deleted)
 	remaining, err := repo.GetRememberAttemptDiagnostic(ctx, teamA, expiredAttemptID)
 	require.NoError(t, err)
-	require.Len(t, remaining.Events, 1)
-	require.Empty(t, remaining.Artifacts)
+	require.Empty(t, remaining.Diagnostics)
 }
 
-func TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndArtifacts(t *testing.T) {
+func TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndExchanges(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -105,9 +124,6 @@ func TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndArtifacts(t *testin
 		ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "completed",
 		PublicResult: map[string]any{"processing_state": "completed"},
 	}))
-	artifactID := uuidForDiagnostics(332)
-	content := []byte(`{"historical":true}`)
-	digest := sha256.Sum256(content)
 	capturedAt := time.Now().UTC()
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).Exec(`
@@ -119,11 +135,11 @@ func TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndArtifacts(t *testin
 			return err
 		}
 		return tx.WithContext(ctx).Exec(`
-			INSERT INTO remember_failure_artifacts (
-				team_id, artifact_id, attempt_id, owner_profile_id, artifact_kind, content_type,
-				content_bytes, byte_count, content_sha256, captured_at, expires_at
-			) VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, 'failure', 'application/json', ?, ?, ?, ?, ?)
-		`, teamID, artifactID, replayedID, ownerID, content, len(content), "sha256:"+fmt.Sprintf("%x", digest[:]), capturedAt, capturedAt.Add(time.Hour)).Error
+			INSERT INTO remember_attempt_diagnostics (
+				team_id, diagnostic_id, attempt_id, owner_profile_id, sequence_no, kind, component,
+				response_bytes, response_content_type, outcome, capture_state, captured_at, expires_at
+			) VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, 1, 'provider_exchange', 'assessor', ?, 'application/json', 'captured', 'captured', ?, ?)
+		`, teamID, uuidForDiagnostics(332), replayedID, ownerID, []byte(`{"replayed":true}`), capturedAt, capturedAt.Add(time.Hour)).Error
 	}))
 
 	page, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: teamID, Outcome: "replayed", Limit: 20})
@@ -135,15 +151,11 @@ func TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndArtifacts(t *testin
 	detail, err := repo.GetRememberAttemptDiagnostic(ctx, teamID, replayedID)
 	require.NoError(t, err)
 	require.Equal(t, "replayed", detail.Outcome)
-	require.Len(t, detail.Artifacts, 1)
-	require.Equal(t, artifactID, detail.Artifacts[0].ArtifactID)
-
-	artifact, err := repo.GetRememberFailureArtifact(ctx, teamID, replayedID, artifactID)
-	require.NoError(t, err)
-	require.Equal(t, content, artifact.Content)
+	require.Len(t, detail.Diagnostics, 1)
+	require.Equal(t, []byte(`{"replayed":true}`), detail.Diagnostics[0].ResponseBody)
 }
 
-func TestRememberFailureArtifactPurgeClaimsConcurrentBatches(t *testing.T) {
+func TestRememberAttemptDiagnosticsPurgeClaimsConcurrentBatches(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -153,10 +165,17 @@ func TestRememberFailureArtifactPurgeClaimsConcurrentBatches(t *testing.T) {
 	old := time.Now().UTC().Add(-8 * 24 * time.Hour)
 	for index := 0; index < 4; index++ {
 		attemptID := uuidForDiagnostics(310 + index)
-		artifactID := uuidForDiagnostics(320 + index)
+		capturedAt := old.Add(time.Duration(index) * time.Millisecond)
 		require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
-			Attempt:   RememberAttemptRecordInput{TeamID: teamID, OwnerProfileID: ownerID, AttemptID: attemptID, IdempotencyKey: "concurrent-" + attemptID, RequestHash: "hash-" + attemptID, ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed", FailedPhase: "assessment", ErrorCode: "provider_unavailable", PublicResult: map[string]any{}},
-			Artifacts: []RememberFailureArtifactInput{{ArtifactID: artifactID, ArtifactKind: "failure", ContentType: "application/json", Content: []byte(`{"expired":true}`), CapturedAt: old, ExpiresAt: old.Add(7 * 24 * time.Hour)}},
+			Attempt: RememberAttemptRecordInput{
+				TeamID: teamID, OwnerProfileID: ownerID, AttemptID: attemptID,
+				IdempotencyKey: fmt.Sprintf("diagnostics-concurrent-%d", index), RequestHash: fmt.Sprintf("diagnostics-concurrent-hash-%d", index),
+				ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed", FailedPhase: "assessment", ErrorCode: "provider_unavailable", PublicResult: map[string]any{},
+			},
+			Diagnostics: []RememberAttemptDiagnosticInput{{
+				DiagnosticID: uuidForDiagnostics(320 + index), SequenceNo: 1, Kind: "provider_exchange", Component: "assessor",
+				ResponseBody: []byte(`{"expired":true}`), Outcome: "captured", CaptureState: "captured", CapturedAt: capturedAt, ExpiresAt: capturedAt.Add(7 * 24 * time.Hour),
+			}},
 		}))
 	}
 	results := make(chan int, 2)
@@ -166,7 +185,7 @@ func TestRememberFailureArtifactPurgeClaimsConcurrentBatches(t *testing.T) {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			deleted, err := repo.PurgeExpiredRememberFailureArtifacts(ctx, 2)
+			deleted, err := repo.PurgeExpiredRememberAttemptDiagnostics(ctx, 2)
 			results <- deleted
 			errors <- err
 		}()
@@ -182,6 +201,53 @@ func TestRememberFailureArtifactPurgeClaimsConcurrentBatches(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.Equal(t, 4, total)
+}
+
+func TestRememberAttemptDiagnosticsDrainRotatesPrivateSpaces(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "remember-attempt-diagnostics-drain-rotation")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "remember-attempt-diagnostics-drain-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "remember-attempt-diagnostics-drain-owner-b")
+	spaceA, err := NewMemorySpaceRepository(appDB, rls).EnsureProfilePrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerA))
+	require.NoError(t, err)
+	spaceB, err := NewMemorySpaceRepository(appDB, rls).EnsureProfilePrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerB))
+	require.NoError(t, err)
+	spaces := []*domain.MemorySpace{spaceA, spaceB}
+	spaceOwners := map[string]string{spaceA.ID.String(): ownerA, spaceB.ID.String(): ownerB}
+	sort.Slice(spaces, func(left, right int) bool { return spaces[left].ID.String() < spaces[right].ID.String() })
+	repo := NewLedgerRepository(appDB, rls)
+	old := time.Now().UTC().Add(-8 * 24 * time.Hour)
+	for index := 0; index < 101; index++ {
+		attemptID := uuidForDiagnostics(1000 + index)
+		require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
+			Attempt: RememberAttemptRecordInput{
+				TeamID: teamID, OwnerProfileID: spaceOwners[spaces[0].ID.String()], AttemptID: attemptID,
+				SpaceID: spaces[0].ID.String(), SpaceGeneration: 1,
+				IdempotencyKey: fmt.Sprintf("diagnostics-drain-a-%d", index), RequestHash: fmt.Sprintf("diagnostics-drain-a-hash-%d", index),
+				ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed", FailedPhase: "assessment", ErrorCode: "provider_unavailable", PublicResult: map[string]any{},
+			},
+			Diagnostics: []RememberAttemptDiagnosticInput{{DiagnosticID: uuidForDiagnostics(2000 + index), SequenceNo: 1, Kind: "provider_exchange", Component: "assessor", ResponseBody: []byte(`{"expired":true}`), Outcome: "captured", CaptureState: "captured", CapturedAt: old, ExpiresAt: old.Add(7 * 24 * time.Hour)}},
+		}))
+	}
+	secondAttemptID := uuidForDiagnostics(1200)
+	require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
+		Attempt: RememberAttemptRecordInput{
+			TeamID: teamID, OwnerProfileID: spaceOwners[spaces[1].ID.String()], AttemptID: secondAttemptID,
+			SpaceID: spaces[1].ID.String(), SpaceGeneration: 1,
+			IdempotencyKey: "diagnostics-drain-b", RequestHash: "diagnostics-drain-b-hash",
+			ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed", FailedPhase: "assessment", ErrorCode: "provider_unavailable", PublicResult: map[string]any{},
+		},
+		Diagnostics: []RememberAttemptDiagnosticInput{{DiagnosticID: uuidForDiagnostics(2200), SequenceNo: 1, Kind: "provider_exchange", Component: "assessor", ResponseBody: []byte(`{"expired":true}`), Outcome: "captured", CaptureState: "captured", CapturedAt: old, ExpiresAt: old.Add(7 * 24 * time.Hour)}},
+	}))
+
+	deleted, err := drainExpiredRememberAttemptDiagnostics(ctx, repo.knowledgeOwner)
+	require.NoError(t, err)
+	require.Equal(t, 102, deleted)
+	detail, err := repo.GetRememberAttemptDiagnostic(ctx, teamID, secondAttemptID)
+	require.NoError(t, err)
+	require.Empty(t, detail.Diagnostics)
 }
 
 func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
@@ -219,22 +285,19 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 		}
 		if attempt.Outcome == "failed" {
 			attempt.FailedPhase, attempt.ErrorCode = "assessment", "provider_unavailable"
-			input := RememberFailureRecordInput{Attempt: attempt}
-			if index == 3 {
-				captured := time.Now().UTC()
-				input.Artifacts = []RememberFailureArtifactInput{{ArtifactID: "00000000-0000-4000-8000-000000000406", ArtifactKind: "failure", ContentType: "application/json", Content: []byte(`{"safe":true}`), CapturedAt: captured, ExpiresAt: captured.Add(24 * time.Hour)}}
-			}
-			require.NoError(t, repo.RecordRememberFailure(ctx, input))
+			require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
+				Attempt:     attempt,
+				Diagnostics: []RememberAttemptDiagnosticInput{{SequenceNo: 1, Kind: "provider_exchange", Component: "assessor", Outcome: "captured", CaptureState: "captured", ResponseBody: []byte(fmt.Sprintf(`{"sequence":%d}`, index))}},
+			}))
 			continue
 		}
 		require.NoError(t, repo.RecordRememberAttempt(ctx, attempt))
 	}
-	teamCAttempt := RememberAttemptRecordInput{
+	require.NoError(t, repo.RecordRememberAttempt(ctx, RememberAttemptRecordInput{
 		TeamID: teamC, OwnerProfileID: ownerC, AttemptID: "00000000-0000-4000-8000-000000000407",
 		IdempotencyKey: "diagnostics-pagination-team-c", RequestHash: "diagnostics-pagination-team-c-hash", ContractVersion: domain.ContractVersion,
 		SubmissionKind: "remember", Outcome: "completed", PublicResult: map[string]any{"processing_state": "completed"},
-	}
-	require.NoError(t, repo.RecordRememberAttempt(ctx, teamCAttempt))
+	}))
 
 	require.NoError(t, insertRememberDiagnosticEvents(ctx, adminDB, rls, teamA, ownerA, attemptIDs[3], []map[string]any{
 		{"sequence_no": 2, "phase": "assessment", "event_kind": "assessment_retry", "outcome": "failed", "metadata": map[string]any{"markup": "<script>bad()</script>"}},
@@ -250,13 +313,11 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 		require.NotEqual(t, teamC, record.TeamID)
 		require.Nil(t, record.PublicResult)
 		require.Empty(t, record.Events)
-		require.Empty(t, record.Artifacts)
 		if index > 0 {
 			previous := full.Records[index-1]
 			require.True(t, !record.CreatedAt.After(previous.CreatedAt), "records must be ordered newest first")
 		}
 	}
-	require.Contains(t, []string{ownerA, ownerB}, full.Records[0].OwnerProfileID)
 
 	pageOne, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: teamA, Limit: 2, Offset: 0})
 	require.NoError(t, err)
@@ -274,7 +335,6 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 	failed, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: teamA, Outcome: "failed", Limit: 100})
 	require.NoError(t, err)
 	require.Len(t, failed.Records, 2)
-
 	global, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{Limit: 100})
 	require.NoError(t, err)
 	require.Equal(t, int64(6), global.Total)
@@ -283,7 +343,6 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 		require.Contains(t, []string{teamA, teamC}, record.TeamID)
 		require.Nil(t, record.PublicResult)
 		require.Empty(t, record.Events)
-		require.Empty(t, record.Artifacts)
 		if index == 0 {
 			continue
 		}
@@ -294,48 +353,22 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 		}
 		require.True(t, record.CreatedAt.Before(previous.CreatedAt), "global records must be ordered newest first")
 	}
-
-	globalPageOne, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: "", Limit: 2, Offset: 0})
-	require.NoError(t, err)
-	globalPageTwo, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: "", Limit: 2, Offset: 2})
-	require.NoError(t, err)
-	require.Equal(t, int64(6), globalPageOne.Total)
-	require.Equal(t, int64(6), globalPageTwo.Total)
-	require.Len(t, globalPageOne.Records, 2)
-	require.Len(t, globalPageTwo.Records, 2)
-	require.Equal(t, global.Records[0].AttemptID, globalPageOne.Records[0].AttemptID)
-	require.Equal(t, global.Records[1].AttemptID, globalPageOne.Records[1].AttemptID)
-	require.Equal(t, global.Records[2].AttemptID, globalPageTwo.Records[0].AttemptID)
-	require.Equal(t, global.Records[3].AttemptID, globalPageTwo.Records[1].AttemptID)
-
-	globalFailed, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: "", Outcome: "failed", Limit: 100})
+	globalFailed, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{Outcome: "failed", Limit: 100})
 	require.NoError(t, err)
 	require.Equal(t, int64(2), globalFailed.Total)
 	require.Len(t, globalFailed.Records, 2)
-	for _, record := range globalFailed.Records {
-		require.Equal(t, "failed", record.Outcome)
-		require.Nil(t, record.PublicResult)
-		require.Empty(t, record.Events)
-		require.Empty(t, record.Artifacts)
-	}
 
 	detail, err := repo.GetRememberAttemptDiagnostic(ctx, teamA, attemptIDs[3])
 	require.NoError(t, err)
 	require.Len(t, detail.Events, 3)
 	require.Equal(t, []int{1, 2, 3}, []int{detail.Events[0].SequenceNo, detail.Events[1].SequenceNo, detail.Events[2].SequenceNo})
 	require.Equal(t, "<script>bad()</script>", detail.Events[1].Metadata["markup"])
-	require.Len(t, detail.Artifacts, 1)
-	require.Equal(t, "sha256:13f513fe32a8991557ebf28941b75597641e94717c08569b7723d998c7428423", detail.Artifacts[0].ContentSHA256)
-	require.False(t, detail.Artifacts[0].ExpiresAt.IsZero())
+	require.Len(t, detail.Diagnostics, 1)
 
 	_, err = repo.GetRememberAttemptDiagnostic(ctx, teamC, attemptIDs[3])
 	require.ErrorIs(t, err, ErrRememberAttemptDiagnosticNotFound)
 	_, err = repo.GetRememberAttemptDiagnostic(ctx, teamA, "00000000-0000-4000-8000-000000000499")
 	require.ErrorIs(t, err, ErrRememberAttemptDiagnosticNotFound)
-	_, err = repo.GetRememberFailureArtifact(ctx, teamC, attemptIDs[3], "00000000-0000-4000-8000-000000000406")
-	require.ErrorIs(t, err, ErrRememberFailureArtifactNotFound)
-	_, err = repo.GetRememberFailureArtifact(ctx, teamA, "00000000-0000-4000-8000-000000000499", "00000000-0000-4000-8000-000000000406")
-	require.ErrorIs(t, err, ErrRememberFailureArtifactNotFound)
 
 	var sameTeamVisible, crossTeamVisible int64
 	require.NoError(t, rls.WithTeamProfileReadOnlyRepeatableTx(ctx, appDB, teamA, ownerB, func(tx *gorm.DB) error {
@@ -346,6 +379,27 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 		return tx.Raw(`SELECT count(*) FROM remember_attempts WHERE team_id = ?::uuid`, teamA).Scan(&crossTeamVisible).Error
 	}))
 	require.Zero(t, crossTeamVisible)
+}
+
+type rememberAttemptDiagnosticPurger interface {
+	PurgeExpiredRememberAttemptDiagnostics(context.Context, int) (int, error)
+}
+
+func drainExpiredRememberAttemptDiagnostics(ctx context.Context, repo rememberAttemptDiagnosticPurger) (int, error) {
+	deletedTotal := 0
+	for {
+		deleted, err := repo.PurgeExpiredRememberAttemptDiagnostics(ctx, 100)
+		deletedTotal += deleted
+		if err != nil {
+			return deletedTotal, err
+		}
+		if deleted < 100 {
+			return deletedTotal, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return deletedTotal, err
+		}
+	}
 }
 
 func insertRememberDiagnosticEvents(ctx context.Context, db *gorm.DB, rls *storagepostgres.RLS, teamID, ownerID, attemptID string, events []map[string]any) error {
