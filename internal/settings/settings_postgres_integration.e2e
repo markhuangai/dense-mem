@@ -1,0 +1,203 @@
+package settings_test
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	tcnetwork "github.com/testcontainers/testcontainers-go/network"
+	"github.com/testcontainers/testcontainers-go/wait"
+	"gorm.io/gorm"
+
+	auditapp "github.com/markhuangai/dense-mem/internal/audit"
+	auditpostgres "github.com/markhuangai/dense-mem/internal/audit/postgres"
+	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/domain"
+	densehttp "github.com/markhuangai/dense-mem/internal/http"
+	settings "github.com/markhuangai/dense-mem/internal/settings"
+	settingspostgres "github.com/markhuangai/dense-mem/internal/settings/postgres"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
+)
+
+type settingsPostgresConfig struct{ dsn string }
+
+func (c settingsPostgresConfig) GetPostgresDSN() string { return c.dsn }
+
+func openSettingsPostgres(t *testing.T) (*gorm.DB, *storagepostgres.RLS, func()) {
+	t.Helper()
+	ctx := context.Background()
+	dsn := storagepostgres.GetTestDSN()
+	cleanupContainer := func() {}
+	if strings.TrimSpace(dsn) == "" {
+		if os.Getenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS") != "1" {
+			if os.Getenv("DENSE_MEM_REQUIRE_POSTGRES_TESTS") == "1" {
+				t.Fatal("Postgres is required for settings integration tests")
+			}
+			t.Skip("set DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 to run settings PostgreSQL integration tests")
+		}
+		options := []testcontainers.ContainerCustomizer{
+			tcpostgres.WithDatabase("testdb"),
+			tcpostgres.WithUsername("testuser"),
+			tcpostgres.WithPassword("testpass"),
+			testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(30 * time.Second)),
+		}
+		if networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK")); networkName != "" {
+			options = append(options, tcnetwork.WithNetworkName([]string{"postgres"}, networkName))
+		}
+		container, err := tcpostgres.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", options...)
+		require.NoError(t, err)
+		if networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK")); networkName != "" {
+			dsn = "postgres://testuser:testpass@postgres:5432/testdb?sslmode=disable"
+		} else {
+			dsn, err = container.ConnectionString(ctx, "sslmode=disable")
+			require.NoError(t, err)
+		}
+		cleanupContainer = func() { _ = container.Terminate(context.Background()) }
+	}
+	db, err := storagepostgres.Open(ctx, settingsPostgresConfig{dsn: dsn})
+	require.NoError(t, err)
+	migrator, err := storagepostgres.NewMigrator(db)
+	require.NoError(t, err)
+	require.NoError(t, migrator.RunUp(ctx))
+	rls := storagepostgres.NewRLS()
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	return db, rls, func() {
+		_ = sqlDB.Close()
+		cleanupContainer()
+	}
+}
+
+func newSettingsApplications(t *testing.T) (*gorm.DB, *settings.AppConfigServiceImpl, *settings.SecurityServiceImpl, func()) {
+	t.Helper()
+	db, rls, cleanup := openSettingsPostgres(t)
+	appRepo := settingspostgres.NewAppConfigRepository(db, rls)
+	securityRepo := settingspostgres.NewSecurityRepository(db, rls)
+	audit := auditapp.New(auditpostgres.NewStore(db, rls))
+	return db, settings.NewAppConfigService(appRepo, audit), settings.NewSecurityService(securityRepo, audit), cleanup
+}
+
+func controlRequest(e http.Handler, method, path, token, body string, remoteIPs ...string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.RemoteAddr = "192.0.2.44:1234"
+	if len(remoteIPs) > 0 && strings.TrimSpace(remoteIPs[0]) != "" {
+		req.RemoteAddr = strings.TrimSpace(remoteIPs[0]) + ":1234"
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestSettingsControlPortalPositiveAndDurableAudit(t *testing.T) {
+	db, appService, securityService, cleanup := newSettingsApplications(t)
+	defer cleanup()
+
+	current, err := appService.GetGeneralSettings(context.Background())
+	require.NoError(t, err)
+	defer func() {
+		_, _ = appService.UpdateGeneralSettings(context.Background(), map[string]string{domain.AppConfigTimezone: current.Items[0].EffectiveValue}, "system", "", "settings-e2e-restore")
+	}()
+
+	e, err := densehttp.NewControlPortalServerWithMetricsAndTelemetry(
+		&config.Config{ControlPortalToken: "settings-token"}, nil, nil, nil,
+		densehttp.ControlPortalTelemetry{Config: appService}, densehttp.HealthConfig{}, nil, securityService,
+	)
+	require.NoError(t, err)
+
+	read := controlRequest(e, http.MethodGet, "/control/api/config/general", "settings-token", "")
+	require.Equal(t, http.StatusOK, read.Code)
+
+	updated := controlRequest(e, http.MethodPatch, "/control/api/config/general", "settings-token", `{"items":[{"key":"APP_TIMEZONE","value":"UTC"}]}`)
+	require.Equal(t, http.StatusOK, updated.Code)
+	require.Contains(t, updated.Body.String(), `"effective_value":"UTC"`)
+
+	reloaded, err := settings.NewAppConfigService(settingspostgres.NewAppConfigRepository(db, storagepostgres.NewRLS()), nil).GeneralRuntimeConfig(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "UTC", reloaded.Timezone)
+
+	var auditCount int64
+	db.Raw("SELECT count(*) FROM audit_log WHERE operation = $1 AND entity_id = $2", "APP_CONFIG_UPDATE", "general").Scan(&auditCount)
+	require.GreaterOrEqual(t, auditCount, int64(1))
+}
+
+func TestSettingsControlPortalRejectsUnauthorizedAndProtectedUpdates(t *testing.T) {
+	_, appService, securityService, cleanup := newSettingsApplications(t)
+	defer cleanup()
+	e, err := densehttp.NewControlPortalServerWithMetricsAndTelemetry(
+		&config.Config{ControlPortalToken: "settings-token"}, nil, nil, nil,
+		densehttp.ControlPortalTelemetry{Config: appService}, densehttp.HealthConfig{}, nil, securityService,
+	)
+	require.NoError(t, err)
+
+	unauthorized := controlRequest(e, http.MethodGet, "/control/api/config/general", "wrong-token", "")
+	require.Equal(t, http.StatusUnauthorized, unauthorized.Code)
+	deniedUpdate := controlRequest(e, http.MethodPatch, "/control/api/config/general", "wrong-token", `{"items":[{"key":"APP_TIMEZONE","value":"UTC"}]}`)
+	require.Equal(t, http.StatusUnauthorized, deniedUpdate.Code)
+
+	protected := controlRequest(e, http.MethodPatch, "/control/api/config/general", "settings-token", `{"items":[{"key":"update_time","value":"forged"}]}`)
+	require.Equal(t, http.StatusUnprocessableEntity, protected.Code)
+	require.NotContains(t, protected.Body.String(), "forged")
+}
+
+func TestSecurityBanRoundTripAndDurableAudit(t *testing.T) {
+	db, appService, securityService, cleanup := newSettingsApplications(t)
+	defer cleanup()
+	ctx := context.Background()
+	original, err := securityService.GetSecuritySettings(ctx)
+	require.NoError(t, err)
+	defer func() {
+		_, _ = securityService.UpdateSecuritySettings(ctx, *original, "system", "", "settings-e2e-restore")
+	}()
+	e, err := densehttp.NewControlPortalServerWithMetricsAndTelemetry(
+		&config.Config{ControlPortalToken: "settings-token"}, nil, nil, nil,
+		densehttp.ControlPortalTelemetry{Config: appService}, densehttp.HealthConfig{}, nil, securityService,
+	)
+	require.NoError(t, err)
+
+	settingsUpdate := controlRequest(e, http.MethodPatch, "/control/api/security/settings", "settings-token", `{"enabled":true,"failure_threshold":2,"failure_window_seconds":600,"ban_duration_seconds":0}`)
+	require.Equal(t, http.StatusOK, settingsUpdate.Code)
+	firstFailure := controlRequest(e, http.MethodGet, "/control/api/config/general", "wrong-token", "")
+	require.Equal(t, http.StatusUnauthorized, firstFailure.Code)
+	secondFailure := controlRequest(e, http.MethodGet, "/control/api/config/general", "wrong-token", "")
+	require.Equal(t, http.StatusUnauthorized, secondFailure.Code)
+	blocked := controlRequest(e, http.MethodGet, "/control/api/config/general", "wrong-token", "")
+	require.Equal(t, http.StatusForbidden, blocked.Code)
+	active, err := securityService.CheckBan(ctx, "192.0.2.44")
+	require.NoError(t, err)
+	require.NotNil(t, active)
+	deleted := controlRequest(e, http.MethodDelete, "/control/api/security/bans/192.0.2.44", "settings-token", "", "192.0.2.45")
+	require.Equal(t, http.StatusOK, deleted.Code)
+	active, err = securityService.CheckBan(ctx, "192.0.2.44")
+	require.NoError(t, err)
+	require.Nil(t, active)
+	postResetFailure := controlRequest(e, http.MethodGet, "/control/api/config/general", "wrong-token", "")
+	require.Equal(t, http.StatusUnauthorized, postResetFailure.Code)
+	active, err = securityService.CheckBan(ctx, "192.0.2.44")
+	require.NoError(t, err)
+	require.Nil(t, active)
+	secondPostResetFailure := controlRequest(e, http.MethodGet, "/control/api/config/general", "wrong-token", "")
+	require.Equal(t, http.StatusUnauthorized, secondPostResetFailure.Code)
+	active, err = securityService.CheckBan(ctx, "192.0.2.44")
+	require.NoError(t, err)
+	require.NotNil(t, active)
+	cleanupBan := controlRequest(e, http.MethodDelete, "/control/api/security/bans/192.0.2.44", "settings-token", "", "192.0.2.45")
+	require.Equal(t, http.StatusOK, cleanupBan.Code)
+
+	var auditCount int64
+	db.Raw("SELECT count(*) FROM audit_log WHERE operation IN ($1, $2, $3)", "SECURITY_SETTINGS_UPDATE", "SECURITY_AUTO_BAN", "SECURITY_UNBAN").Scan(&auditCount)
+	require.GreaterOrEqual(t, auditCount, int64(3), fmt.Sprintf("expected durable security audit events, got %d", auditCount))
+}

@@ -1,5 +1,27 @@
 {
   "version": 1,
   "capability": "settings",
-  "cases": []
+  "cases": [
+    {
+      "id": "settings/TestSettingsControlPortalPositiveAndDurableAudit",
+      "package": "./internal/settings",
+      "run": "^TestSettingsControlPortalPositiveAndDurableAudit$",
+      "phase": "precheck",
+      "source": "internal/settings/settings_postgres_integration.e2e"
+    },
+    {
+      "id": "settings/TestSettingsControlPortalRejectsUnauthorizedAndProtectedUpdates",
+      "package": "./internal/settings",
+      "run": "^TestSettingsControlPortalRejectsUnauthorizedAndProtectedUpdates$",
+      "phase": "precheck",
+      "source": "internal/settings/settings_postgres_integration.e2e"
+    },
+    {
+      "id": "settings/TestSecurityBanRoundTripAndDurableAudit",
+      "package": "./internal/settings",
+      "run": "^TestSecurityBanRoundTripAndDurableAudit$",
+      "phase": "precheck",
+      "source": "internal/settings/settings_postgres_integration.e2e"
+    }
+  ]
 }

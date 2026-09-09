@@ -4,6 +4,22 @@
   "source_ownership": [
     {"path": "cmd/internal/serverapp/configuration_composition.go", "issue": 369},
     {"path": "cmd/internal/serverapp/security_composition.go", "issue": 369},
+    {"path": "internal/settings/app_config_mcp.go", "issue": 369},
+    {"path": "internal/settings/app_config_payload.go", "issue": 369},
+    {"path": "internal/settings/app_config_recall_feedback.go", "issue": 369},
+    {"path": "internal/settings/app_config_retention.go", "issue": 369},
+    {"path": "internal/settings/app_config_service.go", "issue": 369},
+    {"path": "internal/settings/app_config_service_audit_test.go", "issue": 369},
+    {"path": "internal/settings/app_config_service_test.go", "issue": 369},
+    {"path": "internal/settings/app_config_telemetry_pricing.go", "issue": 369},
+    {"path": "internal/settings/security_service.go", "issue": 369},
+    {"path": "internal/settings/security_service_test.go", "issue": 369},
+    {"path": "internal/settings/contract/ports.go", "issue": 369},
+    {"path": "internal/settings/postgres/app_config_repository.go", "issue": 369},
+    {"path": "internal/settings/postgres/app_config_repository_test.go", "issue": 369},
+    {"path": "internal/settings/postgres/security_repository.go", "issue": 369},
+    {"path": "internal/settings/postgres/security_repository_test.go", "issue": 369},
+    {"path": "internal/settings/postgres/security_repository_sqlmock_test.go", "issue": 369},
     {"path": "internal/repository/app_config_repository.go", "issue": 369},
     {"path": "internal/repository/security_repository.go", "issue": 369},
     {"path": "internal/repository/security_repository_test.go", "issue": 369},
@@ -13,14 +29,77 @@
     {"path": "internal/service/app_config_retention.go", "issue": 369},
     {"path": "internal/service/app_config_service.go", "issue": 369},
     {"path": "internal/service/app_config_service_audit_test.go", "issue": 369},
-    {"path": "internal/service/app_config_service_test.go", "issue": 369},
     {"path": "internal/service/app_config_telemetry_pricing.go", "issue": 369},
-    {"path": "internal/service/security_service.go", "issue": 369},
-    {"path": "internal/service/security_service_test.go", "issue": 369}
+    {"path": "internal/service/security_service.go", "issue": 369}
+    ,{"path": "internal/settings/settings_postgres_integration.e2e", "issue": 369}
   ],
   "completed_issues": [],
-  "go": {"units": []},
+  "go": {
+    "units": [
+      {"id": "github.com/markhuangai/dense-mem/internal/settings", "role": "application_api", "visibility": "public"},
+      {"id": "github.com/markhuangai/dense-mem/internal/settings/contract", "role": "port", "visibility": "public"},
+      {"id": "github.com/markhuangai/dense-mem/internal/settings/postgres", "role": "postgres_adapter", "visibility": "private"}
+    ]
+  },
   "browser": {"units": []},
   "exceptions": [],
+  "compatibility_bridges": [
+    {
+      "source_path": "internal/service/app_config_service.go",
+      "fields": ["AppConfigService", "AppConfigServiceImpl", "PrivateMemoryConfigService", "NewAppConfigService", "ErrInvalidAppConfig"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/access_composition.go", "symbol": "buildAccessApplication"},
+        {"path": "cmd/internal/serverapp/application_composition.go", "symbol": "buildApplicationBundle"},
+        {"path": "cmd/internal/serverapp/telemetry_composition.go", "symbol": "buildTelemetryApplication"},
+        {"path": "cmd/internal/serverapp/telemetry_features.go", "symbol": "configureTelemetryFeatures"},
+        {"path": "internal/http/control_portal.go", "symbol": "NewControlPortalServerWithMetricsAndTelemetry"},
+        {"path": "internal/http/control_portal_bindings.go", "symbol": "NewControlPortalServerWithCapabilityBindings"},
+        {"path": "internal/http/dreaming_effective.go", "symbol": "effectiveDreamingConfig"},
+        {"path": "internal/http/control_portal_config.go", "symbol": "controlPortalHandler.getGeneralConfig"},
+        {"path": "internal/http/private_memory.go", "symbol": "controlPortalHandler.getPrivateMemoryConfig"},
+        {"path": "internal/http/user_portal.go", "symbol": "userPortalHandler.mcpPublicBaseURL"},
+        {"path": "internal/http/scim_directory.go", "symbol": "RegisterDirectorySCIM"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/settings/app_config_service.go", "symbol": "NewAppConfigService"},
+      "removal_condition": "Remove the root service aliases after all settings consumers use the native application API."
+    },
+    {
+      "source_path": "internal/service/security_service.go",
+      "fields": ["SecurityService", "SecurityServiceImpl", "NewSecurityService", "ErrInvalidSecurityIP", "ErrInvalidSecuritySettings"],
+      "consumers": [
+        {"path": "internal/http/control_portal.go", "symbol": "NewControlPortalServerWithMetricsAndTelemetry"},
+        {"path": "internal/http/control_portal_bindings.go", "symbol": "NewControlPortalServerWithCapabilityBindings"},
+        {"path": "internal/http/control_portal_auth.go", "symbol": "controlPortalMiddleware"},
+        {"path": "internal/http/scim_directory.go", "symbol": "RegisterDirectorySCIM"},
+        {"path": "internal/http/middleware/auth_sso_test.go", "symbol": "TestAuthMiddleware_SSOSessionFailureIsAuditedAndRecorded"},
+        {"path": "internal/http/mcp_bindings.go", "symbol": "ProtectedDeps.withMCPBindings"},
+        {"path": "internal/http/router_protected.go", "symbol": "ProtectedDeps.GetSecurityService"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/settings/security_service.go", "symbol": "NewSecurityService"},
+      "removal_condition": "Remove the root service aliases after all security consumers use the native application API."
+    },
+    {
+      "source_path": "internal/repository/app_config_repository.go",
+      "fields": ["AppConfigRepository", "AppConfigRepositoryImpl", "NewAppConfigRepository"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/settings/postgres/app_config_repository.go", "symbol": "NewAppConfigRepository"},
+      "removal_condition": "Remove the repository facade after server composition constructs the native settings adapter directly."
+    },
+    {
+      "source_path": "internal/repository/security_repository.go",
+      "fields": ["SecurityRepository", "SecurityRepositoryImpl", "NewSecurityRepository"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/settings/postgres/security_repository.go", "symbol": "NewSecurityRepository"},
+      "removal_condition": "Remove the repository facade after server composition constructs the native settings adapter directly."
+    }
+  ],
   "workers": []
 }

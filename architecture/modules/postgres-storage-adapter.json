@@ -635,6 +635,12 @@
       "target": "github.com/markhuangai/dense-mem/internal/dream/postgres",
       "removal_issue": 382,
       "reason": "Dream repository methods and evaluation entry points remain bounded single-hop compatibility facades recorded in the Dream capability manifest; #382 removes the exception after retained consumers migrate to Dream-owned ports."
+    },
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/repository",
+      "target": "github.com/markhuangai/dense-mem/internal/settings/postgres",
+      "removal_issue": 382,
+      "reason": "The settings repository constructors remain bounded single-hop compatibility facades recorded in the settings capability manifest until final compatibility-facade cleanup."
     }
   ],
   "workers": [
