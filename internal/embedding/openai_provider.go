@@ -30,10 +30,9 @@ type OpenAIEmbeddingProvider struct {
 }
 
 const (
-	// A float32 JSON value is bounded well below 32 bytes. The transport cap
-	// covers the largest supported batch and vector dimension; diagnostics are
-	// projected and remain subject to the smaller operator-retention bounds.
-	openAIEmbeddingMaxValueBytes    = 32
+	// Providers may use long decimal spellings for values that decode to float32;
+	// this explicit JSON wire budget is independent of the in-memory type size.
+	openAIEmbeddingMaxValueBytes    = 128
 	openAIEmbeddingMaxResponseBytes = domain.MaxEmbeddingBatchDocuments*domain.MaxEmbeddingDimensions*openAIEmbeddingMaxValueBytes + (4 << 20)
 )
 

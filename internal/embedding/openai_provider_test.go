@@ -66,6 +66,20 @@ func TestOpenAIProviderAcceptsEmbeddingResponseAboveDiagnosticRetentionCap(t *te
 	require.NoError(t, err)
 }
 
+func TestOpenAIProviderAcceptsLongJSONNumberWithinWireBudget(t *testing.T) {
+	longNumber := "0." + strings.Repeat("1", 48)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"data":[{"embedding":[`+longNumber+`]}],"model":"embedding-model"}`)
+	}))
+	defer srv.Close()
+
+	p := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL: srv.URL, AIAPIKey: "key", AIEmbeddingModel: "embedding-model", AIEmbeddingDimensions: 1,
+	}, srv.Client())
+	_, _, err := p.Embed(context.Background(), "long number")
+	require.NoError(t, err)
+}
+
 func (r *truncatedResponseReader) Read(p []byte) (int, error) {
 	if r.done {
 		return 0, io.ErrUnexpectedEOF

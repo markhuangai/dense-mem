@@ -86,6 +86,15 @@ func TestProjectProviderExchangeBodiesRetainsOnlySafeResponseMetadata(t *testing
 	require.Nil(t, mustProjectionBodies(t, "other", nil, nil))
 }
 
+func TestProjectProviderExchangeBodiesBoundsProviderErrorIdentifiers(t *testing.T) {
+	response := []byte(`{"error":{"type":"invalid_request_error","code":"private evidence echoed by provider","param":"prompt secret"}}`)
+	_, projected := ProjectProviderExchangeBodies("other", nil, response)
+
+	require.Contains(t, string(projected), `"type":"invalid_request_error"`)
+	require.NotContains(t, string(projected), "private evidence echoed by provider")
+	require.NotContains(t, string(projected), "prompt secret")
+}
+
 func TestProjectProviderExchangeBodiesHandlesSparseAndNonStringFields(t *testing.T) {
 	request, response := ProjectProviderExchangeBodies("assessor", []byte(`{"temperature":0.5,"messages":[{"role":"user","content":null},{"role":"assistant","content":{"parts":[1]}}],"response_format":{"type":"json_schema","json_schema":{"strict":false}}}`), []byte(`{"choices":[{"finish_reason":"length","message":{"role":"assistant","content":null}}]}`))
 	require.Contains(t, string(request), `"temperature":0.5`)

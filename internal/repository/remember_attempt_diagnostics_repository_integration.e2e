@@ -79,7 +79,7 @@ func TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes(t 
 			}
 			return tx.WithContext(ctx).Exec(statement, value, teamA, "00000000-0000-4000-8000-000000000302").Error
 		})
-		require.Error(t, err, "diagnostic history mutation must be rejected")
+		require.ErrorContains(t, err, "append-only", "diagnostic history mutation must be rejected by the append-only trigger")
 	}
 
 	old := time.Now().UTC().Add(-8 * 24 * time.Hour)

@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
 const MaxProviderDiagnosticBodyBytes = 16 << 20
+
+const maxProviderDiagnosticIdentifierBytes = 128
 
 // ProviderExchange is a bounded, operator-only record of one outbound model
 // request and the response observed by the transport. It intentionally omits
@@ -281,7 +284,7 @@ func providerResponseMetadata(raw map[string]json.RawMessage) map[string]any {
 		if json.Unmarshal(errorRaw, &providerError) == nil {
 			errorProjection := map[string]any{}
 			for _, field := range []string{"type", "code", "param"} {
-				if value, ok := jsonStringField(providerError, field); ok {
+				if value, ok := jsonDiagnosticIdentifierField(providerError, field); ok {
 					errorProjection[field] = value
 				}
 			}
@@ -291,6 +294,21 @@ func providerResponseMetadata(raw map[string]json.RawMessage) map[string]any {
 		}
 	}
 	return projection
+}
+
+func jsonDiagnosticIdentifierField(fields map[string]json.RawMessage, name string) (string, bool) {
+	value, ok := jsonStringField(fields, name)
+	if !ok || len(value) == 0 || len(value) > maxProviderDiagnosticIdentifierBytes {
+		return "", false
+	}
+	for _, char := range []byte(value) {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || strings.ContainsRune("_-.:/[]", rune(char)) {
+			continue
+		}
+		return "", false
+	}
+	return value, true
 }
 
 func jsonStringField(fields map[string]json.RawMessage, name string) (string, bool) {
