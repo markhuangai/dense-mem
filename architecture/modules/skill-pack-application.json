@@ -2,8 +2,34 @@
   "schema_version": 1,
   "capability": "skill-pack-application",
   "source_ownership": [
-    {"path": "cmd/internal/serverapp/memorypack_composition.go", "issue": 375},
-    {"path": "internal/tools/registry/memory_pack_bindings.go", "issue": 375}
+    {
+      "path": "cmd/internal/serverapp/memorypack_composition.go",
+      "issue": 375
+    },
+    {
+      "path": "internal/tools/registry/memory_pack_bindings.go",
+      "issue": 375
+    },
+    {
+      "path": "internal/service/skillpackservice/memory_pack.go",
+      "issue": 375
+    },
+    {
+      "path": "internal/service/skillpackservice/memory_pack_artifact.go",
+      "issue": 375
+    },
+    {
+      "path": "internal/service/skillpackservice/memory_pack_export_test.go",
+      "issue": 375
+    },
+    {
+      "path": "internal/service/skillpackservice/memory_pack_helpers.go",
+      "issue": 375
+    },
+    {
+      "path": "internal/service/skillpackservice/memory_pack_types.go",
+      "issue": 375
+    }
   ],
   "completed_issues": [],
   "go": {

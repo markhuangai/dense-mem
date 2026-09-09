@@ -77,6 +77,14 @@ func NewLifecycleService(deps LifecycleDependencies) LifecycleService {
 	return &lifecycleService{semantic: deps.Semantic, evidence: deps.Evidence, executor: deps.CorrectionExecutor, embeddingTimeout: timeout}
 }
 
+func correctionStatusErrorForCode(rawCode string, fallbackState string) SubmissionStatusError {
+	if strings.TrimSpace(rawCode) == string(SubmissionErrorPolicyRejected) ||
+		(strings.TrimSpace(rawCode) == "" && strings.TrimSpace(fallbackState) == "rejected") {
+		return submissionStatusError(SubmissionErrorPolicyRejected)
+	}
+	return submissionStatusErrorForCode(rawCode, fallbackState)
+}
+
 type CorrectRelationshipRequest struct {
 	Action            string                                     `json:"action"`
 	RelationshipID    string                                     `json:"relationship_id,omitempty"`

@@ -1,0 +1,237 @@
+{
+  "version": 1,
+  "capability": "access",
+  "cases": [
+    {
+      "id": "repository/TestActiveTeamMutationGuardsAllowConcurrentTransactions",
+      "package": "./internal/repository",
+      "run": "^TestActiveTeamMutationGuardsAllowConcurrentTransactions$",
+      "phase": "precheck",
+      "source": "internal/repository/team_soft_delete_integration.e2e"
+    },
+    {
+      "id": "repository/TestActiveTeamMutationGuardSerializesWithTeamDelete",
+      "package": "./internal/repository",
+      "run": "^TestActiveTeamMutationGuardSerializesWithTeamDelete$",
+      "phase": "precheck",
+      "source": "internal/repository/team_soft_delete_integration.e2e"
+    },
+    {
+      "id": "repository/TestCanonicalCredentialLifecycleRetainsDisabledIdentity",
+      "package": "./internal/repository",
+      "run": "^TestCanonicalCredentialLifecycleRetainsDisabledIdentity$",
+      "phase": "precheck",
+      "source": "internal/repository/canonical_credentials_integration.e2e"
+    },
+    {
+      "id": "repository/TestCanonicalCredentialRevocationPreservesSharedActorAcrossTeams",
+      "package": "./internal/repository",
+      "run": "^TestCanonicalCredentialRevocationPreservesSharedActorAcrossTeams$",
+      "phase": "precheck",
+      "source": "internal/repository/canonical_credentials_integration.e2e"
+    },
+    {
+      "id": "repository/TestCanonicalCredentialScopesRespectMembershipGrants",
+      "package": "./internal/repository",
+      "run": "^TestCanonicalCredentialScopesRespectMembershipGrants$",
+      "phase": "precheck",
+      "source": "internal/repository/canonical_credentials_integration.e2e"
+    },
+    {
+      "id": "repository/TestCanonicalSSOOwnedCredentialCollectionAndSpaces",
+      "package": "./internal/repository",
+      "run": "^TestCanonicalSSOOwnedCredentialCollectionAndSpaces$",
+      "phase": "precheck",
+      "source": "internal/repository/canonical_credentials_integration.e2e"
+    },
+    {
+      "id": "repository/TestDeleteForTeamRetiresPromotedSSOCredentialPrivateSpace",
+      "package": "./internal/repository",
+      "run": "^TestDeleteForTeamRetiresPromotedSSOCredentialPrivateSpace$",
+      "phase": "precheck",
+      "source": "internal/repository/canonical_credentials_integration.e2e"
+    },
+    {
+      "id": "repository/TestDeleteForTeamWithAuditCommitsBeforePrivateErasureQueue",
+      "package": "./internal/repository",
+      "run": "^TestDeleteForTeamWithAuditCommitsBeforePrivateErasureQueue$",
+      "phase": "precheck",
+      "source": "internal/repository/canonical_credentials_integration.e2e"
+    },
+    {
+      "id": "repository/TestDirectoryCredentialsAndProviderRetirementRevokeOAuthAccess",
+      "package": "./internal/repository",
+      "run": "^TestDirectoryCredentialsAndProviderRetirementRevokeOAuthAccess$",
+      "phase": "precheck",
+      "source": "internal/repository/directory_identity_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestDirectoryGroupAndMembershipUpsertIsAtomic",
+      "package": "./internal/repository",
+      "run": "^TestDirectoryGroupAndMembershipUpsertIsAtomic$",
+      "phase": "precheck",
+      "source": "internal/repository/directory_identity_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestDirectoryPageQueriesAreScopedAndRejectDuplicateCreates",
+      "package": "./internal/repository",
+      "run": "^TestDirectoryPageQueriesAreScopedAndRejectDuplicateCreates$",
+      "phase": "precheck",
+      "source": "internal/repository/directory_identity_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestDirectoryReconcileCreatesAndArchivesOnlyDirectoryManagedTeam",
+      "package": "./internal/repository",
+      "run": "^TestDirectoryReconcileCreatesAndArchivesOnlyDirectoryManagedTeam$",
+      "phase": "precheck",
+      "source": "internal/repository/directory_identity_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestDirectoryReconcileFenceAndDisableRetireOnlyDirectoryGrants",
+      "package": "./internal/repository",
+      "run": "^TestDirectoryReconcileFenceAndDisableRetireOnlyDirectoryGrants$",
+      "phase": "precheck",
+      "source": "internal/repository/directory_identity_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSSOListMappingsExcludesRetiredMappings",
+      "package": "./internal/repository",
+      "run": "^TestSSOListMappingsExcludesRetiredMappings$",
+      "phase": "precheck",
+      "source": "internal/repository/directory_identity_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSSOProviderProtectedResourceConfigRoundTripAndStrictRead",
+      "package": "./internal/repository",
+      "run": "^TestSSOProviderProtectedResourceConfigRoundTripAndStrictRead$",
+      "phase": "precheck",
+      "source": "internal/repository/sso_oauth_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSSOProviderProtectedResourceDefaultIsDormant",
+      "package": "./internal/repository",
+      "run": "^TestSSOProviderProtectedResourceDefaultIsDormant$",
+      "phase": "precheck",
+      "source": "internal/repository/sso_oauth_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSSOProviderProtectedResourceIssuerUniquenessIsAtomic",
+      "package": "./internal/repository",
+      "run": "^TestSSOProviderProtectedResourceIssuerUniquenessIsAtomic$",
+      "phase": "precheck",
+      "source": "internal/repository/sso_oauth_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSSOProviderProtectedResourceOmittedUpdatePreservesConcurrentConfig",
+      "package": "./internal/repository",
+      "run": "^TestSSOProviderProtectedResourceOmittedUpdatePreservesConcurrentConfig$",
+      "phase": "precheck",
+      "source": "internal/repository/sso_oauth_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSSOProviderProtectedResourceProfileLimitIsAtomic",
+      "package": "./internal/repository",
+      "run": "^TestSSOProviderProtectedResourceProfileLimitIsAtomic$",
+      "phase": "precheck",
+      "source": "internal/repository/sso_oauth_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSSORuntimeEntitlementsExcludeArchivedTeams",
+      "package": "./internal/repository",
+      "run": "^TestSSORuntimeEntitlementsExcludeArchivedTeams$",
+      "phase": "precheck",
+      "source": "internal/repository/team_soft_delete_integration.e2e"
+    },
+    {
+      "id": "repository/TestTeamHardDeletePreservesAuditRowWhenMemorySpaceIsRemoved",
+      "package": "./internal/repository",
+      "run": "^TestTeamHardDeletePreservesAuditRowWhenMemorySpaceIsRemoved$",
+      "phase": "precheck",
+      "source": "internal/repository/team_soft_delete_integration.e2e"
+    },
+    {
+      "id": "repository/TestTeamHardDeleteRemovesEmptyTeamMemorySpaceCatalog",
+      "package": "./internal/repository",
+      "run": "^TestTeamHardDeleteRemovesEmptyTeamMemorySpaceCatalog$",
+      "phase": "precheck",
+      "source": "internal/repository/team_soft_delete_integration.e2e"
+    },
+    {
+      "id": "repository/TestTeamRepositoryJSONBMapsRoundTrip",
+      "package": "./internal/repository",
+      "run": "^TestTeamRepositoryJSONBMapsRoundTrip$",
+      "phase": "precheck",
+      "source": "internal/repository/team_repository.e2e"
+    },
+    {
+      "id": "repository/TestTeamRepositoryNilJSONBMapsReadAsEmptyObjects",
+      "package": "./internal/repository",
+      "run": "^TestTeamRepositoryNilJSONBMapsReadAsEmptyObjects$",
+      "phase": "precheck",
+      "source": "internal/repository/team_repository.e2e"
+    },
+    {
+      "id": "repository/TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork",
+      "package": "./internal/repository",
+      "run": "^TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork$",
+      "phase": "precheck",
+      "source": "internal/repository/team_soft_delete_integration.e2e"
+    },
+    {
+      "id": "repository/TestUserPortalSessionsEnforceSystemRLSAndProfileLifecycle",
+      "package": "./internal/repository",
+      "run": "^TestUserPortalSessionsEnforceSystemRLSAndProfileLifecycle$",
+      "phase": "precheck",
+      "source": "internal/repository/user_portal_session_repository_integration.e2e"
+    },
+    {
+      "id": "service/TestTeamServiceCreate",
+      "package": "./internal/service",
+      "run": "^TestTeamServiceCreate$",
+      "phase": "precheck",
+      "source": "internal/service/team_service.e2e"
+    },
+    {
+      "id": "service/TestTeamServiceCreateDuplicateName",
+      "package": "./internal/service",
+      "run": "^TestTeamServiceCreateDuplicateName$",
+      "phase": "precheck",
+      "source": "internal/service/team_service.e2e"
+    },
+    {
+      "id": "service/TestTeamServiceDelete",
+      "package": "./internal/service",
+      "run": "^TestTeamServiceDelete$",
+      "phase": "precheck",
+      "source": "internal/service/team_service.e2e"
+    },
+    {
+      "id": "service/TestTeamServiceDeleteRevokesActiveKeys",
+      "package": "./internal/service",
+      "run": "^TestTeamServiceDeleteRevokesActiveKeys$",
+      "phase": "precheck",
+      "source": "internal/service/team_service.e2e"
+    },
+    {
+      "id": "service/TestTeamServiceGet",
+      "package": "./internal/service",
+      "run": "^TestTeamServiceGet$",
+      "phase": "precheck",
+      "source": "internal/service/team_service.e2e"
+    },
+    {
+      "id": "service/TestTeamServiceList",
+      "package": "./internal/service",
+      "run": "^TestTeamServiceList$",
+      "phase": "precheck",
+      "source": "internal/service/team_service.e2e"
+    },
+    {
+      "id": "service/TestTeamServiceUpdate",
+      "package": "./internal/service",
+      "run": "^TestTeamServiceUpdate$",
+      "phase": "precheck",
+      "source": "internal/service/team_service.e2e"
+    }
+  ]
+}

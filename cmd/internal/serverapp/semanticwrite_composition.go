@@ -1,10 +1,10 @@
 package serverapp
 
 import (
-	"github.com/markhuangai/dense-mem/internal/embedding"
+	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
-func buildSemanticWriteCorrectionExecutor(provider embedding.EmbeddingProviderInterface) memoryservice.LifecycleCorrectionExecutor {
+func buildSemanticWriteCorrectionExecutor(provider embeddingcontract.EmbeddingProviderInterface) memoryservice.LifecycleCorrectionExecutor {
 	return newSemanticwriteEmbeddingExecutor(provider)
 }

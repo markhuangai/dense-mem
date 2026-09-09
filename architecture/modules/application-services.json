@@ -2,10 +2,110 @@
   "schema_version": 1,
   "capability": "application-services",
   "source_ownership": [
-    {"path": "cmd/internal/serverapp/operation_log_composition.go", "issue": 371},
-    {"path": "cmd/internal/serverapp/usage_metrics_composition.go", "issue": 371},
-    {"path": "cmd/internal/serverapp/telemetry_composition.go", "issue": 371},
-    {"path": "cmd/internal/serverapp/telemetry_features.go", "issue": 371}
+    {
+      "path": "cmd/internal/serverapp/operation_log_composition.go",
+      "issue": 371
+    },
+    {
+      "path": "cmd/internal/serverapp/usage_metrics_composition.go",
+      "issue": 371
+    },
+    {
+      "path": "cmd/internal/serverapp/telemetry_composition.go",
+      "issue": 371
+    },
+    {
+      "path": "cmd/internal/serverapp/telemetry_features.go",
+      "issue": 371
+    },
+    {
+      "path": "cmd/internal/serverapp/authority_bootstrap.go",
+      "issue": 371
+    },
+    {
+      "path": "cmd/internal/serverapp/authority_bootstrap_test.go",
+      "issue": 371
+    },
+    {
+      "path": "cmd/internal/serverapp/server_health.go",
+      "issue": 371
+    },
+    {
+      "path": "cmd/internal/serverapp/telemetry.go",
+      "issue": 371
+    },
+    {
+      "path": "internal/repository/authority_repository.go",
+      "issue": 371
+    },
+    {
+      "path": "internal/repository/authority_repository_integration.e2e",
+      "issue": 371
+    },
+    {
+      "path": "internal/repository/authority_repository_test.go",
+      "issue": 371
+    },
+    {
+      "path": "internal/repository/telemetry_repository.go",
+      "issue": 371
+    },
+    {
+      "path": "internal/repository/telemetry_repository_integration.e2e",
+      "issue": 371
+    },
+    {
+      "path": "internal/repository/usage_metrics_repository.go",
+      "issue": 371
+    },
+    {
+      "path": "internal/repository/usage_metrics_repository_integration.e2e",
+      "issue": 371
+    },
+    {
+      "path": "internal/service/operation_log_service.go",
+      "issue": 371
+    },
+    {
+      "path": "internal/service/operation_log_service_test.go",
+      "issue": 371
+    },
+    {
+      "path": "internal/service/telemetry_catalog.go",
+      "issue": 371
+    },
+    {
+      "path": "internal/service/telemetry_catalog_test.go",
+      "issue": 371
+    },
+    {
+      "path": "internal/service/telemetry_query_errors.go",
+      "issue": 371
+    },
+    {
+      "path": "internal/service/telemetry_query_errors_test.go",
+      "issue": 371
+    },
+    {
+      "path": "internal/service/telemetry_service.go",
+      "issue": 371
+    },
+    {
+      "path": "internal/service/telemetry_service_test.go",
+      "issue": 371
+    },
+    {
+      "path": "internal/service/telemetry_service_unconfigured_test.go",
+      "issue": 371
+    },
+    {
+      "path": "internal/service/usage_metrics_service.go",
+      "issue": 371
+    },
+    {
+      "path": "internal/service/usage_metrics_service_test.go",
+      "issue": 371
+    }
   ],
   "completed_issues": [],
   "go": {

@@ -3,6 +3,8 @@ package embedding
 import (
 	"context"
 	"sync"
+
+	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 )
 
 // MockEmbeddingProvider is a mock implementation of EmbeddingProviderInterface
@@ -34,7 +36,7 @@ type MockEmbeddingProvider struct {
 }
 
 // Compile-time assertion that MockEmbeddingProvider implements EmbeddingProviderInterface.
-var _ EmbeddingProviderInterface = (*MockEmbeddingProvider)(nil)
+var _ embeddingcontract.EmbeddingProviderInterface = (*MockEmbeddingProvider)(nil)
 
 // Embed calls EmbedFunc if set, otherwise returns a zero vector of DimensionsResult length.
 func (m *MockEmbeddingProvider) Embed(ctx context.Context, text string) ([]float32, string, error) {

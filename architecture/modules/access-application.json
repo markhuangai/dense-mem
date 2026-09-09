@@ -2,8 +2,82 @@
   "schema_version": 1,
   "capability": "access-application",
   "source_ownership": [
-    {"path": "cmd/internal/serverapp/access_composition.go", "issue": 370},
-    {"path": "cmd/internal/serverapp/access_adapters.go", "issue": 370}
+    {
+      "path": "cmd/internal/serverapp/access_composition.go",
+      "issue": 370
+    },
+    {
+      "path": "cmd/internal/serverapp/access_adapters.go",
+      "issue": 370
+    },
+    {
+      "path": "internal/repository/canonical_credentials.go",
+      "issue": 370
+    },
+    {
+      "path": "internal/repository/canonical_credentials_integration.e2e",
+      "issue": 370
+    },
+    {
+      "path": "internal/repository/canonical_credentials_test.go",
+      "issue": 370
+    },
+    {
+      "path": "internal/repository/credential_repository.go",
+      "issue": 370
+    },
+    {
+      "path": "internal/repository/directory_identity_helpers.go",
+      "issue": 370
+    },
+    {
+      "path": "internal/repository/directory_identity_reconcile_repository.go",
+      "issue": 370
+    },
+    {
+      "path": "internal/repository/directory_identity_repository.go",
+      "issue": 370
+    },
+    {
+      "path": "internal/repository/directory_identity_repository_integration.e2e",
+      "issue": 370
+    },
+    {
+      "path": "internal/repository/sso_identity_repository.go",
+      "issue": 370
+    },
+    {
+      "path": "internal/repository/sso_oauth_provider_write.go",
+      "issue": 370
+    },
+    {
+      "path": "internal/repository/sso_oauth_repository_integration.e2e",
+      "issue": 370
+    },
+    {
+      "path": "internal/repository/sso_repository.go",
+      "issue": 370
+    },
+    {
+      "path": "internal/repository/sso_repository_scan.go",
+      "issue": 370
+    },
+    {
+      "path": "internal/repository/team_repository.go",
+      "issue": 370
+    },
+    {
+      "path": "internal/repository/team_repository.e2e",
+      "issue": 370
+    },
+    {
+      "path": "internal/repository/user_portal_session_repository.go",
+      "issue": 370
+    },
+    {
+      "path": "internal/repository/user_portal_session_repository_integration.e2e",
+      "issue": 370
+    }
   ],
   "completed_issues": [],
   "go": {

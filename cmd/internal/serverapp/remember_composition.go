@@ -2,7 +2,7 @@ package serverapp
 
 import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
-	"github.com/markhuangai/dense-mem/internal/embedding"
+	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
@@ -14,7 +14,7 @@ type rememberApplicationDependencies struct {
 	Ledger   *repository.LedgerRepositoryImpl
 	Catalog  memoryservice.SubmissionAssessmentCatalog
 	Assessor assessor.Provider
-	Embedder embedding.EmbeddingProviderInterface
+	Embedder embeddingcontract.EmbeddingProviderInterface
 	Limits   assessor.SemanticAssessmentLimits
 	Metrics  observability.DiscoverabilityMetrics
 	Logger   observability.LogProvider

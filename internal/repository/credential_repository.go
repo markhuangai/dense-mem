@@ -87,6 +87,34 @@ func NewCredentialRepository(db *gorm.DB, rls postgres.RLSHelper) *CredentialRep
 	return &CredentialRepositoryImpl{db: db, rls: rls}
 }
 
+func withSystemModeInTx(ctx context.Context, tx *gorm.DB, teamID, profileID string, fn func(systemTx *gorm.DB) error) error {
+	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_team_id', '', true)").Error; err != nil {
+		return err
+	}
+	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_profile_id', '', true)").Error; err != nil {
+		return err
+	}
+	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.tx_mode', 'system', true)").Error; err != nil {
+		return err
+	}
+	fnErr := fn(tx)
+	resetErr := resetProfileModeInTx(ctx, tx, teamID, profileID)
+	if fnErr != nil {
+		return fnErr
+	}
+	return resetErr
+}
+
+func resetProfileModeInTx(ctx context.Context, tx *gorm.DB, teamID, profileID string) error {
+	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_team_id', ?, true)", teamID).Error; err != nil {
+		return err
+	}
+	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_profile_id', ?, true)", profileID).Error; err != nil {
+		return err
+	}
+	return tx.WithContext(ctx).Exec("SELECT set_config('app.tx_mode', 'profile', true)").Error
+}
+
 // CreateCredential creates one API-client identity, membership, credential, and ownership alias.
 func (r *CredentialRepositoryImpl) CreateCredential(ctx context.Context, credential *domain.Credential) error {
 	if credential.ID == uuid.Nil {

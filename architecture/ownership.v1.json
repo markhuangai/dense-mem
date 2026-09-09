@@ -93,6 +93,7 @@
     "architecture/modules/demo-composition.json",
     "architecture/modules/dream-application.json",
     "architecture/modules/dream-generation-port.json",
+    "architecture/modules/embedding-contract.json",
     "architecture/modules/embedding-provider.json",
     "architecture/modules/evidence-conflict-application.json",
     "architecture/modules/full-text-policy.json",

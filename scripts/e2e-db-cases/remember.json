@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "capability": "remember",
+  "cases": [
+    {
+      "id": "repository/TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndExchanges",
+      "package": "./internal/repository",
+      "run": "^TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndExchanges$",
+      "phase": "precheck",
+      "source": "internal/repository/remember_attempt_diagnostics_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC",
+      "package": "./internal/repository",
+      "run": "^TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC$",
+      "phase": "precheck",
+      "source": "internal/repository/remember_attempt_diagnostics_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestRememberAttemptDiagnosticsPurgeClaimsConcurrentBatches",
+      "package": "./internal/repository",
+      "run": "^TestRememberAttemptDiagnosticsPurgeClaimsConcurrentBatches$",
+      "phase": "precheck",
+      "source": "internal/repository/remember_attempt_diagnostics_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestRememberAttemptDiagnosticsDrainRotatesPrivateSpaces",
+      "package": "./internal/repository",
+      "run": "^TestRememberAttemptDiagnosticsDrainRotatesPrivateSpaces$",
+      "phase": "precheck",
+      "source": "internal/repository/remember_attempt_diagnostics_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes",
+      "package": "./internal/repository",
+      "run": "^TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes$",
+      "phase": "precheck",
+      "source": "internal/repository/remember_attempt_diagnostics_repository_integration.e2e"
+    },
+    {
+      "id": "server/TestRememberServiceRejectsHistoricalOutcomesThroughPostgres",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestRememberServiceRejectsHistoricalOutcomesThroughPostgres$",
+      "phase": "scenario",
+      "scenario": "synchronous_write_primitives",
+      "source": "cmd/internal/serverapp/remember_processor_integration.e2e"
+    },
+    {
+      "id": "server/TestRememberServiceRejectsMigratedAttemptThroughPostgres",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestRememberServiceRejectsMigratedAttemptThroughPostgres$",
+      "phase": "scenario",
+      "scenario": "synchronous_write_primitives",
+      "source": "cmd/internal/serverapp/remember_processor_integration.e2e"
+    },
+    {
+      "id": "service/TestComposeSynchronousEvidenceOnlyAssessorBatch",
+      "package": "./internal/service/memoryservice",
+      "run": "^TestComposeSynchronousEvidenceOnlyAssessorBatch$",
+      "phase": "scenario",
+      "scenario": "synchronous_write_primitives",
+      "source": "internal/service/memoryservice/synchronous_assessment_compose_e2e.e2e"
+    }
+  ]
+}

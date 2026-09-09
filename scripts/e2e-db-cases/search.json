@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "capability": "search",
+  "cases": [
+    {
+      "id": "repository/TestSearchConvergenceHydratesRelationshipDocumentsAfterClosingDocumentRows",
+      "package": "./internal/repository",
+      "run": "^TestSearchConvergenceHydratesRelationshipDocumentsAfterClosingDocumentRows$",
+      "phase": "precheck",
+      "source": "internal/repository/search_reconciliation_integration.e2e"
+    },
+    {
+      "id": "repository/TestSearchReconciliationCanonicalSourceSetAndSpaceFence",
+      "package": "./internal/repository",
+      "run": "^TestSearchReconciliationCanonicalSourceSetAndSpaceFence$",
+      "phase": "precheck",
+      "source": "internal/repository/search_reconciliation_integration.e2e"
+    },
+    {
+      "id": "repository/TestSearchReconciliationExcludesConflictResolutionDeletionOnlyEvidence",
+      "package": "./internal/repository",
+      "run": "^TestSearchReconciliationExcludesConflictResolutionDeletionOnlyEvidence$",
+      "phase": "precheck",
+      "source": "internal/repository/search_reconciliation_integration.e2e"
+    },
+    {
+      "id": "repository/TestSearchReconciliationExcludesLifecycleTerminalEvidenceWithoutDocument",
+      "package": "./internal/repository",
+      "run": "^TestSearchReconciliationExcludesLifecycleTerminalEvidenceWithoutDocument$",
+      "phase": "precheck",
+      "source": "internal/repository/search_reconciliation_integration.e2e"
+    },
+    {
+      "id": "repository/TestSearchReconciliationExcludesSealedSpaceEvidenceWithoutDocument",
+      "package": "./internal/repository",
+      "run": "^TestSearchReconciliationExcludesSealedSpaceEvidenceWithoutDocument$",
+      "phase": "precheck",
+      "source": "internal/repository/search_reconciliation_integration.e2e"
+    },
+    {
+      "id": "repository/TestSearchReconciliationExcludesSupersededSourceRevisionWithoutDocument",
+      "package": "./internal/repository",
+      "run": "^TestSearchReconciliationExcludesSupersededSourceRevisionWithoutDocument$",
+      "phase": "precheck",
+      "source": "internal/repository/search_reconciliation_integration.e2e"
+    },
+    {
+      "id": "repository/TestSearchReconciliationProjectsSafeHistoricalRejectedEvidence",
+      "package": "./internal/repository",
+      "run": "^TestSearchReconciliationProjectsSafeHistoricalRejectedEvidence$",
+      "phase": "precheck",
+      "source": "internal/repository/search_reconciliation_integration.e2e"
+    },
+    {
+      "id": "repository/TestSearchReconciliationRetiresLifecycleTerminalEvidence",
+      "package": "./internal/repository",
+      "run": "^TestSearchReconciliationRetiresLifecycleTerminalEvidence$",
+      "phase": "precheck",
+      "source": "internal/repository/search_reconciliation_integration.e2e"
+    },
+    {
+      "id": "repository/TestSearchReconciliationSelectionAdvancesDurableCursorPastHealthyDocuments",
+      "package": "./internal/repository",
+      "run": "^TestSearchReconciliationSelectionAdvancesDurableCursorPastHealthyDocuments$",
+      "phase": "precheck",
+      "source": "internal/repository/search_reconciliation_integration.e2e"
+    },
+    {
+      "id": "repository/TestSearchReconciliationSelectionAndHashFence",
+      "package": "./internal/repository",
+      "run": "^TestSearchReconciliationSelectionAndHashFence$",
+      "phase": "precheck",
+      "source": "internal/repository/search_reconciliation_integration.e2e"
+    },
+    {
+      "id": "repository/TestSearchReconciliationSelectionFillsRelationshipCapacity",
+      "package": "./internal/repository",
+      "run": "^TestSearchReconciliationSelectionFillsRelationshipCapacity$",
+      "phase": "precheck",
+      "source": "internal/repository/search_reconciliation_integration.e2e"
+    },
+    {
+      "id": "repository/TestSearchReconciliationSuppressesHistoricalEvidenceAliases",
+      "package": "./internal/repository",
+      "run": "^TestSearchReconciliationSuppressesHistoricalEvidenceAliases$",
+      "phase": "precheck",
+      "source": "internal/repository/search_reconciliation_integration.e2e"
+    }
+  ]
+}

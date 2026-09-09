@@ -14,7 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/community"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
-	"github.com/markhuangai/dense-mem/internal/embedding"
+	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/repository"
@@ -37,7 +37,7 @@ type RecallService = recallcontract.Service
 
 type RecallDependencies struct {
 	Search          RecallSearchRepository
-	Provider        embedding.EmbeddingProviderInterface
+	Provider        embeddingcontract.EmbeddingProviderInterface
 	Hypotheses      RecallHypothesisRepository
 	Communities     RecallCommunityRepository
 	CommunityConfig RecallCommunityConfigProvider
@@ -73,7 +73,7 @@ type RecallCommunityConfigProvider interface {
 
 type recallService struct {
 	search          RecallSearchRepository
-	provider        embedding.EmbeddingProviderInterface
+	provider        embeddingcontract.EmbeddingProviderInterface
 	hypotheses      RecallHypothesisRepository
 	communities     RecallCommunityRepository
 	communityConfig RecallCommunityConfigProvider

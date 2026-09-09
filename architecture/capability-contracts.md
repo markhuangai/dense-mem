@@ -14,6 +14,10 @@ storage inputs/results, recall service port, and evidence-conflict read models.
 provider-independent read models. `internal/semanticwrite/contract` owns the
 provider-independent semantic-write plan, embedding result, and batch-provider
 port.
+`internal/embedding/contract` owns the provider-independent embedding interface,
+closed provider error vocabulary, retry-hint bounds, failure classification and
+sanitized error projection. The concrete OpenAI and retry implementations remain
+in `internal/embedding` and consume this public port.
 
 `internal/storage/postgres/graphread` owns bounded breadth-first traversal,
 graph snapshot assembly, and graph row decoding.
@@ -77,6 +81,29 @@ Recall execution keeps prepared search contracts, embeddings, degradation
 state, and derived memory-space scope in private service/adapter wrappers.
 The public request and storage ports cannot carry derived scope or provider
 state.
+
+## Wave 6 shared-readiness ownership
+
+The wave 6 adopters use disjoint capability fragments and database-case
+registries. `access`, `operations`, `remember` and `search` own their populated
+registrations; `lifecycle` and `memorypack` are reserved empty fragments until
+their adopters add capability-specific cases. The complete registry is loaded
+by the existing controller and must retain every case exactly once.
+
+The following shared boundaries are read-only for wave 6 adopters:
+
+- `internal/embedding/contract`, `internal/search/contract`,
+  `internal/semanticwrite/contract`, and the existing domain contracts;
+- canonical Knowledge PostgreSQL writes and their compatibility facades;
+- `cmd/internal/serverapp/application_composition.go`, `server.go`,
+  `cmd/e2e/main.go`, and the E2E host controller;
+- mixed database fixtures and the central architecture manifest/checker.
+
+Remember, Lifecycle and Search consume the public embedding contract. The root
+`internal/embedding` package retains only the concrete provider and compatibility
+aliases, so no adopter may reintroduce a private provider dependency or duplicate
+failure classification. Compatibility aliases remain bounded single-hop paths
+until their named capability cleanup owner removes them.
 
 ## Wave 5 shared-readiness ownership
 

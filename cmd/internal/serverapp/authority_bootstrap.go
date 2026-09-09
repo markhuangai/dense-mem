@@ -59,3 +59,12 @@ func classifyAuthorityMarker(marker *domain.CompatibilityMarker) (authorityBoots
 		return authorityBootstrap{}, fmt.Errorf("%w: unknown compatibility marker status %s", errAuthorityBlocked, marker.Status)
 	}
 }
+
+func checkActiveAuthority(authority authorityBootstrap) error {
+	if authority.Mode != authorityActive ||
+		authority.Marker == nil ||
+		authority.Marker.Status != domain.MigrationMarkerCompatible {
+		return fmt.Errorf("%w: compatible authority marker is required", errAuthorityBlocked)
+	}
+	return nil
+}

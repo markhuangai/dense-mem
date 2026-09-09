@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "capability": "operations",
+  "cases": [
+    {
+      "id": "repository/TestAuthorityRepositoryBlocksFreshAuthorityWhenApplicationDataExists",
+      "package": "./internal/repository",
+      "run": "^TestAuthorityRepositoryBlocksFreshAuthorityWhenApplicationDataExists$",
+      "phase": "precheck",
+      "source": "internal/repository/authority_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestAuthorityRepositoryCommitsFreshAuthorityOnlyWhenApplicationDataEmpty",
+      "package": "./internal/repository",
+      "run": "^TestAuthorityRepositoryCommitsFreshAuthorityOnlyWhenApplicationDataEmpty$",
+      "phase": "precheck",
+      "source": "internal/repository/authority_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestAuthorityRepositoryRetainsMigrationAuditReadOnly",
+      "package": "./internal/repository",
+      "run": "^TestAuthorityRepositoryRetainsMigrationAuditReadOnly$",
+      "phase": "precheck",
+      "source": "internal/repository/authority_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestReadTelemetryLifecycleIsolatesSystemTeamAndProfileScopes",
+      "package": "./internal/repository",
+      "run": "^TestReadTelemetryLifecycleIsolatesSystemTeamAndProfileScopes$",
+      "phase": "precheck",
+      "source": "internal/repository/telemetry_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestReadTelemetryLifecycleOmitsSealedGenerationRows",
+      "package": "./internal/repository",
+      "run": "^TestReadTelemetryLifecycleOmitsSealedGenerationRows$",
+      "phase": "precheck",
+      "source": "internal/repository/telemetry_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestUsageMetricsSnapshotLabelsSSOOwnershipAlias",
+      "package": "./internal/repository",
+      "run": "^TestUsageMetricsSnapshotLabelsSSOOwnershipAlias$",
+      "phase": "precheck",
+      "source": "internal/repository/usage_metrics_repository_integration.e2e"
+    }
+  ]
+}

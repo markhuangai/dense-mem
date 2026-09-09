@@ -209,6 +209,15 @@ func loadCases(root, phase, capabilityValue, scenarioValue, caseValue string) ([
 	return selected, nil
 }
 
+func skipGeneratedEvaluationTree(root, path string) (bool, error) {
+	relative, err := filepath.Rel(root, path)
+	if err != nil {
+		return false, err
+	}
+	relative = filepath.ToSlash(relative)
+	return relative == "tests/eval" || strings.HasPrefix(relative, "tests/eval/"), nil
+}
+
 func reconcileCaseRegistry(root string, cases []databaseCase) error {
 	registered := make(map[string]databaseCase, len(cases))
 	for _, item := range cases {
@@ -229,6 +238,13 @@ func reconcileCaseRegistry(root string, cases []databaseCase) error {
 			return walkErr
 		}
 		if entry.IsDir() {
+			skip, err := skipGeneratedEvaluationTree(root, path)
+			if err != nil {
+				return err
+			}
+			if skip {
+				return filepath.SkipDir
+			}
 			switch entry.Name() {
 			case ".git", "node_modules", ".cache":
 				return filepath.SkipDir
@@ -303,6 +319,13 @@ func writeOverlay(root string) (string, error) {
 			return walkErr
 		}
 		if entry.IsDir() {
+			skip, err := skipGeneratedEvaluationTree(root, path)
+			if err != nil {
+				return err
+			}
+			if skip {
+				return filepath.SkipDir
+			}
 			switch entry.Name() {
 			case ".git", "node_modules", ".cache":
 				return filepath.SkipDir

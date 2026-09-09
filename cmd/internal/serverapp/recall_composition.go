@@ -1,14 +1,14 @@
 package serverapp
 
 import (
-	"github.com/markhuangai/dense-mem/internal/embedding"
+	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
 type recallApplicationDependencies struct {
 	Search          memoryservice.RecallSearchRepository
-	Provider        embedding.EmbeddingProviderInterface
+	Provider        embeddingcontract.EmbeddingProviderInterface
 	Hypotheses      memoryservice.RecallHypothesisRepository
 	Communities     memoryservice.RecallCommunityRepository
 	CommunityConfig memoryservice.RecallCommunityConfigProvider

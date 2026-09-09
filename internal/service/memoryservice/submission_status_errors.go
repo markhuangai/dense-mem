@@ -1,10 +1,6 @@
 package memoryservice
 
-import (
-	"strings"
-
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
-)
+import rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 
 // Status projection policy lives in the Remember application boundary. These
 // aliases keep the broader memory-service package wired to the same contract.
@@ -71,14 +67,6 @@ func submissionStatusError(code SubmissionErrorCode) SubmissionStatusError {
 
 func submissionStatusErrorForCode(rawCode string, fallbackState string) SubmissionStatusError {
 	return rememberapp.StatusErrorForCode(rawCode, fallbackState)
-}
-
-func correctionStatusErrorForCode(rawCode string, fallbackState string) SubmissionStatusError {
-	if strings.TrimSpace(rawCode) == string(SubmissionErrorPolicyRejected) ||
-		(strings.TrimSpace(rawCode) == "" && strings.TrimSpace(fallbackState) == "rejected") {
-		return submissionStatusError(SubmissionErrorPolicyRejected)
-	}
-	return submissionStatusErrorForCode(rawCode, fallbackState)
 }
 
 func submissionFailureCode(stage, class string) SubmissionErrorCode {
