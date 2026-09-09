@@ -261,7 +261,7 @@ func projectProviderResponse(component string, body []byte) []byte {
 func providerResponseMetadata(raw map[string]json.RawMessage) map[string]any {
 	projection := map[string]any{}
 	for _, field := range []string{"id", "object", "model", "system_fingerprint"} {
-		if value, ok := jsonStringField(raw, field); ok {
+		if value, ok := jsonDiagnosticIdentifierField(raw, field); ok {
 			projection[field] = value
 		}
 	}

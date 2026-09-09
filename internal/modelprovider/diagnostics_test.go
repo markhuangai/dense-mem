@@ -3,6 +3,7 @@ package modelprovider
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -93,6 +94,17 @@ func TestProjectProviderExchangeBodiesBoundsProviderErrorIdentifiers(t *testing.
 	require.Contains(t, string(projected), `"type":"invalid_request_error"`)
 	require.NotContains(t, string(projected), "private evidence echoed by provider")
 	require.NotContains(t, string(projected), "prompt secret")
+}
+
+func TestProjectProviderExchangeBodiesBoundsResponseMetadataIdentifiers(t *testing.T) {
+	response := []byte(`{"id":"response-1","object":"response","model":"safe-model","system_fingerprint":"` +
+		strings.Repeat("x", maxProviderDiagnosticIdentifierBytes+1) + `"}`)
+	_, projected := ProjectProviderExchangeBodies("other", nil, response)
+
+	require.Contains(t, string(projected), `"id":"response-1"`)
+	require.Contains(t, string(projected), `"object":"response"`)
+	require.Contains(t, string(projected), `"model":"safe-model"`)
+	require.NotContains(t, string(projected), "system_fingerprint")
 }
 
 func TestProjectProviderExchangeBodiesHandlesSparseAndNonStringFields(t *testing.T) {
