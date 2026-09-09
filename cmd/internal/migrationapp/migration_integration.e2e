@@ -120,6 +120,9 @@ func openMigrationIntegrationDB(t *testing.T) *gorm.DB {
 	}
 	container, err := tcpostgres.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", containerOptions...)
 	if err != nil {
+		if os.Getenv("DENSE_MEM_REQUIRE_POSTGRES_TESTS") == "1" {
+			t.Fatalf("Postgres is required for this test run: %v", err)
+		}
 		t.Skipf("Postgres not available: %v", err)
 	}
 	t.Cleanup(func() {
