@@ -63,8 +63,11 @@ func TestRememberAttemptDiagnosticsMigrationContract(t *testing.T) {
 		"private_memory_legal_holds",
 		"digest(artifact.content_bytes, 'sha256')",
 		"previous-version replicas can still",
+		"TG_OP = 'UPDATE' AND TG_TABLE_NAME = 'remember_failure_artifacts'",
 		"remember_failure_artifacts_team_id_attempt_id_owner_profil_fkey",
 		"ON DELETE CASCADE",
+		"NOT VALID",
+		"set_config('lock_timeout', '30s', true)",
 		"pg_trigger_depth() > 1",
 		"RAISE EXCEPTION 'remember attempt diagnostics migration is irreversible",
 	} {

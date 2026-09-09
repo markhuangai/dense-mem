@@ -2,7 +2,9 @@
 
 -- Lock/rewrite impact: creates one append-only diagnostics table and indexes;
 -- the legacy artifact table is read during migration and retained as an
--- inert compatibility surface until a stopped-service cleanup.
+-- inert compatibility surface until a stopped-service cleanup. The legacy
+-- foreign-key replacement runs after the backfill, with a bounded lock timeout;
+-- it is NOT VALID so the existing-row scan does not extend that schema lock.
 -- RLS impact: enables FORCE RLS with system, migration, and owner-scoped policies.
 -- Backfill: copies still-retained legacy artifact rows once; expired bytes are omitted.
 -- Backward compatibility: the new table preserves the control read model while
@@ -19,15 +21,6 @@
 -- Failure diagnostics are stored as ordered exchanges so the control portal can
 -- show the original request, provider traffic, and caller response together.
 
--- Keep compatibility writes valid during rollout while allowing private-memory
--- erasure to cascade through rows written by an older replica.
-ALTER TABLE remember_failure_artifacts
-    DROP CONSTRAINT IF EXISTS remember_failure_artifacts_team_id_attempt_id_owner_profil_fkey;
-ALTER TABLE remember_failure_artifacts
-    ADD CONSTRAINT remember_failure_artifacts_team_id_attempt_id_owner_profil_fkey
-        FOREIGN KEY (team_id, attempt_id, owner_profile_id)
-        REFERENCES remember_attempts(team_id, attempt_id, owner_profile_id) ON DELETE CASCADE;
-
 -- A foreign-key cascade fires the legacy child trigger after the parent row is
 -- no longer visible. Permit that child delete only inside the system erasure
 -- transaction; ordinary legacy purges still require their explicit setting.
@@ -35,6 +28,38 @@ ALTER TABLE remember_failure_artifacts
 CREATE OR REPLACE FUNCTION prevent_append_only_mutation()
 RETURNS TRIGGER AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' AND TG_TABLE_NAME = 'remember_failure_artifacts' THEN
+        IF current_setting('app.tx_mode', true) = 'system'
+           AND NULLIF(current_setting('app.remember_failure_artifact_retention_space_id', true), '')::uuid IS NOT NULL
+           AND COALESCE((to_jsonb(NEW)->>'retained_by_legal_hold')::boolean, false) =
+               (current_setting('app.remember_failure_artifact_retention_value', true) = 'true')
+           AND (to_jsonb(NEW) - ARRAY['retained_by_legal_hold']) = (to_jsonb(OLD) - ARRAY['retained_by_legal_hold'])
+           AND EXISTS (
+               SELECT 1
+               FROM remember_attempts AS attempt
+               WHERE attempt.team_id = NEW.team_id
+                 AND attempt.attempt_id = NEW.attempt_id
+                 AND attempt.owner_profile_id = NEW.owner_profile_id
+                 AND attempt.space_id = NULLIF(current_setting('app.remember_failure_artifact_retention_space_id', true), '')::uuid
+           )
+           AND (
+               (COALESCE((to_jsonb(NEW)->>'retained_by_legal_hold')::boolean, false) AND EXISTS (
+                   SELECT 1
+                   FROM private_memory_legal_holds AS hold
+                   WHERE hold.space_id = NULLIF(current_setting('app.remember_failure_artifact_retention_space_id', true), '')::uuid
+                     AND hold.released_at IS NULL
+               ))
+               OR
+               (NOT COALESCE((to_jsonb(NEW)->>'retained_by_legal_hold')::boolean, false) AND NOT EXISTS (
+                   SELECT 1
+                   FROM private_memory_legal_holds AS hold
+                   WHERE hold.space_id = NULLIF(current_setting('app.remember_failure_artifact_retention_space_id', true), '')::uuid
+                     AND hold.released_at IS NULL
+               ))
+           ) THEN
+            RETURN NEW;
+        END IF;
+    END IF;
     IF TG_OP = 'DELETE'
        AND current_setting('app.tx_mode', true) = 'system'
        AND (
@@ -288,6 +313,19 @@ LEFT JOIN private_memory_legal_holds AS hold
   ON hold.space_id = attempt.space_id AND hold.released_at IS NULL
 WHERE (artifact.expires_at > clock_timestamp() OR hold.id IS NOT NULL)
 ON CONFLICT (team_id, attempt_id, sequence_no) DO NOTHING;
+
+-- Keep compatibility writes valid during rollout while allowing private-memory
+-- erasure to cascade through rows written by an older replica. The old
+-- constraint remains in force during the backfill; this short schema-change
+-- window runs only after the copy completes, and NOT VALID avoids rescanning
+-- the retained legacy rows while new writes remain checked.
+SELECT set_config('lock_timeout', '30s', true);
+ALTER TABLE remember_failure_artifacts
+    DROP CONSTRAINT IF EXISTS remember_failure_artifacts_team_id_attempt_id_owner_profil_fkey;
+ALTER TABLE remember_failure_artifacts
+    ADD CONSTRAINT remember_failure_artifacts_team_id_attempt_id_owner_profil_fkey
+        FOREIGN KEY (team_id, attempt_id, owner_profile_id)
+        REFERENCES remember_attempts(team_id, attempt_id, owner_profile_id) ON DELETE CASCADE NOT VALID;
 
 -- The diagnostic table is now the sole runtime authority. Keep the legacy
 -- table through this rolling migration so previous-version replicas can still
