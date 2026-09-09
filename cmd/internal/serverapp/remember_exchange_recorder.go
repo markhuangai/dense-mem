@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"regexp"
 	"sync"
 	"time"
@@ -200,12 +199,8 @@ func rememberFailureDiagnosticsWithCapture(
 	return items
 }
 
-func rememberCallerResponseDelivered(ctx context.Context, failure error) bool {
-	if ctx != nil && ctx.Err() != nil {
-		return false
-	}
-	return !errors.Is(failure, context.Canceled) &&
-		!errors.Is(failure, context.DeadlineExceeded)
+func rememberCallerResponseDelivered(ctx context.Context, _ error) bool {
+	return ctx == nil || ctx.Err() == nil
 }
 
 func boundRememberDiagnosticItems(items []repository.RememberAttemptDiagnosticInput) {

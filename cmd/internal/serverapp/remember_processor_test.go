@@ -128,6 +128,7 @@ func TestRememberFailureDiagnosticsUsesHashOnlyRequestForSecurityRejection(t *te
 
 func TestRememberCallerResponseDeliveryUsesRequestContext(t *testing.T) {
 	require.True(t, rememberCallerResponseDelivered(context.Background(), rememberapp.ErrRememberRequestTimeout))
+	require.True(t, rememberCallerResponseDelivered(context.Background(), context.DeadlineExceeded))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	require.False(t, rememberCallerResponseDelivered(ctx, rememberapp.ErrRememberRequestCancelled))
