@@ -1,10 +1,11 @@
 package serverapp
 
 import (
-	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
+	settings "github.com/markhuangai/dense-mem/internal/settings"
+	settingscontract "github.com/markhuangai/dense-mem/internal/settings/contract"
 )
 
-func buildSecurityApplication(repo repository.SecurityRepository, audit service.AuditService) *service.SecurityServiceImpl {
-	return service.NewSecurityService(repo, audit)
+func buildSecurityApplication(repo settingscontract.SecurityRepository, audit service.AuditService) *settings.SecurityServiceImpl {
+	return settings.NewSecurityService(repo, audit)
 }

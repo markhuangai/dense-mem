@@ -1,4 +1,4 @@
-package service
+package settings
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -94,8 +93,7 @@ func TestSecurityServiceDeleteSecurityBanResetsFailures(t *testing.T) {
 
 func TestSecurityServiceSettingsManualBanAndHelpers(t *testing.T) {
 	repo := newFakeSecurityRepository()
-	audit := new(MockAuditService)
-	audit.On("Append", mock.Anything, mock.AnythingOfType("access.AuditLogEntry")).Return(nil)
+	audit := &appConfigAuditStub{}
 	svc := NewSecurityService(repo, audit)
 	now := time.Now().UTC()
 	svc.now = func() time.Time { return now }
@@ -143,7 +141,7 @@ func TestSecurityServiceSettingsManualBanAndHelpers(t *testing.T) {
 	require.NotNil(t, securitySettingsPayload(updated))
 	require.NotNil(t, securityBanPayload(ban))
 	require.Equal(t, future.Format(time.RFC3339), timePayload(&future))
-	audit.AssertExpectations(t)
+	require.Len(t, audit.entries, 2)
 }
 
 func TestSecurityServiceHelperEdgeCases(t *testing.T) {
