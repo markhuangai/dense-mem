@@ -798,7 +798,7 @@ test("preview resolver falls back to GraphQL after a too-many-files REST respons
       rest: { pulls: { get: async () => { throw error; } } },
       graphql: async (_query, variables) => {
         graphQLCalled = true;
-        assert.deepEqual(variables, { owner: "markhuangai", repo: "dense-mem", number: 42 });
+        assert.deepEqual(variables, { owner: "markhuangai", repo: "dense-mem", number: 42, labelCursor: null });
         return {
           repository: {
             pullRequest: {
@@ -808,7 +808,10 @@ test("preview resolver falls back to GraphQL after a too-many-files REST respons
               headRefOid: headSHA,
               author: { login: "Z-M-Huang" },
               headRepository: { nameWithOwner: "markhuangai/dense-mem" },
-              labels: { nodes: [{ name: "deploy-test-image" }] },
+              labels: {
+                nodes: [{ name: "deploy-test-image" }],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
             },
           },
         };
@@ -823,6 +826,62 @@ test("preview resolver falls back to GraphQL after a too-many-files REST respons
   });
 
   assert.equal(graphQLCalled, true);
+  assert.deepEqual(resolved, {
+    mode: "attempt",
+    reason: "owner_admin_pr",
+    removeLabel: true,
+    pullNumber: 42,
+    headSha: headSHA,
+    headRepository: "markhuangai/dense-mem",
+  });
+});
+
+test("preview resolver follows GraphQL label pages after a too-many-files REST response", async () => {
+  const headSHA = "c".repeat(40);
+  const error = Object.assign(new Error("Request failed"), {
+    status: 422,
+    response: { data: { message: "The request could not be processed because too many files changed" } },
+  });
+  const cursors = [];
+  const resolved = await resolvePreviewAttempt({
+    github: {
+      rest: { pulls: { get: async () => { throw error; } } },
+      graphql: async (query, variables) => {
+        assert.match(query, /labels\(first: 100, after: \$labelCursor\)/);
+        cursors.push(variables.labelCursor);
+        const labels = variables.labelCursor === null
+          ? {
+              nodes: Array.from({ length: 100 }, (_, index) => ({ name: `other-label-${index}` })),
+              pageInfo: { hasNextPage: true, endCursor: "labels-page-1" },
+            }
+          : {
+              nodes: [{ name: "deploy-test-image" }],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            };
+        return {
+          repository: {
+            pullRequest: {
+              number: 42,
+              state: "OPEN",
+              baseRefName: "main",
+              headRefOid: headSHA,
+              author: { login: "Z-M-Huang" },
+              headRepository: { nameWithOwner: "markhuangai/dense-mem" },
+              labels,
+            },
+          },
+        };
+      },
+    },
+    context: {
+      repo: { owner: "markhuangai", repo: "dense-mem" },
+      payload: { action: "synchronize", pull_request: { number: 42, head: { sha: headSHA } } },
+    },
+    actorPermission: "admin",
+    authorPermission: "admin",
+  });
+
+  assert.deepEqual(cursors, [null, "labels-page-1"]);
   assert.deepEqual(resolved, {
     mode: "attempt",
     reason: "owner_admin_pr",

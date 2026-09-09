@@ -267,7 +267,7 @@ function isTooManyFilesPullError(error) {
   return /too many files changed/i.test(message);
 }
 
-function graphQLPullRequest(pull) {
+function graphQLPullRequest(pull, labels = pull?.labels?.nodes || []) {
   if (!pull) {
     throw new Error("Could not resolve the current pull request.");
   }
@@ -275,7 +275,7 @@ function graphQLPullRequest(pull) {
     number: pull.number,
     state: String(pull.state || "").toLowerCase(),
     base: { ref: pull.baseRefName || "" },
-    labels: (pull.labels?.nodes || []).map(({ name }) => name),
+    labels: labels.map(({ name }) => name),
     user: { login: pull.author?.login || "" },
     head: {
       sha: pull.headRefOid || "",
@@ -296,23 +296,45 @@ async function loadPullRequest({ github, owner, repo, pullNumber }) {
     if (!isTooManyFilesPullError(error)) throw error;
   }
 
-  const data = await github.graphql(
-    `query PullRequest($owner: String!, $repo: String!, $number: Int!) {
-      repository(owner: $owner, name: $repo) {
-        pullRequest(number: $number) {
-          number
-          state
-          baseRefName
-          headRefOid
-          author { login }
-          headRepository { nameWithOwner }
-          labels(first: 100) { nodes { name } }
+  const labels = [];
+  const seenCursors = new Set();
+  let cursor = null;
+  let pull;
+  for (;;) {
+    const data = await github.graphql(
+      `query PullRequest($owner: String!, $repo: String!, $number: Int!, $labelCursor: String) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $number) {
+            number
+            state
+            baseRefName
+            headRefOid
+            author { login }
+            headRepository { nameWithOwner }
+            labels(first: 100, after: $labelCursor) {
+              nodes { name }
+              pageInfo { hasNextPage endCursor }
+            }
+          }
         }
-      }
-    }`,
-    { owner, repo, number: pullNumber },
-  );
-  return graphQLPullRequest(data.repository?.pullRequest);
+      }`,
+      { owner, repo, number: pullNumber, labelCursor: cursor },
+    );
+    pull = data.repository?.pullRequest;
+    if (!pull) {
+      throw new Error("Could not resolve the current pull request.");
+    }
+    const labelPage = pull.labels;
+    labels.push(...(labelPage?.nodes || []));
+    if (!labelPage?.pageInfo?.hasNextPage) break;
+    const nextCursor = labelPage.pageInfo.endCursor;
+    if (typeof nextCursor !== "string" || nextCursor === "" || seenCursors.has(nextCursor)) {
+      throw new Error("Could not paginate pull request labels.");
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+  return graphQLPullRequest(pull, labels);
 }
 
 async function resolvePreviewAttempt({
