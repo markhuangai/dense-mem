@@ -43,7 +43,7 @@ run_go_source_container() (
       -e "DOCKER_HOST=unix://${docker_socket}"
     )
   fi
-  docker_args+=("${environment_args[@]}" "$image" "${command[@]}")
+  docker_args+=("${environment_args[@]}" -e "GOPROXY=https://proxy.golang.org|direct" "$image" "${command[@]}")
 
   cleanup_go_container() {
     local status=$?

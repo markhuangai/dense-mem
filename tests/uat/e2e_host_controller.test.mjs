@@ -572,6 +572,10 @@ test("community scenarios use the verifier fixture for embeddings without changi
   assert.match(stack, /DENSE_MEM_E2E_PROVIDER_DIMENSIONS: \$\{JSON\.stringify\(providerDimensions \|\| "1536"\)\}/);
 });
 
+test("Go helper containers fall back from module proxy transport errors", () => {
+  assert.match(stack, /-e "GOPROXY=https:\/\/proxy\.golang\.org\|direct"/);
+});
+
 test("scenario runner executes Entra and diagnostics through the shared path", () => {
   assert.match(scenario, /dense-mem CI scenario \[%s\]/);
   assert.match(scenario, /log "running \$\{script\}"/);
