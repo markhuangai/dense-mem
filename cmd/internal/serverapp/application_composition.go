@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
-	"github.com/markhuangai/dense-mem/internal/embedding"
+	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
@@ -25,8 +25,8 @@ type applicationCompositionDependencies struct {
 	RecallFeedbackEvents   repository.RecallFeedbackEventRepository
 	Assessor               assessor.Provider
 	GeneratorTransport     modelprovider.StructuredTransport
-	EmbeddingProvider      embedding.EmbeddingProviderInterface
-	RetryEmbeddingProvider embedding.EmbeddingProviderInterface
+	EmbeddingProvider      embeddingcontract.EmbeddingProviderInterface
+	RetryEmbeddingProvider embeddingcontract.EmbeddingProviderInterface
 	AssessmentLimits       assessor.SemanticAssessmentLimits
 	Metrics                observability.DiscoverabilityMetrics
 	Logger                 observability.LogProvider

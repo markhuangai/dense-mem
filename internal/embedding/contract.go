@@ -1,19 +1,15 @@
 package embedding
 
-const EmbeddingContractVersion = "dense-mem.v2.embedding.v1"
+import embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 
-type EmbeddingSourceKind string
+const EmbeddingContractVersion = embeddingcontract.EmbeddingContractVersion
+
+type EmbeddingSourceKind = embeddingcontract.EmbeddingSourceKind
 
 const (
-	EmbeddingSourceEvidence       EmbeddingSourceKind = "evidence"
-	EmbeddingSourceSearchDocument EmbeddingSourceKind = "search_document"
-	EmbeddingSourceRecallQuery    EmbeddingSourceKind = "recall_query"
+	EmbeddingSourceEvidence       = embeddingcontract.EmbeddingSourceEvidence
+	EmbeddingSourceSearchDocument = embeddingcontract.EmbeddingSourceSearchDocument
+	EmbeddingSourceRecallQuery    = embeddingcontract.EmbeddingSourceRecallQuery
 )
 
-func EmbeddingSourceKinds() []string {
-	return []string{
-		string(EmbeddingSourceEvidence),
-		string(EmbeddingSourceSearchDocument),
-		string(EmbeddingSourceRecallQuery),
-	}
-}
+func EmbeddingSourceKinds() []string { return embeddingcontract.EmbeddingSourceKinds() }

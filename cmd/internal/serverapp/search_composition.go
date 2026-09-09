@@ -6,6 +6,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/embedding"
+	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
@@ -15,8 +16,8 @@ import (
 type searchApplication struct {
 	Repository        *repository.SearchRepositoryImpl
 	Contract          *repository.EnsureActiveSearchContractResult
-	EmbeddingProvider embedding.EmbeddingProviderInterface
-	RetryEmbedding    embedding.EmbeddingProviderInterface
+	EmbeddingProvider embeddingcontract.EmbeddingProviderInterface
+	RetryEmbedding    embeddingcontract.EmbeddingProviderInterface
 	Convergence       service.SearchConvergenceReader
 	Reconciliation    service.SearchReconciliationService
 }

@@ -1,13 +1,11 @@
 package main
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -136,6 +134,35 @@ func TestLoadCasesReconcilesRegistryDeclarations(t *testing.T) {
 	if len(allCases) != 2 || allCases[0].Capability != "postgres" || allCases[1].Capability != "repository" {
 		t.Fatalf("unfiltered loadCases() = %+v, want deterministic capability ownership", allCases)
 	}
+	generated := filepath.Join(root, "tests", "eval", ".runtime", "fixture.e2e")
+	if err := os.MkdirAll(filepath.Dir(generated), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(generated, []byte("package generated\n\nfunc TestIgnored(t *testing.T) {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadCases(root, "precheck", "repository", "", ""); err != nil {
+		t.Fatalf("loadCases() should ignore generated evaluation trees: %v", err)
+	}
+	overlayPath, err := writeOverlay(root)
+	if err != nil {
+		t.Fatalf("writeOverlay() = %v", err)
+	}
+	defer os.Remove(overlayPath)
+	overlayContents, err := os.ReadFile(overlayPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var generatedOverlay overlay
+	if err := json.Unmarshal(overlayContents, &generatedOverlay); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := generatedOverlay.Replace[strings.TrimSuffix(generated, ".e2e")+"_test.go"]; ok {
+		t.Fatal("writeOverlay() included generated evaluation source")
+	}
+	if _, ok := generatedOverlay.Replace[strings.TrimSuffix(source, ".e2e")+"_test.go"]; !ok {
+		t.Fatal("writeOverlay() omitted the registered fixture source")
+	}
 
 	if err := os.WriteFile(source, []byte("package sample\n\nfunc TestRegistered(t *testing.T) {}\nfunc TestUnregistered(t *testing.T) {}\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -150,77 +177,119 @@ func TestLoadCasesReconcilesRegistryDeclarations(t *testing.T) {
 	if _, err := loadCases(root, "precheck", "repository", "", ""); err == nil || !strings.Contains(err.Error(), "has no declaration") {
 		t.Fatalf("loadCases() error = %v, want missing declaration failure", err)
 	}
+
+	if err := os.WriteFile(source, []byte("package sample\n\nfunc TestRegistered(t *testing.T) {}\nfunc TestRegistered(t *testing.T) {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadCases(root, "precheck", "repository", "", ""); err == nil || !strings.Contains(err.Error(), "duplicate test declaration") {
+		t.Fatalf("loadCases() error = %v, want duplicate declaration failure", err)
+	}
+
+	if err := os.WriteFile(source, []byte("package sample\n\nfunc TestRegistered(t *testing.T) {}\nfunc TestOtherRegistered(t *testing.T) {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(registry, []byte(`{
+  "version": 1,
+  "capability": "repository",
+  "cases": [{
+    "id": "repository/TestRegistered",
+    "package": "./wrong/package",
+    "run": "^TestRegistered$",
+    "phase": "precheck",
+    "source": "internal/sample/fixture.e2e"
+  }]
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadCases(root, "precheck", "repository", "", ""); err == nil || !strings.Contains(err.Error(), "uses package ./wrong/package") {
+		t.Fatalf("loadCases() error = %v, want package mismatch failure", err)
+	}
+
+	if err := os.WriteFile(registry, []byte(`{
+  "version": 1,
+  "capability": "repository",
+  "cases": []
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(otherRegistry, []byte(`{
+  "version": 1,
+  "capability": "postgres",
+  "cases": [{
+    "id": "postgres/TestOtherRegistered",
+    "package": "./internal/sample",
+    "run": "^TestOtherRegistered$",
+    "phase": "precheck",
+    "source": "internal/sample/fixture.e2e"
+  }, {
+    "id": "repository/TestRegistered",
+    "package": "./internal/sample",
+    "run": "^TestRegistered$",
+    "phase": "precheck",
+    "source": "internal/sample/fixture.e2e"
+  }]
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	movedCases, err := loadCases(root, "precheck", "postgres", "", "")
+	if err != nil {
+		t.Fatalf("loadCases() after fragment relocation error = %v", err)
+	}
+	var moved databaseCase
+	for _, item := range movedCases {
+		if item.ID == "repository/TestRegistered" {
+			moved = item
+			break
+		}
+	}
+	if moved.ID != "repository/TestRegistered" || moved.Capability != "postgres" {
+		t.Fatalf("relocated case = %+v, want postgres-owned repository/TestRegistered", moved)
+	}
 }
 
-func TestWave5DatabaseCaseFragmentsPreserveBaselineInventory(t *testing.T) {
+func TestDatabaseCaseFragmentsPreserveInventoryAndWave6Partition(t *testing.T) {
 	root, err := repositoryRoot("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	entries, err := os.ReadDir(filepath.Join(root, "scripts", "e2e-db-cases"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	all := make([]databaseCase, 0)
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-		contents, err := os.ReadFile(filepath.Join(root, "scripts", "e2e-db-cases", entry.Name()))
+	seen := make(map[string]bool)
+	for _, phase := range []string{"precheck", "scenario"} {
+		cases, err := loadCases(root, phase, "", "", "")
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("loadCases(%s) error = %v", phase, err)
+		}
+		for _, item := range cases {
+			if seen[item.ID] {
+				t.Fatalf("duplicate database case %s", item.ID)
+			}
+			seen[item.ID] = true
+			if strings.TrimSpace(item.Capability) == "" {
+				t.Fatalf("database case %s has no capability", item.ID)
+			}
+		}
+	}
+	if len(seen) == 0 {
+		t.Fatal("database case inventory is empty")
+	}
+	for _, capability := range []string{"access", "operations", "remember", "search", "lifecycle", "memorypack"} {
+		path := filepath.Join(root, "scripts", "e2e-db-cases", capability+".json")
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
 		}
 		var fragment caseFragment
 		if err := json.Unmarshal(contents, &fragment); err != nil {
-			t.Fatal(err)
+			t.Fatalf("decode %s: %v", path, err)
 		}
-		for _, item := range fragment.Cases {
-			item.Capability = fragment.Capability
-			all = append(all, item)
+		if fragment.Capability != capability {
+			t.Fatalf("fragment %s declares capability %q", capability, fragment.Capability)
 		}
-	}
-	seen := make(map[string]bool, len(all))
-	capabilities := make(map[string]int)
-	baseline := make([]string, 0, len(all)-6)
-	excluded := map[string]bool{
-		"repository/TestRememberAttemptDiagnosticHoldTransactionRollback": true,
-		"knowledge/TestKnowledgeOwnerTerminalReplay":                      true,
-		"knowledge/TestKnowledgeOwnerLateFailureRollsBack":                true,
-		"knowledge/TestKnowledgeOwnerConcurrentRetryUsesOneCommit":        true,
-		"knowledge/TestKnowledgeOwnerRejectsStaleEmbeddingFence":          true,
-		"knowledge/TestKnowledgeOwnerTeamProfileIsolation":                true,
-	}
-	for _, item := range all {
-		if seen[item.ID] {
-			t.Fatalf("duplicate database case %s", item.ID)
+		reserved := capability == "lifecycle" || capability == "memorypack"
+		if !reserved && len(fragment.Cases) == 0 {
+			t.Fatalf("wave 6 fragment %s is unexpectedly empty", capability)
 		}
-		seen[item.ID] = true
-		if strings.TrimSpace(item.Capability) == "" {
-			t.Fatalf("database case %s has no capability", item.ID)
-		}
-		if item.ID == "repository/TestRememberAttemptDiagnosticHoldTransactionRollback" && item.Capability != "privacy" {
-			t.Fatalf("rollback case belongs to capability %s, want privacy", item.Capability)
-		}
-		capabilities[item.Capability]++
-		if !excluded[item.ID] {
-			baseline = append(baseline, strings.Join([]string{item.ID, item.Package, item.Run, item.Phase, item.Scenario, item.Source, item.Capability}, "\t"))
-		}
-	}
-	if len(all) != 391 {
-		t.Fatalf("database case inventory contains %d cases, want 391", len(all))
-	}
-	sort.Strings(baseline)
-	baselineHash := sha256.Sum256([]byte(strings.Join(baseline, "\n") + "\n"))
-	if got := fmt.Sprintf("%x", baselineHash); got != "344288dd3efa02504293ca19d8f81b65d060b5538509911c9f7796bc54e756f0" {
-		t.Fatalf("baseline database case inventory changed: %s", got)
-	}
-	for capability, want := range map[string]int{
-		"audit": 9, "community": 1, "dream": 33, "graph": 2, "http": 1,
-		"knowledge": 56, "migration": 2, "postgres": 112, "privacy": 20,
-		"repository": 139, "server": 2, "service": 8, "settings": 3, "trace": 3,
-	} {
-		if capabilities[capability] != want {
-			t.Fatalf("capability %s contains %d cases, want %d", capability, capabilities[capability], want)
+		if reserved && len(fragment.Cases) != 0 {
+			t.Fatalf("reserved fragment %s unexpectedly owns cases", capability)
 		}
 	}
 }

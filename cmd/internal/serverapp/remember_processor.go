@@ -13,7 +13,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/embedding"
+	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
@@ -27,7 +27,7 @@ type rememberSynchronousProcessor struct {
 	ledger   rememberSynchronousLedger
 	catalog  memoryservice.SubmissionAssessmentCatalog
 	provider assessor.Provider
-	embedder embedding.EmbeddingProviderInterface
+	embedder embeddingcontract.EmbeddingProviderInterface
 	limits   assessor.SemanticAssessmentLimits
 	metrics  observability.DiscoverabilityMetrics
 	logger   observability.LogProvider
@@ -53,7 +53,7 @@ func newRememberSynchronousProcessor(
 	ledger *repository.LedgerRepositoryImpl,
 	catalog memoryservice.SubmissionAssessmentCatalog,
 	provider assessor.Provider,
-	embedder embedding.EmbeddingProviderInterface,
+	embedder embeddingcontract.EmbeddingProviderInterface,
 	limits assessor.SemanticAssessmentLimits,
 	metrics observability.DiscoverabilityMetrics,
 	logger observability.LogProvider,
@@ -543,7 +543,7 @@ func (p *rememberSynchronousProcessor) logRememberFailure(
 		)
 	case errors.As(failure, &providerFailure) && providerFailure.cause != nil:
 		logError = providerFailure.cause
-		metadata := embedding.ClassifyFailure(providerFailure.cause)
+		metadata := embeddingcontract.ClassifyFailure(providerFailure.cause)
 		attrs = append(attrs,
 			observability.String("failure_source", "provider_call"),
 			observability.String("failure_class", metadata.Class),
@@ -656,7 +656,7 @@ func rememberFailureCode(phase string, err error) rememberapp.SubmissionErrorCod
 	}
 	var providerFailure *rememberEmbeddingProviderFailure
 	if errors.As(err, &providerFailure) {
-		if metadata := embedding.ClassifyFailure(providerFailure.cause); metadata.Code == "provider_response_invalid" {
+		if metadata := embeddingcontract.ClassifyFailure(providerFailure.cause); metadata.Code == "provider_response_invalid" {
 			return rememberapp.SubmissionErrorEmbeddingResponseInvalid
 		}
 	}

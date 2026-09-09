@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/embedding"
+	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	"github.com/stretchr/testify/require"
@@ -25,7 +26,7 @@ func TestSemanticwriteEmbeddingAdapterPreservesProviderOrder(t *testing.T) {
 
 func TestSemanticwriteEmbeddingAdapterClassifiesProviderResponseContractErrors(t *testing.T) {
 	adapter := semanticwriteEmbeddingAdapter{provider: semanticwriteEmbeddingProviderStub{
-		err: &embedding.ProviderError{FailureCode: "provider_response_invalid", FailureClass: "provider_action_required"},
+		err: &embeddingcontract.ProviderError{FailureCode: "provider_response_invalid", FailureClass: "provider_action_required"},
 	}}
 	_, _, err := adapter.EmbedBatch(context.Background(), []string{"invalid"})
 	require.ErrorIs(t, err, semanticwrite.ErrProviderResponseInvalid)
@@ -33,7 +34,7 @@ func TestSemanticwriteEmbeddingAdapterClassifiesProviderResponseContractErrors(t
 
 func TestSemanticwriteEmbeddingAdapterClassifiesSanitizedRetryProviderErrors(t *testing.T) {
 	inner := semanticwriteEmbeddingProviderStub{
-		err: &embedding.ProviderError{FailureCode: "provider_response_invalid", FailureClass: "provider_action_required"},
+		err: &embeddingcontract.ProviderError{FailureCode: "provider_response_invalid", FailureClass: "provider_action_required"},
 	}
 	retry := embedding.NewRetryEmbeddingProviderWithKey(inner, semanticwriteEmbeddingTestLogger{}, "")
 	adapter := semanticwriteEmbeddingAdapter{provider: retry}
@@ -44,7 +45,7 @@ func TestSemanticwriteEmbeddingAdapterClassifiesSanitizedRetryProviderErrors(t *
 
 func TestSemanticwriteEmbeddingExecutorBoundsProviderActionFailuresAsUnavailable(t *testing.T) {
 	executor := newSemanticwriteEmbeddingExecutor(semanticwriteEmbeddingProviderStub{
-		err: &embedding.ProviderError{FailureCode: "provider_authentication_failed", FailureClass: "provider_action_required"},
+		err: &embeddingcontract.ProviderError{FailureCode: "provider_authentication_failed", FailureClass: "provider_action_required"},
 	})
 
 	_, err := executor.Execute(context.Background(), semanticwrite.Plan{
@@ -64,7 +65,7 @@ type semanticwriteEmbeddingProviderStub struct {
 	err error
 }
 
-var _ embedding.EmbeddingProviderInterface = semanticwriteEmbeddingProviderStub{}
+var _ embeddingcontract.EmbeddingProviderInterface = semanticwriteEmbeddingProviderStub{}
 
 func (semanticwriteEmbeddingProviderStub) Embed(context.Context, string) ([]float32, string, error) {
 	return []float32{1, 2}, "fixture", nil

@@ -13,6 +13,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
@@ -37,7 +38,7 @@ const (
 )
 
 // Compile-time assertion that OpenAIEmbeddingProvider implements EmbeddingProviderInterface.
-var _ EmbeddingProviderInterface = (*OpenAIEmbeddingProvider)(nil)
+var _ embeddingcontract.EmbeddingProviderInterface = (*OpenAIEmbeddingProvider)(nil)
 
 // NewOpenAIEmbeddingProvider creates a new OpenAI-compatible embedding provider.
 // If httpClient is nil, a default client with the configured timeout is used.
@@ -81,7 +82,7 @@ func (p *OpenAIEmbeddingProvider) Embed(ctx context.Context, text string) ([]flo
 		return nil, "", err
 	}
 	if len(vecs) == 0 {
-		return nil, "", &ProviderError{
+		return nil, "", &embeddingcontract.ProviderError{
 			Provider: "openai",
 			Message:  "no embedding returned",
 		}
@@ -136,7 +137,7 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, "", &ProviderError{
+		return nil, "", &embeddingcontract.ProviderError{
 			Provider: "openai",
 			Message:  "failed to marshal request",
 			Cause:    err,
@@ -145,7 +146,7 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return nil, "", &ProviderError{
+		return nil, "", &embeddingcontract.ProviderError{
 			Provider: "openai",
 			Message:  "failed to create request",
 			Cause:    err,
@@ -158,7 +159,7 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		recordEmbeddingExchange(ctx, p.model, bodyBytes, nil, "", 0, "no_response", nil)
-		return nil, "", &ProviderError{
+		return nil, "", &embeddingcontract.ProviderError{
 			Provider: "openai",
 			Message:  "request failed",
 			Cause:    err,
@@ -169,7 +170,7 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	rawBody, err := io.ReadAll(io.LimitReader(resp.Body, openAIEmbeddingMaxResponseBytes+1))
 	if err != nil {
 		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "response_read_failed", nil)
-		return nil, "", &ProviderError{
+		return nil, "", &embeddingcontract.ProviderError{
 			Provider:     "openai",
 			Message:      "failed to read response",
 			Cause:        err,
@@ -179,13 +180,13 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	}
 	if len(rawBody) > openAIEmbeddingMaxResponseBytes {
 		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "response_too_large", nil)
-		return nil, "", &ProviderError{Provider: "openai", Message: "provider response exceeds transport limit", FailureCode: "provider_response_invalid", FailureClass: "provider_action_required"}
+		return nil, "", &embeddingcontract.ProviderError{Provider: "openai", Message: "provider response exceeds transport limit", FailureCode: "provider_response_invalid", FailureClass: "provider_action_required"}
 	}
 	var respBody openAIEmbeddingResponse
 	if err := json.Unmarshal(rawBody, &respBody); err != nil {
 		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "captured", nil)
 		if resp.StatusCode != http.StatusOK {
-			return nil, "", &ProviderHTTPError{
+			return nil, "", &embeddingcontract.ProviderHTTPError{
 				Status:     resp.StatusCode,
 				Message:    nonJSONProviderErrorMessage,
 				RetryAfter: retryAfterDuration(resp.Header.Get("Retry-After")),
@@ -194,7 +195,7 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 		if resp.StatusCode == http.StatusOK {
 			observability.RecordAIOperationUnpriced(ctx, p.metrics, observability.AIComponentEmbedding, p.model, "missing_usage")
 		}
-		return nil, "", &ProviderError{
+		return nil, "", &embeddingcontract.ProviderError{
 			Provider:     "openai",
 			Message:      "provider response was invalid",
 			Cause:        err,
@@ -209,7 +210,7 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "captured", dimensions)
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, "", &ProviderHTTPError{
+		return nil, "", &embeddingcontract.ProviderHTTPError{
 			Status:     resp.StatusCode,
 			Message:    fmt.Sprintf("provider returned status %d", resp.StatusCode),
 			Code:       providerErrorCode(respBody.Error),
@@ -220,7 +221,7 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	p.recordEmbeddingUsage(ctx, respBody.Usage, len(texts))
 
 	if len(respBody.Data) != len(texts) {
-		return nil, "", &ProviderError{
+		return nil, "", &embeddingcontract.ProviderError{
 			Provider:     "openai",
 			Message:      fmt.Sprintf("expected %d embeddings, got %d", len(texts), len(respBody.Data)),
 			FailureCode:  "provider_response_invalid",
@@ -230,7 +231,7 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 
 	for index, item := range respBody.Data {
 		if len(item.Embedding) != p.dimensions {
-			return nil, "", &ProviderError{
+			return nil, "", &embeddingcontract.ProviderError{
 				Provider:     "openai",
 				Message:      fmt.Sprintf("expected %d dimensions, got %d at index %d", p.dimensions, len(item.Embedding), index),
 				FailureCode:  "provider_response_invalid",

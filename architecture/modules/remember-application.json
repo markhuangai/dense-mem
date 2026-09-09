@@ -2,29 +2,118 @@
   "schema_version": 1,
   "capability": "remember-application",
   "source_ownership": [
-    {"path": "cmd/internal/serverapp/remember_composition.go", "issue": 372},
-    {"path": "internal/tools/registry/remember_bindings.go", "issue": 372},
-    {"path": "cmd/internal/serverapp/remember_processor.go", "issue": 372},
-    {"path": "cmd/internal/serverapp/remember_replay.go", "issue": 372},
-    {"path": "cmd/internal/serverapp/remember_failure_logging.go", "issue": 372},
-    {"path": "cmd/internal/serverapp/remember_exchange_recorder.go", "issue": 372},
-    {"path": "cmd/internal/serverapp/remember_failure_recovery.go", "issue": 372},
-    {"path": "cmd/internal/serverapp/remember_embedding_helpers.go", "issue": 372},
-    {"path": "internal/service/remember/deadlines.go", "issue": 372},
-    {"path": "internal/service/remember/evidence_conversion.go", "issue": 372},
-    {"path": "internal/service/remember/ports.go", "issue": 372},
-    {"path": "internal/service/remember/request_hash.go", "issue": 372},
-    {"path": "internal/service/remember/security_audit.go", "issue": 372},
-    {"path": "internal/service/remember/security_scan.go", "issue": 372},
-    {"path": "internal/service/remember/security_scan_helpers.go", "issue": 372},
-    {"path": "internal/service/remember/security_scan_test.go", "issue": 372},
-    {"path": "internal/service/remember/service.go", "issue": 372},
-    {"path": "internal/service/remember/service_helpers_test.go", "issue": 372},
-    {"path": "internal/service/remember/service_synchronous_test.go", "issue": 372},
-    {"path": "internal/service/remember/status_errors.go", "issue": 372},
-    {"path": "internal/service/remember/status_errors_test.go", "issue": 372},
-    {"path": "internal/service/remember/synchronous_contract.go", "issue": 372},
-    {"path": "internal/service/remember/synchronous_contract_test.go", "issue": 372}
+    {
+      "path": "cmd/internal/serverapp/remember_composition.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/tools/registry/remember_bindings.go",
+      "issue": 372
+    },
+    {
+      "path": "cmd/internal/serverapp/remember_processor.go",
+      "issue": 372
+    },
+    {
+      "path": "cmd/internal/serverapp/remember_replay.go",
+      "issue": 372
+    },
+    {
+      "path": "cmd/internal/serverapp/remember_failure_logging.go",
+      "issue": 372
+    },
+    {
+      "path": "cmd/internal/serverapp/remember_exchange_recorder.go",
+      "issue": 372
+    },
+    {
+      "path": "cmd/internal/serverapp/remember_failure_recovery.go",
+      "issue": 372
+    },
+    {
+      "path": "cmd/internal/serverapp/remember_embedding_helpers.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/remember/deadlines.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/remember/evidence_conversion.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/remember/ports.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/remember/request_hash.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/remember/security_audit.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/remember/security_scan.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/remember/security_scan_helpers.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/remember/security_scan_test.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/remember/service.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/remember/service_helpers_test.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/remember/service_synchronous_test.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/remember/status_errors.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/remember/status_errors_test.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/remember/synchronous_contract.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/remember/synchronous_contract_test.go",
+      "issue": 372
+    },
+    {
+      "path": "cmd/internal/serverapp/remember_processor_integration.e2e",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/remember_attempt_diagnostics_service.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/remember_attempt_diagnostics_service_test.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/repository/remember_attempt_diagnostics_repository_integration.e2e",
+      "issue": 372
+    },
+    {
+      "path": "internal/repository/remember_attempt_repository_test.go",
+      "issue": 372
+    }
   ],
   "completed_issues": [],
   "go": {

@@ -2,8 +2,291 @@
   "schema_version": 1,
   "capability": "embedding-provider",
   "source_ownership": [
-    {"path": "cmd/internal/serverapp/search_composition.go", "issue": 373},
-    {"path": "cmd/internal/serverapp/search_background.go", "issue": 373}
+    {
+      "path": "cmd/internal/serverapp/search_composition.go",
+      "issue": 373
+    },
+    {
+      "path": "cmd/internal/serverapp/search_background.go",
+      "issue": 373
+    },
+    {
+      "path": "internal/repository/search_reconciliation.go",
+      "issue": 373
+    },
+    {
+      "path": "internal/repository/search_reconciliation_documents.go",
+      "issue": 373
+    },
+    {
+      "path": "internal/repository/search_reconciliation_integration.e2e",
+      "issue": 373
+    },
+    {
+      "path": "internal/repository/search_reconciliation_runs.go",
+      "issue": 373
+    },
+    {
+      "path": "internal/service/search_reconciliation.go",
+      "issue": 373
+    },
+    {
+      "path": "internal/service/search_reconciliation_test.go",
+      "issue": 373
+    },
+    {
+      "path": "internal/embedding/contract.go",
+      "issue": 373
+    },
+    {
+      "path": "internal/embedding/provider.go",
+      "issue": 373
+    },
+    {
+      "path": "internal/embedding/errors.go",
+      "issue": 373
+    },
+    {
+      "path": "internal/embedding/sanitize.go",
+      "issue": 373
+    }
+  ],
+  "compatibility_bridges": [
+    {
+      "source_path": "internal/embedding/contract.go",
+      "fields": [
+        "EmbeddingContractVersion",
+        "EmbeddingSourceKind",
+        "EmbeddingSourceEvidence",
+        "EmbeddingSourceSearchDocument",
+        "EmbeddingSourceRecallQuery",
+        "EmbeddingSourceKinds"
+      ],
+      "consumers": [
+        {
+          "path": "internal/tools/registry/contract_test.go",
+          "symbol": "TestProviderAndEmbeddingContracts"
+        },
+        {
+          "path": "internal/embedding/contract_test.go",
+          "symbol": "TestEmbeddingSourceKindsIsClosed"
+        }
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {
+        "path": "internal/embedding/contract/contract.go",
+        "symbol": "EmbeddingSourceKinds"
+      },
+      "removal_condition": "Remove the root embedding contract aliases after all named consumers import internal/embedding/contract directly."
+    },
+    {
+      "source_path": "internal/embedding/provider.go",
+      "fields": ["EmbeddingProviderInterface"],
+      "consumers": [
+        {
+          "path": "internal/embedding/provider_test.go",
+          "symbol": "TestMockEmbeddingProvider_ImplementsInterface"
+        },
+        {
+          "path": "internal/embedding/openai_provider_test.go",
+          "symbol": "TestOpenAIProvider_ImplementsInterface"
+        }
+      ],
+      "removal_issue": 382,
+      "removal_condition": "Remove the root embedding provider alias after all named consumers import internal/embedding/contract directly."
+    },
+    {
+      "source_path": "internal/embedding/errors.go",
+      "fields": [
+        "ErrEmbeddingTimeout",
+        "ErrEmbeddingRateLimit",
+        "ErrEmbeddingProvider",
+        "TimeoutError",
+        "RateLimitError",
+        "ProviderError",
+        "ProviderHTTPError",
+        "FailureMetadata",
+        "MaxProviderRetryAfter",
+        "ClassifyFailure",
+        "boundedRetryAfter"
+      ],
+      "consumers": [
+        {
+          "path": "cmd/internal/serverapp/remember_processor_test.go",
+          "symbol": "TestRememberFailureCodeMapsEmbeddingProviderResponseInvalid"
+        },
+        {
+          "path": "internal/embedding/errors_test.go",
+          "symbol": "TestClassifyFailureUsesClosedProviderContract"
+        },
+        {
+          "path": "internal/embedding/errors_test.go",
+          "symbol": "TestBoundedRetryAfterClampsProviderHints"
+        },
+        {
+          "path": "internal/embedding/openai_provider_test.go",
+          "symbol": "TestOpenAIProviderRecordsProviderUsageBeforeRejectingInvalidResult"
+        },
+        {
+          "path": "internal/embedding/openai_provider_test.go",
+          "symbol": "TestOpenAIProviderMarksMalformedSuccessfulResponseUnpriced"
+        },
+        {
+          "path": "internal/embedding/openai_provider_test.go",
+          "symbol": "TestOpenAIProvider_Non200Response"
+        },
+        {
+          "path": "internal/embedding/openai_provider_test.go",
+          "symbol": "TestOpenAIProvider_NonJSONServerErrorIsHTTPError"
+        },
+        {
+          "path": "internal/embedding/openai_provider_test.go",
+          "symbol": "TestOpenAIProvider_ClassifiesTruncatedResponseAsTransientNetworkFailure"
+        },
+        {
+          "path": "internal/embedding/openai_provider_test.go",
+          "symbol": "TestOpenAIProviderRejectsDimensionMismatchAfterFirstEmbedding"
+        },
+        {
+          "path": "internal/embedding/openai_provider_test.go",
+          "symbol": "TestOpenAIProviderParsesAllowlistedFailureCodeAndTypeWithoutMessage"
+        },
+        {
+          "path": "internal/embedding/openai_provider_test.go",
+          "symbol": "TestOpenAIProvider_WrongDimensions"
+        },
+        {
+          "path": "internal/embedding/openai_provider_test.go",
+          "symbol": "TestOpenAIProvider_WrongNumberOfEmbeddings"
+        },
+        {
+          "path": "internal/embedding/openai_provider_test.go",
+          "symbol": "TestOpenAIProvider_EmbedBatchWaitHonorsContextCancellation"
+        },
+        {
+          "path": "internal/embedding/retry_provider_test.go",
+          "symbol": "TestRetryProvider_ClassifyEmbeddingError"
+        },
+        {
+          "path": "internal/embedding/retry_provider_test.go",
+          "symbol": "TestRetryProvider_Retries5xxUpToMax"
+        },
+        {
+          "path": "internal/embedding/retry_provider_test.go",
+          "symbol": "TestRetryProvider_NoRetryOn400"
+        },
+        {
+          "path": "internal/embedding/retry_provider_test.go",
+          "symbol": "TestRetryProvider_Retries429"
+        },
+        {
+          "path": "internal/embedding/retry_provider_test.go",
+          "symbol": "TestRetryProviderDoesNotRetryInsufficientQuota429"
+        },
+        {
+          "path": "internal/embedding/retry_provider_test.go",
+          "symbol": "TestRetryProvider_ShouldRetryDirectErrorClasses"
+        },
+        {
+          "path": "internal/embedding/retry_provider_test.go",
+          "symbol": "TestRetryProvider_ContextCancelStopsRetry"
+        },
+        {
+          "path": "internal/embedding/retry_provider_test.go",
+          "symbol": "TestRetryProviderCancellationDuringDelayDoesNotStartAnotherCall"
+        },
+        {
+          "path": "internal/embedding/retry_provider_test.go",
+          "symbol": "TestRetryProviderDeadlineDuringDelayPreservesProviderFailure"
+        },
+        {
+          "path": "internal/embedding/retry_provider_test.go",
+          "symbol": "TestRetryProviderCapsProviderRetryHintsAtPolicyMaximum"
+        },
+        {
+          "path": "internal/embedding/retry_provider_test.go",
+          "symbol": "TestRetryProvider_SuccessAfterOneRetry"
+        },
+        {
+          "path": "internal/embedding/retry_provider_test.go",
+          "symbol": "TestRetryProvider_FailAfterMaxRetries"
+        },
+        {
+          "path": "internal/embedding/retry_provider_test.go",
+          "symbol": "TestRetryProvider_NoRetryOn401"
+        },
+        {
+          "path": "internal/embedding/retry_provider_test.go",
+          "symbol": "TestRetryProvider_NoRetryOn404"
+        },
+        {
+          "path": "internal/embedding/retry_provider_test.go",
+          "symbol": "TestRetryProvider_EdimBatchRetries"
+        },
+        {
+          "path": "internal/embedding/provider_test.go",
+          "symbol": "TestEmbeddingProviderInterface_SentinelErrors"
+        },
+        {
+          "path": "internal/embedding/provider_test.go",
+          "symbol": "TestProviderHTTPError_ErrorWithoutMessage"
+        }
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {
+        "path": "internal/embedding/contract/errors.go",
+        "symbol": "ClassifyFailure"
+      },
+      "removal_condition": "Remove the root embedding error aliases and forwarding classifier after all named consumers use internal/embedding/contract directly."
+    },
+    {
+      "source_path": "internal/embedding/sanitize.go",
+      "fields": ["SanitizeError", "ScrubLogFields"],
+      "consumers": [
+        {
+          "path": "internal/embedding/sanitize_test.go",
+          "symbol": "TestSanitizeError_NilError"
+        },
+        {
+          "path": "internal/embedding/sanitize_test.go",
+          "symbol": "TestSanitizeError_ScrubsAPIKey"
+        },
+        {
+          "path": "internal/embedding/sanitize_test.go",
+          "symbol": "TestSanitizeError_ScrubsBearerToken"
+        },
+        {
+          "path": "internal/embedding/sanitize_test.go",
+          "symbol": "TestSanitizeError_ScrubsSKPattern"
+        },
+        {
+          "path": "internal/embedding/sanitize_test.go",
+          "symbol": "TestSanitizeError_PreservesNonSensitive"
+        },
+        {
+          "path": "internal/embedding/sanitize_test.go",
+          "symbol": "TestSanitizeError_ScrubsMultipleKeys"
+        },
+        {
+          "path": "internal/embedding/sanitize_test.go",
+          "symbol": "TestScrubLogFields_NilInput"
+        },
+        {
+          "path": "internal/embedding/sanitize_test.go",
+          "symbol": "TestScrubLogFields_StringWithAPIKey"
+        },
+        {
+          "path": "internal/embedding/sanitize_test.go",
+          "symbol": "TestScrubLogFields_NonStringValues"
+        }
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {
+        "path": "internal/embedding/contract/sanitize.go",
+        "symbol": "SanitizeError"
+      },
+      "removal_condition": "Remove the root embedding sanitization forwarders after all named consumers use internal/embedding/contract directly."
+    }
   ],
   "completed_issues": [],
   "go": {

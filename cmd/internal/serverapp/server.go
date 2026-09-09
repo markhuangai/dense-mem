@@ -783,15 +783,6 @@ func conflictReviewLocation(name string) *time.Location {
 	return actual.(*time.Location)
 }
 
-func checkActiveAuthority(authority authorityBootstrap) error {
-	if authority.Mode != authorityActive ||
-		authority.Marker == nil ||
-		authority.Marker.Status != domain.MigrationMarkerCompatible {
-		return fmt.Errorf("%w: compatible authority marker is required", errAuthorityBlocked)
-	}
-	return nil
-}
-
 func logServerStartError(logger observability.LogProvider, message string, err error) {
 	if errors.Is(err, nethttp.ErrServerClosed) {
 		return

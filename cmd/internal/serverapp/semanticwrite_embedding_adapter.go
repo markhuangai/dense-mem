@@ -4,17 +4,17 @@ import (
 	"context"
 	"errors"
 
-	"github.com/markhuangai/dense-mem/internal/embedding"
+	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 
 type semanticwriteEmbeddingAdapter struct {
-	provider embedding.EmbeddingProviderInterface
+	provider embeddingcontract.EmbeddingProviderInterface
 }
 
 var _ semanticwrite.BatchProvider = semanticwriteEmbeddingAdapter{}
 
-func newSemanticwriteEmbeddingExecutor(provider embedding.EmbeddingProviderInterface) *semanticwrite.Executor {
+func newSemanticwriteEmbeddingExecutor(provider embeddingcontract.EmbeddingProviderInterface) *semanticwrite.Executor {
 	return semanticwrite.NewExecutor(semanticwriteEmbeddingAdapter{provider: provider})
 }
 
@@ -24,7 +24,7 @@ func (a semanticwriteEmbeddingAdapter) EmbedBatch(ctx context.Context, texts []s
 	}
 	vectors, model, err := a.provider.EmbedBatch(ctx, texts)
 	if err != nil {
-		metadata := embedding.ClassifyFailure(err)
+		metadata := embeddingcontract.ClassifyFailure(err)
 		if metadata.Code == "provider_response_invalid" {
 			return nil, "", semanticwrite.ErrProviderResponseInvalid
 		}

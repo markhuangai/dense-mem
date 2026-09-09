@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"time"
 
+	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
@@ -15,7 +16,7 @@ const DefaultRetryEmbeddingMaxRetries = 3
 // RetryEmbeddingProvider wraps an EmbeddingProviderInterface with retry logic.
 // It implements bounded exponential backoff with jitter for transient errors.
 type RetryEmbeddingProvider struct {
-	inner      EmbeddingProviderInterface
+	inner      embeddingcontract.EmbeddingProviderInterface
 	maxRetries int
 	baseDelay  time.Duration
 	maxDelay   time.Duration
@@ -31,14 +32,14 @@ type RetryEmbeddingOptions struct {
 }
 
 // Compile-time assertion that RetryEmbeddingProvider implements EmbeddingProviderInterface.
-var _ EmbeddingProviderInterface = (*RetryEmbeddingProvider)(nil)
+var _ embeddingcontract.EmbeddingProviderInterface = (*RetryEmbeddingProvider)(nil)
 
 // NewRetryEmbeddingProvider creates a new retry wrapper around the given provider.
 // The retry configuration is fixed at:
 // - maxRetries: DefaultRetryEmbeddingMaxRetries
 // - baseDelay: 200ms
 // - maxDelay: 5s
-func NewRetryEmbeddingProvider(inner EmbeddingProviderInterface, logger observability.LogProvider) *RetryEmbeddingProvider {
+func NewRetryEmbeddingProvider(inner embeddingcontract.EmbeddingProviderInterface, logger observability.LogProvider) *RetryEmbeddingProvider {
 	return &RetryEmbeddingProvider{
 		inner:      inner,
 		maxRetries: DefaultRetryEmbeddingMaxRetries,
@@ -51,11 +52,11 @@ func NewRetryEmbeddingProvider(inner EmbeddingProviderInterface, logger observab
 
 // NewRetryEmbeddingProviderWithKey creates a new retry wrapper with the API key
 // for sanitization purposes.
-func NewRetryEmbeddingProviderWithKey(inner EmbeddingProviderInterface, logger observability.LogProvider, apiKey string) *RetryEmbeddingProvider {
+func NewRetryEmbeddingProviderWithKey(inner embeddingcontract.EmbeddingProviderInterface, logger observability.LogProvider, apiKey string) *RetryEmbeddingProvider {
 	return NewRetryEmbeddingProviderWithKeyAndOptions(inner, logger, apiKey, RetryEmbeddingOptions{})
 }
 
-func NewRetryEmbeddingProviderWithKeyAndOptions(inner EmbeddingProviderInterface, logger observability.LogProvider, apiKey string, opts RetryEmbeddingOptions) *RetryEmbeddingProvider {
+func NewRetryEmbeddingProviderWithKeyAndOptions(inner embeddingcontract.EmbeddingProviderInterface, logger observability.LogProvider, apiKey string, opts RetryEmbeddingOptions) *RetryEmbeddingProvider {
 	if opts.MaxRetries <= 0 {
 		opts.MaxRetries = DefaultRetryEmbeddingMaxRetries
 	}
@@ -130,7 +131,7 @@ func (p *RetryEmbeddingProvider) Embed(ctx context.Context, text string) ([]floa
 	observability.RecordEmbeddingError(ctx, p.metrics, configuredModel, classifyEmbeddingError(lastErr))
 
 	// Sanitize the error before returning
-	return nil, "", SanitizeError(lastErr, p.apiKey)
+	return nil, "", embeddingcontract.SanitizeError(lastErr, p.apiKey)
 }
 
 // EmbedBatch returns embeddings for multiple texts with retry logic.
@@ -176,14 +177,14 @@ func (p *RetryEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string)
 	observability.RecordEmbeddingError(ctx, p.metrics, configuredModel, classifyEmbeddingError(lastErr))
 
 	// Sanitize the error before returning
-	return nil, "", SanitizeError(lastErr, p.apiKey)
+	return nil, "", embeddingcontract.SanitizeError(lastErr, p.apiKey)
 }
 
 func (p *RetryEmbeddingProvider) retryContextError(ctx context.Context, lastErr error) error {
 	if err := ctx.Err(); errors.Is(err, context.Canceled) {
 		return err
 	}
-	return SanitizeError(lastErr, p.apiKey)
+	return embeddingcontract.SanitizeError(lastErr, p.apiKey)
 }
 
 // classifyEmbeddingError maps a provider error to a coarse-grained tag used
@@ -193,7 +194,7 @@ func classifyEmbeddingError(err error) string {
 	if err == nil {
 		return "ok"
 	}
-	metadata := ClassifyFailure(err)
+	metadata := embeddingcontract.ClassifyFailure(err)
 	switch metadata.Code {
 	case "provider_timeout":
 		return "timeout"
@@ -239,22 +240,22 @@ func (p *RetryEmbeddingProvider) shouldRetry(err error) bool {
 	if errors.Is(err, context.Canceled) {
 		return false
 	}
-	return ClassifyFailure(err).Class == "transient"
+	return embeddingcontract.ClassifyFailure(err).Class == "transient"
 }
 
 func (p *RetryEmbeddingProvider) retryDelay(attempt int, err error) time.Duration {
-	var httpErr *ProviderHTTPError
+	var httpErr *embeddingcontract.ProviderHTTPError
 	if errors.As(err, &httpErr) {
 		if httpErr.RetryAfter > 0 {
-			return boundedRetryAfter(httpErr.RetryAfter)
+			return embeddingcontract.BoundedRetryAfter(httpErr.RetryAfter)
 		}
 		if httpErr.Status == 429 {
 			return 10 * time.Second
 		}
 	}
-	var rateLimitErr *RateLimitError
+	var rateLimitErr *embeddingcontract.RateLimitError
 	if errors.As(err, &rateLimitErr) && rateLimitErr.RetryAfter > 0 {
-		return boundedRetryAfter(time.Duration(rateLimitErr.RetryAfter) * time.Second)
+		return embeddingcontract.BoundedRetryAfter(time.Duration(rateLimitErr.RetryAfter) * time.Second)
 	}
 	return p.calculateDelay(attempt)
 }
