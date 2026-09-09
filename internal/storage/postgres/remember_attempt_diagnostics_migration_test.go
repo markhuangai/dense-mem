@@ -48,6 +48,7 @@ func TestRememberAttemptDiagnosticsMigrationContract(t *testing.T) {
 		"remember_attempt_diagnostics_capture_state_check",
 		"'not_delivered'",
 		"'hash_only'",
+		"'legacy_quarantine_omitted'",
 		"legacy_hash_summary",
 		"remember_attempt_diagnostics_body_size_check",
 		"remember_attempt_diagnostics_expiry_check",

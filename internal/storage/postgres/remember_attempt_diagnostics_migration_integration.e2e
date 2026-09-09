@@ -20,7 +20,7 @@ func TestRememberAttemptDiagnosticsMigrationCopiesRetainedLegacyBytesAndHidesHas
 	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
 	spaceID := uuid.NewString()
 	activeAttemptID, heldAttemptID := uuid.NewString(), uuid.NewString()
-	activeHashArtifactID, activeFailureArtifactID, heldHashArtifactID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	activeHashArtifactID, activeFailureArtifactID, heldHashArtifactID, quarantineArtifactID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	capturedAt := time.Now().UTC().Add(-time.Hour)
 	heldCapturedAt := time.Now().UTC().Add(-8 * 24 * time.Hour)
 	heldExpiresAt := heldCapturedAt.Add(7 * 24 * time.Hour)
@@ -57,9 +57,11 @@ func TestRememberAttemptDiagnosticsMigrationCopiesRetainedLegacyBytesAndHidesHas
 				 convert_to('{"request_hash":"sha256:legacy"}', 'UTF8'), octet_length(convert_to('{"request_hash":"sha256:legacy"}', 'UTF8')), 'sha256:' || encode(digest(convert_to('{"request_hash":"sha256:legacy"}', 'UTF8'), 'sha256'), 'hex'), $5, $6),
 				($1::uuid, $7::uuid, $3::uuid, $4::uuid, 'failure', 'application/json',
 				 convert_to('{"phase":"assessment"}', 'UTF8'), octet_length(convert_to('{"phase":"assessment"}', 'UTF8')), 'sha256:' || encode(digest(convert_to('{"phase":"assessment"}', 'UTF8'), 'sha256'), 'hex'), $5, $6),
+				($1::uuid, $12::uuid, $3::uuid, $4::uuid, 'legacy_submission_quarantine_payload', 'application/json',
+				 convert_to('{"evidence":"legacy-secret"}', 'UTF8'), octet_length(convert_to('{"evidence":"legacy-secret"}', 'UTF8')), 'sha256:' || encode(digest(convert_to('{"evidence":"legacy-secret"}', 'UTF8'), 'sha256'), 'hex'), $5 + interval '1 minute', $6 + interval '1 minute'),
 				($1::uuid, $8::uuid, $9::uuid, $4::uuid, 'request', 'application/json',
 				 convert_to('{"request_hash":"sha256:held"}', 'UTF8'), octet_length(convert_to('{"request_hash":"sha256:held"}', 'UTF8')), 'sha256:' || encode(digest(convert_to('{"request_hash":"sha256:held"}', 'UTF8'), 'sha256'), 'hex'), $10, $11)
-		`, teamID, activeHashArtifactID, activeAttemptID, profileID, capturedAt, capturedAt.Add(24*time.Hour), activeFailureArtifactID, heldHashArtifactID, heldAttemptID, heldCapturedAt, heldExpiresAt); err != nil {
+		`, teamID, activeHashArtifactID, activeAttemptID, profileID, capturedAt, capturedAt.Add(24*time.Hour), activeFailureArtifactID, heldHashArtifactID, heldAttemptID, heldCapturedAt, heldExpiresAt, quarantineArtifactID); err != nil {
 			return err
 		}
 		return nil
@@ -89,6 +91,16 @@ func TestRememberAttemptDiagnosticsMigrationCopiesRetainedLegacyBytesAndHidesHas
 	`, teamID, activeAttemptID).Scan(&failureBody, &failureState))
 	require.Equal(t, `{"phase":"assessment"}`, failureBody)
 	require.Equal(t, "captured", failureState)
+
+	var quarantineBody, quarantineState, quarantineOutcome string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT encode(response_bytes, 'escape'), capture_state, outcome
+		FROM remember_attempt_diagnostics
+		WHERE team_id = $1::uuid AND attempt_id = $2::uuid AND sequence_no = 3
+	`, teamID, activeAttemptID).Scan(&quarantineBody, &quarantineState, &quarantineOutcome))
+	require.Empty(t, quarantineBody)
+	require.Equal(t, "not_captured", quarantineState)
+	require.Equal(t, "legacy_quarantine_omitted", quarantineOutcome)
 
 	var heldBody, heldState, heldOutcome string
 	var held bool

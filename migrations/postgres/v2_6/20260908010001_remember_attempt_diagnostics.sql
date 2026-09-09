@@ -200,11 +200,18 @@ SELECT artifact.team_id,
        CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request') THEN 'original_request' ELSE 'provider_exchange' END,
        'legacy_failure_artifact',
        ''::bytea,
-       CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request') THEN ''::bytea ELSE artifact.content_bytes END,
+       CASE
+           WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request', 'legacy_submission_quarantine_payload') THEN ''::bytea
+           ELSE artifact.content_bytes
+       END,
        '' AS request_content_type,
-       CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request') THEN '' ELSE artifact.content_type END,
-       CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request') THEN 'legacy_hash_summary' ELSE 'legacy_migrated' END,
-       CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request') THEN 'not_captured' ELSE 'captured' END,
+       CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request', 'legacy_submission_quarantine_payload') THEN '' ELSE artifact.content_type END,
+       CASE
+           WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request') THEN 'legacy_hash_summary'
+           WHEN artifact.artifact_kind = 'legacy_submission_quarantine_payload' THEN 'legacy_quarantine_omitted'
+           ELSE 'legacy_migrated'
+       END,
+       CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request', 'legacy_submission_quarantine_payload') THEN 'not_captured' ELSE 'captured' END,
        artifact.captured_at, artifact.expires_at, (artifact.retained_by_legal_hold OR hold.id IS NOT NULL)
 FROM remember_failure_artifacts AS artifact
 LEFT JOIN remember_attempts AS attempt
