@@ -1,4 +1,4 @@
-package communityservice
+package service
 
 import (
 	"context"
@@ -10,9 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/markhuangai/dense-mem/internal/community"
+	communitydomain "github.com/markhuangai/dense-mem/internal/community"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 func TestRunScheduledPublishesValidatedSnapshot(t *testing.T) {
@@ -68,12 +67,12 @@ func TestRunScheduledSkipsUnchangedWindow(t *testing.T) {
 	teamID := uuid.NewString()
 	now := time.Date(2026, 8, 8, 3, 0, 0, 0, time.UTC)
 	inputs := communityServiceInputs()
-	configurationHash := community.ConfigurationHash(community.DefaultSeed)
+	configurationHash := communitydomain.ConfigurationHash(communitydomain.DefaultSeed)
 	fingerprint, err := fingerprintInputs(inputs, configurationHash, "model-v1")
 	require.NoError(t, err)
 	store := &communityServiceStoreStub{
 		inputs: inputs,
-		latest: &repository.CommunityRun{
+		latest: &CommunityRun{
 			TeamID: teamID, RunID: uuid.NewString(), WindowKey: now.Format("2006-01-02"),
 			Status: "completed", SourceFingerprint: fingerprint,
 		},
@@ -93,7 +92,7 @@ func TestRunScheduledRejectsInvalidSetupAndUnclaimedRuns(t *testing.T) {
 	_, err := New(Dependencies{}).RunScheduled(context.Background(), uuid.NewString(), time.Now())
 	require.ErrorContains(t, err, "repository is required")
 
-	store := &communityServiceStoreStub{inputs: communityServiceInputs(), claimResult: &repository.CommunityRun{
+	store := &communityServiceStoreStub{inputs: communityServiceInputs(), claimResult: &CommunityRun{
 		TeamID: uuid.NewString(), RunID: uuid.NewString(), Status: "running", Claimed: false,
 	}}
 	svc := New(Dependencies{Store: store, Summary: &communitySummaryProviderStub{}})
@@ -143,7 +142,7 @@ func TestStatusReturnsExactCommunityCount(t *testing.T) {
 
 func TestStatusLoadsConfigAndPropagatesConfigErrors(t *testing.T) {
 	teamID := uuid.NewString()
-	latest := &repository.CommunityRun{TeamID: teamID, RunID: uuid.NewString(), Status: "failed"}
+	latest := &CommunityRun{TeamID: teamID, RunID: uuid.NewString(), Status: "failed"}
 	store := &communityServiceStoreStub{latest: latest, count: 4}
 	config := schedulerConfigStub{cfg: domain.CommunityDetectionRuntimeConfig{Enabled: true, StartTimeLocal: "03:00", Timezone: "UTC"}}
 	svc := New(Dependencies{Store: store, AppConfig: config})
@@ -214,9 +213,9 @@ func TestValidateCommunitySummaryResponseRejectsIncompleteResponses(t *testing.T
 
 func TestBoundedSummaryRelationshipsDeduplicatesAndBoundsEvidence(t *testing.T) {
 	longQuote := strings.Repeat("q", maxSummaryQuoteRunes+10)
-	inputs := make([]repository.CommunityInput, 101)
+	inputs := make([]CommunityInput, 101)
 	for index := range inputs {
-		inputs[index] = repository.CommunityInput{
+		inputs[index] = CommunityInput{
 			RelationshipID: uuid.NewString(), SubjectName: "Dense-Mem", PredicateKey: "uses", ObjectName: "PostgreSQL",
 			EvidenceIDs: []string{uuid.NewString(), uuid.NewString()},
 		}
@@ -255,7 +254,7 @@ func TestCommunitySchedulerHelpersAndPublicRunErrors(t *testing.T) {
 
 	completed := time.Date(2026, 8, 8, 3, 1, 0, 0, time.UTC)
 	for _, status := range []string{"failed", "too_large", "cancelled", "skipped"} {
-		result := runResultFromRecord(&repository.CommunityRun{Status: status, CompletedAt: &completed}, status)
+		result := runResultFromRecord(&CommunityRun{Status: status, CompletedAt: &completed}, status)
 		require.Equal(t, status, result.Status)
 		if status == "skipped" {
 			require.Empty(t, result.Error)
@@ -274,12 +273,12 @@ func TestCommunitySchedulerHelpersAndPublicRunErrors(t *testing.T) {
 	require.Equal(t, 1.0, jaccard([]string{"a"}, []string{"a", "a"}))
 	require.Equal(t, 1.0, jaccard(nil, nil))
 
-	cluster := community.Cluster{CommunityID: uuid.New(), GroupKeys: []string{"g1", "g2"}}
-	lineage := []repository.CommunityLineageRecord{{LogicalCommunityID: "logical-1", GroupKeys: []string{"g1", "g2"}}}
-	require.Equal(t, "logical-1", matchLogicalIDs([]community.Cluster{cluster}, lineage)["g1\x00g2"])
-	newLogical := matchLogicalIDs([]community.Cluster{{CommunityID: uuid.New(), GroupKeys: []string{"new"}}}, lineage)
+	cluster := communitydomain.Cluster{CommunityID: uuid.New(), GroupKeys: []string{"g1", "g2"}}
+	lineage := []CommunityLineageRecord{{LogicalCommunityID: "logical-1", GroupKeys: []string{"g1", "g2"}}}
+	require.Equal(t, "logical-1", matchLogicalIDs([]communitydomain.Cluster{cluster}, lineage)["g1\x00g2"])
+	newLogical := matchLogicalIDs([]communitydomain.Cluster{{CommunityID: uuid.New(), GroupKeys: []string{"new"}}}, lineage)
 	require.NotEmpty(t, newLogical["new"])
-	require.Len(t, topPredicates([]repository.CommunityInput{
+	require.Len(t, topPredicates([]CommunityInput{
 		{PredicateKey: "a"}, {PredicateKey: "b"}, {PredicateKey: "c"}, {PredicateKey: "d"}, {PredicateKey: "e"}, {PredicateKey: "f"},
 	}), 5)
 	require.Equal(t, uuid.Nil, uuidString("invalid"))
@@ -337,39 +336,39 @@ func TestCommunitySchedulerSkipsBeforeLaunchingRuns(t *testing.T) {
 }
 
 type communityServiceStoreStub struct {
-	repository.CommunityRepository
-	inputs      []repository.CommunityInput
-	latest      *repository.CommunityRun
+	CommunityRepository
+	inputs      []CommunityInput
+	latest      *CommunityRun
 	runID       string
 	claims      int
-	attempts    []repository.CommunitySummaryAttemptInput
-	published   repository.CommunitySnapshotPublishInput
-	completed   repository.CommunityRunCompleteInput
+	attempts    []CommunitySummaryAttemptInput
+	published   CommunitySnapshotPublishInput
+	completed   CommunityRunCompleteInput
 	count       int
 	countErr    error
 	listErr     error
 	attemptErr  error
 	publishErr  error
-	claimResult *repository.CommunityRun
+	claimResult *CommunityRun
 	completeErr error
 }
 
-func (s *communityServiceStoreStub) ListCommunityInputs(_ context.Context, _ repository.CommunityInputListInput) ([]repository.CommunityInput, error) {
+func (s *communityServiceStoreStub) ListCommunityInputs(_ context.Context, _ CommunityInputListInput) ([]CommunityInput, error) {
 	if s.listErr != nil {
 		return nil, s.listErr
 	}
-	return append([]repository.CommunityInput(nil), s.inputs...), nil
+	return append([]CommunityInput(nil), s.inputs...), nil
 }
 
-func (s *communityServiceStoreStub) LatestCommunityRun(_ context.Context, _ string) (*repository.CommunityRun, error) {
+func (s *communityServiceStoreStub) LatestCommunityRun(_ context.Context, _ string) (*CommunityRun, error) {
 	return s.latest, nil
 }
 
-func (s *communityServiceStoreStub) ListCurrentCommunityLineage(context.Context, string) ([]repository.CommunityLineageRecord, error) {
+func (s *communityServiceStoreStub) ListCurrentCommunityLineage(context.Context, string) ([]CommunityLineageRecord, error) {
 	return nil, nil
 }
 
-func (s *communityServiceStoreStub) ClaimCommunityRun(_ context.Context, input repository.CommunityRunClaimInput) (*repository.CommunityRun, error) {
+func (s *communityServiceStoreStub) ClaimCommunityRun(_ context.Context, input CommunityRunClaimInput) (*CommunityRun, error) {
 	s.claims++
 	if s.claimResult != nil {
 		return s.claimResult, nil
@@ -378,7 +377,7 @@ func (s *communityServiceStoreStub) ClaimCommunityRun(_ context.Context, input r
 	if runID == "" {
 		runID = uuid.NewString()
 	}
-	return &repository.CommunityRun{
+	return &CommunityRun{
 		TeamID: input.TeamID, RunID: runID, WindowKey: input.WindowKey, Status: "running",
 		AlgorithmKind: input.AlgorithmKind, AlgorithmVersion: input.AlgorithmVersion,
 		ProfileVersion: input.ProfileVersion, ConfigurationHash: input.ConfigurationHash,
@@ -386,11 +385,11 @@ func (s *communityServiceStoreStub) ClaimCommunityRun(_ context.Context, input r
 	}, nil
 }
 
-func (s *communityServiceStoreStub) RenewCommunityRunLease(context.Context, repository.CommunityRunLeaseInput) error {
+func (s *communityServiceStoreStub) RenewCommunityRunLease(context.Context, CommunityRunLeaseInput) error {
 	return nil
 }
 
-func (s *communityServiceStoreStub) RecordCommunitySummaryAttempt(_ context.Context, input repository.CommunitySummaryAttemptInput) error {
+func (s *communityServiceStoreStub) RecordCommunitySummaryAttempt(_ context.Context, input CommunitySummaryAttemptInput) error {
 	if s.attemptErr != nil {
 		return s.attemptErr
 	}
@@ -398,16 +397,16 @@ func (s *communityServiceStoreStub) RecordCommunitySummaryAttempt(_ context.Cont
 	return nil
 }
 
-func (s *communityServiceStoreStub) PublishCommunitySnapshot(_ context.Context, input repository.CommunitySnapshotPublishInput) error {
+func (s *communityServiceStoreStub) PublishCommunitySnapshot(_ context.Context, input CommunitySnapshotPublishInput) error {
 	if s.publishErr != nil {
 		return s.publishErr
 	}
 	s.published = input
-	s.completed = repository.CommunityRunCompleteInput{TeamID: input.TeamID, RunID: input.RunID, Status: "completed", NodeCount: input.NodeCount, EdgeCount: input.EdgeCount, CommunityCount: len(input.Communities)}
+	s.completed = CommunityRunCompleteInput{TeamID: input.TeamID, RunID: input.RunID, Status: "completed", NodeCount: input.NodeCount, EdgeCount: input.EdgeCount, CommunityCount: len(input.Communities)}
 	return nil
 }
 
-func (s *communityServiceStoreStub) CompleteCommunityRun(_ context.Context, input repository.CommunityRunCompleteInput) error {
+func (s *communityServiceStoreStub) CompleteCommunityRun(_ context.Context, input CommunityRunCompleteInput) error {
 	s.completed = input
 	return s.completeErr
 }
@@ -444,10 +443,10 @@ func (s *communitySummaryProviderStub) SummarizeCommunity(_ context.Context, inp
 	return response, nil
 }
 
-func communityServiceInputs() []repository.CommunityInput {
+func communityServiceInputs() []CommunityInput {
 	entity1, entity2, entity3, entity4 := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	sharedEvidence, otherEvidence := uuid.NewString(), uuid.NewString()
-	return []repository.CommunityInput{
+	return []CommunityInput{
 		{
 			RelationshipID: uuid.NewString(), SemanticGroupKey: "g1", SubjectEntityID: entity1, ObjectEntityID: entity2,
 			SubjectName: "Dense-Mem", PredicateKey: "uses", ObjectName: "PostgreSQL", EvidenceIDs: []string{sharedEvidence}, Version: 1,
@@ -463,5 +462,5 @@ func communityServiceInputs() []repository.CommunityInput {
 	}
 }
 
-var _ repository.CommunityRepository = (*communityServiceStoreStub)(nil)
+var _ CommunityRepository = (*communityServiceStoreStub)(nil)
 var _ SummaryProvider = (*communitySummaryProviderStub)(nil)

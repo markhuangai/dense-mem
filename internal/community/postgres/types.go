@@ -1,11 +1,12 @@
-package repository
+package postgres
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
-	communitypostgres "github.com/markhuangai/dense-mem/internal/community/postgres"
-	"github.com/markhuangai/dense-mem/internal/storage/postgres"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"gorm.io/gorm"
 )
 
@@ -26,6 +27,7 @@ type (
 	CommunityCoverageInput         = communitycontract.CommunityCoverageInput
 	CommunityRecallTopEntity       = communitycontract.CommunityRecallTopEntity
 	CommunityRecallRecord          = communitycontract.CommunityRecallRecord
+	RecallRelationshipHit          = communitycontract.RecallRelationshipHit
 	CommunitySummaryAttemptInput   = communitycontract.CommunitySummaryAttemptInput
 	CommunityStalenessInput        = communitycontract.CommunityStalenessInput
 	CommunityListInput             = communitycontract.CommunityListInput
@@ -35,23 +37,6 @@ type (
 	CommunityDiscoveryRelationship = communitycontract.CommunityDiscoveryRelationship
 	CommunityRecord                = communitycontract.CommunityRecord
 )
-
-// CommunityDatabase and CommunityRLS are the private composition seam used to
-// construct the native adapter. Application contracts never expose either
-// handle; the legacy methods below remain forwarding-only compatibility.
-func (r *SemanticRepositoryImpl) CommunityDatabase() *gorm.DB {
-	if r == nil {
-		return nil
-	}
-	return r.db
-}
-
-func (r *SemanticRepositoryImpl) CommunityRLS() postgres.RLSHelper {
-	if r == nil {
-		return nil
-	}
-	return r.rls
-}
 
 const (
 	CommunityAlgorithmKind    = communitycontract.CommunityAlgorithmKind
@@ -65,43 +50,43 @@ var (
 	ErrCommunitySourceStale       = communitycontract.ErrCommunitySourceStale
 )
 
-// CommunityStore is the native construction seam. The legacy repository
-// surface remains a single-hop compatibility facade until #382 removes it.
-func (r *SemanticRepositoryImpl) CommunityStore() communitycontract.CommunityRepository {
-	if r == nil || r.db == nil || r.rls == nil {
-		return nil
+type Store struct {
+	db  *gorm.DB
+	rls storagepostgres.RLSHelper
+}
+
+func NewStore(db *gorm.DB, rls storagepostgres.RLSHelper) *Store {
+	return &Store{db: db, rls: rls}
+}
+
+type semanticSpaceFence struct {
+	ID         string
+	Generation int64
+}
+
+func (r *Store) withTeamTx(ctx context.Context, teamID string, fn func(*gorm.DB) error) error {
+	if r == nil || r.db == nil {
+		return errors.New("community: database is required")
 	}
-	return communitypostgres.NewStore(r.db, r.rls)
+	if r.rls == nil {
+		return errors.New("community: rls helper is required")
+	}
+	return r.rls.WithTeamTx(ctx, r.db, teamID, fn)
 }
 
-func (r *SemanticRepositoryImpl) communityOwner() *communitypostgres.Store {
-	store := r.CommunityStore()
-	owner, _ := store.(*communitypostgres.Store)
-	return owner
+func loadTeamSharedSpaceFence(ctx context.Context, tx *gorm.DB, teamID string) (semanticSpaceFence, error) {
+	fence := semanticSpaceFence{}
+	err := tx.WithContext(ctx).Raw(`
+		SELECT id::text, generation
+		FROM memory_spaces
+		WHERE team_id = ?::uuid
+		  AND kind = 'team_shared'
+		  AND lifecycle_state = 'active'
+	`, teamID).Row().Scan(&fence.ID, &fence.Generation)
+	if err != nil {
+		return semanticSpaceFence{}, fmt.Errorf("load team-shared memory space: %w", err)
+	}
+	return fence, nil
 }
 
-func (r *SemanticRepositoryImpl) ClaimCommunityRun(ctx context.Context, input CommunityRunClaimInput) (*CommunityRun, error) {
-	return r.communityOwner().ClaimCommunityRun(ctx, input)
-}
-
-func (r *SemanticRepositoryImpl) CompleteCommunityRun(ctx context.Context, input CommunityRunCompleteInput) error {
-	return r.communityOwner().CompleteCommunityRun(ctx, input)
-}
-
-func (r *SemanticRepositoryImpl) RenewCommunityRunLease(ctx context.Context, input CommunityRunLeaseInput) error {
-	return r.communityOwner().RenewCommunityRunLease(ctx, input)
-}
-
-func (r *SemanticRepositoryImpl) ListCommunityInputs(ctx context.Context, input CommunityInputListInput) ([]CommunityInput, error) {
-	return r.communityOwner().ListCommunityInputs(ctx, input)
-}
-
-func (r *SemanticRepositoryImpl) PublishCommunitySnapshot(ctx context.Context, input CommunitySnapshotPublishInput) error {
-	return r.communityOwner().PublishCommunitySnapshot(ctx, input)
-}
-
-func (r *SemanticRepositoryImpl) RefreshCommunityStaleness(ctx context.Context, input CommunityStalenessInput) (int, error) {
-	return r.communityOwner().RefreshCommunityStaleness(ctx, input)
-}
-
-var _ CommunityRepository = (*SemanticRepositoryImpl)(nil)
+var _ CommunityRepository = (*Store)(nil)
