@@ -52,7 +52,7 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*Exp
 	if len(description) > maxMemoryPackDescriptionBytes {
 		return nil, fmt.Errorf("memory pack export: description exceeds %d characters", maxMemoryPackDescriptionBytes)
 	}
-	relationshipIDs := uniqueStrings(req.RelationshipIDs)
+	relationshipIDs := uniqueMemoryPackRelationshipIDs(req.RelationshipIDs)
 	if len(relationshipIDs) == 0 {
 		return nil, errors.New("memory pack export: relationship_ids is required")
 	}
@@ -96,7 +96,7 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*Exp
 		if teamID := strings.TrimSpace(trace.Relationship.TeamID); teamID != "" && teamID != actor.TeamID.String() {
 			return nil, tracecontract.ErrRelationshipNotFound
 		}
-		if returnedID := strings.TrimSpace(trace.Relationship.RelationshipID); returnedID != "" && returnedID != relationshipID {
+		if returnedID := canonicalMemoryPackRelationshipID(trace.Relationship.RelationshipID); returnedID != "" && returnedID != relationshipID {
 			return nil, tracecontract.ErrRelationshipNotFound
 		}
 		if trace.Relationship.Status != string(domain.RelationshipStatusActive) {
@@ -109,7 +109,7 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*Exp
 		if includeSupport {
 			evidenceIDs := map[string]struct{}{}
 			for _, support := range trace.EvidenceSupports {
-				if support.RelationshipID != "" && support.RelationshipID != relationshipID {
+				if support.RelationshipID != "" && canonicalMemoryPackRelationshipID(support.RelationshipID) != relationshipID {
 					continue
 				}
 				if support.FragmentID != "" {

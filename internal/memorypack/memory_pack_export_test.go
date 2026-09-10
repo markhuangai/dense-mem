@@ -328,7 +328,7 @@ func TestMemoryPackExportIncludesSupportAndNormalizesIDs(t *testing.T) {
 			Status:           string(domain.RelationshipStatusActive),
 		},
 		EvidenceSupports: []tracecontract.RelationshipEvidenceSupportRecord{
-			{FragmentID: "evidence-1", Quote: "Dense-Mem uses 42", SpanStart: 0, SpanEnd: 17, Metadata: map[string]any{"source": "test"}},
+			{RelationshipID: strings.ToUpper(relationshipID), FragmentID: "evidence-1", Quote: "Dense-Mem uses 42", SpanStart: 0, SpanEnd: 17, Metadata: map[string]any{"source": "test"}},
 			{FragmentID: "evidence-1"},
 		},
 		EvidenceFragments: []tracecontract.TraceEvidenceFragment{
@@ -339,12 +339,15 @@ func TestMemoryPackExportIncludesSupportAndNormalizesIDs(t *testing.T) {
 	includeSupport := true
 	svc := NewMemoryPackService(MemoryPackDependencies{Semantic: &exportSemanticStub{result: trace}, Now: func() time.Time { return time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC) }})
 	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: teamID, OwnerID: profileID})
-	result, err := svc.Export(ctx, ExportRequest{Name: "  Numeric choices  ", RelationshipIDs: []string{relationshipID, relationshipID}, IncludeSupport: &includeSupport})
+	result, err := svc.Export(ctx, ExportRequest{Name: "  Numeric choices  ", RelationshipIDs: []string{strings.ToUpper(relationshipID), relationshipID}, IncludeSupport: &includeSupport})
 	if err != nil {
 		t.Fatalf("Export: %v", err)
 	}
 	if result.ItemCount != 1 || len(result.Artifact.Evidence) != 1 || len(result.Artifact.EvidenceSupports) != 2 {
 		t.Fatalf("export counts = item %d evidence %d supports %d", result.ItemCount, len(result.Artifact.Evidence), len(result.Artifact.EvidenceSupports))
+	}
+	if got := svc.(*memoryPackService).deps.Semantic.(*exportSemanticStub).input.RelationshipID; got != relationshipID {
+		t.Fatalf("trace relationship_id = %q, want canonical %q", got, relationshipID)
 	}
 	if got := result.Artifact.Relationships[0].Object.Value; got != "42" {
 		t.Fatalf("value object = %q", got)

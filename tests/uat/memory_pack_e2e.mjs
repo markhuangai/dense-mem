@@ -57,6 +57,14 @@ for (const option of options) {
   ownerResults.push({ name: option.name, counts: payload.counts, filename: payload.filename });
 }
 
+await assertInvalidExport(ownerA.apiKey, { ...baseExportArguments(), name: "n".repeat(257) }, "name exceeds maximum length of 256");
+await assertInvalidExport(ownerA.apiKey, { ...baseExportArguments(), description: "d".repeat(1025) }, "description exceeds maximum length of 1024");
+await assertInvalidExport(
+  ownerA.apiKey,
+  { ...baseExportArguments(), relationship_ids: Array.from({ length: 501 }, () => randomUUID()) },
+  "relationship_ids exceeds maximum item count of 500",
+);
+
 const deniedResults = [];
 for (const actor of [
   { name: "same_team_b", credential: sameTeamB },
@@ -173,6 +181,23 @@ async function exportRaw(apiKey, argumentsValue) {
       params: { name: "export_memory_pack", arguments: argumentsValue },
     }),
   });
+}
+
+async function assertInvalidExport(apiKey, argumentsValue, expectedMessage) {
+  const response = await exportRaw(apiKey, argumentsValue);
+  const error = response.payload.error;
+  const data = error?.data;
+  assert(response.status === 200 && error?.code === -32602 && !response.payload.result, `invalid export returned an unexpected transport response: ${JSON.stringify(response)}`);
+  assert(
+    data?.code === "invalid_input" &&
+      data.reason_code === "validation_failed" &&
+      data.next_action === "correct_and_resubmit" &&
+      data.retryable === false &&
+      Array.isArray(data.issues) &&
+      data.issues.some((issue) => issue.message?.includes(expectedMessage)),
+    `invalid export omitted the documented validation envelope for ${expectedMessage}: ${JSON.stringify(data)}`,
+  );
+  assert(!JSON.stringify(response).includes(evidenceSentinel), "invalid export response exposed private evidence content");
 }
 
 async function assertAuthenticated(actor) {

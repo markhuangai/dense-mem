@@ -74,6 +74,23 @@ func uniqueStrings(values []string) []string {
 	return out
 }
 
+func canonicalMemoryPackRelationshipID(value string) string {
+	value = strings.TrimSpace(value)
+	parsed, err := uuid.Parse(value)
+	if err != nil {
+		return value
+	}
+	return parsed.String()
+}
+
+func uniqueMemoryPackRelationshipIDs(values []string) []string {
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		normalized = append(normalized, canonicalMemoryPackRelationshipID(value))
+	}
+	return uniqueStrings(normalized)
+}
+
 func omitMemoryPackEntityNames(item *MemoryPackRelationship) {
 	if item == nil {
 		return
