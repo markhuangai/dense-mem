@@ -1,4 +1,4 @@
-package skillpackservice
+package memorypack
 
 import (
 	"crypto/sha256"
@@ -12,7 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 )
 
 var ErrInvalidArtifact = errors.New("invalid memory pack artifact")
@@ -169,7 +169,7 @@ func normalizeMemoryPackEndpoint(endpoint MemoryPackEndpoint) MemoryPackEndpoint
 	return endpoint
 }
 
-func memoryPackRelationshipFromTrace(record *repository.RelationshipTraceRecord) MemoryPackRelationship {
+func memoryPackRelationshipFromTrace(record *tracecontract.RelationshipTraceRecord) MemoryPackRelationship {
 	itemID := record.RelationshipID
 	if itemID == "" {
 		itemID = "rel_" + memoryPackShortHash(record.SemanticGroupKey)

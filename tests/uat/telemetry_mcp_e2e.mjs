@@ -388,3 +388,5 @@ function assert(condition, message) {
     throw new Error(message);
   }
 }
+
+await import("./memory_pack_e2e.mjs");

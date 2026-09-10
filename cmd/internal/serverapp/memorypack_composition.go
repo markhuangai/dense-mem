@@ -1,15 +1,15 @@
 package serverapp
 
 import (
-	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
+	memorypackapp "github.com/markhuangai/dense-mem/internal/memorypack"
 )
 
 type memoryPackApplicationDependencies struct {
-	Semantic skillpackservice.MemoryPackSemanticReader
+	Semantic memorypackapp.MemoryPackSemanticReader
 }
 
-func buildMemoryPackApplication(deps memoryPackApplicationDependencies) skillpackservice.MemoryPackService {
-	return skillpackservice.NewMemoryPackService(skillpackservice.MemoryPackDependencies{
+func buildMemoryPackApplication(deps memoryPackApplicationDependencies) memorypackapp.MemoryPackService {
+	return memorypackapp.NewMemoryPackService(memorypackapp.MemoryPackDependencies{
 		Semantic: deps.Semantic,
 	})
 }
