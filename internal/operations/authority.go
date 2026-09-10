@@ -58,6 +58,8 @@ func classifyAuthorityMarker(marker *domain.CompatibilityMarker) (AuthorityBoots
 func CheckActiveAuthority(authority AuthorityBootstrap) error {
 	if authority.Mode != AuthorityActive ||
 		authority.Marker == nil ||
+		authority.Marker.MarkerKind != domain.MigrationMarkerKindCutover ||
+		authority.Marker.Version != CutoverMarkerVersion ||
 		authority.Marker.Status != domain.MigrationMarkerCompatible {
 		return fmt.Errorf("%w: compatible authority marker is required", ErrAuthorityBlocked)
 	}

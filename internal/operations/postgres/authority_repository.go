@@ -40,6 +40,7 @@ var freshAuthorityApplicationTables = []string{
 	"ownership_aliases",
 	"audit_log",
 	"usage_metric_buckets",
+	"usage_metric_flushes",
 	"operation_logs",
 	"recall_feedback_events",
 	"security_ip_failures",

@@ -19,7 +19,7 @@ type OperationLogRepository interface {
 
 // UsageMetricsRepository persists bounded runtime usage aggregates.
 type UsageMetricsRepository interface {
-	UpsertBuckets(context.Context, []domain.UsageMetricBucket) error
+	UpsertBuckets(context.Context, uuid.UUID, []domain.UsageMetricBucket) error
 	PruneBefore(context.Context, time.Time) error
 	Snapshot(context.Context, domain.UsageMetricsFilter) (*domain.UsageMetricsSnapshot, error)
 }

@@ -28,11 +28,28 @@ func NewUsageMetricsRepository(db *gorm.DB, rls postgres.RLSHelper) *UsageMetric
 	return &UsageMetricsRepositoryImpl{db: db, rls: rls}
 }
 
-func (r *UsageMetricsRepositoryImpl) UpsertBuckets(ctx context.Context, buckets []domain.UsageMetricBucket) error {
+func (r *UsageMetricsRepositoryImpl) UpsertBuckets(ctx context.Context, flushID uuid.UUID, buckets []domain.UsageMetricBucket) error {
+	if r == nil || r.db == nil {
+		return fmt.Errorf("usage metrics repository is unavailable")
+	}
 	if len(buckets) == 0 {
 		return nil
 	}
+	if flushID == uuid.Nil {
+		return fmt.Errorf("usage metric flush ID is required")
+	}
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		result := tx.Exec(`
+			INSERT INTO usage_metric_flushes (flush_id)
+			VALUES ($1)
+			ON CONFLICT (flush_id) DO NOTHING
+		`, flushID)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
 		for _, bucket := range buckets {
 			if err := tx.Exec(`
 				INSERT INTO usage_metric_buckets (
@@ -78,7 +95,10 @@ func (r *UsageMetricsRepositoryImpl) UpsertBuckets(ctx context.Context, buckets 
 
 func (r *UsageMetricsRepositoryImpl) PruneBefore(ctx context.Context, cutoff time.Time) error {
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		return tx.Exec("DELETE FROM usage_metric_buckets WHERE bucket_start < $1", cutoff).Error
+		if err := tx.Exec("DELETE FROM usage_metric_buckets WHERE bucket_start < $1", cutoff).Error; err != nil {
+			return err
+		}
+		return tx.Exec("DELETE FROM usage_metric_flushes WHERE created_at < $1", cutoff).Error
 	})
 	if err != nil {
 		return fmt.Errorf("failed to prune usage metric buckets: %w", err)
@@ -97,7 +117,7 @@ func (r *UsageMetricsRepositoryImpl) Snapshot(ctx context.Context, filter domain
 		teamFilter = filter.TeamID.String()
 	}
 
-	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+	err := r.withSystemReadOnlyRepeatableTx(ctx, func(tx *gorm.DB) error {
 		system, err := queryUsageTotal(tx, `
 			SELECT
 				COALESCE(SUM(request_count), 0),
@@ -334,8 +354,29 @@ func nullInt64(value sql.NullInt64) int64 {
 }
 
 func (r *UsageMetricsRepositoryImpl) withSystemTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	if r == nil || r.db == nil {
+		return fmt.Errorf("usage metrics repository is unavailable")
+	}
 	if r.rls != nil {
 		return r.rls.WithSystemTx(ctx, r.db, fn)
 	}
-	return fn(r.db.WithContext(ctx))
+	return r.db.WithContext(ctx).Transaction(fn)
+}
+
+func (r *UsageMetricsRepositoryImpl) withSystemReadOnlyRepeatableTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	if r == nil || r.db == nil {
+		return fmt.Errorf("usage metrics repository is unavailable")
+	}
+	if r.rls != nil {
+		return r.rls.WithSystemReadOnlyRepeatableTx(ctx, r.db, fn)
+	}
+	tx := r.db.WithContext(ctx).Begin(&sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if tx.Error != nil {
+		return tx.Error
+	}
+	defer tx.Rollback()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit().Error
 }

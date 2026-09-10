@@ -84,3 +84,34 @@ func TestUsageMetricsSnapshotLabelsSSOOwnershipAlias(t *testing.T) {
 	require.Equal(t, "", ssoFound.KeySuffix)
 	require.EqualValues(t, 3, ssoFound.Requests)
 }
+
+func TestUsageMetricsFlushRetryIsIdempotentAndAtomic(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "usage-metrics-flush-retry"))
+	keyID := uuid.MustParse(createLedgerProfile(t, adminDB, rls, teamID.String(), "Flush Retry Key"))
+	bucketStart := time.Now().UTC().Truncate(time.Minute)
+	bucket := domain.UsageMetricBucket{
+		BucketStart: bucketStart, TeamID: teamID, KeyID: keyID,
+		Route: "/mcp", Method: "POST", StatusClass: 2,
+		RequestCount: 2, ErrorCount: 1, TotalLatencyMS: 30, MaxLatencyMS: 20,
+		LastSeenAt: bucketStart,
+	}
+	repo := NewUsageMetricsRepository(appDB, rls)
+	flushID := uuid.New()
+	require.NoError(t, repo.UpsertBuckets(ctx, flushID, []domain.UsageMetricBucket{bucket}))
+	require.NoError(t, repo.UpsertBuckets(ctx, flushID, []domain.UsageMetricBucket{bucket}))
+
+	invalid := bucket
+	invalid.StatusClass = 0
+	require.Error(t, repo.UpsertBuckets(ctx, uuid.New(), []domain.UsageMetricBucket{bucket, invalid}))
+
+	snapshot, err := repo.Snapshot(ctx, domain.UsageMetricsFilter{
+		From: bucketStart.Add(-time.Minute), To: bucketStart.Add(time.Minute), TeamID: &teamID,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 2, snapshot.System.Requests)
+	require.EqualValues(t, 1, snapshot.System.Errors)
+}

@@ -20,7 +20,9 @@ func TestCheckActiveAuthorityRequiresCompatibleMarker(t *testing.T) {
 	compatible := AuthorityBootstrap{
 		Mode: AuthorityActive,
 		Marker: &domain.CompatibilityMarker{
-			Status: domain.MigrationMarkerCompatible,
+			MarkerKind: domain.MigrationMarkerKindCutover,
+			Version:    CutoverMarkerVersion,
+			Status:     domain.MigrationMarkerCompatible,
 		},
 	}
 	require.NoError(t, CheckActiveAuthority(compatible))
@@ -30,6 +32,16 @@ func TestCheckActiveAuthorityRequiresCompatibleMarker(t *testing.T) {
 		{Mode: AuthorityActive},
 		{Mode: AuthorityMode("inactive"), Marker: compatible.Marker},
 		{Mode: AuthorityActive, Marker: &domain.CompatibilityMarker{Status: domain.MigrationMarkerCorrupt}},
+		{Mode: AuthorityActive, Marker: &domain.CompatibilityMarker{
+			MarkerKind: domain.MigrationMarkerKindCutover,
+			Version:    "wrong-version",
+			Status:     domain.MigrationMarkerCompatible,
+		}},
+		{Mode: AuthorityActive, Marker: &domain.CompatibilityMarker{
+			MarkerKind: "wrong-kind",
+			Version:    CutoverMarkerVersion,
+			Status:     domain.MigrationMarkerCompatible,
+		}},
 	} {
 		require.ErrorIs(t, CheckActiveAuthority(authority), ErrAuthorityBlocked)
 	}
