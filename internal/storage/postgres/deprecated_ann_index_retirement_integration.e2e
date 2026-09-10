@@ -61,6 +61,21 @@ func TestDeprecatedANNIndexMigrationIsIdempotentWhenTargetAbsent(t *testing.T) {
 	assert.True(t, migrationVersionApplied(t, ctx, db, deprecatedANNRetirementVersion))
 }
 
+func TestDeprecatedANNIndexMigrationIgnoresSessionIdentifierQuoting(t *testing.T) {
+	ctx := context.Background()
+	db := setupDeprecatedANNRetirementDB(t, ctx)
+	installDeprecatedANNFixture(t, ctx, db, "deprecated", "current")
+
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	_, err := db.ExecContext(ctx, `SET quote_all_identifiers = on`)
+	require.NoError(t, err)
+
+	runGooseUpTo(t, ctx, db, deprecatedANNRetirementVersion)
+	assert.False(t, indexExists(t, ctx, db, deprecatedANNTargetIndex))
+	assert.True(t, indexExists(t, ctx, db, deprecatedANNActiveIndex))
+}
+
 func TestDeprecatedANNIndexMigrationFailsClosedOnDefinitionMismatch(t *testing.T) {
 	ctx := context.Background()
 	db := setupDeprecatedANNRetirementDB(t, ctx)
@@ -148,7 +163,8 @@ func TestDeprecatedANNIndexMigrationDownRequiresCatalogRecovery(t *testing.T) {
 
 	err := migrationDownTo(ctx, db, deprecatedANNRetirementBaseVersion)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot automatically roll back")
+	assert.Contains(t, strings.ToLower(err.Error()), "irreversible")
+	assert.Contains(t, strings.ToLower(err.Error()), "do not retry")
 	assert.False(t, indexExists(t, ctx, db, deprecatedANNTargetIndex))
 
 	restoreDeprecatedANNIndex(t, ctx, db)

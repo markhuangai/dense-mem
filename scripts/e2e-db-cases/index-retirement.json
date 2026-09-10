@@ -24,6 +24,13 @@
       "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration.e2e"
     },
     {
+      "id": "postgres/TestDeprecatedANNIndexMigrationIgnoresSessionIdentifierQuoting",
+      "package": "./internal/storage/postgres",
+      "run": "^TestDeprecatedANNIndexMigrationIgnoresSessionIdentifierQuoting$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration.e2e"
+    },
+    {
       "id": "postgres/TestDeprecatedANNIndexMigrationFailsClosedWhenReplacementIsMissing",
       "package": "./internal/storage/postgres",
       "run": "^TestDeprecatedANNIndexMigrationFailsClosedWhenReplacementIsMissing$",

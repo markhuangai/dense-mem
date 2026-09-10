@@ -17,6 +17,7 @@ SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
 SET LOCAL lock_timeout = '1s';
 SET LOCAL statement_timeout = '30s';
+SET LOCAL quote_all_identifiers = off;
 
 LOCK TABLE public.search_index_generations IN SHARE ROW EXCLUSIVE MODE;
 LOCK TABLE public.search_documents IN SHARE ROW EXCLUSIVE MODE;
@@ -271,7 +272,7 @@ $$;
 DO $$
 BEGIN
     RAISE EXCEPTION
-        'cannot automatically roll back 20260910020001: restore the captured catalog definition for v2_search_1a06f88de92e_3072_halfvec_hnsw_idx before retrying';
+        '20260910020001 is irreversible: restore v2_search_1a06f88de92e_3072_halfvec_hnsw_idx with the exact definition below or a new ordered recovery migration; do not retry this Down operation';
 END
 $$;
 
