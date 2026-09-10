@@ -1,4 +1,4 @@
-package service
+package operations
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
 )
 
 func TestPrometheusTelemetryService_UnconfiguredReturnsUnavailableSnapshot(t *testing.T) {
@@ -51,7 +51,7 @@ func TestPrometheusTelemetryService_UnconfiguredReturnsUnavailableSnapshot(t *te
 
 func TestPrometheusTelemetryService_UnconfiguredPrometheusKeepsLifecycleCards(t *testing.T) {
 	active := "active"
-	lifecycle := &telemetryLifecycleReaderStub{snapshot: repository.TelemetryLifecycleSnapshot{
+	lifecycle := &telemetryLifecycleReaderStub{snapshot: operationscontract.TelemetryLifecycleSnapshot{
 		Transitions: map[string]float64{active: 2},
 		Corrections: 1,
 		Current:     map[string]float64{active: 3},
@@ -465,7 +465,7 @@ func TestPrometheusTelemetryServiceKeepsLifecycleItemsWhenPrometheusTimesOut(t *
 	}))
 	defer prom.Close()
 
-	lifecycle := &telemetryLifecycleReaderStub{snapshot: repository.TelemetryLifecycleSnapshot{
+	lifecycle := &telemetryLifecycleReaderStub{snapshot: operationscontract.TelemetryLifecycleSnapshot{
 		Transitions: map[string]float64{"active": 1},
 		Current:     map[string]float64{"active": 1},
 	}}
@@ -587,7 +587,7 @@ func TestTelemetryCostCardsFailClosedWhenActivityIsUnpriced(t *testing.T) {
 		"verifier_cost_usd":  {Scalar: telemetryScalar{}},
 		"embedding_cost_usd": {Scalar: telemetryScalar{}},
 	}
-	cards := buildTelemetryCards(specs, results, repository.TelemetryLifecycleSnapshot{
+	cards := buildTelemetryCards(specs, results, operationscontract.TelemetryLifecycleSnapshot{
 		Transitions: map[string]float64{},
 		Current:     map[string]float64{},
 	}, nil, nil, scope)
@@ -611,7 +611,7 @@ func TestTelemetryAggregateCostIncludesUnpricedEmbeddingActivity(t *testing.T) {
 		"ai_cost_usd":        {Scalar: telemetryScalar{}},
 		"embedding_cost_usd": {Scalar: telemetryScalar{}},
 	}
-	cards := buildTelemetryCards(specs, results, repository.TelemetryLifecycleSnapshot{
+	cards := buildTelemetryCards(specs, results, operationscontract.TelemetryLifecycleSnapshot{
 		Transitions: map[string]float64{},
 		Current:     map[string]float64{},
 	}, nil, nil, scope)
@@ -646,7 +646,7 @@ func TestTelemetryCostCardsPreserveUnpricedUsageReasons(t *testing.T) {
 			results["verifier_cost_usd"] = telemetryInstantResult{Scalar: telemetryScalar{
 				Labels: map[string]string{"reason": tc.reason},
 			}}
-			cards := buildTelemetryCards(specs, results, repository.TelemetryLifecycleSnapshot{
+			cards := buildTelemetryCards(specs, results, operationscontract.TelemetryLifecycleSnapshot{
 				Transitions: map[string]float64{},
 				Current:     map[string]float64{},
 			}, nil, nil, scope)
@@ -663,7 +663,7 @@ func TestTelemetryConflictQueueFailureSentinelIsUnavailable(t *testing.T) {
 	specs := telemetryCurrentCardSpecsForAudience(scope, nil, true)
 	cards := buildTelemetryCards(specs, map[string]telemetryInstantResult{
 		"conflict_queue_collection_success": {Scalar: telemetryScalar{Value: 0, Available: true}},
-	}, repository.TelemetryLifecycleSnapshot{
+	}, operationscontract.TelemetryLifecycleSnapshot{
 		Transitions: map[string]float64{},
 		Current:     map[string]float64{},
 	}, nil, nil, scope)
@@ -679,7 +679,7 @@ func TestTelemetryRecallFeedbackParentUsesEventCount(t *testing.T) {
 	cards := buildTelemetryCards(specs, map[string]telemetryInstantResult{
 		telemetryRecallFeedbackActivityID: {Scalar: telemetryScalar{Value: 3, Available: true}},
 		"llm_recall_used_rate":            {Scalar: telemetryScalar{Value: 0, Available: true}},
-	}, repository.TelemetryLifecycleSnapshot{
+	}, operationscontract.TelemetryLifecycleSnapshot{
 		Transitions: map[string]float64{},
 		Current:     map[string]float64{},
 	}, nil, nil, scope)
@@ -699,7 +699,7 @@ func TestTelemetryParentActivityMakesMissingDerivedItemsUnavailable(t *testing.T
 	cards := buildTelemetryCards(cardSpecs, map[string]telemetryInstantResult{
 		"recalls":            {Scalar: telemetryScalar{Value: 2, Available: true}},
 		"avg_recall_results": {Scalar: telemetryScalar{}},
-	}, repository.TelemetryLifecycleSnapshot{Transitions: map[string]float64{}, Current: map[string]float64{}}, nil, nil, scope)
+	}, operationscontract.TelemetryLifecycleSnapshot{Transitions: map[string]float64{}, Current: map[string]float64{}}, nil, nil, scope)
 	card := telemetrySpecByID(cards, "avg_recall_results")
 	require.NotNil(t, card)
 	require.Equal(t, TelemetryItemUnavailable, card.Status)
@@ -725,7 +725,7 @@ func TestTelemetryParentActivityMakesMissingDerivedItemsUnavailable(t *testing.T
 	zeroUsageCards := buildTelemetryCards(cardSpecs, map[string]telemetryInstantResult{
 		"verifier_requests": {Scalar: telemetryScalar{Value: 0, Available: true}},
 		"verifier_tokens":   {Scalar: telemetryScalar{}},
-	}, repository.TelemetryLifecycleSnapshot{Transitions: map[string]float64{}, Current: map[string]float64{}}, nil, nil, scope)
+	}, operationscontract.TelemetryLifecycleSnapshot{Transitions: map[string]float64{}, Current: map[string]float64{}}, nil, nil, scope)
 	zeroUsage := telemetrySpecByID(zeroUsageCards, "verifier_tokens")
 	require.NotNil(t, zeroUsage)
 	require.Equal(t, TelemetryItemInactive, zeroUsage.Status)
@@ -741,7 +741,7 @@ func TestAssessorFailureTelemetryUsesReadyZeroWhenRequestsAreHealthy(t *testing.
 		"assessor_validation_failures": {Scalar: telemetryScalar{Value: 0, Available: false}},
 		"assessor_terminal_failures":   {Scalar: telemetryScalar{Value: 0, Available: false}},
 	}
-	cards := buildTelemetryCards(windowedSpecs, windowedResults, repository.TelemetryLifecycleSnapshot{}, nil, nil, scope)
+	cards := buildTelemetryCards(windowedSpecs, windowedResults, operationscontract.TelemetryLifecycleSnapshot{}, nil, nil, scope)
 	for _, id := range []string{"assessor_request_failures", "assessor_validation_failures", "assessor_terminal_failures"} {
 		card := telemetrySpecByID(cards, id)
 		require.NotNil(t, card, id)
@@ -775,7 +775,7 @@ func TestAssessorFailureTelemetryUsesReadyZeroWhenRequestsAreHealthy(t *testing.
 		require.Equal(t, 0.0, item.Points[1].Value, item.ID)
 	}
 
-	noParent := buildTelemetryCards(windowedSpecs, map[string]telemetryInstantResult{}, repository.TelemetryLifecycleSnapshot{}, nil, nil, scope)
+	noParent := buildTelemetryCards(windowedSpecs, map[string]telemetryInstantResult{}, operationscontract.TelemetryLifecycleSnapshot{}, nil, nil, scope)
 	missingParentFailure := telemetrySpecByID(noParent, "assessor_request_failures")
 	require.NotNil(t, missingParentFailure)
 	require.Equal(t, TelemetryItemUnavailable, missingParentFailure.Status)
@@ -809,12 +809,12 @@ type captureTelemetryLogger struct {
 }
 
 type telemetryLifecycleReaderStub struct {
-	snapshot repository.TelemetryLifecycleSnapshot
+	snapshot operationscontract.TelemetryLifecycleSnapshot
 	err      error
 	calls    int
 }
 
-func (s *telemetryLifecycleReaderStub) ReadTelemetryLifecycle(context.Context, repository.TelemetryLifecycleFilter, time.Time, time.Time) (repository.TelemetryLifecycleSnapshot, error) {
+func (s *telemetryLifecycleReaderStub) ReadTelemetryLifecycle(context.Context, operationscontract.TelemetryLifecycleFilter, time.Time, time.Time) (operationscontract.TelemetryLifecycleSnapshot, error) {
 	s.calls++
 	return s.snapshot, s.err
 }

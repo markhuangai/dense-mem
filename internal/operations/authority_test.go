@@ -1,4 +1,4 @@
-package serverapp
+package operations
 
 import (
 	"context"
@@ -13,34 +13,34 @@ import (
 func TestClassifyAuthorityActivatesWhenCompatibleMarkerPresent(t *testing.T) {
 	store := &authorityStoreStub{marker: &domain.CompatibilityMarker{
 		MarkerKind: domain.MigrationMarkerKindCutover,
-		Version:    cutoverMarkerVersion,
+		Version:    CutoverMarkerVersion,
 		Status:     domain.MigrationMarkerCompatible,
 	}}
 
 	bootstrap, err := ClassifyAuthority(context.Background(), store)
 
 	require.NoError(t, err)
-	require.Equal(t, authorityActive, bootstrap.Mode)
+	require.Equal(t, AuthorityActive, bootstrap.Mode)
 	require.Equal(t, store.marker, bootstrap.Marker)
 }
 
 func TestClassifyAuthorityFailsClosedForIncompatibleMarker(t *testing.T) {
 	_, err := ClassifyAuthority(context.Background(), &authorityStoreStub{
-		marker: &domain.CompatibilityMarker{MarkerKind: domain.MigrationMarkerKindCutover, Version: cutoverMarkerVersion, Status: domain.MigrationMarkerCorrupt},
+		marker: &domain.CompatibilityMarker{MarkerKind: domain.MigrationMarkerKindCutover, Version: CutoverMarkerVersion, Status: domain.MigrationMarkerCorrupt},
 	})
-	require.ErrorIs(t, err, errAuthorityBlocked)
+	require.ErrorIs(t, err, ErrAuthorityBlocked)
 	require.ErrorContains(t, err, "corrupt")
 
 	_, err = ClassifyAuthority(context.Background(), &authorityStoreStub{
-		marker: &domain.CompatibilityMarker{MarkerKind: domain.MigrationMarkerKindCutover, Version: cutoverMarkerVersion, Status: domain.MigrationMarkerIncompatible},
+		marker: &domain.CompatibilityMarker{MarkerKind: domain.MigrationMarkerKindCutover, Version: CutoverMarkerVersion, Status: domain.MigrationMarkerIncompatible},
 	})
-	require.ErrorIs(t, err, errAuthorityBlocked)
+	require.ErrorIs(t, err, ErrAuthorityBlocked)
 	require.ErrorContains(t, err, "incompatible")
 }
 
 func TestClassifyAuthorityFailsClosedWithoutMarker(t *testing.T) {
 	_, err := ClassifyAuthority(context.Background(), &authorityStoreStub{})
-	require.ErrorIs(t, err, errAuthorityBlocked)
+	require.ErrorIs(t, err, ErrAuthorityBlocked)
 	require.ErrorContains(t, err, "compatible cutover marker")
 }
 
@@ -48,17 +48,17 @@ func TestClassifyAuthorityFailsClosedWhenMarkerReadFails(t *testing.T) {
 	_, err := ClassifyAuthority(context.Background(), &authorityStoreStub{
 		markerErr: errors.New("database unavailable"),
 	})
-	require.ErrorIs(t, err, errAuthorityBlocked)
+	require.ErrorIs(t, err, ErrAuthorityBlocked)
 	require.ErrorContains(t, err, "read compatibility marker")
 	require.ErrorContains(t, err, "database unavailable")
 }
 
 func TestClassifyAuthorityFailsClosedForUnknownMarkerStatus(t *testing.T) {
 	_, err := ClassifyAuthority(context.Background(), &authorityStoreStub{
-		marker: &domain.CompatibilityMarker{MarkerKind: domain.MigrationMarkerKindCutover, Version: cutoverMarkerVersion, Status: "pending"},
+		marker: &domain.CompatibilityMarker{MarkerKind: domain.MigrationMarkerKindCutover, Version: CutoverMarkerVersion, Status: "pending"},
 	})
 
-	require.ErrorIs(t, err, errAuthorityBlocked)
+	require.ErrorIs(t, err, ErrAuthorityBlocked)
 	require.ErrorContains(t, err, "unknown compatibility marker status pending")
 }
 

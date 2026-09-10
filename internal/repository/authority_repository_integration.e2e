@@ -9,6 +9,9 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/operations"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 func TestAuthorityRepositoryCommitsFreshAuthorityOnlyWhenApplicationDataEmpty(t *testing.T) {
@@ -74,4 +77,49 @@ func TestAuthorityRepositoryRetainsMigrationAuditReadOnly(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "row-level security")
+
+	t.Run("operation log retention survives service restart", func(t *testing.T) {
+		testOperationLogRetentionSurvivesServiceRestart(t, appDB, rls)
+	})
+}
+
+func testOperationLogRetentionSurvivesServiceRestart(t *testing.T, appDB *gorm.DB, rls *storagepostgres.RLS) {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	old := now.Add(-48 * time.Hour)
+	recent := now.Add(-time.Hour)
+	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO operation_logs (timestamp, severity, severity_rank, message, source, correlation_id, attrs)
+			VALUES (?, 'INFO', 20, 'expired operation log', 'test', 'expired', '{}'::jsonb),
+			       (?, 'INFO', 20, 'retained operation log', 'test', 'retained', '{}'::jsonb)
+		`, old, recent).Error
+	}))
+
+	repo := NewOperationLogRepository(appDB, rls)
+	service := operations.NewOperationLogService(repo, operationLogRetentionStub{days: 1})
+	require.NoError(t, service.Prune(ctx))
+	require.NoError(t, service.WriteLog(ctx, observability.LogRecord{
+		Timestamp: now, Severity: "INFO", SeverityRank: 20, Message: "flushed before restart", Source: "test",
+	}))
+	require.NoError(t, service.Shutdown(ctx))
+
+	restarted := operations.NewOperationLogService(repo, operationLogRetentionStub{days: 1})
+	page, err := restarted.ListOperationLogs(ctx, domain.OperationLogFilter{Limit: 100})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 2)
+	messages := map[string]bool{}
+	for _, item := range page.Items {
+		messages[item.Message] = true
+	}
+	require.False(t, messages["expired operation log"])
+	require.True(t, messages["retained operation log"])
+	require.True(t, messages["flushed before restart"])
+}
+
+type operationLogRetentionStub struct{ days int }
+
+func (s operationLogRetentionStub) OperationLogRuntimeConfig(context.Context) (domain.OperationLogRuntimeConfig, error) {
+	return domain.OperationLogRuntimeConfig{RetentionDays: s.days}, nil
 }

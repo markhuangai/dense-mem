@@ -1,4 +1,4 @@
-package service
+package operations
 
 import (
 	"testing"

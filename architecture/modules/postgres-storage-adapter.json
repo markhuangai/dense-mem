@@ -632,6 +632,12 @@
     },
     {
       "source": "github.com/markhuangai/dense-mem/internal/repository",
+      "target": "github.com/markhuangai/dense-mem/internal/operations/postgres",
+      "removal_issue": 382,
+      "reason": "Operations repository constructors remain bounded single-hop compatibility facades recorded in the operations capability manifest until final compatibility-facade cleanup."
+    },
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/repository",
       "target": "github.com/markhuangai/dense-mem/internal/graph/postgres",
       "removal_issue": 382,
       "reason": "Graph repository methods remain bounded single-hop compatibility facades while graph consumers migrate to the native PostgreSQL adapter; #382 removes the exception after the named consumers migrate."

@@ -1,4 +1,4 @@
-package service
+package operations
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
 )
 
 const TelemetryRetentionDays = 30
@@ -126,7 +126,7 @@ type PrometheusTelemetryService struct {
 	timeout       time.Duration
 	now           func() time.Time
 	logger        observability.LogProvider
-	lifecycle     repository.TelemetryLifecycleReader
+	lifecycle     operationscontract.TelemetryLifecycleReader
 	features      TelemetryFeatureResolver
 }
 
@@ -135,7 +135,7 @@ type TelemetryFeatureResolver struct {
 	DreamingEnabled       func(context.Context, *uuid.UUID) (bool, error)
 }
 
-func (s *PrometheusTelemetryService) SetLifecycleReader(reader repository.TelemetryLifecycleReader) {
+func (s *PrometheusTelemetryService) SetLifecycleReader(reader operationscontract.TelemetryLifecycleReader) {
 	if s != nil {
 		s.lifecycle = reader
 	}
@@ -224,11 +224,11 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 		StateSeries:    initialStateSeries,
 	}
 	if s == nil || s.baseURL == "" {
-		var lifecycle repository.TelemetryLifecycleSnapshot
+		var lifecycle operationscontract.TelemetryLifecycleSnapshot
 		var lifecycleErr error
 		if s != nil && s.lifecycle != nil {
 			lifecycleCtx, cancel := context.WithTimeout(ctx, s.timeout)
-			lifecycle, lifecycleErr = s.lifecycle.ReadTelemetryLifecycle(lifecycleCtx, repository.TelemetryLifecycleFilter{TeamID: scope.TeamID, ProfileID: scope.ProfileID}, from, to)
+			lifecycle, lifecycleErr = s.lifecycle.ReadTelemetryLifecycle(lifecycleCtx, operationscontract.TelemetryLifecycleFilter{TeamID: scope.TeamID, ProfileID: scope.ProfileID}, from, to)
 			cancel()
 		} else if hasLedgerSpecs(initialWindowedSpecs) || hasLedgerSpecs(initialCurrentSpecs) {
 			lifecycleErr = fmt.Errorf("telemetry lifecycle source is unavailable")
@@ -282,11 +282,11 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 		collectTelemetryRangeFailures(stateExecutableSpecs, stateResults),
 	)
 
-	var lifecycle repository.TelemetryLifecycleSnapshot
+	var lifecycle operationscontract.TelemetryLifecycleSnapshot
 	var lifecycleErr error
 	if s.lifecycle != nil {
 		lifecycleCtx, lifecycleCancel := context.WithTimeout(ctx, s.timeout)
-		lifecycle, lifecycleErr = s.lifecycle.ReadTelemetryLifecycle(lifecycleCtx, repository.TelemetryLifecycleFilter{TeamID: scope.TeamID, ProfileID: scope.ProfileID}, from, to)
+		lifecycle, lifecycleErr = s.lifecycle.ReadTelemetryLifecycle(lifecycleCtx, operationscontract.TelemetryLifecycleFilter{TeamID: scope.TeamID, ProfileID: scope.ProfileID}, from, to)
 		lifecycleCancel()
 	} else if hasLedgerSpecs(windowedCardSpecs) || hasLedgerSpecs(currentCardSpecs) {
 		lifecycleErr = fmt.Errorf("telemetry lifecycle source is unavailable")

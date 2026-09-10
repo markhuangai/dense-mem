@@ -1,4 +1,4 @@
-package service
+package operations
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
 )
 
 const (
@@ -39,7 +39,7 @@ type UsageMetricsService interface {
 }
 
 type UsageMetricsServiceImpl struct {
-	repo   repository.UsageMetricsRepository
+	repo   operationscontract.UsageMetricsRepository
 	logger observability.LogProvider
 
 	mu      sync.Mutex
@@ -61,7 +61,7 @@ type usageBucketKey struct {
 
 var _ UsageMetricsService = (*UsageMetricsServiceImpl)(nil)
 
-func NewUsageMetricsService(repo repository.UsageMetricsRepository, logger observability.LogProvider) *UsageMetricsServiceImpl {
+func NewUsageMetricsService(repo operationscontract.UsageMetricsRepository, logger observability.LogProvider) *UsageMetricsServiceImpl {
 	return &UsageMetricsServiceImpl{
 		repo:    repo,
 		logger:  logger,
