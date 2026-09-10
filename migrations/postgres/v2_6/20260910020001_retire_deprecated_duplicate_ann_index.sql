@@ -2,6 +2,10 @@
 -- it does not rewrite search_documents or change any canonical rows.
 -- RLS impact: migration mode is used only for catalog inspection; no row-level
 -- visibility or application policy is changed.
+-- Backfill: none; this migration changes only the verified physical index.
+-- Backward compatibility: the active generation and canonical search contract
+-- remain unchanged while the deprecated duplicate is removed.
+-- Rollback: automatic recreation is refused; use the exact recovery DDL below.
 -- Recovery: the exact CREATE INDEX statement is recorded below. Down refuses
 -- automatic recreation because the target may have been intentionally absent.
 
