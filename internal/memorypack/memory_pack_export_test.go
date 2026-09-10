@@ -323,6 +323,39 @@ func TestMemoryPackExportIncludesSupportAndNormalizesIDs(t *testing.T) {
 	}
 }
 
+func TestMemoryPackExportOmitsEntityNamesWhenRequested(t *testing.T) {
+	teamID, profileID := uuid.New(), uuid.New()
+	relationshipID := uuid.NewString()
+	reader := &exportSemanticStub{record: &tracecontract.RelationshipTraceRecord{
+		RelationshipID:   relationshipID,
+		SubjectEntityID:  "subject-id",
+		SubjectName:      "Private subject",
+		PredicateKey:     "uses",
+		PredicateVersion: 1,
+		ObjectEntityID:   "object-id",
+		ObjectEntityName: "Private object",
+		Status:           string(domain.RelationshipStatusActive),
+	}}
+	includeEntityNames := false
+	svc := NewMemoryPackService(MemoryPackDependencies{Semantic: reader})
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: teamID, OwnerID: profileID})
+	result, err := svc.Export(ctx, ExportRequest{
+		Name:               "private export",
+		RelationshipIDs:    []string{relationshipID},
+		IncludeEntityNames: &includeEntityNames,
+	})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	item := result.Artifact.Relationships[0]
+	if item.Subject.DisplayName != "" || item.Object.DisplayName != "" {
+		t.Fatalf("entity names = subject %q, object %q; want omitted", item.Subject.DisplayName, item.Object.DisplayName)
+	}
+	if strings.Contains(result.CanonicalJSON, "Private subject") || strings.Contains(result.CanonicalJSON, "Private object") {
+		t.Fatalf("canonical artifact included omitted entity names: %s", result.CanonicalJSON)
+	}
+}
+
 func TestMemoryPackArtifactValidationBranches(t *testing.T) {
 	valid := func() MemoryPackArtifact {
 		return MemoryPackArtifact{
@@ -350,7 +383,7 @@ func TestMemoryPackArtifactValidationBranches(t *testing.T) {
 		{"predicate", func(a *MemoryPackArtifact) { a.Relationships[0].PredicateKey = "" }, "predicate_key is required"},
 		{"predicate length", func(a *MemoryPackArtifact) { a.Relationships[0].PredicateKey = strings.Repeat("p", 129) }, "predicate_key exceeds"},
 		{"predicate version", func(a *MemoryPackArtifact) { a.Relationships[0].PredicateVersion = 0 }, "predicate_version"},
-		{"subject", func(a *MemoryPackArtifact) { a.Relationships[0].Subject.DisplayName = "" }, "subject ref and display_name"},
+		{"subject", func(a *MemoryPackArtifact) { a.Relationships[0].Subject.DisplayName = "" }, "subject display_name is required when entity names are included"},
 		{"object ref", func(a *MemoryPackArtifact) { a.Relationships[0].Object.Ref = "" }, "object ref"},
 		{"object value", func(a *MemoryPackArtifact) {
 			a.Relationships[0].Object = MemoryPackEndpoint{Ref: "value", Kind: "value"}

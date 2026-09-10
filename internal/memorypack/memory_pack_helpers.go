@@ -74,6 +74,16 @@ func uniqueStrings(values []string) []string {
 	return out
 }
 
+func omitMemoryPackEntityNames(item *MemoryPackRelationship) {
+	if item == nil {
+		return
+	}
+	item.Subject.DisplayName = ""
+	if item.Object.Kind != "value" {
+		item.Object.DisplayName = ""
+	}
+}
+
 func MemoryPackCopyMap(value map[string]any) map[string]any {
 	if len(value) == 0 {
 		return nil

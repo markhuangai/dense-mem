@@ -18,8 +18,12 @@ import (
 var ErrInvalidArtifact = errors.New("invalid memory pack artifact")
 
 func canonicalMemoryPackArtifact(artifact MemoryPackArtifact) ([]byte, string, error) {
+	return canonicalMemoryPackArtifactWithOptions(artifact, true)
+}
+
+func canonicalMemoryPackArtifactWithOptions(artifact MemoryPackArtifact, includeEntityNames bool) ([]byte, string, error) {
 	artifact = normalizeMemoryPackArtifact(artifact)
-	if err := validateMemoryPackArtifact(artifact); err != nil {
+	if err := validateMemoryPackArtifactWithOptions(artifact, includeEntityNames); err != nil {
 		return nil, "", err
 	}
 	hashable := artifact
@@ -33,8 +37,12 @@ func canonicalMemoryPackArtifact(artifact MemoryPackArtifact) ([]byte, string, e
 }
 
 func marshalMemoryPackArtifact(artifact MemoryPackArtifact) ([]byte, error) {
+	return marshalMemoryPackArtifactWithOptions(artifact, true)
+}
+
+func marshalMemoryPackArtifactWithOptions(artifact MemoryPackArtifact, includeEntityNames bool) ([]byte, error) {
 	artifact = normalizeMemoryPackArtifact(artifact)
-	if err := validateMemoryPackArtifact(artifact); err != nil {
+	if err := validateMemoryPackArtifactWithOptions(artifact, includeEntityNames); err != nil {
 		return nil, err
 	}
 	data, err := json.Marshal(artifact)
@@ -45,6 +53,10 @@ func marshalMemoryPackArtifact(artifact MemoryPackArtifact) ([]byte, error) {
 }
 
 func validateMemoryPackArtifact(artifact MemoryPackArtifact) error {
+	return validateMemoryPackArtifactWithOptions(artifact, true)
+}
+
+func validateMemoryPackArtifactWithOptions(artifact MemoryPackArtifact, includeEntityNames bool) error {
 	if artifact.Format != MemoryPackFormat {
 		return fmt.Errorf("%w: format must be %q", ErrInvalidArtifact, MemoryPackFormat)
 	}
@@ -62,7 +74,7 @@ func validateMemoryPackArtifact(artifact MemoryPackArtifact) error {
 	}
 	seen := map[string]struct{}{}
 	for i, item := range artifact.Relationships {
-		if err := validateMemoryPackRelationship(item); err != nil {
+		if err := validateMemoryPackRelationshipWithOptions(item, includeEntityNames); err != nil {
 			return fmt.Errorf("%w: relationships[%d]: %v", ErrInvalidArtifact, i, err)
 		}
 		if _, exists := seen[item.ItemID]; exists {
@@ -96,6 +108,10 @@ func validateMemoryPackArtifact(artifact MemoryPackArtifact) error {
 }
 
 func validateMemoryPackRelationship(item MemoryPackRelationship) error {
+	return validateMemoryPackRelationshipWithOptions(item, true)
+}
+
+func validateMemoryPackRelationshipWithOptions(item MemoryPackRelationship, includeEntityNames bool) error {
 	if strings.TrimSpace(item.ItemID) == "" {
 		return errors.New("item_id is required")
 	}
@@ -108,8 +124,11 @@ func validateMemoryPackRelationship(item MemoryPackRelationship) error {
 	if item.PredicateVersion < 1 {
 		return errors.New("predicate_version must be greater than zero")
 	}
-	if strings.TrimSpace(item.Subject.Ref) == "" || strings.TrimSpace(item.Subject.DisplayName) == "" {
-		return errors.New("subject ref and display_name are required")
+	if strings.TrimSpace(item.Subject.Ref) == "" {
+		return errors.New("subject ref is required")
+	}
+	if includeEntityNames && strings.TrimSpace(item.Subject.DisplayName) == "" {
+		return errors.New("subject display_name is required when entity names are included")
 	}
 	if strings.TrimSpace(item.Object.Ref) == "" {
 		return errors.New("object ref is required")
@@ -121,8 +140,8 @@ func validateMemoryPackRelationship(item MemoryPackRelationship) error {
 		if _, err := memoryPackCanonicalValue(item.Object); err != nil {
 			return err
 		}
-	} else if strings.TrimSpace(item.Object.DisplayName) == "" {
-		return errors.New("object display_name is required")
+	} else if includeEntityNames && strings.TrimSpace(item.Object.DisplayName) == "" {
+		return errors.New("object display_name is required when entity names are included")
 	}
 	return nil
 }

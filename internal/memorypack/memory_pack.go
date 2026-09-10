@@ -50,6 +50,7 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*Exp
 		return nil, fmt.Errorf("memory pack export: relationship_ids exceeds %d items", maxExportRelationships)
 	}
 	includeSupport := req.IncludeSupport == nil || *req.IncludeSupport
+	includeEntityNames := req.IncludeEntityNames == nil || *req.IncludeEntityNames
 	now := s.now().UTC()
 	artifact := MemoryPackArtifact{
 		Format:      MemoryPackFormat,
@@ -92,6 +93,9 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*Exp
 			return nil, fmt.Errorf("%w: %s", ErrMemoryPackRelationshipNotActive, relationshipID)
 		}
 		item := memoryPackRelationshipFromTrace(trace.Relationship)
+		if !includeEntityNames {
+			omitMemoryPackEntityNames(&item)
+		}
 		if includeSupport {
 			evidenceIDs := map[string]struct{}{}
 			for _, support := range trace.EvidenceSupports {
@@ -144,12 +148,12 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*Exp
 		}
 		artifact.EvidenceSupports = supports
 	}
-	canonical, hash, err := canonicalMemoryPackArtifact(artifact)
+	canonical, hash, err := canonicalMemoryPackArtifactWithOptions(artifact, includeEntityNames)
 	if err != nil {
 		return nil, err
 	}
 	artifact.ContentSHA256 = hash
-	canonicalWithHash, err := marshalMemoryPackArtifact(artifact)
+	canonicalWithHash, err := marshalMemoryPackArtifactWithOptions(artifact, includeEntityNames)
 	if err != nil {
 		return nil, err
 	}

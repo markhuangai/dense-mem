@@ -103,6 +103,13 @@ function assertExportPayload(payload, option) {
   assert(Array.isArray(artifact.relationships) && artifact.relationships.length === 1, `${label} relationship projection was incomplete`);
   assert(artifact.relationships[0].source_relationship_id === fixture.relationshipID, `${label} relationship identity changed`);
   assert(artifact.relationships[0].source_owner_profile_id === ownerA.credential.id, `${label} relationship owner provenance changed`);
+  if (option.includeEntityNames === false) {
+    assert(!Object.hasOwn(artifact.relationships[0].subject, "display_name"), `${label} subject name was not omitted`);
+    assert(!Object.hasOwn(artifact.relationships[0].object, "display_name"), `${label} object name was not omitted`);
+  } else {
+    assert(artifact.relationships[0].subject.display_name === "Memory Pack private subject", `${label} subject name was not hydrated`);
+    assert(artifact.relationships[0].object.display_name === "Memory Pack private target", `${label} object name was not hydrated`);
+  }
   assert(!artifactJSON.includes("candidate") && !artifactJSON.includes("hypothesis"), `${label} artifact included non-canonical semantic state`);
   assert(payload.filename === "memory-pack-private-export.memory-pack.json", `${label} filename changed: ${payload.filename}`);
   assert(payload.content_sha256 === artifact.content_sha256 && /^[0-9a-f]{64}$/.test(payload.content_sha256), `${label} artifact hash is invalid`);
