@@ -1,0 +1,230 @@
+{
+  "now": "2026-01-02T03:04:05Z",
+  "team_id": "11111111-1111-4111-8111-111111111111",
+  "owner_profile_id": "22222222-2222-4222-8222-222222222222",
+  "name": "  Capability memory pack  ",
+  "description": " v2.4 fixture ",
+  "relationship_ids": [
+    " rel-b ",
+    "rel-a",
+    "rel-b"
+  ],
+  "traces": {
+    "rel-b": {
+      "relationship": {
+        "team_id": "11111111-1111-4111-8111-111111111111",
+        "relationship_id": "rel-b",
+        "owner_profile_id": "22222222-2222-4222-8222-222222222222",
+        "semantic_group_key": "group-b",
+        "subject_entity_id": "entity-b-subject",
+        "subject_name": "B Subject",
+        "predicate_key": "uses",
+        "predicate_version": 1,
+        "object_entity_id": "entity-b-object",
+        "object_entity_name": "B Object",
+        "status": "active",
+        "polarity": "+",
+        "scope_key": "profile_private",
+        "version": 2
+      },
+      "evidence_supports": [
+        {
+          "relationship_id": "rel-b",
+          "evidence_id": "evidence-b",
+          "quote": "B evidence",
+          "span_start": 0,
+          "span_end": 9,
+          "metadata": {
+            "source": "b"
+          }
+        }
+      ],
+      "evidence_fragments": [
+        {
+          "evidence_id": "evidence-b",
+          "content": "B evidence",
+          "content_hash": "sha256:b",
+          "source_type": "manual",
+          "authority": "secondary",
+          "source_ref": "source:b",
+          "source_key": "key:b",
+          "source_revision_id": "rev:b",
+          "labels": [
+            "b",
+            "shared"
+          ],
+          "metadata": {
+            "a": "first",
+            "z": "last"
+          }
+        }
+      ]
+    },
+    "rel-a": {
+      "relationship": {
+        "team_id": "11111111-1111-4111-8111-111111111111",
+        "relationship_id": "rel-a",
+        "owner_profile_id": "22222222-2222-4222-8222-222222222222",
+        "semantic_group_key": "group-a",
+        "subject_entity_id": "entity-a-subject",
+        "subject_name": "A Subject",
+        "predicate_key": "uses",
+        "predicate_version": 1,
+        "object_value_id": "value-a",
+        "object_value": "42",
+        "object_value_type": "number",
+        "status": "active",
+        "polarity": "+",
+        "scope_key": "profile_private",
+        "version": 3
+      },
+      "evidence_supports": [
+        {
+          "relationship_id": "rel-a",
+          "evidence_id": "evidence-a",
+          "quote": "A evidence",
+          "span_start": 1,
+          "span_end": 9,
+          "metadata": {
+            "source": "a"
+          }
+        }
+      ],
+      "evidence_fragments": [
+        {
+          "evidence_id": "evidence-a",
+          "content": "A evidence",
+          "content_hash": "sha256:a",
+          "source_type": "document",
+          "authority": "primary",
+          "source_ref": "source:a",
+          "source_key": "key:a",
+          "source_revision_id": "rev:a",
+          "labels": [
+            "a",
+            "shared"
+          ],
+          "metadata": {
+            "source": "a"
+          }
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "omitted_default_names_omitted",
+      "include_evidence": null,
+      "include_entity_names": null,
+      "artifact_file": "include_evidence.json",
+      "sha256": "f4170413d5866842a3c56e1117652df11d362696f349a52ced027962a12ba4ca",
+      "filename": "capability-memory-pack.memory-pack.json",
+      "item_count": 2,
+      "evidence_count": 2,
+      "support_count": 2,
+      "omissions": []
+    },
+    {
+      "name": "omitted_default_names_true",
+      "include_evidence": null,
+      "include_entity_names": true,
+      "artifact_file": "include_evidence.json",
+      "sha256": "f4170413d5866842a3c56e1117652df11d362696f349a52ced027962a12ba4ca",
+      "filename": "capability-memory-pack.memory-pack.json",
+      "item_count": 2,
+      "evidence_count": 2,
+      "support_count": 2,
+      "omissions": []
+    },
+    {
+      "name": "omitted_default_names_false",
+      "include_evidence": null,
+      "include_entity_names": false,
+      "artifact_file": "include_evidence_without_entity_names.json",
+      "sha256": "2cc3a31b0b241c2d50762128d52b4edeeaa782af786c77b843247878fa611602",
+      "filename": "capability-memory-pack.memory-pack.json",
+      "item_count": 2,
+      "evidence_count": 2,
+      "support_count": 2,
+      "omissions": []
+    },
+    {
+      "name": "explicit_true_names_omitted",
+      "include_evidence": true,
+      "include_entity_names": null,
+      "artifact_file": "include_evidence.json",
+      "sha256": "f4170413d5866842a3c56e1117652df11d362696f349a52ced027962a12ba4ca",
+      "filename": "capability-memory-pack.memory-pack.json",
+      "item_count": 2,
+      "evidence_count": 2,
+      "support_count": 2,
+      "omissions": []
+    },
+    {
+      "name": "explicit_true_names_true",
+      "include_evidence": true,
+      "include_entity_names": true,
+      "artifact_file": "include_evidence.json",
+      "sha256": "f4170413d5866842a3c56e1117652df11d362696f349a52ced027962a12ba4ca",
+      "filename": "capability-memory-pack.memory-pack.json",
+      "item_count": 2,
+      "evidence_count": 2,
+      "support_count": 2,
+      "omissions": []
+    },
+    {
+      "name": "explicit_true_names_false",
+      "include_evidence": true,
+      "include_entity_names": false,
+      "artifact_file": "include_evidence_without_entity_names.json",
+      "sha256": "2cc3a31b0b241c2d50762128d52b4edeeaa782af786c77b843247878fa611602",
+      "filename": "capability-memory-pack.memory-pack.json",
+      "item_count": 2,
+      "evidence_count": 2,
+      "support_count": 2,
+      "omissions": []
+    },
+    {
+      "name": "explicit_false_names_omitted",
+      "include_evidence": false,
+      "include_entity_names": null,
+      "artifact_file": "exclude_evidence.json",
+      "sha256": "2cde4ff84bdfad09376d13acf22d785068188573864d296f2bba6bc7358109b3",
+      "filename": "capability-memory-pack.memory-pack.json",
+      "item_count": 2,
+      "evidence_count": 0,
+      "support_count": 0,
+      "omissions": [
+        "support evidence omitted by request"
+      ]
+    },
+    {
+      "name": "explicit_false_names_true",
+      "include_evidence": false,
+      "include_entity_names": true,
+      "artifact_file": "exclude_evidence.json",
+      "sha256": "2cde4ff84bdfad09376d13acf22d785068188573864d296f2bba6bc7358109b3",
+      "filename": "capability-memory-pack.memory-pack.json",
+      "item_count": 2,
+      "evidence_count": 0,
+      "support_count": 0,
+      "omissions": [
+        "support evidence omitted by request"
+      ]
+    },
+    {
+      "name": "explicit_false_names_false",
+      "include_evidence": false,
+      "include_entity_names": false,
+      "artifact_file": "exclude_evidence_without_entity_names.json",
+      "sha256": "309db88966ca911fb115d09a3499aac36938161503a903145cd27dea88569c9c",
+      "filename": "capability-memory-pack.memory-pack.json",
+      "item_count": 2,
+      "evidence_count": 0,
+      "support_count": 0,
+      "omissions": [
+        "support evidence omitted by request"
+      ]
+    }
+  ]
+}

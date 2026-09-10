@@ -2,55 +2,59 @@
   "schema_version": 1,
   "capability": "skill-pack-application",
   "source_ownership": [
-    {
-      "path": "cmd/internal/serverapp/memorypack_composition.go",
-      "issue": 375
-    },
-    {
-      "path": "internal/tools/registry/memory_pack_bindings.go",
-      "issue": 375
-    },
-    {
-      "path": "internal/service/skillpackservice/memory_pack.go",
-      "issue": 375
-    },
-    {
-      "path": "internal/service/skillpackservice/memory_pack_artifact.go",
-      "issue": 375
-    },
-    {
-      "path": "internal/service/skillpackservice/memory_pack_export_test.go",
-      "issue": 375
-    },
-    {
-      "path": "internal/service/skillpackservice/memory_pack_helpers.go",
-      "issue": 375
-    },
-    {
-      "path": "internal/service/skillpackservice/memory_pack_types.go",
-      "issue": 375
-    }
+    {"path": "cmd/internal/serverapp/memorypack_composition.go", "issue": 375},
+    {"path": "internal/tools/registry/memory_pack_bindings.go", "issue": 375},
+    {"path": "internal/memorypack/memory_pack.go", "issue": 375},
+    {"path": "internal/memorypack/memory_pack_artifact.go", "issue": 375},
+    {"path": "internal/memorypack/memory_pack_export_test.go", "issue": 375},
+    {"path": "internal/memorypack/memory_pack_helpers.go", "issue": 375},
+    {"path": "internal/memorypack/memory_pack_types.go", "issue": 375},
+    {"path": "internal/service/skillpackservice/memory_pack.go", "issue": 375},
+    {"path": "internal/service/skillpackservice/memory_pack_export_test.go", "issue": 375},
+    {"path": "internal/service/skillpackservice/memory_pack_helpers.go", "issue": 375},
+    {"path": "internal/service/skillpackservice/memory_pack_types.go", "issue": 375}
   ],
   "completed_issues": [],
-  "go": {
-    "units": [
-      {
-        "id": "github.com/markhuangai/dense-mem/internal/service/skillpackservice",
-        "role": "application_api",
-        "visibility": "public"
-      }
-    ]
-  },
-  "browser": {
-    "units": []
-  },
-  "exceptions": [
+  "compatibility_bridges": [
     {
-      "source": "github.com/markhuangai/dense-mem/internal/service/skillpackservice",
-      "target": "github.com/markhuangai/dense-mem/internal/repository",
-      "removal_issue": 375,
-      "reason": "Skill-pack application code still consumes the legacy repository until memory-pack ownership is isolated."
+      "source_path": "internal/service/skillpackservice/memory_pack.go",
+      "fields": [
+        "MemoryPackService",
+        "MemoryPackDependencies",
+        "MemoryPackSemanticReader",
+        "ExportRequest",
+        "ExportResult",
+        "MemoryPackArtifact",
+        "MemoryPackSource",
+        "MemoryPackRelationship",
+        "MemoryPackEndpoint",
+        "MemoryPackEvidence",
+        "MemoryPackEvidenceSupport",
+        "NewMemoryPackService"
+      ],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/application_composition.go", "symbol": "buildApplicationBundle"},
+        {"path": "internal/tools/registry/capability_bindings.go", "symbol": "Dependencies.withCapabilityBindings"},
+        {"path": "internal/tools/registry/toolset.go", "symbol": "BuildActive"},
+        {"path": "internal/tools/registry/contract_outputs.go", "symbol": "exportMemoryPackContractOutput"},
+        {"path": "internal/tools/registry/contract_result_errors.go", "symbol": "ActionableErrorData"},
+        {"path": "internal/tools/registry/contract_output_validation_test.go", "symbol": "TestExportMemoryPackContractOutputMatchesClosedSchema"},
+        {"path": "internal/tools/registry/contract_result_errors_test.go", "symbol": "TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance"},
+        {"path": "internal/tools/registry/uat_memory_pack_test.go", "symbol": "TestBuildActiveWiresExportMemoryPackOnly"},
+        {"path": "internal/service/skillpackservice/memory_pack_export_test.go", "symbol": "TestMemoryPackExportRejectsMissingInputsAndUnavailableRelationships"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/memorypack/memory_pack.go", "symbol": "NewMemoryPackService"},
+      "removal_condition": "Remove the compatibility aliases and wrapper after the remaining central assembler, registry projection, and retained test consumers import internal/memorypack directly."
     }
   ],
+  "go": {
+    "units": [
+      {"id": "github.com/markhuangai/dense-mem/internal/memorypack", "role": "application_api", "visibility": "public"},
+      {"id": "github.com/markhuangai/dense-mem/internal/service/skillpackservice", "role": "application_api", "visibility": "public"}
+    ]
+  },
+  "browser": {"units": []},
+  "exceptions": [],
   "workers": []
 }

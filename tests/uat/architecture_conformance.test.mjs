@@ -487,7 +487,7 @@ test("enforces private visibility and narrow PostgreSQL infrastructure reuse", (
 
 test("retains precise replacement owners and lifecycle obligations", () => {
   const exceptionOwners = [...new Set(productionManifest.exceptions.map((entry) => entry.removal_issue))].sort((a, b) => a - b);
-  assert.deepEqual(exceptionOwners, [367, 375, 377, 379, 380, 382]);
+  assert.deepEqual(exceptionOwners, [367, 377, 379, 380, 382]);
   assert.equal(productionManifest.exceptions.some((entry) => entry.removal_issue === 276), false);
   assert.equal(productionManifest.exceptions.some((entry) => entry.removal_issue === 280), false);
   assert.ok(productionManifest.workers.every((entry) => entry.lifecycle_issue === 381));
