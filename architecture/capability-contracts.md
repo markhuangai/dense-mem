@@ -10,8 +10,10 @@ graph store port. `internal/trace/contract` owns trace inputs, trace result
 records, and the relationship-conflict record reused by trace and recall.
 `internal/recall/contract` owns the recall request, application result models,
 storage inputs/results, recall service port, and evidence-conflict read models.
-`internal/search/contract` owns the search read port and its
-provider-independent read models. `internal/semanticwrite/contract` owns the
+`internal/search/contract` owns search read models. `internal/search` owns
+search maintenance contracts and query maintenance orchestration, while
+`internal/search/postgres` owns the PostgreSQL query, bootstrap, convergence,
+and reconciliation adapter. `internal/semanticwrite/contract` owns the
 provider-independent semantic-write plan, embedding result, and batch-provider
 port.
 `internal/embedding/contract` owns the provider-independent embedding interface,
@@ -35,7 +37,8 @@ Compatibility aliases and their current consumers are:
 - `internal/repository/search_types.go`: search names are aliases consumed by
   `internal/repository/search_repository.go`,
   `internal/repository/recall_repository.go`,
-  `internal/service/search_reconciliation`,
+  `internal/service/search_reconciliation` and
+  `internal/service/search_convergence`,
   `internal/service/memoryservice`, and
   `internal/http/control_portal_search.go`.
 - `internal/repository/evidence_conflict_repository.go`: evidence-conflict

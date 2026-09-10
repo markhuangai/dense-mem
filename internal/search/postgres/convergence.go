@@ -1,4 +1,4 @@
-package repository
+package postgres
 
 import (
 	"context"
@@ -13,12 +13,14 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
+	searchmaintenance "github.com/markhuangai/dense-mem/internal/search/maintenance"
 )
 
 // GetSearchConvergence compares active-contract search documents with the
 // canonical semantic projections. A document is current only when its active
 // contract vector is present and has the declared dimensions.
-func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input SearchConvergenceInput) (*SearchConvergence, error) {
+func (r *Store) GetSearchConvergence(ctx context.Context, input searchmaintenance.SearchConvergenceInput) (*searchmaintenance.SearchConvergence, error) {
 	input = normalizeSearchConvergenceInput(input)
 	if err := validateSearchConvergenceInput(input); err != nil {
 		return nil, err
@@ -34,11 +36,11 @@ func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input S
 		return nil, fmt.Errorf("%w: requested convergence dimensions are not active", ErrSearchContractMismatch)
 	}
 
-	convergence := &SearchConvergence{
+	convergence := &searchmaintenance.SearchConvergence{
 		ObservedAt:   time.Now().UTC(),
 		Status:       "converged",
 		Contract:     contract,
-		DriftClasses: []SearchDocumentDriftCount{},
+		DriftClasses: []searchmaintenance.SearchDocumentDriftCount{},
 	}
 	err = r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		// not_required documents have no vector obligation. All other active
@@ -119,7 +121,7 @@ func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input S
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var item SearchDocumentDriftCount
+			var item searchmaintenance.SearchDocumentDriftCount
 			if err := rows.Scan(&item.Class, &item.Count); err != nil {
 				return err
 			}
@@ -174,17 +176,17 @@ type canonicalSearchConvergence struct {
 	DriftedDocuments  int64
 	AffectedTeamCount int64
 	OldestDriftAge    time.Duration
-	DriftClasses      []SearchDocumentDriftCount
+	DriftClasses      []searchmaintenance.SearchDocumentDriftCount
 }
 
-func (r *SearchRepositoryImpl) canonicalSearchConvergence(ctx context.Context, contract *ActiveSearchContract) (*canonicalSearchConvergence, error) {
+func (r *Store) canonicalSearchConvergence(ctx context.Context, contract *searchcontract.ActiveSearchContract) (*canonicalSearchConvergence, error) {
 	result := &canonicalSearchConvergence{}
 	classes := map[string]int64{}
 	teams := map[string]struct{}{}
 	now := time.Now().UTC()
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		type observedDocument struct {
-			item          SearchDocumentForEmbedding
+			item          searchmaintenance.SearchDocumentForEmbedding
 			vectorCurrent bool
 			updatedAt     time.Time
 		}
@@ -215,7 +217,7 @@ func (r *SearchRepositoryImpl) canonicalSearchConvergence(ctx context.Context, c
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var item SearchDocumentForEmbedding
+			var item searchmaintenance.SearchDocumentForEmbedding
 			var vectorCurrent bool
 			var updatedAt time.Time
 			if err := rows.Scan(
@@ -293,9 +295,9 @@ func (r *SearchRepositoryImpl) canonicalSearchConvergence(ctx context.Context, c
 		return nil, fmt.Errorf("search: canonical convergence projection: %w", err)
 	}
 	result.AffectedTeamCount = int64(len(teams))
-	result.DriftClasses = make([]SearchDocumentDriftCount, 0, len(classes))
+	result.DriftClasses = make([]searchmaintenance.SearchDocumentDriftCount, 0, len(classes))
 	for class, count := range classes {
-		result.DriftClasses = append(result.DriftClasses, SearchDocumentDriftCount{Class: class, Count: count})
+		result.DriftClasses = append(result.DriftClasses, searchmaintenance.SearchDocumentDriftCount{Class: class, Count: count})
 	}
 	sort.Slice(result.DriftClasses, func(i, j int) bool { return result.DriftClasses[i].Class < result.DriftClasses[j].Class })
 	return result, nil
@@ -304,7 +306,7 @@ func (r *SearchRepositoryImpl) canonicalSearchConvergence(ctx context.Context, c
 func addMissingCanonicalSearchStats(
 	ctx context.Context,
 	tx *gorm.DB,
-	contract *ActiveSearchContract,
+	contract *searchcontract.ActiveSearchContract,
 	result *canonicalSearchConvergence,
 	classes map[string]int64,
 	teams map[string]struct{},
@@ -396,8 +398,8 @@ func addMissingCanonicalSearchStats(
 	return rows.Err()
 }
 
-func (r *SearchRepositoryImpl) latestSearchReconciliationRun(ctx context.Context) (*SearchReconciliationRun, error) {
-	var run SearchReconciliationRun
+func (r *Store) latestSearchReconciliationRun(ctx context.Context) (*searchmaintenance.SearchReconciliationRun, error) {
+	var run searchmaintenance.SearchReconciliationRun
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		return tx.WithContext(ctx).Raw(`
 			SELECT reconciliation_run_id::text, local_run_date, status,
@@ -426,12 +428,12 @@ func searchTimePointer(value time.Time) *time.Time {
 	return &value
 }
 
-func normalizeSearchConvergenceInput(input SearchConvergenceInput) SearchConvergenceInput {
+func normalizeSearchConvergenceInput(input searchmaintenance.SearchConvergenceInput) searchmaintenance.SearchConvergenceInput {
 	input.EmbeddingContractID = strings.TrimSpace(input.EmbeddingContractID)
 	return input
 }
 
-func validateSearchConvergenceInput(input SearchConvergenceInput) error {
+func validateSearchConvergenceInput(input searchmaintenance.SearchConvergenceInput) error {
 	if input.EmbeddingContractID != "" {
 		if _, err := uuid.Parse(input.EmbeddingContractID); err != nil {
 			return fmt.Errorf("embedding_contract_id is invalid: %w", err)

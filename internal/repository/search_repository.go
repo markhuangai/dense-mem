@@ -2,16 +2,14 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"fmt"
-	"strings"
 
 	"gorm.io/gorm"
 
-	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+	searchmaintenance "github.com/markhuangai/dense-mem/internal/search/maintenance"
+	searchpostgres "github.com/markhuangai/dense-mem/internal/search/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -44,265 +42,74 @@ var (
 	ErrSearchStaleVersion                 = knowledgecontract.ErrSearchStaleVersion
 	ErrSearchContractMismatch             = knowledgecontract.ErrSearchContractMismatch
 	ErrSearchEmbeddingRequired            = knowledgecontract.ErrSearchEmbeddingRequired
-	ErrSearchConvergenceAttentionRequired = errors.New("search convergence is attention_required")
+	ErrSearchConvergenceAttentionRequired = searchpostgres.ErrSearchConvergenceAttentionRequired
 	ErrInlineEmbeddingPlanMismatch        = knowledgecontract.ErrInlineEmbeddingPlanMismatch
 	ErrInlineEmbeddingPlanTooLarge        = knowledgecontract.ErrInlineEmbeddingPlanTooLarge
 )
 
+// SearchRepositoryImpl remains a compatibility facade. Query, bootstrap,
+// convergence, and reconciliation policy live in search/postgres; canonical
+// search-document writes continue to use the knowledge owner.
 type SearchRepositoryImpl struct {
 	db             *gorm.DB
 	rls            rLSHelper
 	knowledgeOwner *knowledgepostgres.Store
+	searchOwner    *searchpostgres.Store
 }
 
 var _ SearchRepository = (*SearchRepositoryImpl)(nil)
 
-type searchPhysicalIndexState struct {
-	Exists     bool
-	Valid      bool
-	Definition string
-}
-
-func loadSearchPhysicalIndexState(
-	ctx context.Context,
-	db *gorm.DB,
-	indexName string,
-) (searchPhysicalIndexState, error) {
-	var state searchPhysicalIndexState
-	err := db.WithContext(ctx).Raw(`
-		SELECT index_meta.indisvalid,
-		       pg_get_indexdef(index_meta.indexrelid)
-		FROM pg_class AS index_class
-		JOIN pg_namespace AS index_schema
-		  ON index_schema.oid = index_class.relnamespace
-		JOIN pg_index AS index_meta
-		  ON index_meta.indexrelid = index_class.oid
-		WHERE index_schema.nspname = current_schema()
-		  AND index_class.relname = ?
-	`, indexName).Row().Scan(&state.Valid, &state.Definition)
-	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, gorm.ErrRecordNotFound) {
-		return state, nil
-	}
-	if err != nil {
-		return searchPhysicalIndexState{}, err
-	}
-	state.Exists = true
-	return state, nil
-}
-
 func NewSearchRepository(db *gorm.DB, rls *postgres.RLS) *SearchRepositoryImpl {
 	return &SearchRepositoryImpl{
-		db:             db,
-		rls:            rls,
+		db: db, rls: rls,
 		knowledgeOwner: knowledgepostgres.NewStore(db, rls, knowledgecontract.ConflictRuntimeConfig{}),
+		searchOwner:    searchpostgres.NewStore(db, rls),
 	}
+}
+
+func (r *SearchRepositoryImpl) searchReadOwner() (*searchpostgres.Store, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("search: database is required")
+	}
+	if r.searchOwner == nil {
+		r.searchOwner = searchpostgres.NewStore(r.db, r.rls)
+	}
+	return r.searchOwner, nil
 }
 
 func (r *SearchRepositoryImpl) GetActiveSearchContract(ctx context.Context) (*ActiveSearchContract, error) {
-	db, err := r.database()
+	owner, err := r.searchReadOwner()
 	if err != nil {
 		return nil, err
 	}
-	var contract ActiveSearchContract
-	err = db.WithContext(ctx).Raw(`
-		SELECT
-		    contract.embedding_contract_id::text,
-		    generation.search_index_generation_id::text,
-		    contract.dimensions,
-		    contract.provider,
-		    contract.model,
-		    contract.distance_metric,
-		    contract.vector_normalization,
-		    contract.document_format_version,
-		    contract.query_format_version,
-		    generation.generation,
-		    generation.ann_strategy,
-		    generation.operator_class,
-		    generation.indexed_expression,
-		    generation.physical_index_name,
-		    generation.query_ef_search,
-		    generation.exact_max_rows,
-		    generation.candidate_limit,
-		    generation.allow_exact_fallback
-		FROM search_index_generations AS generation
-		JOIN embedding_contracts AS contract
-		  ON contract.embedding_contract_id = generation.embedding_contract_id
-		 AND contract.dimensions = generation.embedding_dimensions
-		WHERE generation.activation_state = 'active'
-		  AND contract.lifecycle_state = 'active'
-		  AND contract.distance_metric = ?
-		ORDER BY contract.version DESC, generation.generation DESC, generation.created_at DESC
-		LIMIT 1
-	`, string(domain.VectorDistanceCosine)).Row().Scan(
-		&contract.EmbeddingContractID,
-		&contract.SearchIndexGenerationID,
-		&contract.EmbeddingDimensions,
-		&contract.EmbeddingProvider,
-		&contract.EmbeddingModel,
-		&contract.DistanceMetric,
-		&contract.VectorNormalization,
-		&contract.DocumentFormatVersion,
-		&contract.QueryFormatVersion,
-		&contract.IndexGeneration,
-		&contract.IndexStrategy,
-		&contract.OperatorClass,
-		&contract.IndexedExpression,
-		&contract.PhysicalIndexName,
-		&contract.QueryEFSearch,
-		&contract.ExactMaxRows,
-		&contract.CandidateLimit,
-		&contract.AllowExactFallback,
-	)
-	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("%w: active search contract not found", ErrSearchContractMismatch)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("search: load active contract: %w", err)
-	}
-	if contract.EmbeddingContractID == "" || contract.SearchIndexGenerationID == "" {
-		return nil, fmt.Errorf("%w: active search contract not found", ErrSearchContractMismatch)
-	}
-	return &contract, nil
+	return owner.GetActiveSearchContract(ctx)
 }
 
 func (r *SearchRepositoryImpl) CheckSearchReadiness(ctx context.Context) (*SearchReadiness, error) {
-	contract, err := r.GetActiveSearchContract(ctx)
+	owner, err := r.searchReadOwner()
 	if err != nil {
 		return nil, err
 	}
-	db, err := r.database()
-	if err != nil {
-		return nil, err
-	}
-	readiness := &SearchReadiness{Ready: true, Contract: contract}
-	var vectorPresent bool
-	if err := db.WithContext(ctx).Raw(`
-		SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')
-	`).Scan(&vectorPresent).Error; err != nil {
-		return nil, fmt.Errorf("search: readiness extension check: %w", err)
-	}
-	if !vectorPresent {
-		readiness.Ready = false
-		readiness.Reasons = append(readiness.Reasons, SearchReadinessReason{
-			Code:    "missing_pgvector_extension",
-			Message: "pgvector extension is not installed",
-		})
-	}
-	if contract.IndexStrategy != string(domain.VectorIndexExact) {
-		indexState, err := loadSearchPhysicalIndexState(ctx, db, contract.PhysicalIndexName)
-		if err != nil {
-			return nil, fmt.Errorf("search: readiness index check: %w", err)
-		}
-		if !indexState.Exists {
-			readiness.Ready = false
-			readiness.Reasons = append(readiness.Reasons, SearchReadinessReason{
-				Code:    "missing_physical_index",
-				Message: fmt.Sprintf("physical index %q is missing", contract.PhysicalIndexName),
-			})
-		} else if !indexState.Valid {
-			readiness.Ready = false
-			readiness.Reasons = append(readiness.Reasons, SearchReadinessReason{
-				Code:    "invalid_physical_index",
-				Message: fmt.Sprintf("physical index %q is invalid", contract.PhysicalIndexName),
-			})
-		} else if missing := searchMissingIndexCompatibility(contract, indexState.Definition); len(missing) > 0 {
-			readiness.Ready = false
-			readiness.Reasons = append(readiness.Reasons, SearchReadinessReason{
-				Code: "incompatible_physical_index",
-				Message: fmt.Sprintf(
-					"physical index %q is incompatible with active search contract: missing %s",
-					contract.PhysicalIndexName,
-					strings.Join(missing, ", "),
-				),
-			})
-		}
-	}
-	incompleteRelationships, err := r.relationshipProjectionTextIncomplete(ctx, contract)
-	if err != nil {
-		return nil, err
-	}
-	if incompleteRelationships {
-		readiness.Ready = false
-		readiness.Reasons = append(readiness.Reasons, SearchReadinessReason{
-			Code:    "relationship_projection_text_incomplete",
-			Message: "eligible relationship search documents are missing projection format 2 text",
-		})
-	}
-	return readiness, nil
+	return owner.CheckSearchReadiness(ctx)
 }
 
-func (r *SearchRepositoryImpl) relationshipProjectionTextIncomplete(ctx context.Context, contract *ActiveSearchContract) (bool, error) {
-	var incomplete bool
-	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		return tx.WithContext(ctx).Raw(`
-			WITH activated_generation AS (
-			    SELECT DISTINCT ON (team_id)
-			           team_id, projection_generation_id
-			    FROM search_projection_generations
-			    WHERE source_kind = 'relationship'
-			      AND projection_format_version = 2
-			      AND state = 'current'
-			      AND activated_at IS NOT NULL
-			    ORDER BY team_id, generation DESC, created_at DESC
-			),
-			latest_generation AS (
-			    SELECT DISTINCT ON (team_id)
-			           team_id, projection_generation_id
-			    FROM search_projection_generations
-			    WHERE source_kind = 'relationship'
-			      AND projection_format_version = 2
-			    ORDER BY team_id, generation DESC, created_at DESC
-			),
-			selected_generation AS (
-			    SELECT COALESCE(activated.team_id, latest.team_id) AS team_id,
-			           COALESCE(activated.projection_generation_id, latest.projection_generation_id) AS projection_generation_id
-			    FROM activated_generation AS activated
-			    FULL JOIN latest_generation AS latest
-			      ON latest.team_id = activated.team_id
-			)
-			SELECT EXISTS (
-			    SELECT 1
-			    FROM relationship_records AS relationship
-			    LEFT JOIN selected_generation AS generation
-			      ON generation.team_id = relationship.team_id
-			    WHERE relationship.identity_alias_of_relationship_id IS NULL
-			      AND relationship.status = 'active'
-			      AND relationship.support_count > 0
-			      AND NOT EXISTS (
-			          SELECT 1
-			          FROM search_documents AS document
-			          WHERE document.team_id = relationship.team_id
-			            AND document.source_kind = 'relationship'
-			            AND document.source_id = relationship.relationship_id
-			            AND document.embedding_contract_id = ?::uuid
-			            AND document.embedding_dimensions = ?
-			            AND document.projection_format_version = 2
-			            AND document.search_state IN ('pending', 'current', 'failed')
-			            AND (
-			                document.projection_generation_id = generation.projection_generation_id
-			                OR (
-			                    document.projection_generation_id IS NULL
-			                    AND (
-			                        generation.projection_generation_id IS NULL
-			                        OR COALESCE(document.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = generation.projection_generation_id::text
-			                    )
-			                )
-			            )
-			      )
-			    LIMIT 1
-			)
-			`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&incomplete).Error
-	})
+func (r *SearchRepositoryImpl) SearchFullText(ctx context.Context, input FullTextSearchInput) ([]SearchHit, error) {
+	owner, err := r.searchReadOwner()
 	if err != nil {
-		return false, fmt.Errorf("search: relationship projection readiness: %w", err)
+		return nil, err
 	}
-	return incomplete, nil
+	return owner.SearchFullText(ctx, input)
 }
 
-func (r *SearchRepositoryImpl) UpsertSearchDocument(
-	ctx context.Context,
-	input UpsertSearchDocumentInput,
-) (*SearchDocumentResult, error) {
+func (r *SearchRepositoryImpl) SearchExactVector(ctx context.Context, input ExactVectorSearchInput) ([]SearchHit, error) {
+	owner, err := r.searchReadOwner()
+	if err != nil {
+		return nil, err
+	}
+	return owner.SearchExactVector(ctx, input)
+}
+
+func (r *SearchRepositoryImpl) UpsertSearchDocument(ctx context.Context, input UpsertSearchDocumentInput) (*SearchDocumentResult, error) {
 	owner := r.knowledgeWriteOwner()
 	if owner == nil {
 		return nil, errors.New("search: knowledge write owner is required")
@@ -310,305 +117,99 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 	return owner.UpsertSearchDocument(ctx, knowledgepostgres.UpsertSearchDocumentInput(input))
 }
 
-func (r *SearchRepositoryImpl) SearchFullText(ctx context.Context, input FullTextSearchInput) ([]SearchHit, error) {
-	input = normalizeFullTextSearchInput(input)
-	if err := validateFullTextSearchInput(input); err != nil {
+func (r *SearchRepositoryImpl) EnsureActiveSearchContract(ctx context.Context, input EnsureActiveSearchContractInput) (*EnsureActiveSearchContractResult, error) {
+	owner, err := r.searchReadOwner()
+	if err != nil {
 		return nil, err
 	}
-	hits := []SearchHit{}
-	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		sourceFilter := ""
-		args := []any{input.TeamID, input.Query, input.TeamID, input.Query}
-		if input.SourceKind != "" {
-			sourceFilter = "AND document.source_kind = ?"
-			args = append(args, input.SourceKind)
-		}
-		args = append(args, input.Limit)
-		rows, err := tx.WithContext(ctx).Raw(`
-			WITH `+recallRelationshipGenerationScopeSQL+`
-			SELECT document.team_id::text, document.search_document_id::text, document.source_kind, document.source_id::text,
-			       document.source_version, document.document_version, document.embedding_contract_id::text,
-			       document.search_state,
-			       0::double precision AS distance,
-			       ts_rank_cd(document.search_tsv, plainto_tsquery('simple', ?))::double precision AS text_rank
-			FROM recall_relationship_generation AS generation
-			JOIN search_documents AS document
-			  ON document.team_id = ?::uuid
-			WHERE document.search_state IN ('pending', 'current', 'failed')
-			  AND document.search_tsv @@ plainto_tsquery('simple', ?)
-			  AND (
-			      document.source_kind <> 'evidence'
-			      OR NOT EXISTS (
-			          SELECT 1
-			          FROM evidence_exact_aliases AS alias
-			          WHERE alias.team_id = document.team_id
-			            AND alias.alias_fragment_id = document.source_id
-			      )
-			  )
-			  AND (
-			      document.source_kind <> 'relationship'
-			      OR (
-			          document.projection_format_version = 2
-			          AND `+recallRelationshipGenerationDocumentSQL+`
-			      )
-			  )
-			  `+sourceFilter+`
-			ORDER BY text_rank DESC, document.updated_at DESC, document.search_document_id ASC
-			LIMIT ?
-		`, args...).Rows()
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			hit, err := scanSearchHit(rows)
-			if err != nil {
-				return err
-			}
-			hits = append(hits, hit)
-		}
-		return rows.Err()
+	result, err := owner.EnsureActiveSearchContract(ctx, searchmaintenance.EnsureActiveSearchContractInput{
+		Provider: input.Provider, Model: input.Model, Dimensions: input.Dimensions,
+		VectorNormalization: input.VectorNormalization, DocumentFormatVersion: input.DocumentFormatVersion,
+		QueryFormatVersion: input.QueryFormatVersion, ExactMaxRows: input.ExactMaxRows,
+		CandidateLimit: input.CandidateLimit,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("search: full-text search: %w", err)
+	if err != nil || result == nil {
+		return nil, err
 	}
-	return hits, nil
+	return &EnsureActiveSearchContractResult{
+		Contract:             result.Contract,
+		CreatedContract:      result.CreatedContract,
+		CreatedGeneration:    result.CreatedGeneration,
+		CreatedPhysicalIndex: result.CreatedPhysicalIndex,
+	}, nil
 }
 
-func (r *SearchRepositoryImpl) SearchExactVector(ctx context.Context, input ExactVectorSearchInput) ([]SearchHit, error) {
-	input = normalizeExactVectorSearchInput(input)
-	if err := validateExactVectorSearchInput(input); err != nil {
-		return nil, err
-	}
-	contract, err := r.contractForVectorSearch(ctx, input)
+func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input SearchConvergenceInput) (*SearchConvergence, error) {
+	owner, err := r.searchReadOwner()
 	if err != nil {
 		return nil, err
 	}
-	if len(input.QueryEmbedding) != contract.EmbeddingDimensions {
-		return nil, fmt.Errorf("%w: contract dimensions %d, query dimensions %d", ErrSearchContractMismatch, contract.EmbeddingDimensions, len(input.QueryEmbedding))
-	}
-	if contract.IndexStrategy != string(domain.VectorIndexExact) && !contract.AllowExactFallback {
-		return nil, fmt.Errorf("%w: active search contract does not allow exact vector search", ErrSearchContractMismatch)
-	}
-	if contract.DistanceMetric != string(domain.VectorDistanceCosine) {
-		return nil, fmt.Errorf("%w: exact vector search supports %s distance only", ErrSearchContractMismatch, domain.VectorDistanceCosine)
-	}
-	vectorLiteral, err := vectorLiteral(input.QueryEmbedding)
-	if err != nil {
-		return nil, err
-	}
-	hits := []SearchHit{}
-	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		sourceFilter := ""
-		countArgs := []any{input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions}
-		args := []any{vectorLiteral, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions}
-		if input.SourceKind != "" {
-			sourceFilter = "AND source_kind = ?"
-			countArgs = append(countArgs, input.SourceKind)
-			args = append(args, input.SourceKind)
-		}
-		countArgs = append(countArgs, contract.ExactMaxRows+1)
-		var candidateCount int64
-		if err := tx.WithContext(ctx).Raw(`
-			SELECT count(*)
-			FROM (
-				SELECT search_document_id
-				FROM search_documents
-				WHERE team_id = ?::uuid
-				  AND embedding_contract_id = ?::uuid
-				  AND embedding_dimensions = ?
-				  AND search_state = 'current'
-				  AND embedding IS NOT NULL
-				  AND (
-				      source_kind <> 'evidence'
-				      OR NOT EXISTS (
-				          SELECT 1
-				          FROM evidence_exact_aliases AS alias
-				          WHERE alias.team_id = search_documents.team_id
-				            AND alias.alias_fragment_id = search_documents.source_id
-				      )
-				  )
-				  AND (
-				      source_kind <> 'relationship'
-					      OR (
-					          projection_format_version = 2
-					          AND (
-					              NOT EXISTS (
-					                  SELECT 1
-					                  FROM search_projection_generations AS generation
-					                  WHERE generation.team_id = search_documents.team_id
-					                    AND generation.source_kind = 'relationship'
-					                    AND generation.projection_format_version = search_documents.projection_format_version
-					              )
-					              OR EXISTS (
-					              SELECT 1
-					              FROM search_projection_generations AS generation
-					              WHERE generation.team_id = search_documents.team_id
-					                AND generation.source_kind = 'relationship'
-					                AND generation.projection_format_version = search_documents.projection_format_version
-					                AND generation.state = 'current'
-				                AND (
-				                    generation.projection_generation_id = search_documents.projection_generation_id
-				                    OR (
-				                        search_documents.projection_generation_id IS NULL
-				                        AND COALESCE(search_documents.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = generation.projection_generation_id::text
-				                    )
-				                )
-					              )
-					          )
-				      )
-				  )
-				  `+sourceFilter+`
-				LIMIT ?
-			) AS exact_candidates
-		`, countArgs...).Scan(&candidateCount).Error; err != nil {
-			return err
-		}
-		if candidateCount > int64(contract.ExactMaxRows) {
-			return fmt.Errorf("%w: exact vector candidates %d exceed contract max %d", ErrSearchContractMismatch, candidateCount, contract.ExactMaxRows)
-		}
-		args = append(args, vectorLiteral, input.Limit)
-		rows, err := tx.WithContext(ctx).Raw(`
-				SELECT team_id::text, search_document_id::text, source_kind, source_id::text,
-				       source_version, document_version, embedding_contract_id::text,
-				       search_state,
-				       (embedding <=> ?::vector)::double precision AS distance,
-				       0::double precision AS text_rank
-				FROM search_documents
-				WHERE team_id = ?::uuid
-				  AND embedding_contract_id = ?::uuid
-				  AND embedding_dimensions = ?
-				  AND search_state = 'current'
-				  AND embedding IS NOT NULL
-				  AND (
-				      source_kind <> 'evidence'
-				      OR NOT EXISTS (
-				          SELECT 1
-				          FROM evidence_exact_aliases AS alias
-				          WHERE alias.team_id = search_documents.team_id
-				            AND alias.alias_fragment_id = search_documents.source_id
-				      )
-				  )
-				  AND (
-					      source_kind <> 'relationship'
-						      OR (
-						          projection_format_version = 2
-						          AND (
-						              NOT EXISTS (
-						                  SELECT 1
-						                  FROM search_projection_generations AS generation
-						                  WHERE generation.team_id = search_documents.team_id
-						                    AND generation.source_kind = 'relationship'
-						                    AND generation.projection_format_version = search_documents.projection_format_version
-						              )
-						              OR EXISTS (
-						              SELECT 1
-						              FROM search_projection_generations AS generation
-						              WHERE generation.team_id = search_documents.team_id
-						                AND generation.source_kind = 'relationship'
-						                AND generation.projection_format_version = search_documents.projection_format_version
-						                AND generation.state = 'current'
-				                AND (
-				                    generation.projection_generation_id = search_documents.projection_generation_id
-				                    OR (
-				                        search_documents.projection_generation_id IS NULL
-				                        AND COALESCE(search_documents.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = generation.projection_generation_id::text
-				                    )
-				                )
-						              )
-						          )
-					      )
-					  )
-				  `+sourceFilter+`
-				ORDER BY embedding <=> ?::vector ASC, search_document_id ASC
-				LIMIT ?
-			`, args...).Rows()
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			hit, err := scanSearchHit(rows)
-			if err != nil {
-				return err
-			}
-			hits = append(hits, hit)
-		}
-		return rows.Err()
+	value, err := owner.GetSearchConvergence(ctx, searchmaintenance.SearchConvergenceInput{
+		EmbeddingContractID: input.EmbeddingContractID,
+		EmbeddingDimensions: input.EmbeddingDimensions,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("search: exact vector search: %w", err)
-	}
-	return hits, nil
-}
-
-func (r *SearchRepositoryImpl) contractForDocument(ctx context.Context, input UpsertSearchDocumentInput) (*ActiveSearchContract, error) {
-	if input.EmbeddingContractID == "" {
-		return r.GetActiveSearchContract(ctx)
-	}
-	contract, err := r.GetActiveSearchContract(ctx)
-	if err != nil {
+	if err != nil || value == nil {
 		return nil, err
 	}
-	if contract.EmbeddingContractID != input.EmbeddingContractID {
-		return nil, fmt.Errorf("%w: requested contract %s is not the active contract %s", ErrSearchContractMismatch, input.EmbeddingContractID, contract.EmbeddingContractID)
-	}
-	return contract, nil
+	return searchConvergenceFromNative(value), nil
 }
 
-func (r *SearchRepositoryImpl) contractForVectorSearch(ctx context.Context, input ExactVectorSearchInput) (*ActiveSearchContract, error) {
-	contract, err := r.GetActiveSearchContract(ctx)
+func (r *SearchRepositoryImpl) CheckSearchConvergence(ctx context.Context) error {
+	owner, err := r.searchReadOwner()
 	if err != nil {
-		return nil, err
-	}
-	if input.EmbeddingContractID != "" && input.EmbeddingContractID != contract.EmbeddingContractID {
-		return nil, fmt.Errorf("%w: requested contract %s is not the active contract %s", ErrSearchContractMismatch, input.EmbeddingContractID, contract.EmbeddingContractID)
-	}
-	if contract.DistanceMetric != string(domain.VectorDistanceCosine) {
-		return nil, fmt.Errorf("%w: active search contract distance %q is not supported", ErrSearchContractMismatch, contract.DistanceMetric)
-	}
-	return contract, nil
-}
-
-type searchHitScanner interface {
-	Scan(dest ...any) error
-}
-
-func scanSearchHit(scanner searchHitScanner) (SearchHit, error) {
-	var hit SearchHit
-	err := scanner.Scan(
-		&hit.TeamID,
-		&hit.SearchDocumentID,
-		&hit.SourceKind,
-		&hit.SourceID,
-		&hit.SourceVersion,
-		&hit.DocumentVersion,
-		&hit.EmbeddingContractID,
-		&hit.SearchState,
-		&hit.Distance,
-		&hit.TextRank,
-	)
-	return hit, err
-}
-
-func (r *SearchRepositoryImpl) withActiveTeamProfileTx(ctx context.Context, teamID, profileID string, fn func(tx *gorm.DB) error) error {
-	if _, err := r.database(); err != nil {
 		return err
 	}
-	if r.rls == nil {
-		return errors.New("search: rls helper is required")
+	return owner.CheckSearchConvergence(ctx)
+}
+
+func (r *SearchRepositoryImpl) ReserveSearchReconciliationRun(ctx context.Context, input SearchReconciliationRunInput) (*SearchReconciliationRun, bool, error) {
+	owner, err := r.searchReadOwner()
+	if err != nil {
+		return nil, false, err
 	}
-	return r.rls.WithTeamProfileTx(ctx, r.db, teamID, profileID, func(tx *gorm.DB) error {
-		if err := ensureActiveTeamForMutation(ctx, tx, teamID); err != nil {
-			return err
-		}
-		return fn(tx)
+	run, claimed, err := owner.ReserveSearchReconciliationRun(ctx, searchmaintenance.SearchReconciliationRunInput{
+		EmbeddingContractID: input.EmbeddingContractID, EmbeddingDimensions: input.EmbeddingDimensions,
+		Now: input.Now, StaleAfter: input.StaleAfter,
+	})
+	return searchReconciliationRunFromNative(run), claimed, err
+}
+
+func (r *SearchRepositoryImpl) SelectSearchReconciliationDocuments(ctx context.Context, input SearchReconciliationSelectionInput) ([]SearchDocumentForEmbedding, error) {
+	owner, err := r.searchReadOwner()
+	if err != nil {
+		return nil, err
+	}
+	documents, err := owner.SelectSearchReconciliationDocuments(ctx, searchmaintenance.SearchReconciliationSelectionInput{
+		RunID: input.RunID, EmbeddingContractID: input.EmbeddingContractID,
+		EmbeddingDimensions: input.EmbeddingDimensions, Limit: input.Limit,
+	})
+	return searchDocumentsFromNative(documents), err
+}
+
+func (r *SearchRepositoryImpl) CompleteSearchReconciliationDocuments(ctx context.Context, input ApplySearchReconciliationInput) (*SearchReconciliationApplyResult, error) {
+	owner, err := r.searchReadOwner()
+	if err != nil {
+		return nil, err
+	}
+	result, err := owner.CompleteSearchReconciliationDocuments(ctx, searchApplyInput(input))
+	return searchApplyResultFromNative(result), err
+}
+
+func (r *SearchRepositoryImpl) FinishSearchReconciliationRun(ctx context.Context, input FinishSearchReconciliationRunInput) error {
+	owner, err := r.searchReadOwner()
+	if err != nil {
+		return err
+	}
+	return owner.FinishSearchReconciliationRun(ctx, searchmaintenance.FinishSearchReconciliationRunInput{
+		RunID: input.RunID, Status: input.Status, SelectedCount: input.SelectedCount,
+		EmbeddedCount: input.EmbeddedCount, UpdatedCount: input.UpdatedCount,
+		DriftedCount: input.DriftedCount, LastError: input.LastError,
 	})
 }
 
 func (r *SearchRepositoryImpl) withTeamTx(ctx context.Context, teamID string, fn func(tx *gorm.DB) error) error {
-	if _, err := r.database(); err != nil {
-		return err
+	if r == nil || r.db == nil {
+		return errors.New("search: database is required")
 	}
 	if r.rls == nil {
 		return errors.New("search: rls helper is required")
@@ -616,46 +217,9 @@ func (r *SearchRepositoryImpl) withTeamTx(ctx context.Context, teamID string, fn
 	return r.rls.WithTeamTx(ctx, r.db, teamID, fn)
 }
 
-func (r *SearchRepositoryImpl) withActiveTeamTx(ctx context.Context, teamID string, fn func(tx *gorm.DB) error) error {
-	if _, err := r.database(); err != nil {
-		return err
-	}
-	if r.rls == nil {
-		return errors.New("search: rls helper is required")
-	}
-	return r.rls.WithTeamTx(ctx, r.db, teamID, func(tx *gorm.DB) error {
-		if err := ensureActiveTeamForMutation(ctx, tx, teamID); err != nil {
-			return err
-		}
-		return fn(tx)
-	})
-}
-
-// withActiveSystemTeamTx runs internal worker work with system visibility while
-// retaining an explicit active-team fence and caller-supplied team predicates.
-// Background workers have no request actor, so team-mode RLS would hide
-// private memory spaces from their generation checks.
-func (r *SearchRepositoryImpl) withActiveSystemTeamTx(ctx context.Context, teamID string, fn func(tx *gorm.DB) error) error {
-	if _, err := r.database(); err != nil {
-		return err
-	}
-	if r.rls == nil {
-		return errors.New("search: rls helper is required")
-	}
-	return r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
-		if err := tx.Exec("SELECT set_config('app.current_team_id', ?, true)", teamID).Error; err != nil {
-			return fmt.Errorf("failed to set app.current_team_id: %w", err)
-		}
-		if err := ensureActiveTeamForMutation(ctx, tx, teamID); err != nil {
-			return err
-		}
-		return fn(tx)
-	})
-}
-
 func (r *SearchRepositoryImpl) withSystemTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
-	if _, err := r.database(); err != nil {
-		return err
+	if r == nil || r.db == nil {
+		return errors.New("search: database is required")
 	}
 	if r.rls == nil {
 		return errors.New("search: rls helper is required")

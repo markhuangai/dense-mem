@@ -2,18 +2,70 @@
   "schema_version": 1,
   "capability": "search-contract",
   "completed_issues": [],
+  "source_ownership": [
+    {"path": "internal/search/maintenance/contract.go", "issue": 373},
+    {"path": "internal/search/maintenance_aliases.go", "issue": 373},
+    {"path": "internal/search/convergence.go", "issue": 373},
+    {"path": "internal/search/convergence_test.go", "issue": 373},
+    {"path": "internal/search/reconciliation.go", "issue": 373},
+    {"path": "internal/search/reconciliation_test.go", "issue": 373},
+    {"path": "internal/search/postgres/store.go", "issue": 373},
+    {"path": "internal/search/postgres/read.go", "issue": 373},
+    {"path": "internal/search/postgres/helpers.go", "issue": 373},
+    {"path": "internal/search/postgres/generation.go", "issue": 373},
+    {"path": "internal/search/postgres/bootstrap.go", "issue": 373},
+    {"path": "internal/search/postgres/bootstrap_test.go", "issue": 373},
+    {"path": "internal/search/postgres/convergence.go", "issue": 373},
+    {"path": "internal/search/postgres/reconciliation.go", "issue": 373},
+    {"path": "internal/search/postgres/reconciliation_documents.go", "issue": 373},
+    {"path": "internal/search/postgres/reconciliation_helpers.go", "issue": 373},
+    {"path": "internal/search/postgres/reconciliation_runs.go", "issue": 373},
+    {"path": "internal/repository/search_compat.go", "issue": 373},
+    {"path": "internal/repository/search_owner.go", "issue": 373},
+    {"path": "internal/service/search_convergence.go", "issue": 373}
+  ],
   "go": {
     "units": [
       {
         "id": "github.com/markhuangai/dense-mem/internal/search/contract",
         "role": "port",
         "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/search/maintenance",
+        "role": "port",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/search",
+        "role": "application_api",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/search/postgres",
+        "role": "postgres_adapter",
+        "visibility": "private"
       }
     ]
   },
   "browser": {
     "units": []
   },
-  "exceptions": [],
+  "exceptions": [
+    {
+      "source_path": "internal/repository/search_owner.go",
+      "source": "github.com/markhuangai/dense-mem/internal/repository",
+      "target": "github.com/markhuangai/dense-mem/internal/search/postgres",
+      "removal_issue": 382,
+      "reason": "The retained repository search facade forwards reads and maintenance to the native search PostgreSQL owner until final facade cleanup."
+    },
+    {
+      "source_path": "internal/search/postgres/reconciliation_helpers.go",
+      "source": "github.com/markhuangai/dense-mem/internal/search/postgres",
+      "target": "github.com/markhuangai/dense-mem/internal/knowledge/postgres",
+      "removal_issue": 382,
+      "reason": "Reconciliation uses the merged knowledge search-write handoff to materialize missing canonical documents without duplicating canonical commit SQL."
+    }
+  ],
   "workers": []
 }
