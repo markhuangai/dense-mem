@@ -1,6 +1,6 @@
 package memoryservice
 
-import rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
+import rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 
 var ErrRememberConflict = rememberapp.ErrRememberConflict
 
@@ -17,3 +17,10 @@ type SubmissionRelationshipResult = rememberapp.SubmissionRelationshipResult
 type SubmissionAwaitingConfirmation = rememberapp.SubmissionAwaitingConfirmation
 type RelationshipCorrectionCandidate = rememberapp.RelationshipCorrectionCandidate
 type SubmissionEvidenceStatus = rememberapp.SubmissionEvidenceStatus
+
+// SynchronousAssessmentFailureDetails forwards the bounded Remember
+// assessment projection while registry callers migrate to the native owner.
+// The compatibility entry point is retained for removal by issue #382.
+func SynchronousAssessmentFailureDetails(err error) (string, map[string]any) {
+	return rememberapp.SynchronousAssessmentFailureDetails(err)
+}

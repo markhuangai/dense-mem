@@ -11,7 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/dreamgeneration"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 type dreamApplicationDependencies struct {

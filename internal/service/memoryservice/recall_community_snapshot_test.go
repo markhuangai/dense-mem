@@ -13,6 +13,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
+func intPointer(value int) *int {
+	return &value
+}
+
 func TestRecallUsesCurrentCommunitySnapshotAndCoverage(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()

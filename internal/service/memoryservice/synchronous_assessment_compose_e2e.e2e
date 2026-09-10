@@ -13,9 +13,33 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
+
+type composeSubmissionAssessmentCatalogStub struct{}
+
+func (composeSubmissionAssessmentCatalogStub) ListSubmissionAssessmentEntityCatalog(
+	context.Context,
+	knowledgecontract.SubmissionAssessmentEntityCatalogInput,
+) (knowledgecontract.SubmissionAssessmentEntityCatalogResult, error) {
+	return knowledgecontract.SubmissionAssessmentEntityCatalogResult{Complete: true}, nil
+}
+
+func (composeSubmissionAssessmentCatalogStub) ResolveSemanticReviewPredicateCandidates(
+	context.Context,
+	knowledgecontract.SemanticReviewPredicateResolutionInput,
+) ([]knowledgecontract.SemanticReviewPredicateResolution, error) {
+	return []knowledgecontract.SemanticReviewPredicateResolution{}, nil
+}
+
+func (composeSubmissionAssessmentCatalogStub) ListSemanticAssessmentPredicateOptions(
+	context.Context,
+	knowledgecontract.SemanticAssessmentPredicateOptionsInput,
+) ([]knowledgecontract.SemanticReviewPredicateCandidate, error) {
+	return []knowledgecontract.SemanticReviewPredicateCandidate{}, nil
+}
 
 func TestComposeSynchronousEvidenceOnlyAssessorBatch(t *testing.T) {
 	providerURL := strings.TrimSpace(os.Getenv("DENSE_MEM_E2E_PRIMITIVES_PROVIDER_URL"))
@@ -30,19 +54,19 @@ func TestComposeSynchronousEvidenceOnlyAssessorBatch(t *testing.T) {
 	}
 	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimits(cfg, &http.Client{Timeout: 10 * time.Second}, limits)
 	teamID, ownerID, ingestID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	evidence := []repository.EvidenceFragment{
+	evidence := []knowledgecontract.EvidenceFragment{
 		{FragmentID: uuid.NewString(), EvidenceIndex: 0, Content: "The first evidence item is safe.", Authority: "primary"},
 		{FragmentID: uuid.NewString(), EvidenceIndex: 1, Content: "The second evidence item is also safe.", Authority: "primary"},
 	}
-	snapshot := RememberAssessmentSnapshot{
-		Scope:    RememberAssessmentScope{TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingestID},
+	snapshot := rememberapp.RememberAssessmentSnapshot{
+		Scope:    rememberapp.RememberAssessmentScope{TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingestID},
 		Proposal: map[string]any{}, Evidence: evidence,
-		Items: []RememberAssessmentItem{{ItemID: uuid.NewString(), Fragment: evidence[0]}, {ItemID: uuid.NewString(), Fragment: evidence[1]}},
+		Items: []rememberapp.RememberAssessmentItem{{ItemID: uuid.NewString(), Fragment: evidence[0]}, {ItemID: uuid.NewString(), Fragment: evidence[1]}},
 	}
-	prepared, err := AssessSynchronousRemember(context.Background(), SynchronousAssessmentDependencies{
-		Catalog:  &submissionAssessmentWorkerCatalogStub{entityComplete: true, predicateComplete: true},
+	prepared, err := rememberapp.AssessSynchronousRemember(context.Background(), rememberapp.SynchronousAssessmentDependencies{
+		Catalog:  composeSubmissionAssessmentCatalogStub{},
 		Provider: assessorProvider, Limits: limits,
-	}, SynchronousAssessmentInput{Scope: snapshot.Scope, Snapshot: snapshot})
+	}, rememberapp.SynchronousAssessmentInput{Scope: snapshot.Scope, Snapshot: snapshot})
 	require.NoError(t, err)
 	require.Equal(t, 1, prepared.Assessment.ProviderTurns)
 	require.Empty(t, prepared.Request.SubmittedEntities)
@@ -50,14 +74,14 @@ func TestComposeSynchronousEvidenceOnlyAssessorBatch(t *testing.T) {
 	require.Len(t, prepared.Response.EvidenceSecurityResults, len(evidence))
 	require.Empty(t, prepared.Response.SecuritySignals)
 
-	commitEvidence := make([]repository.EvidenceInput, 0, len(evidence))
+	commitEvidence := make([]knowledgecontract.EvidenceInput, 0, len(evidence))
 	for _, fragment := range evidence {
-		commitEvidence = append(commitEvidence, repository.EvidenceInput{
+		commitEvidence = append(commitEvidence, knowledgecontract.EvidenceInput{
 			FragmentID: fragment.FragmentID, Content: fragment.Content, ContentHash: fragment.ContentHash,
 			SourceType: "manual", Authority: fragment.Authority,
 		})
 	}
-	commit, err := BuildSynchronousRememberCommitInput(SynchronousRememberCommitRequest{
+	commit, err := rememberapp.BuildSynchronousRememberCommitInput(rememberapp.SynchronousRememberCommitRequest{
 		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingestID,
 		IdempotencyKey: "compose-evidence-only", RequestHash: "sha256:compose-evidence-only",
 		Evidence: commitEvidence, Assessment: prepared,

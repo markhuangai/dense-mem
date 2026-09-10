@@ -2,11 +2,13 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 )
 
@@ -34,4 +36,17 @@ func TestRememberCommitFailureStageExtractsOwnerError(t *testing.T) {
 		CommitRememberWithEmbeddings(context.Background(), input, nil)
 	require.Error(t, err)
 	require.Equal(t, "transaction_setup", RememberCommitFailureStage(err))
+}
+
+func TestIsRememberStaleInputErrorClassifiesAdapterBoundaries(t *testing.T) {
+	for _, stale := range []error{
+		knowledgepostgres.ErrConflictContextStale,
+		knowledgepostgres.ErrRememberExactReferenceStale,
+		knowledgepostgres.ErrCorrectionTargetStale,
+	} {
+		require.True(t, IsRememberStaleInputError(stale), stale)
+		require.True(t, IsRememberStaleInputError(errors.Join(errors.New("wrapped"), stale)), stale)
+	}
+	require.True(t, IsRememberStaleInputError(knowledgecontract.ErrSourceRevisionConflict))
+	require.False(t, IsRememberStaleInputError(errors.New("fresh input")))
 }

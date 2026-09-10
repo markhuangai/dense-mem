@@ -112,7 +112,7 @@
       ],
       "consumers": [
         {
-          "path": "cmd/internal/serverapp/remember_processor_test.go",
+          "path": "internal/remember/service/processor/remember_processor_test.go",
           "symbol": "TestRememberFailureCodeMapsEmbeddingProviderResponseInvalid"
         },
         {
