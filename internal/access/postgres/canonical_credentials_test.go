@@ -1,24 +1,20 @@
-package repository
+package postgres_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	gormpostgres "gorm.io/driver/postgres"
-	"gorm.io/gorm"
 
+	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func TestLookupCanonicalCredentialScansRateLimitBeforeRole(t *testing.T) {
-	sqlDB, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer sqlDB.Close()
-	db, err := gorm.Open(gormpostgres.New(gormpostgres.Config{Conn: sqlDB}), &gorm.Config{})
-	require.NoError(t, err)
+	db, mock := newAccessSQLMockDB(t)
 
 	id := uuid.New()
 	actorID := uuid.New()
@@ -41,7 +37,8 @@ func TestLookupCanonicalCredentialScansRateLimitBeforeRole(t *testing.T) {
 	)
 	mock.ExpectQuery("SELECT").WithArgs("dm_test_key").WillReturnRows(rows)
 
-	key, err := lookupCanonicalCredential(db, "dm_test_key")
+	repo := accesspostgres.NewCredentialRepository(db, accessPassthroughRLS{}, nil)
+	key, err := repo.GetActiveByPrefix(context.Background(), "dm_test_key")
 	require.NoError(t, err)
 	require.Equal(t, id, key.ID)
 	require.Equal(t, actorID, key.ActorIdentityID)

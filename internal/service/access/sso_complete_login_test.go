@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 func TestSSOCompleteLoginCreatesSession(t *testing.T) {
@@ -114,7 +114,7 @@ func TestSSOCompleteLoginCreatesSession(t *testing.T) {
 				Enabled:    true,
 			},
 		},
-		upsertProfileErrors: map[uuid.UUID]error{archivedTeamID: repository.ErrTeamInactive},
+		upsertProfileErrors: map[uuid.UUID]error{archivedTeamID: accesscontract.ErrTeamInactive},
 	}
 	svc := NewSSOService(repo, SSOConfig{
 		HTTPClient:   oidcServer.Client(),

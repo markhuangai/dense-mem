@@ -13,10 +13,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/lib/pq"
 
+	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 // CreateCredentialRequest represents a request to create a standard API credential.
@@ -365,7 +365,7 @@ func (s *CredentialServiceImpl) CreateCredential(ctx context.Context, teamID uui
 		if conflict := credentialCreateConflict(err, name); conflict != nil {
 			return nil, "", conflict
 		}
-		if errors.Is(err, repository.ErrTeamInactive) {
+		if errors.Is(err, accesscontract.ErrTeamInactive) {
 			return nil, "", httperr.New(httperr.NOT_FOUND, fmt.Sprintf("team with id '%s' not found", teamID.String()))
 		}
 		return nil, "", fmt.Errorf("failed to create api credential: %w", err)
@@ -805,10 +805,10 @@ func (s *CredentialServiceImpl) DeleteForTeam(ctx context.Context, teamID, id uu
 		"revoked_at":   credential.RevokedAt,
 	}
 
-	atomicAuditRepo, hasAtomicAudit := s.repo.(repository.CredentialDeletionAuditRepository)
+	atomicAuditRepo, hasAtomicAudit := s.repo.(CredentialDeletionAuditStore)
 	var rows int64
 	if hasAtomicAudit {
-		rows, err = atomicAuditRepo.DeleteForTeamWithAudit(ctx, teamID, id, repository.CredentialDeletionAuditInput{
+		rows, err = atomicAuditRepo.DeleteForTeamWithAudit(ctx, teamID, id, CredentialDeletionAuditInput{
 			ActorCredentialID: actorCredentialID,
 			ActorRole:         actorRole,
 			ClientIP:          clientIP,
