@@ -9,6 +9,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestOperationsCompatibilityConstructorsForwardToNativeOwner(t *testing.T) {
+	require.NotNil(t, NewOperationLogService(nil, nil))
+	require.NotNil(t, NewPrometheusTelemetryService("", 0))
+	require.NotNil(t, NewPrometheusTelemetryServiceWithLogger("", 0, nil))
+	require.NotNil(t, NewPrometheusTelemetryServiceWithJobAndLogger("", 0, "job", nil))
+	require.NotNil(t, NewUsageMetricsService(nil, nil))
+	require.NotNil(t, NewTelemetryPricingResolver(nil))
+}
+
 func TestInvariantScanWithAuditRecordsRemovedResult(t *testing.T) {
 	ctx := context.Background()
 	keyID := "key-1"

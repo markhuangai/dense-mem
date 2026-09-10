@@ -1,70 +1,30 @@
 package serverapp
 
+// This compatibility facade keeps the historical serverapp bootstrap API
+// stable while authority classification lives in internal/operations.
+
 import (
 	"context"
-	"errors"
-	"fmt"
 
-	"github.com/markhuangai/dense-mem/internal/domain"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
+	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
 )
 
-var errAuthorityBlocked = errors.New("authority bootstrap blocked")
+var errAuthorityBlocked = operations.ErrAuthorityBlocked
 
-const cutoverMarkerVersion = "dense-mem.v2.6.1.cutover.v1"
+const cutoverMarkerVersion = operations.CutoverMarkerVersion
 
-type authorityMode string
+type authorityMode = operations.AuthorityMode
 
-const (
-	authorityActive authorityMode = "active"
-)
+const authorityActive = operations.AuthorityActive
 
-type authorityBootstrap struct {
-	Mode             authorityMode
-	Marker           *domain.CompatibilityMarker
-	ReadinessMessage string
-}
-
-type authorityBootstrapStore interface {
-	GetLatestMarker(ctx context.Context) (*domain.CompatibilityMarker, error)
-}
+type authorityBootstrap = operations.AuthorityBootstrap
+type authorityBootstrapStore = operationscontract.AuthorityReader
 
 func ClassifyAuthority(ctx context.Context, store authorityBootstrapStore) (authorityBootstrap, error) {
-	if store == nil {
-		return authorityBootstrap{}, fmt.Errorf("%w: authority store is required", errAuthorityBlocked)
-	}
-	marker, err := store.GetLatestMarker(ctx)
-	if err != nil {
-		return authorityBootstrap{}, fmt.Errorf("%w: read compatibility marker: %w", errAuthorityBlocked, err)
-	}
-	return classifyAuthorityMarker(marker)
-}
-
-func classifyAuthorityMarker(marker *domain.CompatibilityMarker) (authorityBootstrap, error) {
-	if marker == nil {
-		return authorityBootstrap{}, fmt.Errorf("%w: compatible cutover marker is required before startup", errAuthorityBlocked)
-	}
-	if marker.MarkerKind != domain.MigrationMarkerKindCutover || marker.Version != cutoverMarkerVersion {
-		return authorityBootstrap{}, fmt.Errorf("%w: exact v2.6.1 cutover marker is required", errAuthorityBlocked)
-	}
-	switch marker.Status {
-	case domain.MigrationMarkerCompatible:
-		return authorityBootstrap{
-			Mode:             authorityActive,
-			Marker:           marker,
-			ReadinessMessage: "compatible authority marker present",
-		}, nil
-	case domain.MigrationMarkerIncompatible, domain.MigrationMarkerCorrupt:
-		return authorityBootstrap{}, fmt.Errorf("%w: compatibility marker status %s", errAuthorityBlocked, marker.Status)
-	default:
-		return authorityBootstrap{}, fmt.Errorf("%w: unknown compatibility marker status %s", errAuthorityBlocked, marker.Status)
-	}
+	return operations.ClassifyAuthority(ctx, store)
 }
 
 func checkActiveAuthority(authority authorityBootstrap) error {
-	if authority.Mode != authorityActive ||
-		authority.Marker == nil ||
-		authority.Marker.Status != domain.MigrationMarkerCompatible {
-		return fmt.Errorf("%w: compatible authority marker is required", errAuthorityBlocked)
-	}
-	return nil
+	return operations.CheckActiveAuthority(authority)
 }

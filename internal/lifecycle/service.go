@@ -1,0 +1,398 @@
+package lifecycle
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/markhuangai/dense-mem/internal/correlation"
+	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/httperr"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
+	semanticwritecontract "github.com/markhuangai/dense-mem/internal/semanticwrite/contract"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
+	semanticwriteapp "github.com/markhuangai/dense-mem/internal/service/semanticwrite"
+)
+
+var (
+	ErrLifecycleAuthContext           = errors.New("memory lifecycle: authenticated actor context is required")
+	ErrLifecyclePersistence           = errors.New("memory lifecycle: persistence failed")
+	ErrLifecycleEmbeddingUnavailable  = errors.New("memory lifecycle: embedding provider unavailable")
+	ErrLifecycleEmbeddingInvalid      = errors.New("memory lifecycle: embedding response invalid")
+	ErrLifecycleEmbeddingTimeout      = errors.New("memory lifecycle: embedding provider timed out")
+	errLifecycleCorrectionCommitFence = errors.New("memory lifecycle: correction commit search fence conflict")
+)
+
+// CorrectionConfirmationInvalidReason identifies a pending confirmation that
+// remains awaiting confirmation after the legacy lifecycle rejects a token or
+// candidate selection.
+const CorrectionConfirmationInvalidReason = "confirmation_invalid"
+
+type LifecycleService interface {
+	CorrectRelationship(ctx context.Context, req CorrectRelationshipRequest) (*CorrectRelationshipReceipt, error)
+	RetractEvidence(ctx context.Context, req RetractEvidenceRequest) (*RetractEvidenceResult, error)
+}
+
+// Service is the lifecycle application boundary used by transports and composition.
+type Service = LifecycleService
+type Dependencies = LifecycleDependencies
+
+// New constructs the lifecycle application from narrow canonical mutation ports.
+func New(deps Dependencies) Service { return NewLifecycleService(deps) }
+
+type LifecycleDependencies struct {
+	Port                       knowledgecontract.LifecyclePort
+	CorrectionExecutor         LifecycleCorrectionExecutor
+	CorrectionEmbeddingTimeout time.Duration
+}
+
+// These aliases preserve the former names while exposing the single canonical
+// lifecycle mutation port.
+type LifecycleSemanticRepository = knowledgecontract.LifecyclePort
+type LifecycleEvidenceRepository = knowledgecontract.LifecyclePort
+
+type LifecycleCorrectionExecutor interface {
+	Execute(context.Context, semanticwritecontract.Plan) (semanticwritecontract.Result, error)
+}
+
+type lifecycleService struct {
+	port             knowledgecontract.LifecyclePort
+	executor         LifecycleCorrectionExecutor
+	embeddingTimeout time.Duration
+}
+
+func NewLifecycleService(deps LifecycleDependencies) LifecycleService {
+	timeout := deps.CorrectionEmbeddingTimeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	return &lifecycleService{port: deps.Port, executor: deps.CorrectionExecutor, embeddingTimeout: timeout}
+}
+
+type CorrectRelationshipRequest struct {
+	Action            string                                            `json:"action"`
+	RelationshipID    string                                            `json:"relationship_id,omitempty"`
+	ExpectedVersion   int                                               `json:"expected_version,omitempty"`
+	Patch             knowledgecontract.RelationshipCorrectionPatch     `json:"patch,omitempty"`
+	Supports          []knowledgecontract.RelationshipCorrectionSupport `json:"supports,omitempty"`
+	Reason            string                                            `json:"reason,omitempty"`
+	SubmissionID      string                                            `json:"submission_id,omitempty"`
+	ConfirmationToken string                                            `json:"confirmation_token,omitempty"`
+	Selection         knowledgecontract.RelationshipCorrectionSelection `json:"selection,omitempty"`
+	IdempotencyKey    string                                            `json:"idempotency_key"`
+}
+
+type CorrectRelationshipReceipt struct {
+	ContractVersion      string                                          `json:"contract_version"`
+	SubmissionID         string                                          `json:"submission_id"`
+	SubmissionKind       string                                          `json:"submission_kind"`
+	ProcessingState      string                                          `json:"processing_state"`
+	SearchState          string                                          `json:"search_state"`
+	CorrelationID        string                                          `json:"correlation_id"`
+	AwaitingConfirmation *SubmissionAwaitingConfirmation                 `json:"awaiting_confirmation,omitempty"`
+	CorrectionResult     *knowledgecontract.RelationshipCorrectionResult `json:"correction_result,omitempty"`
+	Errors               []SubmissionStatusError                         `json:"errors"`
+}
+
+type RetractEvidenceRequest struct {
+	EvidenceIDs    []string `json:"evidence_ids"`
+	Reason         string   `json:"reason"`
+	IdempotencyKey string   `json:"idempotency_key"`
+}
+
+type RetractEvidenceResult struct {
+	DecisionID                      string   `json:"decision_id"`
+	ProcessingState                 string   `json:"processing_state"`
+	RetractedEvidenceIDs            []string `json:"retracted_evidence_ids"`
+	AffectedRelationshipCount       int      `json:"affected_relationship_count"`
+	PendingRelationshipCount        int      `json:"pending_relationship_count"`
+	RetainedActiveRelationshipCount int      `json:"retained_active_relationship_count"`
+}
+
+func (s *lifecycleService) CorrectRelationship(
+	ctx context.Context,
+	req CorrectRelationshipRequest,
+) (*CorrectRelationshipReceipt, error) {
+	if s.port == nil {
+		return nil, errors.New("memory lifecycle: semantic repository is required")
+	}
+	actor, ok := requestctx.ActorFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
+		return nil, ErrLifecycleAuthContext
+	}
+	if req.Action != "submit" && req.Action != "confirm" {
+		return nil, errors.New("memory lifecycle: action must be submit or confirm")
+	}
+	input := knowledgecontract.CorrectRelationshipInput{
+		TeamID:            actor.TeamID.String(),
+		OwnerProfileID:    actor.OwnerID.String(),
+		Action:            req.Action,
+		RelationshipID:    req.RelationshipID,
+		ExpectedVersion:   req.ExpectedVersion,
+		Patch:             req.Patch,
+		Supports:          req.Supports,
+		Reason:            req.Reason,
+		SubmissionID:      req.SubmissionID,
+		ConfirmationToken: req.ConfirmationToken,
+		Selection:         req.Selection,
+		IdempotencyKey:    req.IdempotencyKey,
+	}
+	plan, err := s.port.PlanRelationshipCorrectionEmbeddings(ctx, input)
+	if err == nil && plan == nil {
+		err = ErrLifecyclePersistence
+	}
+	var embeddings []knowledgecontract.RelationshipCorrectionEmbedding
+	if err == nil && len(plan.Documents) > 0 {
+		if s.executor == nil {
+			err = ErrLifecycleEmbeddingUnavailable
+		} else {
+			executionCtx := observability.WithMetricIdentity(ctx, input.TeamID, input.OwnerProfileID)
+			embeddingCtx, cancel := context.WithTimeout(executionCtx, s.embeddingTimeout)
+			result, executeErr := s.executor.Execute(embeddingCtx, semanticwritecontract.Plan{
+				Documents: correctionPlanDocuments(plan.Documents),
+				Fence:     semanticwritecontract.Fence{Model: plan.EmbeddingModel, Dimensions: plan.EmbeddingDimensions, EmbeddingContractID: plan.EmbeddingContractID, SearchGenerationID: plan.SearchIndexGenerationID, SearchGenerationVersion: int64(plan.IndexGeneration)},
+				Timeout:   s.embeddingTimeout,
+			})
+			if executeErr != nil {
+				err = translateCorrectionEmbeddingErrorWithContext(ctx, embeddingCtx, executeErr)
+			} else {
+				embeddings = correctionEmbeddingsFromResult(result)
+			}
+			cancel()
+		}
+	}
+	var result *knowledgecontract.CorrectRelationshipResult
+	if err == nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			err = ctxErr
+		} else {
+			result, err = s.port.CorrectRelationshipWithEmbeddings(ctx, input, embeddings)
+			if isCorrectionCommitSearchFenceError(err) {
+				err = fmt.Errorf("%w: %w", errLifecycleCorrectionCommitFence, err)
+			}
+		}
+	}
+	if err != nil {
+		return nil, translateRelationshipCorrectionError(err)
+	}
+	if result == nil {
+		return nil, ErrLifecyclePersistence
+	}
+	receipt := &CorrectRelationshipReceipt{
+		ContractVersion:  domain.ContractVersion,
+		SubmissionID:     result.SubmissionID,
+		SubmissionKind:   "relationship_correction",
+		ProcessingState:  result.ProcessingState,
+		SearchState:      result.SearchState,
+		CorrelationID:    rememberapp.NormalizeTerminalCorrelationID(correlation.FromContext(ctx)),
+		CorrectionResult: result.Correction,
+		Errors:           []SubmissionStatusError{},
+	}
+	if receipt.SearchState == "" {
+		receipt.SearchState = string(domain.SearchProjectionNotRequired)
+	}
+	if result.Confirmation != nil {
+		receipt.AwaitingConfirmation = &SubmissionAwaitingConfirmation{
+			ConfirmationToken: result.Confirmation.Token,
+			ExpiresAt:         result.Confirmation.ExpiresAt,
+		}
+		for _, candidate := range result.Confirmation.Candidates {
+			receipt.AwaitingConfirmation.Candidates = append(receipt.AwaitingConfirmation.Candidates, rememberapp.RelationshipCorrectionCandidate{
+				Endpoint: candidate.Endpoint, EntityID: candidate.EntityID, EntityKind: candidate.EntityKind, CanonicalName: candidate.CanonicalName,
+			})
+		}
+	}
+	if result.ErrorCode != "" {
+		receipt.Errors = append(receipt.Errors, correctionStatusErrorForCode(result.ErrorCode, result.ProcessingState))
+	}
+	if (result.ProcessingState == "rejected" || result.ProcessingState == "failed") && len(receipt.Errors) == 0 {
+		receipt.Errors = append(receipt.Errors, correctionStatusErrorForCode("", result.ProcessingState))
+	}
+	return receipt, nil
+}
+
+func correctionPlanDocuments(documents []knowledgecontract.RelationshipCorrectionEmbeddingDocument) []semanticwritecontract.Document {
+	result := make([]semanticwritecontract.Document, 0, len(documents))
+	for _, document := range documents {
+		result = append(result, semanticwritecontract.Document{Hash: document.DocumentHash, Text: document.DocumentText})
+	}
+	return result
+}
+
+func correctionEmbeddingsFromResult(result semanticwritecontract.Result) []knowledgecontract.RelationshipCorrectionEmbedding {
+	embeddings := make([]knowledgecontract.RelationshipCorrectionEmbedding, 0, len(result.Embeddings))
+	for _, embedding := range result.Embeddings {
+		embeddings = append(embeddings, knowledgecontract.RelationshipCorrectionEmbedding{DocumentHash: embedding.DocumentHash, Embedding: append([]float32(nil), embedding.Vector...), EmbeddingContractID: result.Fence.EmbeddingContractID, EmbeddingDimensions: result.Fence.Dimensions, EmbeddingModel: result.Fence.Model, SearchIndexGenerationID: result.Fence.SearchGenerationID, IndexGeneration: int(result.Fence.SearchGenerationVersion)})
+	}
+	return embeddings
+}
+
+func translateCorrectionEmbeddingError(err error) error {
+	switch {
+	case errors.Is(err, semanticwriteapp.ErrProviderUnavailable):
+		return ErrLifecycleEmbeddingUnavailable
+	case errors.Is(err, semanticwriteapp.ErrProviderResponseInvalid), errors.Is(err, semanticwriteapp.ErrInvalidPlan):
+		return ErrLifecycleEmbeddingInvalid
+	case errors.Is(err, semanticwriteapp.ErrProviderTimeout):
+		return ErrLifecycleEmbeddingTimeout
+	default:
+		return err
+	}
+}
+
+func translateCorrectionEmbeddingErrorWithContext(callerCtx, embeddingCtx context.Context, err error) error {
+	if errors.Is(err, context.DeadlineExceeded) && correctionEmbeddingContextOwnsDeadline(callerCtx, embeddingCtx) {
+		return ErrLifecycleEmbeddingTimeout
+	}
+	return translateCorrectionEmbeddingError(err)
+}
+
+func correctionEmbeddingContextOwnsDeadline(callerCtx, embeddingCtx context.Context) bool {
+	if !errors.Is(embeddingCtx.Err(), context.DeadlineExceeded) {
+		return false
+	}
+	callerDeadline, callerHasDeadline := callerCtx.Deadline()
+	embeddingDeadline, embeddingHasDeadline := embeddingCtx.Deadline()
+	if !embeddingHasDeadline {
+		return false
+	}
+	if !callerHasDeadline {
+		return true
+	}
+	return embeddingDeadline.Before(callerDeadline)
+}
+
+func translateRelationshipCorrectionError(err error) error {
+	if errors.Is(err, ErrLifecycleEmbeddingUnavailable) {
+		return httperr.New(httperr.ErrEmbeddingUnavailable, "embedding provider unavailable")
+	}
+	if errors.Is(err, ErrLifecycleEmbeddingInvalid) {
+		return httperr.New(httperr.ErrEmbeddingResponseInvalid, "embedding provider response invalid")
+	}
+	if errors.Is(err, ErrLifecycleEmbeddingTimeout) {
+		return httperr.New(httperr.ErrEmbeddingTimeout, "embedding provider timed out")
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	if errors.Is(err, knowledgecontract.ErrSemanticOwnerMismatch) || errors.Is(err, knowledgecontract.ErrRelationshipCorrectionNotFound) {
+		return httperr.New(httperr.NOT_FOUND, "submission not found")
+	}
+	if errors.Is(err, knowledgecontract.ErrSemanticIdempotencyConflict) {
+		return httperr.WithGuidance(httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
+			Field: "reason", Message: "idempotency_conflict",
+		}}), "idempotency_conflict", "correct_and_resubmit", "Use a new idempotency key for the changed correction request, then submit again.", false, nil, "")
+	}
+	if errors.Is(err, knowledgecontract.ErrRelationshipCorrectionConfirmationExpired) {
+		return httperr.WithGuidance(httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
+			Field: "reason", Message: string(SubmissionErrorConfirmationExpired),
+		}}), "confirmation_expired", "correct_and_resubmit", "Start a new correction submission and use its fresh confirmation token.", false, nil, "")
+	}
+	if errors.Is(err, knowledgecontract.ErrRelationshipCorrectionConfirmation) {
+		return httperr.WithGuidance(httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
+			Field: "reason", Message: CorrectionConfirmationInvalidReason,
+		}}), "confirmation_invalid", "correct_and_resubmit", "Start a new correction submission and use its current confirmation token.", false, nil, "")
+	}
+	if errors.Is(err, errLifecycleCorrectionCommitFence) {
+		return httperr.WithGuidance(httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
+			Field: "reason", Message: string(rememberapp.TerminalErrorCommitConflict),
+		}}), "commit_conflict", "refresh_state", "Refresh the current relationship state, then submit the correction again with a new idempotency key.", false, nil, "")
+	}
+	if errors.Is(err, knowledgecontract.ErrRelationshipCorrectionStateConflict) {
+		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "relationship correction conflict"), "state_conflict", "refresh_state", "Refresh the current relationship state, then submit the correction again.", false, nil, "")
+	}
+	if errors.Is(err, knowledgecontract.ErrSearchEmbeddingRequired) || errors.Is(err, knowledgecontract.ErrSearchContractMismatch) {
+		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "relationship correction conflict"), "search_configuration_invalid", "contact_operator", "Contact an operator to restore the configured search contract before retrying.", false, nil, "")
+	}
+	if errors.Is(err, knowledgecontract.ErrSearchStaleVersion) {
+		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "relationship correction conflict"), "search_state_stale", "refresh_state", "Refresh the current relationship state, then submit the correction again.", false, nil, "")
+	}
+	return ErrLifecyclePersistence
+}
+
+func isCorrectionCommitSearchFenceError(err error) bool {
+	return errors.Is(err, knowledgecontract.ErrSearchEmbeddingRequired) ||
+		errors.Is(err, knowledgecontract.ErrSearchContractMismatch) ||
+		errors.Is(err, knowledgecontract.ErrSearchStaleVersion)
+}
+
+func (s *lifecycleService) RetractEvidence(
+	ctx context.Context,
+	req RetractEvidenceRequest,
+) (*RetractEvidenceResult, error) {
+	if s.port == nil {
+		return nil, errors.New("memory lifecycle: evidence repository is required")
+	}
+	actor, ok := requestctx.ActorFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
+		return nil, ErrLifecycleAuthContext
+	}
+	requestHash, err := retractEvidenceRequestHash(req)
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.port.RetractEvidence(ctx, knowledgecontract.RetractEvidenceInput{
+		TeamID:         actor.TeamID.String(),
+		OwnerProfileID: actor.OwnerID.String(),
+		EvidenceIDs:    append([]string(nil), req.EvidenceIDs...),
+		Reason:         req.Reason,
+		IdempotencyKey: req.IdempotencyKey,
+		RequestHash:    requestHash,
+	})
+	if err != nil {
+		return nil, translateEvidenceLifecycleError(err)
+	}
+	return &RetractEvidenceResult{
+		DecisionID:                      result.DecisionID,
+		ProcessingState:                 result.ProcessingState,
+		RetractedEvidenceIDs:            append([]string(nil), result.RetractedEvidenceIDs...),
+		AffectedRelationshipCount:       result.AffectedRelationshipCount,
+		PendingRelationshipCount:        result.PendingRelationshipCount,
+		RetainedActiveRelationshipCount: result.RetainedActiveRelationshipCount,
+	}, nil
+}
+
+// Retract's unchanged request contract must replay hashes written before v2.6.
+const retractEvidenceRequestHashContractVersion = "dense-mem.v2.4"
+
+func retractEvidenceRequestHash(req RetractEvidenceRequest) (string, error) {
+	evidenceIDs := make([]string, len(req.EvidenceIDs))
+	for index, evidenceID := range req.EvidenceIDs {
+		evidenceIDs[index] = strings.TrimSpace(evidenceID)
+	}
+	sort.Strings(evidenceIDs)
+	payload, err := json.Marshal(map[string]any{
+		"contract_version": retractEvidenceRequestHashContractVersion,
+		"evidence_ids":     evidenceIDs,
+		"reason":           strings.TrimSpace(req.Reason),
+		"idempotency_key":  strings.TrimSpace(req.IdempotencyKey),
+	})
+	if err != nil {
+		return "", fmt.Errorf("memory lifecycle: canonical retract request hash: %w", err)
+	}
+	sum := sha256.Sum256(payload)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func translateEvidenceLifecycleError(err error) error {
+	switch {
+	case errors.Is(err, knowledgecontract.ErrEvidenceLifecycleNotFound), errors.Is(err, knowledgecontract.ErrTeamInactive):
+		return httperr.New(httperr.NOT_FOUND, "evidence not found")
+	case errors.Is(err, knowledgecontract.ErrIdempotencyConflict):
+		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "evidence lifecycle conflict"), "idempotency_conflict", "correct_and_resubmit", "Use a new idempotency key for the changed retraction request, then submit again.", false, nil, "")
+	case errors.Is(err, knowledgecontract.ErrEvidenceLifecycleConflict):
+		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "evidence lifecycle conflict"), "evidence_lifecycle_conflict", "refresh_state", "Refresh the current evidence state, then submit the retraction again with a new idempotency key.", false, nil, "")
+	default:
+		return err
+	}
+}

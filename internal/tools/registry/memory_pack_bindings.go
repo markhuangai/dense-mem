@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
+	memorypackapp "github.com/markhuangai/dense-mem/internal/memorypack"
 )
 
 func bindMemoryPackTool(tool Tool, deps Dependencies) Tool {
@@ -18,7 +18,7 @@ func bindMemoryPackTool(tool Tool, deps Dependencies) Tool {
 		if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
 			return nil, fmt.Errorf("export_memory_pack: invalid input: %w", err)
 		}
-		var req skillpackservice.ExportRequest
+		var req memorypackapp.ExportRequest
 		if err := remapInput(input, &req); err != nil {
 			return nil, fmt.Errorf("export_memory_pack: invalid input: %w", err)
 		}

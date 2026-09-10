@@ -1,0 +1,179 @@
+package memorypack
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
+	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
+)
+
+// ErrMemoryPackRelationshipNotActive identifies a caller-selected Relationship
+// that was found but is no longer eligible for export.
+var ErrMemoryPackRelationshipNotActive = errors.New("memory pack export relationship is not active")
+
+const (
+	maxExportRelationships        = 500
+	maxTraceEvents                = 100
+	maxFragmentContentRunes       = 8000
+	maxMemoryPackNameBytes        = 256
+	maxMemoryPackDescriptionBytes = 1024
+)
+
+var _ MemoryPackService = (*memoryPackService)(nil)
+
+func NewMemoryPackService(deps MemoryPackDependencies) MemoryPackService {
+	now := deps.Now
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
+	}
+	return &memoryPackService{deps: deps, now: now}
+}
+
+func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*ExportResult, error) {
+	actor, err := memoryPackActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if s.deps.Semantic == nil {
+		return nil, errors.New("memory pack export: semantic reader is required")
+	}
+	name := strings.TrimSpace(req.Name)
+	description := strings.TrimSpace(req.Description)
+	if name == "" {
+		return nil, errors.New("memory pack export: name is required")
+	}
+	if len(name) > maxMemoryPackNameBytes {
+		return nil, fmt.Errorf("memory pack export: name exceeds %d characters", maxMemoryPackNameBytes)
+	}
+	if len(description) > maxMemoryPackDescriptionBytes {
+		return nil, fmt.Errorf("memory pack export: description exceeds %d characters", maxMemoryPackDescriptionBytes)
+	}
+	relationshipIDs := uniqueMemoryPackRelationshipIDs(req.RelationshipIDs)
+	if len(relationshipIDs) == 0 {
+		return nil, errors.New("memory pack export: relationship_ids is required")
+	}
+	if len(relationshipIDs) > maxExportRelationships {
+		return nil, fmt.Errorf("memory pack export: relationship_ids exceeds %d items", maxExportRelationships)
+	}
+	includeSupport := req.IncludeSupport == nil || *req.IncludeSupport
+	includeEntityNames := req.IncludeEntityNames == nil || *req.IncludeEntityNames
+	now := s.now().UTC()
+	artifact := MemoryPackArtifact{
+		Format:      MemoryPackFormat,
+		PackID:      "pack_" + memoryPackShortHash(strings.Join(relationshipIDs, "\x00")+now.Format(time.RFC3339Nano)),
+		Name:        name,
+		Description: description,
+		CreatedAt:   now.Format(time.RFC3339Nano),
+		Source: MemoryPackSource{
+			TeamID:     actor.TeamID.String(),
+			ExportedBy: actor.OwnerID.String(),
+		},
+		Relationships: []MemoryPackRelationship{},
+	}
+	evidence := map[string]MemoryPackEvidence{}
+	supports := []MemoryPackEvidenceSupport{}
+	for _, relationshipID := range relationshipIDs {
+		trace, err := s.deps.Semantic.TraceRelationship(ctx, tracecontract.Input{
+			TeamID:                  actor.TeamID.String(),
+			RelationshipID:          relationshipID,
+			IncludeEvidenceContent:  boolPtr(includeSupport),
+			MaxEvents:               maxTraceEvents,
+			MaxFragmentContentRunes: maxFragmentContentRunes,
+		})
+		if err != nil {
+			if errors.Is(err, tracecontract.ErrRelationshipNotFound) {
+				return nil, tracecontract.ErrRelationshipNotFound
+			}
+			return nil, err
+		}
+		if trace.Relationship == nil {
+			return nil, fmt.Errorf("%w: %s", tracecontract.ErrRelationshipNotFound, relationshipID)
+		}
+		if teamID := strings.TrimSpace(trace.Relationship.TeamID); teamID != "" && teamID != actor.TeamID.String() {
+			return nil, tracecontract.ErrRelationshipNotFound
+		}
+		if returnedID := canonicalMemoryPackRelationshipID(trace.Relationship.RelationshipID); returnedID != "" && returnedID != relationshipID {
+			return nil, tracecontract.ErrRelationshipNotFound
+		}
+		if trace.Relationship.Status != string(domain.RelationshipStatusActive) {
+			return nil, fmt.Errorf("%w: %s", ErrMemoryPackRelationshipNotActive, relationshipID)
+		}
+		item := memoryPackRelationshipFromTrace(trace.Relationship)
+		if !includeEntityNames {
+			omitMemoryPackEntityNames(&item)
+		}
+		if includeSupport {
+			evidenceIDs := map[string]struct{}{}
+			for _, support := range trace.EvidenceSupports {
+				if support.RelationshipID != "" && canonicalMemoryPackRelationshipID(support.RelationshipID) != relationshipID {
+					continue
+				}
+				if support.FragmentID != "" {
+					item.SupportEvidenceIDs = append(item.SupportEvidenceIDs, support.FragmentID)
+					evidenceIDs[support.FragmentID] = struct{}{}
+				}
+				if support.FragmentID == "" {
+					continue
+				}
+				supports = append(supports, MemoryPackEvidenceSupport{
+					RelationshipItemID: item.ItemID,
+					EvidenceID:         support.FragmentID,
+					Quote:              support.Quote,
+					SpanStart:          support.SpanStart,
+					SpanEnd:            support.SpanEnd,
+					Metadata:           MemoryPackCopyMap(support.Metadata),
+				})
+			}
+			for _, fragment := range trace.EvidenceFragments {
+				if fragment.FragmentID == "" {
+					continue
+				}
+				if _, ok := evidenceIDs[fragment.FragmentID]; !ok {
+					continue
+				}
+				evidence[fragment.FragmentID] = MemoryPackEvidence{
+					EvidenceID:       fragment.FragmentID,
+					Content:          fragment.Content,
+					ContentHash:      fragment.ContentHash,
+					SourceType:       fragment.SourceType,
+					Authority:        fragment.Authority,
+					SourceRef:        fragment.SourceRef,
+					SourceKey:        fragment.SourceKey,
+					SourceRevisionID: fragment.SourceRevisionID,
+					Labels:           append([]string(nil), fragment.Labels...),
+					Metadata:         MemoryPackCopyMap(fragment.Metadata),
+				}
+			}
+		}
+		item.SupportEvidenceIDs = uniqueStrings(item.SupportEvidenceIDs)
+		artifact.Relationships = append(artifact.Relationships, item)
+	}
+	if includeSupport {
+		for _, id := range MemoryPackSortedEvidenceIDs(evidence) {
+			artifact.Evidence = append(artifact.Evidence, evidence[id])
+		}
+		artifact.EvidenceSupports = supports
+	}
+	canonical, hash, err := canonicalMemoryPackArtifactWithOptions(artifact, includeEntityNames)
+	if err != nil {
+		return nil, err
+	}
+	artifact.ContentSHA256 = hash
+	canonicalWithHash, err := marshalMemoryPackArtifactWithOptions(artifact, includeEntityNames)
+	if err != nil {
+		return nil, err
+	}
+	return &ExportResult{
+		Artifact:      artifact,
+		CanonicalJSON: string(canonicalWithHash),
+		SHA256:        hash,
+		ItemCount:     len(artifact.Relationships),
+		Filename:      skillPackFilename(artifact.Name),
+		ContentType:   "application/json",
+		Omissions:     MemoryPackSupportOmissions(includeSupport, canonical),
+	}, nil
+}
