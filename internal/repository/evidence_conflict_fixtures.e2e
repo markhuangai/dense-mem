@@ -1,0 +1,57 @@
+package repository
+
+import (
+	"context"
+	"encoding/json"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+)
+
+func citedEvidenceRememberInput(teamID, ownerID, label, firstContent, secondContent, spaceID string, generation int64) SynchronousRememberCommitInput {
+	firstID, secondID := uuid.NewString(), uuid.NewString()
+	assessmentID := uuid.NewString()
+	input := SynchronousRememberCommitInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: uuid.NewString(),
+		SpaceID: spaceID, SpaceGeneration: generation, IdempotencyKey: label, RequestHash: sha256Hex(label), SourceSummary: label,
+		Evidence: []EvidenceInput{
+			{FragmentID: firstID, Content: firstContent, ContentHash: sha256Hex(firstContent), SourceType: "manual", Authority: "primary"},
+			{FragmentID: secondID, Content: secondContent, ContentHash: sha256Hex(secondContent), SourceType: "manual", Authority: "secondary"},
+		},
+		AssessmentID: assessmentID, AssessmentJSON: json.RawMessage(`{"request_id":"` + label + `"}`), ProviderTurns: 1,
+		EvidenceSecurityResults: []EvidenceSecurityResult{
+			{FragmentID: firstID, EvidenceID: "evidence:0", EvidenceIndex: 0, Decision: "pass", Safe: true},
+			{FragmentID: secondID, EvidenceID: "evidence:1", EvidenceIndex: 1, Decision: "pass", Safe: true},
+		},
+	}
+	input.Commit = CommitSubmissionAssessmentInput{
+		AssessmentID: assessmentID,
+		Items:        []SubmissionAssessmentItemInput{{FragmentID: firstID, EvidenceID: "evidence:0"}, {FragmentID: secondID, EvidenceID: "evidence:1"}},
+		EvidenceConflictResults: []EvidenceConflictResultInput{{Positions: []EvidenceConflictPositionInput{
+			{EvidenceID: "evidence:0", Start: 0, End: 5},
+			{EvidenceID: "evidence:1", Start: 0, End: 5},
+		}}},
+		Payload: map[string]any{"response_hash": sha256Hex(label), "model": "test-model", "tokenizer": "o200k_base", "candidate_context_tokens": 0, "candidate_context_truncated": false},
+	}
+	return input
+}
+
+func commitCitedEvidenceFixture(t *testing.T, ctx context.Context, repo *LedgerRepositoryImpl, input SynchronousRememberCommitInput) *SynchronousRememberCommitResult {
+	t.Helper()
+	plan, err := repo.PlanRememberEmbeddings(ctx, input)
+	require.NoError(t, err)
+	result, err := repo.CommitRememberWithEmbeddings(ctx, input, rememberTestEmbeddings(plan, false))
+	require.NoError(t, err)
+	return result
+}
+
+func conflictIDForTest(t *testing.T, db *gorm.DB, rls rLSHelper, teamID string) string {
+	t.Helper()
+	var conflictID string
+	require.NoError(t, rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT conflict_id::text FROM evidence_conflict_cases WHERE team_id = ?::uuid ORDER BY created_at LIMIT 1`, teamID).Row().Scan(&conflictID)
+	}))
+	return conflictID
+}

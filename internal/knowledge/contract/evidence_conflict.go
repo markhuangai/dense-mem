@@ -1,11 +1,24 @@
 package contract
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+)
+
+const (
+	EvidenceConflictDefaultLimit      = 25
+	EvidenceConflictMaxLimit          = 100
+	EvidenceConflictDefaultEventLimit = 50
+	EvidenceConflictMaxEventLimit     = 100
+	EvidenceConflictMaxResults        = 20
+	EvidenceConflictMaxPositions      = 10
+	EvidenceConflictMaxQuoteRunes     = 4000
 )
 
 type EvidenceConflictPositionRecord = recallcontract.EvidenceConflictPositionRecord
@@ -61,6 +74,66 @@ type EvidenceConflictResolutionInput struct {
 	PreferredPositionID string
 	ActorKind           string
 	ActorID             string
+}
+
+func EncodeEvidenceConflictCursor(cursor EvidenceConflictCursor) (string, error) {
+	if err := cursor.Validate(cursor.TeamID, cursor.StatusFilter); err != nil {
+		return "", err
+	}
+	payload, err := json.Marshal(cursor)
+	if err != nil {
+		return "", fmt.Errorf("encode evidence conflict cursor: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+func DecodeEvidenceConflictCursor(raw string) (*EvidenceConflictCursor, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || len(raw) > 1024 {
+		return nil, ErrEvidenceConflictInvalidCommand
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil || len(payload) == 0 {
+		return nil, ErrEvidenceConflictInvalidCommand
+	}
+	var cursor EvidenceConflictCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil {
+		return nil, ErrEvidenceConflictInvalidCommand
+	}
+	if err := cursor.Validate(cursor.TeamID, cursor.StatusFilter); err != nil {
+		return nil, err
+	}
+	return &cursor, nil
+}
+
+func EncodeEvidenceConflictEventCursor(cursor EvidenceConflictEventCursor) (string, error) {
+	if err := cursor.Validate(cursor.TeamID, cursor.ConflictID); err != nil {
+		return "", err
+	}
+	payload, err := json.Marshal(cursor)
+	if err != nil {
+		return "", fmt.Errorf("encode evidence conflict event cursor: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+func DecodeEvidenceConflictEventCursor(raw string) (*EvidenceConflictEventCursor, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || len(raw) > 1024 {
+		return nil, ErrEvidenceConflictInvalidCommand
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil || len(payload) == 0 {
+		return nil, ErrEvidenceConflictInvalidCommand
+	}
+	var cursor EvidenceConflictEventCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil {
+		return nil, ErrEvidenceConflictInvalidCommand
+	}
+	if err := cursor.Validate(cursor.TeamID, cursor.ConflictID); err != nil {
+		return nil, err
+	}
+	return &cursor, nil
 }
 
 func (c EvidenceConflictCursor) Validate(teamID, status string) error {

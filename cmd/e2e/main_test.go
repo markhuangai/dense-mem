@@ -1,13 +1,11 @@
 package main
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -255,7 +253,7 @@ func TestDatabaseCaseFragmentsPreserveInventoryAndWave6Partition(t *testing.T) {
 		t.Fatal(err)
 	}
 	seen := make(map[string]bool)
-	tuples := make([]string, 0, 391)
+	allCases := make([]databaseCase, 0)
 	capabilities := make(map[string]int)
 	for _, phase := range []string{"precheck", "scenario"} {
 		cases, err := loadCases(root, phase, "", "", "")
@@ -270,34 +268,22 @@ func TestDatabaseCaseFragmentsPreserveInventoryAndWave6Partition(t *testing.T) {
 			if strings.TrimSpace(item.Capability) == "" {
 				t.Fatalf("database case %s has no capability", item.ID)
 			}
-			tuples = append(tuples, strings.Join([]string{
-				item.ID,
-				item.Package,
-				item.Run,
-				item.Phase,
-				item.Scenario,
-				item.Source,
-			}, "\t"))
+			allCases = append(allCases, item)
 			capabilities[item.Capability]++
 		}
 	}
-	if len(seen) != 391 {
-		t.Fatalf("database case inventory contains %d cases, want 391", len(seen))
+	baseline, err := loadDatabaseCaseBaseline(root)
+	if err != nil {
+		t.Fatal(err)
 	}
-	sort.Strings(tuples)
-	baselineHash := sha256.Sum256([]byte(strings.Join(tuples, "\n") + "\n"))
-	if got := fmt.Sprintf("%x", baselineHash); got != "660c62a2328976249aef1c93e21c73ff104f14e52b58bc50227e9eea02e4dab4" {
-		t.Fatalf("database case inventory changed: %s", got)
+	if len(allCases) < len(baseline) {
+		t.Fatalf("database case inventory contains %d cases, baseline contains %d", len(allCases), len(baseline))
 	}
-	for capability, want := range map[string]int{
-		"access": 33, "audit": 9, "community": 1, "dream": 33,
-		"graph": 2, "http": 1, "knowledge": 56, "migration": 2,
-		"operations": 6, "postgres": 112, "privacy": 20, "remember": 8,
-		"repository": 90, "search": 12, "settings": 3, "trace": 3,
-	} {
-		if capabilities[capability] != want {
-			t.Fatalf("capability %s contains %d cases, want %d", capability, capabilities[capability], want)
-		}
+	if err := validateDatabaseCaseBaseline(baseline, allCases); err != nil {
+		t.Fatal(err)
+	}
+	if capabilities["operations"] < 1 || capabilities["repository"] < 1 {
+		t.Fatalf("baseline capabilities lost: %+v", capabilities)
 	}
 	for _, capability := range []string{"access", "operations", "remember", "search", "lifecycle", "memorypack"} {
 		path := filepath.Join(root, "scripts", "e2e-db-cases", capability+".json")
@@ -319,5 +305,45 @@ func TestDatabaseCaseFragmentsPreserveInventoryAndWave6Partition(t *testing.T) {
 		if reserved && len(fragment.Cases) != 0 {
 			t.Fatalf("reserved fragment %s unexpectedly owns cases", capability)
 		}
+	}
+	for _, capability := range []string{"recall", "conflict", "index-retirement"} {
+		path := filepath.Join(root, "scripts", "e2e-db-cases", capability+".json")
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		var fragment caseFragment
+		if err := json.Unmarshal(contents, &fragment); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+		if fragment.Capability != capability {
+			t.Fatalf("fragment %s declares capability %q", capability, fragment.Capability)
+		}
+		if capability != "index-retirement" && len(fragment.Cases) == 0 {
+			t.Fatalf("wave 7 fragment %s is unexpectedly empty", capability)
+		}
+		if capability == "index-retirement" && len(fragment.Cases) != 0 {
+			t.Fatalf("index-retirement fragment unexpectedly owns cases")
+		}
+	}
+}
+
+func TestDatabaseCaseBaselineAllowsAdditionsAndRelocation(t *testing.T) {
+	baseline := []databaseCaseBaseline{{ID: "repository/TestExisting", Run: "^TestExisting$", Phase: "precheck"}}
+	current := []databaseCase{
+		{ID: "repository/TestExisting", Run: "^TestExisting$", Phase: "precheck", Package: "./internal/conflict", Source: "internal/conflict/fixture.e2e", Capability: "conflict"},
+		{ID: "recall/TestAdded", Run: "^TestAdded$", Phase: "scenario", Scenario: "space_aware_recall"},
+	}
+	if err := validateDatabaseCaseBaseline(baseline, current); err != nil {
+		t.Fatalf("baseline rejected valid addition and relocation: %v", err)
+	}
+	current[0].Run = "^TestChanged$"
+	if err := validateDatabaseCaseBaseline(baseline, current); err == nil || !strings.Contains(err.Error(), "changed execution selection") {
+		t.Fatalf("baseline change error = %v, want execution-selection failure", err)
+	}
+	current[0].Run = "^TestExisting$"
+	current = current[1:]
+	if err := validateDatabaseCaseBaseline(baseline, current); err == nil || !strings.Contains(err.Error(), "is missing") {
+		t.Fatalf("baseline missing error = %v, want missing-case failure", err)
 	}
 }

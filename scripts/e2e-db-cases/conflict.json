@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "capability": "conflict",
+  "cases": [
+    {
+      "id": "repository/TestClaimedPrivateConflictDerivedEvidenceCannotStageAfterErasureReopensSpace",
+      "package": "./internal/repository",
+      "run": "^TestClaimedPrivateConflictDerivedEvidenceCannotStageAfterErasureReopensSpace$",
+      "phase": "precheck",
+      "source": "internal/repository/conflict_review_private_space_integration.e2e"
+    },
+    {
+      "id": "repository/TestConflictReviewRetiresLosingSearchProjectionWithoutEmbedding",
+      "package": "./internal/repository",
+      "run": "^TestConflictReviewRetiresLosingSearchProjectionWithoutEmbedding$",
+      "phase": "precheck",
+      "source": "internal/repository/conflict_review_synchronous_integration.e2e"
+    },
+    {
+      "id": "repository/TestConflictSnapshotScopeLocksCorrectionBeforeReviewRowLock",
+      "package": "./internal/repository",
+      "run": "^TestConflictSnapshotScopeLocksCorrectionBeforeReviewRowLock$",
+      "phase": "precheck",
+      "source": "internal/repository/conflict_review_synchronous_integration.e2e"
+    },
+    {
+      "id": "repository/TestConflictSnapshotScopeSerializesPlacementReviewAndWrite",
+      "package": "./internal/repository",
+      "run": "^TestConflictSnapshotScopeSerializesPlacementReviewAndWrite$",
+      "phase": "precheck",
+      "source": "internal/repository/conflict_review_synchronous_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceConflictAllowsExplicitKnownCitationWithoutCandidateAssociation",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceConflictAllowsExplicitKnownCitationWithoutCandidateAssociation$",
+      "phase": "precheck",
+      "source": "internal/repository/evidence_conflict_conflict_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceConflictChangedPositionSetCreatesNewCase",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceConflictChangedPositionSetCreatesNewCase$",
+      "phase": "precheck",
+      "source": "internal/repository/evidence_conflict_conflict_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceConflictConcurrentCreationSerializesSameOwnerAndDifferentOwner",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceConflictConcurrentCreationSerializesSameOwnerAndDifferentOwner$",
+      "phase": "precheck",
+      "source": "internal/repository/evidence_conflict_conflict_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceConflictDismissalRecordsTerminalEvent",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceConflictDismissalRecordsTerminalEvent$",
+      "phase": "precheck",
+      "source": "internal/repository/evidence_conflict_conflict_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceConflictRememberCreationAndRecurrence",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceConflictRememberCreationAndRecurrence$",
+      "phase": "precheck",
+      "source": "internal/repository/evidence_conflict_conflict_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceConflictRememberKeepsForcedBatchPositionsDistinct",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceConflictRememberKeepsForcedBatchPositionsDistinct$",
+      "phase": "precheck",
+      "source": "internal/repository/evidence_conflict_conflict_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceConflictStaleCandidateRollsBackRemember",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceConflictStaleCandidateRollsBackRemember$",
+      "phase": "precheck",
+      "source": "internal/repository/evidence_conflict_conflict_integration.e2e"
+    },
+    {
+      "id": "repository/TestOverdueConflictResolutionRetainsEvidenceUsedByAnotherOwner",
+      "package": "./internal/repository",
+      "run": "^TestOverdueConflictResolutionRetainsEvidenceUsedByAnotherOwner$",
+      "phase": "precheck",
+      "source": "internal/repository/conflict_review_synchronous_integration.e2e"
+    },
+    {
+      "id": "repository/TestOverdueConflictResolutionRetainsEvidenceUsedByLosingOwner",
+      "package": "./internal/repository",
+      "run": "^TestOverdueConflictResolutionRetainsEvidenceUsedByLosingOwner$",
+      "phase": "precheck",
+      "source": "internal/repository/conflict_review_synchronous_integration.e2e"
+    }
+  ]
+}

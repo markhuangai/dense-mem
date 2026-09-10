@@ -63,3 +63,22 @@ func TestEvidenceConflictCursorValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestEvidenceConflictCursorRoundTrip(t *testing.T) {
+	teamID, conflictID, eventID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	cursor := EvidenceConflictCursor{
+		Version: 1, TeamID: teamID, StatusFilter: "open", UpdatedAt: time.Unix(10, 20).UTC(), ConflictID: conflictID,
+	}
+	raw, err := EncodeEvidenceConflictCursor(cursor)
+	require.NoError(t, err)
+	decoded, err := DecodeEvidenceConflictCursor(raw)
+	require.NoError(t, err)
+	require.Equal(t, cursor, *decoded)
+
+	eventCursor := EvidenceConflictEventCursor{Version: 1, TeamID: teamID, ConflictID: conflictID, Ordinal: 2, EventID: eventID}
+	eventRaw, err := EncodeEvidenceConflictEventCursor(eventCursor)
+	require.NoError(t, err)
+	eventDecoded, err := DecodeEvidenceConflictEventCursor(eventRaw)
+	require.NoError(t, err)
+	require.Equal(t, eventCursor, *eventDecoded)
+}

@@ -118,12 +118,15 @@ func (r *SearchRepositoryImpl) RecallEvidence(ctx context.Context, input RecallE
 	conflicts := []RelationshipConflictCaseRecord{}
 	evidenceConflicts := []EvidenceConflictCaseRecord{}
 	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		if r.recallConflicts == nil || r.evidenceConflicts == nil {
+			return errors.New("recall: conflict readers are required")
+		}
 		var err error
-		conflicts, err = loadRecallOpenConflictRecords(ctx, tx, input.TeamID, input.KnownAt, results)
+		conflicts, err = r.recallConflicts(ctx, tx, input.TeamID, input.KnownAt, results)
 		if err != nil {
 			return err
 		}
-		evidenceConflicts, err = loadRecallEvidenceConflictRecords(ctx, tx, input, results)
+		evidenceConflicts, err = r.evidenceConflicts(ctx, tx, input, results)
 		return err
 	})
 	if err != nil {
@@ -913,20 +916,7 @@ func validateRecallEvidenceInput(input RecallEvidenceInput) error {
 }
 
 func normalizeRecallUUIDList(values []string) []string {
-	out := make([]string, 0, len(values))
-	seen := map[string]struct{}{}
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
+	return domain.NormalizeReadIDList(values)
 }
 
 func recallOverfetchLimit(limit int) int {

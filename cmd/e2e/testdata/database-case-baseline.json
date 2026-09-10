@@ -1,0 +1,1975 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "repository/TestActiveTeamMutationGuardsAllowConcurrentTransactions",
+      "run": "^TestActiveTeamMutationGuardsAllowConcurrentTransactions$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestActiveTeamMutationGuardSerializesWithTeamDelete",
+      "run": "^TestActiveTeamMutationGuardSerializesWithTeamDelete$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCanonicalCredentialLifecycleRetainsDisabledIdentity",
+      "run": "^TestCanonicalCredentialLifecycleRetainsDisabledIdentity$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCanonicalCredentialRevocationPreservesSharedActorAcrossTeams",
+      "run": "^TestCanonicalCredentialRevocationPreservesSharedActorAcrossTeams$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCanonicalCredentialScopesRespectMembershipGrants",
+      "run": "^TestCanonicalCredentialScopesRespectMembershipGrants$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCanonicalSSOOwnedCredentialCollectionAndSpaces",
+      "run": "^TestCanonicalSSOOwnedCredentialCollectionAndSpaces$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestDeleteForTeamRetiresPromotedSSOCredentialPrivateSpace",
+      "run": "^TestDeleteForTeamRetiresPromotedSSOCredentialPrivateSpace$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestDeleteForTeamWithAuditCommitsBeforePrivateErasureQueue",
+      "run": "^TestDeleteForTeamWithAuditCommitsBeforePrivateErasureQueue$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestDirectoryCredentialsAndProviderRetirementRevokeOAuthAccess",
+      "run": "^TestDirectoryCredentialsAndProviderRetirementRevokeOAuthAccess$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestDirectoryGroupAndMembershipUpsertIsAtomic",
+      "run": "^TestDirectoryGroupAndMembershipUpsertIsAtomic$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestDirectoryPageQueriesAreScopedAndRejectDuplicateCreates",
+      "run": "^TestDirectoryPageQueriesAreScopedAndRejectDuplicateCreates$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestDirectoryReconcileCreatesAndArchivesOnlyDirectoryManagedTeam",
+      "run": "^TestDirectoryReconcileCreatesAndArchivesOnlyDirectoryManagedTeam$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestDirectoryReconcileFenceAndDisableRetireOnlyDirectoryGrants",
+      "run": "^TestDirectoryReconcileFenceAndDisableRetireOnlyDirectoryGrants$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSSOListMappingsExcludesRetiredMappings",
+      "run": "^TestSSOListMappingsExcludesRetiredMappings$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSSOProviderProtectedResourceConfigRoundTripAndStrictRead",
+      "run": "^TestSSOProviderProtectedResourceConfigRoundTripAndStrictRead$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSSOProviderProtectedResourceDefaultIsDormant",
+      "run": "^TestSSOProviderProtectedResourceDefaultIsDormant$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSSOProviderProtectedResourceIssuerUniquenessIsAtomic",
+      "run": "^TestSSOProviderProtectedResourceIssuerUniquenessIsAtomic$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSSOProviderProtectedResourceOmittedUpdatePreservesConcurrentConfig",
+      "run": "^TestSSOProviderProtectedResourceOmittedUpdatePreservesConcurrentConfig$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSSOProviderProtectedResourceProfileLimitIsAtomic",
+      "run": "^TestSSOProviderProtectedResourceProfileLimitIsAtomic$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSSORuntimeEntitlementsExcludeArchivedTeams",
+      "run": "^TestSSORuntimeEntitlementsExcludeArchivedTeams$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestTeamHardDeletePreservesAuditRowWhenMemorySpaceIsRemoved",
+      "run": "^TestTeamHardDeletePreservesAuditRowWhenMemorySpaceIsRemoved$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestTeamHardDeleteRemovesEmptyTeamMemorySpaceCatalog",
+      "run": "^TestTeamHardDeleteRemovesEmptyTeamMemorySpaceCatalog$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestTeamRepositoryJSONBMapsRoundTrip",
+      "run": "^TestTeamRepositoryJSONBMapsRoundTrip$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestTeamRepositoryNilJSONBMapsReadAsEmptyObjects",
+      "run": "^TestTeamRepositoryNilJSONBMapsReadAsEmptyObjects$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork",
+      "run": "^TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestUserPortalSessionsEnforceSystemRLSAndProfileLifecycle",
+      "run": "^TestUserPortalSessionsEnforceSystemRLSAndProfileLifecycle$",
+      "phase": "precheck"
+    },
+    {
+      "id": "service/TestTeamServiceCreate",
+      "run": "^TestTeamServiceCreate$",
+      "phase": "precheck"
+    },
+    {
+      "id": "service/TestTeamServiceCreateDuplicateName",
+      "run": "^TestTeamServiceCreateDuplicateName$",
+      "phase": "precheck"
+    },
+    {
+      "id": "service/TestTeamServiceDelete",
+      "run": "^TestTeamServiceDelete$",
+      "phase": "precheck"
+    },
+    {
+      "id": "service/TestTeamServiceDeleteRevokesActiveKeys",
+      "run": "^TestTeamServiceDeleteRevokesActiveKeys$",
+      "phase": "precheck"
+    },
+    {
+      "id": "service/TestTeamServiceGet",
+      "run": "^TestTeamServiceGet$",
+      "phase": "precheck"
+    },
+    {
+      "id": "service/TestTeamServiceList",
+      "run": "^TestTeamServiceList$",
+      "phase": "precheck"
+    },
+    {
+      "id": "service/TestTeamServiceUpdate",
+      "run": "^TestTeamServiceUpdate$",
+      "phase": "precheck"
+    },
+    {
+      "id": "service/TestAuditLogAppendOnlyTriggerBlocksDelete",
+      "run": "^TestAuditLogAppendOnlyTriggerBlocksDelete$",
+      "phase": "precheck"
+    },
+    {
+      "id": "service/TestAuditLogAppendOnlyTriggerBlocksUpdate",
+      "run": "^TestAuditLogAppendOnlyTriggerBlocksUpdate$",
+      "phase": "precheck"
+    },
+    {
+      "id": "service/TestAuditServiceAppend",
+      "run": "^TestAuditServiceAppend$",
+      "phase": "precheck"
+    },
+    {
+      "id": "service/TestAuditServiceAppendStoresNullClientIPWhenMissing",
+      "run": "^TestAuditServiceAppendStoresNullClientIPWhenMissing$",
+      "phase": "precheck"
+    },
+    {
+      "id": "service/TestAuditServiceAppendUsesContextClientIPWhenEntryBlank",
+      "run": "^TestAuditServiceAppendUsesContextClientIPWhenEntryBlank$",
+      "phase": "precheck"
+    },
+    {
+      "id": "service/TestAuditServiceHelperMethods",
+      "run": "^TestAuditServiceHelperMethods$",
+      "phase": "precheck"
+    },
+    {
+      "id": "service/TestAuditServiceListHidesSealedPrivateSpaceRows",
+      "run": "^TestAuditServiceListHidesSealedPrivateSpaceRows$",
+      "phase": "precheck"
+    },
+    {
+      "id": "service/TestAuditServiceRedactsSecrets",
+      "run": "^TestAuditServiceRedactsSecrets$",
+      "phase": "precheck"
+    },
+    {
+      "id": "service/TestAuditServiceListIsolatesTeamsForNonSuperuser",
+      "run": "^TestAuditServiceListIsolatesTeamsForNonSuperuser$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityRepositorySnapshotLifecycleAndRecallExpansion",
+      "run": "^TestCommunityRepositorySnapshotLifecycleAndRecallExpansion$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestHypothesisTeamPredicateMigrationRollsBackBeforeTeamOnlyHypothesesExist",
+      "run": "^TestHypothesisTeamPredicateMigrationRollsBackBeforeTeamOnlyHypothesesExist$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestHypothesisTeamPredicateMigrationScopesForeignKeyByTeam",
+      "run": "^TestHypothesisTeamPredicateMigrationScopesForeignKeyByTeam$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestAdvisoryLockAdmissionsSharePoolBudgetAcrossEvidenceAndConfirmation",
+      "run": "^TestAdvisoryLockAdmissionsSharePoolBudgetAcrossEvidenceAndConfirmation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestDreamListSortValidation",
+      "run": "^TestDreamListSortValidation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment",
+      "run": "^TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestDreamRepositoryPersistsTeamScopedPredicateHypothesis",
+      "run": "^TestDreamRepositoryPersistsTeamScopedPredicateHypothesis$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryContextsPrioritizeSameSourceAndExcludePrivateSpaces",
+      "run": "^TestEvidenceDiscoveryContextsPrioritizeSameSourceAndExcludePrivateSpaces$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryEvaluationPersistsDerivationsAndReadsThemBack",
+      "run": "^TestEvidenceDiscoveryEvaluationPersistsDerivationsAndReadsThemBack$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryEvaluationRejectsMixedDuplicateResponseAtomically",
+      "run": "^TestEvidenceDiscoveryEvaluationRejectsMixedDuplicateResponseAtomically$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryMarkerFailureDoesNotReclaimStartedDispatch",
+      "run": "^TestEvidenceDiscoveryMarkerFailureDoesNotReclaimStartedDispatch$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryNodesRankEvidenceMentionsBeforeTheGlobalBound",
+      "run": "^TestEvidenceDiscoveryNodesRankEvidenceMentionsBeforeTheGlobalBound$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryPredicatesRankTargetRelevantDefinitionsBeforeTheGlobalBound",
+      "run": "^TestEvidenceDiscoveryPredicatesRankTargetRelevantDefinitionsBeforeTheGlobalBound$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryRecoveryClaimsOnlyItsLane",
+      "run": "^TestEvidenceDiscoveryRecoveryClaimsOnlyItsLane$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryRecoveryExhaustionReportsPersistedTotals",
+      "run": "^TestEvidenceDiscoveryRecoveryExhaustionReportsPersistedTotals$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryRecoveryReportsDistinctTargetCount",
+      "run": "^TestEvidenceDiscoveryRecoveryReportsDistinctTargetCount$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryTargetEligibilityFiltersAliasesQuarantineLifecycleStaleAndDeletionOnly",
+      "run": "^TestEvidenceDiscoveryTargetEligibilityFiltersAliasesQuarantineLifecycleStaleAndDeletionOnly$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryTargetLockCapsConcurrentProviderPasses",
+      "run": "^TestEvidenceDiscoveryTargetLockCapsConcurrentProviderPasses$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryTargetOrderingUsesAttemptFallback",
+      "run": "^TestEvidenceDiscoveryTargetOrderingUsesAttemptFallback$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryTargetPassCapStopsAfterTwoRecordedEvaluations",
+      "run": "^TestEvidenceDiscoveryTargetPassCapStopsAfterTwoRecordedEvaluations$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryTargetsAreBoundAndTeamScoped",
+      "run": "^TestEvidenceDiscoveryTargetsAreBoundAndTeamScoped$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryValidatedAttemptConsumesPassAfterPersistenceFailure",
+      "run": "^TestEvidenceDiscoveryValidatedAttemptConsumesPassAfterPersistenceFailure$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestHypothesisConfirmationLockAdmitsOneCallback",
+      "run": "^TestHypothesisConfirmationLockAdmitsOneCallback$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestHypothesisConfirmationLockAllowsNestedRepositoryUseWithinPoolBudget",
+      "run": "^TestHypothesisConfirmationLockAllowsNestedRepositoryUseWithinPoolBudget$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestHypothesisConfirmationLockBoundsDifferentHypothesesWithinPoolBudget",
+      "run": "^TestHypothesisConfirmationLockBoundsDifferentHypothesesWithinPoolBudget$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestHypothesisConfirmationLockClassifiesInvalidHypothesisID",
+      "run": "^TestHypothesisConfirmationLockClassifiesInvalidHypothesisID$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestHypothesisConfirmationLockDiscardsFailedCleanupConnection",
+      "run": "^TestHypothesisConfirmationLockDiscardsFailedCleanupConnection$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestHypothesisConfirmationLockRejectsPoolWithoutApplicationCapacity",
+      "run": "^TestHypothesisConfirmationLockRejectsPoolWithoutApplicationCapacity$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestHypothesisConfirmationLockReleasesAfterContextCancellation",
+      "run": "^TestHypothesisConfirmationLockReleasesAfterContextCancellation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestHypothesisConfirmationLockUsesCanonicalAlias",
+      "run": "^TestHypothesisConfirmationLockUsesCanonicalAlias$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestScheduledDreamRecoveryFencesExpiredLease",
+      "run": "^TestScheduledDreamRecoveryFencesExpiredLease$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited",
+      "run": "^TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestStaleDreamSourceErrorMapsMissingRelationship",
+      "run": "^TestStaleDreamSourceErrorMapsMissingRelationship$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestUpdateHypothesisStatusValidationBindsDecisionToStatus",
+      "run": "^TestUpdateHypothesisStatusValidationBindsDecisionToStatus$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticGraphLocalDepthDefaultsToTwoAndCapsAtFive",
+      "run": "^TestSemanticGraphLocalDepthDefaultsToTwoAndCapsAtFive$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticGraphReadsEntityValueEdgesAndNodeDetail",
+      "run": "^TestSemanticGraphReadsEntityValueEdgesAndNodeDetail$",
+      "phase": "precheck"
+    },
+    {
+      "id": "http/TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration",
+      "run": "^TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration$",
+      "phase": "precheck"
+    },
+    {
+      "id": "knowledge/TestKnowledgeOwnerTerminalReplay",
+      "run": "^TestKnowledgeOwnerTerminalReplay$",
+      "phase": "precheck"
+    },
+    {
+      "id": "knowledge/TestKnowledgeOwnerLateFailureRollsBack",
+      "run": "^TestKnowledgeOwnerLateFailureRollsBack$",
+      "phase": "precheck"
+    },
+    {
+      "id": "knowledge/TestKnowledgeOwnerConcurrentRetryUsesOneCommit",
+      "run": "^TestKnowledgeOwnerConcurrentRetryUsesOneCommit$",
+      "phase": "precheck"
+    },
+    {
+      "id": "knowledge/TestKnowledgeOwnerRejectsStaleEmbeddingFence",
+      "run": "^TestKnowledgeOwnerRejectsStaleEmbeddingFence$",
+      "phase": "precheck"
+    },
+    {
+      "id": "knowledge/TestKnowledgeOwnerTeamProfileIsolation",
+      "run": "^TestKnowledgeOwnerTeamProfileIsolation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestOverdueConflictResolutionMigrationAvoidsLegacySystemProfileNameCollision",
+      "run": "^TestOverdueConflictResolutionMigrationAvoidsLegacySystemProfileNameCollision$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberNormalizerMigrationFailsLegacyWorkAndPreservesIndependentWorkflows",
+      "run": "^TestRememberNormalizerMigrationFailsLegacyWorkAndPreservesIndependentWorkflows$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestSemanticLedgerMigrationGuardedRollbackRejectsCanonicalAuthority",
+      "run": "^TestSemanticLedgerMigrationGuardedRollbackRejectsCanonicalAuthority$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestSemanticLedgerMigrationRejectsLegacyDerivedAuthority",
+      "run": "^TestSemanticLedgerMigrationRejectsLegacyDerivedAuthority$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestSemanticLedgerMigrationUpgradesPopulated1703",
+      "run": "^TestSemanticLedgerMigrationUpgradesPopulated1703$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestSubmissionAssessmentMigrationReconcilesLegacyRuns",
+      "run": "^TestSubmissionAssessmentMigrationReconcilesLegacyRuns$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestActiveSpaceGenerationHelperHonorsLifecycleAndExecutionPrivilege",
+      "run": "^TestActiveSpaceGenerationHelperHonorsLifecycleAndExecutionPrivilege$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCorrectRelationshipValidationRejectsInvalidConfirmation",
+      "run": "^TestCorrectRelationshipValidationRejectsInvalidConfirmation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestInsertRelationshipTransitionReturnsExistingIDForIdempotentReplay",
+      "run": "^TestInsertRelationshipTransitionReturnsExistingIDForIdempotentReplay$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestLedgerDirectEvidenceSupersessionRejectsCrossSpaceReplacement",
+      "run": "^TestLedgerDirectEvidenceSupersessionRejectsCrossSpaceReplacement$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestLedgerDirectEvidenceSupersessionRejectsSameTeamCrossOwnerReplacement",
+      "run": "^TestLedgerDirectEvidenceSupersessionRejectsSameTeamCrossOwnerReplacement$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestLedgerDirectEvidenceSupersessionRetiresTargetWhenReplacementIsQuarantined",
+      "run": "^TestLedgerDirectEvidenceSupersessionRetiresTargetWhenReplacementIsQuarantined$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestLedgerEvidenceLifecyclePersistsTargetSpaceAndRejectsMixedSpaces",
+      "run": "^TestLedgerEvidenceLifecyclePersistsTargetSpaceAndRejectsMixedSpaces$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestLedgerRetractEvidenceRevokesOnlyItsSupportAndReplaysAtomically",
+      "run": "^TestLedgerRetractEvidenceRevokesOnlyItsSupportAndReplaysAtomically$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestNormalizeCorrectRelationshipInputCanonicalizesWithoutMutatingCaller",
+      "run": "^TestNormalizeCorrectRelationshipInputCanonicalizesWithoutMutatingCaller$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation",
+      "run": "^TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionEqualHashUsesOneEmbeddingForBothDocumentStates",
+      "run": "^TestRelationshipCorrectionEqualHashUsesOneEmbeddingForBothDocumentStates$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionLocksCrossScopePairCanonically",
+      "run": "^TestRelationshipCorrectionLocksCrossScopePairCanonically$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionPlannerKeepsStoredResolvedSelection",
+      "run": "^TestRelationshipCorrectionPlannerKeepsStoredResolvedSelection$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionPlannerUsesCanonicalNameForUniqueSubmitMatch",
+      "run": "^TestRelationshipCorrectionPlannerUsesCanonicalNameForUniqueSubmitMatch$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionPreservesOccurrenceSupport",
+      "run": "^TestRelationshipCorrectionPreservesOccurrenceSupport$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionRejectsInvalidEmbeddingAtomically",
+      "run": "^TestRelationshipCorrectionRejectsInvalidEmbeddingAtomically$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionRejectsSearchContractRotationAfterPlan",
+      "run": "^TestRelationshipCorrectionRejectsSearchContractRotationAfterPlan$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionRejectsStaleVersionAfterPlan",
+      "run": "^TestRelationshipCorrectionRejectsStaleVersionAfterPlan$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionRejectsSupportRevisionChangeAfterPlan",
+      "run": "^TestRelationshipCorrectionRejectsSupportRevisionChangeAfterPlan$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport",
+      "run": "^TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionReusesActiveCollisionAndRejectsNoOp",
+      "run": "^TestRelationshipCorrectionReusesActiveCollisionAndRejectsNoOp$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticAppendOnlyHistoryAndRetraction",
+      "run": "^TestSemanticAppendOnlyHistoryAndRetraction$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticApplyRelationshipDecisionValidationAllowsStructuralRememberAcceptance",
+      "run": "^TestSemanticApplyRelationshipDecisionValidationAllowsStructuralRememberAcceptance$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticApplyRelationshipDecisionValidationRejectsLegacySupportAuthority",
+      "run": "^TestSemanticApplyRelationshipDecisionValidationRejectsLegacySupportAuthority$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticApplyRelationshipDecisionValidationRejectsMalformedSupportForAnyVerdict",
+      "run": "^TestSemanticApplyRelationshipDecisionValidationRejectsMalformedSupportForAnyVerdict$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticApplyRelationshipDecisionValidationRequiresEntailedSupport",
+      "run": "^TestSemanticApplyRelationshipDecisionValidationRequiresEntailedSupport$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticAssessmentEntityMatchesUseOnlyCanonicalAndAliasNames",
+      "run": "^TestSemanticAssessmentEntityMatchesUseOnlyCanonicalAndAliasNames$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticCatalogsOmitSealedGenerationEntities",
+      "run": "^TestSemanticCatalogsOmitSealedGenerationEntities$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticCreateHypothesisBootstrapsRefsAndDefaultsProposed",
+      "run": "^TestSemanticCreateHypothesisBootstrapsRefsAndDefaultsProposed$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticDelayedOlderOneVersionDoesNotSupersedeNewerManyRows",
+      "run": "^TestSemanticDelayedOlderOneVersionDoesNotSupersedeNewerManyRows$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticEntitiesAllowHomonymsAndTypedValuesDeduplicate",
+      "run": "^TestSemanticEntitiesAllowHomonymsAndTypedValuesDeduplicate$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticGroupKeyExcludesMutableValidTo",
+      "run": "^TestSemanticGroupKeyExcludesMutableValidTo$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticOneCardinalitySupersedesPriorActiveRelationship",
+      "run": "^TestSemanticOneCardinalitySupersedesPriorActiveRelationship$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticOneCardinalityUpgradeSupersedesLegacyManyRows",
+      "run": "^TestSemanticOneCardinalityUpgradeSupersedesLegacyManyRows$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticRelationshipLifecycleAndRLS",
+      "run": "^TestSemanticRelationshipLifecycleAndRLS$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticRepositoryFailsClosedWithoutDependencies",
+      "run": "^TestSemanticRepositoryFailsClosedWithoutDependencies$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases",
+      "run": "^TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticSupportDecisionsRecomputeEffectiveState",
+      "run": "^TestSemanticSupportDecisionsRecomputeEffectiveState$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticSupportMustMatchSuppliedIngest",
+      "run": "^TestSemanticSupportMustMatchSuppliedIngest$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticSupportSourceRevisionMustMatchSource",
+      "run": "^TestSemanticSupportSourceRevisionMustMatchSource$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticValidToDisagreementFailsAtomicallyWithoutMutatingCanonicalRelationship",
+      "run": "^TestSemanticValidToDisagreementFailsAtomicallyWithoutMutatingCanonicalRelationship$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticValueUpsertConcurrentDuplicateReturnsCanonical",
+      "run": "^TestSemanticValueUpsertConcurrentDuplicateReturnsCanonical$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSourceRevisionAdvanceRevokesAdoptedSupportAndRecomputesRelationships",
+      "run": "^TestSourceRevisionAdvanceRevokesAdoptedSupportAndRecomputesRelationships$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSubmissionAssessmentCatalogIsTeamScopedAndUsesBoundedPredicateResolution",
+      "run": "^TestSubmissionAssessmentCatalogIsTeamScopedAndUsesBoundedPredicateResolution$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSubmissionAssessmentKnownEvidenceCatalogEnforcesVisibilityAndEligibility",
+      "run": "^TestSubmissionAssessmentKnownEvidenceCatalogEnforcesVisibilityAndEligibility$",
+      "phase": "precheck"
+    },
+    {
+      "id": "migration/TestRunDownTimeoutRollsBackBlockedMigration",
+      "run": "^TestRunDownTimeoutRollsBackBlockedMigration$",
+      "phase": "precheck"
+    },
+    {
+      "id": "migration/TestRunUpTimeoutRollsBackBlockedMigrationAndReleasesLock",
+      "run": "^TestRunUpTimeoutRollsBackBlockedMigrationAndReleasesLock$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestAuthorityRepositoryBlocksFreshAuthorityWhenApplicationDataExists",
+      "run": "^TestAuthorityRepositoryBlocksFreshAuthorityWhenApplicationDataExists$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestAuthorityRepositoryCommitsFreshAuthorityOnlyWhenApplicationDataEmpty",
+      "run": "^TestAuthorityRepositoryCommitsFreshAuthorityOnlyWhenApplicationDataEmpty$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestAuthorityRepositoryRetainsMigrationAuditReadOnly",
+      "run": "^TestAuthorityRepositoryRetainsMigrationAuditReadOnly$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestReadTelemetryLifecycleIsolatesSystemTeamAndProfileScopes",
+      "run": "^TestReadTelemetryLifecycleIsolatesSystemTeamAndProfileScopes$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestReadTelemetryLifecycleOmitsSealedGenerationRows",
+      "run": "^TestReadTelemetryLifecycleOmitsSealedGenerationRows$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestUsageMetricsSnapshotLabelsSSOOwnershipAlias",
+      "run": "^TestUsageMetricsSnapshotLabelsSSOOwnershipAlias$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestUsageMetricsFlushRetryIsIdempotentAndAtomic",
+      "run": "^TestUsageMetricsFlushRetryIsIdempotentAndAtomic$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestCoreSchemaAuditLogTable",
+      "run": "^TestCoreSchemaAuditLogTable$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestCoreSchemaCanonicalIdentityTables",
+      "run": "^TestCoreSchemaCanonicalIdentityTables$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestCoreSchemaIndexes",
+      "run": "^TestCoreSchemaIndexes$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestCoreSchemaTeamsTable",
+      "run": "^TestCoreSchemaTeamsTable$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestDBPingTimeout",
+      "run": "^TestDBPingTimeout$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestEmbeddingFailureGroupIndexSupportsRepresentativeProjection",
+      "run": "^TestEmbeddingFailureGroupIndexSupportsRepresentativeProjection$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestEmbeddingReconciliationMigrationBackfillsJobsWithoutIncidentState",
+      "run": "^TestEmbeddingReconciliationMigrationBackfillsJobsWithoutIncidentState$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestEmbeddingReconciliationMigrationHasOneRestartGatedBackfill",
+      "run": "^TestEmbeddingReconciliationMigrationHasOneRestartGatedBackfill$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestEmbeddingRetryRecoveryMigrationRequeuesOnlyTransientExhaustion",
+      "run": "^TestEmbeddingRetryRecoveryMigrationRequeuesOnlyTransientExhaustion$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestEvidenceConflictMigrationEnforcesLedgerAndRollbackBoundary",
+      "run": "^TestEvidenceConflictMigrationEnforcesLedgerAndRollbackBoundary$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestEvidenceFirstRememberPrimitivesMigrationEnforcesDurableContract",
+      "run": "^TestEvidenceFirstRememberPrimitivesMigrationEnforcesDurableContract$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestEvidenceFirstRememberPrimitivesMigrationRecoversInvalidRetryabilityIndex",
+      "run": "^TestEvidenceFirstRememberPrimitivesMigrationRecoversInvalidRetryabilityIndex$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestEvidenceOccurrenceMigrationBackfillPrefersCurrentSourceRevision",
+      "run": "^TestEvidenceOccurrenceMigrationBackfillPrefersCurrentSourceRevision$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestEvidenceOccurrenceMigrationBackfillsAliasesAndOccurrencesInBatches",
+      "run": "^TestEvidenceOccurrenceMigrationBackfillsAliasesAndOccurrencesInBatches$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestEvidenceOccurrenceMigrationKeepsIndependentSourceLineagesSeparate",
+      "run": "^TestEvidenceOccurrenceMigrationKeepsIndependentSourceLineagesSeparate$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestEvidenceSecurityScanPolicyMigrationPreservesEventHistory",
+      "run": "^TestEvidenceSecurityScanPolicyMigrationPreservesEventHistory$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestHourlyEvidenceDreamsMigrationDownRejectsEvidenceCycleHistory",
+      "run": "^TestHourlyEvidenceDreamsMigrationDownRejectsEvidenceCycleHistory$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestHourlyEvidenceDreamsMigrationPreservesGraphClaimArbiter",
+      "run": "^TestHourlyEvidenceDreamsMigrationPreservesGraphClaimArbiter$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestIdentityBridgeBackfillsStableIDsAndLegacyGovernance",
+      "run": "^TestIdentityBridgeBackfillsStableIDsAndLegacyGovernance$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestIdentityBridgeKeepsSSOActorTeamNeutralAcrossMemberships",
+      "run": "^TestIdentityBridgeKeepsSSOActorTeamNeutralAcrossMemberships$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestIdentityBridgePreservesGovernanceAliasesAndSSOExternalLinks",
+      "run": "^TestIdentityBridgePreservesGovernanceAliasesAndSSOExternalLinks$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestIdentityBridgeReconcilesLegacyWritesAndRLS",
+      "run": "^TestIdentityBridgeReconcilesLegacyWritesAndRLS$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestIdentityCleanupComposeSeed",
+      "run": "^TestIdentityCleanupComposeSeed$",
+      "phase": "scenario",
+      "scenario": "identity_cleanup"
+    },
+    {
+      "id": "postgres/TestIdentityCleanupDisablesCredentialDeletedDuringBridgeWindow",
+      "run": "^TestIdentityCleanupDisablesCredentialDeletedDuringBridgeWindow$",
+      "phase": "scenario",
+      "scenario": "identity_cleanup"
+    },
+    {
+      "id": "postgres/TestIdentityCleanupLockContentionRollsBackAndCanRetry",
+      "run": "^TestIdentityCleanupLockContentionRollsBackAndCanRetry$",
+      "phase": "scenario",
+      "scenario": "identity_cleanup"
+    },
+    {
+      "id": "postgres/TestIdentityCleanupMismatchRollsBackAndLeavesBridge",
+      "run": "^TestIdentityCleanupMismatchRollsBackAndLeavesBridge$",
+      "phase": "scenario",
+      "scenario": "identity_cleanup"
+    },
+    {
+      "id": "postgres/TestIdentityCleanupReconcilesBridgeWriteBeforeDrop",
+      "run": "^TestIdentityCleanupReconcilesBridgeWriteBeforeDrop$",
+      "phase": "scenario",
+      "scenario": "identity_cleanup"
+    },
+    {
+      "id": "postgres/TestIdentityCleanupUpgradesPopulatedPreBridgeDatabase",
+      "run": "^TestIdentityCleanupUpgradesPopulatedPreBridgeDatabase$",
+      "phase": "scenario",
+      "scenario": "identity_cleanup"
+    },
+    {
+      "id": "postgres/TestKnownEvidenceSupportOwnershipMigrationBackfillsForeignKeys",
+      "run": "^TestKnownEvidenceSupportOwnershipMigrationBackfillsForeignKeys$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestKnownEvidenceSupportOwnershipMigrationDownRejectsCrossOwnerRows",
+      "run": "^TestKnownEvidenceSupportOwnershipMigrationDownRejectsCrossOwnerRows$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestKnownEvidenceSupportOwnershipMigrationPreservesAppendOnlyExceptions",
+      "run": "^TestKnownEvidenceSupportOwnershipMigrationPreservesAppendOnlyExceptions$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestKnownEvidenceSupportOwnershipMigrationsRunWithNOBYPASSRLS",
+      "run": "^TestKnownEvidenceSupportOwnershipMigrationsRunWithNOBYPASSRLS$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMemorySpaceBackfillPreservesAppendOnlyGuards",
+      "run": "^TestMemorySpaceBackfillPreservesAppendOnlyGuards$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMemorySpacePrivateInitializerCanUpsertUnderForceRLS",
+      "run": "^TestMemorySpacePrivateInitializerCanUpsertUnderForceRLS$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationDatabaseDSNPreservesQuotedConninfoValues",
+      "run": "^TestMigrationDatabaseDSNPreservesQuotedConninfoValues$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationDatabaseDSNUpdatesURL",
+      "run": "^TestMigrationDatabaseDSNUpdatesURL$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationFilesystemCombinesReleaseDirectories",
+      "run": "^TestMigrationFilesystemCombinesReleaseDirectories$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationFilesystemRejectsInvalidHistory",
+      "run": "^TestMigrationFilesystemRejectsInvalidHistory$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationOrder_NoConnectorTables",
+      "run": "^TestMigrationOrder_NoConnectorTables$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationStartupClassifierCoversFreshLegacyBridgeAndCleanStates",
+      "run": "^TestMigrationStartupClassifierCoversFreshLegacyBridgeAndCleanStates$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingOrganizationIdentity",
+      "run": "^TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingOrganizationIdentity$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigratorRunUp",
+      "run": "^TestMigratorRunUp$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigratorRunUpAppliesPostCutoverCleanupAfterEmbeddingRetry",
+      "run": "^TestMigratorRunUpAppliesPostCutoverCleanupAfterEmbeddingRetry$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigratorRunUpAsRuntimeRoleWithoutCreateRole",
+      "run": "^TestMigratorRunUpAsRuntimeRoleWithoutCreateRole$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigratorRunUpSerializesConcurrentStartup",
+      "run": "^TestMigratorRunUpSerializesConcurrentStartup$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigratorStatus",
+      "run": "^TestMigratorStatus$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestOAuthProtectedResourceMigrationDefaultsDormantAndRetainsSystemRLS",
+      "run": "^TestOAuthProtectedResourceMigrationDefaultsDormantAndRetainsSystemRLS$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestOAuthProtectedResourceMigrationGuardsCustomizedRollback",
+      "run": "^TestOAuthProtectedResourceMigrationGuardsCustomizedRollback$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestOpenFailsOnEmptyDSN",
+      "run": "^TestOpenFailsOnEmptyDSN$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestOpenFailsOnUnreachable",
+      "run": "^TestOpenFailsOnUnreachable$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestOpenSuccess",
+      "run": "^TestOpenSuccess$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestOpenWithClient",
+      "run": "^TestOpenWithClient$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestOrganizationDirectoryIdentityMigrationSeedsConfigAndBackfillsLegacyAzureIdentity",
+      "run": "^TestOrganizationDirectoryIdentityMigrationSeedsConfigAndBackfillsLegacyAzureIdentity$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestOrganizationDirectoryIdentityMigrationUsesSystemRLSMode",
+      "run": "^TestOrganizationDirectoryIdentityMigrationUsesSystemRLSMode$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestPostCutoverCleanupMigrationBlocksLegacyAPIKeyWithoutCanonicalTeamProfile",
+      "run": "^TestPostCutoverCleanupMigrationBlocksLegacyAPIKeyWithoutCanonicalTeamProfile$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestPostCutoverCleanupMigrationBlocksLegacyProfileWithoutCanonicalTeam",
+      "run": "^TestPostCutoverCleanupMigrationBlocksLegacyProfileWithoutCanonicalTeam$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestPostCutoverCleanupMigrationBlocksNonemptyDatabaseWithoutMarker",
+      "run": "^TestPostCutoverCleanupMigrationBlocksNonemptyDatabaseWithoutMarker$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestPostCutoverCleanupMigrationFreshUpgradeSucceeds",
+      "run": "^TestPostCutoverCleanupMigrationFreshUpgradeSucceeds$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestPostCutoverCleanupMigrationWithCompatibleMarkerDropsLegacyTables",
+      "run": "^TestPostCutoverCleanupMigrationWithCompatibleMarkerDropsLegacyTables$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestPostgresInsufficientPrivilegeDetection",
+      "run": "^TestPostgresInsufficientPrivilegeDetection$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestReadOnlyRepeatableReadTransactionOptions",
+      "run": "^TestReadOnlyRepeatableReadTransactionOptions$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRelationshipIdentityMigrationPreservesValidToCollisionsForReview",
+      "run": "^TestRelationshipIdentityMigrationPreservesValidToCollisionsForReview$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRelationshipIdentityMigrationRollsBackBeforeAliasesExist",
+      "run": "^TestRelationshipIdentityMigrationRollsBackBeforeAliasesExist$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRelationshipTelemetryMigrationRecoversInvalidIndexesAndRollsBack",
+      "run": "^TestRelationshipTelemetryMigrationRecoversInvalidIndexesAndRollsBack$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberReliabilityMigrationDownRejectsQueuedV26RememberIngest",
+      "run": "^TestRememberReliabilityMigrationDownRejectsQueuedV26RememberIngest$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberReliabilityMigrationEnforcesRelationshipResultShape",
+      "run": "^TestRememberReliabilityMigrationEnforcesRelationshipResultShape$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberReliabilityMigrationTerminalizesOnlyUnfinishedLegacyRememberRuns",
+      "run": "^TestRememberReliabilityMigrationTerminalizesOnlyUnfinishedLegacyRememberRuns$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberReliabilityMigrationUsesBoundedLockTimeout",
+      "run": "^TestRememberReliabilityMigrationUsesBoundedLockTimeout$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberRetryActivationMigrationUsesRetryableFailurePredicate",
+      "run": "^TestRememberRetryActivationMigrationUsesRetryableFailurePredicate$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberSynchronousCutoverEnforcesForceRLSForRuntimeRole",
+      "run": "^TestRememberSynchronousCutoverEnforcesForceRLSForRuntimeRole$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberSynchronousCutoverMapsOrphanedPredicateRegistrationThroughAssessment",
+      "run": "^TestRememberSynchronousCutoverMapsOrphanedPredicateRegistrationThroughAssessment$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberSynchronousCutoverNormalizesLegacyReconciliationStatuses",
+      "run": "^TestRememberSynchronousCutoverNormalizesLegacyReconciliationStatuses$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberSynchronousCutoverPreservesConflictDerivedPlacementHistory",
+      "run": "^TestRememberSynchronousCutoverPreservesConflictDerivedPlacementHistory$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberSynchronousCutoverPreservesGroupedItemAssessmentHistory",
+      "run": "^TestRememberSynchronousCutoverPreservesGroupedItemAssessmentHistory$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberSynchronousCutoverPreservesPrivateAttemptLineageForErasure",
+      "run": "^TestRememberSynchronousCutoverPreservesPrivateAttemptLineageForErasure$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement",
+      "run": "^TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberSynchronousCutoverRejectsActiveEmbeddingJobs",
+      "run": "^TestRememberSynchronousCutoverRejectsActiveEmbeddingJobs$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberSynchronousCutoverRejectsActivePlacementRuns",
+      "run": "^TestRememberSynchronousCutoverRejectsActivePlacementRuns$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberSynchronousCutoverRejectsBareUnknownOrigin",
+      "run": "^TestRememberSynchronousCutoverRejectsBareUnknownOrigin$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberSynchronousCutoverRejectsConflictingAssessmentMapping",
+      "run": "^TestRememberSynchronousCutoverRejectsConflictingAssessmentMapping$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberSynchronousCutoverRejectsConflictingPredicateRegistrationMapping",
+      "run": "^TestRememberSynchronousCutoverRejectsConflictingPredicateRegistrationMapping$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberSynchronousCutoverRejectsExistingMarkerConflict",
+      "run": "^TestRememberSynchronousCutoverRejectsExistingMarkerConflict$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberSynchronousCutoverRejectsInvalidActiveSearchDocuments",
+      "run": "^TestRememberSynchronousCutoverRejectsInvalidActiveSearchDocuments$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberSynchronousCutoverRollsBackCopiedHistoryOnGateFailure",
+      "run": "^TestRememberSynchronousCutoverRollsBackCopiedHistoryOnGateFailure$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberSynchronousCutoverTerminalizesPendingCorrections",
+      "run": "^TestRememberSynchronousCutoverTerminalizesPendingCorrections$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRemovePlacementAssessmentPromptRevisionMigrationPreservesAssessment",
+      "run": "^TestRemovePlacementAssessmentPromptRevisionMigrationPreservesAssessment$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRLSPoliciesAuditLogAppendable",
+      "run": "^TestRLSPoliciesAuditLogAppendable$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRLSPoliciesCredentialIsolation",
+      "run": "^TestRLSPoliciesCredentialIsolation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRLSPoliciesSystemSeesAll",
+      "run": "^TestRLSPoliciesSystemSeesAll$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestSearchRepairSelectionCursorShapeRejectsNullSourceKind",
+      "run": "^TestSearchRepairSelectionCursorShapeRejectsNullSourceKind$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestSearchStorageMigrationAllowsIndexGenerationLifecycleOnly",
+      "run": "^TestSearchStorageMigrationAllowsIndexGenerationLifecycleOnly$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestSubmissionDiagnosticsIndexesAreValid",
+      "run": "^TestSubmissionDiagnosticsIndexesAreValid$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberAttemptDiagnosticsMigrationCopiesRetainedLegacyBytesAndHidesHashSummaries",
+      "run": "^TestRememberAttemptDiagnosticsMigrationCopiesRetainedLegacyBytesAndHidesHashSummaries$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberAttemptDiagnosticsMigrationRejectsCorruptLegacyRows",
+      "run": "^TestRememberAttemptDiagnosticsMigrationRejectsCorruptLegacyRows$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestSupporterConflictPolicyMigrationRewritesActiveWorkflow",
+      "run": "^TestSupporterConflictPolicyMigrationRewritesActiveWorkflow$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestSynchronousWriteFoundationAppendOnlyRowsAndGuardedDown",
+      "run": "^TestSynchronousWriteFoundationAppendOnlyRowsAndGuardedDown$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestSynchronousWriteFoundationConstrainsReplayAndAssessmentLineage",
+      "run": "^TestSynchronousWriteFoundationConstrainsReplayAndAssessmentLineage$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestSynchronousWriteFoundationMigrationCreatesEmptyAppendOnlySurface",
+      "run": "^TestSynchronousWriteFoundationMigrationCreatesEmptyAppendOnlySurface$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestSynchronousWriteFoundationMigrationPreservesPopulatedUpgrade",
+      "run": "^TestSynchronousWriteFoundationMigrationPreservesPopulatedUpgrade$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestSynchronousWriteFoundationRLSIsolatesProfileWritesWithinTeam",
+      "run": "^TestSynchronousWriteFoundationRLSIsolatesProfileWritesWithinTeam$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestSynchronousWriteFoundationStoresAdditiveLineage",
+      "run": "^TestSynchronousWriteFoundationStoresAdditiveLineage$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestTeamOwnedDreamingMigrationCanonicalizesLegacyRows",
+      "run": "^TestTeamOwnedDreamingMigrationCanonicalizesLegacyRows$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestTeamOwnedDreamingRepairHandlesLegacyTelemetryVersionSkip",
+      "run": "^TestTeamOwnedDreamingRepairHandlesLegacyTelemetryVersionSkip$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestTelemetryFirstDispositionMigrationPreservesValidConcurrentIndex",
+      "run": "^TestTelemetryFirstDispositionMigrationPreservesValidConcurrentIndex$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestTelemetryFirstDispositionMigrationRebuildsInvalidConcurrentIndex",
+      "run": "^TestTelemetryFirstDispositionMigrationRebuildsInvalidConcurrentIndex$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestTelemetryPricingMigrationsCreateRatesAndMarkerUniqueness",
+      "run": "^TestTelemetryPricingMigrationsCreateRatesAndMarkerUniqueness$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestTransitionalSchemaCleanupEmbeddingMismatchRollsBackOnlyDestructiveMigration",
+      "run": "^TestTransitionalSchemaCleanupEmbeddingMismatchRollsBackOnlyDestructiveMigration$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestTransitionalSchemaCleanupPreservesSemanticOwnersAndInstallsDirectForeignKeys",
+      "run": "^TestTransitionalSchemaCleanupPreservesSemanticOwnersAndInstallsDirectForeignKeys$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestV24OneCallAssessmentDownMigrationNormalizesExpiredReviewTasks",
+      "run": "^TestV24OneCallAssessmentDownMigrationNormalizesExpiredReviewTasks$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestV24OneCallAssessmentMigrationPreservesPopulatedSemanticAndSearchState",
+      "run": "^TestV24OneCallAssessmentMigrationPreservesPopulatedSemanticAndSearchState$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestWithSystemTx",
+      "run": "^TestWithSystemTx$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestWithTeamTxSetsLegacyProfileSetting",
+      "run": "^TestWithTeamTxSetsLegacyProfileSetting$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberAttemptDiagnosticHoldTransactionRollback",
+      "run": "^TestRememberAttemptDiagnosticHoldTransactionRollback$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestPrivateMemoryAuditBackfillAssociatesMatchingCredentialRows",
+      "run": "^TestPrivateMemoryAuditBackfillAssociatesMatchingCredentialRows$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemoryCorrectionStatusHidesSealedGeneration",
+      "run": "^TestPrivateMemoryCorrectionStatusHidesSealedGeneration$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact",
+      "run": "^TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemoryCredentialRetirementUpgradesActiveErasure",
+      "run": "^TestPrivateMemoryCredentialRetirementUpgradesActiveErasure$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage",
+      "run": "^TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemoryErasureCleansSynchronousAssessmentAfterAttemptOrder",
+      "run": "^TestPrivateMemoryErasureCleansSynchronousAssessmentAfterAttemptOrder$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemoryErasureRemovesInboundCrossSpaceReferences",
+      "run": "^TestPrivateMemoryErasureRemovesInboundCrossSpaceReferences$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemoryExpiredLeaseIsReclaimedWithNewFence",
+      "run": "^TestPrivateMemoryExpiredLeaseIsReclaimedWithNewFence$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemoryFailureRetriesAreBackedOffAndBounded",
+      "run": "^TestPrivateMemoryFailureRetriesAreBackedOffAndBounded$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemoryGenerationTriggerAllowsAuthenticatedSharedWrites",
+      "run": "^TestPrivateMemoryGenerationTriggerAllowsAuthenticatedSharedWrites$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemoryIdempotencyConcurrentReplay",
+      "run": "^TestPrivateMemoryIdempotencyConcurrentReplay$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemoryManifestMatchesCatalog",
+      "run": "^TestPrivateMemoryManifestMatchesCatalog$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemoryManifestMismatchBlocksPrepare",
+      "run": "^TestPrivateMemoryManifestMismatchBlocksPrepare$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemoryMissingRetiredCredentialLosesClaim",
+      "run": "^TestPrivateMemoryMissingRetiredCredentialLosesClaim$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemoryRetentionSelectsExpiredSpacesAndExcludesLegalHolds",
+      "run": "^TestPrivateMemoryRetentionSelectsExpiredSpacesAndExcludesLegalHolds$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemorySSOCredentialDeletePreservesSharedActorMembership",
+      "run": "^TestPrivateMemorySSOCredentialDeletePreservesSharedActorMembership$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace",
+      "run": "^TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemorySSOCredentialRevocationAuditFailureRollsBackDisable",
+      "run": "^TestPrivateMemorySSOCredentialRevocationAuditFailureRollsBackDisable$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemorySSOCredentialRevocationAuditStoresProfileAndCredentialActors",
+      "run": "^TestPrivateMemorySSOCredentialRevocationAuditStoresProfileAndCredentialActors$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndExchanges",
+      "run": "^TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndExchanges$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC",
+      "run": "^TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberAttemptDiagnosticsPurgeClaimsConcurrentBatches",
+      "run": "^TestRememberAttemptDiagnosticsPurgeClaimsConcurrentBatches$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberAttemptDiagnosticsDrainRotatesPrivateSpaces",
+      "run": "^TestRememberAttemptDiagnosticsDrainRotatesPrivateSpaces$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes",
+      "run": "^TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes$",
+      "phase": "precheck"
+    },
+    {
+      "id": "server/TestRememberServiceRejectsHistoricalOutcomesThroughPostgres",
+      "run": "^TestRememberServiceRejectsHistoricalOutcomesThroughPostgres$",
+      "phase": "scenario",
+      "scenario": "synchronous_write_primitives"
+    },
+    {
+      "id": "server/TestRememberServiceRejectsMigratedAttemptThroughPostgres",
+      "run": "^TestRememberServiceRejectsMigratedAttemptThroughPostgres$",
+      "phase": "scenario",
+      "scenario": "synchronous_write_primitives"
+    },
+    {
+      "id": "service/TestComposeSynchronousEvidenceOnlyAssessorBatch",
+      "run": "^TestComposeSynchronousEvidenceOnlyAssessorBatch$",
+      "phase": "scenario",
+      "scenario": "synchronous_write_primitives"
+    },
+    {
+      "id": "repository/TestClaimedPrivateConflictDerivedEvidenceCannotStageAfterErasureReopensSpace",
+      "run": "^TestClaimedPrivateConflictDerivedEvidenceCannotStageAfterErasureReopensSpace$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestComposeRememberPrimitives",
+      "run": "^TestComposeRememberPrimitives$",
+      "phase": "scenario",
+      "scenario": "synchronous_write_primitives"
+    },
+    {
+      "id": "repository/TestConflictReviewRetiresLosingSearchProjectionWithoutEmbedding",
+      "run": "^TestConflictReviewRetiresLosingSearchProjectionWithoutEmbedding$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestConflictSnapshotScopeLocksCorrectionBeforeReviewRowLock",
+      "run": "^TestConflictSnapshotScopeLocksCorrectionBeforeReviewRowLock$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestConflictSnapshotScopeSerializesPlacementReviewAndWrite",
+      "run": "^TestConflictSnapshotScopeSerializesPlacementReviewAndWrite$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceConflictAllowsExplicitKnownCitationWithoutCandidateAssociation",
+      "run": "^TestEvidenceConflictAllowsExplicitKnownCitationWithoutCandidateAssociation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceConflictChangedPositionSetCreatesNewCase",
+      "run": "^TestEvidenceConflictChangedPositionSetCreatesNewCase$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceConflictConcurrentCreationSerializesSameOwnerAndDifferentOwner",
+      "run": "^TestEvidenceConflictConcurrentCreationSerializesSameOwnerAndDifferentOwner$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceConflictDismissalRecordsTerminalEvent",
+      "run": "^TestEvidenceConflictDismissalRecordsTerminalEvent$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceConflictHistoricalEventHydrationIsBounded",
+      "run": "^TestEvidenceConflictHistoricalEventHydrationIsBounded$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceConflictRecallBoundsCaseHydration",
+      "run": "^TestEvidenceConflictRecallBoundsCaseHydration$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceConflictRecallFiltersHistoricalIneligibleBeforeCandidateLimit",
+      "run": "^TestEvidenceConflictRecallFiltersHistoricalIneligibleBeforeCandidateLimit$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceConflictRecallHistoricalOrderPrecedesCandidateLimit",
+      "run": "^TestEvidenceConflictRecallHistoricalOrderPrecedesCandidateLimit$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceConflictRecallRequiresEveryPositionToRemainEligible",
+      "run": "^TestEvidenceConflictRecallRequiresEveryPositionToRemainEligible$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceConflictRememberCreationAndRecurrence",
+      "run": "^TestEvidenceConflictRememberCreationAndRecurrence$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceConflictRememberKeepsForcedBatchPositionsDistinct",
+      "run": "^TestEvidenceConflictRememberKeepsForcedBatchPositionsDistinct$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestEvidenceConflictStaleCandidateRollsBackRemember",
+      "run": "^TestEvidenceConflictStaleCandidateRollsBackRemember$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestKnownEvidenceFenceAllowsVisibleCrossOwnerEvidenceUnderRLS",
+      "run": "^TestKnownEvidenceFenceAllowsVisibleCrossOwnerEvidenceUnderRLS$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestKnownEvidenceFenceFailsClosedWhenPrivateSpaceSeals",
+      "run": "^TestKnownEvidenceFenceFailsClosedWhenPrivateSpaceSeals$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestKnownEvidenceFenceFailsClosedWhenSourceRevisionIsLocked",
+      "run": "^TestKnownEvidenceFenceFailsClosedWhenSourceRevisionIsLocked$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestKnownEvidenceFenceRejectsSnapshotAfterSameTransactionSourceAdvance",
+      "run": "^TestKnownEvidenceFenceRejectsSnapshotAfterSameTransactionSourceAdvance$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestKnownEvidenceFenceSerializesConcurrentQuarantine",
+      "run": "^TestKnownEvidenceFenceSerializesConcurrentQuarantine$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestKnownEvidenceSupportAllowsOwnerCorrection",
+      "run": "^TestKnownEvidenceSupportAllowsOwnerCorrection$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestKnownEvidenceSupportDoesNotRequireInlineEmbeddingProjection",
+      "run": "^TestKnownEvidenceSupportDoesNotRequireInlineEmbeddingProjection$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestKnownEvidenceSupportPreservesABCOwnershipAndIsolation",
+      "run": "^TestKnownEvidenceSupportPreservesABCOwnershipAndIsolation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestKnownEvidenceSupportRejectsCrossSpacePrivateRelationship",
+      "run": "^TestKnownEvidenceSupportRejectsCrossSpacePrivateRelationship$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestLedgerAuthorityConstraintsUseCanonicalValues",
+      "run": "^TestLedgerAuthorityConstraintsUseCanonicalValues$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestLedgerCreateIngestAdvancesWholeSourceRevisionWithoutEvidenceTargetList",
+      "run": "^TestLedgerCreateIngestAdvancesWholeSourceRevisionWithoutEvidenceTargetList$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestLedgerSourceRevisionCompareAndSet",
+      "run": "^TestLedgerSourceRevisionCompareAndSet$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestLedgerValidateRejectsMixedSourceRevisionBatch",
+      "run": "^TestLedgerValidateRejectsMixedSourceRevisionBatch$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOverdueConflictResolutionRetainsEvidenceUsedByAnotherOwner",
+      "run": "^TestOverdueConflictResolutionRetainsEvidenceUsedByAnotherOwner$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOverdueConflictResolutionRetainsEvidenceUsedByLosingOwner",
+      "run": "^TestOverdueConflictResolutionRetainsEvidenceUsedByLosingOwner$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallAndFullTextSuppressExactAliasesButKeepCanonicalEvidence",
+      "run": "^TestRecallAndFullTextSuppressExactAliasesButKeepCanonicalEvidence$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallEvidenceDoesNotApplyFutureAliasSupportAtKnownAt",
+      "run": "^TestRecallEvidenceDoesNotApplyFutureAliasSupportAtKnownAt$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallEvidenceExcludesRelationshipAliases",
+      "run": "^TestRecallEvidenceExcludesRelationshipAliases$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallEvidenceExcludesStaleSupportSourceRevision",
+      "run": "^TestRecallEvidenceExcludesStaleSupportSourceRevision$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallEvidenceHistoricalAliasEndsAtSourceSupersession",
+      "run": "^TestRecallEvidenceHistoricalAliasEndsAtSourceSupersession$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallEvidenceHistoricalExcludesEvidenceRetractedAtKnownAt",
+      "run": "^TestRecallEvidenceHistoricalExcludesEvidenceRetractedAtKnownAt$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallEvidenceHistoricalIncludesNonCurrentSearchDocuments",
+      "run": "^TestRecallEvidenceHistoricalIncludesNonCurrentSearchDocuments$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallEvidenceHydratesEvidenceProvenance",
+      "run": "^TestRecallEvidenceHydratesEvidenceProvenance$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallEvidenceHydratesHistoricallySupportedRelationshipAtKnownAt",
+      "run": "^TestRecallEvidenceHydratesHistoricallySupportedRelationshipAtKnownAt$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallEvidenceHydratesSupportDecisionEligibility",
+      "run": "^TestRecallEvidenceHydratesSupportDecisionEligibility$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallEvidenceIsolatesCredentialPrivateSpacesWithinTeam",
+      "run": "^TestRecallEvidenceIsolatesCredentialPrivateSpacesWithinTeam$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallExcludesConflictResolutionDeletionOnlyEvidence",
+      "run": "^TestRecallExcludesConflictResolutionDeletionOnlyEvidence$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallExpansionFollowsHistoricalAliasSupportToCanonicalEvidence",
+      "run": "^TestRecallExpansionFollowsHistoricalAliasSupportToCanonicalEvidence$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallFailedDocumentsRemainLexicalAndTeamScopedWhileVectorsAreExcluded",
+      "run": "^TestRecallFailedDocumentsRemainLexicalAndTeamScopedWhileVectorsAreExcluded$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallFeedbackEventRepositoryFencesSealedPrivateSpace",
+      "run": "^TestRecallFeedbackEventRepositoryFencesSealedPrivateSpace$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallFeedbackEventRepositoryRecordsSnapshotBeforeFeedback",
+      "run": "^TestRecallFeedbackEventRepositoryRecordsSnapshotBeforeFeedback$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallQuarantinedHistoricalAliasSupportDoesNotExposeRelationship",
+      "run": "^TestRecallQuarantinedHistoricalAliasSupportDoesNotExposeRelationship$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallRelationshipsFullTextFencesGenerationAndKeepsForegroundRows",
+      "run": "^TestRecallRelationshipsFullTextFencesGenerationAndKeepsForegroundRows$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallRelationshipsHydratesHistoricallySupersededAtKnownAt",
+      "run": "^TestRecallRelationshipsHydratesHistoricallySupersededAtKnownAt$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallRelationshipsHydratesHistoricallySupportedAtKnownAt",
+      "run": "^TestRecallRelationshipsHydratesHistoricallySupportedAtKnownAt$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallRelationshipsKeepsLastActivatedGenerationDuringUnactivatedProjection",
+      "run": "^TestRecallRelationshipsKeepsLastActivatedGenerationDuringUnactivatedProjection$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallRelationshipsOmitsVectorWhenOnlyStaleContractDocumentsAreCurrent",
+      "run": "^TestRecallRelationshipsOmitsVectorWhenOnlyStaleContractDocumentsAreCurrent$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallRelationshipsReturnsEquivalentRelationshipIDs",
+      "run": "^TestRecallRelationshipsReturnsEquivalentRelationshipIDs$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallRelationshipsScopesKnownRelationshipGroupsToActiveSpace",
+      "run": "^TestRecallRelationshipsScopesKnownRelationshipGroupsToActiveSpace$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallRelationshipsUsesActivatedGenerationWhenNewestGenerationFailed",
+      "run": "^TestRecallRelationshipsUsesActivatedGenerationWhenNewestGenerationFailed$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallRelationshipsUsesCurrentGenerationVectors",
+      "run": "^TestRecallRelationshipsUsesCurrentGenerationVectors$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallRelationshipsUsesNullGenerationVectorsForPostCutoverTeam",
+      "run": "^TestRecallRelationshipsUsesNullGenerationVectorsForPostCutoverTeam$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestReferenceDefinitionGuardRequiresSystemOrMigrationMode",
+      "run": "^TestReferenceDefinitionGuardRequiresSystemOrMigrationMode$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberAttemptLockBoundsDifferentKeysByPoolAdmission",
+      "run": "^TestRememberAttemptLockBoundsDifferentKeysByPoolAdmission$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberAttemptLockDifferentKeysUseIndependentCallbacks",
+      "run": "^TestRememberAttemptLockDifferentKeysUseIndependentCallbacks$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberAttemptLockDiscardsFailedCleanupConnection",
+      "run": "^TestRememberAttemptLockDiscardsFailedCleanupConnection$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberAttemptLockRejectsPoolWithoutApplicationCapacity",
+      "run": "^TestRememberAttemptLockRejectsPoolWithoutApplicationCapacity$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberAttemptLockReleasesAfterCallbackPanic",
+      "run": "^TestRememberAttemptLockReleasesAfterCallbackPanic$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberAttemptLockReleasesAfterContextCancellation",
+      "run": "^TestRememberAttemptLockReleasesAfterContextCancellation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberAttemptLockSerializesAcrossRepositoryInstances",
+      "run": "^TestRememberAttemptLockSerializesAcrossRepositoryInstances$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberDuplicateBudgetAllocationUsesScopedPostgresCandidates",
+      "run": "^TestRememberDuplicateBudgetAllocationUsesScopedPostgresCandidates$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberDuplicateCandidateIsolationAndBound",
+      "run": "^TestRememberDuplicateCandidateIsolationAndBound$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberDuplicateConcurrentSameContentConverges",
+      "run": "^TestRememberDuplicateConcurrentSameContentConverges$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberDuplicateCrossOwnerReusePreservesOccurrenceLineage",
+      "run": "^TestRememberDuplicateCrossOwnerReusePreservesOccurrenceLineage$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberDuplicateEmbeddingPlanUsesCanonicalRenderedBytesAndRejectsContractChange",
+      "run": "^TestRememberDuplicateEmbeddingPlanUsesCanonicalRenderedBytesAndRejectsContractChange$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberDuplicateExactMatchRequiresByteEqualityOnHashCollision",
+      "run": "^TestRememberDuplicateExactMatchRequiresByteEqualityOnHashCollision$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberDuplicateExactReuseCreatesOneCanonicalAndTwoOccurrences",
+      "run": "^TestRememberDuplicateExactReuseCreatesOneCanonicalAndTwoOccurrences$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberDuplicateExactReuseRejectsConcurrentPrivateSpaceSeal",
+      "run": "^TestRememberDuplicateExactReuseRejectsConcurrentPrivateSpaceSeal$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberDuplicateExactReuseRequiresCurrentSearchProjection",
+      "run": "^TestRememberDuplicateExactReuseRequiresCurrentSearchProjection$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberDuplicateExactReuseSerializesWithConcurrentQuarantine",
+      "run": "^TestRememberDuplicateExactReuseSerializesWithConcurrentQuarantine$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberDuplicateFinalReauthorizationRejectsQuarantinedCandidateAtomically",
+      "run": "^TestRememberDuplicateFinalReauthorizationRejectsQuarantinedCandidateAtomically$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberDuplicateForceAndLifecycleBearingEvidenceStayNew",
+      "run": "^TestRememberDuplicateForceAndLifecycleBearingEvidenceStayNew$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberDuplicateIdenticalItemsInOneBatchShareCanonical",
+      "run": "^TestRememberDuplicateIdenticalItemsInOneBatchShareCanonical$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberDuplicateRepeatedCanonicalKeepsRelationshipSupportOccurrences",
+      "run": "^TestRememberDuplicateRepeatedCanonicalKeepsRelationshipSupportOccurrences$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberDuplicateSemanticReuseSerializesWithConcurrentQuarantine",
+      "run": "^TestRememberDuplicateSemanticReuseSerializesWithConcurrentQuarantine$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberDuplicateSourceLessCanonicalStaysIndependentFromSourceAdvance",
+      "run": "^TestRememberDuplicateSourceLessCanonicalStaysIndependentFromSourceAdvance$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberEvidenceOnlyCommitIsAtomicAndSearchable",
+      "run": "^TestRememberEvidenceOnlyCommitIsAtomicAndSearchable$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberAttemptDiagnosticHoldAndPurgeSerializeOnPrivateSpace",
+      "run": "^TestRememberAttemptDiagnosticHoldAndPurgeSerializeOnPrivateSpace$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberAttemptDiagnosticHoldSkipsNoopUpdates",
+      "run": "^TestRememberAttemptDiagnosticHoldSkipsNoopUpdates$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberPolicyDiagnosticLegalHoldReleaseAndErasure",
+      "run": "^TestRememberPolicyDiagnosticLegalHoldReleaseAndErasure$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberPrimitivesPersistRetryabilityAndLegacyProjection",
+      "run": "^TestRememberPrimitivesPersistRetryabilityAndLegacyProjection$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberRejectsMismatchedProvenanceWhenReusingSourceRevision",
+      "run": "^TestRememberRejectsMismatchedProvenanceWhenReusingSourceRevision$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSearchReadinessRejectsStaleRelationshipProjectionGeneration",
+      "run": "^TestSearchReadinessRejectsStaleRelationshipProjectionGeneration$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSearchConvergenceHydratesRelationshipDocumentsAfterClosingDocumentRows",
+      "run": "^TestSearchConvergenceHydratesRelationshipDocumentsAfterClosingDocumentRows$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSearchReconciliationCanonicalSourceSetAndSpaceFence",
+      "run": "^TestSearchReconciliationCanonicalSourceSetAndSpaceFence$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSearchReconciliationExcludesConflictResolutionDeletionOnlyEvidence",
+      "run": "^TestSearchReconciliationExcludesConflictResolutionDeletionOnlyEvidence$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSearchReconciliationExcludesLifecycleTerminalEvidenceWithoutDocument",
+      "run": "^TestSearchReconciliationExcludesLifecycleTerminalEvidenceWithoutDocument$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSearchReconciliationExcludesSealedSpaceEvidenceWithoutDocument",
+      "run": "^TestSearchReconciliationExcludesSealedSpaceEvidenceWithoutDocument$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSearchReconciliationExcludesSupersededSourceRevisionWithoutDocument",
+      "run": "^TestSearchReconciliationExcludesSupersededSourceRevisionWithoutDocument$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSearchReconciliationProjectsSafeHistoricalRejectedEvidence",
+      "run": "^TestSearchReconciliationProjectsSafeHistoricalRejectedEvidence$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSearchReconciliationRetiresLifecycleTerminalEvidence",
+      "run": "^TestSearchReconciliationRetiresLifecycleTerminalEvidence$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSearchReconciliationSelectionAdvancesDurableCursorPastHealthyDocuments",
+      "run": "^TestSearchReconciliationSelectionAdvancesDurableCursorPastHealthyDocuments$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSearchReconciliationSelectionAndHashFence",
+      "run": "^TestSearchReconciliationSelectionAndHashFence$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSearchReconciliationSelectionFillsRelationshipCapacity",
+      "run": "^TestSearchReconciliationSelectionFillsRelationshipCapacity$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSearchReconciliationSuppressesHistoricalEvidenceAliases",
+      "run": "^TestSearchReconciliationSuppressesHistoricalEvidenceAliases$",
+      "phase": "precheck"
+    },
+    {
+      "id": "settings/TestSettingsControlPortalPositiveAndDurableAudit",
+      "run": "^TestSettingsControlPortalPositiveAndDurableAudit$",
+      "phase": "precheck"
+    },
+    {
+      "id": "settings/TestSettingsControlPortalRejectsUnauthorizedAndProtectedUpdates",
+      "run": "^TestSettingsControlPortalRejectsUnauthorizedAndProtectedUpdates$",
+      "phase": "precheck"
+    },
+    {
+      "id": "settings/TestSecurityBanRoundTripAndDurableAudit",
+      "run": "^TestSecurityBanRoundTripAndDurableAudit$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams",
+      "run": "^TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSemanticTraceRelationshipHydratesLineageAndBoundedGraph",
+      "run": "^TestSemanticTraceRelationshipHydratesLineageAndBoundedGraph$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestTraceRelationshipMarksLifecycleEventLimitAsTruncated",
+      "run": "^TestTraceRelationshipMarksLifecycleEventLimitAsTruncated$",
+      "phase": "precheck"
+    }
+  ]
+}

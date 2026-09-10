@@ -10,17 +10,16 @@ import (
 	"unicode/utf8"
 
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 )
 
 const (
-	EvidenceConflictDefaultLimit      = knowledgepostgres.EvidenceConflictDefaultLimit
-	EvidenceConflictMaxLimit          = knowledgepostgres.EvidenceConflictMaxLimit
-	EvidenceConflictDefaultEventLimit = knowledgepostgres.EvidenceConflictDefaultEventLimit
-	EvidenceConflictMaxEventLimit     = knowledgepostgres.EvidenceConflictMaxEventLimit
-	EvidenceConflictMaxResults        = knowledgepostgres.EvidenceConflictMaxResults
-	EvidenceConflictMaxPositions      = knowledgepostgres.EvidenceConflictMaxPositions
-	EvidenceConflictMaxQuoteRunes     = knowledgepostgres.EvidenceConflictMaxQuoteRunes
+	EvidenceConflictDefaultLimit      = knowledgecontract.EvidenceConflictDefaultLimit
+	EvidenceConflictMaxLimit          = knowledgecontract.EvidenceConflictMaxLimit
+	EvidenceConflictDefaultEventLimit = knowledgecontract.EvidenceConflictDefaultEventLimit
+	EvidenceConflictMaxEventLimit     = knowledgecontract.EvidenceConflictMaxEventLimit
+	EvidenceConflictMaxResults        = knowledgecontract.EvidenceConflictMaxResults
+	EvidenceConflictMaxPositions      = knowledgecontract.EvidenceConflictMaxPositions
+	EvidenceConflictMaxQuoteRunes     = knowledgecontract.EvidenceConflictMaxQuoteRunes
 )
 
 var (
@@ -43,19 +42,19 @@ type EvidenceConflictGetResult = knowledgecontract.EvidenceConflictGetResult
 type EvidenceConflictResolutionInput = knowledgecontract.EvidenceConflictResolutionInput
 
 func EncodeEvidenceConflictCursor(cursor EvidenceConflictCursor) (string, error) {
-	return knowledgepostgres.EncodeEvidenceConflictCursor(cursor)
+	return knowledgecontract.EncodeEvidenceConflictCursor(cursor)
 }
 
 func DecodeEvidenceConflictCursor(raw string) (*EvidenceConflictCursor, error) {
-	return knowledgepostgres.DecodeEvidenceConflictCursor(raw)
+	return knowledgecontract.DecodeEvidenceConflictCursor(raw)
 }
 
 func EncodeEvidenceConflictEventCursor(cursor EvidenceConflictEventCursor) (string, error) {
-	return knowledgepostgres.EncodeEvidenceConflictEventCursor(cursor)
+	return knowledgecontract.EncodeEvidenceConflictEventCursor(cursor)
 }
 
 func DecodeEvidenceConflictEventCursor(raw string) (*EvidenceConflictEventCursor, error) {
-	return knowledgepostgres.DecodeEvidenceConflictEventCursor(raw)
+	return knowledgecontract.DecodeEvidenceConflictEventCursor(raw)
 }
 
 type EvidenceConflictRepository interface {
