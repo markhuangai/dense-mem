@@ -1,22 +1,30 @@
 package serverapp
 
 import (
+	"context"
 	"time"
 
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/markhuangai/dense-mem/internal/lifecycle"
+	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 type lifecycleApplicationDependencies struct {
-	Semantic                   memoryservice.LifecycleSemanticRepository
-	Evidence                   memoryservice.LifecycleEvidenceRepository
-	CorrectionExecutor         memoryservice.LifecycleCorrectionExecutor
+	Semantic *repository.SemanticRepositoryImpl
+	Evidence interface {
+		RetractEvidence(context.Context, knowledgecontract.RetractEvidenceInput) (*knowledgecontract.EvidenceLifecycleResult, error)
+	}
+	CorrectionExecutor         lifecycle.LifecycleCorrectionExecutor
 	CorrectionEmbeddingTimeout time.Duration
 }
 
-func buildLifecycleApplication(deps lifecycleApplicationDependencies) memoryservice.LifecycleService {
-	return memoryservice.NewLifecycleService(memoryservice.LifecycleDependencies{
-		Semantic:                   deps.Semantic,
-		Evidence:                   deps.Evidence,
+func buildLifecycleApplication(deps lifecycleApplicationDependencies) lifecycle.LifecycleService {
+	var semantic lifecycle.LifecycleSemanticRepository
+	if deps.Semantic != nil {
+		semantic = deps.Semantic.LifecycleStore()
+	}
+	return lifecycle.NewLifecycleService(lifecycle.LifecycleDependencies{
+		Port:                       semantic,
 		CorrectionExecutor:         deps.CorrectionExecutor,
 		CorrectionEmbeddingTimeout: deps.CorrectionEmbeddingTimeout,
 	})

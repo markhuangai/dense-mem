@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	"github.com/markhuangai/dense-mem/internal/lifecycle"
 )
 
 func bindLifecycleTool(tool Tool, deps Dependencies) Tool {
@@ -18,7 +18,7 @@ func bindLifecycleTool(tool Tool, deps Dependencies) Tool {
 			if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
 				return nil, fmt.Errorf("retract_evidence: invalid input: %w", err)
 			}
-			var req memoryservice.RetractEvidenceRequest
+			var req lifecycle.RetractEvidenceRequest
 			if err := remapInput(input, &req); err != nil {
 				return nil, fmt.Errorf("retract_evidence: invalid input: %w", err)
 			}
@@ -36,7 +36,7 @@ func bindLifecycleTool(tool Tool, deps Dependencies) Tool {
 			if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
 				return nil, fmt.Errorf("correct_relationship: invalid input: %w", err)
 			}
-			var req memoryservice.CorrectRelationshipRequest
+			var req lifecycle.CorrectRelationshipRequest
 			if err := remapInput(input, &req); err != nil {
 				return nil, fmt.Errorf("correct_relationship: invalid input: %w", err)
 			}

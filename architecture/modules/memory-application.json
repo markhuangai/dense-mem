@@ -27,7 +27,23 @@
       "issue": 374
     },
     {
-      "path": "internal/service/memoryservice/lifecycle_test.go",
+      "path": "internal/service/memoryservice/lifecycle_test_helpers_test.go",
+      "issue": 374
+    },
+    {
+      "path": "internal/repository/lifecycle_repository.go",
+      "issue": 374
+    },
+    {
+      "path": "internal/lifecycle/service.go",
+      "issue": 374
+    },
+    {
+      "path": "internal/lifecycle/service_test.go",
+      "issue": 374
+    },
+    {
+      "path": "internal/lifecycle/status.go",
       "issue": 374
     }
   ],
@@ -38,12 +54,70 @@
         "id": "github.com/markhuangai/dense-mem/internal/service/memoryservice",
         "role": "application_api",
         "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/lifecycle",
+        "role": "application_api",
+        "visibility": "public"
       }
     ]
   },
   "browser": {
     "units": []
   },
+  "compatibility_bridges": [
+    {
+      "source_path": "internal/service/memoryservice/lifecycle.go",
+      "fields": [
+        "LifecycleService",
+        "LifecycleDependencies",
+        "LifecycleSemanticRepository",
+        "LifecycleCorrectionExecutor",
+        "LifecycleEvidenceRepository",
+        "CorrectRelationshipRequest",
+        "CorrectRelationshipReceipt",
+        "RetractEvidenceRequest",
+        "RetractEvidenceResult",
+        "NewLifecycleService"
+      ],
+      "consumers": [
+        {
+          "path": "internal/tools/registry/contract_result_errors.go",
+          "symbol": "ActionableErrorData"
+        },
+        {
+          "path": "internal/tools/registry/contract_result_errors_test.go",
+          "symbol": "TestCorrectionToolResultErrorMapsLifecycleAndHTTPFailures"
+        },
+        {
+          "path": "internal/tools/registry/contract_result_errors_test.go",
+          "symbol": "TestCorrectionToolResultErrorPreservesTypedConflictReasons"
+        },
+        {
+          "path": "internal/tools/registry/contract_schema_helpers.go",
+          "symbol": "submissionStatusErrorSchema"
+        },
+        {
+          "path": "internal/tools/registry/uat_lifecycle_test.go",
+          "symbol": "stubLifecycleService.CorrectRelationship"
+        },
+        {
+          "path": "internal/tools/registry/uat_lifecycle_test.go",
+          "symbol": "stubLifecycleService.RetractEvidence"
+        },
+        {
+          "path": "cmd/internal/serverapp/application_composition.go",
+          "symbol": "buildApplicationBundle"
+        }
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {
+        "path": "internal/lifecycle/service.go",
+        "symbol": "NewLifecycleService"
+      },
+      "removal_condition": "Remove the compatibility aliases after the remaining lifecycle consumers use internal/lifecycle directly."
+    }
+  ],
   "exceptions": [
     {
       "source": "github.com/markhuangai/dense-mem/internal/service/memoryservice",
