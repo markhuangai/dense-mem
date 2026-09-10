@@ -319,11 +319,8 @@ func TestDatabaseCaseFragmentsPreserveInventoryAndWave6Partition(t *testing.T) {
 		if fragment.Capability != capability {
 			t.Fatalf("fragment %s declares capability %q", capability, fragment.Capability)
 		}
-		if capability != "index-retirement" && len(fragment.Cases) == 0 {
+		if len(fragment.Cases) == 0 {
 			t.Fatalf("wave 7 fragment %s is unexpectedly empty", capability)
-		}
-		if capability == "index-retirement" && len(fragment.Cases) != 0 {
-			t.Fatalf("index-retirement fragment unexpectedly owns cases")
 		}
 	}
 }
