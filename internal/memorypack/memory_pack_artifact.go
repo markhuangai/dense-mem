@@ -63,11 +63,11 @@ func validateMemoryPackArtifactWithOptions(artifact MemoryPackArtifact, includeE
 	if strings.TrimSpace(artifact.Name) == "" {
 		return fmt.Errorf("%w: name is required", ErrInvalidArtifact)
 	}
-	if len(artifact.Name) > 256 {
-		return fmt.Errorf("%w: name exceeds 256 characters", ErrInvalidArtifact)
+	if len(artifact.Name) > maxMemoryPackNameBytes {
+		return fmt.Errorf("%w: name exceeds %d characters", ErrInvalidArtifact, maxMemoryPackNameBytes)
 	}
-	if len(artifact.Description) > 1024 {
-		return fmt.Errorf("%w: description exceeds 1024 characters", ErrInvalidArtifact)
+	if len(artifact.Description) > maxMemoryPackDescriptionBytes {
+		return fmt.Errorf("%w: description exceeds %d characters", ErrInvalidArtifact, maxMemoryPackDescriptionBytes)
 	}
 	if len(artifact.Relationships) == 0 {
 		return fmt.Errorf("%w: relationships is required", ErrInvalidArtifact)

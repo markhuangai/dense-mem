@@ -29,6 +29,7 @@ type exportSemanticStub struct {
 	result *tracecontract.RelationshipTraceResult
 	err    error
 	input  tracecontract.Input
+	calls  int
 }
 
 type fixtureTrace struct {
@@ -76,6 +77,7 @@ func (s *fixtureSemanticReader) TraceRelationship(_ context.Context, input trace
 }
 
 func (s *exportSemanticStub) TraceRelationship(_ context.Context, input tracecontract.Input) (*tracecontract.RelationshipTraceResult, error) {
+	s.calls++
 	s.input = input
 	if s.err != nil {
 		return nil, s.err
@@ -274,6 +276,35 @@ func TestMemoryPackExportRejectsMissingInputsAndUnavailableRelationships(t *test
 			}
 			if tc.name == "relationship missing" && !errors.Is(err, tracecontract.ErrRelationshipNotFound) {
 				t.Fatalf("Export error = %v, want tracecontract.ErrRelationshipNotFound", err)
+			}
+		})
+	}
+}
+
+func TestMemoryPackExportValidatesMetadataBeforeTracing(t *testing.T) {
+	teamID, profileID := uuid.New(), uuid.New()
+	reader := &exportSemanticStub{record: &tracecontract.RelationshipTraceRecord{
+		RelationshipID: "rel-1",
+		Status:         string(domain.RelationshipStatusActive),
+	}}
+	svc := NewMemoryPackService(MemoryPackDependencies{Semantic: reader})
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: teamID, OwnerID: profileID})
+	cases := []struct {
+		name string
+		req  ExportRequest
+		want string
+	}{
+		{name: "name", req: ExportRequest{Name: strings.Repeat("n", maxMemoryPackNameBytes+1), RelationshipIDs: []string{"rel-1"}}, want: "name exceeds"},
+		{name: "description", req: ExportRequest{Name: "pack", Description: strings.Repeat("d", maxMemoryPackDescriptionBytes+1), RelationshipIDs: []string{"rel-1"}}, want: "description exceeds"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := svc.Export(ctx, tc.req)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Export error = %v, want substring %q", err, tc.want)
+			}
+			if reader.calls != 0 {
+				t.Fatalf("trace calls = %d, want 0 for invalid metadata", reader.calls)
 			}
 		})
 	}

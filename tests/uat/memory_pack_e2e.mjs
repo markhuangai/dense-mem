@@ -62,14 +62,25 @@ for (const actor of [
   { name: "same_team_b", credential: sameTeamB },
   { name: "other_team_c", credential: otherTeamC },
 ]) {
+  await assertAuthenticated(actor);
   for (const option of options) {
     const response = await exportRaw(actor.credential.apiKey, option.arguments);
-    const body = JSON.stringify(response);
-    assert([200, 401, 403].includes(response.status), `${actor.name}/${option.name} returned HTTP ${response.status}`);
-    if (response.status === 200) {
-      assert(response.payload.result?.isError === true || response.payload.error, `${actor.name}/${option.name} export was not denied`);
-    }
-    assert(!body.includes(evidenceSentinel), `${actor.name}/${option.name} response exposed private evidence content`);
+    assert(response.status === 200 && !response.payload.error, `${actor.name}/${option.name} returned an unexpected transport response`);
+    const result = response.payload.result;
+    assert(result?.isError === true, `${actor.name}/${option.name} export was not a structured MCP denial`);
+    const structured = result.structuredContent;
+    assert(
+      structured?.code === "invalid_input" &&
+        structured.reason_code === "reference_not_found" &&
+        structured.next_action === "refresh_state" &&
+        structured.retryable === false,
+      `${actor.name}/${option.name} denial was not the public reference_not_found envelope`,
+    );
+    const text = result.content?.[0]?.text;
+    assert(typeof text === "string", `${actor.name}/${option.name} denial omitted the public text envelope`);
+    const parsed = JSON.parse(text);
+    assert(parsed.code === "invalid_input" && parsed.reason_code === "reference_not_found", `${actor.name}/${option.name} text envelope was not reference_not_found`);
+    assert(!JSON.stringify(response).includes(evidenceSentinel), `${actor.name}/${option.name} response exposed private evidence content`);
     deniedResults.push({ actor: actor.name, option: option.name, status: response.status });
   }
 }
@@ -162,6 +173,29 @@ async function exportRaw(apiKey, argumentsValue) {
       params: { name: "export_memory_pack", arguments: argumentsValue },
     }),
   });
+}
+
+async function assertAuthenticated(actor) {
+  const response = await requestJSON(`${userURL}/mcp`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${actor.credential.apiKey}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: ++rpcID,
+      method: "tools/list",
+      params: {},
+    }),
+  });
+  assert(
+    response.status === 200 &&
+      !response.payload.error &&
+      Array.isArray(response.payload.result?.tools),
+    `${actor.name} credential authentication probe failed with HTTP ${response.status}`,
+  );
 }
 
 async function createTeam(name) {

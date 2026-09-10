@@ -16,9 +16,11 @@ import (
 var ErrMemoryPackRelationshipNotActive = errors.New("memory pack export relationship is not active")
 
 const (
-	maxExportRelationships  = 500
-	maxTraceEvents          = 100
-	maxFragmentContentRunes = 8000
+	maxExportRelationships        = 500
+	maxTraceEvents                = 100
+	maxFragmentContentRunes       = 8000
+	maxMemoryPackNameBytes        = 256
+	maxMemoryPackDescriptionBytes = 1024
 )
 
 var _ MemoryPackService = (*memoryPackService)(nil)
@@ -39,8 +41,16 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*Exp
 	if s.deps.Semantic == nil {
 		return nil, errors.New("memory pack export: semantic reader is required")
 	}
-	if strings.TrimSpace(req.Name) == "" {
+	name := strings.TrimSpace(req.Name)
+	description := strings.TrimSpace(req.Description)
+	if name == "" {
 		return nil, errors.New("memory pack export: name is required")
+	}
+	if len(name) > maxMemoryPackNameBytes {
+		return nil, fmt.Errorf("memory pack export: name exceeds %d characters", maxMemoryPackNameBytes)
+	}
+	if len(description) > maxMemoryPackDescriptionBytes {
+		return nil, fmt.Errorf("memory pack export: description exceeds %d characters", maxMemoryPackDescriptionBytes)
 	}
 	relationshipIDs := uniqueStrings(req.RelationshipIDs)
 	if len(relationshipIDs) == 0 {
@@ -55,8 +65,8 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*Exp
 	artifact := MemoryPackArtifact{
 		Format:      MemoryPackFormat,
 		PackID:      "pack_" + memoryPackShortHash(strings.Join(relationshipIDs, "\x00")+now.Format(time.RFC3339Nano)),
-		Name:        strings.TrimSpace(req.Name),
-		Description: strings.TrimSpace(req.Description),
+		Name:        name,
+		Description: description,
 		CreatedAt:   now.Format(time.RFC3339Nano),
 		Source: MemoryPackSource{
 			TeamID:     actor.TeamID.String(),
