@@ -108,6 +108,28 @@ aliases, so no adopter may reintroduce a private provider dependency or duplicat
 failure classification. Compatibility aliases remain bounded single-hop paths
 until their named capability cleanup owner removes them.
 
+## Wave 7 shared-readiness ownership
+
+The Wave 7 adopters use narrow recall reader callbacks and independent test
+partitions. `internal/recall/postgres` owns the private transaction-scoped
+reader types used by Recall; the current repository facade supplies the
+compatibility implementations until #376 and #377 move their live owners.
+Reader callbacks receive the existing PostgreSQL transaction so RLS, space
+generation, temporal fences, and bounded hydration remain unchanged.
+
+Recall, Conflict, and the retained ANN-index investigation have separate
+database-case fragments. The frozen baseline under
+`cmd/e2e/testdata/database-case-baseline.json` preserves each existing case's
+ID, run expression, phase, and scenario while allowing a capability adopter to
+add or relocate cases after source and architecture ownership are updated.
+The shared evidence-conflict fixture helpers remain owned by the PostgreSQL
+adapter in `internal/repository/evidence_conflict_fixtures.e2e`; Recall owns
+`internal/repository/evidence_conflict_recall_integration.e2e`, and Conflict
+owns `internal/repository/evidence_conflict_conflict_integration.e2e`.
+The central registry loader, architecture manifest, composition root, and
+canonical Knowledge writes remain shared read-only infrastructure during the
+adoptions.
+
 ## Wave 5 shared-readiness ownership
 
 Issue #389 freezes the writable partition for the eight Wave 5 adopters. The

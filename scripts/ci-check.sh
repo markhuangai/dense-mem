@@ -22,6 +22,7 @@ packages="$(scripts/go-packages.sh)"
 
 printf '%s\n' "${packages}"
 go test ${packages}
+go -C cmd/e2e test ./... -count=1
 
 packages="$(
 	go list -f '{{if .TestGoFiles}}{{.ImportPath}}{{end}}' ./internal/... |

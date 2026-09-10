@@ -94,6 +94,7 @@
     {"path": "internal/repository/conflict_system_profile_repository.go", "issue": 362},
     {"path": "internal/repository/evidence_conflict_queries.go", "issue": 362},
     {"path": "internal/repository/evidence_conflict_repository.go", "issue": 362},
+    {"path": "internal/repository/evidence_conflict_fixtures.e2e", "issue": 362},
     {"path": "internal/repository/evidence_duplicate.go", "issue": 362},
     {"path": "internal/repository/evidence_lifecycle_repository.go", "issue": 362},
     {"path": "internal/repository/evidence_lifecycle_compat.go", "issue": 362},
@@ -142,7 +143,7 @@
       "consumers": [
         {"path": "internal/service/conflictreview/service.go", "symbol": "Service.ProcessPendingConflictDerivedEvidence"},
         {"path": "internal/service/conflictreview/service.go", "symbol": "Service.stageConflictDerivedEvidence"},
-        {"path": "cmd/internal/serverapp/server.go", "symbol": "processTeamConflictReview"}
+        {"path": "cmd/internal/serverapp/conflict_review_worker.go", "symbol": "processTeamConflictReview"}
       ],
       "removal_issue": 382,
       "implementation_owner": {"path": "internal/knowledge/postgres/conflict_derived_evidence_task_repository.go", "symbol": "Store.StageConflictDerivedEvidence"},
@@ -204,7 +205,7 @@
       "source_path": "internal/repository/conflict_review_repository.go",
       "fields": ["LedgerRepositoryImpl.ReserveRelationshipConflictReviewRun", "LedgerRepositoryImpl.ClaimRelationshipConflictCases", "LedgerRepositoryImpl.ReleaseRelationshipConflictCaseClaim", "LedgerRepositoryImpl.ReviewRelationshipConflictCase", "LedgerRepositoryImpl.CompleteRelationshipConflictReviewRun"],
       "consumers": [
-        {"path": "cmd/internal/serverapp/server.go", "symbol": "processTeamConflictReview"},
+        {"path": "cmd/internal/serverapp/conflict_review_worker.go", "symbol": "processTeamConflictReview"},
         {"path": "internal/service/conflictreview/runner.go", "symbol": "Runner.ReserveRelationshipConflictReviewRun"},
         {"path": "internal/service/conflictreview/runner.go", "symbol": "Runner.ClaimRelationshipConflictCases"},
         {"path": "internal/service/conflictreview/runner.go", "symbol": "Runner.CompleteRelationshipConflictReviewRun"},
@@ -242,7 +243,7 @@
         {"path": "internal/service/evidenceconflict/service.go", "symbol": "Service.Get"}
       ],
       "removal_issue": 382,
-      "implementation_owner": {"path": "internal/knowledge/postgres/evidence_conflict_repository.go", "symbol": "EncodeEvidenceConflictCursor"},
+      "implementation_owner": {"path": "internal/knowledge/contract/evidence_conflict.go", "symbol": "EncodeEvidenceConflictCursor"},
       "removal_condition": "Remove the repository evidence-conflict aliases after the evidence-conflict service and tests use owner contracts directly."
     },
     {
@@ -651,6 +652,12 @@
       "target": "github.com/markhuangai/dense-mem/internal/graph/postgres",
       "removal_issue": 382,
       "reason": "Graph repository methods remain bounded single-hop compatibility facades while graph consumers migrate to the native PostgreSQL adapter; #382 removes the exception after the named consumers migrate."
+    },
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/repository",
+      "target": "github.com/markhuangai/dense-mem/internal/recall/postgres",
+      "removal_issue": 382,
+      "reason": "The legacy search repository supplies Recall's transaction-scoped conflict readers until the Recall PostgreSQL reader owner is adopted and the compatibility facade is removed."
     }
   ],
   "workers": [

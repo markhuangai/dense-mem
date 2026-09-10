@@ -8,6 +8,7 @@ import (
 
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+	recallpostgres "github.com/markhuangai/dense-mem/internal/recall/postgres"
 	searchmaintenance "github.com/markhuangai/dense-mem/internal/search/maintenance"
 	searchpostgres "github.com/markhuangai/dense-mem/internal/search/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -51,10 +52,12 @@ var (
 // convergence, and reconciliation policy live in search/postgres; canonical
 // search-document writes continue to use the knowledge owner.
 type SearchRepositoryImpl struct {
-	db             *gorm.DB
-	rls            rLSHelper
-	knowledgeOwner *knowledgepostgres.Store
-	searchOwner    *searchpostgres.Store
+	db                *gorm.DB
+	rls               rLSHelper
+	knowledgeOwner    *knowledgepostgres.Store
+	searchOwner       *searchpostgres.Store
+	recallConflicts   recallpostgres.RelationshipConflictReader
+	evidenceConflicts recallpostgres.EvidenceConflictReader
 }
 
 var _ SearchRepository = (*SearchRepositoryImpl)(nil)
@@ -62,8 +65,10 @@ var _ SearchRepository = (*SearchRepositoryImpl)(nil)
 func NewSearchRepository(db *gorm.DB, rls *postgres.RLS) *SearchRepositoryImpl {
 	return &SearchRepositoryImpl{
 		db: db, rls: rls,
-		knowledgeOwner: knowledgepostgres.NewStore(db, rls, knowledgecontract.ConflictRuntimeConfig{}),
-		searchOwner:    searchpostgres.NewStore(db, rls),
+		knowledgeOwner:    knowledgepostgres.NewStore(db, rls, knowledgecontract.ConflictRuntimeConfig{}),
+		searchOwner:       searchpostgres.NewStore(db, rls),
+		recallConflicts:   recallpostgres.RelationshipConflictReader(loadRecallOpenConflictRecords),
+		evidenceConflicts: recallpostgres.EvidenceConflictReader(loadRecallEvidenceConflictRecords),
 	}
 }
 

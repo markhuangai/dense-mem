@@ -156,14 +156,6 @@
     },
     {
       "path": "cmd/internal/serverapp/server.go",
-      "function": "startConflictReviewWorkers",
-      "kind": "goroutine",
-      "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
-    },
-    {
-      "path": "cmd/internal/serverapp/server.go",
       "function": "RunActiveServer",
       "kind": "goroutine",
       "ordinal": 7,

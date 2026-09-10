@@ -33,6 +33,18 @@ type caseFragment struct {
 	Cases      []databaseCase `json:"cases"`
 }
 
+type databaseCaseBaseline struct {
+	ID       string `json:"id"`
+	Run      string `json:"run"`
+	Phase    string `json:"phase"`
+	Scenario string `json:"scenario,omitempty"`
+}
+
+type databaseCaseBaselineFile struct {
+	Version int                    `json:"version"`
+	Cases   []databaseCaseBaseline `json:"cases"`
+}
+
 type goEvent struct {
 	Action string `json:"Action"`
 	Test   string `json:"Test"`
@@ -40,6 +52,52 @@ type goEvent struct {
 
 type overlay struct {
 	Replace map[string]string `json:"Replace"`
+}
+
+func loadDatabaseCaseBaseline(root string) ([]databaseCaseBaseline, error) {
+	path := filepath.Join(root, "cmd", "e2e", "testdata", "database-case-baseline.json")
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read database case baseline: %w", err)
+	}
+	var baseline databaseCaseBaselineFile
+	if err := json.Unmarshal(contents, &baseline); err != nil {
+		return nil, fmt.Errorf("decode database case baseline: %w", err)
+	}
+	if baseline.Version != 1 || len(baseline.Cases) == 0 {
+		return nil, errors.New("database case baseline has invalid version or no cases")
+	}
+	seen := make(map[string]struct{}, len(baseline.Cases))
+	for _, item := range baseline.Cases {
+		if item.ID == "" || item.Run == "" || item.Phase == "" {
+			return nil, fmt.Errorf("database case baseline has incomplete case %q", item.ID)
+		}
+		if _, exists := seen[item.ID]; exists {
+			return nil, fmt.Errorf("database case baseline has duplicate case %s", item.ID)
+		}
+		seen[item.ID] = struct{}{}
+	}
+	return baseline.Cases, nil
+}
+
+func validateDatabaseCaseBaseline(baseline []databaseCaseBaseline, current []databaseCase) error {
+	currentByID := make(map[string]databaseCase, len(current))
+	for _, item := range current {
+		if _, exists := currentByID[item.ID]; exists {
+			return fmt.Errorf("database case registry has duplicate case %s", item.ID)
+		}
+		currentByID[item.ID] = item
+	}
+	for _, expected := range baseline {
+		actual, exists := currentByID[expected.ID]
+		if !exists {
+			return fmt.Errorf("database case baseline case %s is missing", expected.ID)
+		}
+		if actual.Run != expected.Run || actual.Phase != expected.Phase || actual.Scenario != expected.Scenario {
+			return fmt.Errorf("database case baseline case %s changed execution selection", expected.ID)
+		}
+	}
+	return nil
 }
 
 var testDeclarationPattern = regexp.MustCompile(`(?m)^\s*func\s+(Test[A-Za-z0-9_]*)\s*\(`)

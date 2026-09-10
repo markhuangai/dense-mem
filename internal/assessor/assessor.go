@@ -13,6 +13,7 @@ import (
 	"github.com/tiktoken-go/tokenizer"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 const (
@@ -29,9 +30,9 @@ const (
 	SemanticAssessmentMaxRelationshipResults           = 200
 	SemanticAssessmentMaxRelationshipSplits            = 50
 	SemanticAssessmentMaxEvidenceSpans                 = 20
-	SemanticAssessmentMaxEvidenceConflictResults       = 20
-	SemanticAssessmentMaxEvidenceConflictPositions     = 10
-	SemanticAssessmentMaxEvidenceConflictQuoteRunes    = 4000
+	SemanticAssessmentMaxEvidenceConflictResults       = knowledgecontract.EvidenceConflictMaxResults
+	SemanticAssessmentMaxEvidenceConflictPositions     = knowledgecontract.EvidenceConflictMaxPositions
+	SemanticAssessmentMaxEvidenceConflictQuoteRunes    = knowledgecontract.EvidenceConflictMaxQuoteRunes
 	SemanticAssessmentMaxEvidenceEquivalenceCandidates = 10
 	SemanticAssessmentMaxKnownEvidence                 = 4000
 	// SemanticAssessmentMaxKnownEvidenceRunes bounds the aggregate known

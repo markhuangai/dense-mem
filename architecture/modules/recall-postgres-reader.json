@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "capability": "recall-postgres-reader",
+  "source_ownership": [
+    {"path": "internal/recall/postgres/readers.go", "issue": 376},
+    {"path": "internal/repository/evidence_conflict_recall_integration.e2e", "issue": 376}
+  ],
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/recall/postgres",
+        "role": "postgres_adapter",
+        "visibility": "private"
+      }
+    ]
+  },
+  "browser": {"units": []},
+  "exceptions": [],
+  "workers": []
+}
