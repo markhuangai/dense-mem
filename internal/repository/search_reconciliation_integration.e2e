@@ -101,6 +101,104 @@ func TestSearchReconciliationSelectionAndHashFence(t *testing.T) {
 		RunID: run.RunID, Status: "completed", SelectedCount: 1, EmbeddedCount: 1,
 		UpdatedCount: apply.UpdatedCount, DriftedCount: apply.RemainingDriftedCount,
 	}))
+	searchExactVectorOrdersResultsByDistance(t)
+	searchReconciliationReservationSerializesAcrossInstances(t)
+}
+
+func searchExactVectorOrdersResultsByDistance(t *testing.T) {
+	t.Helper()
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-exact-vector-order")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-exact-vector-order-owner")
+	contractID := insertSearchTestContract(t, adminDB, rls, "exact-vector-order", 2, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+
+	closest := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "vector vector vector", 1)
+	middle := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "vector vector", 1)
+	farthest := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "vector", 1)
+	require.Equal(t, contractID, closest.EmbeddingContractID)
+	require.Equal(t, contractID, middle.EmbeddingContractID)
+	require.Equal(t, contractID, farthest.EmbeddingContractID)
+	completeSearchDocumentsForTest(t, repo, teamID, map[string][]float32{
+		closest.SearchDocumentID:  {1, 0},
+		middle.SearchDocumentID:   {0.8, 0.6},
+		farthest.SearchDocumentID: {0, 1},
+	})
+	textHits, err := repo.SearchFullText(ctx, FullTextSearchInput{
+		TeamID: teamID, Query: "vector", Limit: 3,
+	})
+	require.NoError(t, err)
+	require.Len(t, textHits, 3)
+	require.Equal(t, []string{closest.SourceID, middle.SourceID, farthest.SourceID}, []string{
+		textHits[0].SourceID, textHits[1].SourceID, textHits[2].SourceID,
+	})
+	require.Greater(t, textHits[0].TextRank, textHits[1].TextRank)
+	require.Greater(t, textHits[1].TextRank, textHits[2].TextRank)
+
+	vectorHits, err := repo.SearchExactVector(ctx, ExactVectorSearchInput{
+		TeamID: teamID, EmbeddingContractID: contractID,
+		QueryEmbedding: []float32{1, 0}, Limit: 3,
+	})
+	require.NoError(t, err)
+	require.Len(t, vectorHits, 3)
+	require.Equal(t, []string{closest.SourceID, middle.SourceID, farthest.SourceID}, []string{
+		vectorHits[0].SourceID, vectorHits[1].SourceID, vectorHits[2].SourceID,
+	})
+	require.InDelta(t, 0, vectorHits[0].Distance, 1e-6)
+	require.InDelta(t, 0.2, vectorHits[1].Distance, 1e-6)
+	require.InDelta(t, 1, vectorHits[2].Distance, 1e-6)
+}
+
+func searchReconciliationReservationSerializesAcrossInstances(t *testing.T) {
+	t.Helper()
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-concurrency", 2, "exact", "")
+	firstRepo := NewSearchRepository(appDB, rls)
+	secondRepo := NewSearchRepository(appDB, rls)
+	const lockKey = "dense-mem.search-reconciliation"
+
+	competing := make(chan struct {
+		run     *SearchReconciliationRun
+		claimed bool
+		err     error
+	}, 1)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		require.NoError(t, tx.Exec(`SELECT pg_advisory_xact_lock(hashtext(?))`, lockKey).Error)
+		go func() {
+			run, claimed, err := secondRepo.ReserveSearchReconciliationRun(ctx, SearchReconciliationRunInput{
+				EmbeddingContractID: contractID, EmbeddingDimensions: 2, Now: time.Now().UTC(),
+			})
+			competing <- struct {
+				run     *SearchReconciliationRun
+				claimed bool
+				err     error
+			}{run: run, claimed: claimed, err: err}
+		}()
+		select {
+		case result := <-competing:
+			require.NoError(t, result.err)
+			require.False(t, result.claimed)
+			require.Nil(t, result.run)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		return nil
+	}))
+
+	run, claimed, err := firstRepo.ReserveSearchReconciliationRun(ctx, SearchReconciliationRunInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Now: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NotNil(t, run)
+	require.NoError(t, firstRepo.FinishSearchReconciliationRun(ctx, FinishSearchReconciliationRunInput{
+		RunID: run.RunID, Status: "completed",
+	}))
 }
 
 func TestSearchReconciliationSuppressesHistoricalEvidenceAliases(t *testing.T) {

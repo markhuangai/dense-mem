@@ -286,6 +286,32 @@
         "symbol": "SanitizeError"
       },
       "removal_condition": "Remove the root embedding sanitization forwarders after all named consumers use internal/embedding/contract directly."
+    },
+    {
+      "source_path": "internal/service/search_reconciliation.go",
+      "fields": [
+        "SearchReconciliationResult",
+        "SearchReconciliationService",
+        "SearchReconciliationEmbeddingProvider",
+        "SearchReconciliationDependencies",
+        "NewSearchReconciliationService"
+      ],
+      "consumers": [
+        {
+          "path": "internal/service/search_reconciliation_test.go",
+          "symbol": "searchReconciliationRepositoryStub.GetActiveSearchContract"
+        },
+        {
+          "path": "internal/service/search_reconciliation_test.go",
+          "symbol": "searchReconciliationProviderStub.EmbedBatch"
+        }
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {
+        "path": "internal/search/reconciliation.go",
+        "symbol": "NewSearchReconciliationService"
+      },
+      "removal_condition": "Remove the legacy service aliases and conversion facade after reconciliation callers use internal/search directly."
     }
   ],
   "completed_issues": [],

@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service"
+	searchapp "github.com/markhuangai/dense-mem/internal/search"
+	searchpostgres "github.com/markhuangai/dense-mem/internal/search/postgres"
 )
 
 var errSearchConvergenceQueryFailed = errors.New("search convergence query failed")
@@ -20,7 +20,7 @@ func searchConvergenceHealthCheck(search searchConvergenceHealthReader, logger o
 	return func(ctx context.Context) error {
 		err := search.CheckSearchConvergence(ctx)
 		if err != nil {
-			if errors.Is(err, repository.ErrSearchConvergenceAttentionRequired) {
+			if errors.Is(err, searchpostgres.ErrSearchConvergenceAttentionRequired) {
 				return err
 			}
 			if logger != nil {
@@ -33,7 +33,7 @@ func searchConvergenceHealthCheck(search searchConvergenceHealthReader, logger o
 }
 
 type searchReconciliationRunner interface {
-	Run(context.Context) (service.SearchReconciliationResult, error)
+	Run(context.Context) (searchapp.SearchReconciliationResult, error)
 }
 
 const searchReconciliationInterval = time.Hour

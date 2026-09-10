@@ -90,6 +90,7 @@ func setupLedgerRepositoryDSN(t *testing.T) (string, func()) {
 	}
 
 	ctx := context.Background()
+	networkAlias := "postgres-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
 	containerOptions := []testcontainers.ContainerCustomizer{
 		tcpostgres.WithDatabase("testdb"),
 		tcpostgres.WithUsername("testuser"),
@@ -101,12 +102,12 @@ func setupLedgerRepositoryDSN(t *testing.T) (string, func()) {
 		),
 	}
 	containerOptions = append(containerOptions, precheckContainerLabels()...)
-	containerOptions = append(containerOptions, precheckNetworkOptions()...)
+	containerOptions = append(containerOptions, precheckNetworkOptions(networkAlias)...)
 	container, err := runLedgerPostgresContainer(ctx, containerOptions...)
 	if err != nil {
 		t.Fatalf("start Postgres test container: %v", err)
 	}
-	dsn, err := postgresContainerDSN(ctx, container)
+	dsn, err := postgresContainerDSN(ctx, container, networkAlias)
 	if err != nil {
 		_ = container.Terminate(ctx)
 		t.Fatalf("get Postgres test container DSN: %v", err)
@@ -131,15 +132,18 @@ func runLedgerPostgresContainer(ctx context.Context, options ...testcontainers.C
 	return nil, lastErr
 }
 
-func postgresContainerDSN(ctx context.Context, container *tcpostgres.PostgresContainer) (string, error) {
+func postgresContainerDSN(ctx context.Context, container *tcpostgres.PostgresContainer, networkAlias string) (string, error) {
 	host := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK"))
 	if host == "" {
 		return container.ConnectionString(ctx, "sslmode=disable")
 	}
+	if strings.TrimSpace(networkAlias) == "" {
+		return "", fmt.Errorf("postgres test container network alias is required")
+	}
 	connectionURL := &url.URL{
 		Scheme: "postgres",
 		User:   url.UserPassword("testuser", "testpass"),
-		Host:   "postgres:5432",
+		Host:   networkAlias + ":5432",
 		Path:   "/testdb",
 	}
 	query := connectionURL.Query()
@@ -171,12 +175,12 @@ func precheckContainerLabels() []testcontainers.ContainerCustomizer {
 	})}
 }
 
-func precheckNetworkOptions() []testcontainers.ContainerCustomizer {
+func precheckNetworkOptions(networkAlias string) []testcontainers.ContainerCustomizer {
 	networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK"))
 	if networkName == "" {
 		return nil
 	}
-	return []testcontainers.ContainerCustomizer{tcnetwork.WithNetworkName([]string{"postgres"}, networkName)}
+	return []testcontainers.ContainerCustomizer{tcnetwork.WithNetworkName([]string{networkAlias}, networkName)}
 }
 
 func ledgerAppDSN(t *testing.T, dsn string) string {
