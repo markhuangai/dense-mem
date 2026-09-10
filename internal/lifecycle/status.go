@@ -13,8 +13,6 @@ type SubmissionStatusError = rememberapp.SubmissionStatusError
 type SubmissionNextAction = rememberapp.SubmissionNextAction
 type SubmissionAwaitingConfirmation = rememberapp.SubmissionAwaitingConfirmation
 
-const submissionStatusMaxIssueMessageLength = 512
-
 const (
 	SubmissionErrorStaleInput = rememberapp.SubmissionErrorStaleInput
 
@@ -80,8 +78,4 @@ func correctionStatusErrorForCode(rawCode string, fallbackState string) Submissi
 		return submissionStatusError(SubmissionErrorPolicyRejected)
 	}
 	return submissionStatusErrorForCode(rawCode, fallbackState)
-}
-
-func submissionFailureCode(stage, class string) SubmissionErrorCode {
-	return rememberapp.FailureCode(stage, class)
 }
