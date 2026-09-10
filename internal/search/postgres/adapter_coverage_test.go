@@ -385,8 +385,8 @@ func TestSearchAdapterExactVectorReadAndFences(t *testing.T) {
 	store, mock := newSearchMockStore(t)
 	contract := activeSearchContract()
 	expectActiveContract(mock, contract)
-	mock.ExpectQuery(`(?s)SELECT count\(\*\).*FROM \(`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectQuery("(?s)SELECT team_id::text, search_document_id::text").WillReturnRows(searchHitRows(teamID, documentID, sourceID, contractID))
+	mock.ExpectQuery(`(?s)WITH.*recall_relationship_generation_team.*SELECT count\(\*\).*JOIN search_documents AS document.*document\.projection_generation_id = generation\.projection_generation_id`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`(?s)WITH.*recall_relationship_generation_team.*SELECT document\.team_id::text, document\.search_document_id::text.*JOIN search_documents AS document.*document\.projection_generation_id = generation\.projection_generation_id`).WillReturnRows(searchHitRows(teamID, documentID, sourceID, contractID))
 	hits, err := store.SearchExactVector(context.Background(), searchcontract.ExactVectorSearchInput{TeamID: teamID, QueryEmbedding: []float32{.25, .75}, Limit: 1})
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
@@ -395,14 +395,14 @@ func TestSearchAdapterExactVectorReadAndFences(t *testing.T) {
 
 	store, mock = newSearchMockStore(t)
 	expectActiveContract(mock, contract)
-	mock.ExpectQuery(`(?s)SELECT count\(\*\).*FROM \(`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectQuery("(?s)SELECT team_id::text, search_document_id::text").WillReturnRows(searchHitRows(teamID, documentID, sourceID, contractID))
+	mock.ExpectQuery(`(?s)WITH.*recall_relationship_generation_team.*SELECT count\(\*\).*JOIN search_documents AS document.*document\.projection_generation_id = generation\.projection_generation_id`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`(?s)WITH.*recall_relationship_generation_team.*SELECT document\.team_id::text, document\.search_document_id::text.*JOIN search_documents AS document.*document\.projection_generation_id = generation\.projection_generation_id`).WillReturnRows(searchHitRows(teamID, documentID, sourceID, contractID))
 	_, err = store.SearchExactVector(context.Background(), searchcontract.ExactVectorSearchInput{TeamID: teamID, QueryEmbedding: []float32{.25, .75}, SourceKind: "evidence"})
 	require.NoError(t, err)
 
 	store, mock = newSearchMockStore(t)
 	expectActiveContract(mock, contract)
-	mock.ExpectQuery(`(?s)SELECT count\(\*\).*FROM \(`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(101))
+	mock.ExpectQuery(`(?s)WITH.*recall_relationship_generation_team.*SELECT count\(\*\).*JOIN search_documents AS document.*document\.projection_generation_id = generation\.projection_generation_id`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(101))
 	_, err = store.SearchExactVector(context.Background(), searchcontract.ExactVectorSearchInput{TeamID: teamID, QueryEmbedding: []float32{.25, .75}})
 	require.ErrorIs(t, err, ErrSearchContractMismatch)
 

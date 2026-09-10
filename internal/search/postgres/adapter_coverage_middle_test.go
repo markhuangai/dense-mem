@@ -69,6 +69,7 @@ func TestSearchAdapterPhysicalIndexAndActivationPaths(t *testing.T) {
 	created, err := store.ensureSearchPhysicalIndex(context.Background(), contract)
 	require.NoError(t, err)
 	assert.False(t, created)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	store, mock = newSearchMockStore(t)
 	mock.ExpectQuery(regexp.QuoteMeta("FROM pg_class AS index_class")).WillReturnRows(sqlmock.NewRows([]string{"valid", "definition"}).AddRow(false, "bad"))
@@ -96,20 +97,24 @@ func TestSearchAdapterPhysicalIndexAndActivationPaths(t *testing.T) {
 	} {
 		assert.Error(t, store.createSearchPhysicalIndex(context.Background(), generation))
 	}
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	store, mock = newSearchMockStore(t)
 	generationID := "77777777-7777-7777-7777-777777777777"
 	mock.ExpectQuery("(?s)FROM search_index_generations").WillReturnRows(sqlmock.NewRows([]string{"contract", "state"}).AddRow(contractID, "active"))
 	assert.NoError(t, store.activateSearchGeneration(context.Background(), generationID))
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	store, mock = newSearchMockStore(t)
 	mock.ExpectQuery("(?s)FROM search_index_generations").WillReturnRows(sqlmock.NewRows([]string{"contract", "state"}).AddRow(contractID, "failed"))
 	err = store.activateSearchGeneration(context.Background(), generationID)
 	assert.ErrorIs(t, err, ErrSearchContractMismatch)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	store, mock = newSearchMockStore(t)
 	mock.ExpectExec("(?s)UPDATE search_index_generations").WillReturnResult(sqlmock.NewResult(0, 1))
 	assert.NoError(t, store.markSearchGenerationFailed(context.Background(), generationID, errors.New("index failed")))
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func reconciliationDocumentRows(document searchmaintenance.SearchDocumentForEmbedding, vectorCurrent bool) *sqlmock.Rows {
@@ -159,6 +164,7 @@ func TestSearchAdapterReserveReconciliationRunBranches(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, claimed)
 	assert.Nil(t, run)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	store, mock = newSearchMockStore(t)
 	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
@@ -168,17 +174,20 @@ func TestSearchAdapterReserveReconciliationRunBranches(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, claimed)
 	assert.Nil(t, run)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	store, mock = newSearchMockStore(t)
 	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").WillReturnError(errors.New("lock query failed"))
 	_, _, err = store.ReserveSearchReconciliationRun(context.Background(), searchmaintenance.SearchReconciliationRunInput{EmbeddingContractID: contractID, EmbeddingDimensions: 2, Now: now})
 	assert.Contains(t, err.Error(), "reserve reconciliation run")
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	store, mock = newSearchMockStore(t)
 	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
 	mock.ExpectExec("(?s)UPDATE search_reconciliation_runs").WillReturnError(errors.New("expire failed"))
 	_, _, err = store.ReserveSearchReconciliationRun(context.Background(), searchmaintenance.SearchReconciliationRunInput{EmbeddingContractID: contractID, EmbeddingDimensions: 2, Now: now})
 	assert.Contains(t, err.Error(), "reserve reconciliation run")
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestSearchAdapterSelectReconciliationDocumentsBranches(t *testing.T) {
@@ -216,12 +225,14 @@ func TestSearchAdapterSelectReconciliationDocumentsBranches(t *testing.T) {
 	require.Len(t, result, 1)
 	assert.Equal(t, "evidence", result[0].SourceKind)
 	assert.Equal(t, searchDocumentHash("evidence"), result[0].DocumentHash)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	store, mock = newSearchMockStore(t)
 	mock.ExpectQuery("(?s)SELECT selection_cursor_team_id::text").WillReturnRows(sqlmock.NewRows([]string{"team", "kind", "source", "document"}))
 	mock.ExpectQuery("(?s)FROM search_documents AS document").WillReturnError(errors.New("selection failed"))
 	_, err = store.SelectSearchReconciliationDocuments(context.Background(), searchmaintenance.SearchReconciliationSelectionInput{RunID: runID, EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 1})
 	assert.Contains(t, err.Error(), "select reconciliation documents")
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestSearchAdapterCompleteReconciliationDocumentsBranches(t *testing.T) {
@@ -240,6 +251,7 @@ func TestSearchAdapterCompleteReconciliationDocumentsBranches(t *testing.T) {
 	result, err := store.CompleteSearchReconciliationDocuments(context.Background(), searchmaintenance.ApplySearchReconciliationInput{EmbeddingContractID: contractID, EmbeddingDimensions: 2, Documents: []searchmaintenance.SearchDocumentEmbedding{document}})
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, result.UpdatedCount)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	store, mock = newSearchMockStore(t)
 	mock.ExpectQuery("(?s)FROM search_documents AS document").WillReturnRows(sqlmock.NewRows([]string{
@@ -248,14 +260,15 @@ func TestSearchAdapterCompleteReconciliationDocumentsBranches(t *testing.T) {
 	result, err = store.CompleteSearchReconciliationDocuments(context.Background(), searchmaintenance.ApplySearchReconciliationInput{EmbeddingContractID: contractID, EmbeddingDimensions: 2, Documents: []searchmaintenance.SearchDocumentEmbedding{document}})
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, result.SkippedCount)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	store, mock = newSearchMockStore(t)
 	retired := document
 	retired.Retired = true
-	mock.ExpectQuery("(?s)FROM relationship_records").WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	result, err = store.CompleteSearchReconciliationDocuments(context.Background(), searchmaintenance.ApplySearchReconciliationInput{EmbeddingContractID: contractID, EmbeddingDimensions: 2, Documents: []searchmaintenance.SearchDocumentEmbedding{retired}})
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, result.SkippedCount)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	store, mock = newSearchMockStore(t)
 	retired.SourceKind = "evidence"
@@ -264,6 +277,7 @@ func TestSearchAdapterCompleteReconciliationDocumentsBranches(t *testing.T) {
 	result, err = store.CompleteSearchReconciliationDocuments(context.Background(), searchmaintenance.ApplySearchReconciliationInput{EmbeddingContractID: contractID, EmbeddingDimensions: 2, Documents: []searchmaintenance.SearchDocumentEmbedding{retired}})
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, result.UpdatedCount)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	for _, invalid := range []searchmaintenance.ApplySearchReconciliationInput{
 		{EmbeddingContractID: "bad", EmbeddingDimensions: 2},
@@ -274,6 +288,7 @@ func TestSearchAdapterCompleteReconciliationDocumentsBranches(t *testing.T) {
 		_, err := store.CompleteSearchReconciliationDocuments(context.Background(), invalid)
 		assert.Error(t, err)
 	}
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestSearchAdapterConvergenceProjection(t *testing.T) {
@@ -309,6 +324,7 @@ func TestSearchAdapterConvergenceProjection(t *testing.T) {
 	mock.ExpectQuery("(?s)FROM search_documents AS document").WillReturnError(errors.New("convergence query failed"))
 	_, err = store.GetSearchConvergence(context.Background(), searchmaintenance.SearchConvergenceInput{})
 	assert.Contains(t, err.Error(), "convergence projection")
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestSearchAdapterFinishReconciliationRunBranches(t *testing.T) {
@@ -317,29 +333,33 @@ func TestSearchAdapterFinishReconciliationRunBranches(t *testing.T) {
 	mock.ExpectExec("(?s)UPDATE search_reconciliation_runs").WillReturnResult(sqlmock.NewResult(0, 1))
 	err := store.FinishSearchReconciliationRun(context.Background(), searchmaintenance.FinishSearchReconciliationRunInput{RunID: runID, Status: "completed", SelectedCount: 1, EmbeddedCount: 1, UpdatedCount: 1, DriftedCount: 0})
 	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	store, mock = newSearchMockStore(t)
 	mock.ExpectExec("(?s)UPDATE search_reconciliation_runs").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("(?s)UPDATE search_reconciliation_runs").WillReturnResult(sqlmock.NewResult(0, 1))
 	err = store.FinishSearchReconciliationRun(context.Background(), searchmaintenance.FinishSearchReconciliationRunInput{RunID: runID, Status: "failed", SelectedCount: 1, LastError: strings.Repeat("x", 300)})
 	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	store, mock = newSearchMockStore(t)
 	mock.ExpectExec("(?s)UPDATE search_reconciliation_runs").WillReturnResult(sqlmock.NewResult(0, 0))
 	err = store.FinishSearchReconciliationRun(context.Background(), searchmaintenance.FinishSearchReconciliationRunInput{RunID: runID, Status: "completed"})
 	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	store, mock = newSearchMockStore(t)
 	mock.ExpectExec("(?s)UPDATE search_reconciliation_runs").WillReturnError(errors.New("finish failed"))
 	err = store.FinishSearchReconciliationRun(context.Background(), searchmaintenance.FinishSearchReconciliationRunInput{RunID: runID, Status: "completed"})
 	assert.Contains(t, err.Error(), "finish reconciliation run")
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	store, mock = newSearchMockStore(t)
 	mock.ExpectExec("(?s)UPDATE search_reconciliation_runs").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("(?s)UPDATE search_reconciliation_runs").WillReturnError(errors.New("reset failed"))
 	err = store.FinishSearchReconciliationRun(context.Background(), searchmaintenance.FinishSearchReconciliationRunInput{RunID: runID, Status: "failed"})
 	assert.Contains(t, err.Error(), "finish reconciliation run")
-	_ = mock
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestSearchAdapterExportedCompatibilitySeams(t *testing.T) {
@@ -413,6 +433,7 @@ func TestSearchAdapterRelationshipAndMissingDocumentHelpers(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.False(t, updated)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	value := searchDocumentResultFromKnowledge(&knowledgecontract.SearchDocumentResult{TeamID: teamID, SearchDocumentID: "77777777-7777-7777-7777-777777777777"})
 	assert.NotNil(t, value)

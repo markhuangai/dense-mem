@@ -325,62 +325,41 @@ func (r *Store) SearchExactVector(ctx context.Context, input searchcontract.Exac
 	hits := []searchcontract.SearchHit{}
 	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		sourceFilter := ""
-		countArgs := []any{input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions}
-		args := []any{vectorLiteral, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions}
+		countArgs := []any{input.TeamID, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions}
+		args := []any{input.TeamID, vectorLiteral, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions}
 		if input.SourceKind != "" {
-			sourceFilter = "AND source_kind = ?"
+			sourceFilter = "AND document.source_kind = ?"
 			countArgs = append(countArgs, input.SourceKind)
 			args = append(args, input.SourceKind)
 		}
 		countArgs = append(countArgs, contract.ExactMaxRows+1)
 		var candidateCount int64
 		if err := tx.WithContext(ctx).Raw(`
+			WITH `+recallRelationshipGenerationScopeSQL+`
 			SELECT count(*)
 			FROM (
-				SELECT search_document_id
-				FROM search_documents
-				WHERE team_id = ?::uuid
-				  AND embedding_contract_id = ?::uuid
-				  AND embedding_dimensions = ?
-				  AND search_state = 'current'
-				  AND embedding IS NOT NULL
+				SELECT document.search_document_id
+				FROM recall_relationship_generation AS generation
+				JOIN search_documents AS document
+				  ON document.team_id = ?::uuid
+				WHERE document.embedding_contract_id = ?::uuid
+				  AND document.embedding_dimensions = ?
+				  AND document.search_state = 'current'
+				  AND document.embedding IS NOT NULL
 				  AND (
-				      source_kind <> 'evidence'
+				      document.source_kind <> 'evidence'
 				      OR NOT EXISTS (
 				          SELECT 1
 				          FROM evidence_exact_aliases AS alias
-				          WHERE alias.team_id = search_documents.team_id
-				            AND alias.alias_fragment_id = search_documents.source_id
+				          WHERE alias.team_id = document.team_id
+				            AND alias.alias_fragment_id = document.source_id
 				      )
 				  )
 				  AND (
-				      source_kind <> 'relationship'
+				      document.source_kind <> 'relationship'
 					      OR (
-					          projection_format_version = 2
-					          AND (
-					              NOT EXISTS (
-					                  SELECT 1
-					                  FROM search_projection_generations AS generation
-					                  WHERE generation.team_id = search_documents.team_id
-					                    AND generation.source_kind = 'relationship'
-					                    AND generation.projection_format_version = search_documents.projection_format_version
-					              )
-					              OR EXISTS (
-					              SELECT 1
-					              FROM search_projection_generations AS generation
-					              WHERE generation.team_id = search_documents.team_id
-					                AND generation.source_kind = 'relationship'
-					                AND generation.projection_format_version = search_documents.projection_format_version
-					                AND generation.state = 'current'
-				                AND (
-				                    generation.projection_generation_id = search_documents.projection_generation_id
-				                    OR (
-				                        search_documents.projection_generation_id IS NULL
-				                        AND COALESCE(search_documents.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = generation.projection_generation_id::text
-				                    )
-				                )
-				              )
-				          )
+					          document.projection_format_version = 2
+					          AND `+recallRelationshipGenerationDocumentSQL+`
 				      )
 				  )
 				  `+sourceFilter+`
@@ -394,58 +373,37 @@ func (r *Store) SearchExactVector(ctx context.Context, input searchcontract.Exac
 		}
 		args = append(args, vectorLiteral, input.Limit)
 		rows, err := tx.WithContext(ctx).Raw(`
-				SELECT team_id::text, search_document_id::text, source_kind, source_id::text,
-				       source_version, document_version, embedding_contract_id::text,
-				       search_state,
-				       (embedding <=> ?::vector)::double precision AS distance,
+				WITH `+recallRelationshipGenerationScopeSQL+`
+				SELECT document.team_id::text, document.search_document_id::text, document.source_kind, document.source_id::text,
+				       document.source_version, document.document_version, document.embedding_contract_id::text,
+				       document.search_state,
+				       (document.embedding <=> ?::vector)::double precision AS distance,
 				       0::double precision AS text_rank
-				FROM search_documents
-				WHERE team_id = ?::uuid
-				  AND embedding_contract_id = ?::uuid
-				  AND embedding_dimensions = ?
-				  AND search_state = 'current'
-				  AND embedding IS NOT NULL
+				FROM recall_relationship_generation AS generation
+				JOIN search_documents AS document
+				  ON document.team_id = ?::uuid
+				WHERE document.embedding_contract_id = ?::uuid
+				  AND document.embedding_dimensions = ?
+				  AND document.search_state = 'current'
+				  AND document.embedding IS NOT NULL
 				  AND (
-				      source_kind <> 'evidence'
+				      document.source_kind <> 'evidence'
 				      OR NOT EXISTS (
 				          SELECT 1
 				          FROM evidence_exact_aliases AS alias
-				          WHERE alias.team_id = search_documents.team_id
-				            AND alias.alias_fragment_id = search_documents.source_id
+				          WHERE alias.team_id = document.team_id
+				            AND alias.alias_fragment_id = document.source_id
 				      )
 				  )
 				  AND (
-				      source_kind <> 'relationship'
+				      document.source_kind <> 'relationship'
 					      OR (
-					          projection_format_version = 2
-					          AND (
-					              NOT EXISTS (
-					                  SELECT 1
-					                  FROM search_projection_generations AS generation
-					                  WHERE generation.team_id = search_documents.team_id
-					                    AND generation.source_kind = 'relationship'
-					                    AND generation.projection_format_version = search_documents.projection_format_version
-					              )
-					              OR EXISTS (
-					              SELECT 1
-					              FROM search_projection_generations AS generation
-					              WHERE generation.team_id = search_documents.team_id
-				                AND generation.source_kind = 'relationship'
-				                AND generation.projection_format_version = search_documents.projection_format_version
-				                AND generation.state = 'current'
-				                AND (
-				                    generation.projection_generation_id = search_documents.projection_generation_id
-				                    OR (
-				                        search_documents.projection_generation_id IS NULL
-				                        AND COALESCE(search_documents.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = generation.projection_generation_id::text
-				                    )
-				                )
-				              )
-				          )
+					          document.projection_format_version = 2
+					          AND `+recallRelationshipGenerationDocumentSQL+`
 				      )
 				  )
 				  `+sourceFilter+`
-				ORDER BY embedding <=> ?::vector ASC, search_document_id ASC
+				ORDER BY document.embedding <=> ?::vector ASC, document.search_document_id ASC
 				LIMIT ?
 			`, args...).Rows()
 		if err != nil {
