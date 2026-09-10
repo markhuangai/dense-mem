@@ -1,4 +1,4 @@
-package service
+package operations
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
 )
 
 const (
@@ -39,11 +39,14 @@ type UsageMetricsService interface {
 }
 
 type UsageMetricsServiceImpl struct {
-	repo   repository.UsageMetricsRepository
+	repo   operationscontract.UsageMetricsRepository
 	logger observability.LogProvider
 
 	mu      sync.Mutex
 	buckets map[usageBucketKey]domain.UsageMetricBucket
+
+	flushMu      sync.Mutex
+	pendingFlush *usageMetricsFlush
 
 	lifecycleMu sync.Mutex
 	cancel      context.CancelFunc
@@ -59,9 +62,14 @@ type usageBucketKey struct {
 	statusClass     int
 }
 
+type usageMetricsFlush struct {
+	id      uuid.UUID
+	buckets []domain.UsageMetricBucket
+}
+
 var _ UsageMetricsService = (*UsageMetricsServiceImpl)(nil)
 
-func NewUsageMetricsService(repo repository.UsageMetricsRepository, logger observability.LogProvider) *UsageMetricsServiceImpl {
+func NewUsageMetricsService(repo operationscontract.UsageMetricsRepository, logger observability.LogProvider) *UsageMetricsServiceImpl {
 	return &UsageMetricsServiceImpl{
 		repo:    repo,
 		logger:  logger,
@@ -155,12 +163,23 @@ func (s *UsageMetricsServiceImpl) Flush(ctx context.Context) error {
 	if s == nil || s.repo == nil {
 		return nil
 	}
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+
+	if s.pendingFlush != nil {
+		if err := s.repo.UpsertBuckets(ctx, s.pendingFlush.id, s.pendingFlush.buckets); err != nil {
+			return err
+		}
+		s.pendingFlush = nil
+	}
+
 	buckets := s.drainBuckets()
 	if len(buckets) == 0 {
 		return nil
 	}
-	if err := s.repo.UpsertBuckets(ctx, buckets); err != nil {
-		s.requeueBuckets(buckets)
+	batch := &usageMetricsFlush{id: uuid.New(), buckets: buckets}
+	if err := s.repo.UpsertBuckets(ctx, batch.id, batch.buckets); err != nil {
+		s.pendingFlush = batch
 		return err
 	}
 	return nil
@@ -254,36 +273,6 @@ func (s *UsageMetricsServiceImpl) drainBuckets() []domain.UsageMetricBucket {
 	}
 	s.buckets = make(map[usageBucketKey]domain.UsageMetricBucket)
 	return buckets
-}
-
-func (s *UsageMetricsServiceImpl) requeueBuckets(buckets []domain.UsageMetricBucket) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, bucket := range buckets {
-		key := usageBucketKey{
-			bucketStartUnix: bucket.BucketStart.Unix(),
-			teamID:          bucket.TeamID,
-			keyID:           bucket.KeyID,
-			route:           bucket.Route,
-			method:          bucket.Method,
-			statusClass:     bucket.StatusClass,
-		}
-		current := s.buckets[key]
-		if current.RequestCount == 0 {
-			s.buckets[key] = bucket
-			continue
-		}
-		current.RequestCount += bucket.RequestCount
-		current.ErrorCount += bucket.ErrorCount
-		current.TotalLatencyMS += bucket.TotalLatencyMS
-		if bucket.MaxLatencyMS > current.MaxLatencyMS {
-			current.MaxLatencyMS = bucket.MaxLatencyMS
-		}
-		if bucket.LastSeenAt.After(current.LastSeenAt) {
-			current.LastSeenAt = bucket.LastSeenAt
-		}
-		s.buckets[key] = current
-	}
 }
 
 func normalizeMetricsFilter(filter domain.UsageMetricsFilter) domain.UsageMetricsFilter {

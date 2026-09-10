@@ -1,4 +1,4 @@
-package service
+package operations
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/markhuangai/dense-mem/internal/repository"
+	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
 )
 
 const telemetryQueryConcurrency = 6
@@ -279,7 +279,7 @@ func (s *PrometheusTelemetryService) telemetryFeatureStates(ctx context.Context,
 	return states
 }
 
-func buildTelemetryCards(specs []telemetryQuerySpec, results map[string]telemetryInstantResult, lifecycle repository.TelemetryLifecycleSnapshot, lifecycleErr error, features map[string]telemetryFeatureState, scope TelemetryScope) []TelemetryCard {
+func buildTelemetryCards(specs []telemetryQuerySpec, results map[string]telemetryInstantResult, lifecycle operationscontract.TelemetryLifecycleSnapshot, lifecycleErr error, features map[string]telemetryFeatureState, scope TelemetryScope) []TelemetryCard {
 	cards := make([]TelemetryCard, 0, len(specs))
 	for _, spec := range specs {
 		disposition := telemetryDisposition{}

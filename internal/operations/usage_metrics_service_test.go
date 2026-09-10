@@ -1,4 +1,4 @@
-package service
+package operations
 
 import (
 	"context"
@@ -17,7 +17,7 @@ func TestUsageMetricsService_PersistsUsageAcrossServiceInstances(t *testing.T) {
 	repo := newFakeUsageMetricsRepo()
 	teamID := uuid.New()
 	keyID := uuid.New()
-	now := time.Now().UTC()
+	now := time.Date(2026, 9, 10, 12, 34, 30, 0, time.UTC)
 
 	svc := NewUsageMetricsService(repo, nil)
 	svc.RecordRequest(context.Background(), domain.UsageMetricEvent{
@@ -38,6 +38,15 @@ func TestUsageMetricsService_PersistsUsageAcrossServiceInstances(t *testing.T) {
 		Status:    503,
 		Latency:   25 * time.Millisecond,
 	})
+	svc.RecordRequest(context.Background(), domain.UsageMetricEvent{
+		Timestamp: now.Add(-time.Second),
+		TeamID:    teamID,
+		KeyID:     keyID,
+		Method:    "get",
+		Route:     "/ui/api/evidence/:id",
+		Status:    200,
+		Latency:   1 * time.Millisecond,
+	})
 	require.NoError(t, svc.Flush(context.Background()))
 
 	recreated := NewUsageMetricsService(repo, nil)
@@ -46,9 +55,9 @@ func TestUsageMetricsService_PersistsUsageAcrossServiceInstances(t *testing.T) {
 		To:   now.Add(time.Minute),
 	})
 	require.NoError(t, err)
-	require.Equal(t, int64(2), snapshot.System.Requests)
+	require.Equal(t, int64(3), snapshot.System.Requests)
 	require.Equal(t, int64(1), snapshot.System.Errors)
-	require.Equal(t, 20.0, snapshot.System.AvgLatencyMS)
+	require.InDelta(t, 13.6667, snapshot.System.AvgLatencyMS, 0.001)
 	require.Equal(t, int64(25), snapshot.System.MaxLatencyMS)
 	require.Len(t, snapshot.Teams, 1)
 	require.Equal(t, teamID, snapshot.Teams[0].TeamID)
@@ -69,7 +78,7 @@ func TestUsageMetricsService_PrunesExpiredBuckets(t *testing.T) {
 		RequestCount: 1,
 		LastSeenAt:   time.Now().UTC(),
 	}
-	require.NoError(t, repo.UpsertBuckets(context.Background(), []domain.UsageMetricBucket{oldBucket}))
+	require.NoError(t, repo.UpsertBuckets(context.Background(), uuid.New(), []domain.UsageMetricBucket{oldBucket}))
 
 	svc := NewUsageMetricsService(repo, nil)
 	require.NoError(t, svc.Prune(context.Background()))
@@ -82,10 +91,12 @@ func TestUsageMetricsService_PrunesExpiredBuckets(t *testing.T) {
 }
 
 type fakeUsageMetricsRepo struct {
-	mu          sync.Mutex
-	buckets     map[fakeUsageMetricKey]domain.UsageMetricBucket
-	upsertErr   error
-	snapshotErr error
+	mu                   sync.Mutex
+	buckets              map[fakeUsageMetricKey]domain.UsageMetricBucket
+	flushes              map[uuid.UUID]struct{}
+	upsertErr            error
+	upsertErrAfterCommit bool
+	snapshotErr          error
 }
 
 type fakeUsageMetricKey struct {
@@ -98,15 +109,21 @@ type fakeUsageMetricKey struct {
 }
 
 func newFakeUsageMetricsRepo() *fakeUsageMetricsRepo {
-	return &fakeUsageMetricsRepo{buckets: make(map[fakeUsageMetricKey]domain.UsageMetricBucket)}
+	return &fakeUsageMetricsRepo{
+		buckets: make(map[fakeUsageMetricKey]domain.UsageMetricBucket),
+		flushes: make(map[uuid.UUID]struct{}),
+	}
 }
 
-func (r *fakeUsageMetricsRepo) UpsertBuckets(_ context.Context, buckets []domain.UsageMetricBucket) error {
+func (r *fakeUsageMetricsRepo) UpsertBuckets(_ context.Context, flushID uuid.UUID, buckets []domain.UsageMetricBucket) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.flushes[flushID]; exists {
+		return nil
+	}
 	if r.upsertErr != nil {
 		return r.upsertErr
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	for _, bucket := range buckets {
 		key := fakeUsageMetricKey{
 			bucketStart: bucket.BucketStart,
@@ -128,6 +145,11 @@ func (r *fakeUsageMetricsRepo) UpsertBuckets(_ context.Context, buckets []domain
 			current.MaxLatencyMS = bucket.MaxLatencyMS
 		}
 		r.buckets[key] = current
+	}
+	r.flushes[flushID] = struct{}{}
+	if r.upsertErrAfterCommit {
+		r.upsertErrAfterCommit = false
+		return errors.New("committed but response lost")
 	}
 	return nil
 }
@@ -240,6 +262,33 @@ func TestUsageMetricsService_RequeuesBucketsAfterFlushError(t *testing.T) {
 	require.Equal(t, int64(1), snapshot.System.Requests)
 	require.Equal(t, int64(1), snapshot.System.Errors)
 	require.Equal(t, int64(0), snapshot.System.MaxLatencyMS)
+}
+
+func TestUsageMetricsServiceRetriesCommittedFlushWithoutDuplicatingNewEvents(t *testing.T) {
+	repo := newFakeUsageMetricsRepo()
+	repo.upsertErrAfterCommit = true
+	svc := NewUsageMetricsService(repo, nil)
+	teamID := uuid.New()
+	keyID := uuid.New()
+	now := time.Date(2026, 9, 10, 12, 34, 30, 0, time.UTC)
+	for _, event := range []domain.UsageMetricEvent{
+		{Timestamp: now, TeamID: teamID, KeyID: keyID, Route: "/mcp", Method: "POST", Status: 200, Latency: 15 * time.Millisecond},
+		{Timestamp: now.Add(time.Second), TeamID: teamID, KeyID: keyID, Route: "/mcp", Method: "POST", Status: 500, Latency: 25 * time.Millisecond},
+	} {
+		svc.RecordRequest(context.Background(), event)
+	}
+	require.ErrorContains(t, svc.Flush(context.Background()), "committed but response lost")
+
+	svc.RecordRequest(context.Background(), domain.UsageMetricEvent{
+		Timestamp: now.Add(2 * time.Second), TeamID: teamID, KeyID: keyID, Route: "/mcp", Method: "POST", Status: 200, Latency: 5 * time.Millisecond,
+	})
+	require.NoError(t, svc.Flush(context.Background()))
+
+	snapshot, err := svc.Snapshot(context.Background(), domain.UsageMetricsFilter{From: now.Add(-time.Minute), To: now.Add(time.Minute)})
+	require.NoError(t, err)
+	require.Equal(t, int64(3), snapshot.System.Requests)
+	require.Equal(t, int64(1), snapshot.System.Errors)
+	require.Equal(t, int64(25), snapshot.System.MaxLatencyMS)
 }
 
 func TestUsageMetricsService_NilSnapshotAndLifecycle(t *testing.T) {

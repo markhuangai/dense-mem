@@ -1,4 +1,4 @@
-package service
+package operations
 
 import (
 	"context"
@@ -12,7 +12,8 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
+	settings "github.com/markhuangai/dense-mem/internal/settings"
 )
 
 const (
@@ -43,7 +44,7 @@ type OperationLogRetentionProvider interface {
 }
 
 type OperationLogServiceImpl struct {
-	repo      repository.OperationLogRepository
+	repo      operationscontract.OperationLogRepository
 	retention OperationLogRetentionProvider
 
 	queue  chan domain.OperationLog
@@ -58,7 +59,7 @@ type OperationLogServiceImpl struct {
 var _ OperationLogService = (*OperationLogServiceImpl)(nil)
 var _ observability.LogSink = (*OperationLogServiceImpl)(nil)
 
-func NewOperationLogService(repo repository.OperationLogRepository, retention OperationLogRetentionProvider) *OperationLogServiceImpl {
+func NewOperationLogService(repo operationscontract.OperationLogRepository, retention OperationLogRetentionProvider) *OperationLogServiceImpl {
 	return &OperationLogServiceImpl{
 		repo:      repo,
 		retention: retention,
@@ -181,7 +182,7 @@ func (s *OperationLogServiceImpl) Prune(ctx context.Context) error {
 	if s == nil || s.repo == nil {
 		return nil
 	}
-	days := DefaultOperationLogRetentionDays
+	days := settings.DefaultOperationLogRetentionDays
 	if s.retention != nil {
 		cfg, err := s.retention.OperationLogRuntimeConfig(ctx)
 		if err == nil && cfg.RetentionDays > 0 {
