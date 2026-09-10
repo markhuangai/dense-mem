@@ -43,6 +43,13 @@
       "run": "^TestUsageMetricsSnapshotLabelsSSOOwnershipAlias$",
       "phase": "precheck",
       "source": "internal/repository/usage_metrics_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestUsageMetricsFlushRetryIsIdempotentAndAtomic",
+      "package": "./internal/repository",
+      "run": "^TestUsageMetricsFlushRetryIsIdempotentAndAtomic$",
+      "phase": "precheck",
+      "source": "internal/repository/usage_metrics_repository_integration.e2e"
     }
   ]
 }

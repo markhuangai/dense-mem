@@ -2,104 +2,190 @@
   "schema_version": 1,
   "capability": "access-application",
   "source_ownership": [
+    {"path": "cmd/internal/serverapp/access_composition.go", "issue": 370},
+    {"path": "cmd/internal/serverapp/access_adapters.go", "issue": 370},
+    {"path": "cmd/internal/serverapp/access_adapters_test.go", "issue": 370},
+    {"path": "internal/access/contract/ports.go", "issue": 370},
+    {"path": "internal/access/postgres/apikey_repository_test.go", "issue": 370},
+    {"path": "internal/access/postgres/canonical_credentials.go", "issue": 370},
+    {"path": "internal/access/postgres/canonical_credentials_test.go", "issue": 370},
+    {"path": "internal/access/postgres/control_identity_repository.go", "issue": 370},
+    {"path": "internal/access/postgres/credential_deletion.go", "issue": 370},
+    {"path": "internal/access/postgres/credential_repository.go", "issue": 370},
+    {"path": "internal/access/postgres/directory_identity_helpers.go", "issue": 370},
+    {"path": "internal/access/postgres/directory_identity_reconcile_repository.go", "issue": 370},
+    {"path": "internal/access/postgres/directory_identity_repository.go", "issue": 370},
+    {"path": "internal/access/postgres/helpers.go", "issue": 370},
+    {"path": "internal/access/postgres/sso_identity_repository.go", "issue": 370},
+    {"path": "internal/access/postgres/sso_oauth_provider_write.go", "issue": 370},
+    {"path": "internal/access/postgres/sso_repository.go", "issue": 370},
+    {"path": "internal/access/postgres/sso_repository_scan.go", "issue": 370},
+    {"path": "internal/access/postgres/team_repository.go", "issue": 370},
+    {"path": "internal/access/postgres/user_portal_session_repository.go", "issue": 370},
+    {"path": "internal/repository/canonical_credentials_integration.e2e", "issue": 370},
+    {"path": "internal/repository/credential_repository.go", "issue": 370},
+    {"path": "internal/repository/directory_identity_repository.go", "issue": 370},
+    {"path": "internal/repository/directory_identity_repository_integration.e2e", "issue": 370},
+    {"path": "internal/repository/sso_oauth_repository_integration.e2e", "issue": 370},
+    {"path": "internal/repository/sso_repository.go", "issue": 370},
+    {"path": "internal/repository/team_repository.e2e", "issue": 370},
+    {"path": "internal/repository/team_repository.go", "issue": 370},
+    {"path": "internal/repository/user_portal_session_repository.go", "issue": 370},
+    {"path": "internal/repository/user_portal_session_repository_integration.e2e", "issue": 370},
+    {"path": "internal/repository/control_identity_repository.go", "issue": 370}
+  ],
+  "compatibility_bridges": [
     {
-      "path": "cmd/internal/serverapp/access_composition.go",
-      "issue": 370
+      "source_path": "internal/repository/credential_repository.go",
+      "fields": ["CredentialRepository", "CredentialRepositoryImpl", "LastUsedUpdate", "NewCredentialRepository", "GetKeyPrefixFromHash"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"},
+        {"path": "internal/http/middleware/auth.go", "symbol": "AuthMiddleware"},
+        {"path": "internal/http/middleware/auth.go", "symbol": "AuthMiddlewareWithSecurity"},
+        {"path": "internal/http/middleware/auth.go", "symbol": "AuthMiddlewareWithOptions"},
+        {"path": "internal/http/mcp_bindings.go", "symbol": "ProtectedDeps.withMCPBindings"},
+        {"path": "internal/http/router_protected.go", "symbol": "ProtectedDeps.GetCredentialRepo"},
+        {"path": "internal/http/router_protected.go", "symbol": "RegisterProtectedRoutesWithHandlers"},
+        {"path": "internal/http/user_portal_routes.go", "symbol": "RegisterUserPortal"},
+        {"path": "internal/http/user_portal_routes.go", "symbol": "useUserPortalMiddleware"},
+        {"path": "internal/http/middleware/user_portal_session_auth_test.go", "symbol": "TestAuthMiddlewareAuthenticatesPortalSessionAndSetsAuthMethod"},
+        {"path": "cmd/internal/serverapp/remember_processor_integration.e2e", "symbol": "TestRememberServiceRejectsHistoricalOutcomesThroughPostgres"},
+        {"path": "cmd/internal/serverapp/remember_processor_integration.e2e", "symbol": "TestRememberServiceRejectsMigratedAttemptThroughPostgres"},
+        {"path": "internal/http/sso_oidc_integration.e2e", "symbol": "TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration"},
+        {"path": "internal/knowledge/postgres/owner_write_integration.e2e", "symbol": "createOwnerProfile"},
+        {"path": "internal/repository/canonical_credentials_integration.e2e", "symbol": "TestDeleteForTeamRetiresPromotedSSOCredentialPrivateSpace"},
+        {"path": "internal/repository/canonical_credentials_integration.e2e", "symbol": "TestDeleteForTeamWithAuditCommitsBeforePrivateErasureQueue"},
+        {"path": "internal/repository/canonical_credentials_integration.e2e", "symbol": "TestCanonicalCredentialScopesRespectMembershipGrants"},
+        {"path": "internal/repository/canonical_credentials_integration.e2e", "symbol": "TestCanonicalCredentialLifecycleRetainsDisabledIdentity"},
+        {"path": "internal/repository/canonical_credentials_integration.e2e", "symbol": "TestCanonicalCredentialRevocationPreservesSharedActorAcrossTeams"},
+        {"path": "internal/repository/canonical_credentials_integration.e2e", "symbol": "createOwnedCredential"},
+        {"path": "internal/repository/conflict_review_private_space_integration.e2e", "symbol": "TestClaimedPrivateConflictDerivedEvidenceCannotStageAfterErasureReopensSpace"},
+        {"path": "internal/repository/integration_test_helpers.e2e", "symbol": "createLedgerProfile"},
+        {"path": "internal/repository/private_memory_audit_integration.e2e", "symbol": "TestPrivateMemorySSOCredentialRevocationAuditFailureRollsBackDisable"},
+        {"path": "internal/repository/private_memory_audit_integration.e2e", "symbol": "TestPrivateMemorySSOCredentialRevocationAuditStoresProfileAndCredentialActors"},
+        {"path": "internal/repository/private_memory_credential_retirement_integration.e2e", "symbol": "TestPrivateMemoryCredentialRetirementUpgradesActiveErasure"},
+        {"path": "internal/repository/private_memory_remember_assessment_integration.e2e", "symbol": "TestPrivateMemoryErasureCleansSynchronousAssessmentAfterAttemptOrder"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemoryRetentionSelectsExpiredSpacesAndExcludesLegalHolds"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemoryExpiredLeaseIsReclaimedWithNewFence"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemoryFailureRetriesAreBackedOffAndBounded"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemoryMissingRetiredCredentialLosesClaim"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemoryErasureRemovesInboundCrossSpaceReferences"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemoryIdempotencyConcurrentReplay"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace"},
+        {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemorySSOCredentialDeletePreservesSharedActorMembership"},
+        {"path": "internal/repository/private_memory_semantic_lineage_integration.e2e", "symbol": "TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage"},
+        {"path": "internal/repository/recall_feedback_event_repository_integration.e2e", "symbol": "TestRecallFeedbackEventRepositoryFencesSealedPrivateSpace"},
+        {"path": "internal/repository/recall_space_isolation_integration.e2e", "symbol": "TestRecallEvidenceIsolatesCredentialPrivateSpacesWithinTeam"},
+        {"path": "internal/repository/relationship_correction_repository_integration.e2e", "symbol": "TestPrivateMemoryCorrectionStatusHidesSealedGeneration"},
+        {"path": "internal/repository/remember_diagnostic_hold_rollback_integration.e2e", "symbol": "TestRememberAttemptDiagnosticHoldTransactionRollback"},
+        {"path": "internal/repository/remember_primitives_integration.e2e", "symbol": "TestRememberPolicyDiagnosticLegalHoldReleaseAndErasure"},
+        {"path": "internal/repository/remember_primitives_integration.e2e", "symbol": "TestRememberAttemptDiagnosticHoldSkipsNoopUpdates"},
+        {"path": "internal/repository/remember_primitives_integration.e2e", "symbol": "TestRememberAttemptDiagnosticHoldAndPurgeSerializeOnPrivateSpace"},
+        {"path": "internal/repository/team_soft_delete_integration.e2e", "symbol": "TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork"},
+        {"path": "internal/repository/canonical_credentials_integration.e2e", "symbol": "TestCanonicalSSOOwnedCredentialCollectionAndSpaces"},
+        {"path": "internal/service/team_service.e2e", "symbol": "TestTeamServiceDeleteRevokesActiveKeys"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/access/postgres/credential_repository.go", "symbol": "NewCredentialRepository"},
+      "removal_condition": "Remove the repository aliases after all Access callers consume the native credential ports directly."
     },
     {
-      "path": "cmd/internal/serverapp/access_adapters.go",
-      "issue": 370
+      "source_path": "internal/repository/team_repository.go",
+      "fields": ["TeamRepository", "TeamRepositoryImpl", "NewTeamRepository"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"},
+        {"path": "internal/repository/team_repository.e2e", "symbol": "setupTeamRepositoryTest"},
+        {"path": "internal/repository/team_soft_delete_integration.e2e", "symbol": "TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork"},
+        {"path": "internal/repository/team_soft_delete_integration.e2e", "symbol": "TestTeamHardDeleteRemovesEmptyTeamMemorySpaceCatalog"},
+        {"path": "internal/repository/team_soft_delete_integration.e2e", "symbol": "TestTeamHardDeletePreservesAuditRowWhenMemorySpaceIsRemoved"},
+        {"path": "internal/service/team_service.e2e", "symbol": "TestTeamServiceCreate"},
+        {"path": "internal/service/team_service.e2e", "symbol": "TestTeamServiceCreateDuplicateName"},
+        {"path": "internal/service/team_service.e2e", "symbol": "TestTeamServiceGet"},
+        {"path": "internal/service/team_service.e2e", "symbol": "TestTeamServiceList"},
+        {"path": "internal/service/team_service.e2e", "symbol": "TestTeamServiceUpdate"},
+        {"path": "internal/service/team_service.e2e", "symbol": "TestTeamServiceDelete"},
+        {"path": "internal/service/team_service.e2e", "symbol": "TestTeamServiceDeleteRevokesActiveKeys"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/access/postgres/team_repository.go", "symbol": "NewTeamRepository"},
+      "removal_condition": "Remove the repository aliases after team callers consume the native Access port directly."
     },
     {
-      "path": "internal/repository/canonical_credentials.go",
-      "issue": 370
+      "source_path": "internal/repository/sso_repository.go",
+      "fields": ["SSORepository", "SSORepositoryImpl", "ErrSSOProtectedResourceProfileLimit", "NewSSORepository"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"},
+        {"path": "internal/http/control_portal_identity_test.go", "symbol": "TestControlIdentityHTTPHandlersAndAdminGroupLifecycle"},
+        {"path": "internal/http/sso_oidc_integration.e2e", "symbol": "TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration"},
+        {"path": "internal/repository/directory_identity_repository_integration.e2e", "symbol": "TestDirectoryReconcileCreatesAndArchivesOnlyDirectoryManagedTeam"},
+        {"path": "internal/repository/directory_identity_repository_integration.e2e", "symbol": "TestDirectoryCredentialsAndProviderRetirementRevokeOAuthAccess"},
+        {"path": "internal/repository/directory_identity_repository_integration.e2e", "symbol": "TestDirectoryGroupAndMembershipUpsertIsAtomic"},
+        {"path": "internal/repository/directory_identity_repository_integration.e2e", "symbol": "TestDirectoryPageQueriesAreScopedAndRejectDuplicateCreates"},
+        {"path": "internal/repository/directory_identity_repository_integration.e2e", "symbol": "TestSSOListMappingsExcludesRetiredMappings"},
+        {"path": "internal/repository/directory_identity_repository_integration.e2e", "symbol": "TestDirectoryReconcileFenceAndDisableRetireOnlyDirectoryGrants"},
+        {"path": "internal/repository/sso_oauth_repository_integration.e2e", "symbol": "TestSSOProviderProtectedResourceConfigRoundTripAndStrictRead"},
+        {"path": "internal/repository/sso_oauth_repository_integration.e2e", "symbol": "TestSSOProviderProtectedResourceDefaultIsDormant"},
+        {"path": "internal/repository/sso_oauth_repository_integration.e2e", "symbol": "TestSSOProviderProtectedResourceIssuerUniquenessIsAtomic"},
+        {"path": "internal/repository/sso_oauth_repository_integration.e2e", "symbol": "TestSSOProviderProtectedResourceOmittedUpdatePreservesConcurrentConfig"},
+        {"path": "internal/repository/sso_oauth_repository_integration.e2e", "symbol": "TestSSOProviderProtectedResourceProfileLimitIsAtomic"},
+        {"path": "internal/repository/team_soft_delete_integration.e2e", "symbol": "TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork"},
+        {"path": "internal/repository/team_soft_delete_integration.e2e", "symbol": "TestSSORuntimeEntitlementsExcludeArchivedTeams"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/access/postgres/sso_repository.go", "symbol": "NewSSORepository"},
+      "removal_condition": "Remove the repository aliases after SSO callers consume the native Access port directly."
     },
     {
-      "path": "internal/repository/canonical_credentials_integration.e2e",
-      "issue": 370
+      "source_path": "internal/repository/directory_identity_repository.go",
+      "fields": ["DirectoryIdentityRepository", "DirectoryIdentityRepositoryImpl", "ErrDirectoryResourceConflict", "ErrDirectoryInvalidValue", "ErrDirectoryReconcileStale", "NewDirectoryIdentityRepository"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"},
+        {"path": "internal/http/scim_directory.go", "symbol": "RegisterDirectorySCIM"},
+        {"path": "internal/http/scim_directory_test.go", "symbol": "TestDirectorySCIMUserLifecycleAndConnectorIsolation"},
+        {"path": "internal/repository/directory_identity_repository_integration.e2e", "symbol": "TestDirectoryReconcileCreatesAndArchivesOnlyDirectoryManagedTeam"},
+        {"path": "internal/repository/directory_identity_repository_integration.e2e", "symbol": "TestDirectoryCredentialsAndProviderRetirementRevokeOAuthAccess"},
+        {"path": "internal/repository/directory_identity_repository_integration.e2e", "symbol": "TestDirectoryGroupAndMembershipUpsertIsAtomic"},
+        {"path": "internal/repository/directory_identity_repository_integration.e2e", "symbol": "TestDirectoryPageQueriesAreScopedAndRejectDuplicateCreates"},
+        {"path": "internal/repository/directory_identity_repository_integration.e2e", "symbol": "TestDirectoryReconcileFenceAndDisableRetireOnlyDirectoryGrants"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/access/postgres/directory_identity_repository.go", "symbol": "NewDirectoryIdentityRepository"},
+      "removal_condition": "Remove the repository aliases after directory callers consume the native Access port directly."
     },
     {
-      "path": "internal/repository/canonical_credentials_test.go",
-      "issue": 370
+      "source_path": "internal/repository/control_identity_repository.go",
+      "fields": ["ControlIdentityRepository", "ControlIdentityRepositoryImpl", "NewControlIdentityRepository"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"},
+        {"path": "internal/http/control_portal_identity_test.go", "symbol": "TestControlIdentityHTTPHandlersAndAdminGroupLifecycle"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/access/postgres/control_identity_repository.go", "symbol": "NewControlIdentityRepository"},
+      "removal_condition": "Remove the repository aliases after control-identity callers consume the native Access port directly."
     },
     {
-      "path": "internal/repository/credential_repository.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/repository/directory_identity_helpers.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/repository/directory_identity_reconcile_repository.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/repository/directory_identity_repository.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/repository/directory_identity_repository_integration.e2e",
-      "issue": 370
-    },
-    {
-      "path": "internal/repository/sso_identity_repository.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/repository/sso_oauth_provider_write.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/repository/sso_oauth_repository_integration.e2e",
-      "issue": 370
-    },
-    {
-      "path": "internal/repository/sso_repository.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/repository/sso_repository_scan.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/repository/team_repository.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/repository/team_repository.e2e",
-      "issue": 370
-    },
-    {
-      "path": "internal/repository/user_portal_session_repository.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/repository/user_portal_session_repository_integration.e2e",
-      "issue": 370
+      "source_path": "internal/repository/user_portal_session_repository.go",
+      "fields": ["UserPortalSessionRepository", "UserPortalSessionRepositoryImpl", "NewUserPortalSessionRepository"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"},
+        {"path": "internal/repository/user_portal_session_repository_integration.e2e", "symbol": "TestUserPortalSessionsEnforceSystemRLSAndProfileLifecycle"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/access/postgres/user_portal_session_repository.go", "symbol": "NewUserPortalSessionRepository"},
+      "removal_condition": "Remove the repository aliases after portal-session callers consume the native Access port directly."
     }
   ],
   "completed_issues": [],
   "go": {
     "units": [
-      {
-        "id": "github.com/markhuangai/dense-mem/internal/service/access",
-        "role": "application_api",
-        "visibility": "public"
-      }
+      {"id": "github.com/markhuangai/dense-mem/internal/access/contract", "role": "port", "visibility": "public"},
+      {"id": "github.com/markhuangai/dense-mem/internal/access/postgres", "role": "postgres_adapter", "visibility": "private"},
+      {"id": "github.com/markhuangai/dense-mem/internal/service/access", "role": "application_api", "visibility": "public"}
     ]
   },
-  "browser": {
-    "units": []
-  },
-  "exceptions": [
-    {
-      "source": "github.com/markhuangai/dense-mem/internal/service/access",
-      "target": "github.com/markhuangai/dense-mem/internal/repository",
-      "removal_issue": 370,
-      "reason": "Access policy now consumes consumer-owned ports, while the legacy repository implementation remains the staged PostgreSQL bridge until final architecture certification."
-    }
-  ],
+  "browser": {"units": []},
+  "exceptions": [],
   "workers": [
     {
       "path": "internal/service/access/credential_activity.go",

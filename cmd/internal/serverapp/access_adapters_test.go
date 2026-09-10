@@ -8,15 +8,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/markhuangai/dense-mem/internal/repository"
+	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 type credentialLastUsedBatchRepositoryStub struct {
-	updates []repository.LastUsedUpdate
+	updates []accesscontract.LastUsedUpdate
 }
 
-func (s *credentialLastUsedBatchRepositoryStub) TouchLastUsedBatch(_ context.Context, updates []repository.LastUsedUpdate) error {
+func (s *credentialLastUsedBatchRepositoryStub) TouchLastUsedBatch(_ context.Context, updates []accesscontract.LastUsedUpdate) error {
 	s.updates = append(s.updates, updates...)
 	return nil
 }
@@ -28,5 +28,5 @@ func TestCredentialActivityBatchAdapterPreservesUpdates(t *testing.T) {
 	at := time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
 
 	require.NoError(t, adapter.TouchLastUsedBatch(context.Background(), []accessservice.LastUsedUpdate{{ID: id, At: at}}))
-	require.Equal(t, []repository.LastUsedUpdate{{ID: id, At: at}}, repo.updates)
+	require.Equal(t, []accesscontract.LastUsedUpdate{{ID: id, At: at}}, repo.updates)
 }

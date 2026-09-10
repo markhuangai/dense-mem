@@ -15,8 +15,8 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 
+	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 const (
@@ -302,7 +302,7 @@ func (s *ControlIdentityService) CompleteLogin(ctx context.Context, stateToken, 
 		LastEntitlementCheckAt: &now,
 	}
 	if err := s.ssoRepo.UpsertIdentity(ctx, identity); err != nil {
-		if errors.Is(err, repository.ErrDirectoryIdentityNotProvisioned) {
+		if errors.Is(err, accesscontract.ErrDirectoryIdentityNotProvisioned) {
 			return nil, ErrControlAccessDenied
 		}
 		return nil, err

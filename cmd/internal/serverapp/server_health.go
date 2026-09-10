@@ -1,38 +1,17 @@
 package serverapp
 
+// This compatibility facade keeps the serverapp health helper stable while
+// readiness policy lives in internal/operations.
+
 import (
 	"context"
-	"fmt"
-	"strings"
 
-	"github.com/markhuangai/dense-mem/internal/repository"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
+	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 )
 
 func checkSearchReadiness(ctx context.Context, search interface {
-	CheckSearchReadiness(context.Context) (*repository.SearchReadiness, error)
+	CheckSearchReadiness(context.Context) (*searchcontract.SearchReadiness, error)
 }) error {
-	if search == nil {
-		return fmt.Errorf("%w: search repository is required", repository.ErrSearchContractMismatch)
-	}
-	readiness, err := search.CheckSearchReadiness(ctx)
-	if err != nil {
-		return err
-	}
-	if readiness == nil || readiness.Ready {
-		return nil
-	}
-	reasons := make([]string, 0, len(readiness.Reasons))
-	for _, reason := range readiness.Reasons {
-		message := strings.TrimSpace(reason.Message)
-		if message == "" {
-			message = strings.TrimSpace(reason.Code)
-		}
-		if message != "" {
-			reasons = append(reasons, message)
-		}
-	}
-	if len(reasons) == 0 {
-		reasons = append(reasons, "search readiness check failed")
-	}
-	return fmt.Errorf("%w: %s", repository.ErrSearchContractMismatch, strings.Join(reasons, "; "))
+	return operations.CheckSearchReadiness(ctx, search)
 }

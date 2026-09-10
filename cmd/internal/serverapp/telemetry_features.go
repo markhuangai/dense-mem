@@ -1,30 +1,14 @@
 package serverapp
 
+// This compatibility facade keeps feature wiring in serverapp while the
+// telemetry policy helper lives in internal/operations.
+
 import (
-	"context"
-
-	"github.com/google/uuid"
-
-	"github.com/markhuangai/dense-mem/internal/service"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
+	settings "github.com/markhuangai/dense-mem/internal/settings"
 )
 
-func configureTelemetryFeatures(prometheus *service.PrometheusTelemetryService, appConfig service.AppConfigService, dreams dreamservice.Service) {
-	if prometheus == nil {
-		return
-	}
-	prometheus.SetFeatureResolver(service.TelemetryFeatureResolver{
-		RecallFeedbackEnabled: func(ctx context.Context) (bool, error) {
-			config, err := appConfig.RecallFeedbackRuntimeConfig(ctx)
-			return config.Enabled, err
-		},
-		DreamingEnabled: func(ctx context.Context, teamID *uuid.UUID) (bool, error) {
-			if teamID == nil {
-				config, err := appConfig.DreamingRuntimeConfig(ctx)
-				return config.Enabled, err
-			}
-			effective, err := dreams.EffectiveConfig(ctx, teamID.String())
-			return effective.Enabled, err
-		},
-	})
+func configureTelemetryFeatures(prometheus *operations.PrometheusTelemetryService, appConfig settings.AppConfigService, dreams dreamservice.Service) {
+	operations.ConfigureTelemetryFeatures(prometheus, appConfig, dreams)
 }

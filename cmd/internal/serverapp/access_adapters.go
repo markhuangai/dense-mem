@@ -3,12 +3,12 @@ package serverapp
 import (
 	"context"
 
-	"github.com/markhuangai/dense-mem/internal/repository"
+	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 type credentialLastUsedBatchRepository interface {
-	TouchLastUsedBatch(context.Context, []repository.LastUsedUpdate) error
+	TouchLastUsedBatch(context.Context, []accesscontract.LastUsedUpdate) error
 }
 
 type credentialActivityBatchAdapter struct {
@@ -23,9 +23,9 @@ func newCredentialActivityBatchAdapter(repo credentialLastUsedBatchRepository) a
 }
 
 func (a credentialActivityBatchAdapter) TouchLastUsedBatch(ctx context.Context, updates []accessservice.LastUsedUpdate) error {
-	converted := make([]repository.LastUsedUpdate, len(updates))
+	converted := make([]accesscontract.LastUsedUpdate, len(updates))
 	for index, update := range updates {
-		converted[index] = repository.LastUsedUpdate{ID: update.ID, At: update.At}
+		converted[index] = accesscontract.LastUsedUpdate(update)
 	}
 	return a.repo.TouchLastUsedBatch(ctx, converted)
 }

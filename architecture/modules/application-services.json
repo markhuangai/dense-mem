@@ -2,172 +2,190 @@
   "schema_version": 1,
   "capability": "application-services",
   "source_ownership": [
+    {"path": "cmd/internal/serverapp/operation_log_composition.go", "issue": 371},
+    {"path": "cmd/internal/serverapp/usage_metrics_composition.go", "issue": 371},
+    {"path": "cmd/internal/serverapp/telemetry_composition.go", "issue": 371},
+    {"path": "cmd/internal/serverapp/telemetry_features.go", "issue": 371},
+    {"path": "cmd/internal/serverapp/authority_bootstrap.go", "issue": 371},
+    {"path": "cmd/internal/serverapp/server_health.go", "issue": 371},
+    {"path": "cmd/internal/serverapp/telemetry.go", "issue": 371},
+    {"path": "internal/operations/authority.go", "issue": 371},
+    {"path": "internal/operations/authority_test.go", "issue": 371},
+    {"path": "internal/operations/contract/ports.go", "issue": 371},
+    {"path": "internal/operations/health.go", "issue": 371},
+    {"path": "internal/operations/invariant_scan_service.go", "issue": 371},
+    {"path": "internal/operations/operations_helpers_test.go", "issue": 371},
+    {"path": "internal/operations/operation_log_service.go", "issue": 371},
+    {"path": "internal/operations/operation_log_service_test.go", "issue": 371},
+    {"path": "internal/operations/postgres/authority_repository.go", "issue": 371},
+    {"path": "internal/operations/postgres/authority_repository_test.go", "issue": 371},
+    {"path": "internal/operations/postgres/operation_log_repository.go", "issue": 371},
+    {"path": "internal/operations/postgres/operation_log_repository_test.go", "issue": 371},
+    {"path": "internal/operations/postgres/telemetry_repository.go", "issue": 371},
+    {"path": "internal/operations/postgres/telemetry_repository_test.go", "issue": 371},
+    {"path": "internal/operations/postgres/usage_metrics_repository.go", "issue": 371},
+    {"path": "internal/operations/postgres/usage_metrics_repository_test.go", "issue": 371},
+    {"path": "internal/operations/telemetry_catalog.go", "issue": 371},
+    {"path": "internal/operations/telemetry_catalog_test.go", "issue": 371},
+    {"path": "internal/operations/telemetry_pricing.go", "issue": 371},
+    {"path": "internal/operations/telemetry_query_errors.go", "issue": 371},
+    {"path": "internal/operations/telemetry_query_errors_test.go", "issue": 371},
+    {"path": "internal/operations/telemetry_service.go", "issue": 371},
+    {"path": "internal/operations/telemetry_service_test.go", "issue": 371},
+    {"path": "internal/operations/telemetry_service_unconfigured_test.go", "issue": 371},
+    {"path": "internal/operations/usage_metrics_service.go", "issue": 371},
+    {"path": "internal/operations/usage_metrics_service_test.go", "issue": 371},
+    {"path": "internal/repository/authority_repository.go", "issue": 371},
+    {"path": "internal/repository/authority_repository_integration.e2e", "issue": 371},
+    {"path": "internal/repository/operation_log_repository.go", "issue": 371},
+    {"path": "internal/repository/operations_compat_helpers.go", "issue": 371},
+    {"path": "internal/repository/telemetry_repository.go", "issue": 371},
+    {"path": "internal/repository/telemetry_repository_integration.e2e", "issue": 371},
+    {"path": "internal/repository/usage_metrics_repository.go", "issue": 371},
+    {"path": "internal/repository/usage_metrics_repository_integration.e2e", "issue": 371},
+    {"path": "internal/service/invariant_scan_service_unit_test.go", "issue": 371},
+    {"path": "internal/service/operations_compat.go", "issue": 371},
+    {"path": "internal/service/invariant_scan_service.go", "issue": 368}
+  ],
+  "compatibility_bridges": [
     {
-      "path": "cmd/internal/serverapp/operation_log_composition.go",
-      "issue": 371
+      "source_path": "cmd/internal/serverapp/authority_bootstrap.go",
+      "fields": ["authorityMode", "authorityActive", "authorityBootstrap", "authorityBootstrapStore", "ClassifyAuthority", "checkActiveAuthority", "errAuthorityBlocked", "cutoverMarkerVersion"],
+      "consumers": [
+        {"path": "cmd/server/main.go", "symbol": "main"},
+        {"path": "cmd/demo-server/main.go", "symbol": "main"},
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/operations/authority.go", "symbol": "ClassifyAuthority"},
+      "removal_condition": "Remove the serverapp bootstrap aliases after command entry points consume internal/operations authority directly."
     },
     {
-      "path": "cmd/internal/serverapp/usage_metrics_composition.go",
-      "issue": 371
+      "source_path": "cmd/internal/serverapp/server_health.go",
+      "fields": ["checkSearchReadiness"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/operations/health.go", "symbol": "CheckSearchReadiness"},
+      "removal_condition": "Remove the serverapp health forwarding helper after the server assembler consumes operations readiness directly."
     },
     {
-      "path": "cmd/internal/serverapp/telemetry_composition.go",
-      "issue": 371
+      "source_path": "cmd/internal/serverapp/telemetry_features.go",
+      "fields": ["configureTelemetryFeatures"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/application_composition.go", "symbol": "buildApplicationBundle"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/operations/telemetry_pricing.go", "symbol": "ConfigureTelemetryFeatures"},
+      "removal_condition": "Remove the serverapp telemetry feature forwarding helper after application composition consumes the operations helper directly."
     },
     {
-      "path": "cmd/internal/serverapp/telemetry_features.go",
-      "issue": 371
+      "source_path": "cmd/internal/serverapp/telemetry_composition.go",
+      "fields": ["refreshTelemetryPricingCache", "refreshTelemetryPricingCacheUntilCanceled"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/telemetry_composition.go", "symbol": "buildTelemetryApplication"},
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/operations/telemetry_pricing.go", "symbol": "NewTelemetryPricingResolver"},
+      "removal_condition": "Remove the serverapp pricing refresh forwarders after the operations lifecycle is constructed directly by the server composition."
     },
     {
-      "path": "cmd/internal/serverapp/authority_bootstrap.go",
-      "issue": 371
+      "source_path": "internal/service/operations_compat.go",
+      "fields": ["OperationLogReader", "OperationLogService", "OperationLogRetentionProvider", "OperationLogServiceImpl", "TelemetryReader", "TelemetryFilter", "TelemetrySnapshot", "TelemetryWindow", "TelemetryScope", "TelemetryCard", "TelemetrySeries", "TelemetryPoint", "PrometheusTelemetryService", "TelemetryFeatureResolver", "TelemetryPricingReader", "TelemetryPricingResolver", "UsageMetricsRecorder", "UsageMetricsReader", "UsageMetricsService", "UsageMetricsServiceImpl", "TelemetryLifecycleReader", "TelemetryLifecycleFilter", "TelemetryLifecycleSnapshot", "TelemetryRetentionDays", "TelemetryAudienceOperator", "TelemetryAudienceUser", "TelemetrySnapshotReady", "TelemetrySnapshotDegraded", "TelemetrySnapshotUnavailable", "TelemetryItemReady", "TelemetryItemInactive", "TelemetryItemUnavailable", "TelemetryItemUnsupported", "UsageMetricsBucketSeconds", "UsageMetricsRetentionDays", "ErrOperationLogQueueFull", "NewOperationLogService", "NewPrometheusTelemetryService", "NewPrometheusTelemetryServiceWithLogger", "NewPrometheusTelemetryServiceWithJobAndLogger", "NewUsageMetricsService", "NewTelemetryPricingResolver"],
+      "consumers": [
+        {"path": "internal/http/control_portal.go", "symbol": "NewControlPortalServerWithMetricsAndTelemetry"},
+        {"path": "internal/http/control_portal_bindings.go", "symbol": "NewControlPortalServerWithCapabilityBindings"},
+        {"path": "internal/http/mcp_bindings.go", "symbol": "ProtectedDeps.withMCPBindings"},
+        {"path": "internal/http/router_protected.go", "symbol": "RegisterProtectedRoutesWithHandlers"},
+        {"path": "internal/http/user_portal_routes.go", "symbol": "RegisterUserPortal"},
+        {"path": "internal/http/user_portal.go", "symbol": "userPortalHandler.telemetrySnapshot"},
+        {"path": "internal/http/middleware/usage_metrics.go", "symbol": "UsageMetricsMiddleware"},
+        {"path": "internal/http/control_portal_observability.go", "symbol": "controlPortalHandler.listOperationLogs"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/operations/operation_log_service.go", "symbol": "NewOperationLogService"},
+      "removal_condition": "Remove the root operations service aliases after named transports and composition callers consume internal/operations contracts directly."
     },
     {
-      "path": "cmd/internal/serverapp/authority_bootstrap_test.go",
-      "issue": 371
+      "source_path": "internal/service/invariant_scan_service.go",
+      "fields": ["InvariantFinding", "InvariantScanResult", "InvariantScanService", "ErrInvariantScanRemoved", "NewInvariantScanService"],
+      "consumers": [
+        {"path": "internal/service/invariant_scan_service_unit_test.go", "symbol": "TestInvariantScanWithAuditRecordsRemovedResult"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/operations/invariant_scan_service.go", "symbol": "NewInvariantScanService"},
+      "removal_condition": "Remove the legacy invariant-scan facade after retained control-plane fixtures consume internal/operations directly."
     },
     {
-      "path": "cmd/internal/serverapp/server_health.go",
-      "issue": 371
+      "source_path": "internal/repository/authority_repository.go",
+      "fields": ["ErrFreshAuthorityBlocked", "CommitFreshAuthorityInput", "AuthorityRepository", "NewAuthorityRepository"],
+      "consumers": [
+        {"path": "cmd/server/main.go", "symbol": "main"},
+        {"path": "cmd/demo-server/main.go", "symbol": "main"},
+        {"path": "internal/repository/authority_repository_integration.e2e", "symbol": "TestAuthorityRepositoryCommitsFreshAuthorityOnlyWhenApplicationDataEmpty"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/operations/postgres/authority_repository.go", "symbol": "NewAuthorityRepository"},
+      "removal_condition": "Remove the authority repository facade after bootstrap and retained fixtures construct the operations PostgreSQL adapter directly."
     },
     {
-      "path": "cmd/internal/serverapp/telemetry.go",
-      "issue": 371
+      "source_path": "internal/repository/operation_log_repository.go",
+      "fields": ["OperationLogRepository", "OperationLogRepositoryImpl", "NewOperationLogRepository"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/operations/postgres/operation_log_repository.go", "symbol": "NewOperationLogRepository"},
+      "removal_condition": "Remove the operation-log repository facade after the server assembler constructs the operations adapter directly."
     },
     {
-      "path": "internal/repository/authority_repository.go",
-      "issue": 371
+      "source_path": "internal/repository/usage_metrics_repository.go",
+      "fields": ["UsageMetricsRepository", "UsageMetricsRepositoryImpl", "NewUsageMetricsRepository"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"},
+        {"path": "internal/repository/usage_metrics_repository_integration.e2e", "symbol": "TestUsageMetricsSnapshotLabelsSSOOwnershipAlias"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/operations/postgres/usage_metrics_repository.go", "symbol": "NewUsageMetricsRepository"},
+      "removal_condition": "Remove the usage-metrics repository facade after the server assembler and retained fixture construct the operations adapter directly."
     },
     {
-      "path": "internal/repository/authority_repository_integration.e2e",
-      "issue": 371
-    },
-    {
-      "path": "internal/repository/authority_repository_test.go",
-      "issue": 371
-    },
-    {
-      "path": "internal/repository/telemetry_repository.go",
-      "issue": 371
-    },
-    {
-      "path": "internal/repository/telemetry_repository_integration.e2e",
-      "issue": 371
-    },
-    {
-      "path": "internal/repository/usage_metrics_repository.go",
-      "issue": 371
-    },
-    {
-      "path": "internal/repository/usage_metrics_repository_integration.e2e",
-      "issue": 371
-    },
-    {
-      "path": "internal/service/operation_log_service.go",
-      "issue": 371
-    },
-    {
-      "path": "internal/service/operation_log_service_test.go",
-      "issue": 371
-    },
-    {
-      "path": "internal/service/telemetry_catalog.go",
-      "issue": 371
-    },
-    {
-      "path": "internal/service/telemetry_catalog_test.go",
-      "issue": 371
-    },
-    {
-      "path": "internal/service/telemetry_query_errors.go",
-      "issue": 371
-    },
-    {
-      "path": "internal/service/telemetry_query_errors_test.go",
-      "issue": 371
-    },
-    {
-      "path": "internal/service/telemetry_service.go",
-      "issue": 371
-    },
-    {
-      "path": "internal/service/telemetry_service_test.go",
-      "issue": 371
-    },
-    {
-      "path": "internal/service/telemetry_service_unconfigured_test.go",
-      "issue": 371
-    },
-    {
-      "path": "internal/service/usage_metrics_service.go",
-      "issue": 371
-    },
-    {
-      "path": "internal/service/usage_metrics_service_test.go",
-      "issue": 371
+      "source_path": "internal/repository/telemetry_repository.go",
+      "fields": ["TelemetryLifecycleReader", "TelemetryLifecycleFilter", "TelemetryLifecycleSnapshot", "LedgerRepositoryImpl.ReadTelemetryLifecycle"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"},
+        {"path": "internal/repository/telemetry_repository_integration.e2e", "symbol": "TestReadTelemetryLifecycleIsolatesSystemTeamAndProfileScopes"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/operations/postgres/telemetry_repository.go", "symbol": "NewTelemetryLifecycleRepository"},
+      "removal_condition": "Remove the LedgerRepository telemetry forwarding method after operations composition constructs the lifecycle adapter directly."
     }
   ],
   "completed_issues": [],
   "go": {
     "units": [
-      {
-        "id": "github.com/markhuangai/dense-mem/internal/service",
-        "role": "application_api",
-        "visibility": "public"
-      }
+      {"id": "github.com/markhuangai/dense-mem/internal/operations", "role": "application_api", "visibility": "public"},
+      {"id": "github.com/markhuangai/dense-mem/internal/operations/contract", "role": "port", "visibility": "public"},
+      {"id": "github.com/markhuangai/dense-mem/internal/operations/postgres", "role": "postgres_adapter", "visibility": "private"},
+      {"id": "github.com/markhuangai/dense-mem/internal/service", "role": "application_api", "visibility": "public"}
     ]
   },
-  "browser": {
-    "units": []
-  },
+  "browser": {"units": []},
   "exceptions": [
     {
       "source": "github.com/markhuangai/dense-mem/internal/service",
       "target": "github.com/markhuangai/dense-mem/internal/repository",
       "removal_issue": 382,
-      "reason": "The broad application service still consumes the legacy repository adapter until final architecture certification."
+      "reason": "The broad application service retains unrelated legacy repository consumers until final architecture certification."
     }
   ],
   "workers": [
-    {
-      "path": "internal/service/operation_log_service.go",
-      "function": "Start",
-      "kind": "goroutine",
-      "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
-    },
-    {
-      "path": "internal/service/recall_feedback_event_service.go",
-      "function": "Start",
-      "kind": "goroutine",
-      "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
-    },
-    {
-      "path": "internal/service/telemetry_catalog.go",
-      "function": "runTelemetryInstantQueries",
-      "kind": "goroutine",
-      "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
-    },
-    {
-      "path": "internal/service/telemetry_catalog.go",
-      "function": "runTelemetryRangeQueries",
-      "kind": "goroutine",
-      "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
-    },
-    {
-      "path": "internal/service/usage_metrics_service.go",
-      "function": "Start",
-      "kind": "goroutine",
-      "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
-    }
+    {"path": "internal/operations/operation_log_service.go", "function": "Start", "kind": "goroutine", "ordinal": 1, "role": "worker", "lifecycle_issue": 381},
+    {"path": "internal/operations/telemetry_catalog.go", "function": "runTelemetryInstantQueries", "kind": "goroutine", "ordinal": 1, "role": "worker", "lifecycle_issue": 381},
+    {"path": "internal/operations/telemetry_catalog.go", "function": "runTelemetryRangeQueries", "kind": "goroutine", "ordinal": 1, "role": "worker", "lifecycle_issue": 381},
+    {"path": "internal/operations/usage_metrics_service.go", "function": "Start", "kind": "goroutine", "ordinal": 1, "role": "worker", "lifecycle_issue": 381},
+    {"path": "internal/service/recall_feedback_event_service.go", "function": "Start", "kind": "goroutine", "ordinal": 1, "role": "worker", "lifecycle_issue": 381}
   ]
 }
