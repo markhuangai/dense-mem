@@ -1,0 +1,499 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+const (
+	deprecatedANNRetirementBaseVersion int64 = 20260910010001
+	deprecatedANNRetirementVersion     int64 = 20260910020001
+	deprecatedANNContractID                  = "1a06f88d-e92e-4f3c-8d27-0b747bd8cf17"
+	deprecatedANNTargetIndex                 = "v2_search_1a06f88de92e_3072_halfvec_hnsw_idx"
+	deprecatedANNActiveIndex                 = "search_1a06f88de92e_3072_halfvec_hnsw_idx"
+)
+
+func TestDeprecatedANNIndexMigrationRetiresExactDuplicate(t *testing.T) {
+	ctx := context.Background()
+	db := setupDeprecatedANNRetirementDB(t, ctx)
+	installDeprecatedANNFixture(t, ctx, db, "deprecated", "current")
+
+	beforeDefinition := indexDefinition(t, ctx, db, deprecatedANNActiveIndex)
+	beforeGenerations := searchGenerationSnapshot(t, ctx, db)
+	documentID := insertDeprecatedANNSearchDocument(t, ctx, db)
+	beforeDocument := searchDocumentSnapshot(t, ctx, db, documentID)
+	beforePlan := deprecatedANNQueryPlan(t, ctx, db)
+	require.Contains(t, beforePlan, "Index Scan using ")
+	beforeResults := deprecatedANNQueryResults(t, ctx, db)
+	require.Equal(t, []string{documentID}, beforeResults)
+
+	runGooseUpTo(t, ctx, db, deprecatedANNRetirementVersion)
+
+	assert.False(t, indexExists(t, ctx, db, deprecatedANNTargetIndex))
+	assert.True(t, indexExists(t, ctx, db, deprecatedANNActiveIndex))
+	assert.Equal(t, beforeDefinition, indexDefinition(t, ctx, db, deprecatedANNActiveIndex))
+	assert.Equal(t, beforeGenerations, searchGenerationSnapshot(t, ctx, db))
+	assert.Equal(t, beforeDocument, searchDocumentSnapshot(t, ctx, db, documentID))
+
+	afterPlan := deprecatedANNQueryPlan(t, ctx, db)
+	assert.Equal(t, normalizeDeprecatedANNPlan(beforePlan), normalizeDeprecatedANNPlan(afterPlan))
+	assert.Contains(t, afterPlan, "Index Scan using "+deprecatedANNActiveIndex)
+	assert.NotContains(t, afterPlan, deprecatedANNTargetIndex)
+	assert.Equal(t, beforeResults, deprecatedANNQueryResults(t, ctx, db))
+}
+
+func TestDeprecatedANNIndexMigrationIsIdempotentWhenTargetAbsent(t *testing.T) {
+	ctx := context.Background()
+	db := setupDeprecatedANNRetirementDB(t, ctx)
+
+	runGooseUpTo(t, ctx, db, deprecatedANNRetirementVersion)
+	runGooseUpTo(t, ctx, db, deprecatedANNRetirementVersion)
+
+	assert.False(t, indexExists(t, ctx, db, deprecatedANNTargetIndex))
+	assert.False(t, indexExists(t, ctx, db, deprecatedANNActiveIndex))
+	assert.True(t, migrationVersionApplied(t, ctx, db, deprecatedANNRetirementVersion))
+}
+
+func TestDeprecatedANNIndexMigrationFailsClosedOnDefinitionMismatch(t *testing.T) {
+	ctx := context.Background()
+	db := setupDeprecatedANNRetirementDB(t, ctx)
+	installDeprecatedANNFixture(t, ctx, db, "deprecated", "failed")
+
+	err := migrationUpTo(ctx, db, deprecatedANNRetirementVersion)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "physical definition")
+	assert.True(t, indexExists(t, ctx, db, deprecatedANNTargetIndex))
+	assert.True(t, indexExists(t, ctx, db, deprecatedANNActiveIndex))
+	assert.False(t, migrationVersionApplied(t, ctx, db, deprecatedANNRetirementVersion))
+}
+
+func TestDeprecatedANNIndexMigrationFailsClosedWhenReplacementIsMissing(t *testing.T) {
+	ctx := context.Background()
+	db := setupDeprecatedANNRetirementDB(t, ctx)
+	installDeprecatedANNFixture(t, ctx, db, "deprecated", "current")
+	require.NoError(t, dropDeprecatedANNIndex(t, ctx, db, deprecatedANNActiveIndex))
+
+	err := migrationUpTo(ctx, db, deprecatedANNRetirementVersion)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "active replacement is missing")
+	assert.True(t, indexExists(t, ctx, db, deprecatedANNTargetIndex))
+	assert.False(t, indexExists(t, ctx, db, deprecatedANNActiveIndex))
+	assert.False(t, migrationVersionApplied(t, ctx, db, deprecatedANNRetirementVersion))
+}
+
+func TestDeprecatedANNIndexMigrationFailsClosedWhenReplacementIsInvalid(t *testing.T) {
+	ctx := context.Background()
+	db := setupDeprecatedANNRetirementDB(t, ctx)
+	installDeprecatedANNFixture(t, ctx, db, "deprecated", "current")
+	require.NoError(t, dropDeprecatedANNIndex(t, ctx, db, deprecatedANNActiveIndex))
+	createDeprecatedANNIndex(t, ctx, db, deprecatedANNActiveIndex, "failed")
+
+	err := migrationUpTo(ctx, db, deprecatedANNRetirementVersion)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "physical definition")
+	assert.True(t, indexExists(t, ctx, db, deprecatedANNTargetIndex))
+	assert.True(t, indexExists(t, ctx, db, deprecatedANNActiveIndex))
+	assert.False(t, migrationVersionApplied(t, ctx, db, deprecatedANNRetirementVersion))
+}
+
+func TestDeprecatedANNIndexMigrationFailsClosedOnActiveTarget(t *testing.T) {
+	ctx := context.Background()
+	db := setupDeprecatedANNRetirementDB(t, ctx)
+	installDeprecatedANNFixture(t, ctx, db, "active", "current")
+
+	err := migrationUpTo(ctx, db, deprecatedANNRetirementVersion)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "deprecated generation metadata")
+	assert.True(t, indexExists(t, ctx, db, deprecatedANNTargetIndex))
+	assert.True(t, indexExists(t, ctx, db, deprecatedANNActiveIndex))
+	assert.False(t, migrationVersionApplied(t, ctx, db, deprecatedANNRetirementVersion))
+}
+
+func TestDeprecatedANNIndexMigrationReleasesLockAfterBoundedFailure(t *testing.T) {
+	ctx := context.Background()
+	db := setupDeprecatedANNRetirementDB(t, ctx)
+	installDeprecatedANNFixture(t, ctx, db, "deprecated", "current")
+
+	blockerConn, err := db.Conn(ctx)
+	require.NoError(t, err)
+	blockerTx, err := blockerConn.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	_, err = blockerTx.ExecContext(ctx, `LOCK TABLE public.search_documents IN ROW EXCLUSIVE MODE`)
+	require.NoError(t, err)
+
+	err = migrationUpTo(ctx, db, deprecatedANNRetirementVersion)
+	require.Error(t, err)
+	assert.Contains(t, strings.ToLower(err.Error()), "lock")
+	assert.True(t, indexExists(t, ctx, db, deprecatedANNTargetIndex))
+	assert.False(t, migrationVersionApplied(t, ctx, db, deprecatedANNRetirementVersion))
+
+	require.NoError(t, blockerTx.Rollback())
+	require.NoError(t, blockerConn.Close())
+	runGooseUpTo(t, ctx, db, deprecatedANNRetirementVersion)
+	assert.False(t, indexExists(t, ctx, db, deprecatedANNTargetIndex))
+}
+
+func TestDeprecatedANNIndexMigrationDownRequiresCatalogRecovery(t *testing.T) {
+	ctx := context.Background()
+	db := setupDeprecatedANNRetirementDB(t, ctx)
+	installDeprecatedANNFixture(t, ctx, db, "deprecated", "current")
+	runGooseUpTo(t, ctx, db, deprecatedANNRetirementVersion)
+
+	err := migrationDownTo(ctx, db, deprecatedANNRetirementBaseVersion)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot automatically roll back")
+	assert.False(t, indexExists(t, ctx, db, deprecatedANNTargetIndex))
+
+	restoreDeprecatedANNIndex(t, ctx, db)
+	assert.True(t, indexExists(t, ctx, db, deprecatedANNTargetIndex))
+	assert.Equal(t,
+		normalizeDeprecatedANNDefinition(indexDefinition(t, ctx, db, deprecatedANNTargetIndex)),
+		normalizeDeprecatedANNDefinition(indexDefinition(t, ctx, db, deprecatedANNActiveIndex)),
+	)
+}
+
+func TestDeprecatedANNIndexMigrationChecksCatalogDependencies(t *testing.T) {
+	ctx := context.Background()
+	db := setupDeprecatedANNRetirementDB(t, ctx)
+	installDeprecatedANNFixture(t, ctx, db, "deprecated", "current")
+
+	assert.Zero(t, incomingIndexDependencyCount(t, ctx, db, deprecatedANNTargetIndex))
+	runGooseUpTo(t, ctx, db, deprecatedANNRetirementVersion)
+	assert.False(t, indexExists(t, ctx, db, deprecatedANNTargetIndex))
+}
+
+func TestDeprecatedANNIndexMigrationRejectsDependentTarget(t *testing.T) {
+	ctx := context.Background()
+	db := setupDeprecatedANNRetirementDB(t, ctx)
+	installDeprecatedANNFixture(t, ctx, db, "deprecated", "current")
+	require.NoError(t, dropDeprecatedANNIndex(t, ctx, db, deprecatedANNTargetIndex))
+	_, err := db.ExecContext(ctx, fmt.Sprintf(`
+		CREATE UNIQUE INDEX %s ON public.search_documents (document_hash)
+	`, deprecatedANNTargetIndex))
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, fmt.Sprintf(`
+		ALTER TABLE public.search_documents
+			ADD CONSTRAINT %s UNIQUE USING INDEX %s
+	`, deprecatedANNTargetIndex, deprecatedANNTargetIndex))
+	require.NoError(t, err)
+	assert.Greater(t, dependentIndexConstraintCount(t, ctx, db, deprecatedANNTargetIndex), 0)
+
+	err = migrationUpTo(ctx, db, deprecatedANNRetirementVersion)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "constraints")
+	assert.True(t, indexExists(t, ctx, db, deprecatedANNTargetIndex))
+	assert.True(t, indexExists(t, ctx, db, deprecatedANNActiveIndex))
+	assert.False(t, migrationVersionApplied(t, ctx, db, deprecatedANNRetirementVersion))
+}
+
+func setupDeprecatedANNRetirementDB(t *testing.T, ctx context.Context) *sql.DB {
+	t.Helper()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	t.Cleanup(cleanup)
+	runGooseUpTo(t, ctx, db, deprecatedANNRetirementBaseVersion)
+	return db
+}
+
+func installDeprecatedANNFixture(t *testing.T, ctx context.Context, db *sql.DB, targetState, targetPredicate string) {
+	t.Helper()
+	require.Contains(t, []string{"current", "failed"}, targetPredicate)
+	require.Contains(t, []string{"deprecated", "active"}, targetState)
+	targetGenerationID := uuid.NewString()
+	activeGenerationID := uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO embedding_contracts (
+				embedding_contract_id, contract_key, version, provider, model,
+				dimensions, distance_metric, vector_normalization,
+				document_format_version, query_format_version, lifecycle_state
+			) VALUES ($1::uuid, 'deprecated-ann-fixture', 1, 'openai', 'text-embedding-3-large',
+				3072, 'cosine', 'provider', 1, 1, 'active')
+		`, deprecatedANNContractID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO search_index_generations (
+				search_index_generation_id, generation, embedding_contract_id,
+				embedding_dimensions, ann_strategy, operator_class,
+				indexed_expression, physical_index_name, hnsw_m,
+				hnsw_ef_construction, query_ef_search, exact_max_rows,
+				candidate_limit, allow_exact_fallback, activation_state,
+				activated_at, metadata
+			) VALUES ($1::uuid, 1, $2::uuid, 3072, 'halfvec_hnsw', 'halfvec_cosine_ops',
+				'embedding::halfvec(3072)', $3, 16, 64, 40, 10000, 200, false, $4, now(), '{}'::jsonb)
+		`, targetGenerationID, deprecatedANNContractID, deprecatedANNTargetIndex, targetState); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO search_index_generations (
+				search_index_generation_id, generation, embedding_contract_id,
+				embedding_dimensions, ann_strategy, operator_class,
+				indexed_expression, physical_index_name, hnsw_m,
+				hnsw_ef_construction, query_ef_search, exact_max_rows,
+				candidate_limit, allow_exact_fallback, activation_state,
+				activated_at, metadata
+			) VALUES ($1::uuid, 2, $2::uuid, 3072, 'halfvec_hnsw', 'halfvec_cosine_ops',
+				'embedding::halfvec(3072)', $3, 16, 64, 40, 10000, 200, false, 'active', now(), '{}'::jsonb)
+		`, activeGenerationID, deprecatedANNContractID, deprecatedANNActiveIndex)
+		return err
+	}))
+
+	_, err := db.ExecContext(ctx, fmt.Sprintf(`
+		CREATE INDEX %s
+		    ON public.search_documents
+		    USING hnsw (((embedding)::halfvec(3072)) halfvec_cosine_ops)
+		    WITH (m=16, ef_construction=64)
+		    WHERE embedding_contract_id = '%s'::uuid
+		      AND embedding_dimensions = 3072
+		      AND search_state = 'current'
+		      AND embedding IS NOT NULL
+	`, deprecatedANNActiveIndex, deprecatedANNContractID))
+	require.NoError(t, err)
+
+	_, err = db.ExecContext(ctx, fmt.Sprintf(`
+		CREATE INDEX %s
+		    ON public.search_documents
+		    USING hnsw (((embedding)::halfvec(3072)) halfvec_cosine_ops)
+		    WITH (m=16, ef_construction=64)
+		    WHERE embedding_contract_id = '%s'::uuid
+		      AND embedding_dimensions = 3072
+		      AND search_state = '%s'
+		      AND embedding IS NOT NULL
+	`, deprecatedANNTargetIndex, deprecatedANNContractID, targetPredicate))
+	require.NoError(t, err)
+}
+
+func dropDeprecatedANNIndex(t *testing.T, ctx context.Context, db *sql.DB, name string) error {
+	t.Helper()
+	_, err := db.ExecContext(ctx, "DROP INDEX public."+name)
+	return err
+}
+
+func createDeprecatedANNIndex(t *testing.T, ctx context.Context, db *sql.DB, name, predicate string) {
+	t.Helper()
+	_, err := db.ExecContext(ctx, fmt.Sprintf(`
+		CREATE INDEX %s
+		    ON public.search_documents
+		    USING hnsw (((embedding)::halfvec(3072)) halfvec_cosine_ops)
+		    WITH (m=16, ef_construction=64)
+		    WHERE embedding_contract_id = '%s'::uuid
+		      AND embedding_dimensions = 3072
+		      AND search_state = '%s'
+		      AND embedding IS NOT NULL
+	`, name, deprecatedANNContractID, predicate))
+	require.NoError(t, err)
+}
+
+func restoreDeprecatedANNIndex(t *testing.T, ctx context.Context, db *sql.DB) {
+	t.Helper()
+	_, err := db.ExecContext(ctx, fmt.Sprintf(`
+		CREATE INDEX %s
+		    ON public.search_documents
+		    USING hnsw (((embedding)::halfvec(3072)) halfvec_cosine_ops)
+		    WITH (m=16, ef_construction=64)
+		    WHERE embedding_contract_id = '%s'::uuid
+		      AND embedding_dimensions = 3072
+		      AND search_state = 'current'
+		      AND embedding IS NOT NULL
+	`, deprecatedANNTargetIndex, deprecatedANNContractID))
+	require.NoError(t, err)
+}
+
+func indexDefinition(t *testing.T, ctx context.Context, db *sql.DB, name string) string {
+	t.Helper()
+	var definition string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT pg_get_indexdef(indexrelid)
+		FROM pg_index
+		WHERE indexrelid = to_regclass($1)
+	`, "public."+name).Scan(&definition))
+	return definition
+}
+
+func normalizeDeprecatedANNDefinition(definition string) string {
+	definition = strings.ToLower(strings.Join(strings.Fields(definition), " "))
+	definition = strings.ReplaceAll(definition, deprecatedANNTargetIndex, "<ann-index>")
+	definition = strings.ReplaceAll(definition, deprecatedANNActiveIndex, "<ann-index>")
+	return definition
+}
+
+func insertDeprecatedANNSearchDocument(t *testing.T, ctx context.Context, db *sql.DB) string {
+	t.Helper()
+	teamID, profileID := insertMigrationTeamProfile(t, ctx, db)
+	documentID := uuid.NewString()
+	sourceID := uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO search_documents (
+				team_id, search_document_id, owner_profile_id, source_kind, source_id,
+				source_version, document_version, embedding_contract_id, embedding_dimensions,
+				search_state, document_text, document_hash, embedding
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, 'entity', $4::uuid,
+				1, 1, $5::uuid, 3072, 'current', 'ANN retirement fixture',
+				'sha256:ann-retirement-fixture', ('[1,' || repeat('0,', 3070) || '0]')::vector
+			)
+		`, teamID, documentID, profileID, sourceID, deprecatedANNContractID)
+		return err
+	}))
+	return documentID
+}
+
+func searchDocumentSnapshot(t *testing.T, ctx context.Context, db *sql.DB, documentID string) string {
+	t.Helper()
+	var snapshot string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT search_document_id::text || '|' || source_version || '|' || document_version
+		       || '|' || search_state || '|' || document_text || '|' || document_hash
+		       || '|' || md5(embedding::text)
+		FROM search_documents
+		WHERE search_document_id = $1::uuid
+	`, documentID).Scan(&snapshot))
+	return snapshot
+}
+
+func deprecatedANNQueryResults(t *testing.T, ctx context.Context, db *sql.DB) []string {
+	t.Helper()
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+	require.NoError(t, func() error {
+		_, err := tx.ExecContext(ctx, `
+			SELECT set_config('app.tx_mode', 'system', true),
+			       set_config('app.current_team_id', '', true),
+			       set_config('app.current_profile_id', '', true),
+			       set_config('enable_seqscan', 'off', true)
+		`)
+		return err
+	}())
+	rows, err := tx.QueryContext(ctx, `
+		SELECT search_document_id::text
+		FROM public.search_documents
+		WHERE embedding_contract_id = $1::uuid
+		  AND embedding_dimensions = 3072
+		  AND search_state = 'current'
+		  AND embedding IS NOT NULL
+		ORDER BY embedding::halfvec(3072) <=>
+		         ('[1,' || repeat('0,', 3070) || '0]')::vector::halfvec(3072)
+		LIMIT 1
+	`, deprecatedANNContractID)
+	require.NoError(t, err)
+	defer rows.Close()
+	var results []string
+	for rows.Next() {
+		var value string
+		require.NoError(t, rows.Scan(&value))
+		results = append(results, value)
+	}
+	require.NoError(t, rows.Err())
+	return results
+}
+
+func searchGenerationSnapshot(t *testing.T, ctx context.Context, db *sql.DB) []string {
+	t.Helper()
+	rows, err := db.QueryContext(ctx, `
+		SELECT generation || '|' || embedding_contract_id::text || '|' || embedding_dimensions
+		       || '|' || ann_strategy || '|' || operator_class || '|' || indexed_expression
+		       || '|' || physical_index_name || '|' || activation_state
+		FROM search_index_generations
+		WHERE embedding_contract_id = $1::uuid
+		ORDER BY generation
+	`, deprecatedANNContractID)
+	require.NoError(t, err)
+	defer rows.Close()
+	var snapshot []string
+	for rows.Next() {
+		var value string
+		require.NoError(t, rows.Scan(&value))
+		snapshot = append(snapshot, value)
+	}
+	require.NoError(t, rows.Err())
+	return snapshot
+}
+
+func deprecatedANNQueryPlan(t *testing.T, ctx context.Context, db *sql.DB) string {
+	t.Helper()
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+	require.NoError(t, func() error {
+		_, err := tx.ExecContext(ctx, `
+			SELECT set_config('app.tx_mode', 'system', true),
+			       set_config('app.current_team_id', '', true),
+			       set_config('app.current_profile_id', '', true),
+			       set_config('enable_seqscan', 'off', true)
+		`)
+		return err
+	}())
+	rows, err := tx.QueryContext(ctx, `
+		EXPLAIN (COSTS OFF)
+		SELECT search_document_id
+		FROM public.search_documents
+		WHERE embedding_contract_id = $1::uuid
+		  AND embedding_dimensions = 3072
+		  AND search_state = 'current'
+		  AND embedding IS NOT NULL
+		ORDER BY embedding::halfvec(3072) <=>
+		         ('[1,' || repeat('0,', 3070) || '0]')::vector::halfvec(3072)
+		LIMIT 1
+	`, deprecatedANNContractID)
+	require.NoError(t, err)
+	defer rows.Close()
+	var lines []string
+	for rows.Next() {
+		var line string
+		require.NoError(t, rows.Scan(&line))
+		lines = append(lines, line)
+	}
+	require.NoError(t, rows.Err())
+	return strings.Join(lines, "\n")
+}
+
+func normalizeDeprecatedANNPlan(plan string) string {
+	plan = strings.ReplaceAll(plan, deprecatedANNTargetIndex, "<ann-index>")
+	plan = strings.ReplaceAll(plan, deprecatedANNActiveIndex, "<ann-index>")
+	return plan
+}
+
+func incomingIndexDependencyCount(t *testing.T, ctx context.Context, db *sql.DB, name string) int {
+	t.Helper()
+	var count int
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM pg_depend
+		WHERE refclassid = 'pg_class'::regclass
+		  AND refobjid = to_regclass($1)
+	`, "public."+name).Scan(&count))
+	return count
+}
+
+func dependentIndexConstraintCount(t *testing.T, ctx context.Context, db *sql.DB, name string) int {
+	t.Helper()
+	var count int
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM pg_constraint
+		WHERE conindid = to_regclass($1)
+	`, "public."+name).Scan(&count))
+	return count
+}
+
+func migrationVersionApplied(t *testing.T, ctx context.Context, db *sql.DB, version int64) bool {
+	t.Helper()
+	var applied bool
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM goose_db_version
+			WHERE version_id = $1 AND is_applied
+		)
+	`, version).Scan(&applied))
+	return applied
+}
