@@ -1,4 +1,4 @@
-package memoryservice
+package lifecycle
 
 import (
 	"context"
@@ -13,10 +13,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	semanticwritecontract "github.com/markhuangai/dense-mem/internal/semanticwrite/contract"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
-	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
+	semanticwriteapp "github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 
 func authenticatedRememberContext(teamID, profileID, credentialID uuid.UUID) context.Context {
@@ -33,15 +34,15 @@ func TestLifecycleCorrectRelationshipUsesAuthenticatedOwner(t *testing.T) {
 	profileID := uuid.New()
 	relationshipID := uuid.NewString()
 	evidenceID := uuid.NewString()
-	semantic := &lifecycleSemanticStub{correctResult: &repository.CorrectRelationshipResult{
+	semantic := &lifecycleSemanticStub{correctResult: &knowledgecontract.CorrectRelationshipResult{
 		SubmissionID: uuid.NewString(), ProcessingState: "completed",
 	}}
-	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic})
+	svc := NewLifecycleService(LifecycleDependencies{Port: semantic})
 
 	result, err := svc.CorrectRelationship(authenticatedRememberContext(teamID, profileID, uuid.New()), CorrectRelationshipRequest{
 		Action: "submit", RelationshipID: relationshipID, ExpectedVersion: 3,
-		Patch:    repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{Key: "works_with"}},
-		Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: evidenceID, Start: 0, End: 8}},
+		Patch:    knowledgecontract.RelationshipCorrectionPatch{Predicate: &knowledgecontract.RelationshipCorrectionPredicatePatch{Key: "works_with"}},
+		Supports: []knowledgecontract.RelationshipCorrectionSupport{{EvidenceID: evidenceID, Start: 0, End: 8}},
 		Reason:   "predicate was resolved incorrectly", IdempotencyKey: "relationship-correction-1",
 	})
 	require.NoError(t, err)
@@ -57,15 +58,15 @@ func TestLifecycleCorrectRelationshipUsesAuthenticatedOwner(t *testing.T) {
 
 func TestLifecycleCorrectRelationshipNormalizesOversizedCorrelationID(t *testing.T) {
 	teamID, profileID := uuid.New(), uuid.New()
-	semantic := &lifecycleSemanticStub{correctResult: &repository.CorrectRelationshipResult{
+	semantic := &lifecycleSemanticStub{correctResult: &knowledgecontract.CorrectRelationshipResult{
 		SubmissionID: uuid.NewString(), ProcessingState: "completed",
 	}}
 	ctx := correlation.WithID(authenticatedRememberContext(teamID, profileID, uuid.New()), strings.Repeat("x", 129))
 
-	result, err := NewLifecycleService(LifecycleDependencies{Semantic: semantic}).CorrectRelationship(ctx, CorrectRelationshipRequest{
+	result, err := NewLifecycleService(LifecycleDependencies{Port: semantic}).CorrectRelationship(ctx, CorrectRelationshipRequest{
 		Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1,
-		Patch:    repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{Key: "works_with"}},
-		Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 8}},
+		Patch:    knowledgecontract.RelationshipCorrectionPatch{Predicate: &knowledgecontract.RelationshipCorrectionPredicatePatch{Key: "works_with"}},
+		Supports: []knowledgecontract.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 8}},
 		Reason:   "predicate was resolved incorrectly", IdempotencyKey: "oversized-correlation",
 	})
 
@@ -79,15 +80,15 @@ func TestLifecycleCorrectRelationshipNormalizesOversizedCorrelationID(t *testing
 func TestLifecycleCorrectRelationshipExecutesOnePlannedBatchBeforeCommit(t *testing.T) {
 	teamID, profileID := uuid.New(), uuid.New()
 	semantic := &lifecycleSemanticStub{
-		plan: &repository.RelationshipCorrectionEmbeddingPlan{
-			Documents:           []repository.RelationshipCorrectionEmbeddingDocument{{DocumentHash: "hash", DocumentText: "relationship"}},
+		plan: &knowledgecontract.RelationshipCorrectionEmbeddingPlan{
+			Documents:           []knowledgecontract.RelationshipCorrectionEmbeddingDocument{{DocumentHash: "hash", DocumentText: "relationship"}},
 			EmbeddingContractID: uuid.NewString(), EmbeddingDimensions: 2, EmbeddingModel: "model", SearchIndexGenerationID: uuid.NewString(), IndexGeneration: 1,
 		},
-		correctResult: &repository.CorrectRelationshipResult{SubmissionID: uuid.NewString(), ProcessingState: "completed"},
+		correctResult: &knowledgecontract.CorrectRelationshipResult{SubmissionID: uuid.NewString(), ProcessingState: "completed"},
 	}
-	executor := &lifecycleExecutorStub{result: semanticwrite.Result{Fence: semanticwrite.Fence{Model: semantic.plan.EmbeddingModel, Dimensions: 2, EmbeddingContractID: semantic.plan.EmbeddingContractID, SearchGenerationID: semantic.plan.SearchIndexGenerationID, SearchGenerationVersion: 1}, Embeddings: []semanticwrite.Embedding{{DocumentHash: "hash", Vector: []float32{1, 2}}}}}
-	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic, CorrectionExecutor: executor})
-	_, err := svc.CorrectRelationship(authenticatedRememberContext(teamID, profileID, uuid.New()), CorrectRelationshipRequest{Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1, Patch: repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{Key: "works_on"}}, Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}}, Reason: "incorrect predicate", IdempotencyKey: "planned-correction"})
+	executor := &lifecycleExecutorStub{result: semanticwritecontract.Result{Fence: semanticwritecontract.Fence{Model: semantic.plan.EmbeddingModel, Dimensions: 2, EmbeddingContractID: semantic.plan.EmbeddingContractID, SearchGenerationID: semantic.plan.SearchIndexGenerationID, SearchGenerationVersion: 1}, Embeddings: []semanticwritecontract.Embedding{{DocumentHash: "hash", Vector: []float32{1, 2}}}}}
+	svc := NewLifecycleService(LifecycleDependencies{Port: semantic, CorrectionExecutor: executor})
+	_, err := svc.CorrectRelationship(authenticatedRememberContext(teamID, profileID, uuid.New()), CorrectRelationshipRequest{Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1, Patch: knowledgecontract.RelationshipCorrectionPatch{Predicate: &knowledgecontract.RelationshipCorrectionPredicatePatch{Key: "works_on"}}, Supports: []knowledgecontract.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}}, Reason: "incorrect predicate", IdempotencyKey: "planned-correction"})
 	require.NoError(t, err)
 	require.Equal(t, 1, executor.calls)
 	require.Len(t, semantic.embeddings, 1)
@@ -95,12 +96,12 @@ func TestLifecycleCorrectRelationshipExecutesOnePlannedBatchBeforeCommit(t *test
 
 func TestLifecycleCorrectRelationshipDoesNotCommitWhenEmbeddingFails(t *testing.T) {
 	teamID, profileID := uuid.New(), uuid.New()
-	semantic := &lifecycleSemanticStub{plan: &repository.RelationshipCorrectionEmbeddingPlan{
-		Documents:           []repository.RelationshipCorrectionEmbeddingDocument{{DocumentHash: "hash", DocumentText: "relationship"}},
+	semantic := &lifecycleSemanticStub{plan: &knowledgecontract.RelationshipCorrectionEmbeddingPlan{
+		Documents:           []knowledgecontract.RelationshipCorrectionEmbeddingDocument{{DocumentHash: "hash", DocumentText: "relationship"}},
 		EmbeddingContractID: uuid.NewString(), EmbeddingDimensions: 2, EmbeddingModel: "model", SearchIndexGenerationID: uuid.NewString(), IndexGeneration: 1,
-	}, correctResult: &repository.CorrectRelationshipResult{SubmissionID: uuid.NewString(), ProcessingState: "completed"}}
-	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic, CorrectionExecutor: &lifecycleExecutorStub{err: semanticwrite.ErrProviderUnavailable}})
-	_, err := svc.CorrectRelationship(authenticatedRememberContext(teamID, profileID, uuid.New()), CorrectRelationshipRequest{Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1, Patch: repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{Key: "works_on"}}, Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}}, Reason: "incorrect predicate", IdempotencyKey: "failed-planned-correction"})
+	}, correctResult: &knowledgecontract.CorrectRelationshipResult{SubmissionID: uuid.NewString(), ProcessingState: "completed"}}
+	svc := NewLifecycleService(LifecycleDependencies{Port: semantic, CorrectionExecutor: &lifecycleExecutorStub{err: semanticwriteapp.ErrProviderUnavailable}})
+	_, err := svc.CorrectRelationship(authenticatedRememberContext(teamID, profileID, uuid.New()), CorrectRelationshipRequest{Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1, Patch: knowledgecontract.RelationshipCorrectionPatch{Predicate: &knowledgecontract.RelationshipCorrectionPredicatePatch{Key: "works_on"}}, Supports: []knowledgecontract.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}}, Reason: "incorrect predicate", IdempotencyKey: "failed-planned-correction"})
 	var publicErr *httperr.APIError
 	require.ErrorAs(t, err, &publicErr)
 	require.Equal(t, httperr.ErrEmbeddingUnavailable, publicErr.Code)
@@ -109,13 +110,13 @@ func TestLifecycleCorrectRelationshipDoesNotCommitWhenEmbeddingFails(t *testing.
 
 func TestLifecycleCorrectRelationshipDoesNotCommitWhenEmbeddingTimesOut(t *testing.T) {
 	teamID, profileID := uuid.New(), uuid.New()
-	semantic := &lifecycleSemanticStub{plan: &repository.RelationshipCorrectionEmbeddingPlan{
-		Documents:           []repository.RelationshipCorrectionEmbeddingDocument{{DocumentHash: "hash", DocumentText: "relationship"}},
+	semantic := &lifecycleSemanticStub{plan: &knowledgecontract.RelationshipCorrectionEmbeddingPlan{
+		Documents:           []knowledgecontract.RelationshipCorrectionEmbeddingDocument{{DocumentHash: "hash", DocumentText: "relationship"}},
 		EmbeddingContractID: uuid.NewString(), EmbeddingDimensions: 2, EmbeddingModel: "model", SearchIndexGenerationID: uuid.NewString(), IndexGeneration: 1,
-	}, correctResult: &repository.CorrectRelationshipResult{SubmissionID: uuid.NewString(), ProcessingState: "completed"}}
-	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic, CorrectionExecutor: &lifecycleExecutorStub{err: semanticwrite.ErrProviderTimeout}})
+	}, correctResult: &knowledgecontract.CorrectRelationshipResult{SubmissionID: uuid.NewString(), ProcessingState: "completed"}}
+	svc := NewLifecycleService(LifecycleDependencies{Port: semantic, CorrectionExecutor: &lifecycleExecutorStub{err: semanticwriteapp.ErrProviderTimeout}})
 
-	_, err := svc.CorrectRelationship(authenticatedRememberContext(teamID, profileID, uuid.New()), CorrectRelationshipRequest{Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1, Patch: repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{Key: "works_on"}}, Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}}, Reason: "incorrect predicate", IdempotencyKey: "timed-out-planned-correction"})
+	_, err := svc.CorrectRelationship(authenticatedRememberContext(teamID, profileID, uuid.New()), CorrectRelationshipRequest{Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1, Patch: knowledgecontract.RelationshipCorrectionPatch{Predicate: &knowledgecontract.RelationshipCorrectionPredicatePatch{Key: "works_on"}}, Supports: []knowledgecontract.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}}, Reason: "incorrect predicate", IdempotencyKey: "timed-out-planned-correction"})
 
 	var publicErr *httperr.APIError
 	require.ErrorAs(t, err, &publicErr)
@@ -125,16 +126,16 @@ func TestLifecycleCorrectRelationshipDoesNotCommitWhenEmbeddingTimesOut(t *testi
 
 func TestLifecycleCorrectRelationshipPreservesCommitFenceClassification(t *testing.T) {
 	teamID, profileID := uuid.New(), uuid.New()
-	for _, cause := range []error{repository.ErrSearchEmbeddingRequired, repository.ErrSearchContractMismatch, repository.ErrSearchStaleVersion} {
+	for _, cause := range []error{knowledgecontract.ErrSearchEmbeddingRequired, knowledgecontract.ErrSearchContractMismatch, knowledgecontract.ErrSearchStaleVersion} {
 		t.Run(cause.Error(), func(t *testing.T) {
-			semantic := &lifecycleSemanticStub{plan: &repository.RelationshipCorrectionEmbeddingPlan{
-				Documents:           []repository.RelationshipCorrectionEmbeddingDocument{{DocumentHash: "hash", DocumentText: "relationship"}},
+			semantic := &lifecycleSemanticStub{plan: &knowledgecontract.RelationshipCorrectionEmbeddingPlan{
+				Documents:           []knowledgecontract.RelationshipCorrectionEmbeddingDocument{{DocumentHash: "hash", DocumentText: "relationship"}},
 				EmbeddingContractID: uuid.NewString(), EmbeddingDimensions: 2, EmbeddingModel: "model", SearchIndexGenerationID: uuid.NewString(), IndexGeneration: 1,
-			}, correctResult: &repository.CorrectRelationshipResult{SubmissionID: uuid.NewString(), ProcessingState: "completed"}, commitErr: cause}
-			executor := &lifecycleExecutorStub{result: semanticwrite.Result{Fence: semanticwrite.Fence{Model: semantic.plan.EmbeddingModel, Dimensions: 2, EmbeddingContractID: semantic.plan.EmbeddingContractID, SearchGenerationID: semantic.plan.SearchIndexGenerationID, SearchGenerationVersion: 1}, Embeddings: []semanticwrite.Embedding{{DocumentHash: "hash", Vector: []float32{1, 2}}}}}
-			svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic, CorrectionExecutor: executor})
+			}, correctResult: &knowledgecontract.CorrectRelationshipResult{SubmissionID: uuid.NewString(), ProcessingState: "completed"}, commitErr: cause}
+			executor := &lifecycleExecutorStub{result: semanticwritecontract.Result{Fence: semanticwritecontract.Fence{Model: semantic.plan.EmbeddingModel, Dimensions: 2, EmbeddingContractID: semantic.plan.EmbeddingContractID, SearchGenerationID: semantic.plan.SearchIndexGenerationID, SearchGenerationVersion: 1}, Embeddings: []semanticwritecontract.Embedding{{DocumentHash: "hash", Vector: []float32{1, 2}}}}}
+			svc := NewLifecycleService(LifecycleDependencies{Port: semantic, CorrectionExecutor: executor})
 
-			_, err := svc.CorrectRelationship(authenticatedRememberContext(teamID, profileID, uuid.New()), CorrectRelationshipRequest{Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1, Patch: repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{Key: "works_on"}}, Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}}, Reason: "incorrect predicate", IdempotencyKey: "commit-fence-correction"})
+			_, err := svc.CorrectRelationship(authenticatedRememberContext(teamID, profileID, uuid.New()), CorrectRelationshipRequest{Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1, Patch: knowledgecontract.RelationshipCorrectionPatch{Predicate: &knowledgecontract.RelationshipCorrectionPredicatePatch{Key: "works_on"}}, Supports: []knowledgecontract.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}}, Reason: "incorrect predicate", IdempotencyKey: "commit-fence-correction"})
 			var publicErr *httperr.APIError
 			require.ErrorAs(t, err, &publicErr)
 			require.Equal(t, httperr.CONFLICT, publicErr.Code)
@@ -145,13 +146,13 @@ func TestLifecycleCorrectRelationshipPreservesCommitFenceClassification(t *testi
 
 func TestLifecycleCorrectRelationshipClassifiesConfiguredEmbeddingDeadline(t *testing.T) {
 	teamID, profileID := uuid.New(), uuid.New()
-	semantic := &lifecycleSemanticStub{plan: &repository.RelationshipCorrectionEmbeddingPlan{
-		Documents:           []repository.RelationshipCorrectionEmbeddingDocument{{DocumentHash: "hash", DocumentText: "relationship"}},
+	semantic := &lifecycleSemanticStub{plan: &knowledgecontract.RelationshipCorrectionEmbeddingPlan{
+		Documents:           []knowledgecontract.RelationshipCorrectionEmbeddingDocument{{DocumentHash: "hash", DocumentText: "relationship"}},
 		EmbeddingContractID: uuid.NewString(), EmbeddingDimensions: 2, EmbeddingModel: "model", SearchIndexGenerationID: uuid.NewString(), IndexGeneration: 1,
 	}}
-	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic, CorrectionExecutor: &lifecycleExecutorStub{waitForContext: true}, CorrectionEmbeddingTimeout: 10 * time.Millisecond})
+	svc := NewLifecycleService(LifecycleDependencies{Port: semantic, CorrectionExecutor: &lifecycleExecutorStub{waitForContext: true}, CorrectionEmbeddingTimeout: 10 * time.Millisecond})
 
-	_, err := svc.CorrectRelationship(authenticatedRememberContext(teamID, profileID, uuid.New()), CorrectRelationshipRequest{Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1, Patch: repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{Key: "works_on"}}, Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}}, Reason: "incorrect predicate", IdempotencyKey: "configured-timeout-correction"})
+	_, err := svc.CorrectRelationship(authenticatedRememberContext(teamID, profileID, uuid.New()), CorrectRelationshipRequest{Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1, Patch: knowledgecontract.RelationshipCorrectionPatch{Predicate: &knowledgecontract.RelationshipCorrectionPredicatePatch{Key: "works_on"}}, Supports: []knowledgecontract.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}}, Reason: "incorrect predicate", IdempotencyKey: "configured-timeout-correction"})
 
 	var publicErr *httperr.APIError
 	require.ErrorAs(t, err, &publicErr)
@@ -161,16 +162,16 @@ func TestLifecycleCorrectRelationshipClassifiesConfiguredEmbeddingDeadline(t *te
 
 func TestLifecycleCorrectRelationshipPreservesCallerDeadline(t *testing.T) {
 	teamID, profileID := uuid.New(), uuid.New()
-	semantic := &lifecycleSemanticStub{plan: &repository.RelationshipCorrectionEmbeddingPlan{
-		Documents:           []repository.RelationshipCorrectionEmbeddingDocument{{DocumentHash: "hash", DocumentText: "relationship"}},
+	semantic := &lifecycleSemanticStub{plan: &knowledgecontract.RelationshipCorrectionEmbeddingPlan{
+		Documents:           []knowledgecontract.RelationshipCorrectionEmbeddingDocument{{DocumentHash: "hash", DocumentText: "relationship"}},
 		EmbeddingContractID: uuid.NewString(), EmbeddingDimensions: 2, EmbeddingModel: "model", SearchIndexGenerationID: uuid.NewString(), IndexGeneration: 1,
 	}}
 	executor := &lifecycleExecutorStub{waitForContext: true}
-	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic, CorrectionExecutor: executor, CorrectionEmbeddingTimeout: time.Second})
+	svc := NewLifecycleService(LifecycleDependencies{Port: semantic, CorrectionExecutor: executor, CorrectionEmbeddingTimeout: time.Second})
 	callerCtx, cancel := context.WithTimeout(authenticatedRememberContext(teamID, profileID, uuid.New()), 10*time.Millisecond)
 	defer cancel()
 
-	_, err := svc.CorrectRelationship(callerCtx, CorrectRelationshipRequest{Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1, Patch: repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{Key: "works_on"}}, Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}}, Reason: "incorrect predicate", IdempotencyKey: "caller-deadline-correction"})
+	_, err := svc.CorrectRelationship(callerCtx, CorrectRelationshipRequest{Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1, Patch: knowledgecontract.RelationshipCorrectionPatch{Predicate: &knowledgecontract.RelationshipCorrectionPredicatePatch{Key: "works_on"}}, Supports: []knowledgecontract.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}}, Reason: "incorrect predicate", IdempotencyKey: "caller-deadline-correction"})
 
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	var publicErr *httperr.APIError
@@ -181,7 +182,7 @@ func TestLifecycleCorrectRelationshipPreservesCallerDeadline(t *testing.T) {
 func TestLifecycleRelationshipCorrectionErrorsAreBounded(t *testing.T) {
 	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
 	repositoryFailure := errors.New("database host and query details")
-	svc := NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{err: repositoryFailure}})
+	svc := NewLifecycleService(LifecycleDependencies{Port: &lifecycleSemanticStub{err: repositoryFailure}})
 	_, err := svc.CorrectRelationship(ctx, CorrectRelationshipRequest{Action: "submit"})
 	require.ErrorIs(t, err, ErrLifecyclePersistence)
 	require.NotContains(t, err.Error(), repositoryFailure.Error())
@@ -193,7 +194,7 @@ func TestLifecycleRelationshipCorrectionErrorsAreBounded(t *testing.T) {
 }
 
 func TestTranslateRelationshipCorrectionErrorMapsSearchFencesToConflict(t *testing.T) {
-	for _, cause := range []error{repository.ErrSearchEmbeddingRequired, repository.ErrSearchContractMismatch, repository.ErrSearchStaleVersion} {
+	for _, cause := range []error{knowledgecontract.ErrSearchEmbeddingRequired, knowledgecontract.ErrSearchContractMismatch, knowledgecontract.ErrSearchStaleVersion} {
 		err := translateRelationshipCorrectionError(cause)
 		var publicErr *httperr.APIError
 		require.ErrorAs(t, err, &publicErr)
@@ -202,7 +203,7 @@ func TestTranslateRelationshipCorrectionErrorMapsSearchFencesToConflict(t *testi
 }
 
 func TestTranslateRelationshipCorrectionIdempotencyConflictPreservesTerminalClassification(t *testing.T) {
-	err := translateRelationshipCorrectionError(repository.ErrSemanticIdempotencyConflict)
+	err := translateRelationshipCorrectionError(knowledgecontract.ErrSemanticIdempotencyConflict)
 	var publicErr *httperr.APIError
 	require.ErrorAs(t, err, &publicErr)
 	require.Equal(t, httperr.CONFLICT, publicErr.Code)
@@ -210,7 +211,7 @@ func TestTranslateRelationshipCorrectionIdempotencyConflictPreservesTerminalClas
 }
 
 func TestTranslateRelationshipCorrectionConfirmationPreservesTypedConflict(t *testing.T) {
-	err := translateRelationshipCorrectionError(repository.ErrRelationshipCorrectionConfirmation)
+	err := translateRelationshipCorrectionError(knowledgecontract.ErrRelationshipCorrectionConfirmation)
 	var publicErr *httperr.APIError
 	require.ErrorAs(t, err, &publicErr)
 	require.Equal(t, httperr.CONFLICT, publicErr.Code)
@@ -218,7 +219,7 @@ func TestTranslateRelationshipCorrectionConfirmationPreservesTypedConflict(t *te
 }
 
 func TestTranslateRelationshipCorrectionConfirmationExpiryPreservesTerminalClassification(t *testing.T) {
-	err := translateRelationshipCorrectionError(repository.ErrRelationshipCorrectionConfirmationExpired)
+	err := translateRelationshipCorrectionError(knowledgecontract.ErrRelationshipCorrectionConfirmationExpired)
 	var publicErr *httperr.APIError
 	require.ErrorAs(t, err, &publicErr)
 	require.Equal(t, httperr.CONFLICT, publicErr.Code)
@@ -245,13 +246,13 @@ func TestLifecycleCorrectRelationshipRequiresAuthAndRepository(t *testing.T) {
 	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
 	req := CorrectRelationshipRequest{
 		Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1,
-		Patch:    repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{Key: "works_on"}},
-		Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}},
+		Patch:    knowledgecontract.RelationshipCorrectionPatch{Predicate: &knowledgecontract.RelationshipCorrectionPredicatePatch{Key: "works_on"}},
+		Supports: []knowledgecontract.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}},
 		Reason:   "incorrect predicate", IdempotencyKey: "correction-1",
 	}
 	_, err := NewLifecycleService(LifecycleDependencies{}).CorrectRelationship(ctx, req)
 	require.ErrorContains(t, err, "semantic repository is required")
-	_, err = NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{}}).CorrectRelationship(context.Background(), req)
+	_, err = NewLifecycleService(LifecycleDependencies{Port: &lifecycleSemanticStub{}}).CorrectRelationship(context.Background(), req)
 	require.ErrorIs(t, err, ErrLifecycleAuthContext)
 }
 
@@ -259,11 +260,11 @@ func TestLifecycleRetractEvidenceUsesAuthenticatedOwner(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	evidenceID := uuid.NewString()
-	evidence := &lifecycleEvidenceStub{result: &repository.EvidenceLifecycleResult{
+	evidence := &lifecycleEvidenceStub{result: &knowledgecontract.EvidenceLifecycleResult{
 		DecisionID: "decision-canonical", ProcessingState: "completed", RetractedEvidenceIDs: []string{evidenceID},
 		AffectedRelationshipCount: 1, PendingRelationshipCount: 1,
 	}}
-	svc := NewLifecycleService(LifecycleDependencies{Evidence: evidence})
+	svc := NewLifecycleService(LifecycleDependencies{Port: evidence})
 	result, err := svc.RetractEvidence(authenticatedRememberContext(teamID, profileID, uuid.New()), RetractEvidenceRequest{
 		EvidenceIDs: []string{evidenceID}, Reason: "entered in error", IdempotencyKey: "retract-1",
 	})
@@ -309,12 +310,12 @@ func TestLifecycleRetractEvidenceMapsRepositoryErrors(t *testing.T) {
 		err  error
 		code httperr.ErrorCode
 	}{
-		{repository.ErrEvidenceLifecycleNotFound, httperr.NOT_FOUND},
-		{repository.ErrTeamInactive, httperr.NOT_FOUND},
-		{repository.ErrEvidenceLifecycleConflict, httperr.CONFLICT},
-		{repository.ErrIdempotencyConflict, httperr.CONFLICT},
+		{knowledgecontract.ErrEvidenceLifecycleNotFound, httperr.NOT_FOUND},
+		{knowledgecontract.ErrTeamInactive, httperr.NOT_FOUND},
+		{knowledgecontract.ErrEvidenceLifecycleConflict, httperr.CONFLICT},
+		{knowledgecontract.ErrIdempotencyConflict, httperr.CONFLICT},
 	} {
-		_, err := NewLifecycleService(LifecycleDependencies{Evidence: &lifecycleEvidenceStub{err: test.err}}).RetractEvidence(ctx, req)
+		_, err := NewLifecycleService(LifecycleDependencies{Port: &lifecycleEvidenceStub{err: test.err}}).RetractEvidence(ctx, req)
 		var apiErr *httperr.APIError
 		require.ErrorAs(t, err, &apiErr)
 		require.Equal(t, test.code, apiErr.Code)
@@ -322,16 +323,16 @@ func TestLifecycleRetractEvidenceMapsRepositoryErrors(t *testing.T) {
 }
 
 type lifecycleSemanticStub struct {
-	correctInput  repository.CorrectRelationshipInput
-	correctResult *repository.CorrectRelationshipResult
+	correctInput  knowledgecontract.CorrectRelationshipInput
+	correctResult *knowledgecontract.CorrectRelationshipResult
 	err           error
-	plan          *repository.RelationshipCorrectionEmbeddingPlan
-	embeddings    []repository.RelationshipCorrectionEmbedding
+	plan          *knowledgecontract.RelationshipCorrectionEmbeddingPlan
+	embeddings    []knowledgecontract.RelationshipCorrectionEmbedding
 	commitErr     error
 	commitCalls   int
 }
 
-func (s *lifecycleSemanticStub) CorrectRelationship(_ context.Context, input repository.CorrectRelationshipInput) (*repository.CorrectRelationshipResult, error) {
+func (s *lifecycleSemanticStub) CorrectRelationship(_ context.Context, input knowledgecontract.CorrectRelationshipInput) (*knowledgecontract.CorrectRelationshipResult, error) {
 	s.correctInput = input
 	if s.err != nil {
 		return nil, s.err
@@ -342,7 +343,7 @@ func (s *lifecycleSemanticStub) CorrectRelationship(_ context.Context, input rep
 	return s.correctResult, nil
 }
 
-func (s *lifecycleSemanticStub) PlanRelationshipCorrectionEmbeddings(_ context.Context, input repository.CorrectRelationshipInput) (*repository.RelationshipCorrectionEmbeddingPlan, error) {
+func (s *lifecycleSemanticStub) PlanRelationshipCorrectionEmbeddings(_ context.Context, input knowledgecontract.CorrectRelationshipInput) (*knowledgecontract.RelationshipCorrectionEmbeddingPlan, error) {
 	s.correctInput = input
 	if s.err != nil {
 		return nil, s.err
@@ -350,12 +351,16 @@ func (s *lifecycleSemanticStub) PlanRelationshipCorrectionEmbeddings(_ context.C
 	if s.plan != nil {
 		return s.plan, nil
 	}
-	return &repository.RelationshipCorrectionEmbeddingPlan{}, nil
+	return &knowledgecontract.RelationshipCorrectionEmbeddingPlan{}, nil
 }
 
-func (s *lifecycleSemanticStub) CorrectRelationshipWithEmbeddings(ctx context.Context, input repository.CorrectRelationshipInput, embeddings []repository.RelationshipCorrectionEmbedding) (*repository.CorrectRelationshipResult, error) {
+func (s *lifecycleSemanticStub) RetractEvidence(_ context.Context, _ knowledgecontract.RetractEvidenceInput) (*knowledgecontract.EvidenceLifecycleResult, error) {
+	return nil, errors.New("retraction not configured")
+}
+
+func (s *lifecycleSemanticStub) CorrectRelationshipWithEmbeddings(ctx context.Context, input knowledgecontract.CorrectRelationshipInput, embeddings []knowledgecontract.RelationshipCorrectionEmbedding) (*knowledgecontract.CorrectRelationshipResult, error) {
 	s.commitCalls++
-	s.embeddings = append([]repository.RelationshipCorrectionEmbedding(nil), embeddings...)
+	s.embeddings = append([]knowledgecontract.RelationshipCorrectionEmbedding(nil), embeddings...)
 	if s.commitErr != nil {
 		return nil, s.commitErr
 	}
@@ -363,28 +368,36 @@ func (s *lifecycleSemanticStub) CorrectRelationshipWithEmbeddings(ctx context.Co
 }
 
 type lifecycleEvidenceStub struct {
-	input  repository.RetractEvidenceInput
-	result *repository.EvidenceLifecycleResult
+	input  knowledgecontract.RetractEvidenceInput
+	result *knowledgecontract.EvidenceLifecycleResult
 	err    error
 }
 
 type lifecycleExecutorStub struct {
-	result         semanticwrite.Result
+	result         semanticwritecontract.Result
 	err            error
 	calls          int
 	waitForContext bool
 }
 
-func (s *lifecycleExecutorStub) Execute(ctx context.Context, _ semanticwrite.Plan) (semanticwrite.Result, error) {
+func (s *lifecycleExecutorStub) Execute(ctx context.Context, _ semanticwritecontract.Plan) (semanticwritecontract.Result, error) {
 	s.calls++
 	if s.waitForContext {
 		<-ctx.Done()
-		return semanticwrite.Result{}, ctx.Err()
+		return semanticwritecontract.Result{}, ctx.Err()
 	}
 	return s.result, s.err
 }
 
-func (s *lifecycleEvidenceStub) RetractEvidence(_ context.Context, input repository.RetractEvidenceInput) (*repository.EvidenceLifecycleResult, error) {
+func (s *lifecycleEvidenceStub) PlanRelationshipCorrectionEmbeddings(_ context.Context, _ knowledgecontract.CorrectRelationshipInput) (*knowledgecontract.RelationshipCorrectionEmbeddingPlan, error) {
+	return nil, errors.New("correction not configured")
+}
+
+func (s *lifecycleEvidenceStub) CorrectRelationshipWithEmbeddings(_ context.Context, _ knowledgecontract.CorrectRelationshipInput, _ []knowledgecontract.RelationshipCorrectionEmbedding) (*knowledgecontract.CorrectRelationshipResult, error) {
+	return nil, errors.New("correction not configured")
+}
+
+func (s *lifecycleEvidenceStub) RetractEvidence(_ context.Context, input knowledgecontract.RetractEvidenceInput) (*knowledgecontract.EvidenceLifecycleResult, error) {
 	s.input = input
 	if s.err != nil {
 		return nil, s.err

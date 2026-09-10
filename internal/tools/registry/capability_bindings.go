@@ -2,6 +2,7 @@ package registry
 
 import (
 	"github.com/markhuangai/dense-mem/internal/dream"
+	"github.com/markhuangai/dense-mem/internal/lifecycle"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
@@ -23,7 +24,7 @@ type RememberBindings struct {
 }
 
 type LifecycleBindings struct {
-	Service memoryservice.LifecycleService
+	Service lifecycle.LifecycleService
 }
 
 type RecallBindings struct {
