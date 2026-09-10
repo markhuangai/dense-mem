@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"regexp"
 	"testing"
 	"time"
@@ -90,6 +91,49 @@ func TestUsageMetricsRepositoryHelpersHandleNullableTotals(t *testing.T) {
 	require.EqualValues(t, 7, nullInt64(sql.NullInt64{Int64: 7, Valid: true}))
 	require.Zero(t, nullInt64(sql.NullInt64{}))
 	require.Equal(t, domain.UsageMetricTotal{Requests: 0, MaxLatencyMS: 20}, totalFromSums(0, 0, 10, 20))
+}
+
+func TestUsageMetricsRepositoryReportsWriteAndSnapshotErrors(t *testing.T) {
+	sqlDB, mock, db := newOperationsMockDB(t)
+	defer sqlDB.Close()
+	repo := NewUsageMetricsRepository(db, passthroughRLS{})
+	bucket := domainUsageMetricBucket(time.Now().UTC())
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usage_metric_buckets")).WillReturnError(errors.New("insert failed"))
+	require.ErrorContains(t, repo.UpsertBuckets(context.Background(), []domain.UsageMetricBucket{bucket}), "failed to upsert usage metric buckets")
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM usage_metric_buckets WHERE bucket_start < $1")).WillReturnError(errors.New("delete failed"))
+	require.ErrorContains(t, repo.PruneBefore(context.Background(), bucket.BucketStart), "failed to prune usage metric buckets")
+	mock.ExpectQuery("SELECT").WillReturnError(errors.New("snapshot failed"))
+	_, err := repo.Snapshot(context.Background(), domain.UsageMetricsFilter{})
+	require.ErrorContains(t, err, "failed to read usage metrics snapshot")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUsageMetricsRepositoryRejectsMalformedKeyAndRouteRows(t *testing.T) {
+	t.Run("key id", func(t *testing.T) {
+		sqlDB, mock, db := newOperationsMockDB(t)
+		defer sqlDB.Close()
+		teamID := uuid.New()
+		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"requests", "errors", "total_latency", "max_latency"}).AddRow(int64(1), int64(0), int64(1), int64(1)))
+		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "requests", "errors", "total_latency", "max_latency"}))
+		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "key_id", "key_name", "key_suffix", "requests", "errors", "total_latency", "max_latency"}).AddRow(teamID.String(), "Team", "not-a-uuid", "Key", "suffix", int64(1), int64(0), int64(1), int64(1)))
+		_, err := NewUsageMetricsRepository(db, passthroughRLS{}).Snapshot(context.Background(), domain.UsageMetricsFilter{})
+		require.ErrorContains(t, err, "invalid UUID")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("route scan", func(t *testing.T) {
+		sqlDB, mock, db := newOperationsMockDB(t)
+		defer sqlDB.Close()
+		teamID := uuid.New()
+		keyID := uuid.New()
+		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"requests", "errors", "total_latency", "max_latency"}).AddRow(int64(1), int64(0), int64(1), int64(1)))
+		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "requests", "errors", "total_latency", "max_latency"}))
+		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "key_id", "key_name", "key_suffix", "requests", "errors", "total_latency", "max_latency"}).AddRow(teamID.String(), "Team", keyID.String(), "Key", "suffix", int64(1), int64(0), int64(1), int64(1)))
+		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"route", "method", "status_class", "requests", "errors", "total_latency", "max_latency"}).AddRow("/mcp", "POST", "not-an-int", int64(1), int64(0), int64(1), int64(1)))
+		_, err := NewUsageMetricsRepository(db, passthroughRLS{}).Snapshot(context.Background(), domain.UsageMetricsFilter{})
+		require.ErrorContains(t, err, "failed to read usage metrics snapshot")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
 }
 
 func domainUsageMetricBucket(now time.Time) domain.UsageMetricBucket {

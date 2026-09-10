@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"regexp"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
@@ -170,4 +172,43 @@ func TestOperationLogRepositoryHelpersNormalizeFiltersAndValues(t *testing.T) {
 	require.Nil(t, parseNullableUUID(sql.NullString{}))
 	require.Nil(t, parseNullableUUID(sql.NullString{Valid: true, String: "not-a-uuid"}))
 	require.NotNil(t, parseNullableUUID(sql.NullString{Valid: true, String: teamID.String()}))
+}
+
+func TestOperationLogRepositoryReportsWriteAndPruneErrors(t *testing.T) {
+	sqlDB, mock, db := newOperationsMockDB(t)
+	defer sqlDB.Close()
+	repo := NewOperationLogRepository(db, passthroughRLS{})
+	entry := domain.OperationLog{Timestamp: time.Now().UTC(), Severity: "INFO", Message: "failed"}
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO operation_logs")).WillReturnError(errors.New("insert failed"))
+	require.ErrorContains(t, repo.AppendBatch(context.Background(), []domain.OperationLog{entry}), "failed to append operation logs")
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM operation_logs WHERE timestamp < $1")).WillReturnError(errors.New("delete failed"))
+	require.ErrorContains(t, repo.PruneBefore(context.Background(), entry.Timestamp), "failed to prune operation logs")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOperationLogRepositoryReportsListQueryErrors(t *testing.T) {
+	sqlDB, mock, db := newOperationsMockDB(t)
+	defer sqlDB.Close()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT count(*)")).WillReturnError(errors.New("count failed"))
+
+	_, err := NewOperationLogRepository(db, passthroughRLS{}).List(context.Background(), domain.OperationLogFilter{})
+	require.ErrorContains(t, err, "failed to list operation logs")
+	require.ErrorContains(t, err, "count failed")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOperationLogRepositoryHandlesEmptyBatchAndNoRLS(t *testing.T) {
+	sqlDB, mock, db := newOperationsMockDB(t)
+	defer sqlDB.Close()
+	repo := NewOperationLogRepository(db, nil)
+	require.NoError(t, repo.AppendBatch(context.Background(), nil))
+	mock.ExpectBegin()
+	mock.ExpectCommit()
+	called := false
+	require.NoError(t, repo.withSystemTx(context.Background(), func(tx *gorm.DB) error {
+		called = tx != nil
+		return nil
+	}))
+	require.True(t, called)
+	require.NoError(t, mock.ExpectationsWereMet())
 }

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"regexp"
 	"testing"
 	"time"
@@ -69,6 +70,33 @@ func TestTelemetryLifecycleScopeClauseCoversSystemTeamAndProfileScopes(t *testin
 	where, args = telemetryLifecycleScopeClause(operationscontract.TelemetryLifecycleFilter{TeamID: &teamID, ProfileID: &profileID}, "relationship")
 	require.Equal(t, " AND relationship.team_id = ? AND relationship.owner_profile_id = ?", where)
 	require.Equal(t, []any{teamID.String(), profileID.String()}, args)
+}
+
+func TestTelemetryLifecycleRepositoryReportsTransitionQueryErrors(t *testing.T) {
+	sqlDB, mock, db := newOperationsMockDB(t)
+	defer sqlDB.Close()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT event.to_status")).WillReturnError(errors.New("transition query failed"))
+
+	_, err := NewTelemetryLifecycleRepository(db, passthroughRLS{}).ReadTelemetryLifecycle(context.Background(), operationscontract.TelemetryLifecycleFilter{}, time.Time{}, time.Time{})
+	require.ErrorContains(t, err, "transition query failed")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestTelemetryLifecycleRepositorySelectsSystemAndTeamReadScopes(t *testing.T) {
+	teamID := uuid.New()
+	for name, filter := range map[string]operationscontract.TelemetryLifecycleFilter{
+		"system": {},
+		"team":   {TeamID: &teamID},
+	} {
+		t.Run(name, func(t *testing.T) {
+			sqlDB, mock, db := newOperationsMockDB(t)
+			defer sqlDB.Close()
+			mock.ExpectQuery(regexp.QuoteMeta("SELECT event.to_status")).WillReturnError(errors.New("scope query failed"))
+			_, err := NewTelemetryLifecycleRepository(db, passthroughRLS{}).ReadTelemetryLifecycle(context.Background(), filter, time.Time{}, time.Time{})
+			require.ErrorContains(t, err, "scope query failed")
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func newOperationsMockDB(t *testing.T) (*sql.DB, sqlmock.Sqlmock, *gorm.DB) {

@@ -188,3 +188,14 @@ func TestOperationLogServiceLifecycleAndUnavailableBranches(t *testing.T) {
 	require.NotEmpty(t, repo.appendDeadlines)
 	assert.WithinDuration(t, time.Now().UTC().Add(operationLogShutdownFlushTimeout), repo.appendDeadlines[0], time.Second)
 }
+
+func TestOperationLogServiceRetainsFailedBatchUntilRetrySucceeds(t *testing.T) {
+	repo := &operationLogRepoStub{appendErr: errors.New("append failed")}
+	svc := NewOperationLogService(repo, nil)
+	require.NoError(t, svc.WriteLog(context.Background(), observability.LogRecord{Message: "retry"}))
+	require.Error(t, svc.Flush(context.Background()))
+	require.Error(t, svc.Flush(context.Background()))
+	repo.appendErr = nil
+	require.NoError(t, svc.Flush(context.Background()))
+	require.Len(t, repo.appended, 1)
+}

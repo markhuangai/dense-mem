@@ -148,6 +148,12 @@ func TestAuthorityRepositoryHelpersHandleQuotedIdentifiersAndNotFound(t *testing
 	require.True(t, isAuthorityRowNotFound(sql.ErrNoRows))
 	require.True(t, isAuthorityRowNotFound(gorm.ErrRecordNotFound))
 	require.False(t, isAuthorityRowNotFound(errors.New("other")))
+	var metadata map[string]any
+	require.NoError(t, unmarshalAuthorityJSON("null", &metadata))
+	require.Empty(t, metadata)
+	encoded, err := marshalAuthorityJSON(nil)
+	require.NoError(t, err)
+	require.Equal(t, `{}`, string(encoded))
 }
 
 func TestScanCompatibilityMarkerParsesMetadata(t *testing.T) {
@@ -179,6 +185,15 @@ func TestScanCompatibilityMarkerReturnsScannerError(t *testing.T) {
 	_, err := scanCompatibilityMarker(authorityScannerStub{err: sql.ErrNoRows})
 
 	require.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+func TestScanCompatibilityMarkerRejectsInvalidMetadata(t *testing.T) {
+	now := time.Now().UTC()
+	_, err := scanCompatibilityMarker(authorityScannerStub{values: []any{
+		"marker-1", domain.MigrationMarkerKindCutover, testCutoverMarkerVersion, domain.MigrationMarkerCompatible,
+		"", "", "", "{", now,
+	}})
+	require.ErrorContains(t, err, "decode json")
 }
 
 func TestAuthorityJSONHelpersHandleEmptyInvalidAndUnsupportedValues(t *testing.T) {

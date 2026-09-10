@@ -9,8 +9,6 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/operations"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -78,12 +76,12 @@ func TestAuthorityRepositoryRetainsMigrationAuditReadOnly(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "row-level security")
 
-	t.Run("operation log retention survives service restart", func(t *testing.T) {
-		testOperationLogRetentionSurvivesServiceRestart(t, appDB, rls)
+	t.Run("operation log retention survives repository restart", func(t *testing.T) {
+		testOperationLogRetentionSurvivesRepositoryRestart(t, appDB, rls)
 	})
 }
 
-func testOperationLogRetentionSurvivesServiceRestart(t *testing.T, appDB *gorm.DB, rls *storagepostgres.RLS) {
+func testOperationLogRetentionSurvivesRepositoryRestart(t *testing.T, appDB *gorm.DB, rls *storagepostgres.RLS) {
 	t.Helper()
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -98,15 +96,13 @@ func testOperationLogRetentionSurvivesServiceRestart(t *testing.T, appDB *gorm.D
 	}))
 
 	repo := NewOperationLogRepository(appDB, rls)
-	service := operations.NewOperationLogService(repo, operationLogRetentionStub{days: 1})
-	require.NoError(t, service.Prune(ctx))
-	require.NoError(t, service.WriteLog(ctx, observability.LogRecord{
+	require.NoError(t, repo.PruneBefore(ctx, now.Add(-24*time.Hour)))
+	require.NoError(t, repo.AppendBatch(ctx, []domain.OperationLog{{
 		Timestamp: now, Severity: "INFO", SeverityRank: 20, Message: "flushed before restart", Source: "test",
-	}))
-	require.NoError(t, service.Shutdown(ctx))
+	}}))
 
-	restarted := operations.NewOperationLogService(repo, operationLogRetentionStub{days: 1})
-	page, err := restarted.ListOperationLogs(ctx, domain.OperationLogFilter{Limit: 100})
+	restarted := NewOperationLogRepository(appDB, rls)
+	page, err := restarted.List(ctx, domain.OperationLogFilter{Limit: 100})
 	require.NoError(t, err)
 	require.Len(t, page.Items, 2)
 	messages := map[string]bool{}
@@ -116,10 +112,4 @@ func testOperationLogRetentionSurvivesServiceRestart(t *testing.T, appDB *gorm.D
 	require.False(t, messages["expired operation log"])
 	require.True(t, messages["retained operation log"])
 	require.True(t, messages["flushed before restart"])
-}
-
-type operationLogRetentionStub struct{ days int }
-
-func (s operationLogRetentionStub) OperationLogRuntimeConfig(context.Context) (domain.OperationLogRuntimeConfig, error) {
-	return domain.OperationLogRuntimeConfig{RetentionDays: s.days}, nil
 }

@@ -5,12 +5,15 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/dream"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
+	"github.com/markhuangai/dense-mem/internal/settings"
 )
 
 func TestCheckActiveAuthorityRequiresCompatibleMarker(t *testing.T) {
@@ -107,6 +110,79 @@ func TestTelemetryHelperNoopAndCanceledPaths(t *testing.T) {
 	RefreshTelemetryPricingCacheUntilCanceled(ctx, nil, nil)
 	ConfigureTelemetryFeatures(nil, nil, nil)
 	ConfigureTelemetryFeatures(NewPrometheusTelemetryService("", 0), nil, nil)
+}
+
+func TestConfigureTelemetryFeaturesEvaluatesApplicationAndTeamSettings(t *testing.T) {
+	appConfig := telemetryAppConfigStub{}
+	dreams := telemetryDreamServiceStub{}
+	prometheus := NewPrometheusTelemetryService("", 0)
+	ConfigureTelemetryFeatures(prometheus, appConfig, dreams)
+
+	snapshot, err := prometheus.Snapshot(context.Background(), TelemetryFilter{Window: "1h", Scope: "system"})
+	require.NoError(t, err)
+	require.NotEmpty(t, snapshot.Cards)
+
+	teamID := uuid.New()
+	snapshot, err = prometheus.Snapshot(context.Background(), TelemetryFilter{Window: "1h", Scope: "team", TeamID: &teamID})
+	require.NoError(t, err)
+	require.NotEmpty(t, snapshot.Cards)
+}
+
+func TestTelemetryEmptyBuildersAndWindowBounds(t *testing.T) {
+	require.NotEmpty(t, telemetryEmptyCards())
+	require.NotEmpty(t, telemetryEmptyWindowedCards())
+	require.NotEmpty(t, telemetryEmptyCurrentCards())
+	require.NotEmpty(t, telemetryEmptySeries())
+	require.NotEmpty(t, telemetryEmptySeriesForAudience(true))
+	require.NotEmpty(t, telemetryEmptyActivitySeriesForAudience(true))
+	require.NotNil(t, telemetryEmptyStateSeries())
+	require.EqualValues(t, 60, telemetryWindowSeconds(""))
+	require.EqualValues(t, 60, telemetryWindowSeconds("bad"))
+	require.EqualValues(t, 60, telemetryWindowSeconds("0m"))
+	require.EqualValues(t, 60, telemetryWindowSeconds("1x"))
+	require.EqualValues(t, 1, telemetryWindowSeconds("1s"))
+	require.EqualValues(t, 120, telemetryWindowSeconds("2m"))
+	require.EqualValues(t, 3600, telemetryWindowSeconds("1h"))
+	require.EqualValues(t, 86400, telemetryWindowSeconds("1d"))
+}
+
+func TestTelemetryFeatureErrorsAndRangeBuilders(t *testing.T) {
+	teamID := uuid.New()
+	service := NewPrometheusTelemetryService("", 0)
+	service.SetFeatureResolver(TelemetryFeatureResolver{
+		RecallFeedbackEnabled: func(context.Context) (bool, error) { return false, errors.New("recall unavailable") },
+		DreamingEnabled:       func(context.Context, *uuid.UUID) (bool, error) { return false, errors.New("dream unavailable") },
+	})
+	states := service.telemetryFeatureStates(context.Background(), TelemetryScope{Type: "team", TeamID: &teamID})
+	require.True(t, states["recall"].Set)
+	require.True(t, states["dream"].Set)
+
+	require.NotEmpty(t, telemetryRangeHistogramAverage("latency", "{team_id=\"x\"}", "", "1m", 1000))
+	require.NotEmpty(t, telemetryRangeHistogramQuantile("latency", "{team_id=\"x\"}", "le=\"1\"", "1m", 0.95, 1))
+	require.NotEmpty(t, telemetryRangeSparseCounterRate("requests", "{team_id=\"x\"}", "1m"))
+	require.NotEmpty(t, telemetryRangeSparseHistogramQuantile("latency", "", "", "1m", 0.5, 1))
+	require.NotEmpty(t, telemetryRangeRecallFeedbackRate("{team_id=\"x\"}", "reason=\"useful\"", "1m"))
+	require.NotEmpty(t, telemetryRangeSparseHistogramAverage("latency", "{team_id=\"x\"}", "reason=\"useful\"", "1m", 1000))
+}
+
+type telemetryAppConfigStub struct {
+	settings.AppConfigService
+}
+
+func (telemetryAppConfigStub) RecallFeedbackRuntimeConfig(context.Context) (domain.RecallFeedbackRuntimeConfig, error) {
+	return domain.RecallFeedbackRuntimeConfig{Enabled: false}, nil
+}
+
+func (telemetryAppConfigStub) DreamingRuntimeConfig(context.Context) (domain.DreamingRuntimeConfig, error) {
+	return domain.DreamingRuntimeConfig{Enabled: false}, nil
+}
+
+type telemetryDreamServiceStub struct {
+	dream.Service
+}
+
+func (telemetryDreamServiceStub) EffectiveConfig(context.Context, string) (dream.EffectiveConfig, error) {
+	return dream.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: false}}, nil
 }
 
 type telemetryPricingStub struct {

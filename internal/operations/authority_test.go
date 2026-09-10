@@ -62,6 +62,21 @@ func TestClassifyAuthorityFailsClosedForUnknownMarkerStatus(t *testing.T) {
 	require.ErrorContains(t, err, "unknown compatibility marker status pending")
 }
 
+func TestClassifyAuthorityRejectsWrongMarkerIdentityAndNilStore(t *testing.T) {
+	_, err := ClassifyAuthority(context.Background(), nil)
+	require.ErrorIs(t, err, ErrAuthorityBlocked)
+	require.ErrorContains(t, err, "authority store is required")
+
+	for _, marker := range []*domain.CompatibilityMarker{
+		{MarkerKind: "wrong", Version: CutoverMarkerVersion, Status: domain.MigrationMarkerCompatible},
+		{MarkerKind: domain.MigrationMarkerKindCutover, Version: "wrong", Status: domain.MigrationMarkerCompatible},
+	} {
+		_, err = ClassifyAuthority(context.Background(), &authorityStoreStub{marker: marker})
+		require.ErrorIs(t, err, ErrAuthorityBlocked)
+		require.ErrorContains(t, err, "exact v2.6.1 cutover marker")
+	}
+}
+
 type authorityStoreStub struct {
 	marker    *domain.CompatibilityMarker
 	markerErr error

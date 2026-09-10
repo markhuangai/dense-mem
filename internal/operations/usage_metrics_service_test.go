@@ -38,6 +38,15 @@ func TestUsageMetricsService_PersistsUsageAcrossServiceInstances(t *testing.T) {
 		Status:    503,
 		Latency:   25 * time.Millisecond,
 	})
+	svc.RecordRequest(context.Background(), domain.UsageMetricEvent{
+		Timestamp: now.Add(-time.Second),
+		TeamID:    teamID,
+		KeyID:     keyID,
+		Method:    "get",
+		Route:     "/ui/api/evidence/:id",
+		Status:    200,
+		Latency:   1 * time.Millisecond,
+	})
 	require.NoError(t, svc.Flush(context.Background()))
 
 	recreated := NewUsageMetricsService(repo, nil)
@@ -46,9 +55,9 @@ func TestUsageMetricsService_PersistsUsageAcrossServiceInstances(t *testing.T) {
 		To:   now.Add(time.Minute),
 	})
 	require.NoError(t, err)
-	require.Equal(t, int64(2), snapshot.System.Requests)
+	require.Equal(t, int64(3), snapshot.System.Requests)
 	require.Equal(t, int64(1), snapshot.System.Errors)
-	require.Equal(t, 20.0, snapshot.System.AvgLatencyMS)
+	require.InDelta(t, 13.6667, snapshot.System.AvgLatencyMS, 0.001)
 	require.Equal(t, int64(25), snapshot.System.MaxLatencyMS)
 	require.Len(t, snapshot.Teams, 1)
 	require.Equal(t, teamID, snapshot.Teams[0].TeamID)
@@ -240,6 +249,28 @@ func TestUsageMetricsService_RequeuesBucketsAfterFlushError(t *testing.T) {
 	require.Equal(t, int64(1), snapshot.System.Requests)
 	require.Equal(t, int64(1), snapshot.System.Errors)
 	require.Equal(t, int64(0), snapshot.System.MaxLatencyMS)
+}
+
+func TestUsageMetricsServiceMergesRequeuedBuckets(t *testing.T) {
+	svc := NewUsageMetricsService(newFakeUsageMetricsRepo(), nil)
+	teamID := uuid.New()
+	keyID := uuid.New()
+	bucketStart := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	svc.buckets[usageBucketKey{bucketStartUnix: bucketStart.Unix(), teamID: teamID, keyID: keyID, route: "/mcp", method: "POST", statusClass: 2}] = domain.UsageMetricBucket{
+		BucketStart: bucketStart, TeamID: teamID, KeyID: keyID, Route: "/mcp", Method: "POST", StatusClass: 2,
+		RequestCount: 2, ErrorCount: 1, TotalLatencyMS: 20, MaxLatencyMS: 15, LastSeenAt: bucketStart,
+	}
+	svc.requeueBuckets([]domain.UsageMetricBucket{{
+		BucketStart: bucketStart, TeamID: teamID, KeyID: keyID, Route: "/mcp", Method: "POST", StatusClass: 2,
+		RequestCount: 3, ErrorCount: 2, TotalLatencyMS: 30, MaxLatencyMS: 25, LastSeenAt: bucketStart.Add(time.Minute),
+	}})
+
+	merged := svc.buckets[usageBucketKey{bucketStartUnix: bucketStart.Unix(), teamID: teamID, keyID: keyID, route: "/mcp", method: "POST", statusClass: 2}]
+	require.EqualValues(t, 5, merged.RequestCount)
+	require.EqualValues(t, 3, merged.ErrorCount)
+	require.EqualValues(t, 50, merged.TotalLatencyMS)
+	require.EqualValues(t, 25, merged.MaxLatencyMS)
+	require.Equal(t, bucketStart.Add(time.Minute), merged.LastSeenAt)
 }
 
 func TestUsageMetricsService_NilSnapshotAndLifecycle(t *testing.T) {
