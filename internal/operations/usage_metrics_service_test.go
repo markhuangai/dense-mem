@@ -17,7 +17,7 @@ func TestUsageMetricsService_PersistsUsageAcrossServiceInstances(t *testing.T) {
 	repo := newFakeUsageMetricsRepo()
 	teamID := uuid.New()
 	keyID := uuid.New()
-	now := time.Now().UTC()
+	now := time.Date(2026, 9, 10, 12, 34, 30, 0, time.UTC)
 
 	svc := NewUsageMetricsService(repo, nil)
 	svc.RecordRequest(context.Background(), domain.UsageMetricEvent{
