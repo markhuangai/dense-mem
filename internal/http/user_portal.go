@@ -25,7 +25,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/graphview"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	"github.com/markhuangai/dense-mem/internal/recall"
 )
 
 // UserPortalDeps holds the dependencies for the user portal.
@@ -38,7 +38,7 @@ type UserPortalDeps struct {
 	UsageMetrics       service.UsageMetricsRecorder
 	Telemetry          service.TelemetryReader
 	GraphView          graphview.Service
-	RecallSvc          memoryservice.RecallService
+	RecallSvc          recall.RecallService
 	DreamSvc           dream.Service
 	AuditSvc           service.AuditService
 	SecuritySvc        httpmw.SecurityBanService

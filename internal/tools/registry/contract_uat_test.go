@@ -10,7 +10,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	recallapp "github.com/markhuangai/dense-mem/internal/recall"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
@@ -205,16 +205,16 @@ func TestBuildActiveWiresExecutableRecallMemory(t *testing.T) {
 	if result["evidence_id"] != "evidence-canonical" || result["context"] != "Dense-Mem uses PostgreSQL." || result["space_kind"] != string(domain.MemorySpaceTeamShared) {
 		t.Fatalf("result = %#v, want public evidence context", result)
 	}
-	if _, ok := out["related_hypotheses"].([]memoryservice.RelatedHypothesisSummary); !ok {
+	if _, ok := out["related_hypotheses"].([]recallapp.RelatedHypothesisSummary); !ok {
 		t.Fatalf("related_hypotheses = %#v, want typed empty array", out["related_hypotheses"])
 	}
-	if _, ok := out["related_relationships"].([]memoryservice.RelatedRelationshipSummary); !ok {
+	if _, ok := out["related_relationships"].([]recallapp.RelatedRelationshipSummary); !ok {
 		t.Fatalf("related_relationships = %#v, want typed empty array", out["related_relationships"])
 	}
-	if _, ok := out["related_communities"].([]memoryservice.RecallDiscoveryPath); !ok {
+	if _, ok := out["related_communities"].([]recallapp.RecallDiscoveryPath); !ok {
 		t.Fatalf("related_communities = %#v, want typed empty array", out["related_communities"])
 	}
-	if _, ok := out["conflicts"].([]memoryservice.RecallConflictSummary); !ok {
+	if _, ok := out["conflicts"].([]recallapp.RecallConflictSummary); !ok {
 		t.Fatalf("conflicts = %#v, want typed empty array", out["conflicts"])
 	}
 	if stub.req.Query != "PostgreSQL memory" {
@@ -226,9 +226,9 @@ func TestBuildActiveWiresExecutableRecallMemory(t *testing.T) {
 }
 
 func TestRecallSuggestedActionsMatchEnabledFeatures(t *testing.T) {
-	recall := &stubRecallService{result: &memoryservice.RecallResult{
+	recall := &stubRecallService{result: &recallapp.RecallResult{
 		RecallID: "rec-canonical",
-		RelatedHypotheses: []memoryservice.RelatedHypothesisSummary{{
+		RelatedHypotheses: []recallapp.RelatedHypothesisSummary{{
 			HypothesisID: "hypothesis-canonical",
 		}},
 	}}
@@ -251,7 +251,7 @@ func TestRecallSuggestedActionsMatchEnabledFeatures(t *testing.T) {
 	if !recall.req.IncludeHypotheses {
 		t.Fatal("enabled Dreaming did not authorize hypothesis recall")
 	}
-	actions, ok := out["suggested_actions"].([]memoryservice.RecallSuggestedAction)
+	actions, ok := out["suggested_actions"].([]recallapp.RecallSuggestedAction)
 	if !ok || len(actions) != 2 {
 		t.Fatalf("suggested_actions = %#v; want feedback and Dream actions", out["suggested_actions"])
 	}
@@ -268,9 +268,9 @@ func TestRecallSuggestedActionsMatchEnabledFeatures(t *testing.T) {
 		t.Fatalf("snapshots = %d; want 1", len(recorder.snapshots))
 	}
 
-	disabledRecall := &stubRecallService{result: &memoryservice.RecallResult{
+	disabledRecall := &stubRecallService{result: &recallapp.RecallResult{
 		RecallID: "rec-disabled",
-		RelatedHypotheses: []memoryservice.RelatedHypothesisSummary{{
+		RelatedHypotheses: []recallapp.RelatedHypothesisSummary{{
 			HypothesisID: "must-not-leak",
 		}},
 	}}
@@ -286,10 +286,10 @@ func TestRecallSuggestedActionsMatchEnabledFeatures(t *testing.T) {
 	if disabledRecall.req.IncludeHypotheses {
 		t.Fatal("disabled Dreaming authorized hypothesis recall")
 	}
-	if hypotheses := disabledOut["related_hypotheses"].([]memoryservice.RelatedHypothesisSummary); len(hypotheses) != 0 {
+	if hypotheses := disabledOut["related_hypotheses"].([]recallapp.RelatedHypothesisSummary); len(hypotheses) != 0 {
 		t.Fatalf("disabled recall leaked hypotheses: %#v", hypotheses)
 	}
-	if actions := disabledOut["suggested_actions"].([]memoryservice.RecallSuggestedAction); len(actions) != 0 {
+	if actions := disabledOut["suggested_actions"].([]recallapp.RecallSuggestedAction); len(actions) != 0 {
 		t.Fatalf("disabled recall suggested unavailable tools: %#v", actions)
 	}
 }

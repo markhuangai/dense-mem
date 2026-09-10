@@ -2,8 +2,32 @@
   "schema_version": 1,
   "capability": "recall-postgres-reader",
   "source_ownership": [
+    {"path": "internal/recall/postgres/adapter_test.go", "issue": 376},
+    {"path": "internal/recall/postgres/conflict_hydration_test.go", "issue": 376},
+    {"path": "internal/recall/postgres/feedback_store_test.go", "issue": 376},
+    {"path": "internal/recall/postgres/recall_store_test.go", "issue": 376},
+    {"path": "internal/recall/postgres/search_queries_test.go", "issue": 376},
+    {"path": "internal/recall/postgres/evidence_conflict_recall.go", "issue": 376},
+    {"path": "internal/recall/postgres/helpers.go", "issue": 376},
     {"path": "internal/recall/postgres/readers.go", "issue": 376},
-    {"path": "internal/repository/evidence_conflict_recall_integration.e2e", "issue": 376}
+    {"path": "internal/recall/postgres/recall_alias_visibility.go", "issue": 376},
+    {"path": "internal/recall/postgres/recall_feedback_event_repository.go", "issue": 376},
+    {"path": "internal/recall/postgres/recall_feedback_event_repository_test.go", "issue": 376},
+    {"path": "internal/recall/postgres/recall_relationship_generation.go", "issue": 376},
+    {"path": "internal/recall/postgres/recall_relationship_input.go", "issue": 376},
+    {"path": "internal/recall/postgres/recall_relationship_repository.go", "issue": 376},
+    {"path": "internal/recall/postgres/recall_relationship_text.go", "issue": 376},
+    {"path": "internal/recall/postgres/recall_relationship_types.go", "issue": 376},
+    {"path": "internal/recall/postgres/recall_repository.go", "issue": 376},
+    {"path": "internal/recall/postgres/recall_repository_test.go", "issue": 376},
+    {"path": "internal/recall/postgres/types.go", "issue": 376},
+    {"path": "internal/repository/evidence_conflict_recall.go", "issue": 376},
+    {"path": "internal/repository/evidence_conflict_recall_integration.e2e", "issue": 376},
+    {"path": "internal/repository/recall_feedback_event_repository.go", "issue": 376},
+    {"path": "internal/repository/recall_feedback_event_repository_integration.e2e", "issue": 376},
+    {"path": "internal/repository/recall_relationship_repository.go", "issue": 376},
+    {"path": "internal/repository/recall_repository.go", "issue": 376},
+    {"path": "internal/repository/recall_repository_integration.e2e", "issue": 376}
   ],
   "completed_issues": [],
   "go": {
@@ -16,6 +40,95 @@
     ]
   },
   "browser": {"units": []},
+  "compatibility_bridges": [
+    {
+      "source_path": "internal/repository/recall_repository.go",
+      "fields": ["RecallDatabase", "RecallRLS", "RecallSearchRepository", "RecallRelationshipConflictReader", "RecallEvidenceConflictReader", "normalizeRecallUUIDList", "RecallEvidence"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/recall_composition.go", "symbol": "buildRecallApplication"},
+        {"path": "internal/repository/recall_repository_integration.e2e", "symbol": "TestRecallEvidenceHydratesSupportDecisionEligibility"},
+        {"path": "internal/repository/recall_repository_integration.e2e", "symbol": "TestRecallEvidenceHydratesEvidenceProvenance"},
+        {"path": "internal/repository/recall_repository_integration.e2e", "symbol": "TestRecallAndFullTextSuppressExactAliasesButKeepCanonicalEvidence"},
+        {"path": "internal/repository/recall_repository_integration.e2e", "symbol": "TestRecallEvidenceExcludesStaleSupportSourceRevision"},
+        {"path": "internal/repository/recall_repository_integration.e2e", "symbol": "TestRecallEvidenceExcludesRelationshipAliases"},
+        {"path": "internal/repository/recall_repository_integration.e2e", "symbol": "TestRecallEvidenceHydratesHistoricallySupportedRelationshipAtKnownAt"},
+        {"path": "internal/repository/recall_repository_integration.e2e", "symbol": "assertRecallEvidenceRelationships"},
+        {"path": "internal/repository/recall_repository_integration.e2e", "symbol": "assertRecallEvidenceRelationshipsAt"},
+        {"path": "internal/repository/recall_space_isolation_integration.e2e", "symbol": "TestRecallEvidenceIsolatesCredentialPrivateSpacesWithinTeam"},
+        {"path": "internal/repository/recall_failed_document_integration.e2e", "symbol": "TestRecallFailedDocumentsRemainLexicalAndTeamScopedWhileVectorsAreExcluded"},
+        {"path": "internal/repository/recall_failed_document_integration.e2e", "symbol": "TestRecallExcludesConflictResolutionDeletionOnlyEvidence"},
+        {"path": "internal/repository/recall_alias_support_integration.e2e", "symbol": "TestRecallExpansionFollowsHistoricalAliasSupportToCanonicalEvidence"},
+        {"path": "internal/repository/recall_alias_support_integration.e2e", "symbol": "TestRecallQuarantinedHistoricalAliasSupportDoesNotExposeRelationship"},
+        {"path": "internal/repository/recall_alias_support_integration.e2e", "symbol": "TestRecallEvidenceDoesNotApplyFutureAliasSupportAtKnownAt"},
+        {"path": "internal/repository/recall_alias_support_integration.e2e", "symbol": "TestRecallEvidenceHistoricalAliasEndsAtSourceSupersession"},
+        {"path": "internal/repository/recall_evidence_history_integration.e2e", "symbol": "TestRecallEvidenceHistoricalIncludesNonCurrentSearchDocuments"},
+        {"path": "internal/repository/recall_evidence_history_integration.e2e", "symbol": "TestRecallEvidenceHistoricalExcludesEvidenceRetractedAtKnownAt"},
+        {"path": "internal/repository/conflict_repository.go", "symbol": "loadRelationshipConflictRecordsInSpace"},
+        {"path": "internal/repository/conflict_projection_generation.go", "symbol": "loadRelationshipConflictRecordsByIDBoundedWithFence"},
+        {"path": "internal/repository/evidence_conflict_recall_integration.e2e", "symbol": "TestEvidenceConflictRecallRequiresEveryPositionToRemainEligible"},
+        {"path": "internal/repository/evidence_conflict_conflict_integration.e2e", "symbol": "TestEvidenceConflictRememberCreationAndRecurrence"},
+        {"path": "internal/repository/evidence_conflict_conflict_integration.e2e", "symbol": "TestEvidenceConflictDismissalRecordsTerminalEvent"},
+        {"path": "internal/repository/evidence_duplicate_integration.e2e", "symbol": "TestRememberDuplicateSourceLessCanonicalStaysIndependentFromSourceAdvance"},
+        {"path": "internal/repository/search_reconciliation_integration.e2e", "symbol": "TestSearchReconciliationSuppressesHistoricalEvidenceAliases"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/recall/postgres/recall_repository.go", "symbol": "Store.RecallEvidence"},
+      "removal_condition": "Remove the legacy SearchRepository Recall construction and evidence forwarder after Recall consumers use the native repository port."
+    },
+    {
+      "source_path": "internal/repository/recall_relationship_repository.go",
+      "fields": ["RecallRelationships", "relationshipForegroundRecallGenerationMetadataKey"],
+      "consumers": [
+        {"path": "internal/repository/recall_repository_integration.e2e", "symbol": "TestRecallRelationshipsUsesNullGenerationVectorsForPostCutoverTeam"},
+        {"path": "internal/repository/recall_repository_integration.e2e", "symbol": "TestRecallRelationshipsOmitsVectorWhenOnlyStaleContractDocumentsAreCurrent"},
+        {"path": "internal/repository/recall_repository_integration.e2e", "symbol": "TestRecallRelationshipsReturnsEquivalentRelationshipIDs"},
+        {"path": "internal/repository/recall_repository_integration.e2e", "symbol": "TestRecallRelationshipsHydratesHistoricallySupersededAtKnownAt"},
+        {"path": "internal/repository/recall_repository_integration.e2e", "symbol": "TestRecallRelationshipsHydratesHistoricallySupportedAtKnownAt"},
+        {"path": "internal/repository/recall_repository_integration.e2e", "symbol": "TestRecallRelationshipsUsesCurrentGenerationVectors"},
+        {"path": "internal/repository/recall_relationship_generation_integration.e2e", "symbol": "TestRecallRelationshipsKeepsLastActivatedGenerationDuringUnactivatedProjection"},
+        {"path": "internal/repository/recall_relationship_generation_integration.e2e", "symbol": "TestRecallRelationshipsUsesActivatedGenerationWhenNewestGenerationFailed"},
+        {"path": "internal/repository/recall_relationship_generation_integration.e2e", "symbol": "TestRecallRelationshipsFullTextFencesGenerationAndKeepsForegroundRows"},
+        {"path": "internal/repository/recall_relationship_generation_integration.e2e", "symbol": "TestSearchReadinessRejectsStaleRelationshipProjectionGeneration"},
+        {"path": "internal/repository/recall_known_relationship_space_integration.e2e", "symbol": "TestRecallRelationshipsScopesKnownRelationshipGroupsToActiveSpace"},
+        {"path": "internal/repository/recall_alias_support_integration.e2e", "symbol": "TestRecallExpansionFollowsHistoricalAliasSupportToCanonicalEvidence"},
+        {"path": "internal/repository/recall_alias_support_integration.e2e", "symbol": "TestRecallEvidenceDoesNotApplyFutureAliasSupportAtKnownAt"},
+        {"path": "internal/repository/recall_failed_document_integration.e2e", "symbol": "TestRecallFailedDocumentsRemainLexicalAndTeamScopedWhileVectorsAreExcluded"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/recall/postgres/recall_relationship_repository.go", "symbol": "Store.RecallRelationships"},
+      "removal_condition": "Remove the legacy relationship forwarder after Recall consumers use the native repository port."
+    },
+    {
+      "source_path": "internal/repository/recall_feedback_event_repository.go",
+      "fields": ["RecallFeedbackEventRepository", "RecallFeedbackEventRepositoryImpl", "NewRecallFeedbackEventRepository", "ErrRecallFeedbackEventNotFound"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/application_composition.go", "symbol": "buildApplicationBundle"},
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"},
+        {"path": "internal/repository/recall_feedback_event_repository_integration.e2e", "symbol": "TestRecallFeedbackEventRepositoryRecordsSnapshotBeforeFeedback"},
+        {"path": "internal/repository/recall_feedback_event_repository_integration.e2e", "symbol": "TestRecallFeedbackEventRepositoryFencesSealedPrivateSpace"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/recall/postgres/recall_feedback_event_repository.go", "symbol": "NewFeedbackStore"},
+      "removal_condition": "Remove the legacy feedback repository aliases and constructor after feedback composition and fixtures use the native store."
+    },
+    {
+      "source_path": "internal/repository/evidence_conflict_recall.go",
+      "fields": ["evidenceConflictRecallCandidateLimit", "loadRecallEvidenceConflictRecords", "loadRecallEvidenceConflictCase", "loadEvidenceConflictEventsAt"],
+      "consumers": [
+        {"path": "internal/repository/evidence_conflict_recall_integration.e2e", "symbol": "TestEvidenceConflictRecallBoundsCaseHydration"},
+        {"path": "internal/repository/evidence_conflict_recall_integration.e2e", "symbol": "TestEvidenceConflictRecallHistoricalOrderPrecedesCandidateLimit"},
+        {"path": "internal/repository/evidence_conflict_recall_integration.e2e", "symbol": "TestEvidenceConflictHistoricalEventHydrationIsBounded"},
+        {"path": "internal/repository/evidence_conflict_recall_integration.e2e", "symbol": "TestEvidenceConflictRecallFiltersHistoricalIneligibleBeforeCandidateLimit"},
+        {"path": "internal/repository/evidence_conflict_recall_integration.e2e", "symbol": "TestEvidenceConflictRecallRequiresEveryPositionToRemainEligible"},
+        {"path": "internal/repository/evidence_conflict_conflict_integration.e2e", "symbol": "TestEvidenceConflictRememberCreationAndRecurrence"},
+        {"path": "internal/repository/evidence_conflict_conflict_integration.e2e", "symbol": "TestEvidenceConflictDismissalRecordsTerminalEvent"},
+        {"path": "internal/repository/search_repository.go", "symbol": "NewSearchRepository"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/recall/postgres/evidence_conflict_recall.go", "symbol": "LoadRecallEvidenceConflictRecords"},
+      "removal_condition": "Remove the repository evidence-conflict fixture forwarder after the Recall PostgreSQL adapter is used directly by the fixtures."
+    }
+  ],
   "exceptions": [],
   "workers": []
 }

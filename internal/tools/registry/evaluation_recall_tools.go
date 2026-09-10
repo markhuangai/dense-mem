@@ -6,7 +6,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	"github.com/markhuangai/dense-mem/internal/recall"
 )
 
 const defaultRecallCaseLimit = 10
@@ -84,8 +84,8 @@ func evalRunRecallCase(ctx context.Context, deps Dependencies, input map[string]
 	return out, nil
 }
 
-func evalRecallRequest(input map[string]any) (memoryservice.RecallRequest, error) {
-	var req memoryservice.RecallRequest
+func evalRecallRequest(input map[string]any) (recall.RecallRequest, error) {
+	var req recall.RecallRequest
 	if err := remapInput(input, &req); err != nil {
 		return req, err
 	}
@@ -104,7 +104,7 @@ func evalRecallRequest(input map[string]any) (memoryservice.RecallRequest, error
 	return req, nil
 }
 
-func recallResultRefs(result *memoryservice.RecallResult) []map[string]any {
+func recallResultRefs(result *recall.RecallResult) []map[string]any {
 	if result == nil {
 		return []map[string]any{}
 	}

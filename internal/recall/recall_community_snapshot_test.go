@@ -1,4 +1,4 @@
-package memoryservice
+package recall
 
 import (
 	"context"
@@ -9,8 +9,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 )
 
 func intPointer(value int) *int {
@@ -24,19 +26,19 @@ func TestRecallUsesCurrentCommunitySnapshotAndCoverage(t *testing.T) {
 	communityLimit := 2
 	communityRelationshipLimit := 1
 	search := &recallSearchStub{
-		contract: &repository.ActiveSearchContract{
+		contract: &searchcontract.ActiveSearchContract{
 			EmbeddingContractID: uuid.NewString(),
 			EmbeddingDimensions: 3,
 			EmbeddingModel:      "test-model",
 		},
-		result: &repository.RecallEvidenceResult{
+		result: &recallcontract.RecallEvidenceResult{
 			SearchState: string(domain.SearchProjectionCurrent),
-			Results:     []repository.RecallEvidenceHit{},
+			Results:     []recallcontract.RecallEvidenceHit{},
 		},
-		relationshipResult: &repository.RecallRelationshipsResult{
+		relationshipResult: &recallcontract.RecallRelationshipsResult{
 			TeamID:      teamID.String(),
 			SearchState: string(domain.SearchProjectionCurrent),
-			Results: []repository.RecallRelationshipHit{{
+			Results: []recallcontract.RecallRelationshipHit{{
 				RelationshipID:   uuid.NewString(),
 				SemanticGroupKey: "direct-group",
 				SubjectEntityID:  uuid.NewString(),
@@ -52,16 +54,16 @@ func TestRecallUsesCurrentCommunitySnapshotAndCoverage(t *testing.T) {
 	relationshipID := uuid.NewString()
 	communities := &recallCommunitySnapshotStub{
 		covered: []string{"covered-group"},
-		records: []repository.CommunityRecallRecord{{
+		records: []communitycontract.CommunityRecallRecord{{
 			CommunityID:        communityID,
 			LogicalCommunityID: uuid.NewString(),
 			Rank:               1,
 			Summary:            "Durable memory uses PostgreSQL.",
-			TopEntities:        []repository.CommunityRecallTopEntity{{EntityID: uuid.NewString(), Name: "Dense-Mem"}},
+			TopEntities:        []communitycontract.CommunityRecallTopEntity{{EntityID: uuid.NewString(), Name: "Dense-Mem"}},
 			TopPredicates:      []string{"uses"},
 			EntityCount:        2,
 			RelationshipCount:  1,
-			Relationships: []repository.RecallRelationshipHit{{
+			Relationships: []recallcontract.RecallRelationshipHit{{
 				RelationshipID:   relationshipID,
 				SemanticGroupKey: "community-group",
 				SubjectEntityID:  uuid.NewString(),
@@ -151,7 +153,7 @@ func TestRecallCommunitiesRejectsIncompatibleCompletedSnapshot(t *testing.T) {
 		status:            "completed",
 		algorithmKind:     "connected_components",
 		algorithmVersion:  "v1",
-		profileVersion:    repository.CommunityProfileVersion,
+		profileVersion:    communitycontract.CommunityProfileVersion,
 		configurationHash: "sha256:legacy",
 	}
 	svc := &recallService{
@@ -185,9 +187,9 @@ type recallCommunitySnapshotStub struct {
 	recallCommunityStub
 	covered       []string
 	coverageErr   error
-	records       []repository.CommunityRecallRecord
+	records       []communitycontract.CommunityRecallRecord
 	recallErr     error
-	snapshotInput repository.CommunityRecallInput
+	snapshotInput communitycontract.CommunityRecallInput
 }
 
 type recallCommunityRunStub struct {
@@ -199,22 +201,22 @@ type recallCommunityRunStub struct {
 	configurationHash string
 }
 
-func (s *recallCommunityRunStub) LatestCommunityRun(_ context.Context, _ string) (*repository.CommunityRun, error) {
-	return &repository.CommunityRun{
+func (s *recallCommunityRunStub) LatestCommunityRun(_ context.Context, _ string) (*communitycontract.CommunityRun, error) {
+	return &communitycontract.CommunityRun{
 		Status: s.status, AlgorithmKind: s.algorithmKind, AlgorithmVersion: s.algorithmVersion,
 		ProfileVersion: s.profileVersion, ConfigurationHash: s.configurationHash,
 	}, nil
 }
 
-func (s *recallCommunitySnapshotStub) ListCommunitySemanticGroups(_ context.Context, _ repository.CommunityCoverageInput) ([]string, error) {
+func (s *recallCommunitySnapshotStub) ListCommunitySemanticGroups(_ context.Context, _ communitycontract.CommunityCoverageInput) ([]string, error) {
 	if s.coverageErr != nil {
 		return nil, s.coverageErr
 	}
 	return append([]string(nil), s.covered...), nil
 }
 
-func (s *recallCommunitySnapshotStub) RecallCommunities(_ context.Context, input repository.CommunityRecallInput) ([]repository.CommunityRecallRecord, error) {
-	s.recallInput = repository.CommunityDiscoveryInput{TeamID: input.TeamID, Query: input.Query, Limit: input.Limit}
+func (s *recallCommunitySnapshotStub) RecallCommunities(_ context.Context, input communitycontract.CommunityRecallInput) ([]communitycontract.CommunityRecallRecord, error) {
+	s.recallInput = communitycontract.CommunityDiscoveryInput{TeamID: input.TeamID, Query: input.Query, Limit: input.Limit}
 	// Keep the complete input separately so tests can inspect suppression keys.
 	s.snapshotInput = input
 	if s.recallErr != nil {

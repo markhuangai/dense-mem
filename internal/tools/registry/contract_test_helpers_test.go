@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/recall"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
@@ -78,18 +79,18 @@ func (s *stubRememberService) Remember(ctx context.Context, req memoryservice.Re
 }
 
 type stubRecallService struct {
-	req    memoryservice.RecallRequest
-	result *memoryservice.RecallResult
+	req    recall.RecallRequest
+	result *recall.RecallResult
 }
 
-func (s *stubRecallService) Recall(_ context.Context, req memoryservice.RecallRequest) (*memoryservice.RecallResult, error) {
+func (s *stubRecallService) Recall(_ context.Context, req recall.RecallRequest) (*recall.RecallResult, error) {
 	s.req = req
 	if s.result != nil {
 		return s.result, nil
 	}
-	return &memoryservice.RecallResult{
+	return &recall.RecallResult{
 		RecallID: "rec-canonical",
-		Results: []memoryservice.RecallResultItem{{
+		Results: []recall.RecallResultItem{{
 			EvidenceID:      "evidence-canonical",
 			RelationshipIDs: []string{"relationship-canonical"},
 			Rank:            1,

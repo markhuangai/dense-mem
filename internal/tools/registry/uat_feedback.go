@@ -2,13 +2,9 @@ package registry
 
 import (
 	"context"
-	"errors"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	appservice "github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	"github.com/markhuangai/dense-mem/internal/recall"
 )
 
 const feedbackTimeFormat = "2006-01-02T15:04:05.999999999Z07:00"
@@ -17,8 +13,8 @@ func recordRecallFeedbackSnapshot(
 	ctx context.Context,
 	deps Dependencies,
 	input map[string]any,
-	req memoryservice.RecallRequest,
-	res *memoryservice.RecallResult,
+	req recall.RecallRequest,
+	res *recall.RecallResult,
 ) bool {
 	if res == nil || res.RecallID == "" || deps.RecallFeedbackEvents == nil {
 		return false
@@ -37,7 +33,7 @@ func recordRecallFeedbackSnapshot(
 		ToolName:        ToolRecallMemory,
 		Query:           req.Query,
 		ToolArgs:        recallFeedbackToolArgs(input, req),
-		ResultRefs:      recallFeedbackResultRefs(res),
+		ResultRefs:      recall.FeedbackResultRefs(res),
 		ContractVersion: domain.ContractVersion,
 		SearchState:     res.SearchState,
 		Degradation:     degradation,
@@ -46,7 +42,7 @@ func recordRecallFeedbackSnapshot(
 		},
 	})
 	if err != nil {
-		res.Degradations = append(res.Degradations, memoryservice.RecallDegradationResult{
+		res.Degradations = append(res.Degradations, recall.RecallDegradationResult{
 			Frontier: "feedback",
 			Optional: true,
 			Code:     "recall_feedback_snapshot_unavailable",
@@ -58,13 +54,13 @@ func recordRecallFeedbackSnapshot(
 	return true
 }
 
-func setRecallSuggestedActions(res *memoryservice.RecallResult, feedbackSnapshotStored, dreamingEnabled bool) {
+func setRecallSuggestedActions(res *recall.RecallResult, feedbackSnapshotStored, dreamingEnabled bool) {
 	if res == nil {
 		return
 	}
-	actions := make([]memoryservice.RecallSuggestedAction, 0, 2)
+	actions := make([]recall.RecallSuggestedAction, 0, 2)
 	if feedbackSnapshotStored && res.RecallID != "" {
-		actions = append(actions, memoryservice.RecallSuggestedAction{
+		actions = append(actions, recall.RecallSuggestedAction{
 			Tool:          ToolSubmitRecallSessionFeedback,
 			RecallEventID: res.RecallID,
 			Guidance:      "After using this recall, report the session outcome with this recall_event_id.",
@@ -78,7 +74,7 @@ func setRecallSuggestedActions(res *memoryservice.RecallResult, feedbackSnapshot
 			}
 		}
 		if len(hypothesisIDs) > 0 {
-			actions = append(actions, memoryservice.RecallSuggestedAction{
+			actions = append(actions, recall.RecallSuggestedAction{
 				Tool:          ToolResolveDreamFeedback,
 				HypothesisIDs: hypothesisIDs,
 				Guidance:      "Confirm true or false only with independent evidence; leave uncertain hypotheses unresolved.",
@@ -89,71 +85,21 @@ func setRecallSuggestedActions(res *memoryservice.RecallResult, feedbackSnapshot
 }
 
 func submitRecallFeedback(ctx context.Context, deps Dependencies, input map[string]any) (map[string]any, error) {
-	submissions := recallFeedbackSubmissions(input)
-	recorded := 0
-	for _, submission := range submissions {
-		if err := deps.RecallFeedbackEvents.RecordRecallFeedback(ctx, submission); err != nil {
-			//nolint:nilerr // Partial failure is reported through the tool response payload.
-			result := map[string]any{
-				"recorded":        recorded > 0,
-				"recorded_count":  recorded,
-				"partial_success": recorded > 0,
-				"failed_index":    recorded,
-				"error":           "recall feedback submission failed",
-			}
-			for key, value := range recallFeedbackFailureGuidance(err) {
-				result[key] = value
-			}
-			return result, nil
-		}
-		observability.RecordRecallFeedback(ctx, deps.Metrics, observability.RecallFeedback{
-			Used:            submission.Used,
-			AnswerSupported: submission.AnswerSupported,
-			Quality:         submission.Quality,
-			MissingContext:  submission.MissingContext,
-			Irrelevant:      submission.Irrelevant,
-		})
-		recorded++
+	batch := recall.SubmitRecallFeedbackBatch(ctx, deps.RecallFeedbackEvents, deps.Metrics, recallFeedbackSubmissions(input))
+	result := map[string]any{
+		"recorded":       batch.Recorded,
+		"recorded_count": batch.RecordedCount,
 	}
-	return map[string]any{
-		"recorded":       recorded > 0,
-		"recorded_count": recorded,
-	}, nil
-}
-
-func recallFeedbackFailureGuidance(err error) map[string]any {
-	guidance := map[string]any{
-		"error_code":  "degraded",
-		"reason_code": "feedback_persistence_failed",
-		"next_action": "retry_same_request",
-		"remediation": "Retry the same feedback request with unchanged items after the service recovers.",
+	if batch.Failure != nil {
+		result["partial_success"] = batch.Failure.PartialSuccess
+		result["failed_index"] = batch.Failure.FailedIndex
+		result["error"] = batch.Failure.Error
+		result["error_code"] = batch.Failure.ErrorCode
+		result["reason_code"] = batch.Failure.ReasonCode
+		result["next_action"] = batch.Failure.NextAction
+		result["remediation"] = batch.Failure.Remediation
 	}
-	switch {
-	case errors.Is(err, appservice.ErrRecallFeedbackInvalidResultRef):
-		guidance["error_code"] = "invalid_input"
-		guidance["reason_code"] = "result_reference_invalid"
-		guidance["next_action"] = "correct_and_resubmit"
-		guidance["remediation"] = "Correct or remove the invalid irrelevant_result_refs or hypothesis_feedback references and resubmit with the current recall_event_id."
-	case errors.Is(err, repository.ErrRecallFeedbackEventNotFound):
-		guidance["error_code"] = "invalid_input"
-		guidance["reason_code"] = "reference_not_found"
-		guidance["next_action"] = "correct_and_resubmit"
-		guidance["remediation"] = "Use a current recall_event_id and resubmit the corrected feedback items."
-	case errors.Is(err, appservice.ErrRecallFeedbackInvalidInput):
-		guidance["error_code"] = "invalid_input"
-		guidance["reason_code"] = "invalid_feedback"
-		guidance["next_action"] = "correct_and_resubmit"
-		guidance["remediation"] = "Correct the feedback fields and resubmit the request."
-	case errors.Is(err, context.Canceled):
-		guidance["error_code"] = "degraded"
-		guidance["reason_code"] = "request_cancelled"
-		guidance["next_action"] = "stop"
-		guidance["remediation"] = "Stop this feedback submission; retry only if the caller still needs it."
-	case errors.Is(err, context.DeadlineExceeded):
-		guidance["reason_code"] = "request_timeout"
-		guidance["remediation"] = "Retry the same feedback request with unchanged items after the timeout clears."
-	}
-	return guidance
+	return result, nil
 }
 
 func recallFeedbackSubmissions(input map[string]any) []domain.RecallFeedbackSubmission {
@@ -204,7 +150,7 @@ func recallHypothesisFeedback(value any) []domain.RecallFeedbackDreamFeedback {
 	return items
 }
 
-func recallFeedbackToolArgs(input map[string]any, req memoryservice.RecallRequest) map[string]any {
+func recallFeedbackToolArgs(input map[string]any, req recall.RecallRequest) map[string]any {
 	effective := map[string]any{
 		"query": req.Query,
 		"limit": req.Limit,
@@ -258,66 +204,4 @@ func recallFeedbackInputCopy(input map[string]any) map[string]any {
 		}
 	}
 	return out
-}
-
-func recallFeedbackResultRefs(res *memoryservice.RecallResult) []domain.RecallFeedbackResultRef {
-	if res == nil {
-		return []domain.RecallFeedbackResultRef{}
-	}
-	refs := make([]domain.RecallFeedbackResultRef, 0, len(res.Results)*2+len(res.RelatedRelationships)+len(res.RelatedCommunities))
-	seen := map[string]int{}
-	appendRef := func(ref domain.RecallFeedbackResultRef) {
-		key := ref.Type + "\x00" + ref.ID
-		if ref.ID == "" || ref.Type == "" {
-			return
-		}
-		if index, ok := seen[key]; ok {
-			if ref.Rank > 0 && (refs[index].Rank <= 0 || ref.Rank < refs[index].Rank) {
-				refs[index].Rank = ref.Rank
-			}
-			return
-		}
-		seen[key] = len(refs)
-		refs = append(refs, ref)
-	}
-	for resultIndex, item := range res.Results {
-		rank := item.Rank
-		if rank <= 0 {
-			rank = resultIndex + 1
-		}
-		if item.EvidenceID != "" {
-			appendRef(domain.RecallFeedbackResultRef{
-				Type:           domain.RecallFeedbackResultTypeEvidence,
-				ID:             item.EvidenceID,
-				Rank:           rank,
-				Tier:           "evidence",
-				StatusAtRecall: res.SearchState,
-			})
-		}
-		for _, relationshipID := range item.RelationshipIDs {
-			if relationshipID == "" {
-				continue
-			}
-			appendRef(domain.RecallFeedbackResultRef{
-				Type:           domain.RecallFeedbackResultTypeRelationship,
-				ID:             relationshipID,
-				Rank:           rank,
-				Tier:           "relationship",
-				StatusAtRecall: res.SearchState,
-			})
-		}
-	}
-	for _, community := range res.RelatedCommunities {
-		appendRef(domain.RecallFeedbackResultRef{Type: domain.RecallFeedbackResultTypeCommunity, ID: community.CommunityID, Rank: community.Rank, StatusAtRecall: res.SearchState})
-		for _, relationship := range community.CommunityRelationships {
-			appendRef(domain.RecallFeedbackResultRef{Type: domain.RecallFeedbackResultTypeRelationship, ID: relationship.RelationshipID, Rank: community.Rank, StatusAtRecall: firstNonEmpty(relationship.SearchState, res.SearchState)})
-		}
-	}
-	for rank, relationship := range res.RelatedRelationships {
-		appendRef(domain.RecallFeedbackResultRef{Type: domain.RecallFeedbackResultTypeRelationship, ID: relationship.RelationshipID, Rank: rank + 1, StatusAtRecall: relationship.SearchState})
-	}
-	for rank, hypothesis := range res.RelatedHypotheses {
-		appendRef(domain.RecallFeedbackResultRef{Type: domain.RecallFeedbackResultTypeHypothesis, ID: hypothesis.HypothesisID, Rank: rank + 1, StatusAtRecall: hypothesis.Status})
-	}
-	return refs
 }

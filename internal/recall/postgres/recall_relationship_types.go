@@ -1,4 +1,4 @@
-package repository
+package postgres
 
 type relationshipRecallCandidate struct {
 	RelationshipID string

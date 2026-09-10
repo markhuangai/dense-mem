@@ -1,4 +1,4 @@
-package memoryservice
+package recall
 
 import (
 	"context"
@@ -8,16 +8,18 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 )
 
 func TestRecallFusesAuthorizedSpacesWithLabelsAndStablePrivateTieBreak(t *testing.T) {
 	teamID, ownerID := uuid.New(), uuid.New()
 	sharedID, privateID := uuid.New(), uuid.New()
-	search := &spaceRecallStub{contract: &repository.ActiveSearchContract{EmbeddingDimensions: 3, EmbeddingModel: ""}}
+	search := &spaceRecallStub{contract: &searchcontract.ActiveSearchContract{EmbeddingDimensions: 3, EmbeddingModel: ""}}
 	svc := NewRecallService(RecallDependencies{Search: search})
 	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
 		TeamID: teamID, IdentityID: ownerID, MembershipID: ownerID, OwnerID: ownerID,
@@ -40,7 +42,7 @@ func TestRecallFusesAuthorizedSpacesWithLabelsAndStablePrivateTieBreak(t *testin
 func TestRecallAcrossSpacesEmbedsQueryOnceAndReusesVector(t *testing.T) {
 	teamID, ownerID := uuid.New(), uuid.New()
 	sharedID, privateID := uuid.New(), uuid.New()
-	search := &spaceRecallStub{contract: &repository.ActiveSearchContract{EmbeddingDimensions: 3, EmbeddingModel: "recall-model"}}
+	search := &spaceRecallStub{contract: &searchcontract.ActiveSearchContract{EmbeddingDimensions: 3, EmbeddingModel: "recall-model"}}
 	provider := &recallEmbeddingProviderStub{}
 	svc := NewRecallService(RecallDependencies{Search: search, Provider: provider})
 	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
@@ -62,7 +64,7 @@ func TestRecallAcrossSpacesEmbedsQueryOnceAndReusesVector(t *testing.T) {
 func TestRecallAcrossSpacesReportsEmbeddingDegradationOnce(t *testing.T) {
 	teamID, ownerID := uuid.New(), uuid.New()
 	sharedID, privateID := uuid.New(), uuid.New()
-	search := &spaceRecallStub{contract: &repository.ActiveSearchContract{EmbeddingDimensions: 3}}
+	search := &spaceRecallStub{contract: &searchcontract.ActiveSearchContract{EmbeddingDimensions: 3}}
 	svc := NewRecallService(RecallDependencies{
 		Search:   search,
 		Provider: &recallProviderStub{available: false},
@@ -161,11 +163,11 @@ func TestFuseRecallResultsSkipsNilAndClampsLimits(t *testing.T) {
 func TestRecallPrivateBranchDoesNotExpandTeamGraph(t *testing.T) {
 	teamID, ownerID := uuid.New(), uuid.New()
 	sharedID, privateID := uuid.New(), uuid.New()
-	search := &spaceRecallStub{contract: &repository.ActiveSearchContract{EmbeddingDimensions: 3}}
+	search := &spaceRecallStub{contract: &searchcontract.ActiveSearchContract{EmbeddingDimensions: 3}}
 	communities := &recallCommunitySnapshotStub{
-		records: []repository.CommunityRecallRecord{{
+		records: []communitycontract.CommunityRecallRecord{{
 			CommunityID: uuid.NewString(),
-			Relationships: []repository.RecallRelationshipHit{{
+			Relationships: []recallcontract.RecallRelationshipHit{{
 				RelationshipID: uuid.NewString(),
 			}},
 		}},
@@ -196,8 +198,8 @@ func TestRecallPrivateBranchDoesNotExpandTeamGraph(t *testing.T) {
 func TestRecallSingleSharedSpaceRecordsCommunityMetric(t *testing.T) {
 	teamID, ownerID := uuid.New(), uuid.New()
 	sharedID := uuid.New()
-	search := &spaceRecallStub{contract: &repository.ActiveSearchContract{EmbeddingDimensions: 3}}
-	communities := &recallCommunitySnapshotStub{records: []repository.CommunityRecallRecord{{CommunityID: uuid.NewString()}}}
+	search := &spaceRecallStub{contract: &searchcontract.ActiveSearchContract{EmbeddingDimensions: 3}}
+	communities := &recallCommunitySnapshotStub{records: []communitycontract.CommunityRecallRecord{{CommunityID: uuid.NewString()}}}
 	metrics := &recallCommunityMetricsStub{InMemoryDiscoverabilityMetrics: observability.NewInMemoryDiscoverabilityMetrics()}
 	svc := NewRecallService(RecallDependencies{
 		Search: search, Communities: communities, Metrics: metrics,
@@ -217,7 +219,7 @@ func TestRecallPrivateBranchFailureIsBounded(t *testing.T) {
 	teamID, ownerID := uuid.New(), uuid.New()
 	sharedID, privateID := uuid.New(), uuid.New()
 	search := &spaceRecallStub{
-		contract:    &repository.ActiveSearchContract{EmbeddingDimensions: 3},
+		contract:    &searchcontract.ActiveSearchContract{EmbeddingDimensions: 3},
 		failSpaceID: privateID.String(),
 	}
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
@@ -245,7 +247,7 @@ func TestRecallSharedBranchFailureRemainsRequired(t *testing.T) {
 	teamID, ownerID := uuid.New(), uuid.New()
 	sharedID, privateID := uuid.New(), uuid.New()
 	search := &spaceRecallStub{
-		contract:    &repository.ActiveSearchContract{EmbeddingDimensions: 3},
+		contract:    &searchcontract.ActiveSearchContract{EmbeddingDimensions: 3},
 		failSpaceID: sharedID.String(),
 	}
 	svc := NewRecallService(RecallDependencies{Search: search})
@@ -306,8 +308,8 @@ func TestFuseRecallResultsDeduplicatesIdenticalDegradations(t *testing.T) {
 func intPtr(v int) *int { return &v }
 
 type spaceRecallStub struct {
-	contract    *repository.ActiveSearchContract
-	inputs      []repository.RecallEvidenceInput
+	contract    *searchcontract.ActiveSearchContract
+	inputs      []recallcontract.RecallEvidenceInput
 	failSpaceID string
 }
 
@@ -343,19 +345,19 @@ func (*recallEmbeddingProviderStub) Dimensions() int { return 3 }
 
 func (*recallEmbeddingProviderStub) IsAvailable() bool { return true }
 
-func (s *spaceRecallStub) GetActiveSearchContract(context.Context) (*repository.ActiveSearchContract, error) {
+func (s *spaceRecallStub) GetActiveSearchContract(context.Context) (*searchcontract.ActiveSearchContract, error) {
 	return s.contract, nil
 }
 
-func (s *spaceRecallStub) RecallEvidence(_ context.Context, input repository.RecallEvidenceInput) (*repository.RecallEvidenceResult, error) {
+func (s *spaceRecallStub) RecallEvidence(_ context.Context, input recallcontract.RecallEvidenceInput) (*recallcontract.RecallEvidenceResult, error) {
 	s.inputs = append(s.inputs, input)
 	if s.failSpaceID != "" && input.SpaceID == s.failSpaceID {
 		return nil, errors.New("space branch unavailable")
 	}
 	id := uuid.NewString()
-	return &repository.RecallEvidenceResult{TeamID: input.TeamID, SearchState: string(domain.SearchProjectionCurrent), Results: []repository.RecallEvidenceHit{{EvidenceID: id, Rank: 1, Context: input.SpaceID}}}, nil
+	return &recallcontract.RecallEvidenceResult{TeamID: input.TeamID, SearchState: string(domain.SearchProjectionCurrent), Results: []recallcontract.RecallEvidenceHit{{EvidenceID: id, Rank: 1, Context: input.SpaceID}}}, nil
 }
 
-func (s *spaceRecallStub) RecallRelationships(_ context.Context, input repository.RecallRelationshipsInput) (*repository.RecallRelationshipsResult, error) {
-	return &repository.RecallRelationshipsResult{TeamID: input.TeamID, SearchState: string(domain.SearchProjectionCurrent), Results: []repository.RecallRelationshipHit{}}, nil
+func (s *spaceRecallStub) RecallRelationships(_ context.Context, input recallcontract.RecallRelationshipsInput) (*recallcontract.RecallRelationshipsResult, error) {
+	return &recallcontract.RecallRelationshipsResult{TeamID: input.TeamID, SearchState: string(domain.SearchProjectionCurrent), Results: []recallcontract.RecallRelationshipHit{}}, nil
 }

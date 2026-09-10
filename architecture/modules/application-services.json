@@ -185,7 +185,6 @@
     {"path": "internal/operations/operation_log_service.go", "function": "Start", "kind": "goroutine", "ordinal": 1, "role": "worker", "lifecycle_issue": 381},
     {"path": "internal/operations/telemetry_catalog.go", "function": "runTelemetryInstantQueries", "kind": "goroutine", "ordinal": 1, "role": "worker", "lifecycle_issue": 381},
     {"path": "internal/operations/telemetry_catalog.go", "function": "runTelemetryRangeQueries", "kind": "goroutine", "ordinal": 1, "role": "worker", "lifecycle_issue": 381},
-    {"path": "internal/operations/usage_metrics_service.go", "function": "Start", "kind": "goroutine", "ordinal": 1, "role": "worker", "lifecycle_issue": 381},
-    {"path": "internal/service/recall_feedback_event_service.go", "function": "Start", "kind": "goroutine", "ordinal": 1, "role": "worker", "lifecycle_issue": 381}
+		{"path": "internal/operations/usage_metrics_service.go", "function": "Start", "kind": "goroutine", "ordinal": 1, "role": "worker", "lifecycle_issue": 381}
   ]
 }

@@ -1,4 +1,4 @@
-package recallquality
+package quality
 
 import (
 	"testing"
