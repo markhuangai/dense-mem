@@ -7,10 +7,6 @@
       "issue": 372
     },
     {
-      "path": "internal/tools/registry/remember_bindings.go",
-      "issue": 372
-    },
-    {
       "path": "cmd/internal/serverapp/remember_processor.go",
       "issue": 372
     },
@@ -23,75 +19,187 @@
       "issue": 372
     },
     {
-      "path": "cmd/internal/serverapp/remember_exchange_recorder.go",
-      "issue": 372
-    },
-    {
-      "path": "cmd/internal/serverapp/remember_failure_recovery.go",
-      "issue": 372
-    },
-    {
       "path": "cmd/internal/serverapp/remember_embedding_helpers.go",
       "issue": 372
     },
     {
-      "path": "internal/service/remember/deadlines.go",
+      "path": "internal/tools/registry/remember_bindings.go",
       "issue": 372
     },
     {
-      "path": "internal/service/remember/evidence_conversion.go",
+      "path": "internal/remember/service/processor/remember_processor.go",
       "issue": 372
     },
     {
-      "path": "internal/service/remember/ports.go",
+      "path": "internal/remember/service/processor/remember_replay.go",
       "issue": 372
     },
     {
-      "path": "internal/service/remember/request_hash.go",
+      "path": "internal/remember/service/processor/remember_failure_logging.go",
       "issue": 372
     },
     {
-      "path": "internal/service/remember/security_audit.go",
+      "path": "internal/remember/service/processor/remember_exchange_recorder.go",
       "issue": 372
     },
     {
-      "path": "internal/service/remember/security_scan.go",
+      "path": "internal/remember/service/processor/remember_failure_recovery.go",
       "issue": 372
     },
     {
-      "path": "internal/service/remember/security_scan_helpers.go",
+      "path": "internal/remember/service/processor/remember_embedding_helpers.go",
       "issue": 372
     },
     {
-      "path": "internal/service/remember/security_scan_test.go",
+      "path": "internal/remember/service/deadlines.go",
       "issue": 372
     },
     {
-      "path": "internal/service/remember/service.go",
+      "path": "internal/remember/service/evidence_conversion.go",
       "issue": 372
     },
     {
-      "path": "internal/service/remember/service_helpers_test.go",
+      "path": "internal/remember/service/remember_input_helpers.go",
       "issue": 372
     },
     {
-      "path": "internal/service/remember/service_synchronous_test.go",
+      "path": "internal/remember/contract/ports.go",
       "issue": 372
     },
     {
-      "path": "internal/service/remember/status_errors.go",
+      "path": "internal/remember/service/ports_aliases.go",
       "issue": 372
     },
     {
-      "path": "internal/service/remember/status_errors_test.go",
+      "path": "internal/remember/service/request_hash.go",
       "issue": 372
     },
     {
-      "path": "internal/service/remember/synchronous_contract.go",
+      "path": "internal/remember/service/security_audit.go",
       "issue": 372
     },
     {
-      "path": "internal/service/remember/synchronous_contract_test.go",
+      "path": "internal/remember/service/security_scan.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/security_scan_helpers.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/security_scan_test.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/service.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/service_helpers_test.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/service_synchronous_test.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/status_errors.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/status_errors_test.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/synchronous_contract.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/synchronous_contract_test.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/assessment_engine.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/submission_assessment_commit_helpers.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/submission_assessment_commit_input.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/submission_assessment_commit_input_test.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/submission_assessment_conflict_canonicalization_test.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/submission_assessment_duplicate_test.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/submission_assessment_plan.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/submission_assessment_request.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/submission_assessment_request_boundaries_test.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/submission_assessment_request_test.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/submission_assessment_review.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/submission_assessment_session.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/submission_assessment_shared.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/submission_assessment_synchronous.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/submission_assessment_worker_helpers.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/synchronous_assessment_engine.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/synchronous_assessment_test.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/submission_assessment_catalog_stub_test.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/memoryservice/synchronous_assessment_compose_e2e.e2e",
+      "issue": 372
+    },
+    {
+      "path": "internal/service/memoryservice/remember.go",
+      "issue": 372
+    },
+    {
+      "path": "internal/remember/service/processor/remember_processor_test.go",
       "issue": 372
     },
     {
@@ -113,11 +221,30 @@
     {
       "path": "internal/repository/remember_attempt_repository_test.go",
       "issue": 372
+    },
+    {
+      "path": "internal/service/remember/compat.go",
+      "issue": 372
     }
   ],
   "completed_issues": [],
   "go": {
     "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/remember/service",
+        "role": "application_api",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/remember/service/processor",
+        "role": "application_api",
+        "visibility": "private"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/remember/contract",
+        "role": "port",
+        "visibility": "public"
+      },
       {
         "id": "github.com/markhuangai/dense-mem/internal/service/remember",
         "role": "application_api",
@@ -129,5 +256,38 @@
     "units": []
   },
   "exceptions": [],
+  "compatibility_bridges": [
+    {
+      "source_path": "internal/service/remember/compat.go",
+      "fields": ["RememberService", "Dependencies", "RememberRequest", "RememberResult", "SubmissionStatusResult", "SubmissionErrorCode", "SynchronousProcessor", "RememberProcessError", "RememberProcessRequest", "TerminalRememberResult", "SynchronousAssessmentDependencies", "RememberAssessmentSnapshot", "SynchronousRememberCommitRequest", "NewService", "AssessSynchronousRemember", "BuildSynchronousRememberCommitInput", "ScanSubmissionEvidence", "ScanSubmissionBatch", "CanonicalRequestBodyHash", "TerminalStatusError", "ValidateTerminalRememberResult"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/security_rejection_audit_test.go", "symbol": "TestSecurityRejectionAuditAdapterWritesBoundedAuditEntry"},
+        {"path": "internal/audit/security_rejection_test.go", "symbol": "TestRememberSecurityRejectionAuditorWritesBoundedMetadata"},
+        {"path": "internal/dream/workflow_terminal_test.go", "symbol": "TestResolveFeedbackUsesExplicitRememberResultKind"},
+        {"path": "internal/dream/workflow_test.go", "symbol": "TestRunCycleDoesNotTurnOneCandidateIntoAHeuristicDream"},
+        {"path": "internal/dream/workflow_test_helpers_test.go", "symbol": "dreamTestContext"},
+        {"path": "internal/knowledge/postgres/remember_result_test.go", "symbol": "TestRememberPublicResultUsesCanonicalCompletedProjection"},
+        {"path": "internal/lifecycle/service_test.go", "symbol": "authenticatedRememberContext"},
+        {"path": "internal/service/remember_attempt_diagnostics_service_test.go", "symbol": "TestRememberAttemptDiagnosticsServiceProjectsExchangesAndSafeResult"},
+        {"path": "internal/storage/postgres/synchronous_remember_cutover_migration_integration.e2e", "symbol": "TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement"},
+        {"path": "internal/tools/registry/contract_result_errors_test.go", "symbol": "TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance"},
+        {"path": "internal/tools/registry/contract_uat_test.go", "symbol": "TestBuildActiveWiresExecutableRemember"},
+        {"path": "internal/tools/registry/dream_tools_test.go", "symbol": "TestResolveDreamFeedbackReturnsStructuredTerminalFailure"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/remember/service/service.go", "symbol": "NewService"},
+      "removal_condition": "Remove the compatibility aliases after all named callers consume the native Remember service and contract packages."
+    },
+    {
+      "source_path": "internal/service/memoryservice/remember.go",
+      "fields": ["SynchronousAssessmentFailureDetails"],
+      "consumers": [
+        {"path": "internal/tools/registry/contract_result_errors.go", "symbol": "ActionableErrorData"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/remember/service/submission_assessment_shared.go", "symbol": "SynchronousAssessmentFailureDetails"},
+      "removal_condition": "Remove the memoryservice forwarder after registry error projection consumes the native helper directly."
+    }
+  ],
   "workers": []
 }

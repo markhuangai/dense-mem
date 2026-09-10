@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 func bindRememberTool(tool Tool, deps Dependencies) Tool {

@@ -2,7 +2,7 @@ package registry
 
 import (
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service/remember"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 func terminalRememberOutputSchema(version string) map[string]any {
@@ -90,14 +90,14 @@ func terminalErrorSchemaForActions(nextActions []string) map[string]any {
 
 func terminalErrorNextActions(includeDreamFeedback bool) []string {
 	result := []string{
-		string(remember.TerminalNextActionRetrySameRequest),
-		string(remember.TerminalNextActionResubmitRemember),
-		string(remember.TerminalNextActionRetryCorrection),
-		string(remember.TerminalNextActionContactOperator),
-		string(remember.TerminalNextActionNone),
+		string(rememberapp.TerminalNextActionRetrySameRequest),
+		string(rememberapp.TerminalNextActionResubmitRemember),
+		string(rememberapp.TerminalNextActionRetryCorrection),
+		string(rememberapp.TerminalNextActionContactOperator),
+		string(rememberapp.TerminalNextActionNone),
 	}
 	if includeDreamFeedback {
-		result = append(result, string(remember.TerminalNextActionRetryDreamFeedback))
+		result = append(result, string(rememberapp.TerminalNextActionRetryDreamFeedback))
 	}
 	return result
 }
@@ -114,7 +114,7 @@ func contractErrorCodes() []string {
 			result = append(result, value)
 		}
 	}
-	add(remember.TerminalErrorCodes())
-	add(remember.SubmissionErrorCodes())
+	add(rememberapp.TerminalErrorCodes())
+	add(rememberapp.SubmissionErrorCodes())
 	return result
 }

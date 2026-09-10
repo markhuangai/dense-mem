@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/repository"
-	remember "github.com/markhuangai/dense-mem/internal/service/remember"
+	remember "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 var (

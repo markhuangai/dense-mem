@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 // ContractValidationIssue is the bounded, machine-readable form of one

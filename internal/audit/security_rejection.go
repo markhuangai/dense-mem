@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 // AuditAppender is the narrow write port used by the Remember security

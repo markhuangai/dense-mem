@@ -2,6 +2,8 @@ package serverapp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"os"
@@ -15,10 +17,14 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	remembercontract "github.com/markhuangai/dense-mem/internal/remember/contract"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
+	rememberprocessor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -49,10 +55,10 @@ func TestRememberServiceRejectsHistoricalOutcomesThroughPostgres(t *testing.T) {
 	require.NoError(t, repository.NewCredentialRepository(adminDB, rls).CreateCredential(ctx, credential))
 
 	ledger := repository.NewLedgerRepository(appDB, rls)
-	processor := newRememberSynchronousProcessor(
-		ledger, nil, nil, nil, assessor.DefaultSemanticAssessmentLimits(),
-		observability.NoopDiscoverabilityMetrics(), nil,
-	)
+	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
+		Ledger: newRememberPersistenceAdapter(ledger), Assessor: nil, Embedder: nil, Limits: assessor.DefaultSemanticAssessmentLimits(),
+		Metrics: observability.NoopDiscoverabilityMetrics(),
+	})
 	service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
 	actorCtx := requestctx.WithActor(ctx, requestctx.Actor{
 		TeamID: teamID, OwnerID: ownerID, Role: "member", AuthMethod: "api_key",
@@ -121,10 +127,10 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 		},
 	}))
 
-	processor := newRememberSynchronousProcessor(
-		ledger, nil, nil, nil, assessor.DefaultSemanticAssessmentLimits(),
-		observability.NoopDiscoverabilityMetrics(), nil,
-	)
+	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
+		Ledger: newRememberPersistenceAdapter(ledger), Assessor: nil, Embedder: nil, Limits: assessor.DefaultSemanticAssessmentLimits(),
+		Metrics: observability.NoopDiscoverabilityMetrics(),
+	})
 	service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
 	actorCtx := requestctx.WithActor(ctx, requestctx.Actor{
 		TeamID: teamID, OwnerID: ownerID, Role: "member", AuthMethod: "api_key",
@@ -147,7 +153,223 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 		`, teamID, ownerID, key).Scan(&totalCount).Error
 	}))
 	require.Equal(t, 1, totalCount)
+
+	for _, testCase := range []struct {
+		name  string
+		cause error
+	}{
+		{name: "conflict_context", cause: repository.ErrConflictContextStale},
+		{name: "exact_reference", cause: repository.ErrRememberExactReferenceStale},
+		{name: "correction_target", cause: repository.ErrCorrectionTargetStale},
+	} {
+		t.Run("stale commit replay/"+testCase.name, func(t *testing.T) {
+			realLedger := repository.NewLedgerRepository(appDB, rls)
+			ledger := newRememberProcessorIntegrationStaleLedger(newRememberPersistenceAdapter(realLedger), testCase.cause)
+			processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
+				Ledger: ledger, Catalog: rememberProcessorIntegrationCatalog{}, Assessor: rememberProcessorIntegrationAssessor{},
+				Embedder: rememberProcessorIntegrationEmbedder{}, Limits: assessor.DefaultSemanticAssessmentLimits(),
+				Metrics: observability.NoopDiscoverabilityMetrics(), IsStaleInput: repository.IsRememberStaleInputError,
+			})
+			service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
+			evidence := []rememberapp.RememberEvidenceInput{{Content: "A stale Remember commit must be replayable."}}
+			request := rememberapp.RememberRequest{
+				Evidence: evidence, IdempotencyKey: "stale-commit-" + testCase.name + "-" + uuid.NewString(),
+			}
+
+			firstResult, firstErr := service.Remember(actorCtx, request)
+			require.Nil(t, firstResult)
+			var firstProcessErr *rememberapp.RememberProcessError
+			require.ErrorAs(t, firstErr, &firstProcessErr)
+			require.ErrorIs(t, firstErr, rememberapp.ErrRememberStaleInput)
+			require.ErrorIs(t, firstErr, testCase.cause)
+			require.NotContains(t, firstErr.Error(), testCase.cause.Error())
+			require.Equal(t, string(rememberapp.SubmissionErrorStaleInput), firstProcessErr.Status.Errors[0].Code)
+			require.False(t, firstProcessErr.Status.Errors[0].Retryable)
+			require.Equal(t, "failed", firstProcessErr.Status.ProcessingState)
+			require.Equal(t, "not_required", firstProcessErr.Status.SearchState)
+			require.Len(t, firstProcessErr.Status.Evidence, 1)
+			require.Equal(t, "stale_input", firstProcessErr.Status.Evidence[0].Reason)
+			require.Equal(t, 1, ledger.commitCalls)
+
+			persisted, loadErr := ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{
+				TeamID: teamID.String(), OwnerProfileID: ownerID.String(), IdempotencyKey: request.IdempotencyKey,
+			})
+			require.NoError(t, loadErr)
+			require.Equal(t, "failed", persisted.Outcome)
+			require.False(t, persisted.Retryable)
+			require.Equal(t, string(rememberapp.SubmissionErrorStaleInput), persisted.PublicResult["errors"].([]any)[0].(map[string]any)["code"])
+
+			replayResult, replayErr := service.Remember(actorCtx, request)
+			require.Nil(t, replayResult)
+			var replayProcessErr *rememberapp.RememberProcessError
+			require.ErrorAs(t, replayErr, &replayProcessErr)
+			require.ErrorIs(t, replayErr, rememberapp.ErrRememberPersistence)
+			require.Equal(t, firstProcessErr.Status, replayProcessErr.Status)
+			require.Equal(t, firstProcessErr.Result, replayProcessErr.Result)
+			require.Equal(t, 1, ledger.commitCalls, "a terminal stale failure must replay without another commit")
+		})
+	}
 }
+
+type rememberProcessorIntegrationStaleLedger struct {
+	remembercontract.Persistence
+	stale        error
+	contractID   string
+	model        string
+	generationID string
+	commitCalls  int
+}
+
+func newRememberProcessorIntegrationStaleLedger(base remembercontract.Persistence, stale error) *rememberProcessorIntegrationStaleLedger {
+	return &rememberProcessorIntegrationStaleLedger{
+		Persistence: base, stale: stale,
+		contractID:   "11111111-1111-1111-1111-111111111111",
+		model:        "remember-integration-embedding",
+		generationID: "22222222-2222-2222-2222-222222222222",
+	}
+}
+
+func (l *rememberProcessorIntegrationStaleLedger) PlanRememberDuplicateEmbeddings(_ context.Context, input repository.RememberDuplicateCandidateInput) (*repository.RememberDuplicateEmbeddingPlan, error) {
+	plan := &repository.RememberDuplicateEmbeddingPlan{
+		Documents: []repository.SearchDocumentForEmbedding{}, EmbeddingContractID: l.contractID,
+		EmbeddingDimensions: 1, EmbeddingModel: l.model, SearchIndexGenerationID: l.generationID, IndexGeneration: 1,
+	}
+	seen := make(map[string]struct{}, len(input.Evidence))
+	for _, evidence := range input.Evidence {
+		if evidence.ForceInsert {
+			continue
+		}
+		hash := rememberProcessorIntegrationDocumentHash(evidence.Content)
+		if _, ok := seen[hash]; ok {
+			continue
+		}
+		seen[hash] = struct{}{}
+		plan.Documents = append(plan.Documents, repository.SearchDocumentForEmbedding{
+			SearchDocumentResult: repository.SearchDocumentResult{
+				TeamID: input.TeamID, SearchDocumentID: "duplicate:" + evidence.FragmentID,
+				OwnerProfileID: input.OwnerProfileID, SourceKind: "evidence", SourceID: evidence.FragmentID,
+				SourceVersion: 1, ProjectionFormat: 1, EmbeddingContractID: l.contractID, EmbeddingDimensions: 1,
+				SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
+			},
+			DocumentText: strings.TrimSpace(evidence.Content), DocumentHash: hash,
+		})
+	}
+	return plan, nil
+}
+
+func (l *rememberProcessorIntegrationStaleLedger) ResolveRememberDuplicateCandidates(_ context.Context, input repository.RememberDuplicateCandidateInput, _ []repository.InlineEmbeddingResult) (*repository.RememberDuplicateResolutionResult, error) {
+	result := &repository.RememberDuplicateResolutionResult{
+		Exact: make([]repository.RememberDuplicateResolution, len(input.Evidence)), Candidates: []repository.RememberDuplicateCandidateGroup{},
+	}
+	for index, evidence := range input.Evidence {
+		result.Exact[index] = repository.RememberDuplicateResolution{
+			EvidenceIndex: index, EvidenceID: fmt.Sprintf("evidence:%d", index), InputFragmentID: evidence.FragmentID, Disposition: "new",
+		}
+		if !evidence.ForceInsert {
+			result.Candidates = append(result.Candidates, repository.RememberDuplicateCandidateGroup{
+				EvidenceIndex: index, EvidenceID: fmt.Sprintf("evidence:%d", index), Candidates: []repository.RememberDuplicateCandidate{},
+			})
+		}
+	}
+	return result, nil
+}
+
+func (l *rememberProcessorIntegrationStaleLedger) PlanRememberEmbeddings(_ context.Context, _ knowledgecontract.SynchronousRememberCommitInput) (*knowledgecontract.InlineEmbeddingPlan, error) {
+	return &knowledgecontract.InlineEmbeddingPlan{
+		Documents: []knowledgecontract.SearchDocumentForEmbedding{}, EmbeddingContractID: l.contractID,
+		EmbeddingDimensions: 1, EmbeddingModel: l.model, SearchIndexGenerationID: l.generationID, IndexGeneration: 1,
+	}, nil
+}
+
+func (l *rememberProcessorIntegrationStaleLedger) CommitRememberWithEmbeddings(context.Context, knowledgecontract.SynchronousRememberCommitInput, []knowledgecontract.InlineEmbeddingResult) (*knowledgecontract.SynchronousRememberCommitResult, error) {
+	l.commitCalls++
+	return nil, l.stale
+}
+
+func rememberProcessorIntegrationDocumentHash(content string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(content)))
+	return hex.EncodeToString(sum[:])
+}
+
+type rememberProcessorIntegrationCatalog struct{}
+
+func (rememberProcessorIntegrationCatalog) ListSubmissionAssessmentEntityCatalog(context.Context, knowledgecontract.SubmissionAssessmentEntityCatalogInput) (knowledgecontract.SubmissionAssessmentEntityCatalogResult, error) {
+	return knowledgecontract.SubmissionAssessmentEntityCatalogResult{Groups: []knowledgecontract.SubmissionAssessmentEntityCatalogGroup{}, Complete: true}, nil
+}
+
+func (rememberProcessorIntegrationCatalog) ResolveSemanticReviewPredicateCandidates(context.Context, knowledgecontract.SemanticReviewPredicateResolutionInput) ([]knowledgecontract.SemanticReviewPredicateResolution, error) {
+	return []knowledgecontract.SemanticReviewPredicateResolution{}, nil
+}
+
+func (rememberProcessorIntegrationCatalog) ListSemanticAssessmentPredicateOptions(context.Context, knowledgecontract.SemanticAssessmentPredicateOptionsInput) ([]knowledgecontract.SemanticReviewPredicateCandidate, error) {
+	return []knowledgecontract.SemanticReviewPredicateCandidate{}, nil
+}
+
+type rememberProcessorIntegrationAssessmentSession struct{}
+
+func (rememberProcessorIntegrationAssessmentSession) SessionID() string {
+	return "remember-integration-assessment"
+}
+
+type rememberProcessorIntegrationAssessor struct{}
+
+func (rememberProcessorIntegrationAssessor) Assess(_ context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
+	return rememberProcessorIntegrationAssessmentSession{}, assessor.SemanticAssessmentTurn{
+		Response: rememberProcessorIntegrationAssessmentResponse(request), Turn: 1,
+	}, nil
+}
+
+func (rememberProcessorIntegrationAssessor) Repair(_ context.Context, _ assessor.SemanticAssessmentSession, request assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
+	return assessor.SemanticAssessmentTurn{Response: rememberProcessorIntegrationAssessmentResponse(request.Request), Turn: 2}, nil
+}
+
+func (rememberProcessorIntegrationAssessor) ModelName() string {
+	return "remember-integration-assessor"
+}
+
+func rememberProcessorIntegrationAssessmentResponse(request assessor.SemanticAssessmentRequest) assessor.SemanticAssessmentResponse {
+	response := assessor.SemanticAssessmentResponse{
+		RequestID: request.RequestID, EvidenceSecurityResults: []assessor.SemanticAssessmentEvidenceSecurityResult{},
+		EvidenceEquivalenceResults: []assessor.SemanticAssessmentEvidenceEquivalenceResult{},
+		EvidenceConflictResults:    []assessor.SemanticAssessmentEvidenceConflictResult{},
+		EntityResults:              []assessor.SemanticAssessmentEntityResult{}, RelationshipResults: []assessor.SemanticAssessmentRelationshipResult{},
+	}
+	for _, evidence := range request.Evidence {
+		response.EvidenceSecurityResults = append(response.EvidenceSecurityResults, assessor.SemanticAssessmentEvidenceSecurityResult{
+			EvidenceID: evidence.EvidenceID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{},
+		})
+	}
+	for _, group := range request.EvidenceEquivalenceCandidates {
+		response.EvidenceEquivalenceResults = append(response.EvidenceEquivalenceResults, assessor.SemanticAssessmentEvidenceEquivalenceResult{
+			EvidenceID: group.EvidenceID, Action: "new",
+		})
+	}
+	return response
+}
+
+var _ assessor.Provider = rememberProcessorIntegrationAssessor{}
+
+type rememberProcessorIntegrationEmbedder struct{}
+
+func (rememberProcessorIntegrationEmbedder) Embed(context.Context, string) ([]float32, string, error) {
+	return []float32{1}, "remember-integration-embedding", nil
+}
+
+func (rememberProcessorIntegrationEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float32, string, error) {
+	vectors := make([][]float32, len(texts))
+	for index := range vectors {
+		vectors[index] = []float32{1}
+	}
+	return vectors, "remember-integration-embedding", nil
+}
+
+func (rememberProcessorIntegrationEmbedder) ModelName() string {
+	return "remember-integration-embedding"
+}
+func (rememberProcessorIntegrationEmbedder) Dimensions() int   { return 1 }
+func (rememberProcessorIntegrationEmbedder) IsAvailable() bool { return true }
+
+var _ embeddingcontract.EmbeddingProviderInterface = rememberProcessorIntegrationEmbedder{}
 
 func insertHistoricalRememberOutcome(
 	t *testing.T,

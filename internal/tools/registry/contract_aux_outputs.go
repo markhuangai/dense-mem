@@ -2,7 +2,7 @@ package registry
 
 import (
 	"github.com/markhuangai/dense-mem/internal/domain"
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 func recallFeedbackOutputSchema() map[string]any {
