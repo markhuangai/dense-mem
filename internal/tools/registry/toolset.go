@@ -8,6 +8,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/dream"
+	"github.com/markhuangai/dense-mem/internal/lifecycle"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
@@ -36,7 +37,7 @@ type Dependencies struct {
 	Context        contextservice.Service
 	Remember       memoryservice.RememberService
 	Recall         memoryservice.RecallService
-	Lifecycle      memoryservice.LifecycleService
+	Lifecycle      lifecycle.LifecycleService
 	RecallDreaming DreamingConfigProvider
 	Evaluation     repository.EvaluationRepository
 	Communities    repository.CommunityRepository

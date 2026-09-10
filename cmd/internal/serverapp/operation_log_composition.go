@@ -4,14 +4,14 @@ import (
 	"log/slog"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
+	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
 )
 
-func buildOperationLogApplication(repo repository.OperationLogRepository, retention service.OperationLogRetentionProvider) *service.OperationLogServiceImpl {
-	return service.NewOperationLogService(repo, retention)
+func buildOperationLogApplication(repo operationscontract.OperationLogRepository, retention operations.OperationLogRetentionProvider) *operations.OperationLogServiceImpl {
+	return operations.NewOperationLogService(repo, retention)
 }
 
-func buildActiveApplicationLogger(level slog.Level, sink *service.OperationLogServiceImpl) *observability.Logger {
+func buildActiveApplicationLogger(level slog.Level, sink *operations.OperationLogServiceImpl) *observability.Logger {
 	return observability.NewWithSinks(level, sink)
 }

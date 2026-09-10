@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 func TestControlIdentitySessionRequiresStillActiveDirectoryIdentityAndAdminGroup(t *testing.T) {
@@ -80,7 +79,7 @@ func TestControlIdentitySessionRefreshesConfiguredAdminGroups(t *testing.T) {
 }
 
 type controlIdentityRepositoryStub struct {
-	repository.ControlIdentityRepository
+	ControlIdentityStore
 	session           *domain.ControlSession
 	sessions          map[string]*domain.ControlSession
 	states            map[string]*domain.ControlOAuthState
@@ -246,7 +245,7 @@ func (r *controlIdentityRepositoryStub) DeleteExpiredControlSessions(_ context.C
 }
 
 type controlIdentitySSORepositoryStub struct {
-	repository.SSORepository
+	SSOStore
 	identity          *domain.SSOIdentity
 	provider          *domain.SSOProvider
 	identities        map[uuid.UUID]*domain.SSOIdentity

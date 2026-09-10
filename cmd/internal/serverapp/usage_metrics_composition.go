@@ -2,10 +2,10 @@ package serverapp
 
 import (
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
+	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
 )
 
-func buildUsageMetricsApplication(repo repository.UsageMetricsRepository, logger observability.LogProvider) *service.UsageMetricsServiceImpl {
-	return service.NewUsageMetricsService(repo, logger)
+func buildUsageMetricsApplication(repo operationscontract.UsageMetricsRepository, logger observability.LogProvider) *operations.UsageMetricsServiceImpl {
+	return operations.NewUsageMetricsService(repo, logger)
 }
