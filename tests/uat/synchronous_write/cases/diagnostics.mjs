@@ -43,7 +43,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   const disconnectRequest = rememberArguments("disconnect", "[fixture-fault:embedding-cancel]");
   const controller = new AbortController();
   const disconnected = rawRPC("tools/call", { name: "remember", arguments: disconnectRequest.payload }, controller.signal);
-  setTimeout(() => controller.abort(), 100);
+  setTimeout(() => controller.abort(), 1_000);
   let disconnectError;
   try {
     await disconnected;
