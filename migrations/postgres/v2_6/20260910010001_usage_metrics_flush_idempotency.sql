@@ -1,6 +1,16 @@
 -- +goose Up
 -- +goose StatementBegin
 
+-- Lock/rewrite impact: creates one small additive table and index; existing
+-- usage_metric_buckets rows are not rewritten.
+-- RLS impact: flush identifiers are system-only control state, matching the
+-- system transaction policy used for usage metrics.
+-- Backfill: none; only flushes created after this migration need deduplication.
+-- Backward compatibility: existing usage_metric_buckets rows and dimensions
+-- remain unchanged; the repository starts supplying a flush identifier.
+-- Rollback: drop the control table only after usage-metric retry traffic is
+-- stopped; removing it would reopen duplicate-counting on retries.
+
 -- Additive control state for usage-metric flush retries. The table and index
 -- do not rewrite usage_metric_buckets; rows are pruned with metric retention.
 CREATE TABLE IF NOT EXISTS usage_metric_flushes (
