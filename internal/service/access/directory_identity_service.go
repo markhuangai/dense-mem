@@ -15,9 +15,9 @@ import (
 
 	"github.com/google/uuid"
 
+	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	cryptoutil "github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 const DefaultDirectoryOAuthTokenTTL = time.Hour
@@ -201,7 +201,7 @@ func (s *DirectoryIdentityService) SetConnectorStatus(ctx context.Context, conne
 	}
 	if status == domain.DirectoryConnectorActive && snapshot.Connector.Status != domain.DirectoryConnectorActive {
 		if err := s.repo.ActivateDirectoryConnector(ctx, plan); err != nil {
-			if errors.Is(err, repository.ErrDirectoryReconcileStale) {
+			if errors.Is(err, accesscontract.ErrDirectoryReconcileStale) {
 				return nil, ErrDirectoryPreviewStale
 			}
 			return nil, err
@@ -503,9 +503,9 @@ func (s *DirectoryIdentityService) connectorSnapshot(ctx context.Context, connec
 
 func directoryIdentityServiceError(err error) error {
 	switch {
-	case errors.Is(err, repository.ErrDirectoryResourceConflict):
+	case errors.Is(err, accesscontract.ErrDirectoryResourceConflict):
 		return fmt.Errorf("%w: %v", ErrDirectoryResourceConflict, err)
-	case errors.Is(err, repository.ErrDirectoryInvalidValue):
+	case errors.Is(err, accesscontract.ErrDirectoryInvalidValue):
 		return fmt.Errorf("%w: %v", ErrDirectoryInvalidValue, err)
 	}
 	return err
@@ -525,11 +525,11 @@ func (s *DirectoryIdentityService) reconcile(ctx context.Context, connectorID uu
 			return err
 		}
 		err = s.repo.ApplyDirectoryReconcilePlan(ctx, plan)
-		if !errors.Is(err, repository.ErrDirectoryReconcileStale) {
+		if !errors.Is(err, accesscontract.ErrDirectoryReconcileStale) {
 			return err
 		}
 	}
-	return repository.ErrDirectoryReconcileStale
+	return accesscontract.ErrDirectoryReconcileStale
 }
 
 func directoryConnectorPolicyChanged(current, updated domain.DirectoryConnector) bool {

@@ -15,9 +15,9 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 
+	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 const (
@@ -510,7 +510,7 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 		LastEntitlementCheckAt: &now,
 	}
 	if err := s.repo.UpsertIdentity(ctx, identity); err != nil {
-		if errors.Is(err, repository.ErrDirectoryIdentityNotProvisioned) {
+		if errors.Is(err, accesscontract.ErrDirectoryIdentityNotProvisioned) {
 			return nil, NewSSOSetupError(SSOSetupEntitlementEmpty, ErrSSOAccessDenied)
 		}
 		s.debugSSOLoginFailure("sso login identity upsert failed", err, *provider, claims)
@@ -530,7 +530,7 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 			membership, err := s.repo.UpsertTeamMembershipForMapping(ctx, *identity, entitlement, name)
 			if err != nil {
 				s.debugSSOLoginFailure("sso login team membership upsert failed", err, *provider, claims, ssoUUIDLogAttr("team_id", entitlement.TeamID), ssoHashLogAttr("group_id", entitlement.GroupID), observability.String("role", entitlement.Role))
-				if errors.Is(err, repository.ErrTeamInactive) {
+				if errors.Is(err, accesscontract.ErrTeamInactive) {
 					continue
 				}
 				return nil, err

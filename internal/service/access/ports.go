@@ -6,7 +6,9 @@ import (
 
 	"github.com/google/uuid"
 
+	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	privacycontract "github.com/markhuangai/dense-mem/internal/privacy/contract"
 )
 
 // AuditLogEntry is the access capability's narrow audit value. It deliberately
@@ -79,10 +81,7 @@ type CredentialStore interface {
 	TouchLastUsed(context.Context, uuid.UUID) error
 }
 
-type LastUsedUpdate struct {
-	ID uuid.UUID
-	At time.Time
-}
+type LastUsedUpdate = accesscontract.LastUsedUpdate
 
 type CredentialLastUsedBatchStore interface {
 	TouchLastUsedBatch(context.Context, []LastUsedUpdate) error
@@ -92,16 +91,13 @@ type CredentialActivityStore interface {
 	TouchLastUsed(context.Context, uuid.UUID) error
 }
 
+// CredentialDeletionAuditStore is the legacy optional extension on the Access
+// repository. Its implementation delegates the transaction to Privacy while
+// preserving the existing service fallback for lightweight test stores.
 type CredentialDeletionAuditStore interface {
 	DeleteForTeamWithAudit(context.Context, uuid.UUID, uuid.UUID, CredentialDeletionAuditInput) (int64, error)
 }
-
-type CredentialDeletionAuditInput struct {
-	ActorCredentialID *string
-	ActorRole         string
-	ClientIP          string
-	CorrelationID     string
-}
+type CredentialDeletionAuditInput = privacycontract.CredentialDeletionAuditInput
 
 type SSOStore interface {
 	ListProviders(context.Context) ([]*domain.SSOProvider, error)

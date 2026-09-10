@@ -11,11 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 type activityBatchRepo struct {
-	repository.CredentialRepository
+	CredentialStore
 	mu      sync.Mutex
 	updates []LastUsedUpdate
 	err     error
