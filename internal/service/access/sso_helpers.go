@@ -25,8 +25,8 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 
+	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 type oidcLoginClaims struct {
@@ -749,7 +749,7 @@ func (s *SSOService) validateProtectedResourceProviderSet(ctx context.Context, c
 }
 
 func ssoProviderWriteError(err error, issuer string) error {
-	if errors.Is(err, repository.ErrSSOProtectedResourceProfileLimit) {
+	if errors.Is(err, accesscontract.ErrSSOProtectedResourceProfileLimit) {
 		return fmt.Errorf("OAuth protected-resource config requires between 1 and %d profiles", domain.OAuthProtectedResourceMaximumProfiles)
 	}
 	if uniqueViolationName(err) == "idx_sso_providers_active_oauth_issuer_unique" {

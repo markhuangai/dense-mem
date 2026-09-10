@@ -4,8 +4,10 @@
   "source_ownership": [
     {"path": "cmd/internal/serverapp/private_memory.go", "issue": 364},
     {"path": "internal/privacy/contract/private_memory.go", "issue": 364},
+    {"path": "internal/privacy/contract/credential_deletion.go", "issue": 370},
     {"path": "internal/privacy/postgres/compat_exports.go", "issue": 364},
     {"path": "internal/privacy/postgres/credential_delete.go", "issue": 364},
+    {"path": "internal/privacy/postgres/credential_deletion_repository.go", "issue": 370},
     {"path": "internal/privacy/postgres/idempotency.go", "issue": 364},
     {"path": "internal/privacy/postgres/store.go", "issue": 364},
     {"path": "internal/privacy/postgres/store_errors_test.go", "issue": 364},
@@ -14,7 +16,6 @@
     {"path": "internal/privacy/service/service.go", "issue": 364},
     {"path": "internal/privacy/service/service_test.go", "issue": 364},
     {"path": "internal/repository/credential_deletion_audit.go", "issue": 364},
-    {"path": "internal/repository/credential_private_memory_delete.go", "issue": 364},
     {"path": "internal/repository/private_memory_audit_integration.e2e", "issue": 364},
     {"path": "internal/repository/private_memory_compat.go", "issue": 364},
     {"path": "internal/repository/private_memory_conflict_fixture_test.go", "issue": 364},
@@ -90,22 +91,11 @@
       "source_path": "internal/repository/credential_deletion_audit.go",
       "fields": ["CredentialDeletionAuditInput"],
       "consumers": [
-        {"path": "internal/service/access/credential_service.go", "symbol": "CredentialServiceImpl.DeleteForTeam"},
         {"path": "internal/repository/canonical_credentials_integration.e2e", "symbol": "TestDeleteForTeamWithAuditCommitsBeforePrivateErasureQueue"}
       ],
       "removal_issue": 382,
-      "implementation_owner": {"path": "internal/privacy/postgres/credential_delete.go", "symbol": "AppendCredentialDeletionAuditTx"},
-      "removal_condition": "Remove the repository input alias after Access and credential fixtures consume the privacy credential-deletion contract directly."
-    },
-    {
-      "source_path": "internal/repository/credential_private_memory_delete.go",
-      "fields": ["queueCredentialPrivateErasureTx"],
-      "consumers": [
-        {"path": "internal/repository/credential_deletion_audit.go", "symbol": "CredentialRepositoryImpl.deleteForTeam"}
-      ],
-      "removal_issue": 382,
-      "implementation_owner": {"path": "internal/privacy/postgres/credential_delete.go", "symbol": "QueueCredentialPrivateErasureTx"},
-      "removal_condition": "Remove the repository queue alias after credential deletion consumes the privacy erasure port directly."
+      "implementation_owner": {"path": "internal/privacy/postgres/credential_deletion_repository.go", "symbol": "CredentialDeletionRepository.RetireCredential"},
+      "removal_condition": "Remove the repository input and interface aliases after Access and credential fixtures consume the Privacy credential-deletion contract directly."
     }
   ],
   "completed_issues": [],

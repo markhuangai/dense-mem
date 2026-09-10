@@ -11,9 +11,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	cryptoutil "github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 func TestDirectoryIdentityServiceLifecycleCredentialsAndReconciliation(t *testing.T) {
@@ -433,7 +433,7 @@ func directoryConnectorForServiceTest(providerID uuid.UUID) domain.DirectoryConn
 }
 
 type directoryIdentityServiceRepository struct {
-	repository.DirectoryIdentityRepository
+	DirectoryIdentityStore
 	connectors           map[uuid.UUID]*domain.DirectoryConnector
 	users                map[uuid.UUID]*domain.DirectoryUser
 	groups               map[uuid.UUID]*domain.DirectoryGroup
@@ -460,7 +460,7 @@ type directoryTeamAdoption struct {
 	teamID      uuid.UUID
 }
 
-var _ repository.DirectoryIdentityRepository = (*directoryIdentityServiceRepository)(nil)
+var _ DirectoryIdentityStore = (*directoryIdentityServiceRepository)(nil)
 
 func newDirectoryIdentityServiceRepository() *directoryIdentityServiceRepository {
 	return &directoryIdentityServiceRepository{
@@ -603,7 +603,7 @@ func (r *directoryIdentityServiceRepository) CreateDirectoryUser(ctx context.Con
 	}
 	for _, existing := range r.users {
 		if existing.ConnectorID == user.ConnectorID && ((user.ExternalID != "" && existing.ExternalID == user.ExternalID) || strings.EqualFold(existing.UserName, user.UserName)) {
-			return nil, repository.ErrDirectoryResourceConflict
+			return nil, accesscontract.ErrDirectoryResourceConflict
 		}
 	}
 	r.createdUsers++
@@ -700,7 +700,7 @@ func (r *directoryIdentityServiceRepository) CreateDirectoryGroupWithMembers(ctx
 	}
 	for _, existing := range r.groups {
 		if existing.ConnectorID == group.ConnectorID && group.ExternalID != "" && existing.ExternalID == group.ExternalID {
-			return nil, repository.ErrDirectoryResourceConflict
+			return nil, accesscontract.ErrDirectoryResourceConflict
 		}
 	}
 	r.createdGroups++

@@ -6,9 +6,9 @@ import (
 
 	"github.com/google/uuid"
 
+	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 func (s *SSOService) validCurrentSessionTeams(ctx context.Context, session *domain.SSOSession, allTeams []*domain.SSOTeamMembership) ([]domain.SSOTeamMembership, *domain.SSOTeamMembership, error) {
@@ -91,7 +91,7 @@ func (s *SSOService) reconcileCurrentSessionMemberships(ctx context.Context, ide
 		}
 		if _, err := s.repo.UpsertTeamMembershipForMapping(ctx, identity, entitlement, name); err != nil {
 			s.debugSSOFailure("sso current session team membership upsert failed", err, ssoUUIDLogAttr("provider_id", identity.ProviderID), ssoHashLogAttr("subject", identity.Subject), ssoUUIDLogAttr("team_id", entitlement.TeamID), ssoHashLogAttr("group_id", entitlement.GroupID), observability.String("role", entitlement.Role))
-			if errors.Is(err, repository.ErrTeamInactive) {
+			if errors.Is(err, accesscontract.ErrTeamInactive) {
 				continue
 			}
 			return false, err

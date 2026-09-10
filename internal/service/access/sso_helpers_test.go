@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 func TestSSOTokenAndRedirectHelpers(t *testing.T) {
@@ -403,7 +403,7 @@ func TestSSOSetupErrorMessage(t *testing.T) {
 }
 
 func TestSSOProviderWriteErrorMapsProtectedResourceProfileLimit(t *testing.T) {
-	err := ssoProviderWriteError(fmt.Errorf("wrapped: %w", repository.ErrSSOProtectedResourceProfileLimit), "")
+	err := ssoProviderWriteError(fmt.Errorf("wrapped: %w", accesscontract.ErrSSOProtectedResourceProfileLimit), "")
 	require.EqualError(t, err, fmt.Sprintf(
 		"OAuth protected-resource config requires between 1 and %d profiles",
 		domain.OAuthProtectedResourceMaximumProfiles,
