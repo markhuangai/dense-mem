@@ -5,7 +5,7 @@ import (
 
 	auditapp "github.com/markhuangai/dense-mem/internal/audit"
 	"github.com/markhuangai/dense-mem/internal/service"
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 // securityRejectionAuditAppender is retained as a composition seam for the

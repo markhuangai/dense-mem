@@ -1,6 +1,6 @@
 package memoryservice
 
-import rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
+import rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 
 // Status projection policy lives in the Remember application boundary. These
 // aliases keep the broader memory-service package wired to the same contract.
