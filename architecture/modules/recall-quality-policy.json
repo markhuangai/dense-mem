@@ -1,9 +1,19 @@
 {
   "schema_version": 1,
   "capability": "recall-quality-policy",
+  "source_ownership": [
+    {"path": "internal/recall/quality/metrics.go", "issue": 376},
+    {"path": "internal/recall/quality/metrics_test.go", "issue": 376},
+    {"path": "internal/service/recallquality/metrics.go", "issue": 376}
+  ],
   "completed_issues": [],
   "go": {
     "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/recall/quality",
+        "role": "domain",
+        "visibility": "public"
+      },
       {
         "id": "github.com/markhuangai/dense-mem/internal/service/recallquality",
         "role": "domain",
@@ -14,6 +24,22 @@
   "browser": {
     "units": []
   },
+  "compatibility_bridges": [
+    {
+      "source_path": "internal/service/recallquality/metrics.go",
+      "fields": ["ResultRef", "Judgment", "Metrics", "ScoreAtK"],
+      "consumers": [
+        {"path": "internal/evalharness/score.go", "symbol": "ScoreTraces"},
+        {"path": "internal/evalharness/score.go", "symbol": "scoreTrace"},
+        {"path": "internal/evalharness/score.go", "symbol": "remapJudgments"},
+        {"path": "internal/evalharness/score.go", "symbol": "remapResultRefs"},
+        {"path": "internal/evalharness/score.go", "symbol": "resultRefs"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/recall/quality/metrics.go", "symbol": "ScoreAtK"},
+      "removal_condition": "Remove the legacy recallquality aliases after the evaluation harness consumes internal/recall/quality directly."
+    }
+  ],
   "exceptions": [],
   "workers": []
 }

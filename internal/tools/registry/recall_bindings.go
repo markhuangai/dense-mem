@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	"github.com/markhuangai/dense-mem/internal/recall"
 )
 
 func bindRecallTool(tool Tool, deps Dependencies) Tool {
@@ -18,7 +18,7 @@ func bindRecallTool(tool Tool, deps Dependencies) Tool {
 		if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
 			return nil, fmt.Errorf("recall_memory: invalid input: %w", err)
 		}
-		var req memoryservice.RecallRequest
+		var req recall.RecallRequest
 		if err := remapInput(input, &req); err != nil {
 			return nil, fmt.Errorf("recall_memory: invalid input: %w", err)
 		}
@@ -29,7 +29,7 @@ func bindRecallTool(tool Tool, deps Dependencies) Tool {
 			return nil, err
 		}
 		if res != nil && !dreamingEnabled {
-			res.RelatedHypotheses = []memoryservice.RelatedHypothesisSummary{}
+			res.RelatedHypotheses = []recall.RelatedHypothesisSummary{}
 		}
 		feedbackSnapshotStored := recordRecallFeedbackSnapshot(ctx, deps, input, req, res)
 		setRecallSuggestedActions(res, feedbackSnapshotStored, dreamingEnabled)

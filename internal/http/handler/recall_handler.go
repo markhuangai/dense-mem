@@ -15,7 +15,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/http/validation"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	"github.com/markhuangai/dense-mem/internal/recall"
 )
 
 // RecallHandlerInterface is the companion interface for recall handlers.
@@ -25,7 +25,7 @@ type RecallHandlerInterface interface {
 
 // RecallHandler serves GET /ui/api/recall from the active recall pipeline.
 type RecallHandler struct {
-	svc    memoryservice.RecallService
+	svc    recall.RecallService
 	dreams recallDreamingConfigProvider
 }
 
@@ -35,7 +35,7 @@ type recallDreamingConfigProvider interface {
 
 var _ RecallHandlerInterface = (*RecallHandler)(nil)
 
-func NewRecallHandler(svc memoryservice.RecallService, dreams recallDreamingConfigProvider) *RecallHandler {
+func NewRecallHandler(svc recall.RecallService, dreams recallDreamingConfigProvider) *RecallHandler {
 	return &RecallHandler{svc: svc, dreams: dreams}
 }
 
@@ -58,7 +58,7 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 	}
 
 	dreamingEnabled := recallDreamingEnabled(ctx, h.dreams)
-	result, err := h.svc.Recall(ctx, memoryservice.RecallRequest{
+	result, err := h.svc.Recall(ctx, recall.RecallRequest{
 		Query:                      req.Query,
 		Limit:                      req.Limit,
 		IncludeHypotheses:          dreamingEnabled,
@@ -81,13 +81,13 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 		),
 	})
 	if err != nil {
-		if errors.Is(err, memoryservice.ErrRecallAuthContext) {
+		if errors.Is(err, recall.ErrRecallAuthContext) {
 			return httperr.New(httperr.FORBIDDEN, "authentication required")
 		}
 		return httperr.New(httperr.INTERNAL_ERROR, "recall failed")
 	}
 	if result != nil && !dreamingEnabled {
-		result.RelatedHypotheses = []memoryservice.RelatedHypothesisSummary{}
+		result.RelatedHypotheses = []recall.RelatedHypothesisSummary{}
 	}
 	if degradation := requiredRecallDegradation(result); degradation != nil {
 		message := strings.TrimSpace(degradation.Message)
@@ -108,31 +108,31 @@ func recallDreamingEnabled(ctx context.Context, cfg recallDreamingConfigProvider
 	return err == nil && effective.Enabled
 }
 
-func recallHTTPResult(result *memoryservice.RecallResult) memoryservice.RecallResult {
+func recallHTTPResult(result *recall.RecallResult) recall.RecallResult {
 	if result == nil {
-		result = &memoryservice.RecallResult{}
+		result = &recall.RecallResult{}
 	}
 	out := *result
 	if out.Results == nil {
-		out.Results = []memoryservice.RecallResultItem{}
+		out.Results = []recall.RecallResultItem{}
 	}
 	if out.Conflicts == nil {
-		out.Conflicts = []memoryservice.RecallConflictSummary{}
+		out.Conflicts = []recall.RecallConflictSummary{}
 	}
 	if out.RelatedRelationships == nil {
-		out.RelatedRelationships = []memoryservice.RelatedRelationshipSummary{}
+		out.RelatedRelationships = []recall.RelatedRelationshipSummary{}
 	}
 	if out.RelatedCommunities == nil {
-		out.RelatedCommunities = []memoryservice.RecallDiscoveryPath{}
+		out.RelatedCommunities = []recall.RecallDiscoveryPath{}
 	}
 	if out.DiscoveryPaths == nil {
-		out.DiscoveryPaths = []memoryservice.RecallDiscoveryPath{}
+		out.DiscoveryPaths = []recall.RecallDiscoveryPath{}
 	}
 	if out.RelatedHypotheses == nil {
-		out.RelatedHypotheses = []memoryservice.RelatedHypothesisSummary{}
+		out.RelatedHypotheses = []recall.RelatedHypothesisSummary{}
 	}
 	if out.Degradations == nil {
-		out.Degradations = []memoryservice.RecallDegradationResult{}
+		out.Degradations = []recall.RecallDegradationResult{}
 	}
 	if out.SearchStates.Evidence == "" {
 		out.SearchStates.Evidence = string(domain.SearchProjectionCurrent)
@@ -146,7 +146,7 @@ func recallHTTPResult(result *memoryservice.RecallResult) memoryservice.RecallRe
 	return out
 }
 
-func requiredRecallDegradation(result *memoryservice.RecallResult) *memoryservice.RecallDegradationResult {
+func requiredRecallDegradation(result *recall.RecallResult) *recall.RecallDegradationResult {
 	if result == nil {
 		return nil
 	}

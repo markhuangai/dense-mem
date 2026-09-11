@@ -1,4 +1,4 @@
-package memoryservice
+package recall
 
 import recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 

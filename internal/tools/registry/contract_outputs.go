@@ -7,6 +7,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/dream"
+	"github.com/markhuangai/dense-mem/internal/recall"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
@@ -34,7 +35,7 @@ func resolveDreamFeedbackRequestFromContractInput(input map[string]any) (dream.R
 	return req, nil
 }
 
-func recallContractOutput(res *memoryservice.RecallResult) map[string]any {
+func recallContractOutput(res *recall.RecallResult) map[string]any {
 	if res == nil {
 		return map[string]any{
 			"recall_id":             "",
@@ -61,27 +62,27 @@ func recallContractOutput(res *memoryservice.RecallResult) map[string]any {
 	}
 	relatedRelationships := res.RelatedRelationships
 	if relatedRelationships == nil {
-		relatedRelationships = []memoryservice.RelatedRelationshipSummary{}
+		relatedRelationships = []recall.RelatedRelationshipSummary{}
 	}
 	relatedCommunities := res.RelatedCommunities
 	if relatedCommunities == nil {
-		relatedCommunities = []memoryservice.RecallDiscoveryPath{}
+		relatedCommunities = []recall.RecallDiscoveryPath{}
 	}
 	conflicts := res.Conflicts
 	if conflicts == nil {
-		conflicts = []memoryservice.RecallConflictSummary{}
+		conflicts = []recall.RecallConflictSummary{}
 	}
 	relatedHypotheses := res.RelatedHypotheses
 	if relatedHypotheses == nil {
-		relatedHypotheses = []memoryservice.RelatedHypothesisSummary{}
+		relatedHypotheses = []recall.RelatedHypothesisSummary{}
 	}
 	degradations := res.Degradations
 	if degradations == nil {
-		degradations = []memoryservice.RecallDegradationResult{}
+		degradations = []recall.RecallDegradationResult{}
 	}
 	suggestedActions := res.SuggestedActions
 	if suggestedActions == nil {
-		suggestedActions = []memoryservice.RecallSuggestedAction{}
+		suggestedActions = []recall.RecallSuggestedAction{}
 	}
 	searchStates := map[string]any{
 		"evidence":      res.SearchStates.Evidence,

@@ -9,9 +9,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	appservice "github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	recallapp "github.com/markhuangai/dense-mem/internal/recall"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,11 +73,11 @@ func TestBuildActiveRecallReportsFeedbackSnapshotFailure(t *testing.T) {
 	if out["recall_id"] != "rec-canonical" {
 		t.Fatalf("recall_id = %#v; want preserved", out["recall_id"])
 	}
-	degradations, ok := out["degradations"].([]memoryservice.RecallDegradationResult)
+	degradations, ok := out["degradations"].([]recallapp.RecallDegradationResult)
 	if !ok || len(degradations) != 1 || degradations[0].Frontier != "feedback" || degradations[0].Code != "recall_feedback_snapshot_unavailable" {
 		t.Fatalf("degradations = %#v", out["degradations"])
 	}
-	if actions := out["suggested_actions"].([]memoryservice.RecallSuggestedAction); len(actions) != 0 {
+	if actions := out["suggested_actions"].([]recallapp.RecallSuggestedAction); len(actions) != 0 {
 		t.Fatalf("suggested_actions = %#v; unavailable feedback must not be suggested", actions)
 	}
 	serialized, err := json.Marshal(out)
@@ -200,9 +198,9 @@ func TestBuildActiveSubmitRecallSessionFeedbackClassifiesFailureOwnership(t *tes
 		nextAction string
 	}{
 		{name: "persistence", err: errors.New("database unavailable"), errorCode: "degraded", reasonCode: "feedback_persistence_failed", nextAction: "retry_same_request"},
-		{name: "invalid reference", err: repository.ErrRecallFeedbackEventNotFound, errorCode: "invalid_input", reasonCode: "reference_not_found", nextAction: "correct_and_resubmit"},
-		{name: "invalid result reference", err: appservice.ErrRecallFeedbackInvalidResultRef, errorCode: "invalid_input", reasonCode: "result_reference_invalid", nextAction: "correct_and_resubmit"},
-		{name: "invalid feedback", err: appservice.ErrRecallFeedbackInvalidInput, errorCode: "invalid_input", reasonCode: "invalid_feedback", nextAction: "correct_and_resubmit"},
+		{name: "invalid reference", err: recallapp.ErrRecallFeedbackEventNotFound, errorCode: "invalid_input", reasonCode: "reference_not_found", nextAction: "correct_and_resubmit"},
+		{name: "invalid result reference", err: recallapp.ErrRecallFeedbackInvalidResultRef, errorCode: "invalid_input", reasonCode: "result_reference_invalid", nextAction: "correct_and_resubmit"},
+		{name: "invalid feedback", err: recallapp.ErrRecallFeedbackInvalidInput, errorCode: "invalid_input", reasonCode: "invalid_feedback", nextAction: "correct_and_resubmit"},
 		{name: "cancelled", err: context.Canceled, errorCode: "degraded", reasonCode: "request_cancelled", nextAction: "stop"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -242,7 +240,7 @@ func TestRecallFeedbackSnapshotHelpersCoverOptionalBranches(t *testing.T) {
 		"include_evidence":       true,
 		"use_communities":        true,
 		"ignored":                "not persisted",
-	}, memoryservice.RecallRequest{
+	}, recallapp.RecallRequest{
 		Query:                "PostgreSQL memory",
 		Limit:                7,
 		ValidAt:              &validAt,
@@ -271,29 +269,29 @@ func TestRecallFeedbackSnapshotHelpersCoverOptionalBranches(t *testing.T) {
 		}
 	}
 
-	refs := recallFeedbackResultRefs(&memoryservice.RecallResult{
+	refs := recallapp.FeedbackResultRefs(&recallapp.RecallResult{
 		SearchState: string(domain.SearchProjectionFailed),
-		Results: []memoryservice.RecallResultItem{{
+		Results: []recallapp.RecallResultItem{{
 			RelationshipIDs: []string{"", "relationship-canonical"},
 		}},
 	})
 	if len(refs) != 1 || refs[0].Type != domain.RecallFeedbackResultTypeRelationship || refs[0].Rank != 1 {
 		t.Fatalf("relationship-only refs = %+v", refs)
 	}
-	if refs := recallFeedbackResultRefs(nil); len(refs) != 0 {
+	if refs := recallapp.FeedbackResultRefs(nil); len(refs) != 0 {
 		t.Fatalf("nil result refs = %+v", refs)
 	}
 
 	recorder := &stubRecallFeedbackRecorder{err: errors.New("record failed")}
-	res := &memoryservice.RecallResult{
+	res := &recallapp.RecallResult{
 		RecallID: "rec-canonical",
-		Results:  []memoryservice.RecallResultItem{{EvidenceID: "evidence-canonical", Rank: 1}},
+		Results:  []recallapp.RecallResultItem{{EvidenceID: "evidence-canonical", Rank: 1}},
 	}
 	recordRecallFeedbackSnapshot(context.Background(), Dependencies{
 		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
 		RecallFeedbackEvents: recorder,
 		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
-	}, map[string]any{"query": "PostgreSQL memory"}, memoryservice.RecallRequest{Query: "PostgreSQL memory"}, res)
+	}, map[string]any{"query": "PostgreSQL memory"}, recallapp.RecallRequest{Query: "PostgreSQL memory"}, res)
 	if res.RecallID != "rec-canonical" {
 		t.Fatalf("recall id = %q; want preserved after snapshot failure", res.RecallID)
 	}
@@ -305,7 +303,7 @@ func TestRecallFeedbackSnapshotHelpersCoverOptionalBranches(t *testing.T) {
 
 func TestRecordRecallFeedbackSnapshotPrerequisitesAndDegradation(t *testing.T) {
 	input := map[string]any{"query": "PostgreSQL memory"}
-	req := memoryservice.RecallRequest{
+	req := recallapp.RecallRequest{
 		Query: "PostgreSQL memory",
 	}
 	recorder := &stubRecallFeedbackRecorder{}
@@ -316,19 +314,19 @@ func TestRecordRecallFeedbackSnapshotPrerequisitesAndDegradation(t *testing.T) {
 	}
 
 	recordRecallFeedbackSnapshot(context.Background(), enabledDeps, input, req, nil)
-	recordRecallFeedbackSnapshot(context.Background(), enabledDeps, input, req, &memoryservice.RecallResult{})
-	resWithoutRecorder := &memoryservice.RecallResult{RecallID: "rec-canonical"}
+	recordRecallFeedbackSnapshot(context.Background(), enabledDeps, input, req, &recallapp.RecallResult{})
+	resWithoutRecorder := &recallapp.RecallResult{RecallID: "rec-canonical"}
 	recordRecallFeedbackSnapshot(context.Background(), Dependencies{
 		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
 		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
 	}, input, req, resWithoutRecorder)
-	resFeedbackDisabled := &memoryservice.RecallResult{RecallID: "rec-canonical"}
+	resFeedbackDisabled := &recallapp.RecallResult{RecallID: "rec-canonical"}
 	recordRecallFeedbackSnapshot(context.Background(), Dependencies{
 		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: false},
 		RecallFeedbackEvents: recorder,
 		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
 	}, input, req, resFeedbackDisabled)
-	resWithoutMetrics := &memoryservice.RecallResult{RecallID: "rec-canonical"}
+	resWithoutMetrics := &recallapp.RecallResult{RecallID: "rec-canonical"}
 	recordRecallFeedbackSnapshot(context.Background(), Dependencies{
 		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
 		RecallFeedbackEvents: recorder,
@@ -340,15 +338,15 @@ func TestRecordRecallFeedbackSnapshotPrerequisitesAndDegradation(t *testing.T) {
 		t.Fatal("recall ids should not be cleared for no-op prerequisite exits")
 	}
 
-	res := &memoryservice.RecallResult{
+	res := &recallapp.RecallResult{
 		RecallID:    "rec-canonical",
 		SearchState: string(domain.SearchProjectionCurrent),
-		Degradation: &memoryservice.RecallDegradationResult{
+		Degradation: &recallapp.RecallDegradationResult{
 			Optional: true,
 			Code:     "embedding_provider_unavailable",
 			Message:  "embedding provider unavailable",
 		},
-		Results: []memoryservice.RecallResultItem{{
+		Results: []recallapp.RecallResultItem{{
 			EvidenceID: "evidence-canonical",
 			Rank:       1,
 		}},

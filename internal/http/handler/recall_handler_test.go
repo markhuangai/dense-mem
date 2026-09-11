@@ -16,25 +16,25 @@ import (
 	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	"github.com/markhuangai/dense-mem/internal/recall"
 )
 
 type recallDataEnvelope struct {
-	Data memoryservice.RecallResult `json:"data"`
+	Data recall.RecallResult `json:"data"`
 }
 
 type stubRecallService struct {
-	recallFunc func(ctx context.Context, req memoryservice.RecallRequest) (*memoryservice.RecallResult, error)
+	recallFunc func(ctx context.Context, req recall.RecallRequest) (*recall.RecallResult, error)
 }
 
-func (s *stubRecallService) Recall(ctx context.Context, req memoryservice.RecallRequest) (*memoryservice.RecallResult, error) {
+func (s *stubRecallService) Recall(ctx context.Context, req recall.RecallRequest) (*recall.RecallResult, error) {
 	if s.recallFunc != nil {
 		return s.recallFunc(ctx, req)
 	}
 	return nil, nil
 }
 
-var _ memoryservice.RecallService = (*stubRecallService)(nil)
+var _ recall.RecallService = (*stubRecallService)(nil)
 
 type recallDreamingConfigStub struct {
 	enabled bool
@@ -49,37 +49,37 @@ func TestRecallHandlerRoutesHTTPToRecall(t *testing.T) {
 	e := echo.New()
 	teamID := uuid.New()
 	profileID := uuid.New()
-	var captured memoryservice.RecallRequest
+	var captured recall.RecallRequest
 	var capturedActor requestctx.Actor
 	svc := &stubRecallService{
-		recallFunc: func(ctx context.Context, req memoryservice.RecallRequest) (*memoryservice.RecallResult, error) {
+		recallFunc: func(ctx context.Context, req recall.RecallRequest) (*recall.RecallResult, error) {
 			captured = req
 			actor, ok := requestctx.ActorFromContext(ctx)
 			if !ok {
 				t.Fatal("actor context missing")
 			}
 			capturedActor = actor
-			return &memoryservice.RecallResult{
+			return &recall.RecallResult{
 				RecallID:    "rec_canonical",
 				SearchState: string(domain.SearchProjectionCurrent),
-				SearchStates: memoryservice.RecallSearchStates{
+				SearchStates: recall.RecallSearchStates{
 					Evidence:      string(domain.SearchProjectionCurrent),
 					Relationships: string(domain.SearchProjectionCurrent),
 				},
-				Results: []memoryservice.RecallResultItem{{
+				Results: []recall.RecallResultItem{{
 					EvidenceID:      "ev-1",
 					RelationshipIDs: []string{"rel-1"},
 					Rank:            2,
 					Context:         "Dense-Mem uses PostgreSQL as the durable authority.",
 				}},
-				RelatedRelationships: []memoryservice.RelatedRelationshipSummary{{
+				RelatedRelationships: []recall.RelatedRelationshipSummary{{
 					RelationshipID: "rel-1",
 					Predicate:      "uses",
 					EvidenceIDs:    []string{"ev-1"},
 				}},
-				RelatedCommunities: []memoryservice.RecallDiscoveryPath{{
+				RelatedCommunities: []recall.RecallDiscoveryPath{{
 					EvidenceIDs: []string{"ev-1"},
-					Relationships: []memoryservice.RecallRelationshipHandle{{
+					Relationships: []recall.RecallRelationshipHandle{{
 						RelationshipID: "rel-1",
 						Predicate:      "uses",
 					}},
@@ -159,10 +159,10 @@ func TestRecallHandlerGatesHypothesesByEffectiveTeamDreaming(t *testing.T) {
 			e := echo.New()
 			teamID := uuid.New()
 			profileID := uuid.New()
-			var captured memoryservice.RecallRequest
-			svc := &stubRecallService{recallFunc: func(_ context.Context, req memoryservice.RecallRequest) (*memoryservice.RecallResult, error) {
+			var captured recall.RecallRequest
+			svc := &stubRecallService{recallFunc: func(_ context.Context, req recall.RecallRequest) (*recall.RecallResult, error) {
 				captured = req
-				return &memoryservice.RecallResult{RelatedHypotheses: []memoryservice.RelatedHypothesisSummary{{HypothesisID: "hypothesis-1"}}}, nil
+				return &recall.RecallResult{RelatedHypotheses: []recall.RelatedHypothesisSummary{{HypothesisID: "hypothesis-1"}}}, nil
 			}}
 			h := NewRecallHandler(svc, test.dreams)
 			e.HTTPErrorHandler = httperr.ErrorHandler
@@ -211,8 +211,8 @@ func TestRecallHandlerMapsAuthContextError(t *testing.T) {
 	e := echo.New()
 	teamID := uuid.New()
 	svc := &stubRecallService{
-		recallFunc: func(context.Context, memoryservice.RecallRequest) (*memoryservice.RecallResult, error) {
-			return nil, memoryservice.ErrRecallAuthContext
+		recallFunc: func(context.Context, recall.RecallRequest) (*recall.RecallResult, error) {
+			return nil, recall.ErrRecallAuthContext
 		},
 	}
 	h := NewRecallHandler(svc, nil)
@@ -234,9 +234,9 @@ func TestRecallHandlerMapsRequiredDegradation(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	svc := &stubRecallService{
-		recallFunc: func(context.Context, memoryservice.RecallRequest) (*memoryservice.RecallResult, error) {
-			return &memoryservice.RecallResult{
-				Degradation: &memoryservice.RecallDegradationResult{
+		recallFunc: func(context.Context, recall.RecallRequest) (*recall.RecallResult, error) {
+			return &recall.RecallResult{
+				Degradation: &recall.RecallDegradationResult{
 					RequiredFailure: true,
 					Message:         "search unavailable",
 				},
@@ -263,9 +263,9 @@ func TestRecallHandlerMapsEmptyRequiredDegradationMessage(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	svc := &stubRecallService{
-		recallFunc: func(context.Context, memoryservice.RecallRequest) (*memoryservice.RecallResult, error) {
-			return &memoryservice.RecallResult{
-				Degradation: &memoryservice.RecallDegradationResult{
+		recallFunc: func(context.Context, recall.RecallRequest) (*recall.RecallResult, error) {
+			return &recall.RecallResult{
+				Degradation: &recall.RecallDegradationResult{
 					RequiredFailure: true,
 				},
 			}, nil
@@ -294,7 +294,7 @@ func TestRecallHandlerMapsGenericError(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	svc := &stubRecallService{
-		recallFunc: func(context.Context, memoryservice.RecallRequest) (*memoryservice.RecallResult, error) {
+		recallFunc: func(context.Context, recall.RecallRequest) (*recall.RecallResult, error) {
 			return nil, errors.New("database details must not leak")
 		},
 	}

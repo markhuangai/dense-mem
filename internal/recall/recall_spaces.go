@@ -1,4 +1,4 @@
-package memoryservice
+package recall
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
@@ -317,7 +317,7 @@ func (s *recallService) recallRelatedRelationships(
 		return []RelatedRelationshipSummary{}, string(domain.SearchProjectionNotRequired), nil, map[string]struct{}{}
 	}
 	branch, _ := recallBranchFromContext(ctx)
-	recalled, err := s.search.RecallRelationships(ctx, repository.RecallRelationshipsInput{
+	recalled, err := s.search.RecallRelationships(ctx, recallcontract.RecallRelationshipsInput{
 		TeamID:               teamID,
 		Query:                req.Query,
 		QueryEmbedding:       queryEmbedding,

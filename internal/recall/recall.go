@@ -1,4 +1,4 @@
-package memoryservice
+package recall
 
 import (
 	"context"
@@ -12,13 +12,14 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/community"
+	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
-	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 )
 
 const (
@@ -51,20 +52,20 @@ type RecallHypothesisRepository interface {
 }
 
 type RecallCommunityRepository interface {
-	RecallCommunityDiscovery(ctx context.Context, input repository.CommunityDiscoveryInput) ([]repository.CommunityDiscoveryPath, error)
-	RefreshCommunityStaleness(ctx context.Context, input repository.CommunityStalenessInput) (int, error)
+	RecallCommunityDiscovery(ctx context.Context, input communitycontract.CommunityDiscoveryInput) ([]communitycontract.CommunityDiscoveryPath, error)
+	RefreshCommunityStaleness(ctx context.Context, input communitycontract.CommunityStalenessInput) (int, error)
 }
 
 type RecallCommunitySnapshotRepository interface {
-	RecallCommunities(ctx context.Context, input repository.CommunityRecallInput) ([]repository.CommunityRecallRecord, error)
+	RecallCommunities(ctx context.Context, input communitycontract.CommunityRecallInput) ([]communitycontract.CommunityRecallRecord, error)
 }
 
 type RecallCommunityCoverageRepository interface {
-	ListCommunitySemanticGroups(ctx context.Context, input repository.CommunityCoverageInput) ([]string, error)
+	ListCommunitySemanticGroups(ctx context.Context, input communitycontract.CommunityCoverageInput) ([]string, error)
 }
 
 type RecallCommunityRunRepository interface {
-	LatestCommunityRun(ctx context.Context, teamID string) (*repository.CommunityRun, error)
+	LatestCommunityRun(ctx context.Context, teamID string) (*communitycontract.CommunityRun, error)
 }
 
 type RecallCommunityConfigProvider interface {
@@ -99,7 +100,7 @@ type RecallRequest = recallcontract.Request
 
 type recallExecutionRequest struct {
 	RecallRequest
-	recallContract             *repository.ActiveSearchContract
+	recallContract             *searchcontract.ActiveSearchContract
 	recallEmbedding            []float32
 	recallEmbeddingDegradation *RecallDegradationResult
 	recallEmbeddingReady       bool
@@ -174,7 +175,7 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 			degradations = append(degradations, *vectorDegradation)
 		}
 	}
-	recalled, err := s.search.RecallEvidence(ctx, repository.RecallEvidenceInput{
+	recalled, err := s.search.RecallEvidence(ctx, recallcontract.RecallEvidenceInput{
 		TeamID:               actor.TeamID.String(),
 		Query:                req.Query,
 		QueryEmbedding:       queryEmbedding,
@@ -296,7 +297,7 @@ func (s *recallService) resolveCommunityCoverage(
 		return groups, true, nil
 	}
 	evidenceIDs := append(append([]string(nil), knownEvidenceIDs...), returnedEvidenceIDs...)
-	covered, err := coverageRepo.ListCommunitySemanticGroups(ctx, repository.CommunityCoverageInput{
+	covered, err := coverageRepo.ListCommunitySemanticGroups(ctx, communitycontract.CommunityCoverageInput{
 		TeamID: teamID, EvidenceIDs: evidenceIDs, RelationshipIDs: knownRelationshipIDs,
 	})
 	if err != nil {
@@ -326,7 +327,7 @@ func (s *recallService) recallCommunityDiscovery(
 	if !cfg.Enabled {
 		return []RecallDiscoveryPath{}, nil
 	}
-	records, err := s.communities.RecallCommunityDiscovery(ctx, repository.CommunityDiscoveryInput{
+	records, err := s.communities.RecallCommunityDiscovery(ctx, communitycontract.CommunityDiscoveryInput{
 		TeamID:               teamID,
 		Query:                req.Query,
 		ValidAt:              req.ValidAt,
@@ -390,9 +391,9 @@ func (s *recallService) recallCommunities(
 		}
 	}
 	if staler, ok := s.communities.(interface {
-		RefreshCommunityStaleness(context.Context, repository.CommunityStalenessInput) (int, error)
+		RefreshCommunityStaleness(context.Context, communitycontract.CommunityStalenessInput) (int, error)
 	}); ok {
-		if staleCount, staleErr := staler.RefreshCommunityStaleness(ctx, repository.CommunityStalenessInput{TeamID: teamID, Limit: 200}); staleErr != nil || staleCount > 0 {
+		if staleCount, staleErr := staler.RefreshCommunityStaleness(ctx, communitycontract.CommunityStalenessInput{TeamID: teamID, Limit: 200}); staleErr != nil || staleCount > 0 {
 			return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation(
 				"community_snapshot_stale",
 				"community snapshot sources changed; direct relationship fallback was used",
@@ -405,7 +406,7 @@ func (s *recallService) recallCommunities(
 			groups = append(groups, group)
 		}
 		sort.Strings(groups)
-		records, recallErr := snapshotRepo.RecallCommunities(ctx, repository.CommunityRecallInput{
+		records, recallErr := snapshotRepo.RecallCommunities(ctx, communitycontract.CommunityRecallInput{
 			TeamID: teamID, Query: req.Query, ValidAt: req.ValidAt, KnownAt: req.KnownAt,
 			ReturnedEvidenceIDs: returnedEvidenceIDs, SeedRelationshipIDs: seedRelationshipIDs,
 			KnownEvidenceIDs: req.KnownEvidenceIDs, KnownRelationshipIDs: req.KnownRelationshipIDs,
@@ -424,13 +425,13 @@ func (s *recallService) recallCommunities(
 	return []RecallDiscoveryPath{}, paths, degradation
 }
 
-func communitySnapshotRunCompatible(run *repository.CommunityRun) bool {
+func communitySnapshotRunCompatible(run *communitycontract.CommunityRun) bool {
 	if run == nil {
 		return false
 	}
 	return run.AlgorithmKind == community.AlgorithmKind &&
 		run.AlgorithmVersion == community.AlgorithmVersion &&
-		run.ProfileVersion == repository.CommunityProfileVersion &&
+		run.ProfileVersion == communitycontract.CommunityProfileVersion &&
 		run.ConfigurationHash == community.ConfigurationHash(community.DefaultSeed)
 }
 
@@ -491,7 +492,7 @@ func relatedHypothesisDegradation() *RecallDegradationResult {
 	}
 }
 
-func communityDiscoveryPaths(records []repository.CommunityDiscoveryPath) []RecallDiscoveryPath {
+func communityDiscoveryPaths(records []communitycontract.CommunityDiscoveryPath) []RecallDiscoveryPath {
 	out := make([]RecallDiscoveryPath, 0, len(records))
 	for _, record := range records {
 		out = append(out, RecallDiscoveryPath{
@@ -514,7 +515,7 @@ func communityDiscoveryPaths(records []repository.CommunityDiscoveryPath) []Reca
 	return out
 }
 
-func recallCommunitiesFromRepository(records []repository.CommunityRecallRecord) []RecallDiscoveryPath {
+func recallCommunitiesFromRepository(records []communitycontract.CommunityRecallRecord) []RecallDiscoveryPath {
 	out := make([]RecallDiscoveryPath, 0, len(records))
 	for _, record := range records {
 		if len(record.Relationships) == 0 {
@@ -546,7 +547,7 @@ func recallCommunitiesFromRepository(records []repository.CommunityRecallRecord)
 	return out
 }
 
-func relatedRelationshipSummaries(recalled *repository.RecallRelationshipsResult) []RelatedRelationshipSummary {
+func relatedRelationshipSummaries(recalled *recallcontract.RecallRelationshipsResult) []RelatedRelationshipSummary {
 	if recalled == nil {
 		return []RelatedRelationshipSummary{}
 	}
@@ -622,7 +623,7 @@ func relationshipSummaryIDs(values []RelatedRelationshipSummary) []string {
 	return ids
 }
 
-func recallRelationshipObject(record repository.RecallRelationshipHit) SemanticObject {
+func recallRelationshipObject(record recallcontract.RecallRelationshipHit) SemanticObject {
 	if record.ObjectEntityID != "" {
 		return SemanticObject{
 			EntityID: record.ObjectEntityID,
@@ -639,7 +640,7 @@ func recallRelationshipObject(record repository.RecallRelationshipHit) SemanticO
 
 func (s *recallService) queryEmbedding(
 	ctx context.Context,
-	contract *repository.ActiveSearchContract,
+	contract *searchcontract.ActiveSearchContract,
 	query string,
 ) ([]float32, *RecallDegradationResult) {
 	if s.provider == nil || !s.provider.IsAvailable() {
@@ -772,7 +773,7 @@ func validateRecallEmbedding(vector []float32, dims int) error {
 }
 
 func recallResultFromRepository(
-	recalled *repository.RecallEvidenceResult,
+	recalled *recallcontract.RecallEvidenceResult,
 	degradations []RecallDegradationResult,
 ) *RecallResult {
 	searchState := string(domain.SearchProjectionCurrent)

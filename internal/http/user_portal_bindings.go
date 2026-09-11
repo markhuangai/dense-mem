@@ -3,14 +3,14 @@ package http
 import (
 	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/service/graphview"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	"github.com/markhuangai/dense-mem/internal/recall"
 )
 
 // MemoryPortalBindings owns first-party graph, recall, Dream, and private
 // memory readers used by the user portal.
 type MemoryPortalBindings struct {
 	GraphView     graphview.Service
-	RecallSvc     memoryservice.RecallService
+	RecallSvc     recall.RecallService
 	DreamSvc      dream.Service
 	PrivateMemory PrivateMemoryServiceInterface
 }
