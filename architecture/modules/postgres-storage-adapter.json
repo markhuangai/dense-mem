@@ -194,7 +194,7 @@
       ],
       "removal_issue": 382,
       "implementation_owner": {"path": "internal/conflict/postgres/readers.go", "symbol": "LoadRelationshipConflictRecordsInSpace"},
-      "removal_condition": "Remove the repository relationship-conflict read forwarders after Recall, Trace and retained fixtures use the Conflict PostgreSQL readers directly."
+      "removal_condition": "Remove the repository relationship-conflict read forwarders after Recall and Trace use the Conflict PostgreSQL readers directly."
     },
     {
       "source_path": "internal/repository/conflict_resolution_repository.go",
@@ -257,7 +257,7 @@
       ],
       "removal_issue": 382,
       "implementation_owner": {"path": "internal/knowledge/contract/evidence_conflict.go", "symbol": "EncodeEvidenceConflictCursor"},
-      "removal_condition": "Remove the repository evidence-conflict aliases after the named HTTP, Remember, and Recall consumers use the Knowledge conflict contract directly."
+      "removal_condition": "Remove the repository evidence-conflict aliases after the named HTTP and Remember consumers use the Knowledge conflict contract directly."
     },
     {
       "source_path": "internal/repository/evidence_duplicate.go",

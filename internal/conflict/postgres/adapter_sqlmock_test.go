@@ -18,7 +18,11 @@ import (
 
 func TestListConflictQueueHydratesProjectionAndSummaryWithSQLMock(t *testing.T) {
 	db, mock, gormDB := newConflictSQLMockDB(t)
-	defer db.Close()
+	defer func() {
+		mock.ExpectClose()
+		require.NoError(t, db.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	}()
 	store := conflictpostgres.NewStore(gormDB, conflictSQLMockRLS{}, nil)
 	teamID := uuid.NewString()
 	conflictID := uuid.NewString()
@@ -70,12 +74,15 @@ func TestListConflictQueueHydratesProjectionAndSummaryWithSQLMock(t *testing.T) 
 	require.Equal(t, "active", page.Items[0].LeaseState)
 	require.Len(t, page.Items[0].Positions, 1)
 	require.Len(t, page.Items[0].Positions[0].Supporters, 1)
-	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestListConflictQueuePaginatesWithStableCursorAndNoDuplicates(t *testing.T) {
 	db, mock, gormDB := newConflictSQLMockDB(t)
-	defer db.Close()
+	defer func() {
+		mock.ExpectClose()
+		require.NoError(t, db.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	}()
 	store := conflictpostgres.NewStore(gormDB, conflictSQLMockRLS{}, nil)
 	teamID := uuid.NewString()
 	firstID := uuid.NewString()
@@ -159,7 +166,6 @@ func TestListConflictQueuePaginatesWithStableCursorAndNoDuplicates(t *testing.T)
 	require.Len(t, secondPage.Items, 1)
 	require.Equal(t, secondID, secondPage.Items[0].ConflictID)
 	require.Nil(t, secondPage.NextCursor)
-	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func conflictQueuePageColumns() []string {
@@ -197,7 +203,11 @@ func conflictQueueHydrationRow(pageRow []driver.Value) []driver.Value {
 
 func TestGetEvidenceConflictHydratesEventsAndCursorWithSQLMock(t *testing.T) {
 	db, mock, gormDB := newConflictSQLMockDB(t)
-	defer db.Close()
+	defer func() {
+		mock.ExpectClose()
+		require.NoError(t, db.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	}()
 	store := conflictpostgres.NewStore(gormDB, conflictListSQLMockRLS{}, nil)
 	teamID := uuid.NewString()
 	conflictID := uuid.NewString()
@@ -224,5 +234,4 @@ func TestGetEvidenceConflictHydratesEventsAndCursorWithSQLMock(t *testing.T) {
 	require.NotNil(t, result.Conflict)
 	require.Len(t, result.Conflict.Events, 1)
 	require.NotNil(t, result.NextEventCursor)
-	require.NoError(t, mock.ExpectationsWereMet())
 }
