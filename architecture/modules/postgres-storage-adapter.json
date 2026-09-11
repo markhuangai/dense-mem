@@ -189,7 +189,7 @@
       "source_path": "internal/repository/conflict_repository.go",
       "fields": ["loadRelationshipConflictRecords", "loadRelationshipConflictRecordsInSpace", "loadRelationshipConflictRecordsByID", "applyConflictKnownAt", "applyConflictPositionKnownAtDispositions"],
       "consumers": [
-        {"path": "internal/repository/recall_repository.go", "symbol": "loadRecallOpenConflictRecords"},
+        {"path": "internal/repository/recall_relationship_repository.go", "symbol": "loadRecallOpenConflictRecords"},
         {"path": "internal/repository/semantic_trace_repository.go", "symbol": "loadTraceConflicts"},
         {"path": "internal/repository/conflict_repository_test.go", "symbol": "TestApplyConflictKnownAtClearsFutureDismissal"}
       ],
@@ -254,9 +254,7 @@
         {"path": "internal/remember/service/processor/remember_processor.go", "symbol": "rememberCommitFailureMetadata"},
         {"path": "internal/remember/service/processor/remember_processor.go", "symbol": "rememberFailureCode"},
         {"path": "internal/remember/service/processor/remember_processor_branches_test.go", "symbol": "TestRememberFailureAndCommitMetadataCoverSupportedCauses"},
-        {"path": "internal/remember/service/processor/remember_processor_branches_test.go", "symbol": "TestRememberFailureCodeMapsAllTerminalCategories"},
-        {"path": "internal/service/memoryservice/recall_result_helpers.go", "symbol": "recallEvidenceConflictSummaries"},
-        {"path": "internal/service/memoryservice/recall_test.go", "symbol": "TestRecallProjectsEvidenceConflictPositionsAndJSONShape"}
+        {"path": "internal/remember/service/processor/remember_processor_branches_test.go", "symbol": "TestRememberFailureCodeMapsAllTerminalCategories"}
       ],
       "removal_issue": 382,
       "implementation_owner": {"path": "internal/knowledge/contract/evidence_conflict.go", "symbol": "EncodeEvidenceConflictCursor"},

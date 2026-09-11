@@ -64,7 +64,6 @@
         {"path": "internal/repository/recall_evidence_history_integration.e2e", "symbol": "TestRecallEvidenceHistoricalIncludesNonCurrentSearchDocuments"},
         {"path": "internal/repository/recall_evidence_history_integration.e2e", "symbol": "TestRecallEvidenceHistoricalExcludesEvidenceRetractedAtKnownAt"},
         {"path": "internal/repository/conflict_repository.go", "symbol": "loadRelationshipConflictRecordsInSpace"},
-        {"path": "internal/repository/conflict_projection_generation.go", "symbol": "loadRelationshipConflictRecordsByIDBoundedWithFence"},
         {"path": "internal/repository/evidence_conflict_recall_integration.e2e", "symbol": "TestEvidenceConflictRecallRequiresEveryPositionToRemainEligible"},
         {"path": "internal/repository/evidence_conflict_conflict_integration.e2e", "symbol": "TestEvidenceConflictRememberCreationAndRecurrence"},
         {"path": "internal/repository/evidence_conflict_conflict_integration.e2e", "symbol": "TestEvidenceConflictDismissalRecordsTerminalEvent"},

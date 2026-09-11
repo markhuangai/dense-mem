@@ -71,10 +71,6 @@
       "issue": 377
     },
     {
-      "path": "internal/http/control_portal_types.go",
-      "issue": 377
-    },
-    {
       "path": "internal/repository/conflict_owner_compat.go",
       "issue": 377
     },

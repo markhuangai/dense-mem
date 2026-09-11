@@ -29,10 +29,6 @@
     {
       "path": "internal/http/control_portal_evidence_conflicts_test.go",
       "issue": 377
-    },
-    {
-      "path": "internal/repository/evidence_conflict_recall.go",
-      "issue": 377
     }
   ],
   "completed_issues": [],
@@ -50,39 +46,5 @@
   },
   "exceptions": [],
   "workers": [],
-  "compatibility_bridges": [
-    {
-      "source_path": "internal/repository/evidence_conflict_recall.go",
-      "fields": [
-        "evidenceConflictRecallCandidateLimit",
-        "loadRecallEvidenceConflictRecords",
-        "loadRecallEvidenceConflictCase",
-        "loadEvidenceConflictEventsAt"
-      ],
-      "consumers": [
-        {
-          "path": "internal/repository/search_repository.go",
-          "symbol": "NewSearchRepository"
-        },
-        {
-          "path": "internal/repository/evidence_conflict_recall_integration.e2e",
-          "symbol": "TestEvidenceConflictRecallHistoricalOrderPrecedesCandidateLimit"
-        },
-        {
-          "path": "internal/repository/evidence_conflict_recall_integration.e2e",
-          "symbol": "TestEvidenceConflictHistoricalEventHydrationIsBounded"
-        },
-        {
-          "path": "internal/repository/evidence_conflict_conflict_integration.e2e",
-          "symbol": "TestEvidenceConflictRememberCreationAndRecurrence"
-        }
-      ],
-      "removal_issue": 382,
-      "implementation_owner": {
-        "path": "internal/conflict/postgres/readers.go",
-        "symbol": "LoadEvidenceConflictRecords"
-      },
-      "removal_condition": "Remove the Recall evidence-conflict forwarding helper after Search constructs the native Conflict reader directly."
-    }
-  ]
+  "compatibility_bridges": []
 }
