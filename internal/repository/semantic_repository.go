@@ -24,16 +24,19 @@ type SemanticRepositoryImpl struct {
 	rls            rLSHelper
 	knowledgeOwner *knowledgepostgres.Store
 	dreamAdapter   *dreampostgres.Store
+	evaluation     *EvaluationReader
 }
 
 var _ SemanticRepository = (*SemanticRepositoryImpl)(nil)
 
 func NewSemanticRepository(db *gorm.DB, rls *postgres.RLS) *SemanticRepositoryImpl {
-	return &SemanticRepositoryImpl{
+	repository := &SemanticRepositoryImpl{
 		db: db, rls: rls,
 		knowledgeOwner: knowledgepostgres.NewStore(db, rls, knowledgecontract.ConflictRuntimeConfig{}),
 		dreamAdapter:   dreampostgres.NewStore(db, rls),
 	}
+	repository.evaluation = newCompatibilityEvaluationReader(db, rls)
+	return repository
 }
 
 // DreamDatabase and DreamRLS expose the narrow construction seam used by the

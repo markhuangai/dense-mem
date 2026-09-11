@@ -111,7 +111,9 @@ func matchesContractToolSet(names map[string]struct{}, expected []string) bool {
 	}
 	for _, name := range expected {
 		if _, ok := names[name]; !ok {
-			return false
+			if !registry.ContractToolRuntimeOptional(name) {
+				return false
+			}
 		}
 	}
 	return true

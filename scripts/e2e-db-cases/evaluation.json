@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "capability": "evaluation",
+  "cases": [
+    {
+      "id": "evaluation/TestEvaluationReaderPreservesTeamIsolationPaginationAndHypothesisFilter",
+      "package": "./internal/repository",
+      "run": "^TestEvaluationReaderPreservesTeamIsolationPaginationAndHypothesisFilter$",
+      "phase": "precheck",
+      "source": "internal/repository/evaluation_reader_integration.e2e"
+    }
+  ]
+}

@@ -10,9 +10,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/lifecycle"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/recall"
-	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
@@ -40,18 +38,14 @@ type Dependencies struct {
 	Recall         recall.RecallService
 	Lifecycle      lifecycle.LifecycleService
 	RecallDreaming DreamingConfigProvider
-	Evaluation     repository.EvaluationRepository
-	Communities    repository.CommunityRepository
+	Evaluation     EvaluationRepository
+	Communities    CommunityRepository
 	MemoryPack     skillpackservice.MemoryPackService
 	Dreams         dream.Service
 }
 type RecallFeedbackEventRecorder interface {
 	RecordRecallSnapshot(ctx context.Context, event domain.RecallFeedbackEvent) error
 	RecordRecallFeedback(ctx context.Context, feedback domain.RecallFeedbackSubmission) error
-}
-
-type EvaluationAuditAppender interface {
-	Append(ctx context.Context, entry service.AuditLogEntry) error
 }
 
 // ErrToolUnavailable is the defensive fallback returned when a tool dependency

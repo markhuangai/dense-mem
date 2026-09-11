@@ -12,20 +12,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/labstack/echo/v4"
-
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/conflictassessment"
 	"github.com/markhuangai/dense-mem/internal/http"
-	"github.com/markhuangai/dense-mem/internal/http/handler"
-	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
-	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/markhuangai/dense-mem/internal/verifier"
@@ -152,7 +147,6 @@ func RunActiveServer(
 	if err != nil {
 		log.Fatalf("private-memory erasure boot blocked: %v", err)
 	}
-	rateLimitService := backend.rateLimitService
 	runtimeCtx := RuntimeContext{
 		Config:            &cfg,
 		TeamService:       teamService,
@@ -170,10 +164,7 @@ func RunActiveServer(
 		go refreshTelemetryPricingCacheUntilCanceled(telemetry.PricingRefreshContext, appConfigService, logger)
 	}
 	discoverabilityMetrics := telemetry.Metrics
-	telemetryReader := telemetry.Reader
 	telemetryPrometheusService := telemetry.Prometheus
-	telemetryHTTPMetrics := telemetry.HTTPMetrics
-	telemetryScrapeHandler := telemetry.ScrapeHandler
 	pricingRefreshCancel := telemetry.PricingRefreshCancel
 	searchApplication := buildSearchProviders(cfg, searchRepo, searchContract, discoverabilityMetrics, logger)
 	openaiProvider := searchApplication.EmbeddingProvider
@@ -232,12 +223,15 @@ func RunActiveServer(
 	recallFeedbackEventService := applications.RecallFeedback
 	recallFeedbackEventService.Start(context.Background())
 
+	evaluationBindings, err := buildEvaluationRegistryBindings(semanticRepo, auditService)
+	if err != nil {
+		log.Fatalf("failed to build evaluation registry bindings: %v", err)
+	}
 	toolRegistry, err := registry.BuildActive(registry.Dependencies{
 		Core: registry.CoreDependencies{
 			Metrics:              discoverabilityMetrics,
 			RecallFeedbackConfig: appConfigService,
 			RecallFeedbackEvents: recallFeedbackEventService,
-			EvaluationAudit:      auditService,
 		},
 		RememberBindings:   registry.RememberBindings{Service: rememberSvc},
 		RecallBindings:     registry.RecallBindings{Service: recallSvc, Dreams: dreamSvc},
@@ -245,10 +239,7 @@ func RunActiveServer(
 		TraceBindings:      registry.TraceBindings{Service: contextSvc},
 		DreamBindings:      registry.DreamBindings{Service: dreamSvc},
 		MemoryPackBindings: registry.MemoryPackBindings{Service: memoryPackSvc},
-		EvaluationBindings: registry.EvaluationBindings{
-			Repository:  semanticRepo,
-			Communities: semanticRepo,
-		},
+		EvaluationBindings: evaluationBindings,
 	})
 	if err != nil {
 		log.Fatalf("failed to build active tool registry: %v", err)
@@ -259,157 +250,62 @@ func RunActiveServer(
 			log.Fatalf("failed to configure runtime tool registry: %v", err)
 		}
 	}
-	streamLifecycle := sse.NewStreamLifecycleWithConfig(
-		backend.concurrencyLimiter,
-		sse.NewHeartbeatSenderWithInterval(time.Duration(cfg.GetSSEHeartbeatSeconds())*time.Second),
-		time.Duration(cfg.GetSSEMaxDurationSeconds())*time.Second,
-		backend.streamCleanupRepo,
-	)
-	mcpHandler := handler.NewMCPHandlerWithLifecycleAndRuntimeConfig(toolRegistry, logger, streamLifecycle, appConfigService, dreamSvc)
-
-	checks := []http.HealthCheck{
-		{Name: "postgres", Check: func(ctx context.Context) error {
-			return pgDB.Ping(ctx)
-		}},
-		{Name: "postgres_topology", Check: func(ctx context.Context) error {
-			return postgres.ValidateSinglePrimaryTopology(ctx, pgDB.GetDB())
-		}},
-		{Name: "pgvector", Check: func(ctx context.Context) error {
-			return postgres.CheckPGVectorExtension(ctx, pgDB.GetDB())
-		}},
-		{Name: "authority", Check: func(ctx context.Context) error {
-			return checkActiveAuthority(authority)
-		}},
-		{Name: "search_readiness", Check: func(ctx context.Context) error {
-			return checkSearchReadiness(ctx, searchRepo)
-		}},
-	}
-	if backend.redisPingFn != nil {
-		checks = append(checks, http.HealthCheck{Name: "redis", Check: backend.redisPingFn})
-	}
-	healthConfig := (http.HealthConfig{
-		Checks:   checks,
-		Degraded: backend.degraded,
-		Reason:   backend.reason,
-	}).WithSharedDependencyChecks()
-	e := http.NewServer(cfg, logger, healthConfig)
-	e.Use(middleware.CorrelationIDMiddleware(), middleware.ClientIPMiddleware())
-	e.Use(middleware.SecurityBanMiddleware(securityService))
-	http.RegisterOAuthProtectedResourceRoutes(e, ssoService)
-	if err := http.RegisterDirectorySCIM(e, directoryIdentityService, http.DirectorySCIMConfig{
-		RuntimeConfig: appConfigService,
-		Security:      securityService,
-		RateLimitSvc:  rateLimitService,
-		Config:        &cfg,
-	}); err != nil {
-		log.Fatalf("failed to register directory SCIM routes: %v", err)
-	}
-	runtimeCtx.Echo = e
-	if options.RegisterRoutes != nil {
-		if err := options.RegisterRoutes(runtimeCtx); err != nil {
-			log.Fatalf("failed to register runtime routes: %v", err)
-		}
-	}
-	protectedDeps := http.ProtectedDeps{
-		MCP: http.MCPBindings{
-			CredentialRepo:     credentialRepo,
-			TeamSvc:            teamService,
-			RateLimitService:   rateLimitService,
-			UsageMetrics:       usageMetricsService,
-			AuditService:       auditService,
-			SecurityService:    securityService,
-			SSOAuthenticator:   ssoService,
-			OAuthAuthenticator: ssoService,
-			OAuthMetadata:      ssoService,
-			Config:             &cfg,
-			Logger:             logger,
-			CredentialVerifier: credentialVerifier,
-			LastUsedRecorder:   activityWriter,
-		},
-	}
-	protectedDeps.PostAuthMiddleware = append(protectedDeps.PostAuthMiddleware, options.PostAuthMiddleware...)
-	if telemetryHTTPMetrics != nil {
-		protectedDeps.PostAuthMiddleware = append(protectedDeps.PostAuthMiddleware, middleware.TelemetryHTTPMiddleware(telemetryHTTPMetrics))
-	}
-	http.RegisterProtectedRoutesWithHandlers(e, protectedDeps, http.ProtectedHandlers{
-		MCPPost: mcpHandler.HandlePost,
-		MCPGet:  mcpHandler.HandleGet,
+	transport, err := buildTransportComposition(transportCompositionInputs{
+		startupCtx:         startupCtx,
+		cfg:                cfg,
+		pgDB:               pgDB,
+		authority:          authority,
+		backend:            backend,
+		rls:                rlsHelper,
+		options:            options,
+		logger:             logger,
+		searchRepo:         searchRepo,
+		telemetry:          telemetry,
+		toolRegistry:       toolRegistry,
+		convergence:        searchApplication.Convergence,
+		rememberAttempts:   buildRememberAttemptDiagnostics(ledgerRepo),
+		credentialRepo:     credentialRepo,
+		credentialVerifier: credentialVerifier,
+		activityWriter:     activityWriter,
+		teamService:        teamService,
+		credentialService:  credentialService,
+		ssoService:         ssoService,
+		portalSession:      portalSessionService,
+		directoryIdentity:  directoryIdentityService,
+		controlIdentity:    controlIdentityService,
+		privateMemory:      privateMemoryService,
+		auditService:       auditService,
+		securityService:    securityService,
+		appConfig:          appConfigService,
+		operationLogs:      operationLogService,
+		usageMetrics:       usageMetricsService,
+		conflictQueue:      conflictQueueService,
+		evidenceConflicts:  evidenceConflictService,
+		recallFeedback:     recallFeedbackEventService,
+		community:          communitySvc,
+		controlDream:       controlDreamSvc,
+		graph:              graphViewSvc,
+		recall:             recallSvc,
+		dream:              dreamSvc,
 	})
-	userPortalDeps := http.UserPortalDeps{
-		CredentialRepo: credentialRepo,
-		TeamSvc:        teamService,
-		CredentialSvc:  credentialService,
-		RateLimitSvc:   rateLimitService,
-		UsageMetrics:   usageMetricsService,
-		Telemetry:      telemetryReader,
-		Memory: http.MemoryPortalBindings{
-			GraphView:     graphViewSvc,
-			RecallSvc:     recallSvc,
-			DreamSvc:      dreamSvc,
-			PrivateMemory: privateMemoryService,
-		},
-		AuditSvc:           auditService,
-		SecuritySvc:        securityService,
-		SSOService:         ssoService,
-		PortalSession:      portalSessionService,
-		AppConfig:          appConfigService,
-		Config:             &cfg,
-		CredentialVerifier: credentialVerifier,
-		LastUsedRecorder:   activityWriter,
+	if err != nil {
+		log.Fatalf("failed to build transport composition: %v", err)
 	}
-	userPortalDeps.ExtraMiddleware = append(userPortalDeps.ExtraMiddleware, options.UserPortalMiddleware...)
-	if telemetryHTTPMetrics != nil {
-		userPortalDeps.ExtraMiddleware = append(userPortalDeps.ExtraMiddleware, middleware.TelemetryHTTPMiddleware(telemetryHTTPMetrics))
-	}
-	http.RegisterUserPortal(e, userPortalDeps)
-	var controlServer *echo.Echo
-	var telemetryServer *echo.Echo
-	if !options.DisableControlPortal {
-		controlServer, err = http.NewControlPortalServerWithCapabilityBindings(
-			&cfg,
-			teamService,
-			credentialService,
-			usageMetricsService,
-			http.ControlPortalBindings{Telemetry: http.ControlPortalTelemetry{
-				Reader:            telemetryReader,
-				HTTPMetrics:       telemetryHTTPMetrics,
-				ScrapeHandler:     telemetryScrapeHandler,
-				ScrapeToken:       cfg.GetTelemetryScrapeToken(),
-				SSO:               ssoService,
-				Directory:         directoryIdentityService,
-				ControlIdentity:   controlIdentityService,
-				Config:            appConfigService,
-				Logs:              operationLogService,
-				RecallFeedback:    recallFeedbackEventService,
-				Dreams:            controlDreamSvc,
-				Communities:       communitySvc,
-				ConflictQueue:     conflictQueueService,
-				EvidenceConflicts: evidenceConflictService,
-				Convergence:       searchApplication.Convergence,
-				RememberAttempts:  buildRememberAttemptDiagnostics(ledgerRepo),
-				PrivateMemory:     privateMemoryService,
-			}},
-			healthConfig,
-			logger,
-			securityService,
-		)
-		if err != nil {
-			log.Fatalf("failed to build control portal server: %v", err)
-		}
+	e := transport.e
+	runtimeCtx.Echo = e
+	controlServer := transport.controlServer
+	telemetryServer := transport.telemetryServer
+	if controlServer != nil {
 		logger.Info("starting control portal", observability.String("addr", cfg.GetControlHTTPAddr()))
 		go func() {
 			if err := controlServer.Start(cfg.GetControlHTTPAddr()); err != nil {
 				logServerStartError(logger, "control portal server error", err)
 			}
 		}()
-	} else if telemetryScrapeHandler != nil {
-		addr := strings.TrimSpace(options.MetricsOnlyAddr)
+	} else if telemetryServer != nil {
+		addr := strings.TrimSpace(transport.telemetryServerAddr)
 		if addr == "" {
 			addr = ":8091"
-		}
-		telemetryServer, err = newTelemetryScrapeServer(telemetryScrapeHandler, cfg.GetTelemetryScrapeToken())
-		if err != nil {
-			log.Fatalf("failed to build telemetry scrape server: %v", err)
 		}
 		logger.Info("starting telemetry scrape server", observability.String("addr", addr))
 		go func() {

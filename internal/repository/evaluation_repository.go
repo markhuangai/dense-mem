@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
-	dreampostgres "github.com/markhuangai/dense-mem/internal/dream/postgres"
 	"gorm.io/gorm"
 )
 
@@ -23,58 +21,29 @@ type EvaluationPage = dreamcontract.EvaluationPage
 var _ EvaluationRepository = (*SemanticRepositoryImpl)(nil)
 
 func (r *SemanticRepositoryImpl) ListEvaluationRefs(ctx context.Context, input EvaluationListInput) (*EvaluationPage, error) {
-	input = normalizeEvaluationListInput(input)
-	if err := validateEvaluationListInput(input); err != nil {
-		return nil, err
+	reader := r.evaluationReader()
+	if reader == nil {
+		return nil, errors.New("semantic: database is required")
 	}
-	offset := evaluationCursorOffset(input.Cursor)
-	limit := input.Limit + 1
-	var items []map[string]any
-	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		var err error
-		items, err = queryEvaluationItems(ctx, tx, input, limit, offset)
-		return err
-	})
-	if err != nil {
-		return nil, fmt.Errorf("evaluation: list %s: %w", input.Type, err)
-	}
-	hasMore := len(items) > input.Limit
-	if hasMore {
-		items = items[:input.Limit]
-	}
-	nextCursor := ""
-	if hasMore {
-		nextCursor = strconv.Itoa(offset + input.Limit)
-	}
-	return &EvaluationPage{Items: items, NextCursor: nextCursor, HasMore: hasMore}, nil
+	return reader.ListEvaluationRefs(ctx, input)
 }
 
 func (r *SemanticRepositoryImpl) GetEvaluationItem(ctx context.Context, input EvaluationGetInput) (map[string]any, error) {
-	input = normalizeEvaluationGetInput(input)
-	if err := validateEvaluationGetInput(input); err != nil {
-		return nil, err
+	reader := r.evaluationReader()
+	if reader == nil {
+		return nil, errors.New("semantic: database is required")
 	}
-	var item map[string]any
-	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		items, err := queryEvaluationItems(ctx, tx, EvaluationListInput{
-			TeamID: input.TeamID,
-			Type:   input.Type,
-			Limit:  1,
-			Status: "",
-		}, 1, 0, input.ID)
-		if err != nil {
-			return err
-		}
-		if len(items) == 0 {
-			return sql.ErrNoRows
-		}
-		item = items[0]
+	return reader.GetEvaluationItem(ctx, input)
+}
+
+func (r *SemanticRepositoryImpl) evaluationReader() *EvaluationReader {
+	if r == nil {
 		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("evaluation: get %s: %w", input.Type, err)
 	}
-	return item, nil
+	if r.evaluation != nil {
+		return r.evaluation
+	}
+	return newCompatibilityEvaluationReader(r.db, r.rls)
 }
 
 func normalizeEvaluationListInput(input EvaluationListInput) EvaluationListInput {
@@ -160,7 +129,19 @@ func queryEvaluationItems(
 	offset int,
 	ids ...string,
 ) ([]map[string]any, error) {
-	query, args, err := evaluationQuery(input, limit, offset, ids...)
+	return queryEvaluationItemsWithHypothesis(ctx, tx, input, limit, offset, compatibilityHypothesisQuery, ids...)
+}
+
+func queryEvaluationItemsWithHypothesis(
+	ctx context.Context,
+	tx *gorm.DB,
+	input EvaluationListInput,
+	limit int,
+	offset int,
+	hypothesisQuery EvaluationHypothesisQuery,
+	ids ...string,
+) ([]map[string]any, error) {
+	query, args, err := evaluationQueryWithHypothesis(input, limit, offset, hypothesisQuery, ids...)
 	if err != nil {
 		return nil, err
 	}
@@ -185,8 +166,15 @@ func queryEvaluationItems(
 }
 
 func evaluationQuery(input EvaluationListInput, limit int, offset int, ids ...string) (string, []any, error) {
+	return evaluationQueryWithHypothesis(input, limit, offset, compatibilityHypothesisQuery, ids...)
+}
+
+func evaluationQueryWithHypothesis(input EvaluationListInput, limit int, offset int, hypothesisQuery EvaluationHypothesisQuery, ids ...string) (string, []any, error) {
 	if len(ids) > 1 {
 		return "", nil, errors.New("only one id lookup is supported")
+	}
+	if hypothesisQuery == nil {
+		return "", nil, errors.New("hypothesis evaluation query is required")
 	}
 	args := evaluationQueryArgs{values: []any{input.TeamID}}
 	idFilter := args.idFilter(ids)
@@ -334,7 +322,7 @@ func evaluationQuery(input EvaluationListInput, limit int, offset int, ids ...st
 			ORDER BY created_at DESC, id
 			LIMIT ? OFFSET ?`, args.values, nil
 	case "hypothesis":
-		return dreampostgres.HypothesisEvaluationQuery(input, limit, offset, ids...)
+		return hypothesisQuery(input, limit, offset, ids...)
 	default:
 		return "", nil, fmt.Errorf("unsupported type %q", input.Type)
 	}

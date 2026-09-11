@@ -53,3 +53,32 @@ func TestEvaluationHypothesisQueryExcludesCanonicalAliases(t *testing.T) {
 		t.Fatalf("hypothesis query did not exclude canonical aliases:\n%s", query)
 	}
 }
+
+func TestEvaluationQueryUsesInjectedHypothesisProvider(t *testing.T) {
+	called := false
+	query, args, err := evaluationQueryWithHypothesis(
+		EvaluationListInput{TeamID: "00000000-0000-0000-0000-000000000101", Type: "hypothesis"},
+		2,
+		3,
+		func(input EvaluationListInput, limit, offset int, ids ...string) (string, []any, error) {
+			called = true
+			if input.Type != "hypothesis" || limit != 2 || offset != 3 || len(ids) != 1 || ids[0] != "hypothesis-id" {
+				t.Fatalf("injected query input = %+v limit=%d offset=%d ids=%v", input, limit, offset, ids)
+			}
+			return "SELECT injected", []any{"team-id", "hypothesis-id"}, nil
+		},
+		"hypothesis-id",
+	)
+	if err != nil {
+		t.Fatalf("evaluationQueryWithHypothesis: %v", err)
+	}
+	if !called {
+		t.Fatal("injected Hypothesis query was not called")
+	}
+	if query != "SELECT injected" {
+		t.Fatalf("query = %q", query)
+	}
+	if len(args) != 2 || args[0] != "team-id" || args[1] != "hypothesis-id" {
+		t.Fatalf("args = %#v", args)
+	}
+}

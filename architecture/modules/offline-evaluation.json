@@ -2,7 +2,34 @@
   "schema_version": 1,
   "capability": "offline-evaluation",
   "source_ownership": [
-    {"path": "internal/tools/registry/evaluation_bindings.go", "issue": 378}
+    {"path": "cmd/internal/serverapp/evaluation_composition_evaluation.go", "issue": 378},
+    {"path": "cmd/internal/serverapp/evaluation_composition_production.go", "issue": 378},
+    {"path": "cmd/internal/serverapp/evaluation_composition_evaluation_test.go", "issue": 378},
+    {"path": "cmd/internal/serverapp/evaluation_composition_production_test.go", "issue": 378},
+    {"path": "internal/repository/evaluation_reader.go", "issue": 378},
+    {"path": "internal/repository/evaluation_compat.go", "issue": 378},
+    {"path": "internal/repository/evaluation_reader_test.go", "issue": 378},
+    {"path": "internal/repository/evaluation_reader_integration.e2e", "issue": 378},
+    {"path": "internal/repository/evaluation_repository.go", "issue": 378},
+    {"path": "internal/repository/evaluation_repository_test.go", "issue": 378},
+    {"path": "internal/tools/registry/evaluation_bindings.go", "issue": 378},
+    {"path": "internal/tools/registry/evaluation_bindings_test.go", "issue": 378},
+    {"path": "internal/tools/registry/evaluation_audit_failure_test.go", "issue": 378}
+  ],
+  "compatibility_bridges": [
+    {
+      "source_path": "internal/repository/evaluation_compat.go",
+      "fields": ["newCompatibilityEvaluationReader", "compatibilityHypothesisQuery"],
+      "consumers": [
+        {"path": "internal/repository/semantic_repository.go", "symbol": "NewSemanticRepository"},
+        {"path": "internal/repository/evaluation_repository.go", "symbol": "SemanticRepositoryImpl.evaluationReader"},
+        {"path": "internal/repository/evaluation_repository.go", "symbol": "evaluationQuery"},
+        {"path": "internal/repository/evaluation_repository.go", "symbol": "queryEvaluationItems"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/dream/postgres/evaluation_hypothesis.go", "symbol": "HypothesisEvaluationQuery"},
+      "removal_condition": "Remove the compatibility reader and query forward after SemanticRepositoryImpl and retained evaluation callers consume the evaluation-owned reader directly."
+    }
   ],
   "completed_issues": [],
   "go": {

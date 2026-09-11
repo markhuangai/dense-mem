@@ -130,6 +130,31 @@ The central registry loader, architecture manifest, composition root, and
 canonical Knowledge writes remain shared read-only infrastructure during the
 adoptions.
 
+## Wave 8 shared-readiness ownership
+
+Wave 8 begins only after the shared evaluation and transport composition seams
+are established. The evaluation build is selected by the existing `evaluation`
+Go profile: production composition supplies no offline evaluation repository or
+audit binding, while the evaluation composition creates the evaluation reader
+with Dream's Hypothesis query injected through the existing contract. The
+production catalog remains ten tools and the evaluation catalog adds only the
+three existing evaluation tools.
+
+The transport composition owns the construction of MCP, SSE, public HTTP, user
+portal, control portal, and their coordination backends through existing
+application and adapter ports. The central server lifecycle, worker starts,
+shutdown ordering, and public route contracts remain shared read-only
+infrastructure for #378 and #379 after this preparation.
+
+Issue #378 owns the evaluation composition profile files, registry evaluation
+bindings, generic evaluation reader compatibility seam, and its PostgreSQL
+case. Dream retains the Hypothesis SQL query and Dream application contracts.
+Issue #379 owns the transport composition and backend wiring; HTTP, portal,
+proxy, SSE, Redis, and browser implementations remain in its later cutover.
+The existing registry, architecture manifest/checker, and E2E host controller
+are shared read-only infrastructure. Both adopters must preserve exact existing
+database-case identities and may add only capability-specific registry entries.
+
 ## Wave 5 shared-readiness ownership
 
 Issue #389 freezes the writable partition for the eight Wave 5 adopters. The

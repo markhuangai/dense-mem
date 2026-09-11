@@ -1,0 +1,86 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
+	dreampostgres "github.com/markhuangai/dense-mem/internal/dream/postgres"
+)
+
+func TestEvaluationReaderPreservesTeamIsolationPaginationAndHypothesisFilter(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	teamID := createLedgerTeam(t, adminDB, rls, "evaluation-reader-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evaluation-reader-owner")
+	otherTeamID := createLedgerTeam(t, adminDB, rls, "evaluation-reader-other-team")
+	otherOwnerID := createLedgerProfile(t, adminDB, rls, otherTeamID, "evaluation-reader-other-owner")
+	semantic := NewSemanticRepository(appDB, rls)
+
+	firstID, err := semantic.CreateHypothesis(ctx, CreateHypothesisInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Payload: map[string]any{"text": "first"},
+	})
+	require.NoError(t, err)
+	secondID, err := semantic.CreateHypothesis(ctx, CreateHypothesisInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Payload: map[string]any{"text": "second"},
+	})
+	require.NoError(t, err)
+	thirdID, err := semantic.CreateHypothesis(ctx, CreateHypothesisInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Payload: map[string]any{"text": "third"},
+	})
+	require.NoError(t, err)
+	otherID, err := semantic.CreateHypothesis(ctx, CreateHypothesisInput{
+		TeamID: otherTeamID, OwnerProfileID: otherOwnerID, Payload: map[string]any{"text": "other team"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE hypotheses
+			SET canonical_hypothesis_id = ?::uuid
+			WHERE team_id = ?::uuid AND hypothesis_id = ?::uuid
+		`, firstID, teamID, secondID).Error
+	}))
+
+	queryCalls := 0
+	reader := NewEvaluationReader(appDB, rls, func(input EvaluationListInput, limit, offset int, ids ...string) (string, []any, error) {
+		queryCalls++
+		return dreampostgres.HypothesisEvaluationQuery(input, limit, offset, ids...)
+	})
+
+	page, err := reader.ListEvaluationRefs(ctx, EvaluationListInput{TeamID: teamID, Type: "dream", Limit: 1})
+	require.NoError(t, err)
+	require.True(t, page.HasMore)
+	require.Equal(t, "1", page.NextCursor)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, "hypothesis", page.Items[0]["type"])
+	firstPageID, ok := page.Items[0]["id"].(string)
+	require.True(t, ok)
+	require.NotEqual(t, secondID, firstPageID)
+
+	page, err = reader.ListEvaluationRefs(ctx, EvaluationListInput{TeamID: teamID, Type: "hypothesis", Limit: 1, Cursor: page.NextCursor})
+	require.NoError(t, err)
+	require.False(t, page.HasMore)
+	require.Len(t, page.Items, 1)
+	secondPageID, ok := page.Items[0]["id"].(string)
+	require.True(t, ok)
+	require.NotEqual(t, secondID, secondPageID)
+	require.Contains(t, []string{firstID, thirdID}, firstPageID)
+	require.Contains(t, []string{firstID, thirdID}, secondPageID)
+
+	item, err := reader.GetEvaluationItem(ctx, EvaluationGetInput{TeamID: teamID, Type: "hypothesis", ID: firstID})
+	require.NoError(t, err)
+	require.Equal(t, firstID, item["id"])
+	_, err = reader.GetEvaluationItem(ctx, EvaluationGetInput{TeamID: teamID, Type: "hypothesis", ID: otherID})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, sql.ErrNoRows), "error = %v", err)
+	_, err = reader.GetEvaluationItem(ctx, EvaluationGetInput{TeamID: teamID, Type: "hypothesis", ID: secondID})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, sql.ErrNoRows), "canonical alias error = %v", err)
+	require.GreaterOrEqual(t, queryCalls, 3)
+}

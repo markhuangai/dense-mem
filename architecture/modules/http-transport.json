@@ -2,6 +2,9 @@
   "schema_version": 1,
   "capability": "http-transport",
   "source_ownership": [
+    {"path": "cmd/internal/serverapp/backends.go", "issue": 379},
+    {"path": "cmd/internal/serverapp/transport_composition.go", "issue": 379},
+    {"path": "cmd/internal/serverapp/transport_composition_test.go", "issue": 379},
     {"path": "internal/http/mcp_bindings.go", "issue": 379},
     {"path": "internal/http/user_portal_bindings.go", "issue": 379},
     {"path": "internal/http/control_portal_bindings.go", "issue": 379},
