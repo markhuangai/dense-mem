@@ -7,6 +7,8 @@ import (
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 )
 
+const ConflictAssessmentMaxFailedDays = 5
+
 type ConflictRuntimeConfig struct {
 	ReviewTTLDays int
 	Timezone      string

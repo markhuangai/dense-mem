@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
-	"github.com/markhuangai/dense-mem/internal/conflictassessment"
+	"github.com/markhuangai/dense-mem/internal/conflict/assessment"
 )
 
 const (

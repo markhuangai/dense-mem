@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
 )
 
 func TestEvidenceConflictRememberCreationAndRecurrence(t *testing.T) {
@@ -481,4 +483,236 @@ func TestEvidenceConflictAllowsExplicitKnownCitationWithoutCandidateAssociation(
 		`, teamID, knownLoaded.Evidence[0].EvidenceID).Row().Scan(&positionCount)
 	}))
 	require.Equal(t, 1, positionCount)
+}
+
+func TestConflictReviewCompetingWorkersSerializeTerminalEffects(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	insertSearchTestContract(t, adminDB, rls, "conflict-review-competing-workers", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "conflict-review-competing-workers-team")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "conflict-review-competing-workers-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "conflict-review-competing-workers-owner-b")
+	ownerC := createLedgerProfile(t, adminDB, rls, teamID, "conflict-review-competing-workers-owner-c")
+	semantic := NewSemanticRepository(appDB, rls)
+	ledger := NewLedgerRepository(appDB, rls)
+	conflictStore := conflictpostgres.NewStore(appDB, rls, ledger)
+	if sqlDB, err := appDB.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(8)
+		sqlDB.SetMaxIdleConns(8)
+	}
+
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "project", "Competing worker subject")
+	preferredObject := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "product", "Competing worker preferred")
+	losingObject := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "product", "Competing worker losing")
+	preferred := commitConflictRememberFixture(t, ctx, ledger, teamID, ownerA, subject.EntityID, preferredObject.EntityID, "Competing worker subject uses preferred.", "competing-workers-preferred")
+	_ = commitConflictRememberFixture(t, ctx, ledger, teamID, ownerB, subject.EntityID, losingObject.EntityID, "Competing worker subject uses losing.", "competing-workers-losing")
+	_ = commitConflictRememberFixture(t, ctx, ledger, teamID, ownerC, subject.EntityID, preferredObject.EntityID, "Competing worker subject uses preferred again.", "competing-workers-preferred-second")
+	require.Len(t, preferred.RelationshipResults, 1)
+
+	var conflictID, preferredPositionID string
+	var dueAt time.Time
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT conflict_id::text, review_due_at
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid
+			ORDER BY created_at
+			LIMIT 1
+		`, teamID).Row().Scan(&conflictID, &dueAt); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT position_id::text
+			FROM relationship_conflict_positions
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid AND object_entity_id = ?::uuid
+		`, teamID, conflictID, preferredObject.EntityID).Row().Scan(&preferredPositionID)
+	}))
+	require.NotEmpty(t, conflictID)
+	require.NotEmpty(t, preferredPositionID)
+	reviewNow := dueAt.Add(time.Minute)
+
+	type workerRun struct {
+		workerID string
+		run      *ConflictReviewRunRecord
+	}
+	runs := make([]workerRun, 0, 2)
+	for index, workerID := range []string{"conflict-worker-a", "conflict-worker-b"} {
+		run, claimed, err := conflictStore.ReserveRelationshipConflictReviewRun(ctx, ConflictReviewRunInput{
+			TeamID: teamID, WorkerID: workerID, LocalRunDate: reviewNow.Add(time.Duration(index) * 24 * time.Hour), Timezone: "UTC", Lease: time.Minute,
+		})
+		require.NoError(t, err)
+		require.True(t, claimed)
+		require.NotNil(t, run)
+		runs = append(runs, workerRun{workerID: workerID, run: run})
+	}
+
+	type workerResult struct {
+		workerID    string
+		claimed     int
+		claimErr    error
+		review      *ReviewRelationshipConflictCaseResult
+		reviewErr   error
+		completeErr error
+	}
+	start := make(chan struct{})
+	results := make(chan workerResult, len(runs))
+	for _, worker := range runs {
+		worker := worker
+		go func() {
+			<-start
+			result := workerResult{workerID: worker.workerID}
+			cases, err := conflictStore.ClaimRelationshipConflictCases(ctx, ClaimRelationshipConflictCasesInput{
+				TeamID: teamID, WorkerID: worker.workerID, ReviewRunID: worker.run.ReviewRunID,
+				Limit: 1, Lease: time.Minute, MaxAttempts: 5, Now: reviewNow,
+			})
+			result.claimErr = err
+			result.claimed = len(cases)
+			if err == nil && len(cases) == 1 {
+				result.review, result.reviewErr = conflictStore.ReviewRelationshipConflictCase(ctx, ReviewRelationshipConflictCaseInput{
+					TeamID: teamID, WorkerID: worker.workerID, ReviewRunID: worker.run.ReviewRunID,
+					ConflictID: conflictID, Now: reviewNow,
+				})
+				if result.reviewErr == nil {
+					completion := ConflictReviewRunCompleteInput{
+						TeamID: teamID, ReviewRunID: worker.run.ReviewRunID, WorkerID: worker.workerID,
+						Status: "completed", ClaimedCases: 1,
+					}
+					switch result.review.Outcome {
+					case ConflictReviewOutcomeResolve:
+						completion.ResolvedCases = 1
+					case ConflictReviewOutcomeOverdue:
+						completion.OverdueCases = 1
+					default:
+						completion.NoOpCases = 1
+					}
+					result.completeErr = conflictStore.CompleteRelationshipConflictReviewRun(ctx, completion)
+				}
+			}
+			results <- result
+		}()
+	}
+	close(start)
+	workerResults := make([]workerResult, 0, len(runs))
+	for range runs {
+		workerResults = append(workerResults, <-results)
+	}
+
+	var winner, loser *workerResult
+	for index := range workerResults {
+		result := &workerResults[index]
+		require.NoError(t, result.claimErr)
+		if result.claimed == 1 {
+			require.Nil(t, winner, "only one competing worker may claim the conflict")
+			winner = result
+		} else {
+			require.Equal(t, 0, result.claimed)
+			require.Nil(t, result.review)
+			require.NoError(t, result.reviewErr)
+			loser = result
+		}
+	}
+	require.NotNil(t, winner)
+	require.NotNil(t, loser)
+	require.NoError(t, winner.reviewErr)
+	require.NoError(t, winner.completeErr)
+	require.Equal(t, ConflictReviewOutcomeResolve, winner.review.Outcome)
+	require.Equal(t, ConflictReviewStageDueMajority, winner.review.Stage)
+	require.Equal(t, preferredPositionID, winner.review.PreferredPositionID)
+
+	var loserRun *workerRun
+	for index := range runs {
+		if runs[index].workerID == loser.workerID {
+			loserRun = &runs[index]
+			break
+		}
+	}
+	require.NotNil(t, loserRun)
+	// Complete the unclaimed run so the fixture leaves no live worker lease.
+	require.NoError(t, conflictStore.CompleteRelationshipConflictReviewRun(ctx, ConflictReviewRunCompleteInput{
+		TeamID: teamID, ReviewRunID: loserRun.run.ReviewRunID, WorkerID: loserRun.workerID,
+		Status: "completed", ClaimedCases: 0,
+	}))
+
+	var status string
+	var version int
+	var evaluatedEvents, resolvedEvents, updatedEvents int
+	type persistedRun struct {
+		workerID     string
+		status       string
+		claimed      int
+		resolved     int
+		overdue      int
+		noOp         int
+		failed       int
+		leaseCleared bool
+	}
+	var persistedRuns []persistedRun
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT status, version
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+		`, teamID, conflictID).Row().Scan(&status, &version); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT
+				count(*) FILTER (WHERE action = 'evaluated')::int,
+				count(*) FILTER (WHERE action = 'resolved')::int,
+				count(*) FILTER (WHERE action = 'relationship_updated')::int
+			FROM relationship_conflict_events
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+			`, teamID, conflictID).Row().Scan(&evaluatedEvents, &resolvedEvents, &updatedEvents); err != nil {
+			return err
+		}
+		rows, err := tx.Raw(`
+				SELECT worker_id, status, claimed_cases, resolved_cases, overdue_cases,
+				       no_op_cases, failed_cases, lease_until IS NULL
+				FROM relationship_conflict_review_runs
+				WHERE team_id = ?::uuid
+				ORDER BY worker_id
+			`, teamID).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var run persistedRun
+			if err := rows.Scan(&run.workerID, &run.status, &run.claimed, &run.resolved, &run.overdue, &run.noOp, &run.failed, &run.leaseCleared); err != nil {
+				return err
+			}
+			persistedRuns = append(persistedRuns, run)
+		}
+		return rows.Err()
+	}))
+	require.Equal(t, "resolved", status)
+	require.GreaterOrEqual(t, version, 2)
+	require.Equal(t, 1, evaluatedEvents)
+	require.Equal(t, 1, resolvedEvents)
+	require.Equal(t, 1, updatedEvents)
+	require.Len(t, persistedRuns, 2)
+	runStates := make(map[string]persistedRun, len(persistedRuns))
+	for _, run := range persistedRuns {
+		runStates[run.workerID] = run
+	}
+	winnerState, ok := runStates[winner.workerID]
+	require.True(t, ok)
+	loserState, ok := runStates[loser.workerID]
+	require.True(t, ok)
+	require.Equal(t, "completed", winnerState.status)
+	require.Equal(t, 1, winnerState.claimed)
+	require.Equal(t, 1, winnerState.resolved)
+	require.Equal(t, 0, winnerState.overdue)
+	require.Equal(t, 0, winnerState.noOp)
+	require.Equal(t, 0, winnerState.failed)
+	require.True(t, winnerState.leaseCleared)
+	require.Equal(t, "completed", loserState.status)
+	require.Equal(t, 0, loserState.claimed)
+	require.Equal(t, 0, loserState.resolved)
+	require.Equal(t, 0, loserState.overdue)
+	require.Equal(t, 0, loserState.noOp)
+	require.Equal(t, 0, loserState.failed)
+	require.True(t, loserState.leaseCleared)
 }

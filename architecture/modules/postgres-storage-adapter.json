@@ -141,34 +141,38 @@
       "source_path": "internal/repository/conflict_derived_evidence_task_repository.go",
       "fields": ["LedgerRepositoryImpl.StageConflictDerivedEvidence", "LedgerRepositoryImpl.RecordConflictDerivedEvidenceFailure", "LedgerRepositoryImpl.ClaimConflictDerivedEvidenceTasks"],
       "consumers": [
-        {"path": "internal/service/conflictreview/service.go", "symbol": "Service.ProcessPendingConflictDerivedEvidence"},
-        {"path": "internal/service/conflictreview/service.go", "symbol": "Service.stageConflictDerivedEvidence"},
-        {"path": "cmd/internal/serverapp/conflict_review_worker.go", "symbol": "processTeamConflictReview"}
+        {"path": "internal/conflict/postgres/store.go", "symbol": "Store.ClaimConflictDerivedEvidenceTasks"},
+        {"path": "internal/conflict/postgres/store.go", "symbol": "Store.StageConflictDerivedEvidence"},
+        {"path": "internal/conflict/postgres/store.go", "symbol": "Store.RecordConflictDerivedEvidenceFailure"},
+        {"path": "internal/repository/conflict_review_private_space_integration.e2e", "symbol": "TestClaimedPrivateConflictDerivedEvidenceCannotStageAfterErasureReopensSpace"}
       ],
       "removal_issue": 382,
       "implementation_owner": {"path": "internal/knowledge/postgres/conflict_derived_evidence_task_repository.go", "symbol": "Store.StageConflictDerivedEvidence"},
-      "removal_condition": "Remove the repository forwarders after the conflict-review application consumes the knowledge owner port directly."
+      "removal_condition": "Remove the repository forwarders after the Conflict PostgreSQL Store uses the Knowledge owner directly instead of delegating through LedgerRepositoryImpl."
     },
     {
       "source_path": "internal/repository/conflict_overdue_assessment_repository.go",
       "fields": ["LedgerRepositoryImpl.ReserveOverdueConflictAssessment", "LedgerRepositoryImpl.CompleteOverdueConflictAssessment"],
       "consumers": [
-        {"path": "internal/service/conflictreview/service.go", "symbol": "Service.ReviewRelationshipConflictCase"},
-        {"path": "internal/service/conflictreview/service.go", "symbol": "Service.completeAssessment"}
+        {"path": "internal/conflict/postgres/store.go", "symbol": "Store.ReserveOverdueConflictAssessment"},
+        {"path": "internal/conflict/postgres/store.go", "symbol": "Store.CompleteOverdueConflictAssessment"},
+        {"path": "internal/repository/conflict_review_synchronous_integration.e2e", "symbol": "TestOverdueConflictResolutionRetainsEvidenceUsedByAnotherOwner"},
+        {"path": "internal/repository/conflict_review_synchronous_integration.e2e", "symbol": "TestOverdueConflictResolutionRetainsEvidenceUsedByLosingOwner"}
       ],
       "removal_issue": 382,
       "implementation_owner": {"path": "internal/knowledge/postgres/conflict_overdue_assessment_repository.go", "symbol": "Store.ReserveOverdueConflictAssessment"},
-      "removal_condition": "Remove the repository forwarders after overdue assessment uses the knowledge conflict port directly."
+      "removal_condition": "Remove the repository forwarders after the Conflict PostgreSQL Store uses the Knowledge conflict port directly instead of delegating through LedgerRepositoryImpl."
     },
     {
       "source_path": "internal/repository/conflict_overdue_resolution_repository.go",
       "fields": ["LedgerRepositoryImpl.ResumePendingOverdueConflictResolution"],
       "consumers": [
-        {"path": "internal/service/conflictreview/service.go", "symbol": "Service.ReviewRelationshipConflictCase"}
+        {"path": "internal/conflict/postgres/store.go", "symbol": "Store.ResumePendingOverdueConflictResolution"},
+        {"path": "internal/repository/conflict_review_synchronous_integration.e2e", "symbol": "TestConflictSnapshotScopeSerializesPlacementReviewAndWrite"}
       ],
       "removal_issue": 382,
       "implementation_owner": {"path": "internal/knowledge/postgres/conflict_overdue_resolution_repository.go", "symbol": "Store.ResumePendingOverdueConflictResolution"},
-      "removal_condition": "Remove the repository forwarder after pending conflict resolution uses the knowledge conflict port directly."
+      "removal_condition": "Remove the repository forwarder after the Conflict PostgreSQL Store uses the Knowledge conflict port directly instead of delegating through LedgerRepositoryImpl."
     },
     {
       "source_path": "internal/repository/conflict_placement_helpers.go",
@@ -183,37 +187,41 @@
     },
     {
       "source_path": "internal/repository/conflict_repository.go",
-      "fields": ["normalizeConflictRuntimeConfig"],
+      "fields": ["loadRelationshipConflictRecords", "loadRelationshipConflictRecordsInSpace", "loadRelationshipConflictRecordsByID", "applyConflictKnownAt", "applyConflictPositionKnownAtDispositions"],
       "consumers": [
-        {"path": "internal/repository/ledger_repository_constructors.go", "symbol": "NewLedgerRepositoryWithRuntimeConfig"}
+        {"path": "internal/repository/recall_repository.go", "symbol": "loadRecallOpenConflictRecords"},
+        {"path": "internal/repository/semantic_trace_repository.go", "symbol": "loadTraceConflicts"},
+        {"path": "internal/repository/conflict_repository_test.go", "symbol": "TestApplyConflictKnownAtClearsFutureDismissal"}
       ],
       "removal_issue": 382,
-      "implementation_owner": {"path": "internal/knowledge/postgres/compat_exports.go", "symbol": "NormalizeConflictRuntimeConfig"},
-      "removal_condition": "Remove the repository conflict helper aliases after constructors and legacy fixtures consume owner policy directly."
+      "implementation_owner": {"path": "internal/conflict/postgres/readers.go", "symbol": "LoadRelationshipConflictRecordsInSpace"},
+      "removal_condition": "Remove the repository relationship-conflict read forwarders after Recall, Trace and retained fixtures use the Conflict PostgreSQL readers directly."
     },
     {
       "source_path": "internal/repository/conflict_resolution_repository.go",
       "fields": ["LedgerRepositoryImpl.PlanRelationshipConflictResolution", "LedgerRepositoryImpl.CommitRelationshipConflictResolution"],
       "consumers": [
-        {"path": "internal/service/conflictreview/service.go", "symbol": "Service.executeResolution"}
+        {"path": "internal/conflict/postgres/store.go", "symbol": "Store.PlanRelationshipConflictResolution"},
+        {"path": "internal/conflict/postgres/store.go", "symbol": "Store.CommitRelationshipConflictResolution"}
       ],
       "removal_issue": 382,
       "implementation_owner": {"path": "internal/knowledge/postgres/conflict_resolution_repository.go", "symbol": "Store.PlanRelationshipConflictResolution"},
-      "removal_condition": "Remove the repository resolution forwarders after the conflict-review service consumes the owner port directly."
+      "removal_condition": "Remove the repository resolution forwarders after the Conflict PostgreSQL Store uses the Knowledge owner directly instead of delegating through LedgerRepositoryImpl."
     },
     {
       "source_path": "internal/repository/conflict_review_repository.go",
       "fields": ["LedgerRepositoryImpl.ReserveRelationshipConflictReviewRun", "LedgerRepositoryImpl.ClaimRelationshipConflictCases", "LedgerRepositoryImpl.ReleaseRelationshipConflictCaseClaim", "LedgerRepositoryImpl.ReviewRelationshipConflictCase", "LedgerRepositoryImpl.CompleteRelationshipConflictReviewRun"],
       "consumers": [
-        {"path": "cmd/internal/serverapp/conflict_review_worker.go", "symbol": "processTeamConflictReview"},
-        {"path": "internal/service/conflictreview/runner.go", "symbol": "Runner.ReserveRelationshipConflictReviewRun"},
-        {"path": "internal/service/conflictreview/runner.go", "symbol": "Runner.ClaimRelationshipConflictCases"},
-        {"path": "internal/service/conflictreview/runner.go", "symbol": "Runner.CompleteRelationshipConflictReviewRun"},
-        {"path": "internal/service/conflictreview/service.go", "symbol": "Service.ReviewRelationshipConflictCase"}
+        {"path": "internal/conflict/postgres/store.go", "symbol": "Store.ReserveRelationshipConflictReviewRun"},
+        {"path": "internal/conflict/postgres/store.go", "symbol": "Store.ClaimRelationshipConflictCases"},
+        {"path": "internal/conflict/postgres/store.go", "symbol": "Store.ReleaseRelationshipConflictCaseClaim"},
+        {"path": "internal/conflict/postgres/store.go", "symbol": "Store.ReviewRelationshipConflictCase"},
+        {"path": "internal/conflict/postgres/store.go", "symbol": "Store.CompleteRelationshipConflictReviewRun"},
+        {"path": "internal/repository/conflict_review_synchronous_integration.e2e", "symbol": "TestConflictReviewRetiresLosingSearchProjectionWithoutEmbedding"}
       ],
       "removal_issue": 382,
       "implementation_owner": {"path": "internal/knowledge/postgres/conflict_review_repository.go", "symbol": "Store.ReserveRelationshipConflictReviewRun"},
-      "removal_condition": "Remove the repository review forwarders after worker composition and review orchestration consume the knowledge owner directly."
+      "removal_condition": "Remove the repository review forwarders after the Conflict PostgreSQL Store uses the Knowledge owner directly instead of delegating through LedgerRepositoryImpl."
     },
     {
       "source_path": "internal/repository/conflict_system_profile_repository.go",
@@ -229,22 +237,30 @@
       "source_path": "internal/repository/evidence_conflict_queries.go",
       "fields": ["LedgerRepositoryImpl.ResolveEvidenceConflict"],
       "consumers": [
-        {"path": "internal/service/evidenceconflict/service.go", "symbol": "Service.Resolve"}
+        {"path": "internal/conflict/postgres/evidence_conflict_queries.go", "symbol": "Store.ResolveEvidenceConflict"}
       ],
       "removal_issue": 382,
       "implementation_owner": {"path": "internal/knowledge/postgres/evidence_conflict_queries.go", "symbol": "Store.ResolveEvidenceConflict"},
-      "removal_condition": "Remove the repository evidence-conflict resolution forwarder after the evidence-conflict service consumes the knowledge owner directly."
+      "removal_condition": "Remove the repository evidence-conflict resolution forwarder after the Conflict PostgreSQL Store uses the Knowledge owner directly instead of delegating through LedgerRepositoryImpl."
     },
     {
       "source_path": "internal/repository/evidence_conflict_repository.go",
       "fields": ["EvidenceConflictDefaultLimit", "EvidenceConflictMaxLimit", "EvidenceConflictDefaultEventLimit", "EvidenceConflictMaxEventLimit", "EvidenceConflictMaxResults", "EvidenceConflictMaxPositions", "EvidenceConflictMaxQuoteRunes", "ErrEvidenceConflictNotFound", "ErrEvidenceConflictVersionStale", "ErrEvidenceConflictNotOpen", "ErrEvidenceConflictInvalidCommand", "ErrEvidenceConflictStaleInput", "EncodeEvidenceConflictCursor", "DecodeEvidenceConflictCursor", "EncodeEvidenceConflictEventCursor", "DecodeEvidenceConflictEventCursor"],
       "consumers": [
-        {"path": "internal/service/evidenceconflict/service.go", "symbol": "Service.List"},
-        {"path": "internal/service/evidenceconflict/service.go", "symbol": "Service.Get"}
+        {"path": "internal/http/control_portal_evidence_conflicts_test.go", "symbol": "evidenceConflictReaderStub.ListEvidenceConflicts"},
+        {"path": "internal/http/control_portal_evidence_conflicts_test.go", "symbol": "evidenceConflictReaderStub.GetEvidenceConflict"},
+        {"path": "internal/http/control_portal_evidence_conflicts_test.go", "symbol": "evidenceConflictReaderStub.ResolveEvidenceConflict"},
+        {"path": "internal/remember/service/processor/remember_processor.go", "symbol": "normalizeRememberFailureWithClassifier"},
+        {"path": "internal/remember/service/processor/remember_processor.go", "symbol": "rememberCommitFailureMetadata"},
+        {"path": "internal/remember/service/processor/remember_processor.go", "symbol": "rememberFailureCode"},
+        {"path": "internal/remember/service/processor/remember_processor_branches_test.go", "symbol": "TestRememberFailureAndCommitMetadataCoverSupportedCauses"},
+        {"path": "internal/remember/service/processor/remember_processor_branches_test.go", "symbol": "TestRememberFailureCodeMapsAllTerminalCategories"},
+        {"path": "internal/service/memoryservice/recall_result_helpers.go", "symbol": "recallEvidenceConflictSummaries"},
+        {"path": "internal/service/memoryservice/recall_test.go", "symbol": "TestRecallProjectsEvidenceConflictPositionsAndJSONShape"}
       ],
       "removal_issue": 382,
       "implementation_owner": {"path": "internal/knowledge/contract/evidence_conflict.go", "symbol": "EncodeEvidenceConflictCursor"},
-      "removal_condition": "Remove the repository evidence-conflict aliases after the evidence-conflict service and tests use owner contracts directly."
+      "removal_condition": "Remove the repository evidence-conflict aliases after the named HTTP, Remember, and Recall consumers use the Knowledge conflict contract directly."
     },
     {
       "source_path": "internal/repository/evidence_duplicate.go",
@@ -400,7 +416,7 @@
     },
     {
       "source_path": "internal/repository/ledger_repository_constructors.go",
-      "fields": ["NewLedgerRepository", "NewLedgerRepositoryWithRuntimeConfig"],
+      "fields": ["NewLedgerRepository", "NewLedgerRepositoryWithRuntimeConfig", "normalizeConflictRuntimeConfig"],
       "consumers": [
         {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"},
         {"path": "internal/repository/ledger_repository_integration.e2e", "symbol": "TestLedgerSourceRevisionCompareAndSet"}

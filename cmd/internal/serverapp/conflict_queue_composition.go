@@ -1,10 +1,17 @@
 package serverapp
 
 import (
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service/conflictqueue"
+	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
+	conflictqueue "github.com/markhuangai/dense-mem/internal/conflict/queue"
 )
 
-func buildConflictQueueApplication(store repository.ConflictQueueRepository) *conflictqueue.Service {
-	return conflictqueue.New(store)
+type conflictQueueStoreSource interface {
+	ConflictStore() *conflictpostgres.Store
+}
+
+func buildConflictQueueApplication(source conflictQueueStoreSource) *conflictqueue.Service {
+	if source == nil {
+		return conflictqueue.New(nil)
+	}
+	return conflictqueue.New(source.ConflictStore())
 }

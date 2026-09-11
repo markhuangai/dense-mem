@@ -47,6 +47,7 @@ var (
 	ErrConflictAssessmentUnavailable             = errors.New("conflict assessment is unavailable")
 	ErrConflictAssessmentStale                   = errors.New("conflict assessment is stale")
 	ErrConflictAssessmentReserved                = errors.New("conflict assessment is not reserved")
+	ErrConflictReviewLeaseLost                   = errors.New("conflict review lease lost")
 )
 
 // RememberPort is the complete request-owned Remember persistence boundary.

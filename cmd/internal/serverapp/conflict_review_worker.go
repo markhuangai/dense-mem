@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"github.com/markhuangai/dense-mem/internal/config"
+	conflictcontract "github.com/markhuangai/dense-mem/internal/conflict/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"hash/crc32"
 	"os"
@@ -120,7 +120,7 @@ func processTeamConflictReview(
 		observability.RecordConflictReviewDuration(observability.WithMetricIdentity(ctx, teamID, ""), metrics, time.Since(started).Seconds(), outcome)
 	}()
 	lease := time.Duration(cfg.GetConflictReviewLeaseSeconds()) * time.Second
-	runInput := repository.ConflictReviewRunInput{TeamID: teamID, WorkerID: workerID, LocalRunDate: now, Timezone: cfg.GetAppTimezone(), Lease: lease}
+	runInput := conflictcontract.ConflictReviewRunInput{TeamID: teamID, WorkerID: workerID, LocalRunDate: now, Timezone: cfg.GetAppTimezone(), Lease: lease}
 	run, claimed, err := ledger.ReserveRelationshipConflictReviewRun(ctx, runInput)
 	if err != nil {
 		outcome = "error"
@@ -130,13 +130,13 @@ func processTeamConflictReview(
 		outcome = "skipped"
 		return nil
 	}
-	counts := repository.ConflictReviewRunCompleteInput{
+	counts := conflictcontract.ConflictReviewRunCompleteInput{
 		TeamID:      teamID,
 		ReviewRunID: run.ReviewRunID,
 		WorkerID:    workerID,
 		Status:      "completed",
 	}
-	if _, err := ledger.ProcessPendingConflictDerivedEvidence(ctx, repository.ClaimConflictDerivedEvidenceTasksInput{
+	if _, err := ledger.ProcessPendingConflictDerivedEvidence(ctx, conflictcontract.ClaimConflictDerivedEvidenceTasksInput{
 		TeamID:      teamID,
 		ReviewRunID: run.ReviewRunID,
 		WorkerID:    workerID,
@@ -167,7 +167,7 @@ func processTeamConflictReview(
 		for id := range attempted {
 			excluded = append(excluded, id)
 		}
-		cases, err := ledger.ClaimRelationshipConflictCases(ctx, repository.ClaimRelationshipConflictCasesInput{
+		cases, err := ledger.ClaimRelationshipConflictCases(ctx, conflictcontract.ClaimRelationshipConflictCasesInput{
 			TeamID:      teamID,
 			WorkerID:    workerID,
 			ReviewRunID: run.ReviewRunID,
@@ -194,7 +194,7 @@ func processTeamConflictReview(
 			}
 			attempted[conflictCase.ConflictID] = struct{}{}
 			counts.ClaimedCases++
-			result, err := ledger.ReviewRelationshipConflictCase(ctx, repository.ReviewRelationshipConflictCaseInput{
+			result, err := ledger.ReviewRelationshipConflictCase(ctx, conflictcontract.ReviewRelationshipConflictCaseInput{
 				TeamID:      teamID,
 				WorkerID:    workerID,
 				ReviewRunID: run.ReviewRunID,
@@ -207,9 +207,9 @@ func processTeamConflictReview(
 				continue
 			}
 			switch result.Outcome {
-			case repository.ConflictReviewOutcomeResolve:
+			case conflictcontract.ConflictReviewOutcomeResolve:
 				counts.ResolvedCases++
-			case repository.ConflictReviewOutcomeOverdue:
+			case conflictcontract.ConflictReviewOutcomeOverdue:
 				counts.OverdueCases++
 			default:
 				counts.NoOpCases++
@@ -246,11 +246,11 @@ func safeConflictReviewError(err error) string {
 }
 
 type conflictReviewLedger interface {
-	ReserveRelationshipConflictReviewRun(context.Context, repository.ConflictReviewRunInput) (*repository.ConflictReviewRunRecord, bool, error)
-	ClaimRelationshipConflictCases(context.Context, repository.ClaimRelationshipConflictCasesInput) ([]repository.RelationshipConflictCaseRecord, error)
-	ReviewRelationshipConflictCase(context.Context, repository.ReviewRelationshipConflictCaseInput) (*repository.ReviewRelationshipConflictCaseResult, error)
-	ProcessPendingConflictDerivedEvidence(context.Context, repository.ClaimConflictDerivedEvidenceTasksInput) (int, error)
-	CompleteRelationshipConflictReviewRun(context.Context, repository.ConflictReviewRunCompleteInput) error
+	ReserveRelationshipConflictReviewRun(context.Context, conflictcontract.ConflictReviewRunInput) (*conflictcontract.ConflictReviewRunRecord, bool, error)
+	ClaimRelationshipConflictCases(context.Context, conflictcontract.ClaimRelationshipConflictCasesInput) ([]conflictcontract.RelationshipConflictCaseRecord, error)
+	ReviewRelationshipConflictCase(context.Context, conflictcontract.ReviewRelationshipConflictCaseInput) (*conflictcontract.ReviewRelationshipConflictCaseResult, error)
+	ProcessPendingConflictDerivedEvidence(context.Context, conflictcontract.ClaimConflictDerivedEvidenceTasksInput) (int, error)
+	CompleteRelationshipConflictReviewRun(context.Context, conflictcontract.ConflictReviewRunCompleteInput) error
 }
 
 func conflictReviewDueForTeam(now time.Time, cfg *config.Config, teamID string) bool {

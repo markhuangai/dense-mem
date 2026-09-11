@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	operations "github.com/markhuangai/dense-mem/internal/operations"
 	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 type telemetryComposition struct {
@@ -22,11 +22,15 @@ type telemetryComposition struct {
 	PricingRefreshCancel  context.CancelFunc
 }
 
+type telemetryConflictStoreSource interface {
+	ConflictStore() *conflictpostgres.Store
+}
+
 func buildTelemetryApplication(
 	startupCtx context.Context,
 	cfg config.Config,
 	pricing operationscontract.TelemetryPricingReader,
-	conflictQueue repository.ConflictQueueRepository,
+	conflictQueue telemetryConflictStoreSource,
 	lifecycle operationscontract.TelemetryLifecycleReader,
 	logger observability.LogProvider,
 ) (telemetryComposition, error) {
@@ -42,9 +46,12 @@ func buildTelemetryApplication(
 	composition.PricingRefreshCancel = cancel
 	prometheusMetrics := observability.NewPrometheusMetrics(operations.NewTelemetryPricingResolver(pricing))
 	if conflictQueue != nil {
-		if err := prometheusMetrics.RegisterConflictQueueCollector(observability.NewConflictQueueCollector(conflictQueue.CollectConflictQueueMetrics)); err != nil {
-			cancel()
-			return telemetryComposition{}, err
+		store := conflictQueue.ConflictStore()
+		if store != nil {
+			if err := prometheusMetrics.RegisterConflictQueueCollector(observability.NewConflictQueueCollector(store.CollectConflictQueueMetrics)); err != nil {
+				cancel()
+				return telemetryComposition{}, err
+			}
 		}
 	}
 	composition.Metrics = prometheusMetrics

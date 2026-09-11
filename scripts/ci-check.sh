@@ -27,7 +27,7 @@ go -C cmd/e2e test ./... -count=1
 packages="$(
 	go list -f '{{if .TestGoFiles}}{{.ImportPath}}{{end}}' ./internal/... |
 		sed '/^$/d' |
-		grep -Ev '/(evalharness|repository|knowledge/postgres|dream/postgres|trace/postgres|graph/postgres)$|/storage/(neo4j|postgres|redis)$'
+	grep -Ev '/(evalharness|repository|knowledge/postgres|dream/postgres|trace/postgres|graph/postgres|conflict/postgres)$|/storage/(neo4j|postgres|redis)$'
 )"
 
 printf '%s\n' "${packages}"

@@ -38,6 +38,13 @@
       "source": "internal/repository/evidence_conflict_conflict_integration.e2e"
     },
     {
+      "id": "repository/TestConflictReviewCompetingWorkersSerializeTerminalEffects",
+      "package": "./internal/repository",
+      "run": "^TestConflictReviewCompetingWorkersSerializeTerminalEffects$",
+      "phase": "precheck",
+      "source": "internal/repository/evidence_conflict_conflict_integration.e2e"
+    },
+    {
       "id": "repository/TestEvidenceConflictChangedPositionSetCreatesNewCase",
       "package": "./internal/repository",
       "run": "^TestEvidenceConflictChangedPositionSetCreatesNewCase$",

@@ -5,6 +5,11 @@
   "go": {
     "units": [
       {
+        "id": "github.com/markhuangai/dense-mem/internal/conflict/assessment",
+        "role": "port",
+        "visibility": "public"
+      },
+      {
         "id": "github.com/markhuangai/dense-mem/internal/conflictassessment",
         "role": "port",
         "visibility": "public"
@@ -15,5 +20,77 @@
     "units": []
   },
   "exceptions": [],
-  "workers": []
+  "workers": [],
+  "source_ownership": [
+    {
+      "path": "internal/conflict/assessment/contract.go",
+      "issue": 377
+    },
+    {
+      "path": "internal/conflict/assessment/contract_edge_test.go",
+      "issue": 377
+    },
+    {
+      "path": "internal/conflict/assessment/contract_schema_test.go",
+      "issue": 377
+    },
+    {
+      "path": "internal/conflict/assessment/contract_test.go",
+      "issue": 377
+    },
+    {
+      "path": "internal/conflictassessment/compat.go",
+      "issue": 377
+    },
+    {
+      "path": "internal/verifier/conflict_assessment.go",
+      "issue": 377
+    }
+  ],
+  "compatibility_bridges": [
+    {
+      "source_path": "internal/conflictassessment/compat.go",
+      "fields": [
+        "ConflictAssessmentSchemaName",
+        "ConflictAssessmentDecisionSelect",
+        "ConflictAssessmentDecisionAbstain",
+        "ConflictAssessmentMaxPositions",
+        "ConflictAssessmentMaxEvidence",
+        "ConflictAssessmentMaxContent",
+        "ConflictAssessmentMaxRationale",
+        "ConflictAssessmentSystemPrompt",
+        "ConflictAssessmentCorrectionInstruction",
+        "ProviderFailureClassHTTPServer",
+        "ProviderFailureClassProviderUnavailable",
+        "ConflictAssessmentEvidence",
+        "ConflictAssessmentPosition",
+        "ConflictAssessmentRequest",
+        "ConflictAssessmentResponse",
+        "Provider",
+        "SemanticAssessmentLimits",
+        "ProviderError",
+        "MalformedResponseError",
+        "ProviderFailureMetadata",
+        "ErrVerifierMalformedResponse",
+        "ProviderFailureDetails",
+        "ConflictAssessmentResponseSchema",
+        "PrepareConflictAssessmentRequest",
+        "DecodeConflictAssessmentResponseJSON",
+        "ValidateConflictAssessmentResponse",
+        "DefaultSemanticAssessmentLimits"
+      ],
+      "consumers": [
+        {
+          "path": "cmd/internal/serverapp/server.go",
+          "symbol": "RunActiveServer"
+        }
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {
+        "path": "internal/conflict/assessment/contract.go",
+        "symbol": "DefaultSemanticAssessmentLimits"
+      },
+      "removal_condition": "Remove the historical conflictassessment aliases after server composition and retained provider consumers import internal/conflict/assessment directly."
+    }
+  ]
 }
