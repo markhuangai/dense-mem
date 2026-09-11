@@ -190,8 +190,7 @@
       "fields": ["loadRelationshipConflictRecords", "loadRelationshipConflictRecordsInSpace", "loadRelationshipConflictRecordsByID", "applyConflictKnownAt", "applyConflictPositionKnownAtDispositions"],
       "consumers": [
         {"path": "internal/repository/recall_relationship_repository.go", "symbol": "loadRecallOpenConflictRecords"},
-        {"path": "internal/repository/semantic_trace_repository.go", "symbol": "loadTraceConflicts"},
-        {"path": "internal/repository/conflict_repository_test.go", "symbol": "TestApplyConflictKnownAtClearsFutureDismissal"}
+        {"path": "internal/repository/semantic_trace_repository.go", "symbol": "loadTraceConflicts"}
       ],
       "removal_issue": 382,
       "implementation_owner": {"path": "internal/conflict/postgres/readers.go", "symbol": "LoadRelationshipConflictRecordsInSpace"},

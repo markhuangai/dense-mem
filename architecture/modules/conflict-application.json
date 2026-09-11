@@ -75,19 +75,15 @@
       "issue": 377
     },
     {
-      "path": "internal/repository/conflict_projection_generation.go",
-      "issue": 377
-    },
-    {
-      "path": "internal/repository/conflict_queue_repository.go",
-      "issue": 377
-    },
-    {
       "path": "internal/repository/conflict_supporter_repository.go",
       "issue": 377
     },
     {
       "path": "internal/conflict/postgres/queue_repository_sqlmock_test.go",
+      "issue": 377
+    },
+    {
+      "path": "internal/conflict/postgres/relationship_history_test.go",
       "issue": 377
     }
   ],
@@ -163,47 +159,6 @@
         "symbol": "NewStore"
       },
       "removal_condition": "Remove the repository ConflictStore facade after all named composition callers construct the Conflict PostgreSQL adapter directly."
-    },
-    {
-      "source_path": "internal/repository/conflict_projection_generation.go",
-      "fields": [
-        "loadActiveRelationshipConflictRecordsByIDBounded"
-      ],
-      "consumers": [
-        {
-          "path": "internal/repository/conflict_projection_generation.go",
-          "symbol": "loadActiveRelationshipConflictRecordsByIDBounded"
-        }
-      ],
-      "removal_issue": 382,
-      "implementation_owner": {
-        "path": "internal/conflict/postgres/relationship_projection.go",
-        "symbol": "loadActiveRelationshipConflictRecordsByIDBounded"
-      },
-      "removal_condition": "Remove the legacy relationship-conflict projection forwarder after retained repository fixtures use the Conflict PostgreSQL projection helper directly."
-    },
-    {
-      "source_path": "internal/repository/conflict_queue_repository.go",
-      "fields": [
-        "LedgerRepositoryImpl.ListConflictQueue",
-        "LedgerRepositoryImpl.CollectConflictQueueMetrics"
-      ],
-      "consumers": [
-        {
-          "path": "internal/repository/conflict_queue_repository.go",
-          "symbol": "LedgerRepositoryImpl.ListConflictQueue"
-        },
-        {
-          "path": "internal/repository/conflict_queue_repository.go",
-          "symbol": "LedgerRepositoryImpl.CollectConflictQueueMetrics"
-        }
-      ],
-      "removal_issue": 382,
-      "implementation_owner": {
-        "path": "internal/conflict/postgres/queue_repository.go",
-        "symbol": "Store.ListConflictQueue"
-      },
-      "removal_condition": "Remove the legacy queue forwarders after all callers use the Conflict PostgreSQL Store directly."
     }
   ]
 }

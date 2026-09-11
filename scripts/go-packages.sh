@@ -3,16 +3,20 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PRODUCTION_ONLY=false
+COVERAGE_ONLY=false
 GO_TAGS=""
 
 usage() {
 	cat >&2 <<'EOF'
-usage: scripts/go-packages.sh [--production] [--tags <tags>] [--root <dir>]
+usage: scripts/go-packages.sh [--production|--coverage] [--tags <tags>] [--root <dir>]
 
-Print import paths for Go directories tracked by the repository. The default
+Print import paths for tracked and non-ignored working-tree Go directories.
+The default
 includes the historical test packages; --production limits discovery to
-runtime packages and commands. --tags selects an additional Go build-tag
-profile without changing the default invocation used by CI.
+runtime packages and commands. --coverage selects all first-party production
+packages, including evaluation packages, for complete source accounting.
+--tags selects an additional Go build-tag profile without changing the default
+invocation used by CI.
 EOF
 }
 
@@ -20,6 +24,10 @@ while (($# > 0)); do
 	case "$1" in
 		--production)
 			PRODUCTION_ONLY=true
+			shift
+			;;
+		--coverage)
+			COVERAGE_ONLY=true
 			shift
 			;;
 		--tags)
@@ -63,7 +71,7 @@ is_excluded() {
 	if [[ "${path}" == tests/* || "${path}" == */tests/* ]]; then
 		return 0
 	fi
-	if [[ "${path}" == cmd/eval-* || "${path}" == internal/evalharness ]]; then
+	if [[ "${PRODUCTION_ONLY}" == true && ( "${path}" == cmd/eval-* || "${path}" == internal/evalharness ) ]]; then
 		return 0
 	fi
 	return 1
@@ -84,7 +92,7 @@ is_nested_module() {
 
 mapfile -t tracked_files < <(
 	if git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-		git -C "${ROOT_DIR}" ls-files '*.go'
+		git -C "${ROOT_DIR}" ls-files --cached --others --exclude-standard -- '*.go'
 	else
 		find "${ROOT_DIR}" -type f -name '*.go' -print | sed "s#^${ROOT_DIR}/##"
 	fi
@@ -106,7 +114,7 @@ mapfile -t tracked_dirs < <(
 		if is_nested_module "${dir}"; then
 			continue
 		fi
-		if [[ "${PRODUCTION_ONLY}" == true ]] && is_excluded "${dir}"; then
+		if [[ "${PRODUCTION_ONLY}" == true || "${COVERAGE_ONLY}" == true ]] && is_excluded "${dir}"; then
 			continue
 		fi
 		if [[ "${dir}" != tests/uat/* && "${dir}" != tests/eval/runtime/* ]]; then
@@ -121,13 +129,9 @@ if ((${#tracked_dirs[@]} == 0)); then
 	exit 1
 fi
 
-packages=()
+package_dirs=()
 for dir in "${tracked_dirs[@]}"; do
-	if ! package=$(go list "${go_list_args[@]}" "./${dir#./}"); then
-		echo "failed to resolve tracked Go package: ${dir}" >&2
-		exit 1
-	fi
-	packages+=("${package}")
+	package_dirs+=("./${dir#./}")
 done
 
-printf '%s\n' "${packages[@]}" | sort -u
+go list "${go_list_args[@]}" "${package_dirs[@]}" | sort -u

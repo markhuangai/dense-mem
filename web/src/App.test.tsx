@@ -534,7 +534,7 @@ describe("App", () => {
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
 
-    expect(await screen.findByLabelText("Team overview")).toHaveTextContent("Metrics unavailable");
+    await waitFor(() => expect(screen.getByLabelText("Team overview")).toHaveTextContent("Metrics unavailable"));
     expect(screen.getByLabelText("Team activity")).toHaveTextContent("unavailable");
     expect(screen.getByLabelText("Top signals")).toHaveTextContent("n/a");
   });

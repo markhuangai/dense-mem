@@ -14,8 +14,6 @@ import (
 // Recall and Trace. The caller owns the transaction and its visibility fence.
 type RelationshipConflictReader func(context.Context, *gorm.DB, string, *time.Time, []recallcontract.RecallEvidenceHit) ([]tracecontract.RelationshipConflictCaseRecord, error)
 
-const EvidenceConflictRecallCandidateLimit = evidenceConflictRecallCandidateLimit
-
 // LoadRelationshipConflictRecordsInSpace loads bounded conflict projections on
 // the supplied transaction without creating a second transaction boundary.
 func LoadRelationshipConflictRecordsInSpace(ctx context.Context, tx *gorm.DB, teamID string, relationshipIDs []string, knownAt *time.Time, spaceID string) ([]tracecontract.RelationshipConflictCaseRecord, error) {
@@ -30,24 +28,6 @@ func LoadRelationshipConflictRecordsByID(ctx context.Context, tx *gorm.DB, teamI
 
 func LoadActiveRelationshipConflictRecordsByIDBounded(ctx context.Context, tx *gorm.DB, teamID string, conflictIDs []string, knownAt *time.Time, positionLimit, supporterLimit int) ([]tracecontract.RelationshipConflictCaseRecord, error) {
 	return loadActiveRelationshipConflictRecordsByIDBounded(ctx, tx, teamID, conflictIDs, knownAt, positionLimit, supporterLimit)
-}
-
-// LoadEvidenceConflictRecords loads cited-evidence conflict projections on the
-// same recall transaction and scope fence.
-func LoadEvidenceConflictRecords(ctx context.Context, tx *gorm.DB, input recallcontract.RecallEvidenceInput, results []recallcontract.RecallEvidenceHit) ([]conflictcontract.EvidenceConflictCaseRecord, error) {
-	return loadRecallEvidenceConflictRecords(ctx, tx, input, results)
-}
-
-// LoadRecallEvidenceConflictCase exposes the bounded historical case reader to
-// the legacy database-case overlay while the fixture migrates to Conflict.
-func LoadRecallEvidenceConflictCase(ctx context.Context, tx *gorm.DB, teamID, conflictID string, knownAt *time.Time) (*conflictcontract.EvidenceConflictCaseRecord, error) {
-	return loadRecallEvidenceConflictCase(ctx, tx, teamID, conflictID, knownAt)
-}
-
-// LoadEvidenceConflictEventsAt exposes the bounded historical event reader to
-// the legacy database-case overlay while the fixture migrates to Conflict.
-func LoadEvidenceConflictEventsAt(ctx context.Context, tx *gorm.DB, teamID, conflictID string, knownAt *time.Time) ([]conflictcontract.EvidenceConflictEventRecord, error) {
-	return loadEvidenceConflictEventsAt(ctx, tx, teamID, conflictID, knownAt)
 }
 
 func LoadEvidenceConflictPositions(ctx context.Context, tx *gorm.DB, teamID, conflictID string) ([]conflictcontract.EvidenceConflictPositionRecord, error) {

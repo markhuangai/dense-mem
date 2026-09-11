@@ -116,6 +116,9 @@ jobs:
       - name: Install MCP proxy dependencies
         run: npm ci --prefix packages/mcp-proxy
 
+      - name: Install browser dependencies
+        run: npm ci --prefix web
+
       - name: Run repository lint
         run: npm run --prefix .lint lint:lines
 
@@ -123,9 +126,15 @@ jobs:
         run: |
           node scripts/check-architecture.mjs
           node --test tests/uat/architecture_conformance.test.mjs
+          node --test tests/uat/coverage_policy.test.mjs
 
       - name: Run MCP proxy tests
-        run: npm test --prefix packages/mcp-proxy
+        run: npm run test:coverage --prefix packages/mcp-proxy
+
+      - name: Run browser tests, coverage, and builds
+        run: |
+          npm run test:coverage --prefix web
+          npm run build --prefix web
 
       - name: Run scheduled-dreaming timing test
         run: node --test tests/uat/team_dreaming_schedule.test.mjs
@@ -164,27 +173,7 @@ jobs:
 
       - name: Run unit coverage gate
         shell: bash
-        run: |
-          set -euo pipefail
+        run: scripts/coverage-report.sh --transitional
 
-          packages="$(
-            go list -f '{{if .TestGoFiles}}{{.ImportPath}}{{end}}' ./internal/... |
-              sed '/^$/d' |
-              grep -Ev '/(evalharness|repository|knowledge/postgres|dream/postgres|trace/postgres|graph/postgres)$|/storage/(postgres|redis)$'
-          )"
-
-          printf '%s\n' "${packages}"
-          go test ${packages} -covermode=atomic -coverprofile=coverage.out
-          go tool cover -func=coverage.out
-
-          total="$(go tool cover -func=coverage.out | awk '/^total:/ { gsub(/%/, "", $3); print $3 }')"
-          awk \
-            -v total="${total}" \
-            -v threshold="${COVERAGE_THRESHOLD}" \
-            'BEGIN {
-              if ((total + 0) < (threshold + 0)) {
-                printf("coverage %.1f%% is below required %.1f%%\n", total, threshold)
-                exit 1
-              }
-              printf("coverage %.1f%% meets required %.1f%%\n", total, threshold)
-            }'
+      - name: Publish complete Go coverage report
+        run: scripts/coverage-report.sh --complete

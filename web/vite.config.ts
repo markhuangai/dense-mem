@@ -40,5 +40,17 @@ export default defineConfig({
     exclude: ["tests/**", "node_modules/**", "dist/**"],
     setupFiles: ["./src/test/setup.ts"],
     globals: true,
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json-summary"],
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: [
+        "src/**/*.test.{ts,tsx}",
+        "src/test/**",
+        "src/user/App.test-helpers.ts",
+        "src/main.tsx",
+        "src/user/main.tsx",
+      ],
+    },
   },
 });

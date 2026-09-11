@@ -19,10 +19,6 @@
       "issue": 377
     },
     {
-      "path": "internal/conflict/postgres/evidence_conflict_recall.go",
-      "issue": 377
-    },
-    {
       "path": "internal/http/control_portal_evidence_conflicts.go",
       "issue": 377
     },
