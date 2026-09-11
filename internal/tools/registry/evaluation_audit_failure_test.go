@@ -7,14 +7,14 @@ import (
 	"errors"
 	"testing"
 
-	appservice "github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 type failingEvaluationAudit struct {
 	err error
 }
 
-func (s failingEvaluationAudit) Append(context.Context, appservice.AuditLogEntry) error {
+func (s failingEvaluationAudit) Append(context.Context, accessservice.AuditLogEntry) error {
 	return s.err
 }
 

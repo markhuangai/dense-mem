@@ -53,7 +53,6 @@
         {"path": "internal/http/router_protected.go", "symbol": "ProtectedDeps.GetAuditService"},
         {"path": "internal/http/mcp_bindings.go", "symbol": "ProtectedDeps.withMCPBindings"},
         {"path": "internal/http/user_portal_routes.go", "symbol": "RegisterUserPortal"},
-        {"path": "internal/tools/registry/evaluation_tools.go", "symbol": "auditEvaluationTool"},
         {"path": "internal/tools/registry/toolset.go", "symbol": "BuildActive"},
         {"path": "internal/tools/registry/test_helpers_test.go", "symbol": "evaluationAuditStub.Append"}
       ],

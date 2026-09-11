@@ -9,14 +9,14 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/markhuangai/dense-mem/internal/repository"
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 func TestEvalKnowledgeToolsUseTeamScopeAndStripPayloads(t *testing.T) {
 	audit := &evaluationAuditStub{}
 	evaluation := &evalEvaluationStore{
-		listPage: &repository.EvaluationPage{
+		listPage: &dreamcontract.EvaluationPage{
 			Items: []map[string]any{{
 				"type":             "evidence",
 				"id":               "00000000-0000-0000-0000-00000000e001",
@@ -90,36 +90,22 @@ func TestEvalKnowledgeToolRequiresRepository(t *testing.T) {
 	}
 }
 
-func TestEvalActorTeamIDFallbackAndError(t *testing.T) {
-	teamID := "00000000-0000-0000-0000-000000000707"
-	got, err := evalActorTeamID(context.Background(), teamID)
-	if err != nil {
-		t.Fatalf("evalActorTeamID fallback: %v", err)
-	}
-	if got != teamID {
-		t.Fatalf("fallback team id = %q; want %q", got, teamID)
-	}
-	if _, err := evalActorTeamID(context.Background(), "not-a-uuid"); err == nil {
-		t.Fatal("evalActorTeamID accepted missing actor and invalid fallback")
-	}
-}
-
 type evalEvaluationStore struct {
-	lastList repository.EvaluationListInput
-	lastGet  repository.EvaluationGetInput
-	listPage *repository.EvaluationPage
+	lastList dreamcontract.EvaluationListInput
+	lastGet  dreamcontract.EvaluationGetInput
+	listPage *dreamcontract.EvaluationPage
 	item     map[string]any
 }
 
-func (s *evalEvaluationStore) ListEvaluationRefs(_ context.Context, input repository.EvaluationListInput) (*repository.EvaluationPage, error) {
+func (s *evalEvaluationStore) ListEvaluationRefs(_ context.Context, input dreamcontract.EvaluationListInput) (*dreamcontract.EvaluationPage, error) {
 	s.lastList = input
 	if s.listPage != nil {
 		return s.listPage, nil
 	}
-	return &repository.EvaluationPage{}, nil
+	return &dreamcontract.EvaluationPage{}, nil
 }
 
-func (s *evalEvaluationStore) GetEvaluationItem(_ context.Context, input repository.EvaluationGetInput) (map[string]any, error) {
+func (s *evalEvaluationStore) GetEvaluationItem(_ context.Context, input dreamcontract.EvaluationGetInput) (map[string]any, error) {
 	s.lastGet = input
 	if s.item != nil {
 		return s.item, nil

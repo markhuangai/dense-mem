@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/markhuangai/dense-mem/internal/service/recallquality"
+	recallquality "github.com/markhuangai/dense-mem/internal/recall/quality"
 )
 
 func ScoreTraces(runID, mode, seedID, seedHash, suitePath string, suite []SuiteCase, cases map[string]Case, qrels map[string]QRel, traces []RecallTrace, mapping KnowledgeMapping) ([]RetrievalScore, Summary, error) {

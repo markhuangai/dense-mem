@@ -24,7 +24,6 @@ type SemanticRepositoryImpl struct {
 	rls            rLSHelper
 	knowledgeOwner *knowledgepostgres.Store
 	dreamAdapter   *dreampostgres.Store
-	evaluation     *EvaluationReader
 }
 
 var _ SemanticRepository = (*SemanticRepositoryImpl)(nil)
@@ -35,7 +34,6 @@ func NewSemanticRepository(db *gorm.DB, rls *postgres.RLS) *SemanticRepositoryIm
 		knowledgeOwner: knowledgepostgres.NewStore(db, rls, knowledgecontract.ConflictRuntimeConfig{}),
 		dreamAdapter:   dreampostgres.NewStore(db, rls),
 	}
-	repository.evaluation = newCompatibilityEvaluationReader(db, rls)
 	return repository
 }
 
