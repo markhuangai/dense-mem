@@ -104,18 +104,18 @@ func (r *Store) ListEvidenceConflicts(ctx context.Context, input EvidenceConflic
 		if err := rows.Close(); err != nil {
 			return err
 		}
-		for index := range cases {
-			cases[index].Positions, err = loadEvidenceConflictPositions(ctx, tx, input.TeamID, cases[index].ConflictID)
-			if err != nil {
-				return err
-			}
-		}
 		result.Items = cases
 		if len(result.Items) > input.Limit {
 			last := result.Items[input.Limit-1]
 			result.Items = result.Items[:input.Limit]
 			cursor := EvidenceConflictCursor{Version: 1, TeamID: input.TeamID, StatusFilter: input.Status, UpdatedAt: last.UpdatedAt, ConflictID: last.ConflictID}
 			result.NextCursor = &cursor
+		}
+		for index := range result.Items {
+			result.Items[index].Positions, err = loadEvidenceConflictPositions(ctx, tx, input.TeamID, result.Items[index].ConflictID)
+			if err != nil {
+				return err
+			}
 		}
 		return nil
 	})
