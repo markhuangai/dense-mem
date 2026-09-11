@@ -17,8 +17,6 @@
     {"path": "internal/service/dreamservice/compat_test.go", "issue": 365},
     {"path": "internal/repository/dream_compat.go", "issue": 365},
     {"path": "internal/repository/dream_types.go", "issue": 365},
-    {"path": "internal/repository/evaluation_repository.go", "issue": 365},
-    {"path": "internal/repository/evaluation_repository_test.go", "issue": 365},
     {"path": "internal/storage/postgres/dream_helpers.go", "issue": 365},
     {"path": "internal/storage/postgres/dream_helpers_test.go", "issue": 365},
     {

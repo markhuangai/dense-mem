@@ -138,6 +138,19 @@ func TestClassifyContractAllowsEvaluationToolsAndRejectsUnknownTools(t *testing.
 	require.ErrorContains(t, err, "unsupported or mixed MCP contract")
 }
 
+func TestClassifyContractAllowsOmittedRuntimeOptionalTools(t *testing.T) {
+	definitions := make([]mcpToolDefinition, 0, len(registry.ContractTools()))
+	for _, tool := range registry.ContractTools() {
+		if registry.ContractToolRuntimeOptional(tool.Name) {
+			continue
+		}
+		definitions = append(definitions, mcpToolDefinition{Name: tool.Name, OutputSchema: tool.OutputSchema})
+	}
+	mode, err := classifyContract(definitions)
+	require.NoError(t, err)
+	require.Equal(t, contractModeV263, mode)
+}
+
 func TestClassifyContractAcceptsRetainedV262Schema(t *testing.T) {
 	definitions := make([]mcpToolDefinition, 0, len(registry.ContractTools()))
 	for _, tool := range registry.ContractTools() {
