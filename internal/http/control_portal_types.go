@@ -3,14 +3,14 @@ package http
 import (
 	nethttp "net/http"
 
+	"github.com/markhuangai/dense-mem/internal/conflict/evidence"
+	"github.com/markhuangai/dense-mem/internal/conflict/queue"
 	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/recall"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
-	"github.com/markhuangai/dense-mem/internal/service/conflictqueue"
-	"github.com/markhuangai/dense-mem/internal/service/evidenceconflict"
 )
 
 type ControlPortalTelemetry struct {

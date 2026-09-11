@@ -1,4 +1,4 @@
-package repository
+package postgres
 
 import (
 	"context"
@@ -12,17 +12,13 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	conflictcontract "github.com/markhuangai/dense-mem/internal/conflict/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-type ConflictQueueRepository interface {
-	ListConflictQueue(context.Context, domain.ConflictQueueQuery) (*domain.ConflictQueuePage, error)
-	CollectConflictQueueMetrics(context.Context) (domain.ConflictQueueMetricsSnapshot, error)
-}
+var _ conflictcontract.ConflictQueueRepository = (*Store)(nil)
 
-var _ ConflictQueueRepository = (*LedgerRepositoryImpl)(nil)
-
-func (r *LedgerRepositoryImpl) ListConflictQueue(ctx context.Context, query domain.ConflictQueueQuery) (*domain.ConflictQueuePage, error) {
+func (r *Store) ListConflictQueue(ctx context.Context, query domain.ConflictQueueQuery) (*domain.ConflictQueuePage, error) {
 	if err := validateConflictQueueQuery(query); err != nil {
 		return nil, err
 	}
@@ -74,7 +70,7 @@ func (r *LedgerRepositoryImpl) ListConflictQueue(ctx context.Context, query doma
 	return page, nil
 }
 
-func (r *LedgerRepositoryImpl) CollectConflictQueueMetrics(ctx context.Context) (domain.ConflictQueueMetricsSnapshot, error) {
+func (r *Store) CollectConflictQueueMetrics(ctx context.Context) (domain.ConflictQueueMetricsSnapshot, error) {
 	var snapshot domain.ConflictQueueMetricsSnapshot
 	err := r.withSystemReadOnlyRepeatableTx(ctx, func(tx *gorm.DB) error {
 		collectedAt, err := transactionTimestamp(ctx, tx)
@@ -123,16 +119,6 @@ func validateConflictQueueQuery(query domain.ConflictQueueQuery) error {
 		}
 	}
 	return nil
-}
-
-func (r *LedgerRepositoryImpl) withSystemReadOnlyRepeatableTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
-	if r == nil || r.db == nil {
-		return errors.New("conflict queue: database is required")
-	}
-	if r.rls == nil {
-		return errors.New("conflict queue: rls helper is required")
-	}
-	return r.rls.WithSystemReadOnlyRepeatableTx(ctx, r.db, fn)
 }
 
 func transactionTimestamp(ctx context.Context, tx *gorm.DB) (time.Time, error) {

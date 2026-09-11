@@ -7,9 +7,9 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/markhuangai/dense-mem/internal/conflict/queue"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service/conflictqueue"
 )
 
 func (h *controlPortalHandler) listConflictQueue(c echo.Context) error {

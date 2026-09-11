@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/conflict/queue"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service/conflictqueue"
 )
 
 type conflictQueueReaderFunc func(context.Context, string, conflictqueue.ListOptions) (*domain.ConflictQueuePage, error)

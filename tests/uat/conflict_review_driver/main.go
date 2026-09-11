@@ -14,10 +14,12 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/config"
-	"github.com/markhuangai/dense-mem/internal/conflictassessment"
+	"github.com/markhuangai/dense-mem/internal/conflict/assessment"
+	conflictcontract "github.com/markhuangai/dense-mem/internal/conflict/contract"
+	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
+	"github.com/markhuangai/dense-mem/internal/conflict/review"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service/conflictreview"
 	postgresstorage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
@@ -92,6 +94,7 @@ func main() {
 
 	rls := postgresstorage.NewRLS()
 	ledger := repository.NewLedgerRepository(db, rls)
+	conflictStore := conflictpostgres.NewStore(db, rls, ledger)
 	limits := conflictassessment.DefaultSemanticAssessmentLimits()
 	provider := verifier.NewOpenAIVerifierWithAssessmentLimits(&cfg, nil, verifier.SemanticAssessmentLimits(limits))
 	embeddingProvider := embedding.NewRetryEmbeddingProviderWithKey(
@@ -100,7 +103,7 @@ func main() {
 		cfg.GetAIAPIKey(),
 	)
 	reviewer, err := conflictreview.New(conflictreview.Dependencies{
-		Repository:       ledger,
+		Repository:       conflictStore,
 		Provider:         legacyConflictProvider{provider: provider},
 		Embeddings:       embeddingProvider,
 		EmbeddingTimeout: time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
@@ -113,7 +116,7 @@ func main() {
 
 	workerID := fmt.Sprintf("conflict-e2e-%s-%d", compactID(*conflictID), now.Unix())
 	lease := reviewLease()
-	run, claimed, err := ledger.ReserveRelationshipConflictReviewRun(ctx, repository.ConflictReviewRunInput{
+	run, claimed, err := conflictStore.ReserveRelationshipConflictReviewRun(ctx, conflictcontract.ConflictReviewRunInput{
 		TeamID:       *teamID,
 		WorkerID:     workerID,
 		LocalRunDate: now,
@@ -127,12 +130,12 @@ func main() {
 		fatal("conflict review run was not claimable for %s", now.Format("2006-01-02"))
 	}
 
-	record, err := claimTarget(ctx, ledger, *teamID, *conflictID, run.ReviewRunID, workerID, lease, now)
+	record, err := claimTarget(ctx, conflictStore, *teamID, *conflictID, run.ReviewRunID, workerID, lease, now)
 	if err != nil {
-		completeFailedRun(ctx, ledger, *teamID, run.ReviewRunID, workerID)
+		completeFailedRun(ctx, conflictStore, *teamID, run.ReviewRunID, workerID)
 		fatal("claim conflict: %v", err)
 	}
-	result, err := reviewer.ReviewRelationshipConflictCase(ctx, repository.ReviewRelationshipConflictCaseInput{
+	result, err := reviewer.ReviewRelationshipConflictCase(ctx, conflictcontract.ReviewRelationshipConflictCaseInput{
 		TeamID:      *teamID,
 		WorkerID:    workerID,
 		ReviewRunID: run.ReviewRunID,
@@ -140,11 +143,11 @@ func main() {
 		Now:         now,
 	})
 	if err != nil {
-		completeFailedRun(ctx, ledger, *teamID, run.ReviewRunID, workerID)
+		completeFailedRun(ctx, conflictStore, *teamID, run.ReviewRunID, workerID)
 		fatal("review conflict: %v", err)
 	}
 
-	completion := repository.ConflictReviewRunCompleteInput{
+	completion := conflictcontract.ConflictReviewRunCompleteInput{
 		TeamID:       *teamID,
 		ReviewRunID:  run.ReviewRunID,
 		WorkerID:     workerID,
@@ -152,14 +155,14 @@ func main() {
 		ClaimedCases: 1,
 	}
 	switch result.Outcome {
-	case repository.ConflictReviewOutcomeResolve:
+	case conflictcontract.ConflictReviewOutcomeResolve:
 		completion.ResolvedCases = 1
-	case repository.ConflictReviewOutcomeOverdue:
+	case conflictcontract.ConflictReviewOutcomeOverdue:
 		completion.OverdueCases = 1
 	default:
 		completion.NoOpCases = 1
 	}
-	if err := ledger.CompleteRelationshipConflictReviewRun(ctx, completion); err != nil {
+	if err := conflictStore.CompleteRelationshipConflictReviewRun(ctx, completion); err != nil {
 		fatal("complete conflict review run: %v", err)
 	}
 
@@ -183,17 +186,17 @@ func main() {
 
 func claimTarget(
 	ctx context.Context,
-	ledger *repository.LedgerRepositoryImpl,
+	ledger *conflictpostgres.Store,
 	teamID string,
 	conflictID string,
 	reviewRunID string,
 	workerID string,
 	lease time.Duration,
 	now time.Time,
-) (*repository.RelationshipConflictCaseRecord, error) {
+) (*conflictcontract.RelationshipConflictCaseRecord, error) {
 	deadline := time.Now().Add(claimWait)
 	for {
-		records, err := ledger.ClaimRelationshipConflictCases(ctx, repository.ClaimRelationshipConflictCasesInput{
+		records, err := ledger.ClaimRelationshipConflictCases(ctx, conflictcontract.ClaimRelationshipConflictCasesInput{
 			TeamID:      teamID,
 			WorkerID:    workerID,
 			ReviewRunID: reviewRunID,
@@ -238,12 +241,12 @@ func reviewLease() time.Duration {
 
 func completeFailedRun(
 	ctx context.Context,
-	ledger *repository.LedgerRepositoryImpl,
+	ledger *conflictpostgres.Store,
 	teamID string,
 	reviewRunID string,
 	workerID string,
 ) {
-	_ = ledger.CompleteRelationshipConflictReviewRun(ctx, repository.ConflictReviewRunCompleteInput{
+	_ = ledger.CompleteRelationshipConflictReviewRun(ctx, conflictcontract.ConflictReviewRunCompleteInput{
 		TeamID:      teamID,
 		ReviewRunID: reviewRunID,
 		WorkerID:    workerID,

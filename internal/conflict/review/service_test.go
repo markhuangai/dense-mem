@@ -12,10 +12,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/markhuangai/dense-mem/internal/conflictassessment"
+	repository "github.com/markhuangai/dense-mem/internal/conflict/contract"
+	"github.com/markhuangai/dense-mem/internal/conflict/assessment"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 

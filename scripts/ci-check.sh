@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 npm ci --prefix .lint
+npm ci --prefix web
+npm ci --prefix packages/mcp-proxy
 npm run --prefix .lint lint:lines
 node scripts/check-architecture.mjs
 node --test tests/uat/architecture_conformance.test.mjs
@@ -18,30 +20,14 @@ node --test tests/uat/prerelease_version.test.mjs
 node --test tests/uat/go_vulnerability_scan_policy.test.mjs
 node --test tests/uat/ai_pr_review_policy.test.mjs
 bash tests/eval/scripts/run_full_public_rag_eval_until_done_test.sh
+node --test tests/uat/coverage_policy.test.mjs
+npm run test:coverage --prefix web
+npm run test:coverage --prefix packages/mcp-proxy
 packages="$(scripts/go-packages.sh)"
 
 printf '%s\n' "${packages}"
 go test ${packages}
 go -C cmd/e2e test ./... -count=1
 
-packages="$(
-	go list -f '{{if .TestGoFiles}}{{.ImportPath}}{{end}}' ./internal/... |
-		sed '/^$/d' |
-		grep -Ev '/(evalharness|repository|knowledge/postgres|dream/postgres|trace/postgres|graph/postgres)$|/storage/(neo4j|postgres|redis)$'
-)"
-
-printf '%s\n' "${packages}"
-go test ${packages} -covermode=atomic -coverprofile=coverage.out
-go tool cover -func=coverage.out
-
-total="$(go tool cover -func=coverage.out | awk '/^total:/ { gsub(/%/, "", $3); print $3 }')"
-awk \
-	-v total="${total}" \
-	-v threshold="${COVERAGE_THRESHOLD:-90.0}" \
-	'BEGIN {
-		if ((total + 0) < (threshold + 0)) {
-			printf("coverage %.1f%% is below required %.1f%%\n", total, threshold)
-			exit 1
-		}
-		printf("coverage %.1f%% meets required %.1f%%\n", total, threshold)
-	}'
+scripts/coverage-report.sh --transitional
+scripts/coverage-report.sh --complete

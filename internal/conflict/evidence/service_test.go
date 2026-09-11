@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/markhuangai/dense-mem/internal/repository"
+	repository "github.com/markhuangai/dense-mem/internal/conflict/contract"
 )
 
 type evidenceConflictStoreStub struct {

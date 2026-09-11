@@ -7,6 +7,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
+func normalizeConflictRuntimeConfig(input ConflictRuntimeConfig) ConflictRuntimeConfig {
+	return knowledgepostgres.NormalizeConflictRuntimeConfig(input)
+}
+
 func NewLedgerRepository(db *gorm.DB, rls *postgres.RLS) *LedgerRepositoryImpl {
 	return NewLedgerRepositoryWithRuntimeConfig(db, rls, ConflictRuntimeConfig{})
 }

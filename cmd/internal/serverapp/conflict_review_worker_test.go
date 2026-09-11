@@ -5,9 +5,9 @@ import (
 	"errors"
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/config"
+	conflictcontract "github.com/markhuangai/dense-mem/internal/conflict/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
 	"log/slog"
 	"testing"
 	"time"
@@ -98,7 +98,7 @@ func TestProcessTeamConflictReviewCompletesEmptyRun(t *testing.T) {
 	cfg := testConflictReviewConfig(t, "UTC", "04:00", "0")
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	ledger := &conflictReviewLedgerStub{
-		run: &repository.ConflictReviewRunRecord{
+		run: &conflictcontract.ConflictReviewRunRecord{
 			TeamID:      "00000000-0000-0000-0000-000000000001",
 			ReviewRunID: "00000000-0000-0000-0000-000000000002",
 			Status:      "running",
@@ -113,7 +113,7 @@ func TestProcessTeamConflictReviewCompletesEmptyRun(t *testing.T) {
 	if len(ledger.completes) != 1 {
 		t.Fatalf("complete calls = %#v", ledger.completes)
 	}
-	if len(ledger.derivedInputs) != 1 || ledger.derivedInputs[0] != (repository.ClaimConflictDerivedEvidenceTasksInput{
+	if len(ledger.derivedInputs) != 1 || ledger.derivedInputs[0] != (conflictcontract.ClaimConflictDerivedEvidenceTasksInput{
 		TeamID:      ledger.run.TeamID,
 		ReviewRunID: ledger.run.ReviewRunID,
 		WorkerID:    "worker-a",
@@ -134,7 +134,7 @@ func TestProcessTeamConflictReviewCompletesEmptyRun(t *testing.T) {
 func TestProcessTeamConflictReviewRecordsDerivedEvidenceRetryFailure(t *testing.T) {
 	cfg := testConflictReviewConfig(t, "UTC", "04:00", "0")
 	ledger := &conflictReviewLedgerStub{
-		run: &repository.ConflictReviewRunRecord{
+		run: &conflictcontract.ConflictReviewRunRecord{
 			TeamID:      "00000000-0000-0000-0000-000000000020",
 			ReviewRunID: "00000000-0000-0000-0000-000000000021",
 			Status:      "running",
@@ -142,11 +142,11 @@ func TestProcessTeamConflictReviewRecordsDerivedEvidenceRetryFailure(t *testing.
 		},
 		claimed:    true,
 		derivedErr: errors.New("derived evidence task failed"),
-		claimBatches: [][]repository.RelationshipConflictCaseRecord{{
+		claimBatches: [][]conflictcontract.RelationshipConflictCaseRecord{{
 			{ConflictID: "00000000-0000-0000-0000-000000000022"},
 		}},
-		reviewResults: map[string]*repository.ReviewRelationshipConflictCaseResult{
-			"00000000-0000-0000-0000-000000000022": {Outcome: repository.ConflictReviewOutcomeNoop},
+		reviewResults: map[string]*conflictcontract.ReviewRelationshipConflictCaseResult{
+			"00000000-0000-0000-0000-000000000022": {Outcome: conflictcontract.ConflictReviewOutcomeNoop},
 		},
 	}
 	err := processTeamConflictReview(context.Background(), observability.New(slog.LevelError), ledger, cfg, observability.NoopDiscoverabilityMetrics(), ledger.run.TeamID, ledger.run.WorkerID, time.Now().UTC())
@@ -164,7 +164,7 @@ func TestProcessTeamConflictReviewRecordsDerivedEvidenceRetryFailure(t *testing.
 func TestProcessTeamConflictReviewCompletesRunAfterParentContextDeadline(t *testing.T) {
 	cfg := testConflictReviewConfig(t, "UTC", "04:00", "0")
 	ledger := &conflictReviewLedgerStub{
-		run: &repository.ConflictReviewRunRecord{
+		run: &conflictcontract.ConflictReviewRunRecord{
 			TeamID:      "00000000-0000-0000-0000-000000000030",
 			ReviewRunID: "00000000-0000-0000-0000-000000000031",
 			Status:      "running",
@@ -188,23 +188,23 @@ func TestProcessTeamConflictReviewCountsMixedOutcomes(t *testing.T) {
 	teamID := "00000000-0000-0000-0000-000000000010"
 	runID := "00000000-0000-0000-0000-000000000011"
 	ledger := &conflictReviewLedgerStub{
-		run: &repository.ConflictReviewRunRecord{
+		run: &conflictcontract.ConflictReviewRunRecord{
 			TeamID:      teamID,
 			ReviewRunID: runID,
 			Status:      "running",
 			WorkerID:    "worker-b",
 		},
 		claimed: true,
-		claimBatches: [][]repository.RelationshipConflictCaseRecord{{
+		claimBatches: [][]conflictcontract.RelationshipConflictCaseRecord{{
 			{ConflictID: "00000000-0000-0000-0000-000000000101"},
 			{ConflictID: "00000000-0000-0000-0000-000000000102"},
 			{ConflictID: "00000000-0000-0000-0000-000000000103"},
 			{ConflictID: "00000000-0000-0000-0000-000000000104"},
 		}},
-		reviewResults: map[string]*repository.ReviewRelationshipConflictCaseResult{
-			"00000000-0000-0000-0000-000000000101": {Outcome: repository.ConflictReviewOutcomeResolve},
-			"00000000-0000-0000-0000-000000000102": {Outcome: repository.ConflictReviewOutcomeOverdue},
-			"00000000-0000-0000-0000-000000000103": {Outcome: repository.ConflictReviewOutcomeNoop},
+		reviewResults: map[string]*conflictcontract.ReviewRelationshipConflictCaseResult{
+			"00000000-0000-0000-0000-000000000101": {Outcome: conflictcontract.ConflictReviewOutcomeResolve},
+			"00000000-0000-0000-0000-000000000102": {Outcome: conflictcontract.ConflictReviewOutcomeOverdue},
+			"00000000-0000-0000-0000-000000000103": {Outcome: conflictcontract.ConflictReviewOutcomeNoop},
 		},
 		reviewErrs: map[string]error{
 			"00000000-0000-0000-0000-000000000104": errors.New("case failed"),
@@ -237,11 +237,11 @@ func TestProcessTeamConflictReviewClaimsCasesOneAtATime(t *testing.T) {
 	teamID := "00000000-0000-0000-0000-000000000110"
 	runID := "00000000-0000-0000-0000-000000000111"
 	ledger := &conflictReviewLedgerStub{
-		run: &repository.ConflictReviewRunRecord{
+		run: &conflictcontract.ConflictReviewRunRecord{
 			TeamID: teamID, ReviewRunID: runID, Status: "running", WorkerID: "worker-one-at-a-time",
 		},
 		claimed: true,
-		claimBatches: [][]repository.RelationshipConflictCaseRecord{{
+		claimBatches: [][]conflictcontract.RelationshipConflictCaseRecord{{
 			{ConflictID: "00000000-0000-0000-0000-000000000112"},
 			{ConflictID: "00000000-0000-0000-0000-000000000113"},
 		}},
@@ -280,18 +280,18 @@ func testConflictReviewConfig(t *testing.T, timezone string, start string, jitte
 }
 
 type conflictReviewLedgerStub struct {
-	run                   *repository.ConflictReviewRunRecord
+	run                   *conflictcontract.ConflictReviewRunRecord
 	claimed               bool
 	reserveErr            error
-	reserveInputs         []repository.ConflictReviewRunInput
-	claimBatches          [][]repository.RelationshipConflictCaseRecord
-	claimInputs           []repository.ClaimRelationshipConflictCasesInput
+	reserveInputs         []conflictcontract.ConflictReviewRunInput
+	claimBatches          [][]conflictcontract.RelationshipConflictCaseRecord
+	claimInputs           []conflictcontract.ClaimRelationshipConflictCasesInput
 	claimErr              error
 	derivedErr            error
-	derivedInputs         []repository.ClaimConflictDerivedEvidenceTasksInput
-	reviewResults         map[string]*repository.ReviewRelationshipConflictCaseResult
+	derivedInputs         []conflictcontract.ClaimConflictDerivedEvidenceTasksInput
+	reviewResults         map[string]*conflictcontract.ReviewRelationshipConflictCaseResult
 	reviewErrs            map[string]error
-	completes             []repository.ConflictReviewRunCompleteInput
+	completes             []conflictcontract.ConflictReviewRunCompleteInput
 	completeContextErrors []error
 	completeErr           error
 }
@@ -327,11 +327,11 @@ func (l *conflictReviewLogCapture) Debug(string, ...observability.LogAttr) {}
 func (l *conflictReviewLogCapture) With(...observability.LogAttr) observability.LogProvider {
 	return l
 }
-func (s *conflictReviewLedgerStub) ReserveRelationshipConflictReviewRun(_ context.Context, input repository.ConflictReviewRunInput) (*repository.ConflictReviewRunRecord, bool, error) {
+func (s *conflictReviewLedgerStub) ReserveRelationshipConflictReviewRun(_ context.Context, input conflictcontract.ConflictReviewRunInput) (*conflictcontract.ConflictReviewRunRecord, bool, error) {
 	s.reserveInputs = append(s.reserveInputs, input)
 	return s.run, s.claimed, s.reserveErr
 }
-func (s *conflictReviewLedgerStub) ClaimRelationshipConflictCases(_ context.Context, input repository.ClaimRelationshipConflictCasesInput) ([]repository.RelationshipConflictCaseRecord, error) {
+func (s *conflictReviewLedgerStub) ClaimRelationshipConflictCases(_ context.Context, input conflictcontract.ClaimRelationshipConflictCasesInput) ([]conflictcontract.RelationshipConflictCaseRecord, error) {
 	s.claimInputs = append(s.claimInputs, input)
 	if s.claimErr != nil {
 		return nil, s.claimErr
@@ -343,20 +343,20 @@ func (s *conflictReviewLedgerStub) ClaimRelationshipConflictCases(_ context.Cont
 	s.claimBatches = s.claimBatches[1:]
 	return batch, nil
 }
-func (s *conflictReviewLedgerStub) ReviewRelationshipConflictCase(_ context.Context, input repository.ReviewRelationshipConflictCaseInput) (*repository.ReviewRelationshipConflictCaseResult, error) {
+func (s *conflictReviewLedgerStub) ReviewRelationshipConflictCase(_ context.Context, input conflictcontract.ReviewRelationshipConflictCaseInput) (*conflictcontract.ReviewRelationshipConflictCaseResult, error) {
 	if err := s.reviewErrs[input.ConflictID]; err != nil {
 		return nil, err
 	}
 	if result := s.reviewResults[input.ConflictID]; result != nil {
 		return result, nil
 	}
-	return &repository.ReviewRelationshipConflictCaseResult{Outcome: repository.ConflictReviewOutcomeNoop}, nil
+	return &conflictcontract.ReviewRelationshipConflictCaseResult{Outcome: conflictcontract.ConflictReviewOutcomeNoop}, nil
 }
-func (s *conflictReviewLedgerStub) ProcessPendingConflictDerivedEvidence(_ context.Context, input repository.ClaimConflictDerivedEvidenceTasksInput) (int, error) {
+func (s *conflictReviewLedgerStub) ProcessPendingConflictDerivedEvidence(_ context.Context, input conflictcontract.ClaimConflictDerivedEvidenceTasksInput) (int, error) {
 	s.derivedInputs = append(s.derivedInputs, input)
 	return 0, s.derivedErr
 }
-func (s *conflictReviewLedgerStub) CompleteRelationshipConflictReviewRun(ctx context.Context, input repository.ConflictReviewRunCompleteInput) error {
+func (s *conflictReviewLedgerStub) CompleteRelationshipConflictReviewRun(ctx context.Context, input conflictcontract.ConflictReviewRunCompleteInput) error {
 	s.completes = append(s.completes, input)
 	s.completeContextErrors = append(s.completeContextErrors, ctx.Err())
 	return s.completeErr

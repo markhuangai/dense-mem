@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	ErrConflictReviewLeaseLost           = errors.New("conflict review lease lost")
+	ErrConflictReviewLeaseLost           = knowledgecontract.ErrConflictReviewLeaseLost
 	ErrConflictContextStale              = errors.New("conflict context stale")
 	ErrRememberExactReferenceStale       = errors.New("remember exact reference stale")
 	ErrCorrectionTargetStale             = errors.New("correction target stale")

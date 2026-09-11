@@ -8,10 +8,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/markhuangai/dense-mem/internal/conflict/evidence"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service/evidenceconflict"
 )
 
 const evidenceConflictResolutionBodyKey = "evidence_conflict_resolution_body"

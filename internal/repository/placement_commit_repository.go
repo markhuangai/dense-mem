@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	ErrConflictReviewLeaseLost           = knowledgepostgres.ErrConflictReviewLeaseLost
+	ErrConflictReviewLeaseLost           = knowledgecontract.ErrConflictReviewLeaseLost
 	ErrSemanticStaleSource               = knowledgecontract.ErrSemanticStaleSource
 	ErrConflictContextStale              = knowledgepostgres.ErrConflictContextStale
 	ErrRememberExactReferenceStale       = knowledgepostgres.ErrRememberExactReferenceStale

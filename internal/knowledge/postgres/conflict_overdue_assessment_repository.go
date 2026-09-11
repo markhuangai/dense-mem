@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	ConflictAssessmentMaxFailedDays = 5
+	ConflictAssessmentMaxFailedDays = knowledgecontract.ConflictAssessmentMaxFailedDays
 	conflictResolutionMaxFragments  = 200
 )
 

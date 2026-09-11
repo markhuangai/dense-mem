@@ -43,6 +43,7 @@ test("proxy forwards stdio MCP requests to Dense-Mem Streamable HTTP", async () 
     env: {
       DENSE_MEM_MCP_URL: `http://127.0.0.1:${port}/mcp`,
       DENSE_MEM_API_KEY: "dm_live_test",
+      ...(process.env.NODE_V8_COVERAGE ? { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE } : {}),
     },
     stderr: "pipe",
   });

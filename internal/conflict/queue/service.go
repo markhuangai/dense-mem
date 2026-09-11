@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 
+	repository "github.com/markhuangai/dense-mem/internal/conflict/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 var (

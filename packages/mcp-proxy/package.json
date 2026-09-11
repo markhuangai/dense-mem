@@ -25,6 +25,7 @@
   ],
   "scripts": {
     "test": "node --test --test-concurrency=1 tests/*.test.js",
+    "test:coverage": "c8 --all --src src --exclude 'tests/**' --exclude 'src/**/*.test.js' --exclude bin --reporter=text --reporter=json-summary npm test",
     "start": "node bin/dense-mem-mcp-proxy.js"
   },
   "engines": {
@@ -37,6 +38,7 @@
     "supergateway": "3.4.3"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0"
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "c8": "10.1.3"
   }
 }

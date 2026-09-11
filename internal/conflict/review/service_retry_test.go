@@ -2,14 +2,15 @@ package conflictreview
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/markhuangai/dense-mem/internal/conflictassessment"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/conflict/assessment"
+	repository "github.com/markhuangai/dense-mem/internal/conflict/contract"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 
@@ -106,4 +107,19 @@ func TestServiceBoundsDetachedClaimReleaseContext(t *testing.T) {
 	deadline, ok := repo.releaseContexts[0].Deadline()
 	require.True(t, ok)
 	assert.WithinDuration(t, time.Now().Add(conflictClaimReleaseTimeout), deadline, time.Second)
+}
+
+func TestServiceIgnoresWrappedLeaseLossWhenReleasingClaim(t *testing.T) {
+	repo := newConflictReviewRepositoryStub(t)
+	repo.releaseErr = fmt.Errorf("claim release raced: %w", repository.ErrConflictReviewLeaseLost)
+	service := &Service{repository: repo}
+
+	err := service.releaseRetryableConflictClaim(context.Background(), repository.RelationshipConflictResolutionInput{
+		TeamID: conflictReviewTestTeamID, ConflictID: conflictReviewTestConflictID,
+		ReviewRunID: conflictReviewTestReviewRunID, WorkerID: conflictReviewTestWorkerID,
+		Now: time.Now().UTC(),
+	}, semanticwrite.ErrProviderUnavailable)
+
+	require.NoError(t, err)
+	require.Len(t, repo.releaseInputs, 1)
 }

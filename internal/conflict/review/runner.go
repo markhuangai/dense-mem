@@ -5,9 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/markhuangai/dense-mem/internal/conflictassessment"
+	repository "github.com/markhuangai/dense-mem/internal/conflict/contract"
+	"github.com/markhuangai/dense-mem/internal/conflict/assessment"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 type RunLedger interface {

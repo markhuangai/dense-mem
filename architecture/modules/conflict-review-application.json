@@ -2,13 +2,36 @@
   "schema_version": 1,
   "capability": "conflict-review-application",
   "source_ownership": [
-    {"path": "cmd/internal/serverapp/conflict_review_composition.go", "issue": 377}
+    {
+      "path": "cmd/internal/serverapp/conflict_review_composition.go",
+      "issue": 377
+    },
+    {
+      "path": "internal/conflict/review/runner.go",
+      "issue": 377
+    },
+    {
+      "path": "internal/conflict/review/service.go",
+      "issue": 377
+    },
+    {
+      "path": "internal/conflict/review/service_retry_test.go",
+      "issue": 377
+    },
+    {
+      "path": "internal/conflict/review/service_test.go",
+      "issue": 377
+    },
+    {
+      "path": "tests/uat/conflict_review_driver/main.go",
+      "issue": 377
+    }
   ],
   "completed_issues": [],
   "go": {
     "units": [
       {
-        "id": "github.com/markhuangai/dense-mem/internal/service/conflictreview",
+        "id": "github.com/markhuangai/dense-mem/internal/conflict/review",
         "role": "application_api",
         "visibility": "public"
       }
@@ -17,13 +40,7 @@
   "browser": {
     "units": []
   },
-  "exceptions": [
-    {
-      "source": "github.com/markhuangai/dense-mem/internal/service/conflictreview",
-      "target": "github.com/markhuangai/dense-mem/internal/repository",
-      "removal_issue": 377,
-      "reason": "Conflict review application code still consumes the legacy repository until conflict ownership is isolated."
-    }
-  ],
-  "workers": []
+  "exceptions": [],
+  "workers": [],
+  "compatibility_bridges": []
 }
