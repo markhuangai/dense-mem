@@ -13,16 +13,16 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	searchapp "github.com/markhuangai/dense-mem/internal/search"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type controlSearchConvergenceReader struct {
-	value *repository.SearchConvergence
+	value *searchapp.SearchConvergence
 	err   error
 }
 
-func (r controlSearchConvergenceReader) GetSearchConvergence(context.Context) (*repository.SearchConvergence, error) {
+func (r controlSearchConvergenceReader) GetSearchConvergence(context.Context) (*searchapp.SearchConvergence, error) {
 	return r.value, r.err
 }
 
@@ -39,12 +39,12 @@ func (l *controlSearchLogger) With(...observability.LogAttr) observability.LogPr
 func TestControlPortalSearchConvergenceMapsCurrentDocumentProjection(t *testing.T) {
 	now := time.Date(2026, time.August, 26, 1, 0, 0, 0, time.UTC)
 	start, finish := now.Add(-time.Minute), now.Add(-time.Second)
-	converted := toControlSearchConvergence(&repository.SearchConvergence{
+	converted := toControlSearchConvergence(&searchapp.SearchConvergence{
 		ObservedAt: now, Status: "attention_required", ExpectedDocuments: 10, CurrentDocuments: 7,
 		DriftedDocuments: 3, AffectedTeamCount: 2, OldestDriftAge: 2 * time.Minute,
-		Contract:     &repository.ActiveSearchContract{EmbeddingProvider: "openai", EmbeddingModel: "model", EmbeddingDimensions: 3, IndexGeneration: 4, IndexStrategy: "hnsw"},
-		DriftClasses: []repository.SearchDocumentDriftCount{{Class: "missing_vector", Count: 3}},
-		LatestRun:    &repository.SearchReconciliationRun{RunID: "run", LocalRunDate: now, Status: "failed", SelectedCount: 4, EmbeddedCount: 2, UpdatedCount: 1, DriftedCount: 3, LastError: "provider response contained private details", StartedAt: &start, CompletedAt: &finish, UpdatedAt: now},
+		Contract:     &searchapp.ActiveSearchContract{EmbeddingProvider: "openai", EmbeddingModel: "model", EmbeddingDimensions: 3, IndexGeneration: 4, IndexStrategy: "hnsw"},
+		DriftClasses: []searchapp.SearchDocumentDriftCount{{Class: "missing_vector", Count: 3}},
+		LatestRun:    &searchapp.SearchReconciliationRun{RunID: "run", LocalRunDate: now, Status: "failed", SelectedCount: 4, EmbeddedCount: 2, UpdatedCount: 1, DriftedCount: 3, LastError: "provider response contained private details", StartedAt: &start, CompletedAt: &finish, UpdatedAt: now},
 	})
 	require.Equal(t, "attention_required", converted.Status)
 	require.Equal(t, int64(10), converted.ExpectedDocuments)
@@ -63,7 +63,7 @@ func TestControlPortalSearchConvergenceHandlerBoundsFailures(t *testing.T) {
 	baseConfig := &config.Config{ControlPortalToken: "secret"}
 	for _, test := range []struct {
 		name   string
-		reader service.SearchConvergenceReader
+		reader searchapp.SearchConvergenceReader
 		want   int
 	}{
 		{name: "unavailable dependency", reader: controlSearchConvergenceReader{err: service.ErrSearchConvergenceUnavailable}, want: http.StatusServiceUnavailable},

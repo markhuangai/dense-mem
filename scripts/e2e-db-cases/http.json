@@ -8,6 +8,34 @@
       "run": "^TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration$",
       "phase": "precheck",
       "source": "internal/http/sso_oidc_integration.e2e"
+    },
+    {
+      "id": "http/TestConcurrencyLimiter_Contract_Redis",
+      "package": "./internal/sse",
+      "run": "^TestConcurrencyLimiter_Contract_Redis$",
+      "phase": "precheck",
+      "source": "internal/sse/lifecycle_redis_contract.e2e"
+    },
+    {
+      "id": "http/TestStreamLifecycle_Contract_Redis",
+      "package": "./internal/sse",
+      "run": "^TestStreamLifecycle_Contract_Redis$",
+      "phase": "precheck",
+      "source": "internal/sse/lifecycle_redis_contract.e2e"
+    },
+    {
+      "id": "http/TestRateLimitMiddleware_Contract_Redis",
+      "package": "./internal/http/middleware",
+      "run": "^TestRateLimitMiddleware_Contract_Redis$",
+      "phase": "precheck",
+      "source": "internal/http/middleware/rate_limit_redis_contract.e2e"
+    },
+    {
+      "id": "http/TestRedisHealth_Ping",
+      "package": "./internal/storage/redis",
+      "run": "^TestRedisHealth_Ping$",
+      "phase": "precheck",
+      "source": "internal/storage/redis/client_health.e2e"
     }
   ]
 }

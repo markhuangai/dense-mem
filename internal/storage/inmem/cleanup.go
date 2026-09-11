@@ -23,17 +23,3 @@ func (r *NoopCleanupRepository) PurgeTeamState(ctx context.Context, teamID strin
 func (r *NoopCleanupRepository) InvalidateCredentialSessions(ctx context.Context, teamID, credentialID string) error {
 	return nil
 }
-
-// NoopStreamCleanupRepository is a non-nil no-op implementation of
-// SSE stream cleanup operations. It returns nil for all cleanup calls.
-type NoopStreamCleanupRepository struct{}
-
-// NewNoopStreamCleanupRepository creates a new no-op stream cleanup repository.
-func NewNoopStreamCleanupRepository() *NoopStreamCleanupRepository {
-	return &NoopStreamCleanupRepository{}
-}
-
-// PurgeTeamStreamState is a no-op implementation that returns nil.
-func (r *NoopStreamCleanupRepository) PurgeTeamStreamState(ctx context.Context, teamID string) error {
-	return nil
-}

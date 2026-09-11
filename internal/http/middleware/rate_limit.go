@@ -8,13 +8,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/markhuangai/dense-mem/internal/config"
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 // RateLimitMiddleware creates a rate limiting middleware using the fixed-window algorithm.
-func RateLimitMiddleware(svc accessservice.RateLimitServiceInterface, cfg config.ConfigProvider, auditSvc accessservice.AuditService) echo.MiddlewareFunc {
+func RateLimitMiddleware(svc accessservice.RateLimitServiceInterface, cfg httpcontract.ConfigProvider, auditSvc accessservice.AuditService) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			// Get the principal from context
@@ -112,6 +112,6 @@ func logRateLimit(c echo.Context, auditSvc accessservice.AuditService, profileID
 	_ = auditSvc.RateLimited(ctx, profileIDPtr, "request", metadata, clientIP, correlationID)
 }
 
-func selectRateLimit(cfg config.ConfigProvider) int {
+func selectRateLimit(cfg httpcontract.ConfigProvider) int {
 	return cfg.GetRateLimitPerMinute()
 }

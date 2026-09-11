@@ -2,7 +2,7 @@ package sse_test
 
 import (
 	"context"
-	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,30 +13,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/storage/inmem"
-	"github.com/markhuangai/dense-mem/internal/storage/redis"
 )
-
-// redisConcurrencyTestConfig implements redis.ConfigProvider for testing.
-type redisConcurrencyTestConfig struct {
-	addr     string
-	password string
-	db       int
-}
-
-func (c *redisConcurrencyTestConfig) GetRedisAddr() string     { return c.addr }
-func (c *redisConcurrencyTestConfig) GetRedisPassword() string { return c.password }
-func (c *redisConcurrencyTestConfig) GetRedisDB() int          { return c.db }
-
-// redisConcurrencyLimiterForTest wraps the Redis client to implement
-// sse.ConcurrencyLimiter for contract testing.
-type redisConcurrencyLimiterForTest struct {
-	client *redis.RedisClient
-}
-
-func (r *redisConcurrencyLimiterForTest) Acquire(ctx context.Context, profileID string) (func(), error) {
-	limiter := sse.NewConcurrencyLimiter(r.client)
-	return limiter.Acquire(ctx, profileID)
-}
 
 // runConcurrencyLimiterContract exercises shared ConcurrencyLimiter behavior:
 // cap enforcement, rejection when at capacity, and clean release (AC-10, AC-11).
@@ -49,7 +26,7 @@ func runConcurrencyLimiterContract(t *testing.T, name string, factory func(t *te
 		limiter := factory(t)
 		ctx := context.Background()
 		const cap = 3
-		const profile = "contract-test-profile"
+		profile := "contract-test-profile-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
 
 		releases := make([]func(), 0, cap)
 		for i := 0; i < cap; i++ {
@@ -81,7 +58,8 @@ func runConcurrencyLimiterContract(t *testing.T, name string, factory func(t *te
 		limiter := factory(t)
 		ctx := context.Background()
 
-		release, err := limiter.Acquire(ctx, "idempotent-profile")
+		profile := "idempotent-profile-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
+		release, err := limiter.Acquire(ctx, profile)
 		require.NoError(t, err)
 
 		release()
@@ -101,7 +79,8 @@ func runConcurrencyLimiterContract(t *testing.T, name string, factory func(t *te
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				release, err := limiter.Acquire(ctx, "concurrent-profile")
+				profile := "concurrent-profile-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
+				release, err := limiter.Acquire(ctx, profile)
 				if err == nil {
 					atomic.AddInt64(&acquired, 1)
 					time.Sleep(10 * time.Millisecond)
@@ -128,44 +107,4 @@ func TestConcurrencyLimiter_Contract_InMemory(t *testing.T) {
 	}
 
 	runConcurrencyLimiterContract(t, "InMemory", factory)
-}
-
-func TestConcurrencyLimiter_Contract_Redis(t *testing.T) {
-	t.Parallel()
-
-	redisAddr := os.Getenv("REDIS_ADDR")
-	if redisAddr == "" {
-		t.Skip("REDIS_ADDR not set — skipping Redis-backed concurrency limiter test")
-	}
-
-	cfg := &redisConcurrencyTestConfig{
-		addr: redisAddr,
-	}
-
-	redisClient, err := redis.NewClient(t.Context(), cfg)
-	if err != nil {
-		t.Skipf("Redis not available at %s: %v", redisAddr, err)
-	}
-	defer redisClient.Close()
-
-	// Clean up keys before and after the test
-	keys, _, _ := redisClient.Scan(t.Context(), 0, "profile:contract-test-*:stream:count", 100)
-	for _, key := range keys {
-		_ = redisClient.Del(t.Context(), key)
-	}
-	defer func() {
-		keys, _, _ = redisClient.Scan(t.Context(), 0, "profile:contract-test-*:stream:count", 100)
-		for _, key := range keys {
-			_ = redisClient.Del(t.Context(), key)
-		}
-	}()
-
-	factory := func(t *testing.T) sse.ConcurrencyLimiter {
-		t.Helper()
-		return &redisConcurrencyLimiterForTest{
-			client: redisClient,
-		}
-	}
-
-	runConcurrencyLimiterContract(t, "Redis", factory)
 }

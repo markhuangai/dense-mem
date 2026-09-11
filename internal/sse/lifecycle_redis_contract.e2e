@@ -1,0 +1,200 @@
+package sse_test
+
+import (
+	"context"
+	"errors"
+	"net"
+	"os"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/markhuangai/dense-mem/internal/sse"
+	"github.com/markhuangai/dense-mem/internal/storage/redis"
+	goredis "github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	tcnetwork "github.com/testcontainers/testcontainers-go/network"
+	"github.com/testcontainers/testcontainers-go/wait"
+)
+
+type redisConcurrencyTestConfig struct {
+	addr     string
+	password string
+	db       int
+}
+
+func (c *redisConcurrencyTestConfig) GetRedisAddr() string     { return c.addr }
+func (c *redisConcurrencyTestConfig) GetRedisPassword() string { return c.password }
+func (c *redisConcurrencyTestConfig) GetRedisDB() int          { return c.db }
+
+type redisConcurrencyLimiterForTest struct {
+	client *redis.RedisClient
+}
+
+func (r *redisConcurrencyLimiterForTest) Acquire(ctx context.Context, teamID string) (func(), error) {
+	return sse.NewConcurrencyLimiterWithConfig(r.client, 3, 60).Acquire(ctx, teamID)
+}
+
+func TestConcurrencyLimiter_Contract_Redis(t *testing.T) {
+	redisAddr := redisContractAddress(t)
+
+	redisClient, err := redis.NewClient(t.Context(), redisConcurrencyConfig(t, redisAddr))
+	if err != nil {
+		t.Fatalf("connect to Redis: %v", err)
+	}
+	t.Cleanup(func() { require.NoError(t, redisClient.Close()) })
+
+	runConcurrencyLimiterContract(t, "Redis", func(t *testing.T) sse.ConcurrencyLimiter {
+		t.Helper()
+		return &redisConcurrencyLimiterForTest{client: redisClient}
+	})
+}
+
+func TestStreamLifecycle_Contract_Redis(t *testing.T) {
+	client := openRedisContractClient(t)
+	teamID := "lifecycle-contract-" + strings.ReplaceAll(t.Name(), "/", "-")
+	keyBuilder, ok := client.KeyBuilder().(redis.KeyBuilderInterface)
+	require.True(t, ok)
+	key, err := keyBuilder.Stream(teamID, sse.StreamCounterKey)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.GetClient().Del(context.Background(), key).Err() })
+
+	limiter := sse.NewConcurrencyLimiterWithConfig(client, 2, 60)
+	lifecycle := sse.NewStreamLifecycleWithConfig(limiter, redisContractHeartbeat{}, time.Second)
+	writer := &redisContractWriter{}
+
+	firstStarted := make(chan struct{})
+	firstRelease := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- lifecycle.Start(context.Background(), teamID, writer, func(context.Context) error {
+			close(firstStarted)
+			<-firstRelease
+			return nil
+		})
+	}()
+	<-firstStarted
+
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	secondStarted := make(chan struct{})
+	secondRelease := make(chan struct{})
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- lifecycle.Start(cancelCtx, teamID, writer, func(workCtx context.Context) error {
+			close(secondStarted)
+			<-workCtx.Done()
+			<-secondRelease
+			return nil
+		})
+	}()
+	<-secondStarted
+
+	thirdRelease, err := limiter.Acquire(context.Background(), teamID)
+	require.ErrorIs(t, err, sse.ErrTooManyStreams)
+	require.Nil(t, thirdRelease)
+	cancel()
+	select {
+	case err := <-secondDone:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Redis stream cancellation waited for work to return")
+	}
+	require.Equal(t, int64(1), redisContractCounter(t, client, key), "disconnect must preserve the other active reservation")
+	close(secondRelease)
+	close(firstRelease)
+	require.NoError(t, <-firstDone)
+	require.Eventually(t, func() bool { return redisContractCounter(t, client, key) == 0 }, time.Second, 10*time.Millisecond)
+
+	maxRelease := make(chan struct{})
+	maxLifecycle := sse.NewStreamLifecycleWithConfig(limiter, redisContractHeartbeat{}, 20*time.Millisecond)
+	started := make(chan struct{})
+	maxDone := make(chan error, 1)
+	go func() {
+		maxDone <- maxLifecycle.Start(context.Background(), teamID, writer, func(context.Context) error {
+			close(started)
+			<-maxRelease
+			return nil
+		})
+	}()
+	<-started
+	require.ErrorIs(t, <-maxDone, sse.ErrStreamTerminated)
+	require.Eventually(t, func() bool { return redisContractCounter(t, client, key) == 0 }, time.Second, 10*time.Millisecond)
+	close(maxRelease)
+
+	workErr := errors.New("redis lifecycle work failed")
+	err = maxLifecycle.Start(context.Background(), teamID, writer, func(context.Context) error { return workErr })
+	require.ErrorIs(t, err, workErr)
+	require.Eventually(t, func() bool { return redisContractCounter(t, client, key) == 0 }, time.Second, 10*time.Millisecond)
+}
+
+type redisContractHeartbeat struct{}
+
+func (redisContractHeartbeat) Run(ctx context.Context, _ sse.SSEWriter) { <-ctx.Done() }
+
+type redisContractWriter struct{}
+
+func (*redisContractWriter) WriteEvent(string, any) error { return nil }
+func (*redisContractWriter) WriteComment(string) error    { return nil }
+func (*redisContractWriter) Close() error                 { return nil }
+
+func openRedisContractClient(t *testing.T) *redis.RedisClient {
+	t.Helper()
+	addr := redisContractAddress(t)
+	client, err := redis.NewClient(t.Context(), redisConcurrencyConfig(t, addr))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	return client
+}
+
+func redisConcurrencyConfig(t *testing.T, addr string) *redisConcurrencyTestConfig {
+	t.Helper()
+	db, err := strconv.Atoi(strings.TrimSpace(os.Getenv("REDIS_DB")))
+	if strings.TrimSpace(os.Getenv("REDIS_DB")) == "" {
+		db = 0
+	} else {
+		require.NoError(t, err)
+	}
+	return &redisConcurrencyTestConfig{addr: addr, password: os.Getenv("REDIS_PASSWORD"), db: db}
+}
+
+func redisContractCounter(t *testing.T, client *redis.RedisClient, key string) int64 {
+	t.Helper()
+	value, err := client.GetClient().Get(t.Context(), key).Int64()
+	if err != nil {
+		require.ErrorIs(t, err, goredis.Nil)
+		return 0
+	}
+	return value
+}
+
+func redisContractAddress(t *testing.T) string {
+	t.Helper()
+	if addr := strings.TrimSpace(os.Getenv("REDIS_ADDR")); addr != "" {
+		return addr
+	}
+	if os.Getenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS") != "1" {
+		t.Skip("set DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 to run the Redis stream contract")
+	}
+	ctx := context.Background()
+	options := []testcontainers.ContainerCustomizer{
+		testcontainers.WithExposedPorts("6379/tcp"),
+		testcontainers.WithWaitStrategy(wait.ForListeningPort("6379/tcp").WithStartupTimeout(30 * time.Second)),
+	}
+	networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK"))
+	if networkName != "" {
+		options = append(options, tcnetwork.WithNetworkName([]string{"redis"}, networkName))
+	}
+	container, err := testcontainers.Run(ctx, "redis:7-alpine", options...)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, container.Terminate(context.Background())) })
+	if networkName != "" {
+		return "redis:6379"
+	}
+	host, err := container.Host(ctx)
+	require.NoError(t, err)
+	port, err := container.MappedPort(ctx, "6379/tcp")
+	require.NoError(t, err)
+	return net.JoinHostPort(host, port.Port())
+}

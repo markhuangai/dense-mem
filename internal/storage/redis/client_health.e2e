@@ -1,0 +1,66 @@
+package redis
+
+import (
+	"context"
+	"net"
+	"os"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	tcnetwork "github.com/testcontainers/testcontainers-go/network"
+	"github.com/testcontainers/testcontainers-go/wait"
+)
+
+func TestRedisHealth_Ping(t *testing.T) {
+	addr := redisHealthAddress(t)
+	db := 0
+	if rawDB := strings.TrimSpace(os.Getenv("REDIS_DB")); rawDB != "" {
+		parsedDB, parseErr := strconv.Atoi(rawDB)
+		require.NoError(t, parseErr)
+		db = parsedDB
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	client, err := NewClient(ctx, &mockConfig{redisAddr: addr, redisPassword: os.Getenv("REDIS_PASSWORD"), redisDB: db})
+	if err != nil {
+		t.Fatalf("connect to Redis: %v", err)
+	}
+	defer client.Close()
+	if err := client.Ping(ctx); err != nil {
+		t.Fatalf("ping Redis: %v", err)
+	}
+}
+
+func redisHealthAddress(t *testing.T) string {
+	t.Helper()
+	if addr := strings.TrimSpace(os.Getenv("REDIS_ADDR")); addr != "" {
+		return addr
+	}
+	if os.Getenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS") != "1" {
+		t.Skip("set DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 to run the Redis health check")
+	}
+	ctx := context.Background()
+	options := []testcontainers.ContainerCustomizer{
+		testcontainers.WithExposedPorts("6379/tcp"),
+		testcontainers.WithWaitStrategy(wait.ForListeningPort("6379/tcp").WithStartupTimeout(30 * time.Second)),
+	}
+	networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK"))
+	if networkName != "" {
+		options = append(options, tcnetwork.WithNetworkName([]string{"redis"}, networkName))
+	}
+	container, err := testcontainers.Run(ctx, "redis:7-alpine", options...)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, container.Terminate(context.Background())) })
+	if networkName != "" {
+		return "redis:6379"
+	}
+	host, err := container.Host(ctx)
+	require.NoError(t, err)
+	port, err := container.MappedPort(ctx, "6379/tcp")
+	require.NoError(t, err)
+	return net.JoinHostPort(host, port.Port())
+}

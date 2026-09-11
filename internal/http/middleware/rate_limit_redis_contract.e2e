@@ -1,0 +1,80 @@
+package middleware
+
+import (
+	"context"
+	"net"
+	"os"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/markhuangai/dense-mem/internal/service"
+	"github.com/markhuangai/dense-mem/internal/storage/redis"
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	tcnetwork "github.com/testcontainers/testcontainers-go/network"
+	"github.com/testcontainers/testcontainers-go/wait"
+)
+
+type e2eRedisRateLimitConfig struct {
+	addr               string
+	password           string
+	db                 int
+	rateLimitPerMinute int
+}
+
+func (c *e2eRedisRateLimitConfig) GetHTTPMaxBodyBytes() int      { return 1048576 }
+func (c *e2eRedisRateLimitConfig) GetRateLimitPerMinute() int    { return c.rateLimitPerMinute }
+func (c *e2eRedisRateLimitConfig) GetControlPortalToken() string { return "" }
+func (c *e2eRedisRateLimitConfig) GetAIVerifierModel() string    { return "gpt-4o-mini" }
+func (c *e2eRedisRateLimitConfig) GetAIEmbeddingModel() string   { return "" }
+func (c *e2eRedisRateLimitConfig) GetRedisAddr() string          { return c.addr }
+func (c *e2eRedisRateLimitConfig) GetRedisPassword() string      { return c.password }
+func (c *e2eRedisRateLimitConfig) GetRedisDB() int               { return c.db }
+
+func TestRateLimitMiddleware_Contract_Redis(t *testing.T) {
+	redisAddr := redisContractAddress(t)
+	db := 0
+	if rawDB := strings.TrimSpace(os.Getenv("REDIS_DB")); rawDB != "" {
+		parsedDB, parseErr := strconv.Atoi(rawDB)
+		require.NoError(t, parseErr)
+		db = parsedDB
+	}
+	redisClient, err := redis.NewClient(t.Context(), &e2eRedisRateLimitConfig{addr: redisAddr, password: os.Getenv("REDIS_PASSWORD"), db: db, rateLimitPerMinute: 2})
+	if err != nil {
+		t.Fatalf("connect to Redis: %v", err)
+	}
+	defer redisClient.Close()
+	runRateLimitMiddlewareContract(t, "Redis", service.NewRateLimitService(redisClient))
+}
+
+func redisContractAddress(t *testing.T) string {
+	t.Helper()
+	if addr := strings.TrimSpace(os.Getenv("REDIS_ADDR")); addr != "" {
+		return addr
+	}
+	if os.Getenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS") != "1" {
+		t.Skip("set DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 to run the Redis rate-limit contract")
+	}
+	ctx := context.Background()
+	options := []testcontainers.ContainerCustomizer{
+		testcontainers.WithExposedPorts("6379/tcp"),
+		testcontainers.WithWaitStrategy(wait.ForListeningPort("6379/tcp").WithStartupTimeout(30 * time.Second)),
+	}
+	networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK"))
+	if networkName != "" {
+		options = append(options, tcnetwork.WithNetworkName([]string{"redis"}, networkName))
+	}
+	container, err := testcontainers.Run(ctx, "redis:7-alpine", options...)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, container.Terminate(context.Background())) })
+	if networkName != "" {
+		return "redis:6379"
+	}
+	host, err := container.Host(ctx)
+	require.NoError(t, err)
+	port, err := container.MappedPort(ctx, "6379/tcp")
+	require.NoError(t, err)
+	return net.JoinHostPort(host, port.Port())
+}

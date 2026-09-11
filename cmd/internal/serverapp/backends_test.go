@@ -25,7 +25,6 @@ func TestBuildBackendBundle_NoRedis_UsesInMemory(t *testing.T) {
 	assert.NotNil(t, bundle.cleanupRepo)
 	assert.NotNil(t, bundle.rateLimitService)
 	assert.NotNil(t, bundle.concurrencyLimiter)
-	assert.NotNil(t, bundle.streamCleanupRepo)
 }
 
 func TestBuildBackendBundle_DistributedRequiredWithoutRedisFails(t *testing.T) {

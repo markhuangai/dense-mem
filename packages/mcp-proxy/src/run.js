@@ -7,6 +7,7 @@ export async function run(
   argv = process.argv.slice(2),
   env = process.env,
   stdio = { stdout: process.stdout, stderr: process.stderr },
+  gateway = streamableHttpToStdio,
 ) {
   let config;
   try {
@@ -23,7 +24,7 @@ export async function run(
 
   const logger = createLogger({ verbose: config.verbose, stderr: stdio.stderr });
   try {
-    await streamableHttpToStdio({
+    await gateway({
       streamableHttpUrl: config.url,
       headers: config.headers,
       logger,

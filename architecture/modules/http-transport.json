@@ -5,6 +5,7 @@
     {"path": "cmd/internal/serverapp/backends.go", "issue": 379},
     {"path": "cmd/internal/serverapp/transport_composition.go", "issue": 379},
     {"path": "cmd/internal/serverapp/transport_composition_test.go", "issue": 379},
+    {"path": "internal/http/contract/ports.go", "issue": 379},
     {"path": "internal/http/mcp_bindings.go", "issue": 379},
     {"path": "internal/http/user_portal_bindings.go", "issue": 379},
     {"path": "internal/http/control_portal_bindings.go", "issue": 379},
@@ -49,6 +50,17 @@
         {"path": "internal/http/control_portal.go", "symbol": "NewControlPortalServer"}
       ],
       "removal_issue": 382
+    },
+    {
+      "source_path": "cmd/internal/serverapp/transport_composition.go",
+      "fields": ["transportSearchConvergenceReader", "transportSearchConvergenceReader.GetSearchConvergence", "nativeSearchConvergenceReader"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/transport_composition.go", "symbol": "nativeSearchConvergenceReader"},
+        {"path": "cmd/internal/serverapp/transport_composition.go", "symbol": "buildTransportComposition"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/search/convergence.go", "symbol": "NewSearchConvergenceService"},
+      "removal_condition": "Remove the transport compatibility adapter after the control portal consumes the native search convergence reader directly."
     }
   ],
   "completed_issues": [],
@@ -56,6 +68,11 @@
     "units": [
       {
         "id": "github.com/markhuangai/dense-mem/internal/http",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/http/contract",
         "role": "transport",
         "visibility": "public"
       },
@@ -92,28 +109,9 @@
   "exceptions": [
     {
       "source": "github.com/markhuangai/dense-mem/internal/http",
-      "source_path": "internal/http/server.go",
-      "target": "github.com/markhuangai/dense-mem/internal/config",
-      "removal_issue": 379,
-      "reason": "HTTP transport still consumes the shared configuration implementation until transport consolidation."
-    },
-    {
-      "source": "github.com/markhuangai/dense-mem/internal/http",
-      "target": "github.com/markhuangai/dense-mem/internal/crypto",
-      "removal_issue": 379,
-      "reason": "HTTP transport still consumes the shared credential crypto implementation until transport consolidation."
-    },
-    {
-      "source": "github.com/markhuangai/dense-mem/internal/http",
       "target": "github.com/markhuangai/dense-mem/internal/observability",
       "removal_issue": 379,
       "reason": "HTTP transport still consumes the shared observability implementation until transport consolidation."
-    },
-    {
-      "source": "github.com/markhuangai/dense-mem/internal/http",
-      "target": "github.com/markhuangai/dense-mem/internal/repository",
-      "removal_issue": 379,
-      "reason": "HTTP transport still reaches the legacy repository adapter until transport consolidation."
     },
     {
       "source": "github.com/markhuangai/dense-mem/internal/http/handler",
@@ -123,27 +121,15 @@
     },
     {
       "source": "github.com/markhuangai/dense-mem/internal/http/middleware",
-      "target": "github.com/markhuangai/dense-mem/internal/config",
-      "removal_issue": 379,
-      "reason": "HTTP middleware still consumes the shared configuration implementation until transport consolidation."
-    },
-    {
-      "source": "github.com/markhuangai/dense-mem/internal/http/middleware",
       "target": "github.com/markhuangai/dense-mem/internal/crypto",
       "removal_issue": 379,
       "reason": "HTTP middleware still consumes the shared credential crypto implementation until transport consolidation."
     },
     {
-      "source": "github.com/markhuangai/dense-mem/internal/http/middleware",
-      "target": "github.com/markhuangai/dense-mem/internal/observability",
-      "removal_issue": 379,
-      "reason": "HTTP middleware still consumes the shared observability implementation until transport consolidation."
-    },
-    {
-      "source": "github.com/markhuangai/dense-mem/internal/http/middleware",
-      "target": "github.com/markhuangai/dense-mem/internal/repository",
-      "removal_issue": 379,
-      "reason": "HTTP middleware still reaches the legacy repository adapter until transport consolidation."
+      "source": "github.com/markhuangai/dense-mem/internal/http",
+      "target": "github.com/markhuangai/dense-mem/internal/privacy/contract",
+      "removal_issue": 382,
+      "reason": "Private-memory HTTP maps privacy-owned error sentinels through the public contract while the retained service compatibility facade is migrated; no storage implementation is imported."
     }
   ],
   "workers": [

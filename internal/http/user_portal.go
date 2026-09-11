@@ -15,23 +15,22 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/markhuangai/dense-mem/internal/config"
-	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/dream"
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/graphview"
 	"github.com/markhuangai/dense-mem/internal/recall"
+	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
+	"github.com/markhuangai/dense-mem/internal/service/graphview"
 )
 
 // UserPortalDeps holds the dependencies for the user portal.
 type UserPortalDeps struct {
 	Memory             MemoryPortalBindings
-	CredentialRepo     repository.CredentialRepository
+	CredentialRepo     accessservice.CredentialStore
 	TeamSvc            handler.TeamServiceInterface
 	CredentialSvc      handler.CredentialServiceInterface
 	RateLimitSvc       service.RateLimitServiceInterface
@@ -46,8 +45,8 @@ type UserPortalDeps struct {
 	PortalSession      service.UserPortalSessionManager
 	AppConfig          service.AppConfigService
 	PrivateMemory      PrivateMemoryServiceInterface
-	Config             config.ConfigProvider
-	CredentialVerifier crypto.CredentialVerifier
+	Config             httpcontract.ConfigProvider
+	CredentialVerifier httpcontract.CredentialVerifier
 	LastUsedRecorder   httpmw.LastUsedRecorder
 	UserStaticDir      string
 	ExtraMiddleware    []echo.MiddlewareFunc

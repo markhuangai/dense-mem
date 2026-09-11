@@ -12,10 +12,11 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 // Principal represents the authenticated principal stored in context.
@@ -72,11 +73,11 @@ type principalContextKey struct{}
 
 // AuthMiddleware creates an authentication middleware that validates API keys.
 // It requires the Authorization header in the format "Bearer <rawKey>".
-func AuthMiddleware(repo repository.CredentialRepository, auditSvc service.AuditService) echo.MiddlewareFunc {
+func AuthMiddleware(repo accessservice.CredentialStore, auditSvc service.AuditService) echo.MiddlewareFunc {
 	return AuthMiddlewareWithSecurity(repo, auditSvc, nil)
 }
 
-func AuthMiddlewareWithSecurity(repo repository.CredentialRepository, auditSvc service.AuditService, securitySvc SecurityBanService) echo.MiddlewareFunc {
+func AuthMiddlewareWithSecurity(repo accessservice.CredentialStore, auditSvc service.AuditService, securitySvc SecurityBanService) echo.MiddlewareFunc {
 	return AuthMiddlewareWithOptions(repo, auditSvc, securitySvc, AuthOptions{})
 }
 
@@ -97,7 +98,7 @@ type OAuthBearerAuthenticator interface {
 }
 
 type AuthOptions struct {
-	CredentialVerifier             crypto.CredentialVerifier
+	CredentialVerifier             httpcontract.CredentialVerifier
 	SSOEntitlementValidator        SSOEntitlementValidator
 	SSOSessionAuthenticator        SSOSessionAuthenticator
 	UserPortalSessionAuthenticator UserPortalSessionAuthenticator
@@ -105,7 +106,7 @@ type AuthOptions struct {
 	AllowMissingCredentials        bool
 }
 
-func AuthMiddlewareWithOptions(repo repository.CredentialRepository, auditSvc service.AuditService, securitySvc SecurityBanService, opts AuthOptions) echo.MiddlewareFunc {
+func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc service.AuditService, securitySvc SecurityBanService, opts AuthOptions) echo.MiddlewareFunc {
 	verifier := opts.CredentialVerifier
 	if verifier == nil {
 		verifier = crypto.NewArgon2Verifier(0)

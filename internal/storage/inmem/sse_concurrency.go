@@ -4,9 +4,18 @@ import (
 	"context"
 	"sync"
 	"time"
-
-	"github.com/markhuangai/dense-mem/internal/sse"
 )
+
+// ErrTooManyStreams is returned when a team has reached its active stream cap.
+var ErrTooManyStreams error = tooManyStreamsError{}
+
+type tooManyStreamsError struct{}
+
+func (tooManyStreamsError) Error() string { return "too many concurrent streams for team" }
+
+func (tooManyStreamsError) Is(target error) bool {
+	return target != nil && target.Error() == "too many concurrent streams for team"
+}
 
 // InMemoryConcurrencyLimiter implements sse.ConcurrencyLimiter using an
 // in-memory mutex-protected map keyed by team ID.
@@ -68,32 +77,29 @@ func (l *InMemoryConcurrencyLimiter) Acquire(_ context.Context, teamID string) (
 		if entry.count == 0 {
 			delete(l.entries, teamID)
 		}
-		return nil, sse.ErrTooManyStreams
+		return nil, ErrTooManyStreams
 	}
 
 	// Refresh expiry on every successful acquire.
 	entry.expiresAt = l.now().Add(l.ttl)
 
-	released := false
+	var releaseOnce sync.Once
 	return func() {
-		l.mu.Lock()
-		defer l.mu.Unlock()
+		releaseOnce.Do(func() {
+			l.mu.Lock()
+			defer l.mu.Unlock()
 
-		if released {
-			return
-		}
-		released = true
-
-		e, ok := l.entries[teamID]
-		if !ok {
-			return
-		}
-		e.count--
-		if e.count < 0 {
-			e.count = 0
-		}
-		if e.count == 0 {
-			delete(l.entries, teamID)
-		}
+			e, ok := l.entries[teamID]
+			if !ok {
+				return
+			}
+			e.count--
+			if e.count < 0 {
+				e.count = 0
+			}
+			if e.count == 0 {
+				delete(l.entries, teamID)
+			}
+		})
 	}, nil
 }

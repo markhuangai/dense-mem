@@ -7,8 +7,8 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
@@ -27,7 +27,7 @@ func UsageMetricsMiddleware(recorder service.UsageMetricsRecorder) echo.Middlewa
 
 // TelemetryHTTPMiddleware records authenticated HTTP request telemetry for
 // scrape-oriented metrics backends such as Prometheus.
-func TelemetryHTTPMiddleware(recorder observability.HTTPMetrics) echo.MiddlewareFunc {
+func TelemetryHTTPMiddleware(recorder httpcontract.HTTPMetrics) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			start := time.Now()
@@ -62,7 +62,7 @@ func recordUsageMetric(c echo.Context, recorder service.UsageMetricsRecorder, st
 	})
 }
 
-func recordTelemetryHTTPMetric(c echo.Context, recorder observability.HTTPMetrics, start time.Time, err error) {
+func recordTelemetryHTTPMetric(c echo.Context, recorder httpcontract.HTTPMetrics, start time.Time, err error) {
 	if recorder == nil {
 		return
 	}

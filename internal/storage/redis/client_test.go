@@ -1,10 +1,8 @@
 package redis
 
 import (
-	"context"
 	"crypto/tls"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,33 +47,6 @@ func TestKeyBuilder_EmptyIdentifier_Rejects(t *testing.T) {
 	kb := NewKeyBuilder()
 	_, err := kb.RateLimit("profile123", "")
 	assert.ErrorIs(t, err, ErrEmptyIdentifier)
-}
-
-// TestRedisHealth_Ping tests that the Redis client can ping the server.
-// This test requires a running Redis instance and the integration build tag.
-func TestRedisHealth_Ping(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Create a mock config for testing
-	cfg := &mockConfig{
-		redisAddr:     "localhost:6379",
-		redisPassword: "",
-		redisDB:       0,
-	}
-
-	client, err := NewClient(ctx, cfg)
-	if err != nil {
-		t.Skipf("Redis not available: %v", err)
-	}
-	defer client.Close()
-
-	err = client.Ping(ctx)
-	require.NoError(t, err)
 }
 
 // TestRedisClient_NoRawKeyExposure tests that raw unprefixed keys are not exposed.

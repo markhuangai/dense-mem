@@ -16,8 +16,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
@@ -28,7 +28,7 @@ type DirectorySCIMConfig struct {
 	RuntimeConfig service.SSORuntimeConfigProvider
 	Security      service.SecurityService
 	RateLimitSvc  service.RateLimitServiceInterface
-	Config        config.ConfigProvider
+	Config        httpcontract.ConfigProvider
 }
 
 type directorySCIMContextKey struct{}

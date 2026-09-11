@@ -3,20 +3,19 @@ package http
 import (
 	"github.com/labstack/echo/v4"
 
-	"github.com/markhuangai/dense-mem/internal/config"
-	"github.com/markhuangai/dense-mem/internal/crypto"
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 // MCPBindings owns the transport dependencies required by protected MCP
 // endpoints. Flat fields remain as a compatibility bridge for first-party
 // callers until transport consolidation.
 type MCPBindings struct {
-	CredentialRepo   repository.CredentialRepository
+	CredentialRepo   accessservice.CredentialStore
 	TeamSvc          handler.TeamServiceInterface
 	RateLimitService service.RateLimitServiceInterface
 	UsageMetrics     service.UsageMetricsRecorder
@@ -28,9 +27,9 @@ type MCPBindings struct {
 	}
 	OAuthAuthenticator middleware.OAuthBearerAuthenticator
 	OAuthMetadata      OAuthProtectedResourceProvider
-	Config             config.ConfigProvider
+	Config             httpcontract.ConfigProvider
 	Logger             observability.LogProvider
-	CredentialVerifier crypto.CredentialVerifier
+	CredentialVerifier httpcontract.CredentialVerifier
 	LastUsedRecorder   middleware.LastUsedRecorder
 	PostAuthMiddleware []echo.MiddlewareFunc
 }

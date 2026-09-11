@@ -181,7 +181,7 @@ func (c *Config) GetRedisTLSEnabled() bool { return c.RedisTLSEnabled }
 func (c *Config) GetDistributedCoordinationRequired() bool {
 	return c.DistributedCoordinationRequired
 }
-func (c *Config) GetHTTPMaxBodyBytes() int          { return c.HTTPMaxBodyBytes }
+func (c Config) GetHTTPMaxBodyBytes() int           { return c.HTTPMaxBodyBytes }
 func (c *Config) GetRateLimitPerMinute() int        { return c.RateLimitPerMinute }
 func (c *Config) GetSSEHeartbeatSeconds() int       { return c.SSEHeartbeatSeconds }
 func (c *Config) GetSSEMaxDurationSeconds() int     { return c.SSEMaxDurationSeconds }
