@@ -40,13 +40,14 @@ func normalizeEvaluationGetInput(input EvaluationGetInput) EvaluationGetInput {
 }
 
 func normalizeEvaluationType(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
 	case "fragment":
 		return "evidence"
 	case "dream":
 		return "hypothesis"
 	default:
-		return strings.TrimSpace(value)
+		return normalized
 	}
 }
 

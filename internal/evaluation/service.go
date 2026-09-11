@@ -164,7 +164,10 @@ func (s *Service) RunRecallCase(ctx context.Context, caseID string, req contract
 	if includeEvidence {
 		out["context_evidence_refs"] = resultRefs(result)
 	}
-	if includeDreams && s.deps.Dreams != nil {
+	if includeDreams {
+		if s.deps.Dreams == nil {
+			return nil, ErrToolUnavailable
+		}
 		dreams, err := s.deps.Dreams.Recall(ctx, "", req.Query, limit)
 		if err != nil {
 			return nil, err

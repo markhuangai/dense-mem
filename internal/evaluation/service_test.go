@@ -170,6 +170,15 @@ func TestListDreamsAndRecallDreamRefs(t *testing.T) {
 	require.Equal(t, 1, result["ranked_refs"].([]map[string]any)[0]["rank"])
 }
 
+func TestRunRecallCaseReportsUnavailableDreamsWhenRequested(t *testing.T) {
+	svc := New(Dependencies{
+		Recall: &recallServiceStub{result: &recallcontract.RecallResult{}},
+		Audit:  &evaluationAuditStub{},
+	})
+	_, err := svc.RunRecallCase(context.Background(), "case-1", recallcontract.Request{Query: "query"}, "", "", false, true)
+	require.ErrorIs(t, err, ErrToolUnavailable)
+}
+
 func TestStripContentAndReferenceMappingPolicies(t *testing.T) {
 	for kind, fields := range map[string][]string{
 		"dream":      {"hypothesis", "what_if", "possible_outcome", "rationale"},

@@ -102,6 +102,9 @@ func TestEvaluationQueryValidationBranches(t *testing.T) {
 	if got := normalizeEvaluationType(" FRAGMENT "); got != "evidence" {
 		t.Fatalf("fragment normalization = %q", got)
 	}
+	if got := normalizeEvaluationType(" VALUE "); got != "value" {
+		t.Fatalf("canonical type normalization = %q", got)
+	}
 	if got := normalizeEvaluationType("custom"); got != "custom" {
 		t.Fatalf("custom normalization = %q", got)
 	}
