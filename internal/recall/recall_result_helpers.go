@@ -1,13 +1,15 @@
-package memoryservice
+package recall
 
 import (
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"strings"
 
-	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/domain"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 )
 
-func recallConflictSummaries(records []repository.RelationshipConflictCaseRecord) []RecallConflictSummary {
+func recallConflictSummaries(records []tracecontract.RelationshipConflictCaseRecord) []RecallConflictSummary {
 	out := make([]RecallConflictSummary, 0, len(records))
 	for _, record := range records {
 		reviewDueAt := record.ReviewDueAt
@@ -30,7 +32,7 @@ func recallConflictSummaries(records []repository.RelationshipConflictCaseRecord
 	return out
 }
 
-func recallEvidenceConflictSummaries(records []repository.EvidenceConflictCaseRecord) []RecallConflictSummary {
+func recallEvidenceConflictSummaries(records []recallcontract.EvidenceConflictCaseRecord) []RecallConflictSummary {
 	out := make([]RecallConflictSummary, 0, len(records))
 	for _, record := range records {
 		positionsTruncated := len(record.Positions) > recallConflictPositionLimit
@@ -106,7 +108,7 @@ const (
 	recallConflictResultEvidenceIDLimit = 50
 )
 
-func recallConflictPositions(records []repository.RelationshipConflictPositionRecord) []RecallConflictPosition {
+func recallConflictPositions(records []domain.RelationshipConflictPositionRecord) []RecallConflictPosition {
 	if len(records) > recallConflictPositionLimit {
 		records = records[:recallConflictPositionLimit]
 	}
@@ -127,7 +129,7 @@ func recallConflictPositions(records []repository.RelationshipConflictPositionRe
 	return out
 }
 
-func recallConflictSupporters(records []repository.RelationshipConflictSupporterRecord) []RecallConflictSupporter {
+func recallConflictSupporters(records []domain.RelationshipConflictSupporterRecord) []RecallConflictSupporter {
 	if len(records) > recallConflictSupporterLimit {
 		records = records[:recallConflictSupporterLimit]
 	}

@@ -1,6 +1,8 @@
-package repository
+package postgres
 
-const relationshipForegroundRecallGenerationMetadataKey = "relationship_foreground_recall_generation_id"
+const RelationshipForegroundRecallGenerationMetadataKey = "relationship_foreground_recall_generation_id"
+
+const relationshipForegroundRecallGenerationMetadataKey = RelationshipForegroundRecallGenerationMetadataKey
 
 const recallRelationshipGenerationScopeSQL = `
 		recall_relationship_generation_team AS (

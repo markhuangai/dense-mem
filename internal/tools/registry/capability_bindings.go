@@ -4,6 +4,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/lifecycle"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/recall"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
@@ -28,7 +29,7 @@ type LifecycleBindings struct {
 }
 
 type RecallBindings struct {
-	Service memoryservice.RecallService
+	Service recall.RecallService
 	Dreams  DreamingConfigProvider
 }
 

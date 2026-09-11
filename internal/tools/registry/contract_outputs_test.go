@@ -7,8 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	recallapp "github.com/markhuangai/dense-mem/internal/recall"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,12 +17,12 @@ func TestRecallContractOutputValidatesSpaceBranchDegradation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output := recallContractOutput(&memoryservice.RecallResult{
+	output := recallContractOutput(&recallapp.RecallResult{
 		RecallID: "rec-branch-degraded",
-		SearchStates: memoryservice.RecallSearchStates{
+		SearchStates: recallapp.RecallSearchStates{
 			Evidence: string(domain.SearchProjectionCurrent), Relationships: string(domain.SearchProjectionNotRequired),
 		},
-		Degradations: []memoryservice.RecallDegradationResult{{
+		Degradations: []recallapp.RecallDegradationResult{{
 			Frontier: "evidence", Optional: true, Code: "space_branch_unavailable", Message: "authorized memory-space branch was unavailable",
 		}},
 	})
@@ -56,19 +56,19 @@ func TestRecallContractOutputValidatesEmptyEquivalentRelationshipIDs(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	output := recallContractOutput(&memoryservice.RecallResult{
+	output := recallContractOutput(&recallapp.RecallResult{
 		RecallID: "rec-empty-equivalents",
-		RelatedRelationships: []memoryservice.RelatedRelationshipSummary{{
+		RelatedRelationships: []recallapp.RelatedRelationshipSummary{{
 			RelationshipID:            "relationship-1",
 			EquivalentRelationshipIDs: []string{},
-			Subject:                   memoryservice.EntityHandle{EntityID: "entity-1", Name: "Dense-Mem"},
+			Subject:                   recallapp.EntityHandle{EntityID: "entity-1", Name: "Dense-Mem"},
 			Predicate:                 "uses",
-			Object:                    memoryservice.SemanticObject{EntityID: "entity-2", Name: "PostgreSQL"},
+			Object:                    recallapp.SemanticObject{EntityID: "entity-2", Name: "PostgreSQL"},
 			Polarity:                  "+",
 			EvidenceIDs:               []string{"evidence-1"},
 			SpaceKind:                 string(domain.MemorySpaceTeamShared),
 		}},
-		SearchStates: memoryservice.RecallSearchStates{
+		SearchStates: recallapp.RecallSearchStates{
 			Evidence: string(domain.SearchProjectionCurrent), Relationships: string(domain.SearchProjectionCurrent),
 		},
 	})
@@ -102,16 +102,16 @@ func TestRecallContractOutputValidatesEvidenceConflictBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output := recallContractOutput(&memoryservice.RecallResult{
+	output := recallContractOutput(&recallapp.RecallResult{
 		RecallID: "rec-evidence-conflict",
-		Conflicts: []memoryservice.RecallConflictSummary{{
+		Conflicts: []recallapp.RecallConflictSummary{{
 			ConflictID: "conflict-1", Version: 2, Kind: "evidence_conflict", Status: "resolved",
-			PreferredPositionID: "position-1", Positions: []memoryservice.RecallConflictPosition{
+			PreferredPositionID: "position-1", Positions: []recallapp.RecallConflictPosition{
 				{PositionID: "position-1", Disposition: "preferred", EvidenceID: "evidence-1", OccurrenceID: "occurrence-1", Quote: "first", SpanStart: 0, SpanEnd: 5, Authority: "primary", Submitted: true},
 				{PositionID: "position-2", Disposition: "candidate", EvidenceID: "evidence-2", OccurrenceID: "occurrence-2", Quote: "second", SpanStart: 0, SpanEnd: 6, Authority: "secondary", Submitted: false},
 			}, PositionsTruncated: false,
 		}},
-		SearchStates: memoryservice.RecallSearchStates{Evidence: string(domain.SearchProjectionCurrent), Relationships: string(domain.SearchProjectionCurrent)},
+		SearchStates: recallapp.RecallSearchStates{Evidence: string(domain.SearchProjectionCurrent), Relationships: string(domain.SearchProjectionCurrent)},
 	})
 	encoded, err := json.Marshal(output)
 	if err != nil {

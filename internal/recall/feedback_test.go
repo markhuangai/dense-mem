@@ -1,8 +1,9 @@
-package service
+package recall
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -12,9 +13,75 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/observability"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
+
+func TestFeedbackResultRefsPreservesOrderAndEarliestDuplicateRank(t *testing.T) {
+	result := &RecallResult{
+		SearchState: string(domain.SearchProjectionCurrent),
+		Results: []RecallResultItem{
+			{EvidenceID: "evidence-1", RelationshipIDs: []string{"relationship-1"}, Rank: 3},
+			{EvidenceID: "evidence-2", RelationshipIDs: []string{"relationship-1"}},
+		},
+		RelatedCommunities: []RecallDiscoveryPath{{
+			CommunityID: "community-1",
+			Rank:        4,
+			CommunityRelationships: []RelatedRelationshipSummary{{
+				RelationshipID: "relationship-1",
+				SearchState:    string(domain.SearchProjectionFailed),
+			}},
+		}},
+		RelatedHypotheses: []RelatedHypothesisSummary{{HypothesisID: "hypothesis-1", Status: "proposed"}},
+	}
+
+	refs := FeedbackResultRefs(result)
+	require.Equal(t, []domain.RecallFeedbackResultRef{
+		{Type: domain.RecallFeedbackResultTypeEvidence, ID: "evidence-1", Rank: 3, Tier: "evidence", StatusAtRecall: string(domain.SearchProjectionCurrent)},
+		{Type: domain.RecallFeedbackResultTypeRelationship, ID: "relationship-1", Rank: 2, Tier: "relationship", StatusAtRecall: string(domain.SearchProjectionCurrent)},
+		{Type: domain.RecallFeedbackResultTypeEvidence, ID: "evidence-2", Rank: 2, Tier: "evidence", StatusAtRecall: string(domain.SearchProjectionCurrent)},
+		{Type: domain.RecallFeedbackResultTypeCommunity, ID: "community-1", Rank: 4, StatusAtRecall: string(domain.SearchProjectionCurrent)},
+		{Type: domain.RecallFeedbackResultTypeHypothesis, ID: "hypothesis-1", Rank: 1, StatusAtRecall: "proposed"},
+	}, refs)
+	assert.Empty(t, FeedbackResultRefs(nil))
+}
+
+func TestSubmitRecallFeedbackBatchStopsAtFirstFailureAndRecordsMetricsAfterSuccess(t *testing.T) {
+	recorder := &recallFeedbackBatchRecorder{failAt: 1, err: errors.New("database unavailable")}
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	result := SubmitRecallFeedbackBatch(context.Background(), recorder, metrics, []domain.RecallFeedbackSubmission{
+		{RecallID: "rec-1", Used: true, AnswerSupported: true, Quality: "high"},
+		{RecallID: "rec-2", Used: true, AnswerSupported: false, Quality: "low"},
+	})
+
+	require.True(t, result.Recorded)
+	require.Equal(t, 1, result.RecordedCount)
+	require.NotNil(t, result.Failure)
+	assert.True(t, result.Failure.PartialSuccess)
+	assert.Equal(t, 1, result.Failure.FailedIndex)
+	assert.Equal(t, "degraded", result.Failure.ErrorCode)
+	assert.Equal(t, "feedback_persistence_failed", result.Failure.ReasonCode)
+	assert.Equal(t, "retry_same_request", result.Failure.NextAction)
+	assert.Len(t, recorder.submissions, 1)
+	assert.Len(t, metrics.RecallFeedbackSamples(), 1)
+}
+
+func TestSubmitRecallFeedbackBatchClassifiesInvalidInput(t *testing.T) {
+	result := SubmitRecallFeedbackBatch(context.Background(), &recallFeedbackBatchRecorder{
+		failAt: 0,
+		err:    fmt.Errorf("wrapped: %w", ErrRecallFeedbackInvalidResultRef),
+	}, nil, []domain.RecallFeedbackSubmission{{RecallID: "rec-1"}})
+
+	require.False(t, result.Recorded)
+	require.Equal(t, 0, result.RecordedCount)
+	require.NotNil(t, result.Failure)
+	assert.False(t, result.Failure.PartialSuccess)
+	assert.Equal(t, 0, result.Failure.FailedIndex)
+	assert.Equal(t, "invalid_input", result.Failure.ErrorCode)
+	assert.Equal(t, "result_reference_invalid", result.Failure.ReasonCode)
+	assert.Equal(t, "correct_and_resubmit", result.Failure.NextAction)
+}
 
 func TestRecallFeedbackEventServiceRecordsSnapshotWithActorContext(t *testing.T) {
 	ctx := context.Background()
@@ -147,7 +214,7 @@ func TestRecallFeedbackEventServiceRejectsUnsnapshottedOrUnreturnedFeedbackRefs(
 		MissingContext:  true,
 		FeedbackComment: "missing snapshot must fail closed",
 	})
-	require.ErrorIs(t, err, repository.ErrRecallFeedbackEventNotFound)
+	require.ErrorIs(t, err, recallcontract.ErrRecallFeedbackEventNotFound)
 
 	repo.event = &domain.RecallFeedbackEvent{
 		RecallID:        "rec_1",
@@ -218,7 +285,7 @@ func TestRecallFeedbackEventServiceRejectsUnsnapshottedOrUnreturnedFeedbackRefs(
 		Quality:         "low",
 		FeedbackComment: "cross-team feedback must fail closed",
 	})
-	require.ErrorIs(t, err, repository.ErrRecallFeedbackEventNotFound)
+	require.ErrorIs(t, err, recallcontract.ErrRecallFeedbackEventNotFound)
 	require.Empty(t, repo.feedbacks)
 }
 
@@ -242,11 +309,11 @@ func TestRecallFeedbackEventServiceRejectsSameTeamPeerAndReopenedGeneration(t *t
 
 	peerCtx := recallFeedbackActorContext(teamID, peerID, peerSpaceID, 4)
 	err := svc.RecordRecallFeedback(peerCtx, domain.RecallFeedbackSubmission{RecallID: event.RecallID, Quality: "low"})
-	require.ErrorIs(t, err, repository.ErrRecallFeedbackEventNotFound)
+	require.ErrorIs(t, err, recallcontract.ErrRecallFeedbackEventNotFound)
 
 	reopenedCtx := recallFeedbackActorContext(teamID, ownerID, privateSpaceID, 5)
 	err = svc.RecordRecallFeedback(reopenedCtx, domain.RecallFeedbackSubmission{RecallID: event.RecallID, Quality: "low"})
-	require.ErrorIs(t, err, repository.ErrRecallFeedbackEventNotFound)
+	require.ErrorIs(t, err, recallcontract.ErrRecallFeedbackEventNotFound)
 	require.Empty(t, repo.feedbacks)
 }
 
@@ -371,6 +438,24 @@ type recallFeedbackEventRepoStub struct {
 	pruneNotify  chan time.Time
 	event        *domain.RecallFeedbackEvent
 	recordErr    error
+}
+
+type recallFeedbackBatchRecorder struct {
+	failAt      int
+	err         error
+	submissions []domain.RecallFeedbackSubmission
+}
+
+func (r *recallFeedbackBatchRecorder) RecordRecallSnapshot(context.Context, domain.RecallFeedbackEvent) error {
+	return nil
+}
+
+func (r *recallFeedbackBatchRecorder) RecordRecallFeedback(_ context.Context, submission domain.RecallFeedbackSubmission) error {
+	if r.err != nil && len(r.submissions) >= r.failAt {
+		return r.err
+	}
+	r.submissions = append(r.submissions, submission)
+	return nil
 }
 
 func (s *recallFeedbackEventRepoStub) RecordSnapshot(_ context.Context, event domain.RecallFeedbackEvent) error {

@@ -18,6 +18,35 @@
       "path": "internal/tools/registry/recall_bindings.go",
       "issue": 376
     },
+    {"path": "internal/recall/feedback.go", "issue": 376},
+    {"path": "internal/recall/feedback_test.go", "issue": 376},
+    {"path": "internal/recall/recall.go", "issue": 376},
+    {"path": "internal/recall/recall_community_contract_test.go", "issue": 376},
+    {"path": "internal/recall/recall_community_snapshot_test.go", "issue": 376},
+    {"path": "internal/recall/recall_conflicts.go", "issue": 376},
+    {"path": "internal/recall/recall_contract_test.go", "issue": 376},
+    {"path": "internal/recall/recall_embedding_degradation.go", "issue": 376},
+    {"path": "internal/recall/recall_result_helpers.go", "issue": 376},
+    {"path": "internal/recall/recall_space_test.go", "issue": 376},
+    {"path": "internal/recall/recall_spaces.go", "issue": 376},
+    {"path": "internal/recall/recall_test.go", "issue": 376},
+    {"path": "internal/http/control_portal_types.go", "issue": 376},
+    {"path": "internal/http/handler/recall_handler.go", "issue": 376},
+    {"path": "internal/http/handler/recall_handler_test.go", "issue": 376},
+    {"path": "internal/tools/registry/contract_outputs.go", "issue": 376},
+    {"path": "internal/tools/registry/contract_outputs_test.go", "issue": 376},
+    {"path": "internal/tools/registry/contract_uat_test.go", "issue": 376},
+    {"path": "internal/tools/registry/evaluation_recall_tools.go", "issue": 376},
+    {"path": "internal/tools/registry/uat_feedback.go", "issue": 376},
+    {"path": "internal/tools/registry/uat_feedback_test.go", "issue": 376},
+    {
+      "path": "internal/service/memoryservice/recall_compat.go",
+      "issue": 376
+    },
+    {
+      "path": "internal/service/recall_feedback_event_service.go",
+      "issue": 376
+    },
     {
       "path": "internal/tools/registry/lifecycle_bindings.go",
       "issue": 374
@@ -52,6 +81,11 @@
     "units": [
       {
         "id": "github.com/markhuangai/dense-mem/internal/service/memoryservice",
+        "role": "application_api",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/recall",
         "role": "application_api",
         "visibility": "public"
       },
@@ -116,15 +150,69 @@
         "symbol": "NewLifecycleService"
       },
       "removal_condition": "Remove the compatibility aliases after the remaining lifecycle consumers use internal/lifecycle directly."
-    }
-  ],
-  "exceptions": [
+    },
     {
-      "source": "github.com/markhuangai/dense-mem/internal/service/memoryservice",
-      "target": "github.com/markhuangai/dense-mem/internal/repository",
+      "source_path": "internal/service/memoryservice/recall_compat.go",
+      "fields": [
+        "RecallService",
+        "RecallDependencies",
+        "RecallSearchRepository",
+        "RecallHypothesisRepository",
+        "RecallCommunityRepository",
+        "RecallCommunitySnapshotRepository",
+        "RecallCommunityCoverageRepository",
+        "RecallCommunityRunRepository",
+        "RecallCommunityConfigProvider",
+        "RecallRequest",
+        "RecallResult",
+        "RecallSuggestedAction",
+        "RecallResultItem",
+        "RecallDiscoveryPath",
+        "RecallCommunity",
+        "RecallConflictSummary",
+        "RecallRelationshipHandle",
+        "RelatedRelationshipSummary",
+        "EntityHandle",
+        "SemanticObject",
+        "RelatedHypothesisSummary",
+        "RecallDegradationResult",
+        "RecallSearchStates",
+        "RecallConflictPosition",
+        "RecallConflictSupporter",
+        "ErrRecallAuthContext",
+        "ErrRecallRepositoryTeamMismatch",
+        "NewRecallService"
+      ],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/application_composition.go", "symbol": "buildApplicationBundle"}
+      ],
       "removal_issue": 382,
-      "reason": "The legacy memoryservice retains recall, lifecycle, and placement consumers until final capability convergence; Remember intake now uses its own application boundary."
+      "implementation_owner": {"path": "internal/recall/recall.go", "symbol": "NewRecallService"},
+      "removal_condition": "Remove the legacy memoryservice Recall aliases after registry and retained test consumers use internal/recall directly."
+    },
+    {
+      "source_path": "internal/service/recall_feedback_event_service.go",
+      "fields": [
+        "RecallFeedbackEventReader",
+        "RecallFeedbackEventRecorder",
+        "RecallFeedbackEventService",
+        "RecallFeedbackRetentionProvider",
+        "RecallFeedbackResultResolver",
+        "RecallFeedbackEventServiceImpl",
+        "NewRecallFeedbackEventService",
+        "ErrRecallFeedbackInvalidInput",
+        "ErrRecallFeedbackInvalidResultRef"
+      ],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/application_composition.go", "symbol": "buildApplicationBundle"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/recall/feedback.go", "symbol": "NewRecallFeedbackEventService"},
+      "removal_condition": "Remove the shared service feedback aliases after the composition root consumes Recall's native feedback application type directly."
     }
   ],
-  "workers": []
+  "exceptions": [],
+  "workers": [
+    {"path": "internal/recall/feedback.go", "function": "Start", "kind": "goroutine", "ordinal": 1, "role": "worker", "lifecycle_issue": 381}
+  ]
 }

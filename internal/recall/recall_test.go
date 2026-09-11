@@ -1,4 +1,4 @@
-package memoryservice
+package recall
 
 import (
 	"context"
@@ -12,10 +12,24 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
+	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
+	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
+	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 )
+
+func authenticatedRememberContext(teamID, profileID, credentialID uuid.UUID) context.Context {
+	ctx := correlation.WithID(context.Background(), "corr-canonical")
+	return requestctx.WithActor(ctx, requestctx.Actor{
+		TeamID: teamID, TeamName: "team", IdentityID: credentialID, MembershipID: credentialID,
+		OwnerID: profileID, OwnerName: "owner", CredentialID: &credentialID,
+		AuthMethod: "api_key", Role: "member", Grants: []string{"read", "write"},
+	})
+}
 
 func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 	teamID := uuid.New()
@@ -29,14 +43,14 @@ func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 	supportAcceptedAt := time.Date(2026, 7, 20, 10, 31, 0, 0, time.UTC)
 	reviewDueAt := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
 	search := &recallSearchStub{
-		contract: &repository.ActiveSearchContract{
+		contract: &searchcontract.ActiveSearchContract{
 			EmbeddingContractID: uuid.NewString(),
 			EmbeddingDimensions: 3,
 			EmbeddingModel:      "test-model",
 		},
-		result: &repository.RecallEvidenceResult{
+		result: &recallcontract.RecallEvidenceResult{
 			SearchState: string(domain.SearchProjectionCurrent),
-			Results: []repository.RecallEvidenceHit{{
+			Results: []recallcontract.RecallEvidenceHit{{
 				EvidenceID:      evidenceID,
 				RelationshipIDs: []string{relationshipID},
 				Rank:            1,
@@ -46,7 +60,7 @@ func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 				SourceType:      "document",
 				CreatedAt:       evidenceCreatedAt,
 			}},
-			Conflicts: []repository.RelationshipConflictCaseRecord{{
+			Conflicts: []tracecontract.RelationshipConflictCaseRecord{{
 				TeamID:              teamID.String(),
 				ConflictID:          conflictID,
 				Version:             1,
@@ -56,11 +70,11 @@ func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 				ReviewDueAt:         reviewDueAt,
 				PolicyVersion:       domain.ConflictPolicyVersion,
 				PreferredPositionID: "",
-				Positions: []repository.RelationshipConflictPositionRecord{{
+				Positions: []domain.RelationshipConflictPositionRecord{{
 					PositionID:     positionID,
 					Disposition:    "candidate",
 					SupporterCount: 1,
-					Supporters: []repository.RelationshipConflictSupporterRecord{{
+					Supporters: []domain.RelationshipConflictSupporterRecord{{
 						ProfileID:          profileID.String(),
 						ProfileName:        "Profile A",
 						StrongestAuthority: "authoritative",
@@ -126,10 +140,10 @@ func TestRelatedHypothesisSourceIDsExcludeEvidenceReferences(t *testing.T) {
 func TestRecallRejectsMismatchedConflictTeam(t *testing.T) {
 	teamID := uuid.New()
 	search := &recallSearchStub{
-		contract: &repository.ActiveSearchContract{},
-		result: &repository.RecallEvidenceResult{
+		contract: &searchcontract.ActiveSearchContract{},
+		result: &recallcontract.RecallEvidenceResult{
 			SearchState: string(domain.SearchProjectionCurrent),
-			Conflicts: []repository.RelationshipConflictCaseRecord{{
+			Conflicts: []tracecontract.RelationshipConflictCaseRecord{{
 				TeamID:     uuid.NewString(),
 				ConflictID: uuid.NewString(),
 			}},
@@ -142,10 +156,10 @@ func TestRecallRejectsMismatchedConflictTeam(t *testing.T) {
 }
 
 func TestRecallConflictSummariesEnforcePositionBounds(t *testing.T) {
-	records := make([]repository.RelationshipConflictPositionRecord, 0, 11)
+	records := make([]domain.RelationshipConflictPositionRecord, 0, 11)
 	for i := 0; i < 11; i++ {
-		supporters := make([]repository.RelationshipConflictSupporterRecord, 21)
-		records = append(records, repository.RelationshipConflictPositionRecord{
+		supporters := make([]domain.RelationshipConflictSupporterRecord, 21)
+		records = append(records, domain.RelationshipConflictPositionRecord{
 			PositionID:      uuid.NewString(),
 			Disposition:     "candidate",
 			Supporters:      supporters,
@@ -154,7 +168,7 @@ func TestRecallConflictSummariesEnforcePositionBounds(t *testing.T) {
 			EvidenceIDs:     make([]string, 51),
 		})
 	}
-	summaries := recallConflictSummaries([]repository.RelationshipConflictCaseRecord{{
+	summaries := recallConflictSummaries([]tracecontract.RelationshipConflictCaseRecord{{
 		ConflictID:  uuid.NewString(),
 		Version:     1,
 		Kind:        "cross_profile_current_state",
@@ -212,14 +226,14 @@ func TestRecallReturnsRelatedHypothesesOutsidePrimaryResults(t *testing.T) {
 	hypothesisID := uuid.NewString()
 	sourceRelationshipID := uuid.NewString()
 	search := &recallSearchStub{
-		contract: &repository.ActiveSearchContract{
+		contract: &searchcontract.ActiveSearchContract{
 			EmbeddingContractID: uuid.NewString(),
 			EmbeddingDimensions: 3,
 			EmbeddingModel:      "test-model",
 		},
-		result: &repository.RecallEvidenceResult{
+		result: &recallcontract.RecallEvidenceResult{
 			SearchState: string(domain.SearchProjectionCurrent),
-			Results: []repository.RecallEvidenceHit{{
+			Results: []recallcontract.RecallEvidenceHit{{
 				EvidenceID: evidenceID,
 				Rank:       1,
 				Context:    "Dense-Mem uses PostgreSQL for durable memory.",
@@ -264,14 +278,14 @@ func TestRecallProviderFailureIsOptionalDegradation(t *testing.T) {
 	profileID := uuid.New()
 	keyID := uuid.New()
 	search := &recallSearchStub{
-		contract: &repository.ActiveSearchContract{
+		contract: &searchcontract.ActiveSearchContract{
 			EmbeddingContractID: uuid.NewString(),
 			EmbeddingDimensions: 3,
 			EmbeddingModel:      "test-model",
 		},
-		result: &repository.RecallEvidenceResult{
+		result: &recallcontract.RecallEvidenceResult{
 			SearchState: string(domain.SearchProjectionPending),
-			Results:     []repository.RecallEvidenceHit{},
+			Results:     []recallcontract.RecallEvidenceHit{},
 		},
 	}
 	provider := &recallProviderStub{available: false}
@@ -290,14 +304,14 @@ func TestRecallProviderFailureIsOptionalDegradation(t *testing.T) {
 
 func TestRecallProjectsEvidenceConflictPositionsAndJSONShape(t *testing.T) {
 	now := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
-	positions := make([]repository.EvidenceConflictPositionRecord, 0, 11)
+	positions := make([]recallcontract.EvidenceConflictPositionRecord, 0, 11)
 	for index := 0; index < 11; index++ {
-		positions = append(positions, repository.EvidenceConflictPositionRecord{
+		positions = append(positions, recallcontract.EvidenceConflictPositionRecord{
 			PositionID: fmt.Sprintf("position-%d", index), CanonicalEvidenceID: fmt.Sprintf("evidence-%d", index), OccurrenceID: fmt.Sprintf("occurrence-%d", index),
 			Quote: fmt.Sprintf("quote-%d", index), SpanStart: index, SpanEnd: index + 2, Authority: "primary", Submitted: index == 0,
 		})
 	}
-	summaries := recallEvidenceConflictSummaries([]repository.EvidenceConflictCaseRecord{{
+	summaries := recallEvidenceConflictSummaries([]recallcontract.EvidenceConflictCaseRecord{{
 		ConflictID: "conflict-1", Status: "resolved", Version: 3, PreferredPositionID: "position-0", CreatedAt: now, UpdatedAt: now, Positions: positions,
 	}})
 	require.Len(t, summaries, 1)
@@ -328,9 +342,9 @@ func TestRecallConflictLimitPreservesRelationshipOrderAndDeduplicates(t *testing
 }
 
 func TestRecallConflictTeamValidationRejectsCrossTeamEvidence(t *testing.T) {
-	recalled := &repository.RecallEvidenceResult{
-		Conflicts:         []repository.RelationshipConflictCaseRecord{{TeamID: "team-a"}},
-		EvidenceConflicts: []repository.EvidenceConflictCaseRecord{{TeamID: "team-b", Kind: "evidence_conflict"}},
+	recalled := &recallcontract.RecallEvidenceResult{
+		Conflicts:         []tracecontract.RelationshipConflictCaseRecord{{TeamID: "team-a"}},
+		EvidenceConflicts: []recallcontract.EvidenceConflictCaseRecord{{TeamID: "team-b", Kind: "evidence_conflict"}},
 	}
 	require.ErrorIs(t, validateRecallConflictTeams(recalled, "team-a"), ErrRecallRepositoryTeamMismatch)
 	recalled.Conflicts = nil
@@ -355,19 +369,19 @@ func TestRecallProviderFailureReportsFailedRelationshipProjection(t *testing.T) 
 	profileID := uuid.New()
 	keyID := uuid.New()
 	search := &recallSearchStub{
-		contract: &repository.ActiveSearchContract{
+		contract: &searchcontract.ActiveSearchContract{
 			EmbeddingContractID: uuid.NewString(),
 			EmbeddingDimensions: 3,
 			EmbeddingModel:      "test-model",
 		},
-		result: &repository.RecallEvidenceResult{
+		result: &recallcontract.RecallEvidenceResult{
 			SearchState: string(domain.SearchProjectionCurrent),
-			Results:     []repository.RecallEvidenceHit{},
+			Results:     []recallcontract.RecallEvidenceHit{},
 		},
-		relationshipResult: &repository.RecallRelationshipsResult{
+		relationshipResult: &recallcontract.RecallRelationshipsResult{
 			TeamID:      teamID.String(),
 			SearchState: string(domain.SearchProjectionFailed),
-			Results:     []repository.RecallRelationshipHit{},
+			Results:     []recallcontract.RecallRelationshipHit{},
 		},
 	}
 	svc := NewRecallService(RecallDependencies{
@@ -429,14 +443,14 @@ func TestRecallProviderMalformedBranchesAreOptionalDegradation(t *testing.T) {
 			profileID := uuid.New()
 			keyID := uuid.New()
 			search := &recallSearchStub{
-				contract: &repository.ActiveSearchContract{
+				contract: &searchcontract.ActiveSearchContract{
 					EmbeddingContractID: uuid.NewString(),
 					EmbeddingDimensions: 3,
 					EmbeddingModel:      "test-model",
 				},
-				result: &repository.RecallEvidenceResult{
+				result: &recallcontract.RecallEvidenceResult{
 					SearchState: string(domain.SearchProjectionCurrent),
-					Results:     []repository.RecallEvidenceHit{},
+					Results:     []recallcontract.RecallEvidenceHit{},
 				},
 			}
 			if tt.name == "returned model mismatch" {
@@ -464,14 +478,14 @@ func TestRecallNormalizesIDs(t *testing.T) {
 	evidenceID := uuid.NewString()
 	relationshipID := uuid.NewString()
 	search := &recallSearchStub{
-		contract: &repository.ActiveSearchContract{
+		contract: &searchcontract.ActiveSearchContract{
 			EmbeddingContractID: uuid.NewString(),
 			EmbeddingDimensions: 3,
 			EmbeddingModel:      "test-model",
 		},
-		result: &repository.RecallEvidenceResult{
+		result: &recallcontract.RecallEvidenceResult{
 			SearchState: string(domain.SearchProjectionCurrent),
-			Results:     []repository.RecallEvidenceHit{},
+			Results:     []recallcontract.RecallEvidenceHit{},
 		},
 	}
 	svc := NewRecallService(RecallDependencies{Search: search})
@@ -499,20 +513,20 @@ func TestRecallAddsCommunityDiscoveryWhenEnabledAndPrimaryHasRoom(t *testing.T) 
 	subjectID := uuid.NewString()
 	objectID := uuid.NewString()
 	search := &recallSearchStub{
-		contract: &repository.ActiveSearchContract{
+		contract: &searchcontract.ActiveSearchContract{
 			EmbeddingContractID: uuid.NewString(),
 			EmbeddingDimensions: 3,
 			EmbeddingModel:      "test-model",
 		},
-		result: &repository.RecallEvidenceResult{
+		result: &recallcontract.RecallEvidenceResult{
 			SearchState: string(domain.SearchProjectionCurrent),
-			Results:     []repository.RecallEvidenceHit{},
+			Results:     []recallcontract.RecallEvidenceHit{},
 		},
 	}
 	communities := &recallCommunityStub{
-		paths: []repository.CommunityDiscoveryPath{{
+		paths: []communitycontract.CommunityDiscoveryPath{{
 			CommunityID: uuid.NewString(),
-			Relationship: repository.CommunityDiscoveryRelationship{
+			Relationship: communitycontract.CommunityDiscoveryRelationship{
 				RelationshipID:  relationshipID,
 				SubjectEntityID: subjectID,
 				SubjectName:     "Dense-Mem",
@@ -554,14 +568,14 @@ func TestRecallSkipsCommunityDiscoveryWhenPrimaryResultsFillLimit(t *testing.T) 
 	keyID := uuid.New()
 	evidenceID := uuid.NewString()
 	search := &recallSearchStub{
-		contract: &repository.ActiveSearchContract{
+		contract: &searchcontract.ActiveSearchContract{
 			EmbeddingContractID: uuid.NewString(),
 			EmbeddingDimensions: 3,
 			EmbeddingModel:      "test-model",
 		},
-		result: &repository.RecallEvidenceResult{
+		result: &recallcontract.RecallEvidenceResult{
 			SearchState: string(domain.SearchProjectionCurrent),
-			Results: []repository.RecallEvidenceHit{{
+			Results: []recallcontract.RecallEvidenceHit{{
 				TeamID:     teamID.String(),
 				EvidenceID: evidenceID,
 				Context:    "PostgreSQL is used.",
@@ -602,20 +616,20 @@ func TestRecallReturnsRelatedRelationshipsAndVectorDegradation(t *testing.T) {
 	objectValueID := uuid.NewString()
 	relationshipLimit := 2
 	search := &recallSearchStub{
-		contract: &repository.ActiveSearchContract{
+		contract: &searchcontract.ActiveSearchContract{
 			EmbeddingContractID: uuid.NewString(),
 			EmbeddingDimensions: 3,
 			EmbeddingModel:      "test-model",
 		},
-		result: &repository.RecallEvidenceResult{
+		result: &recallcontract.RecallEvidenceResult{
 			SearchState: string(domain.SearchProjectionCurrent),
-			Results:     []repository.RecallEvidenceHit{},
+			Results:     []recallcontract.RecallEvidenceHit{},
 		},
-		relationshipResult: &repository.RecallRelationshipsResult{
+		relationshipResult: &recallcontract.RecallRelationshipsResult{
 			TeamID:        teamID.String(),
 			SearchState:   string(domain.SearchProjectionPending),
 			VectorOmitted: true,
-			Results: []repository.RecallRelationshipHit{
+			Results: []recallcontract.RecallRelationshipHit{
 				{
 					RelationshipID:            entityRelationshipID,
 					EquivalentRelationshipIDs: []string{equivalentRelationshipID},
@@ -677,14 +691,14 @@ func TestRecallSkipsRelatedRelationshipsWhenLimitIsZero(t *testing.T) {
 	keyID := uuid.New()
 	relationshipLimit := 0
 	search := &recallSearchStub{
-		contract: &repository.ActiveSearchContract{
+		contract: &searchcontract.ActiveSearchContract{
 			EmbeddingContractID: uuid.NewString(),
 			EmbeddingDimensions: 3,
 			EmbeddingModel:      "test-model",
 		},
-		result: &repository.RecallEvidenceResult{
+		result: &recallcontract.RecallEvidenceResult{
 			SearchState: string(domain.SearchProjectionCurrent),
-			Results:     []repository.RecallEvidenceHit{},
+			Results:     []recallcontract.RecallEvidenceHit{},
 		},
 	}
 	svc := NewRecallService(RecallDependencies{Search: search})
@@ -704,14 +718,14 @@ func TestRecallRestoresDefaultResultLimit(t *testing.T) {
 	profileID := uuid.New()
 	keyID := uuid.New()
 	search := &recallSearchStub{
-		contract: &repository.ActiveSearchContract{
+		contract: &searchcontract.ActiveSearchContract{
 			EmbeddingContractID: uuid.NewString(),
 			EmbeddingDimensions: 3,
 			EmbeddingModel:      "test-model",
 		},
-		result: &repository.RecallEvidenceResult{
+		result: &recallcontract.RecallEvidenceResult{
 			SearchState: string(domain.SearchProjectionCurrent),
-			Results:     []repository.RecallEvidenceHit{},
+			Results:     []recallcontract.RecallEvidenceHit{},
 		},
 	}
 	svc := NewRecallService(RecallDependencies{Search: search})
@@ -729,14 +743,14 @@ func TestRecallAddsOptionalFrontierDegradations(t *testing.T) {
 	profileID := uuid.New()
 	keyID := uuid.New()
 	search := &recallSearchStub{
-		contract: &repository.ActiveSearchContract{
+		contract: &searchcontract.ActiveSearchContract{
 			EmbeddingContractID: uuid.NewString(),
 			EmbeddingDimensions: 3,
 			EmbeddingModel:      "test-model",
 		},
-		result: &repository.RecallEvidenceResult{
+		result: &recallcontract.RecallEvidenceResult{
 			SearchState: string(domain.SearchProjectionCurrent),
-			Results:     []repository.RecallEvidenceHit{},
+			Results:     []recallcontract.RecallEvidenceHit{},
 		},
 		relationshipErr: errors.New("relationship recall failed"),
 	}
@@ -805,25 +819,25 @@ func TestValidateRecallEmbeddingRejectsInvalidVectors(t *testing.T) {
 }
 
 type recallSearchStub struct {
-	contract           *repository.ActiveSearchContract
-	input              repository.RecallEvidenceInput
-	relationshipInput  repository.RecallRelationshipsInput
-	result             *repository.RecallEvidenceResult
-	relationshipResult *repository.RecallRelationshipsResult
+	contract           *searchcontract.ActiveSearchContract
+	input              recallcontract.RecallEvidenceInput
+	relationshipInput  recallcontract.RecallRelationshipsInput
+	result             *recallcontract.RecallEvidenceResult
+	relationshipResult *recallcontract.RecallRelationshipsResult
 	relationshipCalled bool
 	relationshipCalls  int
 	err                error
 	relationshipErr    error
 }
 
-func (s *recallSearchStub) GetActiveSearchContract(context.Context) (*repository.ActiveSearchContract, error) {
+func (s *recallSearchStub) GetActiveSearchContract(context.Context) (*searchcontract.ActiveSearchContract, error) {
 	if s.contract == nil {
 		return nil, errors.New("missing contract")
 	}
 	return s.contract, nil
 }
 
-func (s *recallSearchStub) RecallEvidence(_ context.Context, input repository.RecallEvidenceInput) (*repository.RecallEvidenceResult, error) {
+func (s *recallSearchStub) RecallEvidence(_ context.Context, input recallcontract.RecallEvidenceInput) (*recallcontract.RecallEvidenceResult, error) {
 	s.input = input
 	if s.err != nil {
 		return nil, s.err
@@ -831,7 +845,7 @@ func (s *recallSearchStub) RecallEvidence(_ context.Context, input repository.Re
 	return s.result, nil
 }
 
-func (s *recallSearchStub) RecallRelationships(_ context.Context, input repository.RecallRelationshipsInput) (*repository.RecallRelationshipsResult, error) {
+func (s *recallSearchStub) RecallRelationships(_ context.Context, input recallcontract.RecallRelationshipsInput) (*recallcontract.RecallRelationshipsResult, error) {
 	s.relationshipCalled = true
 	s.relationshipCalls++
 	s.relationshipInput = input
@@ -841,10 +855,10 @@ func (s *recallSearchStub) RecallRelationships(_ context.Context, input reposito
 	if s.relationshipResult != nil {
 		return s.relationshipResult, nil
 	}
-	return &repository.RecallRelationshipsResult{
+	return &recallcontract.RecallRelationshipsResult{
 		TeamID:      input.TeamID,
 		SearchState: string(domain.SearchProjectionCurrent),
-		Results:     []repository.RecallRelationshipHit{},
+		Results:     []recallcontract.RecallRelationshipHit{},
 	}, nil
 }
 
@@ -863,13 +877,13 @@ func (s *recallHypothesisStub) RecallHypotheses(_ context.Context, input dreamco
 }
 
 type recallCommunityStub struct {
-	refreshInput repository.CommunityStalenessInput
-	recallInput  repository.CommunityDiscoveryInput
-	paths        []repository.CommunityDiscoveryPath
+	refreshInput communitycontract.CommunityStalenessInput
+	recallInput  communitycontract.CommunityDiscoveryInput
+	paths        []communitycontract.CommunityDiscoveryPath
 	err          error
 }
 
-func (s *recallCommunityStub) RefreshCommunityStaleness(_ context.Context, input repository.CommunityStalenessInput) (int, error) {
+func (s *recallCommunityStub) RefreshCommunityStaleness(_ context.Context, input communitycontract.CommunityStalenessInput) (int, error) {
 	s.refreshInput = input
 	if s.err != nil {
 		return 0, s.err
@@ -877,7 +891,7 @@ func (s *recallCommunityStub) RefreshCommunityStaleness(_ context.Context, input
 	return 0, nil
 }
 
-func (s *recallCommunityStub) RecallCommunityDiscovery(_ context.Context, input repository.CommunityDiscoveryInput) ([]repository.CommunityDiscoveryPath, error) {
+func (s *recallCommunityStub) RecallCommunityDiscovery(_ context.Context, input communitycontract.CommunityDiscoveryInput) ([]communitycontract.CommunityDiscoveryPath, error) {
 	s.recallInput = input
 	if s.err != nil {
 		return nil, s.err
