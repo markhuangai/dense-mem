@@ -178,11 +178,19 @@ func redisContractAddress(t *testing.T) string {
 		t.Skip("set DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 to run the Redis stream contract")
 	}
 	ctx := context.Background()
+	networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK"))
 	options := []testcontainers.ContainerCustomizer{
 		testcontainers.WithExposedPorts("6379/tcp"),
-		testcontainers.WithWaitStrategy(wait.ForListeningPort("6379/tcp").WithStartupTimeout(30 * time.Second)),
 	}
-	networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK"))
+	if networkName != "" {
+		options = append(options, testcontainers.WithWaitStrategy(
+			wait.ForLog("Ready to accept connections").WithStartupTimeout(30*time.Second),
+		))
+	} else {
+		options = append(options, testcontainers.WithWaitStrategy(
+			wait.ForListeningPort("6379/tcp").WithStartupTimeout(30*time.Second),
+		))
+	}
 	if networkName != "" {
 		options = append(options, tcnetwork.WithNetworkName([]string{"redis"}, networkName))
 	}
