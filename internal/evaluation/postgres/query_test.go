@@ -1,8 +1,10 @@
-package repository
+package postgres
 
 import (
 	"strings"
 	"testing"
+
+	dreampostgres "github.com/markhuangai/dense-mem/internal/dream/postgres"
 )
 
 func TestEvaluationQueryUsesBoundFiltersForValueStatus(t *testing.T) {
@@ -42,10 +44,10 @@ func TestEvaluationInputNormalization(t *testing.T) {
 }
 
 func TestEvaluationHypothesisQueryExcludesCanonicalAliases(t *testing.T) {
-	query, _, err := evaluationQuery(EvaluationListInput{
+	query, _, err := evaluationQueryWithHypothesis(EvaluationListInput{
 		TeamID: "00000000-0000-0000-0000-000000000101",
 		Type:   "hypothesis",
-	}, 10, 0)
+	}, 10, 0, dreampostgres.HypothesisEvaluationQuery)
 	if err != nil {
 		t.Fatalf("evaluationQuery: %v", err)
 	}
@@ -80,5 +82,41 @@ func TestEvaluationQueryUsesInjectedHypothesisProvider(t *testing.T) {
 	}
 	if len(args) != 2 || args[0] != "team-id" || args[1] != "hypothesis-id" {
 		t.Fatalf("args = %#v", args)
+	}
+}
+
+func TestEvaluationQueryValidationBranches(t *testing.T) {
+	validTeam := "00000000-0000-0000-0000-000000000101"
+	if err := validateEvaluationListInput(EvaluationListInput{TeamID: "bad", Type: "value"}); err == nil {
+		t.Fatal("invalid team was accepted")
+	}
+	if err := validateEvaluationListInput(EvaluationListInput{TeamID: validTeam, Type: "unknown"}); err == nil {
+		t.Fatal("invalid type was accepted")
+	}
+	if err := validateEvaluationGetInput(EvaluationGetInput{TeamID: validTeam, Type: "value", ID: "bad"}); err == nil {
+		t.Fatal("invalid id was accepted")
+	}
+	if err := validateEvaluationGetInput(EvaluationGetInput{TeamID: validTeam, Type: "unknown", ID: validTeam}); err == nil {
+		t.Fatal("invalid get type was accepted")
+	}
+	if got := normalizeEvaluationType(" FRAGMENT "); got != "evidence" {
+		t.Fatalf("fragment normalization = %q", got)
+	}
+	if got := normalizeEvaluationType("custom"); got != "custom" {
+		t.Fatalf("custom normalization = %q", got)
+	}
+	if got := evaluationCursorOffset("bad"); got != 0 {
+		t.Fatalf("invalid cursor offset = %d", got)
+	}
+	if _, _, err := evaluationQueryWithHypothesis(EvaluationListInput{TeamID: validTeam, Type: "hypothesis"}, 1, 0, nil, "one", "two"); err == nil {
+		t.Fatal("multiple ids were accepted")
+	}
+	if _, _, err := evaluationQueryWithHypothesis(EvaluationListInput{TeamID: validTeam, Type: "hypothesis"}, 1, 0, nil); err == nil {
+		t.Fatal("missing hypothesis query was accepted")
+	}
+	if _, _, err := evaluationQueryWithHypothesis(EvaluationListInput{TeamID: validTeam, Type: "unsupported"}, 1, 0, func(EvaluationListInput, int, int, ...string) (string, []any, error) {
+		return "", nil, nil
+	}); err == nil {
+		t.Fatal("unsupported type was accepted")
 	}
 }

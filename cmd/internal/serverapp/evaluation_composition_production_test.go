@@ -13,7 +13,7 @@ func TestProductionEvaluationCompositionIsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("production evaluation composition: %v", err)
 	}
-	if bindings.Repository != nil || bindings.Communities != nil || bindings.Audit != nil {
+	if bindings.Application != nil || bindings.Repository != nil || bindings.Communities != nil || bindings.Audit != nil {
 		t.Fatal("production composition wired offline evaluation dependencies")
 	}
 	reg, err := registry.BuildActive(registry.Dependencies{EvaluationBindings: bindings})

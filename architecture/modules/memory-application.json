@@ -36,7 +36,6 @@
     {"path": "internal/tools/registry/contract_outputs.go", "issue": 376},
     {"path": "internal/tools/registry/contract_outputs_test.go", "issue": 376},
     {"path": "internal/tools/registry/contract_uat_test.go", "issue": 376},
-    {"path": "internal/tools/registry/evaluation_recall_tools.go", "issue": 376},
     {"path": "internal/tools/registry/uat_feedback.go", "issue": 376},
     {"path": "internal/tools/registry/uat_feedback_test.go", "issue": 376},
     {

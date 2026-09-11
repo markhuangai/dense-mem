@@ -57,74 +57,19 @@ func evalRunDreamCycleTool(deps Dependencies) Tool {
 		OutputSchema:   map[string]any{"type": "object"},
 		RequiredScopes: []string{"read", "write"},
 		Invoke: func(ctx context.Context, teamID string, input map[string]any) (map[string]any, error) {
-			if deps.Dreams == nil {
+			if deps.EvaluationBindings.Application == nil {
 				return nil, ErrToolUnavailable
 			}
-			maxOutputs := intInputOrDefault(input["max_outputs"], dream.DefaultMaxOutputs)
-			if err := auditEvaluationTool(ctx, deps, "eval_run_dream_cycle", maxOutputs, false, nil); err != nil {
-				return nil, err
-			}
+			maxOutputs, _ := intInput(input["max_outputs"])
 			req := dream.RunCycleRequest{
 				Manual:     true,
 				MaxOutputs: maxOutputs,
 				SeedDreams: seedDreamsInput(input["seed_dreams"]),
 			}
-			result, err := deps.Dreams.RunCycle(ctx, teamID, req)
-			if err != nil {
-				return nil, err
-			}
-			out, err := structToMap(result)
-			if err != nil {
-				return nil, err
-			}
-			return out, nil
+			out, err := deps.EvaluationBindings.Application.RunDreamCycle(ctx, teamID, req)
+			return out, translateEvaluationError(err)
 		},
 	}
-}
-
-func evalListDreams(ctx context.Context, deps Dependencies, teamID string, input map[string]any, limit int, metadataOnly bool) (map[string]any, error) {
-	if deps.Dreams == nil {
-		return nil, ErrToolUnavailable
-	}
-	opts := dream.ListOptions{Limit: limit}
-	if cursor, ok := input["cursor"].(string); ok {
-		opts.Cursor = cursor
-	}
-	if status, ok := input["status"].(string); ok {
-		opts.Status = status
-	}
-	dreams, nextCursor, err := deps.Dreams.List(ctx, teamID, opts)
-	if err != nil {
-		return nil, err
-	}
-	items := make([]map[string]any, 0, len(dreams))
-	for _, dream := range dreams {
-		item, err := structToMap(dream)
-		if err != nil {
-			return nil, err
-		}
-		if metadataOnly {
-			stripEvalContent("dream", item)
-		}
-		items = append(items, item)
-	}
-	return evalPage(items, nextCursor), nil
-}
-
-func dreamRefs(dreams []*domain.Dream) []map[string]any {
-	refs := make([]map[string]any, 0, len(dreams))
-	for i, dream := range dreams {
-		if dream == nil || strings.TrimSpace(dream.DreamID) == "" {
-			continue
-		}
-		refs = append(refs, map[string]any{
-			"rank":   i + 1,
-			"type":   "dream",
-			"id":     dream.DreamID,
-			"status": string(dream.Status),
-		})
-	}
-	return refs
 }
 
 func seedDreamsInput(value any) []dream.SeedDream {

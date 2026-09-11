@@ -1,4 +1,4 @@
-package repository
+package postgres
 
 import (
 	"context"
@@ -17,8 +17,7 @@ import (
 // making the registry depend on a concrete adapter.
 type EvaluationHypothesisQuery func(EvaluationListInput, int, int, ...string) (string, []any, error)
 
-// EvaluationReader exposes the team-scoped evaluation read model while the
-// legacy SemanticRepositoryImpl remains a compatibility facade.
+// EvaluationReader exposes the team-scoped evaluation read model.
 type EvaluationReader struct {
 	db              *gorm.DB
 	rls             storagepostgres.RLSHelper
@@ -27,8 +26,14 @@ type EvaluationReader struct {
 
 var _ EvaluationRepository = (*EvaluationReader)(nil)
 
-func NewEvaluationReader(db *gorm.DB, rls storagepostgres.RLSHelper, hypothesisQuery EvaluationHypothesisQuery) *EvaluationReader {
+func NewReader(db *gorm.DB, rls storagepostgres.RLSHelper, hypothesisQuery EvaluationHypothesisQuery) *EvaluationReader {
 	return &EvaluationReader{db: db, rls: rls, hypothesisQuery: hypothesisQuery}
+}
+
+// NewEvaluationReader preserves the adapter constructor name for compatibility
+// callers while new composition uses NewReader.
+func NewEvaluationReader(db *gorm.DB, rls storagepostgres.RLSHelper, hypothesisQuery EvaluationHypothesisQuery) *EvaluationReader {
+	return NewReader(db, rls, hypothesisQuery)
 }
 
 func (r *EvaluationReader) ListEvaluationRefs(ctx context.Context, input EvaluationListInput) (*EvaluationPage, error) {

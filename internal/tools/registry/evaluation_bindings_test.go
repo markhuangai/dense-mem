@@ -1,10 +1,22 @@
 package registry
 
 import (
+	"context"
 	"testing"
 
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
+
+type evaluationBindingsRepository struct{}
+
+func (*evaluationBindingsRepository) ListEvaluationRefs(context.Context, dreamcontract.EvaluationListInput) (*dreamcontract.EvaluationPage, error) {
+	return nil, nil
+}
+
+func (*evaluationBindingsRepository) GetEvaluationItem(context.Context, dreamcontract.EvaluationGetInput) (map[string]any, error) {
+	return nil, nil
+}
 
 func TestEvaluationFacetSuppliesAuditAppender(t *testing.T) {
 	audit := &evaluationAuditStub{}
@@ -17,8 +29,8 @@ func TestEvaluationFacetSuppliesAuditAppender(t *testing.T) {
 }
 
 func TestEvaluationBindingsPreserveFlatCoreAndFacetPrecedence(t *testing.T) {
-	flatEval := repository.NewSemanticRepository(nil, nil)
-	facetEval := repository.NewSemanticRepository(nil, nil)
+	flatEval := &evaluationBindingsRepository{}
+	facetEval := &evaluationBindingsRepository{}
 	flatCommunity := repository.NewSemanticRepository(nil, nil)
 	facetCommunity := repository.NewSemanticRepository(nil, nil)
 	flatAudit := &evaluationAuditStub{}
