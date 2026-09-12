@@ -1,6 +1,13 @@
 {
   "schema_version": 1,
   "capability": "mcp-transport",
+  "source_ownership": [
+    {"path": "internal/mcp/server.go", "issue": 380},
+    {"path": "internal/mcp/logger.go", "issue": 380},
+    {"path": "internal/mcp/conformance_harness_test.go", "issue": 380},
+    {"path": "internal/mcp/conformance_catalog_production_test.go", "issue": 380},
+    {"path": "internal/mcp/conformance_catalog_evaluation_test.go", "issue": 380}
+  ],
   "completed_issues": [],
   "go": {
     "units": [
@@ -14,13 +21,6 @@
   "browser": {
     "units": []
   },
-  "exceptions": [
-    {
-      "source": "github.com/markhuangai/dense-mem/internal/mcp",
-      "target": "github.com/markhuangai/dense-mem/internal/observability",
-      "removal_issue": 380,
-      "reason": "MCP transport still consumes the shared observability implementation until transport consolidation."
-    }
-  ],
+  "exceptions": [],
   "workers": []
 }

@@ -269,24 +269,11 @@
         {"path": "internal/knowledge/postgres/remember_result_test.go", "symbol": "TestRememberPublicResultUsesCanonicalCompletedProjection"},
         {"path": "internal/lifecycle/service_test.go", "symbol": "authenticatedRememberContext"},
         {"path": "internal/service/remember_attempt_diagnostics_service_test.go", "symbol": "TestRememberAttemptDiagnosticsServiceProjectsExchangesAndSafeResult"},
-        {"path": "internal/storage/postgres/synchronous_remember_cutover_migration_integration.e2e", "symbol": "TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement"},
-        {"path": "internal/tools/registry/contract_result_errors_test.go", "symbol": "TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance"},
-        {"path": "internal/tools/registry/contract_uat_test.go", "symbol": "TestBuildActiveWiresExecutableRemember"},
-        {"path": "internal/tools/registry/dream_tools_test.go", "symbol": "TestResolveDreamFeedbackReturnsStructuredTerminalFailure"}
+        {"path": "internal/storage/postgres/synchronous_remember_cutover_migration_integration.e2e", "symbol": "TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement"}
       ],
       "removal_issue": 382,
       "implementation_owner": {"path": "internal/remember/service/service.go", "symbol": "NewService"},
       "removal_condition": "Remove the compatibility aliases after all named callers consume the native Remember service and contract packages."
-    },
-    {
-      "source_path": "internal/service/memoryservice/remember.go",
-      "fields": ["SynchronousAssessmentFailureDetails"],
-      "consumers": [
-        {"path": "internal/tools/registry/contract_result_errors.go", "symbol": "ActionableErrorData"}
-      ],
-      "removal_issue": 382,
-      "implementation_owner": {"path": "internal/remember/service/submission_assessment_shared.go", "symbol": "SynchronousAssessmentFailureDetails"},
-      "removal_condition": "Remove the memoryservice forwarder after registry error projection consumes the native helper directly."
     }
   ],
   "workers": []

@@ -1,6 +1,9 @@
 {
   "schema_version": 1,
   "capability": "observability-port",
+  "source_ownership": [
+    {"path": "internal/observability/metrics_discoverability.go", "issue": 380}
+  ],
   "completed_issues": [],
   "go": {
     "units": [
@@ -11,6 +14,29 @@
       }
     ]
   },
+  "compatibility_bridges": [
+    {
+      "source_path": "internal/observability/metrics_discoverability.go",
+      "fields": ["RecallFeedback"],
+      "consumers": [
+        {"path": "internal/observability/metrics_discoverability.go", "symbol": "NoopDiscoverabilityMetrics"},
+        {"path": "internal/observability/metrics_discoverability.go", "symbol": "InMemoryDiscoverabilityMetrics.ObserveRecallFeedback"},
+        {"path": "internal/observability/prometheus_metrics.go", "symbol": "PrometheusMetrics.ObserveRecallFeedback"},
+        {"path": "internal/observability/prometheus_metrics.go", "symbol": "PrometheusMetrics.ObserveRecallFeedbackFor"},
+        {"path": "internal/observability/prometheus_metrics.go", "symbol": "RecordRecallFeedback"},
+        {"path": "internal/observability/metrics_discoverability_test.go", "symbol": "TestNoopDiscoverabilityMetricsNeverPanics"},
+        {"path": "internal/observability/metrics_discoverability_test.go", "symbol": "TestInMemoryDiscoverabilityMetricsRecordsActiveSignals"},
+        {"path": "internal/observability/metrics_discoverability_test.go", "symbol": "TestRecordDiscoverabilityMetricsUsesUnscopedRecorder"},
+        {"path": "internal/observability/metrics_discoverability_test.go", "symbol": "TestInMemoryDiscoverabilityMetricsIsConcurrentSafe"},
+        {"path": "internal/observability/prometheus_metrics_test.go", "symbol": "TestPrometheusMetricsRecordsActiveScopedSignals"},
+        {"path": "internal/observability/prometheus_metrics_test.go", "symbol": "TestPrometheusMetricsRecordsUnknownLabelsAndHelpers"},
+        {"path": "internal/observability/prometheus_metrics_test.go", "symbol": "TestNoopDiscoverabilityMetrics_ConsumesCalls"},
+        {"path": "internal/observability/prometheus_metrics_test.go", "symbol": "exerciseNilMetricHelpers"}
+      ],
+      "removal_issue": 382,
+      "removal_condition": "Remove the observability RecallFeedback alias after metric implementations and retained callers consume internal/recall/contract.FeedbackObservation directly."
+    }
+  ],
   "browser": {
     "units": []
   },

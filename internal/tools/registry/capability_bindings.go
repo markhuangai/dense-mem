@@ -3,25 +3,25 @@ package registry
 import (
 	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/lifecycle"
-	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/memorypack"
 	"github.com/markhuangai/dense-mem/internal/recall"
-	"github.com/markhuangai/dense-mem/internal/service/contextservice"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
-	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
+	traceapp "github.com/markhuangai/dense-mem/internal/trace"
 )
 
 // CoreDependencies are shared immutable inputs used by multiple registry
 // capabilities. They carry providers and policy owners; they do not contain
 // capability-specific invokers.
 type CoreDependencies struct {
-	Metrics              observability.DiscoverabilityMetrics
+	Metrics              recallcontract.FeedbackMetrics
 	RecallFeedbackConfig RecallFeedbackConfigProvider
 	RecallFeedbackEvents RecallFeedbackEventRecorder
 	EvaluationAudit      EvaluationAuditAppender
 }
 
 type RememberBindings struct {
-	Service memoryservice.RememberService
+	Service rememberapp.Service
 }
 
 type LifecycleBindings struct {
@@ -34,7 +34,7 @@ type RecallBindings struct {
 }
 
 type TraceBindings struct {
-	Service contextservice.Service
+	Service traceapp.Service
 }
 
 type DreamBindings struct {
@@ -42,7 +42,7 @@ type DreamBindings struct {
 }
 
 type MemoryPackBindings struct {
-	Service skillpackservice.MemoryPackService
+	Service memorypack.MemoryPackService
 }
 
 func (d Dependencies) withCapabilityBindings() Dependencies {

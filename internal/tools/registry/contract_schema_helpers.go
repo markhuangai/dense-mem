@@ -2,7 +2,7 @@ package registry
 
 import (
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 const (
@@ -224,10 +224,10 @@ func submissionStatusErrorSchema() map[string]any {
 	return closedObject(
 		[]string{"code", "message", "retryable", "next_action", "remediation"},
 		map[string]any{
-			"code":        schemaEnum(memoryservice.SubmissionErrorCodes()),
+			"code":        schemaEnum(rememberapp.SubmissionErrorCodes()),
 			"message":     schemaString("Bounded safe submission error.", 512),
 			"retryable":   map[string]any{"type": "boolean"},
-			"next_action": schemaEnum(memoryservice.SubmissionNextActions()),
+			"next_action": schemaEnum(rememberapp.SubmissionNextActions()),
 			"remediation": schemaString("Bounded action the caller can take next.", 512),
 			"reason_code": schemaString("Code-specific bounded reason.", 128),
 			"details":     actionableErrorDetailsSchema(),

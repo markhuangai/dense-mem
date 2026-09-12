@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	"github.com/markhuangai/dense-mem/internal/lifecycle"
 )
 
 func TestBuildActiveWiresExecutableRetractEvidence(t *testing.T) {
@@ -151,33 +151,33 @@ func TestBuildActiveCorrectRelationshipRejectsTenantOverride(t *testing.T) {
 }
 
 type stubLifecycleService struct {
-	correctReq memoryservice.CorrectRelationshipRequest
-	retractReq memoryservice.RetractEvidenceRequest
+	correctReq lifecycle.CorrectRelationshipRequest
+	retractReq lifecycle.RetractEvidenceRequest
 	retractErr error
 }
 
 func (s *stubLifecycleService) CorrectRelationship(
 	_ context.Context,
-	req memoryservice.CorrectRelationshipRequest,
-) (*memoryservice.CorrectRelationshipReceipt, error) {
+	req lifecycle.CorrectRelationshipRequest,
+) (*lifecycle.CorrectRelationshipReceipt, error) {
 	s.correctReq = req
-	return &memoryservice.CorrectRelationshipReceipt{
+	return &lifecycle.CorrectRelationshipReceipt{
 		ContractVersion: domain.ContractVersion,
 		SubmissionID:    "correction-canonical", SubmissionKind: "relationship_correction",
 		ProcessingState: "completed", SearchState: "current", CorrelationID: "correlation-canonical",
-		Errors: []memoryservice.SubmissionStatusError{},
+		Errors: []lifecycle.SubmissionStatusError{},
 	}, nil
 }
 
 func (s *stubLifecycleService) RetractEvidence(
 	_ context.Context,
-	req memoryservice.RetractEvidenceRequest,
-) (*memoryservice.RetractEvidenceResult, error) {
+	req lifecycle.RetractEvidenceRequest,
+) (*lifecycle.RetractEvidenceResult, error) {
 	s.retractReq = req
 	if s.retractErr != nil {
 		return nil, s.retractErr
 	}
-	return &memoryservice.RetractEvidenceResult{
+	return &lifecycle.RetractEvidenceResult{
 		DecisionID:                      "evidence-decision-canonical",
 		ProcessingState:                 "completed",
 		RetractedEvidenceIDs:            append([]string(nil), req.EvidenceIDs...),

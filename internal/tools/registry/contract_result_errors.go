@@ -12,12 +12,13 @@ import (
 	"github.com/markhuangai/dense-mem/internal/dream"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/markhuangai/dense-mem/internal/lifecycle"
+	"github.com/markhuangai/dense-mem/internal/memorypack"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service/contextservice"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
-	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
+	traceapp "github.com/markhuangai/dense-mem/internal/trace"
+	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 )
 
 const (
@@ -53,11 +54,11 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 		code, reasonCode, message, retryable, nextAction, remediation = domain.ErrorProviderUnavailable, "request_timeout", "The "+tool+" operation exceeded its bounded deadline.", true, actionRetrySameRequest, actionableTimeoutRemediation(tool)
 	case errors.Is(err, ErrToolUnavailable):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorDegraded, "tool_unavailable", "The "+tool+" operation is not available on this server.", actionContactOperator, "Contact an operator to enable the required server capability, then retry."
-	case errors.Is(err, rememberapp.ErrRememberAuthContext), errors.Is(err, memoryservice.ErrLifecycleAuthContext), errors.Is(err, contextservice.ErrTraceAuthContext), errors.Is(err, dream.ErrDreamAuthContext), errors.Is(err, skillpackservice.ErrMemoryPackAuthContext):
+	case errors.Is(err, rememberapp.ErrRememberAuthContext), errors.Is(err, lifecycle.ErrLifecycleAuthContext), errors.Is(err, traceapp.ErrTraceAuthContext), errors.Is(err, dream.ErrDreamAuthContext), errors.Is(err, memorypack.ErrMemoryPackAuthContext):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorUnauthorizedScope, "authenticated_context_required", "Dense-Mem could not authorize the "+tool+" operation.", actionAuthorization, "Authenticate with a credential that has access to this tool and retry."
-	case errors.Is(err, repository.ErrTraceRelationshipNotFound), errors.Is(err, contextservice.ErrTraceRelationshipNotFound), errors.Is(err, dream.ErrDreamNotFound), errors.Is(err, dreamcontract.ErrDreamHypothesisNotFound):
+	case errors.Is(err, tracecontract.ErrRelationshipNotFound), errors.Is(err, traceapp.ErrTraceRelationshipNotFound), errors.Is(err, dream.ErrDreamNotFound), errors.Is(err, dreamcontract.ErrDreamHypothesisNotFound):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "reference_not_found", "The reference supplied to "+tool+" was not found or is no longer available.", actionRefreshState, "Refresh authorized state, then retry with a current reference."
-	case errors.Is(err, repository.ErrTraceRelationshipIDInvalid):
+	case errors.Is(err, tracecontract.ErrRelationshipIDInvalid):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "invalid_request", "The relationship_id supplied to "+tool+" must be a valid UUID.", actionCorrectInput, "Use a relationship_id returned by recall_memory and submit the corrected request again."
 		failureDetails["component"] = "trace.relationship_id"
 		failureDetails["client_controlled"] = true
@@ -65,11 +66,11 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "invalid_request", "The hypothesis_id supplied to "+tool+" must be a valid UUID.", actionCorrectInput, "Use a hypothesis_id returned by list_dreams or recall_memory and submit the corrected request again."
 		failureDetails["component"] = "dream.hypothesis_id"
 		failureDetails["client_controlled"] = true
-	case errors.Is(err, repository.ErrEvidenceLifecycleIDInvalid):
+	case errors.Is(err, contract.ErrEvidenceLifecycleIDInvalid):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "invalid_request", "The evidence_ids supplied to "+tool+" must contain valid UUIDs.", actionCorrectInput, "Use evidence IDs returned by remember or recall_memory and submit the corrected request again."
 		failureDetails["component"] = "retract_evidence.evidence_ids"
 		failureDetails["client_controlled"] = true
-	case errors.Is(err, skillpackservice.ErrMemoryPackRelationshipNotActive):
+	case errors.Is(err, memorypack.ErrMemoryPackRelationshipNotActive):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "relationship_not_active", "The selected relationship for "+tool+" is no longer active.", actionRefreshState, "Refresh authorized relationships, remove inactive references, and submit the export again."
 		failureDetails["component"] = "memory_pack.relationship"
 		failureDetails["client_controlled"] = true
@@ -77,11 +78,11 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "invalid_request", "The evidence field for "+tool+" must contain independent evidence rather than the hypothesis text.", actionCorrectInput, "Provide independent evidence in the evidence field, then submit the corrected Dream feedback request."
 		failureDetails["component"] = "dream_feedback.evidence"
 		failureDetails["client_controlled"] = true
-	case errors.Is(err, repository.ErrSearchContractMismatch):
+	case errors.Is(err, contract.ErrSearchContractMismatch):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorDegraded, "search_not_ready", "Dense-Mem search is not ready for the "+tool+" operation.", actionContactOperator, "Contact an operator to restore the configured search contract, then retry."
 	case errors.Is(err, rememberapp.ErrRememberInputBudgetExceeded):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "input_budget_exceeded", "The assessor input for "+tool+" exceeds the configured server budget.", actionContactOperator, "Ask an operator to review the configured assessor budget and selected server context before retrying."
-		if measuredReason, measured := memoryservice.SynchronousAssessmentFailureDetails(err); measuredReason != "" {
+		if measuredReason, measured := rememberapp.SynchronousAssessmentFailureDetails(err); measuredReason != "" {
 			reasonCode = measuredReason
 			for key, value := range measured {
 				failureDetails[key] = value
@@ -98,11 +99,11 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 		code, reasonCode, message, retryable, nextAction, remediation = domain.ErrorProviderUnavailable, "request_timeout", "The "+tool+" operation exceeded its bounded deadline.", true, actionRetrySameRequest, actionableTimeoutRemediation(tool)
 	case errors.Is(err, rememberapp.ErrRememberRequestCancelled):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorConflict, "request_cancelled", "The "+tool+" operation was cancelled before completion.", actionStop, "Stop this operation; retry only if the caller still needs it."
-	case errors.Is(err, rememberapp.ErrRememberConflict), errors.Is(err, repository.ErrIdempotencyConflict):
+	case errors.Is(err, rememberapp.ErrRememberConflict), errors.Is(err, contract.ErrIdempotencyConflict):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorConflict, "idempotency_conflict", "The idempotency key for "+tool+" is already bound to a different request.", actionRefreshState, "Reuse the key only for the original request; otherwise submit the changed request with a new key."
 	case actionableInputBudgetError(err):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "assessor_input_budget_exceeded", "The server could not fit the assessor conversation within its configured input budget.", actionContactOperator, "Ask an operator to review the configured assessor budget and server-owned context before retrying."
-		if _, measured := memoryservice.SynchronousAssessmentFailureDetails(err); measured != nil {
+		if _, measured := rememberapp.SynchronousAssessmentFailureDetails(err); measured != nil {
 			for key, value := range measured {
 				failureDetails[key] = value
 			}
@@ -290,7 +291,7 @@ func rememberToolResultError(ctx context.Context, err error) error {
 	if processErr != nil && processErr.Status != nil && len(processErr.Status.Errors) > 0 {
 		code = rememberapp.SubmissionErrorCode(rememberapp.StatusErrorForCode(processErr.Status.Errors[0].Code, processErr.Status.ProcessingState).Code)
 	}
-	reasonCode, details := memoryservice.SynchronousAssessmentFailureDetails(err)
+	reasonCode, details := rememberapp.SynchronousAssessmentFailureDetails(err)
 	if reasonCode == "" {
 		reasonCode = "remember_failure"
 		details = map[string]any{"component": "remember", "server_owned": true}
@@ -317,7 +318,7 @@ func rememberToolResultError(ctx context.Context, err error) error {
 
 func rememberErrorCode(err error) rememberapp.SubmissionErrorCode {
 	switch {
-	case errors.Is(err, memoryservice.ErrRememberConflict), errors.Is(err, rememberapp.ErrRememberConflict):
+	case errors.Is(err, rememberapp.ErrRememberConflict):
 		return rememberapp.SubmissionErrorIdempotencyConflict
 	case errors.Is(err, rememberapp.ErrRememberPolicyRejected), errors.Is(err, rememberapp.ErrEvidenceSecurityRejected), errors.Is(err, rememberapp.ErrEncodedEvidenceNotAllowed):
 		return rememberapp.SubmissionErrorPolicyRejected
@@ -355,13 +356,13 @@ func correctionToolResultError(ctx context.Context, submissionID string, err err
 	reasonCode := "relationship_correction_failed"
 	processingState := "failed"
 	switch {
-	case errors.Is(err, memoryservice.ErrLifecycleEmbeddingUnavailable):
+	case errors.Is(err, lifecycle.ErrLifecycleEmbeddingUnavailable):
 		code = rememberapp.SubmissionErrorEmbeddingUnavailable
 		reasonCode = "embedding_unavailable"
-	case errors.Is(err, memoryservice.ErrLifecycleEmbeddingInvalid):
+	case errors.Is(err, lifecycle.ErrLifecycleEmbeddingInvalid):
 		code = rememberapp.SubmissionErrorEmbeddingResponseInvalid
 		reasonCode = "embedding_response_invalid"
-	case errors.Is(err, memoryservice.ErrLifecycleEmbeddingTimeout):
+	case errors.Is(err, lifecycle.ErrLifecycleEmbeddingTimeout):
 		code = rememberapp.SubmissionErrorRequestTimeout
 		reasonCode = "embedding_timeout"
 	case errors.Is(err, context.DeadlineExceeded):

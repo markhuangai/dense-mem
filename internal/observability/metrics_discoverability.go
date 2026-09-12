@@ -3,6 +3,8 @@ package observability
 import (
 	"strings"
 	"sync"
+
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 )
 
 // DiscoverabilityMetrics is the concurrency-safe metrics contract used by
@@ -105,14 +107,9 @@ type RecallSample struct {
 	Outcome     string
 }
 
-// RecallFeedback is one host-LLM online quality judgment for a recall result set.
-type RecallFeedback struct {
-	Used            bool
-	AnswerSupported bool
-	Quality         string
-	MissingContext  bool
-	Irrelevant      bool
-}
+// RecallFeedback is retained as a source-compatible alias for the Recall
+// capability's metrics port shape.
+type RecallFeedback = recallcontract.FeedbackObservation
 
 // RecallFeedbackSample is one recorded online recall-feedback event.
 type RecallFeedbackSample struct {

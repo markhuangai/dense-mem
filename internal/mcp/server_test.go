@@ -46,11 +46,31 @@ func (s dreamingConfigStub) EffectiveConfig(context.Context, string) (dream.Effe
 }
 
 // testLogger returns a LogProvider that writes to a bytes.Buffer.
-func testLogger(t *testing.T) (observability.LogProvider, *bytes.Buffer) {
+func testLogger(t *testing.T) (Logger, *bytes.Buffer) {
 	t.Helper()
 	buf := &bytes.Buffer{}
 	h := slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})
-	return observability.NewWithHandler(h), buf
+	return testLoggerAdapter{delegate: observability.NewWithHandler(h)}, buf
+}
+
+type testLoggerAdapter struct {
+	delegate observability.LogProvider
+}
+
+func (l testLoggerAdapter) Error(message string, err error, fields ...LogField) {
+	l.delegate.Error(message, err, testObservabilityFields(fields)...)
+}
+
+func (l testLoggerAdapter) Warn(message string, fields ...LogField) {
+	l.delegate.Warn(message, testObservabilityFields(fields)...)
+}
+
+func testObservabilityFields(fields []LogField) []observability.LogAttr {
+	converted := make([]observability.LogAttr, 0, len(fields))
+	for _, field := range fields {
+		converted = append(converted, observability.LogAttr{Key: field.Key, Value: field.Value})
+	}
+	return converted
 }
 
 // runRPC feeds one frozen protocol fixture through the official SDK transport.

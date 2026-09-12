@@ -7,16 +7,16 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/dream"
+	"github.com/markhuangai/dense-mem/internal/graph/contract"
+	"github.com/markhuangai/dense-mem/internal/memorypack"
 	"github.com/markhuangai/dense-mem/internal/recall"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service/contextservice"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
-	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
+	traceapp "github.com/markhuangai/dense-mem/internal/trace"
+	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 )
 
-func rememberRequestFromContractInput(input map[string]any) (memoryservice.RememberRequest, error) {
-	var req memoryservice.RememberRequest
+func rememberRequestFromContractInput(input map[string]any) (rememberapp.RememberRequest, error) {
+	var req rememberapp.RememberRequest
 	if err := remapInput(input, &req); err != nil {
 		return req, err
 	}
@@ -110,9 +110,9 @@ func recallContractOutput(res *recall.RecallResult) map[string]any {
 	}
 }
 
-func traceContractOutput(trace *contextservice.SemanticTrace) (map[string]any, error) {
+func traceContractOutput(trace *traceapp.SemanticTrace) (map[string]any, error) {
 	if trace == nil {
-		trace = &contextservice.SemanticTrace{}
+		trace = &traceapp.SemanticTrace{}
 	}
 	stoppedReason := any(nil)
 	if strings.TrimSpace(trace.StoppedReason) != "" {
@@ -138,14 +138,14 @@ func traceContractOutput(trace *contextservice.SemanticTrace) (map[string]any, e
 	}, nil
 }
 
-func traceRelationshipOutput(record *repository.RelationshipTraceRecord) map[string]any {
+func traceRelationshipOutput(record *tracecontract.RelationshipTraceRecord) map[string]any {
 	if record == nil {
 		return nil
 	}
 	return traceRelationshipRecordOutput(*record)
 }
 
-func traceRelationshipLineageOutputs(records []repository.RelationshipTraceRecord) []map[string]any {
+func traceRelationshipLineageOutputs(records []tracecontract.RelationshipTraceRecord) []map[string]any {
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		out = append(out, traceRelationshipRecordOutput(record))
@@ -153,7 +153,7 @@ func traceRelationshipLineageOutputs(records []repository.RelationshipTraceRecor
 	return out
 }
 
-func traceRelationshipRecordOutput(record repository.RelationshipTraceRecord) map[string]any {
+func traceRelationshipRecordOutput(record tracecontract.RelationshipTraceRecord) map[string]any {
 	out := map[string]any{
 		"relationship_id": record.RelationshipID,
 	}
@@ -174,7 +174,7 @@ func traceRelationshipRecordOutput(record repository.RelationshipTraceRecord) ma
 	return out
 }
 
-func traceObservationOutputs(records []repository.RelationshipObservationRecord) []map[string]any {
+func traceObservationOutputs(records []tracecontract.RelationshipObservationRecord) []map[string]any {
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		item := map[string]any{
@@ -192,7 +192,7 @@ func traceObservationOutputs(records []repository.RelationshipObservationRecord)
 	return out
 }
 
-func traceEvidenceSupportOutputs(records []repository.RelationshipEvidenceSupportRecord) []map[string]any {
+func traceEvidenceSupportOutputs(records []tracecontract.RelationshipEvidenceSupportRecord) []map[string]any {
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		item := map[string]any{
@@ -215,7 +215,7 @@ func traceEvidenceSupportOutputs(records []repository.RelationshipEvidenceSuppor
 	return out
 }
 
-func traceSupportDecisionOutputs(records []repository.RelationshipSupportDecisionEvent) []map[string]any {
+func traceSupportDecisionOutputs(records []tracecontract.RelationshipSupportDecisionEvent) []map[string]any {
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		item := map[string]any{
@@ -232,7 +232,7 @@ func traceSupportDecisionOutputs(records []repository.RelationshipSupportDecisio
 	return out
 }
 
-func traceEvidenceOutputs(records []repository.TraceEvidenceFragment) []map[string]any {
+func traceEvidenceOutputs(records []tracecontract.TraceEvidenceFragment) []map[string]any {
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		item := map[string]any{
@@ -252,7 +252,7 @@ func traceEvidenceOutputs(records []repository.TraceEvidenceFragment) []map[stri
 	return out
 }
 
-func traceEvidenceLifecycleEventOutputs(records []repository.TraceEvidenceLifecycleEvent) []map[string]any {
+func traceEvidenceLifecycleEventOutputs(records []tracecontract.TraceEvidenceLifecycleEvent) []map[string]any {
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		item := map[string]any{
@@ -269,7 +269,7 @@ func traceEvidenceLifecycleEventOutputs(records []repository.TraceEvidenceLifecy
 	return out
 }
 
-func traceVerificationOutputs(records []repository.RelationshipVerificationEvent) []map[string]any {
+func traceVerificationOutputs(records []tracecontract.RelationshipVerificationEvent) []map[string]any {
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		item := map[string]any{
@@ -287,7 +287,7 @@ func traceVerificationOutputs(records []repository.RelationshipVerificationEvent
 	return out
 }
 
-func traceTransitionOutputs(records []repository.RelationshipTransitionEvent) []map[string]any {
+func traceTransitionOutputs(records []tracecontract.RelationshipTransitionEvent) []map[string]any {
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		item := map[string]any{
@@ -303,7 +303,7 @@ func traceTransitionOutputs(records []repository.RelationshipTransitionEvent) []
 	return out
 }
 
-func traceConflictOutputs(records []repository.RelationshipConflictCaseRecord) []map[string]any {
+func traceConflictOutputs(records []tracecontract.RelationshipConflictCaseRecord) []map[string]any {
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		positions := traceConflictPositionOutputs(record.Positions)
@@ -333,7 +333,7 @@ const (
 	traceConflictResultEvidenceIDLimit = 50
 )
 
-func traceConflictPositionOutputs(records []repository.RelationshipConflictPositionRecord) []map[string]any {
+func traceConflictPositionOutputs(records []domain.RelationshipConflictPositionRecord) []map[string]any {
 	if len(records) > traceConflictPositionLimit {
 		records = records[:traceConflictPositionLimit]
 	}
@@ -354,7 +354,7 @@ func traceConflictPositionOutputs(records []repository.RelationshipConflictPosit
 	return out
 }
 
-func traceConflictSupporterOutputs(records []repository.RelationshipConflictSupporterRecord) []map[string]any {
+func traceConflictSupporterOutputs(records []domain.RelationshipConflictSupporterRecord) []map[string]any {
 	if len(records) > traceConflictSupporterLimit {
 		records = records[:traceConflictSupporterLimit]
 	}
@@ -378,7 +378,7 @@ func traceBoundedStringArray(values []string, limit int) []string {
 	return traceStringArray(values)
 }
 
-func traceCrossProfileReferenceOutputs(records []repository.RelationshipCrossReferenceRecord) []map[string]any {
+func traceCrossProfileReferenceOutputs(records []tracecontract.RelationshipCrossReferenceRecord) []map[string]any {
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		out = append(out, map[string]any{
@@ -391,7 +391,7 @@ func traceCrossProfileReferenceOutputs(records []repository.RelationshipCrossRef
 	return out
 }
 
-func traceIdentityCorrectionOutputs(records []repository.EntityCorrectionEventRecord) []map[string]any {
+func traceIdentityCorrectionOutputs(records []tracecontract.EntityCorrectionEventRecord) []map[string]any {
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		item := map[string]any{
@@ -408,7 +408,7 @@ func traceIdentityCorrectionOutputs(records []repository.EntityCorrectionEventRe
 	return out
 }
 
-func traceSemanticNodeOutputs(records []repository.SemanticGraphNode) []map[string]any {
+func traceSemanticNodeOutputs(records []contract.Node) []map[string]any {
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		out = append(out, map[string]any{
@@ -420,7 +420,7 @@ func traceSemanticNodeOutputs(records []repository.SemanticGraphNode) []map[stri
 	return out
 }
 
-func traceSemanticEdgeOutputs(records []repository.SemanticGraphEdge) []map[string]any {
+func traceSemanticEdgeOutputs(records []contract.Edge) []map[string]any {
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		out = append(out, map[string]any{
@@ -548,7 +548,7 @@ func resolveDreamTerminalOutcome(res *dream.ResolveFeedbackResult) (map[string]a
 	return output, true, nil
 }
 
-func exportMemoryPackContractOutput(res *skillpackservice.ExportResult) map[string]any {
+func exportMemoryPackContractOutput(res *memorypack.ExportResult) map[string]any {
 	if res == nil {
 		return map[string]any{
 			"artifact_json":  "",

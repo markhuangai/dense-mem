@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
+	"github.com/markhuangai/dense-mem/internal/memorypack"
 )
 
 func TestBuildActiveWiresExportMemoryPackOnly(t *testing.T) {
@@ -47,13 +47,13 @@ func TestBuildActiveDoesNotRegisterMemoryPackImportTools(t *testing.T) {
 }
 
 type exportOnlyMemoryPackStub struct {
-	req skillpackservice.ExportRequest
+	req memorypack.ExportRequest
 }
 
-func (s *exportOnlyMemoryPackStub) Export(_ context.Context, req skillpackservice.ExportRequest) (*skillpackservice.ExportResult, error) {
+func (s *exportOnlyMemoryPackStub) Export(_ context.Context, req memorypack.ExportRequest) (*memorypack.ExportResult, error) {
 	s.req = req
-	return &skillpackservice.ExportResult{
-		CanonicalJSON: `{"format":"` + skillpackservice.MemoryPackFormat + `","relationships":[]}`,
+	return &memorypack.ExportResult{
+		CanonicalJSON: `{"format":"` + memorypack.MemoryPackFormat + `","relationships":[]}`,
 		SHA256:        strings.Repeat("a", 64),
 		ItemCount:     0,
 		Filename:      "postgresql-pack.memory-pack.json",
@@ -61,4 +61,4 @@ func (s *exportOnlyMemoryPackStub) Export(_ context.Context, req skillpackservic
 	}, nil
 }
 
-var _ skillpackservice.MemoryPackService = (*exportOnlyMemoryPackStub)(nil)
+var _ memorypack.MemoryPackService = (*exportOnlyMemoryPackStub)(nil)

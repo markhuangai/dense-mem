@@ -142,7 +142,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 	)
 	mcpHandler := handler.NewMCPHandlerWithLifecycleAndRuntimeConfig(
 		deps.toolRegistry,
-		deps.logger,
+		handler.NewMCPLogger(deps.logger),
 		streamLifecycle,
 		deps.appConfig,
 		deps.dream,

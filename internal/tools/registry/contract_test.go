@@ -12,7 +12,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 type contractFixture struct {
@@ -731,7 +731,7 @@ func TestOutputSchemasAreClosed(t *testing.T) {
 
 func TestRememberEvidenceErrorsUseTheClosedCodeEnum(t *testing.T) {
 	schema := rememberOutputSchema()
-	expectedCodes := append([]string(nil), memoryservice.SubmissionErrorCodes()...)
+	expectedCodes := append([]string(nil), rememberapp.SubmissionErrorCodes()...)
 	slices.Sort(expectedCodes)
 	assertExactCodeEnum := func(label string, codeSchema map[string]any) {
 		t.Helper()
@@ -759,7 +759,7 @@ func TestRememberEvidenceErrorsUseTheClosedCodeEnum(t *testing.T) {
 	)
 	nextActions, ok := schemaProperties(topLevelErrors)["next_action"]["enum"].([]string)
 	require.True(t, ok)
-	require.ElementsMatch(t, memoryservice.SubmissionNextActions(), nextActions)
+	require.ElementsMatch(t, rememberapp.SubmissionNextActions(), nextActions)
 }
 
 func sortedStrings(raw any) []string {

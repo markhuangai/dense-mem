@@ -16,7 +16,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/mcp"
-	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
@@ -25,7 +24,7 @@ import (
 // MCPHandler serves the MCP Streamable HTTP endpoint at /mcp.
 type MCPHandler struct {
 	reg                  registry.Registry
-	logger               observability.LogProvider
+	logger               mcp.Logger
 	lifecycle            sse.StreamLifecycle
 	recallFeedbackConfig registry.RecallFeedbackConfigProvider
 	dreams               registry.DreamingConfigProvider
@@ -40,17 +39,17 @@ type MCPHandlerInterface interface {
 var _ MCPHandlerInterface = (*MCPHandler)(nil)
 
 // NewMCPHandler constructs a Streamable HTTP MCP handler.
-func NewMCPHandler(reg registry.Registry, logger observability.LogProvider) *MCPHandler {
+func NewMCPHandler(reg registry.Registry, logger mcp.Logger) *MCPHandler {
 	return &MCPHandler{reg: reg, logger: logger}
 }
 
-func NewMCPHandlerWithLifecycle(reg registry.Registry, logger observability.LogProvider, lifecycle sse.StreamLifecycle) *MCPHandler {
+func NewMCPHandlerWithLifecycle(reg registry.Registry, logger mcp.Logger, lifecycle sse.StreamLifecycle) *MCPHandler {
 	return &MCPHandler{reg: reg, logger: logger, lifecycle: lifecycle}
 }
 
 // NewMCPHandlerWithLifecycleAndRuntimeConfig constructs a Streamable HTTP MCP
 // handler with runtime feature visibility.
-func NewMCPHandlerWithLifecycleAndRuntimeConfig(reg registry.Registry, logger observability.LogProvider, lifecycle sse.StreamLifecycle, recallFeedbackConfig registry.RecallFeedbackConfigProvider, dreams ...registry.DreamingConfigProvider) *MCPHandler {
+func NewMCPHandlerWithLifecycleAndRuntimeConfig(reg registry.Registry, logger mcp.Logger, lifecycle sse.StreamLifecycle, recallFeedbackConfig registry.RecallFeedbackConfigProvider, dreams ...registry.DreamingConfigProvider) *MCPHandler {
 	var dreamConfig registry.DreamingConfigProvider
 	if len(dreams) > 0 {
 		dreamConfig = dreams[0]

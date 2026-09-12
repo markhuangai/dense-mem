@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
+	"github.com/markhuangai/dense-mem/internal/mcp"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
@@ -435,6 +436,6 @@ func mcpTestContext(ctx context.Context, profileID uuid.UUID, scopes []string) c
 	return middleware.SetPrincipalForTest(ctx, &middleware.Principal{TeamID: profileID, OwnerID: profileID, Grants: scopes})
 }
 
-func testMCPLogger() observability.LogProvider {
-	return observability.NewWithHandler(slog.NewJSONHandler(io.Discard, nil))
+func testMCPLogger() mcp.Logger {
+	return NewMCPLogger(observability.NewWithHandler(slog.NewJSONHandler(io.Discard, nil)))
 }

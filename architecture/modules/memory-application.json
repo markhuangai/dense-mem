@@ -115,30 +115,6 @@
       ],
       "consumers": [
         {
-          "path": "internal/tools/registry/contract_result_errors.go",
-          "symbol": "ActionableErrorData"
-        },
-        {
-          "path": "internal/tools/registry/contract_result_errors_test.go",
-          "symbol": "TestCorrectionToolResultErrorMapsLifecycleAndHTTPFailures"
-        },
-        {
-          "path": "internal/tools/registry/contract_result_errors_test.go",
-          "symbol": "TestCorrectionToolResultErrorPreservesTypedConflictReasons"
-        },
-        {
-          "path": "internal/tools/registry/contract_schema_helpers.go",
-          "symbol": "submissionStatusErrorSchema"
-        },
-        {
-          "path": "internal/tools/registry/uat_lifecycle_test.go",
-          "symbol": "stubLifecycleService.CorrectRelationship"
-        },
-        {
-          "path": "internal/tools/registry/uat_lifecycle_test.go",
-          "symbol": "stubLifecycleService.RetractEvidence"
-        },
-        {
           "path": "cmd/internal/serverapp/application_composition.go",
           "symbol": "buildApplicationBundle"
         }
