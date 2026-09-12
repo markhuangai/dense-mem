@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { execFileSync, spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { devNull, tmpdir } from "node:os";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -11,6 +11,11 @@ const root = new URL("../../", import.meta.url);
 const repositoryRoot = fileURLToPath(root);
 const packageScript = join(repositoryRoot, "scripts", "go-packages.sh");
 const coverageScript = join(repositoryRoot, "scripts", "coverage-report.sh");
+const isolatedGitEnvironment = Object.fromEntries(
+  Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")),
+);
+isolatedGitEnvironment.GIT_CONFIG_GLOBAL = devNull;
+isolatedGitEnvironment.GIT_CONFIG_NOSYSTEM = "1";
 
 async function read(relativePath) {
   return readFile(new URL(relativePath, root), "utf8");
@@ -70,11 +75,12 @@ test("Go coverage discovery keeps external tests, testless packages, and working
   writeFixture(fixture, "tests/uat/fixture.go", "package fixture\n");
   writeFixture(fixture, "ignored/ignored.go", "package ignored\n");
 
-  execFileSync("git", ["init", "-q"], { cwd: fixture });
-  execFileSync("git", ["config", "user.email", "coverage@example.test"], { cwd: fixture });
-  execFileSync("git", ["config", "user.name", "Coverage Fixture"], { cwd: fixture });
-  execFileSync("git", ["add", "."], { cwd: fixture });
-  execFileSync("git", ["commit", "-qm", "fixture"], { cwd: fixture });
+  const gitOptions = { cwd: fixture, env: isolatedGitEnvironment };
+  execFileSync("git", ["init", "-q"], gitOptions);
+  execFileSync("git", ["config", "user.email", "coverage@example.test"], gitOptions);
+  execFileSync("git", ["config", "user.name", "Coverage Fixture"], gitOptions);
+  execFileSync("git", ["add", "."], gitOptions);
+  execFileSync("git", ["commit", "-qm", "fixture"], gitOptions);
   writeFixture(fixture, "internal/working-tree/working.go", "package workingtree\nfunc Value() int { return 1 }\n");
 
   const complete = run("bash", [packageScript, "--coverage", "--root", fixture]);
@@ -121,7 +127,7 @@ function run(command, args, options = {}) {
   return spawnSync(command, args, {
     cwd: options.cwd,
     encoding: "utf8",
-    env: { ...process.env, ...(options.env || {}) },
+    env: { ...isolatedGitEnvironment, ...(options.env || {}) },
   });
 }
 

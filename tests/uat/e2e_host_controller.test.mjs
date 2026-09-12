@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { tmpdir } from "node:os";
+import { devNull, tmpdir } from "node:os";
 
 const execFileAsync = promisify(execFile);
 
@@ -48,6 +48,8 @@ async function run(command, args, options = {}) {
   for (const name of Object.keys(env)) {
     if (name.startsWith("GIT_")) delete env[name];
   }
+  env.GIT_CONFIG_GLOBAL = devNull;
+  env.GIT_CONFIG_NOSYSTEM = "1";
   return execFileAsync(command, args, { ...commandOptions, env, maxBuffer: 1024 * 1024 });
 }
 

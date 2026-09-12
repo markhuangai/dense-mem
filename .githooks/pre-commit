@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if identity_settings="$(env -u GIT_CONFIG git config --includes --show-scope --name-only --get-regexp '^user\.(name|email)$')"; then
+  while read -r scope key; do
+    if [[ "$scope" == local || "$scope" == worktree ]]; then
+      printf '%s\n' 'pre-commit: blocked repository-local author settings; use your global Git identity.' >&2
+      exit 1
+    fi
+  done <<< "$identity_settings"
+else
+  config_status=$?
+  if [[ "$config_status" != 1 ]]; then
+    exit "$config_status"
+  fi
+fi
+
+for identity_kind in AUTHOR COMMITTER; do
+  identity="$(git var "GIT_${identity_kind}_IDENT")"
+  identity_name="${identity%% <*}"
+  identity_email="${identity#*<}"
+  identity_email="${identity_email%%>*}"
+  identity_domain="${identity_email##*@}"
+
+  case "${identity_name,,}" in
+    'coverage fixture'|'caller fixture'|'prerelease test'|'dense-mem e2e')
+      printf 'pre-commit: blocked fixture %s identity.\n' "${identity_kind,,}" >&2
+      exit 1
+      ;;
+  esac
+  case "${identity_domain,,}" in
+    test|*.test|invalid|*.invalid|example|*.example|localhost|*.localhost|example.com|*.example.com|example.net|*.example.net|example.org|*.example.org)
+      printf 'pre-commit: blocked reserved-domain %s email.\n' "${identity_kind,,}" >&2
+      exit 1
+      ;;
+  esac
+done
