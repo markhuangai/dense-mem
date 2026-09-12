@@ -60,27 +60,32 @@ func RunFromEnvironment(processCtx context.Context, options RuntimeOptions) erro
 	}
 
 	migrationTimeout := time.Duration(cfg.GetPostgresMigrationTimeoutSeconds()) * time.Second
-	if err := migrationapp.RunUp(startupCtx, pgDB.GetDB(), migrationTimeout, logger.Slog()); err != nil {
+	migrationCtx, migrationCancel := context.WithTimeout(processCtx, migrationTimeout)
+	if err := migrationapp.RunUp(migrationCtx, pgDB.GetDB(), migrationTimeout, logger.Slog()); err != nil {
+		migrationCancel()
 		return fmt.Errorf("run postgres migrations: %w", err)
 	}
+	migrationCancel()
+	postMigrationCtx, postMigrationCancel := context.WithTimeout(processCtx, DefaultStartupTimeout)
+	defer postMigrationCancel()
 	sqlDB, err := pgDB.GetDB().DB()
 	if err != nil {
 		return fmt.Errorf("access postgres sql client: %w", err)
 	}
-	if err := postgres.ValidateStartupMigrationState(startupCtx, sqlDB, postgres.MigrationsDir()); err != nil {
+	if err := postgres.ValidateStartupMigrationState(postMigrationCtx, sqlDB, postgres.MigrationsDir()); err != nil {
 		return fmt.Errorf("validate postgres migration state: %w", err)
 	}
-	if err := postgres.CheckPGVectorExtension(startupCtx, pgDB.GetDB()); err != nil {
+	if err := postgres.CheckPGVectorExtension(postMigrationCtx, pgDB.GetDB()); err != nil {
 		return fmt.Errorf("check pgvector extension: %w", err)
 	}
 
 	rlsHelper := postgres.NewRLS()
 	authorityRepo := repository.NewAuthorityRepository(pgDB.GetDB(), rlsHelper)
-	authority, err := ClassifyAuthority(startupCtx, authorityRepo)
+	authority, err := ClassifyAuthority(postMigrationCtx, authorityRepo)
 	if err != nil {
 		return fmt.Errorf("bootstrap authority: %w", err)
 	}
-	if err := RunActiveServer(processCtx, startupCtx, cfg, pgDB, logger, level, authority, options); err != nil {
+	if err := RunActiveServer(processCtx, postMigrationCtx, cfg, pgDB, logger, level, authority, options); err != nil {
 		if errors.Is(err, ErrRuntimeShutdownTimeout) {
 			// A live worker may still be using PostgreSQL. Leave the adapter open
 			// for the terminating process instead of closing it underneath work.

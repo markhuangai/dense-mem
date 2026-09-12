@@ -118,6 +118,11 @@ func TestServerLifecycleDrainsRequestsBeforeAdapters(t *testing.T) {
 			t.Fatalf("server returned before active request drained: %v", err)
 		case <-time.After(50 * time.Millisecond):
 		}
+		select {
+		case <-probe.canceled:
+			t.Fatal("runtime workers canceled before active request drained")
+		case <-time.After(50 * time.Millisecond):
+		}
 		releaseRequest()
 		select {
 		case <-probe.canceled:
@@ -282,6 +287,62 @@ func TestRunActiveServerCanceledBeforeWorkersDoesNotBuildRuntimeWorker(t *testin
 	})
 }
 
+func TestServerLifecycleCancelsPreHandoffRuntimeWorkerBeforeRun(t *testing.T) {
+	withLifecyclePostgres(t, func(t *testing.T) {
+		configureLifecycleEnvironment(t, "127.0.0.1:0")
+		worker := newStartupBlockingWorker()
+		workerContext := make(chan context.Context, 1)
+
+		processCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		runDone := make(chan error, 1)
+		go func() {
+			runDone <- RunFromEnvironment(processCtx, RuntimeOptions{
+				DisableControlPortal: true,
+				BuildWorker: func(ctx context.Context, _ RuntimeContext) (RuntimeWorker, error) {
+					workerContext <- ctx
+					return worker, nil
+				},
+			})
+		}()
+
+		var captured context.Context
+		select {
+		case captured = <-workerContext:
+		case err := <-runDone:
+			t.Fatalf("server stopped before runtime worker construction: %v", err)
+		case <-time.After(5 * time.Minute):
+			t.Fatal("runtime worker was not constructed")
+		}
+		select {
+		case <-worker.nameEntered:
+		case err := <-runDone:
+			t.Fatalf("server stopped before runtime worker naming: %v", err)
+		case <-time.After(time.Minute):
+			t.Fatal("runtime worker name was not requested")
+		}
+
+		cancel()
+		select {
+		case <-captured.Done():
+		case <-time.After(time.Second):
+			t.Fatal("pre-handoff runtime worker context was not canceled")
+		}
+		close(worker.releaseName)
+		select {
+		case err := <-runDone:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(time.Minute):
+			t.Fatal("server did not unwind canceled startup")
+		}
+		select {
+		case <-worker.runStarted:
+			t.Fatal("runtime worker ran after pre-handoff cancellation")
+		default:
+		}
+	})
+}
+
 type lifecycleProbeWorker struct {
 	addresses   chan string
 	started     chan struct{}
@@ -289,6 +350,31 @@ type lifecycleProbeWorker struct {
 	releaseCh   chan struct{}
 	releaseOnce sync.Once
 	starts      atomic.Int32
+}
+
+type startupBlockingWorker struct {
+	nameEntered chan struct{}
+	releaseName chan struct{}
+	runStarted  chan struct{}
+}
+
+func newStartupBlockingWorker() *startupBlockingWorker {
+	return &startupBlockingWorker{
+		nameEntered: make(chan struct{}),
+		releaseName: make(chan struct{}),
+		runStarted:  make(chan struct{}),
+	}
+}
+
+func (w *startupBlockingWorker) Name() string {
+	close(w.nameEntered)
+	<-w.releaseName
+	return "startup blocking worker"
+}
+
+func (w *startupBlockingWorker) Run(context.Context) error {
+	close(w.runStarted)
+	return nil
 }
 
 func newLifecycleProbeWorker() *lifecycleProbeWorker {

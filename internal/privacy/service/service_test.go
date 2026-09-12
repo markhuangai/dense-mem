@@ -63,18 +63,19 @@ type privateMemoryRepositoryStub struct {
 	retentionRuns     []domain.PrivateMemoryRetentionRun
 	runtimeErr        error
 
-	claim         *domain.PrivateMemoryErasureOperation
-	claimErr      error
-	claimStarted  chan struct{}
-	claimBlock    <-chan struct{}
-	execute       *domain.PrivateMemoryErasureOperation
-	executeErr    error
-	releaseErr    error
-	releases      int
-	releaseID     uuid.UUID
-	releaseWorker string
-	releaseFence  int64
-	releaseCode   string
+	claim              *domain.PrivateMemoryErasureOperation
+	claimErr           error
+	claimStarted       chan struct{}
+	claimBlock         <-chan struct{}
+	claimIgnoreContext bool
+	execute            *domain.PrivateMemoryErasureOperation
+	executeErr         error
+	releaseErr         error
+	releases           int
+	releaseID          uuid.UUID
+	releaseWorker      string
+	releaseFence       int64
+	releaseCode        string
 }
 
 func (r *privateMemoryRepositoryStub) Prepare(context.Context) error {
@@ -160,10 +161,14 @@ func (r *privateMemoryRepositoryStub) ClaimNext(ctx context.Context, _ string, _
 		r.claimStarted = nil
 	}
 	if r.claimBlock != nil {
-		select {
-		case <-r.claimBlock:
-		case <-ctx.Done():
-			return nil, ctx.Err()
+		if r.claimIgnoreContext {
+			<-r.claimBlock
+		} else {
+			select {
+			case <-r.claimBlock:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 		}
 	}
 	return r.claim, r.claimErr
@@ -600,6 +605,30 @@ func TestPrivateMemoryErasureWorkerJoinsDelayedClaim(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("private-memory erasure worker was not joined")
 	}
+}
+
+func TestPrivateMemoryShutdownTimeoutRetainsLifecycleForRetry(t *testing.T) {
+	claimStarted := make(chan struct{})
+	claimBlock := make(chan struct{})
+	repo := &privateMemoryRepositoryStub{claimStarted: claimStarted, claimBlock: claimBlock, claimIgnoreContext: true}
+	service := NewPrivateMemoryService(PrivateMemoryServiceConfig{Repository: repo, WorkerPoll: time.Hour})
+	done := service.Start(context.Background())
+	select {
+	case <-claimStarted:
+	case <-time.After(time.Second):
+		t.Fatal("private-memory erasure worker did not begin claim")
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	require.ErrorIs(t, service.Shutdown(shutdownCtx), context.DeadlineExceeded)
+	cancel()
+	if retryDone := service.Start(context.Background()); retryDone != done {
+		t.Fatal("starting during a timed-out shutdown created a second lifecycle")
+	}
+	close(claimBlock)
+	joinCtx, joinCancel := context.WithTimeout(context.Background(), time.Second)
+	defer joinCancel()
+	require.NoError(t, service.Shutdown(joinCtx))
 }
 
 func TestPrivateMemoryRetentionWorkerJoinsDelayedConfig(t *testing.T) {

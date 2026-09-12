@@ -345,7 +345,33 @@ func RunActiveServer(
 
 	var runtimeWorker RuntimeWorker
 	runtimeFailures := make(chan error, 3)
-	lifecycle := newRuntimeLifecycle(processCtx)
+	lifecycle := newRuntimeLifecycle(context.Background())
+	stopStartupCancel := context.AfterFunc(processCtx, lifecycle.cancel)
+	startupBridgeArmed := true
+	defer func() {
+		if startupBridgeArmed {
+			stopStartupCancel()
+		}
+	}()
+	startupCheck := func() error {
+		if err := processCtx.Err(); err != nil {
+			return err
+		}
+		return lifecycle.Context().Err()
+	}
+	abortStartup := func(startupErr error) error {
+		closeBoundListeners()
+		workerCtx, workerCancel := context.WithTimeout(context.Background(), workerJoinTimeout)
+		shutdownErr := lifecycle.shutdown(workerCtx)
+		workerCancel()
+		if shutdownErr != nil {
+			startupErr = errors.Join(startupErr, shutdownErr)
+			if errors.Is(shutdownErr, ErrRuntimeShutdownTimeout) {
+				closeBackend = false
+			}
+		}
+		return startupErr
+	}
 	if options.BuildWorker != nil {
 		runtimeWorker, err = options.BuildWorker(lifecycle.Context(), runtimeCtx)
 		if err != nil {
@@ -353,41 +379,76 @@ func RunActiveServer(
 			return fmt.Errorf("failed to start runtime background jobs: %w", err)
 		}
 	}
-	if err := processCtx.Err(); err != nil {
-		closeBoundListeners()
-		return err
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
 	}
 
 	// Start all configured workers and listeners exactly once after binding.
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
 	activityWriter.Start(lifecycle.Context())
 	lifecycle.add(managedRuntimeWorker{name: "credential activity", shutdown: activityWriter.Shutdown, shutdownTimeout: writerShutdownTimeout})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
 	operationLogService.Start(lifecycle.Context())
 	lifecycle.add(managedRuntimeWorker{name: "operation log", shutdown: operationLogService.Shutdown, shutdownTimeout: writerShutdownTimeout})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
 	usageMetricsService.Start(lifecycle.Context())
 	lifecycle.add(managedRuntimeWorker{name: "usage metrics", shutdown: usageMetricsService.Shutdown, shutdownTimeout: writerShutdownTimeout})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
 	recallFeedbackEventService.Start(lifecycle.Context())
 	lifecycle.add(managedRuntimeWorker{name: "recall feedback", shutdown: recallFeedbackEventService.Shutdown, shutdownTimeout: writerShutdownTimeout})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
 	if privateMemoryDone := privateMemoryService.Start(lifecycle.Context()); privateMemoryDone != nil {
 		lifecycle.add(managedRuntimeWorker{name: "private memory", done: privateMemoryDone, shutdown: privateMemoryService.Shutdown})
+	}
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
 	}
 	if telemetry.PricingRefreshEnabled {
 		lifecycle.start("telemetry pricing refresh", func(ctx context.Context) {
 			refreshTelemetryPricingCacheUntilCanceled(ctx, appConfigService, logger)
 		})
 	}
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
 	lifecycle.start("search reconciliation", func(ctx context.Context) {
 		startSearchReconciliation(ctx, searchApplication.Reconciliation, logger)
 	})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
 	diagnosticDone := ledgerRepo.StartRememberAttemptDiagnosticPurger(lifecycle.Context(), time.Hour, slog.Default())
 	lifecycle.add(managedRuntimeWorker{name: "remember diagnostics", done: diagnosticDone, shutdown: ledgerRepo.ShutdownRememberAttemptDiagnosticPurger})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
 	lifecycle.start("dream scheduler", func(ctx context.Context) {
 		dreamservice.NewScheduler(dreamSvc, teamService, slog.Default()).Start(ctx)
 	})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
 	lifecycle.start("community scheduler", func(ctx context.Context) {
 		communityservice.NewScheduler(communitySvc, teamService, appConfigService, slog.Default()).Start(ctx)
 	})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
 	conflictReviewScheduler := conflictreview.NewReviewService(teamService, conflictReviewRunner, &cfg, logger, discoverabilityMetrics)
 	lifecycle.start("conflict review", conflictReviewScheduler.Run)
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
 	if runtimeWorker != nil {
 		workerName := strings.TrimSpace(runtimeWorker.Name())
 		if workerName == "" {
@@ -398,6 +459,19 @@ func RunActiveServer(
 				runtimeFailures <- fmt.Errorf("%s: %w", workerName, err)
 			}
 		})
+	}
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
+	if !stopStartupCancel() {
+		if err := processCtx.Err(); err != nil {
+			return abortStartup(err)
+		}
+		return abortStartup(context.Canceled)
+	}
+	startupBridgeArmed = false
+	if err := processCtx.Err(); err != nil {
+		return abortStartup(err)
 	}
 
 	listenerFailures := make(chan error, 3)

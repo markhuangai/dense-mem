@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,5 +67,38 @@ func TestRememberDiagnosticPurgerJoinsDelayedPurge(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("delayed diagnostic purger was not joined")
+	}
+}
+
+func TestRememberDiagnosticPurgerTimeoutRetainsLifecycleForRetry(t *testing.T) {
+	purgeStarted := make(chan struct{})
+	purgeBlock := make(chan struct{})
+	var purgeStartedOnce sync.Once
+	store := NewStore(nil, nil, knowledgecontract.ConflictRuntimeConfig{})
+	store.rememberDiagnosticPurgeFn = func(context.Context) (int, error) {
+		purgeStartedOnce.Do(func() { close(purgeStarted) })
+		<-purgeBlock
+		return 0, nil
+	}
+	done := store.StartRememberAttemptDiagnosticPurger(context.Background(), 5*time.Millisecond, nil)
+	select {
+	case <-purgeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("diagnostic purger did not begin purge")
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	if err := store.ShutdownRememberAttemptDiagnosticPurger(shutdownCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("shutdown error = %v, want context deadline exceeded", err)
+	}
+	cancel()
+	if retryDone := store.StartRememberAttemptDiagnosticPurger(context.Background(), time.Hour, nil); retryDone != done {
+		t.Fatal("starting during a timed-out shutdown created a second lifecycle")
+	}
+	close(purgeBlock)
+	joinCtx, joinCancel := context.WithTimeout(context.Background(), time.Second)
+	defer joinCancel()
+	if err := store.ShutdownRememberAttemptDiagnosticPurger(joinCtx); err != nil {
+		t.Fatalf("retry shutdown returned error: %v", err)
 	}
 }

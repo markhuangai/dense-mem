@@ -973,8 +973,6 @@ func (r *Store) ShutdownRememberAttemptDiagnosticPurger(ctx context.Context) err
 	r.rememberDiagnosticLifecycleMu.Lock()
 	cancel := r.rememberDiagnosticCancel
 	done := r.rememberDiagnosticDone
-	r.rememberDiagnosticCancel = nil
-	r.rememberDiagnosticDone = nil
 	r.rememberDiagnosticLifecycleMu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -984,6 +982,12 @@ func (r *Store) ShutdownRememberAttemptDiagnosticPurger(ctx context.Context) err
 	}
 	select {
 	case <-done:
+		r.rememberDiagnosticLifecycleMu.Lock()
+		if r.rememberDiagnosticDone == done {
+			r.rememberDiagnosticCancel = nil
+			r.rememberDiagnosticDone = nil
+		}
+		r.rememberDiagnosticLifecycleMu.Unlock()
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

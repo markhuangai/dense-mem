@@ -36,6 +36,13 @@
       "run": "^TestRunActiveServerCanceledBeforeWorkersDoesNotBuildRuntimeWorker$",
       "phase": "precheck",
       "source": "cmd/internal/serverapp/lifecycle_runtime_integration.e2e"
+    },
+    {
+      "id": "server/TestServerLifecycleCancelsPreHandoffRuntimeWorkerBeforeRun",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestServerLifecycleCancelsPreHandoffRuntimeWorkerBeforeRun$",
+      "phase": "precheck",
+      "source": "cmd/internal/serverapp/lifecycle_runtime_integration.e2e"
     }
   ]
 }

@@ -14,6 +14,6 @@ func main() {
 	processCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := serverapp.RunFromEnvironment(processCtx, serverapp.RuntimeOptions{}); err != nil {
-		log.Fatal("server runtime failed")
+		log.Fatalf("server runtime failed: %v", err)
 	}
 }

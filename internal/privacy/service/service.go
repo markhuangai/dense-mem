@@ -312,8 +312,6 @@ func (s *PrivateMemoryService) Shutdown(ctx context.Context) error {
 	s.lifecycleMu.Lock()
 	cancel := s.cancel
 	done := s.done
-	s.cancel = nil
-	s.done = nil
 	s.lifecycleMu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -323,6 +321,12 @@ func (s *PrivateMemoryService) Shutdown(ctx context.Context) error {
 	}
 	select {
 	case <-done:
+		s.lifecycleMu.Lock()
+		if s.done == done {
+			s.cancel = nil
+			s.done = nil
+		}
+		s.lifecycleMu.Unlock()
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

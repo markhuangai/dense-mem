@@ -65,7 +65,9 @@ func (c *Cleaner) Run(ctx context.Context) error {
 	if c == nil {
 		return fmt.Errorf("demo cleaner unavailable")
 	}
-	_ = c.PurgeExpired(ctx)
+	if err := c.PurgeExpired(ctx); err != nil {
+		return err
+	}
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 	for {
@@ -73,7 +75,9 @@ func (c *Cleaner) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			_ = c.PurgeExpired(ctx)
+			if err := c.PurgeExpired(ctx); err != nil {
+				return err
+			}
 		}
 	}
 }
