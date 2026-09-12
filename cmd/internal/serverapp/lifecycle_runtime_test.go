@@ -47,6 +47,13 @@ func TestRuntimeLifecycleReportsShutdownTimeout(t *testing.T) {
 	close(stuck)
 }
 
+func TestRuntimeWorkerFailureBoundsCauseButUnwraps(t *testing.T) {
+	raw := errors.New("postgres connection details")
+	failure := runtimeWorkerFailure{cause: raw}
+	require.Equal(t, "runtime worker failed", failure.Error())
+	require.ErrorIs(t, failure, raw)
+}
+
 func TestRuntimeLifecycleStartsAndJoinsConfiguredWorkerCount(t *testing.T) {
 	lifecycle := newRuntimeLifecycle(context.Background())
 	var started atomic.Int32
@@ -174,6 +181,45 @@ func TestShutdownEchoServerForcesCloseAfterGracefulTimeout(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("forced-close serve loop did not finish")
 	}
+}
+
+func TestShutdownListenersStartsAllDrainsWithinOneDeadline(t *testing.T) {
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	shutdown := func(name string) func(context.Context) error {
+		return func(ctx context.Context) error {
+			started <- name
+			select {
+			case <-release:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	shutdownDone := make(chan error, 1)
+	go func() {
+		shutdownDone <- shutdownListeners(ctx,
+			listenerShutdown{name: "public", shutdown: shutdown("public")},
+			listenerShutdown{name: "control", shutdown: shutdown("control")},
+		)
+	}()
+	seen := map[string]bool{}
+	for range 2 {
+		select {
+		case name := <-started:
+			seen[name] = true
+		case <-time.After(time.Second):
+			t.Fatal("listener shutdowns did not start concurrently")
+		}
+	}
+	require.True(t, seen["public"])
+	require.True(t, seen["control"])
+	close(release)
+	require.NoError(t, <-shutdownDone)
 }
 
 func TestRuntimeLifecycleDrainsWorkerBeforeAdapterClose(t *testing.T) {

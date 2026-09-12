@@ -27,6 +27,15 @@ import (
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
+// runtimeWorkerFailure keeps the underlying cause for control flow while exposing a bounded message to logs.
+type runtimeWorkerFailure struct {
+	cause error
+}
+
+func (e runtimeWorkerFailure) Error() string { return "runtime worker failed" }
+
+func (e runtimeWorkerFailure) Unwrap() error { return e.cause }
+
 func RunActiveServer(
 	processCtx context.Context,
 	startupCtx context.Context,
@@ -456,7 +465,7 @@ func RunActiveServer(
 		}
 		lifecycle.start(workerName, func(ctx context.Context) {
 			if err := runtimeWorker.Run(ctx); err != nil && ctx.Err() == nil {
-				runtimeFailures <- fmt.Errorf("%s: %w", workerName, err)
+				runtimeFailures <- runtimeWorkerFailure{cause: err}
 			}
 		})
 	}
@@ -511,21 +520,33 @@ func RunActiveServer(
 		logger.Error("server listener stopped unexpectedly", err)
 	case err := <-runtimeFailures:
 		runErr = err
-		logger.Error("runtime worker stopped unexpectedly", err)
+		logger.Error("runtime worker stopped unexpectedly", err, observability.String("error_code", "runtime_worker_failed"))
 	}
 	listenerCtx, listenerCancel := context.WithTimeout(context.Background(), listenerShutdownTimeout)
-	if err := shutdownEchoServer(listenerCtx, e); err != nil {
-		runErr = errors.Join(runErr, fmt.Errorf("server shutdown: %w", err))
-	}
+	listenerShutdowns := []listenerShutdown{{
+		name: "server",
+		shutdown: func(ctx context.Context) error {
+			return shutdownEchoServer(ctx, e)
+		},
+	}}
 	if controlServer != nil {
-		if err := shutdownEchoServer(listenerCtx, controlServer); err != nil {
-			runErr = errors.Join(runErr, fmt.Errorf("control portal shutdown: %w", err))
-		}
+		listenerShutdowns = append(listenerShutdowns, listenerShutdown{
+			name: "control portal",
+			shutdown: func(ctx context.Context) error {
+				return shutdownEchoServer(ctx, controlServer)
+			},
+		})
 	}
 	if telemetryServer != nil {
-		if err := shutdownEchoServer(listenerCtx, telemetryServer); err != nil {
-			runErr = errors.Join(runErr, fmt.Errorf("telemetry shutdown: %w", err))
-		}
+		listenerShutdowns = append(listenerShutdowns, listenerShutdown{
+			name: "telemetry",
+			shutdown: func(ctx context.Context) error {
+				return shutdownEchoServer(ctx, telemetryServer)
+			},
+		})
+	}
+	if err := shutdownListeners(listenerCtx, listenerShutdowns...); err != nil {
+		runErr = errors.Join(runErr, err)
 	}
 	listenerCancel()
 	workerCtx, workerCancel := context.WithTimeout(context.Background(), workerJoinTimeout)

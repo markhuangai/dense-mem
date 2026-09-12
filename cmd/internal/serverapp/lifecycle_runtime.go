@@ -126,6 +126,46 @@ func shutdownEchoServer(ctx context.Context, server *echo.Echo) error {
 	return nil
 }
 
+type listenerShutdown struct {
+	name     string
+	shutdown func(context.Context) error
+}
+
+func shutdownListeners(ctx context.Context, listeners ...listenerShutdown) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	results := make(chan struct {
+		index int
+		err   error
+	}, len(listeners))
+	active := 0
+	for index, listener := range listeners {
+		if listener.shutdown == nil {
+			continue
+		}
+		active++
+		go func(index int, listener listenerShutdown) {
+			results <- struct {
+				index int
+				err   error
+			}{index: index, err: listener.shutdown(ctx)}
+		}(index, listener)
+	}
+	errorsByIndex := make([]error, len(listeners))
+	for completed := 0; completed < active; completed++ {
+		result := <-results
+		errorsByIndex[result.index] = result.err
+	}
+	var joined error
+	for index, err := range errorsByIndex {
+		if err != nil {
+			joined = errors.Join(joined, fmt.Errorf("%s shutdown: %w", listeners[index].name, err))
+		}
+	}
+	return joined
+}
+
 func forceCloseEchoServer(server *echo.Echo) error {
 	if server == nil {
 		return nil

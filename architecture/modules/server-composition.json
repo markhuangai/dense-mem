@@ -56,6 +56,14 @@
       "lifecycle_issue": 381
     },
     {
+      "path": "cmd/internal/serverapp/lifecycle_runtime.go",
+      "function": "shutdownListeners",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
       "path": "cmd/internal/serverapp/server.go",
       "function": "RunActiveServer",
       "kind": "run",
