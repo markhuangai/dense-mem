@@ -21,7 +21,7 @@ func TestRedisHealth_Ping(t *testing.T) {
 		want bool
 	}{
 		{addr: "localhost:6379", want: true},
-		{addr: "redis:6379", want: true},
+		{addr: "redis:6379", want: false},
 		{addr: "127.0.0.1:6379", want: true},
 		{addr: "cache.example.com:6379", want: false},
 	} {
@@ -73,7 +73,7 @@ func redisContractEndpointAllowsInsecureAuth(addr string) bool {
 		host = strings.Trim(host, "[]")
 	}
 	switch strings.ToLower(strings.TrimSpace(host)) {
-	case "localhost", "redis":
+	case "localhost":
 		return true
 	}
 	ip := net.ParseIP(host)

@@ -203,7 +203,7 @@ func redisContractEndpointAllowsInsecureAuth(addr string) bool {
 		host = strings.Trim(host, "[]")
 	}
 	switch strings.ToLower(strings.TrimSpace(host)) {
-	case "localhost", "redis":
+	case "localhost":
 		return true
 	}
 	ip := net.ParseIP(host)
