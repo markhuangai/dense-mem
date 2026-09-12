@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	dreampostgres "github.com/markhuangai/dense-mem/internal/dream/postgres"
+	evaluationpostgres "github.com/markhuangai/dense-mem/internal/evaluation/postgres"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
@@ -19,7 +20,7 @@ func buildEvaluationRegistryBindings(semantic *repository.SemanticRepositoryImpl
 		return registry.EvaluationBindings{}, errors.New("evaluation: semantic repository is required")
 	}
 	return registry.EvaluationBindings{
-		Repository: repository.NewEvaluationReader(
+		Repository: evaluationpostgres.NewReader(
 			semantic.DreamDatabase(),
 			semantic.DreamRLS(),
 			dreampostgres.HypothesisEvaluationQuery,
