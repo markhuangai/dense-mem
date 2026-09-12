@@ -35,8 +35,6 @@ type RedisClientForLifecycle interface {
 	Incr(ctx context.Context, key string) (int64, error)
 	Decr(ctx context.Context, key string) (int64, error)
 	Expire(ctx context.Context, key string, expiration int64) error
-	Del(ctx context.Context, key string) error
-	Scan(ctx context.Context, cursor uint64, match string, count int64) (keys []string, nextCursor uint64, err error)
 }
 
 // RedisKeyBuilder is the interface for building Redis keys.
@@ -45,7 +43,7 @@ type RedisKeyBuilder interface {
 }
 
 // StreamLifecycle manages the complete lifecycle of an SSE stream.
-// It handles heartbeat, max duration, disconnect detection, and cleanup.
+// It handles heartbeat, max duration, disconnect detection, and slot release.
 type StreamLifecycle interface {
 	Start(ctx context.Context, teamID string, writer SSEWriter, work func(context.Context) error) error
 }
@@ -65,7 +63,6 @@ type streamLifecycle struct {
 	concurrencyLimiter ConcurrencyLimiter
 	heartbeatSender    HeartbeatSender
 	maxDuration        time.Duration
-	cleanupRepo        StreamCleanupRepository
 }
 
 // Ensure streamLifecycle implements StreamLifecycle.
@@ -89,26 +86,12 @@ type heartbeatSender struct {
 // Ensure heartbeatSender implements HeartbeatSender.
 var _ HeartbeatSender = (*heartbeatSender)(nil)
 
-// StreamCleanupRepository is the interface for cleaning up stream state.
-type StreamCleanupRepository interface {
-	PurgeTeamStreamState(ctx context.Context, teamID string) error
-}
-
-// redisStreamCleanupRepository implements StreamCleanupRepository.
-type redisStreamCleanupRepository struct {
-	client RedisClientForLifecycle
-}
-
-// Ensure redisStreamCleanupRepository implements StreamCleanupRepository.
-var _ StreamCleanupRepository = (*redisStreamCleanupRepository)(nil)
-
 // NewStreamLifecycle creates a new StreamLifecycle instance.
-func NewStreamLifecycle(concurrencyLimiter ConcurrencyLimiter, cleanupRepo StreamCleanupRepository) StreamLifecycle {
+func NewStreamLifecycle(concurrencyLimiter ConcurrencyLimiter) StreamLifecycle {
 	return &streamLifecycle{
 		concurrencyLimiter: concurrencyLimiter,
 		heartbeatSender:    NewHeartbeatSender(),
 		maxDuration:        MaxStreamDuration,
-		cleanupRepo:        cleanupRepo,
 	}
 }
 
@@ -117,13 +100,11 @@ func NewStreamLifecycleWithConfig(
 	concurrencyLimiter ConcurrencyLimiter,
 	heartbeatSender HeartbeatSender,
 	maxDuration time.Duration,
-	cleanupRepo StreamCleanupRepository,
 ) StreamLifecycle {
 	return &streamLifecycle{
 		concurrencyLimiter: concurrencyLimiter,
 		heartbeatSender:    heartbeatSender,
 		maxDuration:        maxDuration,
-		cleanupRepo:        cleanupRepo,
 	}
 }
 
@@ -185,20 +166,16 @@ func (l *streamLifecycle) Start(
 	case <-ctx.Done():
 		// Client disconnected
 		workCancel() // Signal work to abort
-		// Drain workDone channel
+		// Release the reservation before waiting for work to finish.
+		safeRelease()
 		<-workDone
-		// Clean up stream-specific Redis keys
-		if l.cleanupRepo != nil {
-			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cleanupCancel()
-			_ = l.cleanupRepo.PurgeTeamStreamState(cleanupCtx, teamID)
-		}
 		return ctx.Err()
 
 	case <-maxDurationTimer.C:
 		// Max duration reached - send done event
 		workCancel() // Signal work to abort
-		// Drain workDone channel
+		// Release the reservation before waiting for work to finish.
+		safeRelease()
 		<-workDone
 		// Send done event
 		_ = writer.WriteEvent(EventTypeDone, map[string]any{"reason": "max_duration_exceeded"})
@@ -247,7 +224,7 @@ func (l *redisConcurrencyLimiter) Acquire(ctx context.Context, teamID string) (f
 	if count == 1 {
 		if err := l.redisClient.Expire(ctx, key, l.counterTTL); err != nil {
 			// Best effort decrement on failure
-			_, _ = l.redisClient.Decr(ctx, key)
+			l.decrement(key)
 			return nil, fmt.Errorf("failed to set stream counter TTL: %w", err)
 		}
 	}
@@ -255,19 +232,23 @@ func (l *redisConcurrencyLimiter) Acquire(ctx context.Context, teamID string) (f
 	// Check if limit exceeded
 	if count > int64(l.maxStreams) {
 		// Decrement since we exceeded
-		_, _ = l.redisClient.Decr(ctx, key)
+		l.decrement(key)
 		return nil, ErrTooManyStreams
 	}
 
 	// Return release function that decrements counter
-	released := false
+	var releaseOnce sync.Once
 	return func() {
-		if released {
-			return
-		}
-		released = true
-		_, _ = l.redisClient.Decr(ctx, key)
+		releaseOnce.Do(func() {
+			l.decrement(key)
+		})
 	}, nil
+}
+
+func (l *redisConcurrencyLimiter) decrement(key string) {
+	releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = l.redisClient.Decr(releaseCtx, key)
 }
 
 // NewHeartbeatSender creates a new HeartbeatSender.
@@ -300,39 +281,4 @@ func (h *heartbeatSender) Run(ctx context.Context, writer SSEWriter) {
 			_ = writer.WriteComment("keepalive")
 		}
 	}
-}
-
-// NewStreamCleanupRepository creates a new StreamCleanupRepository.
-func NewStreamCleanupRepository(client RedisClientForLifecycle) StreamCleanupRepository {
-	return &redisStreamCleanupRepository{
-		client: client,
-	}
-}
-
-// PurgeTeamStreamState deletes all stream keys for a team.
-func (r *redisStreamCleanupRepository) PurgeTeamStreamState(ctx context.Context, teamID string) error {
-	pattern := fmt.Sprintf("profile:%s:stream:*", teamID)
-
-	var cursor uint64
-	for {
-		keys, nextCursor, err := r.client.Scan(ctx, cursor, pattern, 100)
-		if err != nil {
-			return fmt.Errorf("failed to scan stream keys: %w", err)
-		}
-
-		// Delete found keys
-		for _, key := range keys {
-			if err := r.client.Del(ctx, key); err != nil {
-				// Log but continue
-				continue
-			}
-		}
-
-		cursor = nextCursor
-		if cursor == 0 {
-			break
-		}
-	}
-
-	return nil
 }

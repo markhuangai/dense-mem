@@ -13,7 +13,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 
-	"github.com/markhuangai/dense-mem/internal/config"
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	httperr "github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service"
@@ -87,7 +87,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // NewServer creates a new Echo server with the given configuration and health checks.
 // It sets up the correlation ID middleware, error handler, and public routes.
 // The health and ready endpoints are not behind auth, team, or rate-limit middleware.
-func NewServer(cfg config.Config, logger observability.LogProvider, health HealthConfig) *echo.Echo {
+func NewServer(cfg httpcontract.BodyLimitConfig, logger observability.LogProvider, health HealthConfig) *echo.Echo {
 	e := echo.New()
 	if health.dependencyFlights == nil {
 		health.dependencyFlights = newDependencyCheckFlightRegistry()
@@ -100,7 +100,11 @@ func NewServer(cfg config.Config, logger observability.LogProvider, health Healt
 
 	// Global middleware (applies to all routes)
 	e.Use(middleware.Recover())
-	e.Use(middleware.BodyLimit(fmt.Sprintf("%dB", effectiveMaxBodyBytes(cfg.HTTPMaxBodyBytes))))
+	maxBodyBytes := 0
+	if cfg != nil {
+		maxBodyBytes = cfg.GetHTTPMaxBodyBytes()
+	}
+	e.Use(middleware.BodyLimit(fmt.Sprintf("%dB", effectiveMaxBodyBytes(maxBodyBytes))))
 	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
 		HandleError:  true,
 		LogMethod:    true,
@@ -206,7 +210,7 @@ func effectiveMaxBodyBytes(value int) int {
 
 // NewServerWithGracefulShutdown creates a new server and returns it along with a shutdown function.
 // The shutdown function uses a 10-second timeout for graceful shutdown.
-func NewServerWithGracefulShutdown(cfg config.Config, logger observability.LogProvider, health HealthConfig) (*echo.Echo, func()) {
+func NewServerWithGracefulShutdown(cfg httpcontract.BodyLimitConfig, logger observability.LogProvider, health HealthConfig) (*echo.Echo, func()) {
 	e := NewServer(cfg, logger, health)
 
 	shutdown := func() {

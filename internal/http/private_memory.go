@@ -14,7 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	privacycontract "github.com/markhuangai/dense-mem/internal/privacy/contract"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
@@ -408,21 +408,21 @@ func privateMemoryHTTPError(err error) error {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "private-memory audit service unavailable")
 	case errors.Is(err, service.ErrPrivateMemoryRuntimeConfigUnavailable):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "private-memory runtime configuration unavailable")
-	case errors.Is(err, repository.ErrPrivateMemoryNotFound):
+	case errors.Is(err, privacycontract.ErrPrivateMemoryNotFound):
 		return httperr.New(httperr.NOT_FOUND, "private-memory target not found")
-	case errors.Is(err, repository.ErrPrivateMemoryLegalHold):
+	case errors.Is(err, privacycontract.ErrPrivateMemoryLegalHold):
 		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "private memory is under legal hold"), "legal_hold", "contact_operator", "Do not retry while the legal hold is active; contact an operator to review it.", false, nil, "")
-	case errors.Is(err, repository.ErrPrivateMemoryIdempotency):
+	case errors.Is(err, privacycontract.ErrPrivateMemoryIdempotency):
 		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "Idempotency-Key conflicts with a different request"), "idempotency_conflict", "correct_and_resubmit", "Reuse the Idempotency-Key only for the original request; submit a changed request with a new key.", false, nil, "")
-	case errors.Is(err, repository.ErrPrivateMemoryOperationConflict):
+	case errors.Is(err, privacycontract.ErrPrivateMemoryOperationConflict):
 		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "private-memory erasure is already in progress"), "operation_in_progress", "retry_same_request", "Retry the same erasure request after the current operation completes.", true, nil, "")
-	case errors.Is(err, repository.ErrPrivateMemoryRetentionDisabled):
+	case errors.Is(err, privacycontract.ErrPrivateMemoryRetentionDisabled):
 		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "private-memory retention is disabled"), "retention_disabled", "contact_operator", "Contact an operator to enable private-memory retention before retrying.", false, nil, "")
-	case errors.Is(err, repository.ErrPrivateMemoryHoldConflict):
+	case errors.Is(err, privacycontract.ErrPrivateMemoryHoldConflict):
 		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "private-memory legal hold conflicts with the active hold"), "legal_hold_conflict", "contact_operator", "Stop the request and contact an operator to review the active legal hold.", false, nil, "")
-	case errors.Is(err, repository.ErrPrivateMemoryManifest):
+	case errors.Is(err, privacycontract.ErrPrivateMemoryManifest):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "private-memory erasure is unavailable")
-	case errors.Is(err, repository.ErrPrivateMemoryInternal):
+	case errors.Is(err, privacycontract.ErrPrivateMemoryInternal):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "private-memory service unavailable")
 	default:
 		return err

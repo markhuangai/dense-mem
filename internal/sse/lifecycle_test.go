@@ -126,31 +126,6 @@ func (m *mockConcurrencyLimiter) GetCount() int64 {
 	return atomic.LoadInt64(&m.currentCount)
 }
 
-// mockCleanupRepository implements StreamCleanupRepository for testing.
-type mockCleanupRepository struct {
-	cleanedUp bool
-	profileID string
-	mu        sync.Mutex
-}
-
-func newMockCleanupRepository() *mockCleanupRepository {
-	return &mockCleanupRepository{}
-}
-
-func (m *mockCleanupRepository) PurgeTeamStreamState(ctx context.Context, profileID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.cleanedUp = true
-	m.profileID = profileID
-	return nil
-}
-
-func (m *mockCleanupRepository) WasCleanedUp() (bool, string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.cleanedUp, m.profileID
-}
-
 // mockHeartbeatSender implements HeartbeatSender for testing.
 type mockHeartbeatSender struct {
 	runCalled bool
@@ -228,20 +203,20 @@ func TestMaxDurationTermination(t *testing.T) {
 	// Create mocks
 	writer := newMockSSEWriter()
 	limiter := newMockConcurrencyLimiter(10)
-	cleanupRepo := newMockCleanupRepository()
 	heartbeatSender := newMockHeartbeatSender()
 
 	// Use short max duration for testing
 	maxDuration := 200 * time.Millisecond
 
-	lifecycle := NewStreamLifecycleWithConfig(limiter, heartbeatSender, maxDuration, cleanupRepo)
+	lifecycle := NewStreamLifecycleWithConfig(limiter, heartbeatSender, maxDuration)
 
 	// Create context that won't timeout
 	ctx := context.Background()
 
-	// Work function that never completes on its own
+	workCanceled := make(chan struct{})
 	work := func(ctx context.Context) error {
 		<-ctx.Done()
+		close(workCanceled)
 		return ctx.Err()
 	}
 
@@ -261,12 +236,16 @@ func TestMaxDurationTermination(t *testing.T) {
 		}
 	}
 
-	// Verify concurrency was released
-	time.Sleep(50 * time.Millisecond) // Give time for cleanup
+	// Verify concurrency was released after cancellation was requested.
 	assert.Equal(t, int64(0), limiter.GetCount())
+	select {
+	case <-workCanceled:
+	default:
+		t.Fatal("max-duration termination returned before canceling work")
+	}
 }
 
-// TestDisconnectCleanup tests that disconnect aborts work and cleans up Redis keys.
+// TestDisconnectCleanup tests that disconnect aborts work without purging shared stream state.
 func TestDisconnectCleanup(t *testing.T) {
 	t.Parallel()
 
@@ -277,13 +256,12 @@ func TestDisconnectCleanup(t *testing.T) {
 	// Create mocks
 	writer := newMockSSEWriter()
 	limiter := newMockConcurrencyLimiter(10)
-	cleanupRepo := newMockCleanupRepository()
 	heartbeatSender := newMockHeartbeatSender()
 
 	// Use long max duration so disconnect happens first
 	maxDuration := 5 * time.Second
 
-	lifecycle := NewStreamLifecycleWithConfig(limiter, heartbeatSender, maxDuration, cleanupRepo)
+	lifecycle := NewStreamLifecycleWithConfig(limiter, heartbeatSender, maxDuration)
 
 	// Create context that we'll cancel to simulate disconnect
 	ctx, cancel := context.WithCancel(context.Background())
@@ -317,21 +295,68 @@ func TestDisconnectCleanup(t *testing.T) {
 	// Should have context canceled error
 	assert.True(t, errors.Is(err, context.Canceled))
 
-	// Check that cleanup was called
-	cleanedUp, profileID := cleanupRepo.WasCleanedUp()
-	assert.True(t, cleanedUp, "expected cleanup to be called on disconnect")
-	assert.Equal(t, "profile456", profileID)
-
 	// Check that work was aborted
 	select {
 	case <-workAborted:
 		// Good - work was aborted
-	default:
+	case <-time.After(250 * time.Millisecond):
 		t.Error("expected work to be aborted on disconnect")
 	}
 
 	// Verify concurrency was released
 	assert.Equal(t, int64(0), limiter.GetCount())
+}
+
+func TestDisconnectReleasesSlotBeforeWorkReturns(t *testing.T) {
+	t.Parallel()
+
+	writer := newMockSSEWriter()
+	limiter := newMockConcurrencyLimiter(1)
+	heartbeatSender := newMockHeartbeatSender()
+	lifecycle := NewStreamLifecycleWithConfig(limiter, heartbeatSender, time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	workStarted := make(chan struct{})
+	workRelease := make(chan struct{})
+	workCanceled := make(chan struct{})
+	workDone := make(chan struct{})
+	startDone := make(chan error, 1)
+	go func() {
+		startDone <- lifecycle.Start(ctx, "profile-cancel", writer, func(workCtx context.Context) error {
+			close(workStarted)
+			<-workCtx.Done()
+			close(workCanceled)
+			<-workRelease
+			close(workDone)
+			return nil
+		})
+	}()
+	<-workStarted
+	cancel()
+
+	select {
+	case <-workCanceled:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("disconnect did not cancel stream work")
+	}
+	require.Eventually(t, func() bool { return limiter.GetCount() == 0 }, 250*time.Millisecond, 10*time.Millisecond)
+	select {
+	case err := <-startDone:
+		t.Fatalf("disconnect returned before work finished: %v", err)
+	default:
+	}
+	close(workRelease)
+	select {
+	case <-workDone:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("cancellation test work did not finish after release")
+	}
+	select {
+	case err := <-startDone:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("disconnect did not return after work finished")
+	}
 }
 
 // TestConcurrencyLimit tests that 11th concurrent stream receives 429 rejection.
@@ -411,11 +436,10 @@ func TestNormalCompletion(t *testing.T) {
 	// Create mocks
 	writer := newMockSSEWriter()
 	limiter := newMockConcurrencyLimiter(10)
-	cleanupRepo := newMockCleanupRepository()
 	heartbeatSender := newMockHeartbeatSender()
 
 	maxDuration := 5 * time.Second
-	lifecycle := NewStreamLifecycleWithConfig(limiter, heartbeatSender, maxDuration, cleanupRepo)
+	lifecycle := NewStreamLifecycleWithConfig(limiter, heartbeatSender, maxDuration)
 
 	// Work function that completes quickly
 	work := func(ctx context.Context) error {
@@ -431,10 +455,6 @@ func TestNormalCompletion(t *testing.T) {
 
 	// Verify concurrency was released
 	assert.Equal(t, int64(0), limiter.GetCount())
-
-	// Cleanup should NOT be called on normal completion
-	cleanedUp, _ := cleanupRepo.WasCleanedUp()
-	assert.False(t, cleanedUp, "cleanup should not be called on normal completion")
 }
 
 // TestWorkError tests that work function errors are propagated.
@@ -448,11 +468,10 @@ func TestWorkError(t *testing.T) {
 	// Create mocks
 	writer := newMockSSEWriter()
 	limiter := newMockConcurrencyLimiter(10)
-	cleanupRepo := newMockCleanupRepository()
 	heartbeatSender := newMockHeartbeatSender()
 
 	maxDuration := 5 * time.Second
-	lifecycle := NewStreamLifecycleWithConfig(limiter, heartbeatSender, maxDuration, cleanupRepo)
+	lifecycle := NewStreamLifecycleWithConfig(limiter, heartbeatSender, maxDuration)
 
 	// Work function that returns an error
 	expectedErr := errors.New("work failed")
@@ -478,10 +497,9 @@ func TestStreamLifecycle_ReleasesSlotOnPanic(t *testing.T) {
 
 	writer := newMockSSEWriter()
 	limiter := newMockConcurrencyLimiter(10)
-	cleanupRepo := newMockCleanupRepository()
 	heartbeat := newMockHeartbeatSender()
 
-	lifecycle := NewStreamLifecycleWithConfig(limiter, heartbeat, 5*time.Second, cleanupRepo)
+	lifecycle := NewStreamLifecycleWithConfig(limiter, heartbeat, 5*time.Second)
 
 	err := lifecycle.Start(context.Background(), "profile-1", writer, func(ctx context.Context) error {
 		panic("boom")
@@ -570,14 +588,10 @@ type fakeLifecycleRedis struct {
 	count     int64
 	incrErr   error
 	expireErr error
-	scanErr   error
-	delErr    error
 
 	expireCalls int
 	decrCalls   int
-	delCalls    int
-	scanPattern string
-	scanKeys    []string
+	decrCtxErr  error
 }
 
 func (r *fakeLifecycleRedis) KeyBuilder() any {
@@ -595,8 +609,9 @@ func (r *fakeLifecycleRedis) Incr(context.Context, string) (int64, error) {
 	return r.count, nil
 }
 
-func (r *fakeLifecycleRedis) Decr(context.Context, string) (int64, error) {
+func (r *fakeLifecycleRedis) Decr(ctx context.Context, _ string) (int64, error) {
 	r.decrCalls++
+	r.decrCtxErr = ctx.Err()
 	r.count--
 	return r.count, nil
 }
@@ -604,19 +619,6 @@ func (r *fakeLifecycleRedis) Decr(context.Context, string) (int64, error) {
 func (r *fakeLifecycleRedis) Expire(context.Context, string, int64) error {
 	r.expireCalls++
 	return r.expireErr
-}
-
-func (r *fakeLifecycleRedis) Del(context.Context, string) error {
-	r.delCalls++
-	return r.delErr
-}
-
-func (r *fakeLifecycleRedis) Scan(_ context.Context, _ uint64, match string, _ int64) ([]string, uint64, error) {
-	r.scanPattern = match
-	if r.scanErr != nil {
-		return nil, 0, r.scanErr
-	}
-	return r.scanKeys, 0, nil
 }
 
 func TestStreamLifecycleConstructors(t *testing.T) {
@@ -630,7 +632,7 @@ func TestStreamLifecycleConstructors(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, HeartbeatInterval, heartbeat.interval)
 
-	lifecycle, ok := NewStreamLifecycle(newMockConcurrencyLimiter(1), newMockCleanupRepository()).(*streamLifecycle)
+	lifecycle, ok := NewStreamLifecycle(newMockConcurrencyLimiter(1)).(*streamLifecycle)
 	require.True(t, ok)
 	assert.Equal(t, MaxStreamDuration, lifecycle.maxDuration)
 	assert.NotNil(t, lifecycle.heartbeatSender)
@@ -700,24 +702,16 @@ func TestRedisConcurrencyLimiterAcquireBranches(t *testing.T) {
 	})
 }
 
-func TestStreamCleanupRepositoryPurgeTeamStreamState(t *testing.T) {
-	client := &fakeLifecycleRedis{scanKeys: []string{"profile:p1:stream:a", "profile:p1:stream:b"}}
-	repo := NewStreamCleanupRepository(client)
+func TestRedisConcurrencyLimiterReleaseUsesIndependentContext(t *testing.T) {
+	client := &fakeLifecycleRedis{}
+	limiter := NewConcurrencyLimiterWithConfig(client, 1, 9)
 
-	err := repo.PurgeTeamStreamState(context.Background(), "p1")
-
+	ctx, cancel := context.WithCancel(context.Background())
+	release, err := limiter.Acquire(ctx, "profile-1")
 	require.NoError(t, err)
-	assert.Equal(t, "profile:p1:stream:*", client.scanPattern)
-	assert.Equal(t, 2, client.delCalls)
+	cancel()
 
-	client = &fakeLifecycleRedis{scanErr: errors.New("scan failed")}
-	repo = NewStreamCleanupRepository(client)
-	err = repo.PurgeTeamStreamState(context.Background(), "p1")
-	require.ErrorContains(t, err, "failed to scan")
-
-	client = &fakeLifecycleRedis{scanKeys: []string{"profile:p1:stream:a"}, delErr: errors.New("delete failed")}
-	repo = NewStreamCleanupRepository(client)
-	err = repo.PurgeTeamStreamState(context.Background(), "p1")
-	require.NoError(t, err, "delete errors are intentionally best effort")
-	assert.Equal(t, 1, client.delCalls)
+	release()
+	assert.Equal(t, 1, client.decrCalls)
+	assert.NoError(t, client.decrCtxErr)
 }

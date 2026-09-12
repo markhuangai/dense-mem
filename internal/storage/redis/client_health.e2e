@@ -1,0 +1,119 @@
+package redis
+
+import (
+	"context"
+	"net"
+	"os"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	tcnetwork "github.com/testcontainers/testcontainers-go/network"
+	"github.com/testcontainers/testcontainers-go/wait"
+)
+
+func TestRedisHealth_Ping(t *testing.T) {
+	for _, testCase := range []struct {
+		addr string
+		want bool
+	}{
+		{addr: "localhost:6379", want: true},
+		{addr: "redis:6379", want: false},
+		{addr: "127.0.0.1:6379", want: true},
+		{addr: "cache.example.com:6379", want: false},
+	} {
+		require.Equal(t, testCase.want, redisContractEndpointAllowsInsecureAuth(testCase.addr), testCase.addr)
+	}
+	addr := redisHealthAddress(t)
+	password, tlsEnabled := redisHealthCredentials(t)
+	db := 0
+	if rawDB := strings.TrimSpace(os.Getenv("REDIS_DB")); rawDB != "" {
+		parsedDB, parseErr := strconv.Atoi(rawDB)
+		require.NoError(t, parseErr)
+		db = parsedDB
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	client, err := NewClient(ctx, &mockConfig{redisAddr: addr, redisPassword: password, redisDB: db, redisTLSEnabled: tlsEnabled})
+	if err != nil {
+		t.Fatalf("connect to Redis: %v", err)
+	}
+	defer client.Close()
+	if err := client.Ping(ctx); err != nil {
+		t.Fatalf("ping Redis: %v", err)
+	}
+}
+
+func redisHealthCredentials(t *testing.T) (string, bool) {
+	t.Helper()
+	if strings.TrimSpace(os.Getenv("REDIS_ADDR")) == "" {
+		return "", false
+	}
+	tlsEnabled := false
+	if rawTLS := strings.TrimSpace(os.Getenv("REDIS_TLS_ENABLED")); rawTLS != "" {
+		parsed, err := strconv.ParseBool(rawTLS)
+		require.NoError(t, err)
+		tlsEnabled = parsed
+	}
+	password := os.Getenv("REDIS_PASSWORD")
+	if password != "" && !tlsEnabled && !redisContractEndpointAllowsInsecureAuth(os.Getenv("REDIS_ADDR")) {
+		t.Fatal("REDIS_PASSWORD requires REDIS_TLS_ENABLED=true for external REDIS_ADDR")
+	}
+	return password, tlsEnabled
+}
+
+func redisContractEndpointAllowsInsecureAuth(addr string) bool {
+	host := strings.TrimSpace(addr)
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	} else {
+		host = strings.Trim(host, "[]")
+	}
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "localhost":
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func redisHealthAddress(t *testing.T) string {
+	t.Helper()
+	if addr := strings.TrimSpace(os.Getenv("REDIS_ADDR")); addr != "" {
+		return addr
+	}
+	if os.Getenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS") != "1" {
+		t.Skip("set DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 to run the Redis health check")
+	}
+	ctx := context.Background()
+	networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK"))
+	options := []testcontainers.ContainerCustomizer{
+		testcontainers.WithExposedPorts("6379/tcp"),
+	}
+	if networkName != "" {
+		options = append(options, testcontainers.WithWaitStrategy(
+			wait.ForLog("Ready to accept connections").WithStartupTimeout(30*time.Second),
+		))
+	} else {
+		options = append(options, testcontainers.WithWaitStrategy(
+			wait.ForListeningPort("6379/tcp").WithStartupTimeout(30*time.Second),
+		))
+	}
+	if networkName != "" {
+		options = append(options, tcnetwork.WithNetworkName([]string{"redis"}, networkName))
+	}
+	container, err := testcontainers.Run(ctx, "redis:7-alpine", options...)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, container.Terminate(context.Background())) })
+	if networkName != "" {
+		return "redis:6379"
+	}
+	host, err := container.Host(ctx)
+	require.NoError(t, err)
+	port, err := container.MappedPort(ctx, "6379/tcp")
+	require.NoError(t, err)
+	return net.JoinHostPort(host, port.Port())
+}

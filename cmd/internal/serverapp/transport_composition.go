@@ -19,6 +19,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/recall"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	searchapp "github.com/markhuangai/dense-mem/internal/search"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/graphview"
@@ -77,6 +78,58 @@ type transportComposition struct {
 	telemetryServerAddr string
 }
 
+// transportSearchConvergenceReader adapts the retained service compatibility
+// reader to the native search projection consumed by the control transport.
+// The conversion stays in composition so HTTP does not depend on repository
+// compatibility representations.
+type transportSearchConvergenceReader struct {
+	legacy service.SearchConvergenceReader
+}
+
+func (r transportSearchConvergenceReader) GetSearchConvergence(ctx context.Context) (*searchapp.SearchConvergence, error) {
+	value, err := r.legacy.GetSearchConvergence(ctx)
+	if err != nil || value == nil {
+		return nil, err
+	}
+	result := &searchapp.SearchConvergence{
+		ObservedAt:        value.ObservedAt,
+		Status:            value.Status,
+		Contract:          value.Contract,
+		ExpectedDocuments: value.ExpectedDocuments,
+		CurrentDocuments:  value.CurrentDocuments,
+		DriftedDocuments:  value.DriftedDocuments,
+		AffectedTeamCount: value.AffectedTeamCount,
+		OldestDriftAge:    value.OldestDriftAge,
+		DriftClasses:      make([]searchapp.SearchDocumentDriftCount, len(value.DriftClasses)),
+	}
+	for index, drift := range value.DriftClasses {
+		result.DriftClasses[index] = searchapp.SearchDocumentDriftCount{Class: drift.Class, Count: drift.Count}
+	}
+	if run := value.LatestRun; run != nil {
+		result.LatestRun = &searchapp.SearchReconciliationRun{
+			RunID:         run.RunID,
+			LocalRunDate:  run.LocalRunDate,
+			Status:        run.Status,
+			SelectedCount: run.SelectedCount,
+			EmbeddedCount: run.EmbeddedCount,
+			UpdatedCount:  run.UpdatedCount,
+			DriftedCount:  run.DriftedCount,
+			LastError:     run.LastError,
+			StartedAt:     run.StartedAt,
+			CompletedAt:   run.CompletedAt,
+			UpdatedAt:     run.UpdatedAt,
+		}
+	}
+	return result, nil
+}
+
+func nativeSearchConvergenceReader(reader service.SearchConvergenceReader) searchapp.SearchConvergenceReader {
+	if reader == nil {
+		return nil
+	}
+	return transportSearchConvergenceReader{legacy: reader}
+}
+
 func buildTransportComposition(deps transportCompositionInputs) (*transportComposition, error) {
 	if deps.backend == nil {
 		return nil, fmt.Errorf("transport: backend is required")
@@ -86,7 +139,6 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 		deps.backend.concurrencyLimiter,
 		sse.NewHeartbeatSenderWithInterval(time.Duration(deps.cfg.GetSSEHeartbeatSeconds())*time.Second),
 		time.Duration(deps.cfg.GetSSEMaxDurationSeconds())*time.Second,
-		deps.backend.streamCleanupRepo,
 	)
 	mcpHandler := handler.NewMCPHandlerWithLifecycleAndRuntimeConfig(
 		deps.toolRegistry,
@@ -221,7 +273,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 				Communities:       deps.community,
 				ConflictQueue:     deps.conflictQueue,
 				EvidenceConflicts: deps.evidenceConflicts,
-				Convergence:       deps.convergence,
+				Convergence:       nativeSearchConvergenceReader(deps.convergence),
 				RememberAttempts:  deps.rememberAttempts,
 				PrivateMemory:     deps.privateMemory,
 			}},

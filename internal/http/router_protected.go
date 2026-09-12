@@ -3,13 +3,12 @@ package http
 import (
 	"github.com/labstack/echo/v4"
 
-	"github.com/markhuangai/dense-mem/internal/config"
-	"github.com/markhuangai/dense-mem/internal/crypto"
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 // ProtectedDeps holds all dependencies needed for protected route registration.
@@ -18,7 +17,7 @@ import (
 type ProtectedDeps struct {
 	MCP MCPBindings
 	// CredentialRepo is the API key repository for authentication.
-	CredentialRepo repository.CredentialRepository
+	CredentialRepo accessservice.CredentialStore
 	// TeamSvc resolves the authenticated team.
 	TeamSvc handler.TeamServiceInterface
 	// RateLimitService is the service for rate limiting.
@@ -39,10 +38,10 @@ type ProtectedDeps struct {
 	// OAuthMetadata publishes and links the protected-resource contract.
 	OAuthMetadata OAuthProtectedResourceProvider
 	// Config is the application configuration.
-	Config config.ConfigProvider
+	Config httpcontract.ConfigProvider
 	// Logger is the structured logger.
 	Logger             observability.LogProvider
-	CredentialVerifier crypto.CredentialVerifier
+	CredentialVerifier httpcontract.CredentialVerifier
 	LastUsedRecorder   middleware.LastUsedRecorder
 	// PostAuthMiddleware runs after authentication, team resolution, and
 	// authorization, and before usage metrics/rate limiting.
@@ -52,13 +51,13 @@ type ProtectedDeps struct {
 // ProtectedDepsInterface is the companion interface for ProtectedDeps.
 // Consumers and tests depend on this abstraction rather than the concrete struct.
 type ProtectedDepsInterface interface {
-	GetCredentialRepo() repository.CredentialRepository
+	GetCredentialRepo() accessservice.CredentialStore
 	GetTeamSvc() handler.TeamServiceInterface
 	GetRateLimitService() service.RateLimitServiceInterface
 	GetUsageMetrics() service.UsageMetricsRecorder
 	GetAuditService() service.AuditService
 	GetSecurityService() middleware.SecurityBanService
-	GetConfig() config.ConfigProvider
+	GetConfig() httpcontract.ConfigProvider
 	GetLogger() observability.LogProvider
 	GetPostAuthMiddleware() []echo.MiddlewareFunc
 }
@@ -67,7 +66,7 @@ type ProtectedDepsInterface interface {
 var _ ProtectedDepsInterface = (*ProtectedDeps)(nil)
 
 // Getters for ProtectedDepsInterface
-func (d *ProtectedDeps) GetCredentialRepo() repository.CredentialRepository {
+func (d *ProtectedDeps) GetCredentialRepo() accessservice.CredentialStore {
 	return d.CredentialRepo
 }
 
@@ -91,7 +90,7 @@ func (d *ProtectedDeps) GetSecurityService() middleware.SecurityBanService {
 	return d.SecurityService
 }
 
-func (d *ProtectedDeps) GetConfig() config.ConfigProvider {
+func (d *ProtectedDeps) GetConfig() httpcontract.ConfigProvider {
 	return d.Config
 }
 

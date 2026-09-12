@@ -69,6 +69,18 @@ describe("UserPortalApp MCP context", () => {
     expect(screen.getByText(`${window.location.origin}/teams/${baseSession.team.id}/mcp`)).toBeInTheDocument();
     expect(screen.getByText("Using this browser origin because MCP_PUBLIC_BASE_URL is not configured.")).toBeInTheDocument();
   });
+
+  it("normalizes configured MCP origins before rendering and copying", async () => {
+    mockUserSession({ ...baseSession, mcp_public_base_url: "  https://memory.example.test///  " });
+
+    render(<UserPortalApp />);
+
+    await expectCurrentWorkspace("Research Team");
+    const expectedURL = `https://memory.example.test/teams/${baseSession.team.id}/mcp`;
+    expect(screen.getByText(expectedURL)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Copy MCP URL" }));
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expectedURL);
+  });
 });
 
 function mockUserSession(session: UserSession) {

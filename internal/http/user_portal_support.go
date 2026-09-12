@@ -11,16 +11,16 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/markhuangai/dense-mem/internal/config"
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
-func publicSSORateLimitMiddleware(svc service.RateLimitServiceInterface, cfg config.ConfigProvider) echo.MiddlewareFunc {
+func publicSSORateLimitMiddleware(svc service.RateLimitServiceInterface, cfg httpcontract.ConfigProvider) echo.MiddlewareFunc {
 	return publicIPRateLimitMiddleware("public-sso", svc, cfg)
 }
 
-func publicIPRateLimitMiddleware(subjectNamespace string, svc service.RateLimitServiceInterface, cfg config.ConfigProvider) echo.MiddlewareFunc {
+func publicIPRateLimitMiddleware(subjectNamespace string, svc service.RateLimitServiceInterface, cfg httpcontract.ConfigProvider) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			if svc == nil || cfg == nil {

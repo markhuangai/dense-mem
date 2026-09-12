@@ -19,7 +19,6 @@ type backendBundle struct {
 	rateLimitService   accessservice.RateLimitServiceInterface
 	counterStore       CounterStore
 	concurrencyLimiter sse.ConcurrencyLimiter
-	streamCleanupRepo  sse.StreamCleanupRepository
 	degraded           bool
 	reason             string
 	closeFn            func() error
@@ -50,14 +49,12 @@ func buildRedisBackend(ctx context.Context, cfg config.Config) (*backendBundle, 
 	rateLimitService := accessservice.NewRateLimitService(redisClient)
 
 	concurrencyLimiter := sse.NewConcurrencyLimiterWithConfig(redisClient, cfg.SSEMaxConcurrentStreams, 3600)
-	streamCleanupRepo := sse.NewStreamCleanupRepository(redisClient)
 
 	return &backendBundle{
 		cleanupRepo:        redisCleanup,
 		rateLimitService:   rateLimitService,
 		counterStore:       redisClient,
 		concurrencyLimiter: concurrencyLimiter,
-		streamCleanupRepo:  streamCleanupRepo,
 		degraded:           false,
 		reason:             "",
 		closeFn:            redisClient.Close,
@@ -70,14 +67,12 @@ func buildInMemoryBackend(cfg config.Config) (*backendBundle, error) {
 	rateLimitService := accessservice.NewRateLimitService(inmemStore)
 
 	concurrencyLimiter := inmem.NewInMemoryConcurrencyLimiter(cfg.SSEMaxConcurrentStreams, time.Hour)
-	streamCleanupRepo := inmem.NewNoopStreamCleanupRepository()
 	cleanupRepo := inmem.NewNoopCleanupRepository()
 
 	return &backendBundle{
 		cleanupRepo:        cleanupRepo,
 		rateLimitService:   rateLimitService,
 		concurrencyLimiter: concurrencyLimiter,
-		streamCleanupRepo:  streamCleanupRepo,
 		degraded:           true,
 		reason:             "in-memory backend: no cross-instance rate limiting or session cleanup",
 		closeFn:            func() error { return nil },

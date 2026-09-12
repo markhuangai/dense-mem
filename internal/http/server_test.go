@@ -288,6 +288,13 @@ func TestNewServerAcceptsHealthChecks(t *testing.T) {
 	}
 }
 
+func TestNewServerDefaultsBodyLimitForNilConfig(t *testing.T) {
+	server := NewServer(nil, nil, HealthConfig{})
+	if server == nil {
+		t.Fatal("expected Echo instance to be created")
+	}
+}
+
 func TestRequestLoggerOmitsQueryString(t *testing.T) {
 	logger := &captureLogProvider{}
 	e := NewServer(config.Config{}, logger, HealthConfig{})

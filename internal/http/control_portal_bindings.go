@@ -3,7 +3,7 @@ package http
 import (
 	"github.com/labstack/echo/v4"
 
-	"github.com/markhuangai/dense-mem/internal/config"
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service"
@@ -16,7 +16,7 @@ type ControlPortalBindings struct {
 }
 
 func NewControlPortalServerWithCapabilityBindings(
-	cfg config.ConfigProvider,
+	cfg httpcontract.ConfigProvider,
 	teamSvc handler.TeamServiceInterface,
 	credentialSvc handler.CredentialServiceInterface,
 	metricsSvc service.UsageMetricsReader,

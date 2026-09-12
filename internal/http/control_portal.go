@@ -16,9 +16,9 @@ import (
 	"github.com/labstack/echo/v4"
 	echomw "github.com/labstack/echo/v4/middleware"
 
-	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/dream"
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	dto "github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
@@ -31,7 +31,7 @@ import (
 
 // NewControlPortalServer creates the token-protected management portal server.
 func NewControlPortalServer(
-	cfg config.ConfigProvider,
+	cfg httpcontract.ConfigProvider,
 	teamSvc handler.TeamServiceInterface,
 	credentialSvc handler.CredentialServiceInterface,
 	logger observability.LogProvider,
@@ -41,7 +41,7 @@ func NewControlPortalServer(
 }
 
 func NewControlPortalServerWithMetrics(
-	cfg config.ConfigProvider,
+	cfg httpcontract.ConfigProvider,
 	teamSvc handler.TeamServiceInterface,
 	credentialSvc handler.CredentialServiceInterface,
 	metricsSvc service.UsageMetricsReader,
@@ -62,7 +62,7 @@ func NewControlPortalServerWithMetrics(
 }
 
 func NewControlPortalServerWithMetricsAndTelemetry(
-	cfg config.ConfigProvider,
+	cfg httpcontract.ConfigProvider,
 	teamSvc handler.TeamServiceInterface,
 	credentialSvc handler.CredentialServiceInterface,
 	metricsSvc service.UsageMetricsReader,
@@ -777,7 +777,7 @@ type controlBodyLimitConfig interface {
 	GetHTTPMaxBodyBytes() int
 }
 
-func controlMaxBodyBytes(cfg config.ConfigProvider) int {
+func controlMaxBodyBytes(cfg httpcontract.BodyLimitConfig) int {
 	if provider, ok := cfg.(controlBodyLimitConfig); ok {
 		return effectiveMaxBodyBytes(provider.GetHTTPMaxBodyBytes())
 	}

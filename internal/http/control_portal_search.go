@@ -10,7 +10,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	searchapp "github.com/markhuangai/dense-mem/internal/search"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
@@ -71,7 +71,7 @@ type controlSearchRunResponse struct {
 	UpdatedAt     string `json:"updated_at"`
 }
 
-func toControlSearchConvergence(value *repository.SearchConvergence) controlSearchConvergenceResponse {
+func toControlSearchConvergence(value *searchapp.SearchConvergence) controlSearchConvergenceResponse {
 	result := controlSearchConvergenceResponse{DriftClasses: []controlSearchDriftResponse{}}
 	if value == nil {
 		return result
