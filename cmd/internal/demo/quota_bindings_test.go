@@ -12,18 +12,19 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
+	demoservice "github.com/markhuangai/dense-mem/cmd/internal/demo/service"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
 func TestWrapRegistryConsumesRememberQuotaBeforeInvoke(t *testing.T) {
-	q := DefaultQuotas()
+	q := demoservice.DefaultQuotas()
 	q.WriteAttempts = 1
 	q.EvidenceAttempts = 1
 	q.EvidenceBytes = 4
 	q.VerifierAttempts = 1
-	manager := NewQuotaManager(&fakeCounterStore{}, q)
+	manager := demoservice.NewQuotaManager(&fakeCounterStore{}, q)
 	reg := registry.New()
 	calls := 0
 	require.NoError(t, reg.Register(registry.Tool{
@@ -50,7 +51,7 @@ func TestWrapRegistryConsumesRememberQuotaBeforeInvoke(t *testing.T) {
 }
 
 func TestQuotaLimitsUseEvidenceFieldNames(t *testing.T) {
-	payload, err := json.Marshal(DefaultQuotas().Limits())
+	payload, err := json.Marshal(demoservice.DefaultQuotas().Limits())
 	require.NoError(t, err)
 
 	var values map[string]any
@@ -62,9 +63,9 @@ func TestQuotaLimitsUseEvidenceFieldNames(t *testing.T) {
 }
 
 func TestWrapRegistryConsumesRecallQuota(t *testing.T) {
-	q := DefaultQuotas()
+	q := demoservice.DefaultQuotas()
 	q.RecallCalls = 1
-	manager := NewQuotaManager(&fakeCounterStore{}, q)
+	manager := demoservice.NewQuotaManager(&fakeCounterStore{}, q)
 	reg := registry.New()
 	calls := 0
 	require.NoError(t, reg.Register(registry.Tool{
@@ -88,9 +89,9 @@ func TestWrapRegistryConsumesRecallQuota(t *testing.T) {
 }
 
 func TestWrapRegistryConsumesRetractEvidenceQuota(t *testing.T) {
-	q := DefaultQuotas()
+	q := demoservice.DefaultQuotas()
 	q.WriteAttempts = 1
-	manager := NewQuotaManager(&fakeCounterStore{}, q)
+	manager := demoservice.NewQuotaManager(&fakeCounterStore{}, q)
 	reg := registry.New()
 	calls := 0
 	require.NoError(t, reg.Register(registry.Tool{
@@ -114,9 +115,9 @@ func TestWrapRegistryConsumesRetractEvidenceQuota(t *testing.T) {
 }
 
 func TestRequestQuotaMiddlewareConsumesResolvedTeam(t *testing.T) {
-	q := DefaultQuotas()
+	q := demoservice.DefaultQuotas()
 	q.TotalRequests = 1
-	manager := NewQuotaManager(&fakeCounterStore{}, q)
+	manager := demoservice.NewQuotaManager(&fakeCounterStore{}, q)
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(RequestQuotaMiddleware(manager))

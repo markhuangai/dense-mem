@@ -31,13 +31,23 @@ type RuntimeContext struct {
 	Logger            observability.LogProvider
 }
 
+// RuntimeWorker is a process-owned background loop. The capability owns its
+// policy; the server owns when it starts, cancels, and joins the loop.
+type RuntimeWorker interface {
+	Name() string
+	Run(context.Context) error
+}
+
 type RuntimeOptions struct {
+	// ValidateStartup lets a command add its required startup configuration
+	// checks while the shared bootstrap owns the process and database setup.
+	ValidateStartup      func(*config.Config) error
 	DisableControlPortal bool
 	RequireRedis         bool
 	MetricsOnlyAddr      string
 	ConfigureRegistry    func(context.Context, RuntimeContext, registry.Registry) (registry.Registry, error)
 	RegisterRoutes       func(RuntimeContext) error
-	StartBackground      func(context.Context, RuntimeContext) (func(context.Context) error, error)
+	BuildWorker          func(context.Context, RuntimeContext) (RuntimeWorker, error)
 	PostAuthMiddleware   []echo.MiddlewareFunc
 	UserPortalMiddleware []echo.MiddlewareFunc
 }

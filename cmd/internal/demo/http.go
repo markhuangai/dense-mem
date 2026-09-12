@@ -1,14 +1,21 @@
 package demo
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"strings"
 
 	"github.com/labstack/echo/v4"
+
+	demoservice "github.com/markhuangai/dense-mem/cmd/internal/demo/service"
 )
 
-func RegisterRoutes(e *echo.Echo, provisioner *Provisioner, configuredBaseURL string) {
+type SessionProvisioner interface {
+	Provision(context.Context, demoservice.ProvisionOptions) (*demoservice.ProvisionResponse, error)
+}
+
+func RegisterRoutes(e *echo.Echo, provisioner SessionProvisioner, configuredBaseURL string) {
 	if strings.TrimSpace(configuredBaseURL) == "" {
 		configuredBaseURL = os.Getenv("DEMO_PUBLIC_BASE_URL")
 	}
@@ -18,7 +25,7 @@ func RegisterRoutes(e *echo.Echo, provisioner *Provisioner, configuredBaseURL st
 	})
 
 	e.POST("/ui/api/demo/session", func(c echo.Context) error {
-		resp, err := provisioner.Provision(c.Request().Context(), ProvisionOptions{
+		resp, err := provisioner.Provision(c.Request().Context(), demoservice.ProvisionOptions{
 			ClientIP: c.RealIP(),
 			BaseURL:  requestBaseURL(c, configuredBaseURL),
 		})

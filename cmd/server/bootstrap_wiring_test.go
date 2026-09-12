@@ -34,7 +34,7 @@ func TestServerBootstrapUsesActiveRegistry(t *testing.T) {
 
 	body, err = os.ReadFile("main.go")
 	require.NoError(t, err)
-	require.Contains(t, string(body), "serverapp.RunActiveServer(")
+	require.Contains(t, string(body), "serverapp.RunFromEnvironment(")
 }
 
 func TestReleaseImageDoesNotUseTheE2EEntrypoint(t *testing.T) {
@@ -61,7 +61,7 @@ func TestReleaseImageDoesNotUseTheE2EEntrypoint(t *testing.T) {
 func TestReleaseRuntimeCannotInvokeSynchronousRememberFactory(t *testing.T) {
 	serverMain, err := os.ReadFile("main.go")
 	require.NoError(t, err)
-	require.Contains(t, string(serverMain), "serverapp.RunActiveServer(postMigrationCtx, cfg, pgDB, logger, level, authority, serverapp.RuntimeOptions{})")
+	require.Contains(t, string(serverMain), "serverapp.RunFromEnvironment(processCtx, serverapp.RuntimeOptions{})")
 	require.NotContains(t, string(serverMain), "WriteRuntimeOverride")
 	require.NotContains(t, string(serverMain), "SynchronousRememberFactory")
 

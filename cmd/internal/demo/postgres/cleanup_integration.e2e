@@ -1,0 +1,141 @@
+package postgres
+
+import (
+	"context"
+	"log/slog"
+	"net/url"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	testcontainerspostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	tcnetwork "github.com/testcontainers/testcontainers-go/network"
+	"github.com/testcontainers/testcontainers-go/wait"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/cmd/internal/migrationapp"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
+)
+
+const demoCleanupPostgresImage = "pgvector/pgvector:0.8.2-pg18-trixie"
+
+func TestDemoCleanupRepositorySelectsOnlyExpiredDemoTeamsInBatches(t *testing.T) {
+	db := openDemoCleanupDatabase(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	type fixture struct {
+		id        uuid.UUID
+		name      string
+		metadata  string
+		createdAt time.Time
+		deletedAt *time.Time
+	}
+	deletedAt := now
+	fixtures := []fixture{
+		{id: uuid.New(), name: "demo-cleanup-expired-old", metadata: `{"demo":true,"demo_expires_at":"` + now.Add(-3*time.Hour).Format(time.RFC3339) + `"}`, createdAt: now.Add(-5 * time.Hour)},
+		{id: uuid.New(), name: "demo-cleanup-expired-middle", metadata: `{"demo":true,"demo_expires_at":"` + now.Add(-2*time.Hour).Format(time.RFC3339) + `"}`, createdAt: now.Add(-4 * time.Hour)},
+		{id: uuid.New(), name: "demo-cleanup-expired-new", metadata: `{"demo":true,"demo_expires_at":"` + now.Add(-time.Hour).Format(time.RFC3339) + `"}`, createdAt: now.Add(-3 * time.Hour)},
+		{id: uuid.New(), name: "demo-cleanup-deleted", metadata: `{"demo":true,"demo_expires_at":"` + now.Add(-4*time.Hour).Format(time.RFC3339) + `"}`, createdAt: now.Add(-6 * time.Hour), deletedAt: &deletedAt},
+		{id: uuid.New(), name: "demo-cleanup-future", metadata: `{"demo":true,"demo_expires_at":"` + now.Add(time.Hour).Format(time.RFC3339) + `"}`, createdAt: now.Add(-2 * time.Hour)},
+		{id: uuid.New(), name: "demo-cleanup-nondemo", metadata: `{"demo":false,"demo_expires_at":"` + now.Add(-3*time.Hour).Format(time.RFC3339) + `"}`, createdAt: now.Add(-time.Hour)},
+	}
+	if err := storagepostgres.NewRLS().WithSystemTx(ctx, db, func(tx *gorm.DB) error {
+		for _, item := range fixtures {
+			if err := tx.Exec(`
+				INSERT INTO teams (id, name, metadata, created_at, updated_at, deleted_at)
+				VALUES (?, ?, ?::jsonb, ?, ?, ?)
+			`, item.id, item.name, item.metadata, item.createdAt, item.createdAt, item.deletedAt).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		require.NoError(t, err, "install demo cleanup fixture")
+	}
+	t.Cleanup(func() {
+		_ = storagepostgres.NewRLS().WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
+			ids := make([]uuid.UUID, 0, len(fixtures))
+			for _, item := range fixtures {
+				ids = append(ids, item.id)
+			}
+			return tx.Exec("DELETE FROM teams WHERE id IN ?", ids).Error
+		})
+	})
+
+	repository := NewRepository(db, storagepostgres.NewRLS())
+	ids, err := repository.ExpiredTeamIDs(ctx, now, 2)
+	require.NoError(t, err)
+	require.Equal(t, []uuid.UUID{fixtures[0].id, fixtures[1].id}, ids)
+	ids, err = repository.ExpiredTeamIDs(ctx, now, 100)
+	require.NoError(t, err)
+	require.Equal(t, []uuid.UUID{fixtures[0].id, fixtures[1].id, fixtures[2].id}, ids)
+}
+
+func openDemoCleanupDatabase(t *testing.T) *gorm.DB {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	containerOptions := []testcontainers.ContainerCustomizer{
+		testcontainerspostgres.WithDatabase("densemem"),
+		testcontainerspostgres.WithUsername("densemem"),
+		testcontainerspostgres.WithPassword("densemem"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(30 * time.Second),
+		),
+	}
+	if networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK")); networkName != "" {
+		containerOptions = append(containerOptions, tcnetwork.WithNetworkName([]string{"postgres"}, networkName))
+	}
+	container, err := testcontainerspostgres.Run(
+		ctx,
+		demoCleanupPostgresImage,
+		containerOptions...,
+	)
+	if err != nil {
+		if os.Getenv("DENSE_MEM_REQUIRE_POSTGRES_TESTS") == "1" {
+			t.Fatalf("Postgres is required for this test run: %v", err)
+		}
+		t.Skipf("Postgres not available: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := container.Terminate(context.Background()); err != nil {
+			t.Logf("terminate demo cleanup postgres container: %v", err)
+		}
+	})
+	dsn, err := demoCleanupPostgresDSN(ctx, container)
+	require.NoError(t, err)
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	migrationCtx, migrationCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer migrationCancel()
+	require.NoError(t, migrationapp.RunUp(migrationCtx, db, 5*time.Minute, slog.Default()))
+	return db
+}
+
+func demoCleanupPostgresDSN(ctx context.Context, container *testcontainerspostgres.PostgresContainer) (string, error) {
+	if strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK")) == "" {
+		return container.ConnectionString(ctx, "sslmode=disable")
+	}
+	connectionURL := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword("densemem", "densemem"),
+		Host:   "postgres:5432",
+		Path:   "/densemem",
+	}
+	query := connectionURL.Query()
+	query.Set("sslmode", "disable")
+	connectionURL.RawQuery = query.Encode()
+	return connectionURL.String(), nil
+}

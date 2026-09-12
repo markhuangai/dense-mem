@@ -13,13 +13,12 @@ import (
 )
 
 type telemetryComposition struct {
-	Metrics               observability.DiscoverabilityMetrics
-	Prometheus            *operations.PrometheusTelemetryService
-	HTTPMetrics           observability.HTTPMetrics
-	ScrapeHandler         nethttp.Handler
-	Reader                operations.TelemetryReader
-	PricingRefreshContext context.Context
-	PricingRefreshCancel  context.CancelFunc
+	Metrics                observability.DiscoverabilityMetrics
+	Prometheus             *operations.PrometheusTelemetryService
+	HTTPMetrics            observability.HTTPMetrics
+	ScrapeHandler          nethttp.Handler
+	Reader                 operations.TelemetryReader
+	PricingRefreshEnabled  bool
 }
 
 type telemetryConflictStoreSource interface {
@@ -41,15 +40,12 @@ func buildTelemetryApplication(
 	if err := refreshTelemetryPricingCache(startupCtx, pricing); err != nil {
 		logger.Warn("telemetry pricing snapshot unavailable at startup", observability.String("reason", "configuration_refresh_failed"))
 	}
-	pricingRefreshCtx, cancel := context.WithCancel(context.Background())
-	composition.PricingRefreshContext = pricingRefreshCtx
-	composition.PricingRefreshCancel = cancel
+	composition.PricingRefreshEnabled = true
 	prometheusMetrics := observability.NewPrometheusMetrics(operations.NewTelemetryPricingResolver(pricing))
 	if conflictQueue != nil {
 		store := conflictQueue.ConflictStore()
 		if store != nil {
 			if err := prometheusMetrics.RegisterConflictQueueCollector(observability.NewConflictQueueCollector(store.CollectConflictQueueMetrics)); err != nil {
-				cancel()
 				return telemetryComposition{}, err
 			}
 		}

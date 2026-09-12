@@ -907,23 +907,43 @@ func drainExpiredRememberAttemptDiagnostics(ctx context.Context, repo *Store) (i
 
 // StartRememberAttemptDiagnosticPurger exposes the capability-owned diagnostic
 // retention worker.
-func (r *Store) StartRememberAttemptDiagnosticPurger(ctx context.Context, interval time.Duration, logger *slog.Logger) {
+func (r *Store) StartRememberAttemptDiagnosticPurger(ctx context.Context, interval time.Duration, logger *slog.Logger) <-chan struct{} {
+	if r == nil {
+		done := make(chan struct{})
+		close(done)
+		return done
+	}
 	if interval <= 0 {
 		interval = time.Hour
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	r.rememberDiagnosticLifecycleMu.Lock()
+	if r.rememberDiagnosticDone != nil {
+		done := r.rememberDiagnosticDone
+		r.rememberDiagnosticLifecycleMu.Unlock()
+		return done
+	}
+	workerCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	r.rememberDiagnosticCancel = cancel
+	r.rememberDiagnosticDone = done
+	r.rememberDiagnosticLifecycleMu.Unlock()
 	go func() {
+		defer close(done)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-workerCtx.Done():
 				return
 			case <-ticker.C:
-				deleted, err := drainExpiredRememberAttemptDiagnostics(ctx, r)
-				if err != nil && ctx.Err() == nil {
+				deleted, err := r.purgeRememberAttemptDiagnostics(workerCtx)
+				if err != nil && workerCtx.Err() == nil {
 					logger.Warn("remember attempt diagnostic purge failed", "error_code", "diagnostic_purge_failed")
 				} else if deleted > 0 {
 					logger.Info("remember attempt diagnostics purged", "count", deleted)
@@ -931,4 +951,41 @@ func (r *Store) StartRememberAttemptDiagnosticPurger(ctx context.Context, interv
 			}
 		}
 	}()
+	return done
+}
+
+func (r *Store) purgeRememberAttemptDiagnostics(ctx context.Context) (int, error) {
+	if r != nil && r.rememberDiagnosticPurgeFn != nil {
+		return r.rememberDiagnosticPurgeFn(ctx)
+	}
+	return drainExpiredRememberAttemptDiagnostics(ctx, r)
+}
+
+// ShutdownRememberAttemptDiagnosticPurger cancels the diagnostic retention
+// worker and waits for it to stop before returning.
+func (r *Store) ShutdownRememberAttemptDiagnosticPurger(ctx context.Context) error {
+	if r == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	r.rememberDiagnosticLifecycleMu.Lock()
+	cancel := r.rememberDiagnosticCancel
+	done := r.rememberDiagnosticDone
+	r.rememberDiagnosticCancel = nil
+	r.rememberDiagnosticDone = nil
+	r.rememberDiagnosticLifecycleMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done == nil {
+		return nil
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

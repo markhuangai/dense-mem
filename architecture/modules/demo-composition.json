@@ -2,7 +2,17 @@
   "schema_version": 1,
   "capability": "demo-composition",
   "source_ownership": [
-    {"path": "cmd/demo-server/main.go", "issue": 381}
+    {"path": "cmd/demo-server/main.go", "issue": 381},
+    {"path": "cmd/internal/demo/http.go", "issue": 381},
+    {"path": "cmd/internal/demo/http_test.go", "issue": 381},
+    {"path": "cmd/internal/demo/quota_bindings.go", "issue": 381},
+    {"path": "cmd/internal/demo/postgres/cleanup.go", "issue": 381},
+    {"path": "cmd/internal/demo/postgres/cleanup_integration.e2e", "issue": 381},
+    {"path": "cmd/internal/demo/service/cleanup.go", "issue": 381},
+    {"path": "cmd/internal/demo/service/cleanup_test.go", "issue": 381},
+    {"path": "cmd/internal/demo/service/provision.go", "issue": 381},
+    {"path": "cmd/internal/demo/service/quota.go", "issue": 381},
+    {"path": "cmd/internal/demo/quota_bindings_test.go", "issue": 381}
   ],
   "completed_issues": [],
   "go": {
@@ -16,6 +26,16 @@
         "id": "github.com/markhuangai/dense-mem/cmd/internal/demo",
         "role": "composition",
         "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/cmd/internal/demo/service",
+        "role": "application_api",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/cmd/internal/demo/postgres",
+        "role": "postgres_adapter",
+        "visibility": "private"
       }
     ]
   },
@@ -23,22 +43,5 @@
     "units": []
   },
   "exceptions": [],
-  "workers": [
-    {
-      "path": "cmd/demo-server/main.go",
-      "function": "demoRuntimeOptions",
-      "kind": "start",
-      "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
-    },
-    {
-      "path": "cmd/internal/demo/cleanup.go",
-      "function": "Start",
-      "kind": "goroutine",
-      "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
-    }
-  ]
+  "workers": []
 }

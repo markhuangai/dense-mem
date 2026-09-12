@@ -84,12 +84,22 @@ func (r *LedgerRepositoryImpl) PurgeExpiredRememberAttemptDiagnostics(ctx contex
 	return owner.PurgeExpiredRememberAttemptDiagnostics(ctx, batchSize)
 }
 
-func (r *LedgerRepositoryImpl) StartRememberAttemptDiagnosticPurger(ctx context.Context, interval time.Duration, logger *slog.Logger) {
+func (r *LedgerRepositoryImpl) StartRememberAttemptDiagnosticPurger(ctx context.Context, interval time.Duration, logger *slog.Logger) <-chan struct{} {
 	owner := r.knowledgeWriteOwner()
 	if owner == nil {
-		return
+		done := make(chan struct{})
+		close(done)
+		return done
 	}
-	owner.StartRememberAttemptDiagnosticPurger(ctx, interval, logger)
+	return owner.StartRememberAttemptDiagnosticPurger(ctx, interval, logger)
+}
+
+func (r *LedgerRepositoryImpl) ShutdownRememberAttemptDiagnosticPurger(ctx context.Context) error {
+	owner := r.knowledgeWriteOwner()
+	if owner == nil {
+		return nil
+	}
+	return owner.ShutdownRememberAttemptDiagnosticPurger(ctx)
 }
 
 func normalizeRememberAttemptRecord(input RememberAttemptRecordInput) RememberAttemptRecordInput {

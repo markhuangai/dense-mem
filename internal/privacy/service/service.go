@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -84,6 +85,10 @@ type PrivateMemoryService struct {
 	workerLease        time.Duration
 	retentionPoll      time.Duration
 	now                func() time.Time
+
+	lifecycleMu sync.Mutex
+	cancel      context.CancelFunc
+	done        chan struct{}
 }
 
 func NewPrivateMemoryService(config PrivateMemoryServiceConfig) *PrivateMemoryService {
@@ -251,13 +256,76 @@ func (s *PrivateMemoryService) ListRetentionRuns(ctx context.Context, limit, off
 	return s.repository.ListRetentionRuns(ctx, limit, offset)
 }
 
-func (s *PrivateMemoryService) Start(ctx context.Context) {
+// Start begins the private-memory workers and returns a channel that closes
+// after both workers have stopped. The service owns the worker loops; callers
+// only control their lifetime and wait for completion.
+func (s *PrivateMemoryService) Start(ctx context.Context) <-chan struct{} {
 	if s == nil || s.repository == nil {
-		return
+		done := make(chan struct{})
+		close(done)
+		return done
 	}
-	go s.runWorker(ctx)
-	if s.runtimeConfig != nil {
-		go s.runRetentionScheduler(ctx)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.lifecycleMu.Lock()
+	if s.done != nil {
+		done := s.done
+		s.lifecycleMu.Unlock()
+		return done
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	s.cancel = cancel
+	s.done = done
+	s.lifecycleMu.Unlock()
+
+	go func() {
+		var workers sync.WaitGroup
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			s.runWorker(runCtx)
+		}()
+		if s.runtimeConfig != nil {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				s.runRetentionScheduler(runCtx)
+			}()
+		}
+		workers.Wait()
+		close(done)
+	}()
+	return done
+}
+
+// Shutdown cancels the private-memory workers and waits for both loops to
+// finish before returning.
+func (s *PrivateMemoryService) Shutdown(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.lifecycleMu.Lock()
+	cancel := s.cancel
+	done := s.done
+	s.cancel = nil
+	s.done = nil
+	s.lifecycleMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done == nil {
+		return nil
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

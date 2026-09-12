@@ -339,7 +339,7 @@
     },
     {
       "source_path": "internal/repository/knowledge_write_owner.go",
-      "fields": ["LedgerRepositoryImpl.knowledgeWriteOwner", "LedgerRepositoryImpl.StartRememberAttemptDiagnosticPurger", "SemanticRepositoryImpl.knowledgeWriteOwner"],
+      "fields": ["LedgerRepositoryImpl.knowledgeWriteOwner", "LedgerRepositoryImpl.StartRememberAttemptDiagnosticPurger", "LedgerRepositoryImpl.ShutdownRememberAttemptDiagnosticPurger", "SemanticRepositoryImpl.knowledgeWriteOwner"],
       "consumers": [
         {"path": "internal/repository/conflict_context_repository.go", "symbol": "LedgerRepositoryImpl.ValidateRelationshipConflictContext"},
         {"path": "internal/repository/conflict_derived_evidence_task_repository.go", "symbol": "LedgerRepositoryImpl.StageConflictDerivedEvidence"},
@@ -488,7 +488,7 @@
     },
     {
       "source_path": "internal/repository/remember_attempt_repository.go",
-      "fields": ["LedgerRepositoryImpl.LoadRememberAttempt", "LedgerRepositoryImpl.RecordRememberAttempt", "LedgerRepositoryImpl.RecordRememberFailure", "LedgerRepositoryImpl.ListRememberAttemptDiagnostics", "LedgerRepositoryImpl.GetRememberAttemptDiagnostic", "LedgerRepositoryImpl.PurgeExpiredRememberAttemptDiagnostics", "LedgerRepositoryImpl.StartRememberAttemptDiagnosticPurger", "normalizeRememberAttemptRecord", "validateRememberAttemptRecord", "rememberAttemptPhase", "rememberAttemptEventKind", "ErrRememberAttemptDiagnosticNotFound"],
+      "fields": ["LedgerRepositoryImpl.LoadRememberAttempt", "LedgerRepositoryImpl.RecordRememberAttempt", "LedgerRepositoryImpl.RecordRememberFailure", "LedgerRepositoryImpl.ListRememberAttemptDiagnostics", "LedgerRepositoryImpl.GetRememberAttemptDiagnostic", "LedgerRepositoryImpl.PurgeExpiredRememberAttemptDiagnostics", "LedgerRepositoryImpl.StartRememberAttemptDiagnosticPurger", "LedgerRepositoryImpl.ShutdownRememberAttemptDiagnosticPurger", "normalizeRememberAttemptRecord", "validateRememberAttemptRecord", "rememberAttemptPhase", "rememberAttemptEventKind", "ErrRememberAttemptDiagnosticNotFound"],
       "consumers": [
         {"path": "cmd/internal/serverapp/remember_composition.go", "symbol": "rememberPersistenceAdapter.LoadRememberAttempt"},
         {"path": "cmd/internal/serverapp/remember_composition.go", "symbol": "rememberPersistenceAdapter.RecordRememberFailure"},

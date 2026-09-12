@@ -110,6 +110,7 @@
   "exceptions": [],
   "workers": [
     {"path": "internal/privacy/service/service.go", "function": "Start", "kind": "goroutine", "ordinal": 1, "role": "worker", "lifecycle_issue": 381},
-    {"path": "internal/privacy/service/service.go", "function": "Start", "kind": "goroutine", "ordinal": 2, "role": "worker", "lifecycle_issue": 381}
+    {"path": "internal/privacy/service/service.go", "function": "Start", "kind": "goroutine", "ordinal": 2, "role": "worker", "lifecycle_issue": 381},
+    {"path": "internal/privacy/service/service.go", "function": "Start", "kind": "goroutine", "ordinal": 3, "role": "worker", "lifecycle_issue": 381}
   ]
 }
