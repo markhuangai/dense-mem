@@ -21,6 +21,7 @@ type e2eRedisRateLimitConfig struct {
 	addr               string
 	password           string
 	db                 int
+	tlsEnabled         bool
 	rateLimitPerMinute int
 }
 
@@ -32,21 +33,41 @@ func (c *e2eRedisRateLimitConfig) GetAIEmbeddingModel() string   { return "" }
 func (c *e2eRedisRateLimitConfig) GetRedisAddr() string          { return c.addr }
 func (c *e2eRedisRateLimitConfig) GetRedisPassword() string      { return c.password }
 func (c *e2eRedisRateLimitConfig) GetRedisDB() int               { return c.db }
+func (c *e2eRedisRateLimitConfig) GetRedisTLSEnabled() bool      { return c.tlsEnabled }
 
 func TestRateLimitMiddleware_Contract_Redis(t *testing.T) {
 	redisAddr := redisContractAddress(t)
+	password, tlsEnabled := redisContractCredentials(t)
 	db := 0
 	if rawDB := strings.TrimSpace(os.Getenv("REDIS_DB")); rawDB != "" {
 		parsedDB, parseErr := strconv.Atoi(rawDB)
 		require.NoError(t, parseErr)
 		db = parsedDB
 	}
-	redisClient, err := redis.NewClient(t.Context(), &e2eRedisRateLimitConfig{addr: redisAddr, password: os.Getenv("REDIS_PASSWORD"), db: db, rateLimitPerMinute: 2})
+	redisClient, err := redis.NewClient(t.Context(), &e2eRedisRateLimitConfig{addr: redisAddr, password: password, db: db, tlsEnabled: tlsEnabled, rateLimitPerMinute: 2})
 	if err != nil {
 		t.Fatalf("connect to Redis: %v", err)
 	}
 	defer redisClient.Close()
 	runRateLimitMiddlewareContract(t, "Redis", service.NewRateLimitService(redisClient))
+}
+
+func redisContractCredentials(t *testing.T) (string, bool) {
+	t.Helper()
+	if strings.TrimSpace(os.Getenv("REDIS_ADDR")) == "" {
+		return "", false
+	}
+	tlsEnabled := false
+	if rawTLS := strings.TrimSpace(os.Getenv("REDIS_TLS_ENABLED")); rawTLS != "" {
+		parsed, err := strconv.ParseBool(rawTLS)
+		require.NoError(t, err)
+		tlsEnabled = parsed
+	}
+	password := os.Getenv("REDIS_PASSWORD")
+	if password != "" && !tlsEnabled {
+		t.Fatal("REDIS_PASSWORD requires REDIS_TLS_ENABLED=true when REDIS_ADDR is set")
+	}
+	return password, tlsEnabled
 }
 
 func redisContractAddress(t *testing.T) string {

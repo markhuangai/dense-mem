@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -19,6 +20,7 @@ import (
 // cap enforcement, rejection when at capacity, and clean release (AC-10, AC-11).
 func runConcurrencyLimiterContract(t *testing.T, name string, factory func(t *testing.T) sse.ConcurrencyLimiter) {
 	t.Helper()
+	executionToken := uuid.NewString()
 
 	t.Run("enforces cap and rejects overflow", func(t *testing.T) {
 		t.Parallel()
@@ -26,7 +28,7 @@ func runConcurrencyLimiterContract(t *testing.T, name string, factory func(t *te
 		limiter := factory(t)
 		ctx := context.Background()
 		const cap = 3
-		profile := "contract-test-profile-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
+		profile := "contract-test-profile-" + executionToken + "-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
 
 		releases := make([]func(), 0, cap)
 		for i := 0; i < cap; i++ {
@@ -58,7 +60,7 @@ func runConcurrencyLimiterContract(t *testing.T, name string, factory func(t *te
 		limiter := factory(t)
 		ctx := context.Background()
 
-		profile := "idempotent-profile-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
+		profile := "idempotent-profile-" + executionToken + "-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
 		release, err := limiter.Acquire(ctx, profile)
 		require.NoError(t, err)
 
@@ -75,11 +77,11 @@ func runConcurrencyLimiterContract(t *testing.T, name string, factory func(t *te
 
 		var acquired int64
 		var wg sync.WaitGroup
+		profile := "concurrent-profile-" + executionToken + "-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
 		for i := 0; i < 20; i++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				profile := "concurrent-profile-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
 				release, err := limiter.Acquire(ctx, profile)
 				if err == nil {
 					atomic.AddInt64(&acquired, 1)

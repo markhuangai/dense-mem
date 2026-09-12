@@ -38,7 +38,7 @@ func TestNativeSearchConvergenceReaderAdaptsCompatibilityProjection(t *testing.T
 	reader := nativeSearchConvergenceReader(transportSearchConvergenceStub{value: &repository.SearchConvergence{
 		ObservedAt: now, Status: "attention_required", ExpectedDocuments: 10, CurrentDocuments: 7,
 		DriftedDocuments: 3, AffectedTeamCount: 2, OldestDriftAge: 2 * time.Minute,
-		Contract:     &repository.ActiveSearchContract{EmbeddingProvider: "openai", EmbeddingModel: "model", EmbeddingDimensions: 3},
+		Contract:     &repository.ActiveSearchContract{EmbeddingProvider: "openai", EmbeddingModel: "model", EmbeddingDimensions: 3, IndexGeneration: 4, IndexStrategy: "hnsw"},
 		DriftClasses: []repository.SearchDocumentDriftCount{{Class: "missing_vector", Count: 3}},
 		LatestRun:    &repository.SearchReconciliationRun{RunID: "run", LocalRunDate: now, Status: "failed", StartedAt: &start, CompletedAt: &finish, UpdatedAt: now},
 	}})
@@ -49,6 +49,9 @@ func TestNativeSearchConvergenceReaderAdaptsCompatibilityProjection(t *testing.T
 	}
 	if got == nil || got.Status != "attention_required" || got.ExpectedDocuments != 10 {
 		t.Fatalf("adapted projection = %#v", got)
+	}
+	if got.Contract == nil || got.Contract.IndexGeneration != 4 || got.Contract.IndexStrategy != "hnsw" {
+		t.Fatalf("adapted search contract = %#v", got.Contract)
 	}
 	if len(got.DriftClasses) != 1 || got.DriftClasses[0].Class != "missing_vector" {
 		t.Fatalf("adapted drift classes = %#v", got.DriftClasses)

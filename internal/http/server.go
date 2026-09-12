@@ -100,7 +100,11 @@ func NewServer(cfg httpcontract.BodyLimitConfig, logger observability.LogProvide
 
 	// Global middleware (applies to all routes)
 	e.Use(middleware.Recover())
-	e.Use(middleware.BodyLimit(fmt.Sprintf("%dB", effectiveMaxBodyBytes(cfg.GetHTTPMaxBodyBytes()))))
+	maxBodyBytes := 0
+	if cfg != nil {
+		maxBodyBytes = cfg.GetHTTPMaxBodyBytes()
+	}
+	e.Use(middleware.BodyLimit(fmt.Sprintf("%dB", effectiveMaxBodyBytes(maxBodyBytes))))
 	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
 		HandleError:  true,
 		LogMethod:    true,

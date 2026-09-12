@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/storage/redis"
 	goredis "github.com/redis/go-redis/v9"
@@ -20,14 +21,16 @@ import (
 )
 
 type redisConcurrencyTestConfig struct {
-	addr     string
-	password string
-	db       int
+	addr       string
+	password   string
+	db         int
+	tlsEnabled bool
 }
 
 func (c *redisConcurrencyTestConfig) GetRedisAddr() string     { return c.addr }
 func (c *redisConcurrencyTestConfig) GetRedisPassword() string { return c.password }
 func (c *redisConcurrencyTestConfig) GetRedisDB() int          { return c.db }
+func (c *redisConcurrencyTestConfig) GetRedisTLSEnabled() bool { return c.tlsEnabled }
 
 type redisConcurrencyLimiterForTest struct {
 	client *redis.RedisClient
@@ -54,7 +57,7 @@ func TestConcurrencyLimiter_Contract_Redis(t *testing.T) {
 
 func TestStreamLifecycle_Contract_Redis(t *testing.T) {
 	client := openRedisContractClient(t)
-	teamID := "lifecycle-contract-" + strings.ReplaceAll(t.Name(), "/", "-")
+	teamID := "lifecycle-contract-" + uuid.NewString() + "-" + strings.ReplaceAll(t.Name(), "/", "-")
 	keyBuilder, ok := client.KeyBuilder().(redis.KeyBuilderInterface)
 	require.True(t, ok)
 	key, err := keyBuilder.Stream(teamID, sse.StreamCounterKey)
@@ -156,7 +159,26 @@ func redisConcurrencyConfig(t *testing.T, addr string) *redisConcurrencyTestConf
 	} else {
 		require.NoError(t, err)
 	}
-	return &redisConcurrencyTestConfig{addr: addr, password: os.Getenv("REDIS_PASSWORD"), db: db}
+	password, tlsEnabled := redisContractCredentials(t)
+	return &redisConcurrencyTestConfig{addr: addr, password: password, db: db, tlsEnabled: tlsEnabled}
+}
+
+func redisContractCredentials(t *testing.T) (string, bool) {
+	t.Helper()
+	if strings.TrimSpace(os.Getenv("REDIS_ADDR")) == "" {
+		return "", false
+	}
+	tlsEnabled := false
+	if rawTLS := strings.TrimSpace(os.Getenv("REDIS_TLS_ENABLED")); rawTLS != "" {
+		parsed, err := strconv.ParseBool(rawTLS)
+		require.NoError(t, err)
+		tlsEnabled = parsed
+	}
+	password := os.Getenv("REDIS_PASSWORD")
+	if password != "" && !tlsEnabled {
+		t.Fatal("REDIS_PASSWORD requires REDIS_TLS_ENABLED=true when REDIS_ADDR is set")
+	}
+	return password, tlsEnabled
 }
 
 func redisContractCounter(t *testing.T, client *redis.RedisClient, key string) int64 {

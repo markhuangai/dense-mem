@@ -17,6 +17,7 @@ import (
 
 func TestRedisHealth_Ping(t *testing.T) {
 	addr := redisHealthAddress(t)
+	password, tlsEnabled := redisHealthCredentials(t)
 	db := 0
 	if rawDB := strings.TrimSpace(os.Getenv("REDIS_DB")); rawDB != "" {
 		parsedDB, parseErr := strconv.Atoi(rawDB)
@@ -25,7 +26,7 @@ func TestRedisHealth_Ping(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	client, err := NewClient(ctx, &mockConfig{redisAddr: addr, redisPassword: os.Getenv("REDIS_PASSWORD"), redisDB: db})
+	client, err := NewClient(ctx, &mockConfig{redisAddr: addr, redisPassword: password, redisDB: db, redisTLSEnabled: tlsEnabled})
 	if err != nil {
 		t.Fatalf("connect to Redis: %v", err)
 	}
@@ -33,6 +34,24 @@ func TestRedisHealth_Ping(t *testing.T) {
 	if err := client.Ping(ctx); err != nil {
 		t.Fatalf("ping Redis: %v", err)
 	}
+}
+
+func redisHealthCredentials(t *testing.T) (string, bool) {
+	t.Helper()
+	if strings.TrimSpace(os.Getenv("REDIS_ADDR")) == "" {
+		return "", false
+	}
+	tlsEnabled := false
+	if rawTLS := strings.TrimSpace(os.Getenv("REDIS_TLS_ENABLED")); rawTLS != "" {
+		parsed, err := strconv.ParseBool(rawTLS)
+		require.NoError(t, err)
+		tlsEnabled = parsed
+	}
+	password := os.Getenv("REDIS_PASSWORD")
+	if password != "" && !tlsEnabled {
+		t.Fatal("REDIS_PASSWORD requires REDIS_TLS_ENABLED=true when REDIS_ADDR is set")
+	}
+	return password, tlsEnabled
 }
 
 func redisHealthAddress(t *testing.T) string {

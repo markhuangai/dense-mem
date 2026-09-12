@@ -295,7 +295,7 @@ func TestDisconnectCleanup(t *testing.T) {
 	select {
 	case <-workAborted:
 		// Good - work was aborted
-	default:
+	case <-time.After(250 * time.Millisecond):
 		t.Error("expected work to be aborted on disconnect")
 	}
 
@@ -339,7 +339,7 @@ func TestDisconnectReleasesSlotBeforeWorkReturns(t *testing.T) {
 	assert.Equal(t, int64(0), limiter.GetCount())
 	select {
 	case <-workCanceled:
-	default:
+	case <-time.After(250 * time.Millisecond):
 		t.Fatal("disconnect did not cancel stream work")
 	}
 	close(workRelease)
