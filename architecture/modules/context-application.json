@@ -49,10 +49,7 @@
         {"path": "internal/service/contextservice/semantic_trace_test.go", "symbol": "TestSemanticTraceMapsMissingRelationship"},
         {"path": "internal/service/contextservice/semantic_trace_test.go", "symbol": "TestSemanticTracePreservesRepositoryFailures"},
         {"path": "internal/service/skillpackservice/memory_pack_export_test.go", "symbol": "exportSemanticStub.TraceRelationship"},
-        {"path": "internal/service/skillpackservice/memory_pack_export_test.go", "symbol": "TestMemoryPackExportRejectsMissingInputsAndUnavailableRelationships"},
-        {"path": "internal/tools/registry/contract_result_errors.go", "symbol": "ActionableErrorData"},
-        {"path": "internal/tools/registry/contract_result_errors_test.go", "symbol": "TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance"},
-        {"path": "internal/tools/registry/contract_result_errors_test.go", "symbol": "TestActionableErrorDataMapsHTTPStatusesAndBudgetMeasurements"}
+        {"path": "internal/service/skillpackservice/memory_pack_export_test.go", "symbol": "TestMemoryPackExportRejectsMissingInputsAndUnavailableRelationships"}
       ],
       "removal_issue": 382,
       "implementation_owner": {"path": "internal/trace/postgres/semantic_trace_repository.go", "symbol": "Store.TraceRelationship"},
@@ -73,12 +70,6 @@
       ],
       "consumers": [
         {"path": "cmd/internal/serverapp/application_composition.go", "symbol": "buildApplicationBundle"},
-        {"path": "internal/tools/registry/capability_bindings.go", "symbol": "Dependencies.withCapabilityBindings"},
-        {"path": "internal/tools/registry/toolset.go", "symbol": "BuildActive"},
-        {"path": "internal/tools/registry/contract_outputs.go", "symbol": "traceContractOutput"},
-        {"path": "internal/tools/registry/contract_result_errors.go", "symbol": "ActionableErrorData"},
-        {"path": "internal/tools/registry/contract_outputs_trace_test.go", "symbol": "TestTraceContractOutputPreservesPublicSubmissionAndLineageIDs"},
-        {"path": "internal/tools/registry/contract_test_helpers_test.go", "symbol": "stubTraceContext.Trace"},
         {"path": "internal/service/contextservice/semantic_trace_test.go", "symbol": "TestSemanticTraceMapsMissingRelationship"},
         {"path": "internal/service/contextservice/semantic_trace_test.go", "symbol": "TestSemanticTracePreservesRepositoryFailures"},
         {"path": "internal/service/contextservice/semantic_trace_test.go", "symbol": "TestSemanticTraceRejectsMismatchedConflictTeam"},

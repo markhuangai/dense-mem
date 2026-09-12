@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/dream"
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/stretchr/testify/require"
 )
 

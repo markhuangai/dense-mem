@@ -18,7 +18,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
-	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/promptcatalog"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/tools"
@@ -49,7 +48,7 @@ type Server struct {
 	teamID            string
 	scopes            []string
 	team              TeamContext
-	logger            observability.LogProvider
+	logger            Logger
 	runtimeToolPolicy registry.RuntimeToolPolicy
 	prompts           promptcatalog.Catalog
 }
@@ -62,24 +61,24 @@ type TeamContext struct {
 }
 
 // NewServer constructs a Server bound to a registry and a fixed team ID.
-func NewServer(reg registry.Registry, teamID string, logger observability.LogProvider) *Server {
+func NewServer(reg registry.Registry, teamID string, logger Logger) *Server {
 	return NewServerWithScopesAndTeamContext(reg, teamID, nil, TeamContext{}, logger)
 }
 
 // NewServerWithScopes constructs a Server that filters visible/callable tools by scope.
-func NewServerWithScopes(reg registry.Registry, teamID string, scopes []string, logger observability.LogProvider) *Server {
+func NewServerWithScopes(reg registry.Registry, teamID string, scopes []string, logger Logger) *Server {
 	return NewServerWithScopesAndTeamContext(reg, teamID, scopes, TeamContext{}, logger)
 }
 
 // NewServerWithScopesAndTeamContext constructs a Server with request-scoped team
 // metadata for MCP discovery surfaces.
-func NewServerWithScopesAndTeamContext(reg registry.Registry, teamID string, scopes []string, team TeamContext, logger observability.LogProvider) *Server {
+func NewServerWithScopesAndTeamContext(reg registry.Registry, teamID string, scopes []string, team TeamContext, logger Logger) *Server {
 	return NewServerWithScopesTeamContextAndRuntimeConfig(reg, teamID, scopes, team, logger, nil)
 }
 
 // NewServerWithScopesTeamContextAndRuntimeConfig constructs a Server with
 // request-scoped team metadata and runtime feature visibility.
-func NewServerWithScopesTeamContextAndRuntimeConfig(reg registry.Registry, teamID string, scopes []string, team TeamContext, logger observability.LogProvider, recallFeedbackConfig registry.RecallFeedbackConfigProvider, dreams ...registry.DreamingConfigProvider) *Server {
+func NewServerWithScopesTeamContextAndRuntimeConfig(reg registry.Registry, teamID string, scopes []string, team TeamContext, logger Logger, recallFeedbackConfig registry.RecallFeedbackConfigProvider, dreams ...registry.DreamingConfigProvider) *Server {
 	var dreamConfig registry.DreamingConfigProvider
 	if len(dreams) > 0 {
 		dreamConfig = dreams[0]
@@ -196,8 +195,8 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 		}
 		if s.logger != nil {
 			s.logger.Error("mcp: tool invocation failed", errors.New(safeMessage),
-				observability.String("tool", name),
-				observability.String("team_id", s.teamID),
+				LogField{Key: "tool", Value: name},
+				LogField{Key: "team_id", Value: s.teamID},
 			)
 		}
 		return nil, &rpcError{Code: errCodeToolFailure, Message: boundedRPCText(safeMessage), Data: actionable}
@@ -206,7 +205,7 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 	payload, err := json.Marshal(result)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("mcp: tool result marshal failed", errors.New("tool result serialization failed"), observability.String("tool", name))
+			s.logger.Error("mcp: tool result marshal failed", errors.New("tool result serialization failed"), LogField{Key: "tool", Value: name})
 		}
 		data := registry.ActionableSerializationFailureData(ctx, tool.Name)
 		return nil, &rpcError{Code: errCodeToolFailure, Message: "Dense-Mem could not serialize the result for this operation.", Data: data}
@@ -222,18 +221,18 @@ func (s *Server) logToolInputRejected(ctx context.Context, toolName, reasonCode 
 	if s.logger == nil {
 		return
 	}
-	attrs := []observability.LogAttr{
-		observability.String("tool", toolName),
-		observability.String("team_id", s.teamID),
-		observability.String("reference_type", "mcp_tool"),
-		observability.String("reference_id", toolName),
-		observability.String("reason_code", reasonCode),
+	attrs := []LogField{
+		{Key: "tool", Value: toolName},
+		{Key: "team_id", Value: s.teamID},
+		{Key: "reference_type", Value: "mcp_tool"},
+		{Key: "reference_id", Value: toolName},
+		{Key: "reason_code", Value: reasonCode},
 	}
 	if correlationID := correlation.FromContext(ctx); correlationID != "" {
-		attrs = append(attrs, observability.CorrelationID(correlationID))
+		attrs = append(attrs, LogField{Key: "correlation_id", Value: correlationID})
 	}
 	if actor, ok := requestctx.ActorFromContext(ctx); ok && actor.OwnerID != uuid.Nil {
-		attrs = append(attrs, observability.ProfileID(actor.OwnerID.String()))
+		attrs = append(attrs, LogField{Key: "profile_id", Value: actor.OwnerID.String()})
 	}
 	s.logger.Warn("mcp_tool_input_rejected", attrs...)
 }
@@ -358,15 +357,15 @@ func slugifyMCPName(value string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-func defaultPromptCatalog(logger observability.LogProvider) promptcatalog.Catalog {
+func defaultPromptCatalog(logger Logger) promptcatalog.Catalog {
 	return promptCatalogOrEmpty(logger, promptcatalog.Default)
 }
 
-func promptCatalogOrEmpty(logger observability.LogProvider, load func() (promptcatalog.Catalog, error)) promptcatalog.Catalog {
+func promptCatalogOrEmpty(logger Logger, load func() (promptcatalog.Catalog, error)) promptcatalog.Catalog {
 	catalog, err := load()
 	if err != nil {
 		if logger != nil {
-			logger.Warn("mcp: prompt catalog unavailable", observability.String("error", tools.SanitizeError(err)))
+			logger.Warn("mcp: prompt catalog unavailable", LogField{Key: "error", Value: tools.SanitizeError(err)})
 		}
 		return promptcatalog.Catalog{}
 	}

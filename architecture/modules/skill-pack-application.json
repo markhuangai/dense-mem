@@ -34,13 +34,6 @@
       ],
       "consumers": [
         {"path": "cmd/internal/serverapp/application_composition.go", "symbol": "buildApplicationBundle"},
-        {"path": "internal/tools/registry/capability_bindings.go", "symbol": "Dependencies.withCapabilityBindings"},
-        {"path": "internal/tools/registry/toolset.go", "symbol": "BuildActive"},
-        {"path": "internal/tools/registry/contract_outputs.go", "symbol": "exportMemoryPackContractOutput"},
-        {"path": "internal/tools/registry/contract_result_errors.go", "symbol": "ActionableErrorData"},
-        {"path": "internal/tools/registry/contract_output_validation_test.go", "symbol": "TestExportMemoryPackContractOutputMatchesClosedSchema"},
-        {"path": "internal/tools/registry/contract_result_errors_test.go", "symbol": "TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance"},
-        {"path": "internal/tools/registry/uat_memory_pack_test.go", "symbol": "TestBuildActiveWiresExportMemoryPackOnly"},
         {"path": "internal/service/skillpackservice/memory_pack_export_test.go", "symbol": "TestMemoryPackExportRejectsMissingInputsAndUnavailableRelationships"}
       ],
       "removal_issue": 382,

@@ -11,7 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	recallapp "github.com/markhuangai/dense-mem/internal/recall"
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 func TestBuildActiveWiresExecutableRemember(t *testing.T) {

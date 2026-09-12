@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	recallapp "github.com/markhuangai/dense-mem/internal/recall"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -136,7 +136,7 @@ func TestTraceConflictOutputsIncludePositionsAndResolution(t *testing.T) {
 	dueAt := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
 	effectiveAt := dueAt.Add(time.Hour)
 	acceptedAt := dueAt.Add(-time.Hour)
-	out := traceConflictOutputs([]repository.RelationshipConflictCaseRecord{{
+	out := traceConflictOutputs([]tracecontract.RelationshipConflictCaseRecord{{
 		ConflictID:          "00000000-0000-0000-0000-000000000101",
 		Version:             2,
 		Kind:                "cross_profile_current_state",
@@ -146,11 +146,11 @@ func TestTraceConflictOutputsIncludePositionsAndResolution(t *testing.T) {
 		EffectiveAt:         &effectiveAt,
 		EffectiveTimeBasis:  "valid_from",
 		PreferredPositionID: "00000000-0000-0000-0000-000000000201",
-		Positions: []repository.RelationshipConflictPositionRecord{{
+		Positions: []domain.RelationshipConflictPositionRecord{{
 			PositionID:     "00000000-0000-0000-0000-000000000201",
 			Disposition:    "preferred",
 			SupporterCount: 1,
-			Supporters: []repository.RelationshipConflictSupporterRecord{{
+			Supporters: []domain.RelationshipConflictSupporterRecord{{
 				ProfileID:          "00000000-0000-0000-0000-000000000401",
 				ProfileName:        "Profile A",
 				StrongestAuthority: "authoritative",
@@ -206,18 +206,18 @@ func TestTraceConflictOutputsIncludePositionsAndResolution(t *testing.T) {
 }
 
 func TestTraceConflictOutputsEnforcePositionBounds(t *testing.T) {
-	positions := make([]repository.RelationshipConflictPositionRecord, 0, 11)
+	positions := make([]domain.RelationshipConflictPositionRecord, 0, 11)
 	for i := 0; i < 11; i++ {
-		positions = append(positions, repository.RelationshipConflictPositionRecord{
+		positions = append(positions, domain.RelationshipConflictPositionRecord{
 			PositionID:      "00000000-0000-0000-0000-000000000201",
 			Disposition:     "candidate",
-			Supporters:      make([]repository.RelationshipConflictSupporterRecord, 21),
+			Supporters:      make([]domain.RelationshipConflictSupporterRecord, 21),
 			RelationshipIDs: make([]string, 21),
 			OwnerProfileIDs: make([]string, 21),
 			EvidenceIDs:     make([]string, 51),
 		})
 	}
-	out := traceConflictOutputs([]repository.RelationshipConflictCaseRecord{{
+	out := traceConflictOutputs([]tracecontract.RelationshipConflictCaseRecord{{
 		ConflictID:  "00000000-0000-0000-0000-000000000101",
 		Version:     1,
 		Kind:        "cross_profile_current_state",

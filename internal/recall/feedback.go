@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/observability"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
@@ -81,7 +80,7 @@ type RecallFeedbackBatchFailure struct {
 func SubmitRecallFeedbackBatch(
 	ctx context.Context,
 	recorder RecallFeedbackEventRecorder,
-	metrics observability.DiscoverabilityMetrics,
+	metrics recallcontract.FeedbackMetrics,
 	submissions []domain.RecallFeedbackSubmission,
 ) RecallFeedbackBatchResult {
 	result := RecallFeedbackBatchResult{}
@@ -106,7 +105,7 @@ func SubmitRecallFeedbackBatch(
 			result.Recorded = result.RecordedCount > 0
 			return result
 		}
-		observability.RecordRecallFeedback(ctx, metrics, observability.RecallFeedback{
+		recordRecallFeedbackMetric(ctx, metrics, recallcontract.FeedbackObservation{
 			Used:            submission.Used,
 			AnswerSupported: submission.AnswerSupported,
 			Quality:         submission.Quality,
@@ -117,6 +116,17 @@ func SubmitRecallFeedbackBatch(
 	}
 	result.Recorded = result.RecordedCount > 0
 	return result
+}
+
+func recordRecallFeedbackMetric(ctx context.Context, metrics recallcontract.FeedbackMetrics, observation recallcontract.FeedbackObservation) {
+	if metrics == nil {
+		return
+	}
+	if contextual, ok := metrics.(recallcontract.ContextualFeedbackMetrics); ok {
+		contextual.ObserveRecallFeedbackFor(ctx, observation)
+		return
+	}
+	metrics.ObserveRecallFeedback(observation)
 }
 
 type recallFeedbackFailureGuidanceResult struct {

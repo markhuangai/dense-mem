@@ -9,11 +9,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/lifecycle"
-	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/memorypack"
 	"github.com/markhuangai/dense-mem/internal/recall"
-	"github.com/markhuangai/dense-mem/internal/service/contextservice"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
-	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
+	traceapp "github.com/markhuangai/dense-mem/internal/trace"
 )
 
 // Dependencies is the wiring bundle used to construct the active tool catalog.
@@ -27,20 +27,20 @@ type Dependencies struct {
 	MemoryPackBindings MemoryPackBindings
 	EvaluationBindings EvaluationBindings
 
-	Metrics observability.DiscoverabilityMetrics
+	Metrics recallcontract.FeedbackMetrics
 
 	RecallFeedbackConfig RecallFeedbackConfigProvider
 	RecallFeedbackEvents RecallFeedbackEventRecorder
 	EvaluationAudit      EvaluationAuditAppender
 
-	Context        contextservice.Service
-	Remember       memoryservice.RememberService
+	Context        traceapp.Service
+	Remember       rememberapp.Service
 	Recall         recall.RecallService
 	Lifecycle      lifecycle.LifecycleService
 	RecallDreaming DreamingConfigProvider
 	Evaluation     EvaluationRepository
 	Communities    CommunityRepository
-	MemoryPack     skillpackservice.MemoryPackService
+	MemoryPack     memorypack.MemoryPackService
 	Dreams         dream.Service
 }
 type RecallFeedbackEventRecorder interface {

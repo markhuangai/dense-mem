@@ -16,11 +16,12 @@ import (
 	"github.com/markhuangai/dense-mem/internal/dream"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/markhuangai/dense-mem/internal/lifecycle"
+	"github.com/markhuangai/dense-mem/internal/memorypack"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
-	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
+	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 )
 
 func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T) {
@@ -39,11 +40,11 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 		{name: "deadline read", tool: ToolRecallMemory, err: context.DeadlineExceeded, code: string(domain.ErrorProviderUnavailable), reasonCode: "request_timeout", nextAction: actionRetrySameRequest, retryable: true},
 		{name: "unavailable", tool: ToolRecallMemory, err: ErrToolUnavailable, code: string(domain.ErrorDegraded), reasonCode: "tool_unavailable", nextAction: actionContactOperator},
 		{name: "authorization", tool: ToolRemember, err: rememberapp.ErrRememberAuthContext, code: string(domain.ErrorUnauthorizedScope), reasonCode: "authenticated_context_required", nextAction: actionAuthorization},
-		{name: "reference", tool: ToolTraceMemory, err: repository.ErrTraceRelationshipNotFound, code: string(domain.ErrorInvalidInput), reasonCode: "reference_not_found", nextAction: actionRefreshState},
-		{name: "invalid trace id", tool: ToolTraceMemory, err: repository.ErrTraceRelationshipIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
+		{name: "reference", tool: ToolTraceMemory, err: tracecontract.ErrRelationshipNotFound, code: string(domain.ErrorInvalidInput), reasonCode: "reference_not_found", nextAction: actionRefreshState},
+		{name: "invalid trace id", tool: ToolTraceMemory, err: tracecontract.ErrRelationshipIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
 		{name: "invalid dream id", tool: ToolGetDream, err: dreamcontract.ErrDreamHypothesisIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
 		{name: "invalid dream feedback id", tool: ToolResolveDreamFeedback, err: dreamcontract.ErrDreamHypothesisIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
-		{name: "invalid retract evidence id", tool: ToolRetractEvidence, err: repository.ErrEvidenceLifecycleIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
+		{name: "invalid retract evidence id", tool: ToolRetractEvidence, err: knowledgecontract.ErrEvidenceLifecycleIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
 		{name: "dream feedback input", tool: ToolResolveDreamFeedback, err: dream.ErrDreamFeedbackInvalidInput, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
 		{name: "read repository", tool: ToolRecallMemory, err: errors.New("database unavailable"), code: string(domain.ErrorProviderUnavailable), reasonCode: "read_unavailable", nextAction: actionRetrySameRequest, retryable: true},
 		{name: "retract repository", tool: ToolRetractEvidence, err: errors.New("database unavailable"), code: string(domain.ErrorProviderUnavailable), reasonCode: "write_unavailable", nextAction: actionRetrySameRequest, retryable: true},
@@ -82,7 +83,7 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 		})
 	}
 	longCorrelation := strings.Repeat("界", 129)
-	bounded := ActionableErrorData(correlation.WithID(context.Background(), longCorrelation), ToolTraceMemory, repository.ErrTraceRelationshipNotFound)
+	bounded := ActionableErrorData(correlation.WithID(context.Background(), longCorrelation), ToolTraceMemory, tracecontract.ErrRelationshipNotFound)
 	require.LessOrEqual(t, len([]rune(bounded["correlation_id"].(string))), 128)
 	require.NotEqual(t, longCorrelation, bounded["correlation_id"])
 	serverMessage := ActionableErrorData(ctx, ToolRecallMemory, httperr.New(httperr.SERVICE_UNAVAILABLE, "internal database password"))
@@ -92,7 +93,7 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 	dreamDetails := dreamInput["details"].(map[string]any)
 	require.Equal(t, "dream_feedback.evidence", dreamDetails["component"])
 	require.Equal(t, true, dreamDetails["client_controlled"])
-	inactiveExport := ActionableErrorData(ctx, ToolExportMemoryPack, fmt.Errorf("%w: relationship-1", skillpackservice.ErrMemoryPackRelationshipNotActive))
+	inactiveExport := ActionableErrorData(ctx, ToolExportMemoryPack, fmt.Errorf("%w: relationship-1", memorypack.ErrMemoryPackRelationshipNotActive))
 	require.Equal(t, string(domain.ErrorInvalidInput), inactiveExport["code"])
 	require.Equal(t, "relationship_not_active", inactiveExport["reason_code"])
 	require.Equal(t, actionRefreshState, inactiveExport["next_action"])
@@ -150,7 +151,7 @@ func TestActionableErrorDataMapsHTTPStatusesAndBudgetMeasurements(t *testing.T) 
 	require.Equal(t, 12, details["observed"])
 	require.Equal(t, 10, details["limit"])
 	require.Equal(t, true, details["server_owned"])
-	invalidTrace := ActionableErrorData(ctx, ToolTraceMemory, repository.ErrTraceRelationshipIDInvalid)
+	invalidTrace := ActionableErrorData(ctx, ToolTraceMemory, tracecontract.ErrRelationshipIDInvalid)
 	require.Equal(t, "trace.relationship_id", invalidTrace["details"].(map[string]any)["component"])
 	require.Equal(t, true, invalidTrace["details"].(map[string]any)["client_controlled"])
 
@@ -258,7 +259,7 @@ func TestRememberErrorCodeCoversSupportedFailureClasses(t *testing.T) {
 		err  error
 		want rememberapp.SubmissionErrorCode
 	}{
-		{name: "conflict", err: memoryservice.ErrRememberConflict, want: rememberapp.SubmissionErrorIdempotencyConflict},
+		{name: "conflict", err: rememberapp.ErrRememberConflict, want: rememberapp.SubmissionErrorIdempotencyConflict},
 		{name: "stale", err: rememberapp.ErrRememberStaleInput, want: rememberapp.SubmissionErrorStaleInput},
 		{name: "embedding unavailable", err: rememberapp.ErrRememberEmbeddingUnavailable, want: rememberapp.SubmissionErrorEmbeddingUnavailable},
 		{name: "provider unavailable", err: rememberapp.ErrRememberProviderUnavailable, want: rememberapp.SubmissionErrorProviderUnavailable},
@@ -286,9 +287,9 @@ func TestCorrectionToolResultErrorMapsLifecycleAndHTTPFailures(t *testing.T) {
 		err  error
 		want rememberapp.SubmissionErrorCode
 	}{
-		{name: "embedding unavailable", err: memoryservice.ErrLifecycleEmbeddingUnavailable, want: rememberapp.SubmissionErrorEmbeddingUnavailable},
-		{name: "embedding invalid", err: memoryservice.ErrLifecycleEmbeddingInvalid, want: rememberapp.SubmissionErrorEmbeddingResponseInvalid},
-		{name: "embedding timeout", err: memoryservice.ErrLifecycleEmbeddingTimeout, want: rememberapp.SubmissionErrorRequestTimeout},
+		{name: "embedding unavailable", err: lifecycle.ErrLifecycleEmbeddingUnavailable, want: rememberapp.SubmissionErrorEmbeddingUnavailable},
+		{name: "embedding invalid", err: lifecycle.ErrLifecycleEmbeddingInvalid, want: rememberapp.SubmissionErrorEmbeddingResponseInvalid},
+		{name: "embedding timeout", err: lifecycle.ErrLifecycleEmbeddingTimeout, want: rememberapp.SubmissionErrorRequestTimeout},
 		{name: "request deadline", err: context.DeadlineExceeded, want: rememberapp.SubmissionErrorRequestTimeout},
 		{name: "translated embedding unavailable", err: httperr.New(httperr.ErrEmbeddingUnavailable, "embedding provider unavailable"), want: rememberapp.SubmissionErrorEmbeddingUnavailable},
 		{name: "translated embedding invalid", err: httperr.New(httperr.ErrEmbeddingResponseInvalid, "embedding provider response invalid"), want: rememberapp.SubmissionErrorEmbeddingResponseInvalid},
@@ -359,7 +360,7 @@ func TestCorrectionToolResultErrorPreservesTypedConflictReasons(t *testing.T) {
 			wantNextAction: string(rememberapp.SubmissionNextActionRetrySameRequest), wantClient: false,
 		},
 		{
-			name: "invalid confirmation", reason: memoryservice.CorrectionConfirmationInvalidReason,
+			name: "invalid confirmation", reason: lifecycle.CorrectionConfirmationInvalidReason,
 			wantCode: rememberapp.SubmissionErrorRelationshipChanged, wantState: "failed",
 			wantNextAction: string(rememberapp.SubmissionNextActionRetryCorrection), wantClient: true,
 		},

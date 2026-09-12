@@ -4,11 +4,17 @@ import (
 	"context"
 	"testing"
 
+	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 type evaluationBindingsRepository struct{}
+
+// evaluationCommunityRepositoryStub only needs the native repository method
+// set because these tests exercise dependency precedence, not repository I/O.
+type evaluationCommunityRepositoryStub struct {
+	communitycontract.CommunityRepository
+}
 
 func (*evaluationBindingsRepository) ListEvaluationRefs(context.Context, dreamcontract.EvaluationListInput) (*dreamcontract.EvaluationPage, error) {
 	return nil, nil
@@ -31,8 +37,8 @@ func TestEvaluationFacetSuppliesAuditAppender(t *testing.T) {
 func TestEvaluationBindingsPreserveFlatCoreAndFacetPrecedence(t *testing.T) {
 	flatEval := &evaluationBindingsRepository{}
 	facetEval := &evaluationBindingsRepository{}
-	flatCommunity := repository.NewSemanticRepository(nil, nil)
-	facetCommunity := repository.NewSemanticRepository(nil, nil)
+	flatCommunity := &evaluationCommunityRepositoryStub{}
+	facetCommunity := &evaluationCommunityRepositoryStub{}
 	flatAudit := &evaluationAuditStub{}
 	coreAudit := &evaluationAuditStub{}
 	facetAudit := &evaluationAuditStub{}

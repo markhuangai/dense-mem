@@ -83,6 +83,16 @@ func TestSubmitRecallFeedbackBatchClassifiesInvalidInput(t *testing.T) {
 	assert.Equal(t, "correct_and_resubmit", result.Failure.NextAction)
 }
 
+func TestSubmitRecallFeedbackBatchUsesContextualMetrics(t *testing.T) {
+	ctx := recallFeedbackActorContext(uuid.New(), uuid.New(), uuid.New(), 1)
+	metrics := &contextualFeedbackMetrics{}
+	result := SubmitRecallFeedbackBatch(ctx, &recallFeedbackBatchRecorder{}, metrics, []domain.RecallFeedbackSubmission{{RecallID: "rec-1", Quality: "high"}})
+
+	require.True(t, result.Recorded)
+	require.Equal(t, ctx, metrics.ctx)
+	require.Equal(t, "high", metrics.observation.Quality)
+}
+
 func TestRecallFeedbackEventServiceRecordsSnapshotWithActorContext(t *testing.T) {
 	ctx := context.Background()
 	teamID := uuid.New()
@@ -444,6 +454,20 @@ type recallFeedbackBatchRecorder struct {
 	failAt      int
 	err         error
 	submissions []domain.RecallFeedbackSubmission
+}
+
+type contextualFeedbackMetrics struct {
+	ctx         context.Context
+	observation recallcontract.FeedbackObservation
+}
+
+func (m *contextualFeedbackMetrics) ObserveRecallFeedback(observation recallcontract.FeedbackObservation) {
+	m.observation = observation
+}
+
+func (m *contextualFeedbackMetrics) ObserveRecallFeedbackFor(ctx context.Context, observation recallcontract.FeedbackObservation) {
+	m.ctx = ctx
+	m.observation = observation
 }
 
 func (r *recallFeedbackBatchRecorder) RecordRecallSnapshot(context.Context, domain.RecallFeedbackEvent) error {

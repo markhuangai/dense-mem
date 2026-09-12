@@ -12,7 +12,9 @@
     {"path": "internal/http/server.go", "issue": 379},
     {"path": "internal/http/router_protected.go", "issue": 379},
     {"path": "internal/http/user_portal.go", "issue": 379},
-    {"path": "internal/http/control_portal.go", "issue": 379}
+    {"path": "internal/http/control_portal.go", "issue": 379},
+    {"path": "internal/http/handler/mcp_logger.go", "issue": 380},
+    {"path": "internal/http/handler/mcp_logger_test.go", "issue": 380}
   ],
   "compatibility_bridges": [
     {
