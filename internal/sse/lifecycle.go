@@ -166,17 +166,17 @@ func (l *streamLifecycle) Start(
 	case <-ctx.Done():
 		// Client disconnected
 		workCancel() // Signal work to abort
-		// Release the reservation before returning even if work does not honor
-		// cancellation immediately.
+		// Release the reservation before waiting for work to finish.
 		safeRelease()
+		<-workDone
 		return ctx.Err()
 
 	case <-maxDurationTimer.C:
 		// Max duration reached - send done event
 		workCancel() // Signal work to abort
-		// Release the reservation before returning even if work does not honor
-		// cancellation immediately.
+		// Release the reservation before waiting for work to finish.
 		safeRelease()
+		<-workDone
 		// Send done event
 		_ = writer.WriteEvent(EventTypeDone, map[string]any{"reason": "max_duration_exceeded"})
 		return ErrStreamTerminated

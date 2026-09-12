@@ -16,6 +16,17 @@ import (
 )
 
 func TestRedisHealth_Ping(t *testing.T) {
+	for _, testCase := range []struct {
+		addr string
+		want bool
+	}{
+		{addr: "localhost:6379", want: true},
+		{addr: "redis:6379", want: true},
+		{addr: "127.0.0.1:6379", want: true},
+		{addr: "cache.example.com:6379", want: false},
+	} {
+		require.Equal(t, testCase.want, redisContractEndpointAllowsInsecureAuth(testCase.addr), testCase.addr)
+	}
 	addr := redisHealthAddress(t)
 	password, tlsEnabled := redisHealthCredentials(t)
 	db := 0
@@ -48,10 +59,25 @@ func redisHealthCredentials(t *testing.T) (string, bool) {
 		tlsEnabled = parsed
 	}
 	password := os.Getenv("REDIS_PASSWORD")
-	if password != "" && !tlsEnabled {
-		t.Fatal("REDIS_PASSWORD requires REDIS_TLS_ENABLED=true when REDIS_ADDR is set")
+	if password != "" && !tlsEnabled && !redisContractEndpointAllowsInsecureAuth(os.Getenv("REDIS_ADDR")) {
+		t.Fatal("REDIS_PASSWORD requires REDIS_TLS_ENABLED=true for external REDIS_ADDR")
 	}
 	return password, tlsEnabled
+}
+
+func redisContractEndpointAllowsInsecureAuth(addr string) bool {
+	host := strings.TrimSpace(addr)
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	} else {
+		host = strings.Trim(host, "[]")
+	}
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "localhost", "redis":
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func redisHealthAddress(t *testing.T) string {

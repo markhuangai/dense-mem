@@ -213,11 +213,11 @@ func TestMaxDurationTermination(t *testing.T) {
 	// Create context that won't timeout
 	ctx := context.Background()
 
-	// Work function that never completes on its own
-	workRelease := make(chan struct{})
-	work := func(context.Context) error {
-		<-workRelease
-		return nil
+	workCanceled := make(chan struct{})
+	work := func(ctx context.Context) error {
+		<-ctx.Done()
+		close(workCanceled)
+		return ctx.Err()
 	}
 
 	// Start the stream
@@ -236,9 +236,13 @@ func TestMaxDurationTermination(t *testing.T) {
 		}
 	}
 
-	// Verify concurrency was released without waiting for cancellation-ignoring work.
+	// Verify concurrency was released after cancellation was requested.
 	assert.Equal(t, int64(0), limiter.GetCount())
-	close(workRelease)
+	select {
+	case <-workCanceled:
+	default:
+		t.Fatal("max-duration termination returned before canceling work")
+	}
 }
 
 // TestDisconnectCleanup tests that disconnect aborts work without purging shared stream state.
@@ -331,22 +335,27 @@ func TestDisconnectReleasesSlotBeforeWorkReturns(t *testing.T) {
 	cancel()
 
 	select {
-	case err := <-startDone:
-		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("disconnect waited for work that ignored cancellation")
-	}
-	assert.Equal(t, int64(0), limiter.GetCount())
-	select {
 	case <-workCanceled:
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("disconnect did not cancel stream work")
+	}
+	require.Eventually(t, func() bool { return limiter.GetCount() == 0 }, 250*time.Millisecond, 10*time.Millisecond)
+	select {
+	case err := <-startDone:
+		t.Fatalf("disconnect returned before work finished: %v", err)
+	default:
 	}
 	close(workRelease)
 	select {
 	case <-workDone:
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("cancellation test work did not finish after release")
+	}
+	select {
+	case err := <-startDone:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("disconnect did not return after work finished")
 	}
 }
 

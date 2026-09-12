@@ -98,33 +98,47 @@ func TestStreamLifecycle_Contract_Redis(t *testing.T) {
 	require.ErrorIs(t, err, sse.ErrTooManyStreams)
 	require.Nil(t, thirdRelease)
 	cancel()
+	require.Eventually(t, func() bool { return redisContractCounter(t, client, key) == 1 }, time.Second, 10*time.Millisecond, "disconnect must release its reservation before work returns")
+	close(secondRelease)
 	select {
 	case err := <-secondDone:
 		require.ErrorIs(t, err, context.Canceled)
 	case <-time.After(500 * time.Millisecond):
-		t.Fatal("Redis stream cancellation waited for work to return")
+		t.Fatal("Redis stream cancellation did not finish after work returned")
 	}
 	require.Equal(t, int64(1), redisContractCounter(t, client, key), "disconnect must preserve the other active reservation")
-	close(secondRelease)
 	close(firstRelease)
 	require.NoError(t, <-firstDone)
 	require.Eventually(t, func() bool { return redisContractCounter(t, client, key) == 0 }, time.Second, 10*time.Millisecond)
 
 	maxRelease := make(chan struct{})
+	maxCanceled := make(chan struct{})
 	maxLifecycle := sse.NewStreamLifecycleWithConfig(limiter, redisContractHeartbeat{}, 20*time.Millisecond)
 	started := make(chan struct{})
 	maxDone := make(chan error, 1)
 	go func() {
-		maxDone <- maxLifecycle.Start(context.Background(), teamID, writer, func(context.Context) error {
+		maxDone <- maxLifecycle.Start(context.Background(), teamID, writer, func(workCtx context.Context) error {
 			close(started)
+			<-workCtx.Done()
+			close(maxCanceled)
 			<-maxRelease
 			return nil
 		})
 	}()
 	<-started
-	require.ErrorIs(t, <-maxDone, sse.ErrStreamTerminated)
+	select {
+	case <-maxCanceled:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Redis stream max-duration path did not cancel work")
+	}
 	require.Eventually(t, func() bool { return redisContractCounter(t, client, key) == 0 }, time.Second, 10*time.Millisecond)
+	select {
+	case err := <-maxDone:
+		t.Fatalf("Redis stream max-duration path returned before work finished: %v", err)
+	default:
+	}
 	close(maxRelease)
+	require.ErrorIs(t, <-maxDone, sse.ErrStreamTerminated)
 
 	workErr := errors.New("redis lifecycle work failed")
 	err = maxLifecycle.Start(context.Background(), teamID, writer, func(context.Context) error { return workErr })
@@ -175,10 +189,25 @@ func redisContractCredentials(t *testing.T) (string, bool) {
 		tlsEnabled = parsed
 	}
 	password := os.Getenv("REDIS_PASSWORD")
-	if password != "" && !tlsEnabled {
-		t.Fatal("REDIS_PASSWORD requires REDIS_TLS_ENABLED=true when REDIS_ADDR is set")
+	if password != "" && !tlsEnabled && !redisContractEndpointAllowsInsecureAuth(os.Getenv("REDIS_ADDR")) {
+		t.Fatal("REDIS_PASSWORD requires REDIS_TLS_ENABLED=true for external REDIS_ADDR")
 	}
 	return password, tlsEnabled
+}
+
+func redisContractEndpointAllowsInsecureAuth(addr string) bool {
+	host := strings.TrimSpace(addr)
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	} else {
+		host = strings.Trim(host, "[]")
+	}
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "localhost", "redis":
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func redisContractCounter(t *testing.T, client *redis.RedisClient, key string) int64 {

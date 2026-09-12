@@ -64,10 +64,25 @@ func redisContractCredentials(t *testing.T) (string, bool) {
 		tlsEnabled = parsed
 	}
 	password := os.Getenv("REDIS_PASSWORD")
-	if password != "" && !tlsEnabled {
-		t.Fatal("REDIS_PASSWORD requires REDIS_TLS_ENABLED=true when REDIS_ADDR is set")
+	if password != "" && !tlsEnabled && !redisContractEndpointAllowsInsecureAuth(os.Getenv("REDIS_ADDR")) {
+		t.Fatal("REDIS_PASSWORD requires REDIS_TLS_ENABLED=true for external REDIS_ADDR")
 	}
 	return password, tlsEnabled
+}
+
+func redisContractEndpointAllowsInsecureAuth(addr string) bool {
+	host := strings.TrimSpace(addr)
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	} else {
+		host = strings.Trim(host, "[]")
+	}
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "localhost", "redis":
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func redisContractAddress(t *testing.T) string {
