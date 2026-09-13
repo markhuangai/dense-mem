@@ -3,18 +3,19 @@ package serverapp
 import (
 	"context"
 	"errors"
-	"log"
+	"fmt"
 	"log/slog"
+	"net"
 	nethttp "net/http"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
+	"github.com/labstack/echo/v4"
+
 	"github.com/markhuangai/dense-mem/internal/config"
+	conflictreview "github.com/markhuangai/dense-mem/internal/conflict/review"
 	"github.com/markhuangai/dense-mem/internal/conflictassessment"
-	"github.com/markhuangai/dense-mem/internal/http"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
@@ -26,7 +27,17 @@ import (
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
+// runtimeWorkerFailure keeps the underlying cause for control flow while exposing a bounded message to logs.
+type runtimeWorkerFailure struct {
+	cause error
+}
+
+func (e runtimeWorkerFailure) Error() string { return "runtime worker failed" }
+
+func (e runtimeWorkerFailure) Unwrap() error { return e.cause }
+
 func RunActiveServer(
+	processCtx context.Context,
 	startupCtx context.Context,
 	cfg config.Config,
 	pgDB *postgres.DB,
@@ -34,20 +45,34 @@ func RunActiveServer(
 	level slog.Level,
 	authority authorityBootstrap,
 	options RuntimeOptions,
-) {
+) error {
+	if processCtx == nil {
+		processCtx = context.Background()
+	}
+	if startupCtx == nil {
+		startupCtx = processCtx
+	}
+	if pgDB == nil || pgDB.GetDB() == nil {
+		return errors.New("active server requires postgres database")
+	}
 	if !cfg.IsEmbeddingConfigured() {
-		log.Fatal("active authority requires configured embedding provider")
+		return errors.New("active authority requires configured embedding provider")
 	}
 	if !VerifierConfigured(&cfg) {
-		log.Fatal("active authority requires configured verifier provider")
+		return errors.New("active authority requires configured verifier provider")
 	}
 	backend, err := buildBackendBundle(startupCtx, cfg)
 	if err != nil {
-		log.Fatalf("failed to build backend: %v", err)
+		return fmt.Errorf("failed to build backend: %w", err)
 	}
-	defer backend.closeFn()
+	closeBackend := true
+	defer func() {
+		if closeBackend && backend.closeFn != nil {
+			_ = backend.closeFn()
+		}
+	}()
 	if options.RequireRedis && backend.counterStore == nil {
-		log.Fatal("runtime requires REDIS_ADDR")
+		return errors.New("runtime requires REDIS_ADDR")
 	}
 	logInMemoryModeWarning(logger, backend.degraded, backend.reason)
 
@@ -62,12 +87,6 @@ func RunActiveServer(
 	)
 	credentialVerifier := accessAuthentication.CredentialVerifier
 	activityWriter := accessAuthentication.ActivityWriter
-	activityWriter.Start(context.Background())
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = activityWriter.Shutdown(shutdownCtx)
-	}()
 	ssoRepo := repository.NewSSORepository(pgDB.GetDB(), rlsHelper)
 	portalSessionRepo := repository.NewUserPortalSessionRepository(pgDB.GetDB(), rlsHelper)
 	directoryIdentityRepo := repository.NewDirectoryIdentityRepository(pgDB.GetDB(), rlsHelper)
@@ -90,11 +109,11 @@ func RunActiveServer(
 	conflictQueueService := buildConflictQueueApplication(ledgerRepo)
 	evidenceConflictService := buildEvidenceConflictApplication(ledgerRepo)
 	if err := checkActiveAuthority(authority); err != nil {
-		log.Fatalf("active boot blocked: %v", err)
+		return fmt.Errorf("active boot blocked: %w", err)
 	}
 	searchRepo, searchContract, err := buildSearchRepositoryApplication(startupCtx, cfg, pgDB, rlsHelper)
 	if err != nil {
-		log.Fatalf("active search bootstrap blocked: %v", err)
+		return fmt.Errorf("active search bootstrap blocked: %w", err)
 	}
 	logger.Info(
 		"postgres authority enabled",
@@ -113,10 +132,8 @@ func RunActiveServer(
 	activeLogger := buildActiveApplicationLogger(level, operationLogService)
 	logger = activeLogger
 	slog.SetDefault(activeLogger.Slog())
-	operationLogService.Start(context.Background())
 	securityService := buildSecurityApplication(securityRepo, auditService)
 	usageMetricsService := buildUsageMetricsApplication(usageMetricsRepo, logger)
-	usageMetricsService.Start(context.Background())
 	accessApplication := buildAccessApplication(accessApplicationDependencies{
 		TeamRepo:              teamRepo,
 		CredentialRepo:        credentialRepo,
@@ -145,7 +162,7 @@ func RunActiveServer(
 		startupCtx, privateMemoryRepo, appConfigService, backend.cleanupRepo, auditService, logger,
 	)
 	if err != nil {
-		log.Fatalf("private-memory erasure boot blocked: %v", err)
+		return fmt.Errorf("private-memory erasure boot blocked: %w", err)
 	}
 	runtimeCtx := RuntimeContext{
 		Config:            &cfg,
@@ -158,14 +175,10 @@ func RunActiveServer(
 	}
 	telemetry, err := buildTelemetryApplication(startupCtx, cfg, appConfigService, ledgerRepo, ledgerRepo, logger)
 	if err != nil {
-		log.Fatalf("failed to build telemetry application: %v", err)
-	}
-	if telemetry.PricingRefreshContext != nil {
-		go refreshTelemetryPricingCacheUntilCanceled(telemetry.PricingRefreshContext, appConfigService, logger)
+		return fmt.Errorf("failed to build telemetry application: %w", err)
 	}
 	discoverabilityMetrics := telemetry.Metrics
 	telemetryPrometheusService := telemetry.Prometheus
-	pricingRefreshCancel := telemetry.PricingRefreshCancel
 	searchApplication := buildSearchProviders(cfg, searchRepo, searchContract, discoverabilityMetrics, logger)
 	openaiProvider := searchApplication.EmbeddingProvider
 	retryEmbedder := searchApplication.RetryEmbedding
@@ -186,7 +199,7 @@ func RunActiveServer(
 		Metrics:          discoverabilityMetrics,
 	})
 	if err != nil {
-		log.Fatalf("failed to build conflict review runner: %v", err)
+		return fmt.Errorf("failed to build conflict review runner: %w", err)
 	}
 	applications := buildApplicationBundle(applicationCompositionDependencies{
 		Ledger:                 ledgerRepo,
@@ -221,11 +234,10 @@ func RunActiveServer(
 	graphViewSvc := applications.Graph
 	memoryPackSvc := applications.MemoryPack
 	recallFeedbackEventService := applications.RecallFeedback
-	recallFeedbackEventService.Start(context.Background())
 
 	evaluationBindings, err := buildEvaluationRegistryBindings(semanticRepo, auditService)
 	if err != nil {
-		log.Fatalf("failed to build evaluation registry bindings: %v", err)
+		return fmt.Errorf("failed to build evaluation registry bindings: %w", err)
 	}
 	toolRegistry, err := registry.BuildActive(registry.Dependencies{
 		Core: registry.CoreDependencies{
@@ -242,12 +254,12 @@ func RunActiveServer(
 		EvaluationBindings: evaluationBindings,
 	})
 	if err != nil {
-		log.Fatalf("failed to build active tool registry: %v", err)
+		return fmt.Errorf("failed to build active tool registry: %w", err)
 	}
 	if options.ConfigureRegistry != nil {
 		toolRegistry, err = options.ConfigureRegistry(startupCtx, runtimeCtx, toolRegistry)
 		if err != nil {
-			log.Fatalf("failed to configure runtime tool registry: %v", err)
+			return fmt.Errorf("failed to configure runtime tool registry: %w", err)
 		}
 	}
 	transport, err := buildTransportComposition(transportCompositionInputs{
@@ -289,119 +301,276 @@ func RunActiveServer(
 		dream:              dreamSvc,
 	})
 	if err != nil {
-		log.Fatalf("failed to build transport composition: %v", err)
+		return fmt.Errorf("failed to build transport composition: %w", err)
 	}
 	e := transport.e
 	runtimeCtx.Echo = e
 	controlServer := transport.controlServer
 	telemetryServer := transport.telemetryServer
+	if err := processCtx.Err(); err != nil {
+		return err
+	}
+
+	// Reserve every listener before starting application work. A bind failure
+	// leaves no worker running and closes any listener already reserved.
+	httpAddr := strings.TrimSpace(os.Getenv("HTTP_ADDR"))
+	if httpAddr == "" {
+		httpAddr = config.DefaultHTTPAddr
+	}
+	if err := processCtx.Err(); err != nil {
+		return err
+	}
+	publicListener, err := bindEchoServer(e, httpAddr)
+	if err != nil {
+		return fmt.Errorf("bind server listener: %w", err)
+	}
+	var controlListener, telemetryListener net.Listener
+	closeBoundListeners := func() {
+		_ = publicListener.Close()
+		_ = controlListenerClose(controlListener)
+		_ = telemetryListenerClose(telemetryListener)
+	}
 	if controlServer != nil {
-		logger.Info("starting control portal", observability.String("addr", cfg.GetControlHTTPAddr()))
-		go func() {
-			if err := controlServer.Start(cfg.GetControlHTTPAddr()); err != nil {
-				logServerStartError(logger, "control portal server error", err)
-			}
-		}()
+		controlListener, err = bindEchoServer(controlServer, cfg.GetControlHTTPAddr())
+		if err != nil {
+			closeBoundListeners()
+			return fmt.Errorf("bind control portal listener: %w", err)
+		}
 	} else if telemetryServer != nil {
 		addr := strings.TrimSpace(transport.telemetryServerAddr)
 		if addr == "" {
 			addr = ":8091"
 		}
-		logger.Info("starting telemetry scrape server", observability.String("addr", addr))
-		go func() {
-			if err := telemetryServer.Start(addr); err != nil {
-				logServerStartError(logger, "telemetry scrape server error", err)
-			}
-		}()
-	}
-	var runtimeShutdown func(context.Context) error
-	if options.StartBackground != nil {
-		runtimeShutdown, err = options.StartBackground(context.Background(), runtimeCtx)
+		telemetryListener, err = bindEchoServer(telemetryServer, addr)
 		if err != nil {
-			log.Fatalf("failed to start runtime background jobs: %v", err)
+			closeBoundListeners()
+			return fmt.Errorf("bind telemetry listener: %w", err)
 		}
 	}
-
-	workerCtx, workerCancel := context.WithCancel(context.Background())
-	defer workerCancel()
-	privateMemoryService.Start(workerCtx)
-	searchReconciliationCtx, cancelSearchReconciliation := context.WithCancel(workerCtx)
-	go startSearchReconciliation(searchReconciliationCtx, searchApplication.Reconciliation, logger)
-	defer cancelSearchReconciliation()
-	ledgerRepo.StartRememberAttemptDiagnosticPurger(workerCtx, time.Hour, slog.Default())
-	dreamSchedulerCtx, dreamSchedulerCancel := context.WithCancel(context.Background())
-	defer dreamSchedulerCancel()
-	go dreamservice.NewScheduler(dreamSvc, teamService, slog.Default()).Start(dreamSchedulerCtx)
-	communitySchedulerCtx, communitySchedulerCancel := context.WithCancel(context.Background())
-	defer communitySchedulerCancel()
-	go communityservice.NewScheduler(communitySvc, teamService, appConfigService, slog.Default()).Start(communitySchedulerCtx)
-	conflictReviewCtx, conflictReviewCancel := context.WithCancel(context.Background())
-	defer conflictReviewCancel()
-	startConflictReviewWorkers(conflictReviewCtx, logger, teamService, conflictReviewRunner, &cfg, discoverabilityMetrics)
-
-	httpAddr := os.Getenv("HTTP_ADDR")
-	if httpAddr == "" {
-		httpAddr = config.DefaultHTTPAddr
+	if err := processCtx.Err(); err != nil {
+		closeBoundListeners()
+		return err
 	}
-	logger.Info("starting server", observability.String("addr", httpAddr))
-	go func() {
-		if err := e.Start(httpAddr); err != nil {
-			logServerStartError(logger, "server error", err)
+
+	var runtimeWorker RuntimeWorker
+	runtimeFailures := make(chan error, 3)
+	lifecycle := newRuntimeLifecycle(context.Background())
+	stopStartupCancel := context.AfterFunc(processCtx, lifecycle.cancel)
+	startupBridgeArmed := true
+	defer func() {
+		if startupBridgeArmed {
+			stopStartupCancel()
 		}
 	}()
-
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-
-	logger.Info("shutting down server")
-	workerCancel()
-	dreamSchedulerCancel()
-	communitySchedulerCancel()
-	conflictReviewCancel()
-	if pricingRefreshCancel != nil {
-		pricingRefreshCancel()
-	}
-	if err := http.ShutdownServer(e, logger); err != nil {
-		logger.Error("server shutdown error", err)
-	}
-	if controlServer != nil {
-		if err := http.ShutdownControlPortal(controlServer, logger); err != nil {
-			logger.Error("control portal server shutdown error", err)
+	startupCheck := func() error {
+		if err := processCtx.Err(); err != nil {
+			return err
 		}
+		return lifecycle.Context().Err()
+	}
+	abortStartup := func(startupErr error) error {
+		closeBoundListeners()
+		workerCtx, workerCancel := context.WithTimeout(context.Background(), workerJoinTimeout)
+		shutdownErr := lifecycle.shutdown(workerCtx)
+		workerCancel()
+		if shutdownErr != nil {
+			startupErr = errors.Join(startupErr, shutdownErr)
+			if errors.Is(shutdownErr, ErrRuntimeShutdownTimeout) {
+				closeBackend = false
+			}
+		}
+		return startupErr
+	}
+	if options.BuildWorker != nil {
+		runtimeWorker, err = options.BuildWorker(lifecycle.Context(), runtimeCtx)
+		if err != nil {
+			closeBoundListeners()
+			return fmt.Errorf("failed to start runtime background jobs: %w", err)
+		}
+	}
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
+
+	// Start all configured workers and listeners exactly once after binding.
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
+	activityWriter.Start(lifecycle.Context())
+	lifecycle.add(managedRuntimeWorker{name: "credential activity", shutdown: activityWriter.Shutdown, shutdownTimeout: writerShutdownTimeout})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
+	operationLogService.Start(lifecycle.Context())
+	lifecycle.add(managedRuntimeWorker{name: "operation log", shutdown: operationLogService.Shutdown, shutdownTimeout: writerShutdownTimeout})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
+	usageMetricsService.Start(lifecycle.Context())
+	lifecycle.add(managedRuntimeWorker{name: "usage metrics", shutdown: usageMetricsService.Shutdown, shutdownTimeout: writerShutdownTimeout})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
+	recallFeedbackEventService.Start(lifecycle.Context())
+	lifecycle.add(managedRuntimeWorker{name: "recall feedback", shutdown: recallFeedbackEventService.Shutdown, shutdownTimeout: writerShutdownTimeout})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
+	if privateMemoryDone := privateMemoryService.Start(lifecycle.Context()); privateMemoryDone != nil {
+		lifecycle.add(managedRuntimeWorker{name: "private memory", done: privateMemoryDone, shutdown: privateMemoryService.Shutdown})
+	}
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
+	if telemetry.PricingRefreshEnabled {
+		lifecycle.start("telemetry pricing refresh", func(ctx context.Context) {
+			refreshTelemetryPricingCacheUntilCanceled(ctx, appConfigService, logger)
+		})
+	}
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
+	lifecycle.start("search reconciliation", func(ctx context.Context) {
+		startSearchReconciliation(ctx, searchApplication.Reconciliation, logger)
+	})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
+	diagnosticDone := ledgerRepo.StartRememberAttemptDiagnosticPurger(lifecycle.Context(), time.Hour, slog.Default())
+	lifecycle.add(managedRuntimeWorker{name: "remember diagnostics", done: diagnosticDone, shutdown: ledgerRepo.ShutdownRememberAttemptDiagnosticPurger})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
+	lifecycle.start("dream scheduler", func(ctx context.Context) {
+		dreamservice.NewScheduler(dreamSvc, teamService, slog.Default()).Start(ctx)
+	})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
+	lifecycle.start("community scheduler", func(ctx context.Context) {
+		communityservice.NewScheduler(communitySvc, teamService, appConfigService, slog.Default()).Start(ctx)
+	})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
+	conflictReviewScheduler := conflictreview.NewReviewService(teamService, conflictReviewRunner, &cfg, logger, discoverabilityMetrics)
+	lifecycle.start("conflict review", conflictReviewScheduler.Run)
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
+	if runtimeWorker != nil {
+		workerName := strings.TrimSpace(runtimeWorker.Name())
+		if workerName == "" {
+			workerName = "runtime worker"
+		}
+		lifecycle.start(workerName, func(ctx context.Context) {
+			if err := runtimeWorker.Run(ctx); err != nil && ctx.Err() == nil {
+				runtimeFailures <- runtimeWorkerFailure{cause: err}
+			}
+		})
+	}
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
+	if !stopStartupCancel() {
+		if err := processCtx.Err(); err != nil {
+			return abortStartup(err)
+		}
+		return abortStartup(context.Canceled)
+	}
+	startupBridgeArmed = false
+	if err := processCtx.Err(); err != nil {
+		return abortStartup(err)
+	}
+
+	listenerFailures := make(chan error, 3)
+	startListener := func(name string, server *echo.Echo, listener net.Listener, errorsCh <-chan error) {
+		if server == nil || listener == nil {
+			return
+		}
+		logger.Info("starting "+name, observability.String("addr", listener.Addr().String()))
+		lifecycle.start(name, func(ctx context.Context) {
+			select {
+			case err := <-errorsCh:
+				if !isExpectedServerClose(err) {
+					listenerFailures <- fmt.Errorf("%s: %w", name, err)
+				}
+			case <-ctx.Done():
+			}
+		})
+	}
+	publicErrors := serveEchoServer(e, httpAddr)
+	startListener("server", e, publicListener, publicErrors)
+	if controlServer != nil {
+		startListener("control portal", controlServer, controlListener, serveEchoServer(controlServer, cfg.GetControlHTTPAddr()))
+	} else if telemetryServer != nil {
+		addr := strings.TrimSpace(transport.telemetryServerAddr)
+		if addr == "" {
+			addr = ":8091"
+		}
+		startListener("telemetry scrape server", telemetryServer, telemetryListener, serveEchoServer(telemetryServer, addr))
+	}
+
+	var runErr error
+	select {
+	case <-processCtx.Done():
+		logger.Info("shutting down server")
+	case err := <-listenerFailures:
+		runErr = err
+		logger.Error("server listener stopped unexpectedly", err)
+	case err := <-runtimeFailures:
+		runErr = err
+		logger.Error("runtime worker stopped unexpectedly", err, observability.String("error_code", "runtime_worker_failed"))
+	}
+	listenerCtx, listenerCancel := context.WithTimeout(context.Background(), listenerShutdownTimeout)
+	listenerShutdowns := []listenerShutdown{{
+		name: "server",
+		shutdown: func(ctx context.Context) error {
+			return shutdownEchoServer(ctx, e)
+		},
+	}}
+	if controlServer != nil {
+		listenerShutdowns = append(listenerShutdowns, listenerShutdown{
+			name: "control portal",
+			shutdown: func(ctx context.Context) error {
+				return shutdownEchoServer(ctx, controlServer)
+			},
+		})
 	}
 	if telemetryServer != nil {
-		if err := shutdownTelemetryScrapeServer(telemetryServer); err != nil {
-			logger.Error("telemetry scrape server shutdown error", err)
+		listenerShutdowns = append(listenerShutdowns, listenerShutdown{
+			name: "telemetry",
+			shutdown: func(ctx context.Context) error {
+				return shutdownEchoServer(ctx, telemetryServer)
+			},
+		})
+	}
+	if err := shutdownListeners(listenerCtx, listenerShutdowns...); err != nil {
+		runErr = errors.Join(runErr, err)
+	}
+	listenerCancel()
+	workerCtx, workerCancel := context.WithTimeout(context.Background(), workerJoinTimeout)
+	if err := lifecycle.shutdown(workerCtx); err != nil {
+		runErr = errors.Join(runErr, err)
+		if errors.Is(err, ErrRuntimeShutdownTimeout) {
+			runErr = errors.Join(runErr, ErrRuntimeShutdownTimeout)
+			closeBackend = false
 		}
 	}
-	if runtimeShutdown != nil {
-		runtimeShutdownCtx, runtimeShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer runtimeShutdownCancel()
-		if err := runtimeShutdown(runtimeShutdownCtx); err != nil {
-			logger.Error("runtime background shutdown error", err)
-		}
-	}
-	metricsShutdownCtx, metricsShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	if err := usageMetricsService.Shutdown(metricsShutdownCtx); err != nil {
-		logger.Error("usage metrics shutdown error", err)
-	}
-	metricsShutdownCancel()
-	operationLogShutdownCtx, operationLogShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer operationLogShutdownCancel()
-	if err := operationLogService.Shutdown(operationLogShutdownCtx); err != nil {
-		log.Printf("operation log shutdown error: %v", err)
-	}
-	recallFeedbackShutdownCtx, recallFeedbackShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer recallFeedbackShutdownCancel()
-	if err := recallFeedbackEventService.Shutdown(recallFeedbackShutdownCtx); err != nil {
-		log.Printf("recall feedback event shutdown error: %v", err)
-	}
+	workerCancel()
+	return runErr
 }
 
-func logServerStartError(logger observability.LogProvider, message string, err error) {
-	if errors.Is(err, nethttp.ErrServerClosed) {
-		return
+func controlListenerClose(listener net.Listener) error {
+	if listener == nil {
+		return nil
 	}
-	logger.Error(message, err)
+	return listener.Close()
+}
+
+func telemetryListenerClose(listener net.Listener) error {
+	if listener == nil {
+		return nil
+	}
+	return listener.Close()
 }

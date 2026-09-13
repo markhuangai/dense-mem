@@ -19,6 +19,14 @@
       "issue": 377
     },
     {
+      "path": "internal/conflict/review/scheduler.go",
+      "issue": 381
+    },
+    {
+      "path": "internal/conflict/review/scheduler_test.go",
+      "issue": 381
+    },
+    {
       "path": "internal/conflict/review/service_test.go",
       "issue": 377
     },
@@ -41,6 +49,15 @@
     "units": []
   },
   "exceptions": [],
-  "workers": [],
+  "workers": [
+    {
+      "path": "internal/conflict/review/scheduler.go",
+      "function": "Run",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    }
+  ],
   "compatibility_bridges": []
 }

@@ -3,74 +3,17 @@ package main
 import (
 	"context"
 	"log"
-	"log/slog"
 	"os"
-	"time"
+	"os/signal"
+	"syscall"
 
-	"github.com/markhuangai/dense-mem/cmd/internal/migrationapp"
 	"github.com/markhuangai/dense-mem/cmd/internal/serverapp"
-	"github.com/markhuangai/dense-mem/internal/config"
-	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-const startupTimeout = 5 * time.Minute
-
 func main() {
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatalf("failed to load config: %v", err)
+	processCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := serverapp.RunFromEnvironment(processCtx, serverapp.RuntimeOptions{}); err != nil {
+		log.Fatalf("server runtime failed: %v", err)
 	}
-	if err := cfg.ValidateServerStartup(); err != nil {
-		log.Fatalf("invalid startup config: %v", err)
-	}
-
-	level, err := observability.ParseLevel(os.Getenv("LOG_LEVEL"))
-	if err != nil {
-		log.Fatal(err)
-	}
-	logger := observability.New(level)
-	slog.SetDefault(logger.Slog())
-
-	preflightCtx, preflightCancel := context.WithTimeout(context.Background(), startupTimeout)
-
-	pgDB, err := postgres.OpenWithClient(preflightCtx, &cfg)
-	if err != nil {
-		log.Fatalf("failed to connect to postgres: %v", err)
-	}
-	defer pgDB.Close()
-	if err := postgres.ValidateSinglePrimaryTopology(preflightCtx, pgDB.GetDB()); err != nil {
-		log.Fatalf("unsupported postgres topology: %v", err)
-	}
-	preflightCancel()
-
-	migrationTimeout := time.Duration(cfg.GetPostgresMigrationTimeoutSeconds()) * time.Second
-	if err := migrationapp.RunUp(context.Background(), pgDB.GetDB(), migrationTimeout, logger.Slog()); err != nil {
-		log.Fatalf("failed to run postgres migrations: %v", err)
-	}
-	sqlDB, err := pgDB.GetDB().DB()
-	if err != nil {
-		log.Fatalf("failed to access postgres sql client: %v", err)
-	}
-	migrationStateCtx, migrationStateCancel := context.WithTimeout(context.Background(), startupTimeout)
-	if err := postgres.ValidateStartupMigrationState(migrationStateCtx, sqlDB, postgres.MigrationsDir()); err != nil {
-		migrationStateCancel()
-		log.Fatalf("postgres migration state validation failed: %v", err)
-	}
-	migrationStateCancel()
-
-	postMigrationCtx, postMigrationCancel := context.WithTimeout(context.Background(), startupTimeout)
-	defer postMigrationCancel()
-	if err := postgres.CheckPGVectorExtension(postMigrationCtx, pgDB.GetDB()); err != nil {
-		log.Fatalf("pgvector extension check failed: %v", err)
-	}
-
-	rlsHelper := postgres.NewRLS()
-	authorityRepo := repository.NewAuthorityRepository(pgDB.GetDB(), rlsHelper)
-	authority, err := serverapp.ClassifyAuthority(postMigrationCtx, authorityRepo)
-	if err != nil {
-		log.Fatalf("authority bootstrap failed: %v", err)
-	}
-	serverapp.RunActiveServer(postMigrationCtx, cfg, pgDB, logger, level, authority, serverapp.RuntimeOptions{})
 }

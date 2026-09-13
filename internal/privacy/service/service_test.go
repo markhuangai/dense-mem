@@ -63,16 +63,19 @@ type privateMemoryRepositoryStub struct {
 	retentionRuns     []domain.PrivateMemoryRetentionRun
 	runtimeErr        error
 
-	claim         *domain.PrivateMemoryErasureOperation
-	claimErr      error
-	execute       *domain.PrivateMemoryErasureOperation
-	executeErr    error
-	releaseErr    error
-	releases      int
-	releaseID     uuid.UUID
-	releaseWorker string
-	releaseFence  int64
-	releaseCode   string
+	claim              *domain.PrivateMemoryErasureOperation
+	claimErr           error
+	claimStarted       chan struct{}
+	claimBlock         <-chan struct{}
+	claimIgnoreContext bool
+	execute            *domain.PrivateMemoryErasureOperation
+	executeErr         error
+	releaseErr         error
+	releases           int
+	releaseID          uuid.UUID
+	releaseWorker      string
+	releaseFence       int64
+	releaseCode        string
 }
 
 func (r *privateMemoryRepositoryStub) Prepare(context.Context) error {
@@ -152,7 +155,22 @@ func (r *privateMemoryRepositoryStub) ListRetentionRuns(context.Context, int, in
 	return r.retentionRuns, r.requestErr
 }
 
-func (r *privateMemoryRepositoryStub) ClaimNext(context.Context, string, time.Duration) (*domain.PrivateMemoryErasureOperation, error) {
+func (r *privateMemoryRepositoryStub) ClaimNext(ctx context.Context, _ string, _ time.Duration) (*domain.PrivateMemoryErasureOperation, error) {
+	if r.claimStarted != nil {
+		close(r.claimStarted)
+		r.claimStarted = nil
+	}
+	if r.claimBlock != nil {
+		if r.claimIgnoreContext {
+			<-r.claimBlock
+		} else {
+			select {
+			case <-r.claimBlock:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+	}
 	return r.claim, r.claimErr
 }
 
@@ -170,11 +188,24 @@ func (r *privateMemoryRepositoryStub) ReleaseClaim(_ context.Context, operationI
 }
 
 type privateMemoryRuntimeConfigStub struct {
-	config domain.PrivateMemoryRuntimeConfig
-	err    error
+	config  domain.PrivateMemoryRuntimeConfig
+	err     error
+	started chan struct{}
+	block   <-chan struct{}
 }
 
-func (s *privateMemoryRuntimeConfigStub) PrivateMemoryRuntimeConfig(context.Context) (domain.PrivateMemoryRuntimeConfig, error) {
+func (s *privateMemoryRuntimeConfigStub) PrivateMemoryRuntimeConfig(ctx context.Context) (domain.PrivateMemoryRuntimeConfig, error) {
+	if s.started != nil {
+		close(s.started)
+		s.started = nil
+	}
+	if s.block != nil {
+		select {
+		case <-s.block:
+		case <-ctx.Done():
+			return domain.PrivateMemoryRuntimeConfig{}, ctx.Err()
+		}
+	}
 	return s.config, s.err
 }
 
@@ -527,3 +558,102 @@ func TestPrivateMemoryServiceWorkerAndAutomaticRetentionPolicy(t *testing.T) {
 }
 
 const sha256HexLength = 64
+
+func TestPrivateMemoryWorkersStartOnceAndShutdownTogether(t *testing.T) {
+	repo := &privateMemoryRepositoryStub{}
+	runtime := &privateMemoryRuntimeConfigStub{config: domain.PrivateMemoryRuntimeConfig{RetentionDays: 1}}
+	service := NewPrivateMemoryService(PrivateMemoryServiceConfig{Repository: repo, RuntimeConfig: runtime})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	first := service.Start(ctx)
+	second := service.Start(ctx)
+	if first != second {
+		t.Fatal("starting private-memory workers twice created a second lifecycle")
+	}
+	cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Second)
+	defer shutdownCancel()
+	if err := service.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("shutdown returned error: %v", err)
+	}
+	select {
+	case <-first:
+	case <-time.After(time.Second):
+		t.Fatal("private-memory workers were not joined")
+	}
+}
+
+func TestPrivateMemoryErasureWorkerJoinsDelayedClaim(t *testing.T) {
+	claimStarted := make(chan struct{})
+	claimBlock := make(chan struct{})
+	repo := &privateMemoryRepositoryStub{claimStarted: claimStarted, claimBlock: claimBlock}
+	service := NewPrivateMemoryService(PrivateMemoryServiceConfig{Repository: repo, WorkerPoll: time.Hour})
+	done := service.Start(context.Background())
+	select {
+	case <-claimStarted:
+	case <-time.After(time.Second):
+		t.Fatal("private-memory erasure worker did not begin delayed claim")
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := service.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("shutdown returned error: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("private-memory erasure worker was not joined")
+	}
+}
+
+func TestPrivateMemoryShutdownTimeoutRetainsLifecycleForRetry(t *testing.T) {
+	claimStarted := make(chan struct{})
+	claimBlock := make(chan struct{})
+	repo := &privateMemoryRepositoryStub{claimStarted: claimStarted, claimBlock: claimBlock, claimIgnoreContext: true}
+	service := NewPrivateMemoryService(PrivateMemoryServiceConfig{Repository: repo, WorkerPoll: time.Hour})
+	done := service.Start(context.Background())
+	select {
+	case <-claimStarted:
+	case <-time.After(time.Second):
+		t.Fatal("private-memory erasure worker did not begin claim")
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	require.ErrorIs(t, service.Shutdown(shutdownCtx), context.DeadlineExceeded)
+	cancel()
+	if retryDone := service.Start(context.Background()); retryDone != done {
+		t.Fatal("starting during a timed-out shutdown created a second lifecycle")
+	}
+	close(claimBlock)
+	joinCtx, joinCancel := context.WithTimeout(context.Background(), time.Second)
+	defer joinCancel()
+	require.NoError(t, service.Shutdown(joinCtx))
+}
+
+func TestPrivateMemoryRetentionWorkerJoinsDelayedConfig(t *testing.T) {
+	runtimeStarted := make(chan struct{})
+	runtimeBlock := make(chan struct{})
+	runtime := &privateMemoryRuntimeConfigStub{
+		config:  domain.PrivateMemoryRuntimeConfig{RetentionDays: 1},
+		started: runtimeStarted,
+		block:   runtimeBlock,
+	}
+	service := NewPrivateMemoryService(PrivateMemoryServiceConfig{Repository: &privateMemoryRepositoryStub{}, RuntimeConfig: runtime})
+	done := service.Start(context.Background())
+	select {
+	case <-runtimeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("private-memory retention worker did not begin delayed config read")
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := service.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("shutdown returned error: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("private-memory retention worker was not joined")
+	}
+}

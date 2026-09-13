@@ -1,0 +1,483 @@
+package serverapp
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/labstack/echo/v4"
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	testcontainerspostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	tcnetwork "github.com/testcontainers/testcontainers-go/network"
+	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/markhuangai/dense-mem/cmd/internal/migrationapp"
+	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/repository"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
+)
+
+const lifecyclePostgresImage = "pgvector/pgvector:0.8.2-pg18-trixie"
+
+func TestServerLifecycleDrainsRequestsBeforeAdapters(t *testing.T) {
+	withLifecyclePostgres(t, func(t *testing.T) {
+		configureLifecycleEnvironment(t, "127.0.0.1:0")
+		probe := newLifecycleProbeWorker()
+		requestEntered := make(chan struct{})
+		requestRelease := make(chan struct{})
+		var requestReleaseOnce sync.Once
+		releaseRequest := func() { requestReleaseOnce.Do(func() { close(requestRelease) }) }
+
+		processCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		runDone := make(chan error, 1)
+		go func() {
+			runDone <- RunFromEnvironment(processCtx, RuntimeOptions{
+				DisableControlPortal: true,
+				RegisterRoutes: func(runtime RuntimeContext) error {
+					runtime.Echo.GET("/__lifecycle", func(c echo.Context) error {
+						close(requestEntered)
+						<-requestRelease
+						return c.NoContent(http.StatusNoContent)
+					})
+					return nil
+				},
+				BuildWorker: func(_ context.Context, runtime RuntimeContext) (RuntimeWorker, error) {
+					if runtime.Echo == nil || runtime.Echo.Listener == nil {
+						return nil, errors.New("lifecycle probe received no bound listener")
+					}
+					probe.addresses <- runtime.Echo.Listener.Addr().String()
+					return probe, nil
+				},
+			})
+		}()
+
+		var address string
+		select {
+		case address = <-probe.addresses:
+		case err := <-runDone:
+			t.Fatalf("server stopped before worker construction: %v", err)
+		case <-time.After(5 * time.Minute):
+			t.Fatal("server did not reach worker construction")
+		}
+		select {
+		case <-probe.started:
+		case err := <-runDone:
+			t.Fatalf("server stopped before worker start: %v", err)
+		case <-time.After(time.Minute):
+			t.Fatal("runtime worker did not start")
+		}
+
+		requestDone := make(chan error, 1)
+		go func() {
+			var lastErr error
+			deadline := time.Now().Add(time.Minute)
+			for time.Now().Before(deadline) {
+				resp, err := http.Get("http://" + address + "/__lifecycle")
+				if err == nil {
+					if resp != nil {
+						_ = resp.Body.Close()
+					}
+					requestDone <- nil
+					return
+				}
+				lastErr = err
+				select {
+				case <-requestEntered:
+					requestDone <- err
+					return
+				default:
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			requestDone <- fmt.Errorf("lifecycle request failed: %w", lastErr)
+		}()
+		select {
+		case <-requestEntered:
+		case err := <-requestDone:
+			t.Fatalf("lifecycle request did not enter handler: %v", err)
+		case <-time.After(time.Minute):
+			t.Fatal("lifecycle request did not enter handler")
+		}
+
+		cancel()
+		select {
+		case err := <-runDone:
+			t.Fatalf("server returned before active request drained: %v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+		select {
+		case <-probe.canceled:
+			t.Fatal("runtime workers canceled before active request drained")
+		case <-time.After(50 * time.Millisecond):
+		}
+		releaseRequest()
+		select {
+		case <-probe.canceled:
+		case err := <-runDone:
+			t.Fatalf("server returned before runtime worker cancellation was observed: %v", err)
+		case <-time.After(time.Minute):
+			t.Fatal("runtime worker cancellation was not observed")
+		}
+		select {
+		case err := <-runDone:
+			t.Fatalf("server returned before runtime worker exit: %v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+		probe.release()
+		require.NoError(t, <-runDone)
+		require.NoError(t, <-requestDone)
+		require.Equal(t, int32(1), probe.starts.Load())
+	})
+}
+
+func TestServerLifecycleRejectsOccupiedListenerBeforeWorkers(t *testing.T) {
+	withLifecyclePostgres(t, func(t *testing.T) {
+		occupied, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		defer occupied.Close()
+		configureLifecycleEnvironment(t, occupied.Addr().String())
+
+		var buildCalls atomic.Int32
+		err = RunFromEnvironment(context.Background(), RuntimeOptions{
+			DisableControlPortal: true,
+			BuildWorker: func(context.Context, RuntimeContext) (RuntimeWorker, error) {
+				buildCalls.Add(1)
+				return nil, nil
+			},
+		})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "bind server listener")
+		require.Equal(t, int32(0), buildCalls.Load())
+	})
+}
+
+func TestServerLifecycleForcesListenerCloseAfterCancellation(t *testing.T) {
+	withLifecyclePostgres(t, func(t *testing.T) {
+		configureLifecycleEnvironment(t, "127.0.0.1:0")
+		requestEntered := make(chan struct{})
+		requestRelease := make(chan struct{})
+		var requestReleaseOnce sync.Once
+		releaseRequest := func() { requestReleaseOnce.Do(func() { close(requestRelease) }) }
+		defer releaseRequest()
+
+		processCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		addressCh := make(chan string, 1)
+		runDone := make(chan error, 1)
+		go func() {
+			runDone <- RunFromEnvironment(processCtx, RuntimeOptions{
+				DisableControlPortal: true,
+				RegisterRoutes: func(runtime RuntimeContext) error {
+					runtime.Echo.GET("/__lifecycle-force", func(c echo.Context) error {
+						close(requestEntered)
+						<-requestRelease
+						return c.NoContent(http.StatusNoContent)
+					})
+					return nil
+				},
+				BuildWorker: func(_ context.Context, runtime RuntimeContext) (RuntimeWorker, error) {
+					addressCh <- runtime.Echo.Listener.Addr().String()
+					return nil, nil
+				},
+			})
+		}()
+
+		var address string
+		select {
+		case address = <-addressCh:
+		case err := <-runDone:
+			t.Fatalf("server stopped before listener start: %v", err)
+		case <-time.After(5 * time.Minute):
+			t.Fatal("server did not reach listener start")
+		}
+		requestDone := make(chan error, 1)
+		go func() {
+			var lastErr error
+			deadline := time.Now().Add(time.Minute)
+			for time.Now().Before(deadline) {
+				resp, err := http.Get("http://" + address + "/__lifecycle-force")
+				if err == nil {
+					if resp != nil {
+						_ = resp.Body.Close()
+					}
+					requestDone <- nil
+					return
+				}
+				lastErr = err
+				select {
+				case <-requestEntered:
+					requestDone <- err
+					return
+				default:
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			requestDone <- fmt.Errorf("forced-close request failed: %w", lastErr)
+		}()
+		select {
+		case <-requestEntered:
+		case err := <-requestDone:
+			t.Fatalf("forced-close request did not enter handler: %v", err)
+		case <-time.After(time.Minute):
+			t.Fatal("forced-close request did not enter handler")
+		}
+
+		startedAt := time.Now()
+		cancel()
+		select {
+		case err := <-runDone:
+			require.GreaterOrEqual(t, time.Since(startedAt), listenerShutdownTimeout/2)
+			require.ErrorIs(t, err, context.DeadlineExceeded)
+		case <-time.After(listenerShutdownTimeout + 5*time.Second):
+			t.Fatal("server did not force-close the listener after the graceful timeout")
+		}
+		select {
+		case requestErr := <-requestDone:
+			require.Error(t, requestErr)
+		case <-time.After(time.Second):
+			t.Fatal("forced-close request was not interrupted by listener close")
+		}
+		releaseRequest()
+	})
+}
+
+func TestRunActiveServerCanceledBeforeWorkersDoesNotBuildRuntimeWorker(t *testing.T) {
+	withLifecyclePostgres(t, func(t *testing.T) {
+		configureLifecycleEnvironment(t, "127.0.0.1:0")
+		cfg, err := config.Load()
+		require.NoError(t, err)
+
+		startupCtx, startupCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer startupCancel()
+		pgDB, err := storagepostgres.OpenWithClient(startupCtx, &cfg)
+		require.NoError(t, err)
+		defer pgDB.Close()
+		require.NoError(t, migrationapp.RunUp(startupCtx, pgDB.GetDB(), 5*time.Minute, slog.Default()))
+
+		rl := storagepostgres.NewRLS()
+		authority, err := ClassifyAuthority(startupCtx, repository.NewAuthorityRepository(pgDB.GetDB(), rl))
+		require.NoError(t, err)
+		logger := observability.New(slog.LevelError)
+		processCtx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		var buildCalls atomic.Int32
+		err = RunActiveServer(processCtx, startupCtx, cfg, pgDB, logger, slog.LevelError, authority, RuntimeOptions{
+			DisableControlPortal: true,
+			BuildWorker: func(context.Context, RuntimeContext) (RuntimeWorker, error) {
+				buildCalls.Add(1)
+				return nil, nil
+			},
+		})
+		require.ErrorIs(t, err, context.Canceled)
+		require.Equal(t, int32(0), buildCalls.Load())
+	})
+}
+
+func TestServerLifecycleCancelsPreHandoffRuntimeWorkerBeforeRun(t *testing.T) {
+	withLifecyclePostgres(t, func(t *testing.T) {
+		configureLifecycleEnvironment(t, "127.0.0.1:0")
+		worker := newStartupBlockingWorker()
+		workerContext := make(chan context.Context, 1)
+
+		processCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		runDone := make(chan error, 1)
+		go func() {
+			runDone <- RunFromEnvironment(processCtx, RuntimeOptions{
+				DisableControlPortal: true,
+				BuildWorker: func(ctx context.Context, _ RuntimeContext) (RuntimeWorker, error) {
+					workerContext <- ctx
+					return worker, nil
+				},
+			})
+		}()
+
+		var captured context.Context
+		select {
+		case captured = <-workerContext:
+		case err := <-runDone:
+			t.Fatalf("server stopped before runtime worker construction: %v", err)
+		case <-time.After(5 * time.Minute):
+			t.Fatal("runtime worker was not constructed")
+		}
+		select {
+		case <-worker.nameEntered:
+		case err := <-runDone:
+			t.Fatalf("server stopped before runtime worker naming: %v", err)
+		case <-time.After(time.Minute):
+			t.Fatal("runtime worker name was not requested")
+		}
+
+		cancel()
+		select {
+		case <-captured.Done():
+		case <-time.After(time.Second):
+			t.Fatal("pre-handoff runtime worker context was not canceled")
+		}
+		close(worker.releaseName)
+		select {
+		case err := <-runDone:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(time.Minute):
+			t.Fatal("server did not unwind canceled startup")
+		}
+		select {
+		case <-worker.runStarted:
+			t.Fatal("runtime worker ran after pre-handoff cancellation")
+		default:
+		}
+	})
+}
+
+type lifecycleProbeWorker struct {
+	addresses   chan string
+	started     chan struct{}
+	canceled    chan struct{}
+	releaseCh   chan struct{}
+	releaseOnce sync.Once
+	starts      atomic.Int32
+}
+
+type startupBlockingWorker struct {
+	nameEntered chan struct{}
+	releaseName chan struct{}
+	runStarted  chan struct{}
+}
+
+func newStartupBlockingWorker() *startupBlockingWorker {
+	return &startupBlockingWorker{
+		nameEntered: make(chan struct{}),
+		releaseName: make(chan struct{}),
+		runStarted:  make(chan struct{}),
+	}
+}
+
+func (w *startupBlockingWorker) Name() string {
+	close(w.nameEntered)
+	<-w.releaseName
+	return "startup blocking worker"
+}
+
+func (w *startupBlockingWorker) Run(context.Context) error {
+	close(w.runStarted)
+	return nil
+}
+
+func newLifecycleProbeWorker() *lifecycleProbeWorker {
+	return &lifecycleProbeWorker{
+		addresses: make(chan string, 1),
+		started:   make(chan struct{}),
+		canceled:  make(chan struct{}),
+		releaseCh: make(chan struct{}),
+	}
+}
+
+func (w *lifecycleProbeWorker) Name() string { return "lifecycle probe" }
+
+func (w *lifecycleProbeWorker) Run(ctx context.Context) error {
+	if w.starts.Add(1) == 1 {
+		close(w.started)
+	}
+	<-ctx.Done()
+	close(w.canceled)
+	<-w.releaseCh
+	return nil
+}
+
+func (w *lifecycleProbeWorker) release() {
+	w.releaseOnce.Do(func() { close(w.releaseCh) })
+}
+
+func withLifecyclePostgres(t *testing.T, fn func(*testing.T)) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	containerOptions := []testcontainers.ContainerCustomizer{
+		testcontainerspostgres.WithDatabase("densemem"),
+		testcontainerspostgres.WithUsername("densemem"),
+		testcontainerspostgres.WithPassword("densemem"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(30 * time.Second),
+		),
+	}
+	if networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK")); networkName != "" {
+		containerOptions = append(containerOptions, tcnetwork.WithNetworkName([]string{"postgres"}, networkName))
+	}
+	container, err := testcontainerspostgres.Run(
+		ctx,
+		lifecyclePostgresImage,
+		containerOptions...,
+	)
+	if err != nil {
+		if os.Getenv("DENSE_MEM_REQUIRE_POSTGRES_TESTS") == "1" {
+			t.Fatalf("Postgres is required for this test run: %v", err)
+		}
+		t.Skipf("Postgres not available: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := container.Terminate(context.Background()); err != nil {
+			t.Logf("terminate lifecycle postgres container: %v", err)
+		}
+	})
+	dsn, err := lifecyclePostgresDSN(ctx, container)
+	require.NoError(t, err)
+	t.Setenv("POSTGRES_DSN", dsn)
+	fn(t)
+}
+
+func lifecyclePostgresDSN(ctx context.Context, container *testcontainerspostgres.PostgresContainer) (string, error) {
+	if strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK")) == "" {
+		return container.ConnectionString(ctx, "sslmode=disable")
+	}
+	connectionURL := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword("densemem", "densemem"),
+		Host:   "postgres:5432",
+		Path:   "/densemem",
+	}
+	query := connectionURL.Query()
+	query.Set("sslmode", "disable")
+	connectionURL.RawQuery = query.Encode()
+	return connectionURL.String(), nil
+}
+
+func configureLifecycleEnvironment(t *testing.T, httpAddr string) {
+	t.Helper()
+	t.Setenv("HTTP_ADDR", httpAddr)
+	t.Setenv("CONTROL_HTTP_ADDR", "127.0.0.1:0")
+	t.Setenv("CONTROL_PORTAL_TOKEN", "lifecycle-test-control-token")
+	t.Setenv("POSTGRES_READ_DSN", "")
+	t.Setenv("REDIS_ADDR", "")
+	t.Setenv("REDIS_PASSWORD", "")
+	t.Setenv("DISTRIBUTED_COORDINATION_REQUIRED", "false")
+	t.Setenv("AI_API_URL", "http://127.0.0.1:1/v1")
+	t.Setenv("AI_API_KEY", "lifecycle-test-key")
+	t.Setenv("AI_API_EMBEDDING_MODEL", "lifecycle-test-embedding")
+	t.Setenv("AI_API_EMBEDDING_DIMENSIONS", "3")
+	t.Setenv("AI_API_EMBEDDING_TIMEOUT_SECONDS", "1")
+	t.Setenv("AI_VERIFIER_API_URL", "http://127.0.0.1:1/v1")
+	t.Setenv("AI_VERIFIER_API_KEY", "lifecycle-test-key")
+	t.Setenv("AI_VERIFIER_MODEL", "lifecycle-test-verifier")
+	t.Setenv("AI_VERIFIER_TIMEOUT_SECONDS", "1")
+	t.Setenv("AI_VERIFIER_DISABLE_TEMPERATURE", "true")
+	t.Setenv("TELEMETRY_ENABLED", "false")
+	t.Setenv("LOG_LEVEL", "error")
+	t.Setenv("MCP_TRANSPORT", "sdk")
+	t.Setenv("APP_TIMEZONE", "UTC")
+}

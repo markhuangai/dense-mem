@@ -7,14 +7,6 @@
       "issue": 377
     },
     {
-      "path": "cmd/internal/serverapp/conflict_review_worker.go",
-      "issue": 377
-    },
-    {
-      "path": "cmd/internal/serverapp/conflict_review_worker_test.go",
-      "issue": 377
-    },
-    {
       "path": "internal/repository/evidence_conflict_conflict_integration.e2e",
       "issue": 377
     },
@@ -119,16 +111,7 @@
       "reason": "The legacy repository ConflictStore entry point forwards to the native Conflict PostgreSQL adapter for the named composition consumers until #382 removes the final compatibility facades."
     }
   ],
-  "workers": [
-    {
-      "path": "cmd/internal/serverapp/conflict_review_worker.go",
-      "function": "startConflictReviewWorkers",
-      "kind": "goroutine",
-      "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
-    }
-  ],
+  "workers": [],
   "compatibility_bridges": [
     {
       "source_path": "internal/repository/conflict_owner_compat.go",

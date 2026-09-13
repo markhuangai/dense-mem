@@ -2,7 +2,8 @@ package serverapp
 
 import (
 	"context"
-	"log"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"time"
@@ -17,62 +18,80 @@ import (
 const DefaultStartupTimeout = 5 * time.Minute
 
 // RunFromEnvironment performs the common release bootstrap and starts the
-// active server. RuntimeOptions is the only supported composition seam; the
-// release command passes zero options and therefore cannot select a test slice.
-func RunFromEnvironment(options RuntimeOptions) {
+// active server. The command owns process cancellation; this function owns
+// bounded startup and database cleanup.
+func RunFromEnvironment(processCtx context.Context, options RuntimeOptions) error {
+	if processCtx == nil {
+		processCtx = context.Background()
+	}
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatal("failed to load config")
+		return fmt.Errorf("load config: %w", err)
 	}
-	if err := cfg.ValidateServerStartup(); err != nil {
-		log.Fatal("invalid startup config")
+	validateStartup := options.ValidateStartup
+	if validateStartup == nil {
+		validateStartup = func(cfg *config.Config) error { return cfg.ValidateServerStartup() }
+	}
+	if err := validateStartup(&cfg); err != nil {
+		return fmt.Errorf("validate startup config: %w", err)
 	}
 
 	level, err := observability.ParseLevel(os.Getenv("LOG_LEVEL"))
 	if err != nil {
-		log.Fatal("invalid log level")
+		return fmt.Errorf("parse log level: %w", err)
 	}
 	logger := observability.New(level)
 	slog.SetDefault(logger.Slog())
 
-	preflightCtx, preflightCancel := context.WithTimeout(context.Background(), DefaultStartupTimeout)
-
-	pgDB, err := postgres.OpenWithClient(preflightCtx, &cfg)
+	startupCtx, startupCancel := context.WithTimeout(processCtx, DefaultStartupTimeout)
+	defer startupCancel()
+	pgDB, err := postgres.OpenWithClient(startupCtx, &cfg)
 	if err != nil {
-		log.Fatal("failed to connect to postgres")
+		return fmt.Errorf("connect to postgres: %w", err)
 	}
-	defer pgDB.Close()
-	if err := postgres.ValidateSinglePrimaryTopology(preflightCtx, pgDB.GetDB()); err != nil {
-		log.Fatal("unsupported postgres topology")
+	closePostgres := true
+	defer func() {
+		if closePostgres {
+			_ = pgDB.Close()
+		}
+	}()
+	if err := postgres.ValidateSinglePrimaryTopology(startupCtx, pgDB.GetDB()); err != nil {
+		return fmt.Errorf("validate postgres topology: %w", err)
 	}
-	preflightCancel()
 
 	migrationTimeout := time.Duration(cfg.GetPostgresMigrationTimeoutSeconds()) * time.Second
-	if err := migrationapp.RunUp(context.Background(), pgDB.GetDB(), migrationTimeout, logger.Slog()); err != nil {
-		log.Fatal("failed to run postgres migrations")
+	migrationCtx, migrationCancel := context.WithTimeout(processCtx, migrationTimeout)
+	if err := migrationapp.RunUp(migrationCtx, pgDB.GetDB(), migrationTimeout, logger.Slog()); err != nil {
+		migrationCancel()
+		return fmt.Errorf("run postgres migrations: %w", err)
 	}
+	migrationCancel()
+	postMigrationCtx, postMigrationCancel := context.WithTimeout(processCtx, DefaultStartupTimeout)
+	defer postMigrationCancel()
 	sqlDB, err := pgDB.GetDB().DB()
 	if err != nil {
-		log.Fatal("failed to access postgres sql client")
+		return fmt.Errorf("access postgres sql client: %w", err)
 	}
-	migrationStateCtx, migrationStateCancel := context.WithTimeout(context.Background(), DefaultStartupTimeout)
-	if err := postgres.ValidateStartupMigrationState(migrationStateCtx, sqlDB, postgres.MigrationsDir()); err != nil {
-		migrationStateCancel()
-		log.Fatal("postgres migration state validation failed")
+	if err := postgres.ValidateStartupMigrationState(postMigrationCtx, sqlDB, postgres.MigrationsDir()); err != nil {
+		return fmt.Errorf("validate postgres migration state: %w", err)
 	}
-	migrationStateCancel()
-
-	postMigrationCtx, postMigrationCancel := context.WithTimeout(context.Background(), DefaultStartupTimeout)
-	defer postMigrationCancel()
 	if err := postgres.CheckPGVectorExtension(postMigrationCtx, pgDB.GetDB()); err != nil {
-		log.Fatal("pgvector extension check failed")
+		return fmt.Errorf("check pgvector extension: %w", err)
 	}
 
 	rlsHelper := postgres.NewRLS()
 	authorityRepo := repository.NewAuthorityRepository(pgDB.GetDB(), rlsHelper)
 	authority, err := ClassifyAuthority(postMigrationCtx, authorityRepo)
 	if err != nil {
-		log.Fatal("authority bootstrap failed")
+		return fmt.Errorf("bootstrap authority: %w", err)
 	}
-	RunActiveServer(postMigrationCtx, cfg, pgDB, logger, level, authority, options)
+	if err := RunActiveServer(processCtx, postMigrationCtx, cfg, pgDB, logger, level, authority, options); err != nil {
+		if errors.Is(err, ErrRuntimeShutdownTimeout) {
+			// A live worker may still be using PostgreSQL. Leave the adapter open
+			// for the terminating process instead of closing it underneath work.
+			closePostgres = false
+		}
+		return fmt.Errorf("active server runtime: %w", err)
+	}
+	return nil
 }

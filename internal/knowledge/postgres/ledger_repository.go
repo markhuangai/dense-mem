@@ -41,6 +41,11 @@ type Store struct {
 
 	rememberIdempotencyLockMu sync.Mutex
 	rememberIdempotencyLocks  map[string]*rememberIdempotencyLockEntry
+
+	rememberDiagnosticLifecycleMu sync.Mutex
+	rememberDiagnosticCancel      context.CancelFunc
+	rememberDiagnosticDone        chan struct{}
+	rememberDiagnosticPurgeFn     func(context.Context) (int, error)
 }
 
 var _ LedgerRepository = (*Store)(nil)

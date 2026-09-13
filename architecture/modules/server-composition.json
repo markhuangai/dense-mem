@@ -2,7 +2,12 @@
   "schema_version": 1,
   "capability": "server-composition",
   "source_ownership": [
+    {"path": "cmd/internal/serverapp/bootstrap.go", "issue": 381},
+    {"path": "cmd/internal/serverapp/lifecycle_runtime.go", "issue": 381},
+    {"path": "cmd/internal/serverapp/lifecycle_runtime_test.go", "issue": 381},
+    {"path": "cmd/internal/serverapp/lifecycle_runtime_integration.e2e", "issue": 381},
     {"path": "cmd/internal/serverapp/application_composition.go", "issue": 381},
+    {"path": "cmd/internal/serverapp/runtime_options.go", "issue": 381},
     {"path": "cmd/internal/serverapp/server.go", "issue": 381},
     {"path": "cmd/server/main.go", "issue": 381}
   ],
@@ -27,6 +32,46 @@
   "exceptions": [],
   "workers": [
     {
+      "path": "cmd/internal/serverapp/lifecycle_runtime.go",
+      "function": "start",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "cmd/internal/serverapp/lifecycle_runtime.go",
+      "function": "serveEchoServer",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "cmd/internal/serverapp/lifecycle_runtime.go",
+      "function": "serveEchoServer",
+      "kind": "start",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "cmd/internal/serverapp/lifecycle_runtime.go",
+      "function": "shutdownListeners",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "cmd/internal/serverapp/server.go",
+      "function": "RunActiveServer",
+      "kind": "run",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
       "path": "cmd/internal/serverapp/server.go",
       "function": "RunActiveServer",
       "kind": "start",
@@ -53,14 +98,6 @@
     {
       "path": "cmd/internal/serverapp/server.go",
       "function": "RunActiveServer",
-      "kind": "goroutine",
-      "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
-    },
-    {
-      "path": "cmd/internal/serverapp/server.go",
-      "function": "RunActiveServer",
       "kind": "start",
       "ordinal": 4,
       "role": "worker",
@@ -77,14 +114,6 @@
     {
       "path": "cmd/internal/serverapp/server.go",
       "function": "RunActiveServer",
-      "kind": "goroutine",
-      "ordinal": 2,
-      "role": "worker",
-      "lifecycle_issue": 381
-    },
-    {
-      "path": "cmd/internal/serverapp/server.go",
-      "function": "RunActiveServer",
       "kind": "start",
       "ordinal": 6,
       "role": "worker",
@@ -93,71 +122,7 @@
     {
       "path": "cmd/internal/serverapp/server.go",
       "function": "RunActiveServer",
-      "kind": "goroutine",
-      "ordinal": 3,
-      "role": "worker",
-      "lifecycle_issue": 381
-    },
-    {
-      "path": "cmd/internal/serverapp/server.go",
-      "function": "RunActiveServer",
       "kind": "start",
-      "ordinal": 7,
-      "role": "worker",
-      "lifecycle_issue": 381
-    },
-    {
-      "path": "cmd/internal/serverapp/server.go",
-      "function": "RunActiveServer",
-      "kind": "start",
-      "ordinal": 8,
-      "role": "worker",
-      "lifecycle_issue": 381
-    },
-    {
-      "path": "cmd/internal/serverapp/server.go",
-      "function": "RunActiveServer",
-      "kind": "start",
-      "ordinal": 9,
-      "role": "worker",
-      "lifecycle_issue": 381
-    },
-    {
-      "path": "cmd/internal/serverapp/server.go",
-      "function": "RunActiveServer",
-      "kind": "goroutine",
-      "ordinal": 4,
-      "role": "worker",
-      "lifecycle_issue": 381
-    },
-    {
-      "path": "cmd/internal/serverapp/server.go",
-      "function": "RunActiveServer",
-      "kind": "start",
-      "ordinal": 10,
-      "role": "worker",
-      "lifecycle_issue": 381
-    },
-    {
-      "path": "cmd/internal/serverapp/server.go",
-      "function": "RunActiveServer",
-      "kind": "goroutine",
-      "ordinal": 5,
-      "role": "worker",
-      "lifecycle_issue": 381
-    },
-    {
-      "path": "cmd/internal/serverapp/server.go",
-      "function": "RunActiveServer",
-      "kind": "goroutine",
-      "ordinal": 6,
-      "role": "worker",
-      "lifecycle_issue": 381
-    },
-    {
-      "path": "cmd/internal/serverapp/server.go",
-      "function": "RunActiveServer",
-      "kind": "goroutine",
       "ordinal": 7,
       "role": "worker",
       "lifecycle_issue": 381
