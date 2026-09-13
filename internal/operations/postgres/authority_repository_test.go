@@ -226,7 +226,18 @@ func TestFreshAuthorityApplicationTablesExcludeRetiredCleanupTables(t *testing.T
 	require.Contains(t, freshAuthorityApplicationTables, "teams")
 	require.NotContains(t, freshAuthorityApplicationTables, "team_profiles")
 	require.Contains(t, freshAuthorityApplicationTables, "credentials")
-	require.Contains(t, freshAuthorityApplicationTables, "v2_migration_runs")
+	for _, table := range []string{
+		"v2_migration_runs",
+		"v2_migration_corpus_items",
+		"v2_migration_source_maps",
+		"v2_migration_checkpoints",
+		"v2_migration_errors",
+		"v2_migration_exclusions",
+		"v2_migration_gate_results",
+		"v2_migration_operator_actions",
+	} {
+		require.NotContains(t, freshAuthorityApplicationTables, table)
+	}
 }
 
 type authorityScannerStub struct {

@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "capability": "migration-control-detachment",
+  "cases": [
+    {
+      "id": "postgres/TestMigrationControlDetachmentPreservesRetainedTablesAndMarker",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlDetachmentPreservesRetainedTablesAndMarker$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_detachment_integration.e2e"
+    },
+    {
+      "id": "postgres/TestMigrationControlDetachmentRejectsUnexpectedFunctionAndRollsBack",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlDetachmentRejectsUnexpectedFunctionAndRollsBack$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_detachment_integration.e2e"
+    },
+    {
+      "id": "postgres/TestMigrationControlDetachmentRejectsUnexpectedDependenciesAndRollsBack",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlDetachmentRejectsUnexpectedDependenciesAndRollsBack$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_detachment_integration.e2e"
+    },
+    {
+      "id": "postgres/TestMigrationControlDetachmentLockFailureRollsBackAndCanRetry",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlDetachmentLockFailureRollsBackAndCanRetry$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_detachment_integration.e2e"
+    },
+    {
+      "id": "repository/TestAuthorityRepositoryRetainsMigrationAuditReadOnly",
+      "package": "./internal/repository",
+      "run": "^TestAuthorityRepositoryRetainsMigrationAuditReadOnly$",
+      "phase": "precheck",
+      "source": "internal/repository/migration_control_retirement_integration.e2e"
+    }
+  ]
+}

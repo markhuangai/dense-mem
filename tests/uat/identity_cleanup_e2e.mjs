@@ -74,6 +74,65 @@ const catalog = postgresRow(`
 `);
 if (catalog.some((value) => value !== "true" && value !== "t")) throw new Error(`identity cleanup catalog is incomplete: ${catalog}`);
 
+const migrationDetachment = postgresRow(`
+  SELECT concat(
+    NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'knowledge_ingests' AND column_name = 'migration_run_id'
+    ), '|',
+    NOT EXISTS (
+      SELECT 1 FROM pg_class AS index_row
+      JOIN pg_namespace AS namespace_row ON namespace_row.oid = index_row.relnamespace
+      WHERE namespace_row.nspname = 'public' AND index_row.relname = 'knowledge_ingests_migration_run_idx'
+    ), '|',
+    NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname IN (
+        'knowledge_ingests_migration_run_id_fkey',
+        'v2_compatibility_markers_run_id_fkey',
+        'v2_migration_corpus_items_team_id_fkey',
+        'v2_migration_corpus_items_team_id_owner_profile_id_fkey',
+        'v2_migration_corpus_items_team_id_ingest_id_fkey'
+      )
+    ), '|',
+    NOT EXISTS (
+      SELECT 1
+      FROM pg_constraint AS constraint_row
+      JOIN pg_class AS source_table ON source_table.oid = constraint_row.conrelid
+      JOIN pg_namespace AS source_namespace ON source_namespace.oid = source_table.relnamespace
+      JOIN pg_class AS target_table ON target_table.oid = constraint_row.confrelid
+      JOIN pg_namespace AS target_namespace ON target_namespace.oid = target_table.relnamespace
+      WHERE constraint_row.contype = 'f'
+        AND source_namespace.nspname = 'public'
+        AND target_namespace.nspname = 'public'
+        AND ((source_table.relname = ANY (ARRAY[
+          'v2_migration_runs',
+          'v2_migration_corpus_items',
+          'v2_migration_source_maps',
+          'v2_migration_checkpoints',
+          'v2_migration_errors',
+          'v2_migration_exclusions',
+          'v2_migration_gate_results',
+          'v2_migration_operator_actions'
+        ])) <> (target_table.relname = ANY (ARRAY[
+          'v2_migration_runs',
+          'v2_migration_corpus_items',
+          'v2_migration_source_maps',
+          'v2_migration_checkpoints',
+          'v2_migration_errors',
+          'v2_migration_exclusions',
+          'v2_migration_gate_results',
+          'v2_migration_operator_actions'
+        ])))
+    ), '|',
+    (SELECT count(*) = 8 FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'v2_migration_%'), '|',
+    EXISTS (SELECT 1 FROM v2_compatibility_markers)
+  );
+`);
+if (migrationDetachment.some((value) => value !== "true" && value !== "t")) {
+  throw new Error(`migration-control detachment catalog is incomplete: ${migrationDetachment}`);
+}
+
 await mcpList(upgradeCredential);
 const upgradeState = postgresRow(`
   SELECT concat(

@@ -37,6 +37,7 @@
     {"path": "internal/operations/usage_metrics_service_test.go", "issue": 371},
     {"path": "internal/repository/authority_repository.go", "issue": 371},
     {"path": "internal/repository/authority_repository_integration.e2e", "issue": 371},
+    {"path": "internal/repository/migration_control_retirement_integration.e2e", "issue": 278},
     {"path": "internal/repository/operation_log_repository.go", "issue": 371},
     {"path": "internal/repository/operations_compat_helpers.go", "issue": 371},
     {"path": "internal/repository/telemetry_repository.go", "issue": 371},

@@ -608,12 +608,7 @@ func (r *PrivateMemoryRepositoryImpl) ExecuteClaim(ctx context.Context, operatio
 		if err := tx.WithContext(ctx).Exec(`SET CONSTRAINTS ALL DEFERRED`).Error; err != nil {
 			return err
 		}
-		counts := make(map[string]int64, len(ordered)+1)
-		externalDeleted, err := deletePrivateMemoryExternalDependenciesTx(ctx, tx, space.ID)
-		if err != nil {
-			return err
-		}
-		counts["v2_migration_corpus_items"] = externalDeleted
+		counts := make(map[string]int64, len(ordered)+2)
 		inboundCrossReferencesDeleted, err := deletePrivateMemoryInboundCrossReferencesTx(ctx, tx, space.ID)
 		if err != nil {
 			return err
@@ -764,38 +759,6 @@ func privateMemoryManifestCountQuery(table string) (string, error) {
 	default:
 		return fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE space_id = $1", quoted), nil
 	}
-}
-
-func deletePrivateMemoryExternalDependenciesTx(ctx context.Context, tx *gorm.DB, spaceID uuid.UUID) (int64, error) {
-	deleted := int64(0)
-	byIngest := tx.WithContext(ctx).Exec(`
-		DELETE FROM v2_migration_corpus_items AS corpus
-		USING knowledge_ingests AS ingest
-		WHERE corpus.team_id = ingest.team_id
-		  AND corpus.ingest_id = ingest.ingest_id
-		  AND ingest.space_id = $1
-	`, spaceID)
-	if byIngest.Error != nil {
-		return 0, fmt.Errorf("delete v2 migration ingest dependency: %w", byIngest.Error)
-	}
-	deleted += byIngest.RowsAffected
-	var remaining int64
-	if err := tx.WithContext(ctx).Raw(`
-		SELECT COUNT(*)
-		FROM v2_migration_corpus_items AS corpus
-		WHERE EXISTS (
-			SELECT 1 FROM knowledge_ingests AS ingest
-			WHERE ingest.team_id = corpus.team_id
-			  AND ingest.ingest_id = corpus.ingest_id
-			  AND ingest.space_id = $1
-		)
-	`, spaceID).Row().Scan(&remaining); err != nil {
-		return 0, fmt.Errorf("verify v2 migration dependencies: %w", err)
-	}
-	if remaining != 0 {
-		return 0, fmt.Errorf("%w: v2_migration_corpus_items retained %d rows", ErrPrivateMemoryManifest, remaining)
-	}
-	return deleted, nil
 }
 
 func deletePrivateMemoryInboundCrossReferencesTx(ctx context.Context, tx *gorm.DB, spaceID uuid.UUID) (int64, error) {

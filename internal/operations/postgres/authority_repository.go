@@ -89,14 +89,6 @@ var freshAuthorityApplicationTables = []string{
 	"dream_evidence_target_attempts",
 	"dream_evidence_target_evaluations",
 	"hypothesis_evidence_derivation_sources",
-	"v2_migration_runs",
-	"v2_migration_corpus_items",
-	"v2_migration_source_maps",
-	"v2_migration_checkpoints",
-	"v2_migration_errors",
-	"v2_migration_exclusions",
-	"v2_migration_gate_results",
-	"v2_migration_operator_actions",
 }
 
 func (r *AuthorityRepository) GetLatestMarker(ctx context.Context) (*domain.CompatibilityMarker, error) {

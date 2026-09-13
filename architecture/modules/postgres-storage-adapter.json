@@ -124,7 +124,8 @@
     {"path": "internal/repository/submission_assessment_commit_repository.go", "issue": 362},
     {"path": "internal/repository/submission_assessment_known_evidence_fence.go", "issue": 362},
     {"path": "internal/repository/remember_diagnostic_hold.go", "issue": 389},
-    {"path": "internal/repository/remember_diagnostic_hold_rollback_integration.e2e", "issue": 389}
+    {"path": "internal/repository/remember_diagnostic_hold_rollback_integration.e2e", "issue": 389},
+    {"path": "internal/storage/postgres/migration_control_detachment_integration.e2e", "issue": 278}
   ],
   "compatibility_bridges": [
     {

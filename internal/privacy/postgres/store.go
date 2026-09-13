@@ -79,15 +79,6 @@ var privateMemoryCatalogExclusions = []string{
 	"private_memory_legal_holds",
 }
 
-var privateMemoryExternalDependencies = map[string]struct {
-	child  string
-	parent string
-}{
-	"v2_migration_corpus_items_team_id_ingest_id_fkey": {
-		child: "v2_migration_corpus_items", parent: "knowledge_ingests",
-	},
-}
-
 type PrivateMemoryErasureRequest = privacycontract.PrivateMemoryErasureRequest
 type PrivateMemoryCredentialRevocationAudit = privacycontract.PrivateMemoryCredentialRevocationAudit
 type PrivateMemoryRetentionRequest = privacycontract.PrivateMemoryRetentionRequest
@@ -228,7 +219,6 @@ func validatePrivateMemoryManifestTx(ctx context.Context, tx *gorm.DB) ([]string
 	edges := make(map[string]map[string]struct{}, len(expected))
 	indegree := make(map[string]int, len(expected))
 	externalDependencies := make([]string, 0)
-	seenExternalDependencies := make(map[string]struct{}, len(privateMemoryExternalDependencies))
 	for _, table := range expected {
 		edges[table] = make(map[string]struct{})
 		indegree[table] = 0
@@ -241,12 +231,7 @@ func validatePrivateMemoryManifestTx(ctx context.Context, tx *gorm.DB) ([]string
 		_, childOwned := manifestSet[fk.child]
 		if !childOwned {
 			if fk.deleteType != "c" {
-				known, ok := privateMemoryExternalDependencies[fk.name]
-				if !ok || known.child != fk.child || known.parent != fk.parent {
-					externalDependencies = append(externalDependencies, fmt.Sprintf("%s->%s(%s)", fk.child, fk.parent, fk.name))
-				} else {
-					seenExternalDependencies[fk.name] = struct{}{}
-				}
+				externalDependencies = append(externalDependencies, fmt.Sprintf("%s->%s(%s)", fk.child, fk.parent, fk.name))
 			}
 			continue
 		}
@@ -273,16 +258,6 @@ func validatePrivateMemoryManifestTx(ctx context.Context, tx *gorm.DB) ([]string
 	}
 	if len(externalDependencies) > 0 {
 		return nil, fmt.Errorf("%w: external dependencies=%v", ErrPrivateMemoryManifest, externalDependencies)
-	}
-	missingExternalDependencies := make([]string, 0)
-	for name := range privateMemoryExternalDependencies {
-		if _, ok := seenExternalDependencies[name]; !ok {
-			missingExternalDependencies = append(missingExternalDependencies, name)
-		}
-	}
-	if len(missingExternalDependencies) > 0 {
-		sort.Strings(missingExternalDependencies)
-		return nil, fmt.Errorf("%w: missing external dependencies=%v", ErrPrivateMemoryManifest, missingExternalDependencies)
 	}
 
 	ready := make([]string, 0, len(expected))

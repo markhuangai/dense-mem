@@ -17,13 +17,6 @@
       "source": "internal/repository/authority_repository_integration.e2e"
     },
     {
-      "id": "repository/TestAuthorityRepositoryRetainsMigrationAuditReadOnly",
-      "package": "./internal/repository",
-      "run": "^TestAuthorityRepositoryRetainsMigrationAuditReadOnly$",
-      "phase": "precheck",
-      "source": "internal/repository/authority_repository_integration.e2e"
-    },
-    {
       "id": "repository/TestReadTelemetryLifecycleIsolatesSystemTeamAndProfileScopes",
       "package": "./internal/repository",
       "run": "^TestReadTelemetryLifecycleIsolatesSystemTeamAndProfileScopes$",
