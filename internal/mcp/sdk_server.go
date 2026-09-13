@@ -12,6 +12,7 @@ import (
 	sdkjsonrpc "github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
@@ -61,11 +62,55 @@ func (s *Server) NewSDKHTTPHandler(jsonResponse bool) http.Handler {
 		PropagateRequestCancellation: true,
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		annotateSDKToolDispatch(req)
 		if s.writeSDKToolLookupError(w, req, jsonResponse) {
 			return
 		}
 		transport.ServeHTTP(w, req)
 	})
+}
+
+type sdkToolDispatchContextKey struct{}
+
+// annotateSDKToolDispatch records whether a syntactically valid tools/call
+// carries a JSON-RPC request id. The SDK invokes handlers for notifications as
+// well, but notifications are not counted as dispatched tool calls.
+func annotateSDKToolDispatch(req *http.Request) {
+	if req == nil || req.Body == nil || req.Method != http.MethodPost {
+		return
+	}
+	if strings.ToLower(strings.TrimSpace(strings.SplitN(req.Header.Get("Content-Type"), ";", 2)[0])) != "application/json" {
+		return
+	}
+	payload, err := io.ReadAll(io.LimitReader(req.Body, 4<<20+1))
+	if err != nil {
+		return
+	}
+	req.Body = io.NopCloser(bytes.NewReader(payload))
+	if len(payload) > 4<<20 {
+		return
+	}
+	var envelope struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Method  string          `json:"method"`
+	}
+	if json.Unmarshal(payload, &envelope) != nil || envelope.JSONRPC != "2.0" || envelope.Method != "tools/call" {
+		return
+	}
+	isRequest := len(envelope.ID) > 0 && sdkRPCIDValid(envelope.ID)
+	ctx := context.WithValue(req.Context(), sdkToolDispatchContextKey{}, isRequest)
+	*req = *req.WithContext(ctx)
+}
+
+func sdkToolDispatchRequested(ctx context.Context) bool {
+	value, ok := ctx.Value(sdkToolDispatchContextKey{}).(bool)
+	if !ok {
+		// Direct handler callers and transports that have already validated the
+		// JSON-RPC request are counted by default.
+		return true
+	}
+	return value
 }
 
 func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Request, jsonResponse bool) bool {
@@ -128,6 +173,8 @@ func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Reques
 		code, message = errCodeToolFailure, "insufficient scope for tool"
 		data = registry.ActionableAuthorizationData(req.Context(), envelope.Params.Name)
 	}
+	domain.RecordMCPToolCall(req.Context())
+	domain.RecordMCPToolFailure(req.Context())
 	response := map[string]any{"jsonrpc": "2.0", "id": nil, "error": map[string]any{"code": code, "message": message, "data": data}}
 	if len(envelope.ID) > 0 {
 		var id any
@@ -261,46 +308,58 @@ func (s *Server) newSDKServer(ctx context.Context) *sdkmcp.Server {
 }
 
 func (s *Server) sdkToolHandler(name string) sdkmcp.ToolHandler {
-	return func(ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
-		var args map[string]any
-		if req != nil && req.Params != nil && len(req.Params.Arguments) > 0 {
-			if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-				data, _ := json.Marshal(registry.ActionableInvalidInputData(ctx, name, "invalid_json", "The tool arguments are not valid JSON.", "Correct the JSON arguments and submit the request again."))
-				return nil, &sdkjsonrpc.Error{Code: errCodeInvalidParams, Message: "invalid params", Data: data}
-			}
+	return func(ctx context.Context, req *sdkmcp.CallToolRequest) (result *sdkmcp.CallToolResult, err error) {
+		if sdkToolDispatchRequested(ctx) {
+			domain.RecordMCPToolCall(ctx)
+			defer func() {
+				if err != nil || result == nil || result.IsError {
+					domain.RecordMCPToolFailure(ctx)
+				}
+			}()
 		}
-		result, rpcErr := s.invokeTool(ctx, name, args)
-		if rpcErr != nil {
-			tool, toolExists := s.registry.Get(name)
-			if rpcErr.Code == errCodeToolFailure && rpcErr.Data != nil && toolExists && s.isOperationalTool(name, tool) {
-				return sdkCallToolErrorResult(rpcErr.Data)
-			}
-			return nil, sdkRPCError(rpcErr)
-		}
-		content, ok := result["content"].([]map[string]any)
-		if !ok || len(content) != 1 {
-			tool, toolExists := s.registry.Get(name)
-			if toolExists && s.isOperationalTool(name, tool) {
-				return sdkCallToolErrorResult(registry.ActionableToolUnavailableData(ctx, name))
-			}
-			return nil, &sdkjsonrpc.Error{Code: errCodeToolFailure, Message: "tool result serialization failed"}
-		}
-		text, ok := content[0]["text"].(string)
-		if !ok {
-			tool, toolExists := s.registry.Get(name)
-			if toolExists && s.isOperationalTool(name, tool) {
-				return sdkCallToolErrorResult(registry.ActionableToolUnavailableData(ctx, name))
-			}
-			return nil, &sdkjsonrpc.Error{Code: errCodeToolFailure, Message: "tool result serialization failed"}
-		}
-		structuredContent := result["structuredContent"]
-		isError, _ := result["isError"].(bool)
-		return &sdkmcp.CallToolResult{
-			Content:           []sdkmcp.Content{&sdkmcp.TextContent{Text: text}},
-			StructuredContent: structuredContent,
-			IsError:           isError,
-		}, nil
+		return s.invokeSDKTool(name, ctx, req)
 	}
+}
+
+func (s *Server) invokeSDKTool(name string, ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+	var args map[string]any
+	if req != nil && req.Params != nil && len(req.Params.Arguments) > 0 {
+		if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+			data, _ := json.Marshal(registry.ActionableInvalidInputData(ctx, name, "invalid_json", "The tool arguments are not valid JSON.", "Correct the JSON arguments and submit the request again."))
+			return nil, &sdkjsonrpc.Error{Code: errCodeInvalidParams, Message: "invalid params", Data: data}
+		}
+	}
+	result, rpcErr := s.invokeTool(ctx, name, args)
+	if rpcErr != nil {
+		tool, toolExists := s.registry.Get(name)
+		if rpcErr.Code == errCodeToolFailure && rpcErr.Data != nil && toolExists && s.isOperationalTool(name, tool) {
+			return sdkCallToolErrorResult(rpcErr.Data)
+		}
+		return nil, sdkRPCError(rpcErr)
+	}
+	content, ok := result["content"].([]map[string]any)
+	if !ok || len(content) != 1 {
+		tool, toolExists := s.registry.Get(name)
+		if toolExists && s.isOperationalTool(name, tool) {
+			return sdkCallToolErrorResult(registry.ActionableToolUnavailableData(ctx, name))
+		}
+		return nil, &sdkjsonrpc.Error{Code: errCodeToolFailure, Message: "tool result serialization failed"}
+	}
+	text, ok := content[0]["text"].(string)
+	if !ok {
+		tool, toolExists := s.registry.Get(name)
+		if toolExists && s.isOperationalTool(name, tool) {
+			return sdkCallToolErrorResult(registry.ActionableToolUnavailableData(ctx, name))
+		}
+		return nil, &sdkjsonrpc.Error{Code: errCodeToolFailure, Message: "tool result serialization failed"}
+	}
+	structuredContent := result["structuredContent"]
+	isError, _ := result["isError"].(bool)
+	return &sdkmcp.CallToolResult{
+		Content:           []sdkmcp.Content{&sdkmcp.TextContent{Text: text}},
+		StructuredContent: structuredContent,
+		IsError:           isError,
+	}, nil
 }
 
 func (s *Server) isOperationalTool(name string, tool registry.Tool) bool {

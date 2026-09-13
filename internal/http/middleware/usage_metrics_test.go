@@ -98,6 +98,32 @@ func TestUsageMetricsMiddlewareSkipsMissingRecorderOrPrincipal(t *testing.T) {
 	require.Empty(t, recorder.events)
 }
 
+func TestUsageMetricsMiddlewareRecordsMCPOutcomesOncePerRequest(t *testing.T) {
+	recorder := &captureUsageMetricsRecorder{}
+	e := echo.New()
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			teamID, keyID := uuid.New(), uuid.New()
+			principal := &Principal{TeamID: teamID, OwnerID: keyID, CredentialID: testUUIDPtr(keyID)}
+			ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
+	})
+	e.Use(UsageMetricsMiddleware(recorder))
+	e.GET("/mcp", func(c echo.Context) error {
+		domain.RecordMCPToolCall(c.Request().Context())
+		domain.RecordMCPToolFailure(c.Request().Context())
+		return c.NoContent(http.StatusOK)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Len(t, recorder.events, 1)
+	require.Equal(t, int64(1), recorder.events[0].MCPToolCalls)
+	require.Equal(t, int64(1), recorder.events[0].MCPToolFailures)
+}
+
 func TestTelemetryHTTPMiddlewareRecordsRouteTemplate(t *testing.T) {
 	recorder := &captureHTTPMetricsRecorder{}
 	e := echo.New()
@@ -149,7 +175,7 @@ func TestUsageMetricsRecordsUnknownRouteWhenTemplateMissing(t *testing.T) {
 	ctx := context.WithValue(req.Context(), principalContextKey{}, principal)
 	c.SetRequest(req.WithContext(ctx))
 
-	recordUsageMetric(c, recorder, time.Now(), nil)
+	recordUsageMetric(c, recorder, time.Now(), nil, nil)
 
 	require.Len(t, recorder.events, 1)
 	require.Equal(t, "unknown", recorder.events[0].Route)

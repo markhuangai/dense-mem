@@ -18,8 +18,10 @@ func UsageMetricsMiddleware(recorder service.UsageMetricsRecorder) echo.Middlewa
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			start := time.Now()
+			requestContext, mcpMetrics := domain.WithMCPToolMetrics(c.Request().Context())
+			c.SetRequest(c.Request().WithContext(requestContext))
 			err := next(c)
-			recordUsageMetric(c, recorder, start, err)
+			recordUsageMetric(c, recorder, start, err, mcpMetrics)
 			return err
 		}
 	}
@@ -38,7 +40,7 @@ func TelemetryHTTPMiddleware(recorder httpcontract.HTTPMetrics) echo.MiddlewareF
 	}
 }
 
-func recordUsageMetric(c echo.Context, recorder service.UsageMetricsRecorder, start time.Time, err error) {
+func recordUsageMetric(c echo.Context, recorder service.UsageMetricsRecorder, start time.Time, err error, mcpMetrics *domain.MCPToolMetrics) {
 	if recorder == nil {
 		return
 	}
@@ -51,14 +53,17 @@ func recordUsageMetric(c echo.Context, recorder service.UsageMetricsRecorder, st
 	if route == "" {
 		route = "unknown"
 	}
+	mcpCalls, mcpFailures := mcpMetrics.Snapshot()
 	recorder.RecordRequest(context.Background(), domain.UsageMetricEvent{
-		Timestamp: time.Now().UTC(),
-		TeamID:    principal.GetTeamID(),
-		KeyID:     principal.GetOwnerID(),
-		Method:    c.Request().Method,
-		Route:     route,
-		Status:    usageStatus(c, err),
-		Latency:   time.Since(start),
+		Timestamp:       time.Now().UTC(),
+		TeamID:          principal.GetTeamID(),
+		KeyID:           principal.GetOwnerID(),
+		Method:          c.Request().Method,
+		Route:           route,
+		Status:          usageStatus(c, err),
+		Latency:         time.Since(start),
+		MCPToolCalls:    mcpCalls,
+		MCPToolFailures: mcpFailures,
 	})
 }
 

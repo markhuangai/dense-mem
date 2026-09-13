@@ -128,6 +128,20 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     expect(diagnostics.caller_response?.response_body?.includes('"isError":true'), `${label} detail must expose the caller response envelope`);
   }
 
+  const malformedDetail = await controlJSON(controlURL, token, `/control/api/teams/${teamID}/remember-attempts/${diagnosticAttemptIDs.malformed}`);
+  const validationEvent = (malformedDetail.data?.events || []).find((event) => event.metadata?.assessor_validation);
+  const validation = validationEvent?.metadata?.assessor_validation;
+  expect(validation && Array.isArray(validation.turns), "malformed assessor failure must retain bounded validation turns");
+  expect(validation.turns.every((turn) => Array.isArray(turn.fields) && Array.isArray(turn.field_families) && typeof turn.error_count === "number" && typeof turn.truncated === "boolean"), "validation turns must expose normalized fields, families, counts, and truncation");
+  expect(!JSON.stringify(validation).includes("provider_secret") && !JSON.stringify(validation).includes("Diagnostics provider failure"), "validation metadata must exclude provider content");
+
+  stopDisabledTelemetryPrometheus();
+  const usage = await controlJSON(controlURL, token, "/control/api/metrics?window_minutes=60");
+  const totals = usage.data?.system || {};
+  expect(typeof totals.requests === "number" && typeof totals.errors === "number", "usage rollup must retain HTTP request totals");
+  expect(typeof totals.mcp_tool_calls === "number" && totals.mcp_tool_calls > 0, "usage rollup must expose dispatched MCP calls");
+  expect(typeof totals.mcp_tool_failures === "number" && totals.mcp_tool_failures > 0, "usage rollup must expose MCP failures separately");
+
   const repairRows = postgresQuery(`
     SELECT assessor_turns
     FROM remember_attempts
@@ -188,9 +202,19 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   expect(!serverLogs.includes("Diagnostics provider failure") && !serverLogs.includes("diagnostics-persisted-secret") && !serverLogs.includes("dense-mem-e2e-verifier-key"), "diagnostics content and credentials must not reach server logs");
   const fixtureFile = process.env.DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE;
   if (fixtureFile) {
-    await writeFile(fixtureFile, JSON.stringify({ failed_attempt_id: item.attempt_id, diagnostic_id: failedDiagnostics.original_request?.diagnostic_id || "" }), "utf8");
+    await writeFile(fixtureFile, JSON.stringify({
+      failed_attempt_id: item.attempt_id,
+      diagnostic_id: failedDiagnostics.original_request?.diagnostic_id || "",
+      validation_attempt_id: diagnosticAttemptIDs.malformed,
+    }), "utf8");
   }
-  return { mode: name, outcomes: Object.fromEntries(Object.entries(attempts).map(([label, result]) => [label, result?.processing_state])), attempt_id: item.attempt_id, diagnostic_id: failedDiagnostics.original_request?.diagnostic_id || "" };
+  return {
+    mode: name,
+    outcomes: Object.fromEntries(Object.entries(attempts).map(([label, result]) => [label, result?.processing_state])),
+    attempt_id: item.attempt_id,
+    diagnostic_id: failedDiagnostics.original_request?.diagnostic_id || "",
+    validation_attempt_id: diagnosticAttemptIDs.malformed,
+  };
 }
 
 function rememberArguments(label, marker) {
@@ -244,6 +268,14 @@ function composeServerLogs() {
   const result = spawnSync("docker", ["compose", "-p", composeProject, "-f", composeFile, "logs", "--no-color", "server"], { cwd: process.cwd(), encoding: "utf8" });
   if (result.status !== 0) throw new Error("diagnostics server log collection failed");
   return `${result.stdout}\n${result.stderr}`;
+}
+
+function stopDisabledTelemetryPrometheus() {
+  if (process.env.DENSE_MEM_E2E_TELEMETRY_DISABLED !== "1") return;
+  const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
+  const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
+  const result = spawnSync("docker", ["compose", "-p", composeProject, "-f", composeFile, "stop", "prometheus"], { cwd: process.cwd(), encoding: "utf8" });
+  if (result.status !== 0) throw new Error("telemetry-disabled harness could not stop its disposable Prometheus service");
 }
 
 function sqlLiteral(value) {

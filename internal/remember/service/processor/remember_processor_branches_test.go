@@ -331,13 +331,13 @@ func TestRememberProcessingFailureLoggingClassifiesFailureSources(t *testing.T) 
 		commitFailureStage: func(error) string { return "persist" },
 	}
 	input := rememberapp.RememberProcessRequest{TeamID: "team", OwnerProfileID: "owner"}
-	processor.logRememberFailure(input, "attempt", time.Now(), "embedding", "embedding_unavailable", "corr", &rememberEmbeddingPlanFailure{cause: repository.ErrInlineEmbeddingPlanTooLarge})
-	processor.logRememberFailure(input, "attempt", time.Now(), "embedding", "configuration_invalid", "corr", &rememberEmbeddingConfigurationFailure{})
-	processor.logRememberFailure(input, "attempt", time.Now(), "embedding", "embedding_response_invalid", "corr", &rememberEmbeddingProviderFailure{cause: &embeddingcontract.ProviderError{
+	processor.logRememberFailure(input, "attempt", time.Now(), "embedding", "embedding_unavailable", "corr", 0, &rememberEmbeddingPlanFailure{cause: repository.ErrInlineEmbeddingPlanTooLarge})
+	processor.logRememberFailure(input, "attempt", time.Now(), "embedding", "configuration_invalid", "corr", 0, &rememberEmbeddingConfigurationFailure{})
+	processor.logRememberFailure(input, "attempt", time.Now(), "embedding", "embedding_response_invalid", "corr", 0, &rememberEmbeddingProviderFailure{cause: &embeddingcontract.ProviderError{
 		FailureCode: "provider_response_invalid", FailureClass: "provider_action_required", StatusCode: 422,
 	}})
-	processor.logRememberFailure(input, "attempt", time.Now(), "commit", "database_failure", "corr", context.DeadlineExceeded)
-	processor.logRememberFailure(input, "attempt", time.Now(), "assessment", "provider_unavailable", "corr", errors.New("assessor failed"))
+	processor.logRememberFailure(input, "attempt", time.Now(), "commit", "database_failure", "corr", 0, context.DeadlineExceeded)
+	processor.logRememberFailure(input, "attempt", time.Now(), "assessment", "provider_unavailable", "corr", 0, errors.New("assessor failed"))
 	require.Equal(t, []string{
 		"remember_processing_failed", "remember_processing_failed", "remember_processing_failed",
 		"remember_processing_failed", "remember_processing_failed",

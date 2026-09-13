@@ -112,6 +112,8 @@ test("control panel shows operational metrics against compose", async ({ page })
 
   await expect(page.getByRole("heading", { name: "Usage Rollup" })).toBeVisible();
   await expect(page.getByLabel("Request metrics")).toBeVisible();
+  await expect(page.getByText("MCP tool calls")).toBeVisible();
+  await expect(page.getByText("MCP tool failures")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Dependencies" })).toBeVisible();
   await expect(page.getByText("postgres", { exact: true })).toBeVisible();
   await expect(page.getByText("redis", { exact: true })).toBeVisible();
@@ -120,6 +122,26 @@ test("control panel shows operational metrics against compose", async ({ page })
   await page.getByLabel("Team", { exact: true }).selectOption(seedTeamId);
   await expect(page.getByRole("heading", { name: "Usage Rollup" })).toBeVisible();
   await expectNoShellOverlap(page);
+});
+
+test("control panel marks MCP rollups unavailable for a legacy metrics response", async ({ page }) => {
+  await page.route("**/control/api/metrics*", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json() as { data?: { system?: Record<string, unknown>; teams?: Array<Record<string, unknown>>; keys?: Array<Record<string, unknown>>; routes?: Array<Record<string, unknown>> } };
+    for (const total of [body.data?.system, ...(body.data?.teams ?? []), ...(body.data?.keys ?? []), ...(body.data?.routes ?? [])]) {
+      if (total) {
+        delete total.mcp_tool_calls;
+        delete total.mcp_tool_failures;
+      }
+    }
+    await route.fulfill({ response, body: JSON.stringify(body) });
+  });
+
+  await openControlPanel(page);
+  await page.getByRole("button", { name: /^Metrics$/ }).click();
+  await expect(page.getByRole("heading", { name: "Usage Rollup" })).toBeVisible();
+  await expect(page.getByText("MCP tool calls")).toBeVisible();
+  await expect(page.getByText("Unavailable").first()).toBeVisible();
 });
 
 test("control overview contains every Top Signals diagnostic", async ({ page }) => {

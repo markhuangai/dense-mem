@@ -16,6 +16,7 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
@@ -406,6 +407,68 @@ func TestSDKToolHandlerReturnsStructuredToolErrors(t *testing.T) {
 	require.Len(t, got.Content, 1)
 	text := got.Content[0].(*sdkmcp.TextContent).Text
 	require.JSONEq(t, `{"processing_state":"failed","errors":[{"code":"embedding_unavailable"}]}`, text)
+}
+
+func TestSDKToolHandlerCountsEachToolOutcomeOnce(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	require.NoError(t, reg.Register(registry.Tool{Name: "good", Invoke: func(context.Context, string, map[string]any) (map[string]any, error) {
+		return map[string]any{"content": []map[string]any{{"text": "ok"}}}, nil
+	}}))
+	require.NoError(t, reg.Register(registry.Tool{Name: "failed", Invoke: func(context.Context, string, map[string]any) (map[string]any, error) {
+		return nil, registry.NewToolResultError(map[string]any{"code": "failed"})
+	}}))
+	server := NewServer(reg, "profile-a", logger)
+
+	ctx, metrics := domain.WithMCPToolMetrics(context.Background())
+	result, err := server.sdkToolHandler("good")(ctx, nil)
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	calls, failures := metrics.Snapshot()
+	require.Equal(t, int64(1), calls)
+	require.Zero(t, failures)
+
+	ctx, metrics = domain.WithMCPToolMetrics(context.Background())
+	result, err = server.sdkToolHandler("failed")(ctx, nil)
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	calls, failures = metrics.Snapshot()
+	require.Equal(t, int64(1), calls)
+	require.Equal(t, int64(1), failures)
+}
+
+func TestSDKToolHandlerDoesNotCountToolNotifications(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	require.NoError(t, reg.Register(registry.Tool{Name: "good", Invoke: func(context.Context, string, map[string]any) (map[string]any, error) {
+		return map[string]any{"content": []map[string]any{{"text": "ok"}}}, nil
+	}}))
+	server := NewServer(reg, "profile-a", logger)
+	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"good","arguments":{}}}`))
+	request.Header.Set("Content-Type", "application/json")
+	annotateSDKToolDispatch(request)
+	ctx, metrics := domain.WithMCPToolMetrics(request.Context())
+	result, err := server.sdkToolHandler("good")(ctx, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Arguments: json.RawMessage(`{}`)}})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	calls, failures := metrics.Snapshot()
+	require.Zero(t, calls)
+	require.Zero(t, failures)
+}
+
+func TestSDKLookupRejectionCountsAsOneFailedCall(t *testing.T) {
+	logger, _ := testLogger(t)
+	server := NewServer(registry.New(), "profile-a", logger)
+	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"missing","arguments":{}}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	ctx, metrics := domain.WithMCPToolMetrics(request.Context())
+	*request = *request.WithContext(ctx)
+	response := httptest.NewRecorder()
+	require.True(t, server.writeSDKToolLookupError(response, request, true))
+	calls, failures := metrics.Snapshot()
+	require.Equal(t, int64(1), calls)
+	require.Equal(t, int64(1), failures)
 }
 
 func requireSDKError(t *testing.T, err error, code int, message string) {

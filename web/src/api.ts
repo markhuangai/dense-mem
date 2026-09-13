@@ -125,6 +125,8 @@ export type CreateSecurityBanInput = {
 export type MetricsTotal = {
   requests: number;
   errors: number;
+  mcp_tool_calls?: number;
+  mcp_tool_failures?: number;
   avg_latency_ms: number;
   max_latency_ms: number;
 };

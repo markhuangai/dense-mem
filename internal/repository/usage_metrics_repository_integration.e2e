@@ -83,6 +83,8 @@ func TestUsageMetricsSnapshotLabelsSSOOwnershipAlias(t *testing.T) {
 	require.Equal(t, "SSO Usage User", ssoFound.KeyName)
 	require.Equal(t, "", ssoFound.KeySuffix)
 	require.EqualValues(t, 3, ssoFound.Requests)
+	require.Zero(t, ssoFound.MCPToolCalls)
+	require.Zero(t, ssoFound.MCPToolFailures)
 }
 
 func TestUsageMetricsFlushRetryIsIdempotentAndAtomic(t *testing.T) {
@@ -96,7 +98,7 @@ func TestUsageMetricsFlushRetryIsIdempotentAndAtomic(t *testing.T) {
 	bucket := domain.UsageMetricBucket{
 		BucketStart: bucketStart, TeamID: teamID, KeyID: keyID,
 		Route: "/mcp", Method: "POST", StatusClass: 2,
-		RequestCount: 2, ErrorCount: 1, TotalLatencyMS: 30, MaxLatencyMS: 20,
+		RequestCount: 2, ErrorCount: 1, MCPToolCalls: 3, MCPToolFailures: 1, TotalLatencyMS: 30, MaxLatencyMS: 20,
 		LastSeenAt: bucketStart,
 	}
 	repo := NewUsageMetricsRepository(appDB, rls)
@@ -114,4 +116,6 @@ func TestUsageMetricsFlushRetryIsIdempotentAndAtomic(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 2, snapshot.System.Requests)
 	require.EqualValues(t, 1, snapshot.System.Errors)
+	require.EqualValues(t, 3, snapshot.System.MCPToolCalls)
+	require.EqualValues(t, 1, snapshot.System.MCPToolFailures)
 }

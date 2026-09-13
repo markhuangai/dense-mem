@@ -25,6 +25,8 @@ type synchronousAssessmentProviderStub struct {
 	response    func(assessor.SemanticAssessmentRequest, int) assessor.SemanticAssessmentResponse
 	err         error
 	repairErr   error
+	assessTurn  int
+	repairTurn  int
 	calls       int
 	repairCalls int
 	session     *synchronousAssessmentSessionStub
@@ -38,8 +40,12 @@ func (s *synchronousAssessmentProviderStub) Assess(_ context.Context, request as
 	if s.session == nil {
 		s.session = &synchronousAssessmentSessionStub{id: "assessment-session"}
 	}
-	response := s.response(request, s.calls)
-	return s.session, assessor.SemanticAssessmentTurn{Response: response, Turn: s.calls}, nil
+	turn := s.calls
+	if s.assessTurn > 0 {
+		turn = s.assessTurn
+	}
+	response := s.response(request, turn)
+	return s.session, assessor.SemanticAssessmentTurn{Response: response, Turn: turn}, nil
 }
 
 func (s *synchronousAssessmentProviderStub) Repair(_ context.Context, session assessor.SemanticAssessmentSession, request assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
@@ -50,8 +56,12 @@ func (s *synchronousAssessmentProviderStub) Repair(_ context.Context, session as
 	if s.repairErr != nil {
 		return assessor.SemanticAssessmentTurn{}, s.repairErr
 	}
-	response := s.response(request.Request, s.calls+s.repairCalls)
-	return assessor.SemanticAssessmentTurn{Response: response, Turn: s.calls + s.repairCalls}, nil
+	turn := s.calls + s.repairCalls
+	if s.repairTurn > 0 {
+		turn = s.repairTurn
+	}
+	response := s.response(request.Request, turn)
+	return assessor.SemanticAssessmentTurn{Response: response, Turn: turn}, nil
 }
 
 func (s *synchronousAssessmentProviderStub) ModelName() string {
@@ -593,6 +603,12 @@ func TestAssessSynchronousRememberPreservesBudgetDetailsFromRepairFailure(t *tes
 	require.Equal(t, true, details["client_controlled"])
 	require.Equal(t, 12, details["observed"])
 	require.Equal(t, 10, details["limit"])
+	diagnostics := SynchronousAssessmentValidationDiagnostics(err)
+	require.NotNil(t, diagnostics)
+	turns, ok := diagnostics["turns"].([]any)
+	require.True(t, ok)
+	require.Len(t, turns, 1)
+	require.Greater(t, turns[0].(map[string]any)["error_count"], 0)
 }
 
 func TestRememberInputIndexBounds(t *testing.T) {

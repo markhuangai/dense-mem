@@ -34,6 +34,11 @@ for (const hidden of [feedbackTool, ...dreamTools, ...activeEvalTools, ...remove
   await assertToolNotFound(hidden, {});
 }
 
+await assertNotificationIsNotCounted();
+await assertSSELookupRejection();
+await assertConcurrentToolCalls();
+await assertUsageMetricDeltas();
+
 await updateRecallFeedback(true);
 names = await listedToolNames();
 assertHas(names, feedbackTool, "enabled recall feedback tool");
@@ -96,6 +101,82 @@ async function assertToolNotFound(name, args) {
   const response = await rpc("tools/call", { name, arguments: args });
   if (response.error?.code !== -32601 || response.result !== undefined) {
     throw new Error(`hidden tool ${name} was callable: ${JSON.stringify(response)}`);
+  }
+}
+
+async function assertNotificationIsNotCounted() {
+  const response = await fetch(`${userURL}/mcp`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }),
+  });
+  const body = await response.text();
+  if (![200, 202].includes(response.status) || body.length > 0) {
+    throw new Error(`tools/call notification returned an unexpected response: ${response.status}`);
+  }
+}
+
+async function assertSSELookupRejection() {
+  const response = await fetch(`${userURL}/mcp`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "text/event-stream", "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method: "tools/call", params: { name: "missing-observability-tool", arguments: {} } }),
+  });
+  const body = await response.text();
+  if (response.status !== 200 || !body.includes("event: message") || !body.includes('"code":-32601')) {
+    throw new Error(`SSE lookup rejection was not a bounded JSON-RPC error: ${response.status}`);
+  }
+}
+
+async function assertConcurrentToolCalls() {
+  const results = await Promise.all(Array.from({ length: 4 }, () => rpc("tools/call", {
+    name: "recall_memory",
+    arguments: { query: "concurrent MCP boundary probe", limit: 1 },
+  })));
+  if (results.some((result) => result.error || result.result === undefined)) {
+    throw new Error("concurrent MCP tool calls returned an error");
+  }
+}
+
+async function assertUsageMetricDeltas() {
+  const before = await usageSnapshot();
+  await mcpSuccess("recall_memory", { query: "exact MCP metrics success probe", limit: 1 });
+  await assertToolNotFound("missing-exact-metrics-tool", {});
+  await assertNotificationIsNotCounted();
+  await assertSSELookupRejection();
+  await assertConcurrentToolCalls();
+  const after = await usageSnapshot();
+
+  assertUsageDelta(before.data?.system, after.data?.system, "system", 8, 7, 2);
+  const beforeTeam = (before.data?.teams ?? []).find((item) => item.team_id === teamID);
+  const afterTeam = (after.data?.teams ?? []).find((item) => item.team_id === teamID);
+  assertUsageDelta(beforeTeam, afterTeam, "team", 8, 7, 2);
+
+  const keyDeltas = (after.data?.keys ?? []).map((item) => {
+    const previous = (before.data?.keys ?? []).find((candidate) => candidate.key_id === item.key_id);
+    return { item, calls: (item.mcp_tool_calls ?? 0) - (previous?.mcp_tool_calls ?? 0), failures: (item.mcp_tool_failures ?? 0) - (previous?.mcp_tool_failures ?? 0) };
+  }).filter((delta) => delta.calls !== 0 || delta.failures !== 0);
+  if (keyDeltas.length !== 1 || keyDeltas[0].calls !== 7 || keyDeltas[0].failures !== 2) {
+    throw new Error(`MCP key metrics were not isolated to one credential: ${JSON.stringify(keyDeltas)}`);
+  }
+
+  const route = (after.data?.routes ?? []).find((item) => item.route === "/mcp" && item.method === "POST" && item.status_class === "2xx");
+  const previousRoute = (before.data?.routes ?? []).find((item) => item.route === "/mcp" && item.method === "POST" && item.status_class === "2xx");
+  assertUsageDelta(previousRoute, route, "route", 8, 7, 2);
+}
+
+async function usageSnapshot() {
+  return controlJSON("/metrics?window_minutes=60", { method: "GET" });
+}
+
+function assertUsageDelta(before, after, label, requestDelta, callDelta, failureDelta) {
+  if (!before || !after) throw new Error(`${label} usage metrics row is missing`);
+  const requests = (after.requests ?? 0) - (before.requests ?? 0);
+  const errors = (after.errors ?? 0) - (before.errors ?? 0);
+  const calls = (after.mcp_tool_calls ?? 0) - (before.mcp_tool_calls ?? 0);
+  const failures = (after.mcp_tool_failures ?? 0) - (before.mcp_tool_failures ?? 0);
+  if (requests !== requestDelta || errors !== 0 || calls !== callDelta || failures !== failureDelta) {
+    throw new Error(`${label} usage delta mismatch: ${JSON.stringify({ requests, errors, calls, failures })}`);
   }
 }
 

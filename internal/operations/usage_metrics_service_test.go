@@ -66,6 +66,32 @@ func TestUsageMetricsService_PersistsUsageAcrossServiceInstances(t *testing.T) {
 	require.NotEmpty(t, snapshot.Routes)
 }
 
+func TestUsageMetricsServiceSeparatesMCPToolOutcomesFromHTTPErrors(t *testing.T) {
+	repo := newFakeUsageMetricsRepo()
+	teamID, keyID := uuid.New(), uuid.New()
+	svc := NewUsageMetricsService(repo, nil)
+	svc.RecordRequest(context.Background(), domain.UsageMetricEvent{
+		Timestamp: time.Date(2026, 9, 10, 12, 34, 30, 0, time.UTC),
+		TeamID:    teamID, KeyID: keyID, Method: "POST", Route: "/mcp", Status: 200,
+		Latency: 10 * time.Millisecond, MCPToolCalls: 1, MCPToolFailures: 1,
+	})
+	svc.RecordRequest(context.Background(), domain.UsageMetricEvent{
+		Timestamp: time.Date(2026, 9, 10, 12, 34, 31, 0, time.UTC),
+		TeamID:    teamID, KeyID: keyID, Method: "POST", Route: "/mcp", Status: 500,
+		Latency: 20 * time.Millisecond,
+	})
+	require.NoError(t, svc.Flush(context.Background()))
+	snapshot, err := NewUsageMetricsService(repo, nil).Snapshot(context.Background(), domain.UsageMetricsFilter{
+		From: time.Date(2026, 9, 10, 12, 34, 0, 0, time.UTC),
+		To:   time.Date(2026, 9, 10, 12, 35, 0, 0, time.UTC),
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), snapshot.System.Requests)
+	require.Equal(t, int64(1), snapshot.System.Errors)
+	require.Equal(t, int64(1), snapshot.System.MCPToolCalls)
+	require.Equal(t, int64(1), snapshot.System.MCPToolFailures)
+}
+
 func TestUsageMetricsService_PrunesExpiredBuckets(t *testing.T) {
 	repo := newFakeUsageMetricsRepo()
 	oldBucket := domain.UsageMetricBucket{
@@ -140,6 +166,8 @@ func (r *fakeUsageMetricsRepo) UpsertBuckets(_ context.Context, flushID uuid.UUI
 		}
 		current.RequestCount += bucket.RequestCount
 		current.ErrorCount += bucket.ErrorCount
+		current.MCPToolCalls += bucket.MCPToolCalls
+		current.MCPToolFailures += bucket.MCPToolFailures
 		current.TotalLatencyMS += bucket.TotalLatencyMS
 		if bucket.MaxLatencyMS > current.MaxLatencyMS {
 			current.MaxLatencyMS = bucket.MaxLatencyMS
@@ -185,10 +213,12 @@ func (r *fakeUsageMetricsRepo) Snapshot(_ context.Context, filter domain.UsageMe
 			continue
 		}
 		total := domain.UsageMetricTotal{
-			Requests:     bucket.RequestCount,
-			Errors:       bucket.ErrorCount,
-			AvgLatencyMS: float64(bucket.TotalLatencyMS),
-			MaxLatencyMS: bucket.MaxLatencyMS,
+			Requests:        bucket.RequestCount,
+			Errors:          bucket.ErrorCount,
+			MCPToolCalls:    bucket.MCPToolCalls,
+			MCPToolFailures: bucket.MCPToolFailures,
+			AvgLatencyMS:    float64(bucket.TotalLatencyMS),
+			MaxLatencyMS:    bucket.MaxLatencyMS,
 		}
 		system = addFakeTotal(system, total)
 		teamTotals[bucket.TeamID] = addFakeTotal(teamTotals[bucket.TeamID], total)
@@ -219,6 +249,8 @@ func (r *fakeUsageMetricsRepo) Snapshot(_ context.Context, filter domain.UsageMe
 func addFakeTotal(a, b domain.UsageMetricTotal) domain.UsageMetricTotal {
 	a.Requests += b.Requests
 	a.Errors += b.Errors
+	a.MCPToolCalls += b.MCPToolCalls
+	a.MCPToolFailures += b.MCPToolFailures
 	a.AvgLatencyMS += b.AvgLatencyMS
 	if b.MaxLatencyMS > a.MaxLatencyMS {
 		a.MaxLatencyMS = b.MaxLatencyMS

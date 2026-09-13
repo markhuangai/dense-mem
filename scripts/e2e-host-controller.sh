@@ -638,6 +638,10 @@ start_stack() {
   [[ "$helpers" =~ ^[a-z0-9_,]*$ ]] || fail "invalid helper profile list"
   local created_at
   created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [[ "$scenario" == "synchronous_write_telemetry_disabled" ]]; then
+    export DENSE_MEM_E2E_TELEMETRY_DISABLED=1
+    export DENSE_MEM_CI_TELEMETRY_ENABLED=false
+  fi
   compose_base_env "$project" "$phase" "$scenario" "$digest" "$run_id" "$attempt" "$created_at" "$compose_image"
   local run_root="${JOB_DIR}/${run_id}-${attempt}/${phase}-${scenario}"
   mkdir -p "$run_root"
@@ -673,6 +677,11 @@ start_stack() {
 
   prepare_stack_helpers "$project" "$source_dir" "$helpers" "$run_id" "$attempt" "$phase" "$scenario" >/dev/null
   assert_no_host_ports || fail "Compose bundle publishes a host port"
+  if [[ "$scenario" == "synchronous_write_telemetry_disabled" ]]; then
+    local rendered_telemetry_enabled
+    rendered_telemetry_enabled="$(ci_compose config --format json | node -e 'let input="";process.stdin.on("data",c=>input+=c);process.stdin.on("end",()=>{const value=JSON.parse(input).services?.server?.environment?.TELEMETRY_ENABLED;if(value===undefined)process.exit(1);process.stdout.write(String(value));});')" || fail "telemetry-disabled scenario environment is missing"
+    [[ "$rendered_telemetry_enabled" == "false" ]] || fail "telemetry-disabled scenario rendered TELEMETRY_ENABLED=${rendered_telemetry_enabled}"
+  fi
 
   local -a profiles=(--profile client_env)
   if [[ -n "$helpers" ]]; then

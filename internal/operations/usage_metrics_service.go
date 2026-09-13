@@ -128,6 +128,12 @@ func (s *UsageMetricsServiceImpl) RecordRequest(_ context.Context, event domain.
 	if status >= 400 {
 		bucket.ErrorCount++
 	}
+	if event.MCPToolCalls > 0 {
+		bucket.MCPToolCalls += event.MCPToolCalls
+	}
+	if event.MCPToolFailures > 0 {
+		bucket.MCPToolFailures += event.MCPToolFailures
+	}
 	bucket.TotalLatencyMS += latencyMS
 	if latencyMS > bucket.MaxLatencyMS {
 		bucket.MaxLatencyMS = latencyMS

@@ -257,11 +257,12 @@ func AssessSynchronousRemember(
 			} else if errors.Is(err, ErrRememberInputBudgetExceeded) {
 				mapped = fmt.Errorf("%w: refreshed assessor input exceeded the deterministic budget: %w", ErrRememberInputBudgetExceeded, err)
 			} else if errors.Is(err, assessor.ErrVerifierMalformedResponse) {
-				mapped = fmt.Errorf("%w: complete assessor response remained invalid", ErrRememberProviderResponseInvalid)
+				mapped = fmt.Errorf("%w: %w", ErrRememberProviderResponseInvalid, err)
 			} else {
 				mapped = fmt.Errorf("%w: assessor provider request failed", ErrRememberProviderUnavailable)
 			}
 		}
+		mapped = preserveSubmissionAssessmentValidationHistory(mapped, err)
 		if providerTurns > 0 {
 			mapped = &submissionAssessmentConsumedTurnsError{cause: mapped, providerTurns: providerTurns}
 		}

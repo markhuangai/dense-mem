@@ -127,6 +127,10 @@ run_playwright() {
       diagnostics_attempt_id="$(node -e 'const fs=require("node:fs");const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(value.failed_attempt_id||"");' "$fixture_file")"
       [[ -n "$diagnostics_attempt_id" ]] || fail "diagnostics Playwright attempt is missing"
       export DENSE_MEM_E2E_DIAGNOSTIC_ATTEMPT_ID="$diagnostics_attempt_id"
+      local validation_attempt_id
+      validation_attempt_id="$(node -e 'const fs=require("node:fs");const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(value.validation_attempt_id||"");' "$fixture_file")"
+      [[ -n "$validation_attempt_id" ]] || fail "diagnostics validation Playwright attempt is missing"
+      export DENSE_MEM_E2E_DIAGNOSTIC_VALIDATION_ATTEMPT_ID="$validation_attempt_id"
       ;;
     full) [[ -n "${DENSE_MEM_E2E_DREAM_STATEMENT:-}" ]] || fail "Dream Playwright handoff is missing" ;;
   esac
@@ -173,6 +177,9 @@ case "$SCENARIO" in
     ;;
   synchronous_write_primitives)
     DENSE_MEM_E2E_WRITE_CASE=remember run_node_case tests/uat/synchronous_write/runner.mjs
+    ;;
+  synchronous_write_telemetry_disabled)
+    DENSE_MEM_E2E_TELEMETRY_DISABLED=1 run_node_case tests/uat/synchronous_write/runner.mjs
     ;;
   identity_cleanup) run_node_case tests/uat/identity_cleanup_e2e.mjs ;;
   community) run_node_case tests/uat/community_recall_mcp_e2e.mjs ;;

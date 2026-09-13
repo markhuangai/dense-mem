@@ -5,6 +5,7 @@ const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
 const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const teamName = requiredEnv("DENSE_MEM_E2E_TEAM_NAME");
 const fixtureAttemptID = requiredEnv("DENSE_MEM_E2E_DIAGNOSTIC_ATTEMPT_ID");
+const validationAttemptID = requiredEnv("DENSE_MEM_E2E_DIAGNOSTIC_VALIDATION_ATTEMPT_ID");
 
 test("control panel shows the Remember Attempts diagnostic transcript", async ({ page, request }) => {
   const listResponse = await request.get(`${controlURL}/control/api/remember-attempts?team_id=${encodeURIComponent(teamID)}&outcome=failed&limit=100`, { headers: { Authorization: `Bearer ${controlToken}` } });
@@ -25,6 +26,8 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
   await page.getByRole("button", { name: `Inspect Remember attempt ${failed?.attempt_id}` }).click();
   await expect(page.getByRole("heading", { name: "Attempt Detail" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Event spine" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Assessor validation" })).toBeVisible();
+  await expect(page.getByText("Validation details unavailable for this attempt.")).toBeVisible();
   await expect(page.locator(".remember-event-metadata").filter({ hasText: "<script>bad()</script>" })).toHaveCount(1);
   await expect(page.locator(".remember-event-metadata script")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Original request" })).toBeVisible();
@@ -34,6 +37,11 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
   await expect(page.locator(".remember-diagnostic-body pre").filter({ hasText: '"isError":true' })).toHaveCount(1);
   await page.locator(".remember-diagnostic-body").first().getByRole("button", { name: "Copy" }).click();
   await expect(page.locator(".remember-diagnostic-body").first().getByRole("button", { name: "Copied" })).toBeVisible();
+
+  await page.getByRole("button", { name: `Inspect Remember attempt ${validationAttemptID}` }).click();
+  await expect(page.getByRole("heading", { name: "Assessor validation" })).toBeVisible();
+  await expect(page.locator(".remember-validation")).toContainText("Failure class");
+  await expect(page.locator(".remember-validation table")).toContainText("Fields");
 });
 
 function requiredEnv(name: string): string {

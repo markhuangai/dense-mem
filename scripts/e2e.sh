@@ -108,6 +108,13 @@ export DENSE_MEM_CI_JOB_DIR="$JOB_DIR"
 export DENSE_MEM_CI_REPOSITORY="${DENSE_MEM_CI_REPOSITORY:-local/dense-mem}"
 export DENSE_MEM_E2E_SOURCE_ROOT="$ROOT_DIR"
 export DENSE_MEM_CI_RUN_PLAYWRIGHT="$playwright"
+if [[ "${DENSE_MEM_E2E_TELEMETRY_DISABLED:-0}" == "1" ]]; then
+  export DENSE_MEM_CI_TELEMETRY_ENABLED=false
+fi
+if [[ "$SCENARIO" == "synchronous_write_telemetry_disabled" ]]; then
+  export DENSE_MEM_E2E_TELEMETRY_DISABLED=1
+  export DENSE_MEM_CI_TELEMETRY_ENABLED=false
+fi
 
 REVISION="$(git -C "$ROOT_DIR" rev-parse HEAD)" || fail "unable to resolve the git revision"
 [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]] || fail "git revision is invalid"

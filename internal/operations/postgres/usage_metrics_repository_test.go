@@ -24,7 +24,7 @@ func TestUsageMetricsRepositoryWritesAndPrunesBuckets(t *testing.T) {
 	flushID := uuid.New()
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usage_metric_flushes")).WithArgs(flushID).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usage_metric_buckets")).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), bucket.Route, bucket.Method, bucket.StatusClass,
-		bucket.RequestCount, bucket.ErrorCount, bucket.TotalLatencyMS, bucket.MaxLatencyMS, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+		bucket.RequestCount, bucket.ErrorCount, bucket.MCPToolCalls, bucket.MCPToolFailures, bucket.TotalLatencyMS, bucket.MaxLatencyMS, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	repo := NewUsageMetricsRepository(db, passthroughRLS{})
 	require.NoError(t, repo.UpsertBuckets(context.Background(), flushID, []domain.UsageMetricBucket{bucket}))
@@ -45,10 +45,10 @@ func TestUsageMetricsRepositoryReadsSnapshotAndCalculatesTotals(t *testing.T) {
 	teamID := uuid.New()
 	keyID := uuid.New()
 
-	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"coalesce", "coalesce", "coalesce", "coalesce"}).AddRow(int64(10), int64(2), int64(500), int64(80)))
-	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "requests", "errors", "total_latency", "max_latency"}).AddRow(teamID.String(), "Team", int64(10), int64(2), int64(500), int64(80)))
-	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "key_id", "key_name", "key_suffix", "requests", "errors", "total_latency", "max_latency"}).AddRow(teamID.String(), "Team", keyID.String(), "Key", "suffix", int64(10), int64(2), int64(500), int64(80)))
-	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"route", "method", "status_class", "requests", "errors", "total_latency", "max_latency"}).AddRow("/mcp", "POST", 2, int64(10), int64(2), int64(500), int64(80)))
+	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"coalesce", "coalesce", "coalesce", "coalesce", "coalesce", "coalesce"}).AddRow(int64(10), int64(2), int64(4), int64(1), int64(500), int64(80)))
+	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "requests", "errors", "mcp_calls", "mcp_failures", "total_latency", "max_latency"}).AddRow(teamID.String(), "Team", int64(10), int64(2), int64(4), int64(1), int64(500), int64(80)))
+	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "key_id", "key_name", "key_suffix", "requests", "errors", "mcp_calls", "mcp_failures", "total_latency", "max_latency"}).AddRow(teamID.String(), "Team", keyID.String(), "Key", "suffix", int64(10), int64(2), int64(4), int64(1), int64(500), int64(80)))
+	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"route", "method", "status_class", "requests", "errors", "mcp_calls", "mcp_failures", "total_latency", "max_latency"}).AddRow("/mcp", "POST", 2, int64(10), int64(2), int64(4), int64(1), int64(500), int64(80)))
 
 	rls := &snapshotTrackingRLS{}
 	repo := NewUsageMetricsRepository(db, rls)
@@ -56,6 +56,8 @@ func TestUsageMetricsRepositoryReadsSnapshotAndCalculatesTotals(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 10, snapshot.System.Requests)
 	require.EqualValues(t, 2, snapshot.System.Errors)
+	require.EqualValues(t, 4, snapshot.System.MCPToolCalls)
+	require.EqualValues(t, 1, snapshot.System.MCPToolFailures)
 	require.Equal(t, 50.0, snapshot.System.AvgLatencyMS)
 	require.Len(t, snapshot.Teams, 1)
 	require.Len(t, snapshot.Keys, 1)
@@ -69,8 +71,8 @@ func TestUsageMetricsRepositoryReportsMalformedRows(t *testing.T) {
 	sqlDB, mock, db := newOperationsMockDB(t)
 	defer sqlDB.Close()
 
-	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"coalesce", "coalesce", "coalesce", "coalesce"}).AddRow(int64(1), int64(0), int64(1), int64(1)))
-	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "requests", "errors", "total_latency", "max_latency"}).AddRow("not-a-uuid", "Team", int64(1), int64(0), int64(1), int64(1)))
+	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"coalesce", "coalesce", "coalesce", "coalesce", "coalesce", "coalesce"}).AddRow(int64(1), int64(0), int64(0), int64(0), int64(1), int64(1)))
+	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "requests", "errors", "mcp_calls", "mcp_failures", "total_latency", "max_latency"}).AddRow("not-a-uuid", "Team", int64(1), int64(0), int64(0), int64(0), int64(1), int64(1)))
 
 	repo := NewUsageMetricsRepository(db, passthroughRLS{})
 	_, err := repo.Snapshot(context.Background(), domain.UsageMetricsFilter{})
@@ -125,7 +127,7 @@ func TestUsageMetricsRepositoryDeduplicatesRetriedFlush(t *testing.T) {
 func TestUsageMetricsRepositoryHelpersHandleNullableTotals(t *testing.T) {
 	require.EqualValues(t, 7, nullInt64(sql.NullInt64{Int64: 7, Valid: true}))
 	require.Zero(t, nullInt64(sql.NullInt64{}))
-	require.Equal(t, domain.UsageMetricTotal{Requests: 0, MaxLatencyMS: 20}, totalFromSums(0, 0, 10, 20))
+	require.Equal(t, domain.UsageMetricTotal{Requests: 0, MaxLatencyMS: 20}, totalFromSums(0, 0, 0, 0, 10, 20))
 }
 
 func TestUsageMetricsRepositoryReportsWriteAndSnapshotErrors(t *testing.T) {
@@ -150,9 +152,9 @@ func TestUsageMetricsRepositoryRejectsMalformedKeyAndRouteRows(t *testing.T) {
 		sqlDB, mock, db := newOperationsMockDB(t)
 		defer sqlDB.Close()
 		teamID := uuid.New()
-		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"requests", "errors", "total_latency", "max_latency"}).AddRow(int64(1), int64(0), int64(1), int64(1)))
-		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "requests", "errors", "total_latency", "max_latency"}))
-		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "key_id", "key_name", "key_suffix", "requests", "errors", "total_latency", "max_latency"}).AddRow(teamID.String(), "Team", "not-a-uuid", "Key", "suffix", int64(1), int64(0), int64(1), int64(1)))
+		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"requests", "errors", "mcp_calls", "mcp_failures", "total_latency", "max_latency"}).AddRow(int64(1), int64(0), int64(0), int64(0), int64(1), int64(1)))
+		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "requests", "errors", "mcp_calls", "mcp_failures", "total_latency", "max_latency"}))
+		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "key_id", "key_name", "key_suffix", "requests", "errors", "mcp_calls", "mcp_failures", "total_latency", "max_latency"}).AddRow(teamID.String(), "Team", "not-a-uuid", "Key", "suffix", int64(1), int64(0), int64(0), int64(0), int64(1), int64(1)))
 		_, err := NewUsageMetricsRepository(db, passthroughRLS{}).Snapshot(context.Background(), domain.UsageMetricsFilter{})
 		require.ErrorContains(t, err, "invalid UUID")
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -163,10 +165,10 @@ func TestUsageMetricsRepositoryRejectsMalformedKeyAndRouteRows(t *testing.T) {
 		defer sqlDB.Close()
 		teamID := uuid.New()
 		keyID := uuid.New()
-		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"requests", "errors", "total_latency", "max_latency"}).AddRow(int64(1), int64(0), int64(1), int64(1)))
-		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "requests", "errors", "total_latency", "max_latency"}))
-		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "key_id", "key_name", "key_suffix", "requests", "errors", "total_latency", "max_latency"}).AddRow(teamID.String(), "Team", keyID.String(), "Key", "suffix", int64(1), int64(0), int64(1), int64(1)))
-		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"route", "method", "status_class", "requests", "errors", "total_latency", "max_latency"}).AddRow("/mcp", "POST", "not-an-int", int64(1), int64(0), int64(1), int64(1)))
+		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"requests", "errors", "mcp_calls", "mcp_failures", "total_latency", "max_latency"}).AddRow(int64(1), int64(0), int64(0), int64(0), int64(1), int64(1)))
+		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "requests", "errors", "mcp_calls", "mcp_failures", "total_latency", "max_latency"}))
+		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "key_id", "key_name", "key_suffix", "requests", "errors", "mcp_calls", "mcp_failures", "total_latency", "max_latency"}).AddRow(teamID.String(), "Team", keyID.String(), "Key", "suffix", int64(1), int64(0), int64(0), int64(0), int64(1), int64(1)))
+		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"route", "method", "status_class", "requests", "errors", "mcp_calls", "mcp_failures", "total_latency", "max_latency"}).AddRow("/mcp", "POST", "not-an-int", int64(1), int64(0), int64(0), int64(0), int64(1), int64(1)))
 		_, err := NewUsageMetricsRepository(db, passthroughRLS{}).Snapshot(context.Background(), domain.UsageMetricsFilter{})
 		require.ErrorContains(t, err, "failed to read usage metrics snapshot")
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -175,17 +177,19 @@ func TestUsageMetricsRepositoryRejectsMalformedKeyAndRouteRows(t *testing.T) {
 
 func domainUsageMetricBucket(now time.Time) domain.UsageMetricBucket {
 	return domain.UsageMetricBucket{
-		BucketStart:    now,
-		TeamID:         uuid.New(),
-		KeyID:          uuid.New(),
-		Route:          "/mcp",
-		Method:         "POST",
-		StatusClass:    2,
-		RequestCount:   10,
-		ErrorCount:     2,
-		TotalLatencyMS: 500,
-		MaxLatencyMS:   80,
-		LastSeenAt:     now,
+		BucketStart:     now,
+		TeamID:          uuid.New(),
+		KeyID:           uuid.New(),
+		Route:           "/mcp",
+		Method:          "POST",
+		StatusClass:     2,
+		RequestCount:    10,
+		ErrorCount:      2,
+		MCPToolCalls:    4,
+		MCPToolFailures: 1,
+		TotalLatencyMS:  500,
+		MaxLatencyMS:    80,
+		LastSeenAt:      now,
 	}
 }
 

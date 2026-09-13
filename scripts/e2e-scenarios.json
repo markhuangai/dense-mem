@@ -51,6 +51,14 @@
       "playwright": false
     },
     {
+      "name": "synchronous_write_telemetry_disabled",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": ["conflict_provider", "conflict_review", "synchronous_write"],
+      "timeout_minutes": 60,
+      "playwright": false
+    },
+    {
       "name": "identity_cleanup",
       "isolation": "exclusive",
       "runtime": "production",

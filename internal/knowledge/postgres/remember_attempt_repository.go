@@ -407,7 +407,11 @@ func insertRememberAttemptInTx(ctx context.Context, tx *gorm.DB, input RememberA
 	if result.RowsAffected != 1 {
 		return ErrRememberReplay
 	}
-	metadata, err := json.Marshal(map[string]any{"contract_version": input.ContractVersion, "assessor_turns": input.AssessorTurns, "document_count": input.DocumentCount, "error_code": input.ErrorCode, "retryable": input.Retryable})
+	metadataValues := map[string]any{"contract_version": input.ContractVersion, "assessor_turns": input.AssessorTurns, "document_count": input.DocumentCount, "error_code": input.ErrorCode, "retryable": input.Retryable}
+	if input.AssessorValidation != nil {
+		metadataValues["assessor_validation"] = input.AssessorValidation
+	}
+	metadata, err := json.Marshal(metadataValues)
 	if err != nil {
 		return err
 	}

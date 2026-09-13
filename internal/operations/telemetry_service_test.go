@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -167,9 +168,12 @@ func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
 	teamID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	profileID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
 	var queries []string
+	var queriesMu sync.Mutex
 
 	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queriesMu.Lock()
 		queries = append(queries, r.URL.Query().Get("query"))
+		queriesMu.Unlock()
 		switch r.URL.Path {
 		case "/api/v1/query":
 			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[1770000000,"42"]}]}}`))

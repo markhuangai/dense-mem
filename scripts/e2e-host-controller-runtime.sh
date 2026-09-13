@@ -60,6 +60,10 @@ run_scenario() {
   [[ "$helpers" =~ ^[a-z0-9_,]*$ ]] || fail "invalid helper profile list"
   local created_at
   created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [[ "$scenario" == "synchronous_write_telemetry_disabled" ]]; then
+    export DENSE_MEM_E2E_TELEMETRY_DISABLED=1
+    export DENSE_MEM_CI_TELEMETRY_ENABLED=false
+  fi
   compose_base_env "$project" "$phase" "$stack_scenario" "$digest" "$run_id" "$attempt" "$created_at" "$compose_image"
 
   local run_root="${JOB_DIR}/${run_id}-${attempt}/${phase}-${stack_scenario}"
@@ -197,6 +201,7 @@ run_scenario() {
     -e "DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE=/ci/helper-compose.yml"
     -e "DENSE_MEM_E2E_SCENARIO=${scenario}"
     -e "DENSE_MEM_E2E_RUNTIME=production"
+    -e "DENSE_MEM_E2E_TELEMETRY_DISABLED=${DENSE_MEM_E2E_TELEMETRY_DISABLED:-0}"
     -e "DENSE_MEM_E2E_COMMIT_SHA=${tested_commit}"
     -e "DENSE_MEM_E2E_RUN_ID=${run_id}"
     -e "DENSE_MEM_E2E_RUN_ATTEMPT=${attempt}"

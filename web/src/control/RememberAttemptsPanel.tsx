@@ -10,7 +10,7 @@ import {
   type RememberAttemptOutcome,
 } from "../api";
 import { LoadingState, SectionHeading, writeClipboardText } from "../ui/components";
-import { formatDate, readError, shortId } from "./utils";
+import { formatCount, formatDate, readError, shortId } from "./utils";
 
 const OUTCOMES = ["", "completed", "rejected", "quarantined", "failed", "replayed"] as const;
 const PAGE_SIZE = 50;
@@ -214,9 +214,59 @@ function RememberAttemptDetailView({ detail }: { detail: RememberAttemptDiagnost
         {detail.events.length === 0 ? <div className="table-placeholder compact">No retained events.</div> : <ol className="submission-timeline">{detail.events.map((event) => <RememberEvent key={`${event.sequence_no}:${event.event_kind}`} event={event} />)}</ol>}
       </section>
 
+      <AssessorValidationSection events={detail.events} />
+
       <RememberDiagnosticSection detail={detail} />
     </section>
   );
+}
+
+function AssessorValidationSection({ events }: { events: RememberAttemptDiagnosticEvent[] }) {
+  const validation = events
+    .map((event) => event.metadata?.assessor_validation)
+    .find((value) => isRecord(value));
+  if (!isRecord(validation) || !Array.isArray(validation.turns)) {
+    return (
+      <section className="remember-validation" aria-label="Assessor validation">
+        <h3>Assessor validation</h3>
+        <div className="table-placeholder compact">Validation details unavailable for this attempt.</div>
+      </section>
+    );
+  }
+  const failureClass = typeof validation.failure_class === "string" ? validation.failure_class : "Unknown";
+  const turns = validation.turns.filter(isRecord);
+  return (
+    <section className="remember-validation" aria-label="Assessor validation">
+      <h3>Assessor validation</h3>
+      <p className="form-meta">Failure class: <strong>{outcomeLabel(failureClass)}</strong></p>
+      {turns.length === 0 ? <div className="table-placeholder compact">No rejected turns were retained.</div> : (
+        <div className="table-wrap">
+          <table className="data-table metrics-table">
+            <thead><tr><th>Turn</th><th>Stage</th><th>Fields</th><th>Families</th><th>Errors</th></tr></thead>
+            <tbody>{turns.map((turn, index) => (
+              <tr key={`${String(turn.attempt)}:${index}`}>
+                <td>{typeof turn.attempt === "number" ? turn.attempt : index + 1}</td>
+                <td>{typeof turn.stage === "string" ? outcomeLabel(turn.stage) : "Unknown"}</td>
+                <td>{safeStringList(turn.fields)}</td>
+                <td>{safeStringList(turn.field_families)}</td>
+                <td>{typeof turn.error_count === "number" ? formatCount(turn.error_count) : "n/a"}{turn.truncated === true ? " · truncated" : ""}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function safeStringList(value: unknown): string {
+  if (!Array.isArray(value)) return "n/a";
+  const items = value.filter((item): item is string => typeof item === "string");
+  return items.length > 0 ? items.join(", ") : "—";
 }
 
 function RememberDiagnosticSection({ detail }: { detail: RememberAttemptDiagnosticDetail }) {

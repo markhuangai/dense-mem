@@ -343,6 +343,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		callerResponse, _ = capture.ProjectResponse(publicResult, true)
 	}
 	diagnostics := rememberFailureDiagnosticsWithCapture(input, publicResult, exchanges, callerResponse, rememberCallerResponseDelivered(ctx, failure), callerResponseCaptureAvailable)
+	assessorValidation := rememberapp.SynchronousAssessmentValidationDiagnostics(failure)
 	recoveryCtx, cancel := rememberFailureRecoveryContext(ctx)
 	defer cancel()
 	recordErr := p.ledger.RecordRememberFailure(recoveryCtx, repository.RememberFailureRecordInput{
@@ -353,12 +354,13 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 			ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
 			FailedPhase: phase, ErrorCode: publicError.Code, Retryable: publicError.Retryable, RetryabilitySet: true, CorrelationID: correlationID, PublicResult: publicResult,
 			EvidenceCount: len(input.Evidence), AssessorTurns: assessorTurns, Duration: time.Since(started),
+			AssessorValidation: assessorValidation,
 		},
 		Diagnostics: diagnostics,
 	})
 	if recordErr != nil {
 		if errors.Is(recordErr, repository.ErrRememberFailureRetentionDegraded) {
-			p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, failure)
+			p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
 			p.logRememberFailureRetentionDegraded(input, attemptID, phase)
 			return nil, &rememberapp.RememberProcessError{Status: status, Result: terminalResult, Err: failure}
 		}
@@ -374,11 +376,11 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		if errors.Is(recordErr, repository.ErrIdempotencyConflict) {
 			return nil, rememberConflictProcessError(input, attemptID, errors.Join(rememberapp.ErrRememberConflict, recordErr))
 		}
-		p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, failure)
+		p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
 		p.logRememberFailureRecordError(input, attemptID, phase, publicError.Code, correlationID, recordErr)
 		return nil, rememberFailurePersistenceProcessError(input, attemptID, failure)
 	}
-	p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, failure)
+	p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
 	return nil, &rememberapp.RememberProcessError{Status: status, Result: terminalResult, Err: failure}
 }
 
@@ -569,6 +571,7 @@ func (p *rememberSynchronousProcessor) logRememberFailure(
 	phase string,
 	errorCode string,
 	correlationID string,
+	assessorTurns int,
 	failure error,
 ) {
 	if p == nil || p.logger == nil {
@@ -577,6 +580,10 @@ func (p *rememberSynchronousProcessor) logRememberFailure(
 	logError := errors.New("remember processing failed")
 	attrs := rememberFailureLogAttrs(input, attemptID, phase, errorCode, correlationID)
 	attrs = append(attrs, observability.Int("duration_ms", int(time.Since(started)/time.Millisecond)))
+	attrs = append(attrs, observability.Int("assessor_turns", clampAssessorTurns(assessorTurns)))
+	if validation := rememberapp.SynchronousAssessmentValidationDiagnostics(failure); validation != nil {
+		attrs = append(attrs, observability.LogAttr{Key: "assessor_validation", Value: validation})
+	}
 	var planFailure *rememberEmbeddingPlanFailure
 	var configurationFailure *rememberEmbeddingConfigurationFailure
 	var providerFailure *rememberEmbeddingProviderFailure
@@ -620,6 +627,16 @@ func (p *rememberSynchronousProcessor) logRememberFailure(
 		}
 	}
 	p.logger.Error("remember_processing_failed", logError, attrs...)
+}
+
+func clampAssessorTurns(value int) int {
+	if value < 0 {
+		return 0
+	}
+	if value > rememberapp.SemanticMaxAssessorTurns {
+		return rememberapp.SemanticMaxAssessorTurns
+	}
+	return value
 }
 
 func rememberCommitOperationalLogError(err error, stageFn func(error) string) error {

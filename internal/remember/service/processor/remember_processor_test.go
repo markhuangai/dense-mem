@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
@@ -554,6 +555,24 @@ func TestRememberProcessorFailureProjectsEverySubmittedItem(t *testing.T) {
 	publicRelationships, ok := ledger.failure.Attempt.PublicResult["relationship_results"].([]any)
 	require.True(t, ok)
 	require.Len(t, publicRelationships, 2)
+}
+
+func TestRememberProcessorPersistsBoundedAssessorValidationDiagnostics(t *testing.T) {
+	ledger := &rememberFailureLedgerStub{}
+	processor := &rememberSynchronousProcessor{ledger: ledger}
+	input := rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
+		Evidence: []rememberapp.EvidenceInput{{Content: "first"}},
+	}
+	snapshot, _ := rememberAssessmentSnapshot(input, "88888888-8888-8888-8888-888888888888")
+	_, err := processor.recordRememberFailure(context.Background(), input, "88888888-8888-8888-8888-888888888888", snapshot, time.Now(), "assessment", 3, &assessor.MalformedResponseError{
+		FailureClass: "malformed_exhausted", Attempts: 3, ValidationStage: "response_contract",
+		ValidationFieldFamilies: []string{"relationship_results[0].object_value", "unknown-secret-field"},
+	})
+	require.Error(t, err)
+	require.NotNil(t, ledger.failure.Attempt.AssessorValidation)
+	require.Equal(t, "malformed_exhausted", ledger.failure.Attempt.AssessorValidation["failure_class"])
+	require.NotContains(t, ledger.failure.Attempt.AssessorValidation, "unknown-secret-field")
 }
 
 func TestRememberProcessorInputBudgetUsesCanonicalTerminalGuidance(t *testing.T) {

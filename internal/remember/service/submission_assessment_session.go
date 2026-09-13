@@ -8,6 +8,56 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
+type submissionAssessmentValidationTurn struct {
+	Attempt    int
+	Stage      string
+	Fields     []string
+	ErrorCount int
+}
+
+type submissionAssessmentValidationHistoryError struct {
+	cause error
+	turns []submissionAssessmentValidationTurn
+}
+
+func (err *submissionAssessmentValidationHistoryError) Error() string {
+	if err == nil || err.cause == nil {
+		return "semantic assessor validation failed"
+	}
+	return err.cause.Error()
+}
+
+func (err *submissionAssessmentValidationHistoryError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.cause
+}
+
+func wrapSubmissionAssessmentValidationHistory(err error, turns []submissionAssessmentValidationTurn) error {
+	if err == nil || len(turns) == 0 {
+		return err
+	}
+	copyTurns := make([]submissionAssessmentValidationTurn, len(turns))
+	copy(copyTurns, turns)
+	return &submissionAssessmentValidationHistoryError{cause: err, turns: copyTurns}
+}
+
+func preserveSubmissionAssessmentValidationHistory(mapped, original error) error {
+	if mapped == nil || original == nil {
+		return mapped
+	}
+	var historyErr *submissionAssessmentValidationHistoryError
+	if !errors.As(original, &historyErr) || historyErr == nil || len(historyErr.turns) == 0 {
+		return mapped
+	}
+	var mappedHistory *submissionAssessmentValidationHistoryError
+	if errors.As(mapped, &mappedHistory) {
+		return mapped
+	}
+	return wrapSubmissionAssessmentValidationHistory(mapped, historyErr.turns)
+}
+
 type submissionAssessmentConsumedTurnsError struct {
 	cause         error
 	providerTurns int
@@ -107,12 +157,11 @@ func (s *assessmentEngine) completeRememberSessionTurnsWithValidator(
 	if s == nil || s.provider == nil {
 		return assessor.SemanticAssessmentResponse{}, request, errors.New("synchronous assessment provider is required")
 	}
+	var validationHistory []submissionAssessmentValidationTurn
+	validationAttempts := 0
 	for {
-		turnNumber := turn.Turn
-		if turnNumber <= 0 {
-			turnNumber = 1
-		}
-		totalTurns := turnOffset + turnNumber
+		validationAttempts++
+		totalTurns := turnOffset + validationAttempts
 		response := turn.Response
 		validationErrors := append([]assessor.SemanticValidationError(nil), turn.ValidationErrors...)
 		if len(validationErrors) == 0 {
@@ -129,8 +178,18 @@ func (s *assessmentEngine) completeRememberSessionTurnsWithValidator(
 		for _, family := range semanticAssessmentValidationFieldFamiliesForService(validationErrors) {
 			observability.RecordAssessorValidationFieldFailure(s.metrics, assessmentValidationStage(turn.ValidationStage), family)
 		}
+		validationFields := make([]string, 0, len(validationErrors))
+		for _, validationError := range validationErrors {
+			validationFields = append(validationFields, validationError.Field)
+		}
+		validationHistory = append(validationHistory, submissionAssessmentValidationTurn{
+			Attempt:    totalTurns,
+			Stage:      assessmentValidationStage(turn.ValidationStage),
+			Fields:     validationFields,
+			ErrorCount: len(validationErrors),
+		})
 		if totalTurns >= SemanticMaxAssessorTurns {
-			return assessor.SemanticAssessmentResponse{}, request, &assessor.MalformedResponseError{
+			failure := &assessor.MalformedResponseError{
 				Provider:                "semantic_assessor",
 				Message:                 "semantic assessor response remained invalid after bounded correction",
 				FailureClass:            "malformed_exhausted",
@@ -138,16 +197,17 @@ func (s *assessmentEngine) completeRememberSessionTurnsWithValidator(
 				ValidationStage:         assessmentValidationStage(turn.ValidationStage),
 				ValidationFieldFamilies: semanticAssessmentValidationFieldFamiliesForService(validationErrors),
 			}
+			return assessor.SemanticAssessmentResponse{}, request, wrapSubmissionAssessmentValidationHistory(failure, validationHistory)
 		}
 		nextRequest, err := refresh(ctx)
 		if err != nil {
-			return assessor.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{cause: err, providerTurns: totalTurns}
+			return assessor.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{cause: wrapSubmissionAssessmentValidationHistory(err, validationHistory), providerTurns: totalTurns}
 		}
 		turn, err = s.provider.Repair(ctx, session, assessor.SemanticAssessmentRepairRequest{
 			Request: nextRequest, ValidationErrors: validationErrors,
 		})
 		if err != nil {
-			return assessor.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{cause: err, providerTurns: totalTurns}
+			return assessor.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{cause: wrapSubmissionAssessmentValidationHistory(err, validationHistory), providerTurns: totalTurns}
 		}
 		request = nextRequest
 	}

@@ -27,7 +27,7 @@ describe("RememberAttemptsPanel", () => {
         evidence: [{ disposition: "not_stored", evidence_index: 0, superseded_evidence_ids: [], search_state: "not_required", reason: "<script>alert(1)</script>" }],
         relationship_results: [{ ref: "r1", disposition: "not_stored", splits: [], reason: "provider unavailable" }], errors: [],
       },
-      events: [{ sequence_no: 1, phase: "assessment", event_kind: "assessment_failed", outcome: "failed", metadata: { markup: "<script>bad()</script>" }, created_at: "2026-08-18T01:00:01Z" }],
+      events: [{ sequence_no: 1, phase: "assessment", event_kind: "assessment_failed", outcome: "failed", metadata: { markup: "<script>bad()</script>", assessor_validation: { failure_class: "malformed_exhausted", turns: [{ attempt: 3, stage: "response_contract", fields: ["relationship_results.object"], field_families: ["relationship_results.object"], error_count: 1, truncated: false }] } }, created_at: "2026-08-18T01:00:01Z" }],
       diagnostics: {
         original_request: { diagnostic_id: "request-1", sequence_no: 1, kind: "original_request", component: "remember", request_body: `{"name":"remember","arguments":{"evidence":[]}}`, outcome: "captured", capture_state: "captured", captured_at: "2026-08-18T01:00:01Z", expires_at: "2026-08-25T01:00:01Z", retained_by_legal_hold: false },
         provider_exchanges: [{ diagnostic_id: "provider-1", sequence_no: 2, kind: "provider_exchange", component: "assessor", request_body: `{"model":"test"}`, response_body: `{"error":"unavailable"}`, outcome: "captured", capture_state: "captured", captured_at: "2026-08-18T01:00:01Z", expires_at: "2026-08-25T01:00:01Z", retained_by_legal_hold: false }],
@@ -45,6 +45,8 @@ describe("RememberAttemptsPanel", () => {
     expect(screen.getByText("<script>alert(1)</script>")).toBeInTheDocument();
     expect(document.querySelector("script")).toBeNull();
     expect(detailRegion.querySelector(".remember-event-metadata")?.textContent).toContain('"markup": "<script>bad()</script>"');
+    expect(within(detailRegion).getByRole("heading", { name: "Assessor validation" })).toBeInTheDocument();
+    expect(within(detailRegion).getAllByText("relationship_results.object").length).toBeGreaterThanOrEqual(1);
     expect(within(detailRegion).getByText('{"name":"remember","arguments":{"evidence":[]}}')).toBeInTheDocument();
     expect(within(detailRegion).getByText('{"error":"unavailable"}')).toBeInTheDocument();
     expect(within(detailRegion).getByText('{"isError":true}')).toBeInTheDocument();

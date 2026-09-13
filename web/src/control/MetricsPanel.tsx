@@ -226,9 +226,12 @@ function isAbortError(error: unknown): boolean {
 function MetricsSummary({ metrics }: { metrics: ControlMetrics }) {
   return (
     <div className="metrics-summary" aria-label="Request metrics">
-      <SummaryCard label="Requests" value={formatCount(metrics.system.requests)} />
-      <SummaryCard label="Errors" value={formatCount(metrics.system.errors)} tone={metrics.system.errors > 0 ? "warning" : "neutral"} />
-      <SummaryCard label="Error rate" value={formatPercent(metrics.system.errors, metrics.system.requests)} />
+      <SummaryCard label="HTTP requests" value={formatCount(metrics.system.requests)} />
+      <SummaryCard label="HTTP errors" value={formatCount(metrics.system.errors)} tone={metrics.system.errors > 0 ? "warning" : "neutral"} />
+      <SummaryCard label="HTTP error rate" value={formatPercent(metrics.system.errors, metrics.system.requests)} />
+      <SummaryCard label="MCP tool calls" value={formatOptionalCount(metrics.system.mcp_tool_calls)} />
+      <SummaryCard label="MCP tool failures" value={formatOptionalCount(metrics.system.mcp_tool_failures)} tone={(metrics.system.mcp_tool_failures ?? 0) > 0 ? "warning" : "neutral"} />
+      <SummaryCard label="MCP failure rate" value={formatMCPFailureRate(metrics.system)} />
       <SummaryCard label="Avg latency" value={formatLatency(metrics.system.avg_latency_ms)} />
       <SummaryCard label="Max latency" value={formatLatency(metrics.system.max_latency_ms)} />
     </div>
@@ -285,8 +288,10 @@ function MetricsTeamTable({ teams }: { teams: ControlMetrics["teams"] }) {
             <thead>
               <tr>
                 <th>Team</th>
-                <th>Requests</th>
-                <th>Errors</th>
+                <th>HTTP requests</th>
+                <th>HTTP errors</th>
+                <th>MCP calls</th>
+                <th>MCP failures</th>
                 <th>Avg latency</th>
                 <th>Max latency</th>
               </tr>
@@ -297,6 +302,8 @@ function MetricsTeamTable({ teams }: { teams: ControlMetrics["teams"] }) {
                   <td>{team.team_name || shortId(team.team_id)}</td>
                   <td>{formatCount(team.requests)}</td>
                   <td>{formatCount(team.errors)}</td>
+                  <td>{formatOptionalCount(team.mcp_tool_calls)}</td>
+                  <td>{formatOptionalCount(team.mcp_tool_failures)}</td>
                   <td>{formatLatency(team.avg_latency_ms)}</td>
                   <td>{formatLatency(team.max_latency_ms)}</td>
                 </tr>
@@ -326,8 +333,10 @@ function MetricsKeyTable({ keys }: { keys: ControlMetrics["keys"] }) {
                 <th>Credential</th>
                 <th>Key</th>
                 <th>Team</th>
-                <th>Requests</th>
-                <th>Errors</th>
+                <th>HTTP requests</th>
+                <th>HTTP errors</th>
+                <th>MCP calls</th>
+                <th>MCP failures</th>
                 <th>Avg latency</th>
               </tr>
             </thead>
@@ -339,6 +348,8 @@ function MetricsKeyTable({ keys }: { keys: ControlMetrics["keys"] }) {
                   <td>{key.team_name || shortId(key.team_id)}</td>
                   <td>{formatCount(key.requests)}</td>
                   <td>{formatCount(key.errors)}</td>
+                  <td>{formatOptionalCount(key.mcp_tool_calls)}</td>
+                  <td>{formatOptionalCount(key.mcp_tool_failures)}</td>
                   <td>{formatLatency(key.avg_latency_ms)}</td>
                 </tr>
               ))}
@@ -367,8 +378,10 @@ function MetricsRouteTable({ routes }: { routes: ControlMetrics["routes"] }) {
                 <th>Route</th>
                 <th>Method</th>
                 <th>Status</th>
-                <th>Requests</th>
-                <th>Errors</th>
+                <th>HTTP requests</th>
+                <th>HTTP errors</th>
+                <th>MCP calls</th>
+                <th>MCP failures</th>
               </tr>
             </thead>
             <tbody>
@@ -379,6 +392,8 @@ function MetricsRouteTable({ routes }: { routes: ControlMetrics["routes"] }) {
                   <td>{route.status_class}</td>
                   <td>{formatCount(route.requests)}</td>
                   <td>{formatCount(route.errors)}</td>
+                  <td>{formatOptionalCount(route.mcp_tool_calls)}</td>
+                  <td>{formatOptionalCount(route.mcp_tool_failures)}</td>
                 </tr>
               ))}
             </tbody>
@@ -387,4 +402,15 @@ function MetricsRouteTable({ routes }: { routes: ControlMetrics["routes"] }) {
       )}
     </div>
   );
+}
+
+function formatOptionalCount(value: number | undefined): string {
+  return value === undefined ? "Unavailable" : formatCount(value);
+}
+
+function formatMCPFailureRate(total: ControlMetrics["system"]): string {
+  if (total.mcp_tool_calls === undefined || total.mcp_tool_calls <= 0 || total.mcp_tool_failures === undefined) {
+    return "Unavailable";
+  }
+  return formatPercent(total.mcp_tool_failures, total.mcp_tool_calls);
 }

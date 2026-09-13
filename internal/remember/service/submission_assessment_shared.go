@@ -1,11 +1,13 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -133,6 +135,253 @@ func SynchronousAssessmentFailureDetails(err error) (string, map[string]any) {
 		return reasonCode, details
 	}
 	return "", nil
+}
+
+// SynchronousAssessmentValidationDiagnostics returns the bounded, server-owned
+// validation history for operator logs and Remember attempt events. It never
+// includes provider messages or response content.
+func SynchronousAssessmentValidationDiagnostics(err error) map[string]any {
+	if err == nil {
+		return nil
+	}
+	var historyErr *submissionAssessmentValidationHistoryError
+	var malformed *assessor.MalformedResponseError
+	if !errors.As(err, &historyErr) && !errors.As(err, &malformed) {
+		return nil
+	}
+	turns := make([]submissionAssessmentValidationTurn, 0, SemanticMaxAssessorTurns)
+	if historyErr != nil {
+		turns = append(turns, historyErr.turns...)
+	}
+	if len(turns) == 0 && malformed != nil {
+		turns = append(turns, submissionAssessmentValidationTurn{
+			Attempt:    malformed.Attempts,
+			Stage:      assessmentValidationStage(malformed.ValidationStage),
+			Fields:     append([]string(nil), malformed.ValidationFieldFamilies...),
+			ErrorCount: len(malformed.ValidationFieldFamilies),
+		})
+	}
+	if len(turns) == 0 {
+		return nil
+	}
+	turnsTruncated := len(turns) > SemanticMaxAssessorTurns
+	if turnsTruncated {
+		turns = turns[:SemanticMaxAssessorTurns]
+	}
+	projectedTurns := make([]any, 0, len(turns))
+	for _, turn := range turns {
+		fields := make([]string, 0, len(turn.Fields))
+		families := make([]string, 0, len(turn.Fields))
+		fieldSeen := make(map[string]struct{}, len(turn.Fields))
+		familySeen := make(map[string]struct{}, len(turn.Fields))
+		truncated := false
+		for _, raw := range turn.Fields {
+			field, family := normalizeAssessmentValidationField(raw)
+			if field == "" {
+				field, family = "other", "other"
+			}
+			if _, ok := fieldSeen[field]; !ok {
+				if len(fields) >= 20 {
+					truncated = true
+				} else {
+					fields = append(fields, field)
+					fieldSeen[field] = struct{}{}
+				}
+			}
+			if _, ok := familySeen[family]; !ok {
+				if len(families) >= 20 {
+					truncated = true
+				} else {
+					families = append(families, family)
+					familySeen[family] = struct{}{}
+				}
+			}
+		}
+		sort.Strings(fields)
+		sort.Strings(families)
+		projectedTurns = append(projectedTurns, map[string]any{
+			"attempt":        clampAssessorValidationAttempt(turn.Attempt),
+			"stage":          boundedAssessorValidationStage(turn.Stage),
+			"fields":         fields,
+			"field_families": families,
+			"error_count":    validationTurnErrorCount(turn),
+			"truncated":      truncated,
+		})
+	}
+	if turnsTruncated && len(projectedTurns) > 0 {
+		projectedTurns[len(projectedTurns)-1].(map[string]any)["truncated"] = true
+	}
+	failureClass := assessorValidationFailureClass(err)
+	if malformed != nil && strings.TrimSpace(malformed.FailureClass) != "" {
+		failureClass = boundedAssessorFailureClass(malformed.FailureClass)
+	}
+	return map[string]any{
+		"failure_class": failureClass,
+		"turns":         projectedTurns,
+		"truncated":     turnsTruncated,
+	}
+}
+
+func assessorValidationFailureClass(err error) string {
+	switch {
+	case errors.Is(err, ErrRememberInputBudgetExceeded):
+		return "input_budget"
+	case errors.Is(err, ErrRememberProviderResponseInvalid):
+		return "provider_response_invalid"
+	case errors.Is(err, ErrRememberProviderUnavailable):
+		return "provider_unavailable"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	default:
+		return "provider_error"
+	}
+}
+
+func normalizeAssessmentValidationField(field string) (string, string) {
+	field, ok := normalizeAssessmentValidationIndexes(field)
+	if !ok {
+		return "other", "other"
+	}
+	field = strings.ToLower(strings.TrimSpace(field))
+	if field == "" || len([]byte(field)) > 256 {
+		return "other", "other"
+	}
+	if family, ok := assessmentValidationFieldPathFamilies[field]; ok {
+		return field, family
+	}
+	return "other", "other"
+}
+
+func normalizeAssessmentValidationIndexes(field string) (string, bool) {
+	var out strings.Builder
+	for index := 0; index < len(field); index++ {
+		if field[index] != '[' {
+			out.WriteByte(field[index])
+			continue
+		}
+		close := strings.IndexByte(field[index:], ']')
+		if close < 0 {
+			return "", false
+		}
+		close += index
+		if close == index+1 {
+			return "", false
+		}
+		for _, value := range field[index+1 : close] {
+			if value < '0' || value > '9' {
+				return "", false
+			}
+		}
+		out.WriteString("[]")
+		index = close
+	}
+	return out.String(), true
+}
+
+func validationTurnErrorCount(turn submissionAssessmentValidationTurn) int {
+	if turn.ErrorCount > 0 {
+		return turn.ErrorCount
+	}
+	return len(turn.Fields)
+}
+
+var assessmentValidationFieldPathFamilies = map[string]string{
+	"request_id": "request_id", "input_tokens": "input_tokens", "output_tokens": "output_tokens",
+	"response": "response", "tokenizer": "tokenizer", "request": "request", "team_id": "team_id",
+	"evidence": "evidence", "known_evidence": "known_evidence", "candidate_context_tokens": "candidate_context_tokens",
+	"evidence_security_results": "evidence_security_results", "evidence_equivalence_results": "evidence_equivalence_results",
+	"evidence_conflict_results": "evidence_conflict_results", "submission_contract": "submission_contract",
+	"submission_contract.entities": "submission_contract.entities", "submission_contract.relationships": "submission_contract.relationships",
+	"entity_results": "entity_results", "relationship_results": "relationship_results",
+	"entity_candidate_groups": "entity_candidate_groups", "predicate_options": "predicate_options",
+	"evidence[]": "evidence.evidence", "evidence[].evidence_id": "evidence.evidence",
+	"evidence[].content": "evidence.evidence", "evidence[].source_revision_id": "evidence.evidence",
+	"known_evidence[]": "known_evidence.evidence", "known_evidence[].evidence_id": "known_evidence.evidence",
+	"known_evidence[].content":  "known_evidence.evidence",
+	"entity_candidate_groups[]": "entity_candidate_groups", "entity_candidate_groups[].grounding_ref": "entity_candidate_groups.ref",
+	"entity_candidate_groups[].evidence_id": "entity_candidate_groups.evidence", "entity_candidate_groups[].surface": "entity_candidate_groups.evidence",
+	"entity_candidate_groups[].candidates":                  "entity_candidate_groups.candidates",
+	"entity_candidate_groups[].candidates[]":                "entity_candidate_groups.candidates",
+	"entity_candidate_groups[].candidates[].entity_id":      "entity_candidate_groups.candidates",
+	"entity_candidate_groups[].candidates[].canonical_name": "entity_candidate_groups.candidates",
+	"entity_candidate_groups[].candidates[].kind":           "entity_candidate_groups.candidates",
+	"predicate_options[]":                                   "predicate_options", "predicate_options[].predicate_key": "predicate_options.predicate",
+	"predicate_options[].version": "predicate_options.predicate", "predicate_options[].relationship_kind": "predicate_options.kind",
+	"predicate_options[].current_cardinality": "predicate_options.kind", "predicate_options[].allowed_subject_kinds": "predicate_options.kind",
+	"predicate_options[].allowed_object_kinds": "predicate_options.kind",
+	"entity_results[]":                         "entity_results", "entity_results[].ref": "entity_results.ref",
+	"entity_results[].action": "entity_results.semantics", "entity_results[].candidate_entity_id": "entity_results.ref",
+	"entity_results[].grounding_ref": "entity_results.ref", "entity_results[].anchor_ref": "entity_results.ref",
+	"entity_results[].kind": "entity_results.kind", "entity_results[].surface": "entity_results.evidence",
+	"entity_results[].evidence_id": "entity_results.evidence",
+	"relationship_results[]":       "relationship_results", "relationship_results[].ref": "relationship_results.ref",
+	"relationship_results[].disposition": "relationship_results.semantics", "relationship_results[].reason": "relationship_results.semantics",
+	"relationship_results[].object_ref": "relationship_results.object", "relationship_results[].object_value": "relationship_results.object",
+	"relationship_results[].splits":               "relationship_results.semantics",
+	"relationship_results[].splits[]":             "relationship_results.semantics",
+	"relationship_results[].splits[].split_index": "relationship_results.semantics",
+	"relationship_results[].splits[].subject_ref": "relationship_results.ref", "relationship_results[].splits[].object_ref": "relationship_results.object",
+	"relationship_results[].splits[].object": "relationship_results.object", "relationship_results[].splits[].object_value": "relationship_results.object",
+	"relationship_results[].splits[].value_range": "relationship_results.object", "relationship_results[].splits[].original_predicate": "relationship_results.predicate",
+	"relationship_results[].splits[].predicate_key": "relationship_results.predicate", "relationship_results[].splits[].predicate_version": "relationship_results.predicate",
+	"relationship_results[].splits[].predicate_status": "relationship_results.predicate", "relationship_results[].splits[].predicate_range": "relationship_results.predicate",
+	"relationship_results[].splits[].predicate_registration": "relationship_results.predicate", "relationship_results[].splits[].support_ranges": "relationship_results.evidence",
+	"relationship_results[].splits[].valid_from": "relationship_results.temporal", "relationship_results[].splits[].valid_to": "relationship_results.temporal",
+	"relationship_results[].splits[].polarity": "relationship_results.semantics", "relationship_results[].splits[].validity": "relationship_results.temporal",
+	"relationship_results[].splits[].support_ranges[]":             "relationship_results.evidence",
+	"relationship_results[].splits[].support_ranges[].evidence_id": "relationship_results.evidence",
+	"evidence_security_results[]":                                  "evidence_security_results", "evidence_security_results[].evidence_id": "evidence_security_results.evidence",
+	"evidence_security_results[].decision": "evidence_security_results.semantics", "evidence_security_results[].signals": "evidence_security_results.semantics",
+	"evidence_security_results[].signals[]": "evidence_security_results.semantics", "evidence_security_results[].signals[].kind": "evidence_security_results.semantics",
+	"evidence_security_results[].signals[].span": "evidence_security_results.evidence",
+	"evidence_equivalence_results[]":             "evidence_equivalence_results", "evidence_equivalence_results[].evidence_id": "evidence_equivalence_results.evidence",
+	"evidence_equivalence_results[].action": "evidence_equivalence_results.semantics", "evidence_equivalence_results[].candidate_evidence_id": "evidence_equivalence_results.evidence",
+	"evidence_conflict_results[]": "evidence_conflict_results", "evidence_conflict_results[].positions": "evidence_conflict_results.semantics",
+	"evidence_conflict_results[].positions[]": "evidence_conflict_results.semantics", "evidence_conflict_results[].positions[].evidence_id": "evidence_conflict_results.evidence",
+	"submission_contract.entities[]": "submission_contract.entities", "submission_contract.entities[].ref": "submission_contract.entities.ref",
+	"submission_contract.entities[].name": "submission_contract.entities", "submission_contract.entities[].kind": "submission_contract.entities.kind",
+	"submission_contract.entities[].groundings": "submission_contract.entities.evidence", "submission_contract.entities[].groundings[]": "submission_contract.entities.evidence",
+	"submission_contract.entities[].groundings[].evidence_id": "submission_contract.entities.evidence", "submission_contract.entities[].groundings[].surface": "submission_contract.entities.evidence",
+	"submission_contract.entities[].groundings[].grounding_ref": "submission_contract.entities.ref", "submission_contract.entities[].groundings[].anchor_ref": "submission_contract.entities.ref",
+	"submission_contract.entities[].anchors": "submission_contract.entities.evidence", "submission_contract.entities[].anchors[]": "submission_contract.entities.evidence",
+	"submission_contract.entities[].anchors[].evidence_id": "submission_contract.entities.evidence", "submission_contract.entities[].anchors[].anchor_ref": "submission_contract.entities.ref",
+	"submission_contract.entities[].anchors[].surface": "submission_contract.entities.evidence", "submission_contract.entities[].candidate_entity_ids": "submission_contract.entities.ref",
+	"submission_contract.relationships[]": "submission_contract.relationships", "submission_contract.relationships[].ref": "submission_contract.relationships.ref",
+	"submission_contract.relationships[].subject_ref": "submission_contract.relationships.ref", "submission_contract.relationships[].object": "submission_contract.relationships.object",
+	"submission_contract.relationships[].predicate": "submission_contract.relationships.predicate", "submission_contract.relationships[].polarity": "submission_contract.relationships.semantics",
+	"submission_contract.relationships[].evidence": "submission_contract.relationships.evidence", "submission_contract.relationships[].evidence_ids": "submission_contract.relationships.evidence",
+	"submission_contract.relationships[].known_evidence_ids": "submission_contract.relationships.evidence", "submission_contract.relationships[].evidence[]": "submission_contract.relationships.evidence",
+	"submission_contract.relationships[].evidence[].evidence_id": "submission_contract.relationships.evidence",
+}
+
+func boundedAssessorValidationStage(stage string) string {
+	switch strings.TrimSpace(stage) {
+	case "response_output_tokens", "response_json", "response_contract", "conversation_input_tokens", "conversation_candidate_context_tokens", "input_budget", "assessment":
+		return strings.TrimSpace(stage)
+	default:
+		return "other"
+	}
+}
+
+func boundedAssessorFailureClass(value string) string {
+	switch strings.TrimSpace(value) {
+	case "malformed_exhausted", "validation_failed", "input_budget", "provider", "provider_error", "provider_response_invalid", "provider_unavailable", "timeout", "canceled":
+		return strings.TrimSpace(value)
+	default:
+		return "other"
+	}
+}
+
+func clampAssessorValidationAttempt(value int) int {
+	if value < 1 {
+		return 1
+	}
+	if value > SemanticMaxAssessorTurns {
+		return SemanticMaxAssessorTurns
+	}
+	return value
 }
 
 func assessorFailureComponent(stage string) string {
