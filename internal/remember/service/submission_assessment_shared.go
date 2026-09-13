@@ -230,7 +230,7 @@ func assessorValidationFailureClass(err error) string {
 		return "provider_response_invalid"
 	case errors.Is(err, ErrRememberProviderUnavailable):
 		return "provider_unavailable"
-	case errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, ErrRememberRequestTimeout), errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
 	case errors.Is(err, context.Canceled):
 		return "canceled"
@@ -324,10 +324,10 @@ var assessmentValidationFieldPathFamilies = map[string]string{
 	"relationship_results[].splits[].split_index": "relationship_results.semantics",
 	"relationship_results[].splits[].subject_ref": "relationship_results.ref", "relationship_results[].splits[].object_ref": "relationship_results.object",
 	"relationship_results[].splits[].object": "relationship_results.object", "relationship_results[].splits[].object_value": "relationship_results.object",
-	"relationship_results[].splits[].value_range": "relationship_results.object", "relationship_results[].splits[].original_predicate": "relationship_results.predicate",
+	"relationship_results[].splits[].value_range": "relationship_results.object", "relationship_results[].splits[].value_range.start_ref": "relationship_results.object", "relationship_results[].splits[].value_range.end_ref": "relationship_results.object", "relationship_results[].splits[].original_predicate": "relationship_results.predicate",
 	"relationship_results[].splits[].predicate_key": "relationship_results.predicate", "relationship_results[].splits[].predicate_version": "relationship_results.predicate",
-	"relationship_results[].splits[].predicate_status": "relationship_results.predicate", "relationship_results[].splits[].predicate_range": "relationship_results.predicate",
-	"relationship_results[].splits[].predicate_registration": "relationship_results.predicate", "relationship_results[].splits[].support_ranges": "relationship_results.evidence",
+	"relationship_results[].splits[].predicate_status": "relationship_results.predicate", "relationship_results[].splits[].predicate_range": "relationship_results.predicate", "relationship_results[].splits[].predicate_range.start_ref": "relationship_results.predicate", "relationship_results[].splits[].predicate_range.end_ref": "relationship_results.predicate",
+	"relationship_results[].splits[].predicate_registration": "relationship_results.predicate", "relationship_results[].splits[].support_ranges": "relationship_results.evidence", "relationship_results[].splits[].support_ranges[].start_ref": "relationship_results.evidence", "relationship_results[].splits[].support_ranges[].end_ref": "relationship_results.evidence",
 	"relationship_results[].splits[].valid_from": "relationship_results.temporal", "relationship_results[].splits[].valid_to": "relationship_results.temporal",
 	"relationship_results[].splits[].polarity": "relationship_results.semantics", "relationship_results[].splits[].validity": "relationship_results.temporal",
 	"relationship_results[].splits[].support_ranges[]":             "relationship_results.evidence",
@@ -335,11 +335,13 @@ var assessmentValidationFieldPathFamilies = map[string]string{
 	"evidence_security_results[]":                                  "evidence_security_results", "evidence_security_results[].evidence_id": "evidence_security_results.evidence",
 	"evidence_security_results[].decision": "evidence_security_results.semantics", "evidence_security_results[].signals": "evidence_security_results.semantics",
 	"evidence_security_results[].signals[]": "evidence_security_results.semantics", "evidence_security_results[].signals[].kind": "evidence_security_results.semantics",
+	"evidence_security_results[].signals[].start_ref": "evidence_security_results.evidence", "evidence_security_results[].signals[].end_ref": "evidence_security_results.evidence",
 	"evidence_security_results[].signals[].span": "evidence_security_results.evidence",
 	"evidence_equivalence_results[]":             "evidence_equivalence_results", "evidence_equivalence_results[].evidence_id": "evidence_equivalence_results.evidence",
 	"evidence_equivalence_results[].action": "evidence_equivalence_results.semantics", "evidence_equivalence_results[].candidate_evidence_id": "evidence_equivalence_results.evidence",
 	"evidence_conflict_results[]": "evidence_conflict_results", "evidence_conflict_results[].positions": "evidence_conflict_results.semantics",
 	"evidence_conflict_results[].positions[]": "evidence_conflict_results.semantics", "evidence_conflict_results[].positions[].evidence_id": "evidence_conflict_results.evidence",
+	"evidence_conflict_results[].positions[].start_ref": "evidence_conflict_results.evidence", "evidence_conflict_results[].positions[].end_ref": "evidence_conflict_results.evidence",
 	"submission_contract.entities[]": "submission_contract.entities", "submission_contract.entities[].ref": "submission_contract.entities.ref",
 	"submission_contract.entities[].name": "submission_contract.entities", "submission_contract.entities[].kind": "submission_contract.entities.kind",
 	"submission_contract.entities[].groundings": "submission_contract.entities.evidence", "submission_contract.entities[].groundings[]": "submission_contract.entities.evidence",

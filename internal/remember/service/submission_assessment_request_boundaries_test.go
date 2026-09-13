@@ -454,6 +454,34 @@ func TestSynchronousAssessmentValidationDiagnosticsAreBoundedAndSafe(t *testing.
 	require.Equal(t, 3, turn["error_count"])
 }
 
+func TestSynchronousAssessmentValidationDiagnosticsAllowBoundaryFields(t *testing.T) {
+	fields := []string{
+		"evidence_security_results[0].signals[0].start_ref",
+		"evidence_security_results[0].signals[0].end_ref",
+		"evidence_conflict_results[0].positions[0].start_ref",
+		"evidence_conflict_results[0].positions[0].end_ref",
+		"relationship_results[0].splits[0].predicate_range.start_ref",
+		"relationship_results[0].splits[0].predicate_range.end_ref",
+		"relationship_results[0].splits[0].support_ranges[0].start_ref",
+		"relationship_results[0].splits[0].support_ranges[0].end_ref",
+		"relationship_results[0].splits[0].value_range.start_ref",
+		"relationship_results[0].splits[0].value_range.end_ref",
+	}
+	diagnostics := SynchronousAssessmentValidationDiagnostics(&assessor.MalformedResponseError{
+		FailureClass:            "malformed_exhausted",
+		Attempts:                1,
+		ValidationStage:         "response_contract",
+		ValidationFieldFamilies: fields,
+	})
+	turn := diagnostics["turns"].([]any)[0].(map[string]any)
+	require.NotContains(t, turn["fields"], "other")
+	for _, field := range fields {
+		normalized, ok := normalizeAssessmentValidationIndexes(field)
+		require.True(t, ok)
+		require.Contains(t, turn["fields"], normalized)
+	}
+}
+
 func TestSynchronousAssessmentValidationDiagnosticsCapsTurnHistory(t *testing.T) {
 	turns := make([]submissionAssessmentValidationTurn, SemanticMaxAssessorTurns+1)
 	for index := range turns {
@@ -471,11 +499,22 @@ func TestSynchronousAssessmentValidationDiagnosticsCapsTurnHistory(t *testing.T)
 }
 
 func TestSynchronousAssessmentValidationDiagnosticsPreserveTypedTerminalClass(t *testing.T) {
-	diagnostics := SynchronousAssessmentValidationDiagnostics(&submissionAssessmentValidationHistoryError{
-		cause: errors.Join(ErrRememberInputBudgetExceeded, errors.New("budget")),
-		turns: []submissionAssessmentValidationTurn{{Attempt: 1, Stage: "response_contract", Fields: []string{"request_id"}, ErrorCount: 1}},
-	})
-	require.Equal(t, "input_budget", diagnostics["failure_class"])
+	turns := []submissionAssessmentValidationTurn{{Attempt: 1, Stage: "response_contract", Fields: []string{"request_id"}, ErrorCount: 1}}
+	for _, test := range []struct {
+		name  string
+		cause error
+		want  string
+	}{
+		{name: "input budget", cause: ErrRememberInputBudgetExceeded, want: "input_budget"},
+		{name: "request timeout", cause: ErrRememberRequestTimeout, want: "timeout"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			diagnostics := SynchronousAssessmentValidationDiagnostics(&submissionAssessmentValidationHistoryError{
+				cause: errors.Join(test.cause, errors.New("typed failure")), turns: turns,
+			})
+			require.Equal(t, test.want, diagnostics["failure_class"])
+		})
+	}
 }
 
 func TestSubmissionAssessmentCatalogFailuresCarryDatabaseClassification(t *testing.T) {
