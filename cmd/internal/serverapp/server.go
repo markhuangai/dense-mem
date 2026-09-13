@@ -16,6 +16,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	conflictreview "github.com/markhuangai/dense-mem/internal/conflict/review"
 	"github.com/markhuangai/dense-mem/internal/conflictassessment"
+	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
@@ -98,6 +99,7 @@ func RunActiveServer(
 	recallFeedbackEventRepo := repository.NewRecallFeedbackEventRepository(pgDB.GetDB(), rlsHelper)
 	privateMemoryRepo := repository.NewPrivateMemoryRepository(pgDB.GetDB(), rlsHelper)
 	semanticRepo := repository.NewSemanticRepository(pgDB.GetDB(), rlsHelper)
+	knowledgeStore := knowledgepostgres.NewStore(pgDB.GetDB(), rlsHelper, knowledgepostgres.ConflictRuntimeConfig{})
 	ledgerRepo := repository.NewLedgerRepositoryWithRuntimeConfig(
 		pgDB.GetDB(),
 		rlsHelper,
@@ -204,6 +206,7 @@ func RunActiveServer(
 	applications := buildApplicationBundle(applicationCompositionDependencies{
 		Ledger:                 ledgerRepo,
 		Semantic:               semanticRepo,
+		RememberCatalog:        knowledgeStore,
 		Search:                 searchRepo,
 		RecallFeedbackEvents:   recallFeedbackEventRepo,
 		Assessor:               assessorProvider,
@@ -275,7 +278,7 @@ func RunActiveServer(
 		telemetry:          telemetry,
 		toolRegistry:       toolRegistry,
 		convergence:        searchApplication.Convergence,
-		rememberAttempts:   buildRememberAttemptDiagnostics(ledgerRepo),
+		rememberAttempts:   buildRememberAttemptDiagnostics(knowledgeStore),
 		credentialRepo:     credentialRepo,
 		credentialVerifier: credentialVerifier,
 		activityWriter:     activityWriter,
@@ -436,8 +439,8 @@ func RunActiveServer(
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)
 	}
-	diagnosticDone := ledgerRepo.StartRememberAttemptDiagnosticPurger(lifecycle.Context(), time.Hour, slog.Default())
-	lifecycle.add(managedRuntimeWorker{name: "remember diagnostics", done: diagnosticDone, shutdown: ledgerRepo.ShutdownRememberAttemptDiagnosticPurger})
+	diagnosticDone := knowledgeStore.StartRememberAttemptDiagnosticPurger(lifecycle.Context(), time.Hour, slog.Default())
+	lifecycle.add(managedRuntimeWorker{name: "remember diagnostics", done: diagnosticDone, shutdown: knowledgeStore.ShutdownRememberAttemptDiagnosticPurger})
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)
 	}

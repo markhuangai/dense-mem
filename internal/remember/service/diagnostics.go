@@ -10,12 +10,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/markhuangai/dense-mem/internal/repository"
-	remember "github.com/markhuangai/dense-mem/internal/remember/service"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	remembercontract "github.com/markhuangai/dense-mem/internal/remember/contract"
 )
 
 var (
-	ErrRememberAttemptDiagnosticNotFound     = errors.New("remember attempt diagnostic not found")
+	ErrRememberAttemptDiagnosticNotFound     = knowledgecontract.ErrRememberAttemptDiagnosticNotFound
 	ErrRememberAttemptDiagnosticsUnavailable = errors.New("remember attempt diagnostics unavailable")
 )
 
@@ -94,7 +94,7 @@ type RememberDiagnosticExchange struct {
 // RememberAttemptPublicResult is the existing terminal result schema. The
 // service decodes only these allowlisted fields and never forwards the stored
 // JSON object wholesale.
-type RememberAttemptPublicResult = remember.TerminalRememberResult
+type RememberAttemptPublicResult = TerminalRememberResult
 
 type RememberAttemptDiagnosticEvent struct {
 	SequenceNo int            `json:"sequence_no"`
@@ -106,10 +106,10 @@ type RememberAttemptDiagnosticEvent struct {
 }
 
 type RememberAttemptDiagnosticsService struct {
-	repo repository.RememberAttemptDiagnosticsRepository
+	repo remembercontract.DiagnosticsRepository
 }
 
-func NewRememberAttemptDiagnosticsService(repo repository.RememberAttemptDiagnosticsRepository) *RememberAttemptDiagnosticsService {
+func NewRememberAttemptDiagnosticsService(repo remembercontract.DiagnosticsRepository) *RememberAttemptDiagnosticsService {
 	return &RememberAttemptDiagnosticsService{repo: repo}
 }
 
@@ -124,7 +124,7 @@ func (s *RememberAttemptDiagnosticsService) ListRememberAttemptDiagnostics(
 	if err != nil {
 		return nil, err
 	}
-	records, err := s.repo.ListRememberAttemptDiagnostics(ctx, repository.RememberAttemptDiagnosticFilter{
+	records, err := s.repo.ListRememberAttemptDiagnostics(ctx, knowledgecontract.RememberAttemptDiagnosticFilter{
 		TeamID:  normalized.TeamID,
 		Outcome: normalized.Outcome,
 		Limit:   normalized.Limit,
@@ -161,7 +161,7 @@ func (s *RememberAttemptDiagnosticsService) GetRememberAttemptDiagnostic(
 		return nil, fmt.Errorf("attempt_id must be a UUID: %w", err)
 	}
 	record, err := s.repo.GetRememberAttemptDiagnostic(ctx, teamID, attemptID)
-	if errors.Is(err, repository.ErrRememberAttemptDiagnosticNotFound) {
+	if errors.Is(err, knowledgecontract.ErrRememberAttemptDiagnosticNotFound) {
 		return nil, ErrRememberAttemptDiagnosticNotFound
 	}
 	if err != nil || record == nil {
@@ -194,7 +194,7 @@ func (s *RememberAttemptDiagnosticsService) GetRememberAttemptDiagnostic(
 	}, nil
 }
 
-func projectRememberAttemptDiagnostics(items []repository.RememberAttemptDiagnosticRecordItem) RememberAttemptDiagnostics {
+func projectRememberAttemptDiagnostics(items []knowledgecontract.RememberAttemptDiagnosticRecordItem) RememberAttemptDiagnostics {
 	result := RememberAttemptDiagnostics{ProviderExchanges: []RememberDiagnosticExchange{}}
 	for _, item := range items {
 		exchange := RememberDiagnosticExchange{
@@ -223,7 +223,7 @@ func projectRememberAttemptDiagnostics(items []repository.RememberAttemptDiagnos
 	return result
 }
 
-func rememberAttemptDiagnosticSummary(record repository.RememberAttemptDiagnosticRecord) RememberAttemptDiagnosticSummary {
+func rememberAttemptDiagnosticSummary(record knowledgecontract.RememberAttemptDiagnosticRecord) RememberAttemptDiagnosticSummary {
 	return RememberAttemptDiagnosticSummary{
 		TeamID:             record.TeamID,
 		TeamName:           record.TeamName,
@@ -261,15 +261,15 @@ func projectRememberAttemptPublicResult(raw map[string]any) (*RememberAttemptPub
 	if err := json.Unmarshal(encoded, &result); err != nil {
 		return nil, err
 	}
-	result.Kind = remember.ResultKindTerminal
+	result.Kind = ResultKindTerminal
 	if result.Evidence == nil {
-		result.Evidence = []remember.TerminalEvidenceResult{}
+		result.Evidence = []TerminalEvidenceResult{}
 	}
 	if result.RelationshipResults == nil {
-		result.RelationshipResults = []remember.SubmissionRelationshipResult{}
+		result.RelationshipResults = []SubmissionRelationshipResult{}
 	}
 	if result.Errors == nil {
-		result.Errors = []remember.SubmissionStatusError{}
+		result.Errors = []SubmissionStatusError{}
 	}
 	return &result, nil
 }

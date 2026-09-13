@@ -8,6 +8,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 func TestSemanticCatalogsOmitSealedGenerationEntities(t *testing.T) {
@@ -17,6 +21,7 @@ func TestSemanticCatalogsOmitSealedGenerationEntities(t *testing.T) {
 	teamID := createLedgerTeam(t, adminDB, rls, "semantic-catalog-sealed-generation")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "semantic-catalog-sealed-owner")
 	repo := NewSemanticRepository(appDB, rls)
+	catalog := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
 	activeEntity := createSemanticEntity(t, ctx, repo, teamID, ownerID, "project", "Active Catalog Entity")
 	privateSpace, err := NewMemorySpaceRepository(appDB, rls).EnsureCredentialPrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
 	require.NoError(t, err)
@@ -48,6 +53,17 @@ func TestSemanticCatalogsOmitSealedGenerationEntities(t *testing.T) {
 			WHERE id = ?::uuid
 		`, privateSpace.ID).Error
 	}))
+	privateCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{{ID: privateSpace.ID, Kind: domain.MemorySpaceCredentialPrivate}})
+	entityCatalog, err := catalog.ListSubmissionAssessmentEntityCatalog(privateCtx, knowledgepostgres.SubmissionAssessmentEntityCatalogInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SpaceID: privateSpace.ID.String(),
+		Entities: []knowledgepostgres.SubmissionAssessmentEntityCatalogTarget{{
+			Ref: "sealed-catalog", Surface: "Sealed Catalog Entity", EntityKind: "project", KnownEntityID: privateEntityID.String(),
+		}}, CandidateLimit: 5,
+	})
+	require.NoError(t, err)
+	require.True(t, entityCatalog.Complete)
+	require.Len(t, entityCatalog.Groups, 1)
+	assert.Empty(t, entityCatalog.Groups[0].Candidates, "native entity catalog must omit sealed-generation entities")
 
 	reviewCandidates, err := repo.ListSemanticReviewEntityCandidates(ctx, SemanticReviewEntityCandidateInput{
 		TeamID: teamID, OwnerProfileID: ownerID, Name: "Sealed Catalog Entity", EntityKind: "project", Limit: 5,
@@ -80,6 +96,7 @@ func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.
 	otherTeamID := createLedgerTeam(t, adminDB, rls, "semantic-review-catalog-other-team")
 	otherOwnerID := createLedgerProfile(t, adminDB, rls, otherTeamID, "catalog-other-owner")
 	repo := NewSemanticRepository(appDB, rls)
+	catalog := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
 	entity := createSemanticEntity(t, ctx, repo, teamID, ownerA, "project", "Dense-Mem")
 	retiredEntity := createSemanticEntity(t, ctx, repo, teamID, ownerA, "project", "Retired Entity")
 	otherEntity := createSemanticEntity(t, ctx, repo, otherTeamID, otherOwnerID, "project", "Other Team")
@@ -138,7 +155,7 @@ func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.
 	assert.Equal(t, "works_on", predicates[0].PredicateKey)
 	assert.Equal(t, 1, predicates[0].Version)
 
-	resolutions, err := repo.ResolveSemanticReviewPredicateCandidates(ctx, SemanticReviewPredicateResolutionInput{
+	resolutions, err := catalog.ResolveSemanticReviewPredicateCandidates(ctx, knowledgepostgres.SemanticReviewPredicateResolutionInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerB,
 		Predicates:     []string{"is working on", "novel relation"},
@@ -161,7 +178,7 @@ func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.
 	assert.Contains(t, options, "works_on")
 	assert.Contains(t, options, "is_working_on")
 
-	assessmentOptions, err := repo.ListSemanticAssessmentPredicateOptions(ctx, SemanticAssessmentPredicateOptionsInput{
+	assessmentOptions, err := catalog.ListSemanticAssessmentPredicateOptions(ctx, knowledgepostgres.SemanticAssessmentPredicateOptionsInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerB,
 		QueryText:      "Mark is working on Dense-Mem.",
@@ -191,7 +208,7 @@ func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.
 		`, teamID).Error
 	}))
 
-	proposedKeyOptions, err := repo.ListSemanticAssessmentPredicateOptions(ctx, SemanticAssessmentPredicateOptionsInput{
+	proposedKeyOptions, err := catalog.ListSemanticAssessmentPredicateOptions(ctx, knowledgepostgres.SemanticAssessmentPredicateOptionsInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerB,
 		QueryText:      "Mark is working on project Dense-Mem.",
@@ -235,7 +252,7 @@ func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.
 	require.NoError(t, err)
 	assert.Empty(t, retiredCandidates)
 
-	retiredResolutions, err := repo.ResolveSemanticReviewPredicateCandidates(ctx, SemanticReviewPredicateResolutionInput{
+	retiredResolutions, err := catalog.ResolveSemanticReviewPredicateCandidates(ctx, knowledgepostgres.SemanticReviewPredicateResolutionInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerB,
 		Predicates:     []string{"is working on"},

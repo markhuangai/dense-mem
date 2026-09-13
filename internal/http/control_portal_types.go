@@ -10,6 +10,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/recall"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
@@ -31,7 +32,7 @@ type ControlPortalTelemetry struct {
 	ConflictQueue     conflictqueue.Reader
 	EvidenceConflicts evidenceconflict.Reader
 	Convergence       searchapp.SearchConvergenceReader
-	RememberAttempts  service.RememberAttemptDiagnosticsReader
+	RememberAttempts  rememberapp.RememberAttemptDiagnosticsReader
 	PrivateMemory     PrivateMemoryServiceInterface
 }
 
@@ -48,7 +49,7 @@ type controlPortalHandler struct {
 	conflictQueue     conflictqueue.Reader
 	evidenceConflicts evidenceconflict.Reader
 	convergence       searchapp.SearchConvergenceReader
-	rememberAttempts  service.RememberAttemptDiagnosticsReader
+	rememberAttempts  rememberapp.RememberAttemptDiagnosticsReader
 	privateMemory     PrivateMemoryServiceInterface
 	health            HealthConfig
 	sso               *service.SSOService

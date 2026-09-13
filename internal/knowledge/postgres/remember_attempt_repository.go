@@ -22,7 +22,7 @@ import (
 // ErrRememberReplay identifies a terminal attempt that owns an idempotency
 // key. Callers reload its public result instead of reconstructing it.
 var (
-	ErrRememberAttemptDiagnosticNotFound = errors.New("remember attempt diagnostic not found")
+	ErrRememberAttemptDiagnosticNotFound = knowledgecontract.ErrRememberAttemptDiagnosticNotFound
 )
 
 type RememberAttemptRecordInput = knowledgecontract.RememberAttemptRecordInput

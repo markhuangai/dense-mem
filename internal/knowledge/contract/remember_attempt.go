@@ -2,9 +2,14 @@ package contract
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 )
+
+// ErrRememberAttemptDiagnosticNotFound is the stable storage/application
+// boundary error for a missing control-only diagnostic record.
+var ErrRememberAttemptDiagnosticNotFound = errors.New("remember attempt diagnostic not found")
 
 // DiagnosticCaptureState derives the bounded state used by both the capture
 // recorder and durable repository when a caller did not provide one.

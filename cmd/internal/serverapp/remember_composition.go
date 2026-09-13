@@ -11,12 +11,11 @@ import (
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	rememberprocessor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type rememberApplicationDependencies struct {
 	Ledger   *repository.LedgerRepositoryImpl
-	Catalog  *repository.SemanticRepositoryImpl
+	Catalog  remembercontract.SubmissionAssessmentCatalog
 	Assessor assessor.Provider
 	Embedder embeddingcontract.EmbeddingProviderInterface
 	Limits   assessor.SemanticAssessmentLimits
@@ -27,7 +26,7 @@ type rememberApplicationDependencies struct {
 
 func buildRememberApplication(deps rememberApplicationDependencies) rememberapp.Service {
 	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
-		Ledger: newRememberPersistenceAdapter(deps.Ledger), Catalog: newRememberAssessmentCatalogAdapter(deps.Catalog), Assessor: deps.Assessor,
+		Ledger: newRememberPersistenceAdapter(deps.Ledger), Catalog: deps.Catalog, Assessor: deps.Assessor,
 		Embedder: deps.Embedder, Limits: deps.Limits, Metrics: deps.Metrics,
 		Logger: deps.Logger, IsStaleInput: repository.IsRememberStaleInputError,
 		CommitFailureStage: repository.RememberCommitFailureStage,
@@ -40,8 +39,8 @@ func buildRememberApplication(deps rememberApplicationDependencies) rememberapp.
 	})
 }
 
-func buildRememberAttemptDiagnostics(repo repository.RememberAttemptDiagnosticsRepository) *service.RememberAttemptDiagnosticsService {
-	return service.NewRememberAttemptDiagnosticsService(repo)
+func buildRememberAttemptDiagnostics(repo remembercontract.DiagnosticsRepository) *rememberapp.RememberAttemptDiagnosticsService {
+	return rememberapp.NewRememberAttemptDiagnosticsService(repo)
 }
 
 type rememberPersistenceAdapter struct {
@@ -86,108 +85,6 @@ func (a *rememberPersistenceAdapter) RecordRememberFailure(ctx context.Context, 
 
 func (a *rememberPersistenceAdapter) WithRememberAttemptLock(ctx context.Context, teamID, ownerProfileID, idempotencyKey string, fn func(bool) error) error {
 	return a.legacy.WithRememberAttemptLock(ctx, teamID, ownerProfileID, idempotencyKey, fn)
-}
-
-type rememberAssessmentCatalogAdapter struct {
-	legacy *repository.SemanticRepositoryImpl
-}
-
-var _ remembercontract.SubmissionAssessmentCatalog = (*rememberAssessmentCatalogAdapter)(nil)
-var _ remembercontract.SubmissionAssessmentKnownEvidenceCatalog = (*rememberAssessmentCatalogAdapter)(nil)
-
-func newRememberAssessmentCatalogAdapter(legacy *repository.SemanticRepositoryImpl) remembercontract.SubmissionAssessmentCatalog {
-	if legacy == nil {
-		return nil
-	}
-	return &rememberAssessmentCatalogAdapter{legacy: legacy}
-}
-
-func (a *rememberAssessmentCatalogAdapter) ListSubmissionAssessmentEntityCatalog(ctx context.Context, input knowledgecontract.SubmissionAssessmentEntityCatalogInput) (knowledgecontract.SubmissionAssessmentEntityCatalogResult, error) {
-	legacyInput := repository.SubmissionAssessmentEntityCatalogInput{
-		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, SpaceID: input.SpaceID, CandidateLimit: input.CandidateLimit,
-		Entities: make([]repository.SubmissionAssessmentEntityCatalogTarget, len(input.Entities)),
-	}
-	for i, target := range input.Entities {
-		legacyInput.Entities[i] = repository.SubmissionAssessmentEntityCatalogTarget{
-			Ref: target.Ref, Surface: target.Surface, EntityKind: target.EntityKind, KnownEntityID: target.KnownEntityID,
-		}
-	}
-	result, err := a.legacy.ListSubmissionAssessmentEntityCatalog(ctx, legacyInput)
-	if err != nil {
-		return knowledgecontract.SubmissionAssessmentEntityCatalogResult{}, err
-	}
-	native := knowledgecontract.SubmissionAssessmentEntityCatalogResult{Complete: result.Complete, Groups: make([]knowledgecontract.SubmissionAssessmentEntityCatalogGroup, len(result.Groups))}
-	for i, group := range result.Groups {
-		native.Groups[i] = knowledgecontract.SubmissionAssessmentEntityCatalogGroup{Ref: group.Ref, Complete: group.Complete, Candidates: make([]knowledgecontract.SemanticReviewEntityCandidate, len(group.Candidates))}
-		for j, candidate := range group.Candidates {
-			native.Groups[i].Candidates[j] = knowledgecontract.SemanticReviewEntityCandidate{
-				TeamID: candidate.TeamID, EntityID: candidate.EntityID, EntityKind: candidate.EntityKind,
-				CanonicalName: candidate.CanonicalName, ActiveNames: candidate.ActiveNames,
-				IdentityContext: candidate.IdentityContext, Status: candidate.Status,
-			}
-		}
-	}
-	return native, nil
-}
-
-func (a *rememberAssessmentCatalogAdapter) ResolveSemanticReviewPredicateCandidates(ctx context.Context, input knowledgecontract.SemanticReviewPredicateResolutionInput) ([]knowledgecontract.SemanticReviewPredicateResolution, error) {
-	result, err := a.legacy.ResolveSemanticReviewPredicateCandidates(ctx, repository.SemanticReviewPredicateResolutionInput{
-		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, Predicates: input.Predicates, Limit: input.Limit,
-	})
-	if err != nil {
-		return nil, err
-	}
-	native := make([]knowledgecontract.SemanticReviewPredicateResolution, len(result))
-	for i, resolution := range result {
-		native[i] = knowledgecontract.SemanticReviewPredicateResolution{
-			RequestedPredicate: resolution.RequestedPredicate, MatchKind: resolution.MatchKind,
-			Candidate: knowledgecontract.SemanticReviewPredicateCandidate{
-				PredicateKey: resolution.Candidate.PredicateKey, Version: resolution.Candidate.Version,
-				Aliases: resolution.Candidate.Aliases, AllowedSubjectKinds: resolution.Candidate.AllowedSubjectKinds,
-				AllowedObjectKinds: resolution.Candidate.AllowedObjectKinds, RelationshipKind: resolution.Candidate.RelationshipKind,
-				CurrentCardinality: resolution.Candidate.CurrentCardinality, LifecycleState: resolution.Candidate.LifecycleState,
-			},
-		}
-	}
-	return native, nil
-}
-
-func (a *rememberAssessmentCatalogAdapter) ListSemanticAssessmentPredicateOptions(ctx context.Context, input knowledgecontract.SemanticAssessmentPredicateOptionsInput) ([]knowledgecontract.SemanticReviewPredicateCandidate, error) {
-	result, err := a.legacy.ListSemanticAssessmentPredicateOptions(ctx, repository.SemanticAssessmentPredicateOptionsInput{
-		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, QueryText: input.QueryText, ProposedKeys: input.ProposedKeys, Limit: input.Limit,
-	})
-	if err != nil {
-		return nil, err
-	}
-	native := make([]knowledgecontract.SemanticReviewPredicateCandidate, len(result))
-	for i, candidate := range result {
-		native[i] = knowledgecontract.SemanticReviewPredicateCandidate{
-			PredicateKey: candidate.PredicateKey, Version: candidate.Version, Aliases: candidate.Aliases,
-			AllowedSubjectKinds: candidate.AllowedSubjectKinds, AllowedObjectKinds: candidate.AllowedObjectKinds,
-			RelationshipKind: candidate.RelationshipKind, CurrentCardinality: candidate.CurrentCardinality,
-			LifecycleState: candidate.LifecycleState,
-		}
-	}
-	return native, nil
-}
-
-func (a *rememberAssessmentCatalogAdapter) ListSubmissionAssessmentKnownEvidence(ctx context.Context, input knowledgecontract.SubmissionAssessmentKnownEvidenceInput) (knowledgecontract.SubmissionAssessmentKnownEvidenceResult, error) {
-	result, err := a.legacy.ListSubmissionAssessmentKnownEvidence(ctx, repository.SubmissionAssessmentKnownEvidenceInput{
-		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, SpaceID: input.SpaceID, EvidenceIDs: input.EvidenceIDs,
-	})
-	if err != nil {
-		return knowledgecontract.SubmissionAssessmentKnownEvidenceResult{}, err
-	}
-	native := knowledgecontract.SubmissionAssessmentKnownEvidenceResult{Evidence: make([]knowledgecontract.SubmissionAssessmentKnownEvidence, len(result.Evidence))}
-	for i, item := range result.Evidence {
-		native.Evidence[i] = knowledgecontract.SubmissionAssessmentKnownEvidence{
-			TeamID: item.TeamID, EvidenceID: item.EvidenceID, FragmentID: item.FragmentID, IngestID: item.IngestID,
-			OwnerProfileID: item.OwnerProfileID, Content: item.Content, ContentHash: item.ContentHash,
-			Authority: item.Authority, SourceID: item.SourceID, SourceRevisionID: item.SourceRevisionID,
-			CurrentSourceRevisionID: item.CurrentSourceRevisionID, SpaceID: item.SpaceID, SpaceGeneration: item.SpaceGeneration,
-		}
-	}
-	return native, nil
 }
 
 func legacySynchronousRememberCommitInput(input knowledgecontract.SynchronousRememberCommitInput) repository.SynchronousRememberCommitInput {

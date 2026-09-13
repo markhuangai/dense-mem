@@ -10,20 +10,19 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/markhuangai/dense-mem/internal/repository"
-	remember "github.com/markhuangai/dense-mem/internal/service/remember"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 func TestRememberAttemptDiagnosticsServiceProjectsExchangesAndSafeResult(t *testing.T) {
 	teamID, attemptID := uuid.NewString(), uuid.NewString()
 	repo := &rememberAttemptDiagnosticsRepoStub{
-		page: &repository.RememberAttemptDiagnosticRecordPage{Total: 1, Records: []repository.RememberAttemptDiagnosticRecord{{
+		page: &knowledgecontract.RememberAttemptDiagnosticRecordPage{Total: 1, Records: []knowledgecontract.RememberAttemptDiagnosticRecord{{
 			TeamID: teamID, TeamName: "Team", OwnerProfileID: uuid.NewString(), AttemptID: attemptID,
 			ContractVersion: "dense-mem.v2.6", SubmissionKind: "remember", Outcome: "failed",
 			FailedPhase: "assessment", ErrorCode: "provider_unavailable", Duration: 2 * time.Millisecond,
 			PublicResult: map[string]any{"submission_id": attemptID, "processing_state": "failed", "secret": "must-not-escape-list"},
 		}}},
-		detail: &repository.RememberAttemptDiagnosticRecord{
+		detail: &knowledgecontract.RememberAttemptDiagnosticRecord{
 			TeamID: teamID, TeamName: "Team", OwnerProfileID: uuid.NewString(), AttemptID: attemptID,
 			ContractVersion: "dense-mem.v2.6", SubmissionKind: "remember", Outcome: "failed",
 			PublicResult: map[string]any{
@@ -32,8 +31,8 @@ func TestRememberAttemptDiagnosticsServiceProjectsExchangesAndSafeResult(t *test
 				"evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
 				"secret": "must-not-escape-detail",
 			},
-			Events: []repository.RememberAttemptDiagnosticEvent{{SequenceNo: 1, Phase: "assessment", EventKind: "assessment_failed", Outcome: "failed", Metadata: map[string]any{"markup": "<b>text</b>"}}},
-			Diagnostics: []repository.RememberAttemptDiagnosticRecordItem{
+			Events: []knowledgecontract.RememberAttemptDiagnosticEvent{{SequenceNo: 1, Phase: "assessment", EventKind: "assessment_failed", Outcome: "failed", Metadata: map[string]any{"markup": "<b>text</b>"}}},
+			Diagnostics: []knowledgecontract.RememberAttemptDiagnosticRecordItem{
 				{DiagnosticID: uuid.NewString(), SequenceNo: 1, Kind: "original_request", Component: "remember", RequestBody: []byte(`{"evidence":[]}`), Outcome: "captured", CapturedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour)},
 				{DiagnosticID: uuid.NewString(), SequenceNo: 2, Kind: "provider_exchange", Component: "assessor", Model: "model", RequestBody: []byte(`{"model":"model"}`), ResponseBody: []byte(`{"choices":[]}`), Outcome: "captured", CapturedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour)},
 				{DiagnosticID: uuid.NewString(), SequenceNo: 3, Kind: "caller_response", Component: "mcp", ResponseBody: []byte(`{"isError":true}`), Outcome: "captured", CapturedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour)},
@@ -61,8 +60,8 @@ func TestRememberAttemptDiagnosticsServiceProjectsExchangesAndSafeResult(t *test
 
 func TestRememberAttemptDiagnosticsServiceValidatesScopeAndMapsNotFound(t *testing.T) {
 	repo := &rememberAttemptDiagnosticsRepoStub{
-		listErr:   repository.ErrRememberAttemptDiagnosticNotFound,
-		detailErr: repository.ErrRememberAttemptDiagnosticNotFound,
+		listErr:   knowledgecontract.ErrRememberAttemptDiagnosticNotFound,
+		detailErr: knowledgecontract.ErrRememberAttemptDiagnosticNotFound,
 	}
 	svc := NewRememberAttemptDiagnosticsService(repo)
 
@@ -113,14 +112,14 @@ func TestRememberAttemptDiagnosticsServiceHandlesUnavailableAndMalformedRecords(
 	require.ErrorIs(t, err, ErrRememberAttemptDiagnosticsUnavailable)
 
 	repo.detailErr = nil
-	repo.detail = &repository.RememberAttemptDiagnosticRecord{TeamID: teamID, AttemptID: attemptID, Outcome: "failed", PublicResult: map[string]any{"evidence": "not-an-array"}}
+	repo.detail = &knowledgecontract.RememberAttemptDiagnosticRecord{TeamID: teamID, AttemptID: attemptID, Outcome: "failed", PublicResult: map[string]any{"evidence": "not-an-array"}}
 	_, err = svc.GetRememberAttemptDiagnostic(context.Background(), teamID, attemptID)
 	require.ErrorIs(t, err, ErrRememberAttemptDiagnosticsUnavailable)
 
 	completedAt := time.Now().UTC()
 	repo.detail.PublicResult = nil
 	repo.detail.CompletedAt = &completedAt
-	repo.detail.Events = []repository.RememberAttemptDiagnosticEvent{{Metadata: nil}}
+	repo.detail.Events = []knowledgecontract.RememberAttemptDiagnosticEvent{{Metadata: nil}}
 	detail, err := svc.GetRememberAttemptDiagnostic(context.Background(), teamID, attemptID)
 	require.NoError(t, err)
 	require.NotNil(t, detail.CompletedAt)
@@ -135,7 +134,7 @@ func TestRememberAttemptDiagnosticsServiceDoesNotExposeRawResultFields(t *testin
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotContains(t, mustJSON(t, result), "redact")
-	require.Equal(t, remember.ResultKindTerminal, result.Kind)
+	require.Equal(t, ResultKindTerminal, result.Kind)
 }
 
 func TestProjectRememberAttemptPublicResultRejectsMalformedStoredJSON(t *testing.T) {
@@ -151,21 +150,20 @@ func TestProjectRememberAttemptPublicResultRejectsMalformedStoredJSON(t *testing
 }
 
 type rememberAttemptDiagnosticsRepoStub struct {
-	page       *repository.RememberAttemptDiagnosticRecordPage
+	page       *knowledgecontract.RememberAttemptDiagnosticRecordPage
 	listErr    error
-	listFilter repository.RememberAttemptDiagnosticFilter
-	detail     *repository.RememberAttemptDiagnosticRecord
+	listFilter knowledgecontract.RememberAttemptDiagnosticFilter
+	detail     *knowledgecontract.RememberAttemptDiagnosticRecord
 	detailErr  error
 }
 
-func (s *rememberAttemptDiagnosticsRepoStub) ListRememberAttemptDiagnostics(_ context.Context, filter repository.RememberAttemptDiagnosticFilter) (*repository.RememberAttemptDiagnosticRecordPage, error) {
+func (s *rememberAttemptDiagnosticsRepoStub) ListRememberAttemptDiagnostics(_ context.Context, filter knowledgecontract.RememberAttemptDiagnosticFilter) (*knowledgecontract.RememberAttemptDiagnosticRecordPage, error) {
 	s.listFilter = filter
 	return s.page, s.listErr
 }
-func (s *rememberAttemptDiagnosticsRepoStub) GetRememberAttemptDiagnostic(context.Context, string, string) (*repository.RememberAttemptDiagnosticRecord, error) {
+func (s *rememberAttemptDiagnosticsRepoStub) GetRememberAttemptDiagnostic(context.Context, string, string) (*knowledgecontract.RememberAttemptDiagnosticRecord, error) {
 	return s.detail, s.detailErr
 }
-
 
 func mustJSON(t *testing.T, value any) string {
 	t.Helper()

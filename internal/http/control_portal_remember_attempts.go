@@ -12,7 +12,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/service"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 func (h *controlPortalHandler) listRememberAttemptDiagnostics(c echo.Context) error {
@@ -24,7 +24,7 @@ func (h *controlPortalHandler) listRememberAttemptDiagnostics(c echo.Context) er
 		return err
 	}
 	page, err := h.rememberAttempts.ListRememberAttemptDiagnostics(c.Request().Context(), filter)
-	if errors.Is(err, service.ErrRememberAttemptDiagnosticsUnavailable) {
+	if errors.Is(err, rememberapp.ErrRememberAttemptDiagnosticsUnavailable) {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "remember attempt diagnostics unavailable")
 	}
 	if err != nil {
@@ -46,10 +46,10 @@ func (h *controlPortalHandler) getRememberAttemptDiagnostic(c echo.Context) erro
 		return err
 	}
 	detail, err := h.rememberAttempts.GetRememberAttemptDiagnostic(c.Request().Context(), teamID.String(), attemptID.String())
-	if errors.Is(err, service.ErrRememberAttemptDiagnosticNotFound) {
+	if errors.Is(err, rememberapp.ErrRememberAttemptDiagnosticNotFound) {
 		return httperr.New(httperr.NOT_FOUND, "remember attempt not found")
 	}
-	if errors.Is(err, service.ErrRememberAttemptDiagnosticsUnavailable) {
+	if errors.Is(err, rememberapp.ErrRememberAttemptDiagnosticsUnavailable) {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "remember attempt diagnostics unavailable")
 	}
 	if err != nil {
@@ -69,19 +69,19 @@ func (h *controlPortalHandler) getRememberAttemptDiagnostic(c echo.Context) erro
 	return response.SuccessOK(c, detail)
 }
 
-func controlRememberAttemptDiagnosticFilter(c echo.Context) (service.RememberAttemptDiagnosticFilter, error) {
+func controlRememberAttemptDiagnosticFilter(c echo.Context) (rememberapp.RememberAttemptDiagnosticFilter, error) {
 	limit, offset := controlPagination(c)
 	if raw := strings.TrimSpace(c.QueryParam("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 || parsed > 100 {
-			return service.RememberAttemptDiagnosticFilter{}, httperr.New(httperr.VALIDATION_ERROR, "limit must be between 1 and 100")
+			return rememberapp.RememberAttemptDiagnosticFilter{}, httperr.New(httperr.VALIDATION_ERROR, "limit must be between 1 and 100")
 		}
 		limit = parsed
 	}
 	if raw := strings.TrimSpace(c.QueryParam("offset")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 0 {
-			return service.RememberAttemptDiagnosticFilter{}, httperr.New(httperr.VALIDATION_ERROR, "offset must be a non-negative integer")
+			return rememberapp.RememberAttemptDiagnosticFilter{}, httperr.New(httperr.VALIDATION_ERROR, "offset must be a non-negative integer")
 		}
 		offset = parsed
 	}
@@ -89,7 +89,7 @@ func controlRememberAttemptDiagnosticFilter(c echo.Context) (service.RememberAtt
 	if teamID != "" {
 		parsed, err := uuid.Parse(teamID)
 		if err != nil {
-			return service.RememberAttemptDiagnosticFilter{}, httperr.New(httperr.VALIDATION_ERROR, "team ID must be a valid UUID")
+			return rememberapp.RememberAttemptDiagnosticFilter{}, httperr.New(httperr.VALIDATION_ERROR, "team ID must be a valid UUID")
 		}
 		teamID = parsed.String()
 	}
@@ -97,7 +97,7 @@ func controlRememberAttemptDiagnosticFilter(c echo.Context) (service.RememberAtt
 	switch outcome {
 	case "", "completed", "rejected", "quarantined", "failed", "replayed":
 	default:
-		return service.RememberAttemptDiagnosticFilter{}, httperr.New(httperr.VALIDATION_ERROR, "outcome is unsupported")
+		return rememberapp.RememberAttemptDiagnosticFilter{}, httperr.New(httperr.VALIDATION_ERROR, "outcome is unsupported")
 	}
-	return service.RememberAttemptDiagnosticFilter{TeamID: teamID, Outcome: outcome, Limit: limit, Offset: offset}, nil
+	return rememberapp.RememberAttemptDiagnosticFilter{TeamID: teamID, Outcome: outcome, Limit: limit, Offset: offset}, nil
 }

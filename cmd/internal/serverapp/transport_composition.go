@@ -18,6 +18,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/recall"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
 	"github.com/markhuangai/dense-mem/internal/service"
@@ -44,7 +45,7 @@ type transportCompositionInputs struct {
 	telemetry        telemetryComposition
 	toolRegistry     registry.Registry
 	convergence      service.SearchConvergenceReader
-	rememberAttempts service.RememberAttemptDiagnosticsReader
+	rememberAttempts rememberapp.RememberAttemptDiagnosticsReader
 
 	credentialRepo     repository.CredentialRepository
 	credentialVerifier crypto.CredentialVerifier

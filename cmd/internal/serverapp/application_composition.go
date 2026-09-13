@@ -7,6 +7,7 @@ import (
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	remembercontract "github.com/markhuangai/dense-mem/internal/remember/contract"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
@@ -21,6 +22,7 @@ import (
 type applicationCompositionDependencies struct {
 	Ledger                 *repository.LedgerRepositoryImpl
 	Semantic               *repository.SemanticRepositoryImpl
+	RememberCatalog        remembercontract.SubmissionAssessmentCatalog
 	Search                 *repository.SearchRepositoryImpl
 	RecallFeedbackEvents   repository.RecallFeedbackEventRepository
 	Assessor               assessor.Provider
@@ -58,7 +60,7 @@ type applicationBundle struct {
 func buildApplicationBundle(deps applicationCompositionDependencies) applicationBundle {
 	rememberService := buildRememberApplication(rememberApplicationDependencies{
 		Ledger:   deps.Ledger,
-		Catalog:  deps.Semantic,
+		Catalog:  deps.RememberCatalog,
 		Assessor: deps.Assessor,
 		Embedder: deps.EmbeddingProvider,
 		Limits:   deps.AssessmentLimits,

@@ -16,6 +16,14 @@ var (
 	ErrTeamInactive           = errors.New("remember: team is inactive")
 )
 
+// DiagnosticsRepository is the narrow persistence port for the control-only
+// Remember attempt read model. Knowledge storage owns the durable records;
+// Remember owns filtering and safe projection.
+type DiagnosticsRepository interface {
+	ListRememberAttemptDiagnostics(context.Context, knowledgecontract.RememberAttemptDiagnosticFilter) (*knowledgecontract.RememberAttemptDiagnosticRecordPage, error)
+	GetRememberAttemptDiagnostic(context.Context, string, string) (*knowledgecontract.RememberAttemptDiagnosticRecord, error)
+}
+
 type RememberValidationIssue struct {
 	Path    string `json:"path"`
 	Code    string `json:"code"`

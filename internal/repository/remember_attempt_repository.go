@@ -14,7 +14,7 @@ var (
 	ErrRememberReplay                    = knowledgecontract.ErrRememberReplay
 	ErrRememberAttemptNotFound           = knowledgecontract.ErrRememberAttemptNotFound
 	ErrRememberFailureRetentionDegraded  = knowledgecontract.ErrRememberFailureRetentionDegraded
-	ErrRememberAttemptDiagnosticNotFound = knowledgepostgres.ErrRememberAttemptDiagnosticNotFound
+	ErrRememberAttemptDiagnosticNotFound = knowledgecontract.ErrRememberAttemptDiagnosticNotFound
 )
 
 type RememberAttemptRecordInput = knowledgecontract.RememberAttemptRecordInput

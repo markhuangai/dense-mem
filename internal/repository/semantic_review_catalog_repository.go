@@ -22,8 +22,6 @@ const (
 	semanticReviewMaxCandidateLimit     = 20
 	semanticReviewDefaultOptionLimit    = 100
 	semanticReviewMaxOptionLimit        = 100
-	semanticReviewMaxResolutionLimit    = semanticReviewMaxOptionLimit + 1
-	semanticReviewMaxResolutionInputs   = 200
 )
 
 func (r *SemanticRepositoryImpl) ListSemanticReviewEntityCandidates(
@@ -119,111 +117,6 @@ func (r *SemanticRepositoryImpl) ListSemanticReviewPredicateCandidates(
 	})
 	if err != nil {
 		return nil, fmt.Errorf("semantic: list review predicate candidates: %w", err)
-	}
-	return out, nil
-}
-
-func (r *SemanticRepositoryImpl) ResolveSemanticReviewPredicateCandidates(
-	ctx context.Context,
-	input SemanticReviewPredicateResolutionInput,
-) ([]SemanticReviewPredicateResolution, error) {
-	input = normalizeSemanticReviewPredicateResolutionInput(input)
-	if err := validateSemanticReviewPredicateResolutionInput(input); err != nil {
-		return nil, err
-	}
-	if len(input.Predicates) == 0 {
-		return nil, nil
-	}
-	normalizedPredicates := make([]string, 0, len(input.Predicates))
-	for _, predicate := range input.Predicates {
-		normalizedPredicates = append(normalizedPredicates, canonicalGeneratedPredicateKey(predicate))
-	}
-	out := []SemanticReviewPredicateResolution{}
-	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
-			return err
-		}
-		rows, err := tx.WithContext(ctx).Raw(`
-			WITH requested AS (
-			    SELECT btrim(input.requested_predicate) AS requested_predicate,
-			           input.normalized_predicate,
-			           input.ordinality AS requested_order
-			    FROM unnest(?::text[], ?::text[]) WITH ORDINALITY
-			         AS input(requested_predicate, normalized_predicate, ordinality)
-			    WHERE btrim(input.requested_predicate) <> ''
-			), latest_definitions AS (
-			    SELECT definition.*,
-			           row_number() OVER (
-			               PARTITION BY definition.predicate_key
-			               ORDER BY definition.version DESC
-			           ) AS version_rank
-			    FROM team_predicate_definitions AS definition
-			    WHERE definition.team_id = ?::uuid
-			), matched AS (
-			    SELECT requested.requested_predicate, requested.requested_order,
-			           CASE WHEN definition.predicate_key = requested.normalized_predicate
-			                THEN 'key' ELSE 'alias' END AS match_kind,
-			           definition.predicate_key, definition.version, definition.aliases,
-			           definition.allowed_subject_kinds, definition.allowed_object_kinds,
-			           definition.relationship_kind, definition.current_cardinality,
-			           definition.lifecycle_state
-			    FROM requested
-			    JOIN latest_definitions AS definition
-			      ON definition.version_rank = 1
-			     AND definition.lifecycle_state = 'active'
-			     AND (
-			         definition.predicate_key = requested.normalized_predicate
-			         OR requested.requested_predicate = ANY(definition.aliases)
-			         OR requested.normalized_predicate = ANY(definition.aliases)
-			     )
-			), latest AS (
-			    SELECT *,
-			           row_number() OVER (
-			               PARTITION BY requested_order
-			               ORDER BY CASE match_kind WHEN 'key' THEN 0 ELSE 1 END,
-			                        predicate_key
-			           ) AS match_rank
-			    FROM matched
-			)
-			SELECT requested_predicate, match_kind, predicate_key, version, aliases,
-			       allowed_subject_kinds, allowed_object_kinds,
-			       relationship_kind, current_cardinality, lifecycle_state
-			FROM latest
-			WHERE match_rank <= ?
-			ORDER BY requested_order, match_rank
-		`, pq.Array(input.Predicates), pq.Array(normalizedPredicates), input.TeamID, input.Limit).Rows()
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var resolution SemanticReviewPredicateResolution
-			var aliases pq.StringArray
-			var subjectKinds pq.StringArray
-			var objectKinds pq.StringArray
-			if err := rows.Scan(
-				&resolution.RequestedPredicate,
-				&resolution.MatchKind,
-				&resolution.Candidate.PredicateKey,
-				&resolution.Candidate.Version,
-				&aliases,
-				&subjectKinds,
-				&objectKinds,
-				&resolution.Candidate.RelationshipKind,
-				&resolution.Candidate.CurrentCardinality,
-				&resolution.Candidate.LifecycleState,
-			); err != nil {
-				return err
-			}
-			resolution.Candidate.Aliases = []string(aliases)
-			resolution.Candidate.AllowedSubjectKinds = []string(subjectKinds)
-			resolution.Candidate.AllowedObjectKinds = []string(objectKinds)
-			out = append(out, resolution)
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		return nil, fmt.Errorf("semantic: resolve review predicate candidates: %w", err)
 	}
 	return out, nil
 }
@@ -408,50 +301,6 @@ func validateSemanticReviewPredicateCandidateInput(input SemanticReviewPredicate
 	return nil
 }
 
-func normalizeSemanticReviewPredicateResolutionInput(input SemanticReviewPredicateResolutionInput) SemanticReviewPredicateResolutionInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
-	input.Limit = normalizeReviewResolutionLimit(input.Limit)
-	seen := map[string]struct{}{}
-	predicates := make([]string, 0, len(input.Predicates))
-	for _, predicate := range input.Predicates {
-		predicate = strings.TrimSpace(predicate)
-		if predicate == "" {
-			continue
-		}
-		if _, exists := seen[predicate]; exists {
-			continue
-		}
-		seen[predicate] = struct{}{}
-		predicates = append(predicates, predicate)
-		if len(predicates) == semanticReviewMaxResolutionInputs {
-			break
-		}
-	}
-	input.Predicates = predicates
-	return input
-}
-
-func normalizeReviewResolutionLimit(limit int) int {
-	if limit <= 0 {
-		return semanticReviewDefaultCandidateLimit
-	}
-	if limit > semanticReviewMaxResolutionLimit {
-		return semanticReviewMaxResolutionLimit
-	}
-	return limit
-}
-
-func validateSemanticReviewPredicateResolutionInput(input SemanticReviewPredicateResolutionInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
-	}
-	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
-		return fmt.Errorf("owner_profile_id is required: %w", err)
-	}
-	return nil
-}
-
 func normalizeSemanticReviewPredicateOptionsInput(input SemanticReviewPredicateOptionsInput) SemanticReviewPredicateOptionsInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
@@ -462,50 +311,6 @@ func normalizeSemanticReviewPredicateOptionsInput(input SemanticReviewPredicateO
 	}
 	input.Limit = normalizeReviewOptionLimit(input.Limit)
 	return input
-}
-
-func normalizeSemanticAssessmentPredicateOptionsInput(input SemanticAssessmentPredicateOptionsInput) SemanticAssessmentPredicateOptionsInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
-	input.QueryText = strings.TrimSpace(input.QueryText)
-	queryRunes := []rune(input.QueryText)
-	if len(queryRunes) > 32000 {
-		input.QueryText = string(queryRunes[:32000])
-	}
-	seen := make(map[string]struct{}, len(input.ProposedKeys))
-	proposedKeys := make([]string, 0, len(input.ProposedKeys))
-	for _, key := range input.ProposedKeys {
-		key = strings.TrimSpace(key)
-		if key == "" {
-			continue
-		}
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		proposedKeys = append(proposedKeys, key)
-	}
-	input.ProposedKeys = proposedKeys
-	input.Limit = normalizeReviewOptionLimit(input.Limit)
-	return input
-}
-
-func validateSemanticAssessmentPredicateOptionsInput(input SemanticAssessmentPredicateOptionsInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
-	}
-	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
-		return fmt.Errorf("owner_profile_id is required: %w", err)
-	}
-	if len(input.ProposedKeys) > 200 {
-		return fmt.Errorf("proposed_keys must contain at most 200 entries")
-	}
-	for _, key := range input.ProposedKeys {
-		if len([]rune(key)) > 128 {
-			return fmt.Errorf("proposed_key must be at most 128 characters")
-		}
-	}
-	return nil
 }
 
 func validateSemanticReviewPredicateOptionsInput(input SemanticReviewPredicateOptionsInput) error {

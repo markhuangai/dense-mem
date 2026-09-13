@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
@@ -22,7 +23,7 @@ func TestSubmissionAssessmentKnownEvidenceCatalogEnforcesVisibilityAndEligibilit
 	teamC := createLedgerTeam(t, adminDB, rls, "known-evidence-catalog-team-c")
 	ownerC := createLedgerProfile(t, adminDB, rls, teamC, "known-evidence-catalog-owner-c")
 	ledger := NewLedgerRepository(appDB, rls)
-	repo := NewSemanticRepository(appDB, rls)
+	catalog := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
 	sharedSpace, err := NewMemorySpaceRepository(appDB, rls).GetTeamShared(ctx, uuid.MustParse(teamA))
 	require.NoError(t, err)
 	require.NotNil(t, sharedSpace)
@@ -65,21 +66,21 @@ func TestSubmissionAssessmentKnownEvidenceCatalogEnforcesVisibilityAndEligibilit
 	require.NoError(t, err)
 
 	requested := []string{shared.Evidence[0].FragmentID, private.Evidence[0].FragmentID, otherTeam.Evidence[0].FragmentID, quarantined.Evidence[0].FragmentID, retracted.Evidence[0].FragmentID}
-	visibleToB, err := repo.ListSubmissionAssessmentKnownEvidence(ctx, SubmissionAssessmentKnownEvidenceInput{
+	visibleToB, err := catalog.ListSubmissionAssessmentKnownEvidence(ctx, knowledgepostgres.SubmissionAssessmentKnownEvidenceInput{
 		TeamID: teamA, OwnerProfileID: ownerB, SpaceID: sharedSpace.ID.String(), EvidenceIDs: requested,
 	})
 	require.NoError(t, err)
 	require.Len(t, visibleToB.Evidence, 1)
 	require.Equal(t, shared.Evidence[0].FragmentID, visibleToB.Evidence[0].EvidenceID)
 
-	visibleToA, err := repo.ListSubmissionAssessmentKnownEvidence(privateCtx, SubmissionAssessmentKnownEvidenceInput{
+	visibleToA, err := catalog.ListSubmissionAssessmentKnownEvidence(privateCtx, knowledgepostgres.SubmissionAssessmentKnownEvidenceInput{
 		TeamID: teamA, OwnerProfileID: ownerA, SpaceID: privateSpace.ID.String(), EvidenceIDs: []string{private.Evidence[0].FragmentID},
 	})
 	require.NoError(t, err)
 	require.Len(t, visibleToA.Evidence, 1)
 	require.Equal(t, private.Evidence[0].FragmentID, visibleToA.Evidence[0].EvidenceID)
 
-	visibleToPrivateTarget, err := repo.ListSubmissionAssessmentKnownEvidence(privateCtx, SubmissionAssessmentKnownEvidenceInput{
+	visibleToPrivateTarget, err := catalog.ListSubmissionAssessmentKnownEvidence(privateCtx, knowledgepostgres.SubmissionAssessmentKnownEvidenceInput{
 		TeamID: teamA, OwnerProfileID: ownerA, SpaceID: privateSpace.ID.String(), EvidenceIDs: []string{shared.Evidence[0].FragmentID},
 	})
 	require.NoError(t, err)

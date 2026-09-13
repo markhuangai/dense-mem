@@ -14,20 +14,20 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/service"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 func TestControlPortalRememberAttemptRoutes(t *testing.T) {
 	teamID, attemptID := uuid.New(), uuid.New()
 	reader := &controlRememberAttemptDiagnosticsStub{
-		page: &service.RememberAttemptDiagnosticPage{Items: []service.RememberAttemptDiagnosticSummary{{TeamID: teamID.String(), AttemptID: attemptID.String(), Outcome: "failed", CreatedAt: time.Now().UTC()}}, Total: 1},
-		detail: &service.RememberAttemptDiagnosticDetail{
-			RememberAttemptDiagnosticSummary: service.RememberAttemptDiagnosticSummary{TeamID: teamID.String(), AttemptID: attemptID.String(), Outcome: "failed"},
-			Events:                           []service.RememberAttemptDiagnosticEvent{},
-			Diagnostics: service.RememberAttemptDiagnostics{
-				OriginalRequest:   &service.RememberDiagnosticExchange{Kind: "original_request", RequestBody: `{"evidence":[]}`, Outcome: "captured"},
-				ProviderExchanges: []service.RememberDiagnosticExchange{{Kind: "provider_exchange", Component: "assessor", RequestBody: `{"model":"test"}`, ResponseBody: `{"choices":[]}`, Outcome: "captured"}},
-				CallerResponse:    &service.RememberDiagnosticExchange{Kind: "caller_response", ResponseBody: `{"isError":true}`, Outcome: "captured"},
+		page: &rememberapp.RememberAttemptDiagnosticPage{Items: []rememberapp.RememberAttemptDiagnosticSummary{{TeamID: teamID.String(), AttemptID: attemptID.String(), Outcome: "failed", CreatedAt: time.Now().UTC()}}, Total: 1},
+		detail: &rememberapp.RememberAttemptDiagnosticDetail{
+			RememberAttemptDiagnosticSummary: rememberapp.RememberAttemptDiagnosticSummary{TeamID: teamID.String(), AttemptID: attemptID.String(), Outcome: "failed"},
+			Events:                           []rememberapp.RememberAttemptDiagnosticEvent{},
+			Diagnostics: rememberapp.RememberAttemptDiagnostics{
+				OriginalRequest:   &rememberapp.RememberDiagnosticExchange{Kind: "original_request", RequestBody: `{"evidence":[]}`, Outcome: "captured"},
+				ProviderExchanges: []rememberapp.RememberDiagnosticExchange{{Kind: "provider_exchange", Component: "assessor", RequestBody: `{"model":"test"}`, ResponseBody: `{"choices":[]}`, Outcome: "captured"}},
+				CallerResponse:    &rememberapp.RememberDiagnosticExchange{Kind: "caller_response", ResponseBody: `{"isError":true}`, Outcome: "captured"},
 			},
 		},
 	}
@@ -45,7 +45,7 @@ func TestControlPortalRememberAttemptRoutes(t *testing.T) {
 	rec := do("/control/api/remember-attempts?team_id=" + teamID.String() + "&outcome=failed&limit=25&offset=2")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), `"attempt_id":"`+attemptID.String()+`"`)
-	require.Equal(t, service.RememberAttemptDiagnosticFilter{TeamID: teamID.String(), Outcome: "failed", Limit: 25, Offset: 2}, reader.filter)
+	require.Equal(t, rememberapp.RememberAttemptDiagnosticFilter{TeamID: teamID.String(), Outcome: "failed", Limit: 25, Offset: 2}, reader.filter)
 
 	rec = do("/control/api/teams/" + teamID.String() + "/remember-attempts/" + attemptID.String())
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -84,7 +84,7 @@ func TestControlPortalRememberAttemptValidationAndNotFound(t *testing.T) {
 	_, err := controlRememberAttemptDiagnosticFilter(ctx)
 	require.ErrorContains(t, err, "outcome")
 
-	h := &controlPortalHandler{rememberAttempts: &controlRememberAttemptDiagnosticsStub{detailErr: service.ErrRememberAttemptDiagnosticNotFound}}
+	h := &controlPortalHandler{rememberAttempts: &controlRememberAttemptDiagnosticsStub{detailErr: rememberapp.ErrRememberAttemptDiagnosticNotFound}}
 	ctx = withRememberAttemptParams(echo.New().NewContext(httptest.NewRequest(http.MethodGet, "/", nil), rec), uuid.NewString(), uuid.NewString())
 	err = h.getRememberAttemptDiagnostic(ctx)
 	require.ErrorContains(t, err, "remember attempt not found")
@@ -106,8 +106,8 @@ func TestControlPortalRememberAttemptErrorsAndBounds(t *testing.T) {
 	}
 
 	reader := &controlRememberAttemptDiagnosticsStub{
-		listErr:   service.ErrRememberAttemptDiagnosticsUnavailable,
-		detailErr: service.ErrRememberAttemptDiagnosticsUnavailable,
+		listErr:   rememberapp.ErrRememberAttemptDiagnosticsUnavailable,
+		detailErr: rememberapp.ErrRememberAttemptDiagnosticsUnavailable,
 	}
 	h := &controlPortalHandler{rememberAttempts: reader}
 	require.ErrorContains(t, h.listRememberAttemptDiagnostics(newContext("/")), "unavailable")
@@ -117,7 +117,7 @@ func TestControlPortalRememberAttemptErrorsAndBounds(t *testing.T) {
 
 	reader.listErr = errors.New("list failed")
 	require.ErrorContains(t, h.listRememberAttemptDiagnostics(newContext("/")), "list failed")
-	reader.detailErr = service.ErrRememberAttemptDiagnosticNotFound
+	reader.detailErr = rememberapp.ErrRememberAttemptDiagnosticNotFound
 	require.ErrorContains(t, h.getRememberAttemptDiagnostic(withRememberAttemptParams(newContext("/"), uuid.NewString(), uuid.NewString())), "not found")
 	reader.detailErr = errors.New("detail failed")
 	require.ErrorContains(t, h.getRememberAttemptDiagnostic(withRememberAttemptParams(newContext("/"), uuid.NewString(), uuid.NewString())), "detail failed")
@@ -130,9 +130,9 @@ func withRememberAttemptParams(ctx echo.Context, teamID, attemptID string) echo.
 }
 
 type controlRememberAttemptDiagnosticsStub struct {
-	page      *service.RememberAttemptDiagnosticPage
-	detail    *service.RememberAttemptDiagnosticDetail
-	filter    service.RememberAttemptDiagnosticFilter
+	page      *rememberapp.RememberAttemptDiagnosticPage
+	detail    *rememberapp.RememberAttemptDiagnosticDetail
+	filter    rememberapp.RememberAttemptDiagnosticFilter
 	teamID    string
 	attemptID string
 	listErr   error
@@ -162,11 +162,11 @@ func (l *rememberAttemptLogCapture) With(...observability.LogAttr) observability
 	return l
 }
 
-func (s *controlRememberAttemptDiagnosticsStub) ListRememberAttemptDiagnostics(_ context.Context, filter service.RememberAttemptDiagnosticFilter) (*service.RememberAttemptDiagnosticPage, error) {
+func (s *controlRememberAttemptDiagnosticsStub) ListRememberAttemptDiagnostics(_ context.Context, filter rememberapp.RememberAttemptDiagnosticFilter) (*rememberapp.RememberAttemptDiagnosticPage, error) {
 	s.filter = filter
 	return s.page, s.listErr
 }
-func (s *controlRememberAttemptDiagnosticsStub) GetRememberAttemptDiagnostic(_ context.Context, teamID, attemptID string) (*service.RememberAttemptDiagnosticDetail, error) {
+func (s *controlRememberAttemptDiagnosticsStub) GetRememberAttemptDiagnostic(_ context.Context, teamID, attemptID string) (*rememberapp.RememberAttemptDiagnosticDetail, error) {
 	s.teamID, s.attemptID = teamID, attemptID
 	return s.detail, s.detailErr
 }

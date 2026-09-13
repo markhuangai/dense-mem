@@ -87,10 +87,6 @@
       "issue": 362
     },
     {
-      "path": "internal/repository/submission_assessment_known_evidence_repository.go",
-      "issue": 362
-    },
-    {
       "path": "internal/repository/submission_assessment_catalog_repository_integration.e2e",
       "issue": 362
     },
