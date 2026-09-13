@@ -492,6 +492,28 @@ func TestSynchronousAssessmentValidationDiagnosticsAllowBoundaryFields(t *testin
 	}
 }
 
+func TestSynchronousAssessmentValidationDiagnosticsAllowRelationshipEvidenceFields(t *testing.T) {
+	fields := []string{
+		"relationship_results.splits[0]",
+		"relationship_results[0].splits[0].evidence",
+		"relationship_results[0].splits[0].evidence[0]",
+		"relationship_results[0].splits[0].evidence[0].evidence_id",
+	}
+	diagnostics := SynchronousAssessmentValidationDiagnostics(&assessor.MalformedResponseError{
+		FailureClass:            "malformed_exhausted",
+		Attempts:                1,
+		ValidationStage:         "response_contract",
+		ValidationFieldFamilies: fields,
+	})
+	turn := diagnostics["turns"].([]any)[0].(map[string]any)
+	require.NotContains(t, turn["fields"], "other")
+	for _, field := range fields {
+		normalized, ok := normalizeAssessmentValidationIndexes(field)
+		require.True(t, ok)
+		require.Contains(t, turn["fields"], normalized)
+	}
+}
+
 func TestSynchronousAssessmentValidationDiagnosticsCapsErrorCount(t *testing.T) {
 	diagnostics := SynchronousAssessmentValidationDiagnostics(&submissionAssessmentValidationHistoryError{
 		cause: errors.New("validation failed"),
@@ -501,6 +523,19 @@ func TestSynchronousAssessmentValidationDiagnosticsCapsErrorCount(t *testing.T) 
 	})
 	turn := diagnostics["turns"].([]any)[0].(map[string]any)
 	require.Equal(t, maxAssessorValidationFields, turn["error_count"])
+}
+
+func TestSynchronousAssessmentValidationDiagnosticsMarksCappedErrorCountTruncated(t *testing.T) {
+	diagnostics := SynchronousAssessmentValidationDiagnostics(&submissionAssessmentValidationHistoryError{
+		cause: errors.New("validation failed"),
+		turns: []submissionAssessmentValidationTurn{{
+			Attempt: 1, Stage: "response_contract", Fields: []string{"request_id"}, ErrorCount: maxAssessorValidationFields + 1,
+		}},
+	})
+	turn := diagnostics["turns"].([]any)[0].(map[string]any)
+	require.Equal(t, maxAssessorValidationFields, turn["error_count"])
+	require.Equal(t, true, turn["truncated"])
+	require.Equal(t, true, diagnostics["truncated"])
 }
 
 func TestSynchronousAssessmentValidationDiagnosticsCapsTurnHistory(t *testing.T) {

@@ -269,6 +269,19 @@ func TestSDKHTTPHandlerMapsUnknownAndUnauthorizedTools(t *testing.T) {
 	require.False(t, server.writeSDKToolLookupError(httptest.NewRecorder(), &http.Request{Method: http.MethodGet}, true))
 }
 
+func TestSDKHTTPHandlerPreservesLargeNumericRPCID(t *testing.T) {
+	logger, _ := testLogger(t)
+	server := NewServer(registry.New(), "profile-a", logger)
+	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":9007199254740993,"method":"tools/call","params":{"name":"missing_tool","arguments":{}}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set("MCP-Protocol-Version", "2025-11-25")
+	response := httptest.NewRecorder()
+	server.NewSDKHTTPHandler(true).ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Contains(t, response.Body.String(), `"id":9007199254740993`)
+}
+
 func TestSDKHTTPHandlerPreservesOversizedBodyForSDKValidation(t *testing.T) {
 	logger, _ := testLogger(t)
 	server := NewServer(registry.New(), "profile-a", logger)

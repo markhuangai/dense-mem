@@ -177,10 +177,7 @@ func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Reques
 	domain.RecordMCPToolFailure(req.Context())
 	response := map[string]any{"jsonrpc": "2.0", "id": nil, "error": map[string]any{"code": code, "message": message, "data": data}}
 	if len(envelope.ID) > 0 {
-		var id any
-		if json.Unmarshal(envelope.ID, &id) == nil {
-			response["id"] = id
-		}
+		response["id"] = json.RawMessage(envelope.ID)
 	}
 	encoded, _ := json.Marshal(response)
 	if !jsonResponse && strings.Contains(req.Header.Get("Accept"), "text/event-stream") {

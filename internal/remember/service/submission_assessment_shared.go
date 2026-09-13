@@ -171,12 +171,13 @@ func SynchronousAssessmentValidationDiagnostics(err error) map[string]any {
 		turns = turns[:SemanticMaxAssessorTurns]
 	}
 	projectedTurns := make([]any, 0, len(turns))
+	validationTruncated := false
 	for _, turn := range turns {
 		fields := make([]string, 0, len(turn.Fields))
 		families := make([]string, 0, len(turn.Fields))
 		fieldSeen := make(map[string]struct{}, len(turn.Fields))
 		familySeen := make(map[string]struct{}, len(turn.Fields))
-		truncated := false
+		truncated := turn.ErrorCount > maxAssessorValidationFields
 		for _, raw := range turn.Fields {
 			field, family := normalizeAssessmentValidationField(raw)
 			if field == "" {
@@ -209,6 +210,7 @@ func SynchronousAssessmentValidationDiagnostics(err error) map[string]any {
 			"error_count":    validationTurnErrorCount(turn),
 			"truncated":      truncated,
 		})
+		validationTruncated = validationTruncated || truncated
 	}
 	if turnsTruncated && len(projectedTurns) > 0 {
 		projectedTurns[len(projectedTurns)-1].(map[string]any)["truncated"] = true
@@ -220,7 +222,7 @@ func SynchronousAssessmentValidationDiagnostics(err error) map[string]any {
 	return map[string]any{
 		"failure_class": failureClass,
 		"turns":         projectedTurns,
-		"truncated":     turnsTruncated,
+		"truncated":     turnsTruncated || validationTruncated,
 	}
 }
 
@@ -339,6 +341,10 @@ var assessmentValidationFieldPathFamilies = map[string]string{
 	"relationship_results[].splits[].polarity": "relationship_results.semantics", "relationship_results[].splits[].validity": "relationship_results.temporal",
 	"relationship_results[].splits[].support_ranges[]":             "relationship_results.evidence",
 	"relationship_results[].splits[].support_ranges[].evidence_id": "relationship_results.evidence",
+	"relationship_results.splits[]":                                "relationship_results.semantics",
+	"relationship_results[].splits[].evidence":                     "relationship_results.evidence",
+	"relationship_results[].splits[].evidence[]":                   "relationship_results.evidence",
+	"relationship_results[].splits[].evidence[].evidence_id":       "relationship_results.evidence",
 	"evidence_security_results[]":                                  "evidence_security_results", "evidence_security_results[].evidence_id": "evidence_security_results.evidence",
 	"evidence_security_results[].decision": "evidence_security_results.semantics", "evidence_security_results[].signals": "evidence_security_results.semantics",
 	"evidence_security_results[].signals[]": "evidence_security_results.semantics", "evidence_security_results[].signals[].kind": "evidence_security_results.semantics",
