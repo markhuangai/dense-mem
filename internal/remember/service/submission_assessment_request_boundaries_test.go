@@ -466,6 +466,9 @@ func TestSynchronousAssessmentValidationDiagnosticsAllowBoundaryFields(t *testin
 		"relationship_results[0].splits[0].support_ranges[0].end_ref",
 		"relationship_results[0].splits[0].value_range.start_ref",
 		"relationship_results[0].splits[0].value_range.end_ref",
+		"relationship_results[0].splits[0].predicate_registration.predicate_key",
+		"relationship_results[0].splits[0].predicate_registration.relationship_kind",
+		"relationship_results[0].splits[0].predicate_registration.current_cardinality",
 	}
 	diagnostics := SynchronousAssessmentValidationDiagnostics(&assessor.MalformedResponseError{
 		FailureClass:            "malformed_exhausted",
