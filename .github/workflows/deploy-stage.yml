@@ -23,10 +23,14 @@ jobs:
     name: Authorize staging deployment
     permissions:
       contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     outputs:
       revision: ${{ steps.authorize.outputs.revision }}
       tag: ${{ steps.authorize.outputs.tag }}
+      head_sha: ${{ steps.authorize.outputs.head_sha }}
+      main_sha: ${{ steps.authorize.outputs.main_sha }}
+      preview_pr: ${{ steps.authorize.outputs.preview_pr }}
 
     steps:
       - name: Authorize actor and resolve rehearsal revision
@@ -48,9 +52,34 @@ jobs:
             }
 
             const preview = /^test-([1-9][0-9]*)$/.exec(tag);
+            const mainSha = context.sha;
+            if (!/^[0-9a-f]{40}$/.test(mainSha)) {
+              throw new Error("The dispatch main revision is invalid.");
+            }
+            let headSha = "";
+            let previewPr = "";
+            if (preview) {
+              const pull = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: Number(preview[1]),
+              });
+              if (
+                pull.data.state !== "open" ||
+                pull.data.base.ref !== "main" ||
+                !/^[0-9a-f]{40}$/.test(pull.data.head.sha)
+              ) {
+                throw new Error("The preview pull request is not an open main PR at a valid head.");
+              }
+              headSha = pull.data.head.sha;
+              previewPr = preview[1];
+            }
             const revision = preview ? `refs/pull/${preview[1]}/head` : tag;
             core.setOutput("revision", revision);
             core.setOutput("tag", tag);
+            core.setOutput("head_sha", headSha);
+            core.setOutput("main_sha", mainSha);
+            core.setOutput("preview_pr", previewPr);
 
   staging-migration-rehearsal:
     name: Restore production copy and rehearse migrations
@@ -81,6 +110,9 @@ jobs:
         env:
           GHCR_TOKEN: ${{ github.token }}
           IMAGE_TAG: ${{ needs.authorize.outputs.tag }}
+          EXPECTED_HEAD: ${{ needs.authorize.outputs.head_sha }}
+          EXPECTED_MAIN: ${{ needs.authorize.outputs.main_sha }}
+          EXPECTED_PREVIEW_PR: ${{ needs.authorize.outputs.preview_pr }}
         run: |
           set -euo pipefail
 
@@ -104,16 +136,41 @@ jobs:
             exit 1
           fi
 
-          DENSE_MEM_IMAGE="${IMAGE_TAG}" \
+          docker pull "${IMAGE_TAG}"
+          image_ref="$(docker image inspect --format '{{index .RepoDigests 0}}' "${IMAGE_TAG}")"
+          if [[ ! "${image_ref}" =~ ^ghcr\.io/[^@]+@sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::The pulled staging image did not expose an immutable registry digest"
+            exit 1
+          fi
+          if [[ -n "${EXPECTED_PREVIEW_PR}" ]]; then
+            preview_head="$(docker image inspect --format '{{ index .Config.Labels "io.dense-mem.preview.head" }}' "${IMAGE_TAG}")"
+            preview_main="$(docker image inspect --format '{{ index .Config.Labels "io.dense-mem.preview.main" }}' "${IMAGE_TAG}")"
+            preview_pr="$(docker image inspect --format '{{ index .Config.Labels "io.dense-mem.preview.pr" }}' "${IMAGE_TAG}")"
+            if [[ "${preview_head}" != "${EXPECTED_HEAD}" || "${preview_main}" != "${EXPECTED_MAIN}" || "${preview_pr}" != "${EXPECTED_PREVIEW_PR}" ]]; then
+              echo "::error::The pulled preview image labels do not match the authorized PR, head, and main revisions"
+              exit 1
+            fi
+          fi
+
+          deploy_status=0
+          DENSE_MEM_IMAGE="${image_ref}" \
             docker compose up -d \
-            --pull always \
+            --pull never \
             --no-deps \
             --wait \
             --wait-timeout 3000 \
-            server
+            server || deploy_status=$?
+          if (( deploy_status != 0 )); then
+            container_id="$(docker compose ps -q server || true)"
+            if [[ -n "${container_id}" ]]; then
+              docker inspect --format 'server_status={{.State.Status}} exit_code={{.State.ExitCode}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "${container_id}" >&2 || true
+            fi
+            exit "${deploy_status}"
+          fi
 
           {
             echo "## Staging deployment"
             echo
             echo "- Tag: \`${IMAGE_TAG}\`"
+            echo "- Digest: \`${image_ref}\`"
           } >> "${GITHUB_STEP_SUMMARY}"

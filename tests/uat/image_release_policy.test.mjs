@@ -721,8 +721,13 @@ test("staging deployment is owner-gated and manual-only", async () => {
   assert.match(authorize, /process\.env\.TRIGGERING_ACTOR !== actor/);
   assert.match(authorize, /refs\/heads\/main/);
   assert.match(authorize, /refs\/pull\/\$\{preview\[1\]\}\/head/);
+  assert.match(authorize, /github\.rest\.pulls\.get/);
+  assert.match(authorize, /pull\.data\.head\.sha/);
   assert.match(authorize, /core\.setOutput\("revision", revision\)/);
   assert.match(authorize, /core\.setOutput\("tag", tag\)/);
+  assert.match(authorize, /core\.setOutput\("head_sha", headSha\)/);
+  assert.match(authorize, /core\.setOutput\("main_sha", mainSha\)/);
+  assert.match(authorize, /core\.setOutput\("preview_pr", previewPr\)/);
   assert.doesNotMatch(workflow, /actions\/checkout|image-release-policy/);
   assert.match(rehearsal, /^    needs: authorize$/m);
   assert.match(
@@ -763,15 +768,20 @@ test("staging deployment rehearses before an always-pull healthy startup", async
   );
   assert.match(
     deploy,
-    /DENSE_MEM_IMAGE="\$\{IMAGE_TAG\}"[\s\\]*docker compose up -d/,
+    /EXPECTED_HEAD: \$\{\{ needs\.authorize\.outputs\.head_sha \}\}/,
   );
+  assert.match(deploy, /docker pull "\$\{IMAGE_TAG\}"/);
+  assert.match(deploy, /docker image inspect --format/);
+  assert.match(deploy, /DENSE_MEM_IMAGE="\$\{image_ref\}"[\s\\]*docker compose up -d/);
   assert.doesNotMatch(deploy, /DENSE_MEM_IMAGE="ghcr\.io\/markhuangai\/dense-mem:/);
   assert.doesNotMatch(deploy, /DENSE_MEM_IMAGE_TAG/);
-  assert.match(deploy, /docker compose up -d[\s\\]*--pull always/);
-  assert.match(deploy, /--pull always[\s\\]*--no-deps/);
+  assert.match(deploy, /docker compose up -d[\s\\]*--pull never/);
+  assert.match(deploy, /--pull never[\s\\]*--no-deps/);
   assert.match(deploy, /--wait[\s\\]*--wait-timeout 3000/);
-  assert.doesNotMatch(deploy, /EXPECTED_REVISION|org\.opencontainers\.image\.revision/);
-  assert.doesNotMatch(deploy, /docker (?:image )?pull|docker compose pull|--pull never/);
+  assert.match(deploy, /io\.dense-mem\.preview\.head/);
+  assert.match(deploy, /io\.dense-mem\.preview\.main/);
+  assert.match(deploy, /io\.dense-mem\.preview\.pr/);
+  assert.match(deploy, /docker inspect --format 'server_status=/);
   assert.doesNotMatch(deploy, /docker compose logs/);
 });
 
