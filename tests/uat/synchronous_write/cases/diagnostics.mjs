@@ -28,6 +28,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     ["provider-429", "[fixture-fault:status-429]", "failed", "provider_unavailable"],
     ["provider-500", "[fixture-fault:status-500]", "failed", "provider_unavailable"],
     ["malformed", "[fixture-fault:malformed]", "failed", "provider_response_invalid"],
+    ["assessment-invalid", "[fixture-fault:assessment-invalid]", "failed", "provider_response_invalid"],
     ["embedding", "[fixture-fault:embedding-count]", "failed", "embedding_response_invalid"],
     ["timeout", "[fixture-fault:timeout]", "failed", "provider_unavailable"],
   ];
@@ -128,11 +129,13 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     expect(diagnostics.caller_response?.response_body?.includes('"isError":true'), `${label} detail must expose the caller response envelope`);
   }
 
-  const malformedDetail = await controlJSON(controlURL, token, `/control/api/teams/${teamID}/remember-attempts/${diagnosticAttemptIDs.malformed}`);
-  const validationEvent = (malformedDetail.data?.events || []).find((event) => event.metadata?.assessor_validation);
+  const validationAttempt = await controlJSON(controlURL, token, `/control/api/teams/${teamID}/remember-attempts/${diagnosticAttemptIDs["assessment-invalid"]}`);
+  const validationEvent = (validationAttempt.data?.events || []).find((event) => event.metadata?.assessor_validation);
   const validation = validationEvent?.metadata?.assessor_validation;
-  expect(validation && Array.isArray(validation.turns), "malformed assessor failure must retain bounded validation turns");
+  expect(validation && Array.isArray(validation.turns), "semantic assessor failure must retain bounded validation turns");
+  expect(validation.turns.length === 3, `semantic assessor failure must retain all three turns: ${JSON.stringify(validation)}`);
   expect(validation.turns.every((turn) => Array.isArray(turn.fields) && Array.isArray(turn.field_families) && typeof turn.error_count === "number" && typeof turn.truncated === "boolean"), "validation turns must expose normalized fields, families, counts, and truncation");
+  expect(validation.turns.some((turn) => turn.error_count > 0 && turn.fields.length > 0 && turn.field_families.length > 0), "semantic assessor failure must retain rejected validation fields and families");
   expect(!JSON.stringify(validation).includes("provider_secret") && !JSON.stringify(validation).includes("Diagnostics provider failure"), "validation metadata must exclude provider content");
 
   stopDisabledTelemetryPrometheus();
@@ -205,7 +208,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     await writeFile(fixtureFile, JSON.stringify({
       failed_attempt_id: item.attempt_id,
       diagnostic_id: failedDiagnostics.original_request?.diagnostic_id || "",
-      validation_attempt_id: diagnosticAttemptIDs.malformed,
+      validation_attempt_id: diagnosticAttemptIDs["assessment-invalid"],
     }), "utf8");
   }
   return {
@@ -213,7 +216,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     outcomes: Object.fromEntries(Object.entries(attempts).map(([label, result]) => [label, result?.processing_state])),
     attempt_id: item.attempt_id,
     diagnostic_id: failedDiagnostics.original_request?.diagnostic_id || "",
-    validation_attempt_id: diagnosticAttemptIDs.malformed,
+    validation_attempt_id: diagnosticAttemptIDs["assessment-invalid"],
   };
 }
 

@@ -147,7 +147,15 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
   if (schemaName === "community_summary") return fixtureCommunitySummary(payload);
   if (schemaName === "dense_mem_dream_generation_response") return fixtureDreamGeneration(payload);
   if (schemaName === "dense_mem_evidence_discovery_response") return fixtureEvidenceDiscovery(payload);
-  return fixtureAssessment(assessmentInput(payload), requestFault, attempt);
+  const assessment = fixtureAssessment(assessmentInput(payload), requestFault, attempt);
+  if (requestFault !== "assessment-invalid") return assessment;
+  const [firstRelationship, ...remainingRelationships] = assessment.relationship_results || [];
+  return {
+    ...assessment,
+    relationship_results: firstRelationship
+      ? [{ ...firstRelationship, ref: "provider-forged-ref" }, ...remainingRelationships]
+      : [{ ref: "provider-forged-ref", disposition: "stored", reason: null, splits: [] }],
+  };
 }
 
 function fixtureCommunitySummary(payload) {

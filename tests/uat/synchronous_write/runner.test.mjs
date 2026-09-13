@@ -38,6 +38,26 @@ test("provider fixture retains bounded timeout and fault behavior", async () => 
   assert.match(fixture, /routeFault === "embedding-cancel" && embeddingFaultCall === 1/);
 });
 
+test("provider fixture emits a semantic assessor rejection for diagnostics coverage", () => {
+  const request = structuredRequest("dense_mem_semantic_assessment_response", {
+    request_id: "assessment-invalid-request",
+    evidence: [{ evidence_id: "evidence-1", boundary_text: "⟦fixture-start⟧Dense-Mem uses PostgreSQL.⟦fixture-end⟧" }],
+    submitted_entities: [],
+    submitted_relationships: [{
+      ref: "durable-store",
+      subject_ref: "subject-1",
+      object_value: { type: "string", value: "PostgreSQL" },
+      predicate_hint: "stores_memory_in",
+      evidence_ids: ["evidence-1"],
+      polarity: "+",
+    }],
+  });
+  const response = fixtureChatResponse(request, "assessment-invalid", 1);
+  assert.equal(response.relationship_results[0].ref, "provider-forged-ref");
+  assert.equal(response.relationship_results[0].disposition, "stored");
+  assert.ok(Array.isArray(response.relationship_results[0].splits));
+});
+
 test("provider fixture implements the community, dream, and evidence-discovery schemas", () => {
   const relationshipID = "11111111-1111-4111-8111-111111111111";
   const evidenceID = "22222222-2222-4222-8222-222222222222";
