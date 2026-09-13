@@ -56,14 +56,32 @@ func TestUsageMetricsRepositoryReadsSnapshotAndCalculatesTotals(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 10, snapshot.System.Requests)
 	require.EqualValues(t, 2, snapshot.System.Errors)
-	require.EqualValues(t, 4, snapshot.System.MCPToolCalls)
-	require.EqualValues(t, 1, snapshot.System.MCPToolFailures)
+	require.NotNil(t, snapshot.System.MCPToolCalls)
+	require.NotNil(t, snapshot.System.MCPToolFailures)
+	require.EqualValues(t, 4, *snapshot.System.MCPToolCalls)
+	require.EqualValues(t, 1, *snapshot.System.MCPToolFailures)
 	require.Equal(t, 50.0, snapshot.System.AvgLatencyMS)
 	require.Len(t, snapshot.Teams, 1)
 	require.Len(t, snapshot.Keys, 1)
 	require.Len(t, snapshot.Routes, 1)
 	require.Equal(t, "2xx", snapshot.Routes[0].StatusClass)
 	require.True(t, rls.readOnlyRepeatableCalled)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUsageMetricsRepositoryLeavesMCPTotalsUnavailableWhenWindowHasNoBuckets(t *testing.T) {
+	sqlDB, mock, db := newOperationsMockDB(t)
+	defer sqlDB.Close()
+
+	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"requests", "errors", "mcp_calls", "mcp_failures", "total_latency", "max_latency"}).AddRow(int64(0), int64(0), nil, nil, int64(0), int64(0)))
+	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "requests", "errors", "mcp_calls", "mcp_failures", "total_latency", "max_latency"}))
+	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"team_id", "team_name", "key_id", "key_name", "key_suffix", "requests", "errors", "mcp_calls", "mcp_failures", "total_latency", "max_latency"}))
+	mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"route", "method", "status_class", "requests", "errors", "mcp_calls", "mcp_failures", "total_latency", "max_latency"}))
+
+	snapshot, err := NewUsageMetricsRepository(db, passthroughRLS{}).Snapshot(context.Background(), domain.UsageMetricsFilter{})
+	require.NoError(t, err)
+	require.Nil(t, snapshot.System.MCPToolCalls)
+	require.Nil(t, snapshot.System.MCPToolFailures)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -127,7 +145,8 @@ func TestUsageMetricsRepositoryDeduplicatesRetriedFlush(t *testing.T) {
 func TestUsageMetricsRepositoryHelpersHandleNullableTotals(t *testing.T) {
 	require.EqualValues(t, 7, nullInt64(sql.NullInt64{Int64: 7, Valid: true}))
 	require.Zero(t, nullInt64(sql.NullInt64{}))
-	require.Equal(t, domain.UsageMetricTotal{Requests: 0, MaxLatencyMS: 20}, totalFromSums(0, 0, 0, 0, 10, 20))
+	total := totalFromNullableSums(0, 0, sql.NullInt64{}, sql.NullInt64{}, 10, 20)
+	require.Equal(t, domain.UsageMetricTotal{Requests: 0, MaxLatencyMS: 20}, total)
 }
 
 func TestUsageMetricsRepositoryReportsWriteAndSnapshotErrors(t *testing.T) {

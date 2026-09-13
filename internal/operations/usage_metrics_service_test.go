@@ -88,8 +88,10 @@ func TestUsageMetricsServiceSeparatesMCPToolOutcomesFromHTTPErrors(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), snapshot.System.Requests)
 	require.Equal(t, int64(1), snapshot.System.Errors)
-	require.Equal(t, int64(1), snapshot.System.MCPToolCalls)
-	require.Equal(t, int64(1), snapshot.System.MCPToolFailures)
+	require.NotNil(t, snapshot.System.MCPToolCalls)
+	require.NotNil(t, snapshot.System.MCPToolFailures)
+	require.Equal(t, int64(1), *snapshot.System.MCPToolCalls)
+	require.Equal(t, int64(1), *snapshot.System.MCPToolFailures)
 }
 
 func TestUsageMetricsService_PrunesExpiredBuckets(t *testing.T) {
@@ -215,8 +217,8 @@ func (r *fakeUsageMetricsRepo) Snapshot(_ context.Context, filter domain.UsageMe
 		total := domain.UsageMetricTotal{
 			Requests:        bucket.RequestCount,
 			Errors:          bucket.ErrorCount,
-			MCPToolCalls:    bucket.MCPToolCalls,
-			MCPToolFailures: bucket.MCPToolFailures,
+			MCPToolCalls:    int64Pointer(bucket.MCPToolCalls),
+			MCPToolFailures: int64Pointer(bucket.MCPToolFailures),
 			AvgLatencyMS:    float64(bucket.TotalLatencyMS),
 			MaxLatencyMS:    bucket.MaxLatencyMS,
 		}
@@ -249,13 +251,31 @@ func (r *fakeUsageMetricsRepo) Snapshot(_ context.Context, filter domain.UsageMe
 func addFakeTotal(a, b domain.UsageMetricTotal) domain.UsageMetricTotal {
 	a.Requests += b.Requests
 	a.Errors += b.Errors
-	a.MCPToolCalls += b.MCPToolCalls
-	a.MCPToolFailures += b.MCPToolFailures
+	a.MCPToolCalls = addOptionalCount(a.MCPToolCalls, b.MCPToolCalls)
+	a.MCPToolFailures = addOptionalCount(a.MCPToolFailures, b.MCPToolFailures)
 	a.AvgLatencyMS += b.AvgLatencyMS
 	if b.MaxLatencyMS > a.MaxLatencyMS {
 		a.MaxLatencyMS = b.MaxLatencyMS
 	}
 	return a
+}
+
+func int64Pointer(value int64) *int64 {
+	return &value
+}
+
+func addOptionalCount(left, right *int64) *int64 {
+	if left == nil && right == nil {
+		return nil
+	}
+	var total int64
+	if left != nil {
+		total += *left
+	}
+	if right != nil {
+		total += *right
+	}
+	return &total
 }
 
 func finalizeFakeTotal(total domain.UsageMetricTotal) domain.UsageMetricTotal {

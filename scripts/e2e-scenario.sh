@@ -62,7 +62,7 @@ if [[ "$SCENARIO" == "conflict" ]]; then
   conflict_health_url="${DENSE_MEM_E2E_CONFLICT_PROVIDER_URL%/}"
   conflict_health_url="${conflict_health_url%/v1}/health"
   wait_for_url "conflict provider" "$conflict_health_url"
-elif [[ "$SCENARIO" == "synchronous_write" || "$SCENARIO" == "synchronous_write_primitives" ]]; then
+elif [[ "$SCENARIO" == "synchronous_write" || "$SCENARIO" == "synchronous_write_primitives" || "$SCENARIO" == "synchronous_write_telemetry_disabled" ]]; then
   wait_for_url "synchronous-write provider" "http://synchronous-write-provider:8787/health"
 fi
 

@@ -56,8 +56,8 @@ type UsageMetricsWindow struct {
 type UsageMetricTotal struct {
 	Requests        int64   `json:"requests"`
 	Errors          int64   `json:"errors"`
-	MCPToolCalls    int64   `json:"mcp_tool_calls"`
-	MCPToolFailures int64   `json:"mcp_tool_failures"`
+	MCPToolCalls    *int64  `json:"mcp_tool_calls,omitempty"`
+	MCPToolFailures *int64  `json:"mcp_tool_failures,omitempty"`
 	AvgLatencyMS    float64 `json:"avg_latency_ms"`
 	MaxLatencyMS    int64   `json:"max_latency_ms"`
 }

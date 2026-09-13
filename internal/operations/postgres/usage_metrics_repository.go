@@ -126,8 +126,8 @@ func (r *UsageMetricsRepositoryImpl) Snapshot(ctx context.Context, filter domain
 			SELECT
 				COALESCE(SUM(request_count), 0),
 				COALESCE(SUM(error_count), 0),
-				COALESCE(SUM(mcp_tool_calls), 0),
-				COALESCE(SUM(mcp_tool_failures), 0),
+				SUM(mcp_tool_calls),
+				SUM(mcp_tool_failures),
 				COALESCE(SUM(total_latency_ms), 0),
 				COALESCE(MAX(max_latency_ms), 0)
 			FROM usage_metric_buckets b
@@ -172,8 +172,8 @@ func queryTeamUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter an
 			COALESCE(t.name, ''),
 			COALESCE(SUM(b.request_count), 0),
 			COALESCE(SUM(b.error_count), 0),
-			COALESCE(SUM(b.mcp_tool_calls), 0),
-			COALESCE(SUM(b.mcp_tool_failures), 0),
+			SUM(b.mcp_tool_calls),
+			SUM(b.mcp_tool_failures),
 			COALESCE(SUM(b.total_latency_ms), 0),
 			COALESCE(MAX(b.max_latency_ms), 0)
 		FROM usage_metric_buckets b
@@ -200,7 +200,7 @@ func queryTeamUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter an
 			totalMS   int64
 			maxMS     int64
 		)
-		var mcpCalls, mcpFailures int64
+		var mcpCalls, mcpFailures sql.NullInt64
 		if err := rows.Scan(&teamIDRaw, &teamName, &requests, &errors, &mcpCalls, &mcpFailures, &totalMS, &maxMS); err != nil {
 			return nil, err
 		}
@@ -211,7 +211,7 @@ func queryTeamUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter an
 		out = append(out, domain.UsageTeamMetric{
 			TeamID:           teamID,
 			TeamName:         teamName,
-			UsageMetricTotal: totalFromSums(requests, errors, mcpCalls, mcpFailures, totalMS, maxMS),
+			UsageMetricTotal: totalFromNullableSums(requests, errors, mcpCalls, mcpFailures, totalMS, maxMS),
 		})
 	}
 	return out, rows.Err()
@@ -227,8 +227,8 @@ func queryKeyUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter any
 			COALESCE(k.key_suffix, ''),
 			COALESCE(SUM(b.request_count), 0),
 			COALESCE(SUM(b.error_count), 0),
-			COALESCE(SUM(b.mcp_tool_calls), 0),
-			COALESCE(SUM(b.mcp_tool_failures), 0),
+			SUM(b.mcp_tool_calls),
+			SUM(b.mcp_tool_failures),
 			COALESCE(SUM(b.total_latency_ms), 0),
 			COALESCE(MAX(b.max_latency_ms), 0)
 		FROM usage_metric_buckets b
@@ -266,7 +266,7 @@ func queryKeyUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter any
 			totalMS   int64
 			maxMS     int64
 		)
-		var mcpCalls, mcpFailures int64
+		var mcpCalls, mcpFailures sql.NullInt64
 		if err := rows.Scan(&teamIDRaw, &teamName, &keyIDRaw, &keyName, &keySuffix, &requests, &errors, &mcpCalls, &mcpFailures, &totalMS, &maxMS); err != nil {
 			return nil, err
 		}
@@ -284,7 +284,7 @@ func queryKeyUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter any
 			KeyID:            keyID,
 			KeyName:          keyName,
 			KeySuffix:        keySuffix,
-			UsageMetricTotal: totalFromSums(requests, errors, mcpCalls, mcpFailures, totalMS, maxMS),
+			UsageMetricTotal: totalFromNullableSums(requests, errors, mcpCalls, mcpFailures, totalMS, maxMS),
 		})
 	}
 	return out, rows.Err()
@@ -298,8 +298,8 @@ func queryRouteUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter a
 			b.status_class,
 			COALESCE(SUM(b.request_count), 0),
 			COALESCE(SUM(b.error_count), 0),
-			COALESCE(SUM(b.mcp_tool_calls), 0),
-			COALESCE(SUM(b.mcp_tool_failures), 0),
+			SUM(b.mcp_tool_calls),
+			SUM(b.mcp_tool_failures),
 			COALESCE(SUM(b.total_latency_ms), 0),
 			COALESCE(MAX(b.max_latency_ms), 0)
 		FROM usage_metric_buckets b
@@ -326,7 +326,7 @@ func queryRouteUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter a
 			totalMS     int64
 			maxMS       int64
 		)
-		var mcpCalls, mcpFailures int64
+		var mcpCalls, mcpFailures sql.NullInt64
 		if err := rows.Scan(&route, &method, &statusClass, &requests, &errors, &mcpCalls, &mcpFailures, &totalMS, &maxMS); err != nil {
 			return nil, err
 		}
@@ -334,7 +334,7 @@ func queryRouteUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter a
 			Route:            route,
 			Method:           method,
 			StatusClass:      fmt.Sprintf("%dxx", statusClass),
-			UsageMetricTotal: totalFromSums(requests, errors, mcpCalls, mcpFailures, totalMS, maxMS),
+			UsageMetricTotal: totalFromNullableSums(requests, errors, mcpCalls, mcpFailures, totalMS, maxMS),
 		})
 	}
 	return out, rows.Err()
@@ -346,21 +346,29 @@ func queryUsageTotal(tx *gorm.DB, query string, args ...any) (domain.UsageMetric
 	if err := row.Scan(&requests, &errors, &mcpCalls, &mcpFailures, &totalMS, &maxMS); err != nil {
 		return domain.UsageMetricTotal{}, err
 	}
-	return totalFromSums(nullInt64(requests), nullInt64(errors), nullInt64(mcpCalls), nullInt64(mcpFailures), nullInt64(totalMS), nullInt64(maxMS)), nil
+	return totalFromNullableSums(nullInt64(requests), nullInt64(errors), mcpCalls, mcpFailures, nullInt64(totalMS), nullInt64(maxMS)), nil
 }
 
-func totalFromSums(requests, errors, mcpCalls, mcpFailures, totalLatencyMS, maxLatencyMS int64) domain.UsageMetricTotal {
+func totalFromNullableSums(requests, errors int64, mcpCalls, mcpFailures sql.NullInt64, totalLatencyMS, maxLatencyMS int64) domain.UsageMetricTotal {
 	total := domain.UsageMetricTotal{
 		Requests:        requests,
 		Errors:          errors,
-		MCPToolCalls:    mcpCalls,
-		MCPToolFailures: mcpFailures,
+		MCPToolCalls:    nullableInt64Pointer(mcpCalls),
+		MCPToolFailures: nullableInt64Pointer(mcpFailures),
 		MaxLatencyMS:    maxLatencyMS,
 	}
 	if requests > 0 {
 		total.AvgLatencyMS = float64(totalLatencyMS) / float64(requests)
 	}
 	return total
+}
+
+func nullableInt64Pointer(value sql.NullInt64) *int64 {
+	if !value.Valid {
+		return nil
+	}
+	result := value.Int64
+	return &result
 }
 
 func nullInt64(value sql.NullInt64) int64 {

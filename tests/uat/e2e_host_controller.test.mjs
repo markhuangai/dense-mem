@@ -642,6 +642,7 @@ test("scenario runner executes Entra and diagnostics through the shared path", (
   assert.match(scenario, /log "running Playwright specs: \$\{specs\[\*\]\}"/);
   assert.match(scenario, /Entra OIDC mock/);
   assert.match(scenario, /tests\/uat\/entra_scim_e2e\.mjs/);
+  assert.match(scenario, /synchronous_write_telemetry_disabled/);
   assert.match(scenario, /synchronous_write\) specs=\("tests-compose\/remember-attempts\.spec\.ts"\)/);
   assert.match(scenario, /DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE/);
   assert.doesNotMatch(scenario, /parse_json_dream_statement|DENSE_MEM_E2E_DREAM_STATEMENT.*synchronous/);

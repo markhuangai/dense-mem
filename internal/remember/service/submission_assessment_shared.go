@@ -21,6 +21,8 @@ import (
 // Other assessor workflows retain their own broader historical limits.
 const SemanticMaxAssessorTurns = 3
 
+const maxAssessorValidationFields = 20
+
 type semanticAssessmentPreflightError struct {
 	stage        string
 	reasonCode   string
@@ -181,7 +183,7 @@ func SynchronousAssessmentValidationDiagnostics(err error) map[string]any {
 				field, family = "other", "other"
 			}
 			if _, ok := fieldSeen[field]; !ok {
-				if len(fields) >= 20 {
+				if len(fields) >= maxAssessorValidationFields {
 					truncated = true
 				} else {
 					fields = append(fields, field)
@@ -189,7 +191,7 @@ func SynchronousAssessmentValidationDiagnostics(err error) map[string]any {
 				}
 			}
 			if _, ok := familySeen[family]; !ok {
-				if len(families) >= 20 {
+				if len(families) >= maxAssessorValidationFields {
 					truncated = true
 				} else {
 					families = append(families, family)
@@ -281,10 +283,14 @@ func normalizeAssessmentValidationIndexes(field string) (string, bool) {
 }
 
 func validationTurnErrorCount(turn submissionAssessmentValidationTurn) int {
-	if turn.ErrorCount > 0 {
-		return turn.ErrorCount
+	count := turn.ErrorCount
+	if count <= 0 {
+		count = len(turn.Fields)
 	}
-	return len(turn.Fields)
+	if count > maxAssessorValidationFields {
+		return maxAssessorValidationFields
+	}
+	return count
 }
 
 var assessmentValidationFieldPathFamilies = map[string]string{
@@ -324,11 +330,12 @@ var assessmentValidationFieldPathFamilies = map[string]string{
 	"relationship_results[].splits[].split_index": "relationship_results.semantics",
 	"relationship_results[].splits[].subject_ref": "relationship_results.ref", "relationship_results[].splits[].object_ref": "relationship_results.object",
 	"relationship_results[].splits[].object": "relationship_results.object", "relationship_results[].splits[].object_value": "relationship_results.object",
-	"relationship_results[].splits[].value_range": "relationship_results.object", "relationship_results[].splits[].value_range.start_ref": "relationship_results.object", "relationship_results[].splits[].value_range.end_ref": "relationship_results.object", "relationship_results[].splits[].original_predicate": "relationship_results.predicate",
+	"relationship_results[].splits[].value_range": "relationship_results.object", "relationship_results[].splits[].value_range.evidence_id": "relationship_results.object", "relationship_results[].splits[].value_range.start_ref": "relationship_results.object", "relationship_results[].splits[].value_range.end_ref": "relationship_results.object", "relationship_results[].splits[].original_predicate": "relationship_results.predicate",
 	"relationship_results[].splits[].predicate_key": "relationship_results.predicate", "relationship_results[].splits[].predicate_version": "relationship_results.predicate",
-	"relationship_results[].splits[].predicate_status": "relationship_results.predicate", "relationship_results[].splits[].predicate_range": "relationship_results.predicate", "relationship_results[].splits[].predicate_range.start_ref": "relationship_results.predicate", "relationship_results[].splits[].predicate_range.end_ref": "relationship_results.predicate",
+	"relationship_results[].splits[].predicate_status": "relationship_results.predicate", "relationship_results[].splits[].predicate_range": "relationship_results.predicate", "relationship_results[].splits[].predicate_range.evidence_id": "relationship_results.predicate", "relationship_results[].splits[].predicate_range.start_ref": "relationship_results.predicate", "relationship_results[].splits[].predicate_range.end_ref": "relationship_results.predicate",
 	"relationship_results[].splits[].predicate_registration": "relationship_results.predicate", "relationship_results[].splits[].predicate_registration.predicate_key": "relationship_results.predicate", "relationship_results[].splits[].predicate_registration.relationship_kind": "relationship_results.predicate", "relationship_results[].splits[].predicate_registration.current_cardinality": "relationship_results.predicate", "relationship_results[].splits[].support_ranges": "relationship_results.evidence", "relationship_results[].splits[].support_ranges[].start_ref": "relationship_results.evidence", "relationship_results[].splits[].support_ranges[].end_ref": "relationship_results.evidence",
 	"relationship_results[].splits[].valid_from": "relationship_results.temporal", "relationship_results[].splits[].valid_to": "relationship_results.temporal",
+	"relationship_results[].splits[].object_value.value_type": "relationship_results.object", "relationship_results[].splits[].object_value.canonical_value": "relationship_results.object", "relationship_results[].splits[].object_value.display": "relationship_results.object", "relationship_results[].splits[].object_value.unit": "relationship_results.object",
 	"relationship_results[].splits[].polarity": "relationship_results.semantics", "relationship_results[].splits[].validity": "relationship_results.temporal",
 	"relationship_results[].splits[].support_ranges[]":             "relationship_results.evidence",
 	"relationship_results[].splits[].support_ranges[].evidence_id": "relationship_results.evidence",

@@ -462,10 +462,17 @@ func TestSynchronousAssessmentValidationDiagnosticsAllowBoundaryFields(t *testin
 		"evidence_conflict_results[0].positions[0].end_ref",
 		"relationship_results[0].splits[0].predicate_range.start_ref",
 		"relationship_results[0].splits[0].predicate_range.end_ref",
+		"relationship_results[0].splits[0].predicate_range.evidence_id",
 		"relationship_results[0].splits[0].support_ranges[0].start_ref",
 		"relationship_results[0].splits[0].support_ranges[0].end_ref",
+		"relationship_results[0].splits[0].support_ranges[0].evidence_id",
+		"relationship_results[0].splits[0].value_range.evidence_id",
 		"relationship_results[0].splits[0].value_range.start_ref",
 		"relationship_results[0].splits[0].value_range.end_ref",
+		"relationship_results[0].splits[0].object_value.value_type",
+		"relationship_results[0].splits[0].object_value.canonical_value",
+		"relationship_results[0].splits[0].object_value.display",
+		"relationship_results[0].splits[0].object_value.unit",
 		"relationship_results[0].splits[0].predicate_registration.predicate_key",
 		"relationship_results[0].splits[0].predicate_registration.relationship_kind",
 		"relationship_results[0].splits[0].predicate_registration.current_cardinality",
@@ -483,6 +490,17 @@ func TestSynchronousAssessmentValidationDiagnosticsAllowBoundaryFields(t *testin
 		require.True(t, ok)
 		require.Contains(t, turn["fields"], normalized)
 	}
+}
+
+func TestSynchronousAssessmentValidationDiagnosticsCapsErrorCount(t *testing.T) {
+	diagnostics := SynchronousAssessmentValidationDiagnostics(&submissionAssessmentValidationHistoryError{
+		cause: errors.New("validation failed"),
+		turns: []submissionAssessmentValidationTurn{{
+			Attempt: 1, Stage: "response_contract", Fields: []string{"request_id"}, ErrorCount: 99,
+		}},
+	})
+	turn := diagnostics["turns"].([]any)[0].(map[string]any)
+	require.Equal(t, maxAssessorValidationFields, turn["error_count"])
 }
 
 func TestSynchronousAssessmentValidationDiagnosticsCapsTurnHistory(t *testing.T) {
