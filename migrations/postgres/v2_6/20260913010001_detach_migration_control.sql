@@ -1,6 +1,7 @@
--- Lock/rewrite impact: the migration takes bounded SHARE ROW EXCLUSIVE locks on
--- the affected retained and migration-control tables. It changes metadata only;
--- no table heap or retained row is rewritten.
+-- Lock/rewrite impact: the migration first takes bounded ACCESS EXCLUSIVE locks
+-- on the three tables modified by DDL, then SHARE ROW EXCLUSIVE locks on the
+-- affected retained and migration-control tables used for validation. It changes
+-- metadata only; no table heap or retained row is rewritten.
 -- RLS impact: migration mode is used for catalog inspection and DDL. Existing
 -- policies and transaction-local application context remain unchanged.
 -- Backfill: none. The migration removes only retired lineage columns, indexes,
@@ -23,8 +24,10 @@ SET LOCAL quote_all_identifiers = off;
 
 LOCK TABLE public.knowledge_ingests,
            public.v2_compatibility_markers,
-           public.v2_migration_corpus_items,
-           public.v2_migration_runs,
+           public.v2_migration_corpus_items
+    IN ACCESS EXCLUSIVE MODE;
+
+LOCK TABLE public.v2_migration_runs,
            public.v2_migration_source_maps,
            public.v2_migration_checkpoints,
            public.v2_migration_errors,
@@ -52,7 +55,8 @@ DECLARE
         'v2_compatibility_markers_run_id_fkey',
         'v2_migration_corpus_items_team_id_fkey',
         'v2_migration_corpus_items_team_id_owner_profile_id_fkey',
-        'v2_migration_corpus_items_team_id_ingest_id_fkey'
+        'v2_migration_corpus_items_team_id_ingest_id_fkey',
+        'v2_migration_corpus_items_team_id_placement_item_id_fkey'
     ];
     table_name text;
     dependency record;
@@ -63,8 +67,12 @@ DECLARE
     corpus_team_attnum smallint;
     corpus_owner_attnum smallint;
     corpus_ingest_attnum smallint;
+    corpus_placement_item_attnum smallint;
     alias_team_attnum smallint;
     alias_owner_attnum smallint;
+    placement_items_exists boolean;
+    placement_team_attnum smallint;
+    placement_item_attnum smallint;
     run_id_attnum smallint;
     uuid_btree_opclass oid;
     index_count bigint;
@@ -107,6 +115,11 @@ BEGIN
      WHERE attrelid = 'public.v2_migration_corpus_items'::regclass
        AND attname = 'ingest_id'
        AND NOT attisdropped;
+    SELECT attnum INTO corpus_placement_item_attnum
+      FROM pg_attribute
+     WHERE attrelid = 'public.v2_migration_corpus_items'::regclass
+       AND attname = 'placement_item_id'
+       AND NOT attisdropped;
     SELECT attnum INTO alias_team_attnum
       FROM pg_attribute
      WHERE attrelid = 'public.ownership_aliases'::regclass
@@ -117,6 +130,20 @@ BEGIN
      WHERE attrelid = 'public.ownership_aliases'::regclass
        AND attname = 'legacy_owner_id'
        AND NOT attisdropped;
+    SELECT to_regclass('public.placement_items') IS NOT NULL
+      INTO placement_items_exists;
+    IF placement_items_exists THEN
+        SELECT attnum INTO placement_team_attnum
+          FROM pg_attribute
+         WHERE attrelid = 'public.placement_items'::regclass
+           AND attname = 'team_id'
+           AND NOT attisdropped;
+        SELECT attnum INTO placement_item_attnum
+          FROM pg_attribute
+         WHERE attrelid = 'public.placement_items'::regclass
+           AND attname = 'placement_item_id'
+           AND NOT attisdropped;
+    END IF;
     SELECT attnum INTO run_id_attnum
       FROM pg_attribute
      WHERE attrelid = 'public.v2_migration_runs'::regclass
@@ -129,8 +156,13 @@ BEGIN
        OR corpus_team_attnum IS NULL
        OR corpus_owner_attnum IS NULL
        OR corpus_ingest_attnum IS NULL
+       OR corpus_placement_item_attnum IS NULL
        OR alias_team_attnum IS NULL
        OR alias_owner_attnum IS NULL
+       OR (placement_items_exists AND (
+           placement_team_attnum IS NULL
+           OR placement_item_attnum IS NULL
+       ))
        OR run_id_attnum IS NULL
     THEN
         RAISE EXCEPTION
@@ -235,6 +267,26 @@ BEGIN
     ) THEN
         RAISE EXCEPTION
             'migration-control detachment blocked: corpus ingest FK definition is not the verified target';
+    END IF;
+
+    IF placement_items_exists AND NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint
+         WHERE conname = 'v2_migration_corpus_items_team_id_placement_item_id_fkey'
+           AND contype = 'f'
+           AND conrelid = 'public.v2_migration_corpus_items'::regclass
+           AND confrelid = to_regclass('public.placement_items')
+           AND convalidated
+           AND confdeltype = 'r'
+           AND confupdtype = 'a'
+           AND confmatchtype = 's'
+           AND NOT condeferrable
+           AND NOT condeferred
+           AND conkey = ARRAY[corpus_team_attnum, corpus_placement_item_attnum]::smallint[]
+           AND confkey = ARRAY[placement_team_attnum, placement_item_attnum]::smallint[]
+    ) THEN
+        RAISE EXCEPTION
+            'migration-control detachment blocked: corpus placement FK definition is not the verified target';
     END IF;
 
     SELECT opclass.oid
@@ -365,7 +417,8 @@ BEGIN
     END IF;
 
     -- Every foreign key crossing the retired-schema boundary must be one of
-    -- the five verified constraints detached below. This covers both retained
+    -- the five required constraints and, when present, the verified
+    -- placement_items constraint detached below. This covers both retained
     -- objects pointing at migration-control tables and migration-control
     -- objects pointing back into canonical tables.
     SELECT string_agg(
@@ -403,6 +456,9 @@ BEGIN
            OR (constraint_row.conname = 'v2_migration_corpus_items_team_id_ingest_id_fkey'
                AND constraint_row.conrelid = 'public.v2_migration_corpus_items'::regclass
                AND constraint_row.confrelid = 'public.knowledge_ingests'::regclass)
+           OR (constraint_row.conname = 'v2_migration_corpus_items_team_id_placement_item_id_fkey'
+               AND constraint_row.conrelid = 'public.v2_migration_corpus_items'::regclass
+               AND target_table.relname = 'placement_items')
        );
     IF unexpected IS NOT NULL THEN
         RAISE EXCEPTION
@@ -494,7 +550,8 @@ ALTER TABLE public.v2_compatibility_markers
 ALTER TABLE public.v2_migration_corpus_items
     DROP CONSTRAINT v2_migration_corpus_items_team_id_fkey,
     DROP CONSTRAINT v2_migration_corpus_items_team_id_owner_profile_id_fkey,
-    DROP CONSTRAINT v2_migration_corpus_items_team_id_ingest_id_fkey;
+    DROP CONSTRAINT v2_migration_corpus_items_team_id_ingest_id_fkey,
+    DROP CONSTRAINT IF EXISTS v2_migration_corpus_items_team_id_placement_item_id_fkey;
 
 DO $$
 DECLARE

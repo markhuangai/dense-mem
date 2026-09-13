@@ -92,7 +92,8 @@ const migrationDetachment = postgresRow(`
         'v2_compatibility_markers_run_id_fkey',
         'v2_migration_corpus_items_team_id_fkey',
         'v2_migration_corpus_items_team_id_owner_profile_id_fkey',
-        'v2_migration_corpus_items_team_id_ingest_id_fkey'
+        'v2_migration_corpus_items_team_id_ingest_id_fkey',
+        'v2_migration_corpus_items_team_id_placement_item_id_fkey'
       )
     ), '|',
     NOT EXISTS (
