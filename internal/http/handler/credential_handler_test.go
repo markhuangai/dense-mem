@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,7 +18,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type apiKeyHandlerService struct {
@@ -35,8 +35,8 @@ type apiKeyHandlerService struct {
 	rotateKeyID     uuid.UUID
 	deleteProfileID uuid.UUID
 	deletedKeyID    uuid.UUID
-	createReq       service.CreateCredentialRequest
-	rotateReq       service.CreateCredentialRequest
+	createReq       accessservice.CreateCredentialRequest
+	rotateReq       accessservice.CreateCredentialRequest
 	updatedName     string
 	updatedScopes   []string
 	err             error
@@ -44,7 +44,7 @@ type apiKeyHandlerService struct {
 	countErr        error
 }
 
-func (s *apiKeyHandlerService) CreateCredential(_ context.Context, profileID uuid.UUID, req service.CreateCredentialRequest, _ *string, actorRole, clientIP, _ string) (*domain.Credential, string, error) {
+func (s *apiKeyHandlerService) CreateCredential(_ context.Context, profileID uuid.UUID, req accessservice.CreateCredentialRequest, _ *string, actorRole, clientIP, _ string) (*domain.Credential, string, error) {
 	s.createProfileID = profileID
 	s.createReq = req
 	if s.err != nil {
@@ -74,7 +74,7 @@ func (s *apiKeyHandlerService) UpdateScopesForTeam(_ context.Context, profileID,
 	return s.key, s.err
 }
 
-func (s *apiKeyHandlerService) RotateForTeam(_ context.Context, profileID, id uuid.UUID, req service.CreateCredentialRequest, _ *string, _ string, _ string, _ string) (*domain.Credential, string, error) {
+func (s *apiKeyHandlerService) RotateForTeam(_ context.Context, profileID, id uuid.UUID, req accessservice.CreateCredentialRequest, _ *string, _ string, _ string, _ string) (*domain.Credential, string, error) {
 	s.rotateProfileID = profileID
 	s.rotateKeyID = id
 	s.rotateReq = req
@@ -153,8 +153,8 @@ func TestCredentialHandlerCreateListGetRotateDelete(t *testing.T) {
 		if svc.createReq.Name != "ops key" || svc.createReq.RateLimit != 42 {
 			t.Fatalf("create request = %+v", svc.createReq)
 		}
-		if svc.createReq.Role != service.CredentialRoleMember {
-			t.Fatalf("role = %q; want %q", svc.createReq.Role, service.CredentialRoleMember)
+		if svc.createReq.Role != accessservice.CredentialRoleMember {
+			t.Fatalf("role = %q; want %q", svc.createReq.Role, accessservice.CredentialRoleMember)
 		}
 		if got := svc.createReq.Scopes; len(got) != 1 || got[0] != scopes[0] {
 			t.Fatalf("scopes = %v; want %v", got, scopes)
@@ -239,7 +239,7 @@ func TestCredentialHandlerCreateListGetRotateDelete(t *testing.T) {
 
 	t.Run("update rejects manager profile targets", func(t *testing.T) {
 		managerKey := *key
-		managerKey.Role = service.CredentialRoleManager
+		managerKey.Role = accessservice.CredentialRoleManager
 		updateSvc := &apiKeyHandlerService{key: &managerKey}
 		h := NewCredentialHandler(updateSvc)
 		_, err := runCredentialHandlerWithUpdateBody(t, http.MethodPatch, "/ui/api/team/credentials/"+keyID.String(), "/ui/api/team/credentials/:credentialId", []string{"teamId", "credentialId"}, []string{profileID.String(), keyID.String()}, `{"name":"renamed profile"}`, h.Update)
@@ -314,7 +314,7 @@ func TestCredentialHandlerCreateListGetRotateDelete(t *testing.T) {
 			ID:        memberID,
 			TeamID:    teamID,
 			Name:      "member profile",
-			Role:      service.CredentialRoleMember,
+			Role:      accessservice.CredentialRoleMember,
 			KeySuffix: "lmno",
 			Scopes:    []string{"read"},
 			CreatedAt: createdAt,
@@ -366,7 +366,7 @@ func TestCredentialHandlerCreateDerivesSSOOwnerForProfilePrivateBinding(t *testi
 		TeamID:     teamID,
 		IdentityID: identityID,
 		AuthMethod: "sso_session",
-		Role:       service.CredentialRoleManager,
+		Role:       accessservice.CredentialRoleManager,
 	}))
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
@@ -391,7 +391,7 @@ func TestCredentialHandlerCreateDoesNotDeriveSSOOwnerForNonManager(t *testing.T)
 		TeamID:     teamID,
 		IdentityID: identityID,
 		AuthMethod: "sso_session",
-		Role:       service.CredentialRoleMember,
+		Role:       accessservice.CredentialRoleMember,
 	}))
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)

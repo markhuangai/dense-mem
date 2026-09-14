@@ -11,7 +11,7 @@ func bindDreamTool(tool Tool, deps Dependencies) Tool {
 	switch tool.Name {
 	case ToolListDreams:
 		tool.Invoke = func(ctx context.Context, teamID string, input map[string]any) (map[string]any, error) {
-			if deps.Dreams == nil {
+			if deps.DreamBindings.Service == nil {
 				return nil, ErrToolUnavailable
 			}
 			if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
@@ -21,7 +21,7 @@ func bindDreamTool(tool Tool, deps Dependencies) Tool {
 			if limit, ok := intInput(input["limit"]); ok {
 				opts.Limit = limit
 			}
-			dreams, next, err := deps.Dreams.List(ctx, teamID, opts)
+			dreams, next, err := deps.DreamBindings.Service.List(ctx, teamID, opts)
 			if err != nil {
 				return nil, err
 			}
@@ -29,13 +29,13 @@ func bindDreamTool(tool Tool, deps Dependencies) Tool {
 		}
 	case ToolGetDream:
 		tool.Invoke = func(ctx context.Context, teamID string, input map[string]any) (map[string]any, error) {
-			if deps.Dreams == nil {
+			if deps.DreamBindings.Service == nil {
 				return nil, ErrToolUnavailable
 			}
 			if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
 				return nil, fmt.Errorf("get_dream: invalid input: %w", err)
 			}
-			dream, err := deps.Dreams.Get(ctx, teamID, stringInput(input["hypothesis_id"]))
+			dream, err := deps.DreamBindings.Service.Get(ctx, teamID, stringInput(input["hypothesis_id"]))
 			if err != nil {
 				return nil, err
 			}
@@ -43,7 +43,7 @@ func bindDreamTool(tool Tool, deps Dependencies) Tool {
 		}
 	case ToolResolveDreamFeedback:
 		tool.Invoke = func(ctx context.Context, teamID string, input map[string]any) (map[string]any, error) {
-			if deps.Dreams == nil {
+			if deps.DreamBindings.Service == nil {
 				return nil, ErrToolUnavailable
 			}
 			if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
@@ -53,7 +53,7 @@ func bindDreamTool(tool Tool, deps Dependencies) Tool {
 			if err != nil {
 				return nil, fmt.Errorf("resolve_dream_feedback: invalid input: %w", err)
 			}
-			res, err := deps.Dreams.ResolveFeedback(ctx, teamID, req)
+			res, err := deps.DreamBindings.Service.ResolveFeedback(ctx, teamID, req)
 			if err != nil {
 				if busy, ok := resolveDreamConfirmationBusyOutcome(err); ok {
 					return nil, NewToolResultError(busy)

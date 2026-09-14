@@ -1,13 +1,13 @@
 package handler
 
 import (
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/mcp"
-	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 // NewMCPLogger adapts the shared sanitized logger at the HTTP-to-MCP
 // composition boundary. MCP itself depends only on its narrow transport port.
-func NewMCPLogger(logger observability.LogProvider) mcp.Logger {
+func NewMCPLogger(logger httpcontract.LogProvider) mcp.Logger {
 	if logger == nil {
 		return nil
 	}
@@ -15,21 +15,21 @@ func NewMCPLogger(logger observability.LogProvider) mcp.Logger {
 }
 
 type mcpLoggerAdapter struct {
-	logger observability.LogProvider
+	logger httpcontract.LogProvider
 }
 
 func (a mcpLoggerAdapter) Error(message string, err error, fields ...mcp.LogField) {
-	a.logger.Error(message, err, observabilityFields(fields)...)
+	a.logger.Error(message, err, httpFields(fields)...)
 }
 
 func (a mcpLoggerAdapter) Warn(message string, fields ...mcp.LogField) {
-	a.logger.Warn(message, observabilityFields(fields)...)
+	a.logger.Warn(message, httpFields(fields)...)
 }
 
-func observabilityFields(fields []mcp.LogField) []observability.LogAttr {
-	converted := make([]observability.LogAttr, 0, len(fields))
+func httpFields(fields []mcp.LogField) []httpcontract.LogAttr {
+	converted := make([]httpcontract.LogAttr, 0, len(fields))
 	for _, field := range fields {
-		converted = append(converted, observability.LogAttr{Key: field.Key, Value: field.Value})
+		converted = append(converted, httpcontract.LogAttr{Key: field.Key, Value: field.Value})
 	}
 	return converted
 }

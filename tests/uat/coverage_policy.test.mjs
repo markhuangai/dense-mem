@@ -11,6 +11,7 @@ const root = new URL("../../", import.meta.url);
 const repositoryRoot = fileURLToPath(root);
 const packageScript = join(repositoryRoot, "scripts", "go-packages.sh");
 const coverageScript = join(repositoryRoot, "scripts", "coverage-report.sh");
+const coverageGate = join(repositoryRoot, "scripts", "coverage-gate.mjs");
 const isolatedGitEnvironment = Object.fromEntries(
   Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")),
 );
@@ -24,6 +25,7 @@ async function read(relativePath) {
 test("coverage reports use complete Go discovery and deduplicated profiles", async () => {
   const script = await read("scripts/coverage-report.sh");
   const ci = await read("scripts/ci-check.sh");
+  const gate = await read("scripts/coverage-gate.mjs");
   const textlintIgnore = await read(".textlintignore");
   const workflow = await read(".github/workflows/ci-shared.yml");
 
@@ -39,6 +41,9 @@ test("coverage reports use complete Go discovery and deduplicated profiles", asy
   assert.match(script, /grep -v '\/cmd\/server\$'/);
   assert.match(script, /--tags evaluation/);
   assert.match(workflow, /scripts\/coverage-report\.sh --complete/);
+  assert.match(script, /total \* 10/);
+  assert.match(ci, /coverage-gate\.mjs/);
+  assert.match(gate, /covered \* 10/);
 });
 
 test("browser and proxy coverage keep only bootstrap wrappers outside the inventory", async () => {
@@ -50,6 +55,7 @@ test("browser and proxy coverage keep only bootstrap wrappers outside the invent
 
   assert.equal(webPackage.scripts["test:coverage"], "vitest run --coverage");
   assert.match(webConfig, /provider: "v8"/);
+  assert.match(webConfig, /all: true/);
   assert.match(webConfig, /src\/main\.tsx/);
   assert.match(webConfig, /src\/user\/main\.tsx/);
   assert.equal(proxyPackage.devDependencies.c8, "10.1.3");
@@ -67,8 +73,12 @@ test("Go coverage discovery keeps external tests, testless packages, and working
   writeFixture(fixture, ".gitignore", "ignored/**\n");
   writeFixture(fixture, "cmd/server/main.go", "package main\nfunc main() {}\n");
   writeFixture(fixture, "cmd/eval-runner/main.go", "package main\nfunc main() {}\n");
+  writeFixture(fixture, "cmd/internal/demo/postgres/cleanup.go", "package postgres\nfunc Cleanup() {}\n");
   writeFixture(fixture, "cmd/e2e/go.mod", "module example.com/discovery/cmd/e2e\n\ngo 1.26\n");
   writeFixture(fixture, "cmd/e2e/main.go", "package main\nfunc main() {}\n");
+  writeFixture(fixture, "internal/storage/postgres/graphread/traversal.go", "package graphread\nfunc Traverse() {}\n");
+  writeFixture(fixture, "internal/storage/postgres/lockadmission/admission.go", "package lockadmission\nfunc Admit() {}\n");
+  writeFixture(fixture, "internal/example/postgres/adapter.go", "package postgres\nfunc Adapt() {}\n");
   writeFixture(fixture, "internal/with-tests/with.go", "package withtests\nfunc Value() int { return 1 }\n");
   writeFixture(fixture, "internal/with-tests/with_external_test.go", "package withtests_test\n");
   writeFixture(fixture, "internal/no-tests/no.go", "package notests\nfunc Value() int { return 1 }\n");
@@ -89,6 +99,9 @@ test("Go coverage discovery keeps external tests, testless packages, and working
   assert.match(complete.stdout, /example\.com\/discovery\/internal\/no-tests/);
   assert.match(complete.stdout, /example\.com\/discovery\/internal\/working-tree/);
   assert.match(complete.stdout, /example\.com\/discovery\/cmd\/eval-runner/);
+  assert.doesNotMatch(complete.stdout, /example\.com\/discovery\/cmd\/internal\/demo\/postgres/);
+  assert.doesNotMatch(complete.stdout, /example\.com\/discovery\/internal\/storage\/postgres\/(graphread|lockadmission)/);
+  assert.doesNotMatch(complete.stdout, /example\.com\/discovery\/internal\/example\/postgres/);
   assert.doesNotMatch(complete.stdout, /example\.com\/discovery\/cmd\/e2e/);
   assert.doesNotMatch(complete.stdout, /example\.com\/discovery\/tests\/uat/);
   assert.doesNotMatch(complete.stdout, /example\.com\/discovery\/ignored/);
@@ -99,7 +112,7 @@ test("Go coverage discovery keeps external tests, testless packages, and working
   assert.match(production.stdout, /example\.com\/discovery\/internal\/no-tests/);
 });
 
-test("complete Go coverage deduplicates profiles and transitional thresholds are exact", (t) => {
+test("complete Go coverage deduplicates profiles and rejects exact thresholds", (t) => {
   const fixture = mkdtempSync(join(tmpdir(), "dense-mem-coverage-runner-"));
   t.after(() => rmSync(fixture, { recursive: true, force: true }));
   const fakeGo = join(fixture, "go");
@@ -108,7 +121,7 @@ test("complete Go coverage deduplicates profiles and transitional thresholds are
 
   const completeDir = join(fixture, "complete");
   const complete = runCoverage(fakeGo, completeDir, "--complete");
-  assert.equal(complete.status, 0, complete.stderr);
+  assert.equal(complete.status, 1, complete.stderr);
   const merged = readFixture(join(completeDir, "go-complete.out"));
   assert.equal((merged.match(/^example\//gmu) || []).length, 5);
   assert.match(merged, /example\/evaluation\.go/);
@@ -118,9 +131,28 @@ test("complete Go coverage deduplicates profiles and transitional thresholds are
   assert.notEqual(missing.status, 0);
 
   const exact = runCoverage(fakeGo, join(fixture, "exact"), "--transitional", { FAKE_COVERAGE_TOTAL: "90.0" });
-  assert.equal(exact.status, 0, exact.stderr);
+  assert.equal(exact.status, 1, exact.stderr);
   const below = runCoverage(fakeGo, join(fixture, "below"), "--transitional", { FAKE_COVERAGE_TOTAL: "89.9" });
   assert.equal(below.status, 1);
+});
+
+test("browser and proxy coverage gates fail closed for missing, empty, and exact reports", (t) => {
+  const fixture = mkdtempSync(join(tmpdir(), "dense-mem-browser-coverage-gate-"));
+  t.after(() => rmSync(fixture, { recursive: true, force: true }));
+  const writeReport = (name, value) => {
+    const path = join(fixture, name);
+    if (value !== undefined) writeFileSync(path, JSON.stringify(value));
+    return path;
+  };
+  const exact = writeReport("exact.json", { total: { statements: { total: 10, covered: 9 } } });
+  const empty = writeReport("empty.json", { total: { statements: { total: 0, covered: 0 } } });
+  const passing = writeReport("passing.json", { total: { statements: { total: 11, covered: 10 } } });
+  for (const label of ["browser", "MCP proxy"]) {
+    assert.equal(run("node", [coverageGate, label, exact]).status, 1);
+    assert.equal(run("node", [coverageGate, label, empty]).status, 1);
+    assert.equal(run("node", [coverageGate, label, join(fixture, "missing.json")]).status, 1);
+    assert.equal(run("node", [coverageGate, label, passing]).status, 0);
+  }
 });
 
 function run(command, args, options = {}) {

@@ -13,11 +13,11 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 type OAuthProtectedResourceProvider interface {
-	OAuthProtectedResourceMetadata(context.Context) (service.OAuthProtectedResourceMetadata, error)
+	OAuthProtectedResourceMetadata(context.Context) (accessservice.OAuthProtectedResourceMetadata, error)
 	MCPPublicBaseURL(context.Context) (string, error)
 }
 

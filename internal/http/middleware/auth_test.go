@@ -17,7 +17,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 // mockCredentialRepository is a mock implementation of repository.CredentialRepository
@@ -103,7 +103,7 @@ func (m *mockCredentialRepository) RecordLastUsed(id uuid.UUID, _ time.Time) {
 	_ = m.TouchLastUsed(context.Background(), id)
 }
 
-// mockAuditService is a mock implementation of service.AuditService
+// mockAuditService is a mock implementation of accessservice.AuditService
 type mockAuditService struct {
 	authFailureCalled bool
 	authFailureParams struct {
@@ -116,7 +116,7 @@ type mockAuditService struct {
 	}
 }
 
-func (m *mockAuditService) Append(ctx context.Context, entry service.AuditLogEntry) error {
+func (m *mockAuditService) Append(ctx context.Context, entry accessservice.AuditLogEntry) error {
 	return nil
 }
 
@@ -171,8 +171,8 @@ func (m *mockAuditService) InvariantViolation(ctx context.Context, entityType, e
 	return nil
 }
 
-func (m *mockAuditService) List(ctx context.Context, profileID string, limit, offset int) ([]service.AuditLogEntry, int, error) {
-	return []service.AuditLogEntry{}, 0, nil
+func (m *mockAuditService) List(ctx context.Context, profileID string, limit, offset int) ([]accessservice.AuditLogEntry, int, error) {
+	return []accessservice.AuditLogEntry{}, 0, nil
 }
 
 type mockSecurityService struct {
@@ -235,7 +235,7 @@ func testSSOActor(teamID, identityID, membershipID, ownerID uuid.UUID, providerI
 			OwnerID:         ownerID,
 			Name:            "SSO member",
 			Grants:          append([]string(nil), grants...),
-			Role:            service.CredentialRoleMember,
+			Role:            accessservice.CredentialRoleMember,
 			Status:          "active",
 			SSOProviderID:   providerID,
 		},
@@ -255,7 +255,7 @@ func TestAuthMiddleware_MissingHeader(t *testing.T) {
 	mockRepo := &mockCredentialRepository{}
 	mockAudit := &mockAuditService{}
 
-	e.Use(AuthMiddleware(mockRepo, mockAudit))
+	e.Use(testAuthMiddleware(mockRepo, mockAudit))
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	rec := httptest.NewRecorder()
@@ -283,7 +283,7 @@ func TestAuthMiddleware_WithSecurityStillAuditsAuthFailure(t *testing.T) {
 	mockAudit := &mockAuditService{}
 	mockSecurity := &mockSecurityService{}
 
-	e.Use(AuthMiddlewareWithSecurity(mockRepo, mockAudit, mockSecurity))
+	e.Use(AuthMiddlewareWithOptions(mockRepo, mockAudit, mockSecurity, testAuthOptions(nil)))
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.RemoteAddr = "192.0.2.10:12345"
@@ -307,7 +307,7 @@ func TestAuthMiddleware_MalformedHeader(t *testing.T) {
 	mockRepo := &mockCredentialRepository{}
 	mockAudit := &mockAuditService{}
 
-	e.Use(AuthMiddleware(mockRepo, mockAudit))
+	e.Use(testAuthMiddleware(mockRepo, mockAudit))
 
 	testCases := []struct {
 		name          string
@@ -374,7 +374,7 @@ func TestAuthMiddleware_NoMatchingKey(t *testing.T) {
 	}
 	mockAudit := &mockAuditService{}
 
-	e.Use(AuthMiddleware(mockRepo, mockAudit))
+	e.Use(testAuthMiddleware(mockRepo, mockAudit))
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer testprefix12345678901234567890")
@@ -413,7 +413,7 @@ func TestAuthMiddleware_RevokedKey(t *testing.T) {
 	}
 	mockAudit := &mockAuditService{}
 
-	e.Use(AuthMiddleware(mockRepo, mockAudit))
+	e.Use(testAuthMiddleware(mockRepo, mockAudit))
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer testprefix12345678901234567890")
@@ -452,7 +452,7 @@ func TestAuthMiddleware_ExpiredKey(t *testing.T) {
 	}
 	mockAudit := &mockAuditService{}
 
-	e.Use(AuthMiddleware(mockRepo, mockAudit))
+	e.Use(testAuthMiddleware(mockRepo, mockAudit))
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer testprefix12345678901234567890")
@@ -485,13 +485,13 @@ func TestAuthMiddleware_ValidKey_StoresPrincipal(t *testing.T) {
 			return &domain.Credential{
 				ID: keyID, ActorIdentityID: keyID, MembershipID: keyID, OwnerID: keyID,
 				TeamID: profileID, KeyHash: keyHash, Scopes: []string{"read", "write"},
-				Role: service.CredentialRoleManager,
+				Role: accessservice.CredentialRoleManager,
 			}, nil
 		},
 	}
 	mockAudit := &mockAuditService{}
 
-	e.Use(AuthMiddleware(mockRepo, mockAudit))
+	e.Use(testAuthMiddleware(mockRepo, mockAudit))
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
@@ -518,7 +518,7 @@ func TestAuthMiddleware_ValidKey_StoresPrincipal(t *testing.T) {
 	assert.Equal(t, keyID, capturedPrincipal.IdentityID)
 	assert.Equal(t, keyID, capturedPrincipal.MembershipID)
 	assert.Equal(t, keyID, capturedPrincipal.OwnerID)
-	assert.Equal(t, service.CredentialRoleManager, capturedPrincipal.Role)
+	assert.Equal(t, accessservice.CredentialRoleManager, capturedPrincipal.Role)
 	assert.Equal(t, []string{"read", "write"}, capturedPrincipal.Grants)
 	assert.Equal(t, rawKey[:24], capturedPrincipal.KeyPrefix)
 }
@@ -538,7 +538,7 @@ func TestAuthMiddleware_SSOEntitlementValidatorOverridesPrincipal(t *testing.T) 
 				ID: originalProfileID, ActorIdentityID: originalProfileID,
 				MembershipID: originalProfileID, OwnerID: originalProfileID,
 				TeamID: originalTeamID, Name: "Original credential", TeamName: "Original team",
-				KeyHash: keyHash, Scopes: []string{"read"}, Role: service.CredentialRoleMember, RateLimit: 10,
+				KeyHash: keyHash, Scopes: []string{"read"}, Role: accessservice.CredentialRoleMember, RateLimit: 10,
 			}, nil
 		},
 	}
@@ -547,7 +547,7 @@ func TestAuthMiddleware_SSOEntitlementValidatorOverridesPrincipal(t *testing.T) 
 			require.Equal(t, originalProfileID, key.ID)
 			validated := *key
 			validated.Scopes = []string{"read", "write"}
-			validated.Role = service.CredentialRoleManager
+			validated.Role = accessservice.CredentialRoleManager
 			validated.RateLimit = 77
 			validated.SSOProviderID = &providerID
 			validated.SSOSubject = "subject-123"
@@ -555,7 +555,7 @@ func TestAuthMiddleware_SSOEntitlementValidatorOverridesPrincipal(t *testing.T) 
 		},
 	}
 
-	e.Use(AuthMiddlewareWithOptions(mockRepo, nil, nil, AuthOptions{SSOEntitlementValidator: validator}))
+	e.Use(AuthMiddlewareWithOptions(mockRepo, nil, nil, testAuthOptions(validator)))
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
@@ -579,7 +579,7 @@ func TestAuthMiddleware_SSOEntitlementValidatorOverridesPrincipal(t *testing.T) 
 	assert.Equal(t, originalTeamID, capturedPrincipal.TeamID)
 	assert.Equal(t, originalProfileID, capturedPrincipal.OwnerID)
 	assert.Equal(t, "Original credential", capturedPrincipal.OwnerName)
-	assert.Equal(t, service.CredentialRoleManager, capturedPrincipal.Role)
+	assert.Equal(t, accessservice.CredentialRoleManager, capturedPrincipal.Role)
 	assert.Equal(t, []string{"read", "write"}, capturedPrincipal.Grants)
 	assert.Equal(t, 77, capturedPrincipal.RateLimit)
 	require.NotNil(t, capturedPrincipal.SSOProviderID)
@@ -607,18 +607,18 @@ func TestAuthMiddleware_SSOEntitlementValidatorDeniesKey(t *testing.T) {
 				TeamID:  teamID,
 				KeyHash: keyHash,
 				Scopes:  []string{"read"},
-				Role:    service.CredentialRoleMember,
+				Role:    accessservice.CredentialRoleMember,
 			}, nil
 		},
 	}
 	mockAudit := &mockAuditService{}
 	validator := mockSSOEntitlementValidator{
 		validateFunc: func(ctx context.Context, key *domain.Credential) (*domain.Credential, error) {
-			return nil, service.ErrSSOEntitlementRefreshStale
+			return nil, accessservice.ErrSSOEntitlementRefreshStale
 		},
 	}
 
-	e.Use(AuthMiddlewareWithOptions(mockRepo, mockAudit, nil, AuthOptions{SSOEntitlementValidator: validator}))
+	e.Use(AuthMiddlewareWithOptions(mockRepo, mockAudit, nil, testAuthOptions(validator)))
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
@@ -655,7 +655,7 @@ func TestAuthMiddleware_SSOSessionAuthenticatesWithoutAuthorizationHeader(t *tes
 	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, nil, nil, AuthOptions{SSOSessionAuthenticator: authenticator}))
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	req.AddCookie(&http.Cookie{Name: service.SSOSessionCookieName, Value: "session-token"})
+	req.AddCookie(&http.Cookie{Name: accessservice.SSOSessionCookieName, Value: "session-token"})
 	rec := httptest.NewRecorder()
 
 	var capturedPrincipal *Principal
@@ -684,14 +684,14 @@ func TestAuthMiddleware_SSOSessionRequiresCSRFHeaderForUnsafeMethods(t *testing.
 			require.Equal(t, "session-token", sessionToken)
 			require.Empty(t, csrfToken)
 			require.True(t, requireCSRF)
-			return nil, service.ErrSSOCSRFInvalid
+			return nil, accessservice.ErrSSOCSRFInvalid
 		},
 	}
 	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, nil, nil, AuthOptions{SSOSessionAuthenticator: authenticator}))
 
 	req := httptest.NewRequest(http.MethodPost, "/test", nil)
-	req.AddCookie(&http.Cookie{Name: service.SSOSessionCookieName, Value: "session-token"})
-	req.AddCookie(&http.Cookie{Name: service.SSOCSRFCookieName, Value: "cookie-csrf"})
+	req.AddCookie(&http.Cookie{Name: accessservice.SSOSessionCookieName, Value: "session-token"})
+	req.AddCookie(&http.Cookie{Name: accessservice.SSOCSRFCookieName, Value: "cookie-csrf"})
 	rec := httptest.NewRecorder()
 	handlerCalled := false
 	e.POST("/test", func(c echo.Context) error {
@@ -721,9 +721,9 @@ func TestAuthMiddleware_SSOSessionUsesCSRFHeaderForUnsafeMethods(t *testing.T) {
 	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, nil, nil, AuthOptions{SSOSessionAuthenticator: authenticator}))
 
 	req := httptest.NewRequest(http.MethodPost, "/test", nil)
-	req.AddCookie(&http.Cookie{Name: service.SSOSessionCookieName, Value: "session-token"})
-	req.AddCookie(&http.Cookie{Name: service.SSOCSRFCookieName, Value: "cookie-csrf"})
-	req.Header.Set(service.SSOCSRFHeaderName, "header-csrf")
+	req.AddCookie(&http.Cookie{Name: accessservice.SSOSessionCookieName, Value: "session-token"})
+	req.AddCookie(&http.Cookie{Name: accessservice.SSOCSRFCookieName, Value: "cookie-csrf"})
+	req.Header.Set(accessservice.SSOCSRFHeaderName, "header-csrf")
 	rec := httptest.NewRecorder()
 	e.POST("/test", func(c echo.Context) error {
 		return c.String(http.StatusOK, "ok")
@@ -756,7 +756,7 @@ func TestAuthMiddleware_LegacyPrefixLookupFallback(t *testing.T) {
 		},
 	}
 
-	e.Use(AuthMiddleware(mockRepo, nil))
+	e.Use(testAuthMiddleware(mockRepo, nil))
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
 	rec := httptest.NewRecorder()
@@ -793,7 +793,7 @@ func TestAuthMiddleware_ProfilelessKeyRejected(t *testing.T) {
 	}
 	mockAudit := &mockAuditService{}
 
-	e.Use(AuthMiddleware(mockRepo, mockAudit))
+	e.Use(testAuthMiddleware(mockRepo, mockAudit))
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
@@ -827,7 +827,7 @@ func TestAuthMiddleware_DoesNotTouchLastUsed(t *testing.T) {
 	}
 	mockAudit := &mockAuditService{}
 
-	e.Use(AuthMiddleware(mockRepo, mockAudit))
+	e.Use(testAuthMiddleware(mockRepo, mockAudit))
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
@@ -854,7 +854,7 @@ func TestLastUsedMiddleware_TouchLastUsed_Background(t *testing.T) {
 		TeamID:       uuid.New(),
 		OwnerID:      profileID,
 		CredentialID: &keyID,
-		Role:         service.CredentialRoleMember,
+		Role:         accessservice.CredentialRoleMember,
 		AuthMethod:   "api_key",
 	}
 
@@ -900,7 +900,7 @@ func TestLastUsedMiddleware_SkipsWhenRateLimited(t *testing.T) {
 		TeamID:       uuid.New(),
 		OwnerID:      profileID,
 		CredentialID: &keyID,
-		Role:         service.CredentialRoleMember,
+		Role:         accessservice.CredentialRoleMember,
 		AuthMethod:   "api_key",
 	}
 
@@ -939,7 +939,7 @@ func TestPrincipalInterfaceAndRequireAuthHelpers(t *testing.T) {
 		OwnerID:      keyID,
 		OwnerName:    "Primary",
 		CredentialID: &keyID,
-		Role:         service.CredentialRoleManager,
+		Role:         accessservice.CredentialRoleManager,
 		Grants:       []string{"read", "write"},
 		KeyPrefix:    "dm_test",
 		RateLimit:    42,
@@ -955,7 +955,7 @@ func TestPrincipalInterfaceAndRequireAuthHelpers(t *testing.T) {
 	assert.Equal(t, principal.MembershipID, principal.GetMembershipID())
 	assert.Equal(t, keyID, principal.GetOwnerID())
 	assert.Equal(t, "Primary", principal.GetOwnerName())
-	assert.Equal(t, service.CredentialRoleManager, principal.GetRole())
+	assert.Equal(t, accessservice.CredentialRoleManager, principal.GetRole())
 	assert.Equal(t, []string{"read", "write"}, principal.GetGrants())
 	assert.Equal(t, "dm_test", principal.GetKeyPrefix())
 	assert.Equal(t, 42, principal.GetRateLimit())

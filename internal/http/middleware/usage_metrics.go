@@ -9,12 +9,12 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
 )
 
 // UsageMetricsMiddleware records authenticated request usage after API-key auth
 // has derived team/key identity. Metrics are aggregated by route template, not raw path.
-func UsageMetricsMiddleware(recorder service.UsageMetricsRecorder) echo.MiddlewareFunc {
+func UsageMetricsMiddleware(recorder operations.UsageMetricsRecorder) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			start := time.Now()
@@ -40,7 +40,7 @@ func TelemetryHTTPMiddleware(recorder httpcontract.HTTPMetrics) echo.MiddlewareF
 	}
 }
 
-func recordUsageMetric(c echo.Context, recorder service.UsageMetricsRecorder, start time.Time, err error, mcpMetrics *domain.MCPToolMetrics) {
+func recordUsageMetric(c echo.Context, recorder operations.UsageMetricsRecorder, start time.Time, err error, mcpMetrics *domain.MCPToolMetrics) {
 	if recorder == nil {
 		return
 	}

@@ -3,32 +3,33 @@ package http
 import (
 	nethttp "net/http"
 
+	communityapp "github.com/markhuangai/dense-mem/internal/community/service"
 	"github.com/markhuangai/dense-mem/internal/conflict/evidence"
 	"github.com/markhuangai/dense-mem/internal/conflict/queue"
 	"github.com/markhuangai/dense-mem/internal/dream"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
-	"github.com/markhuangai/dense-mem/internal/observability"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
 	"github.com/markhuangai/dense-mem/internal/recall"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
-	"github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/communityservice"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
+	settings "github.com/markhuangai/dense-mem/internal/settings"
 )
 
 type ControlPortalTelemetry struct {
-	Reader            service.TelemetryReader
+	Reader            operations.TelemetryReader
 	HTTPMetrics       httpcontract.HTTPMetrics
 	ScrapeHandler     nethttp.Handler
 	ScrapeToken       string
-	SSO               *service.SSOService
-	Directory         *service.DirectoryIdentityService
-	ControlIdentity   *service.ControlIdentityService
-	Config            service.AppConfigService
-	Logs              service.OperationLogReader
+	SSO               *accessservice.SSOService
+	Directory         *accessservice.DirectoryIdentityService
+	ControlIdentity   *accessservice.ControlIdentityService
+	Config            settings.AppConfigService
+	Logs              operations.OperationLogReader
 	RecallFeedback    recall.RecallFeedbackEventReader
 	Dreams            dream.ControlService
-	Communities       communityservice.Service
+	Communities       communityapp.Service
 	ConflictQueue     conflictqueue.Reader
 	EvidenceConflicts evidenceconflict.Reader
 	Convergence       searchapp.SearchConvergenceReader
@@ -39,24 +40,24 @@ type ControlPortalTelemetry struct {
 type controlPortalHandler struct {
 	teams             handler.TeamServiceInterface
 	credentials       handler.CredentialServiceInterface
-	security          service.SecurityService
-	metrics           service.UsageMetricsReader
-	telemetry         service.TelemetryReader
-	operationLogs     service.OperationLogReader
+	security          settings.SecurityService
+	metrics           operations.UsageMetricsReader
+	telemetry         operations.TelemetryReader
+	operationLogs     operations.OperationLogReader
 	recallFeedback    recall.RecallFeedbackEventReader
 	dreams            dream.ControlService
-	communities       communityservice.Service
+	communities       communityapp.Service
 	conflictQueue     conflictqueue.Reader
 	evidenceConflicts evidenceconflict.Reader
 	convergence       searchapp.SearchConvergenceReader
 	rememberAttempts  rememberapp.RememberAttemptDiagnosticsReader
 	privateMemory     PrivateMemoryServiceInterface
 	health            HealthConfig
-	sso               *service.SSOService
-	directory         *service.DirectoryIdentityService
-	controlIdentity   *service.ControlIdentityService
-	appConfig         service.AppConfigService
-	logger            observability.LogProvider
+	sso               *accessservice.SSOService
+	directory         *accessservice.DirectoryIdentityService
+	controlIdentity   *accessservice.ControlIdentityService
+	appConfig         settings.AppConfigService
+	logger            httpcontract.LogProvider
 	verifierModel     string
 	embeddingModel    string
 }

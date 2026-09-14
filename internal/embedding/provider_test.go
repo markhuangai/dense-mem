@@ -5,12 +5,13 @@ import (
 	"errors"
 	"testing"
 
+	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMockEmbeddingProvider_ImplementsInterface(t *testing.T) {
-	var _ EmbeddingProviderInterface = (*MockEmbeddingProvider)(nil)
+	var _ embeddingcontract.EmbeddingProviderInterface = (*MockEmbeddingProvider)(nil)
 	assert.True(t, true, "compile-time assertion passed")
 }
 
@@ -126,31 +127,31 @@ func TestMockEmbeddingProvider_IsAvailable(t *testing.T) {
 
 func TestEmbeddingProviderInterface_SentinelErrors(t *testing.T) {
 	// Test ErrEmbeddingTimeout wrapping
-	timeoutErr := &TimeoutError{Provider: "openai", Message: "request timed out"}
-	assert.ErrorIs(t, timeoutErr, ErrEmbeddingTimeout)
+	timeoutErr := &embeddingcontract.TimeoutError{Provider: "openai", Message: "request timed out"}
+	assert.ErrorIs(t, timeoutErr, embeddingcontract.ErrEmbeddingTimeout)
 	assert.Equal(t, "embedding request timed out: openai: request timed out", timeoutErr.Error())
 
 	// Test ErrEmbeddingRateLimit wrapping
-	rateLimitErr := &RateLimitError{Provider: "openai", Message: "too many requests"}
-	assert.ErrorIs(t, rateLimitErr, ErrEmbeddingRateLimit)
+	rateLimitErr := &embeddingcontract.RateLimitError{Provider: "openai", Message: "too many requests"}
+	assert.ErrorIs(t, rateLimitErr, embeddingcontract.ErrEmbeddingRateLimit)
 	assert.Equal(t, "embedding request rate limited: openai: too many requests", rateLimitErr.Error())
 
 	// Test ErrEmbeddingProvider wrapping
-	providerErr := &ProviderError{Provider: "openai", Message: "api error"}
-	assert.ErrorIs(t, providerErr, ErrEmbeddingProvider)
+	providerErr := &embeddingcontract.ProviderError{Provider: "openai", Message: "api error"}
+	assert.ErrorIs(t, providerErr, embeddingcontract.ErrEmbeddingProvider)
 	assert.Equal(t, "embedding provider error: openai: api error", providerErr.Error())
 	assert.NoError(t, errors.Unwrap(providerErr))
 
 	// Test provider error with cause
 	cause := errors.New("underlying error")
-	providerErrWithCause := &ProviderError{Provider: "openai", Message: "api error", Cause: cause}
-	assert.ErrorIs(t, providerErrWithCause, ErrEmbeddingProvider)
+	providerErrWithCause := &embeddingcontract.ProviderError{Provider: "openai", Message: "api error", Cause: cause}
+	assert.ErrorIs(t, providerErrWithCause, embeddingcontract.ErrEmbeddingProvider)
 	assert.ErrorIs(t, providerErrWithCause, cause)
 	assert.Equal(t, "embedding provider error: openai: api error: underlying error", providerErrWithCause.Error())
 	assert.ErrorIs(t, errors.Unwrap(providerErrWithCause), cause)
 }
 
 func TestProviderHTTPError_ErrorWithoutMessage(t *testing.T) {
-	err := &ProviderHTTPError{Status: 503}
+	err := &embeddingcontract.ProviderHTTPError{Status: 503}
 	assert.Equal(t, "embedding provider http error: status=503", err.Error())
 }

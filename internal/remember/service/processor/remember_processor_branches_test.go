@@ -16,7 +16,6 @@ import (
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 func TestInlineEmbeddingResultsFromDocumentsCopiesPlanMetadataAndVectors(t *testing.T) {
@@ -126,7 +125,7 @@ func TestNewSynchronousProcessorUsesDefaultClassifiersAndCommitStage(t *testing.
 	processor := NewSynchronousProcessor(ProcessorDependencies{})
 	require.NotNil(t, processor)
 	require.NotNil(t, processor.isStaleInput)
-	require.True(t, processor.isRememberStaleInput(repository.ErrSourceRevisionConflict))
+	require.True(t, processor.isRememberStaleInput(knowledgecontract.ErrSourceRevisionConflict))
 	require.False(t, processor.isRememberStaleInput(errors.New("ordinary error")))
 	require.Empty(t, processor.commitStage(errors.New("commit failed")))
 	processor.commitFailureStage = func(error) string { return "write" }
@@ -185,8 +184,8 @@ func TestRememberProcessorCoversPipelineFailurePhases(t *testing.T) {
 	t.Run("duplicate embedding provider unavailable", func(t *testing.T) {
 		ledger := &rememberPipelineLedgerStub{
 			rememberFailureLedgerStub: &rememberFailureLedgerStub{},
-			duplicatePlan: &repository.RememberDuplicateEmbeddingPlan{
-				EmbeddingModel: "model", Documents: []repository.SearchDocumentForEmbedding{processorEmbeddingDocument(2)},
+			duplicatePlan: &knowledgecontract.RememberDuplicateEmbeddingPlan{
+				EmbeddingModel: "model", Documents: []knowledgecontract.SearchDocumentForEmbedding{processorEmbeddingDocument(2)},
 			},
 		}
 		_, err := (&rememberSynchronousProcessor{ledger: ledger}).ProcessRemember(context.Background(), input)
@@ -212,8 +211,8 @@ func TestRememberProcessorCommitsValidatedAssessmentAndResult(t *testing.T) {
 	}
 	ledger := &rememberPipelineLedgerStub{
 		rememberFailureLedgerStub: &rememberFailureLedgerStub{},
-		plan:                      &repository.InlineEmbeddingPlan{},
-		commitResult:              &repository.SynchronousRememberCommitResult{IngestID: "committed", Outcome: "completed", PublicResult: commitResult},
+		plan:                      &knowledgecontract.InlineEmbeddingPlan{},
+		commitResult:              &knowledgecontract.SynchronousRememberCommitResult{IngestID: "committed", Outcome: "completed", PublicResult: commitResult},
 	}
 	processor := &rememberSynchronousProcessor{
 		ledger:   ledger,
@@ -234,13 +233,13 @@ func TestRememberProcessorExistingAttemptsTakeTerminalAndConflictPaths(t *testin
 	}
 	tests := []struct {
 		name    string
-		attempt *repository.RememberAttempt
+		attempt *knowledgecontract.RememberAttempt
 		wantErr error
 	}{
-		{name: "unsupported contract", attempt: &repository.RememberAttempt{RequestHash: "hash", ContractVersion: "legacy", Outcome: "completed", PublicResult: baseResult}, wantErr: rememberapp.ErrRememberConflict},
-		{name: "nonretryable failure", attempt: &repository.RememberAttempt{AttemptID: "attempt", RequestHash: "hash", ContractVersion: domain.ContractVersion, Outcome: "failed", PublicResult: baseResult}, wantErr: rememberapp.ErrRememberPersistence},
-		{name: "in progress", attempt: &repository.RememberAttempt{RequestHash: "hash", ContractVersion: domain.ContractVersion, Outcome: "processing", PublicResult: baseResult}, wantErr: rememberapp.ErrRememberConflict},
-		{name: "invalid public result", attempt: &repository.RememberAttempt{AttemptID: "attempt", RequestHash: "hash", ContractVersion: domain.ContractVersion, Outcome: "completed", PublicResult: map[string]any{"evidence": "invalid"}}, wantErr: nil},
+		{name: "unsupported contract", attempt: &knowledgecontract.RememberAttempt{RequestHash: "hash", ContractVersion: "legacy", Outcome: "completed", PublicResult: baseResult}, wantErr: rememberapp.ErrRememberConflict},
+		{name: "nonretryable failure", attempt: &knowledgecontract.RememberAttempt{AttemptID: "attempt", RequestHash: "hash", ContractVersion: domain.ContractVersion, Outcome: "failed", PublicResult: baseResult}, wantErr: rememberapp.ErrRememberPersistence},
+		{name: "in progress", attempt: &knowledgecontract.RememberAttempt{RequestHash: "hash", ContractVersion: domain.ContractVersion, Outcome: "processing", PublicResult: baseResult}, wantErr: rememberapp.ErrRememberConflict},
+		{name: "invalid public result", attempt: &knowledgecontract.RememberAttempt{AttemptID: "attempt", RequestHash: "hash", ContractVersion: domain.ContractVersion, Outcome: "completed", PublicResult: map[string]any{"evidence": "invalid"}}, wantErr: nil},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -277,8 +276,8 @@ func TestNormalizeRememberCommitFailureMapsSearchFenceErrors(t *testing.T) {
 		err  error
 		want error
 	}{
-		{name: "stale version", err: repository.ErrSearchStaleVersion, want: rememberapp.ErrRememberCommitConflict},
-		{name: "contract mismatch", err: repository.ErrSearchContractMismatch, want: rememberapp.ErrRememberCommitConflict},
+		{name: "stale version", err: knowledgecontract.ErrSearchStaleVersion, want: rememberapp.ErrRememberCommitConflict},
+		{name: "contract mismatch", err: knowledgecontract.ErrSearchContractMismatch, want: rememberapp.ErrRememberCommitConflict},
 		{name: "other", err: errors.New("database down"), want: nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -295,8 +294,8 @@ func TestNormalizeRememberCommitFailureMapsSearchFenceErrors(t *testing.T) {
 
 func TestRememberFailureAndCommitMetadataCoverSupportedCauses(t *testing.T) {
 	planCauses := []error{
-		repository.ErrSearchContractMismatch, repository.ErrInlineEmbeddingPlanMismatch,
-		repository.ErrInlineEmbeddingPlanTooLarge, context.DeadlineExceeded, context.Canceled, errors.New("other"),
+		knowledgecontract.ErrSearchContractMismatch, knowledgecontract.ErrInlineEmbeddingPlanMismatch,
+		knowledgecontract.ErrInlineEmbeddingPlanTooLarge, context.DeadlineExceeded, context.Canceled, errors.New("other"),
 	}
 	for _, cause := range planCauses {
 		class, code := rememberEmbeddingPlanFailureMetadata(cause)
@@ -304,10 +303,10 @@ func TestRememberFailureAndCommitMetadataCoverSupportedCauses(t *testing.T) {
 		require.NotEmpty(t, code)
 	}
 	commitCauses := []error{
-		rememberapp.ErrRememberCommitConflict, repository.ErrInlineEmbeddingPlanMismatch,
-		repository.ErrSearchContractMismatch, repository.ErrSearchStaleVersion, rememberapp.ErrRememberStaleInput,
-		repository.ErrRememberDuplicateCandidateStale, repository.ErrSourceRevisionConflict,
-		repository.ErrEvidenceConflictStaleInput, context.DeadlineExceeded, context.Canceled, errors.New("other"),
+		rememberapp.ErrRememberCommitConflict, knowledgecontract.ErrInlineEmbeddingPlanMismatch,
+		knowledgecontract.ErrSearchContractMismatch, knowledgecontract.ErrSearchStaleVersion, rememberapp.ErrRememberStaleInput,
+		knowledgecontract.ErrRememberDuplicateCandidateStale, knowledgecontract.ErrSourceRevisionConflict,
+		knowledgecontract.ErrEvidenceConflictStaleInput, context.DeadlineExceeded, context.Canceled, errors.New("other"),
 	}
 	for _, cause := range commitCauses {
 		class, code := rememberCommitFailureMetadata(cause)
@@ -331,7 +330,7 @@ func TestRememberProcessingFailureLoggingClassifiesFailureSources(t *testing.T) 
 		commitFailureStage: func(error) string { return "persist" },
 	}
 	input := rememberapp.RememberProcessRequest{TeamID: "team", OwnerProfileID: "owner"}
-	processor.logRememberFailure(input, "attempt", time.Now(), "embedding", "embedding_unavailable", "corr", 0, &rememberEmbeddingPlanFailure{cause: repository.ErrInlineEmbeddingPlanTooLarge})
+	processor.logRememberFailure(input, "attempt", time.Now(), "embedding", "embedding_unavailable", "corr", 0, &rememberEmbeddingPlanFailure{cause: knowledgecontract.ErrInlineEmbeddingPlanTooLarge})
 	processor.logRememberFailure(input, "attempt", time.Now(), "embedding", "configuration_invalid", "corr", 0, &rememberEmbeddingConfigurationFailure{})
 	processor.logRememberFailure(input, "attempt", time.Now(), "embedding", "embedding_response_invalid", "corr", 0, &rememberEmbeddingProviderFailure{cause: &embeddingcontract.ProviderError{
 		FailureCode: "provider_response_invalid", FailureClass: "provider_action_required", StatusCode: 422,
@@ -347,7 +346,7 @@ func TestRememberProcessingFailureLoggingClassifiesFailureSources(t *testing.T) 
 func TestRememberAttemptStatusValidatesAndFillsDefaults(t *testing.T) {
 	_, err := rememberAttemptStatus(nil)
 	require.EqualError(t, err, "remember processor: attempt is required")
-	status, err := rememberAttemptStatus(&repository.RememberAttempt{AttemptID: "attempt", PublicResult: map[string]any{}})
+	status, err := rememberAttemptStatus(&knowledgecontract.RememberAttempt{AttemptID: "attempt", PublicResult: map[string]any{}})
 	require.NoError(t, err)
 	require.Equal(t, "attempt", status.SubmissionID)
 	require.Equal(t, "remember", status.SubmissionKind)
@@ -355,9 +354,9 @@ func TestRememberAttemptStatusValidatesAndFillsDefaults(t *testing.T) {
 	require.Empty(t, status.Evidence)
 	require.Empty(t, status.RelationshipResults)
 	require.Empty(t, status.Errors)
-	_, err = rememberAttemptStatus(&repository.RememberAttempt{PublicResult: map[string]any{"evidence": make(chan int)}})
+	_, err = rememberAttemptStatus(&knowledgecontract.RememberAttempt{PublicResult: map[string]any{"evidence": make(chan int)}})
 	require.Error(t, err)
-	_, err = rememberAttemptStatus(&repository.RememberAttempt{PublicResult: map[string]any{"evidence": "invalid"}})
+	_, err = rememberAttemptStatus(&knowledgecontract.RememberAttempt{PublicResult: map[string]any{"evidence": "invalid"}})
 	require.Error(t, err)
 	require.Equal(t, "first", firstNonEmptyString("", " first ", "second"))
 	require.Empty(t, firstNonEmptyString("", "  "))
@@ -407,14 +406,14 @@ func TestRememberFailureHelpersCoverReplayAndInputConversions(t *testing.T) {
 	require.ErrorIs(t, normalizeRememberFailureWithClassifier(errors.New("adapter stale"), func(error) bool { return true }), rememberapp.ErrRememberStaleInput)
 	require.Equal(t, rememberapp.ErrRememberPersistence, rememberFailurePersistenceError(nil))
 
-	winner := &repository.RememberAttempt{
+	winner := &knowledgecontract.RememberAttempt{
 		AttemptID: "winner", RequestHash: "hash", ContractVersion: domain.ContractVersion, Outcome: "completed",
 		PublicResult: map[string]any{
 			"contract_version": domain.ContractVersion, "submission_id": "winner", "submission_kind": "remember",
 			"processing_state": "completed", "search_state": "current", "evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
 		},
 	}
-	ledger := &rememberReplayFailureLedgerStub{rememberFailureLedgerStub: &rememberFailureLedgerStub{load: winner}, failureErr: repository.ErrRememberReplay}
+	ledger := &rememberReplayFailureLedgerStub{rememberFailureLedgerStub: &rememberFailureLedgerStub{load: winner}, failureErr: knowledgecontract.ErrRememberReplay}
 	processor := &rememberSynchronousProcessor{ledger: ledger}
 	snapshot, _ = rememberAssessmentSnapshot(input, "attempt")
 	status, err := processor.recordRememberFailure(context.Background(), input, "attempt", snapshot, time.Now(), "assessment", 0, rememberapp.ErrRememberProviderUnavailable)
@@ -435,49 +434,49 @@ type rememberReplayFailureLedgerStub struct {
 	failureErr error
 }
 
-func (s *rememberReplayFailureLedgerStub) RecordRememberFailure(context.Context, repository.RememberFailureRecordInput) error {
+func (s *rememberReplayFailureLedgerStub) RecordRememberFailure(context.Context, knowledgecontract.RememberFailureRecordInput) error {
 	return s.failureErr
 }
 
 type rememberPipelineLedgerStub struct {
 	*rememberFailureLedgerStub
-	duplicatePlan    *repository.RememberDuplicateEmbeddingPlan
+	duplicatePlan    *knowledgecontract.RememberDuplicateEmbeddingPlan
 	duplicatePlanErr error
 	resolveErr       error
-	plan             *repository.InlineEmbeddingPlan
+	plan             *knowledgecontract.InlineEmbeddingPlan
 	planErr          error
-	commitResult     *repository.SynchronousRememberCommitResult
+	commitResult     *knowledgecontract.SynchronousRememberCommitResult
 	commitErr        error
 }
 
-func (s *rememberPipelineLedgerStub) PlanRememberDuplicateEmbeddings(context.Context, repository.RememberDuplicateCandidateInput) (*repository.RememberDuplicateEmbeddingPlan, error) {
+func (s *rememberPipelineLedgerStub) PlanRememberDuplicateEmbeddings(context.Context, knowledgecontract.RememberDuplicateCandidateInput) (*knowledgecontract.RememberDuplicateEmbeddingPlan, error) {
 	if s.duplicatePlanErr != nil {
 		return nil, s.duplicatePlanErr
 	}
 	if s.duplicatePlan != nil {
 		return s.duplicatePlan, nil
 	}
-	return &repository.RememberDuplicateEmbeddingPlan{}, nil
+	return &knowledgecontract.RememberDuplicateEmbeddingPlan{}, nil
 }
 
-func (s *rememberPipelineLedgerStub) ResolveRememberDuplicateCandidates(context.Context, repository.RememberDuplicateCandidateInput, []repository.InlineEmbeddingResult) (*repository.RememberDuplicateResolutionResult, error) {
+func (s *rememberPipelineLedgerStub) ResolveRememberDuplicateCandidates(context.Context, knowledgecontract.RememberDuplicateCandidateInput, []knowledgecontract.InlineEmbeddingResult) (*knowledgecontract.RememberDuplicateResolutionResult, error) {
 	if s.resolveErr != nil {
 		return nil, s.resolveErr
 	}
-	return &repository.RememberDuplicateResolutionResult{}, nil
+	return &knowledgecontract.RememberDuplicateResolutionResult{}, nil
 }
 
-func (s *rememberPipelineLedgerStub) PlanRememberEmbeddings(context.Context, knowledgecontract.SynchronousRememberCommitInput) (*repository.InlineEmbeddingPlan, error) {
+func (s *rememberPipelineLedgerStub) PlanRememberEmbeddings(context.Context, knowledgecontract.SynchronousRememberCommitInput) (*knowledgecontract.InlineEmbeddingPlan, error) {
 	if s.planErr != nil {
 		return nil, s.planErr
 	}
 	if s.plan != nil {
 		return s.plan, nil
 	}
-	return &repository.InlineEmbeddingPlan{}, nil
+	return &knowledgecontract.InlineEmbeddingPlan{}, nil
 }
 
-func (s *rememberPipelineLedgerStub) CommitRememberWithEmbeddings(context.Context, knowledgecontract.SynchronousRememberCommitInput, []repository.InlineEmbeddingResult) (*repository.SynchronousRememberCommitResult, error) {
+func (s *rememberPipelineLedgerStub) CommitRememberWithEmbeddings(context.Context, knowledgecontract.SynchronousRememberCommitInput, []knowledgecontract.InlineEmbeddingResult) (*knowledgecontract.SynchronousRememberCommitResult, error) {
 	if s.commitErr != nil {
 		return nil, s.commitErr
 	}
@@ -636,9 +635,9 @@ func TestRememberFailureCodeMapsAllTerminalCategories(t *testing.T) {
 		{"assessment", rememberapp.ErrRememberRequestCancelled, rememberapp.SubmissionErrorRequestCancelled},
 		{"assessment", context.Canceled, rememberapp.SubmissionErrorRequestCancelled},
 		{"assessment", rememberapp.ErrRememberDatabaseFailure, rememberapp.SubmissionErrorDatabaseFailure},
-		{"embedding", &rememberEmbeddingPlanFailure{cause: repository.ErrInlineEmbeddingPlanTooLarge}, rememberapp.SubmissionErrorInputBudgetExceeded},
-		{"embedding", &rememberEmbeddingPlanFailure{cause: repository.ErrSearchContractMismatch}, rememberapp.SubmissionErrorConfigurationInvalid},
-		{"embedding", &rememberEmbeddingPlanFailure{cause: repository.ErrInlineEmbeddingPlanMismatch}, rememberapp.SubmissionErrorInternalFailure},
+		{"embedding", &rememberEmbeddingPlanFailure{cause: knowledgecontract.ErrInlineEmbeddingPlanTooLarge}, rememberapp.SubmissionErrorInputBudgetExceeded},
+		{"embedding", &rememberEmbeddingPlanFailure{cause: knowledgecontract.ErrSearchContractMismatch}, rememberapp.SubmissionErrorConfigurationInvalid},
+		{"embedding", &rememberEmbeddingPlanFailure{cause: knowledgecontract.ErrInlineEmbeddingPlanMismatch}, rememberapp.SubmissionErrorInternalFailure},
 		{"embedding", &rememberEmbeddingPlanFailure{cause: errors.New("database")}, rememberapp.SubmissionErrorDatabaseFailure},
 		{"embedding", &rememberEmbeddingConfigurationFailure{}, rememberapp.SubmissionErrorConfigurationInvalid},
 		{"embedding", &rememberEmbeddingProviderFailure{cause: &embeddingcontract.ProviderError{FailureCode: "provider_response_invalid", FailureClass: "provider_action_required"}}, rememberapp.SubmissionErrorEmbeddingResponseInvalid},
@@ -648,10 +647,10 @@ func TestRememberFailureCodeMapsAllTerminalCategories(t *testing.T) {
 		{"assessment", rememberapp.ErrRememberProviderResponseInvalid, rememberapp.SubmissionErrorProviderResponseInvalid},
 		{"assessment", rememberapp.ErrRememberInputBudgetExceeded, rememberapp.SubmissionErrorInputBudgetExceeded},
 		{"commit", rememberapp.ErrRememberCommitConflict, rememberapp.SubmissionErrorCommitConflict},
-		{"commit", repository.ErrSearchStaleVersion, rememberapp.SubmissionErrorCommitConflict},
-		{"commit", repository.ErrRememberDuplicateCandidateStale, rememberapp.SubmissionErrorStaleInput},
-		{"commit", repository.ErrSourceRevisionConflict, rememberapp.SubmissionErrorStaleInput},
-		{"commit", repository.ErrEvidenceConflictStaleInput, rememberapp.SubmissionErrorStaleInput},
+		{"commit", knowledgecontract.ErrSearchStaleVersion, rememberapp.SubmissionErrorCommitConflict},
+		{"commit", knowledgecontract.ErrRememberDuplicateCandidateStale, rememberapp.SubmissionErrorStaleInput},
+		{"commit", knowledgecontract.ErrSourceRevisionConflict, rememberapp.SubmissionErrorStaleInput},
+		{"commit", knowledgecontract.ErrEvidenceConflictStaleInput, rememberapp.SubmissionErrorStaleInput},
 		{"commit", rememberapp.ErrSourceRevisionConflict, rememberapp.SubmissionErrorStaleInput},
 		{"other", errors.New("other"), rememberapp.SubmissionErrorDatabaseFailure},
 	}

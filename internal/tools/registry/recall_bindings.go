@@ -12,7 +12,7 @@ func bindRecallTool(tool Tool, deps Dependencies) Tool {
 		return tool
 	}
 	tool.Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-		if deps.Recall == nil {
+		if deps.RecallBindings.Service == nil {
 			return nil, ErrToolUnavailable
 		}
 		if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
@@ -22,9 +22,9 @@ func bindRecallTool(tool Tool, deps Dependencies) Tool {
 		if err := remapInput(input, &req); err != nil {
 			return nil, fmt.Errorf("recall_memory: invalid input: %w", err)
 		}
-		dreamingEnabled := DreamingEnabled(ctx, deps.RecallDreaming)
+		dreamingEnabled := DreamingEnabled(ctx, deps.RecallBindings.Dreams)
 		req.IncludeHypotheses = dreamingEnabled
-		res, err := deps.Recall.Recall(ctx, req)
+		res, err := deps.RecallBindings.Service.Recall(ctx, req)
 		if err != nil {
 			return nil, err
 		}
@@ -43,7 +43,7 @@ func bindRecallFeedbackTool(tool Tool, deps Dependencies) Tool {
 		return tool
 	}
 	tool.Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-		if deps.RecallFeedbackEvents == nil {
+		if deps.Core.RecallFeedbackEvents == nil {
 			return nil, ErrToolUnavailable
 		}
 		if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {

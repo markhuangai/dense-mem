@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
@@ -34,7 +35,7 @@ func TestPrometheusMetricsRecordsActiveScopedSignals(t *testing.T) {
 	metrics.IncVerifyVerdictFor(ctx, "verify-model", "verified")
 	metrics.ObserveRecallLatencyFor(ctx, 42)
 	metrics.ObserveRecallFor(ctx, 42, 3, "ok")
-	metrics.ObserveRecallFeedbackFor(ctx, RecallFeedback{Used: true, AnswerSupported: true, Quality: "high"})
+	metrics.ObserveRecallFeedbackFor(ctx, recallcontract.FeedbackObservation{Used: true, AnswerSupported: true, Quality: "high"})
 	metrics.ObserveDreamFeedbackFor(ctx, DreamFeedback{Decision: "confirm_true", Outcome: "ok", FromStatus: "proposed"})
 	metrics.ObserveConflictReviewDurationFor(ctx, 2.5, "completed")
 
@@ -98,7 +99,7 @@ func TestPrometheusMetricsRecordsUnknownLabelsAndHelpers(t *testing.T) {
 	metrics.IncEmbeddingError("")
 	metrics.ObserveRecallLatency(2)
 	metrics.ObserveRecall(2, 0, "")
-	metrics.ObserveRecallFeedback(RecallFeedback{Quality: "bad"})
+	metrics.ObserveRecallFeedback(recallcontract.FeedbackObservation{Quality: "bad"})
 	metrics.ObserveDreamFeedback(DreamFeedback{})
 	metrics.ObserveConflictReviewDuration(1, "")
 	metrics.ObserveConflictReviewDurationFor(ctx, -1, "ignored")
@@ -112,7 +113,7 @@ func TestPrometheusMetricsRecordsUnknownLabelsAndHelpers(t *testing.T) {
 	RecordVerifyVerdict(ctx, metrics, "verify-model", "verified")
 	RecordRecallLatency(ctx, metrics, 1)
 	RecordRecall(ctx, metrics, 1, 2, "ok")
-	RecordRecallFeedback(ctx, metrics, RecallFeedback{Quality: "medium"})
+	RecordRecallFeedback(ctx, metrics, recallcontract.FeedbackObservation{Quality: "medium"})
 	RecordDreamFeedback(ctx, metrics, DreamFeedback{Decision: "reject", Outcome: "error", FromStatus: "proposed"})
 	RecordConflictReviewDuration(ctx, metrics, 1, "completed")
 	exerciseNilMetricHelpers(ctx)
@@ -311,7 +312,7 @@ func TestNoopDiscoverabilityMetrics_ConsumesCalls(t *testing.T) {
 	metrics.IncEmbeddingError("timeout")
 	metrics.ObserveRecallLatency(1)
 	metrics.ObserveRecall(1, 2, "ok")
-	metrics.ObserveRecallFeedback(RecallFeedback{Used: true, AnswerSupported: true, Quality: "high"})
+	metrics.ObserveRecallFeedback(recallcontract.FeedbackObservation{Used: true, AnswerSupported: true, Quality: "high"})
 	metrics.ObserveDreamFeedback(DreamFeedback{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"})
 	metrics.ObserveConflictReviewDuration(1, "completed")
 	metrics.IncVerifyVerdict("verified")
@@ -448,7 +449,7 @@ func exerciseNilMetricHelpers(ctx context.Context) {
 	RecordVerifyVerdict(ctx, nil, "model", "verified")
 	RecordRecallLatency(ctx, nil, 1)
 	RecordRecall(ctx, nil, 1, 1, "ok")
-	RecordRecallFeedback(ctx, nil, RecallFeedback{Quality: "high"})
+	RecordRecallFeedback(ctx, nil, recallcontract.FeedbackObservation{Quality: "high"})
 	RecordDreamFeedback(ctx, nil, DreamFeedback{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"})
 	RecordConflictReviewDuration(ctx, nil, 1, "completed")
 }

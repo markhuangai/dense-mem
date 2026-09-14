@@ -80,6 +80,52 @@ func TestOpenAIStructuredChatUsesTokenizerForIncompleteProviderUsage(t *testing.
 	}
 }
 
+func TestOpenAICommunitySummaryTelemetryRecordsProviderTokenizerAndUnpricedUsage(t *testing.T) {
+	rate := 1.0
+	metrics := observability.NewPrometheusMetrics(observability.AIPricingResolverFunc(func(context.Context) (observability.AIPricing, error) {
+		return observability.AIPricing{
+			VerifierInputUSDPerMillionTokens:  &rate,
+			VerifierOutputUSDPerMillionTokens: &rate,
+		}, nil
+	}))
+	responses := []string{
+		`{"choices":[{"message":{"content":"{}"}}],"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}}`,
+		`{"choices":[{"message":{"content":"{}"}}],"usage":{"prompt_tokens":10,"completion_tokens":0,"total_tokens":10}}`,
+		"{not-json",
+	}
+	var index int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		body := responses[index]
+		index++
+		_, err := w.Write([]byte(body))
+		require.NoError(t, err)
+	}))
+	defer srv.Close()
+
+	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "community-model"), srv.Client())
+	v.SetMetrics(metrics)
+	operationCtx := observability.WithAIOperation(context.Background(), observability.AIOperationCommunitySummary, 2)
+	_, err := v.openAIStructuredChatJSONWithUsage(operationCtx, "community-model", "schema", map[string]any{}, "system", map[string]any{})
+	require.NoError(t, err)
+	_, err = v.openAIStructuredChatJSONWithUsage(operationCtx, "community-model", "schema", map[string]any{}, "system", map[string]any{})
+	require.NoError(t, err)
+	_, err = v.openAIStructuredChatJSONWithUsage(operationCtx, "community-model", "schema", map[string]any{}, "system", map[string]any{})
+	require.ErrorIs(t, err, ErrVerifierProvider)
+
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := recorder.Body.String()
+	providerCost, found := verifierMetricLineValue(body, "densemem_ai_operation_cost_usd_total", `operation="community_summary"`, `component="verifier"`, `model="community-model"`, `source="provider"`)
+	require.True(t, found, "missing provider cost metric\n%s", body)
+	require.Positive(t, providerCost)
+	tokenizerCost, found := verifierMetricLineValue(body, "densemem_ai_operation_cost_usd_total", `operation="community_summary"`, `component="verifier"`, `model="community-model"`, `source="tokenizer"`)
+	require.True(t, found, "missing tokenizer cost metric\n%s", body)
+	require.Positive(t, tokenizerCost)
+	unpriced, found := verifierMetricLineValue(body, "densemem_ai_operation_unpriced_total", `operation="community_summary"`, `component="verifier"`, `model="community-model"`, `reason="missing_usage"`)
+	require.True(t, found, "missing unpriced metric\n%s", body)
+	require.Equal(t, float64(1), unpriced)
+}
+
 func TestOpenAIStructuredChatDoesNotMarkMissingUsageForMalformedProviderError(t *testing.T) {
 	metrics := observability.NewPrometheusMetrics()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

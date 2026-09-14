@@ -2,19 +2,18 @@ package middleware
 
 import (
 	"context"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
+	"github.com/markhuangai/dense-mem/internal/storage/redis"
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	tcnetwork "github.com/testcontainers/testcontainers-go/network"
+	"github.com/testcontainers/testcontainers-go/wait"
 	"net"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/storage/redis"
-	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	tcnetwork "github.com/testcontainers/testcontainers-go/network"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 type e2eRedisRateLimitConfig struct {
@@ -49,7 +48,7 @@ func TestRateLimitMiddleware_Contract_Redis(t *testing.T) {
 		t.Fatalf("connect to Redis: %v", err)
 	}
 	defer redisClient.Close()
-	runRateLimitMiddlewareContract(t, "Redis", service.NewRateLimitService(redisClient))
+	runRateLimitMiddlewareContract(t, "Redis", accessservice.NewRateLimitService(redisClient))
 }
 
 func redisContractCredentials(t *testing.T) (string, bool) {

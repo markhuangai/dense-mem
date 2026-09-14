@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,16 +20,15 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type profileServiceStub struct {
 	get    func(context.Context, uuid.UUID) (*domain.Team, error)
-	update func(context.Context, uuid.UUID, service.UpdateTeamRequest, *string, string, string, string) (*domain.Team, error)
+	update func(context.Context, uuid.UUID, accessservice.UpdateTeamRequest, *string, string, string, string) (*domain.Team, error)
 	delete func(context.Context, uuid.UUID, *string, string, string, string) error
 }
 
-func (s *profileServiceStub) Create(context.Context, service.CreateTeamRequest, *string, string, string, string) (*domain.Team, error) {
+func (s *profileServiceStub) Create(context.Context, accessservice.CreateTeamRequest, *string, string, string, string) (*domain.Team, error) {
 	return nil, nil
 }
 
@@ -51,7 +51,7 @@ func (*profileServiceStub) Count(context.Context) (int64, error) {
 	return 0, nil
 }
 
-func (s *profileServiceStub) Update(ctx context.Context, id uuid.UUID, req service.UpdateTeamRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.Team, error) {
+func (s *profileServiceStub) Update(ctx context.Context, id uuid.UUID, req accessservice.UpdateTeamRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.Team, error) {
 	if s.update != nil {
 		return s.update(ctx, id, req, actorKeyID, actorRole, clientIP, correlationID)
 	}
@@ -116,7 +116,7 @@ func TestTeamHandlerPatchUsesAuthenticatedTeam(t *testing.T) {
 	keyID := uuid.New()
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	h := NewTeamHandler(&profileServiceStub{
-		update: func(_ context.Context, id uuid.UUID, req service.UpdateTeamRequest, actorKeyID *string, actorRole, _, _ string) (*domain.Team, error) {
+		update: func(_ context.Context, id uuid.UUID, req accessservice.UpdateTeamRequest, actorKeyID *string, actorRole, _, _ string) (*domain.Team, error) {
 			require.Equal(t, teamID, id)
 			require.NotNil(t, req.Description)
 			require.Equal(t, "Updated team", *req.Description)

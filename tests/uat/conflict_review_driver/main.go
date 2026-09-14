@@ -19,7 +19,8 @@ import (
 	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
 	"github.com/markhuangai/dense-mem/internal/conflict/review"
 	"github.com/markhuangai/dense-mem/internal/embedding"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	postgresstorage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
@@ -93,8 +94,11 @@ func main() {
 	defer sqlDB.Close()
 
 	rls := postgresstorage.NewRLS()
-	ledger := repository.NewLedgerRepository(db, rls)
-	conflictStore := conflictpostgres.NewStore(db, rls, ledger)
+	knowledgeStore := knowledgepostgres.NewStore(db, rls, knowledgecontract.ConflictRuntimeConfig{
+		ReviewTTLDays: cfg.GetConflictReviewTTLDays(),
+		Timezone:      cfg.GetAppTimezone(),
+	})
+	conflictStore := conflictpostgres.NewStore(db, rls, knowledgeStore)
 	limits := conflictassessment.DefaultSemanticAssessmentLimits()
 	provider := verifier.NewOpenAIVerifierWithAssessmentLimits(&cfg, nil, verifier.SemanticAssessmentLimits(limits))
 	embeddingProvider := embedding.NewRetryEmbeddingProviderWithKey(

@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"errors"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	nethttp "net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,7 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 func TestDirectorySCIMPatchAndConversionHelpers(t *testing.T) {
@@ -192,7 +192,7 @@ func TestDirectorySCIMFilteringErrorsAndSmallHelpers(t *testing.T) {
 
 	require.Error(t, directorySCIMGetError("missing", errors.New("user not found")))
 	require.Error(t, directorySCIMGetError("missing", errors.New("storage failed")))
-	require.Error(t, directorySCIMMutationError(service.ErrDirectoryConnectorDisabled))
+	require.Error(t, directorySCIMMutationError(accessservice.ErrDirectoryConnectorDisabled))
 	require.Error(t, directorySCIMMutationError(errors.New("external_id is immutable")))
 	require.Error(t, directorySCIMMutationError(errors.New("required field")))
 
@@ -320,9 +320,9 @@ func TestDirectorySCIMHelperValidationBoundaries(t *testing.T) {
 	require.Nil(t, directorySCIMGetError("missing", nil))
 	require.Nil(t, directorySCIMMutationError(nil))
 	require.Error(t, directorySCIMMutationError(errors.New("duplicate conflict")))
-	require.Equal(t, scimerrors.ScimErrorUniqueness, directorySCIMMutationError(service.ErrDirectoryResourceConflict))
+	require.Equal(t, scimerrors.ScimErrorUniqueness, directorySCIMMutationError(accessservice.ErrDirectoryResourceConflict))
 	require.Error(t, directorySCIMMutationError(errors.New("unexpected storage failure")))
-	require.Equal(t, scimerrors.ScimErrorInvalidFilter, directorySCIMListError(service.ErrDirectoryInvalidValue))
+	require.Equal(t, scimerrors.ScimErrorInvalidFilter, directorySCIMListError(accessservice.ErrDirectoryInvalidValue))
 	require.Equal(t, scimerrors.ScimErrorInternal, directorySCIMListError(errors.New("unexpected storage failure")))
 	_, err = directoryMemberIDFromPath("members[value eq not-a-string]")
 	require.Error(t, err)
@@ -343,7 +343,7 @@ func TestDirectorySCIMResourceHandlersRejectInvalidContextAndUnknownResources(t 
 		users:     make(map[uuid.UUID]*domain.DirectoryUser),
 		groups:    make(map[uuid.UUID]*domain.DirectoryGroup),
 	}
-	directory := service.NewDirectoryIdentityService(repo, service.DirectoryIdentityConfig{})
+	directory := accessservice.NewDirectoryIdentityService(repo, accessservice.DirectoryIdentityConfig{})
 	userHandler := directorySCIMUserResourceHandler{directory: directory}
 	groupHandler := directorySCIMGroupResourceHandler{directory: directory}
 	noContext := httptest.NewRequest(nethttp.MethodGet, "/", nil)

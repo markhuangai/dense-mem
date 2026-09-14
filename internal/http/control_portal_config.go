@@ -9,7 +9,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
+	settingspkg "github.com/markhuangai/dense-mem/internal/settings"
 )
 
 func (h *controlPortalHandler) getGeneralConfig(c echo.Context) error {
@@ -37,7 +37,7 @@ func (h *controlPortalHandler) updateGeneralConfig(c echo.Context) error {
 	}
 	settings, err := h.appConfig.UpdateGeneralSettings(c.Request().Context(), values, "control", c.RealIP(), "")
 	if err != nil {
-		if errors.Is(err, service.ErrInvalidAppConfig) {
+		if errors.Is(err, settingspkg.ErrInvalidAppConfig) {
 			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 		}
 		return err
@@ -70,7 +70,7 @@ func (h *controlPortalHandler) updateSSOConfig(c echo.Context) error {
 	}
 	settings, err := h.appConfig.UpdateSSOSettings(c.Request().Context(), values, "control", c.RealIP(), "")
 	if err != nil {
-		if errors.Is(err, service.ErrInvalidAppConfig) {
+		if errors.Is(err, settingspkg.ErrInvalidAppConfig) {
 			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 		}
 		return err
@@ -103,7 +103,7 @@ func (h *controlPortalHandler) updateDreamingConfig(c echo.Context) error {
 	}
 	settings, err := h.appConfig.UpdateDreamingSettings(c.Request().Context(), values, "control", c.RealIP(), "")
 	if err != nil {
-		if errors.Is(err, service.ErrInvalidAppConfig) {
+		if errors.Is(err, settingspkg.ErrInvalidAppConfig) {
 			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 		}
 		return err
@@ -136,7 +136,7 @@ func (h *controlPortalHandler) updateCommunityDetectionConfig(c echo.Context) er
 	}
 	settings, err := h.appConfig.UpdateCommunityDetectionSettings(c.Request().Context(), values, "control", c.RealIP(), "")
 	if err != nil {
-		if errors.Is(err, service.ErrInvalidAppConfig) {
+		if errors.Is(err, settingspkg.ErrInvalidAppConfig) {
 			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 		}
 		return err
@@ -169,7 +169,7 @@ func (h *controlPortalHandler) updateOperationLogConfig(c echo.Context) error {
 	}
 	settings, err := h.appConfig.UpdateOperationLogSettings(c.Request().Context(), values, "control", c.RealIP(), "")
 	if err != nil {
-		if errors.Is(err, service.ErrInvalidAppConfig) {
+		if errors.Is(err, settingspkg.ErrInvalidAppConfig) {
 			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 		}
 		return err
@@ -202,7 +202,7 @@ func (h *controlPortalHandler) updateRecallFeedbackConfig(c echo.Context) error 
 	}
 	settings, err := h.appConfig.UpdateRecallFeedbackSettings(c.Request().Context(), values, "control", c.RealIP(), "")
 	if err != nil {
-		if errors.Is(err, service.ErrInvalidAppConfig) {
+		if errors.Is(err, settingspkg.ErrInvalidAppConfig) {
 			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 		}
 		return err
@@ -241,7 +241,7 @@ func (h *controlPortalHandler) updateTelemetryPricingConfig(c echo.Context) erro
 	}
 	settings, err := h.appConfig.UpdateTelemetryPricingSettings(c.Request().Context(), values, "control", c.RealIP(), "")
 	if err != nil {
-		if errors.Is(err, service.ErrInvalidAppConfig) {
+		if errors.Is(err, settingspkg.ErrInvalidAppConfig) {
 			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 		}
 		return err

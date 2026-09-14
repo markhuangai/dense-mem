@@ -10,8 +10,8 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 func dreamTestContext(teamID uuid.UUID, ownerID uuid.UUID) context.Context {

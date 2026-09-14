@@ -4,11 +4,11 @@ import (
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	recall "github.com/markhuangai/dense-mem/internal/recall"
-	recallpostgres "github.com/markhuangai/dense-mem/internal/recall/postgres"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 )
 
 type recallApplicationDependencies struct {
-	Search          recallpostgres.Source
+	Search          recallcontract.SearchRepository
 	Provider        embeddingcontract.EmbeddingProviderInterface
 	Hypotheses      recall.RecallHypothesisRepository
 	Communities     recall.RecallCommunityRepository
@@ -17,12 +17,8 @@ type recallApplicationDependencies struct {
 }
 
 func buildRecallApplication(deps recallApplicationDependencies) recall.RecallService {
-	var search recall.RecallSearchRepository
-	if deps.Search != nil {
-		search = recallpostgres.NewStoreFromSource(deps.Search)
-	}
 	return recall.NewRecallService(recall.RecallDependencies{
-		Search:          search,
+		Search:          deps.Search,
 		Provider:        deps.Provider,
 		Hypotheses:      deps.Hypotheses,
 		Communities:     deps.Communities,

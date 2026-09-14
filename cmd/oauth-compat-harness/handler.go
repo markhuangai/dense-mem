@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 type harnessTokenValidator interface {
@@ -146,7 +146,7 @@ func parseHarnessBearer(header string) (string, bool) {
 }
 
 func harnessValidationError(err error) (int, string) {
-	if errors.Is(err, service.ErrOAuthProviderUnavailable) {
+	if errors.Is(err, accessservice.ErrOAuthProviderUnavailable) {
 		return http.StatusServiceUnavailable, "temporarily_unavailable"
 	}
 	return http.StatusUnauthorized, "invalid_token"

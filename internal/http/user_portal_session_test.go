@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"errors"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,13 +18,12 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type portalSessionManagerStub struct {
 	createdKeyID uuid.UUID
 	logoutToken  string
-	result       *service.UserPortalSessionResult
+	result       *accessservice.UserPortalSessionResult
 }
 
 func invokeCreatePortalSession(t *testing.T, h *userPortalHandler, c echo.Context) error {
@@ -31,13 +31,13 @@ func invokeCreatePortalSession(t *testing.T, h *userPortalHandler, c echo.Contex
 	return httpmw.BindAndValidateStrict[dto.CreateUserPortalSessionRequest](userPortalCreateSessionBodyKey)(h.createPortalSession)(c)
 }
 
-func (s *portalSessionManagerStub) CreateSession(_ context.Context, keyID uuid.UUID) (*service.UserPortalSessionResult, error) {
+func (s *portalSessionManagerStub) CreateSession(_ context.Context, keyID uuid.UUID) (*accessservice.UserPortalSessionResult, error) {
 	s.createdKeyID = keyID
 	return s.result, nil
 }
 
 func (*portalSessionManagerStub) AuthenticateSession(context.Context, string, string, bool) (*domain.AuthenticatedActor, error) {
-	return nil, service.ErrUserPortalSessionInvalid
+	return nil, accessservice.ErrUserPortalSessionInvalid
 }
 
 func (s *portalSessionManagerStub) Logout(_ context.Context, token string) error {
@@ -59,7 +59,7 @@ func portalSessionPrincipal(credentialID, teamID uuid.UUID, authMethod string) *
 func TestCreatePortalSessionSetsHostOnlyUiCookies(t *testing.T) {
 	keyID := uuid.New()
 	expires := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
-	manager := &portalSessionManagerStub{result: &service.UserPortalSessionResult{
+	manager := &portalSessionManagerStub{result: &accessservice.UserPortalSessionResult{
 		SessionToken: "opaque-session",
 		CSRFToken:    "csrf-token",
 		ExpiresAt:    expires,
@@ -77,9 +77,9 @@ func TestCreatePortalSessionSetsHostOnlyUiCookies(t *testing.T) {
 	var sessionCookie, csrfCookie *http.Cookie
 	for _, cookie := range cookies {
 		switch cookie.Name {
-		case service.UserPortalSessionCookieName:
+		case accessservice.UserPortalSessionCookieName:
 			sessionCookie = cookie
-		case service.UserPortalCSRFCookieName:
+		case accessservice.UserPortalCSRFCookieName:
 			csrfCookie = cookie
 		}
 	}
@@ -96,7 +96,7 @@ func TestCreatePortalSessionSetsHostOnlyUiCookies(t *testing.T) {
 }
 
 func TestCreatePortalSessionUsesBrowserSessionCookiesWhenRememberDisabled(t *testing.T) {
-	manager := &portalSessionManagerStub{result: &service.UserPortalSessionResult{
+	manager := &portalSessionManagerStub{result: &accessservice.UserPortalSessionResult{
 		SessionToken: "opaque-session",
 		CSRFToken:    "csrf-token",
 		ExpiresAt:    time.Now().UTC().Add(7 * 24 * time.Hour),
@@ -109,7 +109,7 @@ func TestCreatePortalSessionUsesBrowserSessionCookiesWhenRememberDisabled(t *tes
 	require.True(t, ok)
 	found := 0
 	for _, cookie := range recorder.Result().Cookies() {
-		if cookie.Name != service.UserPortalSessionCookieName && cookie.Name != service.UserPortalCSRFCookieName {
+		if cookie.Name != accessservice.UserPortalSessionCookieName && cookie.Name != accessservice.UserPortalCSRFCookieName {
 			continue
 		}
 		found++
@@ -121,7 +121,7 @@ func TestCreatePortalSessionUsesBrowserSessionCookiesWhenRememberDisabled(t *tes
 }
 
 func TestCreatePortalSessionRejectsUnknownOrMissingFields(t *testing.T) {
-	manager := &portalSessionManagerStub{result: &service.UserPortalSessionResult{SessionToken: "s", CSRFToken: "c", ExpiresAt: time.Now().Add(time.Hour)}}
+	manager := &portalSessionManagerStub{result: &accessservice.UserPortalSessionResult{SessionToken: "s", CSRFToken: "c", ExpiresAt: time.Now().Add(time.Hour)}}
 	h := &userPortalHandler{portal: manager}
 	principal := portalSessionPrincipal(uuid.New(), uuid.New(), "api_key")
 
@@ -135,7 +135,7 @@ func TestCreatePortalSessionRejectsUnknownOrMissingFields(t *testing.T) {
 }
 
 func TestCreatePortalSessionRequiresDirectCredentialAndService(t *testing.T) {
-	manager := &portalSessionManagerStub{result: &service.UserPortalSessionResult{SessionToken: "s", CSRFToken: "c", ExpiresAt: time.Now().Add(time.Hour)}}
+	manager := &portalSessionManagerStub{result: &accessservice.UserPortalSessionResult{SessionToken: "s", CSRFToken: "c", ExpiresAt: time.Now().Add(time.Hour)}}
 	for _, principal := range []*httpmw.Principal{
 		nil,
 		portalSessionPrincipal(uuid.New(), uuid.New(), "api_key_session"),
@@ -160,8 +160,8 @@ func TestUserPortalSessionErrorMapping(t *testing.T) {
 		err  error
 		code httperr.ErrorCode
 	}{
-		{name: "invalid session", err: service.ErrUserPortalSessionInvalid, code: httperr.AUTH_INVALID},
-		{name: "invalid csrf", err: service.ErrUserPortalCSRFInvalid, code: httperr.FORBIDDEN},
+		{name: "invalid session", err: accessservice.ErrUserPortalSessionInvalid, code: httperr.AUTH_INVALID},
+		{name: "invalid csrf", err: accessservice.ErrUserPortalCSRFInvalid, code: httperr.FORBIDDEN},
 		{name: "unknown", err: errors.New("unexpected"), code: httperr.INTERNAL_ERROR},
 	}
 	for _, tt := range tests {
@@ -180,11 +180,11 @@ func TestLogoutPortalSessionRequiresDoubleSubmitCsrfAndClearsCookies(t *testing.
 	h := &userPortalHandler{portal: manager}
 	c := userPortalEchoContext(t, http.MethodPost, "/ui/api/session/logout", "", nil)
 	cookieHeader := strings.Join([]string{
-		service.UserPortalSessionCookieName + "=opaque-session",
-		service.UserPortalCSRFCookieName + "=csrf-token",
+		accessservice.UserPortalSessionCookieName + "=opaque-session",
+		accessservice.UserPortalCSRFCookieName + "=csrf-token",
 	}, "; ")
 	c.Request().Header.Set("Cookie", cookieHeader)
-	c.Request().Header.Set(service.SSOCSRFHeaderName, "csrf-token")
+	c.Request().Header.Set(accessservice.SSOCSRFHeaderName, "csrf-token")
 
 	require.NoError(t, h.logoutPortalSession(c))
 	require.Equal(t, "opaque-session", manager.logoutToken)
@@ -196,12 +196,12 @@ func TestLogoutPortalSessionRequiresDoubleSubmitCsrfAndClearsCookies(t *testing.
 			cleared[cookie.Name] = cookie
 		}
 	}
-	require.Equal(t, "/ui", cleared[service.UserPortalSessionCookieName].Path)
-	require.Equal(t, "/ui", cleared[service.UserPortalCSRFCookieName].Path)
+	require.Equal(t, "/ui", cleared[accessservice.UserPortalSessionCookieName].Path)
+	require.Equal(t, "/ui", cleared[accessservice.UserPortalCSRFCookieName].Path)
 
 	invalid := userPortalEchoContext(t, http.MethodPost, "/ui/api/session/logout", "", nil)
-	invalid.Request().Header.Set("Cookie", service.UserPortalSessionCookieName+"=opaque-session; "+service.UserPortalCSRFCookieName+"=csrf-token")
-	invalid.Request().Header.Set(service.SSOCSRFHeaderName, "wrong")
+	invalid.Request().Header.Set("Cookie", accessservice.UserPortalSessionCookieName+"=opaque-session; "+accessservice.UserPortalCSRFCookieName+"=csrf-token")
+	invalid.Request().Header.Set(accessservice.SSOCSRFHeaderName, "wrong")
 	err := h.logoutPortalSession(invalid)
 	var apiErr *httperr.APIError
 	require.ErrorAs(t, err, &apiErr)

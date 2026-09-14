@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/config"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type controlHTTPMetricsRecorder struct {
@@ -31,17 +31,17 @@ func (r *controlHTTPMetricsRecorder) ObserveHTTPRequest(_ context.Context, route
 
 func TestControlPortalTelemetry(t *testing.T) {
 	teamID := uuid.New()
-	telemetry := &controlTelemetrySvc{snapshot: &service.TelemetrySnapshot{
+	telemetry := &controlTelemetrySvc{snapshot: &operations.TelemetrySnapshot{
 		Available: true,
-		Window:    service.TelemetryWindow{Key: "1h"},
-		Scope:     service.TelemetryScope{Type: "team", TeamID: &teamID},
-		Cards:     []service.TelemetryCard{{ID: "http_requests", Label: "HTTP requests", Unit: "requests", Value: 3}},
+		Window:    operations.TelemetryWindow{Key: "1h"},
+		Scope:     operations.TelemetryScope{Type: "team", TeamID: &teamID},
+		Cards:     []operations.TelemetryCard{{ID: "http_requests", Label: "HTTP requests", Unit: "requests", Value: 3}},
 	}}
 	scrapeHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("# HELP densemem_test metric\n"))
 	})
 	httpMetrics := &controlHTTPMetricsRecorder{}
-	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
@@ -61,7 +61,7 @@ func TestControlPortalTelemetry(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"available":true`)
 	require.Equal(t, "1h", telemetry.filter.Window)
 	require.Equal(t, "team", telemetry.filter.Scope)
-	require.Equal(t, service.TelemetryAudienceOperator, telemetry.filter.Audience)
+	require.Equal(t, operations.TelemetryAudienceOperator, telemetry.filter.Audience)
 	require.Equal(t, teamID, *telemetry.filter.TeamID)
 	require.Len(t, httpMetrics.events, 1)
 	require.Equal(t, "/control/api/telemetry", httpMetrics.events[0].route)
@@ -87,7 +87,7 @@ func TestControlPortalTelemetry(t *testing.T) {
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	_, err = NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	_, err = newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{

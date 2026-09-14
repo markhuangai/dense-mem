@@ -7,13 +7,6 @@ import (
 	"fmt"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/dream"
-	"github.com/markhuangai/dense-mem/internal/lifecycle"
-	"github.com/markhuangai/dense-mem/internal/memorypack"
-	"github.com/markhuangai/dense-mem/internal/recall"
-	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
-	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
-	traceapp "github.com/markhuangai/dense-mem/internal/trace"
 )
 
 // Dependencies is the wiring bundle used to construct the active tool catalog.
@@ -26,22 +19,6 @@ type Dependencies struct {
 	DreamBindings      DreamBindings
 	MemoryPackBindings MemoryPackBindings
 	EvaluationBindings EvaluationBindings
-
-	Metrics recallcontract.FeedbackMetrics
-
-	RecallFeedbackConfig RecallFeedbackConfigProvider
-	RecallFeedbackEvents RecallFeedbackEventRecorder
-	EvaluationAudit      EvaluationAuditAppender
-
-	Context        traceapp.Service
-	Remember       rememberapp.Service
-	Recall         recall.RecallService
-	Lifecycle      lifecycle.LifecycleService
-	RecallDreaming DreamingConfigProvider
-	Evaluation     EvaluationRepository
-	Communities    CommunityRepository
-	MemoryPack     memorypack.MemoryPackService
-	Dreams         dream.Service
 }
 type RecallFeedbackEventRecorder interface {
 	RecordRecallSnapshot(ctx context.Context, event domain.RecallFeedbackEvent) error
@@ -55,7 +32,6 @@ var ErrToolUnavailable = errors.New("tool not available (dependency missing or n
 
 // BuildActive wires the PostgreSQL-authoritative production registry.
 func BuildActive(deps Dependencies) (Registry, error) {
-	deps = deps.withCapabilityBindings()
 	r := New()
 	tools := append(contractTools(deps), evaluationTools(deps)...)
 	for _, t := range tools {

@@ -26,60 +26,24 @@ func (*evaluationBindingsRepository) GetEvaluationItem(context.Context, dreamcon
 
 func TestEvaluationFacetSuppliesAuditAppender(t *testing.T) {
 	audit := &evaluationAuditStub{}
-	deps := (Dependencies{
+	deps := Dependencies{
 		EvaluationBindings: EvaluationBindings{Audit: audit},
-	}).withCapabilityBindings()
-	if deps.EvaluationAudit != audit {
+	}
+	if deps.EvaluationBindings.Audit != audit {
 		t.Fatal("evaluation capability facet did not supply its audit appender")
 	}
 }
 
-func TestEvaluationBindingsPreserveFlatCoreAndFacetPrecedence(t *testing.T) {
-	flatEval := &evaluationBindingsRepository{}
-	facetEval := &evaluationBindingsRepository{}
-	flatCommunity := &evaluationCommunityRepositoryStub{}
-	facetCommunity := &evaluationCommunityRepositoryStub{}
-	flatAudit := &evaluationAuditStub{}
-	coreAudit := &evaluationAuditStub{}
-	facetAudit := &evaluationAuditStub{}
-
-	wired := (Dependencies{
-		Core: CoreDependencies{
-			EvaluationAudit: coreAudit,
-		},
-		Evaluation:      flatEval,
-		Communities:     flatCommunity,
-		EvaluationAudit: flatAudit,
-		EvaluationBindings: EvaluationBindings{
-			Repository:  facetEval,
-			Communities: facetCommunity,
-			Audit:       facetAudit,
-		},
-	}).withCapabilityBindings()
-	if wired.Evaluation != flatEval || wired.Communities != flatCommunity || wired.EvaluationAudit != flatAudit {
-		t.Fatal("flat evaluation dependencies did not take precedence")
-	}
-
-	wired = (Dependencies{
-		Core: CoreDependencies{
-			EvaluationAudit: coreAudit,
-		},
-		EvaluationBindings: EvaluationBindings{
-			Repository:  facetEval,
-			Communities: facetCommunity,
-			Audit:       facetAudit,
-		},
-	}).withCapabilityBindings()
-	if wired.Evaluation != facetEval || wired.Communities != facetCommunity || wired.EvaluationAudit != coreAudit {
-		t.Fatal("core audit dependency did not take precedence")
-	}
-
-	wired = (Dependencies{EvaluationBindings: EvaluationBindings{
-		Repository:  facetEval,
-		Communities: facetCommunity,
-		Audit:       facetAudit,
-	}}).withCapabilityBindings()
-	if wired.Evaluation != facetEval || wired.Communities != facetCommunity || wired.EvaluationAudit != facetAudit {
-		t.Fatal("evaluation facet dependencies were not used as fallback")
+func TestEvaluationBindingsKeepNativeContracts(t *testing.T) {
+	repository := &evaluationBindingsRepository{}
+	communities := &evaluationCommunityRepositoryStub{}
+	audit := &evaluationAuditStub{}
+	deps := Dependencies{EvaluationBindings: EvaluationBindings{
+		Repository:  repository,
+		Communities: communities,
+		Audit:       audit,
+	}}
+	if deps.EvaluationBindings.Repository != repository || deps.EvaluationBindings.Communities != communities || deps.EvaluationBindings.Audit != audit {
+		t.Fatal("evaluation bindings did not preserve native contracts")
 	}
 }

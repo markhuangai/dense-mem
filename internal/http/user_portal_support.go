@@ -13,14 +13,14 @@ import (
 
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
-func publicSSORateLimitMiddleware(svc service.RateLimitServiceInterface, cfg httpcontract.ConfigProvider) echo.MiddlewareFunc {
+func publicSSORateLimitMiddleware(svc accessservice.RateLimitServiceInterface, cfg httpcontract.ConfigProvider) echo.MiddlewareFunc {
 	return publicIPRateLimitMiddleware("public-sso", svc, cfg)
 }
 
-func publicIPRateLimitMiddleware(subjectNamespace string, svc service.RateLimitServiceInterface, cfg httpcontract.ConfigProvider) echo.MiddlewareFunc {
+func publicIPRateLimitMiddleware(subjectNamespace string, svc accessservice.RateLimitServiceInterface, cfg httpcontract.ConfigProvider) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			if svc == nil || cfg == nil {
@@ -57,7 +57,7 @@ func publicIPRateLimitMiddleware(subjectNamespace string, svc service.RateLimitS
 }
 
 func ssoSessionTokenFromRequest(c echo.Context) (string, error) {
-	cookie, err := c.Request().Cookie(service.SSOSessionCookieName)
+	cookie, err := c.Request().Cookie(accessservice.SSOSessionCookieName)
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
 		return "", httperr.New(httperr.AUTH_MISSING, "authentication required")
 	}
@@ -84,23 +84,23 @@ func clearSSOCookie(c echo.Context, name string) {
 		Path:     "/",
 		Expires:  time.Unix(0, 0).UTC(),
 		MaxAge:   -1,
-		HttpOnly: name == service.SSOSessionCookieName,
+		HttpOnly: name == accessservice.SSOSessionCookieName,
 		SameSite: http.SameSiteLaxMode,
 	})
 }
 
 func userPortalSSOError(err error) error {
-	if message, ok := service.SSOSetupErrorMessage(err); ok {
+	if message, ok := accessservice.SSOSetupErrorMessage(err); ok {
 		return httperr.New(httperr.FORBIDDEN, message)
 	}
 	switch {
 	case err == nil:
 		return nil
-	case errors.Is(err, service.ErrSSOSessionInvalid):
+	case errors.Is(err, accessservice.ErrSSOSessionInvalid):
 		return httperr.New(httperr.AUTH_INVALID, "invalid sso session")
-	case errors.Is(err, service.ErrSSOCSRFInvalid):
+	case errors.Is(err, accessservice.ErrSSOCSRFInvalid):
 		return httperr.New(httperr.FORBIDDEN, "invalid sso csrf token")
-	case errors.Is(err, service.ErrSSOAccessDenied), errors.Is(err, service.ErrSSOProviderDisabled), errors.Is(err, service.ErrSSOEntitlementRefreshStale):
+	case errors.Is(err, accessservice.ErrSSOAccessDenied), errors.Is(err, accessservice.ErrSSOProviderDisabled), errors.Is(err, accessservice.ErrSSOEntitlementRefreshStale):
 		return httperr.New(httperr.FORBIDDEN, "sso access denied")
 	default:
 		return httperr.New(httperr.INTERNAL_ERROR, "sso authentication failed")

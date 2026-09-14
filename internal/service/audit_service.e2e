@@ -19,10 +19,18 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 	"gorm.io/gorm"
 
+	auditapp "github.com/markhuangai/dense-mem/internal/audit"
+	auditpostgres "github.com/markhuangai/dense-mem/internal/audit/postgres"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
+
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
+
+func newAuditService(db *gorm.DB) *auditapp.Service {
+	return auditapp.New(auditpostgres.NewStore(db, postgres.NewRLS()))
+}
 
 // testConfig implements postgres.ConfigProvider for testing.
 type testConfig struct {
@@ -231,7 +239,7 @@ func TestAuditServiceAppend(t *testing.T) {
 	require.NoError(t, err, "RunUp should succeed")
 
 	// Create audit service
-	auditService := NewAuditService(db)
+	auditService := newAuditService(db)
 
 	// Create a test profile
 	sqlDB, err := db.DB()
@@ -251,7 +259,7 @@ func TestAuditServiceAppend(t *testing.T) {
 	require.NoError(t, err, "should create test credential identity")
 
 	// Append an audit log entry
-	entry := AuditLogEntry{
+	entry := accessservice.AuditLogEntry{
 		ProfileID:     &profileID,
 		Operation:     "CREATE",
 		EntityType:    "test_entity",
@@ -324,10 +332,10 @@ func TestAuditServiceListHidesSealedPrivateSpaceRows(t *testing.T) {
 		`, privateSpaceID, teamID, ownerCredentialID).Error
 	}))
 
-	auditService := NewAuditService(db)
+	auditService := newAuditService(db)
 	teamIDString := teamID.String()
 	privateSpaceIDString := privateSpaceID.String()
-	require.NoError(t, auditService.Append(ctx, AuditLogEntry{
+	require.NoError(t, auditService.Append(ctx, accessservice.AuditLogEntry{
 		ID:            uuid.NewString(),
 		ProfileID:     &teamIDString,
 		MemorySpaceID: &privateSpaceIDString,
@@ -336,7 +344,7 @@ func TestAuditServiceListHidesSealedPrivateSpaceRows(t *testing.T) {
 		EntityID:      "test-private-audit-row",
 		AfterPayload:  map[string]interface{}{"sentinel": "private"},
 	}))
-	require.NoError(t, auditService.Append(ctx, AuditLogEntry{
+	require.NoError(t, auditService.Append(ctx, accessservice.AuditLogEntry{
 		ID:           uuid.NewString(),
 		ProfileID:    &teamIDString,
 		Operation:    "SHARED_CREATE",
@@ -392,7 +400,7 @@ func TestAuditServiceAppendUsesContextClientIPWhenEntryBlank(t *testing.T) {
 	require.NoError(t, err, "NewMigrator should succeed")
 	require.NoError(t, m.RunUp(ctx), "RunUp should succeed")
 
-	auditService := NewAuditService(db)
+	auditService := newAuditService(db)
 	sqlDB, err := db.DB()
 	require.NoError(t, err, "should get underlying sql.DB")
 
@@ -404,7 +412,7 @@ func TestAuditServiceAppendUsesContextClientIPWhenEntryBlank(t *testing.T) {
 	`).Scan(&profileID)
 	require.NoError(t, err, "should create test profile")
 
-	entry := AuditLogEntry{
+	entry := accessservice.AuditLogEntry{
 		ProfileID:  &profileID,
 		Operation:  "CREATE",
 		EntityType: "test_entity",
@@ -441,7 +449,7 @@ func TestAuditServiceAppendStoresNullClientIPWhenMissing(t *testing.T) {
 	require.NoError(t, err, "NewMigrator should succeed")
 	require.NoError(t, m.RunUp(ctx), "RunUp should succeed")
 
-	auditService := NewAuditService(db)
+	auditService := newAuditService(db)
 	sqlDB, err := db.DB()
 	require.NoError(t, err, "should get underlying sql.DB")
 
@@ -453,7 +461,7 @@ func TestAuditServiceAppendStoresNullClientIPWhenMissing(t *testing.T) {
 	`).Scan(&profileID)
 	require.NoError(t, err, "should create test profile")
 
-	entry := AuditLogEntry{
+	entry := accessservice.AuditLogEntry{
 		ProfileID:  &profileID,
 		Operation:  "CREATE",
 		EntityType: "test_entity",
@@ -498,7 +506,7 @@ func TestAuditServiceRedactsSecrets(t *testing.T) {
 	require.NoError(t, err, "RunUp should succeed")
 
 	// Create audit service
-	auditService := NewAuditService(db)
+	auditService := newAuditService(db)
 
 	// Create a test profile
 	sqlDB, err := db.DB()
@@ -513,7 +521,7 @@ func TestAuditServiceRedactsSecrets(t *testing.T) {
 	require.NoError(t, err, "should create test profile")
 
 	// Append an audit log entry with sensitive fields
-	entry := AuditLogEntry{
+	entry := accessservice.AuditLogEntry{
 		ProfileID:  &profileID,
 		Operation:  "CREATE",
 		EntityType: "api_key",
@@ -628,7 +636,7 @@ func TestAuditServiceHelperMethods(t *testing.T) {
 	require.NoError(t, err, "RunUp should succeed")
 
 	// Create audit service
-	auditService := NewAuditService(db)
+	auditService := newAuditService(db)
 
 	// Create a test profile and API key
 	sqlDB, err := db.DB()
@@ -792,13 +800,13 @@ func TestAuditServiceListIsolatesTeamsForNonSuperuser(t *testing.T) {
 		return nil
 	}))
 
-	adminAudit := NewAuditService(adminDB)
+	adminAudit := newAuditService(adminDB)
 	teamAString := teamA.String()
 	teamBString := teamB.String()
-	require.NoError(t, adminAudit.Append(ctx, AuditLogEntry{ProfileID: &teamAString, Operation: "CREATE", EntityType: "test", EntityID: "test-audit-rls-a"}))
-	require.NoError(t, adminAudit.Append(ctx, AuditLogEntry{ProfileID: &teamBString, Operation: "CREATE", EntityType: "test", EntityID: "test-audit-rls-b"}))
+	require.NoError(t, adminAudit.Append(ctx, accessservice.AuditLogEntry{ProfileID: &teamAString, Operation: "CREATE", EntityType: "test", EntityID: "test-audit-rls-a"}))
+	require.NoError(t, adminAudit.Append(ctx, accessservice.AuditLogEntry{ProfileID: &teamBString, Operation: "CREATE", EntityType: "test", EntityID: "test-audit-rls-b"}))
 
-	entries, total, err := NewAuditService(appDB).List(ctx, teamAString, 20, 0)
+	entries, total, err := newAuditService(appDB).List(ctx, teamAString, 20, 0)
 	require.NoError(t, err)
 	require.Equal(t, 1, total)
 	require.Len(t, entries, 1)

@@ -10,12 +10,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
-	"github.com/markhuangai/dense-mem/internal/service"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
@@ -71,16 +69,6 @@ func (p *Principal) GetRateLimit() int           { return p.RateLimit }
 // Using an unexported type prevents downstream code from constructing fake principals.
 type principalContextKey struct{}
 
-// AuthMiddleware creates an authentication middleware that validates API keys.
-// It requires the Authorization header in the format "Bearer <rawKey>".
-func AuthMiddleware(repo accessservice.CredentialStore, auditSvc service.AuditService) echo.MiddlewareFunc {
-	return AuthMiddlewareWithSecurity(repo, auditSvc, nil)
-}
-
-func AuthMiddlewareWithSecurity(repo accessservice.CredentialStore, auditSvc service.AuditService, securitySvc SecurityBanService) echo.MiddlewareFunc {
-	return AuthMiddlewareWithOptions(repo, auditSvc, securitySvc, AuthOptions{})
-}
-
 type SSOEntitlementValidator interface {
 	ValidateCredential(ctx context.Context, credential *domain.Credential) (*domain.Credential, error)
 }
@@ -99,6 +87,7 @@ type OAuthBearerAuthenticator interface {
 
 type AuthOptions struct {
 	CredentialVerifier             httpcontract.CredentialVerifier
+	CredentialLookupPrefixes       httpcontract.CredentialLookupPrefixes
 	SSOEntitlementValidator        SSOEntitlementValidator
 	SSOSessionAuthenticator        SSOSessionAuthenticator
 	UserPortalSessionAuthenticator UserPortalSessionAuthenticator
@@ -106,11 +95,8 @@ type AuthOptions struct {
 	AllowMissingCredentials        bool
 }
 
-func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc service.AuditService, securitySvc SecurityBanService, opts AuthOptions) echo.MiddlewareFunc {
+func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc accessservice.AuditService, securitySvc SecurityBanService, opts AuthOptions) echo.MiddlewareFunc {
 	verifier := opts.CredentialVerifier
-	if verifier == nil {
-		verifier = crypto.NewArgon2Verifier(0)
-	}
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			// Extract Authorization header
@@ -167,7 +153,7 @@ func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc serv
 				logAuthFailure(c, auditSvc, securitySvc, nil, "TEAM_PATH_INVALID", "malformed scoped mcp team ID")
 				return err
 			}
-			if service.IsJWTBearer(rawKey) {
+			if accessservice.IsJWTBearer(rawKey) {
 				if opts.OAuthBearerAuthenticator == nil {
 					logOAuthAuthFailure(c, auditSvc, securitySvc, nil, "OAUTH_INVALID", "oauth bearer authentication is unavailable")
 					return httperr.New(httperr.AUTH_INVALID, "invalid bearer token")
@@ -175,9 +161,9 @@ func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc serv
 				actor, err := opts.OAuthBearerAuthenticator.AuthenticateOAuthBearer(c.Request().Context(), rawKey, pathTeamID)
 				if err != nil {
 					var failureSecurity SecurityBanService
-					if errors.Is(err, service.ErrOAuthTokenExpired) ||
-						errors.Is(err, service.ErrOAuthTokenInvalid) ||
-						errors.Is(err, service.ErrOAuthAccessDenied) {
+					if errors.Is(err, accessservice.ErrOAuthTokenExpired) ||
+						errors.Is(err, accessservice.ErrOAuthTokenInvalid) ||
+						errors.Is(err, accessservice.ErrOAuthAccessDenied) {
 						failureSecurity = securitySvc
 					}
 					logOAuthAuthFailure(c, auditSvc, failureSecurity, nil, "OAUTH_DENIED", "oauth bearer authentication failed")
@@ -195,7 +181,11 @@ func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc serv
 				return next(c)
 			}
 
-			prefixes := crypto.GetLookupPrefixes(rawKey)
+			if verifier == nil || opts.CredentialLookupPrefixes == nil {
+				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_UNAVAILABLE", "authentication dependencies are unavailable")
+				return httperr.New(httperr.SERVICE_UNAVAILABLE, "authentication service unavailable")
+			}
+			prefixes := opts.CredentialLookupPrefixes(rawKey)
 			if len(prefixes) == 0 {
 				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "invalid key format")
 				return httperr.New(httperr.AUTH_INVALID, "invalid key format")
@@ -314,15 +304,15 @@ func authenticatedPathTeamID(c echo.Context) (*uuid.UUID, error) {
 
 func oauthAuthError(err error) error {
 	switch {
-	case errors.Is(err, service.ErrOAuthTokenExpired):
+	case errors.Is(err, accessservice.ErrOAuthTokenExpired):
 		return httperr.New(httperr.AUTH_EXPIRED, "oauth access token expired")
-	case errors.Is(err, service.ErrOAuthTokenInvalid):
+	case errors.Is(err, accessservice.ErrOAuthTokenInvalid):
 		return httperr.New(httperr.AUTH_INVALID, "invalid oauth access token")
-	case errors.Is(err, service.ErrOAuthTeamRequired):
+	case errors.Is(err, accessservice.ErrOAuthTeamRequired):
 		return httperr.New(httperr.TEAM_REQUIRED, "use /teams/{team_id}/mcp or supply the configured team claim")
-	case errors.Is(err, service.ErrOAuthAccessDenied):
+	case errors.Is(err, accessservice.ErrOAuthAccessDenied):
 		return httperr.New(httperr.FORBIDDEN, "oauth membership access denied")
-	case errors.Is(err, service.ErrOAuthProviderUnavailable):
+	case errors.Is(err, accessservice.ErrOAuthProviderUnavailable):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "oauth provider unavailable")
 	default:
 		return httperr.New(httperr.INTERNAL_ERROR, "oauth authentication failed")
@@ -333,14 +323,14 @@ var errNoSSOSession = errors.New("no sso session")
 var errNoUserPortalSession = errors.New("no user portal session")
 
 func authenticateSSOSession(c echo.Context, authenticator SSOSessionAuthenticator) error {
-	cookie, err := c.Request().Cookie(service.SSOSessionCookieName)
+	cookie, err := c.Request().Cookie(accessservice.SSOSessionCookieName)
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
 		return errNoSSOSession
 	}
 	requireCSRF := requestRequiresCSRF(c.Request().Method)
-	csrfToken := c.Request().Header.Get(service.SSOCSRFHeaderName)
+	csrfToken := c.Request().Header.Get(accessservice.SSOCSRFHeaderName)
 	if csrfToken == "" && !requireCSRF {
-		if csrfCookie, err := c.Request().Cookie(service.SSOCSRFCookieName); err == nil {
+		if csrfCookie, err := c.Request().Cookie(accessservice.SSOCSRFCookieName); err == nil {
 			csrfToken = csrfCookie.Value
 		}
 	}
@@ -352,12 +342,12 @@ func authenticateSSOSession(c echo.Context, authenticator SSOSessionAuthenticato
 }
 
 func authenticateUserPortalSession(c echo.Context, authenticator UserPortalSessionAuthenticator, entitlementValidator SSOEntitlementValidator) error {
-	cookie, err := c.Request().Cookie(service.UserPortalSessionCookieName)
+	cookie, err := c.Request().Cookie(accessservice.UserPortalSessionCookieName)
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
 		return errNoUserPortalSession
 	}
 	requireCSRF := requestRequiresCSRF(c.Request().Method)
-	csrfToken := c.Request().Header.Get(service.SSOCSRFHeaderName)
+	csrfToken := c.Request().Header.Get(accessservice.SSOCSRFHeaderName)
 	actor, err := authenticator.AuthenticateSession(c.Request().Context(), cookie.Value, csrfToken, requireCSRF)
 	if err != nil {
 		return userPortalSessionAuthError(err)
@@ -533,11 +523,11 @@ func requestRequiresCSRF(method string) bool {
 
 func ssoAuthError(err error) error {
 	switch {
-	case errors.Is(err, service.ErrSSOSessionInvalid):
+	case errors.Is(err, accessservice.ErrSSOSessionInvalid):
 		return httperr.New(httperr.AUTH_INVALID, "invalid sso session")
-	case errors.Is(err, service.ErrSSOCSRFInvalid):
+	case errors.Is(err, accessservice.ErrSSOCSRFInvalid):
 		return httperr.New(httperr.FORBIDDEN, "invalid sso csrf token")
-	case errors.Is(err, service.ErrSSOAccessDenied), errors.Is(err, service.ErrSSOProviderDisabled), errors.Is(err, service.ErrSSOEntitlementRefreshStale):
+	case errors.Is(err, accessservice.ErrSSOAccessDenied), errors.Is(err, accessservice.ErrSSOProviderDisabled), errors.Is(err, accessservice.ErrSSOEntitlementRefreshStale):
 		return httperr.New(httperr.FORBIDDEN, "sso access denied")
 	default:
 		return httperr.New(httperr.INTERNAL_ERROR, "sso authentication failed")
@@ -546,9 +536,9 @@ func ssoAuthError(err error) error {
 
 func userPortalSessionAuthError(err error) error {
 	switch {
-	case errors.Is(err, service.ErrUserPortalSessionInvalid):
+	case errors.Is(err, accessservice.ErrUserPortalSessionInvalid):
 		return httperr.New(httperr.AUTH_INVALID, "invalid user portal session")
-	case errors.Is(err, service.ErrUserPortalCSRFInvalid):
+	case errors.Is(err, accessservice.ErrUserPortalCSRFInvalid):
 		return httperr.New(httperr.FORBIDDEN, "invalid user portal csrf token")
 	default:
 		return httperr.New(httperr.INTERNAL_ERROR, "user portal session authentication failed")
@@ -578,16 +568,16 @@ func LastUsedMiddleware(recorder LastUsedRecorder) echo.MiddlewareFunc {
 	}
 }
 
-// logAuthFailure logs an authentication failure event to the audit service.
-func logAuthFailure(c echo.Context, auditSvc service.AuditService, securitySvc SecurityBanService, profileID *string, reason, message string) {
+// logAuthFailure logs an authentication failure event to the audit accessservice.
+func logAuthFailure(c echo.Context, auditSvc accessservice.AuditService, securitySvc SecurityBanService, profileID *string, reason, message string) {
 	logAuthFailureForEntity(c, auditSvc, securitySvc, profileID, "api_key", reason, message)
 }
 
-func logOAuthAuthFailure(c echo.Context, auditSvc service.AuditService, securitySvc SecurityBanService, profileID *string, reason, message string) {
+func logOAuthAuthFailure(c echo.Context, auditSvc accessservice.AuditService, securitySvc SecurityBanService, profileID *string, reason, message string) {
 	logAuthFailureForEntity(c, auditSvc, securitySvc, profileID, "oauth", reason, message)
 }
 
-func logAuthFailureForEntity(c echo.Context, auditSvc service.AuditService, securitySvc SecurityBanService, profileID *string, entityType, reason, message string) {
+func logAuthFailureForEntity(c echo.Context, auditSvc accessservice.AuditService, securitySvc SecurityBanService, profileID *string, entityType, reason, message string) {
 	if securitySvc != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if _, err := securitySvc.RecordAuthFailure(ctx, c.RealIP(), authFailureSurface(c), reason); err != nil {

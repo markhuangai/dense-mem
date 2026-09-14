@@ -12,33 +12,33 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/conflict/evidence"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 type evidenceConflictReaderStub struct {
-	resolveInput repository.EvidenceConflictResolutionInput
+	resolveInput knowledgecontract.EvidenceConflictResolutionInput
 	resolveErr   error
 }
 
-func (s *evidenceConflictReaderStub) ListEvidenceConflicts(context.Context, repository.EvidenceConflictListInput) (*repository.EvidenceConflictListResult, error) {
-	return &repository.EvidenceConflictListResult{Items: []repository.EvidenceConflictCaseRecord{}, NextCursor: nil}, nil
+func (s *evidenceConflictReaderStub) ListEvidenceConflicts(context.Context, knowledgecontract.EvidenceConflictListInput) (*knowledgecontract.EvidenceConflictListResult, error) {
+	return &knowledgecontract.EvidenceConflictListResult{Items: []knowledgecontract.EvidenceConflictCaseRecord{}, NextCursor: nil}, nil
 }
 
-func (s *evidenceConflictReaderStub) GetEvidenceConflict(context.Context, repository.EvidenceConflictGetInput) (*repository.EvidenceConflictGetResult, error) {
-	return nil, repository.ErrEvidenceConflictNotFound
+func (s *evidenceConflictReaderStub) GetEvidenceConflict(context.Context, knowledgecontract.EvidenceConflictGetInput) (*knowledgecontract.EvidenceConflictGetResult, error) {
+	return nil, knowledgecontract.ErrEvidenceConflictNotFound
 }
 
-func (s *evidenceConflictReaderStub) ResolveEvidenceConflict(_ context.Context, input repository.EvidenceConflictResolutionInput) (*repository.EvidenceConflictCaseRecord, error) {
+func (s *evidenceConflictReaderStub) ResolveEvidenceConflict(_ context.Context, input knowledgecontract.EvidenceConflictResolutionInput) (*knowledgecontract.EvidenceConflictCaseRecord, error) {
 	s.resolveInput = input
 	if s.resolveErr != nil {
 		return nil, s.resolveErr
 	}
-	return &repository.EvidenceConflictCaseRecord{ConflictID: input.ConflictID, Status: "resolved", Version: input.ExpectedVersion + 1, Positions: []repository.EvidenceConflictPositionRecord{}}, nil
+	return &knowledgecontract.EvidenceConflictCaseRecord{ConflictID: input.ConflictID, Status: "resolved", Version: input.ExpectedVersion + 1, Positions: []knowledgecontract.EvidenceConflictPositionRecord{}}, nil
 }
 
 func TestControlPortalEvidenceConflictStaticTokenCarriesActorAndNoStore(t *testing.T) {
 	reader := &evidenceConflictReaderStub{}
-	server, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	server, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret",
 	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{EvidenceConflicts: evidenceconflict.New(reader)}, HealthConfig{}, nil)
 	require.NoError(t, err)
@@ -58,7 +58,7 @@ func TestControlPortalEvidenceConflictStaticTokenCarriesActorAndNoStore(t *testi
 
 func TestControlPortalEvidenceConflictMapsStaleResolutionToConflict(t *testing.T) {
 	reader := &evidenceConflictReaderStub{resolveErr: evidenceconflict.ErrVersionStale}
-	server, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	server, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret",
 	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{EvidenceConflicts: evidenceconflict.New(reader)}, HealthConfig{}, nil)
 	require.NoError(t, err)
@@ -74,7 +74,7 @@ func TestControlPortalEvidenceConflictMapsStaleResolutionToConflict(t *testing.T
 }
 
 func TestControlPortalEvidenceConflictUnknownDetailIsNotFound(t *testing.T) {
-	server, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	server, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret",
 	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{EvidenceConflicts: evidenceconflict.New(&evidenceConflictReaderStub{})}, HealthConfig{}, nil)
 	require.NoError(t, err)

@@ -25,7 +25,7 @@ import (
 	"github.com/markhuangai/dense-mem/cmd/internal/migrationapp"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	operationspostgres "github.com/markhuangai/dense-mem/internal/operations/postgres"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -268,7 +268,7 @@ func TestRunActiveServerCanceledBeforeWorkersDoesNotBuildRuntimeWorker(t *testin
 		require.NoError(t, migrationapp.RunUp(startupCtx, pgDB.GetDB(), 5*time.Minute, slog.Default()))
 
 		rl := storagepostgres.NewRLS()
-		authority, err := ClassifyAuthority(startupCtx, repository.NewAuthorityRepository(pgDB.GetDB(), rl))
+		authority, err := ClassifyAuthority(startupCtx, operationspostgres.NewAuthorityRepository(pgDB.GetDB(), rl))
 		require.NoError(t, err)
 		logger := observability.New(slog.LevelError)
 		processCtx, cancel := context.WithCancel(context.Background())

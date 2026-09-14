@@ -4,10 +4,10 @@
   "cases": [
     {
       "id": "repository/TestCommunityRepositorySnapshotLifecycleAndRecallExpansion",
-      "package": "./internal/repository",
+      "package": "./internal/community/postgres",
       "run": "^TestCommunityRepositorySnapshotLifecycleAndRecallExpansion$",
       "phase": "precheck",
-      "source": "internal/repository/community_repository_integration.e2e"
+      "source": "internal/community/postgres/community_repository_integration.e2e"
     }
   ]
 }

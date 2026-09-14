@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 func TestLoadHarnessConfigIsBoundedAndStrict(t *testing.T) {
@@ -140,9 +140,9 @@ func TestHarnessMapsTypedValidationErrorsWithoutReflectingTokens(t *testing.T) {
 		status int
 		code   string
 	}{
-		"invalid":     {err: service.OAuthTokenInvalidError{}, status: http.StatusUnauthorized, code: "invalid_token"},
-		"expired":     {err: service.OAuthTokenExpiredError{}, status: http.StatusUnauthorized, code: "invalid_token"},
-		"unavailable": {err: service.OAuthProviderUnavailableError{}, status: http.StatusServiceUnavailable, code: "temporarily_unavailable"},
+		"invalid":     {err: accessservice.OAuthTokenInvalidError{}, status: http.StatusUnauthorized, code: "invalid_token"},
+		"expired":     {err: accessservice.OAuthTokenExpiredError{}, status: http.StatusUnauthorized, code: "invalid_token"},
+		"unavailable": {err: accessservice.OAuthProviderUnavailableError{}, status: http.StatusServiceUnavailable, code: "temporarily_unavailable"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			handler, err := newHarnessHandler("https://harness.example", profiles, harnessValidatorStub{err: test.err})

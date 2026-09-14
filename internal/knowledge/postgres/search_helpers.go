@@ -106,6 +106,9 @@ func marshalSearchJSON(value map[string]any) ([]byte, error) {
 }
 
 func vectorLiteral(values []float32) (string, error) {
+	if len(values) == 0 {
+		return "", errors.New("embedding is required")
+	}
 	parts := make([]string, len(values))
 	for i, value := range values {
 		f := float64(value)

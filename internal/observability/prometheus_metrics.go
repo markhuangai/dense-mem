@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
@@ -32,7 +33,7 @@ type ScopedDiscoverabilityMetrics interface {
 	IncVerifyVerdictFor(ctx context.Context, model string, outcome string)
 	ObserveRecallLatencyFor(ctx context.Context, durationMs float64)
 	ObserveRecallFor(ctx context.Context, durationMs float64, resultCount int, outcome string)
-	ObserveRecallFeedbackFor(ctx context.Context, feedback RecallFeedback)
+	ObserveRecallFeedbackFor(ctx context.Context, feedback recallcontract.FeedbackObservation)
 	ObserveDreamFeedbackFor(ctx context.Context, feedback DreamFeedback)
 	ObserveConflictReviewDurationFor(ctx context.Context, seconds float64, outcome string)
 }
@@ -455,11 +456,11 @@ func aiOperationCostUSD(component string, usage AIOperationUsage, pricing AIPric
 	}
 }
 
-func (m *PrometheusMetrics) ObserveRecallFeedback(feedback RecallFeedback) {
+func (m *PrometheusMetrics) ObserveRecallFeedback(feedback recallcontract.FeedbackObservation) {
 	m.ObserveRecallFeedbackFor(context.Background(), feedback)
 }
 
-func (m *PrometheusMetrics) ObserveRecallFeedbackFor(ctx context.Context, feedback RecallFeedback) {
+func (m *PrometheusMetrics) ObserveRecallFeedbackFor(ctx context.Context, feedback recallcontract.FeedbackObservation) {
 	quality := normalizeRecallFeedbackQuality(feedback.Quality)
 	labels := append(identityValues(ctx),
 		boolLabel(feedback.Used),
@@ -751,7 +752,7 @@ func RecordRecall(ctx context.Context, metrics DiscoverabilityMetrics, durationM
 	metrics.ObserveRecall(durationMs, resultCount, outcome)
 }
 
-func RecordRecallFeedback(ctx context.Context, metrics DiscoverabilityMetrics, feedback RecallFeedback) {
+func RecordRecallFeedback(ctx context.Context, metrics DiscoverabilityMetrics, feedback recallcontract.FeedbackObservation) {
 	if metrics == nil {
 		return
 	}

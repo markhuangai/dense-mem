@@ -1,31 +1,37 @@
 package serverapp
 
 import (
+	"context"
+
 	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
-	communitypostgres "github.com/markhuangai/dense-mem/internal/community/postgres"
+	communityprovider "github.com/markhuangai/dense-mem/internal/community/provider"
 	communityapp "github.com/markhuangai/dense-mem/internal/community/service"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
-	"gorm.io/gorm"
 )
 
+type communitySummaryProvider struct {
+	model    string
+	complete communityprovider.CompleteFunc
+}
+
+func (p communitySummaryProvider) ModelName() string { return p.model }
+
+func (p communitySummaryProvider) SummarizeCommunity(ctx context.Context, input domain.CommunitySummaryInput) (domain.CommunitySummary, error) {
+	ctx = observability.WithAIOperation(ctx, observability.AIOperationCommunitySummary, len(input.Relationships))
+	return communityprovider.SummarizeCommunity(ctx, p.model, input, p.complete)
+}
+
 type communityApplicationDependencies struct {
-	Store interface {
-		CommunityDatabase() *gorm.DB
-		CommunityRLS() storagepostgres.RLSHelper
-	}
+	Store     communitycontract.CommunityRepository
 	AppConfig communityapp.AppConfig
 	Summary   communityapp.SummaryProvider
 	Metrics   observability.DiscoverabilityMetrics
 }
 
 func buildCommunityApplication(deps communityApplicationDependencies) communityapp.Service {
-	var store communitycontract.CommunityRepository
-	if deps.Store != nil {
-		store = communitypostgres.NewStore(deps.Store.CommunityDatabase(), deps.Store.CommunityRLS())
-	}
 	return communityapp.New(communityapp.Dependencies{
-		Store:     store,
+		Store:     deps.Store,
 		AppConfig: deps.AppConfig,
 		Summary:   deps.Summary,
 		Metrics:   deps.Metrics,

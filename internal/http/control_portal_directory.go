@@ -10,7 +10,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 func (h *controlPortalHandler) listDirectoryConnectors(c echo.Context) error {
@@ -240,7 +240,7 @@ func controlDirectoryServiceError(err error) error {
 		return nil
 	}
 	message := strings.ToLower(err.Error())
-	if errors.Is(err, service.ErrDirectoryConnectorDisabled) {
+	if errors.Is(err, accessservice.ErrDirectoryConnectorDisabled) {
 		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "directory connector is disabled"), "connector_disabled", "contact_operator", "Contact an operator to enable the directory connector before retrying.", false, nil, "")
 	}
 	if strings.Contains(message, "not found") {

@@ -3,12 +3,10 @@ package serverapp
 import (
 	"bytes"
 	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -17,59 +15,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
-
-type transportSearchConvergenceStub struct {
-	value *repository.SearchConvergence
-	err   error
-}
-
-func (s transportSearchConvergenceStub) GetSearchConvergence(context.Context) (*repository.SearchConvergence, error) {
-	return s.value, s.err
-}
-
-func TestNativeSearchConvergenceReaderAdaptsCompatibilityProjection(t *testing.T) {
-	now := time.Date(2026, time.August, 26, 1, 0, 0, 0, time.UTC)
-	start, finish := now.Add(-time.Minute), now.Add(-time.Second)
-	reader := nativeSearchConvergenceReader(transportSearchConvergenceStub{value: &repository.SearchConvergence{
-		ObservedAt: now, Status: "attention_required", ExpectedDocuments: 10, CurrentDocuments: 7,
-		DriftedDocuments: 3, AffectedTeamCount: 2, OldestDriftAge: 2 * time.Minute,
-		Contract:     &repository.ActiveSearchContract{EmbeddingProvider: "openai", EmbeddingModel: "model", EmbeddingDimensions: 3, IndexGeneration: 4, IndexStrategy: "hnsw"},
-		DriftClasses: []repository.SearchDocumentDriftCount{{Class: "missing_vector", Count: 3}},
-		LatestRun:    &repository.SearchReconciliationRun{RunID: "run", LocalRunDate: now, Status: "failed", StartedAt: &start, CompletedAt: &finish, UpdatedAt: now},
-	}})
-
-	got, err := reader.GetSearchConvergence(context.Background())
-	if err != nil {
-		t.Fatalf("adapted reader returned error: %v", err)
-	}
-	if got == nil || got.Status != "attention_required" || got.ExpectedDocuments != 10 {
-		t.Fatalf("adapted projection = %#v", got)
-	}
-	if got.Contract == nil || got.Contract.IndexGeneration != 4 || got.Contract.IndexStrategy != "hnsw" {
-		t.Fatalf("adapted search contract = %#v", got.Contract)
-	}
-	if len(got.DriftClasses) != 1 || got.DriftClasses[0].Class != "missing_vector" {
-		t.Fatalf("adapted drift classes = %#v", got.DriftClasses)
-	}
-	if got.LatestRun == nil || got.LatestRun.RunID != "run" {
-		t.Fatalf("adapted latest run = %#v", got.LatestRun)
-	}
-
-	if nativeSearchConvergenceReader(nil) != nil {
-		t.Fatal("nil compatibility reader should remain nil")
-	}
-	failed := errors.New("backend failed")
-	failedReader := nativeSearchConvergenceReader(transportSearchConvergenceStub{err: failed})
-	_, err = failedReader.GetSearchConvergence(context.Background())
-	if !errors.Is(err, failed) {
-		t.Fatalf("adapted error = %v, want %v", err, failed)
-	}
-}
 
 func TestTransportCompositionPreservesRouteAndUserHookOrder(t *testing.T) {
 	backend, err := buildInMemoryBackend(config.Config{SSEMaxConcurrentStreams: 2})
@@ -108,15 +57,16 @@ func TestTransportCompositionPreservesRouteAndUserHookOrder(t *testing.T) {
 		Role:            "manager",
 	}
 	composition, err := buildTransportComposition(transportCompositionInputs{
-		cfg:                config.Config{},
-		pgDB:               &postgres.DB{},
-		backend:            backend,
-		logger:             observability.New(slog.LevelInfo),
-		toolRegistry:       registry.New(),
-		directoryIdentity:  service.NewDirectoryIdentityService(nil, service.DirectoryIdentityConfig{}),
-		credentialRepo:     transportCredentialRepository{credential: credential},
-		credentialVerifier: transportCredentialVerifier{},
-		teamService:        transportTeamService{team: &domain.Team{ID: teamID, Name: "transport-test"}},
+		cfg:                      config.Config{},
+		pgDB:                     &postgres.DB{},
+		backend:                  backend,
+		logger:                   observability.New(slog.LevelInfo),
+		credentialLookupPrefixes: crypto.GetLookupPrefixes,
+		toolRegistry:             registry.New(),
+		directoryIdentity:        accessservice.NewDirectoryIdentityService(nil, accessservice.DirectoryIdentityConfig{}),
+		credentialRepo:           transportCredentialRepository{credential: credential},
+		credentialVerifier:       transportCredentialVerifier{},
+		teamService:              transportTeamService{team: &domain.Team{ID: teamID, Name: "transport-test"}},
 		options: RuntimeOptions{
 			DisableControlPortal: true,
 			RegisterRoutes: func(runtime RuntimeContext) error {
@@ -175,7 +125,7 @@ func TestTransportCompositionPreservesRouteAndUserHookOrder(t *testing.T) {
 }
 
 type transportCredentialRepository struct {
-	repository.CredentialRepository
+	accessservice.CredentialStore
 	credential *domain.Credential
 }
 
@@ -190,7 +140,7 @@ func (transportCredentialVerifier) Verify(context.Context, string, string) (bool
 }
 
 type transportTeamService struct {
-	service.TeamService
+	accessservice.TeamService
 	team *domain.Team
 }
 

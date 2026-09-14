@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,7 +34,7 @@ func TestRetryProvider_Retries5xxUpToMax(t *testing.T) {
 	inner := &MockEmbeddingProvider{
 		EmbedFunc: func(ctx context.Context, _ string) ([]float32, string, error) {
 			calls++
-			return nil, "", &ProviderHTTPError{Status: 500}
+			return nil, "", &embeddingcontract.ProviderHTTPError{Status: 500}
 		},
 	}
 	p := NewRetryEmbeddingProvider(inner, newTestLogger())
@@ -49,7 +50,7 @@ func TestRetryProvider_NoRetryOn400(t *testing.T) {
 	inner := &MockEmbeddingProvider{
 		EmbedFunc: func(ctx context.Context, _ string) ([]float32, string, error) {
 			calls++
-			return nil, "", &ProviderHTTPError{Status: 400}
+			return nil, "", &embeddingcontract.ProviderHTTPError{Status: 400}
 		},
 	}
 	p := NewRetryEmbeddingProvider(inner, newTestLogger())
@@ -64,7 +65,7 @@ func TestRetryProvider_Retries429(t *testing.T) {
 		EmbedFunc: func(ctx context.Context, _ string) ([]float32, string, error) {
 			calls++
 			if calls < 3 {
-				return nil, "", &ProviderHTTPError{Status: 429, Message: "rate limited"}
+				return nil, "", &embeddingcontract.ProviderHTTPError{Status: 429, Message: "rate limited"}
 			}
 			return []float32{0.1, 0.2}, "model", nil
 		},
@@ -82,14 +83,14 @@ func TestRetryProviderDoesNotRetryInsufficientQuota429(t *testing.T) {
 	inner := &MockEmbeddingProvider{
 		EmbedFunc: func(context.Context, string) ([]float32, string, error) {
 			calls++
-			return nil, "", &ProviderHTTPError{Status: 429, Code: "insufficient_quota", Type: "insufficient_quota"}
+			return nil, "", &embeddingcontract.ProviderHTTPError{Status: 429, Code: "insufficient_quota", Type: "insufficient_quota"}
 		},
 	}
 	p := NewRetryEmbeddingProvider(inner, newTestLogger())
 	_, _, err := p.Embed(context.Background(), "x")
 	require.Error(t, err)
 	assert.Equal(t, 1, calls)
-	metadata := ClassifyFailure(err)
+	metadata := embeddingcontract.ClassifyFailure(err)
 	assert.Equal(t, "provider_action_required", metadata.Class)
 	assert.Equal(t, "provider_quota_exhausted", metadata.Code)
 }
@@ -119,11 +120,11 @@ func TestRetryProvider_SetMetrics(t *testing.T) {
 func TestRetryProvider_ClassifyEmbeddingError(t *testing.T) {
 	assert.Equal(t, "ok", classifyEmbeddingError(nil))
 	assert.Equal(t, "timeout", classifyEmbeddingError(context.DeadlineExceeded))
-	assert.Equal(t, "timeout", classifyEmbeddingError(&TimeoutError{Provider: "stub", Message: "deadline"}))
+	assert.Equal(t, "timeout", classifyEmbeddingError(&embeddingcontract.TimeoutError{Provider: "stub", Message: "deadline"}))
 	assert.Equal(t, "timeout", classifyEmbeddingError(timeoutNetError{}))
-	assert.Equal(t, "rate_limited", classifyEmbeddingError(&RateLimitError{Provider: "stub", Message: "429"}))
-	assert.Equal(t, "rate_limited", classifyEmbeddingError(&ProviderHTTPError{Status: 429}))
-	assert.Equal(t, "error", classifyEmbeddingError(&ProviderHTTPError{Status: 500}))
+	assert.Equal(t, "rate_limited", classifyEmbeddingError(&embeddingcontract.RateLimitError{Provider: "stub", Message: "429"}))
+	assert.Equal(t, "rate_limited", classifyEmbeddingError(&embeddingcontract.ProviderHTTPError{Status: 429}))
+	assert.Equal(t, "error", classifyEmbeddingError(&embeddingcontract.ProviderHTTPError{Status: 500}))
 	assert.Equal(t, "error", classifyEmbeddingError(errors.New("boom")))
 }
 
@@ -132,8 +133,8 @@ func TestRetryProvider_ShouldRetryDirectErrorClasses(t *testing.T) {
 
 	assert.False(t, p.shouldRetry(nil))
 	assert.True(t, p.shouldRetry(timeoutNetError{}))
-	assert.True(t, p.shouldRetry(&TimeoutError{Provider: "stub", Message: "deadline"}))
-	assert.True(t, p.shouldRetry(&RateLimitError{Provider: "stub", Message: "429"}))
+	assert.True(t, p.shouldRetry(&embeddingcontract.TimeoutError{Provider: "stub", Message: "deadline"}))
+	assert.True(t, p.shouldRetry(&embeddingcontract.RateLimitError{Provider: "stub", Message: "429"}))
 	assert.False(t, p.shouldRetry(errors.New("boom")))
 }
 
@@ -142,7 +143,7 @@ func TestRetryProvider_ContextCancelStopsRetry(t *testing.T) {
 	inner := &MockEmbeddingProvider{
 		EmbedFunc: func(ctx context.Context, _ string) ([]float32, string, error) {
 			calls++
-			return nil, "", &ProviderHTTPError{Status: 500}
+			return nil, "", &embeddingcontract.ProviderHTTPError{Status: 500}
 		},
 	}
 
@@ -154,7 +155,7 @@ func TestRetryProvider_ContextCancelStopsRetry(t *testing.T) {
 	p.SetMetrics(metrics)
 	_, _, err := p.Embed(ctx, "x")
 	require.ErrorIs(t, err, context.Canceled)
-	var providerErr *ProviderHTTPError
+	var providerErr *embeddingcontract.ProviderHTTPError
 	assert.NotErrorAs(t, err, &providerErr)
 	assert.Equal(t, 1, calls, "should stop after context cancellation")
 	assert.Zero(t, metrics.EmbeddingErrorCount("network_error"))
@@ -171,14 +172,14 @@ func TestRetryProviderCancellationDuringDelayDoesNotStartAnotherCall(t *testing.
 					if calls == 1 {
 						close(firstCall)
 					}
-					return nil, "", &ProviderHTTPError{Status: 500}
+					return nil, "", &embeddingcontract.ProviderHTTPError{Status: 500}
 				},
 				EmbedBatchFunc: func(context.Context, []string) ([][]float32, string, error) {
 					calls++
 					if calls == 1 {
 						close(firstCall)
 					}
-					return nil, "", &ProviderHTTPError{Status: 500}
+					return nil, "", &embeddingcontract.ProviderHTTPError{Status: 500}
 				},
 			}
 			provider := NewRetryEmbeddingProviderWithKeyAndOptions(inner, newTestLogger(), "", RetryEmbeddingOptions{BaseDelay: time.Second, MaxDelay: time.Second})
@@ -198,7 +199,7 @@ func TestRetryProviderCancellationDuringDelayDoesNotStartAnotherCall(t *testing.
 			cancel()
 			err := <-done
 			require.ErrorIs(t, err, context.Canceled)
-			var providerErr *ProviderHTTPError
+			var providerErr *embeddingcontract.ProviderHTTPError
 			assert.NotErrorAs(t, err, &providerErr)
 			assert.Equal(t, 1, calls)
 		})
@@ -210,10 +211,10 @@ func TestRetryProviderDeadlineDuringDelayPreservesProviderFailure(t *testing.T) 
 		t.Run(map[bool]string{false: "single", true: "batch"}[batch], func(t *testing.T) {
 			inner := &MockEmbeddingProvider{
 				EmbedFunc: func(context.Context, string) ([]float32, string, error) {
-					return nil, "", &ProviderHTTPError{Status: 429}
+					return nil, "", &embeddingcontract.ProviderHTTPError{Status: 429}
 				},
 				EmbedBatchFunc: func(context.Context, []string) ([][]float32, string, error) {
-					return nil, "", &ProviderHTTPError{Status: 429}
+					return nil, "", &embeddingcontract.ProviderHTTPError{Status: 429}
 				},
 			}
 			provider := NewRetryEmbeddingProvider(inner, newTestLogger())
@@ -226,7 +227,7 @@ func TestRetryProviderDeadlineDuringDelayPreservesProviderFailure(t *testing.T) 
 				_, _, err = provider.Embed(ctx, "x")
 			}
 
-			var providerErr *ProviderHTTPError
+			var providerErr *embeddingcontract.ProviderHTTPError
 			require.ErrorAs(t, err, &providerErr)
 			assert.Equal(t, 429, providerErr.Status)
 			assert.NotErrorIs(t, err, context.DeadlineExceeded)
@@ -236,8 +237,8 @@ func TestRetryProviderDeadlineDuringDelayPreservesProviderFailure(t *testing.T) 
 
 func TestRetryProviderCapsProviderRetryHintsAtPolicyMaximum(t *testing.T) {
 	provider := NewRetryEmbeddingProvider(&MockEmbeddingProvider{}, newTestLogger())
-	assert.Equal(t, MaxProviderRetryAfter, provider.retryDelay(0, &ProviderHTTPError{Status: 429, RetryAfter: time.Hour}))
-	assert.Equal(t, MaxProviderRetryAfter, provider.retryDelay(0, &RateLimitError{RetryAfter: 3600}))
+	assert.Equal(t, embeddingcontract.MaxProviderRetryAfter, provider.retryDelay(0, &embeddingcontract.ProviderHTTPError{Status: 429, RetryAfter: time.Hour}))
+	assert.Equal(t, embeddingcontract.MaxProviderRetryAfter, provider.retryDelay(0, &embeddingcontract.RateLimitError{RetryAfter: 3600}))
 }
 
 func TestRetryProvider_SuccessAfterOneRetry(t *testing.T) {
@@ -246,7 +247,7 @@ func TestRetryProvider_SuccessAfterOneRetry(t *testing.T) {
 		EmbedFunc: func(ctx context.Context, _ string) ([]float32, string, error) {
 			calls++
 			if calls == 1 {
-				return nil, "", &ProviderHTTPError{Status: 500}
+				return nil, "", &embeddingcontract.ProviderHTTPError{Status: 500}
 			}
 			return []float32{0.5}, "model", nil
 		},
@@ -264,7 +265,7 @@ func TestRetryProvider_FailAfterMaxRetries(t *testing.T) {
 	inner := &MockEmbeddingProvider{
 		EmbedFunc: func(ctx context.Context, _ string) ([]float32, string, error) {
 			calls++
-			return nil, "", &ProviderHTTPError{Status: 503, Message: "service unavailable"}
+			return nil, "", &embeddingcontract.ProviderHTTPError{Status: 503, Message: "service unavailable"}
 		},
 	}
 	p := NewRetryEmbeddingProvider(inner, newTestLogger())
@@ -291,7 +292,7 @@ func TestRetryProvider_NoRetryOn401(t *testing.T) {
 	inner := &MockEmbeddingProvider{
 		EmbedFunc: func(ctx context.Context, _ string) ([]float32, string, error) {
 			calls++
-			return nil, "", &ProviderHTTPError{Status: 401, Message: "unauthorized"}
+			return nil, "", &embeddingcontract.ProviderHTTPError{Status: 401, Message: "unauthorized"}
 		},
 	}
 	p := NewRetryEmbeddingProvider(inner, newTestLogger())
@@ -305,7 +306,7 @@ func TestRetryProvider_NoRetryOn404(t *testing.T) {
 	inner := &MockEmbeddingProvider{
 		EmbedFunc: func(ctx context.Context, _ string) ([]float32, string, error) {
 			calls++
-			return nil, "", &ProviderHTTPError{Status: 404, Message: "not found"}
+			return nil, "", &embeddingcontract.ProviderHTTPError{Status: 404, Message: "not found"}
 		},
 	}
 	p := NewRetryEmbeddingProvider(inner, newTestLogger())
@@ -352,7 +353,7 @@ func TestRetryProvider_EdimBatchRetries(t *testing.T) {
 		EmbedBatchFunc: func(ctx context.Context, texts []string) ([][]float32, string, error) {
 			calls++
 			if calls < 2 {
-				return nil, "", &ProviderHTTPError{Status: 500}
+				return nil, "", &embeddingcontract.ProviderHTTPError{Status: 500}
 			}
 			result := make([][]float32, len(texts))
 			for i := range result {

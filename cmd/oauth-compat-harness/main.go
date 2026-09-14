@@ -16,7 +16,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 const harnessConfigLimit = 1 << 20
@@ -55,7 +55,7 @@ func run(ctx context.Context, args []string, errorOutput io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("load OAuth compatibility config: %w", err)
 	}
-	validator, err := service.NewOAuthProtectedResourceValidator(config.Profiles, service.OAuthProtectedResourceValidatorOptions{})
+	validator, err := accessservice.NewOAuthProtectedResourceValidator(config.Profiles, accessservice.OAuthProtectedResourceValidatorOptions{})
 	if err != nil {
 		return fmt.Errorf("validate OAuth compatibility config: %w", err)
 	}

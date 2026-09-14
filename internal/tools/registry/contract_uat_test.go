@@ -16,7 +16,7 @@ import (
 
 func TestBuildActiveWiresExecutableRemember(t *testing.T) {
 	stub := &stubRememberService{}
-	reg, err := BuildActive(Dependencies{Remember: stub})
+	reg, err := BuildActive(Dependencies{RememberBindings: RememberBindings{Service: stub}})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestBuildActiveRememberCapturesCallerEnvelope(t *testing.T) {
 		callerResponse, err = capture.ProjectResponse(map[string]any{"code": "provider_unavailable"}, true)
 		require.NoError(t, err)
 	}}
-	reg, err := BuildActive(Dependencies{Remember: stub})
+	reg, err := BuildActive(Dependencies{RememberBindings: RememberBindings{Service: stub}})
 	require.NoError(t, err)
 	remember, ok := reg.Get(ToolRemember)
 	require.True(t, ok)
@@ -102,7 +102,7 @@ func TestBuildActiveRememberCapturesCallerEnvelope(t *testing.T) {
 }
 
 func TestBuildActiveRememberRejectsTenantOverride(t *testing.T) {
-	reg, err := BuildActive(Dependencies{Remember: &stubRememberService{}})
+	reg, err := BuildActive(Dependencies{RememberBindings: RememberBindings{Service: &stubRememberService{}}})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestBuildActiveRememberReturnsTypedDynamicValidation(t *testing.T) {
 			Path: "/relationships/0/predicate/known_predicate_key", Code: "unavailable", Message: "known_predicate_key is unavailable",
 		}},
 	}}
-	reg, err := BuildActive(Dependencies{Remember: stub})
+	reg, err := BuildActive(Dependencies{RememberBindings: RememberBindings{Service: stub}})
 	require.NoError(t, err)
 	remember, ok := reg.Get(ToolRemember)
 	require.True(t, ok)
@@ -141,7 +141,7 @@ func TestBuildActiveRememberReturnsTypedDynamicValidation(t *testing.T) {
 
 func TestBuildActiveRememberRejectsReadOnlyCredential(t *testing.T) {
 	stub := &stubRememberService{}
-	reg, err := BuildActive(Dependencies{Remember: stub})
+	reg, err := BuildActive(Dependencies{RememberBindings: RememberBindings{Service: stub}})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestBuildActiveRememberRejectsReadOnlyCredential(t *testing.T) {
 
 func TestBuildActiveWiresExecutableRecallMemory(t *testing.T) {
 	stub := &stubRecallService{}
-	reg, err := BuildActive(Dependencies{Recall: stub})
+	reg, err := BuildActive(Dependencies{RecallBindings: RecallBindings{Service: stub}})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
@@ -234,11 +234,12 @@ func TestRecallSuggestedActionsMatchEnabledFeatures(t *testing.T) {
 	}}
 	recorder := &stubRecallFeedbackRecorder{}
 	reg, err := BuildActive(Dependencies{
-		Recall:               recall,
-		Dreams:               &stubDreamService{},
-		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
-		RecallFeedbackEvents: recorder,
-		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+		Core: CoreDependencies{
+			RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+			RecallFeedbackEvents: recorder,
+			Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+		},
+		RecallBindings: RecallBindings{Service: recall, Dreams: &stubDreamService{}},
 	})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
@@ -274,7 +275,7 @@ func TestRecallSuggestedActionsMatchEnabledFeatures(t *testing.T) {
 			HypothesisID: "must-not-leak",
 		}},
 	}}
-	disabledReg, err := BuildActive(Dependencies{Recall: disabledRecall})
+	disabledReg, err := BuildActive(Dependencies{RecallBindings: RecallBindings{Service: disabledRecall}})
 	if err != nil {
 		t.Fatalf("BuildActive disabled: %v", err)
 	}
@@ -295,7 +296,7 @@ func TestRecallSuggestedActionsMatchEnabledFeatures(t *testing.T) {
 }
 
 func TestBuildActiveRecallRejectsTenantOverride(t *testing.T) {
-	reg, err := BuildActive(Dependencies{Recall: &stubRecallService{}})
+	reg, err := BuildActive(Dependencies{RecallBindings: RecallBindings{Service: &stubRecallService{}}})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
@@ -314,7 +315,7 @@ func TestBuildActiveRecallRejectsTenantOverride(t *testing.T) {
 
 func TestBuildActiveRecallRejectsMissingReadScope(t *testing.T) {
 	stub := &stubRecallService{}
-	reg, err := BuildActive(Dependencies{Recall: stub})
+	reg, err := BuildActive(Dependencies{RecallBindings: RecallBindings{Service: stub}})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
@@ -335,7 +336,7 @@ func TestBuildActiveRecallRejectsMissingReadScope(t *testing.T) {
 
 func TestBuildActiveWiresExecutableTraceMemory(t *testing.T) {
 	stub := &stubTraceContext{}
-	reg, err := BuildActive(Dependencies{Context: stub})
+	reg, err := BuildActive(Dependencies{TraceBindings: TraceBindings{Service: stub}})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
@@ -402,7 +403,7 @@ func TestBuildActiveWiresExecutableTraceMemory(t *testing.T) {
 }
 
 func TestBuildActiveTraceRejectsTenantOverride(t *testing.T) {
-	reg, err := BuildActive(Dependencies{Context: &stubTraceContext{}})
+	reg, err := BuildActive(Dependencies{TraceBindings: TraceBindings{Service: &stubTraceContext{}}})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
@@ -421,7 +422,7 @@ func TestBuildActiveTraceRejectsTenantOverride(t *testing.T) {
 
 func TestBuildActiveTraceRejectsMissingReadScope(t *testing.T) {
 	stub := &stubTraceContext{}
-	reg, err := BuildActive(Dependencies{Context: stub})
+	reg, err := BuildActive(Dependencies{TraceBindings: TraceBindings{Service: stub}})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}

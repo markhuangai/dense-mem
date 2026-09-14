@@ -8,22 +8,25 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	communityapp "github.com/markhuangai/dense-mem/internal/community/service"
 	"github.com/markhuangai/dense-mem/internal/config"
 	conflictevidence "github.com/markhuangai/dense-mem/internal/conflict/evidence"
 	conflictqueue "github.com/markhuangai/dense-mem/internal/conflict/queue"
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/dream"
+	"github.com/markhuangai/dense-mem/internal/graph"
 	densehttp "github.com/markhuangai/dense-mem/internal/http"
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
 	"github.com/markhuangai/dense-mem/internal/recall"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
-	"github.com/markhuangai/dense-mem/internal/repository"
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
-	"github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/communityservice"
-	"github.com/markhuangai/dense-mem/internal/service/graphview"
+	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
+	settings "github.com/markhuangai/dense-mem/internal/settings"
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
@@ -33,41 +36,42 @@ import (
 // infrastructure ports needed to bind supported HTTP, portal, MCP, and SSE
 // surfaces. It deliberately contains no transport policy beyond these ports.
 type transportCompositionInputs struct {
-	startupCtx       context.Context
-	cfg              config.Config
-	pgDB             *postgres.DB
-	authority        authorityBootstrap
-	backend          *backendBundle
-	rls              postgres.RLSHelper
-	options          RuntimeOptions
-	logger           observability.LogProvider
-	searchRepo       *repository.SearchRepositoryImpl
-	telemetry        telemetryComposition
-	toolRegistry     registry.Registry
-	convergence      service.SearchConvergenceReader
-	rememberAttempts rememberapp.RememberAttemptDiagnosticsReader
+	startupCtx               context.Context
+	cfg                      config.Config
+	pgDB                     *postgres.DB
+	authority                authorityBootstrap
+	backend                  *backendBundle
+	rls                      postgres.RLSHelper
+	options                  RuntimeOptions
+	logger                   observability.LogProvider
+	credentialLookupPrefixes httpcontract.CredentialLookupPrefixes
+	searchRepo               searchcontract.SearchRepository
+	telemetry                telemetryComposition
+	toolRegistry             registry.Registry
+	convergence              searchapp.SearchConvergenceReader
+	rememberAttempts         rememberapp.RememberAttemptDiagnosticsReader
 
-	credentialRepo     repository.CredentialRepository
+	credentialRepo     accessservice.CredentialStore
 	credentialVerifier crypto.CredentialVerifier
-	activityWriter     *service.CredentialActivityWriter
-	teamService        service.TeamService
-	credentialService  service.CredentialService
-	ssoService         *service.SSOService
-	portalSession      service.UserPortalSessionManager
-	directoryIdentity  *service.DirectoryIdentityService
-	controlIdentity    *service.ControlIdentityService
+	activityWriter     *accessservice.CredentialActivityWriter
+	teamService        accessservice.TeamService
+	credentialService  accessservice.CredentialService
+	ssoService         *accessservice.SSOService
+	portalSession      accessservice.UserPortalSessionManager
+	directoryIdentity  *accessservice.DirectoryIdentityService
+	controlIdentity    *accessservice.ControlIdentityService
 	privateMemory      densehttp.PrivateMemoryServiceInterface
-	auditService       service.AuditService
-	securityService    service.SecurityService
-	appConfig          service.AppConfigService
-	operationLogs      service.OperationLogReader
-	usageMetrics       service.UsageMetricsService
+	auditService       accessservice.AuditService
+	securityService    settings.SecurityService
+	appConfig          settings.AppConfigService
+	operationLogs      operations.OperationLogReader
+	usageMetrics       operations.UsageMetricsService
 	conflictQueue      conflictqueue.Reader
 	evidenceConflicts  conflictevidence.Reader
 	recallFeedback     recall.RecallFeedbackEventReader
-	community          communityservice.Service
+	community          communityapp.Service
 	controlDream       dream.ControlService
-	graph              graphview.Service
+	graph              graph.Service
 	recall             recall.RecallService
 	dream              dream.Service
 }
@@ -79,61 +83,65 @@ type transportComposition struct {
 	telemetryServerAddr string
 }
 
-// transportSearchConvergenceReader adapts the retained service compatibility
-// reader to the native search projection consumed by the control transport.
-// The conversion stays in composition so HTTP does not depend on repository
-// compatibility representations.
-type transportSearchConvergenceReader struct {
-	legacy service.SearchConvergenceReader
+// httpLoggerAdapter keeps the transport's logging contract independent from
+// the application logger implementation. Redaction and sink behavior remain
+// owned by observability.Logger.
+type httpLoggerAdapter struct {
+	delegate observability.LogProvider
 }
 
-func (r transportSearchConvergenceReader) GetSearchConvergence(ctx context.Context) (*searchapp.SearchConvergence, error) {
-	value, err := r.legacy.GetSearchConvergence(ctx)
-	if err != nil || value == nil {
-		return nil, err
+func (a httpLoggerAdapter) Info(message string, attrs ...httpcontract.LogAttr) {
+	if a.delegate != nil {
+		a.delegate.Info(message, observabilityAttrs(attrs)...)
 	}
-	result := &searchapp.SearchConvergence{
-		ObservedAt:        value.ObservedAt,
-		Status:            value.Status,
-		Contract:          value.Contract,
-		ExpectedDocuments: value.ExpectedDocuments,
-		CurrentDocuments:  value.CurrentDocuments,
-		DriftedDocuments:  value.DriftedDocuments,
-		AffectedTeamCount: value.AffectedTeamCount,
-		OldestDriftAge:    value.OldestDriftAge,
-		DriftClasses:      make([]searchapp.SearchDocumentDriftCount, len(value.DriftClasses)),
-	}
-	for index, drift := range value.DriftClasses {
-		result.DriftClasses[index] = searchapp.SearchDocumentDriftCount{Class: drift.Class, Count: drift.Count}
-	}
-	if run := value.LatestRun; run != nil {
-		result.LatestRun = &searchapp.SearchReconciliationRun{
-			RunID:         run.RunID,
-			LocalRunDate:  run.LocalRunDate,
-			Status:        run.Status,
-			SelectedCount: run.SelectedCount,
-			EmbeddedCount: run.EmbeddedCount,
-			UpdatedCount:  run.UpdatedCount,
-			DriftedCount:  run.DriftedCount,
-			LastError:     run.LastError,
-			StartedAt:     run.StartedAt,
-			CompletedAt:   run.CompletedAt,
-			UpdatedAt:     run.UpdatedAt,
-		}
-	}
-	return result, nil
 }
 
-func nativeSearchConvergenceReader(reader service.SearchConvergenceReader) searchapp.SearchConvergenceReader {
-	if reader == nil {
+func (a httpLoggerAdapter) Error(message string, err error, attrs ...httpcontract.LogAttr) {
+	if a.delegate != nil {
+		a.delegate.Error(message, err, observabilityAttrs(attrs)...)
+	}
+}
+
+func (a httpLoggerAdapter) Warn(message string, attrs ...httpcontract.LogAttr) {
+	if a.delegate != nil {
+		a.delegate.Warn(message, observabilityAttrs(attrs)...)
+	}
+}
+
+func (a httpLoggerAdapter) Debug(message string, attrs ...httpcontract.LogAttr) {
+	if a.delegate != nil {
+		a.delegate.Debug(message, observabilityAttrs(attrs)...)
+	}
+}
+
+func (a httpLoggerAdapter) With(attrs ...httpcontract.LogAttr) httpcontract.LogProvider {
+	if a.delegate == nil {
+		return a
+	}
+	return httpLoggerAdapter{delegate: a.delegate.With(observabilityAttrs(attrs)...)}
+}
+
+func observabilityAttrs(attrs []httpcontract.LogAttr) []observability.LogAttr {
+	converted := make([]observability.LogAttr, 0, len(attrs))
+	for _, attr := range attrs {
+		converted = append(converted, observability.LogAttr{Key: attr.Key, Value: attr.Value})
+	}
+	return converted
+}
+
+func transportLogger(logger observability.LogProvider) httpcontract.LogProvider {
+	if logger == nil {
 		return nil
 	}
-	return transportSearchConvergenceReader{legacy: reader}
+	return httpLoggerAdapter{delegate: logger}
 }
 
 func buildTransportComposition(deps transportCompositionInputs) (*transportComposition, error) {
 	if deps.backend == nil {
 		return nil, fmt.Errorf("transport: backend is required")
+	}
+	if deps.credentialVerifier == nil || deps.credentialLookupPrefixes == nil {
+		return nil, fmt.Errorf("transport: credential verifier and prefix lookup are required")
 	}
 
 	streamLifecycle := sse.NewStreamLifecycleWithConfig(
@@ -143,7 +151,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 	)
 	mcpHandler := handler.NewMCPHandlerWithLifecycleAndRuntimeConfig(
 		deps.toolRegistry,
-		handler.NewMCPLogger(deps.logger),
+		handler.NewMCPLogger(transportLogger(deps.logger)),
 		streamLifecycle,
 		deps.appConfig,
 		deps.dream,
@@ -163,7 +171,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 			return checkActiveAuthority(deps.authority)
 		}},
 		{Name: "search_readiness", Check: func(ctx context.Context) error {
-			return checkSearchReadiness(ctx, deps.searchRepo)
+			return operations.CheckSearchReadiness(ctx, deps.searchRepo)
 		}},
 	}
 	if deps.backend.redisPingFn != nil {
@@ -174,7 +182,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 		Degraded: deps.backend.degraded,
 		Reason:   deps.backend.reason,
 	}).WithSharedDependencyChecks()
-	e := densehttp.NewServer(deps.cfg, deps.logger, healthConfig)
+	e := densehttp.NewServer(deps.cfg, transportLogger(deps.logger), healthConfig)
 	e.Use(middleware.CorrelationIDMiddleware(), middleware.ClientIPMiddleware())
 	e.Use(middleware.SecurityBanMiddleware(deps.securityService))
 	densehttp.RegisterOAuthProtectedResourceRoutes(e, deps.ssoService)
@@ -204,21 +212,20 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 	}
 
 	protectedDeps := densehttp.ProtectedDeps{
-		MCP: densehttp.MCPBindings{
-			CredentialRepo:     deps.credentialRepo,
-			TeamSvc:            deps.teamService,
-			RateLimitService:   deps.backend.rateLimitService,
-			UsageMetrics:       deps.usageMetrics,
-			AuditService:       deps.auditService,
-			SecurityService:    deps.securityService,
-			SSOAuthenticator:   deps.ssoService,
-			OAuthAuthenticator: deps.ssoService,
-			OAuthMetadata:      deps.ssoService,
-			Config:             &deps.cfg,
-			Logger:             deps.logger,
-			CredentialVerifier: deps.credentialVerifier,
-			LastUsedRecorder:   deps.activityWriter,
-		},
+		CredentialRepo:           deps.credentialRepo,
+		TeamSvc:                  deps.teamService,
+		RateLimitService:         deps.backend.rateLimitService,
+		UsageMetrics:             deps.usageMetrics,
+		AuditService:             deps.auditService,
+		SecurityService:          deps.securityService,
+		SSOAuthenticator:         deps.ssoService,
+		OAuthAuthenticator:       deps.ssoService,
+		OAuthMetadata:            deps.ssoService,
+		Config:                   &deps.cfg,
+		Logger:                   transportLogger(deps.logger),
+		CredentialVerifier:       deps.credentialVerifier,
+		CredentialLookupPrefixes: deps.credentialLookupPrefixes,
+		LastUsedRecorder:         deps.activityWriter,
 	}
 	protectedDeps.PostAuthMiddleware = append(protectedDeps.PostAuthMiddleware, deps.options.PostAuthMiddleware...)
 	if deps.telemetry.HTTPMetrics != nil {
@@ -230,21 +237,25 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 	})
 
 	userPortalDeps := densehttp.UserPortalDeps{
-		CredentialRepo:     deps.credentialRepo,
-		TeamSvc:            deps.teamService,
-		CredentialSvc:      deps.credentialService,
-		RateLimitSvc:       deps.backend.rateLimitService,
-		UsageMetrics:       deps.usageMetrics,
-		Telemetry:          deps.telemetry.Reader,
-		Memory:             densehttp.MemoryPortalBindings{GraphView: deps.graph, RecallSvc: deps.recall, DreamSvc: deps.dream, PrivateMemory: deps.privateMemory},
-		AuditSvc:           deps.auditService,
-		SecuritySvc:        deps.securityService,
-		SSOService:         deps.ssoService,
-		PortalSession:      deps.portalSession,
-		AppConfig:          deps.appConfig,
-		Config:             &deps.cfg,
-		CredentialVerifier: deps.credentialVerifier,
-		LastUsedRecorder:   deps.activityWriter,
+		CredentialRepo:           deps.credentialRepo,
+		TeamSvc:                  deps.teamService,
+		CredentialSvc:            deps.credentialService,
+		RateLimitSvc:             deps.backend.rateLimitService,
+		UsageMetrics:             deps.usageMetrics,
+		Telemetry:                deps.telemetry.Reader,
+		GraphView:                deps.graph,
+		RecallSvc:                deps.recall,
+		DreamSvc:                 deps.dream,
+		PrivateMemory:            deps.privateMemory,
+		AuditSvc:                 deps.auditService,
+		SecuritySvc:              deps.securityService,
+		SSOService:               deps.ssoService,
+		PortalSession:            deps.portalSession,
+		AppConfig:                deps.appConfig,
+		Config:                   &deps.cfg,
+		CredentialVerifier:       deps.credentialVerifier,
+		CredentialLookupPrefixes: deps.credentialLookupPrefixes,
+		LastUsedRecorder:         deps.activityWriter,
 	}
 	userPortalDeps.ExtraMiddleware = append(userPortalDeps.ExtraMiddleware, deps.options.UserPortalMiddleware...)
 	if deps.telemetry.HTTPMetrics != nil {
@@ -274,12 +285,12 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 				Communities:       deps.community,
 				ConflictQueue:     deps.conflictQueue,
 				EvidenceConflicts: deps.evidenceConflicts,
-				Convergence:       nativeSearchConvergenceReader(deps.convergence),
+				Convergence:       deps.convergence,
 				RememberAttempts:  deps.rememberAttempts,
 				PrivateMemory:     deps.privateMemory,
 			}},
 			healthConfig,
-			deps.logger,
+			transportLogger(deps.logger),
 			deps.securityService,
 		)
 		if err != nil {

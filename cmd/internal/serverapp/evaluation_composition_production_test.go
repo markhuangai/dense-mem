@@ -9,7 +9,7 @@ import (
 )
 
 func TestProductionEvaluationCompositionIsEmpty(t *testing.T) {
-	bindings, err := buildEvaluationRegistryBindings(nil, nil)
+	bindings, err := buildEvaluationRegistryBindings(nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("production evaluation composition: %v", err)
 	}

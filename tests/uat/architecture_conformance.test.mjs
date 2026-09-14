@@ -68,6 +68,33 @@ function copyManifestFixture() {
     const destination = path.join(fixtureRoot, reference);
     fs.copyFileSync(source, destination);
     const fragment = JSON.parse(fs.readFileSync(source, "utf8"));
+    if (fragment.capability === "tool-registry-application-api" && (fragment.compatibility_bridges ?? []).length === 0) {
+      fragment.compatibility_bridges = [{
+        source_path: "internal/tools/registry/toolset.go",
+        fields: ["Dependencies.Metrics"],
+        consumers: [{path: "internal/tools/registry/capability_bindings.go", symbol: "Dependencies.withCapabilityBindings"}],
+        removal_issue: 382,
+      }];
+    }
+    if (fragment.capability === "postgres-storage-adapter" && (fragment.compatibility_bridges ?? []).length === 0) {
+      fragment.compatibility_bridges = [{
+        source_path: "internal/knowledge/postgres/store.go",
+        fields: ["NewStore"],
+        consumers: [{path: "internal/knowledge/postgres/store.go", symbol: "NewStore"}],
+        removal_issue: 382,
+        implementation_owner: {path: "internal/knowledge/postgres/store.go", symbol: "NewStore"},
+        removal_condition: "replace the fixture bridge with the native adapter owner",
+      }];
+    }
+    if (fragment.capability === "http-transport" && (fragment.exceptions ?? []).length === 0) {
+      fragment.exceptions = [{
+        source_path: "internal/http/server.go",
+        source: "github.com/markhuangai/dense-mem/internal/http",
+        target: "github.com/markhuangai/dense-mem/internal/privacy/contract",
+        removal_issue: 382,
+        reason: "fixture exception for ownership validation",
+      }];
+    }
     for (const ownership of fragment.source_ownership ?? []) {
       const sourcePath = path.join(root, ownership.path);
       const destinationPath = path.join(fixtureRoot, ownership.path);
@@ -88,6 +115,7 @@ function copyManifestFixture() {
         fs.copyFileSync(sourcePath, destinationPath);
       }
     }
+    fs.writeFileSync(destination, JSON.stringify(fragment, null, 2));
   }
   return { fixtureRoot, rootManifest };
 }
@@ -396,7 +424,7 @@ test("rejects duplicate Go and browser unit ownership across fragments", () => {
     architectureFragment.browser.units.push(controlFragment.browser.units[0]);
     fs.writeFileSync(architecturePath, JSON.stringify(architectureFragment, null, 2));
     const loaded = loadManifest(fixtureCopy.fixtureRoot);
-    assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("duplicate-fragment:") && item.includes("internal/repository")));
+    assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("duplicate-fragment:") && item.includes(postgresFragment.go.units[0].id)));
     assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("duplicate-fragment:") && item.includes("web/src/")));
   } finally {
     fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
@@ -425,7 +453,7 @@ test("rejects fragment units that try to override inherited capability", () => {
 });
 
 test("units inherit capability ownership from their fragment", () => {
-  const unit = productionManifest.go.units.find((entry) => entry.id.endsWith("/internal/repository"));
+  const unit = productionManifest.go.units.find((entry) => entry.id.endsWith("/internal/knowledge/postgres"));
   assert.equal(unit.capability, "postgres-storage-adapter");
   assert.equal(unit.role, "postgres_adapter");
   assert.equal(unit.visibility, "private");
@@ -487,7 +515,7 @@ test("enforces private visibility and narrow PostgreSQL infrastructure reuse", (
 
 test("retains precise replacement owners and lifecycle obligations", () => {
   const exceptionOwners = [...new Set(productionManifest.exceptions.map((entry) => entry.removal_issue))].sort((a, b) => a - b);
-  assert.deepEqual(exceptionOwners, [367, 379, 382]);
+  assert.deepEqual(exceptionOwners, []);
   assert.equal(productionManifest.exceptions.some((entry) => entry.removal_issue === 276), false);
   assert.equal(productionManifest.exceptions.some((entry) => entry.removal_issue === 280), false);
   assert.ok(productionManifest.workers.every((entry) => entry.lifecycle_issue === 381));
@@ -525,7 +553,7 @@ test("completion membership is independent of issue order", () => {
     const manifest = structuredClone(productionManifest);
     manifest.completed_issues = completedIssues;
     manifest.exceptions = [{
-      source: "github.com/markhuangai/dense-mem/internal/repository",
+      source: "github.com/markhuangai/dense-mem/internal/legacy-source",
       target: "github.com/markhuangai/dense-mem/internal/storage/postgres",
       removal_issue: 261,
       reason: "fixture exception",
@@ -546,8 +574,8 @@ test("completing an issue expires only its retained obligations", () => {
 
   const retained = structuredClone(completed);
   retained.exceptions.push({
-    source: "github.com/markhuangai/dense-mem/internal/service/skillpackservice",
-    target: "github.com/markhuangai/dense-mem/internal/repository",
+    source: "github.com/markhuangai/dense-mem/internal/legacy-skillpack",
+    target: "github.com/markhuangai/dense-mem/internal/legacy-storage",
     removal_issue: 272,
     reason: "fixture retained obligation",
   });

@@ -92,7 +92,7 @@ func TestBuildActiveExecutableToolsRequireDependencies(t *testing.T) {
 
 func TestBuildActiveWiresExecutableDreamTools(t *testing.T) {
 	dreams := &stubDreamService{}
-	reg, err := BuildActive(Dependencies{Dreams: dreams})
+	reg, err := BuildActive(Dependencies{DreamBindings: DreamBindings{Service: dreams}})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}

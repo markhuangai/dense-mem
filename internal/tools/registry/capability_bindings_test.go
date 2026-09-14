@@ -20,10 +20,10 @@ func TestBuildActiveUsesRememberCapabilityFacet(t *testing.T) {
 
 func TestRecallFacetSuppliesDreamingPolicyToRecallBinding(t *testing.T) {
 	dreams := &stubDreamService{}
-	deps := (Dependencies{
+	deps := Dependencies{
 		RecallBindings: RecallBindings{Dreams: dreams},
-	}).withCapabilityBindings()
-	if deps.RecallDreaming != dreams {
+	}
+	if deps.RecallBindings.Dreams != dreams {
 		t.Fatal("recall capability facet did not supply its Dreaming policy dependency")
 	}
 }
@@ -43,9 +43,10 @@ func TestCapabilityFacetBundleFeedsEveryContractTool(t *testing.T) {
 		DreamBindings:      DreamBindings{Service: dreams},
 		MemoryPackBindings: MemoryPackBindings{Service: memoryPack},
 	}
-	wired := deps.withCapabilityBindings()
-	if wired.Remember != remember || wired.Recall != recall || wired.Lifecycle != lifecycle || wired.Context != trace || wired.Dreams != dreams || wired.MemoryPack != memoryPack {
-		t.Fatal("capability facets did not populate the shared registry view")
+	if deps.RememberBindings.Service != remember || deps.RecallBindings.Service != recall ||
+		deps.LifecycleBindings.Service != lifecycle || deps.TraceBindings.Service != trace ||
+		deps.DreamBindings.Service != dreams || deps.MemoryPackBindings.Service != memoryPack {
+		t.Fatal("capability bindings did not preserve their services")
 	}
 	reg, err := BuildActive(deps)
 	if err != nil {

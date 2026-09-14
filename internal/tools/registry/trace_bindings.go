@@ -12,7 +12,7 @@ func bindTraceTool(tool Tool, deps Dependencies) Tool {
 		return tool
 	}
 	tool.Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-		if deps.Context == nil {
+		if deps.TraceBindings.Service == nil {
 			return nil, ErrToolUnavailable
 		}
 		if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
@@ -22,7 +22,7 @@ func bindTraceTool(tool Tool, deps Dependencies) Tool {
 		if err := remapInput(input, &req); err != nil {
 			return nil, fmt.Errorf("trace_memory: invalid input: %w", err)
 		}
-		res, err := deps.Context.Trace(ctx, "", req)
+		res, err := deps.TraceBindings.Service.Trace(ctx, "", req)
 		if err != nil {
 			return nil, err
 		}

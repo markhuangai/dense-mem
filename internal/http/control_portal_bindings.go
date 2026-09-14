@@ -5,8 +5,8 @@ import (
 
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
-	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/service"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
+	settings "github.com/markhuangai/dense-mem/internal/settings"
 )
 
 // ControlPortalBindings keeps control-listener dependencies in one named
@@ -19,13 +19,13 @@ func NewControlPortalServerWithCapabilityBindings(
 	cfg httpcontract.ConfigProvider,
 	teamSvc handler.TeamServiceInterface,
 	credentialSvc handler.CredentialServiceInterface,
-	metricsSvc service.UsageMetricsReader,
+	metricsSvc operations.UsageMetricsReader,
 	bindings ControlPortalBindings,
 	health HealthConfig,
-	logger observability.LogProvider,
-	securitySvcs ...service.SecurityService,
+	logger httpcontract.LogProvider,
+	securitySvcs ...settings.SecurityService,
 ) (*echo.Echo, error) {
-	return NewControlPortalServerWithMetricsAndTelemetry(
+	return newControlPortalServerWithMetricsAndTelemetry(
 		cfg,
 		teamSvc,
 		credentialSvc,

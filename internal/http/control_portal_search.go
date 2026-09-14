@@ -7,11 +7,10 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/observability"
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 func (h *controlPortalHandler) getSearchConvergence(c echo.Context) error {
@@ -20,11 +19,11 @@ func (h *controlPortalHandler) getSearchConvergence(c echo.Context) error {
 	}
 	projection, err := h.convergence.GetSearchConvergence(c.Request().Context())
 	if err != nil {
-		if errors.Is(err, service.ErrSearchConvergenceUnavailable) {
+		if errors.Is(err, searchapp.ErrSearchConvergenceUnavailable) {
 			return httperr.New(httperr.SERVICE_UNAVAILABLE, "search convergence unavailable")
 		}
 		if h.logger != nil {
-			h.logger.Warn("control_search_convergence_failed", observability.String("error_code", "search_convergence_query_failed"))
+			h.logger.Warn("control_search_convergence_failed", httpcontract.String("error_code", "search_convergence_query_failed"))
 		}
 		return httperr.New(httperr.INTERNAL_ERROR, "failed to load search convergence")
 	}

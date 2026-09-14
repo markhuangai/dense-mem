@@ -16,10 +16,10 @@ func recordRecallFeedbackSnapshot(
 	req recall.RecallRequest,
 	res *recall.RecallResult,
 ) bool {
-	if res == nil || res.RecallID == "" || deps.RecallFeedbackEvents == nil {
+	if res == nil || res.RecallID == "" || deps.Core.RecallFeedbackEvents == nil {
 		return false
 	}
-	if !RecallFeedbackEnabled(ctx, deps.RecallFeedbackConfig) || deps.Metrics == nil {
+	if !RecallFeedbackEnabled(ctx, deps.Core.RecallFeedbackConfig) || deps.Core.Metrics == nil {
 		return false
 	}
 	degradation := map[string]any{}
@@ -28,7 +28,7 @@ func recordRecallFeedbackSnapshot(
 			degradation = mapped
 		}
 	}
-	err := deps.RecallFeedbackEvents.RecordRecallSnapshot(ctx, domain.RecallFeedbackEvent{
+	err := deps.Core.RecallFeedbackEvents.RecordRecallSnapshot(ctx, domain.RecallFeedbackEvent{
 		RecallID:        res.RecallID,
 		ToolName:        ToolRecallMemory,
 		Query:           req.Query,
@@ -85,7 +85,7 @@ func setRecallSuggestedActions(res *recall.RecallResult, feedbackSnapshotStored,
 }
 
 func submitRecallFeedback(ctx context.Context, deps Dependencies, input map[string]any) (map[string]any, error) {
-	batch := recall.SubmitRecallFeedbackBatch(ctx, deps.RecallFeedbackEvents, deps.Metrics, recallFeedbackSubmissions(input))
+	batch := recall.SubmitRecallFeedbackBatch(ctx, deps.Core.RecallFeedbackEvents, deps.Core.Metrics, recallFeedbackSubmissions(input))
 	result := map[string]any{
 		"recorded":       batch.Recorded,
 		"recorded_count": batch.RecordedCount,

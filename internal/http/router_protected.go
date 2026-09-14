@@ -6,8 +6,7 @@ import (
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
-	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/service"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
@@ -15,17 +14,16 @@ import (
 // This struct collects all the middleware and service dependencies required
 // for the protected MCP routes.
 type ProtectedDeps struct {
-	MCP MCPBindings
 	// CredentialRepo is the API key repository for authentication.
 	CredentialRepo accessservice.CredentialStore
 	// TeamSvc resolves the authenticated team.
 	TeamSvc handler.TeamServiceInterface
 	// RateLimitService is the service for rate limiting.
-	RateLimitService service.RateLimitServiceInterface
+	RateLimitService accessservice.RateLimitServiceInterface
 	// UsageMetrics records authenticated request usage for the control-panel metrics tab.
-	UsageMetrics service.UsageMetricsRecorder
+	UsageMetrics operations.UsageMetricsRecorder
 	// AuditService is the service for audit logging.
-	AuditService service.AuditService
+	AuditService accessservice.AuditService
 	// SecurityService checks active IP bans and records auth failures.
 	SecurityService middleware.SecurityBanService
 	// SSOAuthenticator validates SSO-linked API keys and browser SSO sessions when configured.
@@ -40,77 +38,24 @@ type ProtectedDeps struct {
 	// Config is the application configuration.
 	Config httpcontract.ConfigProvider
 	// Logger is the structured logger.
-	Logger             observability.LogProvider
-	CredentialVerifier httpcontract.CredentialVerifier
-	LastUsedRecorder   middleware.LastUsedRecorder
+	Logger                   httpcontract.LogProvider
+	CredentialVerifier       httpcontract.CredentialVerifier
+	CredentialLookupPrefixes httpcontract.CredentialLookupPrefixes
+	LastUsedRecorder         middleware.LastUsedRecorder
 	// PostAuthMiddleware runs after authentication, team resolution, and
 	// authorization, and before usage metrics/rate limiting.
 	PostAuthMiddleware []echo.MiddlewareFunc
-}
-
-// ProtectedDepsInterface is the companion interface for ProtectedDeps.
-// Consumers and tests depend on this abstraction rather than the concrete struct.
-type ProtectedDepsInterface interface {
-	GetCredentialRepo() accessservice.CredentialStore
-	GetTeamSvc() handler.TeamServiceInterface
-	GetRateLimitService() service.RateLimitServiceInterface
-	GetUsageMetrics() service.UsageMetricsRecorder
-	GetAuditService() service.AuditService
-	GetSecurityService() middleware.SecurityBanService
-	GetConfig() httpcontract.ConfigProvider
-	GetLogger() observability.LogProvider
-	GetPostAuthMiddleware() []echo.MiddlewareFunc
-}
-
-// Ensure ProtectedDeps implements ProtectedDepsInterface
-var _ ProtectedDepsInterface = (*ProtectedDeps)(nil)
-
-// Getters for ProtectedDepsInterface
-func (d *ProtectedDeps) GetCredentialRepo() accessservice.CredentialStore {
-	return d.CredentialRepo
-}
-
-func (d *ProtectedDeps) GetTeamSvc() handler.TeamServiceInterface {
-	return d.TeamSvc
-}
-
-func (d *ProtectedDeps) GetRateLimitService() service.RateLimitServiceInterface {
-	return d.RateLimitService
-}
-
-func (d *ProtectedDeps) GetUsageMetrics() service.UsageMetricsRecorder {
-	return d.UsageMetrics
-}
-
-func (d *ProtectedDeps) GetAuditService() service.AuditService {
-	return d.AuditService
-}
-
-func (d *ProtectedDeps) GetSecurityService() middleware.SecurityBanService {
-	return d.SecurityService
-}
-
-func (d *ProtectedDeps) GetConfig() httpcontract.ConfigProvider {
-	return d.Config
-}
-
-func (d *ProtectedDeps) GetLogger() observability.LogProvider {
-	return d.Logger
-}
-
-func (d *ProtectedDeps) GetPostAuthMiddleware() []echo.MiddlewareFunc {
-	return d.PostAuthMiddleware
 }
 
 // RegisterProtectedRoutesWithHandlers registers protected API routes with the
 // middleware chain required for authentication, team authorization, rate
 // limiting, route-specific validation, and handler execution.
 func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handlers ProtectedHandlers) {
-	deps = deps.withMCPBindings()
 	// Create team authorization service from audit service.
 	teamAuthzSvc := middleware.NewTeamAuthorizationService(deps.AuditService)
 	credentialAuthMW := middleware.AuthMiddlewareWithOptions(deps.CredentialRepo, deps.AuditService, deps.SecurityService, middleware.AuthOptions{
 		CredentialVerifier:       deps.CredentialVerifier,
+		CredentialLookupPrefixes: deps.CredentialLookupPrefixes,
 		SSOEntitlementValidator:  deps.SSOAuthenticator,
 		OAuthBearerAuthenticator: deps.OAuthAuthenticator,
 	})

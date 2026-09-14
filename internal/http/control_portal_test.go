@@ -3,6 +3,9 @@ package http
 import (
 	"context"
 	"errors"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
+	settingsapp "github.com/markhuangai/dense-mem/internal/settings"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -15,7 +18,6 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type controlProfileSvc struct {
@@ -28,7 +30,7 @@ type controlProfileSvc struct {
 	deleteErr error
 }
 
-func (s *controlProfileSvc) Create(_ context.Context, req service.CreateTeamRequest, _ *string, _ string, _ string, _ string) (*domain.Team, error) {
+func (s *controlProfileSvc) Create(_ context.Context, req accessservice.CreateTeamRequest, _ *string, _ string, _ string, _ string) (*domain.Team, error) {
 	if s.createErr != nil {
 		return nil, s.createErr
 	}
@@ -72,7 +74,7 @@ func (s *controlProfileSvc) Count(context.Context) (int64, error) {
 	return int64(len(s.profiles)), nil
 }
 
-func (s *controlProfileSvc) Update(_ context.Context, id uuid.UUID, req service.UpdateTeamRequest, _ *string, _ string, _ string, _ string) (*domain.Team, error) {
+func (s *controlProfileSvc) Update(_ context.Context, id uuid.UUID, req accessservice.UpdateTeamRequest, _ *string, _ string, _ string, _ string) (*domain.Team, error) {
 	if s.updateErr != nil {
 		return nil, s.updateErr
 	}
@@ -105,7 +107,7 @@ type controlKeySvc struct {
 	keys          []*domain.Credential
 	rawKey        string
 	deletedKey    uuid.UUID
-	lastCreateReq service.CreateCredentialRequest
+	lastCreateReq accessservice.CreateCredentialRequest
 	listErr       error
 	countErr      error
 	createErr     error
@@ -114,11 +116,11 @@ type controlKeySvc struct {
 	deleteErr     error
 }
 
-func (s *controlKeySvc) CreateCredential(_ context.Context, profileID uuid.UUID, req service.CreateCredentialRequest, _ *string, _ string, _ string, _ string) (*domain.Credential, string, error) {
+func (s *controlKeySvc) CreateCredential(_ context.Context, profileID uuid.UUID, req accessservice.CreateCredentialRequest, _ *string, _ string, _ string, _ string) (*domain.Credential, string, error) {
 	if s.createErr != nil {
 		return nil, "", s.createErr
 	}
-	scopes, err := service.NormalizeCredentialScopes(req.Scopes)
+	scopes, err := accessservice.NormalizeCredentialScopes(req.Scopes)
 	if err != nil {
 		return nil, "", err
 	}
@@ -139,7 +141,7 @@ func (s *controlKeySvc) CreateCredential(_ context.Context, profileID uuid.UUID,
 	return key, s.rawKey, nil
 }
 
-func (s *controlKeySvc) RotateForTeam(_ context.Context, profileID, id uuid.UUID, req service.CreateCredentialRequest, _ *string, _ string, _ string, _ string) (*domain.Credential, string, error) {
+func (s *controlKeySvc) RotateForTeam(_ context.Context, profileID, id uuid.UUID, req accessservice.CreateCredentialRequest, _ *string, _ string, _ string, _ string) (*domain.Credential, string, error) {
 	if s.rotateErr != nil {
 		return nil, "", s.rotateErr
 	}
@@ -174,11 +176,11 @@ func (s *controlKeySvc) UpdateRoleForTeam(_ context.Context, profileID, id uuid.
 	for _, key := range s.keys {
 		if key.TeamID == profileID && key.ID == id {
 			key.Role = role
-			if role == service.CredentialRoleManager {
-				hasFeedback := slices.Contains(key.Scopes, service.CredentialScopeFeedbackRead)
-				key.Scopes = []string{service.CredentialScopeRead, service.CredentialScopeWrite}
+			if role == accessservice.CredentialRoleManager {
+				hasFeedback := slices.Contains(key.Scopes, accessservice.CredentialScopeFeedbackRead)
+				key.Scopes = []string{accessservice.CredentialScopeRead, accessservice.CredentialScopeWrite}
 				if hasFeedback {
-					key.Scopes = append(key.Scopes, service.CredentialScopeFeedbackRead)
+					key.Scopes = append(key.Scopes, accessservice.CredentialScopeFeedbackRead)
 				}
 			}
 			return key, nil
@@ -191,17 +193,17 @@ func (s *controlKeySvc) UpdateScopesForTeam(_ context.Context, profileID, id uui
 	if s.updateErr != nil {
 		return nil, s.updateErr
 	}
-	normalized, err := service.NormalizeCredentialScopes(scopes)
+	normalized, err := accessservice.NormalizeCredentialScopes(scopes)
 	if err != nil {
 		return nil, err
 	}
 	for _, key := range s.keys {
 		if key.TeamID == profileID && key.ID == id {
-			if key.GetRole() == service.CredentialRoleManager {
-				hasFeedback := slices.Contains(normalized, service.CredentialScopeFeedbackRead)
-				normalized = []string{service.CredentialScopeRead, service.CredentialScopeWrite}
+			if key.GetRole() == accessservice.CredentialRoleManager {
+				hasFeedback := slices.Contains(normalized, accessservice.CredentialScopeFeedbackRead)
+				normalized = []string{accessservice.CredentialScopeRead, accessservice.CredentialScopeWrite}
 				if hasFeedback {
-					normalized = append(normalized, service.CredentialScopeFeedbackRead)
+					normalized = append(normalized, accessservice.CredentialScopeFeedbackRead)
 				}
 			}
 			key.Scopes = normalized
@@ -300,13 +302,13 @@ func (s *controlMetricsSvc) Snapshot(_ context.Context, filter domain.UsageMetri
 }
 
 type controlTelemetrySvc struct {
-	snapshot *service.TelemetrySnapshot
-	filter   service.TelemetryFilter
+	snapshot *operations.TelemetrySnapshot
+	filter   operations.TelemetryFilter
 	err      error
 	calls    int
 }
 
-func (s *controlTelemetrySvc) Snapshot(_ context.Context, filter service.TelemetryFilter) (*service.TelemetrySnapshot, error) {
+func (s *controlTelemetrySvc) Snapshot(_ context.Context, filter operations.TelemetryFilter) (*operations.TelemetrySnapshot, error) {
 	s.calls++
 	s.filter = filter
 	if s.err != nil {
@@ -315,7 +317,7 @@ func (s *controlTelemetrySvc) Snapshot(_ context.Context, filter service.Telemet
 	if s.snapshot != nil {
 		return s.snapshot, nil
 	}
-	return &service.TelemetrySnapshot{Available: true}, nil
+	return &operations.TelemetrySnapshot{Available: true}, nil
 }
 
 type controlSecuritySvc struct {
@@ -382,7 +384,7 @@ func (s *controlSecuritySvc) UpdateSecuritySettings(_ context.Context, settings 
 		return nil, s.updateErr
 	}
 	if settings.FailureThreshold <= 0 {
-		return nil, service.ErrInvalidSecuritySettings
+		return nil, settingsapp.ErrInvalidSecuritySettings
 	}
 	s.settings = settings
 	return &s.settings, nil
@@ -703,7 +705,7 @@ func TestControlPortalTelemetryErrors(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 
 	telemetry := &controlTelemetrySvc{}
-	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
@@ -948,12 +950,12 @@ func TestControlPortalServiceAndValidationErrorBranches(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, do(http.MethodGet, "/control/api/security/bans", "").Code)
 	securitySvc.listErr = nil
 	require.Equal(t, http.StatusUnprocessableEntity, do(http.MethodPost, "/control/api/security/bans", "{").Code)
-	securitySvc.createErr = service.ErrInvalidSecurityIP
+	securitySvc.createErr = settingsapp.ErrInvalidSecurityIP
 	require.Equal(t, http.StatusUnprocessableEntity, do(http.MethodPost, "/control/api/security/bans", `{"ip":"bad"}`).Code)
 	securitySvc.createErr = errors.New("ban create failed")
 	require.Equal(t, http.StatusInternalServerError, do(http.MethodPost, "/control/api/security/bans", `{"ip":"203.0.113.9"}`).Code)
 	securitySvc.createErr = nil
-	securitySvc.deleteErr = service.ErrInvalidSecurityIP
+	securitySvc.deleteErr = settingsapp.ErrInvalidSecurityIP
 	require.Equal(t, http.StatusUnprocessableEntity, do(http.MethodDelete, "/control/api/security/bans/bad", "").Code)
 	securitySvc.deleteErr = errors.New("ban delete failed")
 	require.Equal(t, http.StatusInternalServerError, do(http.MethodDelete, "/control/api/security/bans/203.0.113.9", "").Code)
@@ -970,7 +972,7 @@ func TestControlPortalProfileDreamingConfigErrors(t *testing.T) {
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}}}
-	server, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	server, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 	}, profiles, &controlKeySvc{}, nil, ControlPortalTelemetry{

@@ -13,16 +13,27 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
+	communitypostgres "github.com/markhuangai/dense-mem/internal/community/postgres"
+	communityapp "github.com/markhuangai/dense-mem/internal/community/service"
 	"github.com/markhuangai/dense-mem/internal/config"
+	conflictassessment "github.com/markhuangai/dense-mem/internal/conflict/assessment"
+	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
 	conflictreview "github.com/markhuangai/dense-mem/internal/conflict/review"
-	"github.com/markhuangai/dense-mem/internal/conflictassessment"
+	"github.com/markhuangai/dense-mem/internal/crypto"
+	"github.com/markhuangai/dense-mem/internal/dream"
+	dreampostgres "github.com/markhuangai/dense-mem/internal/dream/postgres"
+	graphpostgres "github.com/markhuangai/dense-mem/internal/graph/postgres"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
+	operationspostgres "github.com/markhuangai/dense-mem/internal/operations/postgres"
+	privacy "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service/communityservice"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
+	recallpostgres "github.com/markhuangai/dense-mem/internal/recall/postgres"
+	settingspostgres "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/markhuangai/dense-mem/internal/verifier"
@@ -78,8 +89,9 @@ func RunActiveServer(
 	logInMemoryModeWarning(logger, backend.degraded, backend.reason)
 
 	rlsHelper := postgres.NewRLS()
-	teamRepo := repository.NewTeamRepository(pgDB.GetDB(), rlsHelper)
-	credentialRepo := repository.NewCredentialRepository(pgDB.GetDB(), rlsHelper)
+	teamRepo := accesspostgres.NewTeamRepository(pgDB.GetDB(), rlsHelper)
+	credentialDeletionRepo := privacy.NewCredentialDeletionRepository(pgDB.GetDB(), rlsHelper)
+	credentialRepo := accesspostgres.NewCredentialRepository(pgDB.GetDB(), rlsHelper, credentialDeletionRepo)
 	accessAuthentication := buildAccessAuthenticationApplication(
 		credentialRepo,
 		credentialRepo,
@@ -88,35 +100,38 @@ func RunActiveServer(
 	)
 	credentialVerifier := accessAuthentication.CredentialVerifier
 	activityWriter := accessAuthentication.ActivityWriter
-	ssoRepo := repository.NewSSORepository(pgDB.GetDB(), rlsHelper)
-	portalSessionRepo := repository.NewUserPortalSessionRepository(pgDB.GetDB(), rlsHelper)
-	directoryIdentityRepo := repository.NewDirectoryIdentityRepository(pgDB.GetDB(), rlsHelper)
-	controlIdentityRepo := repository.NewControlIdentityRepository(pgDB.GetDB(), rlsHelper)
-	appConfigRepo := repository.NewAppConfigRepository(pgDB.GetDB(), rlsHelper)
-	securityRepo := repository.NewSecurityRepository(pgDB.GetDB(), rlsHelper)
-	usageMetricsRepo := repository.NewUsageMetricsRepository(pgDB.GetDB(), rlsHelper)
-	operationLogRepo := repository.NewOperationLogRepository(pgDB.GetDB(), rlsHelper)
-	recallFeedbackEventRepo := repository.NewRecallFeedbackEventRepository(pgDB.GetDB(), rlsHelper)
-	privateMemoryRepo := repository.NewPrivateMemoryRepository(pgDB.GetDB(), rlsHelper)
-	semanticRepo := repository.NewSemanticRepository(pgDB.GetDB(), rlsHelper)
-	knowledgeStore := knowledgepostgres.NewStore(pgDB.GetDB(), rlsHelper, knowledgepostgres.ConflictRuntimeConfig{})
-	ledgerRepo := repository.NewLedgerRepositoryWithRuntimeConfig(
-		pgDB.GetDB(),
-		rlsHelper,
-		repository.ConflictRuntimeConfig{
-			ReviewTTLDays: cfg.GetConflictReviewTTLDays(),
-			Timezone:      cfg.GetAppTimezone(),
-		},
-	)
-	conflictQueueService := buildConflictQueueApplication(ledgerRepo)
-	evidenceConflictService := buildEvidenceConflictApplication(ledgerRepo)
+	ssoRepo := accesspostgres.NewSSORepository(pgDB.GetDB(), rlsHelper)
+	portalSessionRepo := accesspostgres.NewUserPortalSessionRepository(pgDB.GetDB(), rlsHelper)
+	directoryIdentityRepo := accesspostgres.NewDirectoryIdentityRepository(pgDB.GetDB(), rlsHelper)
+	controlIdentityRepo := accesspostgres.NewControlIdentityRepository(pgDB.GetDB(), rlsHelper)
+	appConfigRepo := settingspostgres.NewAppConfigRepository(pgDB.GetDB(), rlsHelper)
+	securityRepo := settingspostgres.NewSecurityRepository(pgDB.GetDB(), rlsHelper)
+	usageMetricsRepo := operationspostgres.NewUsageMetricsRepository(pgDB.GetDB(), rlsHelper)
+	operationLogRepo := operationspostgres.NewOperationLogRepository(pgDB.GetDB(), rlsHelper)
+	telemetryLifecycleRepo := operationspostgres.NewTelemetryLifecycleRepository(pgDB.GetDB(), rlsHelper)
+	recallFeedbackEventRepo := recallpostgres.NewFeedbackStore(pgDB.GetDB(), rlsHelper)
+	privateMemoryRepo := privacy.NewStore(pgDB.GetDB(), rlsHelper)
+	knowledgeStore := knowledgepostgres.NewStore(pgDB.GetDB(), rlsHelper, knowledgecontract.ConflictRuntimeConfig{
+		ReviewTTLDays: cfg.GetConflictReviewTTLDays(),
+		Timezone:      cfg.GetAppTimezone(),
+	})
+	dreamStore := dreampostgres.NewStore(pgDB.GetDB(), rlsHelper)
+	conflictStore := conflictpostgres.NewStore(pgDB.GetDB(), rlsHelper, knowledgeStore)
+	graphStore := graphpostgres.NewStore(pgDB.GetDB(), rlsHelper)
+	traceStore := buildTraceStore(pgDB.GetDB(), rlsHelper)
+	conflictQueueService := buildConflictQueueApplication(conflictStore)
+	evidenceConflictService := buildEvidenceConflictApplication(conflictStore)
 	if err := checkActiveAuthority(authority); err != nil {
 		return fmt.Errorf("active boot blocked: %w", err)
 	}
-	searchRepo, searchContract, err := buildSearchRepositoryApplication(startupCtx, cfg, pgDB, rlsHelper)
+	searchRepo, searchContract, err := buildSearchRepositoryApplication(startupCtx, cfg, pgDB, rlsHelper, knowledgeStore)
 	if err != nil {
 		return fmt.Errorf("active search bootstrap blocked: %w", err)
 	}
+	recallStore := recallpostgres.NewStore(
+		pgDB.GetDB(), rlsHelper, searchRepo,
+		searchRecallConflictReader(), recallpostgres.LoadRecallEvidenceConflictRecords,
+	)
 	logger.Info(
 		"postgres authority enabled",
 		observability.String("mode", string(authority.Mode)),
@@ -175,13 +190,13 @@ func RunActiveServer(
 		RLS:               rlsHelper,
 		Logger:            logger,
 	}
-	telemetry, err := buildTelemetryApplication(startupCtx, cfg, appConfigService, ledgerRepo, ledgerRepo, logger)
+	telemetry, err := buildTelemetryApplication(startupCtx, cfg, appConfigService, conflictStore, telemetryLifecycleRepo, logger)
 	if err != nil {
 		return fmt.Errorf("failed to build telemetry application: %w", err)
 	}
 	discoverabilityMetrics := telemetry.Metrics
 	telemetryPrometheusService := telemetry.Prometheus
-	searchApplication := buildSearchProviders(cfg, searchRepo, searchContract, discoverabilityMetrics, logger)
+	searchApplication := buildSearchProviders(cfg, searchRepo, searchContract, knowledgeStore, discoverabilityMetrics, logger)
 	openaiProvider := searchApplication.EmbeddingProvider
 	retryEmbedder := searchApplication.RetryEmbedding
 	assessmentLimits := assessorprovider.SemanticAssessmentLimitsForConfig(&cfg)
@@ -192,7 +207,7 @@ func RunActiveServer(
 	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(&cfg, aiHTTPClient, assessmentLimits, aiConcurrencyGate)
 	assessorProvider.SetMetrics(discoverabilityMetrics)
 	conflictReviewRunner, err := buildConflictReviewApplication(conflictReviewApplicationDependencies{
-		Ledger:           ledgerRepo,
+		Store:            conflictStore,
 		Provider:         verifierProvider,
 		Embeddings:       retryEmbedder,
 		EmbeddingTimeout: time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
@@ -204,10 +219,15 @@ func RunActiveServer(
 		return fmt.Errorf("failed to build conflict review runner: %w", err)
 	}
 	applications := buildApplicationBundle(applicationCompositionDependencies{
-		Ledger:                 ledgerRepo,
-		Semantic:               semanticRepo,
+		Knowledge:              knowledgeStore,
+		Dream:                  dreamStore,
+		RememberPersistence:    knowledgeStore,
+		GraphStore:             graphStore,
+		TraceStore:             traceStore,
+		CommunityStore:         communitypostgres.NewStore(pgDB.GetDB(), rlsHelper),
 		RememberCatalog:        knowledgeStore,
 		Search:                 searchRepo,
+		RecallSearch:           recallStore,
 		RecallFeedbackEvents:   recallFeedbackEventRepo,
 		Assessor:               assessorProvider,
 		GeneratorTransport:     assessorProvider,
@@ -219,13 +239,16 @@ func RunActiveServer(
 		Audit:                  auditService,
 		AppConfig:              appConfigService,
 		Teams:                  teamService,
-		CommunitySummary:       verifierProvider,
-		DreamEvidenceStore:     semanticRepo,
-		DreamModel:             cfg.GetAIVerifierModel(),
-		ProviderCycleLease:     dreamProviderCycleLease(cfg),
-		CorrectionTimeout:      time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
-		CorrectionExecutor:     buildSemanticWriteCorrectionExecutor(openaiProvider),
-		TelemetryPrometheus:    telemetryPrometheusService,
+		CommunitySummary: communitySummaryProvider{
+			model:    cfg.GetAIVerifierModel(),
+			complete: verifierProvider.StructuredChatJSON,
+		},
+		DreamEvidenceStore:  dreamStore,
+		DreamModel:          cfg.GetAIVerifierModel(),
+		ProviderCycleLease:  dreamProviderCycleLease(cfg),
+		CorrectionTimeout:   time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
+		CorrectionExecutor:  buildSemanticWriteCorrectionExecutor(openaiProvider),
+		TelemetryPrometheus: telemetryPrometheusService,
 	})
 	rememberSvc := applications.Remember
 	recallSvc := applications.Recall
@@ -238,7 +261,7 @@ func RunActiveServer(
 	memoryPackSvc := applications.MemoryPack
 	recallFeedbackEventService := applications.RecallFeedback
 
-	evaluationBindings, err := buildEvaluationRegistryBindings(semanticRepo, auditService)
+	evaluationBindings, err := buildEvaluationRegistryBindings(pgDB.GetDB(), rlsHelper, communitypostgres.NewStore(pgDB.GetDB(), rlsHelper), auditService)
 	if err != nil {
 		return fmt.Errorf("failed to build evaluation registry bindings: %w", err)
 	}
@@ -266,42 +289,43 @@ func RunActiveServer(
 		}
 	}
 	transport, err := buildTransportComposition(transportCompositionInputs{
-		startupCtx:         startupCtx,
-		cfg:                cfg,
-		pgDB:               pgDB,
-		authority:          authority,
-		backend:            backend,
-		rls:                rlsHelper,
-		options:            options,
-		logger:             logger,
-		searchRepo:         searchRepo,
-		telemetry:          telemetry,
-		toolRegistry:       toolRegistry,
-		convergence:        searchApplication.Convergence,
-		rememberAttempts:   buildRememberAttemptDiagnostics(knowledgeStore),
-		credentialRepo:     credentialRepo,
-		credentialVerifier: credentialVerifier,
-		activityWriter:     activityWriter,
-		teamService:        teamService,
-		credentialService:  credentialService,
-		ssoService:         ssoService,
-		portalSession:      portalSessionService,
-		directoryIdentity:  directoryIdentityService,
-		controlIdentity:    controlIdentityService,
-		privateMemory:      privateMemoryService,
-		auditService:       auditService,
-		securityService:    securityService,
-		appConfig:          appConfigService,
-		operationLogs:      operationLogService,
-		usageMetrics:       usageMetricsService,
-		conflictQueue:      conflictQueueService,
-		evidenceConflicts:  evidenceConflictService,
-		recallFeedback:     recallFeedbackEventService,
-		community:          communitySvc,
-		controlDream:       controlDreamSvc,
-		graph:              graphViewSvc,
-		recall:             recallSvc,
-		dream:              dreamSvc,
+		startupCtx:               startupCtx,
+		cfg:                      cfg,
+		pgDB:                     pgDB,
+		authority:                authority,
+		backend:                  backend,
+		rls:                      rlsHelper,
+		options:                  options,
+		logger:                   logger,
+		credentialLookupPrefixes: crypto.GetLookupPrefixes,
+		searchRepo:               searchRepo,
+		telemetry:                telemetry,
+		toolRegistry:             toolRegistry,
+		convergence:              searchApplication.Convergence,
+		rememberAttempts:         buildRememberAttemptDiagnostics(knowledgeStore),
+		credentialRepo:           credentialRepo,
+		credentialVerifier:       credentialVerifier,
+		activityWriter:           activityWriter,
+		teamService:              teamService,
+		credentialService:        credentialService,
+		ssoService:               ssoService,
+		portalSession:            portalSessionService,
+		directoryIdentity:        directoryIdentityService,
+		controlIdentity:          controlIdentityService,
+		privateMemory:            privateMemoryService,
+		auditService:             auditService,
+		securityService:          securityService,
+		appConfig:                appConfigService,
+		operationLogs:            operationLogService,
+		usageMetrics:             usageMetricsService,
+		conflictQueue:            conflictQueueService,
+		evidenceConflicts:        evidenceConflictService,
+		recallFeedback:           recallFeedbackEventService,
+		community:                communitySvc,
+		controlDream:             controlDreamSvc,
+		graph:                    graphViewSvc,
+		recall:                   recallSvc,
+		dream:                    dreamSvc,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to build transport composition: %w", err)
@@ -427,7 +451,7 @@ func RunActiveServer(
 	}
 	if telemetry.PricingRefreshEnabled {
 		lifecycle.start("telemetry pricing refresh", func(ctx context.Context) {
-			refreshTelemetryPricingCacheUntilCanceled(ctx, appConfigService, logger)
+			operations.RefreshTelemetryPricingCacheUntilCanceled(ctx, appConfigService, logger)
 		})
 	}
 	if err := startupCheck(); err != nil {
@@ -445,13 +469,13 @@ func RunActiveServer(
 		return abortStartup(err)
 	}
 	lifecycle.start("dream scheduler", func(ctx context.Context) {
-		dreamservice.NewScheduler(dreamSvc, teamService, slog.Default()).Start(ctx)
+		dream.NewScheduler(dreamSvc, teamService, slog.Default()).Start(ctx)
 	})
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)
 	}
 	lifecycle.start("community scheduler", func(ctx context.Context) {
-		communityservice.NewScheduler(communitySvc, teamService, appConfigService, slog.Default()).Start(ctx)
+		communityapp.NewScheduler(communitySvc, teamService, appConfigService, slog.Default()).Start(ctx)
 	})
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)

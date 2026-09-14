@@ -18,9 +18,9 @@ import (
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	semanticwritecontract "github.com/markhuangai/dense-mem/internal/semanticwrite/contract"
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	semanticwriteapp "github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 

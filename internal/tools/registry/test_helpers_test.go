@@ -3,19 +3,19 @@ package registry
 import (
 	"context"
 	"errors"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"testing"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/dream"
-	appservice "github.com/markhuangai/dense-mem/internal/service"
 )
 
 type evaluationAuditStub struct {
-	entries []appservice.AuditLogEntry
+	entries []accessservice.AuditLogEntry
 }
 
-func (s *evaluationAuditStub) Append(_ context.Context, entry appservice.AuditLogEntry) error {
+func (s *evaluationAuditStub) Append(_ context.Context, entry accessservice.AuditLogEntry) error {
 	s.entries = append(s.entries, entry)
 	return nil
 }

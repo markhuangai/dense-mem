@@ -25,6 +25,15 @@ var (
 	ErrPrivateMemoryInvalidReason            = errors.New("invalid private-memory reason code")
 	ErrPrivateMemoryAuditUnavailable         = errors.New("private-memory audit service is unavailable")
 	ErrPrivateMemoryRuntimeConfigUnavailable = errors.New("private-memory runtime configuration is unavailable")
+	ErrPrivateMemoryNotFound                 = privacycontract.ErrPrivateMemoryNotFound
+	ErrPrivateMemoryLegalHold                = privacycontract.ErrPrivateMemoryLegalHold
+	ErrPrivateMemoryIdempotency              = privacycontract.ErrPrivateMemoryIdempotency
+	ErrPrivateMemoryOperationConflict        = privacycontract.ErrPrivateMemoryOperationConflict
+	ErrPrivateMemoryManifest                 = privacycontract.ErrPrivateMemoryManifest
+	ErrPrivateMemoryClaimLost                = privacycontract.ErrPrivateMemoryClaimLost
+	ErrPrivateMemoryRetentionDisabled        = privacycontract.ErrPrivateMemoryRetentionDisabled
+	ErrPrivateMemoryHoldConflict             = privacycontract.ErrPrivateMemoryHoldConflict
+	ErrPrivateMemoryInternal                 = privacycontract.ErrPrivateMemoryInternal
 )
 
 const (

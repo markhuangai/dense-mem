@@ -15,7 +15,7 @@ import (
 // this adapter supplies Conflict-owned reads and transaction boundaries.
 type Persistence interface {
 	conflictcontract.ReviewRunLedger
-	conflictcontract.EvidenceConflictRepository
+	ResolveEvidenceConflict(context.Context, conflictcontract.EvidenceConflictResolutionInput) (*conflictcontract.EvidenceConflictCaseRecord, error)
 }
 
 type Store struct {

@@ -11,9 +11,30 @@ import (
 	"github.com/markhuangai/dense-mem/cmd/internal/migrationapp"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
+	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
+	operationspostgres "github.com/markhuangai/dense-mem/internal/operations/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
+
+var errAuthorityBlocked = operations.ErrAuthorityBlocked
+
+const cutoverMarkerVersion = operations.CutoverMarkerVersion
+
+type authorityMode = operations.AuthorityMode
+
+const authorityActive = operations.AuthorityActive
+
+type authorityBootstrap = operations.AuthorityBootstrap
+type authorityBootstrapStore = operationscontract.AuthorityReader
+
+func ClassifyAuthority(ctx context.Context, store authorityBootstrapStore) (authorityBootstrap, error) {
+	return operations.ClassifyAuthority(ctx, store)
+}
+
+func checkActiveAuthority(authority authorityBootstrap) error {
+	return operations.CheckActiveAuthority(authority)
+}
 
 const DefaultStartupTimeout = 5 * time.Minute
 
@@ -80,7 +101,7 @@ func RunFromEnvironment(processCtx context.Context, options RuntimeOptions) erro
 	}
 
 	rlsHelper := postgres.NewRLS()
-	authorityRepo := repository.NewAuthorityRepository(pgDB.GetDB(), rlsHelper)
+	authorityRepo := operationspostgres.NewAuthorityRepository(pgDB.GetDB(), rlsHelper)
 	authority, err := ClassifyAuthority(postMigrationCtx, authorityRepo)
 	if err != nil {
 		return fmt.Errorf("bootstrap authority: %w", err)

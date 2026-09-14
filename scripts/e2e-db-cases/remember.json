@@ -4,38 +4,38 @@
   "cases": [
     {
       "id": "repository/TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndExchanges",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndExchanges$",
       "phase": "precheck",
-      "source": "internal/repository/remember_attempt_diagnostics_repository_integration.e2e"
+      "source": "internal/knowledge/postgres/remember_attempt_diagnostics_repository_integration.e2e"
     },
     {
       "id": "repository/TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC$",
       "phase": "precheck",
-      "source": "internal/repository/remember_attempt_diagnostics_repository_integration.e2e"
+      "source": "internal/knowledge/postgres/remember_attempt_diagnostics_repository_integration.e2e"
     },
     {
       "id": "repository/TestRememberAttemptDiagnosticsPurgeClaimsConcurrentBatches",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberAttemptDiagnosticsPurgeClaimsConcurrentBatches$",
       "phase": "precheck",
-      "source": "internal/repository/remember_attempt_diagnostics_repository_integration.e2e"
+      "source": "internal/knowledge/postgres/remember_attempt_diagnostics_repository_integration.e2e"
     },
     {
       "id": "repository/TestRememberAttemptDiagnosticsDrainRotatesPrivateSpaces",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberAttemptDiagnosticsDrainRotatesPrivateSpaces$",
       "phase": "precheck",
-      "source": "internal/repository/remember_attempt_diagnostics_repository_integration.e2e"
+      "source": "internal/knowledge/postgres/remember_attempt_diagnostics_repository_integration.e2e"
     },
     {
       "id": "repository/TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes$",
       "phase": "precheck",
-      "source": "internal/repository/remember_attempt_diagnostics_repository_integration.e2e"
+      "source": "internal/knowledge/postgres/remember_attempt_diagnostics_repository_integration.e2e"
     },
     {
       "id": "server/TestRememberServiceRejectsHistoricalOutcomesThroughPostgres",
@@ -55,11 +55,11 @@
     },
     {
       "id": "service/TestComposeSynchronousEvidenceOnlyAssessorBatch",
-      "package": "./internal/service/memoryservice",
+      "package": "./cmd/internal/serverapp",
       "run": "^TestComposeSynchronousEvidenceOnlyAssessorBatch$",
       "phase": "scenario",
       "scenario": "synchronous_write_primitives",
-      "source": "internal/service/memoryservice/synchronous_assessment_compose_e2e.e2e"
+      "source": "cmd/internal/serverapp/synchronous_assessment_compose_e2e.e2e"
     }
   ]
 }

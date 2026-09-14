@@ -14,7 +14,7 @@ func bindRememberTool(tool Tool, deps Dependencies) Tool {
 		return tool
 	}
 	tool.Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-		if deps.Remember == nil {
+		if deps.RememberBindings.Service == nil {
 			return nil, ErrToolUnavailable
 		}
 		if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
@@ -32,7 +32,7 @@ func bindRememberTool(tool Tool, deps Dependencies) Tool {
 			return json.Marshal(ToolCallerResponse(result, isError))
 		})
 		ctx = rememberapp.WithDiagnosticCapture(ctx, capture)
-		res, err := deps.Remember.Remember(ctx, req)
+		res, err := deps.RememberBindings.Service.Remember(ctx, req)
 		if err != nil {
 			validation := wrapRememberValidationError(err)
 			if _, ok := ContractValidationResultFromError(validation); ok {

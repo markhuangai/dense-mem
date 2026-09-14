@@ -15,8 +15,7 @@ import (
 
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	httperr "github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"github.com/markhuangai/dense-mem/internal/tools"
 )
 
@@ -87,7 +86,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // NewServer creates a new Echo server with the given configuration and health checks.
 // It sets up the correlation ID middleware, error handler, and public routes.
 // The health and ready endpoints are not behind auth, team, or rate-limit middleware.
-func NewServer(cfg httpcontract.BodyLimitConfig, logger observability.LogProvider, health HealthConfig) *echo.Echo {
+func NewServer(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider, health HealthConfig) *echo.Echo {
 	e := echo.New()
 	if health.dependencyFlights == nil {
 		health.dependencyFlights = newDependencyCheckFlightRegistry()
@@ -119,18 +118,18 @@ func NewServer(cfg httpcontract.BodyLimitConfig, logger observability.LogProvide
 				return nil
 			}
 
-			attrs := []observability.LogAttr{
-				observability.String("method", v.Method),
-				observability.String("uri", requestLogURI(c)),
-				observability.Int("status", v.Status),
-				observability.String("latency", v.Latency.String()),
-				observability.String("remote_ip", v.RemoteIP),
+			attrs := []httpcontract.LogAttr{
+				httpcontract.String("method", v.Method),
+				httpcontract.String("uri", requestLogURI(c)),
+				httpcontract.Int("status", v.Status),
+				httpcontract.String("latency", v.Latency.String()),
+				httpcontract.String("remote_ip", v.RemoteIP),
 			}
 			if v.RoutePath != "" {
-				attrs = append(attrs, observability.String("route", v.RoutePath))
+				attrs = append(attrs, httpcontract.String("route", v.RoutePath))
 			}
 			if requestID := c.Response().Header().Get(echo.HeaderXRequestID); requestID != "" {
-				attrs = append(attrs, observability.String("request_id", requestID))
+				attrs = append(attrs, httpcontract.String("request_id", requestID))
 			}
 			if isAnonymousUserSessionProbe(c, v) {
 				logger.Info("http_request", attrs...)
@@ -168,7 +167,7 @@ func isAnonymousUserSessionProbe(c echo.Context, v middleware.RequestLoggerValue
 		return false
 	}
 	for _, cookie := range c.Request().Cookies() {
-		if (cookie.Name == service.SSOSessionCookieName || cookie.Name == service.UserPortalSessionCookieName) && strings.TrimSpace(cookie.Value) != "" {
+		if (cookie.Name == accessservice.SSOSessionCookieName || cookie.Name == accessservice.UserPortalSessionCookieName) && strings.TrimSpace(cookie.Value) != "" {
 			return false
 		}
 	}
@@ -210,7 +209,7 @@ func effectiveMaxBodyBytes(value int) int {
 
 // NewServerWithGracefulShutdown creates a new server and returns it along with a shutdown function.
 // The shutdown function uses a 10-second timeout for graceful shutdown.
-func NewServerWithGracefulShutdown(cfg httpcontract.BodyLimitConfig, logger observability.LogProvider, health HealthConfig) (*echo.Echo, func()) {
+func NewServerWithGracefulShutdown(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider, health HealthConfig) (*echo.Echo, func()) {
 	e := NewServer(cfg, logger, health)
 
 	shutdown := func() {
@@ -228,7 +227,7 @@ func NewServerWithGracefulShutdown(cfg httpcontract.BodyLimitConfig, logger obse
 
 // RunServer starts the server and handles graceful shutdown.
 // It blocks until the server is shut down.
-func RunServer(e *echo.Echo, addr string, logger observability.LogProvider) error {
+func RunServer(e *echo.Echo, addr string, logger httpcontract.LogProvider) error {
 	// Start server in a goroutine
 	go func() {
 		if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
@@ -255,7 +254,7 @@ func RunServer(e *echo.Echo, addr string, logger observability.LogProvider) erro
 
 // ShutdownServer gracefully shuts down the Echo server with a 10-second timeout.
 // This function is used by main.go for graceful shutdown.
-func ShutdownServer(e *echo.Echo, logger observability.LogProvider) error {
+func ShutdownServer(e *echo.Echo, logger httpcontract.LogProvider) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return e.Shutdown(ctx)

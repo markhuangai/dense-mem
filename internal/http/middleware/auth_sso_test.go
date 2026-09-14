@@ -3,6 +3,8 @@ package middleware
 import (
 	"context"
 	"errors"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
+	settings "github.com/markhuangai/dense-mem/internal/settings"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,7 +16,6 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type stubCredentialVerifier struct {
@@ -53,7 +54,7 @@ func TestAuthMiddlewareRejectsCredentialVerificationAndEntitlementFailures(t *te
 	baseCredential.KeyHash = "encoded-hash"
 	baseCredential.KeyPrefix = crypto.GetKeyPrefix(rawKey)
 	baseCredential.Scopes = []string{"read"}
-	baseCredential.Role = service.CredentialRoleMember
+	baseCredential.Role = accessservice.CredentialRoleMember
 
 	tests := []struct {
 		name      string
@@ -99,8 +100,9 @@ func TestAuthMiddlewareRejectsCredentialVerificationAndEntitlementFailures(t *te
 				return &credential, nil
 			}}
 			e.Use(AuthMiddlewareWithOptions(repo, nil, nil, AuthOptions{
-				CredentialVerifier:      tt.verifier,
-				SSOEntitlementValidator: tt.validator,
+				CredentialVerifier:       tt.verifier,
+				CredentialLookupPrefixes: crypto.GetLookupPrefixes,
+				SSOEntitlementValidator:  tt.validator,
 			}))
 			handlerCalled := false
 			e.GET("/test", func(c echo.Context) error {
@@ -125,7 +127,7 @@ func TestAuthMiddleware_SSOSessionFailureIsAuditedAndRecorded(t *testing.T) {
 	mockSecurity := &mockSecurityService{}
 	authenticator := mockSSOSessionAuthenticator{
 		authenticateFunc: func(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.AuthenticatedActor, error) {
-			return nil, service.ErrSSOAccessDenied
+			return nil, accessservice.ErrSSOAccessDenied
 		},
 	}
 	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, mockAudit, mockSecurity, AuthOptions{
@@ -135,7 +137,7 @@ func TestAuthMiddleware_SSOSessionFailureIsAuditedAndRecorded(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/api/session", nil)
 	req.RemoteAddr = "198.51.100.10:12345"
-	req.AddCookie(&http.Cookie{Name: service.SSOSessionCookieName, Value: "session-token"})
+	req.AddCookie(&http.Cookie{Name: accessservice.SSOSessionCookieName, Value: "session-token"})
 	rec := httptest.NewRecorder()
 	handlerCalled := false
 	e.GET("/ui/api/session", func(c echo.Context) error {
@@ -252,11 +254,11 @@ func TestAuthMiddlewareOAuthBearerMapsBoundedErrors(t *testing.T) {
 		wantCode            string
 		wantSecurityFailure bool
 	}{
-		{name: "expired", err: service.ErrOAuthTokenExpired, wantStatus: http.StatusUnauthorized, wantCode: "AUTH_EXPIRED", wantSecurityFailure: true},
-		{name: "invalid", err: service.ErrOAuthTokenInvalid, wantStatus: http.StatusUnauthorized, wantCode: "AUTH_INVALID", wantSecurityFailure: true},
-		{name: "ambiguous team", err: service.ErrOAuthTeamRequired, wantStatus: http.StatusBadRequest, wantCode: "team_required"},
-		{name: "membership denied", err: service.ErrOAuthAccessDenied, wantStatus: http.StatusForbidden, wantCode: "FORBIDDEN", wantSecurityFailure: true},
-		{name: "provider unavailable", err: service.ErrOAuthProviderUnavailable, wantStatus: http.StatusServiceUnavailable, wantCode: "SERVICE_UNAVAILABLE"},
+		{name: "expired", err: accessservice.ErrOAuthTokenExpired, wantStatus: http.StatusUnauthorized, wantCode: "AUTH_EXPIRED", wantSecurityFailure: true},
+		{name: "invalid", err: accessservice.ErrOAuthTokenInvalid, wantStatus: http.StatusUnauthorized, wantCode: "AUTH_INVALID", wantSecurityFailure: true},
+		{name: "ambiguous team", err: accessservice.ErrOAuthTeamRequired, wantStatus: http.StatusBadRequest, wantCode: "team_required"},
+		{name: "membership denied", err: accessservice.ErrOAuthAccessDenied, wantStatus: http.StatusForbidden, wantCode: "FORBIDDEN", wantSecurityFailure: true},
+		{name: "provider unavailable", err: accessservice.ErrOAuthProviderUnavailable, wantStatus: http.StatusServiceUnavailable, wantCode: "SERVICE_UNAVAILABLE"},
 		{name: "unknown", err: errors.New("backend details"), wantStatus: http.StatusInternalServerError, wantCode: "INTERNAL_ERROR"},
 	}
 
@@ -285,9 +287,9 @@ func TestAuthMiddlewareOAuthBearerMapsBoundedErrors(t *testing.T) {
 
 func TestAuthMiddlewareOAuthTeamRequiredDoesNotCountTowardAutomaticBan(t *testing.T) {
 	securityRepo := newOAuthAuthSecurityRepository(2)
-	security := service.NewSecurityService(securityRepo, nil)
+	security := settings.NewSecurityService(securityRepo, nil)
 	audit := &mockAuditService{}
-	authenticator := &stubOAuthBearerAuthenticator{err: service.ErrOAuthTeamRequired}
+	authenticator := &stubOAuthBearerAuthenticator{err: accessservice.ErrOAuthTeamRequired}
 	e := newTestEcho()
 	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, audit, security, AuthOptions{
 		OAuthBearerAuthenticator: authenticator,
@@ -324,7 +326,7 @@ func TestAuthMiddlewareOAuthTeamRequiredDoesNotCountTowardAutomaticBan(t *testin
 	assert.Empty(t, securityRepo.failures)
 	assert.Empty(t, securityRepo.bans)
 
-	authenticator.err = service.ErrOAuthTokenInvalid
+	authenticator.err = accessservice.ErrOAuthTokenInvalid
 	for range 2 {
 		rec := request()
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
@@ -345,7 +347,7 @@ func TestAuthMiddlewareStaticCredentialMustMatchScopedTeam(t *testing.T) {
 	credential.KeyHash = "encoded-hash"
 	credential.KeyPrefix = crypto.GetKeyPrefix(rawKey)
 	credential.Scopes = []string{"read"}
-	credential.Role = service.CredentialRoleMember
+	credential.Role = accessservice.CredentialRoleMember
 
 	for _, test := range []struct {
 		name       string
@@ -360,7 +362,10 @@ func TestAuthMiddlewareStaticCredentialMustMatchScopedTeam(t *testing.T) {
 			e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{getActiveByPrefixFunc: func(context.Context, string) (*domain.Credential, error) {
 				copy := *credential
 				return &copy, nil
-			}}, nil, nil, AuthOptions{CredentialVerifier: stubCredentialVerifier{valid: true}}))
+			}}, nil, nil, AuthOptions{
+				CredentialVerifier:       stubCredentialVerifier{valid: true},
+				CredentialLookupPrefixes: crypto.GetLookupPrefixes,
+			}))
 			e.GET("/teams/:teamId/mcp", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
 			req := httptest.NewRequest(http.MethodGet, "/teams/"+test.pathTeamID.String()+"/mcp", nil)
 			req.Header.Set("Authorization", "Bearer "+rawKey)
@@ -379,8 +384,8 @@ func TestAuthMiddlewareOAuthOnlyRejectsBrowserCookies(t *testing.T) {
 	}))
 	e.GET("/mcp", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
 	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
-	req.AddCookie(&http.Cookie{Name: service.SSOSessionCookieName, Value: "sso-session"})
-	req.AddCookie(&http.Cookie{Name: service.UserPortalSessionCookieName, Value: "portal-session"})
+	req.AddCookie(&http.Cookie{Name: accessservice.SSOSessionCookieName, Value: "sso-session"})
+	req.AddCookie(&http.Cookie{Name: accessservice.UserPortalSessionCookieName, Value: "portal-session"})
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 

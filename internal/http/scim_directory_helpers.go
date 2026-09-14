@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 func directorySCIMUserResource(user domain.DirectoryUser) scim.Resource {
@@ -221,14 +221,14 @@ func directorySCIMGetError(id string, err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, service.ErrDirectoryResourceNotFound) {
+	if errors.Is(err, accessservice.ErrDirectoryResourceNotFound) {
 		return scimerrors.ScimErrorResourceNotFound(id)
 	}
 	return scimerrors.ScimErrorInternal
 }
 
 func directorySCIMListError(err error) error {
-	if errors.Is(err, service.ErrDirectoryInvalidValue) {
+	if errors.Is(err, accessservice.ErrDirectoryInvalidValue) {
 		return scimerrors.ScimErrorInvalidFilter
 	}
 	return scimerrors.ScimErrorInternal
@@ -238,13 +238,13 @@ func directorySCIMMutationError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, service.ErrDirectoryConnectorDisabled) {
+	if errors.Is(err, accessservice.ErrDirectoryConnectorDisabled) {
 		return scimerrors.ScimError{Status: nethttp.StatusForbidden}
 	}
-	if errors.Is(err, service.ErrDirectoryResourceConflict) {
+	if errors.Is(err, accessservice.ErrDirectoryResourceConflict) {
 		return scimerrors.ScimErrorUniqueness
 	}
-	if errors.Is(err, service.ErrDirectoryInvalidValue) {
+	if errors.Is(err, accessservice.ErrDirectoryInvalidValue) {
 		return scimerrors.ScimErrorInvalidValue
 	}
 	return scimerrors.ScimErrorInternal

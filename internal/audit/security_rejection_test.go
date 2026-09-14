@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 type rejectionAppenderStub struct {

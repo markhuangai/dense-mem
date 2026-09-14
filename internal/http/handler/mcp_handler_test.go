@@ -3,8 +3,6 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,7 +14,6 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/mcp"
-	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
@@ -437,5 +434,5 @@ func mcpTestContext(ctx context.Context, profileID uuid.UUID, scopes []string) c
 }
 
 func testMCPLogger() mcp.Logger {
-	return NewMCPLogger(observability.NewWithHandler(slog.NewJSONHandler(io.Discard, nil)))
+	return NewMCPLogger(mcpTestLogger{})
 }

@@ -10,13 +10,13 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 // AuditServiceInterface defines the interface for audit service operations.
 // This allows mocking in tests and decouples the handler from concrete implementations.
 type AuditServiceInterface interface {
-	List(ctx context.Context, profileID string, limit, offset int) ([]service.AuditLogEntry, int, error)
+	List(ctx context.Context, profileID string, limit, offset int) ([]accessservice.AuditLogEntry, int, error)
 }
 
 // AuditHandler handles HTTP requests for audit log operations.
@@ -97,8 +97,8 @@ func (h *AuditHandler) Get(c echo.Context) error {
 	})
 }
 
-// toAuditLogResponse converts a service.AuditLogEntry to AuditLogResponse.
-func toAuditLogResponse(e service.AuditLogEntry) AuditLogResponse {
+// toAuditLogResponse converts a accessservice.AuditLogEntry to AuditLogResponse.
+func toAuditLogResponse(e accessservice.AuditLogEntry) AuditLogResponse {
 	return AuditLogResponse{
 		ID:            e.ID,
 		ProfileID:     e.ProfileID,

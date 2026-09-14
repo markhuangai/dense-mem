@@ -16,9 +16,9 @@ import (
 
 var (
 	ErrConflictReviewLeaseLost           = knowledgecontract.ErrConflictReviewLeaseLost
-	ErrConflictContextStale              = errors.New("conflict context stale")
-	ErrRememberExactReferenceStale       = errors.New("remember exact reference stale")
-	ErrCorrectionTargetStale             = errors.New("correction target stale")
+	ErrConflictContextStale              = knowledgecontract.ErrConflictContextStale
+	ErrRememberExactReferenceStale       = knowledgecontract.ErrRememberExactReferenceStale
+	ErrCorrectionTargetStale             = knowledgecontract.ErrCorrectionTargetStale
 	errSemanticUnresolvedEndpoint        = errors.New("semantic relationship endpoint is unresolved")
 	errSemanticPredicateUnresolved       = errors.New("semantic predicate cannot be resolved safely")
 	errRelationshipDecisionNonPromotable = errors.New("relationship decision is not promotable")

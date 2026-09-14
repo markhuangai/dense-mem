@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"io"
 	"math/big"
 	nethttp "net/http"
@@ -29,10 +30,9 @@ import (
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
+	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/storage/inmem"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
@@ -41,7 +41,7 @@ func TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration(t *testing.T) {
 	db := setupSSOHTTPIntegrationDB(t)
 	ctx := context.Background()
 	rls := storagepostgres.NewRLS()
-	ssoRepo := repository.NewSSORepository(db, rls)
+	ssoRepo := accesspostgres.NewSSORepository(db, rls)
 	idp := newSSOIntegrationOIDCProvider(t)
 
 	activeTeamID := uuid.New()
@@ -56,7 +56,7 @@ func TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration(t *testing.T) {
 	}))
 
 	runtime := &ssoIntegrationRuntimeConfig{}
-	ssoSvc := service.NewSSOService(ssoRepo, service.SSOConfig{
+	ssoSvc := accessservice.NewSSOService(ssoRepo, accessservice.SSOConfig{
 		HTTPClient:    idp.server.Client(),
 		RuntimeConfig: runtime,
 	})
@@ -75,16 +75,16 @@ func TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration(t *testing.T) {
 			ProviderID: provider.ID,
 			TeamID:     archivedTeamID,
 			GroupID:    "engineering",
-			Scopes:     []string{service.CredentialScopeRead},
-			Role:       service.CredentialRoleMember,
+			Scopes:     []string{accessservice.CredentialScopeRead},
+			Role:       accessservice.CredentialRoleMember,
 			Enabled:    true,
 		},
 		{
 			ProviderID: provider.ID,
 			TeamID:     activeTeamID,
 			GroupID:    "engineering",
-			Scopes:     []string{service.CredentialScopeRead, service.CredentialScopeWrite},
-			Role:       service.CredentialRoleManager,
+			Scopes:     []string{accessservice.CredentialScopeRead, accessservice.CredentialScopeWrite},
+			Role:       accessservice.CredentialRoleManager,
 			Enabled:    true,
 		},
 	} {
@@ -105,8 +105,8 @@ func TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration(t *testing.T) {
 	}
 	e := NewServer(*cfg, nil, HealthConfig{})
 	RegisterUserPortal(e, UserPortalDeps{
-		CredentialRepo: repository.NewCredentialRepository(db, rls),
-		RateLimitSvc:   service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
+		CredentialRepo: accesspostgres.NewCredentialRepository(db, rls, nil),
+		RateLimitSvc:   accessservice.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
 		SSOService:     ssoSvc,
 		Config:         cfg,
 		UserStaticDir:  t.TempDir(),
@@ -141,7 +141,7 @@ func TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration(t *testing.T) {
 	require.NoError(t, err)
 	cookies := callbackResponse.Cookies()
 	require.Equal(t, "/ui/knowledge", integrationRedirectLocation(t, callbackResponse, nethttp.StatusFound))
-	require.NotEmpty(t, integrationCookieValue(cookies, service.SSOSessionCookieName))
+	require.NotEmpty(t, integrationCookieValue(cookies, accessservice.SSOSessionCookieName))
 
 	sessionRequest, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodGet, app.URL+"/ui/api/session", nil)
 	require.NoError(t, err)
@@ -167,7 +167,7 @@ func TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration(t *testing.T) {
 	require.NoError(t, json.NewDecoder(sessionResponse.Body).Decode(&session))
 	assert.Equal(t, activeTeamID, session.Data.Team.ID)
 	assert.Equal(t, activeTeamID, session.Data.Membership.TeamID)
-	assert.Equal(t, service.CredentialRoleManager, session.Data.Membership.Role)
+	assert.Equal(t, accessservice.CredentialRoleManager, session.Data.Membership.Role)
 	assert.Len(t, session.Data.Teams, 1)
 
 	identity, err := ssoRepo.GetIdentityByProviderSubject(ctx, provider.ID, "integration-subject")
@@ -270,15 +270,15 @@ type ssoIntegrationRuntimeConfig struct {
 	publicBaseURL string
 }
 
-func (c *ssoIntegrationRuntimeConfig) SSORuntimeConfig(context.Context) (service.SSORuntimeConfig, error) {
+func (c *ssoIntegrationRuntimeConfig) SSORuntimeConfig(context.Context) (accessservice.SSORuntimeConfig, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return service.SSORuntimeConfig{
+	return accessservice.SSORuntimeConfig{
 		PublicBaseURL:       c.publicBaseURL,
-		EntitlementCacheTTL: service.DefaultSSOEntitlementCacheTTL,
-		SessionTTL:          service.DefaultSSOSessionTTL,
-		StateTTL:            service.DefaultSSOStateTTL,
-		HTTPTimeout:         service.DefaultSSOHTTPTimeout,
+		EntitlementCacheTTL: accessservice.DefaultSSOEntitlementCacheTTL,
+		SessionTTL:          accessservice.DefaultSSOSessionTTL,
+		StateTTL:            accessservice.DefaultSSOStateTTL,
+		HTTPTimeout:         accessservice.DefaultSSOHTTPTimeout,
 	}, nil
 }
 

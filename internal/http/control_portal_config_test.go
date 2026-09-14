@@ -3,6 +3,8 @@ package http
 import (
 	"context"
 	"errors"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
+	settings "github.com/markhuangai/dense-mem/internal/settings"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -15,7 +17,6 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type controlAppConfigSvc struct {
@@ -37,7 +38,7 @@ type controlAppConfigSvc struct {
 	telemetryValues       map[string]string
 	getErr                error
 	updateErr             error
-	ssoRuntime            service.SSORuntimeConfig
+	ssoRuntime            accessservice.SSORuntimeConfig
 	ssoRuntimeErr         error
 	dreamingRuntime       domain.DreamingRuntimeConfig
 	dreamingRuntimeErr    error
@@ -92,9 +93,9 @@ func (s *controlAppConfigSvc) UpdateSSOSettings(_ context.Context, values map[st
 	return s.settings, nil
 }
 
-func (s *controlAppConfigSvc) SSORuntimeConfig(context.Context) (service.SSORuntimeConfig, error) {
+func (s *controlAppConfigSvc) SSORuntimeConfig(context.Context) (accessservice.SSORuntimeConfig, error) {
 	if s.ssoRuntimeErr != nil {
-		return service.SSORuntimeConfig{}, s.ssoRuntimeErr
+		return accessservice.SSORuntimeConfig{}, s.ssoRuntimeErr
 	}
 	return s.ssoRuntime, nil
 }
@@ -215,7 +216,7 @@ func (s *controlAppConfigSvc) UpdateRecallFeedbackSettings(_ context.Context, va
 	if raw, ok := values[domain.AppConfigRecallFeedbackEnabled]; ok {
 		enabled, err := strconv.ParseBool(raw)
 		if err != nil {
-			return nil, service.ErrInvalidAppConfig
+			return nil, settings.ErrInvalidAppConfig
 		}
 		s.recallRuntime.Enabled = enabled
 		if s.recallSettings != nil {
@@ -231,7 +232,7 @@ func (s *controlAppConfigSvc) UpdateRecallFeedbackSettings(_ context.Context, va
 	if raw, ok := values[domain.AppConfigRecallFeedbackRetentionDays]; ok {
 		retentionDays, err := strconv.Atoi(raw)
 		if err != nil || retentionDays < 1 || retentionDays > 365 {
-			return nil, service.ErrInvalidAppConfig
+			return nil, settings.ErrInvalidAppConfig
 		}
 		s.recallRuntime.RetentionDays = retentionDays
 		if s.recallSettings != nil {
@@ -289,7 +290,7 @@ func TestControlPortalGeneralConfigFlows(t *testing.T) {
 			Effective: domain.GeneralRuntimeConfig{Timezone: "Local"},
 		},
 	}
-	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
@@ -317,7 +318,7 @@ func TestControlPortalGeneralConfigFlows(t *testing.T) {
 	rec = do(http.MethodPatch, "/control/api/config/general", "{")
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
-	appConfig.updateErr = service.ErrInvalidAppConfig
+	appConfig.updateErr = settings.ErrInvalidAppConfig
 	rec = do(http.MethodPatch, "/control/api/config/general", `{"items":[{"key":"APP_TIMEZONE","value":"Nope/Zone"}]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
@@ -340,7 +341,7 @@ func TestControlPortalSSOConfigFlows(t *testing.T) {
 			}},
 		},
 	}
-	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
@@ -369,7 +370,7 @@ func TestControlPortalSSOConfigFlows(t *testing.T) {
 	rec = do(http.MethodPatch, "/control/api/config/sso", "{")
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
-	appConfig.updateErr = service.ErrInvalidAppConfig
+	appConfig.updateErr = settings.ErrInvalidAppConfig
 	rec = do(http.MethodPatch, "/control/api/config/sso", `{"items":[{"key":"SSO_SESSION_TTL_SECONDS","value":"0"}]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
@@ -401,7 +402,7 @@ func TestControlPortalDreamingConfigFlows(t *testing.T) {
 			},
 		},
 	}
-	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
@@ -430,7 +431,7 @@ func TestControlPortalDreamingConfigFlows(t *testing.T) {
 	rec = do(http.MethodPatch, "/control/api/config/dreaming", "{")
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
-	appConfig.updateErr = service.ErrInvalidAppConfig
+	appConfig.updateErr = settings.ErrInvalidAppConfig
 	rec = do(http.MethodPatch, "/control/api/config/dreaming", `{"items":[{"key":"DREAMING_MAX_OUTPUTS","value":"0"}]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
@@ -459,7 +460,7 @@ func TestControlPortalCommunityDetectionConfigFlows(t *testing.T) {
 			},
 		},
 	}
-	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
@@ -488,7 +489,7 @@ func TestControlPortalCommunityDetectionConfigFlows(t *testing.T) {
 	rec = do(http.MethodPatch, "/control/api/config/community-detection", "{")
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
-	appConfig.updateErr = service.ErrInvalidAppConfig
+	appConfig.updateErr = settings.ErrInvalidAppConfig
 	rec = do(http.MethodPatch, "/control/api/config/community-detection", `{"items":[{"key":"COMMUNITY_DETECTION_MAX_CONCURRENCY","value":"0"}]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
@@ -507,7 +508,7 @@ func TestControlPortalOperationLogConfigFlows(t *testing.T) {
 			Effective: domain.OperationLogRuntimeConfig{RetentionDays: 30},
 		},
 	}
-	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
@@ -536,7 +537,7 @@ func TestControlPortalOperationLogConfigFlows(t *testing.T) {
 	rec = do(http.MethodPatch, "/control/api/config/operation-logs", "{")
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
-	appConfig.updateErr = service.ErrInvalidAppConfig
+	appConfig.updateErr = settings.ErrInvalidAppConfig
 	rec = do(http.MethodPatch, "/control/api/config/operation-logs", `{"items":[{"key":"OPERATION_LOG_RETENTION_DAYS","value":"0"}]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
@@ -556,7 +557,7 @@ func TestControlPortalPrivateMemoryConfigFlows(t *testing.T) {
 		},
 		privateMemoryRuntime: domain.PrivateMemoryRuntimeConfig{RetentionDays: 0},
 	}
-	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
@@ -584,7 +585,7 @@ func TestControlPortalPrivateMemoryConfigFlows(t *testing.T) {
 	rec = do(http.MethodPatch, "/control/api/config/private-memory", "{")
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
-	appConfig.updateErr = service.ErrInvalidAppConfig
+	appConfig.updateErr = settings.ErrInvalidAppConfig
 	rec = do(http.MethodPatch, "/control/api/config/private-memory", `{"items":[{"key":"PRIVATE_MEMORY_RETENTION_DAYS","value":"-1"}]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
@@ -609,7 +610,7 @@ func TestControlPortalRecallFeedbackConfigFlows(t *testing.T) {
 		},
 		recallRuntime: domain.RecallFeedbackRuntimeConfig{Enabled: false, RetentionDays: 30},
 	}
-	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
@@ -641,7 +642,7 @@ func TestControlPortalRecallFeedbackConfigFlows(t *testing.T) {
 	rec = do(http.MethodPatch, "/control/api/config/recall-feedback", "{")
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
-	appConfig.updateErr = service.ErrInvalidAppConfig
+	appConfig.updateErr = settings.ErrInvalidAppConfig
 	rec = do(http.MethodPatch, "/control/api/config/recall-feedback", `{"items":[{"key":"RECALL_FEEDBACK_ENABLED","value":"maybe"}]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
@@ -666,7 +667,7 @@ func TestControlPortalTelemetryPricingConfigFlows(t *testing.T) {
 			},
 		},
 	}
-	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 		AIVerifierModel:    "configured-verifier",
@@ -722,7 +723,7 @@ func TestControlPortalTelemetryPricingConfigFlows(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "", appConfig.telemetryValues[domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens])
 
-	appConfig.updateErr = service.ErrInvalidAppConfig
+	appConfig.updateErr = settings.ErrInvalidAppConfig
 	rec = do(http.MethodPatch, "/control/api/config/telemetry-pricing", `{"items":[{"key":"TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS","value":"-1"}]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }

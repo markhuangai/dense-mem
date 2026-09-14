@@ -16,10 +16,12 @@ import (
 func TestBuildActiveRecallRecordsFeedbackSnapshot(t *testing.T) {
 	recorder := &stubRecallFeedbackRecorder{}
 	reg, err := BuildActive(Dependencies{
-		Recall:               &stubRecallService{},
-		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
-		RecallFeedbackEvents: recorder,
-		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+		Core: CoreDependencies{
+			RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+			RecallFeedbackEvents: recorder,
+			Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+		},
+		RecallBindings: RecallBindings{Service: &stubRecallService{}},
 	})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
@@ -57,10 +59,12 @@ func TestBuildActiveRecallRecordsFeedbackSnapshot(t *testing.T) {
 
 func TestBuildActiveRecallReportsFeedbackSnapshotFailure(t *testing.T) {
 	reg, err := BuildActive(Dependencies{
-		Recall:               &stubRecallService{},
-		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
-		RecallFeedbackEvents: &stubRecallFeedbackRecorder{err: errors.New("snapshot unavailable")},
-		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+		Core: CoreDependencies{
+			RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+			RecallFeedbackEvents: &stubRecallFeedbackRecorder{err: errors.New("snapshot unavailable")},
+			Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+		},
+		RecallBindings: RecallBindings{Service: &stubRecallService{}},
 	})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
@@ -97,9 +101,11 @@ func TestBuildActiveSubmitRecallSessionFeedbackRecordsFeedback(t *testing.T) {
 	recorder := &stubRecallFeedbackRecorder{}
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	reg, err := BuildActive(Dependencies{
-		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
-		RecallFeedbackEvents: recorder,
-		Metrics:              metrics,
+		Core: CoreDependencies{
+			RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+			RecallFeedbackEvents: recorder,
+			Metrics:              metrics,
+		},
 	})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
@@ -153,9 +159,11 @@ func TestBuildActiveSubmitRecallSessionFeedbackRecordsFeedback(t *testing.T) {
 func TestBuildActiveSubmitRecallSessionFeedbackReportsPartialSuccess(t *testing.T) {
 	recorder := &stubRecallFeedbackRecorder{failAfter: 1}
 	reg, err := BuildActive(Dependencies{
-		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
-		RecallFeedbackEvents: recorder,
-		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+		Core: CoreDependencies{
+			RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+			RecallFeedbackEvents: recorder,
+			Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+		},
 	})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
@@ -205,8 +213,10 @@ func TestBuildActiveSubmitRecallSessionFeedbackClassifiesFailureOwnership(t *tes
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			reg, err := BuildActive(Dependencies{
-				RecallFeedbackEvents: &stubRecallFeedbackRecorder{err: test.err},
-				Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+				Core: CoreDependencies{
+					RecallFeedbackEvents: &stubRecallFeedbackRecorder{err: test.err},
+					Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+				},
 			})
 			require.NoError(t, err)
 			submit, ok := reg.Get(ToolSubmitRecallSessionFeedback)
@@ -288,9 +298,11 @@ func TestRecallFeedbackSnapshotHelpersCoverOptionalBranches(t *testing.T) {
 		Results:  []recallapp.RecallResultItem{{EvidenceID: "evidence-canonical", Rank: 1}},
 	}
 	recordRecallFeedbackSnapshot(context.Background(), Dependencies{
-		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
-		RecallFeedbackEvents: recorder,
-		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+		Core: CoreDependencies{
+			RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+			RecallFeedbackEvents: recorder,
+			Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+		},
 	}, map[string]any{"query": "PostgreSQL memory"}, recallapp.RecallRequest{Query: "PostgreSQL memory"}, res)
 	if res.RecallID != "rec-canonical" {
 		t.Fatalf("recall id = %q; want preserved after snapshot failure", res.RecallID)
@@ -308,28 +320,36 @@ func TestRecordRecallFeedbackSnapshotPrerequisitesAndDegradation(t *testing.T) {
 	}
 	recorder := &stubRecallFeedbackRecorder{}
 	enabledDeps := Dependencies{
-		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
-		RecallFeedbackEvents: recorder,
-		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+		Core: CoreDependencies{
+			RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+			RecallFeedbackEvents: recorder,
+			Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+		},
 	}
 
 	recordRecallFeedbackSnapshot(context.Background(), enabledDeps, input, req, nil)
 	recordRecallFeedbackSnapshot(context.Background(), enabledDeps, input, req, &recallapp.RecallResult{})
 	resWithoutRecorder := &recallapp.RecallResult{RecallID: "rec-canonical"}
 	recordRecallFeedbackSnapshot(context.Background(), Dependencies{
-		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
-		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+		Core: CoreDependencies{
+			RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+			Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+		},
 	}, input, req, resWithoutRecorder)
 	resFeedbackDisabled := &recallapp.RecallResult{RecallID: "rec-canonical"}
 	recordRecallFeedbackSnapshot(context.Background(), Dependencies{
-		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: false},
-		RecallFeedbackEvents: recorder,
-		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+		Core: CoreDependencies{
+			RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: false},
+			RecallFeedbackEvents: recorder,
+			Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+		},
 	}, input, req, resFeedbackDisabled)
 	resWithoutMetrics := &recallapp.RecallResult{RecallID: "rec-canonical"}
 	recordRecallFeedbackSnapshot(context.Background(), Dependencies{
-		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
-		RecallFeedbackEvents: recorder,
+		Core: CoreDependencies{
+			RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+			RecallFeedbackEvents: recorder,
+		},
 	}, input, req, resWithoutMetrics)
 	if len(recorder.snapshots) != 0 {
 		t.Fatalf("snapshots = %d; want no snapshots before prerequisites are met", len(recorder.snapshots))

@@ -10,7 +10,7 @@ import (
 
 func TestBuildActiveWiresExportMemoryPackOnly(t *testing.T) {
 	stub := &exportOnlyMemoryPackStub{}
-	reg, err := BuildActive(Dependencies{MemoryPack: stub})
+	reg, err := BuildActive(Dependencies{MemoryPackBindings: MemoryPackBindings{Service: stub}})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestBuildActiveWiresExportMemoryPackOnly(t *testing.T) {
 }
 
 func TestBuildActiveDoesNotRegisterMemoryPackImportTools(t *testing.T) {
-	reg, err := BuildActive(Dependencies{MemoryPack: &exportOnlyMemoryPackStub{}})
+	reg, err := BuildActive(Dependencies{MemoryPackBindings: MemoryPackBindings{Service: &exportOnlyMemoryPackStub{}}})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}

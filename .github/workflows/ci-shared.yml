@@ -136,6 +136,11 @@ jobs:
           npm run test:coverage --prefix web
           npm run build --prefix web
 
+      - name: Enforce browser and MCP proxy statement coverage
+        run: |
+          node scripts/coverage-gate.mjs browser web/coverage/coverage-summary.json
+          node scripts/coverage-gate.mjs "MCP proxy" packages/mcp-proxy/coverage/coverage-summary.json
+
       - name: Run scheduled-dreaming timing test
         run: node --test tests/uat/team_dreaming_schedule.test.mjs
 
@@ -172,8 +177,4 @@ jobs:
         run: scripts/go-vulnerability-scan.sh
 
       - name: Run unit coverage gate
-        shell: bash
-        run: scripts/coverage-report.sh --transitional
-
-      - name: Publish complete Go coverage report
         run: scripts/coverage-report.sh --complete

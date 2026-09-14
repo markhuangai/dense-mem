@@ -7,7 +7,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 // TeamAuthorizationService is the interface used by team authorization middleware.
@@ -17,13 +17,13 @@ type TeamAuthorizationService interface {
 }
 
 type teamAuthorizationService struct {
-	auditSvc service.AuditService
+	auditSvc accessservice.AuditService
 }
 
 var _ TeamAuthorizationService = (*teamAuthorizationService)(nil)
 
 // NewTeamAuthorizationService creates a new TeamAuthorizationService from an AuditService.
-func NewTeamAuthorizationService(auditSvc service.AuditService) TeamAuthorizationService {
+func NewTeamAuthorizationService(auditSvc accessservice.AuditService) TeamAuthorizationService {
 	return &teamAuthorizationService{auditSvc: auditSvc}
 }
 

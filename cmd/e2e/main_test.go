@@ -14,7 +14,7 @@ import (
 func TestGroupCasesCapsPackageBatches(t *testing.T) {
 	cases := make([]databaseCase, 0, maxDatabaseCasesPerBatch+1)
 	for index := 0; index < maxDatabaseCasesPerBatch+1; index++ {
-		cases = append(cases, databaseCase{ID: fmt.Sprintf("case-%03d", index), Package: "./internal/repository"})
+		cases = append(cases, databaseCase{ID: fmt.Sprintf("case-%03d", index), Package: "./internal/knowledge/postgres"})
 	}
 	cases = append(cases, databaseCase{ID: "other", Package: "./internal/http"})
 
@@ -25,10 +25,10 @@ func TestGroupCasesCapsPackageBatches(t *testing.T) {
 	if batches[0].Package != "./internal/http" || len(batches[0].Cases) != 1 {
 		t.Fatalf("unexpected first batch: %+v", batches[0])
 	}
-	if batches[1].Package != "./internal/repository" || len(batches[1].Cases) != maxDatabaseCasesPerBatch {
+	if batches[1].Package != "./internal/knowledge/postgres" || len(batches[1].Cases) != maxDatabaseCasesPerBatch {
 		t.Fatalf("unexpected first repository batch: %+v", batches[1])
 	}
-	if batches[2].Package != "./internal/repository" || len(batches[2].Cases) != 1 {
+	if batches[2].Package != "./internal/knowledge/postgres" || len(batches[2].Cases) != 1 {
 		t.Fatalf("unexpected second repository batch: %+v", batches[2])
 	}
 }
@@ -47,7 +47,7 @@ func TestRunBatchRequiresEveryCaseToPass(t *testing.T) {
 		{name: "pass", output: `{"Action":"pass","Test":"TestRequired"}`, want: ""},
 		{name: "skip", output: `{"Action":"skip","Test":"TestRequired"}`, want: "ended with skip"},
 		{name: "missing", output: `{"Action":"pass","Test":"TestOther"}`, want: "did not execute"},
-		{name: "command failure", output: `{"Action":"fail","Test":"TestRequired"}`, exitStatus: 1, want: "batch ./internal/repository failed"},
+		{name: "command failure", output: `{"Action":"fail","Test":"TestRequired"}`, exitStatus: 1, want: "batch ./internal/knowledge/postgres failed"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -60,7 +60,7 @@ func TestRunBatchRequiresEveryCaseToPass(t *testing.T) {
 			t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 			err := runBatch(t.TempDir(), filepath.Join(t.TempDir(), "overlay.json"), packageBatch{
-				Package: "./internal/repository",
+				Package: "./internal/knowledge/postgres",
 				Cases:   []databaseCase{{ID: "required", Run: "^TestRequired$"}},
 			}, 10*time.Second)
 			if tc.want == "" {

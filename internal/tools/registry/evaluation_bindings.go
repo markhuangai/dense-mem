@@ -32,16 +32,3 @@ type EvaluationBindings struct {
 	Communities CommunityRepository
 	Audit       EvaluationAuditAppender
 }
-
-func (d Dependencies) withEvaluationBindings() Dependencies {
-	if d.Evaluation == nil {
-		d.Evaluation = d.EvaluationBindings.Repository
-	}
-	if d.Communities == nil {
-		d.Communities = d.EvaluationBindings.Communities
-	}
-	if d.EvaluationAudit == nil {
-		d.EvaluationAudit = d.EvaluationBindings.Audit
-	}
-	return d
-}

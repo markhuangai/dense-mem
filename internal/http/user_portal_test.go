@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,10 +21,9 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	graphservice "github.com/markhuangai/dense-mem/internal/graph"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/graphview"
 	"github.com/markhuangai/dense-mem/internal/storage/inmem"
 )
 
@@ -82,14 +83,14 @@ type userPortalKeySvc struct {
 	rotateKeyID     uuid.UUID
 	deleteProfileID uuid.UUID
 	deleteKeyID     uuid.UUID
-	lastRotateReq   service.CreateCredentialRequest
-	lastCreateReq   service.CreateCredentialRequest
+	lastRotateReq   accessservice.CreateCredentialRequest
+	lastCreateReq   accessservice.CreateCredentialRequest
 	rawRotatedKey   string
 	rawCreatedKey   string
 }
 
-func (s *userPortalKeySvc) CreateCredential(_ context.Context, profileID uuid.UUID, req service.CreateCredentialRequest, _ *string, _ string, _ string, _ string) (*domain.Credential, string, error) {
-	scopes, err := service.NormalizeCredentialScopes(req.Scopes)
+func (s *userPortalKeySvc) CreateCredential(_ context.Context, profileID uuid.UUID, req accessservice.CreateCredentialRequest, _ *string, _ string, _ string, _ string) (*domain.Credential, string, error) {
+	scopes, err := accessservice.NormalizeCredentialScopes(req.Scopes)
 	if err != nil {
 		return nil, "", err
 	}
@@ -103,7 +104,7 @@ func (s *userPortalKeySvc) CreateCredential(_ context.Context, profileID uuid.UU
 		Name:            req.Name,
 		KeySuffix:       "own123",
 		Scopes:          scopes,
-		Role:            service.CredentialRoleMember,
+		Role:            accessservice.CredentialRoleMember,
 		RateLimit:       req.RateLimit,
 		CreatedAt:       time.Now().UTC().Truncate(time.Second),
 		ExpiresAt:       req.ExpiresAt,
@@ -129,14 +130,14 @@ func (s *userPortalKeySvc) UpdateScopesForTeam(_ context.Context, profileID, id 
 	if key == nil {
 		return nil, httperr.New(httperr.NOT_FOUND, "key not found")
 	}
-	normalized, err := service.NormalizeCredentialScopes(scopes)
+	normalized, err := accessservice.NormalizeCredentialScopes(scopes)
 	if err != nil {
 		return nil, err
 	}
 	key.Scopes = normalized
 	return key, nil
 }
-func (s *userPortalKeySvc) RotateForTeam(_ context.Context, profileID, id uuid.UUID, req service.CreateCredentialRequest, _ *string, _ string, _ string, _ string) (*domain.Credential, string, error) {
+func (s *userPortalKeySvc) RotateForTeam(_ context.Context, profileID, id uuid.UUID, req accessservice.CreateCredentialRequest, _ *string, _ string, _ string, _ string) (*domain.Credential, string, error) {
 	key, _ := s.GetByIDForTeam(context.Background(), profileID, id)
 	if key == nil {
 		return nil, "", httperr.New(httperr.NOT_FOUND, "key not found")
@@ -205,13 +206,13 @@ type userPortalRotateErrorKeySvc struct {
 	err error
 }
 
-func (s *userPortalRotateErrorKeySvc) RotateForTeam(context.Context, uuid.UUID, uuid.UUID, service.CreateCredentialRequest, *string, string, string, string) (*domain.Credential, string, error) {
+func (s *userPortalRotateErrorKeySvc) RotateForTeam(context.Context, uuid.UUID, uuid.UUID, accessservice.CreateCredentialRequest, *string, string, string, string) (*domain.Credential, string, error) {
 	return nil, "", s.err
 }
 
 type userPortalGraphSvc struct {
 	profileID        string
-	query            graphview.Query
+	query            graphservice.Query
 	calls            int
 	detailProfileID  string
 	detailType       string
@@ -219,19 +220,19 @@ type userPortalGraphSvc struct {
 	detailCalls      int
 	err              error
 	nodeDetailErr    error
-	nodeDetailResult *graphview.Node
+	nodeDetailResult *graphservice.Node
 }
 
-func (s *userPortalGraphSvc) Graph(_ context.Context, profileID string, query graphview.Query) (*graphview.Snapshot, error) {
+func (s *userPortalGraphSvc) Graph(_ context.Context, profileID string, query graphservice.Query) (*graphservice.Snapshot, error) {
 	s.profileID = profileID
 	s.query = query
 	s.calls++
 	if s.err != nil {
 		return nil, s.err
 	}
-	return &graphview.Snapshot{
+	return &graphservice.Snapshot{
 		Scope: query.Scope,
-		Nodes: []graphview.Node{{
+		Nodes: []graphservice.Node{{
 			Key:   "entity:entity-1",
 			ID:    "entity-1",
 			Type:  "entity",
@@ -240,7 +241,7 @@ func (s *userPortalGraphSvc) Graph(_ context.Context, profileID string, query gr
 	}, nil
 }
 
-func (s *userPortalGraphSvc) NodeDetail(_ context.Context, profileID string, nodeType string, nodeID string) (*graphview.Node, error) {
+func (s *userPortalGraphSvc) NodeDetail(_ context.Context, profileID string, nodeType string, nodeID string) (*graphservice.Node, error) {
 	s.detailProfileID = profileID
 	s.detailType = nodeType
 	s.detailID = nodeID
@@ -251,7 +252,7 @@ func (s *userPortalGraphSvc) NodeDetail(_ context.Context, profileID string, nod
 	if s.nodeDetailResult != nil {
 		return s.nodeDetailResult, nil
 	}
-	return &graphview.Node{
+	return &graphservice.Node{
 		Key:         "entity:entity-1",
 		ID:          "entity-1",
 		Type:        "entity",
@@ -295,10 +296,10 @@ func TestUserPortalTelemetryMemberUsesSelfScope(t *testing.T) {
 	teamID := uuid.New()
 	keyID := uuid.New()
 	authKey, rawKey := userPortalTestKey(t, teamID, keyID, "Mine", []string{"read", "write"})
-	telemetry := &controlTelemetrySvc{snapshot: &service.TelemetrySnapshot{
+	telemetry := &controlTelemetrySvc{snapshot: &operations.TelemetrySnapshot{
 		Available: true,
-		Window:    service.TelemetryWindow{Key: "15m"},
-		Cards:     []service.TelemetryCard{{ID: "http_requests", Label: "HTTP requests", Unit: "requests", Value: 4}},
+		Window:    operations.TelemetryWindow{Key: "15m"},
+		Cards:     []operations.TelemetryCard{{ID: "http_requests", Label: "HTTP requests", Unit: "requests", Value: 4}},
 	}}
 	server := userPortalTestServerWithTelemetry(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", telemetry)
 
@@ -310,7 +311,7 @@ func TestUserPortalTelemetryMemberUsesSelfScope(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"available":true`)
 	require.Equal(t, "15m", telemetry.filter.Window)
 	require.Equal(t, "self", telemetry.filter.Scope)
-	require.Equal(t, service.TelemetryAudienceUser, telemetry.filter.Audience)
+	require.Equal(t, operations.TelemetryAudienceUser, telemetry.filter.Audience)
 	require.Equal(t, teamID, *telemetry.filter.TeamID)
 	require.Equal(t, keyID, *telemetry.filter.ProfileID)
 	require.Equal(t, 1, telemetry.calls)
@@ -337,11 +338,11 @@ func TestUserPortalTelemetryManagerUsesTeamScope(t *testing.T) {
 	teamID := uuid.New()
 	keyID := uuid.New()
 	authKey, rawKey := userPortalTestKey(t, teamID, keyID, "Manager", []string{"read", "write"})
-	authKey.Role = service.CredentialRoleManager
-	telemetry := &controlTelemetrySvc{snapshot: &service.TelemetrySnapshot{
+	authKey.Role = accessservice.CredentialRoleManager
+	telemetry := &controlTelemetrySvc{snapshot: &operations.TelemetrySnapshot{
 		Available: true,
-		Window:    service.TelemetryWindow{Key: "30m"},
-		Cards:     []service.TelemetryCard{{ID: "http_requests", Label: "HTTP requests", Unit: "requests", Value: 9}},
+		Window:    operations.TelemetryWindow{Key: "30m"},
+		Cards:     []operations.TelemetryCard{{ID: "http_requests", Label: "HTTP requests", Unit: "requests", Value: 9}},
 	}}
 	server := userPortalTestServerWithTelemetry(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", telemetry)
 
@@ -353,7 +354,7 @@ func TestUserPortalTelemetryManagerUsesTeamScope(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"available":true`)
 	require.Equal(t, "30m", telemetry.filter.Window)
 	require.Equal(t, "team", telemetry.filter.Scope)
-	require.Equal(t, service.TelemetryAudienceUser, telemetry.filter.Audience)
+	require.Equal(t, operations.TelemetryAudienceUser, telemetry.filter.Audience)
 	require.Equal(t, teamID, *telemetry.filter.TeamID)
 	require.Nil(t, telemetry.filter.ProfileID)
 	require.Equal(t, 1, telemetry.calls)
@@ -456,7 +457,7 @@ func TestUserPortalGraphNodeDetailUsesAuthenticatedTeamScope(t *testing.T) {
 func TestUserPortalGraphNodeDetailMapsValidationAndNotFound(t *testing.T) {
 	teamID := uuid.New()
 	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Reader", []string{"read"})
-	graph := &userPortalGraphSvc{nodeDetailErr: graphview.ErrMissingNode}
+	graph := &userPortalGraphSvc{nodeDetailErr: graphservice.ErrMissingNode}
 	server := userPortalTestServerWithGraph(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", nil, graph)
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/api/node-detail", nil)
@@ -466,7 +467,7 @@ func TestUserPortalGraphNodeDetailMapsValidationAndNotFound(t *testing.T) {
 
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
-	graph.nodeDetailErr = graphview.ErrNodeNotFound
+	graph.nodeDetailErr = graphservice.ErrNodeNotFound
 	req = httptest.NewRequest(http.MethodGet, "/ui/api/node-detail?type=entity&id=missing", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
 	rec = httptest.NewRecorder()
@@ -478,7 +479,7 @@ func TestUserPortalGraphNodeDetailMapsValidationAndNotFound(t *testing.T) {
 func TestUserPortalTelemetryReadOnlyForbidden(t *testing.T) {
 	teamID := uuid.New()
 	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Read only", []string{"read"})
-	telemetry := &controlTelemetrySvc{snapshot: &service.TelemetrySnapshot{Available: true}}
+	telemetry := &controlTelemetrySvc{snapshot: &operations.TelemetrySnapshot{Available: true}}
 	server := userPortalTestServerWithTelemetry(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", telemetry)
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/api/telemetry", nil)
@@ -568,17 +569,17 @@ func TestUserPortalCurrentSessionIncludesTrustedMCPBaseURL(t *testing.T) {
 			UpdatedAt: time.Now().UTC(),
 		}}},
 		credentials: &userPortalKeySvc{keys: []*domain.Credential{authKey}},
-		appConfig: &controlAppConfigSvc{ssoRuntime: service.SSORuntimeConfig{
+		appConfig: &controlAppConfigSvc{ssoRuntime: accessservice.SSORuntimeConfig{
 			MCPPublicBaseURL: "https://memory.example.test/base",
 		}},
 	}
 
-	session, err := h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", userPortalPrincipal(teamID, keyID, service.CredentialRoleMember, []string{"read"}, "api_key")))
+	session, err := h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", userPortalPrincipal(teamID, keyID, accessservice.CredentialRoleMember, []string{"read"}, "api_key")))
 	require.NoError(t, err)
 	require.Equal(t, "https://memory.example.test/base", session.MCPPublicBaseURL)
 
 	h.appConfig = &controlAppConfigSvc{ssoRuntimeErr: errors.New("load sso runtime config")}
-	_, err = h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", userPortalPrincipal(teamID, keyID, service.CredentialRoleMember, []string{"read"}, "api_key")))
+	_, err = h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", userPortalPrincipal(teamID, keyID, accessservice.CredentialRoleMember, []string{"read"}, "api_key")))
 	require.ErrorContains(t, err, "load sso runtime config")
 }
 
@@ -594,7 +595,7 @@ func TestUserPortalCurrentSessionErrors(t *testing.T) {
 	err := h.session(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", nil))
 	require.ErrorContains(t, err, "authentication required")
 
-	_, err = h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", userPortalPrincipal(teamID, keyID, service.CredentialRoleMember, []string{"read"}, "api_key")))
+	_, err = h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", userPortalPrincipal(teamID, keyID, accessservice.CredentialRoleMember, []string{"read"}, "api_key")))
 	require.ErrorContains(t, err, "team not found")
 
 	h.teams = &controlProfileSvc{profiles: []*domain.Team{{
@@ -604,16 +605,16 @@ func TestUserPortalCurrentSessionErrors(t *testing.T) {
 		UpdatedAt: time.Now().UTC(),
 	}}}
 	h.credentials = &userPortalNilKeySvc{err: errors.New("lookup failed")}
-	_, err = h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", userPortalPrincipal(teamID, keyID, service.CredentialRoleMember, []string{"read"}, "api_key")))
+	_, err = h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", userPortalPrincipal(teamID, keyID, accessservice.CredentialRoleMember, []string{"read"}, "api_key")))
 	require.ErrorContains(t, err, "lookup failed")
 
 	h.credentials = &userPortalNilKeySvc{}
-	_, err = h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", userPortalPrincipal(teamID, keyID, service.CredentialRoleMember, []string{"read"}, "api_key")))
+	_, err = h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", userPortalPrincipal(teamID, keyID, accessservice.CredentialRoleMember, []string{"read"}, "api_key")))
 	require.ErrorContains(t, err, "credential not found")
 
 	h.credentials = &userPortalKeySvc{keys: []*domain.Credential{authKey}}
 	h.appConfig = &controlAppConfigSvc{dreamingRuntimeErr: errors.New("config failed")}
-	_, err = h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", userPortalPrincipal(teamID, keyID, service.CredentialRoleMember, []string{"read"}, "api_key")))
+	_, err = h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", userPortalPrincipal(teamID, keyID, accessservice.CredentialRoleMember, []string{"read"}, "api_key")))
 	require.ErrorContains(t, err, "load dreaming runtime config")
 }
 
@@ -629,10 +630,10 @@ func TestUserPortalRotateCurrentKeyErrors(t *testing.T) {
 	err := h.rotateCurrentCredential(userPortalEchoContext(t, http.MethodPost, "/ui/api/credential/rotate", "{}", nil))
 	require.ErrorContains(t, err, "authentication required")
 
-	err = h.rotateCurrentCredential(userPortalEchoContext(t, http.MethodPost, "/ui/api/credential/rotate", "{}", userPortalPrincipal(teamID, uuid.Nil, service.CredentialRoleMember, []string{"read", "write"}, "sso_session")))
+	err = h.rotateCurrentCredential(userPortalEchoContext(t, http.MethodPost, "/ui/api/credential/rotate", "{}", userPortalPrincipal(teamID, uuid.Nil, accessservice.CredentialRoleMember, []string{"read", "write"}, "sso_session")))
 	require.ErrorContains(t, err, "sso sessions cannot rotate api keys")
 
-	principal := userPortalPrincipal(teamID, keyID, service.CredentialRoleMember, []string{"read", "write"}, "api_key")
+	principal := userPortalPrincipal(teamID, keyID, accessservice.CredentialRoleMember, []string{"read", "write"}, "api_key")
 	h.credentials = &userPortalNilKeySvc{err: errors.New("lookup failed")}
 	err = h.rotateCurrentCredential(userPortalEchoContext(t, http.MethodPost, "/ui/api/credential/rotate", "{}", principal))
 	require.ErrorContains(t, err, "lookup failed")
@@ -739,7 +740,11 @@ func TestRegisterUserPortalRegistersCurrentSurface(t *testing.T) {
 
 func TestUserPortalSessionAloneAllowsOnlyMissingCredentialsThroughAuth(t *testing.T) {
 	e := NewServer(config.Config{}, nil, HealthConfig{})
-	RegisterUserPortal(e, UserPortalDeps{})
+	RegisterUserPortal(e, UserPortalDeps{
+		CredentialRepo:           &userPortalAuthRepo{},
+		CredentialVerifier:       crypto.NewArgon2Verifier(0),
+		CredentialLookupPrefixes: crypto.GetLookupPrefixes,
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/api/session", nil)
 	rec := httptest.NewRecorder()
@@ -767,14 +772,14 @@ func TestUserPortalMountedRoutesUseAuthenticatedTeam(t *testing.T) {
 	managerID := uuid.New()
 	memberID := uuid.New()
 	managerKey, rawKey := userPortalTestKey(t, teamID, managerID, "Manager", []string{"read", "write"})
-	managerKey.Role = service.CredentialRoleManager
+	managerKey.Role = accessservice.CredentialRoleManager
 	memberKey := &domain.Credential{
 		ID:        memberID,
 		TeamID:    teamID,
 		Name:      "Member",
 		KeySuffix: "member",
 		Scopes:    []string{"read"},
-		Role:      service.CredentialRoleMember,
+		Role:      accessservice.CredentialRoleMember,
 		RateLimit: 120,
 		CreatedAt: time.Now().UTC().Truncate(time.Second),
 	}
@@ -792,12 +797,14 @@ func TestUserPortalMountedRoutesUseAuthenticatedTeam(t *testing.T) {
 		RateLimitPerMinute: 100,
 	}, nil, HealthConfig{})
 	RegisterUserPortal(e, UserPortalDeps{
-		CredentialRepo: &userPortalAuthRepo{key: managerKey},
-		TeamSvc:        profiles,
-		CredentialSvc:  keys,
-		RateLimitSvc:   service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
-		DreamSvc:       dreams,
-		Config:         &config.Config{RateLimitPerMinute: 100},
+		CredentialRepo:           &userPortalAuthRepo{key: managerKey},
+		TeamSvc:                  profiles,
+		CredentialSvc:            keys,
+		RateLimitSvc:             accessservice.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
+		DreamSvc:                 dreams,
+		Config:                   &config.Config{RateLimitPerMinute: 100},
+		CredentialVerifier:       crypto.NewArgon2Verifier(0),
+		CredentialLookupPrefixes: crypto.GetLookupPrefixes,
 	})
 
 	for _, tt := range []struct {
@@ -825,7 +832,7 @@ func TestUserPortalMountedRoutesUseAuthenticatedTeam(t *testing.T) {
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusCreated, rec.Code)
 	require.Contains(t, rec.Body.String(), `"api_key":"dm_created_plaintext"`)
-	require.Equal(t, service.CredentialRoleMember, keys.lastCreateReq.Role)
+	require.Equal(t, accessservice.CredentialRoleMember, keys.lastCreateReq.Role)
 
 	req = httptest.NewRequest(http.MethodPatch, "/ui/api/team/credentials/"+memberID.String(), strings.NewReader(`{"scopes":["read","write"]}`))
 	req.Header.Set("Authorization", "Bearer "+rawKey)
@@ -866,16 +873,18 @@ func TestUserPortalMissingRouteServicesReturnUnavailable(t *testing.T) {
 	teamID := uuid.New()
 	managerID := uuid.New()
 	authKey, rawKey := userPortalTestKey(t, teamID, managerID, "Manager", []string{"read", "write"})
-	authKey.Role = service.CredentialRoleManager
+	authKey.Role = accessservice.CredentialRoleManager
 	cfg := &config.Config{
 		HTTPMaxBodyBytes:   1048576,
 		RateLimitPerMinute: 100,
 	}
 	e := NewServer(*cfg, nil, HealthConfig{})
 	RegisterUserPortal(e, UserPortalDeps{
-		CredentialRepo: &userPortalAuthRepo{key: authKey},
-		RateLimitSvc:   service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
-		Config:         cfg,
+		CredentialRepo:           &userPortalAuthRepo{key: authKey},
+		RateLimitSvc:             accessservice.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
+		Config:                   cfg,
+		CredentialVerifier:       crypto.NewArgon2Verifier(0),
+		CredentialLookupPrefixes: crypto.GetLookupPrefixes,
 	})
 
 	for _, tt := range []struct {
@@ -940,11 +949,11 @@ func userPortalTestServer(t *testing.T, teamID uuid.UUID, authKey *domain.Creden
 	return userPortalTestServerWithTelemetry(t, teamID, authKey, keySvc, staticDir, nil)
 }
 
-func userPortalTestServerWithTelemetry(t *testing.T, teamID uuid.UUID, authKey *domain.Credential, keySvc *userPortalKeySvc, staticDir string, telemetry service.TelemetryReader) http.Handler {
+func userPortalTestServerWithTelemetry(t *testing.T, teamID uuid.UUID, authKey *domain.Credential, keySvc *userPortalKeySvc, staticDir string, telemetry operations.TelemetryReader) http.Handler {
 	return userPortalTestServerWithGraph(t, teamID, authKey, keySvc, staticDir, telemetry, nil)
 }
 
-func userPortalTestServerWithGraph(t *testing.T, teamID uuid.UUID, authKey *domain.Credential, keySvc *userPortalKeySvc, staticDir string, telemetry service.TelemetryReader, graph graphview.Service) http.Handler {
+func userPortalTestServerWithGraph(t *testing.T, teamID uuid.UUID, authKey *domain.Credential, keySvc *userPortalKeySvc, staticDir string, telemetry operations.TelemetryReader, graph graphservice.Service) http.Handler {
 	t.Helper()
 	profiles := &controlProfileSvc{profiles: []*domain.Team{{
 		ID:        teamID,
@@ -958,14 +967,16 @@ func userPortalTestServerWithGraph(t *testing.T, teamID uuid.UUID, authKey *doma
 		RateLimitPerMinute: 100,
 	}, nil, HealthConfig{})
 	RegisterUserPortal(e, UserPortalDeps{
-		CredentialRepo: &userPortalAuthRepo{key: authKey},
-		TeamSvc:        profiles,
-		CredentialSvc:  keySvc,
-		RateLimitSvc:   service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
-		Telemetry:      telemetry,
-		GraphView:      graph,
-		Config:         &config.Config{RateLimitPerMinute: 100},
-		UserStaticDir:  staticDir,
+		CredentialRepo:           &userPortalAuthRepo{key: authKey},
+		TeamSvc:                  profiles,
+		CredentialSvc:            keySvc,
+		RateLimitSvc:             accessservice.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
+		Telemetry:                telemetry,
+		GraphView:                graph,
+		Config:                   &config.Config{RateLimitPerMinute: 100},
+		CredentialVerifier:       crypto.NewArgon2Verifier(0),
+		CredentialLookupPrefixes: crypto.GetLookupPrefixes,
+		UserStaticDir:            staticDir,
 	})
 	return e
 }

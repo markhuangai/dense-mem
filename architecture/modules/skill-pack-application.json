@@ -2,52 +2,49 @@
   "schema_version": 1,
   "capability": "skill-pack-application",
   "source_ownership": [
-    {"path": "cmd/internal/serverapp/memorypack_composition.go", "issue": 375},
-    {"path": "internal/tools/registry/memory_pack_bindings.go", "issue": 375},
-    {"path": "internal/memorypack/memory_pack.go", "issue": 375},
-    {"path": "internal/memorypack/memory_pack_artifact.go", "issue": 375},
-    {"path": "internal/memorypack/memory_pack_export_test.go", "issue": 375},
-    {"path": "internal/memorypack/memory_pack_helpers.go", "issue": 375},
-    {"path": "internal/memorypack/memory_pack_types.go", "issue": 375},
-    {"path": "internal/service/skillpackservice/memory_pack.go", "issue": 375},
-    {"path": "internal/service/skillpackservice/memory_pack_export_test.go", "issue": 375},
-    {"path": "internal/service/skillpackservice/memory_pack_helpers.go", "issue": 375},
-    {"path": "internal/service/skillpackservice/memory_pack_types.go", "issue": 375}
-  ],
-  "completed_issues": [],
-  "compatibility_bridges": [
     {
-      "source_path": "internal/service/skillpackservice/memory_pack.go",
-      "fields": [
-        "MemoryPackService",
-        "MemoryPackDependencies",
-        "MemoryPackSemanticReader",
-        "ExportRequest",
-        "ExportResult",
-        "MemoryPackArtifact",
-        "MemoryPackSource",
-        "MemoryPackRelationship",
-        "MemoryPackEndpoint",
-        "MemoryPackEvidence",
-        "MemoryPackEvidenceSupport",
-        "NewMemoryPackService"
-      ],
-      "consumers": [
-        {"path": "cmd/internal/serverapp/application_composition.go", "symbol": "buildApplicationBundle"},
-        {"path": "internal/service/skillpackservice/memory_pack_export_test.go", "symbol": "TestMemoryPackExportRejectsMissingInputsAndUnavailableRelationships"}
-      ],
-      "removal_issue": 382,
-      "implementation_owner": {"path": "internal/memorypack/memory_pack.go", "symbol": "NewMemoryPackService"},
-      "removal_condition": "Remove the compatibility aliases and wrapper after the remaining central assembler, registry projection, and retained test consumers import internal/memorypack directly."
+      "path": "cmd/internal/serverapp/memorypack_composition.go",
+      "issue": 375
+    },
+    {
+      "path": "internal/tools/registry/memory_pack_bindings.go",
+      "issue": 375
+    },
+    {
+      "path": "internal/memorypack/memory_pack.go",
+      "issue": 375
+    },
+    {
+      "path": "internal/memorypack/memory_pack_artifact.go",
+      "issue": 375
+    },
+    {
+      "path": "internal/memorypack/memory_pack_export_test.go",
+      "issue": 375
+    },
+    {
+      "path": "internal/memorypack/memory_pack_helpers.go",
+      "issue": 375
+    },
+    {
+      "path": "internal/memorypack/memory_pack_types.go",
+      "issue": 375
     }
   ],
+  "completed_issues": [],
+  "compatibility_bridges": [],
   "go": {
     "units": [
-      {"id": "github.com/markhuangai/dense-mem/internal/memorypack", "role": "application_api", "visibility": "public"},
-      {"id": "github.com/markhuangai/dense-mem/internal/service/skillpackservice", "role": "application_api", "visibility": "public"}
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/memorypack",
+        "role": "application_api",
+        "visibility": "public"
+      }
     ]
   },
-  "browser": {"units": []},
+  "browser": {
+    "units": []
+  },
   "exceptions": [],
   "workers": []
 }

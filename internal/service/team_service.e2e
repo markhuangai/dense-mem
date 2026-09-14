@@ -8,9 +8,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
+
+	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -39,11 +41,11 @@ func TestTeamServiceCreate(t *testing.T) {
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id LIKE 'test-%'")
 	sqlDB.Exec("DELETE FROM teams WHERE name LIKE 'Test %'")
 
-	repo := repository.NewTeamRepository(db, postgres.NewRLS())
-	auditService := NewAuditService(db)
-	service := NewTeamService(repo, auditService, nil)
+	repo := accesspostgres.NewTeamRepository(db, postgres.NewRLS())
+	auditService := newAuditService(db)
+	service := accessservice.NewTeamService(repo, auditService, nil)
 
-	req := CreateTeamRequest{
+	req := accessservice.CreateTeamRequest{
 		Name:        "Test Profile Create",
 		Description: "Test description",
 		Metadata:    map[string]any{"key": "value"},
@@ -89,11 +91,11 @@ func TestTeamServiceCreateDuplicateName(t *testing.T) {
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id LIKE 'test-%'")
 	sqlDB.Exec("DELETE FROM teams WHERE name LIKE 'Test %'")
 
-	repo := repository.NewTeamRepository(db, postgres.NewRLS())
-	auditService := NewAuditService(db)
-	service := NewTeamService(repo, auditService, nil)
+	repo := accesspostgres.NewTeamRepository(db, postgres.NewRLS())
+	auditService := newAuditService(db)
+	service := accessservice.NewTeamService(repo, auditService, nil)
 
-	req1 := CreateTeamRequest{
+	req1 := accessservice.CreateTeamRequest{
 		Name:        "Test Duplicate Profile",
 		Description: "First profile",
 	}
@@ -102,7 +104,7 @@ func TestTeamServiceCreateDuplicateName(t *testing.T) {
 	profile1, err := service.Create(ctx, req1, &actorKeyID, "system", "127.0.0.1", "test-correlation-id")
 	require.NoError(t, err, "First create should succeed")
 
-	req2 := CreateTeamRequest{
+	req2 := accessservice.CreateTeamRequest{
 		Name:        "test duplicate profile",
 		Description: "Second profile",
 	}
@@ -141,11 +143,11 @@ func TestTeamServiceGet(t *testing.T) {
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id LIKE 'test-%'")
 	sqlDB.Exec("DELETE FROM teams WHERE name LIKE 'Test %'")
 
-	repo := repository.NewTeamRepository(db, postgres.NewRLS())
-	auditService := NewAuditService(db)
-	service := NewTeamService(repo, auditService, nil)
+	repo := accesspostgres.NewTeamRepository(db, postgres.NewRLS())
+	auditService := newAuditService(db)
+	service := accessservice.NewTeamService(repo, auditService, nil)
 
-	req := CreateTeamRequest{
+	req := accessservice.CreateTeamRequest{
 		Name:        "Test Profile Get",
 		Description: "Test description",
 	}
@@ -195,14 +197,14 @@ func TestTeamServiceList(t *testing.T) {
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id LIKE 'test-%'")
 	sqlDB.Exec("DELETE FROM teams WHERE name LIKE 'Test %'")
 
-	repo := repository.NewTeamRepository(db, postgres.NewRLS())
-	auditService := NewAuditService(db)
-	service := NewTeamService(repo, auditService, nil)
+	repo := accesspostgres.NewTeamRepository(db, postgres.NewRLS())
+	auditService := newAuditService(db)
+	service := accessservice.NewTeamService(repo, auditService, nil)
 
 	actorKeyID := uuid.NewString()
 	var createdIDs []uuid.UUID
 	for i := 0; i < 5; i++ {
-		req := CreateTeamRequest{
+		req := accessservice.CreateTeamRequest{
 			Name:        uuid.New().String(),
 			Description: "Test description",
 		}
@@ -257,11 +259,11 @@ func TestTeamServiceUpdate(t *testing.T) {
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id LIKE 'test-%'")
 	sqlDB.Exec("DELETE FROM teams WHERE name LIKE 'Test %'")
 
-	repo := repository.NewTeamRepository(db, postgres.NewRLS())
-	auditService := NewAuditService(db)
-	service := NewTeamService(repo, auditService, nil)
+	repo := accesspostgres.NewTeamRepository(db, postgres.NewRLS())
+	auditService := newAuditService(db)
+	service := accessservice.NewTeamService(repo, auditService, nil)
 
-	req := CreateTeamRequest{
+	req := accessservice.CreateTeamRequest{
 		Name:        "Test Profile Update",
 		Description: "Original description",
 	}
@@ -272,7 +274,7 @@ func TestTeamServiceUpdate(t *testing.T) {
 
 	newName := "Test Profile Update Modified"
 	newDesc := "Updated description"
-	updateReq := UpdateTeamRequest{
+	updateReq := accessservice.UpdateTeamRequest{
 		Name:        &newName,
 		Description: &newDesc,
 		Metadata:    map[string]any{"updated": true},
@@ -321,11 +323,11 @@ func TestTeamServiceDelete(t *testing.T) {
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id LIKE 'test-%'")
 	sqlDB.Exec("DELETE FROM teams WHERE name LIKE 'Test %'")
 
-	repo := repository.NewTeamRepository(db, postgres.NewRLS())
-	auditService := NewAuditService(db)
-	service := NewTeamService(repo, auditService, nil)
+	repo := accesspostgres.NewTeamRepository(db, postgres.NewRLS())
+	auditService := newAuditService(db)
+	service := accessservice.NewTeamService(repo, auditService, nil)
 
-	req := CreateTeamRequest{
+	req := accessservice.CreateTeamRequest{
 		Name:        "Test Profile Delete",
 		Description: "Test description",
 	}
@@ -392,11 +394,11 @@ func TestTeamServiceDeleteRevokesActiveKeys(t *testing.T) {
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id LIKE 'test-%'")
 	sqlDB.Exec("DELETE FROM teams WHERE name LIKE 'Test %'")
 
-	repo := repository.NewTeamRepository(db, postgres.NewRLS())
-	auditService := NewAuditService(db)
-	service := NewTeamService(repo, auditService, nil)
+	repo := accesspostgres.NewTeamRepository(db, postgres.NewRLS())
+	auditService := newAuditService(db)
+	service := accessservice.NewTeamService(repo, auditService, nil)
 
-	req := CreateTeamRequest{
+	req := accessservice.CreateTeamRequest{
 		Name:        "Test Profile Delete Blocked",
 		Description: "Test description",
 	}
@@ -406,7 +408,7 @@ func TestTeamServiceDeleteRevokesActiveKeys(t *testing.T) {
 	require.NoError(t, err, "Create should succeed")
 
 	keyID := uuid.New()
-	keyRepo := repository.NewCredentialRepository(db, postgres.NewRLS())
+	keyRepo := accesspostgres.NewCredentialRepository(db, postgres.NewRLS(), nil)
 	require.NoError(t, keyRepo.CreateCredential(ctx, &domain.Credential{
 		ID: keyID, TeamID: profile.ID, Name: "Test Key", KeyHash: "testhash",
 		KeyPrefix: keyID.String()[:24], Scopes: []string{"read"},

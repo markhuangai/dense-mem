@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"errors"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,8 +18,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service"
+	privacyservice "github.com/markhuangai/dense-mem/internal/privacy/service"
 )
 
 type privateMemoryHTTPServiceStub struct {
@@ -30,17 +30,17 @@ type privateMemoryHTTPServiceStub struct {
 	holdChanged         bool
 	retentionRun        *domain.PrivateMemoryRetentionRun
 	retentionRuns       []domain.PrivateMemoryRetentionRun
-	credentialCommand   service.PrivateMemoryCommand
+	credentialCommand   privacyservice.PrivateMemoryCommand
 	credentialTeamID    uuid.UUID
 	credentialID        uuid.UUID
-	profileCommand      service.PrivateMemoryCommand
+	profileCommand      privacyservice.PrivateMemoryCommand
 	profileTeamID       uuid.UUID
 	profileIdentityID   uuid.UUID
-	controlCommand      service.PrivateMemoryCommand
+	controlCommand      privacyservice.PrivateMemoryCommand
 	controlSpaceID      uuid.UUID
 	holdSpaceID         uuid.UUID
 	holdReason          string
-	retentionCommand    service.PrivateMemoryCommand
+	retentionCommand    privacyservice.PrivateMemoryCommand
 	retentionActorClass domain.PrivateMemoryActorClass
 	requestErr          error
 }
@@ -53,29 +53,29 @@ func (s *privateMemoryHTTPRuntimeConfigStub) PrivateMemoryRuntimeConfig(context.
 	return domain.PrivateMemoryRuntimeConfig{}, s.err
 }
 
-func (s *privateMemoryHTTPServiceStub) DeleteSSOCredential(_ context.Context, teamID, identityID, credentialID uuid.UUID, _ service.PrivateMemoryCommand, _ service.PrivateMemoryAuditContext) (*domain.PrivateMemoryErasureOperation, error) {
+func (s *privateMemoryHTTPServiceStub) DeleteSSOCredential(_ context.Context, teamID, identityID, credentialID uuid.UUID, _ privacyservice.PrivateMemoryCommand, _ privacyservice.PrivateMemoryAuditContext) (*domain.PrivateMemoryErasureOperation, error) {
 	s.credentialTeamID = teamID
 	s.credentialID = credentialID
 	s.profileIdentityID = identityID
 	return s.operation, s.requestErr
 }
 
-func (s *privateMemoryHTTPServiceStub) RequestSSOProfileErasure(_ context.Context, teamID, identityID uuid.UUID, command service.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error) {
+func (s *privateMemoryHTTPServiceStub) RequestSSOProfileErasure(_ context.Context, teamID, identityID uuid.UUID, command privacyservice.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error) {
 	s.profileCommand = command
 	s.profileTeamID = teamID
 	s.profileIdentityID = identityID
 	return s.operation, s.requestErr
 }
 
-func (s *privateMemoryHTTPServiceStub) RequestCredentialErasure(_ context.Context, teamID, credentialID uuid.UUID, command service.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error) {
+func (s *privateMemoryHTTPServiceStub) RequestCredentialErasure(_ context.Context, teamID, credentialID uuid.UUID, command privacyservice.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error) {
 	s.credentialCommand = command
 	s.credentialTeamID = teamID
 	s.credentialID = credentialID
 	if !command.AcknowledgeIrreversible {
-		return nil, service.ErrPrivateMemoryAcknowledgementRequired
+		return nil, privacyservice.ErrPrivateMemoryAcknowledgementRequired
 	}
 	if strings.TrimSpace(command.IdempotencyKey) == "" {
-		return nil, service.ErrPrivateMemoryIdempotencyKeyRequired
+		return nil, privacyservice.ErrPrivateMemoryIdempotencyKeyRequired
 	}
 	if s.requestErr != nil {
 		return nil, s.requestErr
@@ -91,7 +91,7 @@ func (s *privateMemoryHTTPServiceStub) GetOperation(_ context.Context, _ uuid.UU
 	return s.operation, s.requestErr
 }
 
-func (s *privateMemoryHTTPServiceStub) RequestControlErasure(_ context.Context, spaceID uuid.UUID, command service.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error) {
+func (s *privateMemoryHTTPServiceStub) RequestControlErasure(_ context.Context, spaceID uuid.UUID, command privacyservice.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error) {
 	s.controlSpaceID = spaceID
 	s.controlCommand = command
 	return s.operation, s.requestErr
@@ -116,7 +116,7 @@ func (s *privateMemoryHTTPServiceStub) ReleaseLegalHold(_ context.Context, space
 	return s.hold, s.holdChanged, s.requestErr
 }
 
-func (s *privateMemoryHTTPServiceStub) RunRetention(_ context.Context, command service.PrivateMemoryCommand, actorClass domain.PrivateMemoryActorClass) (*domain.PrivateMemoryRetentionRun, error) {
+func (s *privateMemoryHTTPServiceStub) RunRetention(_ context.Context, command privacyservice.PrivateMemoryCommand, actorClass domain.PrivateMemoryActorClass) (*domain.PrivateMemoryRetentionRun, error) {
 	s.retentionCommand = command
 	s.retentionActorClass = actorClass
 	return s.retentionRun, s.requestErr
@@ -300,14 +300,14 @@ func TestControlErasureStatusIncludesGovernanceIdentifiers(t *testing.T) {
 }
 
 func TestPrivateMemoryHTTPErrorsAreBounded(t *testing.T) {
-	apiErr, ok := privateMemoryHTTPError(service.ErrPrivateMemoryAcknowledgementRequired).(*httperr.APIError)
+	apiErr, ok := privateMemoryHTTPError(privacyservice.ErrPrivateMemoryAcknowledgementRequired).(*httperr.APIError)
 	require.True(t, ok)
 	require.Equal(t, httperr.VALIDATION_ERROR, apiErr.Code)
 }
 
 func TestPrivateMemoryRetentionConfigErrorsAreBounded(t *testing.T) {
 	rawErr := errors.New("pq: password authentication failed")
-	privateMemory := service.NewPrivateMemoryService(service.PrivateMemoryServiceConfig{
+	privateMemory := privacyservice.NewPrivateMemoryService(privacyservice.PrivateMemoryServiceConfig{
 		RuntimeConfig: &privateMemoryHTTPRuntimeConfigStub{err: rawErr},
 	})
 	handler := &controlPortalHandler{privateMemory: privateMemory}
@@ -331,7 +331,7 @@ func TestPrivateMemoryRetentionConfigErrorsAreBounded(t *testing.T) {
 }
 
 func TestSSOOwnerPrivateMemoryErasureHTTPContract(t *testing.T) {
-	fixture := newSSOPersonalKeyFixture(service.CredentialRoleMember, []string{service.CredentialScopeRead})
+	fixture := newSSOPersonalKeyFixture(accessservice.CredentialRoleMember, []string{accessservice.CredentialScopeRead})
 	operation := privateMemoryHTTPTestOperation(fixture.teamID, fixture.identityID)
 	stub := &privateMemoryHTTPServiceStub{operation: operation}
 	fixture.handler.privateMemory = stub
@@ -488,27 +488,27 @@ func TestPrivateMemoryResponseHelpersAndBoundedErrors(t *testing.T) {
 	require.Same(t, apiErr, privateMemoryHTTPError(apiErr))
 	unknown := errors.New("backend failed")
 	require.ErrorIs(t, privateMemoryHTTPError(unknown), unknown)
-	internal, ok := privateMemoryHTTPError(repository.ErrPrivateMemoryInternal).(*httperr.APIError)
+	internal, ok := privateMemoryHTTPError(privacyservice.ErrPrivateMemoryInternal).(*httperr.APIError)
 	require.True(t, ok)
 	require.Equal(t, httperr.SERVICE_UNAVAILABLE, internal.Code)
 	for err, code := range map[error]httperr.ErrorCode{
-		service.ErrPrivateMemoryAcknowledgementRequired:  httperr.VALIDATION_ERROR,
-		service.ErrPrivateMemoryIdempotencyKeyRequired:   httperr.VALIDATION_ERROR,
-		service.ErrPrivateMemoryInvalidReason:            httperr.VALIDATION_ERROR,
-		service.ErrPrivateMemoryRuntimeConfigUnavailable: httperr.SERVICE_UNAVAILABLE,
-		repository.ErrPrivateMemoryNotFound:              httperr.NOT_FOUND,
-		repository.ErrPrivateMemoryLegalHold:             httperr.CONFLICT,
-		repository.ErrPrivateMemoryIdempotency:           httperr.CONFLICT,
-		repository.ErrPrivateMemoryOperationConflict:     httperr.CONFLICT,
-		repository.ErrPrivateMemoryRetentionDisabled:     httperr.CONFLICT,
-		repository.ErrPrivateMemoryHoldConflict:          httperr.CONFLICT,
-		repository.ErrPrivateMemoryManifest:              httperr.SERVICE_UNAVAILABLE,
+		privacyservice.ErrPrivateMemoryAcknowledgementRequired:  httperr.VALIDATION_ERROR,
+		privacyservice.ErrPrivateMemoryIdempotencyKeyRequired:   httperr.VALIDATION_ERROR,
+		privacyservice.ErrPrivateMemoryInvalidReason:            httperr.VALIDATION_ERROR,
+		privacyservice.ErrPrivateMemoryRuntimeConfigUnavailable: httperr.SERVICE_UNAVAILABLE,
+		privacyservice.ErrPrivateMemoryNotFound:                 httperr.NOT_FOUND,
+		privacyservice.ErrPrivateMemoryLegalHold:                httperr.CONFLICT,
+		privacyservice.ErrPrivateMemoryIdempotency:              httperr.CONFLICT,
+		privacyservice.ErrPrivateMemoryOperationConflict:        httperr.CONFLICT,
+		privacyservice.ErrPrivateMemoryRetentionDisabled:        httperr.CONFLICT,
+		privacyservice.ErrPrivateMemoryHoldConflict:             httperr.CONFLICT,
+		privacyservice.ErrPrivateMemoryManifest:                 httperr.SERVICE_UNAVAILABLE,
 	} {
 		mapped, ok := privateMemoryHTTPError(err).(*httperr.APIError)
 		require.True(t, ok)
 		require.Equal(t, code, mapped.Code)
 	}
-	legalHold, ok := privateMemoryHTTPError(repository.ErrPrivateMemoryLegalHold).(*httperr.APIError)
+	legalHold, ok := privateMemoryHTTPError(privacyservice.ErrPrivateMemoryLegalHold).(*httperr.APIError)
 	require.True(t, ok)
 	require.Equal(t, "legal_hold", legalHold.ReasonCode)
 	require.Equal(t, "contact_operator", legalHold.NextAction)
@@ -573,7 +573,7 @@ func TestPrivateMemoryOwnerHandlersRejectUnavailableOrWrongPrincipals(t *testing
 	credentialID := uuid.New()
 	apiPrincipal.CredentialID = &credentialID
 	assertCode(handler.getOwnerPrivateMemoryErasure(newContext(http.MethodGet, "/ui/api/private-memory/erasures/"+operationID.String(), apiPrincipal)), httperr.NOT_FOUND)
-	stub.requestErr = repository.ErrPrivateMemoryLegalHold
+	stub.requestErr = privacyservice.ErrPrivateMemoryLegalHold
 	assertCode(handler.getOwnerPrivateMemoryErasure(newContext(http.MethodGet, "/ui/api/private-memory/erasures/"+operationID.String(), apiPrincipal)), httperr.CONFLICT)
 }
 

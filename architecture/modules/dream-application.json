@@ -2,23 +2,58 @@
   "schema_version": 1,
   "capability": "dream-application",
   "source_ownership": [
-    {"path": "internal/dream/contract/errors.go", "issue": 365},
-    {"path": "internal/dream/contract/evaluation.go", "issue": 365},
-    {"path": "internal/dream/contract/ports.go", "issue": 365},
-    {"path": "internal/dream/contract/types.go", "issue": 365},
-    {"path": "internal/dream/postgres/evaluation_hypothesis.go", "issue": 365},
-    {"path": "internal/dream/postgres/adapter_test.go", "issue": 365},
-    {"path": "internal/dream/postgres/dream_repository_validation_integration.e2e", "issue": 365},
-    {"path": "internal/dream/postgres/helpers.go", "issue": 365},
-    {"path": "internal/dream/postgres/locks.go", "issue": 365},
-    {"path": "internal/dream/postgres/store.go", "issue": 365},
-    {"path": "internal/dream/postgres/types.go", "issue": 365},
-    {"path": "internal/service/dreamservice/compat.go", "issue": 365},
-    {"path": "internal/service/dreamservice/compat_test.go", "issue": 365},
-    {"path": "internal/repository/dream_compat.go", "issue": 365},
-    {"path": "internal/repository/dream_types.go", "issue": 365},
-    {"path": "internal/storage/postgres/dream_helpers.go", "issue": 365},
-    {"path": "internal/storage/postgres/dream_helpers_test.go", "issue": 365},
+    {
+      "path": "internal/dream/contract/errors.go",
+      "issue": 365
+    },
+    {
+      "path": "internal/dream/contract/evaluation.go",
+      "issue": 365
+    },
+    {
+      "path": "internal/dream/contract/ports.go",
+      "issue": 365
+    },
+    {
+      "path": "internal/dream/contract/types.go",
+      "issue": 365
+    },
+    {
+      "path": "internal/dream/postgres/evaluation_hypothesis.go",
+      "issue": 365
+    },
+    {
+      "path": "internal/dream/postgres/adapter_test.go",
+      "issue": 365
+    },
+    {
+      "path": "internal/dream/postgres/dream_repository_validation_integration.e2e",
+      "issue": 365
+    },
+    {
+      "path": "internal/dream/postgres/helpers.go",
+      "issue": 365
+    },
+    {
+      "path": "internal/dream/postgres/locks.go",
+      "issue": 365
+    },
+    {
+      "path": "internal/dream/postgres/store.go",
+      "issue": 365
+    },
+    {
+      "path": "internal/dream/postgres/types.go",
+      "issue": 365
+    },
+    {
+      "path": "internal/storage/postgres/dream_helpers.go",
+      "issue": 365
+    },
+    {
+      "path": "internal/storage/postgres/dream_helpers_test.go",
+      "issue": 365
+    },
     {
       "path": "cmd/internal/serverapp/dream_composition.go",
       "issue": 365
@@ -60,7 +95,7 @@
       "issue": 365
     },
     {
-      "path": "internal/repository/dream_confirmation_lock_integration.e2e",
+      "path": "internal/dream/postgres/dream_confirmation_lock_integration.e2e",
       "issue": 365
     },
     {
@@ -68,7 +103,7 @@
       "issue": 365
     },
     {
-      "path": "internal/repository/dream_cycle_recovery_integration.e2e",
+      "path": "internal/dream/postgres/dream_cycle_recovery_integration.e2e",
       "issue": 365
     },
     {
@@ -88,7 +123,7 @@
       "issue": 365
     },
     {
-      "path": "internal/repository/dream_evidence_duplicate_integration.e2e",
+      "path": "internal/dream/postgres/dream_evidence_duplicate_integration.e2e",
       "issue": 365
     },
     {
@@ -112,7 +147,7 @@
       "issue": 365
     },
     {
-      "path": "internal/repository/dream_evidence_target_repository_integration.e2e",
+      "path": "internal/dream/postgres/dream_evidence_target_repository_integration.e2e",
       "issue": 365
     },
     {
@@ -120,7 +155,7 @@
       "issue": 365
     },
     {
-      "path": "internal/repository/dream_lock_admission_integration.e2e",
+      "path": "internal/dream/postgres/dream_lock_admission_integration.e2e",
       "issue": 365
     },
     {
@@ -132,7 +167,7 @@
       "issue": 365
     },
     {
-      "path": "internal/repository/dream_repository_integration.e2e",
+      "path": "internal/dream/postgres/dream_repository_integration.e2e",
       "issue": 365
     },
     {
@@ -280,48 +315,7 @@
       "issue": 365
     }
   ],
-  "compatibility_bridges": [
-    {
-      "source_path": "internal/repository/dream_compat.go",
-      "fields": ["SemanticRepositoryImpl.ClaimDreamCycle", "SemanticRepositoryImpl.GetHypothesis", "SemanticRepositoryImpl.WithHypothesisConfirmationLock", "SemanticRepositoryImpl.PersistEvidenceDiscoveryEvaluation"],
-      "consumers": [
-        {"path": "cmd/internal/serverapp/application_composition.go", "symbol": "buildApplicationBundle"},
-        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"},
-        {"path": "internal/repository/dream_confirmation_lock_integration.e2e", "symbol": "TestHypothesisConfirmationLockAdmitsOneCallback"},
-        {"path": "internal/repository/dream_cycle_recovery_integration.e2e", "symbol": "TestEvidenceDiscoveryRecoveryExhaustionReportsPersistedTotals"},
-        {"path": "internal/repository/dream_evidence_duplicate_integration.e2e", "symbol": "TestEvidenceDiscoveryEvaluationRejectsMixedDuplicateResponseAtomically"},
-        {"path": "internal/repository/dream_evidence_target_repository_integration.e2e", "symbol": "TestEvidenceDiscoveryTargetsAreBoundAndTeamScoped"},
-        {"path": "internal/repository/dream_lock_admission_integration.e2e", "symbol": "TestAdvisoryLockAdmissionsSharePoolBudgetAcrossEvidenceAndConfirmation"},
-        {"path": "internal/repository/dream_repository_integration.e2e", "symbol": "TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment"}
-      ],
-      "removal_issue": 382,
-      "implementation_owner": {"path": "internal/dream/postgres/dream_repository.go", "symbol": "Store.GetHypothesis"},
-      "removal_condition": "Remove the repository forwarding methods after all application composition and retained Dream database fixtures consume internal/dream/postgres ports directly."
-    },
-    {
-      "source_path": "internal/repository/dream_types.go",
-      "fields": ["DreamRepository", "ScheduledDreamRepository", "EvidenceDiscoveryRepository", "ErrDreamCycleAlreadyClaimed"],
-      "consumers": [
-        {"path": "cmd/internal/serverapp/application_composition.go", "symbol": "buildApplicationBundle"},
-        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"},
-        {"path": "internal/repository/dream_repository_integration.e2e", "symbol": "TestDreamRepositoryPersistsTeamScopedPredicateHypothesis"}
-      ],
-      "removal_issue": 382,
-      "removal_condition": "Remove aliases after all named consumers import internal/dream/contract directly."
-    },
-    {
-      "source_path": "internal/service/dreamservice/compat.go",
-      "fields": ["New", "NewControl", "NewScheduler", "NewEvidenceProviderGenerator", "Service"],
-      "consumers": [
-        {"path": "cmd/internal/serverapp/application_composition.go", "symbol": "buildApplicationBundle"},
-        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"},
-        {"path": "cmd/internal/serverapp/telemetry_features.go", "symbol": "configureTelemetryFeatures"}
-      ],
-      "removal_issue": 382,
-      "implementation_owner": {"path": "internal/dream/service.go", "symbol": "New"},
-      "removal_condition": "Remove the facade after the three named server consumers migrate to internal/dream."
-    }
-  ],
+  "compatibility_bridges": [],
   "completed_issues": [],
   "go": {
     "units": [
@@ -338,11 +332,6 @@
       {
         "id": "github.com/markhuangai/dense-mem/internal/dream/postgres",
         "role": "postgres_adapter",
-        "visibility": "private"
-      },
-      {
-        "id": "github.com/markhuangai/dense-mem/internal/service/dreamservice",
-        "role": "application_api",
         "visibility": "private"
       }
     ]

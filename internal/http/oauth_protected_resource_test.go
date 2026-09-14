@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	nethttp "net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 func TestOAuthProtectedResourceMetadataRoutes(t *testing.T) {
@@ -23,7 +23,7 @@ func TestOAuthProtectedResourceMetadataRoutes(t *testing.T) {
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	provider := &oauthMetadataStub{
 		baseURL: "https://memory.example.test/",
-		metadata: service.OAuthProtectedResourceMetadata{
+		metadata: accessservice.OAuthProtectedResourceMetadata{
 			AuthorizationServers: []string{"https://idp.example.test"},
 			ScopesSupported:      []string{"densemem.read", "densemem.write"},
 		},
@@ -132,7 +132,7 @@ func TestOAuthProtectedResourceMetadataIsDormantWithoutEnabledProvider(t *testin
 func TestOAuthProtectedResourceChallengeUsesMatchingMetadataDocument(t *testing.T) {
 	provider := &oauthMetadataStub{
 		baseURL:  "https://memory.example.test",
-		metadata: service.OAuthProtectedResourceMetadata{AuthorizationServers: []string{"https://idp.example.test"}},
+		metadata: accessservice.OAuthProtectedResourceMetadata{AuthorizationServers: []string{"https://idp.example.test"}},
 	}
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
@@ -164,7 +164,7 @@ func TestOAuthProtectedResourceChallengeUsesMatchingMetadataDocument(t *testing.
 
 func TestOAuthProtectedResourceMetadataRequiresConfiguredOrigin(t *testing.T) {
 	provider := &oauthMetadataStub{
-		metadata: service.OAuthProtectedResourceMetadata{
+		metadata: accessservice.OAuthProtectedResourceMetadata{
 			AuthorizationServers: []string{"https://idp.example.test"},
 		},
 	}
@@ -209,7 +209,7 @@ func TestOAuthProtectedResourceMetadataRequiresConfiguredOrigin(t *testing.T) {
 func TestOAuthProtectedResourceChallengeSkipsNonOAuthFailureSurfaces(t *testing.T) {
 	provider := &oauthMetadataStub{
 		baseURL: "https://memory.example.test",
-		metadata: service.OAuthProtectedResourceMetadata{
+		metadata: accessservice.OAuthProtectedResourceMetadata{
 			AuthorizationServers: []string{"https://idp.example.test"},
 		},
 	}
@@ -301,12 +301,12 @@ func TestOAuthProtectedResourceChallengeSkipsNonOAuthFailureSurfaces(t *testing.
 
 type oauthMetadataStub struct {
 	baseURL     string
-	metadata    service.OAuthProtectedResourceMetadata
+	metadata    accessservice.OAuthProtectedResourceMetadata
 	metadataErr error
 	baseErr     error
 }
 
-func (s *oauthMetadataStub) OAuthProtectedResourceMetadata(context.Context) (service.OAuthProtectedResourceMetadata, error) {
+func (s *oauthMetadataStub) OAuthProtectedResourceMetadata(context.Context) (accessservice.OAuthProtectedResourceMetadata, error) {
 	return s.metadata, s.metadataErr
 }
 

@@ -24,8 +24,9 @@ import (
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	httpvalidation "github.com/markhuangai/dense-mem/internal/http/validation"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/service"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
+	settings "github.com/markhuangai/dense-mem/internal/settings"
 	"github.com/markhuangai/dense-mem/internal/tools"
 )
 
@@ -34,8 +35,8 @@ func NewControlPortalServer(
 	cfg httpcontract.ConfigProvider,
 	teamSvc handler.TeamServiceInterface,
 	credentialSvc handler.CredentialServiceInterface,
-	logger observability.LogProvider,
-	securitySvcs ...service.SecurityService,
+	logger httpcontract.LogProvider,
+	securitySvcs ...settings.SecurityService,
 ) (*echo.Echo, error) {
 	return NewControlPortalServerWithMetrics(cfg, teamSvc, credentialSvc, nil, HealthConfig{}, logger, securitySvcs...)
 }
@@ -44,12 +45,12 @@ func NewControlPortalServerWithMetrics(
 	cfg httpcontract.ConfigProvider,
 	teamSvc handler.TeamServiceInterface,
 	credentialSvc handler.CredentialServiceInterface,
-	metricsSvc service.UsageMetricsReader,
+	metricsSvc operations.UsageMetricsReader,
 	health HealthConfig,
-	logger observability.LogProvider,
-	securitySvcs ...service.SecurityService,
+	logger httpcontract.LogProvider,
+	securitySvcs ...settings.SecurityService,
 ) (*echo.Echo, error) {
-	return NewControlPortalServerWithMetricsAndTelemetry(
+	return newControlPortalServerWithMetricsAndTelemetry(
 		cfg,
 		teamSvc,
 		credentialSvc,
@@ -61,15 +62,15 @@ func NewControlPortalServerWithMetrics(
 	)
 }
 
-func NewControlPortalServerWithMetricsAndTelemetry(
+func newControlPortalServerWithMetricsAndTelemetry(
 	cfg httpcontract.ConfigProvider,
 	teamSvc handler.TeamServiceInterface,
 	credentialSvc handler.CredentialServiceInterface,
-	metricsSvc service.UsageMetricsReader,
+	metricsSvc operations.UsageMetricsReader,
 	telemetry ControlPortalTelemetry,
 	health HealthConfig,
-	logger observability.LogProvider,
-	securitySvcs ...service.SecurityService,
+	logger httpcontract.LogProvider,
+	securitySvcs ...settings.SecurityService,
 ) (*echo.Echo, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("control portal: config is required")
@@ -97,10 +98,10 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 			if logger == nil {
 				return nil
 			}
-			attrs := []observability.LogAttr{
-				observability.String("method", v.Method),
-				observability.String("uri", v.URI),
-				observability.Int("status", v.Status),
+			attrs := []httpcontract.LogAttr{
+				httpcontract.String("method", v.Method),
+				httpcontract.String("uri", v.URI),
+				httpcontract.Int("status", v.Status),
 			}
 			if v.Error != nil {
 				logger.Error("control_http_request", errors.New(tools.SanitizeError(v.Error)), attrs...)
@@ -111,7 +112,7 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		},
 	}))
 
-	var securitySvc service.SecurityService
+	var securitySvc settings.SecurityService
 	if len(securitySvcs) > 0 {
 		securitySvc = securitySvcs[0]
 	}
@@ -314,7 +315,7 @@ func (h *controlPortalHandler) createTeam(c echo.Context) error {
 	if err := httpvalidation.ValidateStruct(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 	}
-	team, err := h.teams.Create(c.Request().Context(), service.CreateTeamRequest{
+	team, err := h.teams.Create(c.Request().Context(), accessservice.CreateTeamRequest{
 		Name:        body.Name,
 		Description: body.Description,
 		Metadata:    body.Metadata,
@@ -349,7 +350,7 @@ func (h *controlPortalHandler) updateTeam(c echo.Context) error {
 	if body.Description != "" {
 		descPtr = &body.Description
 	}
-	team, err := h.teams.Update(c.Request().Context(), teamID, service.UpdateTeamRequest{
+	team, err := h.teams.Update(c.Request().Context(), teamID, accessservice.UpdateTeamRequest{
 		Name:        namePtr,
 		Description: descPtr,
 		Metadata:    body.Metadata,
@@ -409,7 +410,7 @@ func (h *controlPortalHandler) createCredential(c echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
-	req := service.CreateCredentialRequest{
+	req := accessservice.CreateCredentialRequest{
 		Name:      body.Name,
 		RateLimit: body.RateLimit,
 		Role:      body.Role,
@@ -419,7 +420,7 @@ func (h *controlPortalHandler) createCredential(c echo.Context) error {
 	}
 	if body.Scopes != nil {
 		if len(*body.Scopes) == 0 {
-			return httperr.New(httperr.VALIDATION_ERROR, service.CredentialScopeValidationMessage())
+			return httperr.New(httperr.VALIDATION_ERROR, accessservice.CredentialScopeValidationMessage())
 		}
 		req.Scopes = append([]string(nil), (*body.Scopes)...)
 	}
@@ -465,12 +466,12 @@ func (h *controlPortalHandler) updateCredential(c echo.Context) error {
 		return httperr.New(httperr.VALIDATION_ERROR, "credential name, role, and scopes must be updated separately")
 	}
 	if rolePresent {
-		if _, err := service.NormalizeCredentialRole(body.Role); err != nil {
+		if _, err := accessservice.NormalizeCredentialRole(body.Role); err != nil {
 			return err
 		}
 	}
 	if scopesPresent && len(*body.Scopes) == 0 {
-		return httperr.New(httperr.VALIDATION_ERROR, service.CredentialScopeValidationMessage())
+		return httperr.New(httperr.VALIDATION_ERROR, accessservice.CredentialScopeValidationMessage())
 	}
 	var credential *domain.Credential
 	if namePresent {
@@ -513,7 +514,7 @@ func (h *controlPortalHandler) rotateCredential(c echo.Context) error {
 	if strings.TrimSpace(body.Role) != "" {
 		return httperr.New(httperr.VALIDATION_ERROR, "role cannot be changed by rotating a key")
 	}
-	req := service.CreateCredentialRequest{
+	req := accessservice.CreateCredentialRequest{
 		Name:      body.Name,
 		RateLimit: body.RateLimit,
 	}
@@ -589,7 +590,7 @@ func (h *controlPortalHandler) updateSecuritySettings(c echo.Context) error {
 	}
 	updated, err := h.security.UpdateSecuritySettings(c.Request().Context(), next, "control", c.RealIP(), "")
 	if err != nil {
-		if errors.Is(err, service.ErrInvalidSecuritySettings) {
+		if errors.Is(err, settings.ErrInvalidSecuritySettings) {
 			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 		}
 		return err
@@ -635,7 +636,7 @@ func (h *controlPortalHandler) createSecurityBan(c echo.Context) error {
 	}
 	ban, err := h.security.CreateManualSecurityBan(c.Request().Context(), body.IP, body.Reason, expiresAt, "control", c.RealIP(), "")
 	if err != nil {
-		if errors.Is(err, service.ErrInvalidSecurityIP) || errors.Is(err, service.ErrInvalidSecuritySettings) {
+		if errors.Is(err, settings.ErrInvalidSecurityIP) || errors.Is(err, settings.ErrInvalidSecuritySettings) {
 			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 		}
 		return err
@@ -649,7 +650,7 @@ func (h *controlPortalHandler) deleteSecurityBan(c echo.Context) error {
 	}
 	ip := c.Param("ip")
 	if err := h.security.DeleteSecurityBan(c.Request().Context(), ip, "control", c.RealIP(), ""); err != nil {
-		if errors.Is(err, service.ErrInvalidSecurityIP) {
+		if errors.Is(err, settings.ErrInvalidSecurityIP) {
 			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 		}
 		return err
@@ -735,7 +736,7 @@ func controlMetricsFilter(c echo.Context) (domain.UsageMetricsFilter, error) {
 	}, nil
 }
 
-func controlTelemetryFilter(c echo.Context) (service.TelemetryFilter, error) {
+func controlTelemetryFilter(c echo.Context) (operations.TelemetryFilter, error) {
 	scope := strings.TrimSpace(c.QueryParam("scope"))
 	if scope == "" {
 		scope = "system"
@@ -743,14 +744,14 @@ func controlTelemetryFilter(c echo.Context) (service.TelemetryFilter, error) {
 	switch scope {
 	case "system", "team", "profile":
 	default:
-		return service.TelemetryFilter{}, httperr.New(httperr.VALIDATION_ERROR, "scope must be one of system, team, profile")
+		return operations.TelemetryFilter{}, httperr.New(httperr.VALIDATION_ERROR, "scope must be one of system, team, profile")
 	}
 
 	var teamID *uuid.UUID
 	if raw := strings.TrimSpace(c.QueryParam("team_id")); raw != "" {
 		parsed, err := uuid.Parse(raw)
 		if err != nil {
-			return service.TelemetryFilter{}, httperr.New(httperr.INVALID_UUID, "invalid team ID format")
+			return operations.TelemetryFilter{}, httperr.New(httperr.INVALID_UUID, "invalid team ID format")
 		}
 		teamID = &parsed
 	}
@@ -759,17 +760,17 @@ func controlTelemetryFilter(c echo.Context) (service.TelemetryFilter, error) {
 	if raw := strings.TrimSpace(c.QueryParam("profile_id")); raw != "" {
 		parsed, err := uuid.Parse(raw)
 		if err != nil {
-			return service.TelemetryFilter{}, httperr.New(httperr.INVALID_UUID, "invalid profile ID format")
+			return operations.TelemetryFilter{}, httperr.New(httperr.INVALID_UUID, "invalid profile ID format")
 		}
 		profileID = &parsed
 	}
 
-	return service.TelemetryFilter{
+	return operations.TelemetryFilter{
 		Window:    strings.TrimSpace(c.QueryParam("window")),
 		Scope:     scope,
 		TeamID:    teamID,
 		ProfileID: profileID,
-		Audience:  service.TelemetryAudienceOperator,
+		Audience:  operations.TelemetryAudienceOperator,
 	}, nil
 }
 
@@ -987,7 +988,7 @@ func controlTimePtr(t *time.Time) *string {
 }
 
 // ShutdownControlPortal gracefully shuts down the control portal server.
-func ShutdownControlPortal(e *echo.Echo, logger observability.LogProvider) error {
+func ShutdownControlPortal(e *echo.Echo, logger httpcontract.LogProvider) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := e.Shutdown(ctx); err != nil && logger != nil {

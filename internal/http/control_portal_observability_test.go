@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,7 +16,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/dream"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type controlOperationLogReaderStub struct {
@@ -179,7 +179,7 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 		},
 	}
 	profiles := &controlProfileSvc{profiles: []*domain.Team{{ID: teamID, Name: "Default"}}}
-	server, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	server, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 	}, profiles, &controlKeySvc{}, nil, ControlPortalTelemetry{
@@ -427,5 +427,5 @@ func TestControlDependencySnapshotErrorAndDegraded(t *testing.T) {
 	assert.Equal(t, "single_node_mode", *snapshot[1].ReasonCode)
 }
 
-var _ service.OperationLogReader = (*controlOperationLogReaderStub)(nil)
+var _ operations.OperationLogReader = (*controlOperationLogReaderStub)(nil)
 var _ dream.Service = (*controlDreamServiceStub)(nil)

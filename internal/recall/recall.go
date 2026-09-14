@@ -281,7 +281,7 @@ func recordRecallCommunityMetric(ctx context.Context, metrics observability.Disc
 	for _, community := range result.RelatedCommunities {
 		communityRelationships += len(community.CommunityRelationships)
 	}
-	observability.RecordCommunityRecall(ctx, metrics, outcome, len(result.RelatedCommunities), communityRelationships)
+	communitycontract.RecordCommunityRecall(ctx, metrics, outcome, len(result.RelatedCommunities), communityRelationships)
 }
 
 func (s *recallService) resolveCommunityCoverage(

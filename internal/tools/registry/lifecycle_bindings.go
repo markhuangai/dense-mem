@@ -12,7 +12,7 @@ func bindLifecycleTool(tool Tool, deps Dependencies) Tool {
 	switch tool.Name {
 	case ToolRetractEvidence:
 		tool.Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-			if deps.Lifecycle == nil {
+			if deps.LifecycleBindings.Service == nil {
 				return nil, ErrToolUnavailable
 			}
 			if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
@@ -22,7 +22,7 @@ func bindLifecycleTool(tool Tool, deps Dependencies) Tool {
 			if err := remapInput(input, &req); err != nil {
 				return nil, fmt.Errorf("retract_evidence: invalid input: %w", err)
 			}
-			res, err := deps.Lifecycle.RetractEvidence(ctx, req)
+			res, err := deps.LifecycleBindings.Service.RetractEvidence(ctx, req)
 			if err != nil {
 				return nil, err
 			}
@@ -30,7 +30,7 @@ func bindLifecycleTool(tool Tool, deps Dependencies) Tool {
 		}
 	case ToolCorrectRelationship:
 		tool.Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-			if deps.Lifecycle == nil {
+			if deps.LifecycleBindings.Service == nil {
 				return nil, ErrToolUnavailable
 			}
 			if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
@@ -40,7 +40,7 @@ func bindLifecycleTool(tool Tool, deps Dependencies) Tool {
 			if err := remapInput(input, &req); err != nil {
 				return nil, fmt.Errorf("correct_relationship: invalid input: %w", err)
 			}
-			res, err := deps.Lifecycle.CorrectRelationship(ctx, req)
+			res, err := deps.LifecycleBindings.Service.CorrectRelationship(ctx, req)
 			if err != nil {
 				submissionID := ""
 				if req.Action == "confirm" {

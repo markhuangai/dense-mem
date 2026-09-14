@@ -12,9 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/config"
-	"github.com/markhuangai/dense-mem/internal/observability"
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type controlSearchConvergenceReader struct {
@@ -28,13 +27,13 @@ func (r controlSearchConvergenceReader) GetSearchConvergence(context.Context) (*
 
 type controlSearchLogger struct{ warnings []string }
 
-func (*controlSearchLogger) Info(string, ...observability.LogAttr)         {}
-func (*controlSearchLogger) Error(string, error, ...observability.LogAttr) {}
-func (l *controlSearchLogger) Warn(message string, _ ...observability.LogAttr) {
+func (*controlSearchLogger) Info(string, ...httpcontract.LogAttr)         {}
+func (*controlSearchLogger) Error(string, error, ...httpcontract.LogAttr) {}
+func (l *controlSearchLogger) Warn(message string, _ ...httpcontract.LogAttr) {
 	l.warnings = append(l.warnings, message)
 }
-func (*controlSearchLogger) Debug(string, ...observability.LogAttr)                    {}
-func (l *controlSearchLogger) With(...observability.LogAttr) observability.LogProvider { return l }
+func (*controlSearchLogger) Debug(string, ...httpcontract.LogAttr)                   {}
+func (l *controlSearchLogger) With(...httpcontract.LogAttr) httpcontract.LogProvider { return l }
 
 func TestControlPortalSearchConvergenceMapsCurrentDocumentProjection(t *testing.T) {
 	now := time.Date(2026, time.August, 26, 1, 0, 0, 0, time.UTC)
@@ -66,12 +65,12 @@ func TestControlPortalSearchConvergenceHandlerBoundsFailures(t *testing.T) {
 		reader searchapp.SearchConvergenceReader
 		want   int
 	}{
-		{name: "unavailable dependency", reader: controlSearchConvergenceReader{err: service.ErrSearchConvergenceUnavailable}, want: http.StatusServiceUnavailable},
+		{name: "unavailable dependency", reader: controlSearchConvergenceReader{err: searchapp.ErrSearchConvergenceUnavailable}, want: http.StatusServiceUnavailable},
 		{name: "backend failure", reader: controlSearchConvergenceReader{err: errors.New("pq: private details")}, want: http.StatusInternalServerError},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			logger := &controlSearchLogger{}
-			server, err := NewControlPortalServerWithMetricsAndTelemetry(baseConfig, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{Convergence: test.reader}, HealthConfig{}, logger)
+			server, err := newControlPortalServerWithMetricsAndTelemetry(baseConfig, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{Convergence: test.reader}, HealthConfig{}, logger)
 			require.NoError(t, err)
 			req := httptest.NewRequest(http.MethodGet, "/control/api/search/convergence", nil)
 			req.Header.Set("Authorization", "Bearer secret")
@@ -84,7 +83,7 @@ func TestControlPortalSearchConvergenceHandlerBoundsFailures(t *testing.T) {
 			}
 		})
 	}
-	server, err := NewControlPortalServerWithMetricsAndTelemetry(baseConfig, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{}, HealthConfig{}, nil)
+	server, err := newControlPortalServerWithMetricsAndTelemetry(baseConfig, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{}, HealthConfig{}, nil)
 	require.NoError(t, err)
 	req := httptest.NewRequest(http.MethodGet, "/control/api/search/convergence", nil)
 	req.Header.Set("Authorization", "Bearer secret")

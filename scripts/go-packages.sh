@@ -71,6 +71,9 @@ is_excluded() {
 	if [[ "${path}" == tests/* || "${path}" == */tests/* ]]; then
 		return 0
 	fi
+	if [[ "${COVERAGE_ONLY}" == true && ( "${path}" == internal/*/postgres || "${path}" == internal/*/postgres/* || "${path}" == internal/storage/postgres || "${path}" == internal/storage/postgres/* || "${path}" == internal/storage/redis || "${path}" == cmd/internal/demo/postgres || "${path}" == cmd/internal/demo/postgres/* || "${path}" == cmd/e2e/* ) ]]; then
+		return 0
+	fi
 	if [[ "${PRODUCTION_ONLY}" == true && ( "${path}" == cmd/eval-* || "${path}" == internal/evalharness ) ]]; then
 		return 0
 	fi

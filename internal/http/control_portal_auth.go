@@ -10,7 +10,8 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
+	settings "github.com/markhuangai/dense-mem/internal/settings"
 )
 
 type controlPortalActorContextKey struct{}
@@ -42,8 +43,8 @@ func controlPortalActorFromRequest(req *nethttp.Request) string {
 	return "control_portal"
 }
 
-func controlPortalMiddleware(token string, securitySvc service.SecurityService, controlIdentity ...*service.ControlIdentityService) echo.MiddlewareFunc {
-	var identityService *service.ControlIdentityService
+func controlPortalMiddleware(token string, securitySvc settings.SecurityService, controlIdentity ...*accessservice.ControlIdentityService) echo.MiddlewareFunc {
+	var identityService *accessservice.ControlIdentityService
 	if len(controlIdentity) > 0 {
 		identityService = controlIdentity[0]
 	}
@@ -54,9 +55,9 @@ func controlPortalMiddleware(token string, securitySvc service.SecurityService, 
 			if controlTokenMatches(c.Request(), token) {
 				actor = controlPortalActorFromRequest(c.Request())
 			} else if identityService != nil {
-				cookie, err := c.Cookie(service.ControlSessionCookieName)
+				cookie, err := c.Cookie(accessservice.ControlSessionCookieName)
 				if err == nil {
-					csrf := c.Request().Header.Get(service.ControlCSRFHeaderName)
+					csrf := c.Request().Header.Get(accessservice.ControlCSRFHeaderName)
 					requireCSRF := c.Request().Method != nethttp.MethodGet && c.Request().Method != nethttp.MethodHead
 					if identity, authErr := identityService.AuthenticateSession(c.Request().Context(), cookie.Value, csrf, requireCSRF); authErr == nil {
 						actor = "control_portal:sso"
@@ -80,7 +81,7 @@ func controlPortalMiddleware(token string, securitySvc service.SecurityService, 
 	}
 }
 
-func recordControlAuthFailure(c echo.Context, securitySvc service.SecurityService) {
+func recordControlAuthFailure(c echo.Context, securitySvc settings.SecurityService) {
 	if securitySvc == nil {
 		return
 	}

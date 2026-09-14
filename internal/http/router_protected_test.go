@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"sync"
 	"testing"
 	"time"
@@ -10,12 +11,11 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type routerCredentialService struct{}
 
-func (routerCredentialService) CreateCredential(context.Context, uuid.UUID, service.CreateCredentialRequest, *string, string, string, string) (*domain.Credential, string, error) {
+func (routerCredentialService) CreateCredential(context.Context, uuid.UUID, accessservice.CreateCredentialRequest, *string, string, string, string) (*domain.Credential, string, error) {
 	return nil, "", nil
 }
 
@@ -31,7 +31,7 @@ func (routerCredentialService) UpdateScopesForTeam(context.Context, uuid.UUID, u
 	return nil, nil
 }
 
-func (routerCredentialService) RotateForTeam(context.Context, uuid.UUID, uuid.UUID, service.CreateCredentialRequest, *string, string, string, string) (*domain.Credential, string, error) {
+func (routerCredentialService) RotateForTeam(context.Context, uuid.UUID, uuid.UUID, accessservice.CreateCredentialRequest, *string, string, string, string) (*domain.Credential, string, error) {
 	return nil, "", nil
 }
 
@@ -134,30 +134,6 @@ func (r *routerCredentialRepo) touched(id uuid.UUID) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.touchedID == id && r.touchedCount > 0
-}
-
-func TestProtectedDepsGettersReturnConfiguredDependencies(t *testing.T) {
-	deps := &ProtectedDeps{
-		CredentialRepo:   nil,
-		TeamSvc:          nil,
-		RateLimitService: nil,
-		UsageMetrics:     nil,
-		AuditService:     nil,
-		SecurityService:  nil,
-		Config:           nil,
-		Logger:           nil,
-	}
-
-	if deps.GetCredentialRepo() != nil ||
-		deps.GetTeamSvc() != nil ||
-		deps.GetRateLimitService() != nil ||
-		deps.GetUsageMetrics() != nil ||
-		deps.GetAuditService() != nil ||
-		deps.GetSecurityService() != nil ||
-		deps.GetConfig() != nil ||
-		deps.GetLogger() != nil {
-		t.Fatal("zero-value ProtectedDeps getters must return configured nil dependencies")
-	}
 }
 
 func TestRegisterProtectedRoutesWithHandlersRegistersConfiguredSurface(t *testing.T) {

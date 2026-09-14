@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
+	searchpostgres "github.com/markhuangai/dense-mem/internal/search/postgres"
 )
 
 type searchConvergenceHealthStub struct {
@@ -53,11 +53,11 @@ func TestSearchConvergenceHealthCheckBoundsRepositoryErrors(t *testing.T) {
 
 func TestSearchConvergenceHealthCheckDoesNotLogExpectedDegradation(t *testing.T) {
 	logger := &searchConvergenceHealthLogger{}
-	check := searchConvergenceHealthCheck(searchConvergenceHealthStub{err: repository.ErrSearchConvergenceAttentionRequired}, logger)
+	check := searchConvergenceHealthCheck(searchConvergenceHealthStub{err: searchpostgres.ErrSearchConvergenceAttentionRequired}, logger)
 
 	err := check(context.Background())
 
-	if !errors.Is(err, repository.ErrSearchConvergenceAttentionRequired) {
+	if !errors.Is(err, searchpostgres.ErrSearchConvergenceAttentionRequired) {
 		t.Fatalf("health error = %v", err)
 	}
 	if len(logger.warnings) != 0 {

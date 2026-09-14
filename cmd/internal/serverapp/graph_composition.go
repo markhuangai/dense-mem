@@ -5,13 +5,9 @@ import (
 	graphcontract "github.com/markhuangai/dense-mem/internal/graph/contract"
 )
 
-type graphStoreSource interface {
-	GraphStore() graphcontract.Store
-}
-
-func buildGraphApplication(source graphStoreSource) graphapp.Service {
-	if source == nil {
+func buildGraphApplication(store graphcontract.Store) graphapp.Service {
+	if store == nil {
 		return graphapp.New(nil)
 	}
-	return graphapp.New(source.GraphStore())
+	return graphapp.New(store)
 }

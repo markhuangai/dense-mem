@@ -5,13 +5,9 @@ import (
 	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
 )
 
-type evidenceConflictStoreSource interface {
-	ConflictStore() *conflictpostgres.Store
-}
-
-func buildEvidenceConflictApplication(source evidenceConflictStoreSource) *evidenceconflict.Service {
-	if source == nil {
+func buildEvidenceConflictApplication(store *conflictpostgres.Store) *evidenceconflict.Service {
+	if store == nil {
 		return evidenceconflict.New(nil)
 	}
-	return evidenceconflict.New(source.ConflictStore())
+	return evidenceconflict.New(store)
 }

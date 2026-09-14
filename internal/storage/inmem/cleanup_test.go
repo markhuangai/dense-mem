@@ -2,12 +2,12 @@ package inmem
 
 import (
 	"context"
+	privacyservice "github.com/markhuangai/dense-mem/internal/privacy/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-
-	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/storage/redis"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNoopCleanupRepository_ReturnsNilForBothCleanupCalls(t *testing.T) {
@@ -23,8 +23,8 @@ func TestNoopCleanupRepository_ReturnsNilForBothCleanupCalls(t *testing.T) {
 
 func TestNoopCleanupImplementations_SatisfyRequiredInterfaces(t *testing.T) {
 	var _ redis.CleanupRepositoryInterface = (*NoopCleanupRepository)(nil)
-	var _ service.CredentialSessionInvalidator = (*NoopCleanupRepository)(nil)
-	var _ service.TeamStatePurger = (*NoopCleanupRepository)(nil)
+	var _ privacyservice.CredentialSessionInvalidator = (*NoopCleanupRepository)(nil)
+	var _ accessservice.TeamStatePurger = (*NoopCleanupRepository)(nil)
 
 	assert.True(t, true)
 }

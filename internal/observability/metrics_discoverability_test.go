@@ -3,6 +3,8 @@ package observability
 import (
 	"context"
 	"testing"
+
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 )
 
 func TestNoopDiscoverabilityMetricsNeverPanics(t *testing.T) {
@@ -11,7 +13,7 @@ func TestNoopDiscoverabilityMetricsNeverPanics(t *testing.T) {
 	m.IncEmbeddingError("timeout")
 	m.ObserveRecallLatency(5)
 	m.ObserveRecall(5, 2, "ok")
-	m.ObserveRecallFeedback(RecallFeedback{Used: true, AnswerSupported: true, Quality: "high"})
+	m.ObserveRecallFeedback(recallcontract.FeedbackObservation{Used: true, AnswerSupported: true, Quality: "high"})
 	m.ObserveDreamFeedback(DreamFeedback{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"})
 	m.ObserveConflictReviewDuration(1, "completed")
 	m.IncVerifyVerdict("verified")
@@ -23,7 +25,7 @@ func TestInMemoryDiscoverabilityMetricsRecordsActiveSignals(t *testing.T) {
 	m.IncEmbeddingError("timeout")
 	m.ObserveRecallLatency(42)
 	m.ObserveRecall(7.5, 3, "ok")
-	m.ObserveRecallFeedback(RecallFeedback{
+	m.ObserveRecallFeedback(recallcontract.FeedbackObservation{
 		Used:            true,
 		AnswerSupported: false,
 		Quality:         "medium",
@@ -72,7 +74,7 @@ func TestRecordDiscoverabilityMetricsUsesUnscopedRecorder(t *testing.T) {
 	RecordVerifyVerdict(ctx, metrics, "verify-model", "verified")
 	RecordRecallLatency(ctx, metrics, 7)
 	RecordRecall(ctx, metrics, 8, 2, "ok")
-	RecordRecallFeedback(ctx, metrics, RecallFeedback{Used: true, Quality: "high"})
+	RecordRecallFeedback(ctx, metrics, recallcontract.FeedbackObservation{Used: true, Quality: "high"})
 	RecordDreamFeedback(ctx, metrics, DreamFeedback{Decision: "confirm_true", Outcome: "ok", FromStatus: "proposed"})
 	RecordConflictReviewDuration(ctx, metrics, 1.5, "completed")
 	RecordConflictReviewDuration(ctx, metrics, -1, "ignored")
@@ -109,7 +111,7 @@ func TestInMemoryDiscoverabilityMetricsIsConcurrentSafe(t *testing.T) {
 			m.ObserveEmbeddingLatency(1, "ok")
 			m.IncEmbeddingError("timeout")
 			m.ObserveRecall(1, 1, "ok")
-			m.ObserveRecallFeedback(RecallFeedback{Quality: "high"})
+			m.ObserveRecallFeedback(recallcontract.FeedbackObservation{Quality: "high"})
 			m.ObserveDreamFeedback(DreamFeedback{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"})
 			m.ObserveConflictReviewDuration(1, "completed")
 			m.IncVerifyVerdict("verified")

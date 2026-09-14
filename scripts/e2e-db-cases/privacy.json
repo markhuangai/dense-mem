@@ -4,10 +4,10 @@
   "cases": [
     {
       "id": "repository/TestRememberAttemptDiagnosticHoldTransactionRollback",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberAttemptDiagnosticHoldTransactionRollback$",
       "phase": "precheck",
-      "source": "internal/repository/remember_diagnostic_hold_rollback_integration.e2e"
+      "source": "internal/knowledge/postgres/remember_diagnostic_hold_rollback_integration.e2e"
     },
     {
       "id": "postgres/TestPrivateMemoryAuditBackfillAssociatesMatchingCredentialRows",
@@ -18,129 +18,129 @@
     },
     {
       "id": "repository/TestPrivateMemoryCorrectionStatusHidesSealedGeneration",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestPrivateMemoryCorrectionStatusHidesSealedGeneration$",
       "phase": "precheck",
-      "source": "internal/repository/relationship_correction_repository_integration.e2e"
+      "source": "internal/knowledge/postgres/relationship_correction_repository_integration.e2e"
     },
     {
       "id": "repository/TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact",
-      "package": "./internal/repository",
+      "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact$",
       "phase": "precheck",
-      "source": "internal/repository/private_memory_repository_integration.e2e"
+      "source": "internal/privacy/postgres/private_memory_repository_integration.e2e"
     },
     {
       "id": "repository/TestPrivateMemoryCredentialRetirementUpgradesActiveErasure",
-      "package": "./internal/repository",
+      "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemoryCredentialRetirementUpgradesActiveErasure$",
       "phase": "precheck",
-      "source": "internal/repository/private_memory_credential_retirement_integration.e2e"
+      "source": "internal/privacy/postgres/private_memory_credential_retirement_integration.e2e"
     },
     {
       "id": "repository/TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage",
-      "package": "./internal/repository",
+      "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage$",
       "phase": "precheck",
-      "source": "internal/repository/private_memory_semantic_lineage_integration.e2e"
+      "source": "internal/privacy/postgres/private_memory_semantic_lineage_integration.e2e"
     },
     {
       "id": "repository/TestPrivateMemoryErasureCleansSynchronousAssessmentAfterAttemptOrder",
-      "package": "./internal/repository",
+      "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemoryErasureCleansSynchronousAssessmentAfterAttemptOrder$",
       "phase": "precheck",
-      "source": "internal/repository/private_memory_remember_assessment_integration.e2e"
+      "source": "internal/privacy/postgres/private_memory_remember_assessment_integration.e2e"
     },
     {
       "id": "repository/TestPrivateMemoryErasureRemovesInboundCrossSpaceReferences",
-      "package": "./internal/repository",
+      "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemoryErasureRemovesInboundCrossSpaceReferences$",
       "phase": "precheck",
-      "source": "internal/repository/private_memory_repository_integration.e2e"
+      "source": "internal/privacy/postgres/private_memory_repository_integration.e2e"
     },
     {
       "id": "repository/TestPrivateMemoryExpiredLeaseIsReclaimedWithNewFence",
-      "package": "./internal/repository",
+      "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemoryExpiredLeaseIsReclaimedWithNewFence$",
       "phase": "precheck",
-      "source": "internal/repository/private_memory_repository_integration.e2e"
+      "source": "internal/privacy/postgres/private_memory_repository_integration.e2e"
     },
     {
       "id": "repository/TestPrivateMemoryFailureRetriesAreBackedOffAndBounded",
-      "package": "./internal/repository",
+      "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemoryFailureRetriesAreBackedOffAndBounded$",
       "phase": "precheck",
-      "source": "internal/repository/private_memory_repository_integration.e2e"
+      "source": "internal/privacy/postgres/private_memory_repository_integration.e2e"
     },
     {
       "id": "repository/TestPrivateMemoryGenerationTriggerAllowsAuthenticatedSharedWrites",
-      "package": "./internal/repository",
+      "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemoryGenerationTriggerAllowsAuthenticatedSharedWrites$",
       "phase": "precheck",
-      "source": "internal/repository/private_memory_repository_integration.e2e"
+      "source": "internal/privacy/postgres/private_memory_repository_integration.e2e"
     },
     {
       "id": "repository/TestPrivateMemoryIdempotencyConcurrentReplay",
-      "package": "./internal/repository",
+      "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemoryIdempotencyConcurrentReplay$",
       "phase": "precheck",
-      "source": "internal/repository/private_memory_repository_integration.e2e"
+      "source": "internal/privacy/postgres/private_memory_repository_integration.e2e"
     },
     {
       "id": "repository/TestPrivateMemoryManifestMatchesCatalog",
-      "package": "./internal/repository",
+      "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemoryManifestMatchesCatalog$",
       "phase": "precheck",
-      "source": "internal/repository/private_memory_repository_integration.e2e"
+      "source": "internal/privacy/postgres/private_memory_repository_integration.e2e"
     },
     {
       "id": "repository/TestPrivateMemoryManifestMismatchBlocksPrepare",
-      "package": "./internal/repository",
+      "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemoryManifestMismatchBlocksPrepare$",
       "phase": "precheck",
-      "source": "internal/repository/private_memory_repository_integration.e2e"
+      "source": "internal/privacy/postgres/private_memory_repository_integration.e2e"
     },
     {
       "id": "repository/TestPrivateMemoryMissingRetiredCredentialLosesClaim",
-      "package": "./internal/repository",
+      "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemoryMissingRetiredCredentialLosesClaim$",
       "phase": "precheck",
-      "source": "internal/repository/private_memory_repository_integration.e2e"
+      "source": "internal/privacy/postgres/private_memory_repository_integration.e2e"
     },
     {
       "id": "repository/TestPrivateMemoryRetentionSelectsExpiredSpacesAndExcludesLegalHolds",
-      "package": "./internal/repository",
+      "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemoryRetentionSelectsExpiredSpacesAndExcludesLegalHolds$",
       "phase": "precheck",
-      "source": "internal/repository/private_memory_repository_integration.e2e"
+      "source": "internal/privacy/postgres/private_memory_repository_integration.e2e"
     },
     {
       "id": "repository/TestPrivateMemorySSOCredentialDeletePreservesSharedActorMembership",
-      "package": "./internal/repository",
+      "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemorySSOCredentialDeletePreservesSharedActorMembership$",
       "phase": "precheck",
-      "source": "internal/repository/private_memory_repository_integration.e2e"
+      "source": "internal/privacy/postgres/private_memory_repository_integration.e2e"
     },
     {
       "id": "repository/TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace",
-      "package": "./internal/repository",
+      "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace$",
       "phase": "precheck",
-      "source": "internal/repository/private_memory_repository_integration.e2e"
+      "source": "internal/privacy/postgres/private_memory_repository_integration.e2e"
     },
     {
       "id": "repository/TestPrivateMemorySSOCredentialRevocationAuditFailureRollsBackDisable",
-      "package": "./internal/repository",
+      "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemorySSOCredentialRevocationAuditFailureRollsBackDisable$",
       "phase": "precheck",
-      "source": "internal/repository/private_memory_audit_integration.e2e"
+      "source": "internal/privacy/postgres/private_memory_audit_integration.e2e"
     },
     {
       "id": "repository/TestPrivateMemorySSOCredentialRevocationAuditStoresProfileAndCredentialActors",
-      "package": "./internal/repository",
+      "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemorySSOCredentialRevocationAuditStoresProfileAndCredentialActors$",
       "phase": "precheck",
-      "source": "internal/repository/private_memory_audit_integration.e2e"
+      "source": "internal/privacy/postgres/private_memory_audit_integration.e2e"
     }
   ]
 }

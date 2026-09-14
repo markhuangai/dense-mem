@@ -4,312 +4,312 @@
   "cases": [
     {
       "id": "repository/TestComposeRememberPrimitives",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestComposeRememberPrimitives$",
       "phase": "scenario",
       "scenario": "synchronous_write_primitives",
-      "source": "internal/repository/remember_primitives_compose_e2e.e2e"
+      "source": "internal/knowledge/postgres/remember_primitives_compose_e2e.e2e"
     },
     {
       "id": "repository/TestKnownEvidenceFenceAllowsVisibleCrossOwnerEvidenceUnderRLS",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestKnownEvidenceFenceAllowsVisibleCrossOwnerEvidenceUnderRLS$",
       "phase": "precheck",
-      "source": "internal/repository/known_evidence_support_integration.e2e"
+      "source": "internal/knowledge/postgres/known_evidence_support_integration.e2e"
     },
     {
       "id": "repository/TestKnownEvidenceFenceFailsClosedWhenPrivateSpaceSeals",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestKnownEvidenceFenceFailsClosedWhenPrivateSpaceSeals$",
       "phase": "precheck",
-      "source": "internal/repository/known_evidence_support_integration.e2e"
+      "source": "internal/knowledge/postgres/known_evidence_support_integration.e2e"
     },
     {
       "id": "repository/TestKnownEvidenceFenceFailsClosedWhenSourceRevisionIsLocked",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestKnownEvidenceFenceFailsClosedWhenSourceRevisionIsLocked$",
       "phase": "precheck",
-      "source": "internal/repository/known_evidence_support_integration.e2e"
+      "source": "internal/knowledge/postgres/known_evidence_support_integration.e2e"
     },
     {
       "id": "repository/TestKnownEvidenceFenceRejectsSnapshotAfterSameTransactionSourceAdvance",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestKnownEvidenceFenceRejectsSnapshotAfterSameTransactionSourceAdvance$",
       "phase": "precheck",
-      "source": "internal/repository/known_evidence_support_integration.e2e"
+      "source": "internal/knowledge/postgres/known_evidence_support_integration.e2e"
     },
     {
       "id": "repository/TestKnownEvidenceFenceSerializesConcurrentQuarantine",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestKnownEvidenceFenceSerializesConcurrentQuarantine$",
       "phase": "precheck",
-      "source": "internal/repository/known_evidence_support_integration.e2e"
+      "source": "internal/knowledge/postgres/known_evidence_support_integration.e2e"
     },
     {
       "id": "repository/TestKnownEvidenceSupportAllowsOwnerCorrection",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestKnownEvidenceSupportAllowsOwnerCorrection$",
       "phase": "precheck",
-      "source": "internal/repository/known_evidence_support_integration.e2e"
+      "source": "internal/knowledge/postgres/known_evidence_support_integration.e2e"
     },
     {
       "id": "repository/TestKnownEvidenceSupportDoesNotRequireInlineEmbeddingProjection",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestKnownEvidenceSupportDoesNotRequireInlineEmbeddingProjection$",
       "phase": "precheck",
-      "source": "internal/repository/known_evidence_support_integration.e2e"
+      "source": "internal/knowledge/postgres/known_evidence_support_integration.e2e"
     },
     {
       "id": "repository/TestKnownEvidenceSupportPreservesABCOwnershipAndIsolation",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestKnownEvidenceSupportPreservesABCOwnershipAndIsolation$",
       "phase": "precheck",
-      "source": "internal/repository/known_evidence_support_integration.e2e"
+      "source": "internal/knowledge/postgres/known_evidence_support_integration.e2e"
     },
     {
       "id": "repository/TestKnownEvidenceSupportRejectsCrossSpacePrivateRelationship",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestKnownEvidenceSupportRejectsCrossSpacePrivateRelationship$",
       "phase": "precheck",
-      "source": "internal/repository/known_evidence_support_integration.e2e"
+      "source": "internal/knowledge/postgres/known_evidence_support_integration.e2e"
     },
     {
       "id": "repository/TestLedgerAuthorityConstraintsUseCanonicalValues",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestLedgerAuthorityConstraintsUseCanonicalValues$",
       "phase": "precheck",
-      "source": "internal/repository/ledger_repository_integration.e2e"
+      "source": "internal/knowledge/postgres/ledger_repository_integration.e2e"
     },
     {
       "id": "repository/TestLedgerCreateIngestAdvancesWholeSourceRevisionWithoutEvidenceTargetList",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestLedgerCreateIngestAdvancesWholeSourceRevisionWithoutEvidenceTargetList$",
       "phase": "precheck",
-      "source": "internal/repository/ledger_source_revision_supersedes_integration.e2e"
+      "source": "internal/knowledge/postgres/ledger_source_revision_supersedes_integration.e2e"
     },
     {
       "id": "repository/TestLedgerSourceRevisionCompareAndSet",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestLedgerSourceRevisionCompareAndSet$",
       "phase": "precheck",
-      "source": "internal/repository/ledger_repository_integration.e2e"
+      "source": "internal/knowledge/postgres/ledger_repository_integration.e2e"
     },
     {
       "id": "repository/TestLedgerValidateRejectsMixedSourceRevisionBatch",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestLedgerValidateRejectsMixedSourceRevisionBatch$",
       "phase": "precheck",
-      "source": "internal/repository/ledger_repository_integration.e2e"
+      "source": "internal/knowledge/postgres/ledger_repository_integration.e2e"
     },
     {
       "id": "repository/TestReferenceDefinitionGuardRequiresSystemOrMigrationMode",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestReferenceDefinitionGuardRequiresSystemOrMigrationMode$",
       "phase": "precheck",
-      "source": "internal/repository/ledger_repository_integration.e2e"
+      "source": "internal/knowledge/postgres/ledger_repository_integration.e2e"
     },
     {
       "id": "repository/TestRememberAttemptLockBoundsDifferentKeysByPoolAdmission",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberAttemptLockBoundsDifferentKeysByPoolAdmission$",
       "phase": "precheck",
-      "source": "internal/repository/remember_attempt_lock_integration.e2e"
+      "source": "internal/knowledge/postgres/remember_attempt_lock_integration.e2e"
     },
     {
       "id": "repository/TestRememberAttemptLockDifferentKeysUseIndependentCallbacks",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberAttemptLockDifferentKeysUseIndependentCallbacks$",
       "phase": "precheck",
-      "source": "internal/repository/remember_attempt_lock_integration.e2e"
+      "source": "internal/knowledge/postgres/remember_attempt_lock_integration.e2e"
     },
     {
       "id": "repository/TestRememberAttemptLockDiscardsFailedCleanupConnection",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberAttemptLockDiscardsFailedCleanupConnection$",
       "phase": "precheck",
-      "source": "internal/repository/remember_attempt_lock_integration.e2e"
+      "source": "internal/knowledge/postgres/remember_attempt_lock_integration.e2e"
     },
     {
       "id": "repository/TestRememberAttemptLockRejectsPoolWithoutApplicationCapacity",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberAttemptLockRejectsPoolWithoutApplicationCapacity$",
       "phase": "precheck",
-      "source": "internal/repository/remember_attempt_lock_integration.e2e"
+      "source": "internal/knowledge/postgres/remember_attempt_lock_integration.e2e"
     },
     {
       "id": "repository/TestRememberAttemptLockReleasesAfterCallbackPanic",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberAttemptLockReleasesAfterCallbackPanic$",
       "phase": "precheck",
-      "source": "internal/repository/remember_attempt_lock_integration.e2e"
+      "source": "internal/knowledge/postgres/remember_attempt_lock_integration.e2e"
     },
     {
       "id": "repository/TestRememberAttemptLockReleasesAfterContextCancellation",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberAttemptLockReleasesAfterContextCancellation$",
       "phase": "precheck",
-      "source": "internal/repository/remember_attempt_lock_integration.e2e"
+      "source": "internal/knowledge/postgres/remember_attempt_lock_integration.e2e"
     },
     {
       "id": "repository/TestRememberAttemptLockSerializesAcrossRepositoryInstances",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberAttemptLockSerializesAcrossRepositoryInstances$",
       "phase": "precheck",
-      "source": "internal/repository/remember_attempt_lock_integration.e2e"
+      "source": "internal/knowledge/postgres/remember_attempt_lock_integration.e2e"
     },
     {
       "id": "repository/TestRememberDuplicateBudgetAllocationUsesScopedPostgresCandidates",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberDuplicateBudgetAllocationUsesScopedPostgresCandidates$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_duplicate_budget_integration.e2e"
+      "source": "internal/knowledge/postgres/evidence_duplicate_budget_integration.e2e"
     },
     {
       "id": "repository/TestRememberDuplicateCandidateIsolationAndBound",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberDuplicateCandidateIsolationAndBound$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_duplicate_integration.e2e"
+      "source": "internal/knowledge/postgres/evidence_duplicate_integration.e2e"
     },
     {
       "id": "repository/TestRememberDuplicateConcurrentSameContentConverges",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberDuplicateConcurrentSameContentConverges$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_duplicate_integration.e2e"
+      "source": "internal/knowledge/postgres/evidence_duplicate_integration.e2e"
     },
     {
       "id": "repository/TestRememberDuplicateCrossOwnerReusePreservesOccurrenceLineage",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberDuplicateCrossOwnerReusePreservesOccurrenceLineage$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_duplicate_integration.e2e"
+      "source": "internal/knowledge/postgres/evidence_duplicate_integration.e2e"
     },
     {
       "id": "repository/TestRememberDuplicateEmbeddingPlanUsesCanonicalRenderedBytesAndRejectsContractChange",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberDuplicateEmbeddingPlanUsesCanonicalRenderedBytesAndRejectsContractChange$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_duplicate_integration.e2e"
+      "source": "internal/knowledge/postgres/evidence_duplicate_integration.e2e"
     },
     {
       "id": "repository/TestRememberDuplicateExactMatchRequiresByteEqualityOnHashCollision",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberDuplicateExactMatchRequiresByteEqualityOnHashCollision$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_duplicate_integration.e2e"
+      "source": "internal/knowledge/postgres/evidence_duplicate_integration.e2e"
     },
     {
       "id": "repository/TestRememberDuplicateExactReuseCreatesOneCanonicalAndTwoOccurrences",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberDuplicateExactReuseCreatesOneCanonicalAndTwoOccurrences$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_duplicate_integration.e2e"
+      "source": "internal/knowledge/postgres/evidence_duplicate_integration.e2e"
     },
     {
       "id": "repository/TestRememberDuplicateExactReuseRejectsConcurrentPrivateSpaceSeal",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberDuplicateExactReuseRejectsConcurrentPrivateSpaceSeal$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_duplicate_integration.e2e"
+      "source": "internal/knowledge/postgres/evidence_duplicate_integration.e2e"
     },
     {
       "id": "repository/TestRememberDuplicateExactReuseRequiresCurrentSearchProjection",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberDuplicateExactReuseRequiresCurrentSearchProjection$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_duplicate_search_projection_integration.e2e"
+      "source": "internal/knowledge/postgres/evidence_duplicate_search_projection_integration.e2e"
     },
     {
       "id": "repository/TestRememberDuplicateExactReuseSerializesWithConcurrentQuarantine",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberDuplicateExactReuseSerializesWithConcurrentQuarantine$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_duplicate_integration.e2e"
+      "source": "internal/knowledge/postgres/evidence_duplicate_integration.e2e"
     },
     {
       "id": "repository/TestRememberDuplicateFinalReauthorizationRejectsQuarantinedCandidateAtomically",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberDuplicateFinalReauthorizationRejectsQuarantinedCandidateAtomically$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_duplicate_integration.e2e"
+      "source": "internal/knowledge/postgres/evidence_duplicate_integration.e2e"
     },
     {
       "id": "repository/TestRememberDuplicateForceAndLifecycleBearingEvidenceStayNew",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberDuplicateForceAndLifecycleBearingEvidenceStayNew$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_duplicate_integration.e2e"
+      "source": "internal/knowledge/postgres/evidence_duplicate_integration.e2e"
     },
     {
       "id": "repository/TestRememberDuplicateIdenticalItemsInOneBatchShareCanonical",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberDuplicateIdenticalItemsInOneBatchShareCanonical$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_duplicate_integration.e2e"
+      "source": "internal/knowledge/postgres/evidence_duplicate_integration.e2e"
     },
     {
       "id": "repository/TestRememberDuplicateRepeatedCanonicalKeepsRelationshipSupportOccurrences",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberDuplicateRepeatedCanonicalKeepsRelationshipSupportOccurrences$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_duplicate_integration.e2e"
+      "source": "internal/knowledge/postgres/evidence_duplicate_integration.e2e"
     },
     {
       "id": "repository/TestRememberDuplicateSemanticReuseSerializesWithConcurrentQuarantine",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberDuplicateSemanticReuseSerializesWithConcurrentQuarantine$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_duplicate_integration.e2e"
+      "source": "internal/knowledge/postgres/evidence_duplicate_integration.e2e"
     },
     {
       "id": "repository/TestRememberDuplicateSourceLessCanonicalStaysIndependentFromSourceAdvance",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberDuplicateSourceLessCanonicalStaysIndependentFromSourceAdvance$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_duplicate_integration.e2e"
+      "source": "internal/knowledge/postgres/evidence_duplicate_integration.e2e"
     },
     {
       "id": "repository/TestRememberEvidenceOnlyCommitIsAtomicAndSearchable",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberEvidenceOnlyCommitIsAtomicAndSearchable$",
       "phase": "precheck",
-      "source": "internal/repository/remember_primitives_integration.e2e"
+      "source": "internal/knowledge/postgres/remember_primitives_integration.e2e"
     },
     {
       "id": "repository/TestRememberAttemptDiagnosticHoldAndPurgeSerializeOnPrivateSpace",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberAttemptDiagnosticHoldAndPurgeSerializeOnPrivateSpace$",
       "phase": "precheck",
-      "source": "internal/repository/remember_primitives_integration.e2e"
+      "source": "internal/knowledge/postgres/remember_primitives_integration.e2e"
     },
     {
       "id": "repository/TestRememberAttemptDiagnosticHoldSkipsNoopUpdates",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberAttemptDiagnosticHoldSkipsNoopUpdates$",
       "phase": "precheck",
-      "source": "internal/repository/remember_primitives_integration.e2e"
+      "source": "internal/knowledge/postgres/remember_primitives_integration.e2e"
     },
     {
       "id": "repository/TestRememberPolicyDiagnosticLegalHoldReleaseAndErasure",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberPolicyDiagnosticLegalHoldReleaseAndErasure$",
       "phase": "precheck",
-      "source": "internal/repository/remember_primitives_integration.e2e"
+      "source": "internal/knowledge/postgres/remember_primitives_integration.e2e"
     },
     {
       "id": "repository/TestRememberPrimitivesPersistRetryabilityAndLegacyProjection",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberPrimitivesPersistRetryabilityAndLegacyProjection$",
       "phase": "precheck",
-      "source": "internal/repository/remember_primitives_integration.e2e"
+      "source": "internal/knowledge/postgres/remember_primitives_integration.e2e"
     },
     {
       "id": "repository/TestRememberRejectsMismatchedProvenanceWhenReusingSourceRevision",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestRememberRejectsMismatchedProvenanceWhenReusingSourceRevision$",
       "phase": "precheck",
-      "source": "internal/repository/ledger_source_revision_supersedes_integration.e2e"
+      "source": "internal/knowledge/postgres/ledger_source_revision_supersedes_integration.e2e"
     }
   ]
 }

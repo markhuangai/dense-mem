@@ -2,69 +2,52 @@
   "schema_version": 1,
   "capability": "http-transport",
   "source_ownership": [
-    {"path": "cmd/internal/serverapp/backends.go", "issue": 379},
-    {"path": "cmd/internal/serverapp/transport_composition.go", "issue": 379},
-    {"path": "cmd/internal/serverapp/transport_composition_test.go", "issue": 379},
-    {"path": "internal/http/contract/ports.go", "issue": 379},
-    {"path": "internal/http/mcp_bindings.go", "issue": 379},
-    {"path": "internal/http/user_portal_bindings.go", "issue": 379},
-    {"path": "internal/http/control_portal_bindings.go", "issue": 379},
-    {"path": "internal/http/server.go", "issue": 379},
-    {"path": "internal/http/router_protected.go", "issue": 379},
-    {"path": "internal/http/user_portal.go", "issue": 379},
-    {"path": "internal/http/control_portal.go", "issue": 379},
-    {"path": "internal/http/handler/mcp_logger.go", "issue": 380},
-    {"path": "internal/http/handler/mcp_logger_test.go", "issue": 380}
-  ],
-  "compatibility_bridges": [
     {
-      "source_path": "internal/http/mcp_bindings.go",
-      "fields": ["MCPBindings.CredentialRepo", "MCPBindings.TeamSvc", "MCPBindings.RateLimitService", "MCPBindings.UsageMetrics", "MCPBindings.AuditService", "MCPBindings.SecurityService", "MCPBindings.SSOAuthenticator", "MCPBindings.OAuthAuthenticator", "MCPBindings.OAuthMetadata", "MCPBindings.Config", "MCPBindings.Logger", "MCPBindings.CredentialVerifier", "MCPBindings.LastUsedRecorder", "MCPBindings.PostAuthMiddleware"],
-      "consumers": [
-        {"path": "internal/http/mcp_bindings.go", "symbol": "ProtectedDeps.withMCPBindings"},
-        {"path": "internal/http/router_protected.go", "symbol": "RegisterProtectedRoutesWithHandlers"}
-      ],
-      "removal_issue": 382
+      "path": "cmd/internal/serverapp/backends.go",
+      "issue": 379
     },
     {
-      "source_path": "internal/http/router_protected.go",
-      "fields": ["ProtectedDeps.CredentialRepo", "ProtectedDeps.TeamSvc", "ProtectedDeps.RateLimitService", "ProtectedDeps.UsageMetrics", "ProtectedDeps.AuditService", "ProtectedDeps.SecurityService", "ProtectedDeps.SSOAuthenticator", "ProtectedDeps.OAuthAuthenticator", "ProtectedDeps.OAuthMetadata", "ProtectedDeps.Config", "ProtectedDeps.Logger", "ProtectedDeps.CredentialVerifier", "ProtectedDeps.LastUsedRecorder", "ProtectedDeps.PostAuthMiddleware"],
-      "consumers": [
-        {"path": "internal/http/mcp_bindings.go", "symbol": "ProtectedDeps.withMCPBindings"},
-        {"path": "internal/http/router_protected.go", "symbol": "RegisterProtectedRoutesWithHandlers"}
-      ],
-      "removal_issue": 382
+      "path": "cmd/internal/serverapp/transport_composition.go",
+      "issue": 379
     },
     {
-      "source_path": "internal/http/user_portal.go",
-      "fields": ["UserPortalDeps.GraphView", "UserPortalDeps.RecallSvc", "UserPortalDeps.DreamSvc", "UserPortalDeps.PrivateMemory"],
-      "consumers": [
-        {"path": "internal/http/user_portal_bindings.go", "symbol": "UserPortalDeps.withMemoryBindings"},
-        {"path": "internal/http/user_portal_routes.go", "symbol": "RegisterUserPortal"}
-      ],
-      "removal_issue": 382
+      "path": "cmd/internal/serverapp/transport_composition_test.go",
+      "issue": 379
     },
     {
-      "source_path": "internal/http/control_portal.go",
-      "fields": ["NewControlPortalServerWithMetricsAndTelemetry"],
-      "consumers": [
-        {"path": "internal/http/control_portal_bindings.go", "symbol": "NewControlPortalServerWithCapabilityBindings"},
-        {"path": "internal/http/control_portal.go", "symbol": "NewControlPortalServer"}
-      ],
-      "removal_issue": 382
+      "path": "internal/http/contract/ports.go",
+      "issue": 379
     },
     {
-      "source_path": "cmd/internal/serverapp/transport_composition.go",
-      "fields": ["transportSearchConvergenceReader", "transportSearchConvergenceReader.GetSearchConvergence", "nativeSearchConvergenceReader"],
-      "consumers": [
-        {"path": "cmd/internal/serverapp/transport_composition.go", "symbol": "nativeSearchConvergenceReader"},
-        {"path": "cmd/internal/serverapp/transport_composition.go", "symbol": "buildTransportComposition"}
-      ],
-      "removal_issue": 382,
-      "implementation_owner": {"path": "internal/search/convergence.go", "symbol": "NewSearchConvergenceService"},
-      "removal_condition": "Remove the transport compatibility adapter after the control portal consumes the native search convergence reader directly."
+      "path": "internal/http/control_portal_bindings.go",
+      "issue": 379
+    },
+    {
+      "path": "internal/http/server.go",
+      "issue": 379
+    },
+    {
+      "path": "internal/http/router_protected.go",
+      "issue": 379
+    },
+    {
+      "path": "internal/http/user_portal.go",
+      "issue": 379
+    },
+    {
+      "path": "internal/http/control_portal.go",
+      "issue": 379
+    },
+    {
+      "path": "internal/http/handler/mcp_logger.go",
+      "issue": 380
+    },
+    {
+      "path": "internal/http/handler/mcp_logger_test.go",
+      "issue": 380
     }
   ],
+  "compatibility_bridges": [],
   "completed_issues": [],
   "go": {
     "units": [
@@ -108,32 +91,7 @@
   "browser": {
     "units": []
   },
-  "exceptions": [
-    {
-      "source": "github.com/markhuangai/dense-mem/internal/http",
-      "target": "github.com/markhuangai/dense-mem/internal/observability",
-      "removal_issue": 379,
-      "reason": "HTTP transport still consumes the shared observability implementation until transport consolidation."
-    },
-    {
-      "source": "github.com/markhuangai/dense-mem/internal/http/handler",
-      "target": "github.com/markhuangai/dense-mem/internal/observability",
-      "removal_issue": 379,
-      "reason": "HTTP handlers still consume the shared observability implementation until transport consolidation."
-    },
-    {
-      "source": "github.com/markhuangai/dense-mem/internal/http/middleware",
-      "target": "github.com/markhuangai/dense-mem/internal/crypto",
-      "removal_issue": 379,
-      "reason": "HTTP middleware still consumes the shared credential crypto implementation until transport consolidation."
-    },
-    {
-      "source": "github.com/markhuangai/dense-mem/internal/http",
-      "target": "github.com/markhuangai/dense-mem/internal/privacy/contract",
-      "removal_issue": 382,
-      "reason": "Private-memory HTTP maps privacy-owned error sentinels through the public contract while the retained service compatibility facade is migrated; no storage implementation is imported."
-    }
-  ],
+  "exceptions": [],
   "workers": [
     {
       "path": "internal/http/dependency_checks.go",

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,38 +12,37 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type captureLogProvider struct {
 	level string
 	msg   string
-	attrs []observability.LogAttr
+	attrs []httpcontract.LogAttr
 }
 
-func (l *captureLogProvider) Info(msg string, attrs ...observability.LogAttr) {
+func (l *captureLogProvider) Info(msg string, attrs ...httpcontract.LogAttr) {
 	l.level = "info"
 	l.msg = msg
-	l.attrs = append([]observability.LogAttr(nil), attrs...)
+	l.attrs = append([]httpcontract.LogAttr(nil), attrs...)
 }
 
-func (l *captureLogProvider) Error(msg string, err error, attrs ...observability.LogAttr) {
+func (l *captureLogProvider) Error(msg string, err error, attrs ...httpcontract.LogAttr) {
 	l.level = "error"
 	l.msg = msg
-	l.attrs = append([]observability.LogAttr(nil), attrs...)
+	l.attrs = append([]httpcontract.LogAttr(nil), attrs...)
 }
 
-func (l *captureLogProvider) Warn(msg string, attrs ...observability.LogAttr) {
+func (l *captureLogProvider) Warn(msg string, attrs ...httpcontract.LogAttr) {
 	l.level = "warn"
 	l.msg = msg
-	l.attrs = append([]observability.LogAttr(nil), attrs...)
+	l.attrs = append([]httpcontract.LogAttr(nil), attrs...)
 }
 
-func (l *captureLogProvider) Debug(msg string, attrs ...observability.LogAttr) {}
+func (l *captureLogProvider) Debug(msg string, attrs ...httpcontract.LogAttr) {}
 
-func (l *captureLogProvider) With(attrs ...observability.LogAttr) observability.LogProvider {
+func (l *captureLogProvider) With(attrs ...httpcontract.LogAttr) httpcontract.LogProvider {
 	return l
 }
 
@@ -51,7 +50,7 @@ func (l *captureLogProvider) With(attrs ...observability.LogAttr) observability.
 func TestHealthEndpointReturns200(t *testing.T) {
 	// Arrange
 	cfg := config.Config{}
-	logger := observability.New(slog.LevelInfo)
+	logger := &captureLogProvider{}
 	e := NewServer(cfg, logger, HealthConfig{})
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
@@ -84,7 +83,7 @@ func TestHealthEndpointReturns200(t *testing.T) {
 func TestReadyBypassesAuth(t *testing.T) {
 	// Arrange
 	cfg := config.Config{}
-	logger := observability.New(slog.LevelInfo)
+	logger := &captureLogProvider{}
 	checks := []HealthCheck{}
 	e := NewServer(cfg, logger, HealthConfig{Checks: checks})
 
@@ -114,7 +113,7 @@ func TestReadyBypassesAuth(t *testing.T) {
 func TestReadyDegradedWhenCheckFails(t *testing.T) {
 	// Arrange
 	cfg := config.Config{}
-	logger := observability.New(slog.LevelInfo)
+	logger := &captureLogProvider{}
 
 	// Create a failing health check
 	failingCheck := HealthCheck{
@@ -166,7 +165,7 @@ func TestReadyDegradedWhenCheckFails(t *testing.T) {
 
 func TestReadyReportsOptionalFailureWithoutBlocking(t *testing.T) {
 	cfg := config.Config{}
-	logger := observability.New(slog.LevelInfo)
+	logger := &captureLogProvider{}
 	e := NewServer(cfg, logger, HealthConfig{Checks: []HealthCheck{{
 		Name:     "migration_state",
 		Optional: true,
@@ -199,7 +198,7 @@ func TestReadyReportsOptionalFailureWithoutBlocking(t *testing.T) {
 func TestReadyReadyWhenAllChecksPass(t *testing.T) {
 	// Arrange
 	cfg := config.Config{}
-	logger := observability.New(slog.LevelInfo)
+	logger := &captureLogProvider{}
 
 	// Create passing health checks
 	passingCheck1 := HealthCheck{
@@ -253,7 +252,7 @@ func TestGracefulShutdown(t *testing.T) {
 	// but we can verify the timeout constant is correct
 
 	cfg := config.Config{}
-	logger := observability.New(slog.LevelInfo)
+	logger := &captureLogProvider{}
 	checks := []HealthCheck{}
 
 	// Create server with graceful shutdown
@@ -273,7 +272,7 @@ func TestGracefulShutdown(t *testing.T) {
 // TestNewServerAcceptsHealthChecks verifies that NewServer accepts HealthConfig and compiles
 func TestNewServerAcceptsHealthChecks(t *testing.T) {
 	cfg := config.Config{}
-	logger := observability.New(slog.LevelInfo)
+	logger := &captureLogProvider{}
 
 	// Create various health checks
 	checks := []HealthCheck{
@@ -363,7 +362,7 @@ func TestRequestLoggerKeepsInvalidSessionCredentialsAtError(t *testing.T) {
 		{
 			name: "sso cookie",
 			mutate: func(req *http.Request) {
-				req.AddCookie(&http.Cookie{Name: service.SSOSessionCookieName, Value: "invalid"})
+				req.AddCookie(&http.Cookie{Name: accessservice.SSOSessionCookieName, Value: "invalid"})
 			},
 		},
 	} {
@@ -386,7 +385,7 @@ func TestRequestLoggerKeepsInvalidSessionCredentialsAtError(t *testing.T) {
 	}
 }
 
-func logAttrValue(attrs []observability.LogAttr, key string) string {
+func logAttrValue(attrs []httpcontract.LogAttr, key string) string {
 	for _, attr := range attrs {
 		if attr.Key != key {
 			continue
@@ -398,7 +397,7 @@ func logAttrValue(attrs []observability.LogAttr, key string) string {
 }
 
 func TestNewServerUsesDirectIPByDefault(t *testing.T) {
-	e := NewServer(config.Config{}, observability.New(slog.LevelInfo), HealthConfig{})
+	e := NewServer(config.Config{}, &captureLogProvider{}, HealthConfig{})
 	e.GET("/ip", func(c echo.Context) error {
 		return c.String(http.StatusOK, c.RealIP())
 	})
@@ -431,7 +430,7 @@ func TestServerWrapperMethods(t *testing.T) {
 		t.Fatalf("Shutdown() error = %v", err)
 	}
 
-	if err := ShutdownServer(e, observability.New(slog.LevelInfo)); err != nil {
+	if err := ShutdownServer(e, &captureLogProvider{}); err != nil {
 		t.Fatalf("ShutdownServer() error = %v", err)
 	}
 }
@@ -439,7 +438,7 @@ func TestServerWrapperMethods(t *testing.T) {
 // TestHealthEndpointNoMiddleware verifies that /health has no middleware applied
 func TestHealthEndpointNoMiddleware(t *testing.T) {
 	cfg := config.Config{}
-	logger := observability.New(slog.LevelInfo)
+	logger := &captureLogProvider{}
 	e := NewServer(cfg, logger, HealthConfig{})
 
 	// Make request without any headers
@@ -457,7 +456,7 @@ func TestHealthEndpointNoMiddleware(t *testing.T) {
 // TestHealthEndpoint_NoRedis_ReturnsDegraded200 verifies that /health returns 200
 // with degraded=true when running in in-memory mode.
 func TestHealthEndpoint_NoRedis_ReturnsDegraded200(t *testing.T) {
-	e := NewServer(config.Config{}, observability.New(slog.LevelInfo), HealthConfig{
+	e := NewServer(config.Config{}, &captureLogProvider{}, HealthConfig{
 		Degraded: true,
 		Reason:   "in-memory backend: no cross-instance rate limiting or session cleanup",
 		Checks: []HealthCheck{
@@ -499,7 +498,7 @@ func TestHealthEndpoint_NoRedis_ReturnsDegraded200(t *testing.T) {
 // TestHealthEndpoint_RedisEnabled_ReturnsNonDegraded verifies /health returns 200
 // without degraded when Redis is enabled.
 func TestHealthEndpoint_RedisEnabled_ReturnsNonDegraded(t *testing.T) {
-	e := NewServer(config.Config{}, observability.New(slog.LevelInfo), HealthConfig{
+	e := NewServer(config.Config{}, &captureLogProvider{}, HealthConfig{
 		Degraded: false,
 		Reason:   "",
 		Checks: []HealthCheck{
@@ -534,7 +533,7 @@ func TestHealthEndpoint_RedisEnabled_ReturnsNonDegraded(t *testing.T) {
 
 // TestHealthEndpoint_Degraded_ContainsChecks verifies that degraded /health includes named checks.
 func TestHealthEndpoint_Degraded_ContainsChecks(t *testing.T) {
-	e := NewServer(config.Config{}, observability.New(slog.LevelInfo), HealthConfig{
+	e := NewServer(config.Config{}, &captureLogProvider{}, HealthConfig{
 		Degraded: true,
 		Reason:   "in-memory backend: no cross-instance rate limiting or session cleanup",
 		Checks: []HealthCheck{

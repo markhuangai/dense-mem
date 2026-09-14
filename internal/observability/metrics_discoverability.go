@@ -14,7 +14,7 @@ type DiscoverabilityMetrics interface {
 	IncEmbeddingError(code string)
 	ObserveRecallLatency(durationMs float64)
 	ObserveRecall(durationMs float64, resultCount int, outcome string)
-	ObserveRecallFeedback(feedback RecallFeedback)
+	ObserveRecallFeedback(feedback recallcontract.FeedbackObservation)
 	ObserveDreamFeedback(feedback DreamFeedback)
 	ObserveConflictReviewDuration(seconds float64, outcome string)
 	IncVerifyVerdict(outcome string)
@@ -41,12 +41,12 @@ type noopMetrics struct{}
 
 var _ DiscoverabilityMetrics = noopMetrics{}
 
-func (noopMetrics) ObserveEmbeddingLatency(float64, string) {}
-func (noopMetrics) IncEmbeddingError(string)                {}
-func (noopMetrics) ObserveRecallLatency(float64)            {}
-func (noopMetrics) ObserveRecall(float64, int, string)      {}
-func (noopMetrics) ObserveRecallFeedback(RecallFeedback)    {}
-func (noopMetrics) ObserveDreamFeedback(DreamFeedback)      {}
+func (noopMetrics) ObserveEmbeddingLatency(float64, string)                  {}
+func (noopMetrics) IncEmbeddingError(string)                                 {}
+func (noopMetrics) ObserveRecallLatency(float64)                             {}
+func (noopMetrics) ObserveRecall(float64, int, string)                       {}
+func (noopMetrics) ObserveRecallFeedback(recallcontract.FeedbackObservation) {}
+func (noopMetrics) ObserveDreamFeedback(DreamFeedback)                       {}
 func (noopMetrics) ObserveConflictReviewDuration(float64, string) {
 }
 func (noopMetrics) IncVerifyVerdict(string)                       {}
@@ -106,10 +106,6 @@ type RecallSample struct {
 	ResultCount int
 	Outcome     string
 }
-
-// RecallFeedback is retained as a source-compatible alias for the Recall
-// capability's metrics port shape.
-type RecallFeedback = recallcontract.FeedbackObservation
 
 // RecallFeedbackSample is one recorded online recall-feedback event.
 type RecallFeedbackSample struct {
@@ -183,7 +179,7 @@ func (m *InMemoryDiscoverabilityMetrics) ObserveRecall(durationMs float64, resul
 	m.recallSamples = append(m.recallSamples, RecallSample{DurationMs: durationMs, ResultCount: resultCount, Outcome: outcome})
 }
 
-func (m *InMemoryDiscoverabilityMetrics) ObserveRecallFeedback(feedback RecallFeedback) {
+func (m *InMemoryDiscoverabilityMetrics) ObserveRecallFeedback(feedback recallcontract.FeedbackObservation) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	quality := normalizeRecallFeedbackQuality(feedback.Quality)

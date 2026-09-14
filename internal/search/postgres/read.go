@@ -459,9 +459,3 @@ func scanSearchHit(scanner searchHitScanner) (searchcontract.SearchHit, error) {
 	)
 	return hit, err
 }
-
-// ScanSearchHit is the compatibility seam used by retained recall query
-// helpers while the native adapter owns search-row scanning.
-func ScanSearchHit(scanner searchHitScanner) (searchcontract.SearchHit, error) {
-	return scanSearchHit(scanner)
-}

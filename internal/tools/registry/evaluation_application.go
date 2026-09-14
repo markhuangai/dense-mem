@@ -11,10 +11,10 @@ import (
 func bindEvaluationApplication(deps Dependencies) Dependencies {
 	if deps.EvaluationBindings.Application == nil {
 		deps.EvaluationBindings.Application = evaluationapp.New(evaluationapp.Dependencies{
-			Repository: deps.Evaluation,
-			Recall:     deps.Recall,
-			Dreams:     deps.Dreams,
-			Audit:      deps.EvaluationAudit,
+			Repository: deps.EvaluationBindings.Repository,
+			Recall:     deps.RecallBindings.Service,
+			Dreams:     deps.DreamBindings.Service,
+			Audit:      deps.EvaluationBindings.Audit,
 		})
 	}
 	return deps

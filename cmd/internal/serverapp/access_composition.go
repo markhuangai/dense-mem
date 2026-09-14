@@ -3,7 +3,6 @@ package serverapp
 import (
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/service"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
@@ -20,7 +19,7 @@ type accessApplicationDependencies struct {
 	CredentialVerifier    crypto.CredentialVerifier
 	ActivityWriter        *accessservice.CredentialActivityWriter
 	AuthVerifyConcurrency int
-	Audit                 service.AuditService
+	Audit                 accessservice.AuditService
 	RuntimeConfig         accessservice.SSORuntimeConfigProvider
 	Logger                observability.LogProvider
 	StatePurger           accessservice.TeamStatePurger

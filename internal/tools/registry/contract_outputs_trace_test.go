@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
+	graphcontract "github.com/markhuangai/dense-mem/internal/graph/contract"
 	traceapp "github.com/markhuangai/dense-mem/internal/trace"
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
-	graphcontract "github.com/markhuangai/dense-mem/internal/graph/contract"
 )
 
 func TestTraceContractOutputPreservesPublicSubmissionAndLineageIDs(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/stretchr/testify/assert"
@@ -181,7 +182,7 @@ func TestOpenAIProviderRecordsProviderUsageBeforeRejectingInvalidResult(t *testi
 	p.SetMetrics(metrics)
 	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationRecallEmbedding, 1)
 	_, _, err := p.EmbedBatch(ctx, []string{"first", "second"})
-	require.ErrorIs(t, err, ErrEmbeddingProvider)
+	require.ErrorIs(t, err, embeddingcontract.ErrEmbeddingProvider)
 
 	recorder := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -255,7 +256,7 @@ func TestOpenAIProviderMarksMalformedSuccessfulResponseUnpriced(t *testing.T) {
 	p.SetMetrics(metrics)
 	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationRecallEmbedding, 1)
 	_, _, err := p.Embed(ctx, "malformed response")
-	require.ErrorIs(t, err, ErrEmbeddingProvider)
+	require.ErrorIs(t, err, embeddingcontract.ErrEmbeddingProvider)
 
 	recorder := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -316,7 +317,7 @@ func TestOpenAIProvider_Non200Response(t *testing.T) {
 
 	_, _, err := p.Embed(context.Background(), "test")
 	require.Error(t, err)
-	var httpErr *ProviderHTTPError
+	var httpErr *embeddingcontract.ProviderHTTPError
 	require.ErrorAs(t, err, &httpErr)
 	assert.Equal(t, 401, httpErr.Status)
 	assert.Equal(t, "provider returned status 401", httpErr.Message)
@@ -342,7 +343,7 @@ func TestOpenAIProvider_NonJSONServerErrorIsHTTPError(t *testing.T) {
 
 	_, _, err := p.Embed(context.Background(), "test")
 	require.Error(t, err)
-	var httpErr *ProviderHTTPError
+	var httpErr *embeddingcontract.ProviderHTTPError
 	require.ErrorAs(t, err, &httpErr)
 	assert.Equal(t, http.StatusBadGateway, httpErr.Status)
 	assert.Equal(t, nonJSONProviderErrorMessage, httpErr.Message)
@@ -364,7 +365,7 @@ func TestOpenAIProvider_ClassifiesTruncatedResponseAsTransientNetworkFailure(t *
 
 	_, _, err := p.Embed(context.Background(), "truncated")
 	require.Error(t, err)
-	metadata := ClassifyFailure(err)
+	metadata := embeddingcontract.ClassifyFailure(err)
 	assert.Equal(t, "transient", metadata.Class)
 	assert.Equal(t, "provider_network_error", metadata.Code)
 }
@@ -410,7 +411,7 @@ func TestOpenAIProviderRejectsDimensionMismatchAfterFirstEmbedding(t *testing.T)
 
 	_, _, err := p.EmbedBatch(context.Background(), []string{"first", "second"})
 	require.Error(t, err)
-	metadata := ClassifyFailure(err)
+	metadata := embeddingcontract.ClassifyFailure(err)
 	assert.Equal(t, "provider_action_required", metadata.Class)
 	assert.Equal(t, "provider_response_invalid", metadata.Code)
 }
@@ -426,12 +427,12 @@ func TestOpenAIProviderParsesAllowlistedFailureCodeAndTypeWithoutMessage(t *test
 		AIAPIURL: srv.URL, AIAPIKey: "key", AIEmbeddingModel: "m", AIEmbeddingDimensions: 2,
 	}, srv.Client())
 	_, _, err := p.Embed(context.Background(), "test")
-	var httpErr *ProviderHTTPError
+	var httpErr *embeddingcontract.ProviderHTTPError
 	require.ErrorAs(t, err, &httpErr)
 	assert.Equal(t, "insufficient_quota", httpErr.Code)
 	assert.Equal(t, "insufficient_quota", httpErr.Type)
 	assert.NotContains(t, err.Error(), "billing secret detail")
-	metadata := ClassifyFailure(err)
+	metadata := embeddingcontract.ClassifyFailure(err)
 	assert.Equal(t, "provider_action_required", metadata.Class)
 	assert.Equal(t, "provider_quota_exhausted", metadata.Code)
 }
@@ -454,7 +455,7 @@ func TestOpenAIProvider_WrongDimensions(t *testing.T) {
 
 	_, _, err := p.Embed(context.Background(), "test")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrEmbeddingProvider)
+	assert.ErrorIs(t, err, embeddingcontract.ErrEmbeddingProvider)
 	assert.Contains(t, err.Error(), "expected 2 dimensions, got 4")
 }
 
@@ -476,7 +477,7 @@ func TestOpenAIProvider_WrongNumberOfEmbeddings(t *testing.T) {
 
 	_, _, err := p.EmbedBatch(context.Background(), []string{"a", "b", "c"})
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrEmbeddingProvider)
+	assert.ErrorIs(t, err, embeddingcontract.ErrEmbeddingProvider)
 	assert.Contains(t, err.Error(), "expected 3 embeddings, got 1")
 }
 
@@ -609,8 +610,8 @@ func TestOpenAIProvider_TrailingSlashInURL(t *testing.T) {
 }
 
 func TestOpenAIProvider_ImplementsInterface(t *testing.T) {
-	// Compile-time assertion that OpenAIEmbeddingProvider implements EmbeddingProviderInterface
-	var _ EmbeddingProviderInterface = (*OpenAIEmbeddingProvider)(nil)
+	// Compile-time assertion that OpenAIEmbeddingProvider implements embeddingcontract.EmbeddingProviderInterface
+	var _ embeddingcontract.EmbeddingProviderInterface = (*OpenAIEmbeddingProvider)(nil)
 	assert.True(t, true, "compile-time interface assertion passed")
 }
 
@@ -718,7 +719,7 @@ func TestOpenAIProvider_EmbedBatchWaitHonorsContextCancellation(t *testing.T) {
 	cancel()
 	_, _, err := provider.EmbedBatch(ctx, []string{"second"})
 	require.ErrorIs(t, err, context.Canceled)
-	assert.NotErrorIs(t, err, ErrEmbeddingTimeout)
+	assert.NotErrorIs(t, err, embeddingcontract.ErrEmbeddingTimeout)
 
 	releaseOnce.Do(func() { close(release) })
 	require.NoError(t, <-firstDone)

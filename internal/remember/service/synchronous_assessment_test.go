@@ -13,7 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	repository "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	legacyrepo "github.com/markhuangai/dense-mem/internal/repository"
+	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 )
 
 type synchronousAssessmentSessionStub struct{ id string }
@@ -682,10 +682,10 @@ func TestSynchronousAssessmentErrorClassificationAndHelpers(t *testing.T) {
 		require.True(t, IsRememberStaleInputError(stale), stale)
 	}
 	for _, stale := range []error{
-		legacyrepo.ErrConflictContextStale, legacyrepo.ErrRememberExactReferenceStale,
-		legacyrepo.ErrCorrectionTargetStale,
+		knowledgepostgres.ErrConflictContextStale, knowledgepostgres.ErrRememberExactReferenceStale,
+		knowledgepostgres.ErrCorrectionTargetStale,
 	} {
-		require.True(t, legacyrepo.IsRememberStaleInputError(stale), stale)
+		require.True(t, IsRememberStaleInputError(stale), stale)
 	}
 	require.False(t, IsRememberStaleInputError(errors.New("fresh")))
 }

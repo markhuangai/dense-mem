@@ -8,10 +8,10 @@ usage() {
 	cat >&2 <<'EOF'
 usage: scripts/coverage-report.sh --transitional | --complete
 
---transitional runs the existing Go CI inventory and enforces its 90 percent
-gate. --complete accounts for every first-party root-module package, the
-evaluation profile, the nested E2E module, and cross-package execution
-without enforcing the final architecture-program threshold yet.
+--transitional runs the legacy Go inventory. --complete accounts for every
+first-party root-module package, the evaluation profile, the nested E2E module,
+and cross-package execution, then enforces the strict above-90-percent gate on
+the deduplicated merged inventory.
 EOF
 }
 
@@ -46,6 +46,20 @@ profile_totals() {
 		}
 		printf "%d %d %.1f", covered, total, (covered / total) * 100
 	}' "$1"
+}
+
+enforce_profile_threshold() {
+	local profile="$1" label="$2" covered total
+	read -r covered total _ < <(profile_totals "${profile}")
+	if (( total <= 0 )); then
+		echo "${label} coverage report is empty" >&2
+		return 1
+	fi
+	if (( covered * 10 <= total * 9 )); then
+		printf '%s coverage %d/%d does not exceed 90%%\n' "${label}" "${covered}" "${total}" >&2
+		return 1
+	fi
+	printf '%s coverage %d/%d exceeds 90%%\n' "${label}" "${covered}" "${total}"
 }
 
 merge_profiles() {
@@ -95,11 +109,11 @@ run_transitional() {
 		-v total="${total}" \
 		-v threshold="${COVERAGE_THRESHOLD:-90.0}" \
 		'BEGIN {
-			if ((total + 0) < (threshold + 0)) {
-				printf("coverage %.1f%% is below required %.1f%%\n", total, threshold)
+			if ((total * 10) <= (threshold * 10)) {
+				printf("coverage %.1f%% does not exceed required %.1f%%\n", total, threshold)
 				exit 1
 			}
-			printf("coverage %.1f%% meets required %.1f%%\n", total, threshold)
+			printf("coverage %.1f%% exceeds required %.1f%%\n", total, threshold)
 		}'
 }
 
@@ -147,6 +161,7 @@ run_complete() {
 		cat "${e2e_report}"
 		printf '\ncomplete total: %d/%d %.1f%%\n' "${totals[0]}" "${totals[1]}" "${totals[2]}"
 	} | tee "${complete_report}"
+	enforce_profile_threshold "${merged_profile}" "complete Go"
 }
 
 case "$1" in

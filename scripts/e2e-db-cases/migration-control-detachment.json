@@ -39,10 +39,10 @@
     },
     {
       "id": "repository/TestAuthorityRepositoryRetainsMigrationAuditReadOnly",
-      "package": "./internal/repository",
+      "package": "./internal/operations/postgres",
       "run": "^TestAuthorityRepositoryRetainsMigrationAuditReadOnly$",
       "phase": "precheck",
-      "source": "internal/repository/migration_control_retirement_integration.e2e"
+      "source": "internal/operations/postgres/migration_control_retirement_integration.e2e"
     }
   ]
 }

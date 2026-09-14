@@ -17,59 +17,60 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/dream"
+	"github.com/markhuangai/dense-mem/internal/graph"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
 	"github.com/markhuangai/dense-mem/internal/recall"
-	"github.com/markhuangai/dense-mem/internal/service"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
-	"github.com/markhuangai/dense-mem/internal/service/graphview"
+	settings "github.com/markhuangai/dense-mem/internal/settings"
 )
 
 // UserPortalDeps holds the dependencies for the user portal.
 type UserPortalDeps struct {
-	Memory             MemoryPortalBindings
-	CredentialRepo     accessservice.CredentialStore
-	TeamSvc            handler.TeamServiceInterface
-	CredentialSvc      handler.CredentialServiceInterface
-	RateLimitSvc       service.RateLimitServiceInterface
-	UsageMetrics       service.UsageMetricsRecorder
-	Telemetry          service.TelemetryReader
-	GraphView          graphview.Service
-	RecallSvc          recall.RecallService
-	DreamSvc           dream.Service
-	AuditSvc           service.AuditService
-	SecuritySvc        httpmw.SecurityBanService
-	SSOService         *service.SSOService
-	PortalSession      service.UserPortalSessionManager
-	AppConfig          service.AppConfigService
-	PrivateMemory      PrivateMemoryServiceInterface
-	Config             httpcontract.ConfigProvider
-	CredentialVerifier httpcontract.CredentialVerifier
-	LastUsedRecorder   httpmw.LastUsedRecorder
-	UserStaticDir      string
-	ExtraMiddleware    []echo.MiddlewareFunc
+	CredentialRepo           accessservice.CredentialStore
+	TeamSvc                  handler.TeamServiceInterface
+	CredentialSvc            handler.CredentialServiceInterface
+	RateLimitSvc             accessservice.RateLimitServiceInterface
+	UsageMetrics             operations.UsageMetricsRecorder
+	Telemetry                operations.TelemetryReader
+	GraphView                graph.Service
+	RecallSvc                recall.RecallService
+	DreamSvc                 dream.Service
+	AuditSvc                 accessservice.AuditService
+	SecuritySvc              httpmw.SecurityBanService
+	SSOService               *accessservice.SSOService
+	PortalSession            accessservice.UserPortalSessionManager
+	AppConfig                settings.AppConfigService
+	PrivateMemory            PrivateMemoryServiceInterface
+	Config                   httpcontract.ConfigProvider
+	CredentialVerifier       httpcontract.CredentialVerifier
+	CredentialLookupPrefixes httpcontract.CredentialLookupPrefixes
+	LastUsedRecorder         httpmw.LastUsedRecorder
+	UserStaticDir            string
+	ExtraMiddleware          []echo.MiddlewareFunc
 }
 
 type userPortalHandler struct {
 	teams         handler.TeamServiceInterface
 	credentials   handler.CredentialServiceInterface
-	telemetry     service.TelemetryReader
-	graph         graphview.Service
+	telemetry     operations.TelemetryReader
+	graph         graph.Service
 	recall        *handler.RecallHandler
 	dreams        *handler.DreamHandler
 	audit         *handler.AuditHandler
-	sso           *service.SSOService
-	portal        service.UserPortalSessionManager
-	appConfig     service.AppConfigService
+	sso           *accessservice.SSOService
+	portal        accessservice.UserPortalSessionManager
+	appConfig     settings.AppConfigService
 	privateMemory PrivateMemoryServiceInterface
 }
 
 type userPortalSSOCredentialService interface {
 	ListSSOOwnedCredentials(ctx context.Context, teamID, identityID uuid.UUID) ([]*domain.Credential, error)
 	GetSSOOwnedCredentialByID(ctx context.Context, teamID, identityID, credentialID uuid.UUID) (*domain.Credential, error)
-	RotateSSOOwnedCredential(ctx context.Context, teamID, identityID, credentialID uuid.UUID, req service.CreateCredentialRequest, actorCredentialID *string, actorRole, clientIP, correlationID string) (*domain.Credential, string, error)
+	RotateSSOOwnedCredential(ctx context.Context, teamID, identityID, credentialID uuid.UUID, req accessservice.CreateCredentialRequest, actorCredentialID *string, actorRole, clientIP, correlationID string) (*domain.Credential, string, error)
 }
 
 type userPortalSessionResponse struct {
@@ -193,7 +194,7 @@ func (h *userPortalHandler) graphSnapshot(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	snapshot, err := h.graph.Graph(c.Request().Context(), teamID.String(), graphview.Query{
+	snapshot, err := h.graph.Graph(c.Request().Context(), teamID.String(), graph.Query{
 		Scope:      c.QueryParam("scope"),
 		Query:      c.QueryParam("q"),
 		Types:      userPortalGraphTypes(c.QueryParam("types")),
@@ -203,7 +204,7 @@ func (h *userPortalHandler) graphSnapshot(c echo.Context) error {
 		Limit:      limit,
 	})
 	if err != nil {
-		if errors.Is(err, graphview.ErrMissingAnchor) || errors.Is(err, graphview.ErrInvalidAnchorType) {
+		if errors.Is(err, graph.ErrMissingAnchor) || errors.Is(err, graph.ErrInvalidAnchorType) {
 			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 		}
 		return err
@@ -227,10 +228,10 @@ func (h *userPortalHandler) graphNodeDetail(c echo.Context) error {
 
 	node, err := h.graph.NodeDetail(c.Request().Context(), teamID.String(), c.QueryParam("type"), c.QueryParam("id"))
 	if err != nil {
-		if errors.Is(err, graphview.ErrMissingNode) || errors.Is(err, graphview.ErrInvalidNodeType) {
+		if errors.Is(err, graph.ErrMissingNode) || errors.Is(err, graph.ErrInvalidNodeType) {
 			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 		}
-		if errors.Is(err, graphview.ErrNodeNotFound) {
+		if errors.Is(err, graph.ErrNodeNotFound) {
 			return httperr.New(httperr.NOT_FOUND, err.Error())
 		}
 		return err
@@ -260,34 +261,34 @@ func userPortalGraphTypes(raw string) []string {
 	})
 }
 
-func userPortalTelemetryFilter(principal *httpmw.Principal, window, requestedScope string) (service.TelemetryFilter, error) {
+func userPortalTelemetryFilter(principal *httpmw.Principal, window, requestedScope string) (operations.TelemetryFilter, error) {
 	teamID := principal.GetTeamID()
 	if teamID == uuid.Nil {
-		return service.TelemetryFilter{}, httperr.New(httperr.FORBIDDEN, "authenticated key is not team bound")
+		return operations.TelemetryFilter{}, httperr.New(httperr.FORBIDDEN, "authenticated key is not team bound")
 	}
 
 	scope := "self"
 	var ownerID *uuid.UUID
-	if principal.GetRole() == service.CredentialRoleManager {
+	if principal.GetRole() == accessservice.CredentialRoleManager {
 		scope = "team"
 	} else {
 		resolvedOwnerID := principal.GetOwnerID()
 		if resolvedOwnerID == uuid.Nil {
-			return service.TelemetryFilter{}, httperr.New(httperr.FORBIDDEN, "authenticated actor has no owner")
+			return operations.TelemetryFilter{}, httperr.New(httperr.FORBIDDEN, "authenticated actor has no owner")
 		}
 		ownerID = &resolvedOwnerID
 	}
 
 	if requested := strings.TrimSpace(requestedScope); requested != "" && requested != scope {
-		return service.TelemetryFilter{}, httperr.New(httperr.FORBIDDEN, "user portal telemetry scope is determined by the authenticated key")
+		return operations.TelemetryFilter{}, httperr.New(httperr.FORBIDDEN, "user portal telemetry scope is determined by the authenticated key")
 	}
 
-	return service.TelemetryFilter{
+	return operations.TelemetryFilter{
 		Window:    strings.TrimSpace(window),
 		Scope:     scope,
 		TeamID:    &teamID,
 		ProfileID: ownerID,
-		Audience:  service.TelemetryAudienceUser,
+		Audience:  operations.TelemetryAudienceUser,
 	}, nil
 }
 
@@ -319,7 +320,7 @@ func (h *userPortalHandler) rotateCurrentCredential(c echo.Context) error {
 	}
 
 	actorCredentialID := credentialID.String()
-	rotated, rawKey, err := h.credentials.RotateForTeam(ctx, teamID, *credentialID, service.CreateCredentialRequest{
+	rotated, rawKey, err := h.credentials.RotateForTeam(ctx, teamID, *credentialID, accessservice.CreateCredentialRequest{
 		Name:      current.GetName(),
 		RateLimit: current.RateLimit,
 		ExpiresAt: current.ExpiresAt,
@@ -427,7 +428,7 @@ func (h *userPortalHandler) currentSSOSession(c echo.Context) (userPortalSession
 		PersonalCredentials: []userPortalCredentialResponse{},
 		MCPPublicBaseURL:    mcpPublicBaseURL,
 	}
-	if selected.Membership.Role != service.CredentialRoleManager && h.credentials != nil {
+	if selected.Membership.Role != accessservice.CredentialRoleManager && h.credentials != nil {
 		personalCredentials, err := h.ssoOwnedCredentials(ctx, info.Selected.Team.ID, info.Identity.ID)
 		if err != nil {
 			return userPortalSessionResponse{}, err
@@ -504,15 +505,15 @@ func (h *userPortalHandler) completeSSO(c echo.Context) error {
 		return userPortalSSOError(err)
 	}
 	cookieSecure := h.sso.CookieSecure(c.Request().Context())
-	setSSOCookie(c, service.SSOSessionCookieName, result.SessionToken, true, result.Session.ExpiresAt, cookieSecure)
-	setSSOCookie(c, service.SSOCSRFCookieName, result.CSRFToken, false, result.Session.ExpiresAt, cookieSecure)
-	clearUserPortalCookie(c, service.UserPortalSessionCookieName, true, cookieSecure)
-	clearUserPortalCookie(c, service.UserPortalCSRFCookieName, false, cookieSecure)
+	setSSOCookie(c, accessservice.SSOSessionCookieName, result.SessionToken, true, result.Session.ExpiresAt, cookieSecure)
+	setSSOCookie(c, accessservice.SSOCSRFCookieName, result.CSRFToken, false, result.Session.ExpiresAt, cookieSecure)
+	clearUserPortalCookie(c, accessservice.UserPortalSessionCookieName, true, cookieSecure)
+	clearUserPortalCookie(c, accessservice.UserPortalCSRFCookieName, false, cookieSecure)
 	return c.Redirect(nethttp.StatusFound, result.RedirectPath)
 }
 
 func (h *userPortalHandler) logoutSSO(c echo.Context) error {
-	if cookie, err := c.Request().Cookie(service.SSOSessionCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
+	if cookie, err := c.Request().Cookie(accessservice.SSOSessionCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
 		if err := validateSSOLogoutCSRF(c); err != nil {
 			return err
 		}
@@ -520,8 +521,8 @@ func (h *userPortalHandler) logoutSSO(c echo.Context) error {
 			_ = h.sso.Logout(c.Request().Context(), cookie.Value)
 		}
 	}
-	clearSSOCookie(c, service.SSOSessionCookieName)
-	clearSSOCookie(c, service.SSOCSRFCookieName)
+	clearSSOCookie(c, accessservice.SSOSessionCookieName)
+	clearSSOCookie(c, accessservice.SSOCSRFCookieName)
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]string{"status": "signed_out"}})
 }
 
@@ -563,7 +564,7 @@ func (h *userPortalHandler) createSSOCredential(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if info.Selected.Membership.Role == service.CredentialRoleManager {
+	if info.Selected.Membership.Role == accessservice.CredentialRoleManager {
 		return httperr.New(httperr.FORBIDDEN, "sso managers should create credentials from the team section")
 	}
 	if h.credentials == nil {
@@ -609,7 +610,7 @@ func (h *userPortalHandler) listSSOCredentials(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if info.Selected.Membership.Role == service.CredentialRoleManager {
+	if info.Selected.Membership.Role == accessservice.CredentialRoleManager {
 		return httperr.New(httperr.FORBIDDEN, "sso managers should use the team credentials section")
 	}
 	if h.credentials == nil {
@@ -642,7 +643,7 @@ func (h *userPortalHandler) rotateSSOCredential(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if info.Selected.Membership.Role == service.CredentialRoleManager {
+	if info.Selected.Membership.Role == accessservice.CredentialRoleManager {
 		return httperr.New(httperr.FORBIDDEN, "sso managers should rotate credentials from the team section")
 	}
 	credentialService, ok := h.credentials.(userPortalSSOCredentialService)
@@ -660,12 +661,12 @@ func (h *userPortalHandler) rotateSSOCredential(c echo.Context) error {
 	if personalCredential == nil {
 		return httperr.New(httperr.NOT_FOUND, "sso-owned credential not found")
 	}
-	if !userPortalHasGrant(personalCredential.Scopes, service.CredentialScopeWrite) ||
-		!userPortalHasGrant(info.Selected.Membership.Grants, service.CredentialScopeWrite) {
+	if !userPortalHasGrant(personalCredential.Scopes, accessservice.CredentialScopeWrite) ||
+		!userPortalHasGrant(info.Selected.Membership.Grants, accessservice.CredentialScopeWrite) {
 		return httperr.New(httperr.FORBIDDEN, "sso-owned credential cannot be rotated")
 	}
 
-	rotateRequest := service.CreateCredentialRequest{
+	rotateRequest := accessservice.CreateCredentialRequest{
 		Name:      personalCredential.GetName(),
 		RateLimit: personalCredential.RateLimit,
 		ExpiresAt: personalCredential.ExpiresAt,
@@ -683,7 +684,7 @@ func (h *userPortalHandler) rotateSSOCredential(c echo.Context) error {
 	}})
 }
 
-func (h *userPortalHandler) ssoRequestSession(c echo.Context) (*service.SSOSessionInfo, *httpmw.Principal, error) {
+func (h *userPortalHandler) ssoRequestSession(c echo.Context) (*accessservice.SSOSessionInfo, *httpmw.Principal, error) {
 	if h.sso == nil {
 		return nil, nil, httperr.New(httperr.NOT_FOUND, "sso is not configured")
 	}
@@ -706,22 +707,22 @@ func (h *userPortalHandler) ssoRequestSession(c echo.Context) (*service.SSOSessi
 }
 
 func (h *userPortalHandler) ssoOwnedCredentials(ctx context.Context, teamID, identityID uuid.UUID) ([]*domain.Credential, error) {
-	service, ok := h.credentials.(userPortalSSOCredentialService)
+	credentialService, ok := h.credentials.(userPortalSSOCredentialService)
 	if !ok {
 		return nil, httperr.New(httperr.SERVICE_UNAVAILABLE, "credential service unavailable")
 	}
-	return service.ListSSOOwnedCredentials(ctx, teamID, identityID)
+	return credentialService.ListSSOOwnedCredentials(ctx, teamID, identityID)
 }
 
-func (h *userPortalHandler) ssoOwnedCredentialByID(c echo.Context) (*service.SSOSessionInfo, *httpmw.Principal, *domain.Credential, error) {
+func (h *userPortalHandler) ssoOwnedCredentialByID(c echo.Context) (*accessservice.SSOSessionInfo, *httpmw.Principal, *domain.Credential, error) {
 	info, principal, err := h.ssoRequestSession(c)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if info.Selected.Membership.Role == service.CredentialRoleManager {
+	if info.Selected.Membership.Role == accessservice.CredentialRoleManager {
 		return nil, nil, nil, httperr.New(httperr.FORBIDDEN, "sso managers should use the team credentials section")
 	}
-	service, ok := h.credentials.(userPortalSSOCredentialService)
+	credentialService, ok := h.credentials.(userPortalSSOCredentialService)
 	if !ok {
 		return nil, nil, nil, httperr.New(httperr.SERVICE_UNAVAILABLE, "credential service unavailable")
 	}
@@ -729,7 +730,7 @@ func (h *userPortalHandler) ssoOwnedCredentialByID(c echo.Context) (*service.SSO
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	credential, err := service.GetSSOOwnedCredentialByID(c.Request().Context(), info.Selected.Team.ID, info.Identity.ID, credentialID)
+	credential, err := credentialService.GetSSOOwnedCredentialByID(c.Request().Context(), info.Selected.Team.ID, info.Identity.ID, credentialID)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -747,34 +748,34 @@ func userPortalCredentialParam(c echo.Context) (uuid.UUID, error) {
 	return credentialID, nil
 }
 
-func userPortalSSOCreateCredentialRequest(body userPortalCreateSSOCredentialRequest, identity domain.SSOIdentity, maxGrants []string) (service.CreateCredentialRequest, error) {
-	if !userPortalHasGrant(maxGrants, service.CredentialScopeRead) {
-		return service.CreateCredentialRequest{}, httperr.New(httperr.FORBIDDEN, "sso access denied")
+func userPortalSSOCreateCredentialRequest(body userPortalCreateSSOCredentialRequest, identity domain.SSOIdentity, maxGrants []string) (accessservice.CreateCredentialRequest, error) {
+	if !userPortalHasGrant(maxGrants, accessservice.CredentialScopeRead) {
+		return accessservice.CreateCredentialRequest{}, httperr.New(httperr.FORBIDDEN, "sso access denied")
 	}
 	scopes := append([]string{}, body.Scopes...)
 	if len(scopes) == 0 {
-		scopes = []string{service.CredentialScopeRead}
-		if userPortalHasGrant(maxGrants, service.CredentialScopeWrite) {
-			scopes = service.StandardCredentialScopes()
+		scopes = []string{accessservice.CredentialScopeRead}
+		if userPortalHasGrant(maxGrants, accessservice.CredentialScopeWrite) {
+			scopes = accessservice.StandardCredentialScopes()
 		}
 	}
-	normalizedScopes, err := service.NormalizeCredentialScopes(scopes)
+	normalizedScopes, err := accessservice.NormalizeCredentialScopes(scopes)
 	if err != nil {
-		return service.CreateCredentialRequest{}, err
+		return accessservice.CreateCredentialRequest{}, err
 	}
 	for _, scope := range normalizedScopes {
 		if !userPortalHasGrant(maxGrants, scope) {
-			return service.CreateCredentialRequest{}, httperr.New(httperr.FORBIDDEN, "cannot create credential above sso entitlement")
+			return accessservice.CreateCredentialRequest{}, httperr.New(httperr.FORBIDDEN, "cannot create credential above sso entitlement")
 		}
 	}
 	if body.RateLimit <= 0 {
-		return service.CreateCredentialRequest{}, httperr.New(httperr.VALIDATION_ERROR, "rate_limit must be greater than zero")
+		return accessservice.CreateCredentialRequest{}, httperr.New(httperr.VALIDATION_ERROR, "rate_limit must be greater than zero")
 	}
 	var expiresAt *time.Time
 	if body.ExpiresAt != nil && strings.TrimSpace(*body.ExpiresAt) != "" {
 		parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(*body.ExpiresAt))
 		if err != nil {
-			return service.CreateCredentialRequest{}, httperr.New(httperr.VALIDATION_ERROR, "expires_at must be an RFC3339 timestamp")
+			return accessservice.CreateCredentialRequest{}, httperr.New(httperr.VALIDATION_ERROR, "expires_at must be an RFC3339 timestamp")
 		}
 		expiresAt = &parsed
 	}
@@ -782,12 +783,12 @@ func userPortalSSOCreateCredentialRequest(body userPortalCreateSSOCredentialRequ
 	if name == "" {
 		name = ssoOwnedKeyDefaultName(identity)
 	}
-	return service.CreateCredentialRequest{
+	return accessservice.CreateCredentialRequest{
 		Name:          name,
 		RateLimit:     body.RateLimit,
 		ExpiresAt:     expiresAt,
 		Scopes:        normalizedScopes,
-		Role:          service.CredentialRoleMember,
+		Role:          accessservice.CredentialRoleMember,
 		MemoryBinding: strings.TrimSpace(body.MemoryBinding),
 	}, nil
 }
@@ -826,8 +827,8 @@ func nextSSOOwnedCredentialName(base string, existing []*domain.Credential) stri
 }
 
 func validateSSOLogoutCSRF(c echo.Context) error {
-	headerToken := strings.TrimSpace(c.Request().Header.Get(service.SSOCSRFHeaderName))
-	cookie, err := c.Request().Cookie(service.SSOCSRFCookieName)
+	headerToken := strings.TrimSpace(c.Request().Header.Get(accessservice.SSOCSRFHeaderName))
+	cookie, err := c.Request().Cookie(accessservice.SSOCSRFCookieName)
 	if err != nil || headerToken == "" || strings.TrimSpace(cookie.Value) == "" {
 		return httperr.New(httperr.FORBIDDEN, "invalid sso csrf token")
 	}
@@ -878,7 +879,7 @@ func (h *userPortalHandler) toUserPortalTeam(ctx context.Context, team *domain.T
 func userPortalMembershipFromPrincipal(principal *httpmw.Principal) userPortalMembershipResponse {
 	role := principal.GetRole()
 	if role == "" {
-		role = service.CredentialRoleMember
+		role = accessservice.CredentialRoleMember
 	}
 	return userPortalMembershipResponse{
 		TeamID: principal.GetTeamID(),
@@ -891,7 +892,7 @@ func userPortalMembershipFromPrincipal(principal *httpmw.Principal) userPortalMe
 func toUserPortalMembership(membership domain.Membership) userPortalMembershipResponse {
 	role := membership.Role
 	if role == "" {
-		role = service.CredentialRoleMember
+		role = accessservice.CredentialRoleMember
 	}
 	return userPortalMembershipResponse{
 		TeamID: membership.TeamID,

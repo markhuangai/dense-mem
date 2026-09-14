@@ -5,13 +5,9 @@ import (
 	conflictqueue "github.com/markhuangai/dense-mem/internal/conflict/queue"
 )
 
-type conflictQueueStoreSource interface {
-	ConflictStore() *conflictpostgres.Store
-}
-
-func buildConflictQueueApplication(source conflictQueueStoreSource) *conflictqueue.Service {
-	if source == nil {
+func buildConflictQueueApplication(store *conflictpostgres.Store) *conflictqueue.Service {
+	if store == nil {
 		return conflictqueue.New(nil)
 	}
-	return conflictqueue.New(source.ConflictStore())
+	return conflictqueue.New(store)
 }

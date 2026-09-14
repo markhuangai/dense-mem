@@ -28,10 +28,6 @@ func normalizeFullTextSearchInput(input searchcontract.FullTextSearchInput) sear
 	return input
 }
 
-func NormalizeFullTextSearchInput(input searchcontract.FullTextSearchInput) searchcontract.FullTextSearchInput {
-	return normalizeFullTextSearchInput(input)
-}
-
 func validateFullTextSearchInput(input searchcontract.FullTextSearchInput) error {
 	if _, err := uuid.Parse(input.TeamID); err != nil {
 		return fmt.Errorf("team_id is required: %w", err)
@@ -45,10 +41,6 @@ func validateFullTextSearchInput(input searchcontract.FullTextSearchInput) error
 	return nil
 }
 
-func ValidateFullTextSearchInput(input searchcontract.FullTextSearchInput) error {
-	return validateFullTextSearchInput(input)
-}
-
 func normalizeExactVectorSearchInput(input searchcontract.ExactVectorSearchInput) searchcontract.ExactVectorSearchInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.EmbeddingContractID = strings.TrimSpace(input.EmbeddingContractID)
@@ -60,10 +52,6 @@ func normalizeExactVectorSearchInput(input searchcontract.ExactVectorSearchInput
 		input.Limit = 100
 	}
 	return input
-}
-
-func NormalizeExactVectorSearchInput(input searchcontract.ExactVectorSearchInput) searchcontract.ExactVectorSearchInput {
-	return normalizeExactVectorSearchInput(input)
 }
 
 func validateExactVectorSearchInput(input searchcontract.ExactVectorSearchInput) error {
@@ -84,15 +72,9 @@ func validateExactVectorSearchInput(input searchcontract.ExactVectorSearchInput)
 	return nil
 }
 
-func ValidateExactVectorSearchInput(input searchcontract.ExactVectorSearchInput) error {
-	return validateExactVectorSearchInput(input)
-}
-
 func validSearchSourceKind(kind string) bool {
 	return kind == "evidence" || kind == "relationship" || kind == "entity"
 }
-
-func ValidSearchSourceKind(kind string) bool { return validSearchSourceKind(kind) }
 
 func defaultProjectionFormat(sourceKind string) int {
 	if sourceKind == "relationship" {
@@ -101,9 +83,10 @@ func defaultProjectionFormat(sourceKind string) int {
 	return 1
 }
 
-func DefaultProjectionFormat(sourceKind string) int { return defaultProjectionFormat(sourceKind) }
-
 func vectorLiteral(values []float32) (string, error) {
+	if len(values) == 0 {
+		return "", errors.New("embedding is required")
+	}
 	parts := make([]string, len(values))
 	for i, value := range values {
 		f := float64(value)
@@ -114,8 +97,6 @@ func vectorLiteral(values []float32) (string, error) {
 	}
 	return "[" + strings.Join(parts, ",") + "]", nil
 }
-
-func VectorLiteral(values []float32) (string, error) { return vectorLiteral(values) }
 
 func searchMissingIndexCompatibility(contract *searchcontract.ActiveSearchContract, indexDefinition string) []string {
 	normalized := strings.Join(strings.Fields(strings.ToLower(indexDefinition)), " ")
@@ -146,10 +127,6 @@ func searchMissingIndexCompatibility(contract *searchcontract.ActiveSearchContra
 	return missing
 }
 
-func SearchMissingIndexCompatibility(contract *searchcontract.ActiveSearchContract, indexDefinition string) []string {
-	return searchMissingIndexCompatibility(contract, indexDefinition)
-}
-
 func searchIndexExpressionCompatible(contract *searchcontract.ActiveSearchContract, indexDefinition string) bool {
 	token := searchIndexExpressionToken(contract)
 	if token == "" {
@@ -161,10 +138,6 @@ func searchIndexExpressionCompatible(contract *searchcontract.ActiveSearchContra
 	}
 	canonical := strings.NewReplacer("(", "", ")", "", " ", "").Replace(normalized)
 	return strings.Contains(canonical, fmt.Sprintf("binary_quantizeembedding::bit%d", contract.EmbeddingDimensions))
-}
-
-func SearchIndexExpressionCompatible(contract *searchcontract.ActiveSearchContract, indexDefinition string) bool {
-	return searchIndexExpressionCompatible(contract, indexDefinition)
 }
 
 func searchIndexExpressionToken(contract *searchcontract.ActiveSearchContract) string {

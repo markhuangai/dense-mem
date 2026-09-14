@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,10 +11,9 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
+	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type userPortalSessionAuthStub struct {
@@ -39,7 +39,7 @@ func TestAuthMiddlewareAuthenticatesPortalSessionAndSetsAuthMethod(t *testing.T)
 	keyID := uuid.New()
 	stub := &userPortalSessionAuthStub{key: &domain.Credential{
 		ID: keyID, ActorIdentityID: keyID, MembershipID: keyID, OwnerID: keyID,
-		TeamID: teamID, Name: "portal", Role: service.CredentialRoleMember,
+		TeamID: teamID, Name: "portal", Role: accessservice.CredentialRoleMember,
 		Scopes: []string{"read"}, RateLimit: 120,
 	}}
 	e := echo.New()
@@ -56,7 +56,7 @@ func TestAuthMiddlewareAuthenticatesPortalSessionAndSetsAuthMethod(t *testing.T)
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/api/session", nil)
-	req.AddCookie(&http.Cookie{Name: service.UserPortalSessionCookieName, Value: "opaque-session"})
+	req.AddCookie(&http.Cookie{Name: accessservice.UserPortalSessionCookieName, Value: "opaque-session"})
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -70,7 +70,7 @@ func TestAuthMiddlewareAuthenticatesPortalSessionAndSetsAuthMethod(t *testing.T)
 func TestAuthMiddlewareFailsClosedForInvalidPortalSession(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
-	stub := &userPortalSessionAuthStub{err: service.ErrUserPortalSessionInvalid}
+	stub := &userPortalSessionAuthStub{err: accessservice.ErrUserPortalSessionInvalid}
 	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, nil, nil, AuthOptions{
 		UserPortalSessionAuthenticator: stub,
 		AllowMissingCredentials:        true,
@@ -78,7 +78,7 @@ func TestAuthMiddlewareFailsClosedForInvalidPortalSession(t *testing.T) {
 	e.GET("/ui/api/session", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/api/session", nil)
-	req.AddCookie(&http.Cookie{Name: service.UserPortalSessionCookieName, Value: "stale-session"})
+	req.AddCookie(&http.Cookie{Name: accessservice.UserPortalSessionCookieName, Value: "stale-session"})
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -89,14 +89,14 @@ func TestAuthMiddlewareFailsClosedForInvalidPortalSession(t *testing.T) {
 func TestAuthMiddlewareRequiresPortalCSRFForUnsafeRequests(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
-	stub := &userPortalSessionAuthStub{err: service.ErrUserPortalCSRFInvalid}
+	stub := &userPortalSessionAuthStub{err: accessservice.ErrUserPortalCSRFInvalid}
 	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, nil, nil, AuthOptions{
 		UserPortalSessionAuthenticator: stub,
 	}))
 	e.POST("/ui/api/credential/rotate", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
 
 	req := httptest.NewRequest(http.MethodPost, "/ui/api/credential/rotate", nil)
-	req.AddCookie(&http.Cookie{Name: service.UserPortalSessionCookieName, Value: "opaque-session"})
+	req.AddCookie(&http.Cookie{Name: accessservice.UserPortalSessionCookieName, Value: "opaque-session"})
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -107,4 +107,4 @@ func TestAuthMiddlewareRequiresPortalCSRFForUnsafeRequests(t *testing.T) {
 	require.True(t, stub.gotRequireCSRF)
 }
 
-var _ repository.CredentialRepository = (*mockCredentialRepository)(nil)
+var _ accesspostgres.CredentialRepository = (*mockCredentialRepository)(nil)

@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,7 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/storage/inmem"
 )
 
@@ -70,8 +70,8 @@ func (c *testRateLimitConfig) GetControlPortalToken() string       { return "" }
 
 // runRateLimitMiddlewareContract is the shared contract helper for rate limit
 // middleware. It exercises header contract and 429 behavior for any backend
-// that implements service.RateLimitServiceInterface (AC-09).
-func runRateLimitMiddlewareContract(t *testing.T, name string, svc service.RateLimitServiceInterface) {
+// that implements accessservice.RateLimitServiceInterface (AC-09).
+func runRateLimitMiddlewareContract(t *testing.T, name string, svc accessservice.RateLimitServiceInterface) {
 	t.Helper()
 
 	e := echo.New()
@@ -110,7 +110,7 @@ func TestRateLimitMiddleware_Contract_InMemory(t *testing.T) {
 	t.Parallel()
 
 	store := inmem.NewInMemoryRateLimitStore()
-	svc := service.NewRateLimitService(store)
+	svc := accessservice.NewRateLimitService(store)
 
 	runRateLimitMiddlewareContract(t, "InMemory", svc)
 }
@@ -118,7 +118,7 @@ func TestRateLimitMiddleware_Contract_InMemory(t *testing.T) {
 func TestRateLimitMiddlewareSharesMCPRouteAliasBucket(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
-	e.Use(RateLimitMiddleware(service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()), &testRateLimitConfig{rateLimitPerMinute: 1}, nil))
+	e.Use(RateLimitMiddleware(accessservice.NewRateLimitService(inmem.NewInMemoryRateLimitStore()), &testRateLimitConfig{rateLimitPerMinute: 1}, nil))
 	handler := func(c echo.Context) error { return c.NoContent(http.StatusOK) }
 	e.GET("/mcp", handler)
 	e.GET("/teams/:teamId/mcp", handler)

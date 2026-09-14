@@ -44,10 +44,10 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 
 func evalListKnowledgeRefTypes(deps Dependencies) []string {
 	types := make([]string, 0, 6)
-	if deps.Dreams != nil {
+	if deps.DreamBindings.Service != nil {
 		types = append(types, "dream")
 	}
-	if deps.EvaluationBindings.Application != nil || deps.Evaluation != nil {
+	if deps.EvaluationBindings.Application != nil || deps.EvaluationBindings.Repository != nil {
 		types = append(types, "evidence", "relationship", "entity", "value", "hypothesis")
 	}
 	return types

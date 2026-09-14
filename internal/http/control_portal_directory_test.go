@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	nethttp "net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 func TestControlDirectoryConnectorHandlersDriveLifecycle(t *testing.T) {
@@ -26,7 +26,7 @@ func TestControlDirectoryConnectorHandlersDriveLifecycle(t *testing.T) {
 		groups:      make(map[uuid.UUID]*domain.DirectoryGroup),
 		oauthTokens: make(map[string]directorySCIMOAuthToken),
 	}
-	directory := service.NewDirectoryIdentityService(repo, service.DirectoryIdentityConfig{})
+	directory := accessservice.NewDirectoryIdentityService(repo, accessservice.DirectoryIdentityConfig{})
 	handler := &controlPortalHandler{directory: directory}
 	providerID := uuid.New()
 	connectorBody := `{"group_pattern":"^(?P<team>.+?)(?P<role>Readonly|Member|Manager)$","role_entitlements":{"Readonly":{"role":"member","scopes":["read"]},"Member":{"role":"member","scopes":["read","write"]},"Manager":{"role":"manager","scopes":["read","write","feedback:read"]}},"max_auto_teams":5}`
@@ -144,9 +144,9 @@ func TestControlDirectoryErrorsAndResponseMapping(t *testing.T) {
 		err  error
 		code httperr.ErrorCode
 	}{
-		{service.ErrDirectoryConnectorDisabled, httperr.CONFLICT},
+		{accessservice.ErrDirectoryConnectorDisabled, httperr.CONFLICT},
 		{assertError("directory connector not found"), httperr.NOT_FOUND},
-		{service.ErrDirectoryPreviewStale, httperr.CONFLICT},
+		{accessservice.ErrDirectoryPreviewStale, httperr.CONFLICT},
 		{assertError("directory role entitlement is invalid"), httperr.VALIDATION_ERROR},
 		{assertError("storage unavailable"), httperr.INTERNAL_ERROR},
 	} {
@@ -176,7 +176,7 @@ func TestControlDirectoryHandlersValidateIdentifiersBodiesAndServiceFailures(t *
 	t.Parallel()
 
 	ctx := context.Background()
-	unavailable := &controlPortalHandler{directory: service.NewDirectoryIdentityService(nil, service.DirectoryIdentityConfig{})}
+	unavailable := &controlPortalHandler{directory: accessservice.NewDirectoryIdentityService(nil, accessservice.DirectoryIdentityConfig{})}
 	validID := uuid.NewString()
 
 	c, _ := controlDirectoryContext(nethttp.MethodGet, "", nil)
@@ -221,11 +221,11 @@ func TestControlDirectoryHandlersValidateIdentifiersBodiesAndServiceFailures(t *
 	require.Error(t, unavailable.adoptDirectoryGroupTeam(c))
 
 	repo := &directorySCIMRepositoryStub{users: make(map[uuid.UUID]*domain.DirectoryUser), groups: make(map[uuid.UUID]*domain.DirectoryGroup)}
-	directory := service.NewDirectoryIdentityService(repo, service.DirectoryIdentityConfig{})
+	directory := accessservice.NewDirectoryIdentityService(repo, accessservice.DirectoryIdentityConfig{})
 	connector, _, err := directory.CreateConnector(ctx, domain.DirectoryConnector{
 		ProviderID:       uuid.New(),
 		GroupPattern:     "^(?P<team>.+?)(?P<role>Readonly|Member|Manager)$",
-		RoleEntitlements: map[string]domain.DirectoryRoleEntitlement{"Readonly": {Role: service.CredentialRoleMember, Scopes: []string{service.CredentialScopeRead}}, "Member": {Role: service.CredentialRoleMember, Scopes: []string{service.CredentialScopeRead, service.CredentialScopeWrite}}, "Manager": {Role: service.CredentialRoleManager, Scopes: []string{service.CredentialScopeRead, service.CredentialScopeWrite}}},
+		RoleEntitlements: map[string]domain.DirectoryRoleEntitlement{"Readonly": {Role: accessservice.CredentialRoleMember, Scopes: []string{accessservice.CredentialScopeRead}}, "Member": {Role: accessservice.CredentialRoleMember, Scopes: []string{accessservice.CredentialScopeRead, accessservice.CredentialScopeWrite}}, "Manager": {Role: accessservice.CredentialRoleManager, Scopes: []string{accessservice.CredentialScopeRead, accessservice.CredentialScopeWrite}}},
 		MaxAutoTeams:     1,
 	})
 	require.NoError(t, err)

@@ -22,7 +22,7 @@ func TestResolveDreamFeedbackReturnsStructuredTerminalFailure(t *testing.T) {
 			Errors:              []rememberapp.SubmissionStatusError{rememberapp.StatusError(rememberapp.SubmissionErrorProviderUnavailable)},
 		}},
 	}}
-	reg, err := BuildActive(Dependencies{Dreams: dreams})
+	reg, err := BuildActive(Dependencies{DreamBindings: DreamBindings{Service: dreams}})
 	require.NoError(t, err)
 	tool, ok := reg.Get(ToolResolveDreamFeedback)
 	require.True(t, ok)
@@ -66,9 +66,9 @@ func TestResolveDreamFeedbackOutputSchemaCoversTerminalBranch(t *testing.T) {
 }
 
 func TestResolveDreamFeedbackReturnsStructuredBusyRetry(t *testing.T) {
-	reg, err := BuildActive(Dependencies{Dreams: &stubDreamService{
+	reg, err := BuildActive(Dependencies{DreamBindings: DreamBindings{Service: &stubDreamService{
 		resolveErr: &dream.ConfirmationBusyError{},
-	}})
+	}}})
 	require.NoError(t, err)
 	tool, ok := reg.Get(ToolResolveDreamFeedback)
 	require.True(t, ok)
@@ -92,9 +92,9 @@ func TestResolveDreamFeedbackReturnsStructuredBusyRetry(t *testing.T) {
 }
 
 func TestResolveDreamFeedbackReturnsLifecycleCompatibleBusyRetry(t *testing.T) {
-	reg, err := BuildActive(Dependencies{Dreams: &stubDreamService{
+	reg, err := BuildActive(Dependencies{DreamBindings: DreamBindings{Service: &stubDreamService{
 		resolveErr: &dream.ConfirmationBusyError{Decision: "reject"},
-	}})
+	}}})
 	require.NoError(t, err)
 	tool, ok := reg.Get(ToolResolveDreamFeedback)
 	require.True(t, ok)
@@ -115,7 +115,7 @@ func TestResolveDreamFeedbackReturnsLifecycleCompatibleBusyRetry(t *testing.T) {
 
 func TestBuildActiveDreamToolsInvokeAndValidate(t *testing.T) {
 	dreams := &stubDreamService{}
-	reg, err := BuildActive(Dependencies{Dreams: dreams})
+	reg, err := BuildActive(Dependencies{DreamBindings: DreamBindings{Service: dreams}})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}

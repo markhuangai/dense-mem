@@ -2,13 +2,13 @@ package http
 
 import (
 	"context"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 func (r *userPortalAuthRepo) ListSSOOwnedCredentials(context.Context, uuid.UUID, uuid.UUID) ([]*domain.Credential, error) {
@@ -19,7 +19,7 @@ func (r *userPortalAuthRepo) GetSSOOwnedCredentialByID(context.Context, uuid.UUI
 	return nil, nil
 }
 
-func (s *userPortalKeySvc) RotateSSOOwnedCredential(ctx context.Context, teamID, identityID, credentialID uuid.UUID, req service.CreateCredentialRequest, actorCredentialID *string, actorRole, clientIP, correlationID string) (*domain.Credential, string, error) {
+func (s *userPortalKeySvc) RotateSSOOwnedCredential(ctx context.Context, teamID, identityID, credentialID uuid.UUID, req accessservice.CreateCredentialRequest, actorCredentialID *string, actorRole, clientIP, correlationID string) (*domain.Credential, string, error) {
 	key, err := s.GetSSOOwnedCredentialByID(ctx, teamID, identityID, credentialID)
 	if err != nil {
 		return nil, "", err

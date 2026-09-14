@@ -42,6 +42,8 @@ export default defineConfig({
     globals: true,
     coverage: {
       provider: "v8",
+      // @ts-expect-error Vitest 4 omits the complete-inventory option from its type.
+      all: true,
       reporter: ["text", "json-summary"],
       include: ["src/**/*.{ts,tsx}"],
       exclude: [

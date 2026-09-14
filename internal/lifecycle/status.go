@@ -3,7 +3,7 @@ package lifecycle
 import (
 	"strings"
 
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 // Status projection policy lives in the Remember application boundary. These

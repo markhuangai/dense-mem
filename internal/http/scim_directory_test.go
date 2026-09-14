@@ -15,12 +15,12 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
+	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/config"
 	cryptoutil "github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"github.com/markhuangai/dense-mem/internal/storage/inmem"
 )
 
@@ -40,7 +40,7 @@ func TestDirectorySCIMUserLifecycleAndConnectorIsolation(t *testing.T) {
 		users:  make(map[uuid.UUID]*domain.DirectoryUser),
 		groups: make(map[uuid.UUID]*domain.DirectoryGroup),
 	}
-	directory := service.NewDirectoryIdentityService(repo, service.DirectoryIdentityConfig{})
+	directory := accessservice.NewDirectoryIdentityService(repo, accessservice.DirectoryIdentityConfig{})
 	e := echo.New()
 	require.NoError(t, RegisterDirectorySCIM(e, directory, DirectorySCIMConfig{}))
 
@@ -142,7 +142,7 @@ func TestDirectorySCIMGroupAndOAuthLifecycle(t *testing.T) {
 		groups:      make(map[uuid.UUID]*domain.DirectoryGroup),
 		oauthTokens: make(map[string]directorySCIMOAuthToken),
 	}
-	directory := service.NewDirectoryIdentityService(repo, service.DirectoryIdentityConfig{})
+	directory := accessservice.NewDirectoryIdentityService(repo, accessservice.DirectoryIdentityConfig{})
 	e := echo.New()
 	require.NoError(t, RegisterDirectorySCIM(e, directory, DirectorySCIMConfig{PublicBaseURL: "https://scim.example.com"}))
 
@@ -301,7 +301,7 @@ func TestDirectorySCIMRejectsMalformedOrUnauthorizedRequestsWithoutLeakingState(
 		users:  make(map[uuid.UUID]*domain.DirectoryUser),
 		groups: make(map[uuid.UUID]*domain.DirectoryGroup),
 	}
-	directory := service.NewDirectoryIdentityService(repo, service.DirectoryIdentityConfig{})
+	directory := accessservice.NewDirectoryIdentityService(repo, accessservice.DirectoryIdentityConfig{})
 	require.NoError(t, RegisterDirectorySCIM(e, directory, DirectorySCIMConfig{}))
 
 	request := httptest.NewRequest(nethttp.MethodGet, "/scim/v2/not-a-uuid/Users", nil)
@@ -364,11 +364,11 @@ func TestDirectorySCIMRoutesAreRateLimited(t *testing.T) {
 		users:     make(map[uuid.UUID]*domain.DirectoryUser),
 		groups:    make(map[uuid.UUID]*domain.DirectoryGroup),
 	}
-	directory := service.NewDirectoryIdentityService(repo, service.DirectoryIdentityConfig{})
+	directory := accessservice.NewDirectoryIdentityService(repo, accessservice.DirectoryIdentityConfig{})
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	require.NoError(t, RegisterDirectorySCIM(e, directory, DirectorySCIMConfig{
-		RateLimitSvc: service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
+		RateLimitSvc: accessservice.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
 		Config:       &config.Config{RateLimitPerMinute: 1},
 	}))
 
@@ -412,7 +412,7 @@ func TestDirectorySCIMRoutesAreRateLimited(t *testing.T) {
 }
 
 type directorySCIMRepositoryStub struct {
-	repository.DirectoryIdentityRepository
+	accesspostgres.DirectoryIdentityRepository
 	connector       *domain.DirectoryConnector
 	users           map[uuid.UUID]*domain.DirectoryUser
 	groups          map[uuid.UUID]*domain.DirectoryGroup
@@ -549,7 +549,7 @@ func (r *directorySCIMRepositoryStub) CreateDirectoryUser(ctx context.Context, u
 			continue
 		}
 		if (user.ExternalID != "" && existing.ExternalID == user.ExternalID) || strings.EqualFold(existing.UserName, user.UserName) {
-			return nil, repository.ErrDirectoryResourceConflict
+			return nil, accessservice.ErrDirectoryResourceConflict
 		}
 	}
 	return r.UpsertDirectoryUser(ctx, user)
@@ -624,7 +624,7 @@ func (r *directorySCIMRepositoryStub) UpsertDirectoryGroupWithMembers(ctx contex
 func (r *directorySCIMRepositoryStub) CreateDirectoryGroupWithMembers(ctx context.Context, group domain.DirectoryGroup, memberIDs []uuid.UUID) (*domain.DirectoryGroup, error) {
 	for _, existing := range r.groups {
 		if existing.ConnectorID == group.ConnectorID && group.ExternalID != "" && existing.ExternalID == group.ExternalID {
-			return nil, repository.ErrDirectoryResourceConflict
+			return nil, accessservice.ErrDirectoryResourceConflict
 		}
 	}
 	return r.UpsertDirectoryGroupWithMembers(ctx, group, memberIDs)

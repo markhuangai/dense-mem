@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"math/big"
 	nethttp "net/http"
 	"net/http/httptest"
@@ -20,10 +21,9 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
+	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 func TestControlIdentityHTTPHandlersAndAdminGroupLifecycle(t *testing.T) {
@@ -93,9 +93,9 @@ func TestControlIdentityHTTPHandlersAndAdminGroupLifecycle(t *testing.T) {
 		Enabled:    true,
 	}}
 	ssoRepo := &controlIdentityHTTPSSORepository{providers: map[uuid.UUID]*domain.SSOProvider{providerID: provider}}
-	identity := service.NewControlIdentityService(repo, ssoRepo, service.ControlIdentityConfig{
+	identity := accessservice.NewControlIdentityService(repo, ssoRepo, accessservice.ControlIdentityConfig{
 		HTTPClient: oidcServer.Client(),
-		RuntimeConfig: controlIdentityHTTPRuntime{config: service.SSORuntimeConfig{
+		RuntimeConfig: controlIdentityHTTPRuntime{config: accessservice.SSORuntimeConfig{
 			ControlPublicBaseURL: "https://control.example.test",
 			StateTTL:             time.Minute,
 			SessionTTL:           time.Hour,
@@ -121,7 +121,7 @@ func TestControlIdentityHTTPHandlersAndAdminGroupLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	stateToken := startURL.Query().Get("state")
 	require.NotEmpty(t, stateToken)
-	nonce = repo.states[service.HashSSOToken(stateToken)].Nonce
+	nonce = repo.states[accessservice.HashSSOToken(stateToken)].Nonce
 
 	request = httptest.NewRequest(nethttp.MethodGet, "/control/auth/callback?state="+url.QueryEscape(stateToken)+"&code=control-http-code", nil)
 	response = httptest.NewRecorder()
@@ -133,12 +133,12 @@ func TestControlIdentityHTTPHandlersAndAdminGroupLifecycle(t *testing.T) {
 	var sessionToken string
 	var csrfToken string
 	for _, cookie := range cookies {
-		if cookie.Name == service.ControlSessionCookieName {
+		if cookie.Name == accessservice.ControlSessionCookieName {
 			sessionToken = cookie.Value
 			require.True(t, cookie.Secure)
 			require.Equal(t, "/", cookie.Path)
 		}
-		if cookie.Name == service.ControlCSRFCookieName {
+		if cookie.Name == accessservice.ControlCSRFCookieName {
 			csrfToken = cookie.Value
 			require.True(t, cookie.Secure)
 			require.Equal(t, "/", cookie.Path)
@@ -172,13 +172,13 @@ func TestControlIdentityHTTPHandlersAndAdminGroupLifecycle(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"status":"retired"`)
 
 	request = httptest.NewRequest(nethttp.MethodPost, "/control/auth/logout", nil)
-	request.AddCookie(&nethttp.Cookie{Name: service.ControlSessionCookieName, Value: sessionToken})
-	request.AddCookie(&nethttp.Cookie{Name: service.ControlCSRFCookieName, Value: csrfToken})
-	request.Header.Set(service.ControlCSRFHeaderName, csrfToken)
+	request.AddCookie(&nethttp.Cookie{Name: accessservice.ControlSessionCookieName, Value: sessionToken})
+	request.AddCookie(&nethttp.Cookie{Name: accessservice.ControlCSRFCookieName, Value: csrfToken})
+	request.Header.Set(accessservice.ControlCSRFHeaderName, csrfToken)
 	response = httptest.NewRecorder()
 	e.ServeHTTP(response, request)
 	require.Equal(t, nethttp.StatusNoContent, response.Code, response.Body.String())
-	require.Equal(t, service.HashSSOToken(sessionToken), repo.deletedSession)
+	require.Equal(t, accessservice.HashSSOToken(sessionToken), repo.deletedSession)
 	requireControlIdentityCookiesCleared(t, response.Result().Cookies())
 
 	request = httptest.NewRequest(nethttp.MethodGet, "/control/auth/callback?error=access_denied", nil)
@@ -201,15 +201,15 @@ func TestControlIdentityHTTPHelpersMapSafeResponses(t *testing.T) {
 	require.NotNil(t, response.RetiredAt)
 	require.Equal(t, controlAdminGroupResponse{}, toControlAdminGroup(nil))
 	_, err := controlIdentityCallbackURL(echo.New().NewContext(httptest.NewRequest(nethttp.MethodGet, "/", nil), httptest.NewRecorder()), nil)
-	require.ErrorIs(t, err, service.ErrControlSSOUnavailable)
+	require.ErrorIs(t, err, accessservice.ErrControlSSOUnavailable)
 
 	for _, testCase := range []struct {
 		err  error
 		code httperr.ErrorCode
 	}{
-		{service.ErrControlAccessDenied, httperr.AUTH_INVALID},
-		{service.ErrControlSessionInvalid, httperr.AUTH_INVALID},
-		{service.ErrControlSSOUnavailable, httperr.SERVICE_UNAVAILABLE},
+		{accessservice.ErrControlAccessDenied, httperr.AUTH_INVALID},
+		{accessservice.ErrControlSessionInvalid, httperr.AUTH_INVALID},
+		{accessservice.ErrControlSSOUnavailable, httperr.SERVICE_UNAVAILABLE},
 		{assertError("control admin group not found"), httperr.NOT_FOUND},
 		{assertError("sso provider ID is required"), httperr.VALIDATION_ERROR},
 		{assertError("storage unavailable"), httperr.INTERNAL_ERROR},
@@ -226,7 +226,7 @@ func TestControlIdentityHTTPHandlersValidateInputAndFailSafely(t *testing.T) {
 
 	providerID := uuid.New()
 	providerIDText := providerID.String()
-	runtimeFailure := service.NewControlIdentityService(newControlIdentityHTTPRepository(), &controlIdentityHTTPSSORepository{providers: map[uuid.UUID]*domain.SSOProvider{}}, service.ControlIdentityConfig{
+	runtimeFailure := accessservice.NewControlIdentityService(newControlIdentityHTTPRepository(), &controlIdentityHTTPSSORepository{providers: map[uuid.UUID]*domain.SSOProvider{}}, accessservice.ControlIdentityConfig{
 		RuntimeConfig: controlIdentityHTTPRuntime{err: errors.New("runtime unavailable")},
 	})
 	handler := &controlPortalHandler{controlIdentity: runtimeFailure}
@@ -237,8 +237,8 @@ func TestControlIdentityHTTPHandlersValidateInputAndFailSafely(t *testing.T) {
 	registerControlIdentityRoutes(echo.New(), nil)
 	registerControlIdentityRoutes(echo.New(), &controlPortalHandler{})
 
-	readyUnavailable := service.NewControlIdentityService(nil, nil, service.ControlIdentityConfig{
-		RuntimeConfig: controlIdentityHTTPRuntime{config: service.SSORuntimeConfig{ControlPublicBaseURL: "https://control.example.test"}},
+	readyUnavailable := accessservice.NewControlIdentityService(nil, nil, accessservice.ControlIdentityConfig{
+		RuntimeConfig: controlIdentityHTTPRuntime{config: accessservice.SSORuntimeConfig{ControlPublicBaseURL: "https://control.example.test"}},
 	})
 	handler.controlIdentity = readyUnavailable
 	c, _ = controlDirectoryContext(nethttp.MethodGet, "", map[string]string{"providerId": "not-a-uuid"})
@@ -273,16 +273,16 @@ func TestControlIdentityHTTPHandlersValidateInputAndFailSafely(t *testing.T) {
 	c, _ = controlDirectoryContext(nethttp.MethodDelete, "", map[string]string{"providerId": providerIDText, "groupId": uuid.NewString()})
 	require.Error(t, handler.deleteControlAdminGroup(c))
 
-	emptyOrigin := service.NewControlIdentityService(nil, nil, service.ControlIdentityConfig{RuntimeConfig: controlIdentityHTTPRuntime{}})
+	emptyOrigin := accessservice.NewControlIdentityService(nil, nil, accessservice.ControlIdentityConfig{RuntimeConfig: controlIdentityHTTPRuntime{}})
 	_, err := controlIdentityCallbackURL(echo.New().NewContext(httptest.NewRequest(nethttp.MethodGet, "/", nil), httptest.NewRecorder()), emptyOrigin)
-	require.ErrorIs(t, err, service.ErrControlSSOUnavailable)
+	require.ErrorIs(t, err, accessservice.ErrControlSSOUnavailable)
 	_, err = controlIdentityCallbackURL(echo.New().NewContext(httptest.NewRequest(nethttp.MethodGet, "/", nil), httptest.NewRecorder()), runtimeFailure)
 	require.ErrorContains(t, err, "runtime unavailable")
 
-	logoutFailure := service.NewControlIdentityService(controlIdentityLogoutFailureRepository{}, nil, service.ControlIdentityConfig{})
+	logoutFailure := accessservice.NewControlIdentityService(controlIdentityLogoutFailureRepository{}, nil, accessservice.ControlIdentityConfig{})
 	handler.controlIdentity = logoutFailure
 	c, logoutFailureRec := controlDirectoryContext(nethttp.MethodPost, "", nil)
-	c.Request().AddCookie(&nethttp.Cookie{Name: service.ControlSessionCookieName, Value: "session"})
+	c.Request().AddCookie(&nethttp.Cookie{Name: accessservice.ControlSessionCookieName, Value: "session"})
 	require.Error(t, handler.logoutControlIdentity(c))
 	require.Empty(t, logoutFailureRec.Result().Cookies())
 	handler.controlIdentity = readyUnavailable
@@ -301,35 +301,35 @@ func requireControlIdentityCookiesCleared(t *testing.T, cookies []*nethttp.Cooki
 		cleared[cookie.Name+"|"+cookie.Path] = true
 	}
 	require.Equal(t, map[string]bool{
-		service.ControlSessionCookieName + "|/":        true,
-		service.ControlSessionCookieName + "|/control": true,
-		service.ControlCSRFCookieName + "|/":           true,
-		service.ControlCSRFCookieName + "|/control":    true,
+		accessservice.ControlSessionCookieName + "|/":        true,
+		accessservice.ControlSessionCookieName + "|/control": true,
+		accessservice.ControlCSRFCookieName + "|/":           true,
+		accessservice.ControlCSRFCookieName + "|/control":    true,
 	}, cleared)
 }
 
 type controlIdentityHTTPRuntime struct {
-	config service.SSORuntimeConfig
+	config accessservice.SSORuntimeConfig
 	err    error
 }
 
 type controlIdentityLogoutFailureRepository struct {
-	repository.ControlIdentityRepository
+	accesspostgres.ControlIdentityRepository
 }
 
 func (controlIdentityLogoutFailureRepository) DeleteControlSession(context.Context, string) error {
 	return errors.New("delete control session failed")
 }
 
-func (r controlIdentityHTTPRuntime) SSORuntimeConfig(context.Context) (service.SSORuntimeConfig, error) {
+func (r controlIdentityHTTPRuntime) SSORuntimeConfig(context.Context) (accessservice.SSORuntimeConfig, error) {
 	if r.err != nil {
-		return service.SSORuntimeConfig{}, r.err
+		return accessservice.SSORuntimeConfig{}, r.err
 	}
 	return r.config, nil
 }
 
 type controlIdentityHTTPRepository struct {
-	repository.ControlIdentityRepository
+	accesspostgres.ControlIdentityRepository
 	groups         []*domain.ControlAdminGroup
 	states         map[string]*domain.ControlOAuthState
 	sessions       map[string]*domain.ControlSession
@@ -442,7 +442,7 @@ func (r *controlIdentityHTTPRepository) DeleteExpiredControlSessions(_ context.C
 }
 
 type controlIdentityHTTPSSORepository struct {
-	repository.SSORepository
+	accesspostgres.SSORepository
 	providers  map[uuid.UUID]*domain.SSOProvider
 	identities map[uuid.UUID]*domain.SSOIdentity
 }

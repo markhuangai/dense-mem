@@ -4,101 +4,101 @@
   "cases": [
     {
       "id": "repository/TestClaimedPrivateConflictDerivedEvidenceCannotStageAfterErasureReopensSpace",
-      "package": "./internal/repository",
+      "package": "./internal/conflict/postgres",
       "run": "^TestClaimedPrivateConflictDerivedEvidenceCannotStageAfterErasureReopensSpace$",
       "phase": "precheck",
-      "source": "internal/repository/conflict_review_private_space_integration.e2e"
+      "source": "internal/conflict/postgres/conflict_review_private_space_integration.e2e"
     },
     {
       "id": "repository/TestConflictReviewRetiresLosingSearchProjectionWithoutEmbedding",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestConflictReviewRetiresLosingSearchProjectionWithoutEmbedding$",
       "phase": "precheck",
-      "source": "internal/repository/conflict_review_synchronous_integration.e2e"
+      "source": "internal/knowledge/postgres/conflict_review_synchronous_integration.e2e"
     },
     {
       "id": "repository/TestConflictSnapshotScopeLocksCorrectionBeforeReviewRowLock",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestConflictSnapshotScopeLocksCorrectionBeforeReviewRowLock$",
       "phase": "precheck",
-      "source": "internal/repository/conflict_review_synchronous_integration.e2e"
+      "source": "internal/knowledge/postgres/conflict_review_synchronous_integration.e2e"
     },
     {
       "id": "repository/TestConflictSnapshotScopeSerializesPlacementReviewAndWrite",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestConflictSnapshotScopeSerializesPlacementReviewAndWrite$",
       "phase": "precheck",
-      "source": "internal/repository/conflict_review_synchronous_integration.e2e"
+      "source": "internal/knowledge/postgres/conflict_review_synchronous_integration.e2e"
     },
     {
       "id": "repository/TestEvidenceConflictAllowsExplicitKnownCitationWithoutCandidateAssociation",
-      "package": "./internal/repository",
+      "package": "./internal/conflict/postgres",
       "run": "^TestEvidenceConflictAllowsExplicitKnownCitationWithoutCandidateAssociation$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_conflict_conflict_integration.e2e"
+      "source": "internal/conflict/postgres/evidence_conflict_conflict_integration.e2e"
     },
     {
       "id": "repository/TestConflictReviewCompetingWorkersSerializeTerminalEffects",
-      "package": "./internal/repository",
+      "package": "./internal/conflict/postgres",
       "run": "^TestConflictReviewCompetingWorkersSerializeTerminalEffects$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_conflict_conflict_integration.e2e"
+      "source": "internal/conflict/postgres/evidence_conflict_conflict_integration.e2e"
     },
     {
       "id": "repository/TestEvidenceConflictChangedPositionSetCreatesNewCase",
-      "package": "./internal/repository",
+      "package": "./internal/conflict/postgres",
       "run": "^TestEvidenceConflictChangedPositionSetCreatesNewCase$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_conflict_conflict_integration.e2e"
+      "source": "internal/conflict/postgres/evidence_conflict_conflict_integration.e2e"
     },
     {
       "id": "repository/TestEvidenceConflictConcurrentCreationSerializesSameOwnerAndDifferentOwner",
-      "package": "./internal/repository",
+      "package": "./internal/conflict/postgres",
       "run": "^TestEvidenceConflictConcurrentCreationSerializesSameOwnerAndDifferentOwner$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_conflict_conflict_integration.e2e"
+      "source": "internal/conflict/postgres/evidence_conflict_conflict_integration.e2e"
     },
     {
       "id": "repository/TestEvidenceConflictDismissalRecordsTerminalEvent",
-      "package": "./internal/repository",
+      "package": "./internal/conflict/postgres",
       "run": "^TestEvidenceConflictDismissalRecordsTerminalEvent$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_conflict_conflict_integration.e2e"
+      "source": "internal/conflict/postgres/evidence_conflict_conflict_integration.e2e"
     },
     {
       "id": "repository/TestEvidenceConflictRememberCreationAndRecurrence",
-      "package": "./internal/repository",
+      "package": "./internal/conflict/postgres",
       "run": "^TestEvidenceConflictRememberCreationAndRecurrence$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_conflict_conflict_integration.e2e"
+      "source": "internal/conflict/postgres/evidence_conflict_conflict_integration.e2e"
     },
     {
       "id": "repository/TestEvidenceConflictRememberKeepsForcedBatchPositionsDistinct",
-      "package": "./internal/repository",
+      "package": "./internal/conflict/postgres",
       "run": "^TestEvidenceConflictRememberKeepsForcedBatchPositionsDistinct$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_conflict_conflict_integration.e2e"
+      "source": "internal/conflict/postgres/evidence_conflict_conflict_integration.e2e"
     },
     {
       "id": "repository/TestEvidenceConflictStaleCandidateRollsBackRemember",
-      "package": "./internal/repository",
+      "package": "./internal/conflict/postgres",
       "run": "^TestEvidenceConflictStaleCandidateRollsBackRemember$",
       "phase": "precheck",
-      "source": "internal/repository/evidence_conflict_conflict_integration.e2e"
+      "source": "internal/conflict/postgres/evidence_conflict_conflict_integration.e2e"
     },
     {
       "id": "repository/TestOverdueConflictResolutionRetainsEvidenceUsedByAnotherOwner",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestOverdueConflictResolutionRetainsEvidenceUsedByAnotherOwner$",
       "phase": "precheck",
-      "source": "internal/repository/conflict_review_synchronous_integration.e2e"
+      "source": "internal/knowledge/postgres/conflict_review_synchronous_integration.e2e"
     },
     {
       "id": "repository/TestOverdueConflictResolutionRetainsEvidenceUsedByLosingOwner",
-      "package": "./internal/repository",
+      "package": "./internal/knowledge/postgres",
       "run": "^TestOverdueConflictResolutionRetainsEvidenceUsedByLosingOwner$",
       "phase": "precheck",
-      "source": "internal/repository/conflict_review_synchronous_integration.e2e"
+      "source": "internal/knowledge/postgres/conflict_review_synchronous_integration.e2e"
     }
   ]
 }

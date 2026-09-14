@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"errors"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	nethttp "net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,7 +17,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
-	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/storage/inmem"
 )
 
@@ -36,8 +36,8 @@ func TestControlPortalSSOProviderAndMappingFlows(t *testing.T) {
 			TeamName:   "Research",
 			GroupID:    "group-read",
 			GroupName:  "Read group",
-			Scopes:     []string{service.CredentialScopeRead},
-			Role:       service.CredentialRoleMember,
+			Scopes:     []string{accessservice.CredentialScopeRead},
+			Role:       accessservice.CredentialRoleMember,
 			Enabled:    true,
 			CreatedAt:  now,
 			UpdatedAt:  now,
@@ -138,18 +138,18 @@ func TestUserPortalSSOHandlers(t *testing.T) {
 			},
 		},
 		mappings: []*domain.SSOGroupMapping{
-			httpSSOMapping(providerID, teamOneID, "Team One", "group-one", service.CredentialRoleMember, now),
-			httpSSOMapping(providerID, teamTwoID, "Team Two", "group-two", service.CredentialRoleManager, now),
+			httpSSOMapping(providerID, teamOneID, "Team One", "group-one", accessservice.CredentialRoleMember, now),
+			httpSSOMapping(providerID, teamTwoID, "Team Two", "group-two", accessservice.CredentialRoleManager, now),
 		},
 		sessions: map[string]*domain.SSOSession{
-			service.HashSSOToken(sessionToken): {
-				SessionHash:  service.HashSSOToken(sessionToken),
+			accessservice.HashSSOToken(sessionToken): {
+				SessionHash:  accessservice.HashSSOToken(sessionToken),
 				IdentityID:   identityID,
 				ProviderID:   providerID,
 				MembershipID: membershipOneID,
 				OwnerID:      ownerOneID,
 				TeamID:       teamOneID,
-				CSRFHash:     service.HashSSOToken(csrfToken),
+				CSRFHash:     accessservice.HashSSOToken(csrfToken),
 				ExpiresAt:    now.Add(time.Hour),
 				CreatedAt:    now,
 			},
@@ -157,15 +157,15 @@ func TestUserPortalSSOHandlers(t *testing.T) {
 		now: now,
 	}
 	repo.teamProfiles = []*domain.SSOTeamMembership{
-		httpSSOTeamMembership(identityID, providerID, membershipOneID, ownerOneID, teamOneID, "Team One", service.CredentialRoleMember, now),
-		httpSSOTeamMembership(identityID, providerID, membershipTwoID, ownerTwoID, teamTwoID, "Team Two", service.CredentialRoleManager, now),
+		httpSSOTeamMembership(identityID, providerID, membershipOneID, ownerOneID, teamOneID, "Team One", accessservice.CredentialRoleMember, now),
+		httpSSOTeamMembership(identityID, providerID, membershipTwoID, ownerTwoID, teamTwoID, "Team Two", accessservice.CredentialRoleManager, now),
 	}
 	handler := &userPortalHandler{
-		sso: service.NewSSOService(repo, service.SSOConfig{
+		sso: accessservice.NewSSOService(repo, accessservice.SSOConfig{
 			PublicBaseURL: "https://portal.example.com",
 			Now:           func() time.Time { return now },
 		}),
-		appConfig: &controlAppConfigSvc{ssoRuntime: service.SSORuntimeConfig{
+		appConfig: &controlAppConfigSvc{ssoRuntime: accessservice.SSORuntimeConfig{
 			MCPPublicBaseURL: "https://memory.example.test",
 		}},
 	}
@@ -190,15 +190,15 @@ func TestUserPortalSSOHandlers(t *testing.T) {
 	setUserSSOPrincipal(c, ownerOneID, teamOneID)
 	require.NoError(t, handler.switchSSOTeam(c))
 	require.Equal(t, nethttp.StatusOK, rec.Code)
-	require.Equal(t, service.HashSSOToken(sessionToken), repo.updatedSessionHash)
+	require.Equal(t, accessservice.HashSSOToken(sessionToken), repo.updatedSessionHash)
 	require.Contains(t, rec.Body.String(), `"name":"Team Two"`)
 
 	c, rec = userSSOContext(nethttp.MethodPost, "/ui/api/sso/logout", "", sessionToken)
 	addSSOCSRF(c, csrfToken)
 	require.NoError(t, handler.logoutSSO(c))
 	require.Equal(t, nethttp.StatusOK, rec.Code)
-	require.Equal(t, service.HashSSOToken(sessionToken), repo.deletedSessionHash)
-	require.Contains(t, rec.Header().Values("Set-Cookie")[0], service.SSOSessionCookieName+"=;")
+	require.Equal(t, accessservice.HashSSOToken(sessionToken), repo.deletedSessionHash)
+	require.Contains(t, rec.Header().Values("Set-Cookie")[0], accessservice.SSOSessionCookieName+"=;")
 
 	c, _ = userSSOContext(nethttp.MethodGet, "/ui/api/sso/callback", "", "")
 	req := c.Request()
@@ -208,7 +208,7 @@ func TestUserPortalSSOHandlers(t *testing.T) {
 	callbackURL, err := handler.ssoCallbackURL(c.Request().Context())
 	require.NoError(t, err)
 	require.Equal(t, "https://portal.example.com/ui/api/sso/callback", callbackURL)
-	handler.sso = service.NewSSOService(repo, service.SSOConfig{Now: func() time.Time { return now }})
+	handler.sso = accessservice.NewSSOService(repo, accessservice.SSOConfig{Now: func() time.Time { return now }})
 	_, err = handler.ssoCallbackURL(c.Request().Context())
 	require.ErrorContains(t, err, "sso public base url is not configured")
 }
@@ -221,7 +221,7 @@ func TestUserPortalSSOErrorBranches(t *testing.T) {
 	c.SetParamValues("not-a-uuid")
 	require.ErrorContains(t, handler.startSSO(c), "sso is not configured")
 
-	handler.sso = service.NewSSOService(&httpSSORepoStub{}, service.SSOConfig{})
+	handler.sso = accessservice.NewSSOService(&httpSSORepoStub{}, accessservice.SSOConfig{})
 	require.ErrorContains(t, handler.startSSO(c), "invalid sso provider ID format")
 
 	require.ErrorContains(t, (&userPortalHandler{}).switchSSOTeam(c), "sso is not configured")
@@ -255,7 +255,7 @@ func TestUserPortalSSOErrorBranches(t *testing.T) {
 	_, err = handler.currentSSOSession(c)
 	require.ErrorContains(t, err, "invalid sso session")
 
-	handler.sso = service.NewSSOService(&httpSSORepoStub{listProvidersErr: errors.New("list providers failed")}, service.SSOConfig{PublicBaseURL: "https://portal.example.com"})
+	handler.sso = accessservice.NewSSOService(&httpSSORepoStub{listProvidersErr: errors.New("list providers failed")}, accessservice.SSOConfig{PublicBaseURL: "https://portal.example.com"})
 	c, _ = userSSOContext(nethttp.MethodGet, "/ui/api/sso/providers", "", "")
 	require.ErrorContains(t, handler.ssoProviders(c), "list providers failed")
 
@@ -265,19 +265,19 @@ func TestUserPortalSSOErrorBranches(t *testing.T) {
 	defer discovery.Close()
 	provider := httpSSOProvider(providerID, "Enterprise IdP", now)
 	provider.IssuerURL = discovery.URL
-	handler.sso = service.NewSSOService(&httpSSORepoStub{
+	handler.sso = accessservice.NewSSOService(&httpSSORepoStub{
 		providers: map[uuid.UUID]*domain.SSOProvider{providerID: provider},
 		now:       now,
-	}, service.SSOConfig{HTTPClient: discovery.Client(), Now: func() time.Time { return now }})
+	}, accessservice.SSOConfig{HTTPClient: discovery.Client(), Now: func() time.Time { return now }})
 	c, _ = userSSOContext(nethttp.MethodGet, "/ui/api/sso/start/"+providerID.String(), "", "")
 	c.SetParamNames("providerId")
 	c.SetParamValues(providerID.String())
 	require.ErrorContains(t, handler.startSSO(c), "sso public base url is not configured")
 
-	handler.sso = service.NewSSOService(&httpSSORepoStub{
+	handler.sso = accessservice.NewSSOService(&httpSSORepoStub{
 		providers: map[uuid.UUID]*domain.SSOProvider{providerID: provider},
 		now:       now,
-	}, service.SSOConfig{PublicBaseURL: "https://portal.example.com", HTTPClient: discovery.Client(), Now: func() time.Time { return now }})
+	}, accessservice.SSOConfig{PublicBaseURL: "https://portal.example.com", HTTPClient: discovery.Client(), Now: func() time.Time { return now }})
 	c, rec := userSSOContext(nethttp.MethodGet, "/ui/api/sso/start/"+providerID.String(), "", "")
 	c.SetParamNames("providerId")
 	c.SetParamValues(providerID.String())
@@ -285,10 +285,10 @@ func TestUserPortalSSOErrorBranches(t *testing.T) {
 	require.Equal(t, nethttp.StatusFound, rec.Code)
 	require.Contains(t, rec.Header().Get("Location"), discovery.URL+"/authorize")
 
-	require.ErrorContains(t, userPortalSSOError(service.ErrSSOSessionInvalid), "invalid sso session")
-	require.ErrorContains(t, userPortalSSOError(service.ErrSSOCSRFInvalid), "invalid sso csrf token")
-	require.ErrorContains(t, userPortalSSOError(service.ErrSSOAccessDenied), "sso access denied")
-	require.ErrorContains(t, userPortalSSOError(service.NewSSOSetupError(service.SSOSetupMappingMissing, service.ErrSSOAccessDenied)), "no mapping matched")
+	require.ErrorContains(t, userPortalSSOError(accessservice.ErrSSOSessionInvalid), "invalid sso session")
+	require.ErrorContains(t, userPortalSSOError(accessservice.ErrSSOCSRFInvalid), "invalid sso csrf token")
+	require.ErrorContains(t, userPortalSSOError(accessservice.ErrSSOAccessDenied), "sso access denied")
+	require.ErrorContains(t, userPortalSSOError(accessservice.NewSSOSetupError(accessservice.SSOSetupMappingMissing, accessservice.ErrSSOAccessDenied)), "no mapping matched")
 	require.ErrorContains(t, userPortalSSOError(errors.New("issuer returned tenant detail")), "sso authentication failed")
 	require.NotContains(t, userPortalSSOError(errors.New("issuer returned tenant detail")).Error(), "tenant detail")
 }
@@ -339,7 +339,7 @@ func TestControlPortalSSOErrorBranches(t *testing.T) {
 		})
 	}
 
-	handler.sso = service.NewSSOService(&httpSSORepoStub{}, service.SSOConfig{})
+	handler.sso = accessservice.NewSSOService(&httpSSORepoStub{}, accessservice.SSOConfig{})
 	req := httptest.NewRequest(nethttp.MethodPatch, "/", strings.NewReader(`{`))
 	req.Header.Set("Content-Type", "application/json")
 	c := e.NewContext(req, httptest.NewRecorder())
@@ -368,25 +368,25 @@ func TestControlPortalSSOErrorBranches(t *testing.T) {
 	require.ErrorContains(t, handler.updateSSOMapping(c), "invalid SSO group mapping ID format")
 
 	backendErr := errors.New("sso backend failed")
-	handler.sso = service.NewSSOService(&httpSSORepoStub{listProvidersErr: backendErr}, service.SSOConfig{})
+	handler.sso = accessservice.NewSSOService(&httpSSORepoStub{listProvidersErr: backendErr}, accessservice.SSOConfig{})
 	req = httptest.NewRequest(nethttp.MethodGet, "/", nil)
 	require.ErrorIs(t, handler.listSSOProviders(e.NewContext(req, httptest.NewRecorder())), backendErr)
 
-	handler.sso = service.NewSSOService(&httpSSORepoStub{listMappingsErr: backendErr}, service.SSOConfig{})
+	handler.sso = accessservice.NewSSOService(&httpSSORepoStub{listMappingsErr: backendErr}, accessservice.SSOConfig{})
 	req = httptest.NewRequest(nethttp.MethodGet, "/", nil)
 	c = e.NewContext(req, httptest.NewRecorder())
 	c.SetParamNames("providerId")
 	c.SetParamValues(uuid.NewString())
 	require.ErrorIs(t, handler.listSSOMappings(c), backendErr)
 
-	handler.sso = service.NewSSOService(&httpSSORepoStub{deleteProviderErr: backendErr}, service.SSOConfig{})
+	handler.sso = accessservice.NewSSOService(&httpSSORepoStub{deleteProviderErr: backendErr}, accessservice.SSOConfig{})
 	req = httptest.NewRequest(nethttp.MethodDelete, "/", nil)
 	c = e.NewContext(req, httptest.NewRecorder())
 	c.SetParamNames("providerId")
 	c.SetParamValues(uuid.NewString())
 	require.ErrorIs(t, handler.deleteSSOProvider(c), backendErr)
 
-	handler.sso = service.NewSSOService(&httpSSORepoStub{deleteMappingErr: backendErr}, service.SSOConfig{})
+	handler.sso = accessservice.NewSSOService(&httpSSORepoStub{deleteMappingErr: backendErr}, accessservice.SSOConfig{})
 	req = httptest.NewRequest(nethttp.MethodDelete, "/", nil)
 	c = e.NewContext(req, httptest.NewRecorder())
 	c.SetParamNames("providerId", "mappingId")
@@ -421,14 +421,14 @@ func TestUserPortalSSORoutesAndCookies(t *testing.T) {
 			ExpiresAt:  now.Add(time.Hour),
 		},
 		mappings: []*domain.SSOGroupMapping{
-			httpSSOMapping(providerID, teamID, "Team One", "group-one", service.CredentialRoleMember, now),
+			httpSSOMapping(providerID, teamID, "Team One", "group-one", accessservice.CredentialRoleMember, now),
 		},
 		identities: map[uuid.UUID]*domain.SSOIdentity{
 			identityID: {ID: identityID, ProviderID: providerID, Subject: "subject-123"},
 		},
 		sessions: map[string]*domain.SSOSession{
-			service.HashSSOToken(sessionToken): {
-				SessionHash:  service.HashSSOToken(sessionToken),
+			accessservice.HashSSOToken(sessionToken): {
+				SessionHash:  accessservice.HashSSOToken(sessionToken),
 				IdentityID:   identityID,
 				ProviderID:   providerID,
 				MembershipID: membershipID,
@@ -440,9 +440,9 @@ func TestUserPortalSSORoutesAndCookies(t *testing.T) {
 		now: now,
 	}
 	repo.teamProfiles = []*domain.SSOTeamMembership{
-		httpSSOTeamMembership(identityID, providerID, membershipID, ownerID, teamID, "Team One", service.CredentialRoleMember, now),
+		httpSSOTeamMembership(identityID, providerID, membershipID, ownerID, teamID, "Team One", accessservice.CredentialRoleMember, now),
 	}
-	ssoSvc := service.NewSSOService(repo, service.SSOConfig{
+	ssoSvc := accessservice.NewSSOService(repo, accessservice.SSOConfig{
 		PublicBaseURL: "https://portal.example.com",
 		Now:           func() time.Time { return now },
 	})
@@ -453,7 +453,7 @@ func TestUserPortalSSORoutesAndCookies(t *testing.T) {
 	}, nil, HealthConfig{})
 	RegisterUserPortal(e, UserPortalDeps{
 		CredentialRepo: &userPortalAuthRepo{},
-		RateLimitSvc:   service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
+		RateLimitSvc:   accessservice.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
 		SSOService:     ssoSvc,
 		Config:         &config.Config{RateLimitPerMinute: 100},
 	})
@@ -465,7 +465,7 @@ func TestUserPortalSSORoutesAndCookies(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"Enterprise IdP"`)
 
 	req = httptest.NewRequest(nethttp.MethodGet, "/ui/api/session", nil)
-	req.AddCookie(&nethttp.Cookie{Name: service.SSOSessionCookieName, Value: sessionToken})
+	req.AddCookie(&nethttp.Cookie{Name: accessservice.SSOSessionCookieName, Value: sessionToken})
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	require.Equal(t, nethttp.StatusOK, rec.Code)
@@ -475,17 +475,17 @@ func TestUserPortalSSORoutesAndCookies(t *testing.T) {
 
 	req = httptest.NewRequest(nethttp.MethodPost, "/ui/api/sso/logout", nil)
 	csrfToken := "csrf-token"
-	req.AddCookie(&nethttp.Cookie{Name: service.SSOSessionCookieName, Value: sessionToken})
-	req.AddCookie(&nethttp.Cookie{Name: service.SSOCSRFCookieName, Value: csrfToken})
-	req.Header.Set(service.SSOCSRFHeaderName, csrfToken)
+	req.AddCookie(&nethttp.Cookie{Name: accessservice.SSOSessionCookieName, Value: sessionToken})
+	req.AddCookie(&nethttp.Cookie{Name: accessservice.SSOCSRFCookieName, Value: csrfToken})
+	req.Header.Set(accessservice.SSOCSRFHeaderName, csrfToken)
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	require.Equal(t, nethttp.StatusOK, rec.Code)
-	require.Equal(t, service.HashSSOToken(sessionToken), repo.deletedSessionHash)
+	require.Equal(t, accessservice.HashSSOToken(sessionToken), repo.deletedSessionHash)
 
 	c, rec := userSSOContext(nethttp.MethodGet, "/ui/api/sso/callback", "", "")
-	setSSOCookie(c, service.SSOSessionCookieName, "value", true, now.Add(time.Hour), true)
-	require.Contains(t, rec.Header().Get("Set-Cookie"), service.SSOSessionCookieName+"=value")
+	setSSOCookie(c, accessservice.SSOSessionCookieName, "value", true, now.Add(time.Hour), true)
+	require.Contains(t, rec.Header().Get("Set-Cookie"), accessservice.SSOSessionCookieName+"=value")
 
 	handler := &userPortalHandler{}
 	c, _ = userSSOContext(nethttp.MethodGet, "/ui/api/sso/providers", "", "")
@@ -503,8 +503,8 @@ func TestUserPortalPublicSSOStartIsRateLimited(t *testing.T) {
 	e := NewServer(*cfg, nil, HealthConfig{})
 	RegisterUserPortal(e, UserPortalDeps{
 		CredentialRepo: &userPortalAuthRepo{},
-		RateLimitSvc:   service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
-		SSOService:     service.NewSSOService(&httpSSORepoStub{}, service.SSOConfig{PublicBaseURL: "https://portal.example.com"}),
+		RateLimitSvc:   accessservice.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
+		SSOService:     accessservice.NewSSOService(&httpSSORepoStub{}, accessservice.SSOConfig{PublicBaseURL: "https://portal.example.com"}),
 		Config:         cfg,
 	})
 
@@ -527,8 +527,8 @@ func TestUserPortalPublicSSOStartIsRateLimited(t *testing.T) {
 
 func controlPortalSSOServer(t *testing.T, repo *httpSSORepoStub, now time.Time) nethttp.Handler {
 	t.Helper()
-	ssoSvc := service.NewSSOService(repo, service.SSOConfig{Now: func() time.Time { return now }})
-	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	ssoSvc := accessservice.NewSSOService(repo, accessservice.SSOConfig{Now: func() time.Time { return now }})
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{SSO: ssoSvc}, HealthConfig{}, nil)
@@ -554,7 +554,7 @@ func userSSOContext(method, target, body, sessionToken string) (echo.Context, *h
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if sessionToken != "" {
-		req.AddCookie(&nethttp.Cookie{Name: service.SSOSessionCookieName, Value: sessionToken})
+		req.AddCookie(&nethttp.Cookie{Name: accessservice.SSOSessionCookieName, Value: sessionToken})
 	}
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
@@ -575,8 +575,8 @@ func setUserSSOPrincipal(c echo.Context, ownerID, teamID uuid.UUID) {
 		MembershipID: ownerID,
 		OwnerID:      ownerID,
 		TeamID:       teamID,
-		Grants:       []string{service.CredentialScopeRead},
-		Role:         service.CredentialRoleMember,
+		Grants:       []string{accessservice.CredentialScopeRead},
+		Role:         accessservice.CredentialRoleMember,
 		AuthMethod:   "sso_session",
 	})
 	c.SetRequest(c.Request().WithContext(ctx))
@@ -589,16 +589,16 @@ func setUserCredentialPrincipal(c echo.Context, credentialID, teamID uuid.UUID) 
 		OwnerID:      credentialID,
 		CredentialID: &credentialID,
 		TeamID:       teamID,
-		Grants:       []string{service.CredentialScopeRead},
-		Role:         service.CredentialRoleMember,
+		Grants:       []string{accessservice.CredentialScopeRead},
+		Role:         accessservice.CredentialRoleMember,
 		AuthMethod:   "api_key",
 	})
 	c.SetRequest(c.Request().WithContext(ctx))
 }
 
 func addSSOCSRF(c echo.Context, token string) {
-	c.Request().Header.Set(service.SSOCSRFHeaderName, token)
-	c.Request().AddCookie(&nethttp.Cookie{Name: service.SSOCSRFCookieName, Value: token})
+	c.Request().Header.Set(accessservice.SSOCSRFHeaderName, token)
+	c.Request().AddCookie(&nethttp.Cookie{Name: accessservice.SSOCSRFCookieName, Value: token})
 }
 
 type httpSSORepoStub struct {
@@ -951,7 +951,7 @@ func httpSSOMapping(providerID, teamID uuid.UUID, teamName, groupID, role string
 		TeamName:   teamName,
 		GroupID:    groupID,
 		GroupName:  groupID,
-		Scopes:     []string{service.CredentialScopeRead, service.CredentialScopeWrite},
+		Scopes:     []string{accessservice.CredentialScopeRead, accessservice.CredentialScopeWrite},
 		Role:       role,
 		Enabled:    true,
 		CreatedAt:  now,
@@ -973,7 +973,7 @@ func httpSSOTeamMembership(identityID, providerID, membershipID, ownerID, teamID
 			TeamID:               teamID,
 			OwnerID:              ownerID,
 			Name:                 "SSO " + teamName,
-			Grants:               []string{service.CredentialScopeRead, service.CredentialScopeWrite},
+			Grants:               []string{accessservice.CredentialScopeRead, accessservice.CredentialScopeWrite},
 			Role:                 role,
 			Status:               "active",
 			CreatedAt:            now,

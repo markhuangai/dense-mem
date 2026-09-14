@@ -225,6 +225,19 @@ func (v *OpenAIVerifier) ModelName() string {
 	return v.model
 }
 
+// StructuredChatJSON exposes the bounded structured transport to composition
+// adapters that own a provider-specific capability contract.
+func (v *OpenAIVerifier) StructuredChatJSON(
+	ctx context.Context,
+	model string,
+	schemaName string,
+	schema map[string]any,
+	prompt string,
+	payload any,
+) (string, error) {
+	return v.openAIStructuredChatJSON(ctx, model, schemaName, schema, prompt, payload)
+}
+
 // Verify submits req to the OpenAI-compatible chat completions endpoint and
 // returns a structured Response. The returned error is one of the sentinel
 // types defined in errors.go (ErrVerifierTimeout, ErrVerifierProvider,

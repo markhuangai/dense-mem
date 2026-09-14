@@ -5,20 +5,23 @@ package serverapp
 import (
 	"testing"
 
-	"github.com/markhuangai/dense-mem/internal/repository"
+	communitypostgres "github.com/markhuangai/dense-mem/internal/community/postgres"
+	evaluationpostgres "github.com/markhuangai/dense-mem/internal/evaluation/postgres"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
+	"gorm.io/gorm"
 )
 
 func TestEvaluationCompositionUsesDedicatedReader(t *testing.T) {
-	semantic := repository.NewSemanticRepository(nil, nil)
-	bindings, err := buildEvaluationRegistryBindings(semantic, nil)
+	communities := communitypostgres.NewStore(nil, nil)
+	bindings, err := buildEvaluationRegistryBindings(&gorm.DB{}, storagepostgres.NewRLS(), communities, nil)
 	if err != nil {
 		t.Fatalf("evaluation composition: %v", err)
 	}
-	if _, ok := bindings.Repository.(*repository.EvaluationReader); !ok {
-		t.Fatalf("evaluation repository = %T; want *repository.EvaluationReader", bindings.Repository)
+	if _, ok := bindings.Repository.(*evaluationpostgres.EvaluationReader); !ok {
+		t.Fatalf("evaluation repository = %T; want *evaluationpostgres.EvaluationReader", bindings.Repository)
 	}
-	if bindings.Communities != semantic {
+	if bindings.Communities != communities {
 		t.Fatal("evaluation composition did not preserve the community reader")
 	}
 	reg, err := registry.BuildActive(registry.Dependencies{EvaluationBindings: bindings})
@@ -31,7 +34,7 @@ func TestEvaluationCompositionUsesDedicatedReader(t *testing.T) {
 }
 
 func TestEvaluationCompositionRejectsMissingSemanticRepository(t *testing.T) {
-	if _, err := buildEvaluationRegistryBindings(nil, nil); err == nil {
+	if _, err := buildEvaluationRegistryBindings(nil, nil, nil, nil); err == nil {
 		t.Fatal("missing semantic repository did not fail evaluation composition")
 	}
 }

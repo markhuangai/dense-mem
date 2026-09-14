@@ -23,11 +23,13 @@ bash tests/eval/scripts/run_full_public_rag_eval_until_done_test.sh
 node --test tests/uat/coverage_policy.test.mjs
 npm run test:coverage --prefix web
 npm run test:coverage --prefix packages/mcp-proxy
+
+node scripts/coverage-gate.mjs browser web/coverage/coverage-summary.json
+node scripts/coverage-gate.mjs "MCP proxy" packages/mcp-proxy/coverage/coverage-summary.json
 packages="$(scripts/go-packages.sh)"
 
 printf '%s\n' "${packages}"
 go test ${packages}
 go -C cmd/e2e test ./... -count=1
 
-scripts/coverage-report.sh --transitional
 scripts/coverage-report.sh --complete

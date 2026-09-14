@@ -14,7 +14,7 @@ import (
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 const userPortalCreateSessionBodyKey = "user_portal_create_session"
@@ -39,15 +39,15 @@ func (h *userPortalHandler) createPortalSession(c echo.Context) error {
 		return userPortalSessionError(err)
 	}
 	secure := h.portalCookieSecure(c.Request().Context())
-	setUserPortalCookie(c, service.UserPortalSessionCookieName, result.SessionToken, true, *body.Remember, result.ExpiresAt, secure)
-	setUserPortalCookie(c, service.UserPortalCSRFCookieName, result.CSRFToken, false, *body.Remember, result.ExpiresAt, secure)
-	clearSSOCookie(c, service.SSOSessionCookieName)
-	clearSSOCookie(c, service.SSOCSRFCookieName)
+	setUserPortalCookie(c, accessservice.UserPortalSessionCookieName, result.SessionToken, true, *body.Remember, result.ExpiresAt, secure)
+	setUserPortalCookie(c, accessservice.UserPortalCSRFCookieName, result.CSRFToken, false, *body.Remember, result.ExpiresAt, secure)
+	clearSSOCookie(c, accessservice.SSOSessionCookieName)
+	clearSSOCookie(c, accessservice.SSOCSRFCookieName)
 	return response.SuccessOK(c, map[string]string{"status": "signed_in"})
 }
 
 func (h *userPortalHandler) logoutPortalSession(c echo.Context) error {
-	if cookie, err := c.Request().Cookie(service.UserPortalSessionCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
+	if cookie, err := c.Request().Cookie(accessservice.UserPortalSessionCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
 		if err := validateUserPortalLogoutCSRF(c); err != nil {
 			return err
 		}
@@ -58,14 +58,14 @@ func (h *userPortalHandler) logoutPortalSession(c echo.Context) error {
 		}
 	}
 	secure := h.portalCookieSecure(c.Request().Context())
-	clearUserPortalCookie(c, service.UserPortalSessionCookieName, true, secure)
-	clearUserPortalCookie(c, service.UserPortalCSRFCookieName, false, secure)
+	clearUserPortalCookie(c, accessservice.UserPortalSessionCookieName, true, secure)
+	clearUserPortalCookie(c, accessservice.UserPortalCSRFCookieName, false, secure)
 	return response.SuccessOK(c, map[string]string{"status": "signed_out"})
 }
 
 func validateUserPortalLogoutCSRF(c echo.Context) error {
-	headerToken := strings.TrimSpace(c.Request().Header.Get(service.SSOCSRFHeaderName))
-	cookie, err := c.Request().Cookie(service.UserPortalCSRFCookieName)
+	headerToken := strings.TrimSpace(c.Request().Header.Get(accessservice.SSOCSRFHeaderName))
+	cookie, err := c.Request().Cookie(accessservice.UserPortalCSRFCookieName)
 	if err != nil || headerToken == "" || strings.TrimSpace(cookie.Value) == "" {
 		return httperr.New(httperr.FORBIDDEN, "invalid user portal csrf token")
 	}
@@ -115,9 +115,9 @@ func userPortalSessionError(err error) error {
 	switch {
 	case err == nil:
 		return nil
-	case errors.Is(err, service.ErrUserPortalSessionInvalid):
+	case errors.Is(err, accessservice.ErrUserPortalSessionInvalid):
 		return httperr.New(httperr.AUTH_INVALID, "invalid user portal session")
-	case errors.Is(err, service.ErrUserPortalCSRFInvalid):
+	case errors.Is(err, accessservice.ErrUserPortalCSRFInvalid):
 		return httperr.New(httperr.FORBIDDEN, "invalid user portal csrf token")
 	default:
 		return httperr.New(httperr.INTERNAL_ERROR, "user portal session failed")

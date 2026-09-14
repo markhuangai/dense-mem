@@ -3,6 +3,8 @@ package http
 import (
 	"context"
 	"errors"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
+	settings "github.com/markhuangai/dense-mem/internal/settings"
 	nethttp "net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,14 +16,13 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 func TestControlPortalMiddlewareIgnoresOriginBehindTLSProxy(t *testing.T) {
 	t.Parallel()
 
-	identity := service.NewControlIdentityService(nil, nil, service.ControlIdentityConfig{
-		RuntimeConfig: controlIdentityHTTPRuntime{config: service.SSORuntimeConfig{}},
+	identity := accessservice.NewControlIdentityService(nil, nil, accessservice.ControlIdentityConfig{
+		RuntimeConfig: controlIdentityHTTPRuntime{config: accessservice.SSORuntimeConfig{}},
 	})
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
@@ -57,8 +58,8 @@ func TestControlPortalMiddlewareAcceptsCurrentSSOSessionAndRecordsSafeFailures(t
 	sessionToken := "control-sso-session"
 	repo := newControlIdentityHTTPRepository()
 	repo.groups = []*domain.ControlAdminGroup{{ProviderID: providerID, GroupID: "entra-control-admins", Enabled: true}}
-	repo.sessions[service.HashSSOToken(sessionToken)] = &domain.ControlSession{
-		SessionHash: service.HashSSOToken(sessionToken),
+	repo.sessions[accessservice.HashSSOToken(sessionToken)] = &domain.ControlSession{
+		SessionHash: accessservice.HashSSOToken(sessionToken),
 		IdentityID:  identityID,
 		ProviderID:  providerID,
 		GroupIDs:    []string{"entra-control-admins"},
@@ -68,7 +69,7 @@ func TestControlPortalMiddlewareAcceptsCurrentSSOSessionAndRecordsSafeFailures(t
 		providers:  map[uuid.UUID]*domain.SSOProvider{providerID: {ID: providerID, Enabled: true}},
 		identities: map[uuid.UUID]*domain.SSOIdentity{identityID: {ID: identityID, ProviderID: providerID, Active: true}},
 	}
-	identity := service.NewControlIdentityService(repo, ssoRepo, service.ControlIdentityConfig{Now: func() time.Time { return now }})
+	identity := accessservice.NewControlIdentityService(repo, ssoRepo, accessservice.ControlIdentityConfig{Now: func() time.Time { return now }})
 	recorder := &controlAuthFailureRecorder{}
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
@@ -81,14 +82,14 @@ func TestControlPortalMiddlewareAcceptsCurrentSSOSessionAndRecordsSafeFailures(t
 	})
 
 	request := httptest.NewRequest(nethttp.MethodGet, "/session", nil)
-	request.AddCookie(&nethttp.Cookie{Name: service.ControlSessionCookieName, Value: sessionToken})
+	request.AddCookie(&nethttp.Cookie{Name: accessservice.ControlSessionCookieName, Value: sessionToken})
 	response := httptest.NewRecorder()
 	e.ServeHTTP(response, request)
 	require.Equal(t, nethttp.StatusOK, response.Code, response.Body.String())
 	require.Equal(t, "control_portal:sso", response.Body.String())
 
 	request = httptest.NewRequest(nethttp.MethodGet, "/identity", nil)
-	request.AddCookie(&nethttp.Cookie{Name: service.ControlSessionCookieName, Value: sessionToken})
+	request.AddCookie(&nethttp.Cookie{Name: accessservice.ControlSessionCookieName, Value: sessionToken})
 	response = httptest.NewRecorder()
 	e.ServeHTTP(response, request)
 	require.Equal(t, nethttp.StatusOK, response.Code, response.Body.String())
@@ -111,7 +112,7 @@ func TestControlPortalMiddlewareAcceptsCurrentSSOSessionAndRecordsSafeFailures(t
 }
 
 type controlAuthFailureRecorder struct {
-	service.SecurityService
+	settings.SecurityService
 	calls int
 }
 

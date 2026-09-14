@@ -768,37 +768,3 @@ func searchPhysicalIndexNameMatchesSpec(
 	)
 	return physicalIndexName == legacyName
 }
-
-// The exported helpers are narrow read-only seams for compatibility tests and
-// migration tooling; bootstrap policy remains implemented by Store methods.
-func NormalizeEnsureActiveSearchContractInput(input searchmaintenance.EnsureActiveSearchContractInput) searchmaintenance.EnsureActiveSearchContractInput {
-	return normalizeEnsureActiveSearchContractInput(input)
-}
-
-func ValidateEnsureActiveSearchContractInput(input searchmaintenance.EnsureActiveSearchContractInput) error {
-	return validateEnsureActiveSearchContractInput(input)
-}
-
-func ValidateActiveContractMatchesConfig(contract *searchcontract.ActiveSearchContract, input searchmaintenance.EnsureActiveSearchContractInput) error {
-	return validateActiveContractMatchesConfig(contract, input)
-}
-
-func DeriveSearchGenerationSpec(contractID string, input searchmaintenance.EnsureActiveSearchContractInput) SearchIndexGenerationDefinition {
-	return deriveSearchGenerationSpec(contractID, input)
-}
-
-func ValidateSearchGenerationMatchesSpec(generation, spec SearchIndexGenerationDefinition) error {
-	return validateSearchGenerationMatchesSpec(generation, spec)
-}
-
-func SearchPhysicalIndexNameMatchesSpec(physicalIndexName string, spec SearchIndexGenerationDefinition) bool {
-	return searchPhysicalIndexNameMatchesSpec(physicalIndexName, spec)
-}
-
-func DerivedSearchIndexName(contractID string, dimensions int, strategy string) string {
-	return derivedSearchIndexName(contractID, dimensions, strategy)
-}
-
-func EmbeddingContractKey(input searchmaintenance.EnsureActiveSearchContractInput) string {
-	return embeddingContractKey(input)
-}

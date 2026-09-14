@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,11 +15,10 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type unitAuditService struct {
-	entries     []service.AuditLogEntry
+	entries     []accessservice.AuditLogEntry
 	total       int
 	err         error
 	lastProfile string
@@ -27,7 +27,7 @@ type unitAuditService struct {
 	called      int
 }
 
-func (s *unitAuditService) List(_ context.Context, profileID string, limit, offset int) ([]service.AuditLogEntry, int, error) {
+func (s *unitAuditService) List(_ context.Context, profileID string, limit, offset int) ([]accessservice.AuditLogEntry, int, error) {
 	s.called++
 	s.lastProfile = profileID
 	s.lastLimit = limit
@@ -45,7 +45,7 @@ func TestAuditHandlerGetReturnsPaginatedAuditEntries(t *testing.T) {
 	now := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 	svc := &unitAuditService{
 		total: 1,
-		entries: []service.AuditLogEntry{{
+		entries: []accessservice.AuditLogEntry{{
 			ID:            "audit-1",
 			ProfileID:     &profileID,
 			Timestamp:     now,
@@ -116,7 +116,7 @@ func TestAuditHandlerGetPropagatesServiceErrorAndPureHelpers(t *testing.T) {
 	require.Equal(t, 20, svc.lastLimit)
 	require.Equal(t, 0, svc.lastOffset)
 
-	entry := service.AuditLogEntry{
+	entry := accessservice.AuditLogEntry{
 		ID:        "audit-2",
 		Timestamp: time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC),
 		Operation: "UPDATE",

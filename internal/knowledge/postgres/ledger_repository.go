@@ -203,12 +203,6 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 	return ingestID, true, rows.Err()
 }
 
-// InsertKnowledgeIngestTx keeps legacy test and adapter setup callers on the
-// same canonical ingest implementation without exposing Store state.
-func InsertKnowledgeIngestTx(ctx context.Context, tx transactionHandle, input CreateIngestInput) (string, bool, error) {
-	return insertKnowledgeIngest(ctx, tx.db, input)
-}
-
 const (
 	ingestMetadataTelemetryOriginKey      = "_dense_mem_telemetry_origin"
 	ingestMetadataTelemetryOriginRemember = "remember"
@@ -281,10 +275,4 @@ func insertEvidenceFragment(ctx context.Context, tx *gorm.DB, input CreateIngest
 		return EvidenceFragment{}, err
 	}
 	return fragment, rows.Err()
-}
-
-// InsertEvidenceFragmentTx keeps legacy test and adapter setup callers on the
-// same canonical evidence implementation without exposing Store state.
-func InsertEvidenceFragmentTx(ctx context.Context, tx transactionHandle, input CreateIngestInput, ingestID string, index int, item EvidenceInput, source *SourceRevisionResult) (EvidenceFragment, error) {
-	return insertEvidenceFragment(ctx, tx.db, input, ingestID, index, item, source)
 }

@@ -12,7 +12,7 @@ import (
 
 func TestBuildActiveWiresExecutableRetractEvidence(t *testing.T) {
 	stub := &stubLifecycleService{}
-	reg, err := BuildActive(Dependencies{Lifecycle: stub})
+	reg, err := BuildActive(Dependencies{LifecycleBindings: LifecycleBindings{Service: stub}})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestBuildActiveRetractEvidenceReportsDependencyValidationAndServiceErrors(t
 		t.Fatalf("unavailable retract error = %v", err)
 	}
 
-	registry, err := BuildActive(Dependencies{Lifecycle: &stubLifecycleService{}})
+	registry, err := BuildActive(Dependencies{LifecycleBindings: LifecycleBindings{Service: &stubLifecycleService{}}})
 	if err != nil {
 		t.Fatalf("BuildActive lifecycle: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestBuildActiveRetractEvidenceReportsDependencyValidationAndServiceErrors(t
 	}
 
 	serviceErr := errors.New("lifecycle unavailable")
-	retryRegistry, err := BuildActive(Dependencies{Lifecycle: &stubLifecycleService{retractErr: serviceErr}})
+	retryRegistry, err := BuildActive(Dependencies{LifecycleBindings: LifecycleBindings{Service: &stubLifecycleService{retractErr: serviceErr}}})
 	if err != nil {
 		t.Fatalf("BuildActive failing lifecycle: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestBuildActiveRetractEvidenceReportsDependencyValidationAndServiceErrors(t
 
 func TestBuildActiveWiresExecutableCorrectRelationship(t *testing.T) {
 	stub := &stubLifecycleService{}
-	reg, err := BuildActive(Dependencies{Lifecycle: stub})
+	reg, err := BuildActive(Dependencies{LifecycleBindings: LifecycleBindings{Service: stub}})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestBuildActiveWiresExecutableCorrectRelationship(t *testing.T) {
 }
 
 func TestBuildActiveCorrectRelationshipRejectsTenantOverride(t *testing.T) {
-	reg, err := BuildActive(Dependencies{Lifecycle: &stubLifecycleService{}})
+	reg, err := BuildActive(Dependencies{LifecycleBindings: LifecycleBindings{Service: &stubLifecycleService{}}})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}

@@ -28,7 +28,7 @@ func TestControlPortalConflictQueue(t *testing.T) {
 		observed = options
 		return &domain.ConflictQueuePage{Summary: domain.ConflictQueueSummary{}, Items: []domain.ConflictQueueItem{}}, nil
 	})
-	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{ConflictQueue: reader}, HealthConfig{}, nil)
@@ -49,7 +49,7 @@ func TestControlPortalConflictQueueRejectsNonGetAndInvalidStatus(t *testing.T) {
 	reader := conflictQueueReaderFunc(func(context.Context, string, conflictqueue.ListOptions) (*domain.ConflictQueuePage, error) {
 		return nil, conflictqueue.ErrInvalidStatus
 	})
-	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{ConflictQueue: reader}, HealthConfig{}, nil)

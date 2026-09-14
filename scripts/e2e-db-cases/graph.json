@@ -4,17 +4,17 @@
   "cases": [
     {
       "id": "repository/TestSemanticGraphLocalDepthDefaultsToTwoAndCapsAtFive",
-      "package": "./internal/repository",
+      "package": "./internal/graph/postgres",
       "run": "^TestSemanticGraphLocalDepthDefaultsToTwoAndCapsAtFive$",
       "phase": "precheck",
-      "source": "internal/repository/semantic_trace_graph_integration.e2e"
+      "source": "internal/graph/postgres/semantic_trace_graph_integration.e2e"
     },
     {
       "id": "repository/TestSemanticGraphReadsEntityValueEdgesAndNodeDetail",
-      "package": "./internal/repository",
+      "package": "./internal/graph/postgres",
       "run": "^TestSemanticGraphReadsEntityValueEdgesAndNodeDetail$",
       "phase": "precheck",
-      "source": "internal/repository/semantic_trace_graph_integration.e2e"
+      "source": "internal/graph/postgres/semantic_trace_graph_integration.e2e"
     }
   ]
 }

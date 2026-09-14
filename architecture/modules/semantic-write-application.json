@@ -15,95 +15,67 @@
       "issue": 362
     },
     {
-      "path": "internal/repository/evidence_lifecycle_repository_integration.e2e",
+      "path": "internal/knowledge/postgres/evidence_lifecycle_repository_integration.e2e",
       "issue": 362
     },
     {
-      "path": "internal/repository/evidence_lifecycle_validation_test.go",
+      "path": "internal/knowledge/postgres/evidence_lifecycle_validation_test.go",
       "issue": 362
     },
     {
-      "path": "internal/repository/placement_commit_types.go",
+      "path": "internal/knowledge/postgres/relationship_correction_canonical_projection_integration.e2e",
       "issue": 362
     },
     {
-      "path": "internal/repository/relationship_correction_canonical_projection_integration.e2e",
+      "path": "internal/knowledge/postgres/relationship_correction_fence_integration.e2e",
       "issue": 362
     },
     {
-      "path": "internal/repository/relationship_correction_fence_integration.e2e",
+      "path": "internal/knowledge/postgres/relationship_correction_lock_order_integration.e2e",
       "issue": 362
     },
     {
-      "path": "internal/repository/relationship_correction_lock_order_integration.e2e",
+      "path": "internal/knowledge/postgres/relationship_correction_occurrence_integration.e2e",
       "issue": 362
     },
     {
-      "path": "internal/repository/relationship_correction_occurrence_integration.e2e",
+      "path": "internal/knowledge/postgres/relationship_identity_integration.e2e",
       "issue": 362
     },
     {
-      "path": "internal/repository/relationship_identity_integration.e2e",
+      "path": "internal/knowledge/postgres/remember_commit_helpers_test.go",
       "issue": 362
     },
     {
-      "path": "internal/repository/remember_commit_helpers.go",
+      "path": "internal/knowledge/postgres/semantic_lifecycle_integration.e2e",
       "issue": 362
     },
     {
-      "path": "internal/repository/remember_commit_helpers_test.go",
+      "path": "internal/knowledge/postgres/semantic_repository_integration.e2e",
       "issue": 362
     },
     {
-      "path": "internal/repository/semantic_lifecycle_integration.e2e",
+      "path": "internal/knowledge/postgres/semantic_review_catalog_repository_integration.e2e",
       "issue": 362
     },
     {
-      "path": "internal/repository/semantic_repository.go",
+      "path": "internal/knowledge/postgres/semantic_review_regression.e2e",
       "issue": 362
     },
     {
-      "path": "internal/repository/semantic_repository_integration.e2e",
+      "path": "internal/knowledge/postgres/semantic_space_generation_integration.e2e",
       "issue": 362
     },
     {
-      "path": "internal/repository/semantic_review_catalog_repository_integration.e2e",
+      "path": "internal/knowledge/postgres/semantic_support_helpers_test.go",
       "issue": 362
     },
     {
-      "path": "internal/repository/semantic_review_regression.e2e",
+      "path": "internal/knowledge/postgres/submission_assessment_catalog_repository_integration.e2e",
       "issue": 362
     },
     {
-      "path": "internal/repository/semantic_space_generation_integration.e2e",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/semantic_space_helpers.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/semantic_support_helpers_test.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/submission_assessment_catalog_repository_integration.e2e",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/submission_assessment_inline_embedding.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/submission_assessment_known_evidence_repository_integration.e2e",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/submission_assessment_types.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/submission_relationship_result_repository.go",
+      "path": "internal/knowledge/postgres/submission_assessment_known_evidence_repository_integration.e2e",
       "issue": 362
     },
     {
@@ -128,19 +100,7 @@
   "browser": {
     "units": []
   },
-  "compatibility_bridges": [
-    {
-      "source_path": "internal/repository/semantic_repository.go",
-      "fields": ["SemanticRepositoryImpl.CreateEntity", "SemanticRepositoryImpl.AddEntityName", "SemanticRepositoryImpl.UpsertValue", "SemanticRepositoryImpl.ApplyRelationshipDecision", "SemanticRepositoryImpl.RetractRelationship", "SemanticRepositoryImpl.ApplyRelationshipSupportDecision", "SemanticRepositoryImpl.AppendCrossReference"],
-      "consumers": [
-        {"path": "internal/repository/semantic_repository_integration_helpers_test.go", "symbol": "createSemanticEntity"},
-        {"path": "internal/repository/semantic_repository_integration_helpers_test.go", "symbol": "applySemanticDecision"}
-      ],
-      "removal_issue": 382,
-      "implementation_owner": {"path": "internal/knowledge/postgres/semantic_repository.go", "symbol": "Store.CreateEntity"},
-      "removal_condition": "Remove the mixed-file semantic repository forwarders after Dream/Graph ownership is split and semantic adopters consume the knowledge owner directly."
-    }
-  ],
+  "compatibility_bridges": [],
   "exceptions": [],
   "workers": []
 }

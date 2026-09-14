@@ -13,16 +13,16 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/embedding"
+	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 func TestRememberFailureCodeMapsEmbeddingProviderResponseInvalid(t *testing.T) {
-	failure := &rememberEmbeddingProviderFailure{cause: &embedding.ProviderError{
+	failure := &rememberEmbeddingProviderFailure{cause: &embeddingcontract.ProviderError{
 		FailureCode:  "provider_response_invalid",
 		FailureClass: "provider_action_required",
 	}}
@@ -31,16 +31,16 @@ func TestRememberFailureCodeMapsEmbeddingProviderResponseInvalid(t *testing.T) {
 }
 
 func TestRememberFailureCodeMapsDuplicateCandidateStaleToStaleInput(t *testing.T) {
-	require.Equal(t, rememberapp.SubmissionErrorStaleInput, rememberFailureCode("commit", repository.ErrRememberDuplicateCandidateStale))
-	require.ErrorIs(t, normalizeRememberFailure(repository.ErrRememberDuplicateCandidateStale), rememberapp.ErrRememberStaleInput)
+	require.Equal(t, rememberapp.SubmissionErrorStaleInput, rememberFailureCode("commit", knowledgecontract.ErrRememberDuplicateCandidateStale))
+	require.ErrorIs(t, normalizeRememberFailure(knowledgecontract.ErrRememberDuplicateCandidateStale), rememberapp.ErrRememberStaleInput)
 }
 
 func TestNormalizeRememberFailurePreservesAdapterStaleCause(t *testing.T) {
-	processor := &rememberSynchronousProcessor{isStaleInput: repository.IsRememberStaleInputError}
+	processor := &rememberSynchronousProcessor{isStaleInput: rememberapp.IsRememberStaleInputError}
 	for _, stale := range []error{
-		repository.ErrConflictContextStale,
-		repository.ErrRememberExactReferenceStale,
-		repository.ErrCorrectionTargetStale,
+		knowledgepostgres.ErrConflictContextStale,
+		knowledgepostgres.ErrRememberExactReferenceStale,
+		knowledgepostgres.ErrCorrectionTargetStale,
 	} {
 		normalized := processor.normalizeRememberFailure(stale)
 		require.ErrorIs(t, normalized, rememberapp.ErrRememberStaleInput)
@@ -70,8 +70,8 @@ func TestRememberAssessmentSnapshotCarriesHashAndDuplicateEligibility(t *testing
 
 func TestMergeInlineEmbeddingResultsDeduplicatesDocumentHashes(t *testing.T) {
 	results := mergeInlineEmbeddingResults(
-		[]repository.InlineEmbeddingResult{{DocumentHash: "same", Embedding: []float32{1}}},
-		[]repository.InlineEmbeddingResult{{DocumentHash: "same", Embedding: []float32{2}}, {DocumentHash: "other", Embedding: []float32{3}}},
+		[]knowledgecontract.InlineEmbeddingResult{{DocumentHash: "same", Embedding: []float32{1}}},
+		[]knowledgecontract.InlineEmbeddingResult{{DocumentHash: "same", Embedding: []float32{2}}, {DocumentHash: "other", Embedding: []float32{3}}},
 	)
 	require.Len(t, results, 2)
 	require.Equal(t, []float32{1}, results[0].Embedding)
@@ -247,7 +247,7 @@ func TestRememberFailureRecoveryContextUsesPersistenceBudget(t *testing.T) {
 }
 
 func TestRememberReplayReloadUsesBoundedRecoveryContext(t *testing.T) {
-	ledger := &rememberFailureLedgerStub{loadSequence: []*repository.RememberAttempt{{
+	ledger := &rememberFailureLedgerStub{loadSequence: []*knowledgecontract.RememberAttempt{{
 		AttemptID: "77777777-7777-7777-7777-777777777777", Outcome: "completed",
 		PublicResult: map[string]any{
 			"contract_version": domain.ContractVersion, "submission_id": "77777777-7777-7777-7777-777777777777",
@@ -291,14 +291,14 @@ func TestRememberReplayReloadFailurePreservesCompleteTypedResult(t *testing.T) {
 func TestRememberAttemptMatchesRequestDoesNotAcceptMigratedHash(t *testing.T) {
 	input := rememberapp.RememberProcessRequest{RequestHash: "current"}
 
-	require.True(t, rememberAttemptMatchesRequest(&repository.RememberAttempt{RequestHash: "current"}, input))
-	require.False(t, rememberAttemptMatchesRequest(&repository.RememberAttempt{
+	require.True(t, rememberAttemptMatchesRequest(&knowledgecontract.RememberAttempt{RequestHash: "current"}, input))
+	require.False(t, rememberAttemptMatchesRequest(&knowledgecontract.RememberAttempt{
 		RequestHash: "legacy", ContractVersion: "remember_request_hash_v1",
 	}, input))
 }
 
 func TestRememberAttemptStatusForRequestRestoresRelationshipOrder(t *testing.T) {
-	attempt := &repository.RememberAttempt{
+	attempt := &knowledgecontract.RememberAttempt{
 		AttemptID: "77777777-7777-7777-7777-777777777777", Outcome: "completed",
 		PublicResult: map[string]any{
 			"contract_version": domain.ContractVersion, "submission_id": "77777777-7777-7777-7777-777777777777",
@@ -331,7 +331,7 @@ func TestRememberAttemptReplayRejectsLegacyOutcomes(t *testing.T) {
 	}
 	for _, outcome := range []string{"rejected", "quarantined", "replayed"} {
 		t.Run(outcome, func(t *testing.T) {
-			_, err := rememberAttemptReplay(&repository.RememberAttempt{
+			_, err := rememberAttemptReplay(&knowledgecontract.RememberAttempt{
 				AttemptID: "77777777-7777-7777-7777-777777777777", ContractVersion: domain.ContractVersion,
 				Outcome: outcome, PublicResult: publicResult,
 			}, input)
@@ -345,7 +345,7 @@ func TestRememberAttemptReplayRejectsLegacyOutcomes(t *testing.T) {
 
 func TestRememberAttemptReplayAcceptsOnlyCurrentTerminalOutcomes(t *testing.T) {
 	input := rememberapp.RememberProcessRequest{RequestHash: "request-hash"}
-	completed := &repository.RememberAttempt{
+	completed := &knowledgecontract.RememberAttempt{
 		AttemptID: "77777777-7777-7777-7777-777777777777", RequestHash: "request-hash", ContractVersion: domain.ContractVersion, Outcome: "completed",
 		PublicResult: map[string]any{
 			"contract_version": domain.ContractVersion, "submission_id": "77777777-7777-7777-7777-777777777777",
@@ -373,7 +373,7 @@ func TestRememberAttemptReplayAcceptsOnlyCurrentTerminalOutcomes(t *testing.T) {
 }
 
 func TestRememberAttemptReplayRejectsRequestHashMismatch(t *testing.T) {
-	attempt := &repository.RememberAttempt{
+	attempt := &knowledgecontract.RememberAttempt{
 		AttemptID: "77777777-7777-7777-7777-777777777777", RequestHash: "stored-request-hash",
 		ContractVersion: domain.ContractVersion, Outcome: "completed",
 		PublicResult: map[string]any{
@@ -390,7 +390,7 @@ func TestRememberAttemptReplayRejectsRequestHashMismatch(t *testing.T) {
 }
 
 func TestRememberProcessorWaiterReplaysWithoutProcessing(t *testing.T) {
-	base := &rememberFailureLedgerStub{load: &repository.RememberAttempt{
+	base := &rememberFailureLedgerStub{load: &knowledgecontract.RememberAttempt{
 		AttemptID:       "77777777-7777-7777-7777-777777777777",
 		RequestHash:     "request-hash",
 		ContractVersion: domain.ContractVersion,
@@ -433,7 +433,7 @@ func TestRememberProcessorWaiterReplaysWithoutProcessing(t *testing.T) {
 
 func TestRememberProcessorPreservesCompletedResultWhenLockCleanupFails(t *testing.T) {
 	attemptID := "77777777-7777-7777-7777-777777777777"
-	ledger := &rememberFailureLedgerStub{load: &repository.RememberAttempt{
+	ledger := &rememberFailureLedgerStub{load: &knowledgecontract.RememberAttempt{
 		AttemptID: attemptID, RequestHash: "request-hash", ContractVersion: domain.ContractVersion, Outcome: "completed",
 		PublicResult: map[string]any{
 			"contract_version": domain.ContractVersion, "submission_id": attemptID,
@@ -458,7 +458,7 @@ func TestRememberProcessorPreservesCompletedResultWhenLockCleanupFails(t *testin
 }
 
 func TestRememberProcessorWaiterRejectsRequestHashMismatch(t *testing.T) {
-	ledger := &rememberFailureLedgerStub{load: &repository.RememberAttempt{
+	ledger := &rememberFailureLedgerStub{load: &knowledgecontract.RememberAttempt{
 		AttemptID: "77777777-7777-7777-7777-777777777777", RequestHash: "stored-request-hash",
 		ContractVersion: domain.ContractVersion, Outcome: "completed",
 		PublicResult: map[string]any{
@@ -633,7 +633,7 @@ func TestRememberProcessorFailurePersistencePreservesDatabaseResult(t *testing.T
 }
 
 func TestRememberProcessorRetentionDegradationPreservesCommittedFailure(t *testing.T) {
-	ledger := &rememberFailureLedgerStub{failureErr: repository.ErrRememberFailureRetentionDegraded}
+	ledger := &rememberFailureLedgerStub{failureErr: knowledgecontract.ErrRememberFailureRetentionDegraded}
 	logger := &rememberProcessorLogCapture{}
 	processor := &rememberSynchronousProcessor{ledger: ledger, logger: logger}
 	input := rememberapp.RememberProcessRequest{
@@ -692,19 +692,19 @@ func TestRememberProcessorConflictProjectsEverySubmittedItem(t *testing.T) {
 	}
 
 	t.Run("existing request mismatch", func(t *testing.T) {
-		assertConflict(t, &rememberFailureLedgerStub{load: &repository.RememberAttempt{RequestHash: "different"}})
+		assertConflict(t, &rememberFailureLedgerStub{load: &knowledgecontract.RememberAttempt{RequestHash: "different"}})
 	})
 	t.Run("persistence race", func(t *testing.T) {
-		assertConflict(t, &rememberFailureLedgerStub{failureErr: repository.ErrIdempotencyConflict})
+		assertConflict(t, &rememberFailureLedgerStub{failureErr: knowledgecontract.ErrIdempotencyConflict})
 	})
 }
 
 type rememberFailureLedgerStub struct {
-	failure           repository.RememberFailureRecordInput
-	load              *repository.RememberAttempt
+	failure           knowledgecontract.RememberFailureRecordInput
+	load              *knowledgecontract.RememberAttempt
 	loadErr           error
 	failureErr        error
-	loadSequence      []*repository.RememberAttempt
+	loadSequence      []*knowledgecontract.RememberAttempt
 	loadContexts      []context.Context
 	loadContextErrors []error
 	loadDeadlines     []time.Time
@@ -747,7 +747,7 @@ func (l *rememberProcessorLogCapture) With(...observability.LogAttr) observabili
 	return l
 }
 
-func (s *rememberFailureLedgerStub) LoadRememberAttempt(ctx context.Context, _ repository.RememberAttemptLookupInput) (*repository.RememberAttempt, error) {
+func (s *rememberFailureLedgerStub) LoadRememberAttempt(ctx context.Context, _ knowledgecontract.RememberAttemptLookupInput) (*knowledgecontract.RememberAttempt, error) {
 	s.loadContexts = append(s.loadContexts, ctx)
 	s.loadContextErrors = append(s.loadContextErrors, ctx.Err())
 	if deadline, ok := ctx.Deadline(); ok {
@@ -764,30 +764,30 @@ func (s *rememberFailureLedgerStub) LoadRememberAttempt(ctx context.Context, _ r
 	if s.loadErr != nil {
 		return nil, s.loadErr
 	}
-	return nil, repository.ErrRememberAttemptNotFound
+	return nil, knowledgecontract.ErrRememberAttemptNotFound
 }
 
-func (*rememberFailureLedgerStub) PlanRememberEmbeddings(context.Context, knowledgecontract.SynchronousRememberCommitInput) (*repository.InlineEmbeddingPlan, error) {
+func (*rememberFailureLedgerStub) PlanRememberEmbeddings(context.Context, knowledgecontract.SynchronousRememberCommitInput) (*knowledgecontract.InlineEmbeddingPlan, error) {
 	return nil, errors.New("unused")
 }
 
-func (*rememberFailureLedgerStub) PlanRememberDuplicateEmbeddings(context.Context, repository.RememberDuplicateCandidateInput) (*repository.RememberDuplicateEmbeddingPlan, error) {
-	return &repository.RememberDuplicateEmbeddingPlan{}, nil
+func (*rememberFailureLedgerStub) PlanRememberDuplicateEmbeddings(context.Context, knowledgecontract.RememberDuplicateCandidateInput) (*knowledgecontract.RememberDuplicateEmbeddingPlan, error) {
+	return &knowledgecontract.RememberDuplicateEmbeddingPlan{}, nil
 }
 
-func (s *rememberFailureLedgerStub) ResolveRememberDuplicateCandidates(_ context.Context, input repository.RememberDuplicateCandidateInput, _ []repository.InlineEmbeddingResult) (*repository.RememberDuplicateResolutionResult, error) {
-	result := &repository.RememberDuplicateResolutionResult{Exact: make([]repository.RememberDuplicateResolution, len(input.Evidence))}
+func (s *rememberFailureLedgerStub) ResolveRememberDuplicateCandidates(_ context.Context, input knowledgecontract.RememberDuplicateCandidateInput, _ []knowledgecontract.InlineEmbeddingResult) (*knowledgecontract.RememberDuplicateResolutionResult, error) {
+	result := &knowledgecontract.RememberDuplicateResolutionResult{Exact: make([]knowledgecontract.RememberDuplicateResolution, len(input.Evidence))}
 	for index, evidence := range input.Evidence {
-		result.Exact[index] = repository.RememberDuplicateResolution{EvidenceIndex: index, EvidenceID: fmt.Sprintf("evidence:%d", index), InputFragmentID: evidence.FragmentID}
+		result.Exact[index] = knowledgecontract.RememberDuplicateResolution{EvidenceIndex: index, EvidenceID: fmt.Sprintf("evidence:%d", index), InputFragmentID: evidence.FragmentID}
 	}
 	return result, nil
 }
 
-func (*rememberFailureLedgerStub) CommitRememberWithEmbeddings(context.Context, knowledgecontract.SynchronousRememberCommitInput, []repository.InlineEmbeddingResult) (*repository.SynchronousRememberCommitResult, error) {
+func (*rememberFailureLedgerStub) CommitRememberWithEmbeddings(context.Context, knowledgecontract.SynchronousRememberCommitInput, []knowledgecontract.InlineEmbeddingResult) (*knowledgecontract.SynchronousRememberCommitResult, error) {
 	return nil, errors.New("unused")
 }
 
-func (s *rememberFailureLedgerStub) RecordRememberFailure(_ context.Context, input repository.RememberFailureRecordInput) error {
+func (s *rememberFailureLedgerStub) RecordRememberFailure(_ context.Context, input knowledgecontract.RememberFailureRecordInput) error {
 	s.failure = input
 	return s.failureErr
 }

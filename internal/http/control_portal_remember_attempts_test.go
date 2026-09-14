@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/config"
-	"github.com/markhuangai/dense-mem/internal/observability"
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
@@ -32,7 +32,7 @@ func TestControlPortalRememberAttemptRoutes(t *testing.T) {
 		},
 	}
 	logger := &rememberAttemptLogCapture{}
-	server, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret"}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{RememberAttempts: reader}, HealthConfig{}, logger)
+	server, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret"}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{RememberAttempts: reader}, HealthConfig{}, logger)
 	require.NoError(t, err)
 
 	do := func(path string) *httptest.ResponseRecorder {
@@ -141,24 +141,24 @@ type controlRememberAttemptDiagnosticsStub struct {
 
 type rememberAttemptLogEntry struct {
 	message string
-	attrs   []observability.LogAttr
+	attrs   []httpcontract.LogAttr
 }
 
 type rememberAttemptLogCapture struct {
 	entries []rememberAttemptLogEntry
 }
 
-func (l *rememberAttemptLogCapture) Info(message string, attrs ...observability.LogAttr) {
-	l.entries = append(l.entries, rememberAttemptLogEntry{message: message, attrs: append([]observability.LogAttr(nil), attrs...)})
+func (l *rememberAttemptLogCapture) Info(message string, attrs ...httpcontract.LogAttr) {
+	l.entries = append(l.entries, rememberAttemptLogEntry{message: message, attrs: append([]httpcontract.LogAttr(nil), attrs...)})
 }
-func (l *rememberAttemptLogCapture) Error(message string, _ error, attrs ...observability.LogAttr) {
-	l.entries = append(l.entries, rememberAttemptLogEntry{message: message, attrs: append([]observability.LogAttr(nil), attrs...)})
+func (l *rememberAttemptLogCapture) Error(message string, _ error, attrs ...httpcontract.LogAttr) {
+	l.entries = append(l.entries, rememberAttemptLogEntry{message: message, attrs: append([]httpcontract.LogAttr(nil), attrs...)})
 }
-func (l *rememberAttemptLogCapture) Warn(message string, attrs ...observability.LogAttr) {
-	l.entries = append(l.entries, rememberAttemptLogEntry{message: message, attrs: append([]observability.LogAttr(nil), attrs...)})
+func (l *rememberAttemptLogCapture) Warn(message string, attrs ...httpcontract.LogAttr) {
+	l.entries = append(l.entries, rememberAttemptLogEntry{message: message, attrs: append([]httpcontract.LogAttr(nil), attrs...)})
 }
-func (*rememberAttemptLogCapture) Debug(string, ...observability.LogAttr) {}
-func (l *rememberAttemptLogCapture) With(...observability.LogAttr) observability.LogProvider {
+func (*rememberAttemptLogCapture) Debug(string, ...httpcontract.LogAttr) {}
+func (l *rememberAttemptLogCapture) With(...httpcontract.LogAttr) httpcontract.LogProvider {
 	return l
 }
 

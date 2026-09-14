@@ -9,12 +9,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 // RegisterUserPortal registers the API-key user portal under /ui on the main API server.
 func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
-	deps = deps.withMemoryBindings()
 	portal := &userPortalHandler{
 		teams:         deps.TeamSvc,
 		credentials:   deps.CredentialSvc,
@@ -41,7 +40,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	portalSessionAPI.Use(publicIPRateLimitMiddleware("public-user-session", deps.RateLimitSvc, deps.Config))
 	portalSessionAPI.POST("/logout", portal.logoutPortalSession)
 
-	authOpts := httpmw.AuthOptions{CredentialVerifier: deps.CredentialVerifier}
+	authOpts := httpmw.AuthOptions{CredentialVerifier: deps.CredentialVerifier, CredentialLookupPrefixes: deps.CredentialLookupPrefixes}
 	if deps.SSOService != nil {
 		authOpts.SSOEntitlementValidator = deps.SSOService
 		authOpts.SSOSessionAuthenticator = deps.SSOService
@@ -78,15 +77,15 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 		api.DELETE("/credential/private-memory", portal.eraseCredentialPrivateMemory, httpmw.RequireScopes("write"), httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
 		api.GET("/private-memory/erasures/:operationId", portal.getOwnerPrivateMemoryErasure, httpmw.RequireScopes("read"))
 	}
-	api.GET("/team", teamHandler.Get, httpmw.RequireRole(service.CredentialRoleManager), teamSvcMW)
-	api.PATCH("/team", teamHandler.Patch, httpmw.RequireRole(service.CredentialRoleManager), teamSvcMW, httpmw.BindAndValidate[dto.UpdateTeamRequest](httpmw.UpdateTeamBodyKey))
-	api.DELETE("/team", teamHandler.Delete, httpmw.RequireRole(service.CredentialRoleManager), teamSvcMW)
-	api.GET("/team/credentials", credentialHandler.List, httpmw.RequireRole(service.CredentialRoleManager), credentialSvcMW)
-	api.POST("/team/credentials", credentialHandler.Create, httpmw.RequireRole(service.CredentialRoleManager), credentialSvcMW, httpmw.BindAndValidate[dto.CreateCredentialRequest](httpmw.CreateCredentialBodyKey))
-	api.GET("/team/credentials/:credentialId", credentialHandler.Get, httpmw.RequireRole(service.CredentialRoleManager), credentialSvcMW)
-	api.PATCH("/team/credentials/:credentialId", credentialHandler.Update, httpmw.RequireRole(service.CredentialRoleManager), credentialSvcMW, httpmw.BindAndValidate[dto.UpdateCredentialRequest](httpmw.UpdateCredentialBodyKey))
-	api.POST("/team/credentials/:credentialId/rotate", credentialHandler.Rotate, httpmw.RequireRole(service.CredentialRoleManager), credentialSvcMW, httpmw.BindAndValidate[dto.CreateCredentialRequest](httpmw.CreateCredentialBodyKey))
-	api.DELETE("/team/credentials/:credentialId", credentialHandler.Delete, httpmw.RequireRole(service.CredentialRoleManager), credentialSvcMW)
+	api.GET("/team", teamHandler.Get, httpmw.RequireRole(accessservice.CredentialRoleManager), teamSvcMW)
+	api.PATCH("/team", teamHandler.Patch, httpmw.RequireRole(accessservice.CredentialRoleManager), teamSvcMW, httpmw.BindAndValidate[dto.UpdateTeamRequest](httpmw.UpdateTeamBodyKey))
+	api.DELETE("/team", teamHandler.Delete, httpmw.RequireRole(accessservice.CredentialRoleManager), teamSvcMW)
+	api.GET("/team/credentials", credentialHandler.List, httpmw.RequireRole(accessservice.CredentialRoleManager), credentialSvcMW)
+	api.POST("/team/credentials", credentialHandler.Create, httpmw.RequireRole(accessservice.CredentialRoleManager), credentialSvcMW, httpmw.BindAndValidate[dto.CreateCredentialRequest](httpmw.CreateCredentialBodyKey))
+	api.GET("/team/credentials/:credentialId", credentialHandler.Get, httpmw.RequireRole(accessservice.CredentialRoleManager), credentialSvcMW)
+	api.PATCH("/team/credentials/:credentialId", credentialHandler.Update, httpmw.RequireRole(accessservice.CredentialRoleManager), credentialSvcMW, httpmw.BindAndValidate[dto.UpdateCredentialRequest](httpmw.UpdateCredentialBodyKey))
+	api.POST("/team/credentials/:credentialId/rotate", credentialHandler.Rotate, httpmw.RequireRole(accessservice.CredentialRoleManager), credentialSvcMW, httpmw.BindAndValidate[dto.CreateCredentialRequest](httpmw.CreateCredentialBodyKey))
+	api.DELETE("/team/credentials/:credentialId", credentialHandler.Delete, httpmw.RequireRole(accessservice.CredentialRoleManager), credentialSvcMW)
 	api.GET("/recall", portal.recall.Handle, teamSvcMW, teamResolutionMW, authorizeTeamMW, httpmw.RequireScopes("read"))
 	api.GET("/dreaming/status", portal.dreams.Status, dreamSvcMW, teamSvcMW, teamResolutionMW, authorizeTeamMW, httpmw.RequireScopes("read"))
 	api.GET("/dreaming/runs", portal.dreams.Runs, dreamSvcMW, teamSvcMW, teamResolutionMW, authorizeTeamMW, httpmw.RequireScopes("read"))

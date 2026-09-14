@@ -8,10 +8,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
@@ -57,11 +57,11 @@ func (h *controlPortalHandler) getRememberAttemptDiagnostic(c echo.Context) erro
 	}
 	if h.logger != nil {
 		h.logger.Info("control_remember_attempt_diagnostic_access",
-			observability.String("actor", controlPortalActorFromContext(c.Request().Context())),
-			observability.String("actor_identity_id", controlPortalActorIdentityFromContext(c.Request().Context())),
-			observability.String("team_id", teamID.String()),
-			observability.String("attempt_id", attemptID.String()),
-			observability.String("correlation_id", httpmw.GetCorrelationID(c.Request().Context())),
+			httpcontract.String("actor", controlPortalActorFromContext(c.Request().Context())),
+			httpcontract.String("actor_identity_id", controlPortalActorIdentityFromContext(c.Request().Context())),
+			httpcontract.String("team_id", teamID.String()),
+			httpcontract.String("attempt_id", attemptID.String()),
+			httpcontract.String("correlation_id", httpmw.GetCorrelationID(c.Request().Context())),
 		)
 	}
 	c.Response().Header().Set("Cache-Control", "no-store")

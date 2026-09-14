@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/markhuangai/dense-mem/internal/service/remember"
+	remember "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 func TestRememberPublicResultUsesCanonicalCompletedProjection(t *testing.T) {

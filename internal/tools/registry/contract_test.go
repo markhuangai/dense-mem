@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/embedding"
+	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
@@ -770,13 +770,13 @@ func sortedStrings(raw any) []string {
 }
 
 func TestProviderAndEmbeddingContracts(t *testing.T) {
-	sourceKinds := embedding.EmbeddingSourceKinds()
+	sourceKinds := embeddingcontract.EmbeddingSourceKinds()
 	for _, want := range []string{"evidence", "search_document", "recall_query"} {
 		if !slices.Contains(sourceKinds, want) {
 			t.Fatalf("embedding source kinds missing %s: %#v", want, sourceKinds)
 		}
 	}
-	if embedding.EmbeddingContractVersion == "" {
+	if embeddingcontract.EmbeddingContractVersion == "" {
 		t.Fatal("embedding contract version is empty")
 	}
 }

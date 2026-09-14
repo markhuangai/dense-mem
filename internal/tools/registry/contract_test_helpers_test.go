@@ -10,8 +10,8 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/recall"
-	"github.com/markhuangai/dense-mem/internal/requestctx"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	traceapp "github.com/markhuangai/dense-mem/internal/trace"
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 )

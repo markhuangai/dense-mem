@@ -2,13 +2,11 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"math"
 	"regexp"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
@@ -229,73 +227,6 @@ func mustIndexName(t *testing.T, value string) string {
 	name, err := validateSearchIndexName(value)
 	require.NoError(t, err)
 	return name
-}
-
-func TestSearchAdapterConvergenceAndDocumentPolicies(t *testing.T) {
-	assert.NoError(t, validateSearchConvergenceInput(searchmaintenance.SearchConvergenceInput{}))
-	assert.Error(t, validateSearchConvergenceInput(searchmaintenance.SearchConvergenceInput{EmbeddingContractID: "bad"}))
-	assert.Error(t, validateSearchConvergenceInput(searchmaintenance.SearchConvergenceInput{EmbeddingDimensions: -1}))
-	assert.Equal(t, "00112233-4455-6677-8899-aabbccddeeff", normalizeSearchConvergenceInput(searchmaintenance.SearchConvergenceInput{EmbeddingContractID: " 00112233-4455-6677-8899-aabbccddeeff "}).EmbeddingContractID)
-
-	base := searchmaintenance.SearchDocumentForEmbedding{
-		SearchDocumentResult: searchmaintenance.SearchDocumentResult{SourceVersion: 1, ProjectionFormat: 1, ProjectionGenerationID: " gen ", SpaceID: " space ", SpaceGeneration: 2},
-		DocumentText:         "text", DocumentHash: "hash",
-	}
-	assert.True(t, searchDocumentMatchesCanonical(base, base))
-	base.DocumentHash = "other"
-	assert.False(t, searchDocumentMatchesCanonical(base, searchmaintenance.SearchDocumentForEmbedding{SearchDocumentResult: searchmaintenance.SearchDocumentResult{SourceVersion: 1, ProjectionFormat: 1, ProjectionGenerationID: "gen", SpaceID: "space", SpaceGeneration: 2}, DocumentText: "text", DocumentHash: "hash"}))
-	assert.Nil(t, searchDocumentResultFromKnowledge(nil))
-	assert.NotNil(t, searchTimePointer(time.Now()))
-
-	store, mock := newSearchMockStore(t)
-	teamID, _, sourceID, _, _, _ := searchIDs()
-	// Unknown source kinds are deliberately outside canonical semantic ownership.
-	expected, known, err := canonicalSearchDocument(context.Background(), store.db, searchmaintenance.SearchDocumentForEmbedding{SearchDocumentResult: searchmaintenance.SearchDocumentResult{SourceKind: "other"}})
-	require.NoError(t, err)
-	assert.False(t, known)
-	assert.Nil(t, expected)
-
-	mock.ExpectQuery(regexp.QuoteMeta("FROM evidence_fragments AS fragment")).WillReturnRows(sqlmock.NewRows([]string{"content", "space_id", "space_generation"}).AddRow(" text ", "space", int64(3)))
-	expected, known, err = canonicalSearchDocument(context.Background(), store.db, searchmaintenance.SearchDocumentForEmbedding{SearchDocumentResult: searchmaintenance.SearchDocumentResult{TeamID: teamID, OwnerProfileID: "22222222-2222-2222-2222-222222222222", SourceID: sourceID, SourceKind: "evidence"}})
-	require.NoError(t, err)
-	require.True(t, known)
-	require.NotNil(t, expected)
-	assert.Equal(t, "text", expected.DocumentText)
-	assert.Equal(t, int64(3), expected.SpaceGeneration)
-
-	mock.ExpectQuery(regexp.QuoteMeta("FROM evidence_fragments AS fragment")).WillReturnError(sql.ErrNoRows)
-	expected, known, err = canonicalSearchDocument(context.Background(), store.db, searchmaintenance.SearchDocumentForEmbedding{SearchDocumentResult: searchmaintenance.SearchDocumentResult{TeamID: teamID, OwnerProfileID: "22222222-2222-2222-2222-222222222222", SourceID: sourceID, SourceKind: "evidence"}})
-	require.NoError(t, err)
-	assert.True(t, known)
-	assert.Nil(t, expected)
-	require.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestSearchAdapterStoreNilAndValidationFailures(t *testing.T) {
-	var nilStore *Store
-	_, err := nilStore.GetActiveSearchContract(context.Background())
-	assert.Error(t, err)
-	assert.Error(t, (&Store{}).withTeamTx(context.Background(), "team", func(*gorm.DB) error { return nil }))
-	assert.Error(t, (&Store{db: &gorm.DB{}}).withTeamTx(context.Background(), "team", func(*gorm.DB) error { return nil }))
-	assert.Error(t, (&Store{}).withSystemTx(context.Background(), func(*gorm.DB) error { return nil }))
-	assert.Error(t, (&Store{db: &gorm.DB{}}).withSystemTx(context.Background(), func(*gorm.DB) error { return nil }))
-
-	for _, input := range []searchmaintenance.SearchReconciliationRunInput{
-		{EmbeddingContractID: "bad", EmbeddingDimensions: 2},
-		{EmbeddingContractID: "11111111-1111-1111-1111-111111111111"},
-		{EmbeddingContractID: "11111111-1111-1111-1111-111111111111", EmbeddingDimensions: 2, StaleAfter: 25 * time.Hour},
-	} {
-		_, _, err := (&Store{}).ReserveSearchReconciliationRun(context.Background(), input)
-		assert.Error(t, err)
-	}
-	_, err = (&Store{}).SelectSearchReconciliationDocuments(context.Background(), searchmaintenance.SearchReconciliationSelectionInput{RunID: "bad", EmbeddingContractID: "11111111-1111-1111-1111-111111111111", EmbeddingDimensions: 2})
-	assert.Error(t, err)
-	_, err = (&Store{}).SelectSearchReconciliationDocuments(context.Background(), searchmaintenance.SearchReconciliationSelectionInput{EmbeddingContractID: "bad", EmbeddingDimensions: 2})
-	assert.Error(t, err)
-	_, err = (&Store{}).CompleteSearchReconciliationDocuments(context.Background(), searchmaintenance.ApplySearchReconciliationInput{EmbeddingContractID: "bad", EmbeddingDimensions: 2})
-	assert.Error(t, err)
-	err = (&Store{}).FinishSearchReconciliationRun(context.Background(), searchmaintenance.FinishSearchReconciliationRunInput{RunID: "bad", Status: "completed"})
-	assert.Error(t, err)
 }
 
 func TestSearchAdapterActiveContractReadAndErrors(t *testing.T) {

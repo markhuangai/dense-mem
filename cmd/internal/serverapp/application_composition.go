@@ -4,27 +4,38 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
+	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
+	communityapp "github.com/markhuangai/dense-mem/internal/community/service"
+	"github.com/markhuangai/dense-mem/internal/dream"
+	dreampostgres "github.com/markhuangai/dense-mem/internal/dream/postgres"
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
+	"github.com/markhuangai/dense-mem/internal/graph"
+	graphcontract "github.com/markhuangai/dense-mem/internal/graph/contract"
+	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+	"github.com/markhuangai/dense-mem/internal/lifecycle"
+	"github.com/markhuangai/dense-mem/internal/memorypack"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	operations "github.com/markhuangai/dense-mem/internal/operations"
+	"github.com/markhuangai/dense-mem/internal/recall"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	remembercontract "github.com/markhuangai/dense-mem/internal/remember/contract"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/communityservice"
-	"github.com/markhuangai/dense-mem/internal/service/contextservice"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
-	"github.com/markhuangai/dense-mem/internal/service/graphview"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
-	"github.com/markhuangai/dense-mem/internal/service/remember"
-	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
+	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
+	settings "github.com/markhuangai/dense-mem/internal/settings"
+	traceapp "github.com/markhuangai/dense-mem/internal/trace"
 )
 
 type applicationCompositionDependencies struct {
-	Ledger                 *repository.LedgerRepositoryImpl
-	Semantic               *repository.SemanticRepositoryImpl
+	Knowledge              *knowledgepostgres.Store
+	Dream                  *dreampostgres.Store
+	RememberPersistence    remembercontract.Persistence
+	GraphStore             graphcontract.Store
+	TraceStore             traceapp.SemanticTraceStore
 	RememberCatalog        remembercontract.SubmissionAssessmentCatalog
-	Search                 *repository.SearchRepositoryImpl
-	RecallFeedbackEvents   repository.RecallFeedbackEventRepository
+	Search                 searchcontract.SearchRepository
+	RecallSearch           recallcontract.SearchRepository
+	RecallFeedbackEvents   recallcontract.FeedbackEventRepository
 	Assessor               assessor.Provider
 	GeneratorTransport     modelprovider.StructuredTransport
 	EmbeddingProvider      embeddingcontract.EmbeddingProviderInterface
@@ -33,66 +44,66 @@ type applicationCompositionDependencies struct {
 	Metrics                observability.DiscoverabilityMetrics
 	Logger                 observability.LogProvider
 	Audit                  securityRejectionAuditAppender
-	AppConfig              service.AppConfigService
-	Teams                  dreamservice.TeamService
-	CommunitySummary       communityservice.SummaryProvider
-	DreamEvidenceStore     repository.EvidenceDiscoveryRepository
+	AppConfig              settings.AppConfigService
+	Teams                  dream.TeamService
+	CommunitySummary       communityapp.SummaryProvider
+	CommunityStore         communitycontract.CommunityRepository
+	DreamEvidenceStore     dreampostgres.EvidenceDiscoveryRepository
 	DreamModel             string
 	ProviderCycleLease     time.Duration
 	CorrectionTimeout      time.Duration
-	CorrectionExecutor     memoryservice.LifecycleCorrectionExecutor
-	TelemetryPrometheus    *service.PrometheusTelemetryService
+	CorrectionExecutor     lifecycle.LifecycleCorrectionExecutor
+	TelemetryPrometheus    *operations.PrometheusTelemetryService
 }
 
 type applicationBundle struct {
-	Remember       remember.Service
-	Recall         memoryservice.RecallService
-	Community      communityservice.Service
-	Lifecycle      memoryservice.LifecycleService
-	Context        contextservice.Service
-	Dream          dreamservice.Service
-	ControlDream   dreamservice.ControlService
-	Graph          graphview.Service
-	MemoryPack     skillpackservice.MemoryPackService
-	RecallFeedback *service.RecallFeedbackEventServiceImpl
+	Remember       rememberapp.Service
+	Recall         recall.RecallService
+	Community      communityapp.Service
+	Lifecycle      lifecycle.LifecycleService
+	Context        traceapp.Service
+	Dream          dream.Service
+	ControlDream   dream.ControlService
+	Graph          graph.Service
+	MemoryPack     memorypack.MemoryPackService
+	RecallFeedback *recall.RecallFeedbackEventServiceImpl
 }
 
 func buildApplicationBundle(deps applicationCompositionDependencies) applicationBundle {
 	rememberService := buildRememberApplication(rememberApplicationDependencies{
-		Ledger:   deps.Ledger,
-		Catalog:  deps.RememberCatalog,
-		Assessor: deps.Assessor,
-		Embedder: deps.EmbeddingProvider,
-		Limits:   deps.AssessmentLimits,
-		Metrics:  deps.Metrics,
-		Logger:   deps.Logger,
-		Audit:    deps.Audit,
+		Persistence: deps.RememberPersistence,
+		Catalog:     deps.RememberCatalog,
+		Assessor:    deps.Assessor,
+		Embedder:    deps.EmbeddingProvider,
+		Limits:      deps.AssessmentLimits,
+		Metrics:     deps.Metrics,
+		Logger:      deps.Logger,
+		Audit:       deps.Audit,
 	})
 	recallService := buildRecallApplication(recallApplicationDependencies{
-		Search:          deps.Search,
+		Search:          deps.RecallSearch,
 		Provider:        deps.RetryEmbeddingProvider,
-		Hypotheses:      deps.Semantic,
-		Communities:     deps.Semantic,
+		Hypotheses:      deps.Dream,
+		Communities:     deps.CommunityStore,
 		CommunityConfig: deps.AppConfig,
 		Metrics:         deps.Metrics,
 	})
 	communityService := buildCommunityApplication(communityApplicationDependencies{
-		Store:     deps.Semantic,
+		Store:     deps.CommunityStore,
 		AppConfig: deps.AppConfig,
 		Summary:   deps.CommunitySummary,
 		Metrics:   deps.Metrics,
 	})
 	lifecycleService := buildLifecycleApplication(lifecycleApplicationDependencies{
-		Semantic:                   deps.Semantic,
-		Evidence:                   deps.Ledger,
+		Port:                       deps.Knowledge,
 		CorrectionExecutor:         deps.CorrectionExecutor,
 		CorrectionEmbeddingTimeout: deps.CorrectionTimeout,
 	})
-	contextService := buildContextApplication(deps.Semantic)
+	contextService := buildContextApplication(deps.TraceStore)
 	dreamService := buildDreamApplication(dreamApplicationDependencies{
 		Remember:           rememberService,
-		Store:              deps.Semantic,
-		ScheduledStore:     deps.Semantic,
+		Store:              deps.Dream,
+		ScheduledStore:     deps.Dream,
 		AppConfig:          deps.AppConfig,
 		Teams:              deps.Teams,
 		GeneratorTransport: deps.GeneratorTransport,
@@ -104,7 +115,7 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 	})
 	configureTelemetryFeatures(deps.TelemetryPrometheus, deps.AppConfig, dreamService)
 	controlDreamService := buildControlDreamApplication(controlDreamApplicationDependencies{
-		Store:     deps.Semantic,
+		Store:     deps.Dream,
 		AppConfig: deps.AppConfig,
 		Teams:     deps.Teams,
 	})
@@ -116,8 +127,12 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 		Context:        contextService,
 		Dream:          dreamService,
 		ControlDream:   controlDreamService,
-		Graph:          buildGraphApplication(deps.Semantic),
-		MemoryPack:     buildMemoryPackApplication(memoryPackApplicationDependencies{Semantic: deps.Semantic}),
+		Graph:          buildGraphApplication(deps.GraphStore),
+		MemoryPack:     buildMemoryPackApplication(memoryPackApplicationDependencies{Trace: deps.TraceStore}),
 		RecallFeedback: buildRecallFeedbackApplication(recallFeedbackApplicationDependencies{Events: deps.RecallFeedbackEvents, Config: deps.AppConfig}),
 	}
+}
+
+func configureTelemetryFeatures(prometheus *operations.PrometheusTelemetryService, appConfig settings.AppConfigService, dreams dream.Service) {
+	operations.ConfigureTelemetryFeatures(prometheus, appConfig, dreams)
 }

@@ -4,12 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"testing"
 
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/stretchr/testify/require"
-
-	"github.com/markhuangai/dense-mem/internal/service"
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 func TestSecurityRejectionAuditAdapterWritesBoundedAuditEntry(t *testing.T) {
@@ -66,11 +65,11 @@ func TestSecurityRejectionAuditAdapterPropagatesAppenderFailure(t *testing.T) {
 }
 
 type securityRejectionAuditAppenderStub struct {
-	entry service.AuditLogEntry
+	entry accessservice.AuditLogEntry
 	err   error
 }
 
-func (s *securityRejectionAuditAppenderStub) Append(_ context.Context, entry service.AuditLogEntry) error {
+func (s *securityRejectionAuditAppenderStub) Append(_ context.Context, entry accessservice.AuditLogEntry) error {
 	s.entry = entry
 	return s.err
 }

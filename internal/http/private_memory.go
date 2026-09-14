@@ -14,8 +14,9 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	privacycontract "github.com/markhuangai/dense-mem/internal/privacy/contract"
-	"github.com/markhuangai/dense-mem/internal/service"
+	privacyservice "github.com/markhuangai/dense-mem/internal/privacy/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
+	settingspkg "github.com/markhuangai/dense-mem/internal/settings"
 )
 
 const (
@@ -25,21 +26,21 @@ const (
 )
 
 type PrivateMemoryServiceInterface interface {
-	RequestSSOProfileErasure(context.Context, uuid.UUID, uuid.UUID, service.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error)
-	RequestCredentialErasure(context.Context, uuid.UUID, uuid.UUID, service.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error)
-	DeleteSSOCredential(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, service.PrivateMemoryCommand, service.PrivateMemoryAuditContext) (*domain.PrivateMemoryErasureOperation, error)
+	RequestSSOProfileErasure(context.Context, uuid.UUID, uuid.UUID, privacyservice.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error)
+	RequestCredentialErasure(context.Context, uuid.UUID, uuid.UUID, privacyservice.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error)
+	DeleteSSOCredential(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, privacyservice.PrivateMemoryCommand, privacyservice.PrivateMemoryAuditContext) (*domain.PrivateMemoryErasureOperation, error)
 	GetOwnerOperation(context.Context, uuid.UUID, uuid.UUID, *uuid.UUID, *uuid.UUID) (*domain.PrivateMemoryErasureOperation, error)
-	RequestControlErasure(context.Context, uuid.UUID, service.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error)
+	RequestControlErasure(context.Context, uuid.UUID, privacyservice.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error)
 	GetOperation(context.Context, uuid.UUID) (*domain.PrivateMemoryErasureOperation, error)
 	ListOperations(context.Context, int, int) ([]domain.PrivateMemoryErasureOperation, error)
 	ListSpaces(context.Context, int, int) ([]domain.PrivateMemorySpaceMetadata, error)
 	PlaceLegalHold(context.Context, uuid.UUID, string) (*domain.PrivateMemoryLegalHold, bool, error)
 	ReleaseLegalHold(context.Context, uuid.UUID) (*domain.PrivateMemoryLegalHold, bool, error)
-	RunRetention(context.Context, service.PrivateMemoryCommand, domain.PrivateMemoryActorClass) (*domain.PrivateMemoryRetentionRun, error)
+	RunRetention(context.Context, privacyservice.PrivateMemoryCommand, domain.PrivateMemoryActorClass) (*domain.PrivateMemoryRetentionRun, error)
 	ListRetentionRuns(context.Context, int, int) ([]domain.PrivateMemoryRetentionRun, error)
 }
 
-var _ PrivateMemoryServiceInterface = (*service.PrivateMemoryService)(nil)
+var _ PrivateMemoryServiceInterface = (*privacyservice.PrivateMemoryService)(nil)
 
 type privateMemoryOperationResponse struct {
 	OperationID        string                            `json:"operation_id"`
@@ -170,7 +171,7 @@ func (h *userPortalHandler) deleteSSOCredential(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if info.Selected.Membership.Role == service.CredentialRoleManager {
+	if info.Selected.Membership.Role == accessservice.CredentialRoleManager {
 		return httperr.New(httperr.FORBIDDEN, "sso managers should use the team credentials section")
 	}
 	credentialID, err := userPortalCredentialParam(c)
@@ -183,7 +184,7 @@ func (h *userPortalHandler) deleteSSOCredential(c echo.Context) error {
 		info.Identity.ID,
 		credentialID,
 		privateMemoryCommand(c),
-		service.PrivateMemoryAuditContext{
+		privacyservice.PrivateMemoryAuditContext{
 			ActorProfileID:    userPortalPrincipalProfileID(principal),
 			ActorCredentialID: userPortalPrincipalCredentialID(principal),
 			ActorRole:         principal.Role,
@@ -260,7 +261,7 @@ func (h *controlPortalHandler) updatePrivateMemoryConfig(c echo.Context) error {
 	}
 	settings, err := h.appConfig.UpdatePrivateMemorySettings(c.Request().Context(), values, "control", c.RealIP(), "")
 	if err != nil {
-		if errors.Is(err, service.ErrInvalidAppConfig) {
+		if errors.Is(err, settingspkg.ErrInvalidAppConfig) {
 			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 		}
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "private-memory config unavailable")
@@ -376,9 +377,9 @@ func (h *controlPortalHandler) listPrivateMemoryRetentionRuns(c echo.Context) er
 	return c.JSON(nethttp.StatusOK, newPrivateMemoryPage(items, limit, offset))
 }
 
-func privateMemoryCommand(c echo.Context) service.PrivateMemoryCommand {
+func privateMemoryCommand(c echo.Context) privacyservice.PrivateMemoryCommand {
 	body := httpmw.MustGetValidatedBody[dto.PrivateMemoryErasureRequest](c.Request().Context(), privateMemoryErasureBodyKey)
-	return service.PrivateMemoryCommand{
+	return privacyservice.PrivateMemoryCommand{
 		IdempotencyKey:          strings.TrimSpace(c.Request().Header.Get("Idempotency-Key")),
 		AcknowledgeIrreversible: body.AcknowledgeIrreversible != nil && *body.AcknowledgeIrreversible,
 	}
@@ -398,31 +399,31 @@ func privateMemoryHTTPError(err error) error {
 		return apiErr
 	}
 	switch {
-	case errors.Is(err, service.ErrPrivateMemoryAcknowledgementRequired):
+	case errors.Is(err, privacyservice.ErrPrivateMemoryAcknowledgementRequired):
 		return httperr.New(httperr.VALIDATION_ERROR, "acknowledge_irreversible must be true")
-	case errors.Is(err, service.ErrPrivateMemoryIdempotencyKeyRequired):
+	case errors.Is(err, privacyservice.ErrPrivateMemoryIdempotencyKeyRequired):
 		return httperr.New(httperr.VALIDATION_ERROR, "Idempotency-Key is required and must be at most 200 characters")
-	case errors.Is(err, service.ErrPrivateMemoryInvalidReason):
+	case errors.Is(err, privacyservice.ErrPrivateMemoryInvalidReason):
 		return httperr.New(httperr.VALIDATION_ERROR, "reason_code must be a lowercase code of at most 64 characters")
-	case errors.Is(err, service.ErrPrivateMemoryAuditUnavailable):
+	case errors.Is(err, privacyservice.ErrPrivateMemoryAuditUnavailable):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "private-memory audit service unavailable")
-	case errors.Is(err, service.ErrPrivateMemoryRuntimeConfigUnavailable):
+	case errors.Is(err, privacyservice.ErrPrivateMemoryRuntimeConfigUnavailable):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "private-memory runtime configuration unavailable")
-	case errors.Is(err, privacycontract.ErrPrivateMemoryNotFound):
+	case errors.Is(err, privacyservice.ErrPrivateMemoryNotFound):
 		return httperr.New(httperr.NOT_FOUND, "private-memory target not found")
-	case errors.Is(err, privacycontract.ErrPrivateMemoryLegalHold):
+	case errors.Is(err, privacyservice.ErrPrivateMemoryLegalHold):
 		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "private memory is under legal hold"), "legal_hold", "contact_operator", "Do not retry while the legal hold is active; contact an operator to review it.", false, nil, "")
-	case errors.Is(err, privacycontract.ErrPrivateMemoryIdempotency):
+	case errors.Is(err, privacyservice.ErrPrivateMemoryIdempotency):
 		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "Idempotency-Key conflicts with a different request"), "idempotency_conflict", "correct_and_resubmit", "Reuse the Idempotency-Key only for the original request; submit a changed request with a new key.", false, nil, "")
-	case errors.Is(err, privacycontract.ErrPrivateMemoryOperationConflict):
+	case errors.Is(err, privacyservice.ErrPrivateMemoryOperationConflict):
 		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "private-memory erasure is already in progress"), "operation_in_progress", "retry_same_request", "Retry the same erasure request after the current operation completes.", true, nil, "")
-	case errors.Is(err, privacycontract.ErrPrivateMemoryRetentionDisabled):
+	case errors.Is(err, privacyservice.ErrPrivateMemoryRetentionDisabled):
 		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "private-memory retention is disabled"), "retention_disabled", "contact_operator", "Contact an operator to enable private-memory retention before retrying.", false, nil, "")
-	case errors.Is(err, privacycontract.ErrPrivateMemoryHoldConflict):
+	case errors.Is(err, privacyservice.ErrPrivateMemoryHoldConflict):
 		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "private-memory legal hold conflicts with the active hold"), "legal_hold_conflict", "contact_operator", "Stop the request and contact an operator to review the active legal hold.", false, nil, "")
-	case errors.Is(err, privacycontract.ErrPrivateMemoryManifest):
+	case errors.Is(err, privacyservice.ErrPrivateMemoryManifest):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "private-memory erasure is unavailable")
-	case errors.Is(err, privacycontract.ErrPrivateMemoryInternal):
+	case errors.Is(err, privacyservice.ErrPrivateMemoryInternal):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "private-memory service unavailable")
 	default:
 		return err

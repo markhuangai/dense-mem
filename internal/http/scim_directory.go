@@ -18,30 +18,31 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
+	settings "github.com/markhuangai/dense-mem/internal/settings"
 )
 
 const directorySCIMMaxResults = 100
 
 type DirectorySCIMConfig struct {
 	PublicBaseURL string
-	RuntimeConfig service.SSORuntimeConfigProvider
-	Security      service.SecurityService
-	RateLimitSvc  service.RateLimitServiceInterface
+	RuntimeConfig accessservice.SSORuntimeConfigProvider
+	Security      settings.SecurityService
+	RateLimitSvc  accessservice.RateLimitServiceInterface
 	Config        httpcontract.ConfigProvider
 }
 
 type directorySCIMContextKey struct{}
 
 type directorySCIMHandler struct {
-	directory           *service.DirectoryIdentityService
+	directory           *accessservice.DirectoryIdentityService
 	publicBaseURL       string
-	runtimeConfigSource service.SSORuntimeConfigProvider
-	security            service.SecurityService
+	runtimeConfigSource accessservice.SSORuntimeConfigProvider
+	security            settings.SecurityService
 }
 
 // RegisterDirectorySCIM exposes one authenticated SCIM endpoint per configured provider connector.
-func RegisterDirectorySCIM(e *echo.Echo, directory *service.DirectoryIdentityService, cfg DirectorySCIMConfig) error {
+func RegisterDirectorySCIM(e *echo.Echo, directory *accessservice.DirectoryIdentityService, cfg DirectorySCIMConfig) error {
 	if e == nil {
 		return fmt.Errorf("SCIM: echo server is required")
 	}
@@ -59,7 +60,7 @@ func RegisterDirectorySCIM(e *echo.Echo, directory *service.DirectoryIdentitySer
 	return nil
 }
 
-func newDirectorySCIMHandler(directory *service.DirectoryIdentityService, cfg DirectorySCIMConfig) (*directorySCIMHandler, error) {
+func newDirectorySCIMHandler(directory *accessservice.DirectoryIdentityService, cfg DirectorySCIMConfig) (*directorySCIMHandler, error) {
 	if _, err := newDirectorySCIMProtocolServer(directory, ""); err != nil {
 		return nil, err
 	}
@@ -71,7 +72,7 @@ func newDirectorySCIMHandler(directory *service.DirectoryIdentityService, cfg Di
 	}, nil
 }
 
-func newDirectorySCIMProtocolServer(directory *service.DirectoryIdentityService, baseURL string) (scim.Server, error) {
+func newDirectorySCIMProtocolServer(directory *accessservice.DirectoryIdentityService, baseURL string) (scim.Server, error) {
 	userHandler := directorySCIMUserResourceHandler{directory: directory}
 	groupHandler := directorySCIMGroupResourceHandler{directory: directory}
 	config := &scim.ServiceProviderConfig{
@@ -135,7 +136,7 @@ func (h *directorySCIMHandler) oauthToken(c echo.Context) error {
 	}
 	token, expiresAt, err := h.directory.IssueOAuthToken(c.Request().Context(), clientID, clientSecret)
 	if err != nil {
-		if errors.Is(err, service.ErrDirectoryCredentialInvalid) {
+		if errors.Is(err, accessservice.ErrDirectoryCredentialInvalid) {
 			recordDirectoryOAuthAuthFailure(c, h.security)
 			return directoryOAuthError(c, nethttp.StatusUnauthorized, "invalid_client")
 		}
@@ -163,7 +164,7 @@ func directoryOAuthNoStore(c echo.Context) {
 	c.Response().Header().Set("Pragma", "no-cache")
 }
 
-func recordDirectoryOAuthAuthFailure(c echo.Context, securitySvc service.SecurityService) {
+func recordDirectoryOAuthAuthFailure(c echo.Context, securitySvc settings.SecurityService) {
 	if securitySvc == nil {
 		return
 	}
@@ -185,7 +186,7 @@ func (h *directorySCIMHandler) serve(c echo.Context) error {
 	}
 	valid, err := h.directory.AuthenticateSCIM(c.Request().Context(), connectorID, rawToken)
 	if err != nil {
-		if errors.Is(err, service.ErrDirectoryCredentialInvalid) || errors.Is(err, service.ErrDirectoryConnectorDisabled) || errors.Is(err, service.ErrDirectoryResourceNotFound) {
+		if errors.Is(err, accessservice.ErrDirectoryCredentialInvalid) || errors.Is(err, accessservice.ErrDirectoryConnectorDisabled) || errors.Is(err, accessservice.ErrDirectoryResourceNotFound) {
 			return directorySCIMError(c, scimerrors.ScimError{Status: nethttp.StatusUnauthorized})
 		}
 		return directorySCIMError(c, scimerrors.ScimErrorInternal)
@@ -254,7 +255,7 @@ func directorySCIMConnectorID(request *nethttp.Request) (uuid.UUID, error) {
 }
 
 type directorySCIMUserResourceHandler struct {
-	directory *service.DirectoryIdentityService
+	directory *accessservice.DirectoryIdentityService
 }
 
 func (h directorySCIMUserResourceHandler) Create(request *nethttp.Request, attributes scim.ResourceAttributes) (scim.Resource, error) {
@@ -360,7 +361,7 @@ func (h directorySCIMUserResourceHandler) Patch(request *nethttp.Request, id str
 }
 
 type directorySCIMGroupResourceHandler struct {
-	directory *service.DirectoryIdentityService
+	directory *accessservice.DirectoryIdentityService
 }
 
 func (h directorySCIMGroupResourceHandler) Create(request *nethttp.Request, attributes scim.ResourceAttributes) (scim.Resource, error) {

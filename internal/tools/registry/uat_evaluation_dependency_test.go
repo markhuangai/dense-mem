@@ -11,8 +11,8 @@ import (
 func TestBuildActiveWiresEvaluationRecallCaseTo(t *testing.T) {
 	recall := &stubRecallService{}
 	reg, err := BuildActive(Dependencies{
-		Recall:          recall,
-		EvaluationAudit: &evaluationAuditStub{},
+		RecallBindings:     RecallBindings{Service: recall},
+		EvaluationBindings: EvaluationBindings{Audit: &evaluationAuditStub{}},
 	})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)

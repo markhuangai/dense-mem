@@ -15,8 +15,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/recall"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 type recallDataEnvelope struct {

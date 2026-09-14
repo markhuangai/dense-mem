@@ -2,14 +2,15 @@ package serverapp
 
 import (
 	memorypackapp "github.com/markhuangai/dense-mem/internal/memorypack"
+	traceapp "github.com/markhuangai/dense-mem/internal/trace"
 )
 
 type memoryPackApplicationDependencies struct {
-	Semantic memorypackapp.MemoryPackSemanticReader
+	Trace traceapp.SemanticTraceStore
 }
 
 func buildMemoryPackApplication(deps memoryPackApplicationDependencies) memorypackapp.MemoryPackService {
 	return memorypackapp.NewMemoryPackService(memorypackapp.MemoryPackDependencies{
-		Semantic: deps.Semantic,
+		Semantic: deps.Trace,
 	})
 }

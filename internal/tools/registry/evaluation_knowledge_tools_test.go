@@ -29,8 +29,7 @@ func TestEvalKnowledgeToolsUseTeamScopeAndStripPayloads(t *testing.T) {
 		},
 	}
 	reg, err := BuildActive(Dependencies{
-		EvaluationAudit: audit,
-		Evaluation:      evaluation,
+		EvaluationBindings: EvaluationBindings{Audit: audit, Repository: evaluation},
 	})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
@@ -75,7 +74,7 @@ func TestEvalKnowledgeToolsUseTeamScopeAndStripPayloads(t *testing.T) {
 
 func TestEvalKnowledgeToolRequiresRepository(t *testing.T) {
 	reg, err := BuildActive(Dependencies{
-		EvaluationAudit: &evaluationAuditStub{},
+		EvaluationBindings: EvaluationBindings{Audit: &evaluationAuditStub{}},
 	})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)

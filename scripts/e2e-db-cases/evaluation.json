@@ -4,10 +4,10 @@
   "cases": [
     {
       "id": "evaluation/TestEvaluationReaderPreservesTeamIsolationPaginationAndHypothesisFilter",
-      "package": "./internal/repository",
+      "package": "./internal/evaluation/postgres",
       "run": "^TestEvaluationReaderPreservesTeamIsolationPaginationAndHypothesisFilter$",
       "phase": "precheck",
-      "source": "internal/repository/evaluation_reader_integration.e2e"
+      "source": "internal/evaluation/postgres/evaluation_reader_integration.e2e"
     }
   ]
 }

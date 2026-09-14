@@ -15,15 +15,16 @@ import (
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
+	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	remembercontract "github.com/markhuangai/dense-mem/internal/remember/contract"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	rememberprocessor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
-	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
@@ -52,11 +53,11 @@ func TestRememberServiceRejectsHistoricalOutcomesThroughPostgres(t *testing.T) {
 		KeyHash: "remember-historical-outcomes-hash", KeyPrefix: strings.ReplaceAll(teamID.String(), "-", "")[:24],
 		KeySuffix: "owner", Scopes: []string{"read", "write"},
 	}
-	require.NoError(t, repository.NewCredentialRepository(adminDB, rls).CreateCredential(ctx, credential))
+	require.NoError(t, accesspostgres.NewCredentialRepository(adminDB, rls, nil).CreateCredential(ctx, credential))
 
-	ledger := repository.NewLedgerRepository(appDB, rls)
+	ledger := knowledgepostgres.NewStore(appDB, rls, knowledgecontract.ConflictRuntimeConfig{})
 	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
-		Ledger: newRememberPersistenceAdapter(ledger), Assessor: nil, Embedder: nil, Limits: assessor.DefaultSemanticAssessmentLimits(),
+		Ledger: ledger, Assessor: nil, Embedder: nil, Limits: assessor.DefaultSemanticAssessmentLimits(),
 		Metrics: observability.NoopDiscoverabilityMetrics(),
 	})
 	service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
@@ -106,15 +107,15 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 		KeyHash: "remember-migrated-conflict-hash", KeyPrefix: strings.ReplaceAll(teamID.String(), "-", "")[:24],
 		KeySuffix: "owner", Scopes: []string{"read", "write"},
 	}
-	require.NoError(t, repository.NewCredentialRepository(adminDB, rls).CreateCredential(ctx, credential))
+	require.NoError(t, accesspostgres.NewCredentialRepository(adminDB, rls, nil).CreateCredential(ctx, credential))
 
-	ledger := repository.NewLedgerRepository(appDB, rls)
+	ledger := knowledgepostgres.NewStore(appDB, rls, knowledgecontract.ConflictRuntimeConfig{})
 	evidence := []rememberapp.RememberEvidenceInput{{Content: "A migrated Remember attempt."}}
 	key := "migrated-conflict-" + uuid.NewString()
 	requestHash, err := rememberapp.CanonicalRequestBodyHash(evidence, nil, nil)
 	require.NoError(t, err)
 	attemptID := uuid.New()
-	require.NoError(t, ledger.RecordRememberAttempt(ctx, repository.RememberAttemptRecordInput{
+	require.NoError(t, ledger.RecordRememberAttempt(ctx, knowledgecontract.RememberAttemptRecordInput{
 		TeamID: teamID.String(), OwnerProfileID: ownerID.String(), AttemptID: attemptID.String(),
 		IdempotencyKey: key, RequestHash: requestHash, ContractVersion: "remember_request_hash_v1",
 		SubmissionKind: "remember", Outcome: "completed", PublicResult: map[string]any{
@@ -128,7 +129,7 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 	}))
 
 	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
-		Ledger: newRememberPersistenceAdapter(ledger), Assessor: nil, Embedder: nil, Limits: assessor.DefaultSemanticAssessmentLimits(),
+		Ledger: ledger, Assessor: nil, Embedder: nil, Limits: assessor.DefaultSemanticAssessmentLimits(),
 		Metrics: observability.NoopDiscoverabilityMetrics(),
 	})
 	service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
@@ -158,17 +159,17 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 		name  string
 		cause error
 	}{
-		{name: "conflict_context", cause: repository.ErrConflictContextStale},
-		{name: "exact_reference", cause: repository.ErrRememberExactReferenceStale},
-		{name: "correction_target", cause: repository.ErrCorrectionTargetStale},
+		{name: "conflict_context", cause: knowledgepostgres.ErrConflictContextStale},
+		{name: "exact_reference", cause: knowledgepostgres.ErrRememberExactReferenceStale},
+		{name: "correction_target", cause: knowledgepostgres.ErrCorrectionTargetStale},
 	} {
 		t.Run("stale commit replay/"+testCase.name, func(t *testing.T) {
-			realLedger := repository.NewLedgerRepository(appDB, rls)
-			ledger := newRememberProcessorIntegrationStaleLedger(newRememberPersistenceAdapter(realLedger), testCase.cause)
+			realLedger := knowledgepostgres.NewStore(appDB, rls, knowledgecontract.ConflictRuntimeConfig{})
+			ledger := newRememberProcessorIntegrationStaleLedger(realLedger, testCase.cause)
 			processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
 				Ledger: ledger, Catalog: rememberProcessorIntegrationCatalog{}, Assessor: rememberProcessorIntegrationAssessor{},
 				Embedder: rememberProcessorIntegrationEmbedder{}, Limits: assessor.DefaultSemanticAssessmentLimits(),
-				Metrics: observability.NoopDiscoverabilityMetrics(), IsStaleInput: repository.IsRememberStaleInputError,
+				Metrics: observability.NoopDiscoverabilityMetrics(), IsStaleInput: rememberapp.IsRememberStaleInputError,
 			})
 			service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
 			evidence := []rememberapp.RememberEvidenceInput{{Content: "A stale Remember commit must be replayable."}}
@@ -191,7 +192,7 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 			require.Equal(t, "stale_input", firstProcessErr.Status.Evidence[0].Reason)
 			require.Equal(t, 1, ledger.commitCalls)
 
-			persisted, loadErr := ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{
+			persisted, loadErr := ledger.LoadRememberAttempt(ctx, knowledgecontract.RememberAttemptLookupInput{
 				TeamID: teamID.String(), OwnerProfileID: ownerID.String(), IdempotencyKey: request.IdempotencyKey,
 			})
 			require.NoError(t, loadErr)
@@ -229,9 +230,9 @@ func newRememberProcessorIntegrationStaleLedger(base remembercontract.Persistenc
 	}
 }
 
-func (l *rememberProcessorIntegrationStaleLedger) PlanRememberDuplicateEmbeddings(_ context.Context, input repository.RememberDuplicateCandidateInput) (*repository.RememberDuplicateEmbeddingPlan, error) {
-	plan := &repository.RememberDuplicateEmbeddingPlan{
-		Documents: []repository.SearchDocumentForEmbedding{}, EmbeddingContractID: l.contractID,
+func (l *rememberProcessorIntegrationStaleLedger) PlanRememberDuplicateEmbeddings(_ context.Context, input knowledgecontract.RememberDuplicateCandidateInput) (*knowledgecontract.RememberDuplicateEmbeddingPlan, error) {
+	plan := &knowledgecontract.RememberDuplicateEmbeddingPlan{
+		Documents: []knowledgecontract.SearchDocumentForEmbedding{}, EmbeddingContractID: l.contractID,
 		EmbeddingDimensions: 1, EmbeddingModel: l.model, SearchIndexGenerationID: l.generationID, IndexGeneration: 1,
 	}
 	seen := make(map[string]struct{}, len(input.Evidence))
@@ -244,8 +245,8 @@ func (l *rememberProcessorIntegrationStaleLedger) PlanRememberDuplicateEmbedding
 			continue
 		}
 		seen[hash] = struct{}{}
-		plan.Documents = append(plan.Documents, repository.SearchDocumentForEmbedding{
-			SearchDocumentResult: repository.SearchDocumentResult{
+		plan.Documents = append(plan.Documents, knowledgecontract.SearchDocumentForEmbedding{
+			SearchDocumentResult: knowledgecontract.SearchDocumentResult{
 				TeamID: input.TeamID, SearchDocumentID: "duplicate:" + evidence.FragmentID,
 				OwnerProfileID: input.OwnerProfileID, SourceKind: "evidence", SourceID: evidence.FragmentID,
 				SourceVersion: 1, ProjectionFormat: 1, EmbeddingContractID: l.contractID, EmbeddingDimensions: 1,
@@ -257,17 +258,17 @@ func (l *rememberProcessorIntegrationStaleLedger) PlanRememberDuplicateEmbedding
 	return plan, nil
 }
 
-func (l *rememberProcessorIntegrationStaleLedger) ResolveRememberDuplicateCandidates(_ context.Context, input repository.RememberDuplicateCandidateInput, _ []repository.InlineEmbeddingResult) (*repository.RememberDuplicateResolutionResult, error) {
-	result := &repository.RememberDuplicateResolutionResult{
-		Exact: make([]repository.RememberDuplicateResolution, len(input.Evidence)), Candidates: []repository.RememberDuplicateCandidateGroup{},
+func (l *rememberProcessorIntegrationStaleLedger) ResolveRememberDuplicateCandidates(_ context.Context, input knowledgecontract.RememberDuplicateCandidateInput, _ []knowledgecontract.InlineEmbeddingResult) (*knowledgecontract.RememberDuplicateResolutionResult, error) {
+	result := &knowledgecontract.RememberDuplicateResolutionResult{
+		Exact: make([]knowledgecontract.RememberDuplicateResolution, len(input.Evidence)), Candidates: []knowledgecontract.RememberDuplicateCandidateGroup{},
 	}
 	for index, evidence := range input.Evidence {
-		result.Exact[index] = repository.RememberDuplicateResolution{
+		result.Exact[index] = knowledgecontract.RememberDuplicateResolution{
 			EvidenceIndex: index, EvidenceID: fmt.Sprintf("evidence:%d", index), InputFragmentID: evidence.FragmentID, Disposition: "new",
 		}
 		if !evidence.ForceInsert {
-			result.Candidates = append(result.Candidates, repository.RememberDuplicateCandidateGroup{
-				EvidenceIndex: index, EvidenceID: fmt.Sprintf("evidence:%d", index), Candidates: []repository.RememberDuplicateCandidate{},
+			result.Candidates = append(result.Candidates, knowledgecontract.RememberDuplicateCandidateGroup{
+				EvidenceIndex: index, EvidenceID: fmt.Sprintf("evidence:%d", index), Candidates: []knowledgecontract.RememberDuplicateCandidate{},
 			})
 		}
 	}
@@ -380,9 +381,9 @@ func insertHistoricalRememberOutcome(
 	key, requestHash, outcome string,
 ) {
 	t.Helper()
-	ledger := repository.NewLedgerRepository(appDB, rls)
+	ledger := knowledgepostgres.NewStore(appDB, rls, knowledgecontract.ConflictRuntimeConfig{})
 	if outcome != "replayed" {
-		require.NoError(t, ledger.RecordRememberAttempt(ctx, repository.RememberAttemptRecordInput{
+		require.NoError(t, ledger.RecordRememberAttempt(ctx, knowledgecontract.RememberAttemptRecordInput{
 			TeamID: teamID.String(), OwnerProfileID: ownerID.String(), AttemptID: attemptID.String(),
 			IdempotencyKey: key, RequestHash: requestHash, ContractVersion: domain.ContractVersion,
 			SubmissionKind: "remember", Outcome: outcome, ErrorCode: "historical_" + outcome,
@@ -392,7 +393,7 @@ func insertHistoricalRememberOutcome(
 	}
 
 	canonicalID := uuid.New()
-	require.NoError(t, ledger.RecordRememberAttempt(ctx, repository.RememberAttemptRecordInput{
+	require.NoError(t, ledger.RecordRememberAttempt(ctx, knowledgecontract.RememberAttemptRecordInput{
 		TeamID: teamID.String(), OwnerProfileID: ownerID.String(), AttemptID: canonicalID.String(),
 		IdempotencyKey: key, RequestHash: requestHash, ContractVersion: domain.ContractVersion,
 		SubmissionKind: "remember", Outcome: "completed",

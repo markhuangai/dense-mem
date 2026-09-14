@@ -18,6 +18,9 @@ func isRememberStaleInputError(err error) bool {
 		errors.Is(err, repository.ErrSourceRevisionConflict) ||
 		errors.Is(err, repository.ErrEvidenceLifecycleConflict) ||
 		errors.Is(err, repository.ErrEvidenceConflictStaleInput) ||
+		errors.Is(err, repository.ErrConflictContextStale) ||
+		errors.Is(err, repository.ErrRememberExactReferenceStale) ||
+		errors.Is(err, repository.ErrCorrectionTargetStale) ||
 		errors.Is(err, repository.ErrSemanticStaleSource) ||
 		errors.Is(err, repository.ErrSubmissionAssessmentKnownEvidenceStale)
 }

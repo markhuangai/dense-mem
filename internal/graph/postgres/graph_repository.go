@@ -73,6 +73,13 @@ func LoadLocalRows(ctx context.Context, tx *gorm.DB, input graphcontract.Query, 
 	})
 }
 
+// Snapshot assembles a graph read model from rows selected under an existing
+// transaction. Composition and Trace use it without importing private graph
+// implementation helpers.
+func Snapshot(input graphcontract.Query, rows []graphread.Row) *graphcontract.Snapshot {
+	return graphread.Snapshot(input, rows)
+}
+
 func (r *Store) SemanticGraph(
 	ctx context.Context,
 	input graphcontract.Query,

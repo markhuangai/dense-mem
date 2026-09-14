@@ -39,6 +39,7 @@ func TestSearchProviderCompositionBuildsSharedProviderFacets(t *testing.T) {
 		config.Config{},
 		nil,
 		nil,
+		nil,
 		observability.NoopDiscoverabilityMetrics(),
 		observability.New(slog.LevelInfo),
 	)

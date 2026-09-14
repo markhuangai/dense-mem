@@ -21,8 +21,8 @@ func (s failingEvaluationAudit) Append(context.Context, accessservice.AuditLogEn
 func TestEvaluationAuditFailureBlocksEvaluationTool(t *testing.T) {
 	sentinel := errors.New("audit unavailable")
 	reg, err := BuildActive(Dependencies{
-		Dreams:          &stubDreamService{},
-		EvaluationAudit: failingEvaluationAudit{err: sentinel},
+		DreamBindings:      DreamBindings{Service: &stubDreamService{}},
+		EvaluationBindings: EvaluationBindings{Audit: failingEvaluationAudit{err: sentinel}},
 	})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)

@@ -1,191 +1,69 @@
 # Capability contract ownership
 
-Issue #360 establishes capability-owned contract roots and shared PostgreSQL
-mechanics for later cutovers. Each moved declaration has one live definition;
-the old package name is only a type alias or a single-hop compatibility
-interface.
+The architecture manifest is assembled from capability fragments under
+`architecture/modules/`. Each fragment owns the exact source units, worker
+anchors, database-case registrations, and completion records for one
+capability. The central manifest owns discovery, profiles, the role matrix, and
+fragment inventory. The loader rejects missing, duplicate, unlisted, or
+undiscovered units.
 
-`internal/graph/contract` owns graph queries, node/edge read models, and the
-graph store port. `internal/trace/contract` owns trace inputs, trace result
-records, and the relationship-conflict record reused by trace and recall.
-`internal/recall/contract` owns the recall request, application result models,
-storage inputs/results, recall service port, and evidence-conflict read models.
-`internal/search/contract` owns search read models. `internal/search` owns
-search maintenance contracts and query maintenance orchestration, while
-`internal/search/postgres` owns the PostgreSQL query, bootstrap, convergence,
-and reconciliation adapter. `internal/semanticwrite/contract` owns the
-provider-independent semantic-write plan, embedding result, and batch-provider
-port.
-`internal/embedding/contract` owns the provider-independent embedding interface,
-closed provider error vocabulary, retry-hint bounds, failure classification and
-sanitized error projection. The concrete OpenAI and retry implementations remain
-in `internal/embedding` and consume this public port.
+The dependency direction is transport to application to domain and ports.
+PostgreSQL adapters implement capability ports and may use only domain, ports,
+and the shared PostgreSQL infrastructure. Composition constructs private
+adapters. Cross-capability imports require a public target; private units stay
+inside their owning capability.
 
-`internal/storage/postgres/graphread` owns bounded breadth-first traversal,
-graph snapshot assembly, and graph row decoding.
-`internal/storage/postgres/lockadmission` owns the one-per-database-pool
-advisory-lock admission budget. `internal/storage/postgres` owns the shared
-active-space-generation SQL fragment. These packages contain mechanics only;
-adapters retain authorization, transaction, and domain policy.
+## Native owners
 
-Compatibility aliases and their current consumers are:
+- `internal/knowledge/contract` and `internal/knowledge/postgres` own
+  authoritative evidence, semantic, relationship, lifecycle, search-document,
+  canonical projection, and reconciliation writes. Search projection repair
+  uses Knowledge operation ports and one transaction per repair operation.
+- `internal/search` owns query and reconciliation orchestration, provider
+  bounds, readiness, ranking, and error projection. `internal/search/postgres`
+  owns query reads, bootstrap, and index mechanics; it does not persist the
+  canonical projection or reconciliation run state.
+- `internal/graph`, `internal/trace`, `internal/recall`, `internal/dream`,
+  `internal/community`, `internal/conflict`, and `internal/memorypack` own
+  their capability APIs and contracts. Their PostgreSQL packages implement
+  private adapters for those APIs.
+- `internal/service/access`, `internal/privacy/service`,
+  `internal/settings`, `internal/operations`, `internal/audit`, and
+  `internal/remember/service` own Access, privacy, settings, operational,
+  audit, and Remember policy respectively. The root `internal/service` package
+  is not an application facade.
+- `internal/http` binds and translates transport contracts. Logger, credential
+  lookup, and verifier implementations are supplied by composition; HTTP does
+  not import observability or crypto implementations directly.
 
-- `internal/repository/semantic_types.go`: graph and trace names are aliases
-  consumed by `internal/service/graphview`,
-  `internal/service/contextservice`, `internal/service/skillpackservice`,
-  `internal/tools/registry`, and repository integration tests.
-- `internal/repository/search_types.go`: search names are aliases consumed by
-  `internal/repository/search_repository.go`,
-  `internal/repository/recall_repository.go`,
-  `internal/service/search_reconciliation` and
-  `internal/service/search_convergence`,
-  `internal/service/memoryservice`, and
-  `internal/http/control_portal_search.go`.
-- `internal/repository/evidence_conflict_repository.go`: evidence-conflict
-  records are aliases consumed by the evidence-conflict repository/query
-  files and `internal/service/memoryservice/recall_conflicts.go`.
-- `internal/service/memoryservice/recall.go` and
-  `internal/service/memoryservice/recall_conflicts.go`: recall request/result
-  names and the narrow `RecallSearchRepository` port are aliases consumed by
-  `internal/http/handler/recall_handler.go`, the HTTP/MCP tool registries,
-  community/space fusion, and recall tests.
-- `internal/service/semanticwrite/executor.go`: semantic-write names are
-  aliases consumed by `internal/service/memoryservice/lifecycle.go`,
-  `internal/service/semanticwrite`, and their tests.
-- `internal/service/dreamservice/compat.go`: Dream service names are bounded
-  aliases consumed by `cmd/internal/serverapp/application_composition.go`,
-  `cmd/internal/serverapp/server.go` (`NewScheduler`), and
-  `cmd/internal/serverapp/telemetry_features.go`; canonical application policy
-  and ports live in `internal/dream` and `internal/dream/contract`.
-- `internal/repository/dream_compat.go` and
-  `internal/repository/dream_types.go`: Dream repository methods, contracts,
-  and errors are single-hop compatibility aliases consumed by the server
-  composition's `SemanticRepositoryImpl` dependency and the retained Dream
-  database fixtures under `internal/repository/`; SQL ownership is
-  `internal/dream/postgres.Store`.
+Every live implementation has one owner. Compatibility aliases and forwarding
+facades from the former broad service and repository packages were removed once
+their callers moved to these native owners. Test fixtures use owner-local
+helpers or the public capability ports; they do not expose a second runtime
+authority.
 
-`internal/dream/postgres` owns Dream's PostgreSQL SQL, transaction boundaries,
-Hypothesis evaluation reads, daily graph-dreaming persistence, and hourly
-evidence-discovery persistence. `internal/repository/dream_*.go` is no longer a
-live implementation: `SemanticRepositoryImpl` keeps only single-hop forwarding
-methods for transitional callers. Daily graph dreaming and hourly evidence
-discovery remain separate lanes, and Hypothesis records never enter default
-recall or active graph reads. The compatibility facades are removed with the
-other legacy facades by #382 after all named consumers migrate.
+## Database-case registry
 
-The compatibility removal owner is #382. It removes these aliases and the
-legacy repository/service facades after the graph, trace, recall, search, and
-semantic-write adopters complete their native cutovers. Lifecycle and Remember
-remain consumer-owned ports in this issue, as required by the frozen plan;
-their existing `internal/service/memoryservice` and
-`internal/service/remember` contracts are not duplicated here.
+Every `.e2e` source has one declaration in `scripts/e2e-db-cases/`. The
+declaration's package is the source directory, and its run expression names one
+concrete test. The registry loader checks duplicate IDs, missing declarations,
+package mismatches, and stale source paths before invoking a batch. The frozen
+baseline preserves IDs, run expressions, phases, and scenario ownership while
+allowing a capability to relocate a fixture to its native package.
 
-Recall execution keeps prepared search contracts, embeddings, degradation
-state, and derived memory-space scope in private service/adapter wrappers.
-The public request and storage ports cannot carry derived scope or provider
-state.
+The central architecture manifest, registry loader, composition root, and E2E
+host controller are shared read-only infrastructure for capability cutovers.
+Native fragments and fixtures may update their own ownership records and
+registrations without restoring a broad shared facade.
 
-## Wave 6 shared-readiness ownership
+## Coverage and verification
 
-The wave 6 adopters use disjoint capability fragments and database-case
-registries. `access`, `operations`, `remember` and `search` own their populated
-registrations; `lifecycle` and `memorypack` are reserved empty fragments until
-their adopters add capability-specific cases. The complete registry is loaded
-by the existing controller and must retain every case exactly once.
+Database-free Go production and evaluation packages, browser modules, and the
+MCP proxy are inventoried independently. Each report fails closed for missing
+sources, empty reports, omitted browser modules, exact-boundary percentages,
+and profile duplication. PostgreSQL adapter and integration coverage remains a
+separate proof of SQL, RLS, transaction, lock, and concurrency behavior.
 
-The following shared boundaries are read-only for wave 6 adopters:
-
-- `internal/embedding/contract`, `internal/search/contract`,
-  `internal/semanticwrite/contract`, and the existing domain contracts;
-- canonical Knowledge PostgreSQL writes and their compatibility facades;
-- `cmd/internal/serverapp/application_composition.go`, `server.go`,
-  `cmd/e2e/main.go`, and the E2E host controller;
-- mixed database fixtures and the central architecture manifest/checker.
-
-Remember, Lifecycle and Search consume the public embedding contract. The root
-`internal/embedding` package retains only the concrete provider and compatibility
-aliases, so no adopter may reintroduce a private provider dependency or duplicate
-failure classification. Compatibility aliases remain bounded single-hop paths
-until their named capability cleanup owner removes them.
-
-## Wave 7 shared-readiness ownership
-
-The Wave 7 adopters use narrow recall reader callbacks and independent test
-partitions. `internal/recall/postgres` owns the private transaction-scoped
-reader types used by Recall; the current repository facade supplies the
-compatibility implementations until #376 and #377 move their live owners.
-Reader callbacks receive the existing PostgreSQL transaction so RLS, space
-generation, temporal fences, and bounded hydration remain unchanged.
-
-Recall, Conflict, and the retained ANN-index investigation have separate
-database-case fragments. The frozen baseline under
-`cmd/e2e/testdata/database-case-baseline.json` preserves each existing case's
-ID, run expression, phase, and scenario while allowing a capability adopter to
-add or relocate cases after source and architecture ownership are updated.
-The shared evidence-conflict fixture helpers remain owned by the PostgreSQL
-adapter in `internal/repository/evidence_conflict_fixtures.e2e`; Recall owns
-`internal/repository/evidence_conflict_recall_integration.e2e`, and Conflict
-owns `internal/repository/evidence_conflict_conflict_integration.e2e`.
-The central registry loader, architecture manifest, composition root, and
-canonical Knowledge writes remain shared read-only infrastructure during the
-adoptions.
-
-## Wave 8 shared-readiness ownership
-
-Wave 8 begins only after the shared evaluation and transport composition seams
-are established. The evaluation build is selected by the existing `evaluation`
-Go profile: production composition supplies no offline evaluation repository or
-audit binding, while the evaluation composition creates the evaluation reader
-with Dream's Hypothesis query injected through the existing contract. The
-production catalog remains ten tools and the evaluation catalog adds only the
-three existing evaluation tools.
-
-The transport composition owns the construction of MCP, SSE, public HTTP, user
-portal, control portal, and their coordination backends through existing
-application and adapter ports. The central server lifecycle, worker starts,
-shutdown ordering, and public route contracts remain shared read-only
-infrastructure for #378 and #379 after this preparation.
-
-Issue #378 owns the evaluation composition profile files, registry evaluation
-bindings, generic evaluation reader compatibility seam, and its PostgreSQL
-case. Dream retains the Hypothesis SQL query and Dream application contracts.
-Issue #379 owns the transport composition and backend wiring; HTTP, portal,
-proxy, SSE, Redis, and browser implementations remain in its later cutover.
-The existing registry, architecture manifest/checker, and E2E host controller
-are shared read-only infrastructure. Both adopters must preserve exact existing
-database-case identities and may add only capability-specific registry entries.
-
-## Wave 5 shared-readiness ownership
-
-Issue #389 freezes the writable partition for the eight Wave 5 adopters. The
-capability fragments are the authoritative source-to-owner map; the central
-manifest, shared contracts, role rules, assemblers, and mixed fixtures remain
-read-only infrastructure for adopters.
-
-The following files intentionally remain shared-read-only because they contain
-cross-capability contracts or mixed acceptance setup:
-
-- `internal/repository/semantic_types.go` and `internal/repository/semantic_read_helpers.go`
-- `internal/repository/semantic_trace_graph_integration.e2e`
-- `internal/repository/remember_primitives_integration.e2e`
-- `cmd/internal/serverapp/application_composition.go` and `cmd/internal/serverapp/server.go`
-- `cmd/e2e/main.go` and `scripts/e2e-host-controller.sh`, except for the bounded
-  precheck project-name helper owned by #389
-
-Database-case registrations use the same partition: `knowledge` (#362),
-`trace` (#363), `privacy` (#364), `dream` (#365), `graph` (#366),
-`community` (#367), `audit` (#368), and `settings` (#369). The empty settings
-fragment is intentional; its owner is reserved before that capability adds
-database-backed cases. Existing `http`, `migration`, `postgres`,
-`repository`, `server`, and `service` fragments retain cases outside this
-Wave 5 partition.
-
-Remember-attempt diagnostics are retained in PostgreSQL as ordered,
-operator-only request/provider/caller exchanges. The diagnostic hold writer is
-`internal/storage/postgres/remember_diagnostic_hold.go:SetRememberAttemptDiagnosticHoldStateTx`;
-legacy failure-artifact storage and its hash-bearing API were removed after the
-verified migration to `remember_attempt_diagnostics`. Bodies are bounded to 16
-MiB per exchange and 64 MiB per failed attempt, expire after seven days, and
-are sanitized before storage; transport headers, credentials, stack traces, and
-database errors are never captured. Control detail reads are audited and
-`no-store`, and expired rows retain only capture state until purge.
+The architecture conformance UAT and checker validate fragment completeness,
+visibility, dependency direction, worker lifecycle obligations, database-case
+ownership, and the absence of expired compatibility obligations.

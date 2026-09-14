@@ -6,10 +6,10 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/dream"
-	"github.com/markhuangai/dense-mem/internal/service"
+	settings "github.com/markhuangai/dense-mem/internal/settings"
 )
 
-func effectiveDreamingConfig(ctx context.Context, appConfig service.AppConfigService, teamConfig map[string]any) (*dream.EffectiveConfig, error) {
+func effectiveDreamingConfig(ctx context.Context, appConfig settings.AppConfigService, teamConfig map[string]any) (*dream.EffectiveConfig, error) {
 	var global domain.DreamingRuntimeConfig
 	if appConfig != nil {
 		runtime, err := appConfig.DreamingRuntimeConfig(ctx)

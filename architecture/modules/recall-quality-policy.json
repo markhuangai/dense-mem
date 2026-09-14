@@ -2,20 +2,20 @@
   "schema_version": 1,
   "capability": "recall-quality-policy",
   "source_ownership": [
-    {"path": "internal/recall/quality/metrics.go", "issue": 376},
-    {"path": "internal/recall/quality/metrics_test.go", "issue": 376},
-    {"path": "internal/service/recallquality/metrics.go", "issue": 376}
+    {
+      "path": "internal/recall/quality/metrics.go",
+      "issue": 376
+    },
+    {
+      "path": "internal/recall/quality/metrics_test.go",
+      "issue": 376
+    }
   ],
   "completed_issues": [],
   "go": {
     "units": [
       {
         "id": "github.com/markhuangai/dense-mem/internal/recall/quality",
-        "role": "domain",
-        "visibility": "public"
-      },
-      {
-        "id": "github.com/markhuangai/dense-mem/internal/service/recallquality",
         "role": "domain",
         "visibility": "public"
       }

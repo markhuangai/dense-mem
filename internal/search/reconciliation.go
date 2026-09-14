@@ -9,6 +9,8 @@ import (
 	"time"
 
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 )
 
 const (
@@ -38,14 +40,16 @@ type SearchReconciliationService interface {
 // consumed by reconciliation. Concrete providers remain composition-owned.
 
 type SearchReconciliationDependencies struct {
-	Repository      SearchReconciliationRepository
+	Repository      searchcontract.SearchRepository
+	Projection      knowledgecontract.SearchProjectionRepository
 	Provider        embeddingcontract.EmbeddingProviderInterface
 	Now             func() time.Time
 	ProviderTimeout time.Duration
 }
 
 type searchReconciliationService struct {
-	repository      SearchReconciliationRepository
+	repository      searchcontract.SearchRepository
+	projection      knowledgecontract.SearchProjectionRepository
 	provider        embeddingcontract.EmbeddingProviderInterface
 	now             func() time.Time
 	providerTimeout time.Duration
@@ -61,14 +65,14 @@ func NewSearchReconciliationService(deps SearchReconciliationDependencies) Searc
 		timeout = searchReconciliationProviderCap
 	}
 	return &searchReconciliationService{
-		repository: deps.Repository, provider: deps.Provider,
+		repository: deps.Repository, projection: deps.Projection, provider: deps.Provider,
 		now: now, providerTimeout: timeout,
 	}
 }
 
 func (s *searchReconciliationService) Run(ctx context.Context) (SearchReconciliationResult, error) {
 	result := SearchReconciliationResult{}
-	if s == nil || s.repository == nil || s.provider == nil {
+	if s == nil || s.repository == nil || s.projection == nil || s.provider == nil {
 		return result, fmt.Errorf("%w: service unavailable", ErrSearchReconciliationFailed)
 	}
 	contract, err := s.repository.GetActiveSearchContract(ctx)
@@ -76,7 +80,7 @@ func (s *searchReconciliationService) Run(ctx context.Context) (SearchReconcilia
 		return result, fmt.Errorf("%w: active contract unavailable", ErrSearchReconciliationFailed)
 	}
 	now := s.now().UTC()
-	run, claimed, err := s.repository.ReserveSearchReconciliationRun(ctx, SearchReconciliationRunInput{
+	run, claimed, err := s.projection.ReserveSearchReconciliationRun(ctx, knowledgecontract.SearchReconciliationRunInput{
 		EmbeddingContractID: contract.EmbeddingContractID,
 		EmbeddingDimensions: contract.EmbeddingDimensions,
 		Now:                 now,
@@ -92,7 +96,7 @@ func (s *searchReconciliationService) Run(ctx context.Context) (SearchReconcilia
 	result.RunID = run.RunID
 	result.Status = "running"
 
-	documents, err := s.repository.SelectSearchReconciliationDocuments(ctx, SearchReconciliationSelectionInput{
+	documents, err := s.projection.SelectSearchReconciliationDocuments(ctx, knowledgecontract.SearchReconciliationSelectionInput{
 		RunID:               run.RunID,
 		EmbeddingContractID: contract.EmbeddingContractID,
 		EmbeddingDimensions: contract.EmbeddingDimensions,
@@ -180,7 +184,7 @@ func (s *searchReconciliationService) Run(ctx context.Context) (SearchReconcilia
 			Retired:                document.Retired,
 		})
 	}
-	applyResult, err := s.repository.CompleteSearchReconciliationDocuments(ctx, ApplySearchReconciliationInput{
+	applyResult, err := s.projection.CompleteSearchReconciliationDocuments(ctx, knowledgecontract.ApplySearchReconciliationInput{
 		EmbeddingContractID: contract.EmbeddingContractID,
 		EmbeddingDimensions: contract.EmbeddingDimensions,
 		Documents:           embeddings,
@@ -225,7 +229,7 @@ func reconciliationBatch(documents []SearchDocumentForEmbedding) ([]string, []st
 func (s *searchReconciliationService) finish(ctx context.Context, result SearchReconciliationResult, status, lastError string) (SearchReconciliationResult, error) {
 	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), searchReconciliationFinalizeCap)
 	defer cancel()
-	err := s.repository.FinishSearchReconciliationRun(finishCtx, FinishSearchReconciliationRunInput{
+	err := s.projection.FinishSearchReconciliationRun(finishCtx, knowledgecontract.FinishSearchReconciliationRunInput{
 		RunID:         result.RunID,
 		Status:        status,
 		SelectedCount: result.SelectedCount,
