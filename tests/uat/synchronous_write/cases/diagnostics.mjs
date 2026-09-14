@@ -177,6 +177,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   const validationEvent = (validationAttempt.data?.events || []).find((event) => event.metadata?.assessor_validation);
   const validation = validationEvent?.metadata?.assessor_validation;
   expect(validation && Array.isArray(validation.turns), "semantic assessor failure must retain bounded validation turns");
+  expect(validation.failure_class === "malformed_exhausted", `semantic assessor failure must retain its exhausted classification: ${JSON.stringify(validation)}`);
   expect(validation.turns.length === 3, `semantic assessor failure must retain all three turns: ${JSON.stringify(validation)}`);
   expect(validation.turns.every((turn) => Array.isArray(turn.fields) && Array.isArray(turn.field_families) && typeof turn.error_count === "number" && typeof turn.truncated === "boolean"), "validation turns must expose normalized fields, families, counts, and truncation");
   expect(validation.turns.some((turn) => turn.error_count > 0 && turn.fields.length > 0 && turn.field_families.length > 0), "semantic assessor failure must retain rejected validation fields and families");

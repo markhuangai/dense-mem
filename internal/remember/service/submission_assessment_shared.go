@@ -148,7 +148,9 @@ func SynchronousAssessmentValidationDiagnostics(err error) map[string]any {
 	}
 	var historyErr *submissionAssessmentValidationHistoryError
 	var malformed *assessor.MalformedResponseError
-	if !errors.As(err, &historyErr) && !errors.As(err, &malformed) {
+	hasHistory := errors.As(err, &historyErr)
+	hasMalformed := errors.As(err, &malformed)
+	if !hasHistory && !hasMalformed {
 		return nil
 	}
 	turns := make([]submissionAssessmentValidationTurn, 0, SemanticMaxAssessorTurns)

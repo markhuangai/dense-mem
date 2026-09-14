@@ -563,6 +563,13 @@ func TestSynchronousAssessmentValidationDiagnosticsPreserveTypedTerminalClass(t 
 	}{
 		{name: "input budget", cause: ErrRememberInputBudgetExceeded, want: "input_budget"},
 		{name: "request timeout", cause: ErrRememberRequestTimeout, want: "timeout"},
+		{
+			name: "malformed exhausted with history",
+			cause: errors.Join(ErrRememberProviderResponseInvalid, &assessor.MalformedResponseError{
+				FailureClass: "malformed_exhausted", Attempts: SemanticMaxAssessorTurns,
+			}),
+			want: "malformed_exhausted",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			diagnostics := SynchronousAssessmentValidationDiagnostics(&submissionAssessmentValidationHistoryError{
