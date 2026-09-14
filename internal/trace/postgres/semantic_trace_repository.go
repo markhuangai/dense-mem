@@ -229,7 +229,7 @@ func loadTraceRelationship(
 		       COALESCE(object_name.display_name, ''),
 		       COALESCE(object.entity_kind, ''),
 		       COALESCE(r.object_value_id::text, ''),
-		       COALESCE(NULLIF(value.display, ''), value.canonical_value, ''),
+		       COALESCE(value.canonical_value, ''),
 		       COALESCE(value.value_type, ''),
 		       r.relationship_kind, r.current_cardinality, r.status,
 		       r.polarity, COALESCE(r.scope_key, ''), r.valid_from, r.valid_to,

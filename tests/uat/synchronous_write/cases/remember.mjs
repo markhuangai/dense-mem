@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import { assertTerminalRememberResult } from "../surface.mjs";
@@ -46,7 +46,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     } else if (fault === "multi") {
       results.push(await runMultiItemCase({ rpc, expect }));
     } else if (fault === "mixed-objects") {
-      results.push(await runMixedObjectCase({ rpc, expect }));
+      results.push(await runMixedObjectCase({ expect }));
     } else if (fault === "mixed") {
       results.push(await runMixedDispositionCase({ rpc, expect }));
     } else if (fault === "repair" || fault === "repair-exhausted") {
@@ -621,30 +621,75 @@ async function runMultiItemCase({ rpc, expect }) {
   return { fault: "multi", processing_state: result.processing_state, evidence_count: result.evidence.length };
 }
 
-async function runMixedObjectCase({ rpc, expect }) {
+async function runMixedObjectCase({ expect }) {
   const suffix = Date.now();
   const subject = `Dense-Mem Mixed Objects ${suffix}`;
   const database = `PostgreSQL Mixed Objects ${suffix}`;
+  const teamID = await createKnownEvidenceTeam(`mixed-objects-${suffix}`);
+  const actor = await createKnownEvidenceCredential(teamID, `mixed-objects-${suffix}`, "shared_only");
   const entityPredicate = `stores_memory_in_mixed_objects_entity_${suffix}`;
+  const values = [
+    { type: "string", value: "stable", display: "Stable contract" },
+    { type: "number", value: 42, display: "42 ms", unit: "ms" },
+    { type: "boolean", value: true, display: "Yes" },
+    { type: "date", value: "2026-09-13", display: "13 September 2026" },
+    { type: "date_time", value: "2026-09-13T10:45:28Z", display: "13 September 2026 at 10:45:28 UTC" },
+  ];
   const args = {
     evidence: [
       { content: `${subject} stores its durable memory in ${database}. [fixture:mixed-objects-entity]`, source_type: "manual" },
-      { content: `${subject} retains a stable memory contract. [fixture:mixed-objects-value]`, source_type: "manual" },
+      ...values.map((value) => ({
+        content: `${subject} records ${value.type} value ${value.value}, displayed as ${value.display}. [fixture:mixed-objects-value]`,
+        source_type: "manual",
+      })),
     ],
     relationships: [
       relationship("entity-object", subject, "project", { entity: { name: database, entity_kind: "product" } }, [0], entityPredicate),
-      relationship("typed-value", subject, "project", { value: { type: "string", value: "stable" } }, [1]),
+      ...values.map((value, index) => relationship(`typed-${value.type}`, subject, "project", { value }, [index + 1], `mixed_objects_${value.type}_${suffix}`)),
     ],
     idempotency_key: `synchronous-write-remember-mixed-objects-${Date.now()}`,
   };
-  const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
+  const result = await rememberWithKey(actor.apiKey, args);
   assertStrictTerminalRemember(result, expect);
   expect(result.processing_state === "completed", `mixed Entity and typed-Value batch must complete: ${JSON.stringify(result)}`);
-  expect(result.evidence.length === 2 && result.evidence.every((item) => item.disposition === "stored" && item.search_state === "current"), "mixed object evidence must be current");
+  expect(result.evidence.length === args.evidence.length && result.evidence.every((item) => item.disposition === "stored" && item.search_state === "current"), "mixed object evidence must be current");
   const byRef = new Map(result.relationship_results.map((item) => [item.ref, item]));
   expect(byRef.get("entity-object")?.disposition === "stored" && byRef.get("entity-object")?.splits.length > 0, "Entity-object relationship must be stored");
-  expect(byRef.get("typed-value")?.disposition === "stored" && byRef.get("typed-value")?.splits.length > 0, "typed-Value relationship must be stored");
-  return { fault: "mixed-objects", processing_state: result.processing_state, relationship_count: result.relationship_results.length };
+  for (const value of values) {
+    const item = byRef.get(`typed-${value.type}`);
+    expect(item?.disposition === "stored" && item.splits.length === 1, `${value.type} relationship must be stored`);
+  }
+  expect(Number(postgresQuery(`
+    SELECT count(*) FROM value_records
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND canonical_value <> display;
+  `)) === values.length, "typed values must retain their distinct display forms in PostgreSQL");
+
+  const exportArgs = {
+    name: `mixed-objects-${suffix}`,
+    relationship_ids: result.relationship_results.flatMap((item) => item.splits.map((split) => split.relationship_id)),
+  };
+  const exported = await mcpSuccessWithKey(actor.apiKey, "export_memory_pack", exportArgs);
+  const artifact = JSON.parse(exported.artifact_json);
+  expect(artifact.format === "dense-mem.memory-pack.v2.4", "mixed-object export must preserve the artifact format");
+  expect(exported.counts.relationships === args.relationships.length && exported.counts.evidence === args.evidence.length, "mixed-object export must include every relationship and evidence item");
+  for (const value of values) {
+    const relationshipID = byRef.get(`typed-${value.type}`).splits[0].relationship_id;
+    const item = artifact.relationships.find((item) => item.source_relationship_id === relationshipID);
+    expect(item?.object.kind === "value" && item.object.value_type === value.type, `${value.type} export must retain the typed endpoint`);
+    expect(item.object.value === String(value.value), `${value.type} export must use canonical data, not its display form`);
+  }
+  expect(artifact.content_sha256 === exported.content_sha256, "mixed-object artifact hash must match its envelope");
+  delete artifact.content_sha256;
+  expect(createHash("sha256").update(JSON.stringify(artifact)).digest("hex") === exported.content_sha256, "mixed-object hash must cover the canonical artifact");
+
+  const missing = await rawRPCWithKey(actor.apiKey, "tools/call", {
+    name: "export_memory_pack",
+    arguments: { ...exportArgs, relationship_ids: [...exportArgs.relationship_ids, randomUUID()] },
+  });
+  expect(!missing.error && missing.result?.isError === true, "one missing relationship must fail the complete export");
+  const denied = terminalPayload(missing.result);
+  expect(denied.reason_code === "reference_not_found" && denied.retryable === false && !Object.hasOwn(denied, "artifact_json"), "missing-reference export must return a bounded denial without a partial artifact");
+  return { fault: "mixed-objects", processing_state: result.processing_state, relationship_count: result.relationship_results.length, canonical_typed_export: true, missing_reference_rejected: true };
 }
 
 async function runMixedDispositionCase({ rpc, expect }) {

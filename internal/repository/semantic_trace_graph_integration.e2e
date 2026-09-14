@@ -483,6 +483,16 @@ func TestSemanticTraceRelationshipHydratesLineageAndBoundedGraph(t *testing.T) {
 	require.NotEmpty(t, trace.EvidenceFragments)
 	assert.Empty(t, trace.EvidenceFragments[0].Content)
 
+	releaseTrace, err := semanticRepo.TraceRelationship(ctx, TraceRelationshipInput{
+		TeamID:         teamA,
+		RelationshipID: released.Relationship.RelationshipID,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, releaseTrace.Relationship)
+	assert.Equal(t, "date", releaseTrace.Relationship.ObjectValueType)
+	assert.Equal(t, "2026-07-17", releaseTrace.Relationship.ObjectValue)
+	assertGraphHasNode(t, releaseTrace.SemanticNodes, "value", releaseDate.ValueID, "July 17, 2026")
+
 	_, err = semanticRepo.TraceRelationship(ctx, TraceRelationshipInput{
 		TeamID:         teamB,
 		RelationshipID: first.Relationship.RelationshipID,
