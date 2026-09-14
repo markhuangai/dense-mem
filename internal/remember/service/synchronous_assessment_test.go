@@ -30,10 +30,14 @@ type synchronousAssessmentProviderStub struct {
 	calls       int
 	repairCalls int
 	session     *synchronousAssessmentSessionStub
+	beforeCall  func(context.Context)
 }
 
-func (s *synchronousAssessmentProviderStub) Assess(_ context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
+func (s *synchronousAssessmentProviderStub) Assess(ctx context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
 	s.calls++
+	if s.beforeCall != nil {
+		s.beforeCall(ctx)
+	}
 	if s.err != nil {
 		return nil, assessor.SemanticAssessmentTurn{}, s.err
 	}
@@ -48,8 +52,11 @@ func (s *synchronousAssessmentProviderStub) Assess(_ context.Context, request as
 	return s.session, assessor.SemanticAssessmentTurn{Response: response, Turn: turn}, nil
 }
 
-func (s *synchronousAssessmentProviderStub) Repair(_ context.Context, session assessor.SemanticAssessmentSession, request assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
+func (s *synchronousAssessmentProviderStub) Repair(ctx context.Context, session assessor.SemanticAssessmentSession, request assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
 	s.repairCalls++
+	if s.beforeCall != nil {
+		s.beforeCall(ctx)
+	}
 	if session == nil || session.SessionID() != "assessment-session" {
 		return assessor.SemanticAssessmentTurn{}, errors.New("unexpected assessment session")
 	}

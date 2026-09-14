@@ -61,6 +61,42 @@ func TestSemanticAssessmentWireRejectsDuplicateFields(t *testing.T) {
 	require.ErrorContains(t, err, "duplicate JSON field")
 }
 
+func TestSemanticAssessmentPredicateLengthErrorsNameTheProviderRange(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		text  string
+		valid bool
+	}{
+		{name: "over limit", text: strings.Repeat("x", 257)},
+		{name: "blank", text: "   "},
+		{name: "Unicode limit", text: strings.Repeat("界", 256), valid: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req, limits := semanticAssessmentTestRequest(t)
+			prefix := req.Evidence[0].Content + " "
+			req.Evidence[0].Content = prefix + test.text
+			prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
+			require.Empty(t, errs)
+			response := semanticAssessmentTestResponse()
+			split := &response.RelationshipResults[0].Splits[0]
+			split.PredicateRange = semanticAssessmentTestRange(prepared.Evidence[0], len([]rune(prefix)), len([]rune(prefix+test.text)))
+			split.SupportRanges = []SemanticAssessmentGroundedRange{semanticAssessmentTestRange(prepared.Evidence[0], 0, len([]rune(prefix+test.text)))}
+			_, errs = PrepareSemanticAssessmentResponse(prepared, response, limits)
+			if test.valid {
+				require.Empty(t, errs)
+				return
+			}
+			require.Contains(t, errs, SemanticValidationError{
+				Field:   "relationship_results[0].splits[0].predicate_range",
+				Message: "must select a non-blank predicate phrase of at most 256 Unicode characters",
+			})
+			for _, err := range errs {
+				require.NotContains(t, err.Field, "original_predicate")
+			}
+		})
+	}
+}
+
 func TestSemanticAssessmentSubmissionContractPreservesTypedValue(t *testing.T) {
 	display := " 42 ms "
 	unit := " ms "

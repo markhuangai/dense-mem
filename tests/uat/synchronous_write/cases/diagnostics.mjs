@@ -23,6 +23,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
 
   const diagnosticFaults = [
     ["repair", "[fixture-fault:repair]", "completed", ""],
+    ["predicate-repair", "[fixture-fault:assessment-predicate-repair]", "completed", ""],
     ["repair-exhausted", "[fixture-fault:repair-exhausted]", "failed", "provider_response_invalid"],
     ["provider-status", "[fixture-fault:unavailable]", "failed", "provider_unavailable"],
     ["provider-429", "[fixture-fault:status-429]", "failed", "provider_unavailable"],
@@ -65,6 +66,49 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
   const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
   const token = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
+  const assessmentDisconnect = rememberArguments("assessment-disconnect", "[fixture-fault:assessment-timeout]");
+  const assessmentController = new AbortController();
+  const assessmentCall = fetch(`${requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "")}/mcp`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${requiredEnv("DENSE_MEM_E2E_API_KEY")}`,
+      Accept: "application/json, text/event-stream",
+      "Content-Type": "application/json",
+      "Mcp-Protocol-Version": "2026-07-28",
+      "Mcp-Method": "tools/call",
+      "Mcp-Name": "remember",
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: "tools/call", params: {
+      name: "remember",
+      arguments: assessmentDisconnect.payload,
+      _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {} },
+    } }),
+    signal: assessmentController.signal,
+  }).then(async (response) => {
+    const body = await response.text();
+    expect(response.ok, `assessment disconnect fixture returned HTTP ${response.status}`);
+    return body;
+  });
+  const assessmentAbort = setTimeout(() => assessmentController.abort(), 1_000);
+  try {
+    await assert.rejects(assessmentCall, { name: "AbortError" });
+  } finally {
+    clearTimeout(assessmentAbort);
+  }
+  let assessmentFailure = "";
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    assessmentFailure = postgresQuery(`
+      SELECT error_code || '|' || failed_phase || '|' || document_count || '|' || outcome
+      FROM remember_attempts
+      WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+        AND idempotency_key = '${sqlLiteral(assessmentDisconnect.idempotencyKey)}'
+      ORDER BY created_at DESC, attempt_id DESC LIMIT 1;
+    `);
+    if (assessmentFailure) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  expect(assessmentFailure === "request_cancelled|assessment|0|failed", `assessment disconnect must retain cancellation without a semantic commit: ${assessmentFailure}`);
+
   for (const path of [
     "/control/api/remember-attempts?limit=101",
     "/control/api/remember-attempts?limit=0",
@@ -153,6 +197,13 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     ORDER BY created_at DESC, attempt_id DESC LIMIT 1;
   `);
   expect(repairRows === "2", `successful repair must retain two assessor turns: ${repairRows}`);
+  const predicateRepairRows = postgresQuery(`
+    SELECT assessor_turns FROM remember_attempts
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+      AND idempotency_key = '${sqlLiteral(idempotencyKeys["predicate-repair"])}'
+    ORDER BY created_at DESC, attempt_id DESC LIMIT 1;
+  `);
+  expect(predicateRepairRows === "2", `predicate-range feedback must repair the complete response in two turns: ${predicateRepairRows}`);
 
   const failed = attempts.failed;
   const failedList = await controlJSON(controlURL, token, `/control/api/remember-attempts?team_id=${encodeURIComponent(teamID)}&outcome=failed&limit=100`);
@@ -217,16 +268,18 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     attempt_id: item.attempt_id,
     diagnostic_id: failedDiagnostics.original_request?.diagnostic_id || "",
     validation_attempt_id: diagnosticAttemptIDs["assessment-invalid"],
+    assessment_disconnect: "request_cancelled",
   };
 }
 
 function rememberArguments(label, marker) {
   const suffix = `${Date.now()}-${randomUUID()}`;
   const idempotencyKey = `synchronous-write-diagnostics-${label}-${suffix}`;
+  const predicateContext = label === "predicate-repair" ? " This public fixture has additional background context.".repeat(6) : "";
   return {
     idempotencyKey,
     payload: {
-    evidence: [{ content: `Dense-Mem stores durable memory in PostgreSQL. [fixture:diagnostics-${label}] ${suffix} ${marker}`, source_type: "manual" }],
+    evidence: [{ content: `Dense-Mem stores durable memory in PostgreSQL. [fixture:diagnostics-${label}] ${suffix} ${marker}${predicateContext}`, source_type: "manual" }],
     relationships: [{
       ref: "durable-store",
       subject: { name: "Dense-Mem", entity_kind: "project" },

@@ -246,9 +246,9 @@ func AssessSynchronousRemember(
 		}
 		observability.RecordAssessorCall(deps.Metrics, request.InputTokens, 0, time.Since(started).Seconds(), outcome)
 		var mapped error
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
 			mapped = fmt.Errorf("%w: assessor phase exceeded 160 seconds", ErrRememberRequestTimeout)
-		} else if errors.Is(err, context.Canceled) {
+		} else if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
 			mapped = context.Canceled
 		} else {
 			var malformed *assessor.MalformedResponseError
