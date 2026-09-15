@@ -59,7 +59,7 @@ func TestPrivateMemoryGenerationTriggerAllowsAuthenticatedSharedWrites(t *testin
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "shared-writer")
 	repo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
 
-	created, err := repo.CreateIngest(ctx, CreateIngestInput{
+	created, err := repo.CreateIngestForTest(ctx, CreateIngestInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IdempotencyKey: "private-generation-shared-write",

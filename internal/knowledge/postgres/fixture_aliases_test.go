@@ -1,0 +1,11 @@
+package postgres
+
+import knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+
+type SearchReconciliationRun = knowledgecontract.SearchReconciliationRun
+type SearchReconciliationSelectionInput = knowledgecontract.SearchReconciliationSelectionInput
+type SearchReconciliationRunInput = knowledgecontract.SearchReconciliationRunInput
+type FinishSearchReconciliationRunInput = knowledgecontract.FinishSearchReconciliationRunInput
+type ApplySearchReconciliationInput = knowledgecontract.ApplySearchReconciliationInput
+type SearchConvergenceInput = knowledgecontract.SearchConvergenceInput
+type SearchDocumentDriftCount = knowledgecontract.SearchDocumentDriftCount

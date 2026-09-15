@@ -39,6 +39,7 @@ var (
 	ErrEvidenceConflictVersionStale   = conflictcontract.ErrEvidenceConflictVersionStale
 	ErrEvidenceConflictNotOpen        = conflictcontract.ErrEvidenceConflictNotOpen
 	ErrEvidenceConflictInvalidCommand = conflictcontract.ErrEvidenceConflictInvalidCommand
+	ErrEvidenceConflictStaleInput     = conflictcontract.ErrEvidenceConflictStaleInput
 )
 
 func validEvidenceConflictStatus(status string) bool {

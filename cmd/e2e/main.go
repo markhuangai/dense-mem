@@ -322,7 +322,11 @@ func reconcileCaseRegistry(root string, cases []databaseCase) error {
 			return fmt.Errorf("read E2E test source %s: %w", source, err)
 		}
 		packageName := "./" + filepath.ToSlash(filepath.Dir(relative))
-		for _, match := range testDeclarationPattern.FindAllStringSubmatch(string(contents), -1) {
+		matches := testDeclarationPattern.FindAllStringSubmatch(string(contents), -1)
+		if len(matches) == 0 {
+			return fmt.Errorf("E2E source %s has no test declaration", source)
+		}
+		for _, match := range matches {
 			name := match[1]
 			key := source + "\x00" + name
 			item, ok := registered[key]

@@ -12,23 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
 )
-
-type CommunityInputListInput = communitycontract.CommunityInputListInput
-type CommunityInput = communitycontract.CommunityInput
-type CommunityRunClaimInput = communitycontract.CommunityRunClaimInput
-type CommunitySnapshotPublishInput = communitycontract.CommunitySnapshotPublishInput
-type CommunityPublishRecord = communitycontract.CommunityPublishRecord
-type CommunityMembershipInput = communitycontract.CommunityMembershipInput
-type CommunitySourceInput = communitycontract.CommunitySourceInput
-type CommunityListInput = communitycontract.CommunityListInput
-type CommunityRecallInput = communitycontract.CommunityRecallInput
-type CommunityDiscoveryInput = communitycontract.CommunityDiscoveryInput
-type CommunityStalenessInput = communitycontract.CommunityStalenessInput
-type CommunityRecord = communitycontract.CommunityRecord
-type CommunityRecallRecord = communitycontract.CommunityRecallRecord
-type CommunityDiscoveryPath = communitycontract.CommunityDiscoveryPath
 
 func TestCommunityRepositorySnapshotLifecycleAndRecallExpansion(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)

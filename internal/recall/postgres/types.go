@@ -48,17 +48,6 @@ type Store struct {
 	evidenceConflicts     EvidenceConflictReader
 }
 
-// Source is the narrow construction seam used by composition. It exposes
-// database mechanics and conflict readers without exposing them to the Recall
-// application service.
-type Source interface {
-	RecallDatabase() *gorm.DB
-	RecallRLS() storagepostgres.RLSHelper
-	RecallSearchRepository() searchcontract.SearchRepository
-	RecallRelationshipConflictReader() RelationshipConflictReader
-	RecallEvidenceConflictReader() EvidenceConflictReader
-}
-
 func NewStore(db *gorm.DB, rls storagepostgres.RLSHelper, search searchcontract.SearchRepository, relationshipConflicts RelationshipConflictReader, evidenceConflicts EvidenceConflictReader) *Store {
 	return &Store{
 		db:                    db,
@@ -67,13 +56,6 @@ func NewStore(db *gorm.DB, rls storagepostgres.RLSHelper, search searchcontract.
 		relationshipConflicts: relationshipConflicts,
 		evidenceConflicts:     evidenceConflicts,
 	}
-}
-
-func NewStoreFromSource(source Source) *Store {
-	if source == nil {
-		return nil
-	}
-	return NewStore(source.RecallDatabase(), source.RecallRLS(), source.RecallSearchRepository(), source.RecallRelationshipConflictReader(), source.RecallEvidenceConflictReader())
 }
 
 func (r *Store) GetActiveSearchContract(ctx context.Context) (*ActiveSearchContract, error) {

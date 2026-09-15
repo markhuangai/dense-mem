@@ -59,6 +59,7 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 	}))
 
 	semantic := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	traceRepo := newPrivacyTraceFixtureStore(appDB, rls)
 	semanticCtx := requestctx.WithActor(ctx, requestctx.Actor{
 		TeamID:  teamID,
 		OwnerID: ownerID,
@@ -162,7 +163,7 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 		require.Equal(t, target.MemorySpaceID.String(), spaceID)
 	}
 
-	trace, err := semantic.TraceRelationship(semanticCtx, TraceRelationshipInput{
+	trace, err := traceRepo.TraceRelationship(semanticCtx, TraceRelationshipInput{
 		TeamID: teamID.String(), RelationshipID: relationshipID, MaxEvents: 20,
 	})
 	require.NoError(t, err)

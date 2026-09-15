@@ -42,7 +42,12 @@ func citedEvidenceRememberInput(teamID, ownerID, label, firstContent, secondCont
 	return input
 }
 
-func commitCitedEvidenceFixture(t *testing.T, ctx context.Context, repo *knowledgepostgres.Store, input knowledgepostgres.SynchronousRememberCommitInput) *knowledgepostgres.SynchronousRememberCommitResult {
+type rememberEmbeddingCommitter interface {
+	PlanRememberEmbeddings(context.Context, knowledgepostgres.SynchronousRememberCommitInput) (*knowledgepostgres.InlineEmbeddingPlan, error)
+	CommitRememberWithEmbeddings(context.Context, knowledgepostgres.SynchronousRememberCommitInput, []knowledgepostgres.InlineEmbeddingResult) (*knowledgepostgres.SynchronousRememberCommitResult, error)
+}
+
+func commitCitedEvidenceFixture(t *testing.T, ctx context.Context, repo rememberEmbeddingCommitter, input knowledgepostgres.SynchronousRememberCommitInput) *knowledgepostgres.SynchronousRememberCommitResult {
 	t.Helper()
 	plan, err := repo.PlanRememberEmbeddings(ctx, input)
 	require.NoError(t, err)

@@ -20,7 +20,7 @@ func TestEvidenceConflictRecallBoundsCaseHydration(t *testing.T) {
 	teamID := createLedgerTeam(t, adminDB, rls, "evidence-conflict-recall-bound-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-recall-bound-owner")
 	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	repo := newRecallKnowledgeConflictFixtureStore(appDB, rls)
 
 	sharedContent := "The bounded recall citation is shared across cases."
 	var sharedEvidenceID string
@@ -90,7 +90,7 @@ func TestEvidenceConflictRecallHistoricalOrderPrecedesCandidateLimit(t *testing.
 	teamID := createLedgerTeam(t, adminDB, rls, "evidence-conflict-recall-historical-order-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-recall-historical-order-owner")
 	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	repo := newRecallKnowledgeConflictFixtureStore(appDB, rls)
 
 	const totalCases = evidenceConflictRecallCandidateLimit + 1
 	const postKnownAtUpdates = evidenceConflictRecallCandidateLimit - EvidenceConflictMaxResults + 1
@@ -175,7 +175,7 @@ func TestEvidenceConflictHistoricalEventHydrationIsBounded(t *testing.T) {
 	teamID := createLedgerTeam(t, adminDB, rls, "evidence-conflict-historical-events-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-historical-events-owner")
 	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	repo := newRecallKnowledgeConflictFixtureStore(appDB, rls)
 
 	input := citedEvidenceRememberInput(teamID, ownerID, "evidence-conflict-historical-events", "Historical event one.", "Historical event two.", spaceID, generation)
 	commitCitedEvidenceFixture(t, ctx, repo, input)
@@ -235,7 +235,7 @@ func TestEvidenceConflictRecallFiltersHistoricalIneligibleBeforeCandidateLimit(t
 	teamID := createLedgerTeam(t, adminDB, rls, "evidence-conflict-recall-historical-filter-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-recall-historical-filter-owner")
 	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	repo := newRecallKnowledgeConflictFixtureStore(appDB, rls)
 
 	input := citedEvidenceRememberInput(teamID, ownerID, "evidence-conflict-recall-historical-filter", "Historical filter evidence one.", "Historical filter evidence two.", spaceID, generation)
 	commitCitedEvidenceFixture(t, ctx, repo, input)

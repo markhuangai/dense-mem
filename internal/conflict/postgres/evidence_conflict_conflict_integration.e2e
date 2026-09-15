@@ -22,7 +22,7 @@ func TestEvidenceConflictRememberCreationAndRecurrence(t *testing.T) {
 	teamID := createLedgerTeam(t, adminDB, rls, "evidence-conflict-recurrence-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-recurrence-owner")
 	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	repo := newConflictKnowledgeFixtureStore(appDB, rls)
 
 	first := citedEvidenceRememberInput(teamID, ownerID, "evidence-conflict-first", "Alice approved the change.", "Alice rejected the change.", spaceID, generation)
 	commitCitedEvidenceFixture(t, ctx, repo, first)
@@ -204,7 +204,7 @@ func TestEvidenceConflictRememberKeepsForcedBatchPositionsDistinct(t *testing.T)
 	defer cleanup()
 	ctx := context.Background()
 	insertSearchTestContract(t, adminDB, rls, "evidence-conflict-forced-distinct", 2, "exact", "")
-	repo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	repo := newConflictKnowledgeFixtureStore(appDB, rls)
 	content := "Forced evidence stays distinct."
 	contentHash := sha256Hex(content)
 
@@ -248,7 +248,7 @@ func TestEvidenceConflictDismissalRecordsTerminalEvent(t *testing.T) {
 	teamID := createLedgerTeam(t, adminDB, rls, "evidence-conflict-dismiss-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-dismiss-owner")
 	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	repo := newConflictKnowledgeFixtureStore(appDB, rls)
 
 	input := citedEvidenceRememberInput(teamID, ownerID, "evidence-conflict-dismiss", "Dismissal evidence supports the first position.", "Dismissal evidence supports the opposing position.", spaceID, generation)
 	commitCitedEvidenceFixture(t, ctx, repo, input)
@@ -298,7 +298,7 @@ func TestEvidenceConflictConcurrentCreationSerializesSameOwnerAndDifferentOwner(
 	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-concurrent-owner-a")
 	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-concurrent-owner-b")
 	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	repo := newConflictKnowledgeFixtureStore(appDB, rls)
 	if sqlDB, err := appDB.DB(); err == nil {
 		sqlDB.SetMaxOpenConns(8)
 		sqlDB.SetMaxIdleConns(8)
@@ -389,7 +389,7 @@ func TestEvidenceConflictChangedPositionSetCreatesNewCase(t *testing.T) {
 	teamID := createLedgerTeam(t, adminDB, rls, "evidence-conflict-changed-set-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-changed-set-owner")
 	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	repo := newConflictKnowledgeFixtureStore(appDB, rls)
 
 	first := citedEvidenceRememberInput(teamID, ownerID, "evidence-conflict-changed-set-first", "Alice approved the change.", "Alice rejected the change.", spaceID, generation)
 	commitCitedEvidenceFixture(t, ctx, repo, first)
@@ -411,7 +411,7 @@ func TestEvidenceConflictStaleCandidateRollsBackRemember(t *testing.T) {
 	teamID := createLedgerTeam(t, adminDB, rls, "evidence-conflict-stale-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-stale-owner")
 	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	repo := newConflictKnowledgeFixtureStore(appDB, rls)
 
 	candidate := evidenceOnlyRememberInput(teamID, ownerID, "evidence-conflict-candidate")
 	candidate.SpaceID, candidate.SpaceGeneration = spaceID, generation

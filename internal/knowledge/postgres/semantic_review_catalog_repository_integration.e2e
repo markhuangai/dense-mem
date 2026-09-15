@@ -65,25 +65,36 @@ func TestSemanticCatalogsOmitSealedGenerationEntities(t *testing.T) {
 	require.Len(t, entityCatalog.Groups, 1)
 	assert.Empty(t, entityCatalog.Groups[0].Candidates, "native entity catalog must omit sealed-generation entities")
 
-	reviewCandidates, err := repo.ListSemanticReviewEntityCandidates(ctx, SemanticReviewEntityCandidateInput{
-		TeamID: teamID, OwnerProfileID: ownerID, Name: "Sealed Catalog Entity", EntityKind: "project", Limit: 5,
+	reviewCatalog, err := catalog.ListSubmissionAssessmentEntityCatalog(ctx, SubmissionAssessmentEntityCatalogInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Entities: []SubmissionAssessmentEntityCatalogTarget{{
+			Ref: "sealed-review", Surface: "Sealed Catalog Entity", EntityKind: "project",
+		}}, CandidateLimit: 5,
 	})
 	require.NoError(t, err)
-	assert.Empty(t, reviewCandidates)
+	require.Len(t, reviewCatalog.Groups, 1)
+	assert.Empty(t, reviewCatalog.Groups[0].Candidates)
 
-	knownEntities, err := repo.ListSemanticAssessmentKnownEntities(ctx, SemanticAssessmentKnownEntityInput{
-		TeamID: teamID, OwnerProfileID: ownerID, EntityIDs: []string{activeEntity.EntityID, privateEntityID.String()},
+	knownCatalog, err := catalog.ListSubmissionAssessmentEntityCatalog(ctx, SubmissionAssessmentEntityCatalogInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Entities: []SubmissionAssessmentEntityCatalogTarget{
+			{Ref: "active", KnownEntityID: activeEntity.EntityID},
+			{Ref: "private", KnownEntityID: privateEntityID.String()},
+		}, CandidateLimit: 1,
 	})
 	require.NoError(t, err)
+	knownEntities := flattenEntityCatalogCandidates(knownCatalog)
 	require.Len(t, knownEntities, 1)
 	assert.Equal(t, activeEntity.EntityID, knownEntities[0].EntityID)
 
-	matches, err := repo.ListSemanticAssessmentEntityMatches(ctx, SemanticAssessmentEntityMatchInput{
-		TeamID: teamID, OwnerProfileID: ownerID, EvidenceText: "Active Catalog Entity and Sealed Catalog Entity", Limit: 5,
+	matchCatalog, err := catalog.ListSubmissionAssessmentEntityCatalog(ctx, SubmissionAssessmentEntityCatalogInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Entities: []SubmissionAssessmentEntityCatalogTarget{
+			{Ref: "active-match", Surface: "Active Catalog Entity"},
+			{Ref: "sealed-match", Surface: "Sealed Catalog Entity"},
+		}, CandidateLimit: 5,
 	})
 	require.NoError(t, err)
-	require.Len(t, matches.Matches, 1)
-	assert.Equal(t, activeEntity.EntityID, matches.Matches[0].Candidate.EntityID)
+	matches := flattenEntityCatalogCandidates(matchCatalog)
+	require.Len(t, matches, 1)
+	assert.Equal(t, activeEntity.EntityID, matches[0].EntityID)
 }
 
 func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.T) {
@@ -114,48 +125,50 @@ func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.
 	}))
 	require.Equal(t, int64(1), retiredRows)
 
-	candidates, err := repo.ListSemanticReviewEntityCandidates(ctx, SemanticReviewEntityCandidateInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerB,
-		Name:           " DENSE-MEM ",
-		EntityKind:     "project",
-		Limit:          5,
+	candidateCatalog, err := repo.ListSubmissionAssessmentEntityCatalog(ctx, SubmissionAssessmentEntityCatalogInput{
+		TeamID: teamID, OwnerProfileID: ownerB,
+		Entities:       []SubmissionAssessmentEntityCatalogTarget{{Ref: "candidate", Surface: " DENSE-MEM ", EntityKind: "project"}},
+		CandidateLimit: 5,
 	})
 	require.NoError(t, err)
+	candidates := flattenEntityCatalogCandidates(candidateCatalog)
 	require.Len(t, candidates, 1)
 	assert.Equal(t, entity.EntityID, candidates[0].EntityID)
 	assert.Equal(t, "Dense-Mem", candidates[0].CanonicalName)
 
-	hidden, err := repo.ListSemanticReviewEntityCandidates(ctx, SemanticReviewEntityCandidateInput{
-		TeamID:         otherTeamID,
-		OwnerProfileID: otherOwnerID,
-		Name:           "Dense-Mem",
-		EntityKind:     "project",
+	hiddenCatalog, err := repo.ListSubmissionAssessmentEntityCatalog(ctx, SubmissionAssessmentEntityCatalogInput{
+		TeamID: otherTeamID, OwnerProfileID: otherOwnerID,
+		Entities:       []SubmissionAssessmentEntityCatalogTarget{{Ref: "hidden", Surface: "Dense-Mem", EntityKind: "project"}},
+		CandidateLimit: 5,
 	})
 	require.NoError(t, err)
-	assert.Empty(t, hidden)
+	assert.Empty(t, flattenEntityCatalogCandidates(hiddenCatalog))
 
-	known, err := repo.ListSemanticAssessmentKnownEntities(ctx, SemanticAssessmentKnownEntityInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerB,
-		EntityIDs:      []string{entity.EntityID, entity.EntityID, retiredEntity.EntityID, otherEntity.EntityID},
+	knownCatalog, err := repo.ListSubmissionAssessmentEntityCatalog(ctx, SubmissionAssessmentEntityCatalogInput{
+		TeamID: teamID, OwnerProfileID: ownerB, CandidateLimit: 1,
+		Entities: []SubmissionAssessmentEntityCatalogTarget{
+			{Ref: "entity-1", KnownEntityID: entity.EntityID},
+			{Ref: "entity-duplicate", KnownEntityID: entity.EntityID},
+			{Ref: "retired", KnownEntityID: retiredEntity.EntityID},
+			{Ref: "other", KnownEntityID: otherEntity.EntityID},
+		},
 	})
 	require.NoError(t, err)
+	known := flattenEntityCatalogCandidates(knownCatalog)
+	known = uniqueEntityCandidates(known)
 	require.Len(t, known, 1)
 	assert.Equal(t, entity.EntityID, known[0].EntityID)
 	assert.Equal(t, "Dense-Mem", known[0].CanonicalName)
 
-	predicates, err := repo.ListSemanticReviewPredicateCandidates(ctx, SemanticReviewPredicateCandidateInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerB,
-		Predicate:      "is_working_on",
+	resolutions, err := repo.ResolveSemanticReviewPredicateCandidates(ctx, SemanticReviewPredicateResolutionInput{
+		TeamID: teamID, OwnerProfileID: ownerB, Predicates: []string{"is_working_on"}, Limit: 1,
 	})
 	require.NoError(t, err)
-	require.Len(t, predicates, 1)
-	assert.Equal(t, "works_on", predicates[0].PredicateKey)
-	assert.Equal(t, 1, predicates[0].Version)
+	require.Len(t, resolutions, 1)
+	assert.Equal(t, "works_on", resolutions[0].Candidate.PredicateKey)
+	assert.Equal(t, 1, resolutions[0].Candidate.Version)
 
-	resolutions, err := catalog.ResolveSemanticReviewPredicateCandidates(ctx, SemanticReviewPredicateResolutionInput{
+	resolutions, err = catalog.ResolveSemanticReviewPredicateCandidates(ctx, SemanticReviewPredicateResolutionInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerB,
 		Predicates:     []string{"is working on", "novel relation"},
@@ -167,12 +180,13 @@ func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.
 	assert.Equal(t, "works_on", resolutions[0].Candidate.PredicateKey)
 	assert.Contains(t, resolutions[0].Candidate.Aliases, "is_working_on")
 
-	options, err := repo.ListSemanticReviewPredicateOptions(ctx, SemanticReviewPredicateOptionsInput{
+	optionCandidates, err := repo.ListSemanticAssessmentPredicateOptions(ctx, SemanticAssessmentPredicateOptionsInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerB,
 		QueryText:      "Dense-Mem uses PostgreSQL for durable memory.",
 	})
 	require.NoError(t, err)
+	options := flattenPredicateOptions(optionCandidates)
 	require.NotEmpty(t, options)
 	assert.Equal(t, "uses", options[0])
 	assert.Contains(t, options, "works_on")
@@ -244,10 +258,8 @@ func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.
 		`, teamID).Error
 	}))
 
-	retiredCandidates, err := repo.ListSemanticReviewPredicateCandidates(ctx, SemanticReviewPredicateCandidateInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerB,
-		Predicate:      "is_working_on",
+	retiredCandidates, err := repo.ResolveSemanticReviewPredicateCandidates(ctx, SemanticReviewPredicateResolutionInput{
+		TeamID: teamID, OwnerProfileID: ownerB, Predicates: []string{"is_working_on"}, Limit: 1,
 	})
 	require.NoError(t, err)
 	assert.Empty(t, retiredCandidates)
@@ -260,12 +272,13 @@ func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.
 	require.NoError(t, err)
 	assert.Empty(t, retiredResolutions)
 
-	retiredOptions, err := repo.ListSemanticReviewPredicateOptions(ctx, SemanticReviewPredicateOptionsInput{
+	retiredOptionCandidates, err := repo.ListSemanticAssessmentPredicateOptions(ctx, SemanticAssessmentPredicateOptionsInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerB,
 		QueryText:      "Mark works on Dense-Mem.",
 	})
 	require.NoError(t, err)
+	retiredOptions := flattenPredicateOptions(retiredOptionCandidates)
 	assert.NotContains(t, retiredOptions, "works_on")
 	assert.NotContains(t, retiredOptions, "is_working_on")
 }
@@ -296,23 +309,59 @@ func TestSemanticAssessmentEntityMatchesUseOnlyCanonicalAndAliasNames(t *testing
 	})
 	require.NoError(t, err)
 
-	formerOnly, err := repo.ListSemanticAssessmentEntityMatches(ctx, SemanticAssessmentEntityMatchInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerID,
-		EvidenceText:   "Dense Memory Legacy is no longer the current name.",
-		Limit:          5,
+	formerOnly, err := repo.ListSubmissionAssessmentEntityCatalog(ctx, SubmissionAssessmentEntityCatalogInput{
+		TeamID: teamID, OwnerProfileID: ownerID, CandidateLimit: 5,
+		Entities: []SubmissionAssessmentEntityCatalogTarget{{Ref: "former", Surface: "Dense Memory Legacy"}},
 	})
 	require.NoError(t, err)
-	assert.Empty(t, formerOnly.Matches)
+	assert.Empty(t, flattenEntityCatalogCandidates(formerOnly))
 
-	aliasMatches, err := repo.ListSemanticAssessmentEntityMatches(ctx, SemanticAssessmentEntityMatchInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerID,
-		EvidenceText:   "DM retains its canonical project identity.",
-		Limit:          5,
+	aliasCatalog, err := repo.ListSubmissionAssessmentEntityCatalog(ctx, SubmissionAssessmentEntityCatalogInput{
+		TeamID: teamID, OwnerProfileID: ownerID, CandidateLimit: 5,
+		Entities: []SubmissionAssessmentEntityCatalogTarget{{Ref: "alias", Surface: "DM"}},
 	})
 	require.NoError(t, err)
-	require.Len(t, aliasMatches.Matches, 1)
-	assert.Equal(t, entity.EntityID, aliasMatches.Matches[0].Candidate.EntityID)
-	assert.Equal(t, "DM", aliasMatches.Matches[0].MatchedName)
+	aliasMatches := flattenEntityCatalogCandidates(aliasCatalog)
+	require.Len(t, aliasMatches, 1)
+	assert.Equal(t, entity.EntityID, aliasMatches[0].EntityID)
+	assert.Contains(t, aliasMatches[0].ActiveNames, "DM")
+}
+
+func flattenEntityCatalogCandidates(result SubmissionAssessmentEntityCatalogResult) []SemanticReviewEntityCandidate {
+	var candidates []SemanticReviewEntityCandidate
+	for _, group := range result.Groups {
+		candidates = append(candidates, group.Candidates...)
+	}
+	return candidates
+}
+
+func uniqueEntityCandidates(candidates []SemanticReviewEntityCandidate) []SemanticReviewEntityCandidate {
+	seen := make(map[string]struct{}, len(candidates))
+	result := make([]SemanticReviewEntityCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if _, ok := seen[candidate.EntityID]; ok {
+			continue
+		}
+		seen[candidate.EntityID] = struct{}{}
+		result = append(result, candidate)
+	}
+	return result
+}
+
+func flattenPredicateOptions(candidates []SemanticReviewPredicateCandidate) []string {
+	values := make([]string, 0, len(candidates)*2)
+	seen := make(map[string]struct{}, len(candidates)*2)
+	for _, candidate := range candidates {
+		for _, value := range append([]string{candidate.PredicateKey}, candidate.Aliases...) {
+			if value == "" {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			values = append(values, value)
+		}
+	}
+	return values
 }

@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 func TestRememberAttemptDiagnosticHoldTransactionRollback(t *testing.T) {
@@ -56,7 +57,7 @@ func TestRememberAttemptDiagnosticHoldTransactionRollback(t *testing.T) {
 		if result.RowsAffected != 1 {
 			return errors.New("expected one legal hold to release")
 		}
-		require.NoError(t, setRememberAttemptDiagnosticHoldStateTx(ctx, tx, credential.MemorySpaceID, false))
+		require.NoError(t, storagepostgres.SetRememberAttemptDiagnosticHoldStateTx(ctx, tx, credential.MemorySpaceID, false))
 		return errors.New("force diagnostic-hold rollback")
 	})
 	require.ErrorContains(t, err, "force diagnostic-hold rollback")

@@ -179,6 +179,10 @@
       "issue": 365
     },
     {
+      "path": "internal/knowledge/postgres/predicate_catalog_owner.go",
+      "issue": 382
+    },
+    {
       "path": "internal/knowledge/postgres/relationship_correction_embedding_plan.go",
       "issue": 362
     },
@@ -327,7 +331,7 @@
       "issue": 362
     },
     {
-      "path": "internal/knowledge/postgres/evidence_conflict_fixtures.e2e",
+      "path": "internal/knowledge/postgres/evidence_conflict_fixtures_test.go",
       "issue": 362
     },
     {

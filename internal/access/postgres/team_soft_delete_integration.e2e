@@ -3,6 +3,8 @@ package postgres
 import (
 	"context"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
+	searchpostgres "github.com/markhuangai/dense-mem/internal/search/postgres"
 	"strings"
 	"sync"
 	"testing"
@@ -39,8 +41,8 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 	})
 	require.NoError(t, err)
 	require.NotNil(t, created)
-	searchRepo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
-	searchDoc, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+	projectionRepo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	searchDoc, err := projectionRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		SourceKind:     "evidence",
@@ -149,7 +151,7 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 	require.ErrorIs(t, err, ErrTeamInactive)
 	require.Zero(t, apiRows)
 
-	hits, err := searchRepo.SearchFullText(ctx, FullTextSearchInput{
+	hits, err := searchpostgres.NewStore(appDB, rls).SearchFullText(ctx, searchcontract.FullTextSearchInput{
 		TeamID: teamID,
 		Query:  "provenance",
 		Limit:  5,

@@ -343,6 +343,75 @@ func TestEvidenceProviderMappingsCoverRecordAndReferenceVariants(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestProviderEvidenceDiscoveryRequestRejectsAndBoundsInputs(t *testing.T) {
+	provider := &evidenceProviderGeneratorStub{model: "provider"}
+	generator := &EvidenceProviderGenerator{provider: provider}
+	_, _, err := generator.GenerateEvidence(context.Background(), "team", EvidenceGenerationRequest{})
+	require.ErrorContains(t, err, "target is required")
+
+	if _, _, err := providerEvidenceDiscoveryRequest(EvidenceGenerationRequest{}); err == nil {
+		t.Fatal("empty evidence target was accepted")
+	}
+	nodes := []dreamcontract.EvidenceNode{
+		{ID: "", Kind: "entity"},
+		{ID: "node-b", Kind: "project", Display: "B"},
+		{ID: "node-b", Kind: "project", Display: "duplicate"},
+		{ID: "node-a", Kind: "entity", Display: "A"},
+	}
+	predicates := []dreamcontract.DreamTargetPredicate{
+		{PredicateKey: "uses", Version: 2},
+		{PredicateKey: "Uses", Version: 1},
+		{PredicateKey: "", Version: 1},
+		{PredicateKey: "works", Version: 0},
+	}
+	contexts := []dreamcontract.EvidenceContext{
+		{EvidenceID: "", Content: "ignored"},
+		{EvidenceID: "target", Content: "duplicate"},
+		{EvidenceID: "context-1", Content: "context one"},
+		{EvidenceID: "context-2", Content: "context two"},
+	}
+	relationships := make([]dreamcontract.DreamInput, dreamgeneration.EvidenceDiscoveryMaxRelated+2)
+	hypotheses := make([]dreamcontract.HypothesisRecord, dreamgeneration.EvidenceDiscoveryMaxRelated+2)
+	for i := range relationships {
+		relationships[i] = dreamcontract.DreamInput{SubjectEntityID: "node-a", SubjectKind: "entity", ObjectEntityID: "node-b", ObjectKind: "project", PredicateKey: "uses", Status: "active"}
+		hypotheses[i] = dreamcontract.HypothesisRecord{SubjectEntityID: "node-a", ObjectEntityID: "node-b", PredicateKey: "uses", Status: "proposed"}
+	}
+	request, mappings, err := providerEvidenceDiscoveryRequest(EvidenceGenerationRequest{
+		Target: dreamcontract.EvidenceTarget{EvidenceID: "target", FragmentID: "fragment", Content: "target content"},
+		Nodes:  nodes, AllowedPredicates: predicates, Contexts: contexts,
+		RelatedRelationships: relationships, RelatedHypotheses: hypotheses, MaxOutputs: 0,
+	})
+	require.NoError(t, err)
+	require.Len(t, request.Contexts, 3)
+	require.Len(t, request.RelatedRelationships, dreamgeneration.EvidenceDiscoveryMaxRelated)
+	require.Len(t, request.RelatedHypotheses, 0)
+	require.NotEmpty(t, mappings.nodes)
+	require.NotEmpty(t, mappings.predicates)
+
+	// A related hypothesis is retained when no relationship consumes the
+	// bounded related-item budget, and invalid references are skipped.
+	validHypothesis := dreamcontract.HypothesisRecord{SubjectEntityID: "node-a", ObjectEntityID: "node-b", PredicateKey: "uses", Status: "proposed"}
+	request, _, err = providerEvidenceDiscoveryRequest(EvidenceGenerationRequest{
+		Target:            dreamcontract.EvidenceTarget{EvidenceID: "target", Content: "target"},
+		Nodes:             []dreamcontract.EvidenceNode{{ID: "node-a", Kind: "entity"}, {ID: "node-b", Kind: "entity"}},
+		AllowedPredicates: []dreamcontract.DreamTargetPredicate{{PredicateKey: "uses", Version: 1}},
+		RelatedHypotheses: []dreamcontract.HypothesisRecord{{SubjectEntityID: "missing", ObjectEntityID: "node-b", PredicateKey: "uses"}, validHypothesis},
+	})
+	require.NoError(t, err)
+	require.Len(t, request.RelatedHypotheses, 1)
+
+	if _, ok := mapEvidenceDiscoveryProposal(dreamgeneration.EvidenceDiscoveryProposal{
+		SubjectRef: "subject", PredicateRef: "predicate", ObjectRef: "object",
+		Derivations: []dreamgeneration.EvidenceDiscoveryDerivation{{EvidenceRef: "context", Start: 0, End: 100}},
+	}, evidenceProviderMappings{
+		nodes:      map[string]dreamcontract.EvidenceNode{"subject": {ID: "subject", Kind: "entity"}, "object": {ID: "object", Kind: "entity"}},
+		predicates: map[string]dreamcontract.DreamTargetPredicate{"predicate": {PredicateKey: "uses", Version: 1}},
+		contexts:   map[string]dreamcontract.EvidenceContext{"context": {EvidenceID: "evidence", Content: "short"}},
+	}); ok {
+		t.Fatal("out-of-range evidence citation was accepted")
+	}
+}
+
 type evidenceProviderGeneratorStub struct {
 	model    string
 	response dreamgeneration.EvidenceDiscoveryResponse

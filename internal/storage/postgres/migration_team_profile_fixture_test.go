@@ -18,7 +18,7 @@ func insertMigrationTeamProfile(t *testing.T, ctx context.Context, db *sql.DB) (
 	require.NoError(t, db.QueryRowContext(ctx, `
 		SELECT to_regclass('public.team_profiles') IS NOT NULL
 	`).Scan(&hasLegacyProfiles))
-	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+	require.NoError(t, execMigrationFixtureTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_team_id', $1, true), set_config('app.current_profile_id', $2, true)`, teamID, profileID); err != nil {
 			return err
 		}
@@ -83,4 +83,28 @@ func insertMigrationTeamProfile(t *testing.T, ctx context.Context, db *sql.DB) (
 		return err
 	}))
 	return teamID, profileID
+}
+
+func execMigrationFixtureTxMode(ctx context.Context, db *sql.DB, txMode string, fn func(tx *sql.Tx) error) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', $1, true)`, txMode); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_team_id', '', true)`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_profile_id', '', true)`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }

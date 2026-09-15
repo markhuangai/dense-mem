@@ -76,30 +76,16 @@ func addRecallHit(rows *sqlmock.Rows, kind, id, state string) *sqlmock.Rows {
 	return rows.AddRow(recallTeam, id, kind, id, 2, 3, recallContract, state, 0.25, 0.75)
 }
 
-type recallStoreSource struct{ *Store }
-
-func (s recallStoreSource) RecallDatabase() *gorm.DB                                { return s.db }
-func (s recallStoreSource) RecallRLS() storagepostgres.RLSHelper                    { return s.rls }
-func (s recallStoreSource) RecallSearchRepository() searchcontract.SearchRepository { return s.search }
-func (s recallStoreSource) RecallRelationshipConflictReader() RelationshipConflictReader {
-	return s.relationshipConflicts
-}
-func (s recallStoreSource) RecallEvidenceConflictReader() EvidenceConflictReader {
-	return s.evidenceConflicts
-}
-
 func TestRecallStoreConstructionPreservesDependenciesAndReportsMissingOnes(t *testing.T) {
 	db, _ := newRecallSQLMockDB(t)
 	contract := recallTestContract()
-	source := recallStoreSource{NewStore(db, recallQueryRLS{}, recallSearchContract{contract: contract}, nil, nil)}
-	store := NewStoreFromSource(source)
+	store := NewStore(db, recallQueryRLS{}, recallSearchContract{contract: contract}, nil, nil)
 	got, err := store.GetActiveSearchContract(t.Context())
 	require.NoError(t, err)
 	require.Same(t, contract, got)
 	gotDB, err := store.database()
 	require.NoError(t, err)
 	require.Same(t, db, gotDB)
-	require.Nil(t, NewStoreFromSource(nil))
 	var missing *Store
 	_, err = missing.database()
 	require.EqualError(t, err, "recall: database is required")

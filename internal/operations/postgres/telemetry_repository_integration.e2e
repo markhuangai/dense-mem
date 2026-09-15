@@ -67,6 +67,7 @@ func TestReadTelemetryLifecycleOmitsSealedGenerationRows(t *testing.T) {
 	semantic := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
 	ledger := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
 	createTelemetryRelationship(t, ctx, semantic, ledger, teamID, ownerID, "telemetry-sealed-shared")
+	reader := NewTelemetryLifecycleRepository(appDB, rls)
 
 	privateSpace, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureCredentialPrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
 	require.NoError(t, err)
@@ -152,7 +153,7 @@ func TestReadTelemetryLifecycleOmitsSealedGenerationRows(t *testing.T) {
 	from := time.Now().UTC().Add(-time.Minute)
 	to := time.Now().UTC().Add(time.Minute)
 	teamUUID := uuid.MustParse(teamID)
-	snapshot, err := ledger.ReadTelemetryLifecycle(ctx, TelemetryLifecycleFilter{TeamID: &teamUUID}, from, to)
+	snapshot, err := reader.ReadTelemetryLifecycle(ctx, TelemetryLifecycleFilter{TeamID: &teamUUID}, from, to)
 	require.NoError(t, err)
 	assert.Equal(t, 1.0, snapshot.Transitions["active"])
 	assert.Equal(t, 0.0, snapshot.Corrections)

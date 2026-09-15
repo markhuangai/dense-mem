@@ -42,7 +42,7 @@ func commitCitedEvidenceFixture(t *testing.T, ctx context.Context, repo *Store, 
 	t.Helper()
 	plan, err := repo.PlanRememberEmbeddings(ctx, input)
 	require.NoError(t, err)
-	result, err := repo.CommitRememberWithEmbeddings(ctx, input, rememberTestEmbeddings(plan, false))
+	result, err := repo.CommitRememberWithEmbeddings(ctx, input, fixtureRememberTestEmbeddings(plan))
 	require.NoError(t, err)
 	return result
 }
@@ -54,4 +54,20 @@ func conflictIDForTest(t *testing.T, db *gorm.DB, rls rLSHelper, teamID string) 
 		return tx.Raw(`SELECT conflict_id::text FROM evidence_conflict_cases WHERE team_id = ?::uuid ORDER BY created_at LIMIT 1`, teamID).Row().Scan(&conflictID)
 	}))
 	return conflictID
+}
+
+func fixtureRememberTestEmbeddings(plan *InlineEmbeddingPlan) []InlineEmbeddingResult {
+	results := make([]InlineEmbeddingResult, 0, len(plan.Documents))
+	for _, document := range plan.Documents {
+		vector := make([]float32, plan.EmbeddingDimensions)
+		if len(vector) > 0 {
+			vector[0] = 1
+		}
+		results = append(results, InlineEmbeddingResult{
+			DocumentHash: document.DocumentHash, Embedding: vector,
+			EmbeddingContractID: plan.EmbeddingContractID, EmbeddingDimensions: plan.EmbeddingDimensions,
+			EmbeddingModel: plan.EmbeddingModel, SearchIndexGenerationID: plan.SearchIndexGenerationID, IndexGeneration: plan.IndexGeneration,
+		})
+	}
+	return results
 }

@@ -49,6 +49,7 @@ export default defineConfig({
       exclude: [
         "src/**/*.test.{ts,tsx}",
         "src/test/**",
+        "src/App.test-helpers.ts",
         "src/user/App.test-helpers.ts",
         "src/main.tsx",
         "src/user/main.tsx",

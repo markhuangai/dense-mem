@@ -1,6 +1,17 @@
 package postgres
 
-import knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+import (
+	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+)
+
+const (
+	ConflictReviewOutcomeResolve = domain.ConflictReviewOutcomeResolve
+	ConflictReviewOutcomeOverdue = domain.ConflictReviewOutcomeOverdue
+	ConflictReviewStageDueMajority = domain.ConflictReviewStageDueMajority
+)
 
 type EvidenceInput = knowledgepostgres.EvidenceInput
 type ApplyRelationshipDecisionInput = knowledgepostgres.ApplyRelationshipDecisionInput
@@ -24,3 +35,9 @@ type RelationshipCorrectionSupport = knowledgepostgres.RelationshipCorrectionSup
 type RememberDuplicateResolution = knowledgepostgres.RememberDuplicateResolution
 type InlineEmbeddingPlan = knowledgepostgres.InlineEmbeddingPlan
 type InlineEmbeddingResult = knowledgepostgres.InlineEmbeddingResult
+type RememberDuplicateCandidateInput = knowledgepostgres.RememberDuplicateCandidateInput
+type RememberDuplicateEmbeddingPlan = knowledgepostgres.RememberDuplicateEmbeddingPlan
+type RetractEvidenceInput = knowledgepostgres.RetractEvidenceInput
+type RecallEvidenceInput = recallcontract.RecallEvidenceInput
+type RecallEvidenceHit = recallcontract.RecallEvidenceHit
+type SecurityEventDraft = knowledgecontract.SecurityEventDraft

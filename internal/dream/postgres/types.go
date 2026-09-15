@@ -44,6 +44,7 @@ type EvaluationGetInput = dreamcontract.EvaluationGetInput
 type EvaluationPage = dreamcontract.EvaluationPage
 
 var (
+	ErrTeamInactive                       = dreamcontract.ErrTeamInactive
 	ErrDreamCycleAlreadyClaimed            = dreamcontract.ErrDreamCycleAlreadyClaimed
 	ErrDreamHypothesisNotFound             = dreamcontract.ErrDreamHypothesisNotFound
 	ErrDreamHypothesisIDInvalid            = dreamcontract.ErrDreamHypothesisIDInvalid

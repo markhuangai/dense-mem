@@ -120,6 +120,21 @@ func TestGenerateLocalEval1KAcceptsHistoricalPresetAlias(t *testing.T) {
 	}
 }
 
+func TestEvalSeedGeneratorRejectsUnsupportedPresetAndMalformedRelationshipContent(t *testing.T) {
+	if err := generatePreset("unsupported", filepath.Join(t.TempDir(), "seed"), filepath.Join(t.TempDir(), "suite.jsonl")); err == nil {
+		t.Fatal("unsupported preset was accepted")
+	}
+	if _, err := localEval100Relationship("unsupported content"); err == nil {
+		t.Fatal("unsupported relationship content was accepted")
+	}
+	if _, err := localEvalToken("content", "missing"); err == nil {
+		t.Fatal("missing token prefix was accepted")
+	}
+	if _, err := localEval100Relationship("Canonical owner registry has no account L token"); err == nil {
+		t.Fatal("missing relationship token was accepted")
+	}
+}
+
 func assertSameFile(t *testing.T, firstPath, secondPath string) {
 	t.Helper()
 	first, err := os.ReadFile(firstPath)

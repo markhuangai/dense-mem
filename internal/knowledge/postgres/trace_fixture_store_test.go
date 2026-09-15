@@ -16,7 +16,6 @@ import (
 type TraceRelationshipInput = tracepostgres.TraceRelationshipInput
 
 type knowledgeTraceFixtureStore struct {
-	*Store
 	trace *tracepostgres.Store
 }
 
@@ -28,15 +27,11 @@ func newKnowledgeTraceFixtureStore(db *gorm.DB, rls storagepostgres.RLSHelper) *
 		}
 		return graphpostgres.Snapshot(input, rows), nil
 	}, nil)
-	return &knowledgeTraceFixtureStore{Store: NewStore(db, rls, ConflictRuntimeConfig{}), trace: trace}
+	return &knowledgeTraceFixtureStore{trace: trace}
 }
 
 func (s *knowledgeTraceFixtureStore) TraceRelationship(ctx context.Context, input tracepostgres.TraceRelationshipInput) (*tracepostgres.RelationshipTraceResult, error) {
 	return s.trace.TraceRelationship(ctx, input)
-}
-
-func (s *Store) TraceRelationship(ctx context.Context, input tracepostgres.TraceRelationshipInput) (*tracepostgres.RelationshipTraceResult, error) {
-	return newKnowledgeTraceFixtureStore(s.db, s.rls).trace.TraceRelationship(ctx, input)
 }
 
 func assertDuplicateTraceOccurrences(

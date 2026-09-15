@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"testing"
@@ -13,6 +14,33 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+type recallConflictStore = conflictpostgres.Store
+
+type recallKnowledgeConflictFixtureStore struct {
+	*knowledgepostgres.Store
+	*recallConflictStore
+}
+
+func newRecallKnowledgeConflictFixtureStore(db *gorm.DB, rls storagepostgres.RLSHelper) *recallKnowledgeConflictFixtureStore {
+	knowledge := knowledgepostgres.NewStore(db, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	return &recallKnowledgeConflictFixtureStore{
+		Store:               knowledge,
+		recallConflictStore: conflictpostgres.NewStore(db, rls, knowledge),
+	}
+}
+
+func (s *recallKnowledgeConflictFixtureStore) ResolveEvidenceConflict(ctx context.Context, input EvidenceConflictResolutionInput) (*EvidenceConflictCaseRecord, error) {
+	return s.recallConflictStore.ResolveEvidenceConflict(ctx, input)
+}
+
+func (s *recallKnowledgeConflictFixtureStore) GetEvidenceConflict(ctx context.Context, input conflictpostgres.EvidenceConflictGetInput) (*conflictpostgres.EvidenceConflictGetResult, error) {
+	return s.recallConflictStore.GetEvidenceConflict(ctx, input)
+}
+
+func loadRecallEvidenceConflictRecords(ctx context.Context, tx *gorm.DB, input RecallEvidenceInput, results []RecallEvidenceHit) ([]EvidenceConflictCaseRecord, error) {
+	return LoadRecallEvidenceConflictRecords(ctx, tx, input, results)
+}
 
 func citedEvidenceRememberInput(teamID, ownerID, label, firstContent, secondContent, spaceID string, generation int64) knowledgepostgres.SynchronousRememberCommitInput {
 	firstID, secondID := uuid.NewString(), uuid.NewString()
@@ -42,7 +70,12 @@ func citedEvidenceRememberInput(teamID, ownerID, label, firstContent, secondCont
 	return input
 }
 
-func commitCitedEvidenceFixture(t *testing.T, ctx context.Context, repo *knowledgepostgres.Store, input knowledgepostgres.SynchronousRememberCommitInput) *knowledgepostgres.SynchronousRememberCommitResult {
+type rememberEmbeddingCommitter interface {
+	PlanRememberEmbeddings(context.Context, knowledgepostgres.SynchronousRememberCommitInput) (*knowledgepostgres.InlineEmbeddingPlan, error)
+	CommitRememberWithEmbeddings(context.Context, knowledgepostgres.SynchronousRememberCommitInput, []knowledgepostgres.InlineEmbeddingResult) (*knowledgepostgres.SynchronousRememberCommitResult, error)
+}
+
+func commitCitedEvidenceFixture(t *testing.T, ctx context.Context, repo rememberEmbeddingCommitter, input knowledgepostgres.SynchronousRememberCommitInput) *knowledgepostgres.SynchronousRememberCommitResult {
 	t.Helper()
 	plan, err := repo.PlanRememberEmbeddings(ctx, input)
 	require.NoError(t, err)

@@ -15,15 +15,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-// Source is the narrow construction seam used by the legacy repository while
-// the application composition migrates to the Dream-owned adapter.
-type Source interface {
-	DreamDatabase() *gorm.DB
-	DreamRLS() postgres.RLSHelper
-}
-
 // Store is the complete Dream PostgreSQL adapter. Its methods are implemented
-// in this package so the legacy repository can remain a forwarding facade.
+// in this package so the application service can depend on Dream-owned ports.
 type Store struct {
 	db  *gorm.DB
 	rls postgres.RLSHelper
@@ -31,13 +24,6 @@ type Store struct {
 
 func NewStore(db *gorm.DB, rls postgres.RLSHelper) *Store {
 	return &Store{db: db, rls: rls}
-}
-
-func NewStoreFromSource(source Source) *Store {
-	if source == nil {
-		return nil
-	}
-	return NewStore(source.DreamDatabase(), source.DreamRLS())
 }
 
 var _ dreamcontract.DreamRepository = (*Store)(nil)

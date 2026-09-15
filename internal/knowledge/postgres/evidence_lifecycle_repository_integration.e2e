@@ -187,6 +187,7 @@ func TestLedgerRetractEvidenceRevokesOnlyItsSupportAndReplaysAtomically(t *testi
 	otherOwnerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-retraction-other-owner")
 	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
 	semantic := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	traceRepo := newKnowledgeTraceFixtureStore(appDB, rls)
 
 	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Jamie")
 	object := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Dense-Mem")
@@ -239,7 +240,7 @@ func TestLedgerRetractEvidenceRevokesOnlyItsSupportAndReplaysAtomically(t *testi
 	assert.Equal(t, 0, firstRetraction.PendingRelationshipCount)
 	assert.Equal(t, 1, firstRetraction.RetainedActiveRelationshipCount)
 
-	trace, err := semantic.TraceRelationship(ctx, TraceRelationshipInput{
+	trace, err := traceRepo.TraceRelationship(ctx, TraceRelationshipInput{
 		TeamID:         teamID,
 		RelationshipID: first.Relationship.RelationshipID,
 		MaxEvents:      20,
@@ -285,7 +286,7 @@ func TestLedgerRetractEvidenceRevokesOnlyItsSupportAndReplaysAtomically(t *testi
 	assert.Equal(t, 1, secondRetraction.PendingRelationshipCount)
 	assert.Equal(t, 0, secondRetraction.RetainedActiveRelationshipCount)
 
-	trace, err = semantic.TraceRelationship(ctx, TraceRelationshipInput{
+	trace, err = traceRepo.TraceRelationship(ctx, TraceRelationshipInput{
 		TeamID:         teamID,
 		RelationshipID: first.Relationship.RelationshipID,
 		MaxEvents:      20,
@@ -315,6 +316,7 @@ func TestLedgerDirectEvidenceSupersessionRetiresTargetWhenReplacementIsQuarantin
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-supersession-owner")
 	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
 	semantic := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	traceRepo := newKnowledgeTraceFixtureStore(appDB, rls)
 
 	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Jamie")
 	object := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Dense-Mem")
@@ -356,7 +358,7 @@ func TestLedgerDirectEvidenceSupersessionRetiresTargetWhenReplacementIsQuarantin
 	require.Len(t, replacement.Evidence, 1)
 	assert.Equal(t, []string{original.Evidence[0].FragmentID}, replacement.Evidence[0].SupersededEvidenceIDs)
 
-	trace, err := semantic.TraceRelationship(ctx, TraceRelationshipInput{
+	trace, err := traceRepo.TraceRelationship(ctx, TraceRelationshipInput{
 		TeamID:         teamID,
 		RelationshipID: decision.Relationship.RelationshipID,
 		MaxEvents:      20,
@@ -406,6 +408,7 @@ func TestTraceRelationshipMarksLifecycleEventLimitAsTruncated(t *testing.T) {
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-lifecycle-trace-owner")
 	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
 	semantic := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	traceRepo := newKnowledgeTraceFixtureStore(appDB, rls)
 
 	targetEvidenceIDs := make([]string, 0, 3)
 	for index, content := range []string{
@@ -447,7 +450,7 @@ func TestTraceRelationshipMarksLifecycleEventLimitAsTruncated(t *testing.T) {
 		},
 	})
 
-	trace, err := semantic.TraceRelationship(ctx, TraceRelationshipInput{
+	trace, err := traceRepo.TraceRelationship(ctx, TraceRelationshipInput{
 		TeamID:         teamID,
 		RelationshipID: decision.Relationship.RelationshipID,
 		MaxEvents:      2,

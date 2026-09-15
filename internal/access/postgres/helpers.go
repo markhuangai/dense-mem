@@ -21,6 +21,7 @@ func isPostgresUniqueConstraint(err error, constraint string) bool {
 }
 
 var (
+	ErrTeamInactive                     = accesscontract.ErrTeamInactive
 	ErrDirectoryIdentityNotProvisioned  = accesscontract.ErrDirectoryIdentityNotProvisioned
 	ErrDirectoryManagedMapping          = accesscontract.ErrDirectoryManagedMapping
 	ErrDirectoryResourceConflict        = accesscontract.ErrDirectoryResourceConflict

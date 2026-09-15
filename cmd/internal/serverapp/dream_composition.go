@@ -7,7 +7,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/dream"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
-	dreampostgres "github.com/markhuangai/dense-mem/internal/dream/postgres"
 	"github.com/markhuangai/dense-mem/internal/dreamgeneration"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -37,12 +36,6 @@ func buildDreamApplication(deps dreamApplicationDependencies) dream.Service {
 	store := deps.Store
 	scheduledStore := deps.ScheduledStore
 	evidenceStore := deps.EvidenceStore
-	if source, ok := deps.Store.(dreampostgres.Source); ok {
-		native := dreampostgres.NewStoreFromSource(source)
-		store = native
-		scheduledStore = native
-		evidenceStore = native
-	}
 	return dream.New(dream.Dependencies{
 		Remember:           deps.Remember,
 		Store:              store,
@@ -64,12 +57,8 @@ type controlDreamApplicationDependencies struct {
 }
 
 func buildControlDreamApplication(deps controlDreamApplicationDependencies) dream.ControlService {
-	store := deps.Store
-	if source, ok := deps.Store.(dreampostgres.Source); ok {
-		store = dreampostgres.NewStoreFromSource(source)
-	}
 	return dream.NewControl(dream.ControlDependencies{
-		Store:     store,
+		Store:     deps.Store,
 		AppConfig: deps.AppConfig,
 		Teams:     deps.Teams,
 	})

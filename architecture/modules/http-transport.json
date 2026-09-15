@@ -39,6 +39,78 @@
       "issue": 379
     },
     {
+      "path": "internal/http/control_portal_auth.go",
+      "issue": 382
+    },
+    {
+      "path": "internal/http/control_portal_config.go",
+      "issue": 382
+    },
+    {
+      "path": "internal/http/control_portal_directory.go",
+      "issue": 382
+    },
+    {
+      "path": "internal/http/control_portal_identity.go",
+      "issue": 382
+    },
+    {
+      "path": "internal/http/control_portal_remember_attempts.go",
+      "issue": 382
+    },
+    {
+      "path": "internal/http/control_portal_search.go",
+      "issue": 382
+    },
+    {
+      "path": "internal/http/dreaming_effective.go",
+      "issue": 382
+    },
+    {
+      "path": "internal/http/handler/audit_handler.go",
+      "issue": 382
+    },
+    {
+      "path": "internal/http/middleware/auth.go",
+      "issue": 382
+    },
+    {
+      "path": "internal/http/middleware/team_authorization.go",
+      "issue": 382
+    },
+    {
+      "path": "internal/http/middleware/usage_metrics.go",
+      "issue": 382
+    },
+    {
+      "path": "internal/http/oauth_protected_resource.go",
+      "issue": 382
+    },
+    {
+      "path": "internal/http/private_memory.go",
+      "issue": 382
+    },
+    {
+      "path": "internal/http/scim_directory.go",
+      "issue": 382
+    },
+    {
+      "path": "internal/http/scim_directory_helpers.go",
+      "issue": 382
+    },
+    {
+      "path": "internal/http/user_portal_routes.go",
+      "issue": 382
+    },
+    {
+      "path": "internal/http/user_portal_session.go",
+      "issue": 382
+    },
+    {
+      "path": "internal/http/user_portal_support.go",
+      "issue": 382
+    },
+    {
       "path": "internal/http/handler/mcp_logger.go",
       "issue": 380
     },

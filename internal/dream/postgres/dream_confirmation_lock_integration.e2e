@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"testing"
 	"time"
 

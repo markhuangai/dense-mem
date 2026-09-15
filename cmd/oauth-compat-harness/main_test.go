@@ -64,6 +64,19 @@ func TestParseHarnessOptionsReportsMissingFlagsDeterministically(t *testing.T) {
 	}
 }
 
+func TestHarnessRunRejectsInvalidInputsBeforeStartingTLS(t *testing.T) {
+	baseArgs := []string{"--public-base-url=https://harness.example", "--config=missing.json", "--tls-cert=missing.crt", "--tls-key=missing.key"}
+	if err := run(context.Background(), append([]string{"unexpected"}, baseArgs...), io.Discard); err == nil || !strings.Contains(err.Error(), "unexpected positional") {
+		t.Fatalf("unexpected positional error = %v", err)
+	}
+	if err := run(context.Background(), append([]string{"--public-base-url=http://harness.example"}, baseArgs[1:]...), io.Discard); err == nil || !strings.Contains(err.Error(), "invalid --public-base-url") {
+		t.Fatalf("invalid URL error = %v", err)
+	}
+	if err := run(context.Background(), baseArgs, io.Discard); err == nil || !strings.Contains(err.Error(), "load OAuth compatibility config") {
+		t.Fatalf("missing config error = %v", err)
+	}
+}
+
 func TestHarnessMetadataAndChallengeUseConfiguredHTTPSURL(t *testing.T) {
 	profiles := []domain.OAuthProtectedResourceProfile{{
 		Name: "entra", Issuer: "https://issuer.example/entra",

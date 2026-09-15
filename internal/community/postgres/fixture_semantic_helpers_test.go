@@ -13,6 +13,8 @@ type EvidenceInput = knowledgepostgres.EvidenceInput
 type UpsertSearchDocumentInput = knowledgepostgres.UpsertSearchDocumentInput
 type ApplyRelationshipDecisionInput = knowledgepostgres.ApplyRelationshipDecisionInput
 type EvidenceSupportInput = knowledgepostgres.EvidenceSupportInput
+type RetractRelationshipInput = knowledgepostgres.RetractRelationshipInput
+type RelationshipRecord = knowledgepostgres.RelationshipRecord
 
 func createSemanticEntity(t *testing.T, ctx context.Context, repo *knowledgepostgres.Store, teamID, ownerID, kind, name string) *knowledgepostgres.EntityRecord {
 	t.Helper()

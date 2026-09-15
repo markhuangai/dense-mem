@@ -48,6 +48,34 @@ func TestListKnowledgeRefsRejectsInvalidFallbackWithoutActor(t *testing.T) {
 	require.EqualError(t, err, "evaluation tool requires authenticated team context")
 }
 
+func TestEvaluationSmallHelpersNormalizeAndCopySafely(t *testing.T) {
+	if normalizeListType(" fragment ") != "evidence" || normalizeListType(" DREAM ") != "dream" || normalizeListType("entity") != "entity" {
+		t.Fatal("normalizeListType returned an unexpected value")
+	}
+	if normalizePageLimit(0) != DefaultPageSize || normalizePageLimit(MaxPageSize+1) != MaxPageSize {
+		t.Fatal("normalizePageLimit did not enforce bounds")
+	}
+	if parsed, err := parseOptionalTime("2026-01-01T00:00:00Z"); err != nil || parsed.IsZero() {
+		t.Fatalf("parseOptionalTime valid = %v, %v", parsed, err)
+	}
+	if _, err := parseOptionalTime("bad"); err == nil {
+		t.Fatal("malformed optional time was accepted")
+	}
+	original := map[string]any{"content": "secret", "nested": map[string]any{"value": 1}}
+	copied, err := structMap(original)
+	if err != nil || copied["content"] != "secret" {
+		t.Fatalf("structMap = %#v, %v", copied, err)
+	}
+	stripped := copyItem(original)
+	stripContent("evidence", stripped)
+	if _, ok := stripped["content"]; ok {
+		t.Fatal("evidence content was not stripped")
+	}
+	if _, ok := original["content"]; !ok {
+		t.Fatal("copyItem mutated original")
+	}
+}
+
 func TestRunRecallCaseMapsRefsAndRequiresAudit(t *testing.T) {
 	recall := &recallServiceStub{result: &recallcontract.RecallResult{
 		RecallID:    "recall-1",

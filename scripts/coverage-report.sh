@@ -28,7 +28,7 @@ report_total() {
 	(
 		cd "${module_dir}"
 		go tool cover -func="${profile}"
-	) | tee "${report}"
+	) | sed '/^$/d' | tee "${report}"
 	total="$(awk '/^total:/ { gsub(/%/, "", $3); print $3 }' "${report}")"
 	printf 'coverage %.1f%%\n' "${total}"
 }
@@ -41,10 +41,10 @@ profile_totals() {
 	}
 	END {
 		if (total == 0) {
-			printf "0 0 0.0"
+			printf "0 0 0.0\n"
 			exit
 		}
-		printf "%d %d %.1f", covered, total, (covered / total) * 100
+		printf "%d %d %.1f\n", covered, total, (covered / total) * 100
 	}' "$1"
 }
 
@@ -78,6 +78,7 @@ merge_profiles() {
 	for profile in "$@"; do
 		tail -n +2 "${profile}"
 	done | awk '
+	NF < 3 { next }
 	{
 		key = $1 SUBSEP $2
 		count = $3 + 0

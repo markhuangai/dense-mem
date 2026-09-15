@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -74,6 +75,158 @@ func TestRunBatchRequiresEveryCaseToPass(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDatabaseCaseBaselineValidationRejectsDriftAndDuplicates(t *testing.T) {
+	baseline := []databaseCaseBaseline{{ID: "case-1", Run: "^TestOne$", Phase: "precheck"}}
+	if err := validateDatabaseCaseBaseline(baseline, []databaseCase{{ID: "case-1", Run: "^TestOne$", Phase: "precheck"}}); err != nil {
+		t.Fatalf("matching baseline rejected: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		current []databaseCase
+		want    string
+	}{
+		"missing":   {current: nil, want: "is missing"},
+		"changed":   {current: []databaseCase{{ID: "case-1", Run: "^TestTwo$", Phase: "precheck"}}, want: "changed execution"},
+		"duplicate": {current: []databaseCase{{ID: "case-1", Run: "^TestOne$", Phase: "precheck"}, {ID: "case-1", Run: "^TestOther$", Phase: "precheck"}}, want: "duplicate"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := validateDatabaseCaseBaseline(baseline, tc.current)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateDatabaseCaseBaseline() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestDatabaseCaseBaselineLoaderRejectsInvalidFiles(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "cmd", "e2e", "testdata", "database-case-baseline.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		contents string
+		want     string
+	}{
+		"malformed":     {contents: `{`, want: "decode"},
+		"wrong version": {contents: `{"version":2,"cases":[{"id":"x","run":"TestX","phase":"precheck"}]}`, want: "invalid version"},
+		"empty":         {contents: `{"version":1,"cases":[]}`, want: "invalid version"},
+		"incomplete":    {contents: `{"version":1,"cases":[{"id":"","run":"TestX","phase":"precheck"}]}`, want: "incomplete"},
+		"duplicate":     {contents: `{"version":1,"cases":[{"id":"x","run":"TestX","phase":"precheck"},{"id":"x","run":"TestY","phase":"precheck"}]}`, want: "duplicate"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := os.WriteFile(path, []byte(tc.contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := loadDatabaseCaseBaseline(root); err == nil || !strings.Contains(strings.ToLower(err.Error()), tc.want) {
+				t.Fatalf("loadDatabaseCaseBaseline() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestE2ERunnerSmallHelpersAndOverlay(t *testing.T) {
+	root := t.TempDir()
+	if got, err := repositoryRoot(root); err != nil || got != root {
+		t.Fatalf("repositoryRoot explicit = %q, %v", got, err)
+	}
+	if skip, err := skipGeneratedEvaluationTree(root, filepath.Join(root, "tests", "eval")); err != nil || !skip {
+		t.Fatalf("skipGeneratedEvaluationTree root = %v, %v", skip, err)
+	}
+	if skip, err := skipGeneratedEvaluationTree(root, filepath.Join(root, "internal")); err != nil || skip {
+		t.Fatalf("skipGeneratedEvaluationTree unrelated = %v, %v", skip, err)
+	}
+	if got := splitFilter(" a, ,b "); len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("splitFilter = %#v", got)
+	}
+	if !contains([]string{"a", "b"}, "b") || contains([]string{"a"}, "b") {
+		t.Fatal("contains returned the wrong result")
+	}
+	for expression, want := range map[string]string{"^TestOne$": "TestOne", "TestOne|TestTwo": "TestOne", "^TestOne": "TestOne"} {
+		if got := testName(expression); got != want {
+			t.Errorf("testName(%q) = %q, want %q", expression, got, want)
+		}
+	}
+	if _, err := writeOverlay(root); err == nil || !strings.Contains(err.Error(), "no E2E test sources") {
+		t.Fatalf("writeOverlay(empty) error = %v", err)
+	}
+	source := filepath.Join(root, "internal", "fixture.e2e")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("package fixture\n\nfunc TestFixture(t *testing.T) {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	overlayPath, err := writeOverlay(root)
+	if err != nil {
+		t.Fatalf("writeOverlay() = %v", err)
+	}
+	defer os.Remove(overlayPath)
+	var got overlay
+	contents, err := os.ReadFile(overlayPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(contents, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Replace[filepath.Join(root, "internal", "fixture_test.go")] != source {
+		t.Fatalf("overlay = %#v", got.Replace)
+	}
+}
+
+func TestReconcileCaseRegistryAcceptsDeclaredFixture(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "internal", "fixture.e2e")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("package fixture\n\nfunc TestFixture(t *testing.T) {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	caseDef := databaseCase{ID: "fixture/TestFixture", Package: "./internal", Run: "^TestFixture$", Source: "internal/fixture.e2e"}
+	if err := reconcileCaseRegistry(root, []databaseCase{caseDef}); err != nil {
+		t.Fatalf("reconcileCaseRegistry() = %v", err)
+	}
+	bad := caseDef
+	bad.Run = "^TestMissing$"
+	if err := reconcileCaseRegistry(root, []databaseCase{bad}); err == nil || !strings.Contains(err.Error(), "no entry") {
+		t.Fatalf("unregistered declaration error = %v", err)
+	}
+}
+
+func TestReconcileCaseRegistryRejectsHelperSourceWithoutTestDeclaration(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "internal", "fixture.e2e")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("package fixture\n\nfunc helper() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconcileCaseRegistry(root, nil); err == nil || !strings.Contains(err.Error(), "has no test declaration") {
+		t.Fatalf("reconcileCaseRegistry() error = %v, want helper declaration failure", err)
+	}
+}
+
+func TestE2ERunnerMainListsRegisteredCasesWithoutRunningBatches(t *testing.T) {
+	oldArgs := os.Args
+	oldCommandLine := flag.CommandLine
+	t.Cleanup(func() {
+		os.Args = oldArgs
+		flag.CommandLine = oldCommandLine
+	})
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	flag.CommandLine = flag.NewFlagSet("e2e-list", flag.ContinueOnError)
+	os.Args = []string{"e2e", "-root", root, "-list-capabilities"}
+	main()
+	flag.CommandLine = flag.NewFlagSet("e2e-case-list", flag.ContinueOnError)
+	os.Args = []string{"e2e", "-root", root, "-list", "-capability", "postgres"}
+	main()
 }
 
 func TestLoadCasesReconcilesRegistryDeclarations(t *testing.T) {
@@ -174,7 +327,7 @@ func TestLoadCasesReconcilesRegistryDeclarations(t *testing.T) {
 	if err := os.WriteFile(source, []byte("package sample\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadCases(root, "precheck", "repository", "", ""); err == nil || !strings.Contains(err.Error(), "has no declaration") {
+	if _, err := loadCases(root, "precheck", "repository", "", ""); err == nil || !strings.Contains(err.Error(), "has no test declaration") {
 		t.Fatalf("loadCases() error = %v, want missing declaration failure", err)
 	}
 
@@ -343,4 +496,24 @@ func TestDatabaseCaseBaselineAllowsAdditionsAndRelocation(t *testing.T) {
 	if err := validateDatabaseCaseBaseline(baseline, current); err == nil || !strings.Contains(err.Error(), "is missing") {
 		t.Fatalf("baseline missing error = %v, want missing-case failure", err)
 	}
+}
+
+func TestE2ERunnerMainListModesUseRegisteredInventory(t *testing.T) {
+	root, err := repositoryRoot("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCommandLine := flag.CommandLine
+	oldArgs := os.Args
+	t.Cleanup(func() {
+		flag.CommandLine = oldCommandLine
+		os.Args = oldArgs
+	})
+	flag.CommandLine = flag.NewFlagSet("e2e-test", flag.ContinueOnError)
+	os.Args = []string{"e2e", "-root", root, "-phase", "precheck", "-capability", "operations", "-list"}
+	main()
+
+	flag.CommandLine = flag.NewFlagSet("e2e-test-capabilities", flag.ContinueOnError)
+	os.Args = []string{"e2e", "-root", root, "-phase", "scenario", "-list-capabilities"}
+	main()
 }

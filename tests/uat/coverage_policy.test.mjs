@@ -56,6 +56,7 @@ test("browser and proxy coverage keep only bootstrap wrappers outside the invent
   assert.equal(webPackage.scripts["test:coverage"], "vitest run --coverage");
   assert.match(webConfig, /provider: "v8"/);
   assert.match(webConfig, /all: true/);
+  assert.match(webConfig, /src\/App\.test-helpers\.ts/);
   assert.match(webConfig, /src\/main\.tsx/);
   assert.match(webConfig, /src\/user\/main\.tsx/);
   assert.equal(proxyPackage.devDependencies.c8, "10.1.3");

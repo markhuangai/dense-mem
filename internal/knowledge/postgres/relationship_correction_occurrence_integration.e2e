@@ -18,6 +18,7 @@ func TestRelationshipCorrectionPreservesOccurrenceSupport(t *testing.T) {
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "relationship-correction-occurrence-owner")
 	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
 	semantic := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	traceRepo := newKnowledgeTraceFixtureStore(appDB, rls)
 
 	canonicalContent := "The canonical evidence uses the original wording."
 	canonical := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "relationship-correction-occurrence-canonical", canonicalContent)
@@ -81,7 +82,7 @@ func TestRelationshipCorrectionPreservesOccurrenceSupport(t *testing.T) {
 	}))
 	require.Equal(t, occurrenceID, successorOccurrenceID)
 
-	trace, err := semantic.TraceRelationship(ctx, TraceRelationshipInput{
+	trace, err := traceRepo.TraceRelationship(ctx, TraceRelationshipInput{
 		TeamID: teamID, RelationshipID: result.Correction.SuccessorRelationshipID,
 	})
 	require.NoError(t, err)

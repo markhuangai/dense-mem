@@ -28,6 +28,7 @@ func TestKnownEvidenceSupportPreservesABCOwnershipAndIsolation(t *testing.T) {
 	ownerC := createLedgerProfile(t, adminDB, rls, teamC, "known-support-isolation-owner-c")
 	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
 	semantic := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	traceRepo := newKnowledgeTraceFixtureStore(appDB, rls)
 
 	subject := createSemanticEntity(t, ctx, semantic, teamA, ownerB, "project", "Known Support Subject")
 	object := createSemanticEntity(t, ctx, semantic, teamA, ownerB, "product", "Known Support Object")
@@ -101,7 +102,7 @@ func TestKnownEvidenceSupportPreservesABCOwnershipAndIsolation(t *testing.T) {
 		}
 	}
 
-	trace, err := semantic.TraceRelationship(ctx, TraceRelationshipInput{TeamID: teamA, RelationshipID: decision.Relationship.RelationshipID})
+	trace, err := traceRepo.TraceRelationship(ctx, TraceRelationshipInput{TeamID: teamA, RelationshipID: decision.Relationship.RelationshipID})
 	require.NoError(t, err)
 	require.Len(t, trace.EvidenceSupports, 2)
 	for _, support := range trace.EvidenceSupports {

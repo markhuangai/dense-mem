@@ -15,6 +15,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	graphcontract "github.com/markhuangai/dense-mem/internal/graph/contract"
+	graphpostgres "github.com/markhuangai/dense-mem/internal/graph/postgres"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
@@ -30,6 +32,7 @@ func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *t
 	ownerC := createLedgerProfile(t, adminDB, rls, teamC, "owner-c")
 	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
 	semantic := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	graph := graphpostgres.NewStore(appDB, rls)
 
 	subject := createSemanticEntity(t, ctx, semantic, teamA, ownerA, "person", "Mark Huang")
 	wrongObject := createSemanticEntity(t, ctx, semantic, teamA, ownerA, "project", "Wrong Project")
@@ -165,7 +168,7 @@ func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *t
 	})
 	require.NoError(t, err)
 
-	freshGraph, err := semantic.SemanticGraph(ctx, SemanticGraphQuery{TeamID: teamA, Limit: 181})
+	freshGraph, err := graph.SemanticGraph(ctx, graphcontract.Query{TeamID: teamA, Limit: 181})
 	require.NoError(t, err)
 	assert.Contains(t, semanticGraphEdgeIDs(freshGraph.Edges), result.Correction.SuccessorRelationshipID)
 	assert.NotContains(t, semanticGraphEdgeIDs(freshGraph.Edges), original.RelationshipID)
@@ -185,7 +188,7 @@ func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *t
 	}).Relationship
 	require.NotNil(t, shared)
 
-	sharedGraph, err := semantic.SemanticGraph(ctx, SemanticGraphQuery{TeamID: teamA, Limit: 181})
+	sharedGraph, err := graph.SemanticGraph(ctx, graphcontract.Query{TeamID: teamA, Limit: 181})
 	require.NoError(t, err)
 	assert.Contains(t, semanticGraphEdgeIDs(sharedGraph.Edges), shared.RelationshipID)
 	assert.NotContains(t, semanticGraphEdgeIDs(sharedGraph.Edges), original.RelationshipID)
