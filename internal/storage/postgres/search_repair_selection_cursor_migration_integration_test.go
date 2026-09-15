@@ -1,0 +1,55 @@
+//go:build integration
+
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/stretchr/testify/require"
+)
+
+func TestSearchRepairSelectionCursorShapeRejectsNullSourceKind(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, sqlDB, 20260829010001)
+
+	contractID := uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO embedding_contracts (
+				embedding_contract_id, contract_key, version, provider, model,
+				dimensions, distance_metric, vector_normalization,
+				document_format_version, query_format_version, lifecycle_state
+			) VALUES ($1::uuid, $2, 1, 'openai', 'cursor-shape-model', 2,
+			           'cosine', 'provider', 1, 1, 'active')
+		`, contractID, "cursor-shape-"+contractID)
+		return err
+	}))
+
+	_, err := sqlDB.ExecContext(ctx, `
+		INSERT INTO embedding_reconciliation_runs (
+			reconciliation_run_id, embedding_contract_id, embedding_dimensions,
+			local_run_date, selection_cursor_observed_at, selection_cursor_team_id,
+			selection_cursor_source_kind, selection_cursor_source_id
+		) VALUES ($1::uuid, $2::uuid, 2, CURRENT_DATE, $3, $4::uuid, NULL, $5::uuid)
+	`, uuid.NewString(), contractID, time.Now().UTC(), uuid.NewString(), uuid.NewString())
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, err, &pgErr)
+	require.Equal(t, "23514", pgErr.Code)
+	require.Equal(t, "embedding_reconciliation_runs_selection_cursor_shape_check", pgErr.ConstraintName)
+
+	_, err = sqlDB.ExecContext(ctx, `
+		INSERT INTO embedding_reconciliation_runs (
+			reconciliation_run_id, embedding_contract_id, embedding_dimensions,
+			local_run_date, selection_cursor_observed_at, selection_cursor_team_id,
+			selection_cursor_source_kind, selection_cursor_source_id
+		) VALUES ($1::uuid, $2::uuid, 2, CURRENT_DATE + 1, $3, $4::uuid, 'relationship', $5::uuid)
+	`, uuid.NewString(), contractID, time.Now().UTC(), uuid.NewString(), uuid.NewString())
+	require.NoError(t, err)
+}

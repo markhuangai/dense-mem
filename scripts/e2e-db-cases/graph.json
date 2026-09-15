@@ -7,14 +7,14 @@
       "package": "./internal/graph/postgres",
       "run": "^TestSemanticGraphLocalDepthDefaultsToTwoAndCapsAtFive$",
       "phase": "precheck",
-      "source": "internal/graph/postgres/semantic_trace_graph_integration.e2e"
+      "source": "internal/graph/postgres/semantic_trace_graph_integration_test.go"
     },
     {
       "id": "repository/TestSemanticGraphReadsEntityValueEdgesAndNodeDetail",
       "package": "./internal/graph/postgres",
       "run": "^TestSemanticGraphReadsEntityValueEdgesAndNodeDetail$",
       "phase": "precheck",
-      "source": "internal/graph/postgres/semantic_trace_graph_integration.e2e"
+      "source": "internal/graph/postgres/semantic_trace_graph_integration_test.go"
     }
   ]
 }

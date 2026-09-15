@@ -123,19 +123,19 @@
       "issue": 371
     },
     {
-      "path": "internal/operations/postgres/authority_repository_integration.e2e",
+      "path": "internal/operations/postgres/authority_repository_integration_test.go",
       "issue": 371
     },
     {
-      "path": "internal/operations/postgres/migration_control_retirement_integration.e2e",
+      "path": "internal/operations/postgres/migration_control_retirement_integration_test.go",
       "issue": 278
     },
     {
-      "path": "internal/operations/postgres/telemetry_repository_integration.e2e",
+      "path": "internal/operations/postgres/telemetry_repository_integration_test.go",
       "issue": 371
     },
     {
-      "path": "internal/operations/postgres/usage_metrics_repository_integration.e2e",
+      "path": "internal/operations/postgres/usage_metrics_repository_integration_test.go",
       "issue": 371
     }
   ],

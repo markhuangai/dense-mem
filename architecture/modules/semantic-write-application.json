@@ -15,7 +15,7 @@
       "issue": 362
     },
     {
-      "path": "internal/knowledge/postgres/evidence_lifecycle_repository_integration.e2e",
+      "path": "internal/knowledge/postgres/evidence_lifecycle_repository_integration_test.go",
       "issue": 362
     },
     {
@@ -23,23 +23,23 @@
       "issue": 362
     },
     {
-      "path": "internal/knowledge/postgres/relationship_correction_canonical_projection_integration.e2e",
+      "path": "internal/knowledge/postgres/relationship_correction_canonical_projection_integration_test.go",
       "issue": 362
     },
     {
-      "path": "internal/knowledge/postgres/relationship_correction_fence_integration.e2e",
+      "path": "internal/knowledge/postgres/relationship_correction_fence_integration_test.go",
       "issue": 362
     },
     {
-      "path": "internal/knowledge/postgres/relationship_correction_lock_order_integration.e2e",
+      "path": "internal/knowledge/postgres/relationship_correction_lock_order_integration_test.go",
       "issue": 362
     },
     {
-      "path": "internal/knowledge/postgres/relationship_correction_occurrence_integration.e2e",
+      "path": "internal/knowledge/postgres/relationship_correction_occurrence_integration_test.go",
       "issue": 362
     },
     {
-      "path": "internal/knowledge/postgres/relationship_identity_integration.e2e",
+      "path": "internal/knowledge/postgres/relationship_identity_integration_test.go",
       "issue": 362
     },
     {
@@ -47,23 +47,23 @@
       "issue": 362
     },
     {
-      "path": "internal/knowledge/postgres/semantic_lifecycle_integration.e2e",
+      "path": "internal/knowledge/postgres/semantic_lifecycle_integration_test.go",
       "issue": 362
     },
     {
-      "path": "internal/knowledge/postgres/semantic_repository_integration.e2e",
+      "path": "internal/knowledge/postgres/semantic_repository_integration_test.go",
       "issue": 362
     },
     {
-      "path": "internal/knowledge/postgres/semantic_review_catalog_repository_integration.e2e",
+      "path": "internal/knowledge/postgres/semantic_review_catalog_repository_integration_test.go",
       "issue": 362
     },
     {
-      "path": "internal/knowledge/postgres/semantic_review_regression.e2e",
+      "path": "internal/knowledge/postgres/semantic_review_regression_integration_test.go",
       "issue": 362
     },
     {
-      "path": "internal/knowledge/postgres/semantic_space_generation_integration.e2e",
+      "path": "internal/knowledge/postgres/semantic_space_generation_integration_test.go",
       "issue": 362
     },
     {
@@ -71,11 +71,11 @@
       "issue": 362
     },
     {
-      "path": "internal/knowledge/postgres/submission_assessment_catalog_repository_integration.e2e",
+      "path": "internal/knowledge/postgres/submission_assessment_catalog_repository_integration_test.go",
       "issue": 362
     },
     {
-      "path": "internal/knowledge/postgres/submission_assessment_known_evidence_repository_integration.e2e",
+      "path": "internal/knowledge/postgres/submission_assessment_known_evidence_repository_integration_test.go",
       "issue": 362
     },
     {

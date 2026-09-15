@@ -19,7 +19,7 @@
       "issue": 378
     },
     {
-      "path": "internal/evaluation/postgres/evaluation_reader_integration.e2e",
+      "path": "internal/evaluation/postgres/evaluation_reader_integration_test.go",
       "issue": 378
     },
     {

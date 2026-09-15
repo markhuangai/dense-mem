@@ -175,7 +175,7 @@
       "issue": 372
     },
     {
-      "path": "cmd/internal/serverapp/synchronous_assessment_compose_e2e.e2e",
+      "path": "cmd/internal/serverapp/synchronous_assessment_compose_e2e_integration_test.go",
       "issue": 372
     },
     {
@@ -187,7 +187,7 @@
       "issue": 372
     },
     {
-      "path": "cmd/internal/serverapp/remember_processor_integration.e2e",
+      "path": "cmd/internal/serverapp/remember_processor_integration_test.go",
       "issue": 372
     },
     {
@@ -199,7 +199,7 @@
       "issue": 418
     },
     {
-      "path": "internal/knowledge/postgres/remember_attempt_diagnostics_repository_integration.e2e",
+      "path": "internal/knowledge/postgres/remember_attempt_diagnostics_repository_integration_test.go",
       "issue": 372
     },
     {

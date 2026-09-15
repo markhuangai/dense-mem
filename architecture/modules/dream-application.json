@@ -27,7 +27,7 @@
       "issue": 365
     },
     {
-      "path": "internal/dream/postgres/dream_repository_validation_integration.e2e",
+      "path": "internal/dream/postgres/dream_repository_validation_test.go",
       "issue": 365
     },
     {
@@ -95,7 +95,7 @@
       "issue": 365
     },
     {
-      "path": "internal/dream/postgres/dream_confirmation_lock_integration.e2e",
+      "path": "internal/dream/postgres/dream_confirmation_lock_integration_test.go",
       "issue": 365
     },
     {
@@ -103,7 +103,7 @@
       "issue": 365
     },
     {
-      "path": "internal/dream/postgres/dream_cycle_recovery_integration.e2e",
+      "path": "internal/dream/postgres/dream_cycle_recovery_integration_test.go",
       "issue": 365
     },
     {
@@ -123,7 +123,7 @@
       "issue": 365
     },
     {
-      "path": "internal/dream/postgres/dream_evidence_duplicate_integration.e2e",
+      "path": "internal/dream/postgres/dream_evidence_duplicate_integration_test.go",
       "issue": 365
     },
     {
@@ -147,7 +147,7 @@
       "issue": 365
     },
     {
-      "path": "internal/dream/postgres/dream_evidence_target_repository_integration.e2e",
+      "path": "internal/dream/postgres/dream_evidence_target_repository_integration_test.go",
       "issue": 365
     },
     {
@@ -155,7 +155,7 @@
       "issue": 365
     },
     {
-      "path": "internal/dream/postgres/dream_lock_admission_integration.e2e",
+      "path": "internal/dream/postgres/dream_lock_admission_integration_test.go",
       "issue": 365
     },
     {
@@ -167,7 +167,7 @@
       "issue": 365
     },
     {
-      "path": "internal/dream/postgres/dream_repository_integration.e2e",
+      "path": "internal/dream/postgres/dream_repository_integration_test.go",
       "issue": 365
     },
     {
@@ -180,10 +180,6 @@
     },
     {
       "path": "internal/dream/postgres/dream_repository_validation.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_repository_validation_test.go",
       "issue": 365
     },
     {

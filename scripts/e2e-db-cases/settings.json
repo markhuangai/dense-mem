@@ -7,21 +7,21 @@
       "package": "./internal/settings",
       "run": "^TestSettingsControlPortalPositiveAndDurableAudit$",
       "phase": "precheck",
-      "source": "internal/settings/settings_postgres_integration.e2e"
+      "source": "internal/settings/settings_postgres_integration_test.go"
     },
     {
       "id": "settings/TestSettingsControlPortalRejectsUnauthorizedAndProtectedUpdates",
       "package": "./internal/settings",
       "run": "^TestSettingsControlPortalRejectsUnauthorizedAndProtectedUpdates$",
       "phase": "precheck",
-      "source": "internal/settings/settings_postgres_integration.e2e"
+      "source": "internal/settings/settings_postgres_integration_test.go"
     },
     {
       "id": "settings/TestSecurityBanRoundTripAndDurableAudit",
       "package": "./internal/settings",
       "run": "^TestSecurityBanRoundTripAndDurableAudit$",
       "phase": "precheck",
-      "source": "internal/settings/settings_postgres_integration.e2e"
+      "source": "internal/settings/settings_postgres_integration_test.go"
     }
   ]
 }

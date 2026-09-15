@@ -7,42 +7,42 @@
       "package": "./cmd/internal/demo/postgres",
       "run": "^TestDemoCleanupRepositorySelectsOnlyExpiredDemoTeamsInBatches$",
       "phase": "precheck",
-      "source": "cmd/internal/demo/postgres/cleanup_integration.e2e"
+      "source": "cmd/internal/demo/postgres/cleanup_integration_test.go"
     },
     {
       "id": "server/TestServerLifecycleDrainsRequestsBeforeAdapters",
       "package": "./cmd/internal/serverapp",
       "run": "^TestServerLifecycleDrainsRequestsBeforeAdapters$",
       "phase": "precheck",
-      "source": "cmd/internal/serverapp/lifecycle_runtime_integration.e2e"
+      "source": "cmd/internal/serverapp/lifecycle_runtime_integration_test.go"
     },
     {
       "id": "server/TestServerLifecycleRejectsOccupiedListenerBeforeWorkers",
       "package": "./cmd/internal/serverapp",
       "run": "^TestServerLifecycleRejectsOccupiedListenerBeforeWorkers$",
       "phase": "precheck",
-      "source": "cmd/internal/serverapp/lifecycle_runtime_integration.e2e"
+      "source": "cmd/internal/serverapp/lifecycle_runtime_integration_test.go"
     },
     {
       "id": "server/TestServerLifecycleForcesListenerCloseAfterCancellation",
       "package": "./cmd/internal/serverapp",
       "run": "^TestServerLifecycleForcesListenerCloseAfterCancellation$",
       "phase": "precheck",
-      "source": "cmd/internal/serverapp/lifecycle_runtime_integration.e2e"
+      "source": "cmd/internal/serverapp/lifecycle_runtime_integration_test.go"
     },
     {
       "id": "server/TestRunActiveServerCanceledBeforeWorkersDoesNotBuildRuntimeWorker",
       "package": "./cmd/internal/serverapp",
       "run": "^TestRunActiveServerCanceledBeforeWorkersDoesNotBuildRuntimeWorker$",
       "phase": "precheck",
-      "source": "cmd/internal/serverapp/lifecycle_runtime_integration.e2e"
+      "source": "cmd/internal/serverapp/lifecycle_runtime_integration_test.go"
     },
     {
       "id": "server/TestServerLifecycleCancelsPreHandoffRuntimeWorkerBeforeRun",
       "package": "./cmd/internal/serverapp",
       "run": "^TestServerLifecycleCancelsPreHandoffRuntimeWorkerBeforeRun$",
       "phase": "precheck",
-      "source": "cmd/internal/serverapp/lifecycle_runtime_integration.e2e"
+      "source": "cmd/internal/serverapp/lifecycle_runtime_integration_test.go"
     }
   ]
 }

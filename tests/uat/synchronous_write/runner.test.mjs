@@ -160,7 +160,7 @@ test("synchronous-write provider remains a project-scoped Compose helper", async
   const compose = await readFile(new URL("../../../scripts/e2e-stack.yml", import.meta.url), "utf8");
   const controller = await readFile(new URL("../../../scripts/e2e-host-controller.sh", import.meta.url), "utf8");
   const stack = await readFile(new URL("../../../scripts/e2e-host-controller-stack.sh", import.meta.url), "utf8");
-  const processor = await readFile(new URL("../../../cmd/internal/serverapp/remember_processor_integration.e2e", import.meta.url), "utf8");
+  const processor = await readFile(new URL("../../../cmd/internal/serverapp/remember_processor_integration_test.go", import.meta.url), "utf8");
   assert.match(compose, /synchronous-write-provider-files/);
   assert.match(compose, /profiles: \[synchronous_write, verifier\]/);
   assert.match(stack, /provider-fixture\.mjs/);

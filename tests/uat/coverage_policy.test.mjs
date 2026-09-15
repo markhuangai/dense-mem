@@ -83,6 +83,7 @@ test("Go coverage discovery keeps external tests, testless packages, and working
   writeFixture(fixture, "internal/with-tests/with.go", "package withtests\nfunc Value() int { return 1 }\n");
   writeFixture(fixture, "internal/with-tests/with_external_test.go", "package withtests_test\n");
   writeFixture(fixture, "internal/no-tests/no.go", "package notests\nfunc Value() int { return 1 }\n");
+  writeFixture(fixture, "internal/integration-only/only_integration_test.go", "//go:build integration\n\npackage integrationonly\nimport \"testing\"\nfunc TestOnlyIntegration(t *testing.T) {}\n");
   writeFixture(fixture, "tests/uat/fixture.go", "package fixture\n");
   writeFixture(fixture, "ignored/ignored.go", "package ignored\n");
 
@@ -104,6 +105,7 @@ test("Go coverage discovery keeps external tests, testless packages, and working
   assert.doesNotMatch(complete.stdout, /example\.com\/discovery\/internal\/storage\/postgres\/(graphread|lockadmission)/);
   assert.doesNotMatch(complete.stdout, /example\.com\/discovery\/internal\/example\/postgres/);
   assert.doesNotMatch(complete.stdout, /example\.com\/discovery\/cmd\/e2e/);
+  assert.doesNotMatch(complete.stdout, /example\.com\/discovery\/internal\/integration-only/);
   assert.doesNotMatch(complete.stdout, /example\.com\/discovery\/tests\/uat/);
   assert.doesNotMatch(complete.stdout, /example\.com\/discovery\/ignored/);
 
@@ -111,6 +113,23 @@ test("Go coverage discovery keeps external tests, testless packages, and working
   assert.equal(production.status, 0, production.stderr);
   assert.doesNotMatch(production.stdout, /example\.com\/discovery\/cmd\/eval-runner/);
   assert.match(production.stdout, /example\.com\/discovery\/internal\/no-tests/);
+  assert.doesNotMatch(production.stdout, /example\.com\/discovery\/internal\/integration-only/);
+
+  const integration = run("bash", [packageScript, "--tags", "integration", "--root", fixture]);
+  assert.equal(integration.status, 0, integration.stderr);
+  assert.match(integration.stdout, /example\.com\/discovery\/internal\/integration-only/);
+
+  const notIntegration = run("bash", [packageScript, "--tags", "notintegration", "--root", fixture]);
+  assert.equal(notIntegration.status, 0, notIntegration.stderr);
+  assert.doesNotMatch(notIntegration.stdout, /example\.com\/discovery\/internal\/integration-only/);
+
+  writeFixture(
+    fixture,
+    "internal/integration-only/broken.go",
+    "//go:build integration\n\npackage integrationonly\n\nimport (\n",
+  );
+  const brokenIntegration = run("bash", [packageScript, "--tags", "integration", "--root", fixture]);
+  assert.notEqual(brokenIntegration.status, 0);
 });
 
 test("complete Go coverage deduplicates profiles and rejects exact thresholds", (t) => {

@@ -12,7 +12,7 @@
     {"path": "internal/audit/security_rejection_test.go", "issue": 368},
     {"path": "internal/audit/service.go", "issue": 368},
     {"path": "internal/audit/service_test.go", "issue": 368},
-    {"path": "internal/service/audit_service.e2e", "issue": 368}
+    {"path": "internal/service/audit_service_integration_test.go", "issue": 368}
   ],
   "compatibility_bridges": [],
   "completed_issues": [],

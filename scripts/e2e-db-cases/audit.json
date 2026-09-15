@@ -7,63 +7,63 @@
       "package": "./internal/service",
       "run": "^TestAuditLogAppendOnlyTriggerBlocksDelete$",
       "phase": "precheck",
-      "source": "internal/service/audit_service.e2e"
+      "source": "internal/service/audit_service_integration_test.go"
     },
     {
       "id": "service/TestAuditLogAppendOnlyTriggerBlocksUpdate",
       "package": "./internal/service",
       "run": "^TestAuditLogAppendOnlyTriggerBlocksUpdate$",
       "phase": "precheck",
-      "source": "internal/service/audit_service.e2e"
+      "source": "internal/service/audit_service_integration_test.go"
     },
     {
       "id": "service/TestAuditServiceAppend",
       "package": "./internal/service",
       "run": "^TestAuditServiceAppend$",
       "phase": "precheck",
-      "source": "internal/service/audit_service.e2e"
+      "source": "internal/service/audit_service_integration_test.go"
     },
     {
       "id": "service/TestAuditServiceAppendStoresNullClientIPWhenMissing",
       "package": "./internal/service",
       "run": "^TestAuditServiceAppendStoresNullClientIPWhenMissing$",
       "phase": "precheck",
-      "source": "internal/service/audit_service.e2e"
+      "source": "internal/service/audit_service_integration_test.go"
     },
     {
       "id": "service/TestAuditServiceAppendUsesContextClientIPWhenEntryBlank",
       "package": "./internal/service",
       "run": "^TestAuditServiceAppendUsesContextClientIPWhenEntryBlank$",
       "phase": "precheck",
-      "source": "internal/service/audit_service.e2e"
+      "source": "internal/service/audit_service_integration_test.go"
     },
     {
       "id": "service/TestAuditServiceHelperMethods",
       "package": "./internal/service",
       "run": "^TestAuditServiceHelperMethods$",
       "phase": "precheck",
-      "source": "internal/service/audit_service.e2e"
+      "source": "internal/service/audit_service_integration_test.go"
     },
     {
       "id": "service/TestAuditServiceListHidesSealedPrivateSpaceRows",
       "package": "./internal/service",
       "run": "^TestAuditServiceListHidesSealedPrivateSpaceRows$",
       "phase": "precheck",
-      "source": "internal/service/audit_service.e2e"
+      "source": "internal/service/audit_service_integration_test.go"
     },
     {
       "id": "service/TestAuditServiceRedactsSecrets",
       "package": "./internal/service",
       "run": "^TestAuditServiceRedactsSecrets$",
       "phase": "precheck",
-      "source": "internal/service/audit_service.e2e"
+      "source": "internal/service/audit_service_integration_test.go"
     },
     {
       "id": "service/TestAuditServiceListIsolatesTeamsForNonSuperuser",
       "package": "./internal/service",
       "run": "^TestAuditServiceListIsolatesTeamsForNonSuperuser$",
       "phase": "precheck",
-      "source": "internal/service/audit_service.e2e"
+      "source": "internal/service/audit_service_integration_test.go"
     }
   ]
 }

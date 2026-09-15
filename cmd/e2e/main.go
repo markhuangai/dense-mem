@@ -50,10 +50,6 @@ type goEvent struct {
 	Test   string `json:"Test"`
 }
 
-type overlay struct {
-	Replace map[string]string `json:"Replace"`
-}
-
 func loadDatabaseCaseBaseline(root string) ([]databaseCaseBaseline, error) {
 	path := filepath.Join(root, "cmd", "e2e", "testdata", "database-case-baseline.json")
 	contents, err := os.ReadFile(path)
@@ -157,12 +153,6 @@ func main() {
 		return
 	}
 
-	overlayPath, err := writeOverlay(root)
-	if err != nil {
-		fatal(err)
-	}
-	defer os.Remove(overlayPath)
-
 	var deadline time.Time
 	if *totalTimeoutFlag > 0 {
 		deadline = time.Now().Add(*totalTimeoutFlag)
@@ -178,7 +168,7 @@ func main() {
 				batchTimeout = remaining
 			}
 		}
-		if err := runBatch(root, overlayPath, batch, batchTimeout); err != nil {
+		if err := runBatch(root, batch, batchTimeout); err != nil {
 			fatal(err)
 		}
 	}
@@ -309,7 +299,7 @@ func reconcileCaseRegistry(root string, cases []databaseCase) error {
 			}
 			return nil
 		}
-		if filepath.Ext(entry.Name()) != ".e2e" {
+		if !strings.HasSuffix(entry.Name(), "_integration_test.go") {
 			return nil
 		}
 		relative, err := filepath.Rel(root, path)
@@ -319,12 +309,15 @@ func reconcileCaseRegistry(root string, cases []databaseCase) error {
 		source := filepath.ToSlash(relative)
 		contents, err := os.ReadFile(path)
 		if err != nil {
-			return fmt.Errorf("read E2E test source %s: %w", source, err)
+			return fmt.Errorf("read integration test source %s: %w", source, err)
+		}
+		if !strings.HasPrefix(string(contents), "//go:build integration") {
+			return fmt.Errorf("integration test source %s must use the integration build tag", source)
 		}
 		packageName := "./" + filepath.ToSlash(filepath.Dir(relative))
 		matches := testDeclarationPattern.FindAllStringSubmatch(string(contents), -1)
 		if len(matches) == 0 {
-			return fmt.Errorf("E2E source %s has no test declaration", source)
+			return nil
 		}
 		for _, match := range matches {
 			name := match[1]
@@ -374,59 +367,6 @@ func contains(items []string, value string) bool {
 	return false
 }
 
-func writeOverlay(root string) (string, error) {
-	replacements := make(map[string]string)
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			skip, err := skipGeneratedEvaluationTree(root, path)
-			if err != nil {
-				return err
-			}
-			if skip {
-				return filepath.SkipDir
-			}
-			switch entry.Name() {
-			case ".git", "node_modules", ".cache":
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".e2e") {
-			return nil
-		}
-		base := strings.TrimSuffix(path, ".e2e")
-		destination := base + "_test.go"
-		replacements[destination] = path
-		return nil
-	})
-	if err != nil {
-		return "", fmt.Errorf("discover E2E test sources: %w", err)
-	}
-	if len(replacements) == 0 {
-		return "", errors.New("no E2E test sources found")
-	}
-	file, err := os.CreateTemp("", "dense-mem-e2e-overlay-*.json")
-	if err != nil {
-		return "", fmt.Errorf("create E2E test overlay: %w", err)
-	}
-	path := file.Name()
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(overlay{Replace: replacements}); err != nil {
-		file.Close()
-		os.Remove(path)
-		return "", fmt.Errorf("write E2E test overlay: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		os.Remove(path)
-		return "", fmt.Errorf("close E2E test overlay: %w", err)
-	}
-	return path, nil
-}
-
 type packageBatch struct {
 	Package string
 	Cases   []databaseCase
@@ -459,7 +399,7 @@ func groupCases(cases []databaseCase) []packageBatch {
 	return batches
 }
 
-func runBatch(root, overlayPath string, batch packageBatch, timeout time.Duration) error {
+func runBatch(root string, batch packageBatch, timeout time.Duration) error {
 	parts := make([]string, 0, len(batch.Cases))
 	for _, item := range batch.Cases {
 		parts = append(parts, "(?:"+item.Run+")")
@@ -471,7 +411,7 @@ func runBatch(root, overlayPath string, batch packageBatch, timeout time.Duratio
 	if testTimeout <= 0 {
 		testTimeout = timeout
 	}
-	command := exec.CommandContext(ctx, "go", "test", "-overlay", overlayPath, "-json", "-count=1", "-timeout", testTimeout.String(), "-run", pattern, batch.Package)
+	command := exec.CommandContext(ctx, "go", "test", "-tags=integration", "-json", "-count=1", "-timeout", testTimeout.String(), "-run", pattern, batch.Package)
 	command.Dir = root
 	command.Env = append(os.Environ(), "DENSE_MEM_E2E_DB_RUNNER=1")
 	var output strings.Builder

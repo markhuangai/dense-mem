@@ -7,77 +7,77 @@
       "package": "./internal/storage/postgres",
       "run": "^TestDeprecatedANNIndexMigrationRetiresExactDuplicate$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration.e2e"
+      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration_test.go"
     },
     {
       "id": "postgres/TestDeprecatedANNIndexMigrationIsIdempotentWhenTargetAbsent",
       "package": "./internal/storage/postgres",
       "run": "^TestDeprecatedANNIndexMigrationIsIdempotentWhenTargetAbsent$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration.e2e"
+      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration_test.go"
     },
     {
       "id": "postgres/TestDeprecatedANNIndexMigrationFailsClosedOnDefinitionMismatch",
       "package": "./internal/storage/postgres",
       "run": "^TestDeprecatedANNIndexMigrationFailsClosedOnDefinitionMismatch$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration.e2e"
+      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration_test.go"
     },
     {
       "id": "postgres/TestDeprecatedANNIndexMigrationIgnoresSessionIdentifierQuoting",
       "package": "./internal/storage/postgres",
       "run": "^TestDeprecatedANNIndexMigrationIgnoresSessionIdentifierQuoting$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration.e2e"
+      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration_test.go"
     },
     {
       "id": "postgres/TestDeprecatedANNIndexMigrationFailsClosedWhenReplacementIsMissing",
       "package": "./internal/storage/postgres",
       "run": "^TestDeprecatedANNIndexMigrationFailsClosedWhenReplacementIsMissing$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration.e2e"
+      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration_test.go"
     },
     {
       "id": "postgres/TestDeprecatedANNIndexMigrationFailsClosedWhenReplacementIsInvalid",
       "package": "./internal/storage/postgres",
       "run": "^TestDeprecatedANNIndexMigrationFailsClosedWhenReplacementIsInvalid$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration.e2e"
+      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration_test.go"
     },
     {
       "id": "postgres/TestDeprecatedANNIndexMigrationFailsClosedOnActiveTarget",
       "package": "./internal/storage/postgres",
       "run": "^TestDeprecatedANNIndexMigrationFailsClosedOnActiveTarget$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration.e2e"
+      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration_test.go"
     },
     {
       "id": "postgres/TestDeprecatedANNIndexMigrationReleasesLockAfterBoundedFailure",
       "package": "./internal/storage/postgres",
       "run": "^TestDeprecatedANNIndexMigrationReleasesLockAfterBoundedFailure$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration.e2e"
+      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration_test.go"
     },
     {
       "id": "postgres/TestDeprecatedANNIndexMigrationDownRequiresCatalogRecovery",
       "package": "./internal/storage/postgres",
       "run": "^TestDeprecatedANNIndexMigrationDownRequiresCatalogRecovery$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration.e2e"
+      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration_test.go"
     },
     {
       "id": "postgres/TestDeprecatedANNIndexMigrationChecksCatalogDependencies",
       "package": "./internal/storage/postgres",
       "run": "^TestDeprecatedANNIndexMigrationChecksCatalogDependencies$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration.e2e"
+      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration_test.go"
     },
     {
       "id": "postgres/TestDeprecatedANNIndexMigrationRejectsDependentTarget",
       "package": "./internal/storage/postgres",
       "run": "^TestDeprecatedANNIndexMigrationRejectsDependentTarget$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration.e2e"
+      "source": "internal/storage/postgres/deprecated_ann_index_retirement_integration_test.go"
     }
   ]
 }

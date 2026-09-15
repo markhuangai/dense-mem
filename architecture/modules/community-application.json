@@ -111,7 +111,7 @@
       "issue": 367
     },
     {
-      "path": "internal/community/postgres/community_repository_integration.e2e",
+      "path": "internal/community/postgres/community_repository_integration_test.go",
       "issue": 367
     }
   ],

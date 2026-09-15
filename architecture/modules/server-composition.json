@@ -5,7 +5,7 @@
     {"path": "cmd/internal/serverapp/bootstrap.go", "issue": 381},
     {"path": "cmd/internal/serverapp/lifecycle_runtime.go", "issue": 381},
     {"path": "cmd/internal/serverapp/lifecycle_runtime_test.go", "issue": 381},
-    {"path": "cmd/internal/serverapp/lifecycle_runtime_integration.e2e", "issue": 381},
+    {"path": "cmd/internal/serverapp/lifecycle_runtime_integration_test.go", "issue": 381},
     {"path": "cmd/internal/serverapp/application_composition.go", "issue": 381},
     {"path": "cmd/internal/serverapp/runtime_options.go", "issue": 381},
     {"path": "cmd/internal/serverapp/server.go", "issue": 381},

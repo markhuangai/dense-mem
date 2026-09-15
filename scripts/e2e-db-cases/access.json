@@ -7,231 +7,231 @@
       "package": "./internal/access/postgres",
       "run": "^TestActiveTeamMutationGuardsAllowConcurrentTransactions$",
       "phase": "precheck",
-      "source": "internal/access/postgres/team_soft_delete_integration.e2e"
+      "source": "internal/access/postgres/team_soft_delete_integration_test.go"
     },
     {
       "id": "repository/TestActiveTeamMutationGuardSerializesWithTeamDelete",
       "package": "./internal/access/postgres",
       "run": "^TestActiveTeamMutationGuardSerializesWithTeamDelete$",
       "phase": "precheck",
-      "source": "internal/access/postgres/team_soft_delete_integration.e2e"
+      "source": "internal/access/postgres/team_soft_delete_integration_test.go"
     },
     {
       "id": "repository/TestCanonicalCredentialLifecycleRetainsDisabledIdentity",
       "package": "./internal/access/postgres",
       "run": "^TestCanonicalCredentialLifecycleRetainsDisabledIdentity$",
       "phase": "precheck",
-      "source": "internal/access/postgres/canonical_credentials_integration.e2e"
+      "source": "internal/access/postgres/canonical_credentials_integration_test.go"
     },
     {
       "id": "repository/TestCanonicalCredentialRevocationPreservesSharedActorAcrossTeams",
       "package": "./internal/access/postgres",
       "run": "^TestCanonicalCredentialRevocationPreservesSharedActorAcrossTeams$",
       "phase": "precheck",
-      "source": "internal/access/postgres/canonical_credentials_integration.e2e"
+      "source": "internal/access/postgres/canonical_credentials_integration_test.go"
     },
     {
       "id": "repository/TestCanonicalCredentialScopesRespectMembershipGrants",
       "package": "./internal/access/postgres",
       "run": "^TestCanonicalCredentialScopesRespectMembershipGrants$",
       "phase": "precheck",
-      "source": "internal/access/postgres/canonical_credentials_integration.e2e"
+      "source": "internal/access/postgres/canonical_credentials_integration_test.go"
     },
     {
       "id": "repository/TestCanonicalSSOOwnedCredentialCollectionAndSpaces",
       "package": "./internal/access/postgres",
       "run": "^TestCanonicalSSOOwnedCredentialCollectionAndSpaces$",
       "phase": "precheck",
-      "source": "internal/access/postgres/canonical_credentials_integration.e2e"
+      "source": "internal/access/postgres/canonical_credentials_integration_test.go"
     },
     {
       "id": "repository/TestDeleteForTeamRetiresPromotedSSOCredentialPrivateSpace",
       "package": "./internal/access/postgres",
       "run": "^TestDeleteForTeamRetiresPromotedSSOCredentialPrivateSpace$",
       "phase": "precheck",
-      "source": "internal/access/postgres/canonical_credentials_integration.e2e"
+      "source": "internal/access/postgres/canonical_credentials_integration_test.go"
     },
     {
       "id": "repository/TestDeleteForTeamWithAuditCommitsBeforePrivateErasureQueue",
       "package": "./internal/access/postgres",
       "run": "^TestDeleteForTeamWithAuditCommitsBeforePrivateErasureQueue$",
       "phase": "precheck",
-      "source": "internal/access/postgres/canonical_credentials_integration.e2e"
+      "source": "internal/access/postgres/canonical_credentials_integration_test.go"
     },
     {
       "id": "repository/TestDirectoryCredentialsAndProviderRetirementRevokeOAuthAccess",
       "package": "./internal/access/postgres",
       "run": "^TestDirectoryCredentialsAndProviderRetirementRevokeOAuthAccess$",
       "phase": "precheck",
-      "source": "internal/access/postgres/directory_identity_repository_integration.e2e"
+      "source": "internal/access/postgres/directory_identity_repository_integration_test.go"
     },
     {
       "id": "repository/TestDirectoryGroupAndMembershipUpsertIsAtomic",
       "package": "./internal/access/postgres",
       "run": "^TestDirectoryGroupAndMembershipUpsertIsAtomic$",
       "phase": "precheck",
-      "source": "internal/access/postgres/directory_identity_repository_integration.e2e"
+      "source": "internal/access/postgres/directory_identity_repository_integration_test.go"
     },
     {
       "id": "repository/TestDirectoryPageQueriesAreScopedAndRejectDuplicateCreates",
       "package": "./internal/access/postgres",
       "run": "^TestDirectoryPageQueriesAreScopedAndRejectDuplicateCreates$",
       "phase": "precheck",
-      "source": "internal/access/postgres/directory_identity_repository_integration.e2e"
+      "source": "internal/access/postgres/directory_identity_repository_integration_test.go"
     },
     {
       "id": "repository/TestDirectoryReconcileCreatesAndArchivesOnlyDirectoryManagedTeam",
       "package": "./internal/access/postgres",
       "run": "^TestDirectoryReconcileCreatesAndArchivesOnlyDirectoryManagedTeam$",
       "phase": "precheck",
-      "source": "internal/access/postgres/directory_identity_repository_integration.e2e"
+      "source": "internal/access/postgres/directory_identity_repository_integration_test.go"
     },
     {
       "id": "repository/TestDirectoryReconcileFenceAndDisableRetireOnlyDirectoryGrants",
       "package": "./internal/access/postgres",
       "run": "^TestDirectoryReconcileFenceAndDisableRetireOnlyDirectoryGrants$",
       "phase": "precheck",
-      "source": "internal/access/postgres/directory_identity_repository_integration.e2e"
+      "source": "internal/access/postgres/directory_identity_repository_integration_test.go"
     },
     {
       "id": "repository/TestSSOListMappingsExcludesRetiredMappings",
       "package": "./internal/access/postgres",
       "run": "^TestSSOListMappingsExcludesRetiredMappings$",
       "phase": "precheck",
-      "source": "internal/access/postgres/directory_identity_repository_integration.e2e"
+      "source": "internal/access/postgres/directory_identity_repository_integration_test.go"
     },
     {
       "id": "repository/TestSSOProviderProtectedResourceConfigRoundTripAndStrictRead",
       "package": "./internal/access/postgres",
       "run": "^TestSSOProviderProtectedResourceConfigRoundTripAndStrictRead$",
       "phase": "precheck",
-      "source": "internal/access/postgres/sso_oauth_repository_integration.e2e"
+      "source": "internal/access/postgres/sso_oauth_repository_integration_test.go"
     },
     {
       "id": "repository/TestSSOProviderProtectedResourceDefaultIsDormant",
       "package": "./internal/access/postgres",
       "run": "^TestSSOProviderProtectedResourceDefaultIsDormant$",
       "phase": "precheck",
-      "source": "internal/access/postgres/sso_oauth_repository_integration.e2e"
+      "source": "internal/access/postgres/sso_oauth_repository_integration_test.go"
     },
     {
       "id": "repository/TestSSOProviderProtectedResourceIssuerUniquenessIsAtomic",
       "package": "./internal/access/postgres",
       "run": "^TestSSOProviderProtectedResourceIssuerUniquenessIsAtomic$",
       "phase": "precheck",
-      "source": "internal/access/postgres/sso_oauth_repository_integration.e2e"
+      "source": "internal/access/postgres/sso_oauth_repository_integration_test.go"
     },
     {
       "id": "repository/TestSSOProviderProtectedResourceOmittedUpdatePreservesConcurrentConfig",
       "package": "./internal/access/postgres",
       "run": "^TestSSOProviderProtectedResourceOmittedUpdatePreservesConcurrentConfig$",
       "phase": "precheck",
-      "source": "internal/access/postgres/sso_oauth_repository_integration.e2e"
+      "source": "internal/access/postgres/sso_oauth_repository_integration_test.go"
     },
     {
       "id": "repository/TestSSOProviderProtectedResourceProfileLimitIsAtomic",
       "package": "./internal/access/postgres",
       "run": "^TestSSOProviderProtectedResourceProfileLimitIsAtomic$",
       "phase": "precheck",
-      "source": "internal/access/postgres/sso_oauth_repository_integration.e2e"
+      "source": "internal/access/postgres/sso_oauth_repository_integration_test.go"
     },
     {
       "id": "repository/TestSSORuntimeEntitlementsExcludeArchivedTeams",
       "package": "./internal/access/postgres",
       "run": "^TestSSORuntimeEntitlementsExcludeArchivedTeams$",
       "phase": "precheck",
-      "source": "internal/access/postgres/team_soft_delete_integration.e2e"
+      "source": "internal/access/postgres/team_soft_delete_integration_test.go"
     },
     {
       "id": "repository/TestTeamHardDeletePreservesAuditRowWhenMemorySpaceIsRemoved",
       "package": "./internal/access/postgres",
       "run": "^TestTeamHardDeletePreservesAuditRowWhenMemorySpaceIsRemoved$",
       "phase": "precheck",
-      "source": "internal/access/postgres/team_soft_delete_integration.e2e"
+      "source": "internal/access/postgres/team_soft_delete_integration_test.go"
     },
     {
       "id": "repository/TestTeamHardDeleteRemovesEmptyTeamMemorySpaceCatalog",
       "package": "./internal/access/postgres",
       "run": "^TestTeamHardDeleteRemovesEmptyTeamMemorySpaceCatalog$",
       "phase": "precheck",
-      "source": "internal/access/postgres/team_soft_delete_integration.e2e"
+      "source": "internal/access/postgres/team_soft_delete_integration_test.go"
     },
     {
       "id": "repository/TestTeamRepositoryJSONBMapsRoundTrip",
       "package": "./internal/access/postgres",
       "run": "^TestTeamRepositoryJSONBMapsRoundTrip$",
       "phase": "precheck",
-      "source": "internal/access/postgres/team_repository.e2e"
+      "source": "internal/access/postgres/team_repository_integration_test.go"
     },
     {
       "id": "repository/TestTeamRepositoryNilJSONBMapsReadAsEmptyObjects",
       "package": "./internal/access/postgres",
       "run": "^TestTeamRepositoryNilJSONBMapsReadAsEmptyObjects$",
       "phase": "precheck",
-      "source": "internal/access/postgres/team_repository.e2e"
+      "source": "internal/access/postgres/team_repository_integration_test.go"
     },
     {
       "id": "repository/TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork",
       "package": "./internal/access/postgres",
       "run": "^TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork$",
       "phase": "precheck",
-      "source": "internal/access/postgres/team_soft_delete_integration.e2e"
+      "source": "internal/access/postgres/team_soft_delete_integration_test.go"
     },
     {
       "id": "repository/TestUserPortalSessionsEnforceSystemRLSAndProfileLifecycle",
       "package": "./internal/access/postgres",
       "run": "^TestUserPortalSessionsEnforceSystemRLSAndProfileLifecycle$",
       "phase": "precheck",
-      "source": "internal/access/postgres/user_portal_session_repository_integration.e2e"
+      "source": "internal/access/postgres/user_portal_session_repository_integration_test.go"
     },
     {
       "id": "service/TestTeamServiceCreate",
       "package": "./internal/service",
       "run": "^TestTeamServiceCreate$",
       "phase": "precheck",
-      "source": "internal/service/team_service.e2e"
+      "source": "internal/service/team_service_integration_test.go"
     },
     {
       "id": "service/TestTeamServiceCreateDuplicateName",
       "package": "./internal/service",
       "run": "^TestTeamServiceCreateDuplicateName$",
       "phase": "precheck",
-      "source": "internal/service/team_service.e2e"
+      "source": "internal/service/team_service_integration_test.go"
     },
     {
       "id": "service/TestTeamServiceDelete",
       "package": "./internal/service",
       "run": "^TestTeamServiceDelete$",
       "phase": "precheck",
-      "source": "internal/service/team_service.e2e"
+      "source": "internal/service/team_service_integration_test.go"
     },
     {
       "id": "service/TestTeamServiceDeleteRevokesActiveKeys",
       "package": "./internal/service",
       "run": "^TestTeamServiceDeleteRevokesActiveKeys$",
       "phase": "precheck",
-      "source": "internal/service/team_service.e2e"
+      "source": "internal/service/team_service_integration_test.go"
     },
     {
       "id": "service/TestTeamServiceGet",
       "package": "./internal/service",
       "run": "^TestTeamServiceGet$",
       "phase": "precheck",
-      "source": "internal/service/team_service.e2e"
+      "source": "internal/service/team_service_integration_test.go"
     },
     {
       "id": "service/TestTeamServiceList",
       "package": "./internal/service",
       "run": "^TestTeamServiceList$",
       "phase": "precheck",
-      "source": "internal/service/team_service.e2e"
+      "source": "internal/service/team_service_integration_test.go"
     },
     {
       "id": "service/TestTeamServiceUpdate",
       "package": "./internal/service",
       "run": "^TestTeamServiceUpdate$",
       "phase": "precheck",
-      "source": "internal/service/team_service.e2e"
+      "source": "internal/service/team_service_integration_test.go"
     }
   ]
 }

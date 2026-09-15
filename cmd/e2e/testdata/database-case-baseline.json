@@ -232,11 +232,6 @@
       "phase": "precheck"
     },
     {
-      "id": "repository/TestDreamListSortValidation",
-      "run": "^TestDreamListSortValidation$",
-      "phase": "precheck"
-    },
-    {
       "id": "repository/TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment",
       "run": "^TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment$",
       "phase": "precheck"
@@ -337,11 +332,6 @@
       "phase": "precheck"
     },
     {
-      "id": "repository/TestHypothesisConfirmationLockClassifiesInvalidHypothesisID",
-      "run": "^TestHypothesisConfirmationLockClassifiesInvalidHypothesisID$",
-      "phase": "precheck"
-    },
-    {
       "id": "repository/TestHypothesisConfirmationLockDiscardsFailedCleanupConnection",
       "run": "^TestHypothesisConfirmationLockDiscardsFailedCleanupConnection$",
       "phase": "precheck"
@@ -369,16 +359,6 @@
     {
       "id": "repository/TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited",
       "run": "^TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestStaleDreamSourceErrorMapsMissingRelationship",
-      "run": "^TestStaleDreamSourceErrorMapsMissingRelationship$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestUpdateHypothesisStatusValidationBindsDecisionToStatus",
-      "run": "^TestUpdateHypothesisStatusValidationBindsDecisionToStatus$",
       "phase": "precheck"
     },
     {
@@ -457,11 +437,6 @@
       "phase": "precheck"
     },
     {
-      "id": "repository/TestCorrectRelationshipValidationRejectsInvalidConfirmation",
-      "run": "^TestCorrectRelationshipValidationRejectsInvalidConfirmation$",
-      "phase": "precheck"
-    },
-    {
       "id": "repository/TestInsertRelationshipTransitionReturnsExistingIDForIdempotentReplay",
       "run": "^TestInsertRelationshipTransitionReturnsExistingIDForIdempotentReplay$",
       "phase": "precheck"
@@ -489,11 +464,6 @@
     {
       "id": "repository/TestLedgerRetractEvidenceRevokesOnlyItsSupportAndReplaysAtomically",
       "run": "^TestLedgerRetractEvidenceRevokesOnlyItsSupportAndReplaysAtomically$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestNormalizeCorrectRelationshipInputCanonicalizesWithoutMutatingCaller",
-      "run": "^TestNormalizeCorrectRelationshipInputCanonicalizesWithoutMutatingCaller$",
       "phase": "precheck"
     },
     {
@@ -562,26 +532,6 @@
       "phase": "precheck"
     },
     {
-      "id": "repository/TestSemanticApplyRelationshipDecisionValidationAllowsStructuralRememberAcceptance",
-      "run": "^TestSemanticApplyRelationshipDecisionValidationAllowsStructuralRememberAcceptance$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestSemanticApplyRelationshipDecisionValidationRejectsLegacySupportAuthority",
-      "run": "^TestSemanticApplyRelationshipDecisionValidationRejectsLegacySupportAuthority$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestSemanticApplyRelationshipDecisionValidationRejectsMalformedSupportForAnyVerdict",
-      "run": "^TestSemanticApplyRelationshipDecisionValidationRejectsMalformedSupportForAnyVerdict$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestSemanticApplyRelationshipDecisionValidationRequiresEntailedSupport",
-      "run": "^TestSemanticApplyRelationshipDecisionValidationRequiresEntailedSupport$",
-      "phase": "precheck"
-    },
-    {
       "id": "repository/TestSemanticAssessmentEntityMatchesUseOnlyCanonicalAndAliasNames",
       "run": "^TestSemanticAssessmentEntityMatchesUseOnlyCanonicalAndAliasNames$",
       "phase": "precheck"
@@ -607,11 +557,6 @@
       "phase": "precheck"
     },
     {
-      "id": "repository/TestSemanticGroupKeyExcludesMutableValidTo",
-      "run": "^TestSemanticGroupKeyExcludesMutableValidTo$",
-      "phase": "precheck"
-    },
-    {
       "id": "repository/TestSemanticOneCardinalitySupersedesPriorActiveRelationship",
       "run": "^TestSemanticOneCardinalitySupersedesPriorActiveRelationship$",
       "phase": "precheck"
@@ -624,11 +569,6 @@
     {
       "id": "repository/TestSemanticRelationshipLifecycleAndRLS",
       "run": "^TestSemanticRelationshipLifecycleAndRLS$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestSemanticRepositoryFailsClosedWithoutDependencies",
-      "run": "^TestSemanticRepositoryFailsClosedWithoutDependencies$",
       "phase": "precheck"
     },
     {
@@ -742,11 +682,6 @@
       "phase": "precheck"
     },
     {
-      "id": "postgres/TestDBPingTimeout",
-      "run": "^TestDBPingTimeout$",
-      "phase": "precheck"
-    },
-    {
       "id": "postgres/TestEmbeddingFailureGroupIndexSupportsRepresentativeProjection",
       "run": "^TestEmbeddingFailureGroupIndexSupportsRepresentativeProjection$",
       "phase": "precheck"
@@ -754,11 +689,6 @@
     {
       "id": "postgres/TestEmbeddingReconciliationMigrationBackfillsJobsWithoutIncidentState",
       "run": "^TestEmbeddingReconciliationMigrationBackfillsJobsWithoutIncidentState$",
-      "phase": "precheck"
-    },
-    {
-      "id": "postgres/TestEmbeddingReconciliationMigrationHasOneRestartGatedBackfill",
-      "run": "^TestEmbeddingReconciliationMigrationHasOneRestartGatedBackfill$",
       "phase": "precheck"
     },
     {
@@ -898,26 +828,6 @@
       "phase": "precheck"
     },
     {
-      "id": "postgres/TestMigrationDatabaseDSNPreservesQuotedConninfoValues",
-      "run": "^TestMigrationDatabaseDSNPreservesQuotedConninfoValues$",
-      "phase": "precheck"
-    },
-    {
-      "id": "postgres/TestMigrationDatabaseDSNUpdatesURL",
-      "run": "^TestMigrationDatabaseDSNUpdatesURL$",
-      "phase": "precheck"
-    },
-    {
-      "id": "postgres/TestMigrationFilesystemCombinesReleaseDirectories",
-      "run": "^TestMigrationFilesystemCombinesReleaseDirectories$",
-      "phase": "precheck"
-    },
-    {
-      "id": "postgres/TestMigrationFilesystemRejectsInvalidHistory",
-      "run": "^TestMigrationFilesystemRejectsInvalidHistory$",
-      "phase": "precheck"
-    },
-    {
       "id": "postgres/TestMigrationOrder_NoConnectorTables",
       "run": "^TestMigrationOrder_NoConnectorTables$",
       "phase": "precheck"
@@ -968,16 +878,6 @@
       "phase": "precheck"
     },
     {
-      "id": "postgres/TestOpenFailsOnEmptyDSN",
-      "run": "^TestOpenFailsOnEmptyDSN$",
-      "phase": "precheck"
-    },
-    {
-      "id": "postgres/TestOpenFailsOnUnreachable",
-      "run": "^TestOpenFailsOnUnreachable$",
-      "phase": "precheck"
-    },
-    {
       "id": "postgres/TestOpenSuccess",
       "run": "^TestOpenSuccess$",
       "phase": "precheck"
@@ -1020,11 +920,6 @@
     {
       "id": "postgres/TestPostCutoverCleanupMigrationWithCompatibleMarkerDropsLegacyTables",
       "run": "^TestPostCutoverCleanupMigrationWithCompatibleMarkerDropsLegacyTables$",
-      "phase": "precheck"
-    },
-    {
-      "id": "postgres/TestPostgresInsufficientPrivilegeDetection",
-      "run": "^TestPostgresInsufficientPrivilegeDetection$",
       "phase": "precheck"
     },
     {
@@ -1574,11 +1469,6 @@
     {
       "id": "repository/TestLedgerSourceRevisionCompareAndSet",
       "run": "^TestLedgerSourceRevisionCompareAndSet$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestLedgerValidateRejectsMixedSourceRevisionBatch",
-      "run": "^TestLedgerValidateRejectsMixedSourceRevisionBatch$",
       "phase": "precheck"
     },
     {

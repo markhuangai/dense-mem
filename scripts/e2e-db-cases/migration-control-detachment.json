@@ -7,42 +7,42 @@
       "package": "./internal/storage/postgres",
       "run": "^TestMigrationControlDetachmentPreservesRetainedTablesAndMarker$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/migration_control_detachment_integration.e2e"
+      "source": "internal/storage/postgres/migration_control_detachment_integration_test.go"
     },
     {
       "id": "postgres/TestMigrationControlDetachmentRejectsUnexpectedFunctionAndRollsBack",
       "package": "./internal/storage/postgres",
       "run": "^TestMigrationControlDetachmentRejectsUnexpectedFunctionAndRollsBack$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/migration_control_detachment_integration.e2e"
+      "source": "internal/storage/postgres/migration_control_detachment_integration_test.go"
     },
     {
       "id": "postgres/TestMigrationControlDetachmentRejectsUnexpectedDependenciesAndRollsBack",
       "package": "./internal/storage/postgres",
       "run": "^TestMigrationControlDetachmentRejectsUnexpectedDependenciesAndRollsBack$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/migration_control_detachment_integration.e2e"
+      "source": "internal/storage/postgres/migration_control_detachment_integration_test.go"
     },
     {
       "id": "postgres/TestMigrationControlDetachmentLockFailureRollsBackAndCanRetry",
       "package": "./internal/storage/postgres",
       "run": "^TestMigrationControlDetachmentLockFailureRollsBackAndCanRetry$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/migration_control_detachment_integration.e2e"
+      "source": "internal/storage/postgres/migration_control_detachment_integration_test.go"
     },
     {
       "id": "postgres/TestMigrationControlDetachmentAcquiresDDLLocksBeforeValidationLocks",
       "package": "./internal/storage/postgres",
       "run": "^TestMigrationControlDetachmentAcquiresDDLLocksBeforeValidationLocks$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/migration_control_detachment_integration.e2e"
+      "source": "internal/storage/postgres/migration_control_detachment_integration_test.go"
     },
     {
       "id": "repository/TestAuthorityRepositoryRetainsMigrationAuditReadOnly",
       "package": "./internal/operations/postgres",
       "run": "^TestAuthorityRepositoryRetainsMigrationAuditReadOnly$",
       "phase": "precheck",
-      "source": "internal/operations/postgres/migration_control_retirement_integration.e2e"
+      "source": "internal/operations/postgres/migration_control_retirement_integration_test.go"
     }
   ]
 }

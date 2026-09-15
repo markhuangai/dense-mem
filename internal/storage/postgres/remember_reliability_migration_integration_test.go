@@ -1,0 +1,252 @@
+//go:build integration
+
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+const rememberReliabilityMigrationVersion int64 = 20260823010001
+const rememberReliabilityMigrationBaseVersion int64 = 20260821160001
+
+func TestRememberReliabilityMigrationTerminalizesOnlyUnfinishedLegacyRememberRuns(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, db, rememberReliabilityMigrationBaseVersion)
+	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
+	ingestID, runID := uuid.NewString(), uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO knowledge_ingests (
+				team_id, ingest_id, owner_profile_id, idempotency_key,
+				request_hash, status, metadata
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'legacy-remember',
+				        'legacy-request', 'processing',
+				        '{"_dense_mem_telemetry_origin":"remember","contract_version":"dense-mem.v2.5"}'::jsonb)
+		`, teamID, ingestID, profileID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_runs (
+				team_id, placement_run_id, ingest_id, owner_profile_id,
+				status, attempts, max_attempts
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'processing', 1, 5)
+		`, teamID, runID, ingestID, profileID)
+		return err
+	}))
+
+	runGooseUpTo(t, ctx, db, rememberReliabilityMigrationVersion)
+	var ingestStatus, ingestError, runStatus, runError string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT status, error FROM knowledge_ingests
+		WHERE team_id = $1::uuid AND ingest_id = $2::uuid
+	`, teamID, ingestID).Scan(&ingestStatus, &ingestError))
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT status, error FROM placement_runs
+		WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
+	`, teamID, runID).Scan(&runStatus, &runError))
+	assert.Equal(t, "failed", ingestStatus)
+	assert.Equal(t, "v2.6 Remember contract superseded; resubmit the complete submission", ingestError)
+	assert.Equal(t, "failed", runStatus)
+	assert.Equal(t, "v2.6 Remember contract superseded; resubmit the complete submission", runError)
+}
+
+func TestRememberReliabilityMigrationDownRejectsQueuedV26RememberIngest(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, db, rememberReliabilityMigrationVersion)
+	assert.True(t, columnExists(t, ctx, db, "placement_runs", "assessor_turns_reserved"))
+	var verdictNullable, rationaleNullable string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT
+			MAX(is_nullable) FILTER (WHERE column_name = 'evidence_verdict'),
+			MAX(is_nullable) FILTER (WHERE column_name = 'rationale')
+		FROM information_schema.columns
+		WHERE table_schema = current_schema()
+		  AND table_name = 'verification_events'
+	`).Scan(&verdictNullable, &rationaleNullable))
+	assert.Equal(t, "YES", verdictNullable)
+	assert.Equal(t, "YES", rationaleNullable)
+	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
+	ingestID, runID := uuid.NewString(), uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO knowledge_ingests (
+				team_id, ingest_id, owner_profile_id, idempotency_key,
+				request_hash, status, metadata
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'v26-queued',
+				        'v26-queued-request', 'queued',
+				        '{"_dense_mem_telemetry_origin":"remember","contract_version":"dense-mem.v2.6"}'::jsonb)
+		`, teamID, ingestID, profileID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_runs (
+				team_id, placement_run_id, ingest_id, owner_profile_id,
+				status, attempts, max_attempts
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'queued', 0, 5)
+		`, teamID, runID, ingestID, profileID)
+		return err
+	}))
+
+	err := migrationDownTo(ctx, db, rememberReliabilityMigrationBaseVersion)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "v2.6 Remember ingest history exists")
+	assert.True(t, tableExists(t, ctx, db, "remember_source_revision_intents"))
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM placement_runs
+			WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
+		`, teamID, runID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			DELETE FROM knowledge_ingests
+			WHERE team_id = $1::uuid AND ingest_id = $2::uuid
+		`, teamID, ingestID)
+		return err
+	}))
+	require.NoError(t, migrationDownTo(ctx, db, rememberReliabilityMigrationBaseVersion))
+	assert.False(t, tableExists(t, ctx, db, "remember_source_revision_intents"))
+	assert.False(t, columnExists(t, ctx, db, "placement_runs", "assessor_turns_reserved"))
+	var fragmentGuard string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT function_row.proname
+		FROM pg_trigger AS trigger_row
+		JOIN pg_proc AS function_row ON function_row.oid = trigger_row.tgfoid
+		WHERE trigger_row.tgrelid = 'evidence_fragments'::regclass
+		  AND trigger_row.tgname = 'evidence_fragments_append_only'
+	`).Scan(&fragmentGuard))
+	assert.Equal(t, "prevent_append_only_mutation", fragmentGuard)
+}
+
+func TestRememberReliabilityMigrationUsesBoundedLockTimeout(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, db, rememberReliabilityMigrationBaseVersion)
+
+	lockTx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	_, err = lockTx.ExecContext(ctx, `LOCK TABLE knowledge_ingests IN ACCESS SHARE MODE`)
+	require.NoError(t, err)
+
+	blockedCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
+	err = migrationUpTo(blockedCtx, db, rememberReliabilityMigrationVersion)
+	cancel()
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, err, &pgErr)
+	assert.Equal(t, "55P03", pgErr.Code)
+	assert.Contains(t, pgErr.Message, "lock timeout")
+	require.NoError(t, lockTx.Rollback())
+	require.NoError(t, migrationUpTo(ctx, db, rememberReliabilityMigrationVersion))
+}
+
+func TestRememberReliabilityMigrationEnforcesRelationshipResultShape(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, db, rememberReliabilityMigrationVersion)
+	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
+	ingestID, runID := uuid.NewString(), uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO knowledge_ingests (
+				team_id, ingest_id, owner_profile_id, idempotency_key, request_hash, status, metadata
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'result-shape', 'result-shape', 'processing',
+			          '{"_dense_mem_telemetry_origin":"remember","contract_version":"dense-mem.v2.6"}'::jsonb)
+		`, teamID, ingestID, profileID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_runs (
+				team_id, placement_run_id, ingest_id, owner_profile_id, status, attempts, max_attempts
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'processing', 1, 5)
+		`, teamID, runID, ingestID, profileID)
+		return err
+	}))
+
+	insertResult := func(ref, disposition, reason, splits string) error {
+		return execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `
+				INSERT INTO submission_relationship_results (
+					team_id, ingest_id, placement_run_id, owner_profile_id,
+					relationship_ref, disposition, reason, splits
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6, $7, $8::jsonb)
+			`, teamID, ingestID, runID, profileID, ref, disposition, reason, splits)
+			return err
+		})
+	}
+	validRelationshipID := uuid.NewString()
+	require.NoError(t, insertResult("stored-valid", "stored", "", `[{"split_index":0,"relationship_id":"`+validRelationshipID+`","relationship_version":1,"status":"active"}]`))
+	require.NoError(t, insertResult("not-stored-valid", "not_stored", "not_supported_by_evidence", `[]`))
+	require.NoError(t, insertResult("stale-input-valid", "not_stored", "stale_input", `[]`))
+	require.NoError(t, insertResult("security-quarantine-valid", "not_stored", "security_quarantine", `[]`))
+
+	tests := []struct {
+		name        string
+		disposition string
+		reason      string
+		splits      string
+	}{
+		{name: "stored empty", disposition: "stored", splits: `[]`},
+		{name: "stored reason", disposition: "stored", reason: "unexpected", splits: `[{"split_index":0,"relationship_id":"` + uuid.NewString() + `","relationship_version":1,"status":"active"}]`},
+		{name: "not stored reason", disposition: "not_stored", reason: "other", splits: `[]`},
+		{name: "not stored split", disposition: "not_stored", reason: "not_supported_by_evidence", splits: `[{"split_index":0,"relationship_id":"` + uuid.NewString() + `","relationship_version":1,"status":"active"}]`},
+		{name: "extra split key", disposition: "stored", splits: `[{"split_index":0,"relationship_id":"` + uuid.NewString() + `","relationship_version":1,"status":"active","extra":true}]`},
+		{name: "split gap", disposition: "stored", splits: `[{"split_index":0,"relationship_id":"` + uuid.NewString() + `","relationship_version":1,"status":"active"},{"split_index":2,"relationship_id":"` + uuid.NewString() + `","relationship_version":1,"status":"active"}]`},
+		{name: "split duplicate", disposition: "stored", splits: `[{"split_index":0,"relationship_id":"` + uuid.NewString() + `","relationship_version":1,"status":"active"},{"split_index":0,"relationship_id":"` + uuid.NewString() + `","relationship_version":1,"status":"active"}]`},
+		{name: "relationship version", disposition: "stored", splits: `[{"split_index":0,"relationship_id":"` + uuid.NewString() + `","relationship_version":0,"status":"active"}]`},
+		{name: "relationship status", disposition: "stored", splits: `[{"split_index":0,"relationship_id":"` + uuid.NewString() + `","relationship_version":1,"status":"pending_evidence"}]`},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := insertResult(fmt.Sprintf("invalid-%d", index), test.disposition, test.reason, test.splits)
+			require.Error(t, err)
+			var pgErr *pgconn.PgError
+			require.ErrorAs(t, err, &pgErr)
+			assert.Equal(t, "23514", pgErr.Code)
+		})
+	}
+	err := migrationDownTo(ctx, db, rememberReliabilityMigrationBaseVersion)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "v2.6 Remember intent or result history exists")
+}
+
+func insertRememberReliabilityIdentityFixture(t *testing.T, ctx context.Context, db *sql.DB) (string, string) {
+	t.Helper()
+	teamID, profileID, identityID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO teams (id, name, description, metadata, config)
+			VALUES ($1::uuid, $2, '', '{}'::jsonb, '{}'::jsonb)
+		`, teamID, "remember-reliability-"+teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO actor_identities (id, kind, team_id, display_name)
+			VALUES ($1::uuid, 'human', $2::uuid, 'Remember reliability owner')
+		`, identityID, teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO ownership_aliases (team_id, legacy_owner_id, canonical_identity_id, reason)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, 'migration_test')
+		`, teamID, profileID, identityID); err != nil {
+			return err
+		}
+		return nil
+	}))
+	return teamID, profileID
+}

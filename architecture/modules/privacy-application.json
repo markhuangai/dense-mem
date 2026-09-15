@@ -55,23 +55,23 @@
       "issue": 364
     },
     {
-      "path": "internal/privacy/postgres/private_memory_audit_integration.e2e",
+      "path": "internal/privacy/postgres/private_memory_audit_integration_test.go",
       "issue": 364
     },
     {
-      "path": "internal/privacy/postgres/private_memory_credential_retirement_integration.e2e",
+      "path": "internal/privacy/postgres/private_memory_credential_retirement_integration_test.go",
       "issue": 364
     },
     {
-      "path": "internal/privacy/postgres/private_memory_remember_assessment_integration.e2e",
+      "path": "internal/privacy/postgres/private_memory_remember_assessment_integration_test.go",
       "issue": 364
     },
     {
-      "path": "internal/privacy/postgres/private_memory_repository_integration.e2e",
+      "path": "internal/privacy/postgres/private_memory_repository_integration_test.go",
       "issue": 364
     },
     {
-      "path": "internal/privacy/postgres/private_memory_semantic_lineage_integration.e2e",
+      "path": "internal/privacy/postgres/private_memory_semantic_lineage_integration_test.go",
       "issue": 364
     }
   ],

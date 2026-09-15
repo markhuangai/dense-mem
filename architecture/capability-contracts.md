@@ -44,12 +44,14 @@ authority.
 
 ## Database-case registry
 
-Every `.e2e` source has one declaration in `scripts/e2e-db-cases/`. The
-declaration's package is the source directory, and its run expression names one
-concrete test. The registry loader checks duplicate IDs, missing declarations,
-package mismatches, and stale source paths before invoking a batch. The frozen
-baseline preserves IDs, run expressions, phases, and scenario ownership while
-allowing a capability to relocate a fixture to its native package.
+Every tagged `_integration_test.go` source has one declaration in
+`scripts/e2e-db-cases/`. The declaration's package is the source directory, and
+its run expression names one concrete test. The registry loader checks duplicate
+IDs, missing declarations, package mismatches, build tags, and stale source
+paths before invoking a batch. Database-free cases remain ordinary `_test.go`
+files and are covered by the normal Go test suite. The frozen baseline preserves
+IDs, run expressions, phases, and scenario ownership while allowing a
+capability to relocate a fixture to its native package.
 
 The central architecture manifest, registry loader, composition root, and E2E
 host controller are shared read-only infrastructure for capability cutovers.

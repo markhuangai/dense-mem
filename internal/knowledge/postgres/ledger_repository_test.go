@@ -210,3 +210,16 @@ func validAdvanceSourceRevisionInput() AdvanceSourceRevisionInput {
 		ContentHash:    "sha256:policy",
 	}
 }
+
+func TestLedgerValidateRejectsMixedSourceRevisionBatch(t *testing.T) {
+	input := normalizeCreateIngestInput(CreateIngestInput{
+		TeamID: uuid.NewString(), OwnerProfileID: uuid.NewString(),
+		Evidence: []EvidenceInput{
+			{Content: "first source fragment", SourceKey: "wiki://write-pipeline", SourceRevisionToken: "rev-1"},
+			{Content: "second source fragment", SourceKey: "wiki://write-pipeline", SourceRevisionToken: "rev-2"},
+		},
+	})
+	err := validateCreateIngestInput(input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "revision fields must match")
+}

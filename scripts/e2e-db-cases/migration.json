@@ -7,14 +7,14 @@
       "package": "./cmd/internal/migrationapp",
       "run": "^TestRunDownTimeoutRollsBackBlockedMigration$",
       "phase": "precheck",
-      "source": "cmd/internal/migrationapp/migration_integration.e2e"
+      "source": "cmd/internal/migrationapp/migration_integration_test.go"
     },
     {
       "id": "migration/TestRunUpTimeoutRollsBackBlockedMigrationAndReleasesLock",
       "package": "./cmd/internal/migrationapp",
       "run": "^TestRunUpTimeoutRollsBackBlockedMigrationAndReleasesLock$",
       "phase": "precheck",
-      "source": "cmd/internal/migrationapp/migration_integration.e2e"
+      "source": "cmd/internal/migrationapp/migration_integration_test.go"
     }
   ]
 }

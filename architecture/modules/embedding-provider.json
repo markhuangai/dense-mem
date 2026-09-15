@@ -11,7 +11,11 @@
       "issue": 373
     },
     {
-      "path": "internal/knowledge/postgres/search_reconciliation_integration.e2e",
+      "path": "internal/knowledge/postgres/search_reconciliation_integration_test.go",
+      "issue": 373
+    },
+    {
+      "path": "internal/knowledge/postgres/search_relationship_reconciliation_integration_test.go",
       "issue": 373
     }
   ],

@@ -93,6 +93,33 @@ is_nested_module() {
 	return 1
 }
 
+has_go_tag() {
+	local wanted="$1"
+	local tag
+	IFS=',' read -r -a requested_tags <<< "${GO_TAGS}"
+	for tag in "${requested_tags[@]}"; do
+		tag="${tag//[[:space:]]/}"
+		if [[ "${tag}" == "${wanted}" ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+integration_only_sources() {
+	local dir="$1"
+	local source first_line
+	local found=false
+	while IFS= read -r source; do
+		found=true
+		first_line="$(sed -n '1p' "${source}")"
+		if [[ "${first_line}" != "//go:build integration" ]]; then
+			return 1
+		fi
+	done < <(find "${dir}" -maxdepth 1 -type f -name '*.go' ! -name '*_test.go' -print)
+	[[ "${found}" == true ]]
+}
+
 mapfile -t tracked_files < <(
 	if git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 		git -C "${ROOT_DIR}" ls-files --cached --others --exclude-standard -- '*.go'
@@ -114,7 +141,14 @@ mapfile -t tracked_dirs < <(
 		elif ! find "${dir}" -maxdepth 1 -type f -name '*.go' -print -quit 2>/dev/null | grep -q .; then
 			continue
 		fi
-		if is_nested_module "${dir}"; then
+	if is_nested_module "${dir}"; then
+			continue
+		fi
+		if ! has_go_tag integration && integration_only_sources "${dir}"; then
+			continue
+		fi
+		if ! find "${dir}" -maxdepth 1 -type f -name '*.go' ! -name '*_test.go' -print -quit 2>/dev/null | grep -q . \
+			&& ! has_go_tag integration; then
 			continue
 		fi
 		if [[ "${PRODUCTION_ONLY}" == true || "${COVERAGE_ONLY}" == true ]] && is_excluded "${dir}"; then

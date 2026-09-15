@@ -7,7 +7,7 @@
       "issue": 377
     },
     {
-      "path": "internal/conflict/postgres/evidence_conflict_conflict_integration.e2e",
+      "path": "internal/conflict/postgres/evidence_conflict_conflict_integration_test.go",
       "issue": 377
     },
     {

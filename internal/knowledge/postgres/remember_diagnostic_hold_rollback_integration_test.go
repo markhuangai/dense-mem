@@ -1,0 +1,72 @@
+//go:build integration
+
+package postgres
+
+import (
+	"context"
+	"errors"
+	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
+	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
+)
+
+func TestRememberAttemptDiagnosticHoldTransactionRollback(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "remember-primitives-hold-rollback")
+	identityID := createLedgerSSOIdentity(t, adminDB, rls, uuid.MustParse(teamID))
+	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
+	credential := createOwnedCredential(t, credentialRepo, uuid.MustParse(teamID), identityID, "remember-primitives-hold-rollback", domain.CredentialBindingCredentialPrivate)
+	ownerID := credential.ID.String()
+	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	privateRepo := privacypostgres.NewPrivateMemoryRepository(appDB, rls)
+	require.NoError(t, privateRepo.Prepare(ctx))
+
+	attemptID, diagnosticID := uuid.NewString(), uuid.NewString()
+	require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
+		Attempt: RememberAttemptRecordInput{
+			TeamID: teamID, OwnerProfileID: ownerID, AttemptID: attemptID,
+			SpaceID: credential.MemorySpaceID.String(), SpaceGeneration: credential.MemorySpaceGeneration,
+			IdempotencyKey: "remember-primitives-hold-rollback", RequestHash: "remember-primitives-hold-rollback-hash",
+			ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed",
+			FailedPhase: "preflight", ErrorCode: "provider_unavailable", PublicResult: map[string]any{},
+		},
+		Diagnostics: []RememberAttemptDiagnosticInput{{
+			DiagnosticID: diagnosticID, SequenceNo: 1, Kind: "original_request", Component: "remember",
+			RequestBody: []byte(`{"rollback":true}`), RequestContentType: "application/json",
+			CapturedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
+		}},
+	}))
+	_, created, err := privateRepo.PlaceLegalHold(ctx, credential.MemorySpaceID, "remember-primitives-hold-rollback")
+	require.NoError(t, err)
+	require.True(t, created)
+
+	err = rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+		result := tx.Exec(`UPDATE private_memory_legal_holds SET released_at = clock_timestamp() WHERE space_id = ?::uuid AND released_at IS NULL`, credential.MemorySpaceID)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("expected one legal hold to release")
+		}
+		require.NoError(t, storagepostgres.SetRememberAttemptDiagnosticHoldStateTx(ctx, tx, credential.MemorySpaceID, false))
+		return errors.New("force diagnostic-hold rollback")
+	})
+	require.ErrorContains(t, err, "force diagnostic-hold rollback")
+
+	var retained bool
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT retained_by_legal_hold FROM remember_attempt_diagnostics WHERE team_id = ?::uuid AND diagnostic_id = ?::uuid`, teamID, diagnosticID).Row().Scan(&retained)
+	}))
+	require.True(t, retained, "rolled-back writer must leave the diagnostic legal-hold state unchanged")
+}

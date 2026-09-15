@@ -75,7 +75,7 @@
       "issue": 369
     },
     {
-      "path": "internal/settings/settings_postgres_integration.e2e",
+      "path": "internal/settings/settings_postgres_integration_test.go",
       "issue": 369
     }
   ],

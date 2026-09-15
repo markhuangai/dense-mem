@@ -7,154 +7,140 @@
       "package": "./internal/storage/postgres",
       "run": "^TestCoreSchemaAuditLogTable$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/schema.e2e"
+      "source": "internal/storage/postgres/schema_integration_test.go"
     },
     {
       "id": "postgres/TestCoreSchemaCanonicalIdentityTables",
       "package": "./internal/storage/postgres",
       "run": "^TestCoreSchemaCanonicalIdentityTables$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/schema.e2e"
+      "source": "internal/storage/postgres/schema_integration_test.go"
     },
     {
       "id": "postgres/TestCoreSchemaIndexes",
       "package": "./internal/storage/postgres",
       "run": "^TestCoreSchemaIndexes$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/schema.e2e"
+      "source": "internal/storage/postgres/schema_integration_test.go"
     },
     {
       "id": "postgres/TestCoreSchemaTeamsTable",
       "package": "./internal/storage/postgres",
       "run": "^TestCoreSchemaTeamsTable$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/schema.e2e"
-    },
-    {
-      "id": "postgres/TestDBPingTimeout",
-      "package": "./internal/storage/postgres",
-      "run": "^TestDBPingTimeout$",
-      "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
+      "source": "internal/storage/postgres/schema_integration_test.go"
     },
     {
       "id": "postgres/TestEmbeddingFailureGroupIndexSupportsRepresentativeProjection",
       "package": "./internal/storage/postgres",
       "run": "^TestEmbeddingFailureGroupIndexSupportsRepresentativeProjection$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/embedding_reconciliation_migration_integration.e2e"
+      "source": "internal/storage/postgres/embedding_reconciliation_migration_integration_test.go"
     },
     {
       "id": "postgres/TestEmbeddingReconciliationMigrationBackfillsJobsWithoutIncidentState",
       "package": "./internal/storage/postgres",
       "run": "^TestEmbeddingReconciliationMigrationBackfillsJobsWithoutIncidentState$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/embedding_reconciliation_migration_integration.e2e"
-    },
-    {
-      "id": "postgres/TestEmbeddingReconciliationMigrationHasOneRestartGatedBackfill",
-      "package": "./internal/storage/postgres",
-      "run": "^TestEmbeddingReconciliationMigrationHasOneRestartGatedBackfill$",
-      "phase": "precheck",
-      "source": "internal/storage/postgres/embedding_reconciliation_migration_integration.e2e"
+      "source": "internal/storage/postgres/embedding_reconciliation_migration_integration_test.go"
     },
     {
       "id": "postgres/TestEmbeddingRetryRecoveryMigrationRequeuesOnlyTransientExhaustion",
       "package": "./internal/storage/postgres",
       "run": "^TestEmbeddingRetryRecoveryMigrationRequeuesOnlyTransientExhaustion$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
+      "source": "internal/storage/postgres/client_integration_test.go"
     },
     {
       "id": "postgres/TestEvidenceConflictMigrationEnforcesLedgerAndRollbackBoundary",
       "package": "./internal/storage/postgres",
       "run": "^TestEvidenceConflictMigrationEnforcesLedgerAndRollbackBoundary$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/evidence_conflict_migration_integration.e2e"
+      "source": "internal/storage/postgres/evidence_conflict_migration_integration_test.go"
     },
     {
       "id": "postgres/TestEvidenceFirstRememberPrimitivesMigrationEnforcesDurableContract",
       "package": "./internal/storage/postgres",
       "run": "^TestEvidenceFirstRememberPrimitivesMigrationEnforcesDurableContract$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/evidence_first_remember_primitives_migration_integration.e2e"
+      "source": "internal/storage/postgres/evidence_first_remember_primitives_migration_integration_test.go"
     },
     {
       "id": "postgres/TestEvidenceFirstRememberPrimitivesMigrationRecoversInvalidRetryabilityIndex",
       "package": "./internal/storage/postgres",
       "run": "^TestEvidenceFirstRememberPrimitivesMigrationRecoversInvalidRetryabilityIndex$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/evidence_first_remember_primitives_migration_integration.e2e"
+      "source": "internal/storage/postgres/evidence_first_remember_primitives_migration_integration_test.go"
     },
     {
       "id": "postgres/TestEvidenceOccurrenceMigrationBackfillPrefersCurrentSourceRevision",
       "package": "./internal/storage/postgres",
       "run": "^TestEvidenceOccurrenceMigrationBackfillPrefersCurrentSourceRevision$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/evidence_occurrence_migration_integration.e2e"
+      "source": "internal/storage/postgres/evidence_occurrence_migration_integration_test.go"
     },
     {
       "id": "postgres/TestEvidenceOccurrenceMigrationBackfillsAliasesAndOccurrencesInBatches",
       "package": "./internal/storage/postgres",
       "run": "^TestEvidenceOccurrenceMigrationBackfillsAliasesAndOccurrencesInBatches$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/evidence_occurrence_migration_integration.e2e"
+      "source": "internal/storage/postgres/evidence_occurrence_migration_integration_test.go"
     },
     {
       "id": "postgres/TestEvidenceOccurrenceMigrationKeepsIndependentSourceLineagesSeparate",
       "package": "./internal/storage/postgres",
       "run": "^TestEvidenceOccurrenceMigrationKeepsIndependentSourceLineagesSeparate$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/evidence_occurrence_migration_integration.e2e"
+      "source": "internal/storage/postgres/evidence_occurrence_migration_integration_test.go"
     },
     {
       "id": "postgres/TestEvidenceSecurityScanPolicyMigrationPreservesEventHistory",
       "package": "./internal/storage/postgres",
       "run": "^TestEvidenceSecurityScanPolicyMigrationPreservesEventHistory$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/evidence_security_scan_policy_migration_integration.e2e"
+      "source": "internal/storage/postgres/evidence_security_scan_policy_migration_integration_test.go"
     },
     {
       "id": "postgres/TestHourlyEvidenceDreamsMigrationDownRejectsEvidenceCycleHistory",
       "package": "./internal/storage/postgres",
       "run": "^TestHourlyEvidenceDreamsMigrationDownRejectsEvidenceCycleHistory$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/hourly_evidence_dreams_migration_integration.e2e"
+      "source": "internal/storage/postgres/hourly_evidence_dreams_migration_integration_test.go"
     },
     {
       "id": "postgres/TestHourlyEvidenceDreamsMigrationPreservesGraphClaimArbiter",
       "package": "./internal/storage/postgres",
       "run": "^TestHourlyEvidenceDreamsMigrationPreservesGraphClaimArbiter$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/hourly_evidence_dreams_migration_integration.e2e"
+      "source": "internal/storage/postgres/hourly_evidence_dreams_migration_integration_test.go"
     },
     {
       "id": "postgres/TestIdentityBridgeBackfillsStableIDsAndLegacyGovernance",
       "package": "./internal/storage/postgres",
       "run": "^TestIdentityBridgeBackfillsStableIDsAndLegacyGovernance$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/identity_bridge_migration_integration.e2e"
+      "source": "internal/storage/postgres/identity_bridge_migration_integration_test.go"
     },
     {
       "id": "postgres/TestIdentityBridgeKeepsSSOActorTeamNeutralAcrossMemberships",
       "package": "./internal/storage/postgres",
       "run": "^TestIdentityBridgeKeepsSSOActorTeamNeutralAcrossMemberships$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/identity_bridge_migration_integration.e2e"
+      "source": "internal/storage/postgres/identity_bridge_migration_integration_test.go"
     },
     {
       "id": "postgres/TestIdentityBridgePreservesGovernanceAliasesAndSSOExternalLinks",
       "package": "./internal/storage/postgres",
       "run": "^TestIdentityBridgePreservesGovernanceAliasesAndSSOExternalLinks$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/identity_bridge_migration_integration.e2e"
+      "source": "internal/storage/postgres/identity_bridge_migration_integration_test.go"
     },
     {
       "id": "postgres/TestIdentityBridgeReconcilesLegacyWritesAndRLS",
       "package": "./internal/storage/postgres",
       "run": "^TestIdentityBridgeReconcilesLegacyWritesAndRLS$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/identity_bridge_migration_integration.e2e"
+      "source": "internal/storage/postgres/identity_bridge_migration_integration_test.go"
     },
     {
       "id": "postgres/TestIdentityCleanupComposeSeed",
@@ -162,7 +148,7 @@
       "run": "^TestIdentityCleanupComposeSeed$",
       "phase": "scenario",
       "scenario": "identity_cleanup",
-      "source": "internal/storage/postgres/identity_cleanup_migration_integration.e2e"
+      "source": "internal/storage/postgres/identity_cleanup_migration_integration_test.go"
     },
     {
       "id": "postgres/TestIdentityCleanupDisablesCredentialDeletedDuringBridgeWindow",
@@ -170,7 +156,7 @@
       "run": "^TestIdentityCleanupDisablesCredentialDeletedDuringBridgeWindow$",
       "phase": "scenario",
       "scenario": "identity_cleanup",
-      "source": "internal/storage/postgres/identity_cleanup_migration_integration.e2e"
+      "source": "internal/storage/postgres/identity_cleanup_migration_integration_test.go"
     },
     {
       "id": "postgres/TestIdentityCleanupLockContentionRollsBackAndCanRetry",
@@ -178,7 +164,7 @@
       "run": "^TestIdentityCleanupLockContentionRollsBackAndCanRetry$",
       "phase": "scenario",
       "scenario": "identity_cleanup",
-      "source": "internal/storage/postgres/identity_cleanup_migration_integration.e2e"
+      "source": "internal/storage/postgres/identity_cleanup_migration_integration_test.go"
     },
     {
       "id": "postgres/TestIdentityCleanupMismatchRollsBackAndLeavesBridge",
@@ -186,7 +172,7 @@
       "run": "^TestIdentityCleanupMismatchRollsBackAndLeavesBridge$",
       "phase": "scenario",
       "scenario": "identity_cleanup",
-      "source": "internal/storage/postgres/identity_cleanup_migration_integration.e2e"
+      "source": "internal/storage/postgres/identity_cleanup_migration_integration_test.go"
     },
     {
       "id": "postgres/TestIdentityCleanupReconcilesBridgeWriteBeforeDrop",
@@ -194,7 +180,7 @@
       "run": "^TestIdentityCleanupReconcilesBridgeWriteBeforeDrop$",
       "phase": "scenario",
       "scenario": "identity_cleanup",
-      "source": "internal/storage/postgres/identity_cleanup_migration_integration.e2e"
+      "source": "internal/storage/postgres/identity_cleanup_migration_integration_test.go"
     },
     {
       "id": "postgres/TestIdentityCleanupUpgradesPopulatedPreBridgeDatabase",
@@ -202,595 +188,546 @@
       "run": "^TestIdentityCleanupUpgradesPopulatedPreBridgeDatabase$",
       "phase": "scenario",
       "scenario": "identity_cleanup",
-      "source": "internal/storage/postgres/identity_cleanup_migration_integration.e2e"
+      "source": "internal/storage/postgres/identity_cleanup_migration_integration_test.go"
     },
     {
       "id": "postgres/TestKnownEvidenceSupportOwnershipMigrationBackfillsForeignKeys",
       "package": "./internal/storage/postgres",
       "run": "^TestKnownEvidenceSupportOwnershipMigrationBackfillsForeignKeys$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/known_evidence_support_ownership_migration_integration.e2e"
+      "source": "internal/storage/postgres/known_evidence_support_ownership_migration_integration_test.go"
     },
     {
       "id": "postgres/TestKnownEvidenceSupportOwnershipMigrationDownRejectsCrossOwnerRows",
       "package": "./internal/storage/postgres",
       "run": "^TestKnownEvidenceSupportOwnershipMigrationDownRejectsCrossOwnerRows$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/known_evidence_support_ownership_migration_integration.e2e"
+      "source": "internal/storage/postgres/known_evidence_support_ownership_migration_integration_test.go"
     },
     {
       "id": "postgres/TestKnownEvidenceSupportOwnershipMigrationPreservesAppendOnlyExceptions",
       "package": "./internal/storage/postgres",
       "run": "^TestKnownEvidenceSupportOwnershipMigrationPreservesAppendOnlyExceptions$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/known_evidence_support_ownership_migration_integration.e2e"
+      "source": "internal/storage/postgres/known_evidence_support_ownership_migration_integration_test.go"
     },
     {
       "id": "postgres/TestKnownEvidenceSupportOwnershipMigrationsRunWithNOBYPASSRLS",
       "package": "./internal/storage/postgres",
       "run": "^TestKnownEvidenceSupportOwnershipMigrationsRunWithNOBYPASSRLS$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/known_evidence_support_ownership_migration_integration.e2e"
+      "source": "internal/storage/postgres/known_evidence_support_ownership_migration_integration_test.go"
     },
     {
       "id": "postgres/TestMemorySpaceBackfillPreservesAppendOnlyGuards",
       "package": "./internal/storage/postgres",
       "run": "^TestMemorySpaceBackfillPreservesAppendOnlyGuards$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/memory_space_migration.e2e"
+      "source": "internal/storage/postgres/memory_space_migration_integration_test.go"
     },
     {
       "id": "postgres/TestMemorySpacePrivateInitializerCanUpsertUnderForceRLS",
       "package": "./internal/storage/postgres",
       "run": "^TestMemorySpacePrivateInitializerCanUpsertUnderForceRLS$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/memory_space_migration.e2e"
-    },
-    {
-      "id": "postgres/TestMigrationDatabaseDSNPreservesQuotedConninfoValues",
-      "package": "./internal/storage/postgres",
-      "run": "^TestMigrationDatabaseDSNPreservesQuotedConninfoValues$",
-      "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
-    },
-    {
-      "id": "postgres/TestMigrationDatabaseDSNUpdatesURL",
-      "package": "./internal/storage/postgres",
-      "run": "^TestMigrationDatabaseDSNUpdatesURL$",
-      "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
-    },
-    {
-      "id": "postgres/TestMigrationFilesystemCombinesReleaseDirectories",
-      "package": "./internal/storage/postgres",
-      "run": "^TestMigrationFilesystemCombinesReleaseDirectories$",
-      "phase": "precheck",
-      "source": "internal/storage/postgres/migration_order.e2e"
-    },
-    {
-      "id": "postgres/TestMigrationFilesystemRejectsInvalidHistory",
-      "package": "./internal/storage/postgres",
-      "run": "^TestMigrationFilesystemRejectsInvalidHistory$",
-      "phase": "precheck",
-      "source": "internal/storage/postgres/migration_order.e2e"
+      "source": "internal/storage/postgres/memory_space_migration_integration_test.go"
     },
     {
       "id": "postgres/TestMigrationOrder_NoConnectorTables",
       "package": "./internal/storage/postgres",
       "run": "^TestMigrationOrder_NoConnectorTables$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/migration_order.e2e"
+      "source": "internal/storage/postgres/migration_order_integration_test.go"
     },
     {
       "id": "postgres/TestMigrationStartupClassifierCoversFreshLegacyBridgeAndCleanStates",
       "package": "./internal/storage/postgres",
       "run": "^TestMigrationStartupClassifierCoversFreshLegacyBridgeAndCleanStates$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/identity_bridge_migration_integration.e2e"
+      "source": "internal/storage/postgres/identity_bridge_migration_integration_test.go"
     },
     {
       "id": "postgres/TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingOrganizationIdentity",
       "package": "./internal/storage/postgres",
       "run": "^TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingOrganizationIdentity$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
+      "source": "internal/storage/postgres/client_integration_test.go"
     },
     {
       "id": "postgres/TestMigratorRunUp",
       "package": "./internal/storage/postgres",
       "run": "^TestMigratorRunUp$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
+      "source": "internal/storage/postgres/client_integration_test.go"
     },
     {
       "id": "postgres/TestMigratorRunUpAppliesPostCutoverCleanupAfterEmbeddingRetry",
       "package": "./internal/storage/postgres",
       "run": "^TestMigratorRunUpAppliesPostCutoverCleanupAfterEmbeddingRetry$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
+      "source": "internal/storage/postgres/client_integration_test.go"
     },
     {
       "id": "postgres/TestMigratorRunUpAsRuntimeRoleWithoutCreateRole",
       "package": "./internal/storage/postgres",
       "run": "^TestMigratorRunUpAsRuntimeRoleWithoutCreateRole$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/migrator_concurrency.e2e"
+      "source": "internal/storage/postgres/migrator_concurrency_integration_test.go"
     },
     {
       "id": "postgres/TestMigratorRunUpSerializesConcurrentStartup",
       "package": "./internal/storage/postgres",
       "run": "^TestMigratorRunUpSerializesConcurrentStartup$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/migrator_concurrency.e2e"
+      "source": "internal/storage/postgres/migrator_concurrency_integration_test.go"
     },
     {
       "id": "postgres/TestMigratorStatus",
       "package": "./internal/storage/postgres",
       "run": "^TestMigratorStatus$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
+      "source": "internal/storage/postgres/client_integration_test.go"
     },
     {
       "id": "postgres/TestOAuthProtectedResourceMigrationDefaultsDormantAndRetainsSystemRLS",
       "package": "./internal/storage/postgres",
       "run": "^TestOAuthProtectedResourceMigrationDefaultsDormantAndRetainsSystemRLS$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/oauth_protected_resource_migration_integration.e2e"
+      "source": "internal/storage/postgres/oauth_protected_resource_migration_integration_test.go"
     },
     {
       "id": "postgres/TestOAuthProtectedResourceMigrationGuardsCustomizedRollback",
       "package": "./internal/storage/postgres",
       "run": "^TestOAuthProtectedResourceMigrationGuardsCustomizedRollback$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/oauth_protected_resource_migration_integration.e2e"
-    },
-    {
-      "id": "postgres/TestOpenFailsOnEmptyDSN",
-      "package": "./internal/storage/postgres",
-      "run": "^TestOpenFailsOnEmptyDSN$",
-      "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
-    },
-    {
-      "id": "postgres/TestOpenFailsOnUnreachable",
-      "package": "./internal/storage/postgres",
-      "run": "^TestOpenFailsOnUnreachable$",
-      "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
+      "source": "internal/storage/postgres/oauth_protected_resource_migration_integration_test.go"
     },
     {
       "id": "postgres/TestOpenSuccess",
       "package": "./internal/storage/postgres",
       "run": "^TestOpenSuccess$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
+      "source": "internal/storage/postgres/client_integration_test.go"
     },
     {
       "id": "postgres/TestOpenWithClient",
       "package": "./internal/storage/postgres",
       "run": "^TestOpenWithClient$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
+      "source": "internal/storage/postgres/client_integration_test.go"
     },
     {
       "id": "postgres/TestOrganizationDirectoryIdentityMigrationSeedsConfigAndBackfillsLegacyAzureIdentity",
       "package": "./internal/storage/postgres",
       "run": "^TestOrganizationDirectoryIdentityMigrationSeedsConfigAndBackfillsLegacyAzureIdentity$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/organization_directory_identity_migration.e2e"
+      "source": "internal/storage/postgres/organization_directory_identity_migration_integration_test.go"
     },
     {
       "id": "postgres/TestOrganizationDirectoryIdentityMigrationUsesSystemRLSMode",
       "package": "./internal/storage/postgres",
       "run": "^TestOrganizationDirectoryIdentityMigrationUsesSystemRLSMode$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/organization_directory_identity_migration.e2e"
+      "source": "internal/storage/postgres/organization_directory_identity_migration_integration_test.go"
     },
     {
       "id": "postgres/TestPostCutoverCleanupMigrationBlocksLegacyAPIKeyWithoutCanonicalTeamProfile",
       "package": "./internal/storage/postgres",
       "run": "^TestPostCutoverCleanupMigrationBlocksLegacyAPIKeyWithoutCanonicalTeamProfile$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
+      "source": "internal/storage/postgres/client_integration_test.go"
     },
     {
       "id": "postgres/TestPostCutoverCleanupMigrationBlocksLegacyProfileWithoutCanonicalTeam",
       "package": "./internal/storage/postgres",
       "run": "^TestPostCutoverCleanupMigrationBlocksLegacyProfileWithoutCanonicalTeam$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
+      "source": "internal/storage/postgres/client_integration_test.go"
     },
     {
       "id": "postgres/TestPostCutoverCleanupMigrationBlocksNonemptyDatabaseWithoutMarker",
       "package": "./internal/storage/postgres",
       "run": "^TestPostCutoverCleanupMigrationBlocksNonemptyDatabaseWithoutMarker$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
+      "source": "internal/storage/postgres/client_integration_test.go"
     },
     {
       "id": "postgres/TestPostCutoverCleanupMigrationFreshUpgradeSucceeds",
       "package": "./internal/storage/postgres",
       "run": "^TestPostCutoverCleanupMigrationFreshUpgradeSucceeds$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
+      "source": "internal/storage/postgres/client_integration_test.go"
     },
     {
       "id": "postgres/TestPostCutoverCleanupMigrationWithCompatibleMarkerDropsLegacyTables",
       "package": "./internal/storage/postgres",
       "run": "^TestPostCutoverCleanupMigrationWithCompatibleMarkerDropsLegacyTables$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
-    },
-    {
-      "id": "postgres/TestPostgresInsufficientPrivilegeDetection",
-      "package": "./internal/storage/postgres",
-      "run": "^TestPostgresInsufficientPrivilegeDetection$",
-      "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
+      "source": "internal/storage/postgres/client_integration_test.go"
     },
     {
       "id": "postgres/TestReadOnlyRepeatableReadTransactionOptions",
       "package": "./internal/storage/postgres",
       "run": "^TestReadOnlyRepeatableReadTransactionOptions$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/rls.e2e"
+      "source": "internal/storage/postgres/rls_integration_test.go"
     },
     {
       "id": "postgres/TestRelationshipIdentityMigrationPreservesValidToCollisionsForReview",
       "package": "./internal/storage/postgres",
       "run": "^TestRelationshipIdentityMigrationPreservesValidToCollisionsForReview$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/relationship_identity_migration_integration.e2e"
+      "source": "internal/storage/postgres/relationship_identity_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRelationshipIdentityMigrationRollsBackBeforeAliasesExist",
       "package": "./internal/storage/postgres",
       "run": "^TestRelationshipIdentityMigrationRollsBackBeforeAliasesExist$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/relationship_identity_migration_integration.e2e"
+      "source": "internal/storage/postgres/relationship_identity_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRelationshipTelemetryMigrationRecoversInvalidIndexesAndRollsBack",
       "package": "./internal/storage/postgres",
       "run": "^TestRelationshipTelemetryMigrationRecoversInvalidIndexesAndRollsBack$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/relationship_telemetry_migration.e2e"
+      "source": "internal/storage/postgres/relationship_telemetry_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRememberReliabilityMigrationDownRejectsQueuedV26RememberIngest",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberReliabilityMigrationDownRejectsQueuedV26RememberIngest$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/remember_reliability_migration_integration.e2e"
+      "source": "internal/storage/postgres/remember_reliability_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRememberReliabilityMigrationEnforcesRelationshipResultShape",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberReliabilityMigrationEnforcesRelationshipResultShape$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/remember_reliability_migration_integration.e2e"
+      "source": "internal/storage/postgres/remember_reliability_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRememberReliabilityMigrationTerminalizesOnlyUnfinishedLegacyRememberRuns",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberReliabilityMigrationTerminalizesOnlyUnfinishedLegacyRememberRuns$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/remember_reliability_migration_integration.e2e"
+      "source": "internal/storage/postgres/remember_reliability_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRememberReliabilityMigrationUsesBoundedLockTimeout",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberReliabilityMigrationUsesBoundedLockTimeout$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/remember_reliability_migration_integration.e2e"
+      "source": "internal/storage/postgres/remember_reliability_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRememberRetryActivationMigrationUsesRetryableFailurePredicate",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberRetryActivationMigrationUsesRetryableFailurePredicate$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/remember_retry_activation_migration_integration.e2e"
+      "source": "internal/storage/postgres/remember_retry_activation_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRememberSynchronousCutoverEnforcesForceRLSForRuntimeRole",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberSynchronousCutoverEnforcesForceRLSForRuntimeRole$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_remember_cutover_rls_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_remember_cutover_rls_integration_test.go"
     },
     {
       "id": "postgres/TestRememberSynchronousCutoverMapsOrphanedPredicateRegistrationThroughAssessment",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberSynchronousCutoverMapsOrphanedPredicateRegistrationThroughAssessment$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_remember_cutover_lineage_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_remember_cutover_lineage_integration_test.go"
     },
     {
       "id": "postgres/TestRememberSynchronousCutoverNormalizesLegacyReconciliationStatuses",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberSynchronousCutoverNormalizesLegacyReconciliationStatuses$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_remember_cutover_migration_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_remember_cutover_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRememberSynchronousCutoverPreservesConflictDerivedPlacementHistory",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberSynchronousCutoverPreservesConflictDerivedPlacementHistory$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_remember_cutover_migration_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_remember_cutover_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRememberSynchronousCutoverPreservesGroupedItemAssessmentHistory",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberSynchronousCutoverPreservesGroupedItemAssessmentHistory$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_remember_cutover_lineage_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_remember_cutover_lineage_integration_test.go"
     },
     {
       "id": "postgres/TestRememberSynchronousCutoverPreservesPrivateAttemptLineageForErasure",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberSynchronousCutoverPreservesPrivateAttemptLineageForErasure$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_remember_cutover_private_space_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_remember_cutover_private_space_integration_test.go"
     },
     {
       "id": "postgres/TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_remember_cutover_migration_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_remember_cutover_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRememberSynchronousCutoverRejectsActiveEmbeddingJobs",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberSynchronousCutoverRejectsActiveEmbeddingJobs$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_remember_cutover_migration_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_remember_cutover_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRememberSynchronousCutoverRejectsActivePlacementRuns",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberSynchronousCutoverRejectsActivePlacementRuns$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_remember_cutover_migration_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_remember_cutover_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRememberSynchronousCutoverRejectsBareUnknownOrigin",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberSynchronousCutoverRejectsBareUnknownOrigin$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_remember_cutover_lineage_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_remember_cutover_lineage_integration_test.go"
     },
     {
       "id": "postgres/TestRememberSynchronousCutoverRejectsConflictingAssessmentMapping",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberSynchronousCutoverRejectsConflictingAssessmentMapping$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_remember_cutover_lineage_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_remember_cutover_lineage_integration_test.go"
     },
     {
       "id": "postgres/TestRememberSynchronousCutoverRejectsConflictingPredicateRegistrationMapping",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberSynchronousCutoverRejectsConflictingPredicateRegistrationMapping$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_remember_cutover_lineage_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_remember_cutover_lineage_integration_test.go"
     },
     {
       "id": "postgres/TestRememberSynchronousCutoverRejectsExistingMarkerConflict",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberSynchronousCutoverRejectsExistingMarkerConflict$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_remember_cutover_lineage_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_remember_cutover_lineage_integration_test.go"
     },
     {
       "id": "postgres/TestRememberSynchronousCutoverRejectsInvalidActiveSearchDocuments",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberSynchronousCutoverRejectsInvalidActiveSearchDocuments$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_remember_cutover_migration_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_remember_cutover_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRememberSynchronousCutoverRollsBackCopiedHistoryOnGateFailure",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberSynchronousCutoverRollsBackCopiedHistoryOnGateFailure$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_remember_cutover_migration_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_remember_cutover_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRememberSynchronousCutoverTerminalizesPendingCorrections",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberSynchronousCutoverTerminalizesPendingCorrections$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_remember_cutover_migration_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_remember_cutover_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRemovePlacementAssessmentPromptRevisionMigrationPreservesAssessment",
       "package": "./internal/storage/postgres",
       "run": "^TestRemovePlacementAssessmentPromptRevisionMigrationPreservesAssessment$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/v2_4_one_call_assessment_migration_integration.e2e"
+      "source": "internal/storage/postgres/v2_4_one_call_assessment_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRLSPoliciesAuditLogAppendable",
       "package": "./internal/storage/postgres",
       "run": "^TestRLSPoliciesAuditLogAppendable$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/rls.e2e"
+      "source": "internal/storage/postgres/rls_integration_test.go"
     },
     {
       "id": "postgres/TestRLSPoliciesCredentialIsolation",
       "package": "./internal/storage/postgres",
       "run": "^TestRLSPoliciesCredentialIsolation$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/rls.e2e"
+      "source": "internal/storage/postgres/rls_integration_test.go"
     },
     {
       "id": "postgres/TestRLSPoliciesSystemSeesAll",
       "package": "./internal/storage/postgres",
       "run": "^TestRLSPoliciesSystemSeesAll$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/rls.e2e"
+      "source": "internal/storage/postgres/rls_integration_test.go"
     },
     {
       "id": "postgres/TestSearchRepairSelectionCursorShapeRejectsNullSourceKind",
       "package": "./internal/storage/postgres",
       "run": "^TestSearchRepairSelectionCursorShapeRejectsNullSourceKind$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/search_repair_selection_cursor_migration_integration.e2e"
+      "source": "internal/storage/postgres/search_repair_selection_cursor_migration_integration_test.go"
     },
     {
       "id": "postgres/TestSearchStorageMigrationAllowsIndexGenerationLifecycleOnly",
       "package": "./internal/storage/postgres",
       "run": "^TestSearchStorageMigrationAllowsIndexGenerationLifecycleOnly$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
+      "source": "internal/storage/postgres/client_integration_test.go"
     },
     {
       "id": "postgres/TestSubmissionDiagnosticsIndexesAreValid",
       "package": "./internal/storage/postgres",
       "run": "^TestSubmissionDiagnosticsIndexesAreValid$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/submission_diagnostics_migration_integration.e2e"
+      "source": "internal/storage/postgres/submission_diagnostics_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRememberAttemptDiagnosticsMigrationCopiesRetainedLegacyBytesAndHidesHashSummaries",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberAttemptDiagnosticsMigrationCopiesRetainedLegacyBytesAndHidesHashSummaries$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/remember_attempt_diagnostics_migration_integration.e2e"
+      "source": "internal/storage/postgres/remember_attempt_diagnostics_migration_integration_test.go"
     },
     {
       "id": "postgres/TestRememberAttemptDiagnosticsMigrationRejectsCorruptLegacyRows",
       "package": "./internal/storage/postgres",
       "run": "^TestRememberAttemptDiagnosticsMigrationRejectsCorruptLegacyRows$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/remember_attempt_diagnostics_migration_integration.e2e"
+      "source": "internal/storage/postgres/remember_attempt_diagnostics_migration_integration_test.go"
     },
     {
       "id": "postgres/TestSupporterConflictPolicyMigrationRewritesActiveWorkflow",
       "package": "./internal/storage/postgres",
       "run": "^TestSupporterConflictPolicyMigrationRewritesActiveWorkflow$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/supporter_conflict_policy_migration_integration.e2e"
+      "source": "internal/storage/postgres/supporter_conflict_policy_migration_integration_test.go"
     },
     {
       "id": "postgres/TestSynchronousWriteFoundationAppendOnlyRowsAndGuardedDown",
       "package": "./internal/storage/postgres",
       "run": "^TestSynchronousWriteFoundationAppendOnlyRowsAndGuardedDown$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_write_foundation_migration_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_write_foundation_migration_integration_test.go"
     },
     {
       "id": "postgres/TestSynchronousWriteFoundationConstrainsReplayAndAssessmentLineage",
       "package": "./internal/storage/postgres",
       "run": "^TestSynchronousWriteFoundationConstrainsReplayAndAssessmentLineage$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_write_foundation_migration_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_write_foundation_migration_integration_test.go"
     },
     {
       "id": "postgres/TestSynchronousWriteFoundationMigrationCreatesEmptyAppendOnlySurface",
       "package": "./internal/storage/postgres",
       "run": "^TestSynchronousWriteFoundationMigrationCreatesEmptyAppendOnlySurface$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_write_foundation_migration_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_write_foundation_migration_integration_test.go"
     },
     {
       "id": "postgres/TestSynchronousWriteFoundationMigrationPreservesPopulatedUpgrade",
       "package": "./internal/storage/postgres",
       "run": "^TestSynchronousWriteFoundationMigrationPreservesPopulatedUpgrade$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_write_foundation_migration_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_write_foundation_migration_integration_test.go"
     },
     {
       "id": "postgres/TestSynchronousWriteFoundationRLSIsolatesProfileWritesWithinTeam",
       "package": "./internal/storage/postgres",
       "run": "^TestSynchronousWriteFoundationRLSIsolatesProfileWritesWithinTeam$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_write_foundation_migration_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_write_foundation_migration_integration_test.go"
     },
     {
       "id": "postgres/TestSynchronousWriteFoundationStoresAdditiveLineage",
       "package": "./internal/storage/postgres",
       "run": "^TestSynchronousWriteFoundationStoresAdditiveLineage$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/synchronous_write_foundation_migration_integration.e2e"
+      "source": "internal/storage/postgres/synchronous_write_foundation_migration_integration_test.go"
     },
     {
       "id": "postgres/TestTeamOwnedDreamingMigrationCanonicalizesLegacyRows",
       "package": "./internal/storage/postgres",
       "run": "^TestTeamOwnedDreamingMigrationCanonicalizesLegacyRows$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/client_dreaming_migration.e2e"
+      "source": "internal/storage/postgres/client_dreaming_migration_integration_test.go"
     },
     {
       "id": "postgres/TestTeamOwnedDreamingRepairHandlesLegacyTelemetryVersionSkip",
       "package": "./internal/storage/postgres",
       "run": "^TestTeamOwnedDreamingRepairHandlesLegacyTelemetryVersionSkip$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/telemetry_pricing_migration.e2e"
+      "source": "internal/storage/postgres/telemetry_pricing_migration_integration_test.go"
     },
     {
       "id": "postgres/TestTelemetryFirstDispositionMigrationPreservesValidConcurrentIndex",
       "package": "./internal/storage/postgres",
       "run": "^TestTelemetryFirstDispositionMigrationPreservesValidConcurrentIndex$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/telemetry_pricing_migration.e2e"
+      "source": "internal/storage/postgres/telemetry_pricing_migration_integration_test.go"
     },
     {
       "id": "postgres/TestTelemetryFirstDispositionMigrationRebuildsInvalidConcurrentIndex",
       "package": "./internal/storage/postgres",
       "run": "^TestTelemetryFirstDispositionMigrationRebuildsInvalidConcurrentIndex$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/telemetry_pricing_migration.e2e"
+      "source": "internal/storage/postgres/telemetry_pricing_migration_integration_test.go"
     },
     {
       "id": "postgres/TestTelemetryPricingMigrationsCreateRatesAndMarkerUniqueness",
       "package": "./internal/storage/postgres",
       "run": "^TestTelemetryPricingMigrationsCreateRatesAndMarkerUniqueness$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/telemetry_pricing_migration.e2e"
+      "source": "internal/storage/postgres/telemetry_pricing_migration_integration_test.go"
     },
     {
       "id": "postgres/TestTransitionalSchemaCleanupEmbeddingMismatchRollsBackOnlyDestructiveMigration",
       "package": "./internal/storage/postgres",
       "run": "^TestTransitionalSchemaCleanupEmbeddingMismatchRollsBackOnlyDestructiveMigration$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/transitional_schema_cleanup_migration_integration.e2e"
+      "source": "internal/storage/postgres/transitional_schema_cleanup_migration_integration_test.go"
     },
     {
       "id": "postgres/TestTransitionalSchemaCleanupPreservesSemanticOwnersAndInstallsDirectForeignKeys",
       "package": "./internal/storage/postgres",
       "run": "^TestTransitionalSchemaCleanupPreservesSemanticOwnersAndInstallsDirectForeignKeys$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/transitional_schema_cleanup_migration_integration.e2e"
+      "source": "internal/storage/postgres/transitional_schema_cleanup_migration_integration_test.go"
     },
     {
       "id": "postgres/TestV24OneCallAssessmentDownMigrationNormalizesExpiredReviewTasks",
       "package": "./internal/storage/postgres",
       "run": "^TestV24OneCallAssessmentDownMigrationNormalizesExpiredReviewTasks$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/v2_4_one_call_assessment_migration_integration.e2e"
+      "source": "internal/storage/postgres/v2_4_one_call_assessment_migration_integration_test.go"
     },
     {
       "id": "postgres/TestV24OneCallAssessmentMigrationPreservesPopulatedSemanticAndSearchState",
       "package": "./internal/storage/postgres",
       "run": "^TestV24OneCallAssessmentMigrationPreservesPopulatedSemanticAndSearchState$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/v2_4_one_call_assessment_migration_integration.e2e"
+      "source": "internal/storage/postgres/v2_4_one_call_assessment_migration_integration_test.go"
     },
     {
       "id": "postgres/TestWithSystemTx",
       "package": "./internal/storage/postgres",
       "run": "^TestWithSystemTx$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/rls.e2e"
+      "source": "internal/storage/postgres/rls_integration_test.go"
     },
     {
       "id": "postgres/TestWithTeamTxSetsLegacyProfileSetting",
       "package": "./internal/storage/postgres",
       "run": "^TestWithTeamTxSetsLegacyProfileSetting$",
       "phase": "precheck",
-      "source": "internal/storage/postgres/rls.e2e"
+      "source": "internal/storage/postgres/rls_integration_test.go"
     }
   ]
 }

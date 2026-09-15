@@ -79,15 +79,15 @@
       "issue": 376
     },
     {
-      "path": "internal/recall/postgres/evidence_conflict_recall_integration.e2e",
+      "path": "internal/recall/postgres/evidence_conflict_recall_integration_test.go",
       "issue": 376
     },
     {
-      "path": "internal/recall/postgres/recall_feedback_event_repository_integration.e2e",
+      "path": "internal/recall/postgres/recall_feedback_event_repository_integration_test.go",
       "issue": 376
     },
     {
-      "path": "internal/recall/postgres/recall_repository_integration.e2e",
+      "path": "internal/recall/postgres/recall_repository_integration_test.go",
       "issue": 376
     }
   ],

@@ -7,21 +7,21 @@
       "package": "./internal/graph/postgres",
       "run": "^TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams$",
       "phase": "precheck",
-      "source": "internal/graph/postgres/semantic_trace_graph_integration.e2e"
+      "source": "internal/graph/postgres/semantic_trace_graph_integration_test.go"
     },
     {
       "id": "repository/TestSemanticTraceRelationshipHydratesLineageAndBoundedGraph",
       "package": "./internal/graph/postgres",
       "run": "^TestSemanticTraceRelationshipHydratesLineageAndBoundedGraph$",
       "phase": "precheck",
-      "source": "internal/graph/postgres/semantic_trace_graph_integration.e2e"
+      "source": "internal/graph/postgres/semantic_trace_graph_integration_test.go"
     },
     {
       "id": "repository/TestTraceRelationshipMarksLifecycleEventLimitAsTruncated",
       "package": "./internal/knowledge/postgres",
       "run": "^TestTraceRelationshipMarksLifecycleEventLimitAsTruncated$",
       "phase": "precheck",
-      "source": "internal/knowledge/postgres/evidence_lifecycle_repository_integration.e2e"
+      "source": "internal/knowledge/postgres/evidence_lifecycle_repository_integration_test.go"
     }
   ]
 }

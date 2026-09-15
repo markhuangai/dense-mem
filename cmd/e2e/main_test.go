@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -54,13 +55,15 @@ func TestRunBatchRequiresEveryCaseToPass(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			binDir := t.TempDir()
 			fakeGo := filepath.Join(binDir, "go")
-			script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' '%s'\nexit %d\n", tc.output, tc.exitStatus)
+			argsFile := filepath.Join(t.TempDir(), "args")
+			t.Setenv("ARGS_FILE", argsFile)
+			script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > \"$ARGS_FILE\"\nprintf '%%s\\n' '%s'\nexit %d\n", tc.output, tc.exitStatus)
 			if err := os.WriteFile(fakeGo, []byte(script), 0o700); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-			err := runBatch(t.TempDir(), filepath.Join(t.TempDir(), "overlay.json"), packageBatch{
+			err := runBatch(t.TempDir(), packageBatch{
 				Package: "./internal/knowledge/postgres",
 				Cases:   []databaseCase{{ID: "required", Run: "^TestRequired$"}},
 			}, 10*time.Second)
@@ -68,12 +71,79 @@ func TestRunBatchRequiresEveryCaseToPass(t *testing.T) {
 				if err != nil {
 					t.Fatalf("runBatch() error = %v", err)
 				}
+				args, readErr := os.ReadFile(argsFile)
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				if !strings.Contains(string(args), "-tags=integration") {
+					t.Fatalf("runBatch() args = %q, missing integration build tag", args)
+				}
 				return
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("runBatch() error = %v, want substring %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestRunBatchUsesIntegrationTagWithRealGoPackage(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/runner-fixture\n\ngo 1.26\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pkgDir := filepath.Join(root, "fixture")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	contents := "//go:build integration\n\npackage fixture\n\nimport (\n\t\"testing\"\n\t\"time\"\n)\n\nfunc TestIntegrationFixture(t *testing.T) {}\n\nfunc TestSkippedIntegrationFixture(t *testing.T) { t.Skip(\"intentional runner fixture skip\") }\n\nfunc TestFailedIntegrationFixture(t *testing.T) { t.Fatal(\"intentional runner fixture failure\") }\n\nfunc TestSlowIntegrationFixture(t *testing.T) {\n\ttime.Sleep(10 * time.Second)\n}\n"
+	if err := os.WriteFile(filepath.Join(pkgDir, "fixture_integration_test.go"), []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "fixture_test.go"), []byte("package fixture\n\nimport \"testing\"\n\nfunc TestOrdinaryFixture(t *testing.T) {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runBatch(root, packageBatch{
+		Package: "./fixture",
+		Cases:   []databaseCase{{ID: "fixture/TestIntegrationFixture", Run: "^TestIntegrationFixture$"}},
+	}, 10*time.Second); err != nil {
+		t.Fatalf("tagged runBatch() error = %v", err)
+	}
+
+	ordinary := exec.Command("go", "test", "-json", "-run", "^TestIntegrationFixture$", "./fixture")
+	ordinary.Dir = root
+	ordinaryOutput, err := ordinary.CombinedOutput()
+	if err != nil {
+		t.Fatalf("ordinary go test error = %v, output = %s", err, ordinaryOutput)
+	}
+	if strings.Contains(string(ordinaryOutput), "TestIntegrationFixture") {
+		t.Fatalf("ordinary go test unexpectedly selected integration test: %s", ordinaryOutput)
+	}
+
+	if err := runBatch(root, packageBatch{
+		Package: "./fixture",
+		Cases:   []databaseCase{{ID: "fixture/TestMissingIntegrationFixture", Run: "^TestMissingIntegrationFixture$"}},
+	}, 10*time.Second); err == nil || !strings.Contains(err.Error(), "did not execute") {
+		t.Fatalf("missing tagged case error = %v, want did-not-execute failure", err)
+	}
+	if err := runBatch(root, packageBatch{
+		Package: "./fixture",
+		Cases:   []databaseCase{{ID: "fixture/TestSkippedIntegrationFixture", Run: "^TestSkippedIntegrationFixture$"}},
+	}, 10*time.Second); err == nil || !strings.Contains(err.Error(), "ended with skip") {
+		t.Fatalf("skipped tagged case error = %v, want skip failure", err)
+	}
+	if err := runBatch(root, packageBatch{
+		Package: "./fixture",
+		Cases:   []databaseCase{{ID: "fixture/TestFailedIntegrationFixture", Run: "^TestFailedIntegrationFixture$"}},
+	}, 10*time.Second); err == nil || !strings.Contains(err.Error(), "batch ./fixture failed") {
+		t.Fatalf("failed tagged case error = %v, want batch failure", err)
+	}
+	if err := runBatch(root, packageBatch{
+		Package: "./fixture",
+		Cases:   []databaseCase{{ID: "fixture/TestSlowIntegrationFixture", Run: "^TestSlowIntegrationFixture$"}},
+	}, 500*time.Millisecond); err == nil {
+		t.Fatal("slow tagged case unexpectedly completed")
 	}
 }
 
@@ -126,7 +196,7 @@ func TestDatabaseCaseBaselineLoaderRejectsInvalidFiles(t *testing.T) {
 	}
 }
 
-func TestE2ERunnerSmallHelpersAndOverlay(t *testing.T) {
+func TestE2ERunnerSmallHelpers(t *testing.T) {
 	root := t.TempDir()
 	if got, err := repositoryRoot(root); err != nil || got != root {
 		t.Fatalf("repositoryRoot explicit = %q, %v", got, err)
@@ -148,44 +218,18 @@ func TestE2ERunnerSmallHelpersAndOverlay(t *testing.T) {
 			t.Errorf("testName(%q) = %q, want %q", expression, got, want)
 		}
 	}
-	if _, err := writeOverlay(root); err == nil || !strings.Contains(err.Error(), "no E2E test sources") {
-		t.Fatalf("writeOverlay(empty) error = %v", err)
-	}
-	source := filepath.Join(root, "internal", "fixture.e2e")
-	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(source, []byte("package fixture\n\nfunc TestFixture(t *testing.T) {}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	overlayPath, err := writeOverlay(root)
-	if err != nil {
-		t.Fatalf("writeOverlay() = %v", err)
-	}
-	defer os.Remove(overlayPath)
-	var got overlay
-	contents, err := os.ReadFile(overlayPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(contents, &got); err != nil {
-		t.Fatal(err)
-	}
-	if got.Replace[filepath.Join(root, "internal", "fixture_test.go")] != source {
-		t.Fatalf("overlay = %#v", got.Replace)
-	}
 }
 
 func TestReconcileCaseRegistryAcceptsDeclaredFixture(t *testing.T) {
 	root := t.TempDir()
-	source := filepath.Join(root, "internal", "fixture.e2e")
+	source := filepath.Join(root, "internal", "fixture_integration_test.go")
 	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(source, []byte("package fixture\n\nfunc TestFixture(t *testing.T) {}\n"), 0o600); err != nil {
+	if err := os.WriteFile(source, []byte("//go:build integration\n\npackage fixture\n\nfunc TestFixture(t *testing.T) {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	caseDef := databaseCase{ID: "fixture/TestFixture", Package: "./internal", Run: "^TestFixture$", Source: "internal/fixture.e2e"}
+	caseDef := databaseCase{ID: "fixture/TestFixture", Package: "./internal", Run: "^TestFixture$", Source: "internal/fixture_integration_test.go"}
 	if err := reconcileCaseRegistry(root, []databaseCase{caseDef}); err != nil {
 		t.Fatalf("reconcileCaseRegistry() = %v", err)
 	}
@@ -196,17 +240,17 @@ func TestReconcileCaseRegistryAcceptsDeclaredFixture(t *testing.T) {
 	}
 }
 
-func TestReconcileCaseRegistryRejectsHelperSourceWithoutTestDeclaration(t *testing.T) {
+func TestReconcileCaseRegistryAllowsHelperSourceWithoutTestDeclaration(t *testing.T) {
 	root := t.TempDir()
-	source := filepath.Join(root, "internal", "fixture.e2e")
+	source := filepath.Join(root, "internal", "fixture_integration_test.go")
 	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(source, []byte("package fixture\n\nfunc helper() {}\n"), 0o600); err != nil {
+	if err := os.WriteFile(source, []byte("//go:build integration\n\npackage fixture\n\nfunc helper() {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := reconcileCaseRegistry(root, nil); err == nil || !strings.Contains(err.Error(), "has no test declaration") {
-		t.Fatalf("reconcileCaseRegistry() error = %v, want helper declaration failure", err)
+	if err := reconcileCaseRegistry(root, nil); err != nil {
+		t.Fatalf("reconcileCaseRegistry() error = %v, want helper source acceptance", err)
 	}
 }
 
@@ -231,7 +275,7 @@ func TestE2ERunnerMainListsRegisteredCasesWithoutRunningBatches(t *testing.T) {
 
 func TestLoadCasesReconcilesRegistryDeclarations(t *testing.T) {
 	root := t.TempDir()
-	source := filepath.Join(root, "internal", "sample", "fixture.e2e")
+	source := filepath.Join(root, "internal", "sample", "fixture_integration_test.go")
 	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +283,7 @@ func TestLoadCasesReconcilesRegistryDeclarations(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(registry), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(source, []byte("package sample\n\nfunc TestRegistered(t *testing.T) {}\n"), 0o600); err != nil {
+	if err := os.WriteFile(source, []byte("//go:build integration\n\npackage sample\n\nfunc TestRegistered(t *testing.T) {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(registry, []byte(`{
@@ -250,7 +294,7 @@ func TestLoadCasesReconcilesRegistryDeclarations(t *testing.T) {
     "package": "./internal/sample",
     "run": "^TestRegistered$",
     "phase": "precheck",
-    "source": "internal/sample/fixture.e2e"
+    "source": "internal/sample/fixture_integration_test.go"
   }]
 }`), 0o600); err != nil {
 		t.Fatal(err)
@@ -264,12 +308,12 @@ func TestLoadCasesReconcilesRegistryDeclarations(t *testing.T) {
     "package": "./internal/sample",
     "run": "^TestOtherRegistered$",
     "phase": "precheck",
-    "source": "internal/sample/fixture.e2e"
+    "source": "internal/sample/fixture_integration_test.go"
   }]
 }`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(source, []byte("package sample\n\nfunc TestRegistered(t *testing.T) {}\nfunc TestOtherRegistered(t *testing.T) {}\n"), 0o600); err != nil {
+	if err := os.WriteFile(source, []byte("//go:build integration\n\npackage sample\n\nfunc TestRegistered(t *testing.T) {}\nfunc TestOtherRegistered(t *testing.T) {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -287,58 +331,38 @@ func TestLoadCasesReconcilesRegistryDeclarations(t *testing.T) {
 	if len(allCases) != 2 || allCases[0].Capability != "postgres" || allCases[1].Capability != "repository" {
 		t.Fatalf("unfiltered loadCases() = %+v, want deterministic capability ownership", allCases)
 	}
-	generated := filepath.Join(root, "tests", "eval", ".runtime", "fixture.e2e")
+	generated := filepath.Join(root, "tests", "eval", ".runtime", "fixture_integration_test.go")
 	if err := os.MkdirAll(filepath.Dir(generated), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(generated, []byte("package generated\n\nfunc TestIgnored(t *testing.T) {}\n"), 0o600); err != nil {
+	if err := os.WriteFile(generated, []byte("//go:build integration\n\npackage generated\n\nfunc TestIgnored(t *testing.T) {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := loadCases(root, "precheck", "repository", "", ""); err != nil {
 		t.Fatalf("loadCases() should ignore generated evaluation trees: %v", err)
 	}
-	overlayPath, err := writeOverlay(root)
-	if err != nil {
-		t.Fatalf("writeOverlay() = %v", err)
-	}
-	defer os.Remove(overlayPath)
-	overlayContents, err := os.ReadFile(overlayPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var generatedOverlay overlay
-	if err := json.Unmarshal(overlayContents, &generatedOverlay); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := generatedOverlay.Replace[strings.TrimSuffix(generated, ".e2e")+"_test.go"]; ok {
-		t.Fatal("writeOverlay() included generated evaluation source")
-	}
-	if _, ok := generatedOverlay.Replace[strings.TrimSuffix(source, ".e2e")+"_test.go"]; !ok {
-		t.Fatal("writeOverlay() omitted the registered fixture source")
-	}
-
-	if err := os.WriteFile(source, []byte("package sample\n\nfunc TestRegistered(t *testing.T) {}\nfunc TestUnregistered(t *testing.T) {}\n"), 0o600); err != nil {
+	if err := os.WriteFile(source, []byte("//go:build integration\n\npackage sample\n\nfunc TestRegistered(t *testing.T) {}\nfunc TestUnregistered(t *testing.T) {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := loadCases(root, "precheck", "repository", "", ""); err == nil || !strings.Contains(err.Error(), "TestUnregistered") {
 		t.Fatalf("loadCases() error = %v, want unregistered declaration failure", err)
 	}
 
-	if err := os.WriteFile(source, []byte("package sample\n"), 0o600); err != nil {
+	if err := os.WriteFile(source, []byte("//go:build integration\n\npackage sample\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadCases(root, "precheck", "repository", "", ""); err == nil || !strings.Contains(err.Error(), "has no test declaration") {
+	if _, err := loadCases(root, "precheck", "repository", "", ""); err == nil || !strings.Contains(err.Error(), "has no declaration") {
 		t.Fatalf("loadCases() error = %v, want missing declaration failure", err)
 	}
 
-	if err := os.WriteFile(source, []byte("package sample\n\nfunc TestRegistered(t *testing.T) {}\nfunc TestRegistered(t *testing.T) {}\n"), 0o600); err != nil {
+	if err := os.WriteFile(source, []byte("//go:build integration\n\npackage sample\n\nfunc TestRegistered(t *testing.T) {}\nfunc TestRegistered(t *testing.T) {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := loadCases(root, "precheck", "repository", "", ""); err == nil || !strings.Contains(err.Error(), "duplicate test declaration") {
 		t.Fatalf("loadCases() error = %v, want duplicate declaration failure", err)
 	}
 
-	if err := os.WriteFile(source, []byte("package sample\n\nfunc TestRegistered(t *testing.T) {}\nfunc TestOtherRegistered(t *testing.T) {}\n"), 0o600); err != nil {
+	if err := os.WriteFile(source, []byte("//go:build integration\n\npackage sample\n\nfunc TestRegistered(t *testing.T) {}\nfunc TestOtherRegistered(t *testing.T) {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(registry, []byte(`{
@@ -349,7 +373,7 @@ func TestLoadCasesReconcilesRegistryDeclarations(t *testing.T) {
     "package": "./wrong/package",
     "run": "^TestRegistered$",
     "phase": "precheck",
-    "source": "internal/sample/fixture.e2e"
+    "source": "internal/sample/fixture_integration_test.go"
   }]
 }`), 0o600); err != nil {
 		t.Fatal(err)
@@ -373,13 +397,13 @@ func TestLoadCasesReconcilesRegistryDeclarations(t *testing.T) {
     "package": "./internal/sample",
     "run": "^TestOtherRegistered$",
     "phase": "precheck",
-    "source": "internal/sample/fixture.e2e"
+    "source": "internal/sample/fixture_integration_test.go"
   }, {
     "id": "repository/TestRegistered",
     "package": "./internal/sample",
     "run": "^TestRegistered$",
     "phase": "precheck",
-    "source": "internal/sample/fixture.e2e"
+    "source": "internal/sample/fixture_integration_test.go"
   }]
 }`), 0o600); err != nil {
 		t.Fatal(err)
@@ -481,7 +505,7 @@ func TestDatabaseCaseFragmentsPreserveInventoryAndWave6Partition(t *testing.T) {
 func TestDatabaseCaseBaselineAllowsAdditionsAndRelocation(t *testing.T) {
 	baseline := []databaseCaseBaseline{{ID: "repository/TestExisting", Run: "^TestExisting$", Phase: "precheck"}}
 	current := []databaseCase{
-		{ID: "repository/TestExisting", Run: "^TestExisting$", Phase: "precheck", Package: "./internal/conflict", Source: "internal/conflict/fixture.e2e", Capability: "conflict"},
+		{ID: "repository/TestExisting", Run: "^TestExisting$", Phase: "precheck", Package: "./internal/conflict", Source: "internal/conflict/fixture_integration_test.go", Capability: "conflict"},
 		{ID: "recall/TestAdded", Run: "^TestAdded$", Phase: "scenario", Scenario: "space_aware_recall"},
 	}
 	if err := validateDatabaseCaseBaseline(baseline, current); err != nil {

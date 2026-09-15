@@ -7,98 +7,98 @@
       "package": "./internal/knowledge/postgres",
       "run": "^TestSearchConvergenceHydratesRelationshipDocumentsAfterClosingDocumentRows$",
       "phase": "precheck",
-      "source": "internal/knowledge/postgres/search_reconciliation_integration.e2e"
+      "source": "internal/knowledge/postgres/search_relationship_reconciliation_integration_test.go"
     },
     {
       "id": "repository/TestSearchReconciliationCanonicalSourceSetAndSpaceFence",
       "package": "./internal/knowledge/postgres",
       "run": "^TestSearchReconciliationCanonicalSourceSetAndSpaceFence$",
       "phase": "precheck",
-      "source": "internal/knowledge/postgres/search_reconciliation_integration.e2e"
+      "source": "internal/knowledge/postgres/search_reconciliation_integration_test.go"
     },
     {
       "id": "repository/TestSearchReconciliationExcludesConflictResolutionDeletionOnlyEvidence",
       "package": "./internal/knowledge/postgres",
       "run": "^TestSearchReconciliationExcludesConflictResolutionDeletionOnlyEvidence$",
       "phase": "precheck",
-      "source": "internal/knowledge/postgres/search_reconciliation_integration.e2e"
+      "source": "internal/knowledge/postgres/search_reconciliation_integration_test.go"
     },
     {
       "id": "repository/TestSearchReconciliationExcludesLifecycleTerminalEvidenceWithoutDocument",
       "package": "./internal/knowledge/postgres",
       "run": "^TestSearchReconciliationExcludesLifecycleTerminalEvidenceWithoutDocument$",
       "phase": "precheck",
-      "source": "internal/knowledge/postgres/search_reconciliation_integration.e2e"
+      "source": "internal/knowledge/postgres/search_reconciliation_integration_test.go"
     },
     {
       "id": "repository/TestSearchReconciliationExcludesSealedSpaceEvidenceWithoutDocument",
       "package": "./internal/knowledge/postgres",
       "run": "^TestSearchReconciliationExcludesSealedSpaceEvidenceWithoutDocument$",
       "phase": "precheck",
-      "source": "internal/knowledge/postgres/search_reconciliation_integration.e2e"
+      "source": "internal/knowledge/postgres/search_reconciliation_integration_test.go"
     },
     {
       "id": "repository/TestSearchReconciliationExcludesSupersededSourceRevisionWithoutDocument",
       "package": "./internal/knowledge/postgres",
       "run": "^TestSearchReconciliationExcludesSupersededSourceRevisionWithoutDocument$",
       "phase": "precheck",
-      "source": "internal/knowledge/postgres/search_reconciliation_integration.e2e"
+      "source": "internal/knowledge/postgres/search_reconciliation_integration_test.go"
     },
     {
       "id": "repository/TestSearchReconciliationProjectsSafeHistoricalRejectedEvidence",
       "package": "./internal/knowledge/postgres",
       "run": "^TestSearchReconciliationProjectsSafeHistoricalRejectedEvidence$",
       "phase": "precheck",
-      "source": "internal/knowledge/postgres/search_reconciliation_integration.e2e"
+      "source": "internal/knowledge/postgres/search_reconciliation_integration_test.go"
     },
     {
       "id": "repository/TestSearchReconciliationRetiresLifecycleTerminalEvidence",
       "package": "./internal/knowledge/postgres",
       "run": "^TestSearchReconciliationRetiresLifecycleTerminalEvidence$",
       "phase": "precheck",
-      "source": "internal/knowledge/postgres/search_reconciliation_integration.e2e"
+      "source": "internal/knowledge/postgres/search_reconciliation_integration_test.go"
     },
     {
       "id": "repository/TestSearchReconciliationSelectionAdvancesDurableCursorPastHealthyDocuments",
       "package": "./internal/knowledge/postgres",
       "run": "^TestSearchReconciliationSelectionAdvancesDurableCursorPastHealthyDocuments$",
       "phase": "precheck",
-      "source": "internal/knowledge/postgres/search_reconciliation_integration.e2e"
+      "source": "internal/knowledge/postgres/search_reconciliation_integration_test.go"
     },
     {
       "id": "repository/TestSearchReconciliationSelectionAndHashFence",
       "package": "./internal/knowledge/postgres",
       "run": "^TestSearchReconciliationSelectionAndHashFence$",
       "phase": "precheck",
-      "source": "internal/knowledge/postgres/search_reconciliation_integration.e2e"
+      "source": "internal/knowledge/postgres/search_reconciliation_integration_test.go"
     },
     {
       "id": "repository/TestSearchReconciliationLateBatchFailureRollsBackEarlierUpdates",
       "package": "./internal/knowledge/postgres",
       "run": "^TestSearchReconciliationLateBatchFailureRollsBackEarlierUpdates$",
       "phase": "precheck",
-      "source": "internal/knowledge/postgres/search_reconciliation_integration.e2e"
+      "source": "internal/knowledge/postgres/search_reconciliation_integration_test.go"
     },
     {
       "id": "repository/TestSearchReconciliationRepairWriteRaceSkipsStaleSnapshot",
       "package": "./internal/knowledge/postgres",
       "run": "^TestSearchReconciliationRepairWriteRaceSkipsStaleSnapshot$",
       "phase": "precheck",
-      "source": "internal/knowledge/postgres/search_reconciliation_integration.e2e"
+      "source": "internal/knowledge/postgres/search_reconciliation_integration_test.go"
     },
     {
       "id": "repository/TestSearchReconciliationSelectionFillsRelationshipCapacity",
       "package": "./internal/knowledge/postgres",
       "run": "^TestSearchReconciliationSelectionFillsRelationshipCapacity$",
       "phase": "precheck",
-      "source": "internal/knowledge/postgres/search_reconciliation_integration.e2e"
+      "source": "internal/knowledge/postgres/search_relationship_reconciliation_integration_test.go"
     },
     {
       "id": "repository/TestSearchReconciliationSuppressesHistoricalEvidenceAliases",
       "package": "./internal/knowledge/postgres",
       "run": "^TestSearchReconciliationSuppressesHistoricalEvidenceAliases$",
       "phase": "precheck",
-      "source": "internal/knowledge/postgres/search_reconciliation_integration.e2e"
+      "source": "internal/knowledge/postgres/search_reconciliation_integration_test.go"
     }
   ]
 }

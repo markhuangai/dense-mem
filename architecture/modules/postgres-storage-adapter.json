@@ -327,7 +327,7 @@
       "issue": 362
     },
     {
-      "path": "internal/knowledge/postgres/owner_write_integration.e2e",
+      "path": "internal/knowledge/postgres/owner_write_integration_test.go",
       "issue": 362
     },
     {
@@ -339,15 +339,15 @@
       "issue": 362
     },
     {
-      "path": "internal/knowledge/postgres/remember_diagnostic_hold_rollback_integration.e2e",
+      "path": "internal/knowledge/postgres/remember_diagnostic_hold_rollback_integration_test.go",
       "issue": 389
     },
     {
-      "path": "internal/storage/postgres/migration_control_detachment_integration.e2e",
+      "path": "internal/storage/postgres/migration_control_detachment_integration_test.go",
       "issue": 278
     },
     {
-      "path": "internal/knowledge/postgres/conflict_review_synchronous_integration.e2e",
+      "path": "internal/knowledge/postgres/conflict_review_synchronous_integration_test.go",
       "issue": 382
     }
   ],

@@ -83,23 +83,23 @@
       "issue": 370
     },
     {
-      "path": "internal/access/postgres/canonical_credentials_integration.e2e",
+      "path": "internal/access/postgres/canonical_credentials_integration_test.go",
       "issue": 370
     },
     {
-      "path": "internal/access/postgres/directory_identity_repository_integration.e2e",
+      "path": "internal/access/postgres/directory_identity_repository_integration_test.go",
       "issue": 370
     },
     {
-      "path": "internal/access/postgres/sso_oauth_repository_integration.e2e",
+      "path": "internal/access/postgres/sso_oauth_repository_integration_test.go",
       "issue": 370
     },
     {
-      "path": "internal/access/postgres/team_repository.e2e",
+      "path": "internal/access/postgres/team_repository_integration_test.go",
       "issue": 370
     },
     {
-      "path": "internal/access/postgres/user_portal_session_repository_integration.e2e",
+      "path": "internal/access/postgres/user_portal_session_repository_integration_test.go",
       "issue": 370
     }
   ],

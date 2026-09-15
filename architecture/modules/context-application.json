@@ -11,7 +11,7 @@
       "issue": 363
     },
     {
-      "path": "internal/trace/postgres/evidence_duplicate_trace_integration_test.go",
+      "path": "internal/trace/postgres/evidence_duplicate_trace_helpers_test.go",
       "issue": 363
     },
     {
