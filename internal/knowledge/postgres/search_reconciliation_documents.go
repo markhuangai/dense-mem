@@ -370,6 +370,7 @@ func completeMissingCanonicalSearchDocument(
 		strings.TrimSpace(expected.SpaceID) != strings.TrimSpace(document.SpaceID) {
 		return false, nil
 	}
+	ctx = WithInlineEmbeddingResults(ctx, []InlineEmbeddingResult{})
 	loaded, err := upsertSearchDocumentInTx(
 		ctx,
 		tx,

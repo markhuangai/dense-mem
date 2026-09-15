@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -27,7 +28,14 @@ type RecallEvidenceInput = recallpostgres.RecallEvidenceInput
 
 func newSearchFixtureStore(db *gorm.DB, rls storagepostgres.RLSHelper) *searchFixtureStore {
 	read := searchpostgres.NewStore(db, rls)
-	return &searchFixtureStore{read: read, projection: NewStore(db, rls, ConflictRuntimeConfig{}), recall: recallpostgres.NewStore(db, rls, read, nil, nil)}
+	relationshipReader := func(context.Context, *gorm.DB, string, *time.Time, []recallpostgres.RecallEvidenceHit) ([]recallpostgres.RelationshipConflictCaseRecord, error) {
+		return []recallpostgres.RelationshipConflictCaseRecord{}, nil
+	}
+	return &searchFixtureStore{
+		read:       read,
+		projection: NewStore(db, rls, ConflictRuntimeConfig{}),
+		recall:     recallpostgres.NewStore(db, rls, read, relationshipReader, recallpostgres.LoadRecallEvidenceConflictRecords),
+	}
 }
 
 func (s *searchFixtureStore) GetActiveSearchContract(ctx context.Context) (*searchcontract.ActiveSearchContract, error) {

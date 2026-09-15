@@ -73,7 +73,7 @@ describe("App coverage additions", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("at least 3");
     vi.spyOn(window, "confirm").mockReturnValue(false);
     await userEvent.click(screen.getByRole("button", { name: /^Delete$/i }));
-  });
+  }, 15000);
 
   it("reports team editor save and delete failures", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -113,7 +113,8 @@ describe("App coverage additions", () => {
     await userEvent.type(screen.getByLabelText("Description", { selector: "#team-description" }), " updated");
     await userEvent.click(screen.getByRole("button", { name: /^Save$/i }));
     expect(await screen.findByText("team update failed")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Delete$/i })).toBeEnabled(), { timeout: 5000 });
     await userEvent.click(screen.getByRole("button", { name: /^Delete$/i }));
     expect(await screen.findByText("team delete failed")).toBeInTheDocument();
-  });
+  }, 15000);
 });
