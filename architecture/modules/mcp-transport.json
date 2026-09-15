@@ -1,14 +1,6 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "mcp-transport",
-  "source_ownership": [
-    {"path": "internal/mcp/server.go", "issue": 380},
-    {"path": "internal/mcp/logger.go", "issue": 380},
-    {"path": "internal/mcp/conformance_harness_test.go", "issue": 380},
-    {"path": "internal/mcp/conformance_catalog_production_test.go", "issue": 380},
-    {"path": "internal/mcp/conformance_catalog_evaluation_test.go", "issue": 380}
-  ],
-  "completed_issues": [],
   "go": {
     "units": [
       {
@@ -17,10 +9,5 @@
         "visibility": "public"
       }
     ]
-  },
-  "browser": {
-    "units": []
-  },
-  "exceptions": [],
-  "workers": []
+  }
 }

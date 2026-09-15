@@ -1,121 +1,47 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "memory-application",
   "source_ownership": [
     {
-      "path": "cmd/internal/serverapp/recall_composition.go",
-      "issue": 376
+      "path": "cmd/internal/serverapp/recall_composition.go"
     },
     {
-      "path": "cmd/internal/serverapp/lifecycle_composition.go",
-      "issue": 374
+      "path": "cmd/internal/serverapp/lifecycle_composition.go"
     },
     {
-      "path": "cmd/internal/serverapp/recall_feedback_composition.go",
-      "issue": 376
+      "path": "cmd/internal/serverapp/recall_feedback_composition.go"
     },
     {
-      "path": "internal/tools/registry/recall_bindings.go",
-      "issue": 376
+      "path": "internal/tools/registry/recall_bindings.go"
     },
     {
-      "path": "internal/recall/feedback.go",
-      "issue": 376
+      "path": "internal/http/control_portal_types.go"
     },
     {
-      "path": "internal/recall/feedback_test.go",
-      "issue": 376
+      "path": "internal/http/handler/recall_handler.go"
     },
     {
-      "path": "internal/recall/recall.go",
-      "issue": 376
+      "path": "internal/http/handler/recall_handler_test.go"
     },
     {
-      "path": "internal/recall/recall_community_contract_test.go",
-      "issue": 376
+      "path": "internal/tools/registry/contract_outputs.go"
     },
     {
-      "path": "internal/recall/recall_community_snapshot_test.go",
-      "issue": 376
+      "path": "internal/tools/registry/contract_outputs_test.go"
     },
     {
-      "path": "internal/recall/recall_conflicts.go",
-      "issue": 376
+      "path": "internal/tools/registry/contract_uat_test.go"
     },
     {
-      "path": "internal/recall/recall_contract_test.go",
-      "issue": 376
+      "path": "internal/tools/registry/uat_feedback.go"
     },
     {
-      "path": "internal/recall/recall_embedding_degradation.go",
-      "issue": 376
+      "path": "internal/tools/registry/uat_feedback_test.go"
     },
     {
-      "path": "internal/recall/recall_result_helpers.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/recall_space_test.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/recall_spaces.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/recall_test.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/http/control_portal_types.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/http/handler/recall_handler.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/http/handler/recall_handler_test.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/tools/registry/contract_outputs.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/tools/registry/contract_outputs_test.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/tools/registry/contract_uat_test.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/tools/registry/uat_feedback.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/tools/registry/uat_feedback_test.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/tools/registry/lifecycle_bindings.go",
-      "issue": 374
-    },
-    {
-      "path": "internal/lifecycle/service.go",
-      "issue": 374
-    },
-    {
-      "path": "internal/lifecycle/service_test.go",
-      "issue": 374
-    },
-    {
-      "path": "internal/lifecycle/status.go",
-      "issue": 374
+      "path": "internal/tools/registry/lifecycle_bindings.go"
     }
   ],
-  "completed_issues": [],
   "go": {
     "units": [
       {
@@ -130,19 +56,13 @@
       }
     ]
   },
-  "browser": {
-    "units": []
-  },
-  "compatibility_bridges": [],
-  "exceptions": [],
   "workers": [
     {
       "path": "internal/recall/feedback.go",
       "function": "Start",
       "kind": "goroutine",
       "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     }
   ]
 }

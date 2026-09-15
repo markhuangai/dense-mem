@@ -1,10 +1,6 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "control-portal",
-  "completed_issues": [],
-  "go": {
-    "units": []
-  },
   "browser": {
     "units": [
       {
@@ -173,7 +169,5 @@
         "visibility": "public"
       }
     ]
-  },
-  "exceptions": [],
-  "workers": []
+  }
 }

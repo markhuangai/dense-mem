@@ -1,110 +1,17 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "access-application",
   "source_ownership": [
     {
-      "path": "cmd/internal/serverapp/access_composition.go",
-      "issue": 370
+      "path": "cmd/internal/serverapp/access_composition.go"
     },
     {
-      "path": "cmd/internal/serverapp/access_adapters.go",
-      "issue": 370
+      "path": "cmd/internal/serverapp/access_adapters.go"
     },
     {
-      "path": "cmd/internal/serverapp/access_adapters_test.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/contract/ports.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/apikey_repository_test.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/canonical_credentials.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/canonical_credentials_test.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/control_identity_repository.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/credential_deletion.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/credential_repository.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/directory_identity_helpers.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/directory_identity_reconcile_repository.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/directory_identity_repository.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/helpers.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/sso_identity_repository.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/sso_oauth_provider_write.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/sso_repository.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/sso_repository_scan.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/team_repository.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/user_portal_session_repository.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/canonical_credentials_integration_test.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/directory_identity_repository_integration_test.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/sso_oauth_repository_integration_test.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/team_repository_integration_test.go",
-      "issue": 370
-    },
-    {
-      "path": "internal/access/postgres/user_portal_session_repository_integration_test.go",
-      "issue": 370
+      "path": "cmd/internal/serverapp/access_adapters_test.go"
     }
   ],
-  "compatibility_bridges": [],
-  "completed_issues": [],
   "go": {
     "units": [
       {
@@ -124,18 +31,13 @@
       }
     ]
   },
-  "browser": {
-    "units": []
-  },
-  "exceptions": [],
   "workers": [
     {
       "path": "internal/service/access/credential_activity.go",
       "function": "Start",
       "kind": "goroutine",
       "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     }
   ]
 }

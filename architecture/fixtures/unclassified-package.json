@@ -1,5 +1,0 @@
-{
-  "source": "fixture/transport",
-  "target": "fixture/new-package",
-  "expected": "unclassified"
-}

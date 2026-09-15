@@ -1,7 +1,6 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "classification-policy",
-  "completed_issues": [],
   "go": {
     "units": [
       {
@@ -10,10 +9,5 @@
         "visibility": "public"
       }
     ]
-  },
-  "browser": {
-    "units": []
-  },
-  "exceptions": [],
-  "workers": []
+  }
 }

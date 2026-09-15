@@ -1,126 +1,32 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "http-transport",
   "source_ownership": [
     {
-      "path": "cmd/internal/serverapp/backends.go",
-      "issue": 379
+      "path": "cmd/internal/serverapp/backends.go"
     },
     {
-      "path": "cmd/internal/serverapp/transport_composition.go",
-      "issue": 379
+      "path": "cmd/internal/serverapp/transport_composition.go"
     },
     {
-      "path": "cmd/internal/serverapp/transport_composition_test.go",
-      "issue": 379
+      "path": "cmd/internal/serverapp/transport_composition_test.go"
     },
     {
-      "path": "internal/http/contract/ports.go",
-      "issue": 379
+      "path": "internal/http/control_portal_bindings.go"
     },
     {
-      "path": "internal/http/control_portal_bindings.go",
-      "issue": 379
+      "path": "internal/http/server.go"
     },
     {
-      "path": "internal/http/server.go",
-      "issue": 379
+      "path": "internal/http/router_protected.go"
     },
     {
-      "path": "internal/http/router_protected.go",
-      "issue": 379
+      "path": "internal/http/user_portal.go"
     },
     {
-      "path": "internal/http/user_portal.go",
-      "issue": 379
-    },
-    {
-      "path": "internal/http/control_portal.go",
-      "issue": 379
-    },
-    {
-      "path": "internal/http/control_portal_auth.go",
-      "issue": 382
-    },
-    {
-      "path": "internal/http/control_portal_config.go",
-      "issue": 382
-    },
-    {
-      "path": "internal/http/control_portal_directory.go",
-      "issue": 382
-    },
-    {
-      "path": "internal/http/control_portal_identity.go",
-      "issue": 382
-    },
-    {
-      "path": "internal/http/control_portal_remember_attempts.go",
-      "issue": 382
-    },
-    {
-      "path": "internal/http/control_portal_search.go",
-      "issue": 382
-    },
-    {
-      "path": "internal/http/dreaming_effective.go",
-      "issue": 382
-    },
-    {
-      "path": "internal/http/handler/audit_handler.go",
-      "issue": 382
-    },
-    {
-      "path": "internal/http/middleware/auth.go",
-      "issue": 382
-    },
-    {
-      "path": "internal/http/middleware/team_authorization.go",
-      "issue": 382
-    },
-    {
-      "path": "internal/http/middleware/usage_metrics.go",
-      "issue": 382
-    },
-    {
-      "path": "internal/http/oauth_protected_resource.go",
-      "issue": 382
-    },
-    {
-      "path": "internal/http/private_memory.go",
-      "issue": 382
-    },
-    {
-      "path": "internal/http/scim_directory.go",
-      "issue": 382
-    },
-    {
-      "path": "internal/http/scim_directory_helpers.go",
-      "issue": 382
-    },
-    {
-      "path": "internal/http/user_portal_routes.go",
-      "issue": 382
-    },
-    {
-      "path": "internal/http/user_portal_session.go",
-      "issue": 382
-    },
-    {
-      "path": "internal/http/user_portal_support.go",
-      "issue": 382
-    },
-    {
-      "path": "internal/http/handler/mcp_logger.go",
-      "issue": 380
-    },
-    {
-      "path": "internal/http/handler/mcp_logger_test.go",
-      "issue": 380
+      "path": "internal/http/control_portal.go"
     }
   ],
-  "compatibility_bridges": [],
-  "completed_issues": [],
   "go": {
     "units": [
       {
@@ -160,66 +66,55 @@
       }
     ]
   },
-  "browser": {
-    "units": []
-  },
-  "exceptions": [],
   "workers": [
     {
       "path": "internal/http/dependency_checks.go",
       "function": "runDependencyChecks",
       "kind": "goroutine",
       "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     },
     {
       "path": "internal/http/dependency_checks.go",
       "function": "runDependencyCheck",
       "kind": "goroutine",
       "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     },
     {
       "path": "internal/http/handler/mcp_handler.go",
       "function": "handleSDKPost",
       "kind": "start",
       "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     },
     {
       "path": "internal/http/handler/mcp_handler.go",
       "function": "HandleGet",
       "kind": "start",
       "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     },
     {
       "path": "internal/http/server.go",
       "function": "Start",
       "kind": "start",
       "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     },
     {
       "path": "internal/http/server.go",
       "function": "RunServer",
       "kind": "goroutine",
       "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     },
     {
       "path": "internal/http/server.go",
       "function": "RunServer",
       "kind": "start",
       "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     }
   ]
 }

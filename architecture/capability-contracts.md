@@ -1,11 +1,13 @@
 # Capability contract ownership
 
-The architecture manifest is assembled from capability fragments under
-`architecture/modules/`. Each fragment owns the exact source units, worker
-anchors, database-case registrations, and completion records for one
-capability. The central manifest owns discovery, profiles, the role matrix, and
-fragment inventory. The loader rejects missing, duplicate, unlisted, or
-undiscovered units.
+The schema-version-2 architecture manifest is assembled from capability
+fragments under `architecture/modules/`. Each fragment owns the exact source
+units, worker anchors, and database-case registrations for one capability. The
+central manifest owns discovery, profiles, and fragment inventory. The loader
+rejects missing, duplicate, unlisted, or undiscovered units.
+
+The dependency role matrix is defined once by `architecture/manifest.mjs` and
+is injected into the merged manifest. It is not copied into the JSON inventory.
 
 The dependency direction is transport to application to domain and ports.
 PostgreSQL adapters implement capability ports and may use only domain, ports,
@@ -67,5 +69,7 @@ and profile duplication. PostgreSQL adapter and integration coverage remains a
 separate proof of SQL, RLS, transaction, lock, and concurrency behavior.
 
 The architecture conformance UAT and checker validate fragment completeness,
-visibility, dependency direction, worker lifecycle obligations, database-case
-ownership, and the absence of expired compatibility obligations.
+visibility, dependency direction, worker anchors, database-case ownership, and
+the absence of retired migration metadata. Workers remain permanent ownership
+records; their identities are discovered from source and compared with the
+manifest on every check.

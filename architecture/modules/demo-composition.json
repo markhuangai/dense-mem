@@ -1,20 +1,11 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "demo-composition",
   "source_ownership": [
-    {"path": "cmd/demo-server/main.go", "issue": 381},
-    {"path": "cmd/internal/demo/http.go", "issue": 381},
-    {"path": "cmd/internal/demo/http_test.go", "issue": 381},
-    {"path": "cmd/internal/demo/quota_bindings.go", "issue": 381},
-    {"path": "cmd/internal/demo/postgres/cleanup.go", "issue": 381},
-    {"path": "cmd/internal/demo/postgres/cleanup_integration_test.go", "issue": 381},
-    {"path": "cmd/internal/demo/service/cleanup.go", "issue": 381},
-    {"path": "cmd/internal/demo/service/cleanup_test.go", "issue": 381},
-    {"path": "cmd/internal/demo/service/provision.go", "issue": 381},
-    {"path": "cmd/internal/demo/service/quota.go", "issue": 381},
-    {"path": "cmd/internal/demo/quota_bindings_test.go", "issue": 381}
+    {
+      "path": "cmd/demo-server/main.go"
+    }
   ],
-  "completed_issues": [],
   "go": {
     "units": [
       {
@@ -38,10 +29,5 @@
         "visibility": "private"
       }
     ]
-  },
-  "browser": {
-    "units": []
-  },
-  "exceptions": [],
-  "workers": []
+  }
 }

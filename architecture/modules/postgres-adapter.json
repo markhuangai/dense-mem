@@ -1,11 +1,6 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "postgres-adapter",
-  "source_ownership": [
-    {"path": "internal/storage/postgres/remember_diagnostic_hold.go", "issue": 389},
-    {"path": "internal/storage/postgres/remember_diagnostic_hold_test.go", "issue": 389}
-  ],
-  "completed_issues": [],
   "go": {
     "units": [
       {
@@ -14,10 +9,5 @@
         "visibility": "private"
       }
     ]
-  },
-  "browser": {
-    "units": []
-  },
-  "exceptions": [],
-  "workers": []
+  }
 }

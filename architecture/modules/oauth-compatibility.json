@@ -1,7 +1,6 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "oauth-compatibility",
-  "completed_issues": [],
   "go": {
     "units": [
       {
@@ -11,18 +10,13 @@
       }
     ]
   },
-  "browser": {
-    "units": []
-  },
-  "exceptions": [],
   "workers": [
     {
       "path": "cmd/oauth-compat-harness/main.go",
       "function": "run",
       "kind": "goroutine",
       "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     }
   ]
 }

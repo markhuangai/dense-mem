@@ -1,93 +1,65 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "semantic-write-application",
   "source_ownership": [
     {
-      "path": "cmd/internal/serverapp/semanticwrite_composition.go",
-      "issue": 362
+      "path": "cmd/internal/serverapp/semanticwrite_composition.go"
     },
     {
-      "path": "cmd/internal/serverapp/semanticwrite_embedding_adapter.go",
-      "issue": 362
+      "path": "cmd/internal/serverapp/semanticwrite_embedding_adapter.go"
     },
     {
-      "path": "cmd/internal/serverapp/semanticwrite_embedding_adapter_test.go",
-      "issue": 362
+      "path": "cmd/internal/serverapp/semanticwrite_embedding_adapter_test.go"
     },
     {
-      "path": "internal/knowledge/postgres/evidence_lifecycle_repository_integration_test.go",
-      "issue": 362
+      "path": "internal/knowledge/postgres/evidence_lifecycle_repository_integration_test.go"
     },
     {
-      "path": "internal/knowledge/postgres/evidence_lifecycle_validation_test.go",
-      "issue": 362
+      "path": "internal/knowledge/postgres/evidence_lifecycle_validation_test.go"
     },
     {
-      "path": "internal/knowledge/postgres/relationship_correction_canonical_projection_integration_test.go",
-      "issue": 362
+      "path": "internal/knowledge/postgres/relationship_correction_canonical_projection_integration_test.go"
     },
     {
-      "path": "internal/knowledge/postgres/relationship_correction_fence_integration_test.go",
-      "issue": 362
+      "path": "internal/knowledge/postgres/relationship_correction_fence_integration_test.go"
     },
     {
-      "path": "internal/knowledge/postgres/relationship_correction_lock_order_integration_test.go",
-      "issue": 362
+      "path": "internal/knowledge/postgres/relationship_correction_lock_order_integration_test.go"
     },
     {
-      "path": "internal/knowledge/postgres/relationship_correction_occurrence_integration_test.go",
-      "issue": 362
+      "path": "internal/knowledge/postgres/relationship_correction_occurrence_integration_test.go"
     },
     {
-      "path": "internal/knowledge/postgres/relationship_identity_integration_test.go",
-      "issue": 362
+      "path": "internal/knowledge/postgres/relationship_identity_integration_test.go"
     },
     {
-      "path": "internal/knowledge/postgres/remember_commit_helpers_test.go",
-      "issue": 362
+      "path": "internal/knowledge/postgres/remember_commit_helpers_test.go"
     },
     {
-      "path": "internal/knowledge/postgres/semantic_lifecycle_integration_test.go",
-      "issue": 362
+      "path": "internal/knowledge/postgres/semantic_lifecycle_integration_test.go"
     },
     {
-      "path": "internal/knowledge/postgres/semantic_repository_integration_test.go",
-      "issue": 362
+      "path": "internal/knowledge/postgres/semantic_repository_integration_test.go"
     },
     {
-      "path": "internal/knowledge/postgres/semantic_review_catalog_repository_integration_test.go",
-      "issue": 362
+      "path": "internal/knowledge/postgres/semantic_review_catalog_repository_integration_test.go"
     },
     {
-      "path": "internal/knowledge/postgres/semantic_review_regression_integration_test.go",
-      "issue": 362
+      "path": "internal/knowledge/postgres/semantic_review_regression_integration_test.go"
     },
     {
-      "path": "internal/knowledge/postgres/semantic_space_generation_integration_test.go",
-      "issue": 362
+      "path": "internal/knowledge/postgres/semantic_space_generation_integration_test.go"
     },
     {
-      "path": "internal/knowledge/postgres/semantic_support_helpers_test.go",
-      "issue": 362
+      "path": "internal/knowledge/postgres/semantic_support_helpers_test.go"
     },
     {
-      "path": "internal/knowledge/postgres/submission_assessment_catalog_repository_integration_test.go",
-      "issue": 362
+      "path": "internal/knowledge/postgres/submission_assessment_catalog_repository_integration_test.go"
     },
     {
-      "path": "internal/knowledge/postgres/submission_assessment_known_evidence_repository_integration_test.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/service/semanticwrite/executor.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/service/semanticwrite/executor_test.go",
-      "issue": 362
+      "path": "internal/knowledge/postgres/submission_assessment_known_evidence_repository_integration_test.go"
     }
   ],
-  "completed_issues": [],
   "go": {
     "units": [
       {
@@ -96,11 +68,5 @@
         "visibility": "public"
       }
     ]
-  },
-  "browser": {
-    "units": []
-  },
-  "compatibility_bridges": [],
-  "exceptions": [],
-  "workers": []
+  }
 }

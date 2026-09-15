@@ -1,7 +1,6 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "remember-assessor-provider",
-  "completed_issues": [],
   "go": {
     "units": [
       {
@@ -10,10 +9,5 @@
         "visibility": "private"
       }
     ]
-  },
-  "browser": {
-    "units": []
-  },
-  "exceptions": [],
-  "workers": []
+  }
 }

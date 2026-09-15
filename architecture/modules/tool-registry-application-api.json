@@ -1,14 +1,20 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "tool-registry-application-api",
   "source_ownership": [
-    {"path": "internal/tools/registry/capability_bindings.go", "issue": 380},
-    {"path": "internal/tools/registry/tool_bindings.go", "issue": 380},
-    {"path": "internal/tools/registry/toolset.go", "issue": 380},
-    {"path": "internal/tools/registry/contract.go", "issue": 380}
+    {
+      "path": "internal/tools/registry/capability_bindings.go"
+    },
+    {
+      "path": "internal/tools/registry/tool_bindings.go"
+    },
+    {
+      "path": "internal/tools/registry/toolset.go"
+    },
+    {
+      "path": "internal/tools/registry/contract.go"
+    }
   ],
-  "compatibility_bridges": [],
-  "completed_issues": [],
   "go": {
     "units": [
       {
@@ -17,10 +23,5 @@
         "visibility": "public"
       }
     ]
-  },
-  "browser": {
-    "units": []
-  },
-  "exceptions": [],
-  "workers": []
+  }
 }

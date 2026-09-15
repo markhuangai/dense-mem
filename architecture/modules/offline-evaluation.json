@@ -1,98 +1,50 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "offline-evaluation",
   "source_ownership": [
     {
-      "path": "cmd/internal/serverapp/evaluation_composition_evaluation.go",
-      "issue": 378
+      "path": "cmd/internal/serverapp/evaluation_composition_evaluation.go"
     },
     {
-      "path": "cmd/internal/serverapp/evaluation_composition_production.go",
-      "issue": 378
+      "path": "cmd/internal/serverapp/evaluation_composition_production.go"
     },
     {
-      "path": "cmd/internal/serverapp/evaluation_composition_evaluation_test.go",
-      "issue": 378
+      "path": "cmd/internal/serverapp/evaluation_composition_evaluation_test.go"
     },
     {
-      "path": "cmd/internal/serverapp/evaluation_composition_production_test.go",
-      "issue": 378
+      "path": "cmd/internal/serverapp/evaluation_composition_production_test.go"
     },
     {
-      "path": "internal/evaluation/postgres/evaluation_reader_integration_test.go",
-      "issue": 378
+      "path": "internal/tools/registry/evaluation_bindings.go"
     },
     {
-      "path": "internal/evaluation/service.go",
-      "issue": 378
+      "path": "internal/tools/registry/evaluation_bindings_test.go"
     },
     {
-      "path": "internal/evaluation/service_test.go",
-      "issue": 378
+      "path": "internal/tools/registry/evaluation_application.go"
     },
     {
-      "path": "internal/evaluation/postgres/reader.go",
-      "issue": 378
+      "path": "internal/tools/registry/evaluation_audit_failure_test.go"
     },
     {
-      "path": "internal/evaluation/postgres/reader_test.go",
-      "issue": 378
+      "path": "internal/tools/registry/evaluation_catalog_evaluation.go"
     },
     {
-      "path": "internal/evaluation/postgres/query.go",
-      "issue": 378
+      "path": "internal/tools/registry/evaluation_dream_tools.go"
     },
     {
-      "path": "internal/evaluation/postgres/query_test.go",
-      "issue": 378
+      "path": "internal/tools/registry/evaluation_knowledge_tools_test.go"
     },
     {
-      "path": "internal/tools/registry/evaluation_bindings.go",
-      "issue": 378
+      "path": "internal/tools/registry/evaluation_recall_tools.go"
     },
     {
-      "path": "internal/tools/registry/evaluation_bindings_test.go",
-      "issue": 378
+      "path": "internal/tools/registry/evaluation_tools.go"
     },
     {
-      "path": "internal/tools/registry/evaluation_application.go",
-      "issue": 378
-    },
-    {
-      "path": "internal/tools/registry/evaluation_audit_failure_test.go",
-      "issue": 378
-    },
-    {
-      "path": "internal/tools/registry/evaluation_catalog_evaluation.go",
-      "issue": 378
-    },
-    {
-      "path": "internal/tools/registry/evaluation_dream_tools.go",
-      "issue": 378
-    },
-    {
-      "path": "internal/tools/registry/evaluation_knowledge_tools_test.go",
-      "issue": 378
-    },
-    {
-      "path": "internal/tools/registry/evaluation_recall_tools.go",
-      "issue": 378
-    },
-    {
-      "path": "internal/tools/registry/evaluation_tools.go",
-      "issue": 378
-    },
-    {
-      "path": "internal/tools/registry/uat_evaluation_dependency_test.go",
-      "issue": 378
-    },
-    {
-      "path": "internal/evalharness/score.go",
-      "issue": 378
+      "path": "internal/tools/registry/uat_evaluation_dependency_test.go"
     }
   ],
-  "compatibility_bridges": [],
-  "completed_issues": [],
   "go": {
     "units": [
       {
@@ -122,66 +74,55 @@
       }
     ]
   },
-  "browser": {
-    "units": []
-  },
-  "exceptions": [],
   "workers": [
     {
       "path": "cmd/eval-runner/main.go",
       "function": "main",
       "kind": "run",
       "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     },
     {
       "path": "internal/evalharness/client.go",
       "function": "importCorpusFileConcurrent",
       "kind": "goroutine",
       "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     },
     {
       "path": "internal/evalharness/client.go",
       "function": "importCorpusFileConcurrent",
       "kind": "goroutine",
       "ordinal": 2,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     },
     {
       "path": "internal/evalharness/client.go",
       "function": "importCorpusFileConcurrent",
       "kind": "goroutine",
       "ordinal": 3,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     },
     {
       "path": "internal/evalharness/client.go",
       "function": "ImportCorpusWithConcurrency",
       "kind": "goroutine",
       "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     },
     {
       "path": "internal/evalharness/client.go",
       "function": "ImportCorpusWithConcurrency",
       "kind": "goroutine",
       "ordinal": 2,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     },
     {
       "path": "internal/evalharness/client.go",
       "function": "ImportCorpusWithConcurrency",
       "kind": "goroutine",
       "ordinal": 3,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     }
   ]
 }

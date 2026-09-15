@@ -1,318 +1,44 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "dream-application",
   "source_ownership": [
     {
-      "path": "internal/dream/contract/errors.go",
-      "issue": 365
+      "path": "internal/storage/postgres/dream_helpers.go"
     },
     {
-      "path": "internal/dream/contract/evaluation.go",
-      "issue": 365
+      "path": "internal/storage/postgres/dream_helpers_test.go"
     },
     {
-      "path": "internal/dream/contract/ports.go",
-      "issue": 365
+      "path": "cmd/internal/serverapp/dream_composition.go"
     },
     {
-      "path": "internal/dream/contract/types.go",
-      "issue": 365
+      "path": "internal/dreamgeneration/contract.go"
     },
     {
-      "path": "internal/dream/postgres/evaluation_hypothesis.go",
-      "issue": 365
+      "path": "internal/dreamgeneration/contract_edge_test.go"
     },
     {
-      "path": "internal/dream/postgres/adapter_test.go",
-      "issue": 365
+      "path": "internal/dreamgeneration/contract_schema_test.go"
     },
     {
-      "path": "internal/dream/postgres/dream_repository_validation_test.go",
-      "issue": 365
+      "path": "internal/dreamgeneration/contract_test.go"
     },
     {
-      "path": "internal/dream/postgres/helpers.go",
-      "issue": 365
+      "path": "internal/dreamgeneration/evidence_contract.go"
     },
     {
-      "path": "internal/dream/postgres/locks.go",
-      "issue": 365
+      "path": "internal/dreamgeneration/evidence_contract_test.go"
     },
     {
-      "path": "internal/dream/postgres/store.go",
-      "issue": 365
+      "path": "internal/dreamgeneration/provider.go"
     },
     {
-      "path": "internal/dream/postgres/types.go",
-      "issue": 365
+      "path": "internal/dreamgeneration/provider_test.go"
     },
     {
-      "path": "internal/storage/postgres/dream_helpers.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/storage/postgres/dream_helpers_test.go",
-      "issue": 365
-    },
-    {
-      "path": "cmd/internal/serverapp/dream_composition.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dreamgeneration/contract.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dreamgeneration/contract_edge_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dreamgeneration/contract_schema_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dreamgeneration/contract_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dreamgeneration/evidence_contract.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dreamgeneration/evidence_contract_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dreamgeneration/provider.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dreamgeneration/provider_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_confirmation_lock.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_confirmation_lock_integration_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_control_repository.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_cycle_recovery_integration_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_cycle_repository.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_derivation_read_repository.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_derivation_repository.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_evidence_derivation_repository.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_evidence_duplicate_integration_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_evidence_errors.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_evidence_input_validation.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_evidence_repository.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_evidence_target_lock.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_evidence_target_repository.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_evidence_target_repository_integration_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_generation_repository.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_lock_admission_integration_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_path_evaluation_repository.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_repository.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_repository_integration_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_repository_scan.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_repository_sql.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_repository_validation.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/postgres/dream_target_repository.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/config.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/config_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/control.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/control_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/evidence_paths.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/evidence_paths_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/generator.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/generator_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/list.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/provider_generator.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/provider_generator_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/scheduler.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/scheduler_evidence_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/scheduler_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/service.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/types.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/workflow.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/workflow_confirmation.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/workflow_evidence.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/workflow_evidence_regression_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/workflow_evidence_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/workflow_generation_helpers.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/workflow_inactive_team_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/workflow_read_errors_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/workflow_schedule.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/workflow_schedule_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/workflow_terminal_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/workflow_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/workflow_test_helpers_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/dream/workflow_test_stubs_test.go",
-      "issue": 365
-    },
-    {
-      "path": "internal/tools/registry/dream_bindings.go",
-      "issue": 365
+      "path": "internal/tools/registry/dream_bindings.go"
     }
   ],
-  "compatibility_bridges": [],
-  "completed_issues": [],
   "go": {
     "units": [
       {
@@ -331,10 +57,5 @@
         "visibility": "private"
       }
     ]
-  },
-  "browser": {
-    "units": []
-  },
-  "exceptions": [],
-  "workers": []
+  }
 }

@@ -1,57 +1,6 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "search-contract",
-  "completed_issues": [],
-  "source_ownership": [
-    {
-      "path": "internal/search/maintenance/contract.go",
-      "issue": 373
-    },
-    {
-      "path": "internal/search/maintenance_aliases.go",
-      "issue": 373
-    },
-    {
-      "path": "internal/search/convergence.go",
-      "issue": 373
-    },
-    {
-      "path": "internal/search/convergence_test.go",
-      "issue": 373
-    },
-    {
-      "path": "internal/search/reconciliation.go",
-      "issue": 373
-    },
-    {
-      "path": "internal/search/reconciliation_test.go",
-      "issue": 373
-    },
-    {
-      "path": "internal/search/postgres/store.go",
-      "issue": 373
-    },
-    {
-      "path": "internal/search/postgres/read.go",
-      "issue": 373
-    },
-    {
-      "path": "internal/search/postgres/helpers.go",
-      "issue": 373
-    },
-    {
-      "path": "internal/search/postgres/generation.go",
-      "issue": 373
-    },
-    {
-      "path": "internal/search/postgres/bootstrap.go",
-      "issue": 373
-    },
-    {
-      "path": "internal/search/postgres/bootstrap_test.go",
-      "issue": 373
-    }
-  ],
   "go": {
     "units": [
       {
@@ -75,10 +24,5 @@
         "visibility": "private"
       }
     ]
-  },
-  "browser": {
-    "units": []
-  },
-  "exceptions": [],
-  "workers": []
+  }
 }

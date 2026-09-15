@@ -1,13 +1,12 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "index-retirement",
   "source_ownership": [
-    {"path": "migrations/postgres/v2_6/20260910020001_retire_deprecated_duplicate_ann_index.sql", "issue": 350},
-    {"path": "internal/storage/postgres/deprecated_ann_index_retirement_integration_test.go", "issue": 350}
-  ],
-  "completed_issues": [],
-  "go": {"units": []},
-  "browser": {"units": []},
-  "exceptions": [],
-  "workers": []
+    {
+      "path": "migrations/postgres/v2_6/20260910020001_retire_deprecated_duplicate_ann_index.sql"
+    },
+    {
+      "path": "internal/storage/postgres/deprecated_ann_index_retirement_integration_test.go"
+    }
+  ]
 }

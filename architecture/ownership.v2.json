@@ -1,63 +1,6 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "module": "github.com/markhuangai/dense-mem",
-  "allowed_targets": {
-    "domain": [
-      "domain"
-    ],
-    "port": [
-      "domain",
-      "port"
-    ],
-    "application_api": [
-      "application_api",
-      "domain",
-      "port"
-    ],
-    "adapter": [
-      "domain",
-      "port"
-    ],
-    "postgres_adapter": [
-      "domain",
-      "port",
-      "postgres_infrastructure"
-    ],
-    "postgres_infrastructure": [
-      "domain",
-      "port",
-      "postgres_infrastructure"
-    ],
-    "transport": [
-      "application_api",
-      "domain",
-      "transport"
-    ],
-    "worker": [
-      "application_api",
-      "domain",
-      "port"
-    ],
-    "composition": [
-      "domain",
-      "port",
-      "application_api",
-      "adapter",
-      "postgres_adapter",
-      "postgres_infrastructure",
-      "transport",
-      "worker",
-      "composition",
-      "offline_evaluation"
-    ],
-    "offline_evaluation": [
-      "domain",
-      "port",
-      "application_api",
-      "transport",
-      "offline_evaluation"
-    ]
-  },
   "go": {
     "profiles": [
       "production",
@@ -78,7 +21,6 @@
     "architecture/modules/access-application.json",
     "architecture/modules/audit-application.json",
     "architecture/modules/application-services.json",
-    "architecture/modules/architecture.json",
     "architecture/modules/classification-policy.json",
     "architecture/modules/community-application.json",
     "architecture/modules/community-policy.json",

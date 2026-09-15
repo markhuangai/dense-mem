@@ -1,29 +1,37 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "audit-application",
   "source_ownership": [
-    {"path": "cmd/internal/serverapp/audit_composition.go", "issue": 368},
-    {"path": "cmd/internal/serverapp/security_rejection_audit.go", "issue": 368},
-    {"path": "cmd/internal/serverapp/security_rejection_audit_test.go", "issue": 368},
-    {"path": "internal/audit/contract/ports.go", "issue": 368},
-    {"path": "internal/audit/postgres/store.go", "issue": 368},
-    {"path": "internal/audit/postgres/store_test.go", "issue": 368},
-    {"path": "internal/audit/security_rejection.go", "issue": 368},
-    {"path": "internal/audit/security_rejection_test.go", "issue": 368},
-    {"path": "internal/audit/service.go", "issue": 368},
-    {"path": "internal/audit/service_test.go", "issue": 368},
-    {"path": "internal/service/audit_service_integration_test.go", "issue": 368}
+    {
+      "path": "cmd/internal/serverapp/audit_composition.go"
+    },
+    {
+      "path": "cmd/internal/serverapp/security_rejection_audit.go"
+    },
+    {
+      "path": "cmd/internal/serverapp/security_rejection_audit_test.go"
+    },
+    {
+      "path": "internal/service/audit_service_integration_test.go"
+    }
   ],
-  "compatibility_bridges": [],
-  "completed_issues": [],
   "go": {
     "units": [
-      {"id": "github.com/markhuangai/dense-mem/internal/audit", "role": "application_api", "visibility": "public"},
-      {"id": "github.com/markhuangai/dense-mem/internal/audit/contract", "role": "port", "visibility": "private"},
-      {"id": "github.com/markhuangai/dense-mem/internal/audit/postgres", "role": "postgres_adapter", "visibility": "private"}
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/audit",
+        "role": "application_api",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/audit/contract",
+        "role": "port",
+        "visibility": "private"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/audit/postgres",
+        "role": "postgres_adapter",
+        "visibility": "private"
+      }
     ]
-  },
-  "browser": {"units": []},
-  "exceptions": [],
-  "workers": []
+  }
 }

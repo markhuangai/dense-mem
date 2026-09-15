@@ -5,6 +5,10 @@
 - Supersedes: None
 - Refines: ADR 0003, ADR 0004
 
+ADR 0006 supersedes this record's migration bookkeeping and duplicated role
+policy provisions. The capability-fragment, visibility, and dependency-boundary
+decisions below remain in force.
+
 ## Context
 
 The architecture checker previously kept one complete ownership document. That
@@ -18,13 +22,12 @@ metadata.
 
 The checked architecture is one combined graph assembled from independently
 owned capability fragments under `architecture/modules/<capability>.json`.
-Each fragment owns the exact Go and browser units, worker anchors, retained
-exceptions, and completion records for one capability. The central manifest
-owns repository-wide discovery entries, profiles, the role matrix, and the
-deterministic fragment inventory. The loader rejects missing, duplicate,
-unlisted, malformed, wildcard, and undiscovered entries; a fragment unit
-inherits its fragment capability and declares explicit `public` or `private`
-visibility.
+Each fragment owns the exact Go and browser units, worker anchors, and
+database-case registrations for one capability. The central manifest owns
+repository-wide discovery entries, profiles, and the deterministic fragment
+inventory. The loader rejects missing, duplicate, unlisted, malformed,
+wildcard, and undiscovered entries; a fragment unit inherits its fragment
+capability and declares explicit `public` or `private` visibility.
 
 The role matrix remains dependency-directed from transport to application
 service to domain and ports. PostgreSQL storage is split into a private
@@ -35,11 +38,10 @@ adapter code cannot consume PostgreSQL infrastructure. Composition may construct
 private units. A cross-capability import is otherwise allowed only when its
 target is public; same-capability imports remain valid.
 
-Each migration has one live implementation. Compatibility may remain only as a
-bounded alias or single-hop forwarding path with named consumers and removal
-owner #382. It must not copy policy, create a second authority, add a runtime
-flag, or become a permanent dual-write or fallback path. When the named removal
-owner lands, the corresponding exception or compatibility entry is deleted.
+The migration has one live implementation. Compatibility aliases and
+forwarding facades are removed when callers move to native owners; no runtime
+fallback or second authority is permitted. Permanent ownership enforcement and
+the role-matrix source of truth are defined by ADR 0006.
 
 ## Consequences
 
@@ -60,14 +62,14 @@ for migration adopters.
   capabilities. Keep concrete adapters and PostgreSQL infrastructure private,
   allow only the narrow adapter-to-infrastructure edge, and retain negative
   application, transport, provider, and adapter tests.
-- A compatibility alias could become a second implementation or survive its
-  removal owner. Record every consumer and issue owner in the fragment
-  exception, and expire the entry when that issue is completed.
+- A capability fragment could drift from the permanent ownership graph. Require
+  exact inventory reconciliation and the schema-version-2 checks defined by
+  ADR 0006.
 
 ## Verification
 
 Run the architecture conformance UAT and checker against the merged manifest.
 The tests cover fragment inventory, duplicate/missing/unlisted fragments,
 capability inheritance, visibility boundaries, PostgreSQL infrastructure
-direction, completion and exception expiry, worker lifecycle obligations, and
-the existing production/evaluation/browser/worker discovery paths.
+direction, permanent worker anchors, and the existing
+production/evaluation/browser/worker discovery paths.

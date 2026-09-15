@@ -21,14 +21,9 @@ import {
 const root = path.resolve(import.meta.dirname, "../..");
 const productionManifest = loadManifest(root);
 
-function fixture(name) {
-  return JSON.parse(fs.readFileSync(path.join(root, "architecture/fixtures", name), "utf8"));
-}
-
 function fixtureManifest() {
   return {
-    schema_version: 1,
-    completed_issues: [260],
+    schema_version: 2,
     module: "fixture",
     allowed_targets: productionManifest.allowed_targets,
     go: {
@@ -44,76 +39,24 @@ function fixtureManifest() {
       exclusions: [],
       units: [],
     },
-    exceptions: [],
-    workers: [],
   };
-}
-
-function assertEdgeExpectation(edge, result) {
-  if (edge.expected === "allowed") {
-    assert.deepEqual(result.diagnostics, []);
-    return;
-  }
-  assert.equal(result.diagnostics.length, 1);
-  assert.match(result.diagnostics[0], new RegExp(`^${edge.expected}:`));
 }
 
 function copyManifestFixture() {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dense-mem-architecture-"));
   fs.mkdirSync(path.join(fixtureRoot, "architecture/modules"), { recursive: true });
-  const rootManifest = JSON.parse(fs.readFileSync(path.join(root, "architecture/ownership.v1.json"), "utf8"));
-  fs.writeFileSync(path.join(fixtureRoot, "architecture/ownership.v1.json"), JSON.stringify(rootManifest, null, 2));
+  const rootManifest = JSON.parse(fs.readFileSync(path.join(root, "architecture/ownership.v2.json"), "utf8"));
+  fs.writeFileSync(path.join(fixtureRoot, "architecture/ownership.v2.json"), JSON.stringify(rootManifest, null, 2));
   for (const reference of rootManifest.fragments) {
     const source = path.join(root, reference);
     const destination = path.join(fixtureRoot, reference);
     fs.copyFileSync(source, destination);
     const fragment = JSON.parse(fs.readFileSync(source, "utf8"));
-    if (fragment.capability === "tool-registry-application-api" && (fragment.compatibility_bridges ?? []).length === 0) {
-      fragment.compatibility_bridges = [{
-        source_path: "internal/tools/registry/toolset.go",
-        fields: ["Dependencies.Metrics"],
-        consumers: [{path: "internal/tools/registry/capability_bindings.go", symbol: "Dependencies.withCapabilityBindings"}],
-        removal_issue: 382,
-      }];
-    }
-    if (fragment.capability === "postgres-storage-adapter" && (fragment.compatibility_bridges ?? []).length === 0) {
-      fragment.compatibility_bridges = [{
-        source_path: "internal/knowledge/postgres/store.go",
-        fields: ["NewStore"],
-        consumers: [{path: "internal/knowledge/postgres/store.go", symbol: "NewStore"}],
-        removal_issue: 382,
-        implementation_owner: {path: "internal/knowledge/postgres/store.go", symbol: "NewStore"},
-        removal_condition: "replace the fixture bridge with the native adapter owner",
-      }];
-    }
-    if (fragment.capability === "http-transport" && (fragment.exceptions ?? []).length === 0) {
-      fragment.exceptions = [{
-        source_path: "internal/http/server.go",
-        source: "github.com/markhuangai/dense-mem/internal/http",
-        target: "github.com/markhuangai/dense-mem/internal/privacy/contract",
-        removal_issue: 382,
-        reason: "fixture exception for ownership validation",
-      }];
-    }
     for (const ownership of fragment.source_ownership ?? []) {
       const sourcePath = path.join(root, ownership.path);
       const destinationPath = path.join(fixtureRoot, ownership.path);
       fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
       fs.copyFileSync(sourcePath, destinationPath);
-    }
-    for (const bridge of fragment.compatibility_bridges ?? []) {
-      for (const consumer of bridge.consumers ?? []) {
-        const sourcePath = path.join(root, consumer.path);
-        const destinationPath = path.join(fixtureRoot, consumer.path);
-        fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
-        fs.copyFileSync(sourcePath, destinationPath);
-      }
-      if (bridge.implementation_owner) {
-        const sourcePath = path.join(root, bridge.implementation_owner.path);
-        const destinationPath = path.join(fixtureRoot, bridge.implementation_owner.path);
-        fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
-        fs.copyFileSync(sourcePath, destinationPath);
-      }
     }
     fs.writeFileSync(destination, JSON.stringify(fragment, null, 2));
   }
@@ -122,7 +65,11 @@ function copyManifestFixture() {
 
 test("loads the complete independently owned architecture inventory", () => {
   assert.equal(productionManifest.load_diagnostics.length, 0);
-  assert.deepEqual(productionManifest.completed_issues, [260, 347, 261, 262, 263, 348]);
+  assert.equal(productionManifest.schema_version, 2);
+  assert.equal(productionManifest.fragments.length, 63);
+  assert.equal(productionManifest.source_ownership.length, 125);
+  assert.equal(productionManifest.workers.length, 46);
+  assert.equal(Object.hasOwn(productionManifest, "exceptions"), false);
   assert.deepEqual(validateManifest(productionManifest), []);
 });
 
@@ -131,7 +78,7 @@ test("rejects missing, unlisted, and duplicate capability fragments", () => {
   try {
     delete absent.rootManifest.fragments;
     fs.writeFileSync(
-      path.join(absent.fixtureRoot, "architecture/ownership.v1.json"),
+      path.join(absent.fixtureRoot, "architecture/ownership.v2.json"),
       JSON.stringify(absent.rootManifest, null, 2),
     );
     const loaded = loadManifest(absent.fixtureRoot);
@@ -144,7 +91,7 @@ test("rejects missing, unlisted, and duplicate capability fragments", () => {
   try {
     empty.rootManifest.fragments = [];
     fs.writeFileSync(
-      path.join(empty.fixtureRoot, "architecture/ownership.v1.json"),
+      path.join(empty.fixtureRoot, "architecture/ownership.v2.json"),
       JSON.stringify(empty.rootManifest, null, 2),
     );
     const loaded = loadManifest(empty.fixtureRoot);
@@ -153,38 +100,10 @@ test("rejects missing, unlisted, and duplicate capability fragments", () => {
     fs.rmSync(empty.fixtureRoot, { recursive: true, force: true });
   }
 
-  const rootOwned = copyManifestFixture();
-  try {
-    rootOwned.rootManifest.completed_issues = [381];
-    rootOwned.rootManifest.enforced_through_issue = 381;
-    fs.writeFileSync(
-      path.join(rootOwned.fixtureRoot, "architecture/ownership.v1.json"),
-      JSON.stringify(rootOwned.rootManifest, null, 2),
-    );
-    const loaded = loadManifest(rootOwned.fixtureRoot);
-    assert.ok(loaded.load_diagnostics.some((item) => item.includes("root manifest must not define completed_issues")));
-    assert.ok(loaded.load_diagnostics.some((item) => item.includes("root manifest must not define enforced_through_issue")));
-  } finally {
-    fs.rmSync(rootOwned.fixtureRoot, { recursive: true, force: true });
-  }
-
-  const missing = copyManifestFixture();
-  try {
-    missing.rootManifest.fragments.push("architecture/modules/missing.json");
-    fs.writeFileSync(
-      path.join(missing.fixtureRoot, "architecture/ownership.v1.json"),
-      JSON.stringify(missing.rootManifest, null, 2),
-    );
-    const loaded = loadManifest(missing.fixtureRoot);
-    assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("missing-fragment:")));
-  } finally {
-    fs.rmSync(missing.fixtureRoot, { recursive: true, force: true });
-  }
-
   const unlisted = copyManifestFixture();
   try {
     fs.copyFileSync(
-      path.join(unlisted.fixtureRoot, "architecture/modules/architecture.json"),
+      path.join(unlisted.fixtureRoot, "architecture/modules/classification-policy.json"),
       path.join(unlisted.fixtureRoot, "architecture/modules/unlisted.json"),
     );
     const loaded = loadManifest(unlisted.fixtureRoot);
@@ -201,7 +120,7 @@ test("rejects missing, unlisted, and duplicate capability fragments", () => {
       ...duplicate.rootManifest.fragments.slice(1),
     ];
     fs.writeFileSync(
-      path.join(duplicate.fixtureRoot, "architecture/ownership.v1.json"),
+      path.join(duplicate.fixtureRoot, "architecture/ownership.v2.json"),
       JSON.stringify(duplicate.rootManifest, null, 2),
     );
     const loaded = loadManifest(duplicate.fixtureRoot);
@@ -213,57 +132,116 @@ test("rejects missing, unlisted, and duplicate capability fragments", () => {
   const duplicateCapability = copyManifestFixture();
   try {
     fs.copyFileSync(
-      path.join(duplicateCapability.fixtureRoot, "architecture/modules/architecture.json"),
-      path.join(duplicateCapability.fixtureRoot, "architecture/modules/architecture-copy.json"),
+      path.join(duplicateCapability.fixtureRoot, "architecture/modules/classification-policy.json"),
+      path.join(duplicateCapability.fixtureRoot, "architecture/modules/classification-policy-copy.json"),
     );
     const duplicateFragment = JSON.parse(fs.readFileSync(
-      path.join(duplicateCapability.fixtureRoot, "architecture/modules/architecture-copy.json"),
+      path.join(duplicateCapability.fixtureRoot, "architecture/modules/classification-policy-copy.json"),
       "utf8",
     ));
-    duplicateFragment.capability = "architecture";
+    duplicateCapability.rootManifest.fragments.push("architecture/modules/classification-policy-copy.json");
     fs.writeFileSync(
-      path.join(duplicateCapability.fixtureRoot, "architecture/modules/architecture-copy.json"),
-      JSON.stringify(duplicateFragment, null, 2),
-    );
-    duplicateCapability.rootManifest.fragments.push("architecture/modules/architecture-copy.json");
-    fs.writeFileSync(
-      path.join(duplicateCapability.fixtureRoot, "architecture/ownership.v1.json"),
+      path.join(duplicateCapability.fixtureRoot, "architecture/ownership.v2.json"),
       JSON.stringify(duplicateCapability.rootManifest, null, 2),
     );
+    assert.equal(duplicateFragment.capability, "classification-policy");
     const loaded = loadManifest(duplicateCapability.fixtureRoot);
-    assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("duplicate-fragment:") && item.includes("capability architecture")));
+    assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("duplicate-fragment:") && item.includes("capability classification-policy")));
   } finally {
     fs.rmSync(duplicateCapability.fixtureRoot, { recursive: true, force: true });
   }
 
   const misplaced = copyManifestFixture();
   try {
-    const sourceFragmentPath = path.join(misplaced.fixtureRoot, "architecture/modules/http-transport.json");
-    const sourceFragment = JSON.parse(fs.readFileSync(sourceFragmentPath, "utf8"));
-    const architecturePath = path.join(misplaced.fixtureRoot, "architecture/modules/architecture.json");
-    const architectureFragment = JSON.parse(fs.readFileSync(architecturePath, "utf8"));
-    architectureFragment.exceptions.push(sourceFragment.exceptions[0]);
-    architectureFragment.workers.push(sourceFragment.workers[0]);
-    fs.writeFileSync(architecturePath, JSON.stringify(architectureFragment, null, 2));
+    const sourcePath = path.join(misplaced.fixtureRoot, "architecture/modules/sse-transport.json");
+    const source = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
+    const targetPath = path.join(misplaced.fixtureRoot, "architecture/modules/server-composition.json");
+    const target = JSON.parse(fs.readFileSync(targetPath, "utf8"));
+    target.workers.push(source.workers[0]);
+    fs.writeFileSync(targetPath, JSON.stringify(target, null, 2));
     const loaded = loadManifest(misplaced.fixtureRoot);
-    assert.ok(loaded.load_diagnostics.some((item) => item.includes("exception") && item.includes("must be owned by")));
     assert.ok(loaded.load_diagnostics.some((item) => item.includes("worker") && item.includes("must be owned by")));
   } finally {
     fs.rmSync(misplaced.fixtureRoot, { recursive: true, force: true });
   }
 });
 
-test("rejects obsolete completion markers inside capability fragments", () => {
+test("rejects retired migration metadata", () => {
   const fixtureCopy = copyManifestFixture();
   try {
-    const architecturePath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/architecture.json");
-    const architectureFragment = JSON.parse(fs.readFileSync(architecturePath, "utf8"));
-    architectureFragment.enforced_through_issue = 381;
-    fs.writeFileSync(architecturePath, JSON.stringify(architectureFragment, null, 2));
+    const fragmentPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/server-composition.json");
+    const fragment = JSON.parse(fs.readFileSync(fragmentPath, "utf8"));
+    fragment.completed_issues = [381];
+    fragment.source_ownership[0].issue = 381;
+    fragment.source_ownership[0].owner_issue = 381;
+    fragment.workers[0].lifecycle_issue = 381;
+    fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
     const loaded = loadManifest(fixtureCopy.fixtureRoot);
-    assert.ok(loaded.load_diagnostics.some((item) => item.includes("uses obsolete enforced_through_issue")));
+    assert.ok(loaded.load_diagnostics.some((item) => item.includes("completed_issues is retired")));
+    assert.ok(loaded.load_diagnostics.some((item) => item.includes("retired issue metadata")));
+    assert.ok(loaded.load_diagnostics.some((item) => item.includes("unsupported field owner_issue")));
+    assert.ok(validateManifest(loaded).some((item) => item.includes("uses retired lifecycle_issue")));
   } finally {
     fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("accepts omitted optional fragment sections and rejects malformed ones", () => {
+  const fixtureCopy = copyManifestFixture();
+  try {
+    const fragmentPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/classification-policy.json");
+    const fragment = JSON.parse(fs.readFileSync(fragmentPath, "utf8"));
+    delete fragment.go;
+    fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
+    assert.deepEqual(loadManifest(fixtureCopy.fixtureRoot).load_diagnostics, []);
+  } finally {
+    fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
+  }
+
+  for (const [field, value] of [
+    ["go", null],
+    ["browser", {units: null}],
+    ["workers", {}],
+    ["source_ownership", {}],
+  ]) {
+    const malformed = copyManifestFixture();
+    try {
+      const fragmentPath = path.join(malformed.fixtureRoot, "architecture/modules/classification-policy.json");
+      const fragment = JSON.parse(fs.readFileSync(fragmentPath, "utf8"));
+      fragment[field] = value;
+      fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
+      const loaded = loadManifest(malformed.fixtureRoot);
+      assert.ok(loaded.load_diagnostics.some((item) => item.includes(`${field}`)));
+    } finally {
+      fs.rmSync(malformed.fixtureRoot, { recursive: true, force: true });
+    }
+  }
+});
+
+test("rejects schema version 1 and mixed-version manifests", () => {
+  const rootV1 = copyManifestFixture();
+  try {
+    rootV1.rootManifest.schema_version = 1;
+    fs.writeFileSync(
+      path.join(rootV1.fixtureRoot, "architecture/ownership.v2.json"),
+      JSON.stringify(rootV1.rootManifest, null, 2),
+    );
+    const loaded = loadManifest(rootV1.fixtureRoot);
+    assert.ok(validateManifest(loaded).some((item) => item.includes("schema_version must be 2")));
+  } finally {
+    fs.rmSync(rootV1.fixtureRoot, { recursive: true, force: true });
+  }
+
+  const mixed = copyManifestFixture();
+  try {
+    const fragmentPath = path.join(mixed.fixtureRoot, "architecture/modules/classification-policy.json");
+    const fragment = JSON.parse(fs.readFileSync(fragmentPath, "utf8"));
+    fragment.schema_version = 1;
+    fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
+    const loaded = loadManifest(mixed.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.includes("classification-policy.json schema_version must be 2")));
+  } finally {
+    fs.rmSync(mixed.fixtureRoot, { recursive: true, force: true });
   }
 });
 
@@ -275,7 +253,9 @@ test("rejects central manifest fields inside capability fragments", () => {
     fragment.module = "ignored-module";
     fragment.allowed_targets = {};
     fragment.fragments = [];
+    fragment.go ??= {units: []};
     fragment.go.profiles = ["production"];
+    fragment.browser ??= {units: []};
     fragment.browser.entries = ["web/src/main.tsx"];
     fragment.browser.exclusions = [];
     fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
@@ -301,9 +281,9 @@ test("validates exact capability source ownership", () => {
   try {
     const fragmentPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/server-composition.json");
     const fragment = JSON.parse(fs.readFileSync(fragmentPath, "utf8"));
-    fragment.source_ownership.push({ path: "cmd/internal/serverapp/server.go", issue: 361 });
-    fragment.source_ownership.push({ path: "cmd/internal/serverapp/missing.go", issue: 361 });
-    fragment.source_ownership.push({ path: "cmd/internal/serverapp/*.go", issue: 361 });
+    fragment.source_ownership.push({path: "cmd/internal/serverapp/server.go"});
+    fragment.source_ownership.push({path: "cmd/internal/serverapp/missing.go"});
+    fragment.source_ownership.push({path: "cmd/internal/serverapp/*.go"});
     fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
     const loaded = loadManifest(fixtureCopy.fixtureRoot);
     assert.ok(loaded.load_diagnostics.some((item) => item.includes("source cmd/internal/serverapp/server.go is owned by both")));
@@ -327,77 +307,19 @@ test("requires every partitioned composition and binding source to be owned", ()
   }
 });
 
-test("rejects expired compatibility bridges", () => {
-  const fixtureCopy = copyManifestFixture();
-  try {
-    const fragmentPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/tool-registry-application-api.json");
-    const fragment = JSON.parse(fs.readFileSync(fragmentPath, "utf8"));
-    fragment.compatibility_bridges[0].removal_issue = 260;
-    fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
-    const loaded = loadManifest(fixtureCopy.fixtureRoot);
-    assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("expired:") && item.includes("toolset.go")));
-  } finally {
-    fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
-  }
-});
-
-test("requires bridge consumers to name a symbol", () => {
-  const fixtureCopy = copyManifestFixture();
-  try {
-    const fragmentPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/tool-registry-application-api.json");
-    const fragment = JSON.parse(fs.readFileSync(fragmentPath, "utf8"));
-    fragment.compatibility_bridges[0].consumers = [{path: "internal/tools/registry/capability_bindings.go"}];
-    fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
-    const loaded = loadManifest(fixtureCopy.fixtureRoot);
-    assert.ok(loaded.load_diagnostics.some((item) => item.includes("needs exact consumer package/symbol records")));
-  } finally {
-    fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
-  }
-});
-
-test("rejects bridge consumers whose symbols are absent from the declared file", () => {
-  const fixtureCopy = copyManifestFixture();
-  try {
-    const fragmentPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/tool-registry-application-api.json");
-    const fragment = JSON.parse(fs.readFileSync(fragmentPath, "utf8"));
-    fragment.compatibility_bridges[0].consumers[0].symbol = "Dependencies.missing";
-    fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
-    const loaded = loadManifest(fixtureCopy.fixtureRoot);
-    assert.ok(loaded.load_diagnostics.some((item) => item.includes("consumer internal/tools/registry/capability_bindings.go does not define Dependencies.missing")));
-  } finally {
-    fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
-  }
-});
-
-test("validates compatibility bridge implementation ownership and removal conditions", () => {
-  const fixtureCopy = copyManifestFixture();
-  try {
-    const fragmentPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/postgres-storage-adapter.json");
-    const fragment = JSON.parse(fs.readFileSync(fragmentPath, "utf8"));
-    fragment.compatibility_bridges[0].implementation_owner.path = "internal/storage/postgres/missing.go";
-    fragment.compatibility_bridges[0].removal_condition = "";
-    fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
-    const loaded = loadManifest(fixtureCopy.fixtureRoot);
-    assert.ok(loaded.load_diagnostics.some((item) => item.includes("invalid implementation owner")));
-    assert.ok(loaded.load_diagnostics.some((item) => item.includes("needs a removal condition")));
-  } finally {
-    fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
-  }
-});
-
 test("rejects a fragment whose capability does not match its filename", () => {
   const fixtureCopy = copyManifestFixture();
   try {
     const fragmentPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/foo.json");
     const fragment = JSON.parse(fs.readFileSync(
-      path.join(fixtureCopy.fixtureRoot, "architecture/modules/architecture.json"),
+      path.join(fixtureCopy.fixtureRoot, "architecture/modules/classification-policy.json"),
       "utf8",
     ));
     fragment.capability = "bar";
     fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
     fixtureCopy.rootManifest.fragments.push("architecture/modules/foo.json");
     fs.writeFileSync(
-      path.join(fixtureCopy.fixtureRoot, "architecture/ownership.v1.json"),
+      path.join(fixtureCopy.fixtureRoot, "architecture/ownership.v2.json"),
       JSON.stringify(fixtureCopy.rootManifest, null, 2),
     );
     const loaded = loadManifest(fixtureCopy.fixtureRoot);
@@ -410,8 +332,8 @@ test("rejects a fragment whose capability does not match its filename", () => {
 test("rejects duplicate Go and browser unit ownership across fragments", () => {
   const fixtureCopy = copyManifestFixture();
   try {
-    const architecturePath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/architecture.json");
-    const architectureFragment = JSON.parse(fs.readFileSync(architecturePath, "utf8"));
+    const serverPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/server-composition.json");
+    const serverFragment = JSON.parse(fs.readFileSync(serverPath, "utf8"));
     const postgresFragment = JSON.parse(fs.readFileSync(
       path.join(fixtureCopy.fixtureRoot, "architecture/modules/postgres-storage-adapter.json"),
       "utf8",
@@ -420,9 +342,9 @@ test("rejects duplicate Go and browser unit ownership across fragments", () => {
       path.join(fixtureCopy.fixtureRoot, "architecture/modules/control-portal.json"),
       "utf8",
     ));
-    architectureFragment.go.units.push(postgresFragment.go.units[0]);
-    architectureFragment.browser.units.push(controlFragment.browser.units[0]);
-    fs.writeFileSync(architecturePath, JSON.stringify(architectureFragment, null, 2));
+    serverFragment.go.units.push(postgresFragment.go.units[0]);
+    serverFragment.browser = {units: [controlFragment.browser.units[0]]};
+    fs.writeFileSync(serverPath, JSON.stringify(serverFragment, null, 2));
     const loaded = loadManifest(fixtureCopy.fixtureRoot);
     assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("duplicate-fragment:") && item.includes(postgresFragment.go.units[0].id)));
     assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("duplicate-fragment:") && item.includes("web/src/")));
@@ -513,114 +435,64 @@ test("enforces private visibility and narrow PostgreSQL infrastructure reuse", (
   assert.ok(validateManifest(publicInfrastructure).some((item) => item.includes("postgres_infrastructure") && item.includes("must be private")));
 });
 
-test("retains precise replacement owners and lifecycle obligations", () => {
-  const exceptionOwners = [...new Set(productionManifest.exceptions.map((entry) => entry.removal_issue))].sort((a, b) => a - b);
-  assert.deepEqual(exceptionOwners, []);
-  assert.equal(productionManifest.exceptions.some((entry) => entry.removal_issue === 276), false);
-  assert.equal(productionManifest.exceptions.some((entry) => entry.removal_issue === 280), false);
-  assert.ok(productionManifest.workers.every((entry) => entry.lifecycle_issue === 381));
+test("retains permanent ownership records and worker anchors", () => {
+  assert.equal(productionManifest.source_ownership.length, 125);
+  assert.ok(productionManifest.source_ownership.every((entry) => Object.keys(entry).length === 3));
+  assert.ok(productionManifest.workers.every((entry) => !Object.hasOwn(entry, "lifecycle_issue")));
+  assert.ok(productionManifest.workers.every((entry) => entry.role === "worker"));
 });
 
 test("allows composition-to-adapter edges", () => {
-  const edge = fixture("allowed-edge.json");
-  assertEdgeExpectation(edge, checkGoEdges(fixtureManifest(), [edge]));
+  assert.deepEqual(checkGoEdges(fixtureManifest(), [{
+    source: "fixture/composition",
+    target: "fixture/postgres",
+  }]).diagnostics, []);
 });
 
 test("rejects a transport-to-PostgreSQL falsification edge", () => {
-  const edge = fixture("forbidden-transport-postgres.json");
-  assertEdgeExpectation(edge, checkGoEdges(fixtureManifest(), [edge]));
+  const result = checkGoEdges(fixtureManifest(), [{
+    source: "fixture/transport",
+    target: "fixture/postgres",
+  }]);
+  assert.equal(result.diagnostics.length, 1);
+  assert.match(result.diagnostics[0], /^forbidden:/);
 });
 
 test("rejects an unclassified package", () => {
-  const edge = fixture("unclassified-package.json");
-  assertEdgeExpectation(edge, checkGoEdges(fixtureManifest(), [edge]));
+  const result = checkGoEdges(fixtureManifest(), [{
+    source: "fixture/missing",
+    target: "fixture/postgres",
+  }]);
+  assert.equal(result.diagnostics.length, 1);
+  assert.match(result.diagnostics[0], /^unclassified:/);
 });
 
-test("rejects an exception owned by a completed issue", () => {
-  const edge = fixture("expired-exception.json");
-  const manifest = fixtureManifest();
-  manifest.exceptions = [{
-    source: edge.source,
-    target: edge.target,
-    removal_issue: edge.removal_issue,
-    reason: "fixture exception",
-  }];
-  assert.ok(validateManifest(manifest).some((item) => item.startsWith("expired:")));
-});
-
-test("completion membership is independent of issue order", () => {
-  const makeManifest = (completedIssues) => {
-    const manifest = structuredClone(productionManifest);
-    manifest.completed_issues = completedIssues;
-    manifest.exceptions = [{
-      source: "github.com/markhuangai/dense-mem/internal/legacy-source",
-      target: "github.com/markhuangai/dense-mem/internal/storage/postgres",
-      removal_issue: 261,
-      reason: "fixture exception",
-    }];
-    return manifest;
-  };
-  const ordered = validateManifest(makeManifest([260, 262]));
-  const reversed = validateManifest(makeManifest([262, 260]));
-  assert.deepEqual(reversed, ordered);
-  assert.equal(ordered.some((item) => item.startsWith("expired:")), false);
-});
-
-test("completing an issue expires only its retained obligations", () => {
-  const completed = structuredClone(productionManifest);
-  completed.completed_issues = [260, 261, 262, 263, 272];
-  completed.exceptions = completed.exceptions.filter((entry) => entry.removal_issue !== 272);
-  assert.deepEqual(validateManifest(completed), []);
-
-  const retained = structuredClone(completed);
-  retained.exceptions.push({
-    source: "github.com/markhuangai/dense-mem/internal/legacy-skillpack",
-    target: "github.com/markhuangai/dense-mem/internal/legacy-storage",
-    removal_issue: 272,
-    reason: "fixture retained obligation",
-  });
-  assert.ok(validateManifest(retained).some((item) => item.includes("completed issue 272")));
-});
-
-test("rejects malformed completion membership", () => {
+test("rejects retired migration fields and duplicated role policy", () => {
   const manifest = structuredClone(productionManifest);
-  manifest.completed_issues = [260, 260, 0, "261"];
+  manifest.completed_issues = [263];
+  manifest.exceptions = [];
+  manifest.workers[0].lifecycle_issue = 381;
   const diagnostics = validateManifest(manifest);
-  assert.ok(diagnostics.some((item) => item.startsWith("duplicate: completed_issues")));
-  assert.ok(diagnostics.filter((item) => item.includes("completed_issues contains an invalid issue number")).length >= 2);
-});
+  assert.ok(diagnostics.some((item) => item.includes("completed_issues is retired")));
+  assert.ok(diagnostics.some((item) => item.includes("exceptions is retired")));
+  assert.ok(diagnostics.some((item) => item.includes("uses retired lifecycle_issue")));
 
-test("rejects missing completion membership and malformed lifecycle metadata", () => {
-  const missing = structuredClone(productionManifest);
-  delete missing.completed_issues;
-  assert.ok(validateManifest(missing).some((item) => item.includes("completed_issues must be an array")));
+  const duplicatePolicy = structuredClone(productionManifest);
+  duplicatePolicy.allowed_targets = {};
+  assert.ok(validateManifest(duplicatePolicy).some((item) => item.includes("allowed_targets") && item.includes("architecture role matrix")));
 
-  const malformed = structuredClone(productionManifest);
-  malformed.workers[0].lifecycle_issue = 0;
-  malformed.workers[1].lifecycle_issue = "277";
-  const diagnostics = validateManifest(malformed);
-  assert.ok(diagnostics.some((item) => item.includes("lifecycle_issue must be a positive issue number")));
-});
-
-test("rejects obsolete completion and worker lifecycle fields", () => {
-  const manifest = structuredClone(productionManifest);
-  manifest.enforced_through_issue = 263;
-  manifest.workers[0].owner_issue = 277;
-  const diagnostics = validateManifest(manifest);
-  assert.ok(diagnostics.some((item) => item.includes("enforced_through_issue is obsolete")));
-  assert.ok(diagnostics.some((item) => item.includes("uses obsolete owner_issue")));
-});
-
-test("completed worker lifecycle obligations fail while permanent anchors remain valid", () => {
-  const expiring = structuredClone(productionManifest);
-  expiring.completed_issues = [260, 261, 262, 263, 381];
-  assert.ok(validateManifest(expiring).some((item) => item.includes("worker") && item.includes("completed issue 381")));
-
-  const permanent = structuredClone(productionManifest);
-  permanent.completed_issues = [260, 261, 262, 263, 381];
-  permanent.workers = [permanent.workers[0]];
-  delete permanent.workers[0].lifecycle_issue;
-  assert.equal(validateManifest(permanent).some((item) => item.includes("worker") && item.startsWith("expired:")), false);
+  const rootOwned = copyManifestFixture();
+  try {
+    rootOwned.rootManifest.source_ownership = [];
+    fs.writeFileSync(
+      path.join(rootOwned.fixtureRoot, "architecture/ownership.v2.json"),
+      JSON.stringify(rootOwned.rootManifest, null, 2),
+    );
+    const loaded = loadManifest(rootOwned.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.includes("root manifest must not define source_ownership")));
+  } finally {
+    fs.rmSync(rootOwned.fixtureRoot, {recursive: true, force: true});
+  }
 });
 
 test("rejects Go profiles that the checker cannot discover", () => {

@@ -1,5 +1,0 @@
-{
-  "source": "fixture/transport",
-  "target": "fixture/postgres",
-  "expected": "forbidden"
-}

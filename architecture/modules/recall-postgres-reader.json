@@ -1,97 +1,6 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "recall-postgres-reader",
-  "source_ownership": [
-    {
-      "path": "internal/recall/postgres/adapter_test.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/conflict_hydration_test.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/feedback_store_test.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/recall_store_test.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/search_queries_test.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/evidence_conflict_recall.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/helpers.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/readers.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/recall_alias_visibility.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/recall_feedback_event_repository.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/recall_feedback_event_repository_test.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/recall_relationship_generation.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/recall_relationship_input.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/recall_relationship_repository.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/recall_relationship_text.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/recall_relationship_types.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/recall_repository.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/recall_repository_test.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/types.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/evidence_conflict_recall_integration_test.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/recall_feedback_event_repository_integration_test.go",
-      "issue": 376
-    },
-    {
-      "path": "internal/recall/postgres/recall_repository_integration_test.go",
-      "issue": 376
-    }
-  ],
-  "completed_issues": [],
   "go": {
     "units": [
       {
@@ -100,11 +9,5 @@
         "visibility": "private"
       }
     ]
-  },
-  "browser": {
-    "units": []
-  },
-  "compatibility_bridges": [],
-  "exceptions": [],
-  "workers": []
+  }
 }

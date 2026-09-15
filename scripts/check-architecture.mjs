@@ -722,10 +722,6 @@ export async function runCheck(root, manifest) {
   diagnostics.push(...checkDiscoveredUnits(manifest, go, browser));
   const edgeResult = checkGoEdges(manifest, go.edges);
   diagnostics.push(...edgeResult.diagnostics);
-  for (const exception of manifest.exceptions) {
-    const key = `${exception.source}\u0000${exception.target}`;
-    if (!edgeResult.usedExceptions.has(key)) diagnostics.push(diagnostic("unused", `exception ${exception.source} -> ${exception.target} is not exercised`));
-  }
   diagnostics.push(...checkBrowserEdges(manifest, browser));
   diagnostics.push(...checkWorkers(manifest, workers));
   return {
@@ -757,7 +753,7 @@ export async function main(argv = process.argv.slice(2)) {
     return 0;
   }
   const root = normaliseRoot(options.root);
-  const manifestPath = options.manifest ? path.resolve(options.manifest) : path.join(root, "architecture", "ownership.v1.json");
+  const manifestPath = options.manifest ? path.resolve(options.manifest) : path.join(root, "architecture", "ownership.v2.json");
   const manifest = loadManifest(root, manifestPath);
   const result = await runCheck(root, manifest);
   const { diagnostics } = result;

@@ -1,121 +1,20 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "capability": "community-application",
   "source_ownership": [
     {
-      "path": "cmd/internal/serverapp/community_composition.go",
-      "issue": 367
+      "path": "cmd/internal/serverapp/community_composition.go"
     },
     {
-      "path": "cmd/internal/serverapp/community_composition_test.go",
-      "issue": 367
+      "path": "cmd/internal/serverapp/community_composition_test.go"
     },
     {
-      "path": "internal/community/contract/community_record.go",
-      "issue": 367
+      "path": "internal/community/detector.go"
     },
     {
-      "path": "internal/community/contract/metrics.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/contract/types.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/detector.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/detector_test.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/postgres/community_discovery_repository.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/postgres/community_recall_coverage_repository.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/postgres/community_recall_repository.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/postgres/community_repository.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/postgres/community_repository_helpers.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/postgres/community_repository_read_helpers.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/postgres/community_repository_write_helpers.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/postgres/community_summary_repository.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/postgres/types.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/postgres/adapter_test.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/postgres/adapter_coverage_test.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/postgres/adapter_methods_test.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/postgres/adapter_recall_test.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/provider/community_summary.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/provider/community_summary_test.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/service/scheduler.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/service/scheduler_test.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/service/service.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/service/service_test.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/service/types.go",
-      "issue": 367
-    },
-    {
-      "path": "internal/community/postgres/community_repository_integration_test.go",
-      "issue": 367
+      "path": "internal/community/detector_test.go"
     }
   ],
-  "completed_issues": [],
   "go": {
     "units": [
       {
@@ -140,27 +39,20 @@
       }
     ]
   },
-  "browser": {
-    "units": []
-  },
-  "compatibility_bridges": [],
-  "exceptions": [],
   "workers": [
     {
       "path": "internal/community/service/scheduler.go",
       "function": "runDue",
       "kind": "goroutine",
       "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     },
     {
       "path": "internal/community/service/service.go",
       "function": "RunScheduled",
       "kind": "goroutine",
       "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
+      "role": "worker"
     }
   ]
 }
