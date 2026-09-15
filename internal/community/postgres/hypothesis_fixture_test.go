@@ -13,7 +13,7 @@ func createHypothesisForTest(ctx context.Context, db *gorm.DB, rls storagepostgr
 	err := rls.WithTeamProfileTx(ctx, db, teamID, ownerID, func(tx *gorm.DB) error {
 		return tx.Raw(`
 			INSERT INTO hypotheses (team_id, created_by_profile_id, status, payload)
-			VALUES (?::uuid, ?::uuid, 'proposed', jsonb_build_object('text', ?))
+			VALUES (?::uuid, ?::uuid, 'proposed', jsonb_build_object('text', ?::text))
 			RETURNING hypothesis_id::text
 		`, teamID, ownerID, text).Row().Scan(&hypothesisID)
 	})

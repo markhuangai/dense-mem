@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -23,7 +24,14 @@ type searchFixtureStore struct {
 
 func newSearchFixtureStore(db *gorm.DB, rls storagepostgres.RLSHelper) *searchFixtureStore {
 	read := searchpostgres.NewStore(db, rls)
-	return &searchFixtureStore{db: db, rls: rls, read: read, projection: knowledgepostgres.NewStore(db, rls, knowledgecontract.ConflictRuntimeConfig{}), recall: recallpostgres.NewStore(db, rls, read, nil, nil)}
+	relationshipReader := func(context.Context, *gorm.DB, string, *time.Time, []recallpostgres.RecallEvidenceHit) ([]recallpostgres.RelationshipConflictCaseRecord, error) {
+		return []recallpostgres.RelationshipConflictCaseRecord{}, nil
+	}
+	return &searchFixtureStore{
+		db: db, rls: rls, read: read,
+		projection: knowledgepostgres.NewStore(db, rls, knowledgecontract.ConflictRuntimeConfig{}),
+		recall:     recallpostgres.NewStore(db, rls, read, relationshipReader, recallpostgres.LoadRecallEvidenceConflictRecords),
+	}
 }
 func (s *searchFixtureStore) GetActiveSearchContract(ctx context.Context) (*searchcontract.ActiveSearchContract, error) {
 	return s.read.GetActiveSearchContract(ctx)

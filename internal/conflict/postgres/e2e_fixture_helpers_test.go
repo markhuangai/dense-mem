@@ -21,6 +21,7 @@ import (
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	recallpostgres "github.com/markhuangai/dense-mem/internal/recall/postgres"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
@@ -127,8 +128,7 @@ func createOwnedCredential(t *testing.T, repo *accesspostgres.CredentialReposito
 }
 
 func privateMemoryHash(parts ...string) string {
-	digest := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
-	return "sha256:" + hex.EncodeToString(digest[:])
+	return privacypostgres.Hash(parts...)
 }
 
 func ensureConflictSystemProfile(ctx context.Context, tx *gorm.DB, teamID string) (string, error) {

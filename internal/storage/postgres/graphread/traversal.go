@@ -136,7 +136,7 @@ func Traverse(
 	frontier := []string{anchor}
 	seenNodes := map[string]struct{}{anchor: {}}
 	seenEdges := map[string]struct{}{}
-	out := make([]Row, 0, limit)
+	out := make([]Row, 0)
 	for level := 0; level < depth && len(frontier) > 0 && len(out) < limit; level++ {
 		batch, err := load(ctx, frontier, limit-len(out))
 		if err != nil {
