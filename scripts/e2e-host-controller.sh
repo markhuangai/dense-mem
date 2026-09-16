@@ -513,9 +513,10 @@ for (const record of records) {
     for (const [packageName, count] of record.packageCounts) {
       projected.set(packageName, (projected.get(packageName) || 0) + count);
     }
-    const candidate = [batchWeight(projected), groups[index].cases + record.cases, index];
+    const candidate = [groups[index].cases + record.cases, batchWeight(projected), index];
     if (!selected || candidate[0] < selected[0] ||
-        (candidate[0] === selected[0] && candidate[1] < selected[1])) {
+        (candidate[0] === selected[0] && candidate[1] < selected[1]) ||
+        (candidate[0] === selected[0] && candidate[1] === selected[1] && candidate[2] < selected[2])) {
       selected = candidate;
     }
   }

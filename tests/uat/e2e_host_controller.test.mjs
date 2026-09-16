@@ -244,6 +244,66 @@ partition_precheck_capabilities "${sourceRoot}"
   }
 });
 
+test("precheck partition balances cases when package weights overlap", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-case-balance-"));
+  try {
+    const sourceRoot = join(fixture, "repo");
+    const casesDir = join(sourceRoot, "scripts/e2e-db-cases");
+    await mkdir(casesDir, { recursive: true });
+    const fragments = [
+      ["http", { "./internal/http": 1, "./internal/sse": 2, "./internal/http/middleware": 1, "./internal/storage/redis": 1 }],
+      ["postgres", { "./internal/storage/postgres": 97 }],
+      ["knowledge", { "./internal/knowledge/postgres": 42, "./internal/storage/postgres": 6 }],
+      ["repository", { "./internal/knowledge/postgres": 42 }],
+      ["access", { "./internal/access/postgres": 26, "./internal/service": 7 }],
+      ["dream", { "./internal/storage/postgres": 2, "./internal/dream/postgres": 27 }],
+    ];
+    for (const [capability, packages] of fragments) {
+      const cases = [];
+      for (const [packageName, count] of Object.entries(packages)) {
+        for (let index = 0; index < count; index += 1) {
+          cases.push({
+            id: `${capability}/${packageName}/${index}`,
+            package: packageName,
+            run: `^Test${capability}${index}$`,
+            phase: "precheck",
+          });
+        }
+      }
+      await writeFile(join(casesDir, `${capability}.json`), JSON.stringify({
+        version: 1,
+        capability,
+        cases,
+      }));
+    }
+    const start = controller.indexOf("\ndatabase_case_capabilities()") + 1;
+    const end = controller.indexOf("\nprecheck() {", start);
+    const helper = controller.slice(start, end);
+    const script = `#!/usr/bin/env bash
+set -euo pipefail
+${helper}
+fail() { printf '%s\\n' "$*" >&2; return 1; }
+partition_precheck_capabilities "${sourceRoot}"
+`;
+    const scriptPath = join(fixture, "case-balance-test.sh");
+    await executable(scriptPath, script);
+    const { stdout } = await run("bash", [scriptPath]);
+    const groups = stdout.trim().split(/\r?\n/).map((group) => group.split(","));
+    assert.equal(groups.length, 3);
+    const casesByCapability = new Map(fragments.map(([capability, packages]) => [
+      capability,
+      Object.values(packages).reduce((total, count) => total + count, 0),
+    ]));
+    const groupCaseCounts = groups.map((group) => group.reduce(
+      (total, capability) => total + casesByCapability.get(capability),
+      0,
+    ));
+    assert.ok(Math.max(...groupCaseCounts) - Math.min(...groupCaseCounts) <= 20);
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
 test("capability-specific precheck project names stay bounded and distinct", async () => {
   const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-project-name-"));
   try {
