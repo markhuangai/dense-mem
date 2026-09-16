@@ -200,6 +200,12 @@ func TestCredentialProtectorRejectsGoQuotedCredentialSerialization(t *testing.T)
 	got := NewCredentialProtector(`\x01`).Snapshot(string([]byte{1}), 256)
 	require.Equal(t, CredentialProtectionFormattingFailed, got.UnavailableReason)
 	require.Nil(t, got.Value)
+
+	got = NewCredentialProtector(`\x01`).Snapshot(map[string]any{
+		"nested": []any{string([]byte{1})},
+	}, 256)
+	require.Equal(t, CredentialProtectionFormattingFailed, got.UnavailableReason)
+	require.Nil(t, got.Value)
 }
 
 func TestCredentialProtectorMatchesSurrogateUnicodeEscapes(t *testing.T) {
