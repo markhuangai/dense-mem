@@ -1,6 +1,9 @@
 package observability
 
-import "unicode/utf8"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 type credentialDecodedByte struct {
 	value byte
@@ -48,7 +51,35 @@ func matchCredentialLayers(input []credentialDecodedByte, variant string, allowP
 			return 0, false, false
 		}
 	}
-	return 0, false, true
+	if credentialDecodedLayerChanges(decoded, allowPercentEncoding, allowUnicodeEncoding, percentFirst) {
+		return 0, false, true
+	}
+	return 0, false, false
+}
+
+func credentialDecodedLayerChanges(input []credentialDecodedByte, allowPercentEncoding, allowUnicodeEncoding, percentFirst bool) bool {
+	decoded := input
+	if percentFirst && allowPercentEncoding {
+		next := decodeCredentialPercentLayer(decoded)
+		if !credentialDecodedBytesEqual(decoded, next) {
+			return true
+		}
+		decoded = next
+	}
+	if allowUnicodeEncoding {
+		next := decodeCredentialEscapeLayer(decoded)
+		if !credentialDecodedBytesEqual(decoded, next) {
+			return true
+		}
+		decoded = next
+	}
+	if !percentFirst && allowPercentEncoding {
+		next := decodeCredentialPercentLayer(decoded)
+		if !credentialDecodedBytesEqual(decoded, next) {
+			return true
+		}
+	}
+	return false
 }
 
 func credentialDecodedBytesEqual(left, right []credentialDecodedByte) bool {
@@ -76,6 +107,12 @@ func credentialLiteralCandidate(text, variant string) bool {
 	for index := 0; index < limit; index++ {
 		switch text[index] {
 		case '%', '\\', '+':
+			if !credentialEncodingPrefixIsValid(text[index:]) {
+				return false
+			}
+			if text[index] == '+' && !strings.Contains(variant, " ") {
+				return false
+			}
 			return true
 		}
 		if text[index] != variant[index] {
@@ -85,9 +122,45 @@ func credentialLiteralCandidate(text, variant string) bool {
 	return true
 }
 
+func credentialEncodingPrefixIsValid(text string) bool {
+	if len(text) < 2 {
+		return false
+	}
+	switch text[0] {
+	case '%':
+		return len(text) >= 3 && isHexDigit(text[1]) && isHexDigit(text[2])
+	case '+':
+		return true
+	case '\\':
+		switch text[1] {
+		case 'x':
+			return len(text) >= 4 && isHexDigit(text[2]) && isHexDigit(text[3])
+		case 'u':
+			return len(text) >= 6 && isHexDigit(text[2]) && isHexDigit(text[3]) && isHexDigit(text[4]) && isHexDigit(text[5])
+		case 'U':
+			return len(text) >= 10 && isHexDigit(text[2]) && isHexDigit(text[3]) && isHexDigit(text[4]) && isHexDigit(text[5]) && isHexDigit(text[6]) && isHexDigit(text[7]) && isHexDigit(text[8]) && isHexDigit(text[9])
+		case '0', '1', '2', '3':
+			return len(text) >= 4 && text[2] >= '0' && text[2] <= '7' && text[3] >= '0' && text[3] <= '7'
+		case '"', '\\', '\'', '/', 'a', 'b', 'f', 'n', 'r', 't', 'v':
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+}
+
 func credentialRawByteLimit(variantLength int) int {
-	const maxEncodingExpansion = 30
+	const maxEncodingExpansionPerLayer = 10
 	maxInt := int(^uint(0) >> 1)
+	maxEncodingExpansion := 1
+	for layer := 0; layer < maxCredentialDecodeLayers; layer++ {
+		if maxEncodingExpansion > maxInt/maxEncodingExpansionPerLayer {
+			return maxInt
+		}
+		maxEncodingExpansion *= maxEncodingExpansionPerLayer
+	}
 	if variantLength > maxInt/maxEncodingExpansion {
 		return maxInt
 	}

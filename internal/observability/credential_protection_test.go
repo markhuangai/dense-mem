@@ -183,6 +183,35 @@ func TestCredentialProtectorMatchesExactlyMaximumEncodingLayers(t *testing.T) {
 	got := NewCredentialProtector("q").Snapshot("token="+encoded, 256)
 	require.Empty(t, got.UnavailableReason)
 	require.Equal(t, "token="+CredentialProtectionRedacted, got.Value)
+
+	got = NewCredentialProtector("q").Snapshot("token=%25252578", 256)
+	require.Empty(t, got.UnavailableReason)
+	require.Equal(t, "token=%25252578", got.Value)
+}
+
+func TestCredentialProtectorMatchesNestedUnicodeEncodingWithinBound(t *testing.T) {
+	encoded := `\u0061`
+	encoded = encodeCredentialTestUnicodeLayer(encoded)
+
+	got := NewCredentialProtector("a").Snapshot("token="+encoded, 256)
+	require.Empty(t, got.UnavailableReason)
+	require.Equal(t, "token="+CredentialProtectionRedacted, got.Value)
+}
+
+func encodeCredentialTestUnicodeLayer(text string) string {
+	var builder strings.Builder
+	builder.Grow(len(text) * 6)
+	for index := 0; index < len(text); index++ {
+		fmt.Fprintf(&builder, `\u%04X`, text[index])
+	}
+	return builder.String()
+}
+
+func TestCredentialProtectorLeavesMalformedEncodingCandidatesUntouched(t *testing.T) {
+	input := strings.Repeat("%", 256)
+	got := NewCredentialProtector("q").Snapshot(input, 1024)
+	require.Empty(t, got.UnavailableReason)
+	require.Equal(t, input, got.Value)
 }
 
 func TestCredentialProtectorFailsClosedWhenEncodingLayersExceedBound(t *testing.T) {
