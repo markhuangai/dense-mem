@@ -184,13 +184,16 @@ matching compares the raw `support.fragment_id` loaded from PostgreSQL
 `internal/knowledge/postgres/relationship_correction_helpers.go:128-197`, and
 `internal/knowledge/postgres/relationship_correction_repository.go:626-635`).
 For migrated alias rows, the backfill sets `occurrence_id` to that raw alias
-fragment ID, and trace exposes `occurrence_id`; the client can use that value as
-the correction input's `evidence_id` with the same span
+fragment ID, and trace exposes `occurrence_id`
 (`migrations/postgres/v2_6/20260903010001_evidence_occurrence_duplicates.sql:550-598`).
-Using the canonical trace `evidence_id` alone produces `support_set_mismatch`.
-Do not substitute an occurrence ID for every support: ordinary occurrence IDs
-can identify a distinct occurrence rather than the raw fragment ID, so the
-conversion must be confirmed per support.
+If the caller independently retained the raw mapping and knows that the row is
+a migrated alias, it can use that `occurrence_id` as the correction input's
+`evidence_id` with the same span. The public trace shape has no alias marker or
+raw `support.fragment_id`, and ordinary occurrence IDs can identify a distinct
+occurrence, so a caller cannot safely infer this conversion from the returned
+fields alone. Without the independently retained mapping, alias-backed support
+has no complete public correction path; using the canonical trace `evidence_id`
+alone produces `support_set_mismatch`.
 
 Validity has a separate correction limit. `correct_relationship` copies the
 source `valid_from` and `valid_to` values; it has no validity-window patch.
