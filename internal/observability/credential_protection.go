@@ -104,6 +104,13 @@ func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSec
 	if contains {
 		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
 	}
+	contains, exhausted = credentialSnapshotContainsGoQuotedVariant(snapshot, variants)
+	if exhausted {
+		return unavailableDiagnostic(CredentialProtectionEncodingLimitExceeded, variants)
+	}
+	if contains {
+		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
+	}
 	return ProtectedDiagnostic{Value: snapshot}
 }
 
@@ -817,6 +824,32 @@ func literalCredentialPrefixDetailed(text, variant string, allowPercentEncoding,
 		}
 	}
 	return 0, false, exhausted
+}
+
+func credentialSnapshotContainsGoQuotedVariant(value any, variants []credentialVariant) (bool, bool) {
+	switch typed := value.(type) {
+	case string:
+		return credentialTextContainsVariantDetailed(strconv.Quote(typed), variants)
+	case map[string]any:
+		for key, child := range typed {
+			contains, exhausted := credentialTextContainsVariantDetailed(strconv.Quote(key), variants)
+			if exhausted || contains {
+				return contains, exhausted
+			}
+			contains, exhausted = credentialSnapshotContainsGoQuotedVariant(child, variants)
+			if exhausted || contains {
+				return contains, exhausted
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			contains, exhausted := credentialSnapshotContainsGoQuotedVariant(child, variants)
+			if exhausted || contains {
+				return contains, exhausted
+			}
+		}
+	}
+	return false, false
 }
 
 func decodeEscapedRune(text string) (rune, int, bool) {

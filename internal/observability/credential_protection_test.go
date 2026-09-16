@@ -174,6 +174,17 @@ func TestCredentialProtectorMatchesRepeatedEncodingLayers(t *testing.T) {
 	}
 }
 
+func TestCredentialProtectorMatchesExactlyMaximumEncodingLayers(t *testing.T) {
+	encoded := "%71"
+	for index := 1; index < maxCredentialDecodeLayers; index++ {
+		encoded = url.QueryEscape(encoded)
+	}
+
+	got := NewCredentialProtector("q").Snapshot("token="+encoded, 256)
+	require.Empty(t, got.UnavailableReason)
+	require.Equal(t, "token="+CredentialProtectionRedacted, got.Value)
+}
+
 func TestCredentialProtectorFailsClosedWhenEncodingLayersExceedBound(t *testing.T) {
 	encoded := "%71"
 	for index := 1; index < maxCredentialDecodeLayers+1; index++ {
@@ -182,6 +193,12 @@ func TestCredentialProtectorFailsClosedWhenEncodingLayersExceedBound(t *testing.
 
 	got := NewCredentialProtector("q").Snapshot("token="+encoded, 256)
 	require.Equal(t, CredentialProtectionEncodingLimitExceeded, got.UnavailableReason)
+	require.Nil(t, got.Value)
+}
+
+func TestCredentialProtectorRejectsGoQuotedCredentialSerialization(t *testing.T) {
+	got := NewCredentialProtector(`\x01`).Snapshot(string([]byte{1}), 256)
+	require.Equal(t, CredentialProtectionFormattingFailed, got.UnavailableReason)
 	require.Nil(t, got.Value)
 }
 
