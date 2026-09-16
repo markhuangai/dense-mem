@@ -214,6 +214,14 @@ func TestCredentialProtectorLeavesMalformedEncodingCandidatesUntouched(t *testin
 	require.Equal(t, input, got.Value)
 }
 
+func TestCredentialProtectorLeavesNonmatchingEncodedPrefixesUntouched(t *testing.T) {
+	input := strings.Repeat("%61", 256)
+
+	got := NewCredentialProtector(strings.Repeat("b", 32)).Snapshot(input, len(input)+2)
+	require.Empty(t, got.UnavailableReason)
+	require.Equal(t, input, got.Value)
+}
+
 func TestCredentialProtectorFailsClosedWhenEncodingLayersExceedBound(t *testing.T) {
 	encoded := "%71"
 	for index := 1; index < maxCredentialDecodeLayers+1; index++ {
@@ -233,6 +241,14 @@ func TestCredentialProtectorRejectsGoQuotedCredentialSerialization(t *testing.T)
 	got = NewCredentialProtector(`\x01`).Snapshot(map[string]any{
 		"nested": []any{string([]byte{1})},
 	}, 256)
+	require.Equal(t, CredentialProtectionFormattingFailed, got.UnavailableReason)
+	require.Nil(t, got.Value)
+
+	got = NewCredentialProtector(`\u00e9`).Snapshot("é", 256)
+	require.Equal(t, CredentialProtectionFormattingFailed, got.UnavailableReason)
+	require.Nil(t, got.Value)
+
+	got = NewCredentialProtector(`\u00e9`).Snapshot(map[string]any{"é": "safe"}, 256)
 	require.Equal(t, CredentialProtectionFormattingFailed, got.UnavailableReason)
 	require.Nil(t, got.Value)
 }

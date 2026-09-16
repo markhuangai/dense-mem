@@ -785,6 +785,9 @@ func encodedCredentialPrefixDetailed(text, variant string, allowPercentEncoding,
 	if !credentialLiteralCandidate(text, variant) {
 		return 0, false, false
 	}
+	if !credentialFirstDecodedByteCouldMatch(text, variant, allowPercentEncoding, allowUnicodeEncoding) {
+		return 0, false, false
+	}
 	exhausted := false
 	if allowUnicodeEncoding {
 		if consumed, ok, variantExhausted := decodedCredentialPrefixDetailed(text, variant, allowPercentEncoding); ok {
@@ -829,14 +832,21 @@ func literalCredentialPrefixDetailed(text, variant string, allowPercentEncoding,
 func credentialSnapshotContainsGoQuotedVariant(value any, variants []credentialVariant) (bool, bool) {
 	switch typed := value.(type) {
 	case string:
-		return credentialTextContainsVariantDetailed(strconv.Quote(typed), variants)
-	case map[string]any:
-		for key, child := range typed {
-			contains, exhausted := credentialTextContainsVariantDetailed(strconv.Quote(key), variants)
+		for _, quoted := range []string{strconv.Quote(typed), strconv.QuoteToASCII(typed)} {
+			contains, exhausted := credentialTextContainsVariantDetailed(quoted, variants)
 			if exhausted || contains {
 				return contains, exhausted
 			}
-			contains, exhausted = credentialSnapshotContainsGoQuotedVariant(child, variants)
+		}
+	case map[string]any:
+		for key, child := range typed {
+			for _, quoted := range []string{strconv.Quote(key), strconv.QuoteToASCII(key)} {
+				contains, exhausted := credentialTextContainsVariantDetailed(quoted, variants)
+				if exhausted || contains {
+					return contains, exhausted
+				}
+			}
+			contains, exhausted := credentialSnapshotContainsGoQuotedVariant(child, variants)
 			if exhausted || contains {
 				return contains, exhausted
 			}

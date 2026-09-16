@@ -122,6 +122,35 @@ func credentialLiteralCandidate(text, variant string) bool {
 	return true
 }
 
+func credentialFirstDecodedByteCouldMatch(text, variant string, allowPercentEncoding, allowUnicodeEncoding bool) bool {
+	if len(text) == 0 || len(variant) == 0 {
+		return true
+	}
+	first := text[0]
+	switch first {
+	case '%':
+		if allowPercentEncoding && len(text) >= 3 && isHexDigit(text[1]) && isHexDigit(text[2]) {
+			first = hexByte(text[1], text[2])
+		}
+	case '+':
+		if allowPercentEncoding {
+			first = ' '
+		}
+	case '\\':
+		if allowUnicodeEncoding {
+			if escaped, _, ok := decodeGoByteEscape(text); ok {
+				first = escaped
+			} else if escaped, _, ok := decodeEscapedRune(text); ok {
+				var encoded [utf8.UTFMax]byte
+				if encodedSize := utf8.EncodeRune(encoded[:], escaped); encodedSize > 0 {
+					first = encoded[0]
+				}
+			}
+		}
+	}
+	return first == variant[0] || first == '%' || first == '\\' || first == '+'
+}
+
 func credentialEncodingPrefixIsValid(text string) bool {
 	if len(text) < 2 {
 		return false
