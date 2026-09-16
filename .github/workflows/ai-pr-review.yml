@@ -7,7 +7,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_run:
     workflows:
-      - CI Pull Request
+      - CodeQL
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -122,7 +122,7 @@ jobs:
                 Number.isSafeInteger(eventHeadRepositoryId) &&
                 eventHeadRepositoryId === eventBaseRepositoryId;
               if (!eventPullIsTrusted || !eventPullIsSameRepository) {
-                skip(`Pull request #${eventPull.number} will use the trusted CI completion path.`);
+                skip(`Pull request #${eventPull.number} will use the trusted CodeQL completion path.`);
                 return;
               }
               pullNumber = eventPull.number;
@@ -136,12 +136,12 @@ jobs:
             } else if (eventName === "workflow_run") {
               const workflowRun = context.payload.workflow_run;
               if (!workflowRun || workflowRun.event !== "pull_request") {
-                skip("The completed CI run was not triggered by a pull request.");
+                skip("The completed CodeQL run was not triggered by a pull request.");
                 return;
               }
               if (workflowRun.conclusion !== "success") {
                 skip(
-                  `The completed CI run concluded ${workflowRun.conclusion || "without a result"}.`,
+                  `The completed CodeQL run concluded ${workflowRun.conclusion || "without a result"}.`,
                 );
                 return;
               }

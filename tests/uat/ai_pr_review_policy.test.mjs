@@ -299,7 +299,7 @@ test("AI review uses the Claude endpoint without obsolete executor routing", asy
   );
 });
 
-test("owner-controlled AI review starts with PR CI while untrusted heads use the CI fallback", async () => {
+test("owner-controlled AI review starts directly while other heads use CodeQL completion", async () => {
   const [reviewWorkflow, ciWorkflow] = await Promise.all([
     readFile(reviewWorkflowURL, "utf8"),
     readFile(prCIWorkflowURL, "utf8"),
@@ -320,7 +320,7 @@ test("owner-controlled AI review starts with PR CI while untrusted heads use the
   );
   assert.match(
     normalizedReviewWorkflow,
-    /workflows: - CI Pull Request types: \[completed\]/,
+    /workflows: - CodeQL types: \[completed\]/,
   );
   assert.match(reviewWorkflow, /github\.event_name == 'pull_request_target'/);
   assert.match(

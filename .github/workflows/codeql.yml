@@ -18,11 +18,6 @@ permissions:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
-    if: >-
-      ${{
-        github.event_name != 'pull_request' ||
-        github.event.pull_request.head.repo.full_name == github.repository
-      }}
     runs-on: ubuntu-latest
 
     strategy:
@@ -65,3 +60,31 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
+
+  result:
+    name: CodeQL analysis
+    needs: analyze
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Require all language analyses
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              ...context.repo,
+              run_id: context.runId,
+              filter: 'all',
+              per_page: 100,
+            });
+            for (const language of ['actions', 'go', 'javascript-typescript']) {
+              const executions = jobs.filter(job => job.name === `Analyze (${language})` &&
+                job.run_attempt <= Number(process.env.GITHUB_RUN_ATTEMPT));
+              const latestAttempt = Math.max(...executions.map(job => job.run_attempt));
+              const matches = executions.filter(job => job.run_attempt === latestAttempt);
+              if (matches.length !== 1 || matches[0].status !== 'completed' || matches[0].conclusion !== 'success') {
+                core.setFailed(`CodeQL ${language} has no successful latest execution.`);
+              }
+            }

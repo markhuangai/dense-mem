@@ -185,7 +185,7 @@ test("shared CI partitions slow gates into independent hosted jobs", async () =>
     readFile(new URL("../../.github/workflows/ci-push.yml", import.meta.url), "utf8"),
   ]);
   const jobIds = [...shared.matchAll(/^  ([a-z0-9-]+):$/gm)].map(([, id]) => id);
-  assert.deepEqual(jobIds, ["npm-audit", "postgres-migrations", "quality"]);
+  assert.deepEqual(jobIds, ["npm-audit", "postgres-migrations", "quality", "result"]);
   const audit = workflowJob(shared, "npm-audit");
   const migrations = workflowJob(shared, "postgres-migrations");
   const quality = workflowJob(shared, "quality");
@@ -252,14 +252,16 @@ test("shared CI partitions slow gates into independent hosted jobs", async () =>
   assert.match(quality, /Run Go tests/);
   assert.match(quality, /Run unit coverage gate/);
   assert.doesNotMatch(quality, /Run npm vulnerability audits|Run PostgreSQL migration integration suite|Validate PostgreSQL migration history/);
-  assert.match(shared, /^  workflow_call:\n    inputs:\n      migration-base-ref:\n        description:/m);
+  assert.match(shared, /^  workflow_call:\n    inputs:/m);
+  assert.match(shared, /^      migration-base-ref:\n        description:/m);
   assert.match(shared, /^        required: false$/m);
   assert.match(shared, /^        type: string$/m);
   assert.match(shared, /^        default: origin\/main$/m);
   assert.match(migrations, /scripts\/check-postgres-migrations\.sh "\$\{\{ inputs\.migration-base-ref \}\}"/);
   assert.match(pullRequest, /^name: CI Pull Request$/m);
   assert.match(push, /^name: CI Push$/m);
-  assert.match(pullRequest, /  ci:\n    name: CI\n    uses: \.\/\.github\/workflows\/ci-shared\.yml/);
+  assert.match(workflowJob(pullRequest, "ci"), /^    name: CI$/m);
+  assert.match(workflowJob(pullRequest, "ci"), /^    uses: \.\/\.github\/workflows\/ci-shared\.yml$/m);
   assert.match(push, /  ci:\n    name: CI\n    uses: \.\/\.github\/workflows\/ci-shared\.yml/);
   assert.match(push, /migration-base-ref: \$\{\{ github\.event\.before \}\}/);
 });

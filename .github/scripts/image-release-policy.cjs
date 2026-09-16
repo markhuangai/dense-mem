@@ -101,6 +101,7 @@ function decidePreviewEvent({
   pullRequestAuthorPermission,
   pullRequestState,
   pullRequestBase,
+  reviewGatedCI = false,
 }) {
   if (!triggerHeadMatches) {
     return { mode: "noop", reason: "stale_event" };
@@ -115,7 +116,7 @@ function decidePreviewEvent({
     pullRequestState,
     pullRequestBase,
   });
-  if (automatic.authorized && ["opened", "reopened", "synchronize", "labeled"].includes(action)) {
+  if (!reviewGatedCI && automatic.authorized && ["opened", "reopened", "synchronize", "labeled"].includes(action)) {
     return {
       mode: "attempt",
       reason: automatic.reason,
@@ -153,6 +154,16 @@ function decidePreviewEvent({
 
 function compareContainsMain(compareStatus) {
   return compareStatus === "ahead" || compareStatus === "identical";
+}
+
+function runsAutomaticRepositoryCI(pull, repository) {
+  if (!pull.head?.repo?.full_name) {
+    throw new Error("The pull request head repository is unavailable.");
+  }
+  if (!pull.user?.login) {
+    throw new Error("The pull request author is unavailable.");
+  }
+  return pull.head.repo.full_name === repository && pull.user.login !== PRODUCTION_E2E_ACTOR;
 }
 
 function selectMergedPull(pulls, mainCommit) {
@@ -274,7 +285,7 @@ function graphQLPullRequest(pull, labels = pull?.labels?.nodes || []) {
   return {
     number: pull.number,
     state: String(pull.state || "").toLowerCase(),
-    base: { ref: pull.baseRefName || "" },
+    base: { ref: pull.baseRefName || "", sha: pull.baseRefOid || "" },
     labels: labels.map(({ name }) => name),
     user: { login: pull.author?.login || "" },
     head: {
@@ -308,6 +319,7 @@ async function loadPullRequest({ github, owner, repo, pullNumber }) {
             number
             state
             baseRefName
+            baseRefOid
             headRefOid
             author { login }
             headRepository { nameWithOwner }
@@ -342,6 +354,7 @@ async function resolvePreviewAttempt({
   context,
   actorPermission,
   authorPermission,
+  reviewGatedCI = false,
 }) {
   const event = resolvePullRequestEvent(context.payload, actorPermission);
   const pull = await loadPullRequest({
@@ -364,6 +377,7 @@ async function resolvePreviewAttempt({
     pullRequestState: pull.state,
     pullRequestBase: pull.base.ref,
     triggerHeadMatches: pull.head.sha === event.triggerHead,
+    reviewGatedCI,
   });
 
   return {
@@ -371,6 +385,34 @@ async function resolvePreviewAttempt({
     pullNumber: pull.number,
     headSha: pull.head.sha,
     headRepository: pull.head.repo?.full_name || "",
+    ...(reviewGatedCI && decision.mode !== "noop" ? {
+      runCI: !runsAutomaticRepositoryCI(pull, `${context.repo.owner}/${context.repo.repo}`),
+    } : {}),
+  };
+}
+
+async function resolveRepositoryCI({ github, context }) {
+  const event = resolvePullRequestEvent(context.payload);
+  const pull = await loadPullRequest({
+    github,
+    owner: context.repo.owner,
+    repo: context.repo.repo,
+    pullNumber: event.pullNumber,
+  });
+  if (pull.state !== "open" || pull.base.ref !== "main" || pull.head.sha !== event.triggerHead) {
+    return { shouldRun: false };
+  }
+  if (!runsAutomaticRepositoryCI(pull, `${context.repo.owner}/${context.repo.repo}`)) {
+    return { shouldRun: false };
+  }
+  if (!/^[0-9a-f]{40}$/.test(pull.base.sha || "")) {
+    throw new Error("The pull request base revision is unavailable.");
+  }
+  return {
+    shouldRun: true,
+    headSha: pull.head.sha,
+    headRepository: pull.head.repo.full_name,
+    baseSha: pull.base.sha,
   };
 }
 
@@ -456,9 +498,11 @@ module.exports = {
   decideRcPreview,
   parseSuccessfulPolicyStatus,
   resolvePreviewAttempt,
+  resolveRepositoryCI,
   resolvePullRequestEvent,
   resolveRcPreview,
   selectMergedPull,
+  runsAutomaticRepositoryCI,
   validatePinnedProductionImageReference,
   validateProductionImageReference,
 };
