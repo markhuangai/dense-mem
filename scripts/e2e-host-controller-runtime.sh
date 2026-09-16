@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sourced by e2e-host-controller.sh.
 
-SCENARIO_TEST_IMAGE="mcr.microsoft.com/playwright:v1.62.1-noble"
+SCENARIO_TEST_IMAGE="mcr.microsoft.com/playwright:v1.63.0-noble"
 
 docker_cli_paths() {
   local docker_bin
