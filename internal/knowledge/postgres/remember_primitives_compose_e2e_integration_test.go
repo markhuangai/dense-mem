@@ -18,7 +18,7 @@ import (
 func TestComposeRememberPrimitives(t *testing.T) {
 	baseDSN := strings.TrimSpace(os.Getenv("DATABASE_URL"))
 	if baseDSN == "" {
-		t.Fatal("DATABASE_URL is required for the Compose primitive driver")
+		t.Skip("DATABASE_URL is required for the Compose primitive driver")
 	}
 	parsed, err := url.Parse(baseDSN)
 	require.NoError(t, err)
