@@ -115,6 +115,7 @@ func TestConformanceHarness(t *testing.T) {
 	}
 
 	testConformanceCancellation(t)
+	testConformanceToolExamples(t)
 }
 
 func conformanceRPC(t *testing.T, server *Server, payload string) rpcResp {
