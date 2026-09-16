@@ -75,6 +75,10 @@ func TestCredentialProtectorProtectsJSONByteContentAndErrors(t *testing.T) {
 	require.Equal(t, "provider failed: "+CredentialProtectionRedacted, errorValue.Value)
 	_, retainsError := errorValue.Value.(error)
 	require.False(t, retainsError)
+
+	budgeted := protector.Snapshot([]byte(`{"x":"1234567890"}`), 18)
+	require.Empty(t, budgeted.UnavailableReason)
+	require.Equal(t, map[string]any{"x": "1234567890"}, budgeted.Value)
 }
 
 func TestCredentialProtectorSnapshotsWithoutMutation(t *testing.T) {
@@ -220,6 +224,19 @@ func TestCredentialProtectorLeavesNonmatchingEncodedPrefixesUntouched(t *testing
 	got := NewCredentialProtector(strings.Repeat("b", 32)).Snapshot(input, len(input)+2)
 	require.Empty(t, got.UnavailableReason)
 	require.Equal(t, input, got.Value)
+
+	sharedPrefix := strings.Repeat("%61", 256)
+	got = NewCredentialProtector(strings.Repeat("a", 31)+"b").Snapshot(sharedPrefix, len(sharedPrefix)+2)
+	require.Empty(t, got.UnavailableReason)
+	require.Equal(t, sharedPrefix, got.Value)
+}
+
+func TestCredentialProtectorLeavesMalformedEscapesAfterCandidateUntouched(t *testing.T) {
+	for _, input := range []string{"a%41%zz", `a%41\zz`} {
+		got := NewCredentialProtector("aAB").Snapshot(input, 256)
+		require.Empty(t, got.UnavailableReason)
+		require.Equal(t, input, got.Value)
+	}
 }
 
 func TestCredentialProtectorFailsClosedWhenEncodingLayersExceedBound(t *testing.T) {

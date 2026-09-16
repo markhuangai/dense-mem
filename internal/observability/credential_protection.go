@@ -142,8 +142,9 @@ type credentialSnapshotVisit struct {
 }
 
 type credentialSnapshotWalker struct {
-	variants []credentialVariant
-	active   map[credentialSnapshotVisit]struct{}
+	variants          []credentialVariant
+	active            map[credentialSnapshotVisit]struct{}
+	processingCharged bool
 }
 
 type credentialSnapshotBudget struct {
@@ -285,7 +286,7 @@ func (w *credentialSnapshotWalker) walkString(text string, budget *credentialSna
 }
 
 func (w *credentialSnapshotWalker) protectText(text string, budget *credentialSnapshotBudget, alreadyProcessed bool) (string, string) {
-	if !alreadyProcessed && !budget.process(len(text)) {
+	if !alreadyProcessed && !w.processingCharged && !budget.process(len(text)) {
 		return "", CredentialProtectionBudgetExceeded
 	}
 	if !utf8.ValidString(text) {
@@ -325,7 +326,7 @@ func (w *credentialSnapshotWalker) walkMap(value reflect.Value, depth int, budge
 	iterator := value.MapRange()
 	for iterator.Next() {
 		rawKey := iterator.Key().String()
-		if !budget.process(len(rawKey)) {
+		if !w.processingCharged && !budget.process(len(rawKey)) {
 			return nil, CredentialProtectionBudgetExceeded
 		}
 		key, reason := w.protectText(rawKey, budget, true)
@@ -438,6 +439,9 @@ func (w *credentialSnapshotWalker) walkBytes(value reflect.Value, depth int, bud
 		if _, err := decoder.Token(); err != io.EOF {
 			return nil, CredentialProtectionFormattingFailed
 		}
+		previouslyCharged := w.processingCharged
+		w.processingCharged = true
+		defer func() { w.processingCharged = previouslyCharged }()
 		return w.walk(reflect.ValueOf(decoded), depth, budget)
 	}
 	protected, reason := w.protectText(text, budget, true)
@@ -785,7 +789,7 @@ func encodedCredentialPrefixDetailed(text, variant string, allowPercentEncoding,
 	if !credentialLiteralCandidate(text, variant) {
 		return 0, false, false
 	}
-	if !credentialFirstDecodedByteCouldMatch(text, variant, allowPercentEncoding, allowUnicodeEncoding) {
+	if !credentialDecodedLiteralCandidate(text, variant, allowPercentEncoding, allowUnicodeEncoding) {
 		return 0, false, false
 	}
 	exhausted := false

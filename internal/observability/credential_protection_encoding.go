@@ -122,33 +122,86 @@ func credentialLiteralCandidate(text, variant string) bool {
 	return true
 }
 
-func credentialFirstDecodedByteCouldMatch(text, variant string, allowPercentEncoding, allowUnicodeEncoding bool) bool {
-	if len(text) == 0 || len(variant) == 0 {
+func credentialDecodedLiteralCandidate(text, variant string, allowPercentEncoding, allowUnicodeEncoding bool) bool {
+	limit := len(variant)
+	if limit > credentialLiteralCandidateLimit {
+		limit = credentialLiteralCandidateLimit
+	}
+	if limit == 0 {
 		return true
 	}
-	first := text[0]
-	switch first {
-	case '%':
-		if allowPercentEncoding && len(text) >= 3 && isHexDigit(text[1]) && isHexDigit(text[2]) {
-			first = hexByte(text[1], text[2])
+	textIndex := 0
+	variantIndex := 0
+	for variantIndex < limit {
+		if textIndex >= len(text) {
+			return true
 		}
-	case '+':
-		if allowPercentEncoding {
-			first = ' '
-		}
-	case '\\':
-		if allowUnicodeEncoding {
-			if escaped, _, ok := decodeGoByteEscape(text); ok {
-				first = escaped
-			} else if escaped, _, ok := decodeEscapedRune(text); ok {
-				var encoded [utf8.UTFMax]byte
-				if encodedSize := utf8.EncodeRune(encoded[:], escaped); encodedSize > 0 {
-					first = encoded[0]
+		var decoded [utf8.UTFMax]byte
+		decodedSize := 0
+		consumed := 1
+		switch text[textIndex] {
+		case '%':
+			if allowPercentEncoding && textIndex+2 < len(text) && isHexDigit(text[textIndex+1]) && isHexDigit(text[textIndex+2]) {
+				decoded[0] = hexByte(text[textIndex+1], text[textIndex+2])
+				decodedSize = 1
+				consumed = 3
+			} else {
+				decoded[0] = '%'
+				decodedSize = 1
+			}
+		case '+':
+			decoded[0] = '+'
+			decodedSize = 1
+			if allowPercentEncoding {
+				decoded[0] = ' '
+			}
+		case '\\':
+			if allowUnicodeEncoding {
+				if escaped, size, ok := decodeGoByteEscape(text[textIndex:]); ok {
+					decoded[0] = escaped
+					decodedSize = 1
+					consumed = size
+				} else if escaped, size, ok := decodeEscapedRune(text[textIndex:]); ok {
+					decodedSize = utf8.EncodeRune(decoded[:], escaped)
+					consumed = size
 				}
 			}
+			if decodedSize == 0 {
+				decoded[0] = '\\'
+				decodedSize = 1
+			}
+		default:
+			_, size := utf8.DecodeRuneInString(text[textIndex:])
+			if size == 0 {
+				return true
+			}
+			if size > len(decoded) {
+				return true
+			}
+			copy(decoded[:size], text[textIndex:textIndex+size])
+			decodedSize = size
+			consumed = size
 		}
+		for decodedIndex := 0; decodedIndex < decodedSize && variantIndex < limit; decodedIndex++ {
+			if decoded[decodedIndex] != variant[variantIndex] {
+				return decodedIndex == 0 && credentialDecodedByteMayChange(decoded[decodedIndex], allowPercentEncoding, allowUnicodeEncoding)
+			}
+			variantIndex++
+		}
+		textIndex += consumed
 	}
-	return first == variant[0] || first == '%' || first == '\\' || first == '+'
+	return true
+}
+
+func credentialDecodedByteMayChange(value byte, allowPercentEncoding, allowUnicodeEncoding bool) bool {
+	switch value {
+	case '%', '+':
+		return allowPercentEncoding
+	case '\\':
+		return allowUnicodeEncoding
+	default:
+		return false
+	}
 }
 
 func credentialEncodingPrefixIsValid(text string) bool {
