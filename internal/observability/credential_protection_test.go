@@ -229,14 +229,57 @@ func TestCredentialProtectorLeavesNonmatchingEncodedPrefixesUntouched(t *testing
 	got = NewCredentialProtector(strings.Repeat("a", 31)+"b").Snapshot(sharedPrefix, len(sharedPrefix)+2)
 	require.Empty(t, got.UnavailableReason)
 	require.Equal(t, sharedPrefix, got.Value)
+
+	nestedPrefix := strings.Repeat("%2561", 256)
+	got = NewCredentialProtector(strings.Repeat("a", 31)+"b").Snapshot(nestedPrefix, len(nestedPrefix)+2)
+	require.Empty(t, got.UnavailableReason)
+	require.Equal(t, nestedPrefix, got.Value)
 }
 
 func TestCredentialProtectorLeavesMalformedEscapesAfterCandidateUntouched(t *testing.T) {
-	for _, input := range []string{"a%41%zz", `a%41\zz`} {
+	for _, input := range []string{
+		"a%41%zz",
+		`a%41\zz`,
+		`a%41\xzz`,
+		`a%41\400`,
+		`a%41\u12xz`,
+		`a%41\U00110000`,
+		`a%41\uD800\uxxxx`,
+		"a%41\\",
+	} {
 		got := NewCredentialProtector("aAB").Snapshot(input, 256)
 		require.Empty(t, got.UnavailableReason)
 		require.Equal(t, input, got.Value)
 	}
+}
+
+func TestCredentialProtectorBoundsDecodedCandidatePrefilter(t *testing.T) {
+	secret := strings.Repeat("a", credentialLiteralCandidateLimit+1) + "/"
+	encoded := url.QueryEscape(secret)
+	encoded = "%61" + encoded[1:]
+
+	got := NewCredentialProtector(secret).Snapshot("token="+encoded, 512)
+	require.Empty(t, got.UnavailableReason)
+	require.Equal(t, "token="+CredentialProtectionRedacted, got.Value)
+
+	input := "token=+x"
+	got = NewCredentialProtector("secret").Snapshot(input, 256)
+	require.Empty(t, got.UnavailableReason)
+	require.Equal(t, input, got.Value)
+}
+
+func TestCredentialCandidatePrefilterBounds(t *testing.T) {
+	var full credentialCandidateBuffer
+	full.length = len(full.bytes)
+	require.False(t, credentialCandidateAppend(&full, 'x'))
+	require.True(t, full.truncated)
+
+	left := credentialCandidateBuffer{length: 1}
+	right := credentialCandidateBuffer{length: 1}
+	left.bytes[0] = 'a'
+	right.bytes[0] = 'b'
+	require.False(t, credentialCandidateBuffersEqual(left, right))
+	require.True(t, credentialDecodedLiteralCandidate("", "", false, false))
 }
 
 func TestCredentialProtectorFailsClosedWhenEncodingLayersExceedBound(t *testing.T) {
@@ -623,4 +666,11 @@ func TestCredentialProtectorConvertsFormattingPanicsToBoundedFailure(t *testing.
 	got = NewCredentialProtector("_").Snapshot("safe", 0)
 	require.Equal(t, string(rune(0xE000)), got.UnavailableReason)
 	require.Nil(t, got.Value)
+}
+
+func TestCredentialProtectorProtectsUnavailableReasonSerialization(t *testing.T) {
+	got := NewCredentialProtector("_", `\ue000`).Snapshot("safe", 0)
+	require.NotEmpty(t, got.UnavailableReason)
+	require.Nil(t, got.Value)
+	require.NotContains(t, strconv.QuoteToASCII(got.UnavailableReason), `\ue000`)
 }

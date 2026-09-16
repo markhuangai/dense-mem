@@ -115,10 +115,10 @@ func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSec
 }
 
 func unavailableDiagnostic(reason string, variants []credentialVariant) ProtectedDiagnostic {
-	if reason == "" || !credentialTextContainsVariant(reason, variants) {
+	if reason == "" || !credentialDiagnosticContainsVariant(reason, variants) {
 		return ProtectedDiagnostic{UnavailableReason: reason}
 	}
-	if !credentialTextContainsVariant(credentialProtectionGenericUnavailable, variants) {
+	if !credentialDiagnosticContainsVariant(credentialProtectionGenericUnavailable, variants) {
 		return ProtectedDiagnostic{UnavailableReason: credentialProtectionGenericUnavailable}
 	}
 	for candidate := rune(0xE000); candidate <= utf8.MaxRune; candidate++ {
@@ -126,11 +126,19 @@ func unavailableDiagnostic(reason string, variants []credentialVariant) Protecte
 			continue
 		}
 		text := string(candidate)
-		if !credentialTextContainsVariant(text, variants) {
+		if !credentialDiagnosticContainsVariant(text, variants) {
 			return ProtectedDiagnostic{UnavailableReason: text}
 		}
 	}
 	return ProtectedDiagnostic{UnavailableReason: credentialProtectionGenericUnavailable}
+}
+
+func credentialDiagnosticContainsVariant(text string, variants []credentialVariant) bool {
+	if credentialTextContainsVariant(text, variants) {
+		return true
+	}
+	contains, exhausted := credentialSnapshotContainsGoQuotedVariant(text, variants)
+	return contains || exhausted
 }
 
 type credentialSnapshotVisit struct {

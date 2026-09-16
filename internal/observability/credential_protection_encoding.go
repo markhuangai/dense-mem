@@ -2,6 +2,7 @@ package observability
 
 import (
 	"strings"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -130,67 +131,256 @@ func credentialDecodedLiteralCandidate(text, variant string, allowPercentEncodin
 	if limit == 0 {
 		return true
 	}
-	textIndex := 0
-	variantIndex := 0
-	for variantIndex < limit {
-		if textIndex >= len(text) {
-			return true
-		}
-		var decoded [utf8.UTFMax]byte
-		decodedSize := 0
-		consumed := 1
-		switch text[textIndex] {
-		case '%':
-			if allowPercentEncoding && textIndex+2 < len(text) && isHexDigit(text[textIndex+1]) && isHexDigit(text[textIndex+2]) {
-				decoded[0] = hexByte(text[textIndex+1], text[textIndex+2])
-				decodedSize = 1
-				consumed = 3
-			} else {
-				decoded[0] = '%'
-				decodedSize = 1
-			}
-		case '+':
-			decoded[0] = '+'
-			decodedSize = 1
-			if allowPercentEncoding {
-				decoded[0] = ' '
-			}
-		case '\\':
-			if allowUnicodeEncoding {
-				if escaped, size, ok := decodeGoByteEscape(text[textIndex:]); ok {
-					decoded[0] = escaped
-					decodedSize = 1
-					consumed = size
-				} else if escaped, size, ok := decodeEscapedRune(text[textIndex:]); ok {
-					decodedSize = utf8.EncodeRune(decoded[:], escaped)
-					consumed = size
-				}
-			}
-			if decodedSize == 0 {
-				decoded[0] = '\\'
-				decodedSize = 1
-			}
-		default:
-			_, size := utf8.DecodeRuneInString(text[textIndex:])
-			if size == 0 {
+	if credentialDecodedLiteralCandidateOrder(text, variant, limit, allowPercentEncoding, allowUnicodeEncoding, false) {
+		return true
+	}
+	return allowPercentEncoding && allowUnicodeEncoding && credentialDecodedLiteralCandidateOrder(text, variant, limit, true, true, true)
+}
+
+const credentialCandidateBufferLimit = credentialLiteralCandidateLimit * 10
+
+type credentialCandidateBuffer struct {
+	bytes     [credentialCandidateBufferLimit]byte
+	length    int
+	truncated bool
+}
+
+type credentialCandidatePrefixStatus uint8
+
+const (
+	credentialCandidateNoMatch credentialCandidatePrefixStatus = iota
+	credentialCandidateMayChange
+	credentialCandidateMatch
+)
+
+func credentialDecodedLiteralCandidateOrder(text, variant string, limit int, allowPercentEncoding, allowUnicodeEncoding, percentFirst bool) bool {
+	current := credentialCandidateBuffer{length: len(text)}
+	if current.length > len(current.bytes) {
+		current.length = len(current.bytes)
+		current.truncated = true
+	}
+	copy(current.bytes[:current.length], text[:current.length])
+	status := credentialCandidatePrefixStatusFor(current, variant, limit, allowPercentEncoding, allowUnicodeEncoding)
+	if status == credentialCandidateMatch {
+		return true
+	}
+	if status == credentialCandidateNoMatch {
+		return false
+	}
+	for layer := 0; layer < maxCredentialDecodeLayers; layer++ {
+		roundChanged := false
+		before := current
+		if percentFirst && allowPercentEncoding {
+			current = decodeCredentialCandidatePercent(current)
+			roundChanged = roundChanged || !credentialCandidateBuffersEqual(before, current)
+			status = credentialCandidatePrefixStatusFor(current, variant, limit, allowPercentEncoding, allowUnicodeEncoding)
+			if status == credentialCandidateMatch {
 				return true
 			}
-			if size > len(decoded) {
+			if status == credentialCandidateNoMatch {
+				return false
+			}
+		}
+		if allowUnicodeEncoding {
+			before = current
+			current = decodeCredentialCandidateEscapes(current)
+			roundChanged = roundChanged || !credentialCandidateBuffersEqual(before, current)
+			status = credentialCandidatePrefixStatusFor(current, variant, limit, allowPercentEncoding, allowUnicodeEncoding)
+			if status == credentialCandidateMatch {
 				return true
 			}
-			copy(decoded[:size], text[textIndex:textIndex+size])
-			decodedSize = size
-			consumed = size
-		}
-		for decodedIndex := 0; decodedIndex < decodedSize && variantIndex < limit; decodedIndex++ {
-			if decoded[decodedIndex] != variant[variantIndex] {
-				return decodedIndex == 0 && credentialDecodedByteMayChange(decoded[decodedIndex], allowPercentEncoding, allowUnicodeEncoding)
+			if status == credentialCandidateNoMatch {
+				return false
 			}
-			variantIndex++
 		}
-		textIndex += consumed
+		if !percentFirst && allowPercentEncoding {
+			before = current
+			current = decodeCredentialCandidatePercent(current)
+			roundChanged = roundChanged || !credentialCandidateBuffersEqual(before, current)
+			status = credentialCandidatePrefixStatusFor(current, variant, limit, allowPercentEncoding, allowUnicodeEncoding)
+			if status == credentialCandidateMatch {
+				return true
+			}
+			if status == credentialCandidateNoMatch {
+				return false
+			}
+		}
+		if !roundChanged && !current.truncated {
+			return false
+		}
+		if layer == maxCredentialDecodeLayers-1 {
+			return roundChanged || current.truncated
+		}
+	}
+	return current.truncated
+}
+
+func credentialCandidatePrefixStatusFor(candidate credentialCandidateBuffer, variant string, limit int, allowPercentEncoding, allowUnicodeEncoding bool) credentialCandidatePrefixStatus {
+	for index := 0; index < candidate.length && index < limit; index++ {
+		if candidate.bytes[index] != variant[index] {
+			if credentialDecodedByteMayChange(candidate.bytes[index], allowPercentEncoding, allowUnicodeEncoding) {
+				return credentialCandidateMayChange
+			}
+			return credentialCandidateNoMatch
+		}
+	}
+	return credentialCandidateMatch
+}
+
+func credentialCandidateBuffersEqual(left, right credentialCandidateBuffer) bool {
+	if left.length != right.length || left.truncated != right.truncated {
+		return false
+	}
+	for index := 0; index < left.length; index++ {
+		if left.bytes[index] != right.bytes[index] {
+			return false
+		}
 	}
 	return true
+}
+
+func credentialCandidateAppend(candidate *credentialCandidateBuffer, value byte) bool {
+	if candidate.length >= len(candidate.bytes) {
+		candidate.truncated = true
+		return false
+	}
+	candidate.bytes[candidate.length] = value
+	candidate.length++
+	return true
+}
+
+func decodeCredentialCandidatePercent(input credentialCandidateBuffer) credentialCandidateBuffer {
+	var decoded credentialCandidateBuffer
+	for index := 0; index < input.length; {
+		if input.bytes[index] == '%' && index+2 < input.length && isHexDigit(input.bytes[index+1]) && isHexDigit(input.bytes[index+2]) {
+			if !credentialCandidateAppend(&decoded, hexByte(input.bytes[index+1], input.bytes[index+2])) {
+				break
+			}
+			index += 3
+			continue
+		}
+		if input.bytes[index] == '+' {
+			if !credentialCandidateAppend(&decoded, ' ') {
+				break
+			}
+			index++
+			continue
+		}
+		if !credentialCandidateAppend(&decoded, input.bytes[index]) {
+			break
+		}
+		index++
+	}
+	decoded.truncated = decoded.truncated || input.truncated
+	return decoded
+}
+
+func decodeCredentialCandidateEscapes(input credentialCandidateBuffer) credentialCandidateBuffer {
+	var decoded credentialCandidateBuffer
+	for index := 0; index < input.length; {
+		if input.bytes[index] == '\\' {
+			if encoded, encodedSize, consumed, ok := decodeCredentialCandidateEscape(input.bytes[index:input.length]); ok {
+				for encodedIndex := 0; encodedIndex < encodedSize; encodedIndex++ {
+					if !credentialCandidateAppend(&decoded, encoded[encodedIndex]) {
+						decoded.truncated = true
+						return decoded
+					}
+				}
+				index += consumed
+				continue
+			}
+		}
+		if !credentialCandidateAppend(&decoded, input.bytes[index]) {
+			break
+		}
+		index++
+	}
+	decoded.truncated = decoded.truncated || input.truncated
+	return decoded
+}
+
+func decodeCredentialCandidateEscape(text []byte) ([utf8.UTFMax]byte, int, int, bool) {
+	var encoded [utf8.UTFMax]byte
+	if len(text) < 2 || text[0] != '\\' {
+		return encoded, 0, 0, false
+	}
+	if text[1] == 'x' {
+		if len(text) < 4 || !isHexDigit(text[2]) || !isHexDigit(text[3]) {
+			return encoded, 0, 0, false
+		}
+		encoded[0] = hexByte(text[2], text[3])
+		return encoded, 1, 4, true
+	}
+	if text[1] >= '0' && text[1] <= '7' {
+		if len(text) < 4 || text[1] > '3' || text[2] < '0' || text[2] > '7' || text[3] < '0' || text[3] > '7' {
+			return encoded, 0, 0, false
+		}
+		encoded[0] = (text[1]-'0')<<6 | (text[2]-'0')<<3 | (text[3] - '0')
+		return encoded, 1, 4, true
+	}
+	var escaped rune
+	consumed := 2
+	switch text[1] {
+	case '"', '\\', '\'', '/':
+		escaped = rune(text[1])
+	case 'a':
+		escaped = '\a'
+	case 'b':
+		escaped = '\b'
+	case 'f':
+		escaped = '\f'
+	case 'n':
+		escaped = '\n'
+	case 'r':
+		escaped = '\r'
+	case 't':
+		escaped = '\t'
+	case 'v':
+		escaped = '\v'
+	case 'u', 'U':
+		digits := 4
+		if text[1] == 'U' {
+			digits = 8
+		}
+		if len(text) < 2+digits {
+			return encoded, 0, 0, false
+		}
+		for index := 0; index < digits; index++ {
+			if !isHexDigit(text[2+index]) {
+				return encoded, 0, 0, false
+			}
+			escaped = escaped<<4 | rune(hexDigit(text[2+index]))
+		}
+		consumed += digits
+		if text[1] == 'U' && escaped > utf8.MaxRune || escaped >= 0xD800 && escaped <= 0xDFFF && text[1] == 'U' {
+			return encoded, 0, 0, false
+		}
+		if escaped >= 0xD800 && escaped <= 0xDBFF {
+			if len(text) >= consumed+6 && text[consumed] == '\\' && text[consumed+1] == 'u' {
+				var low rune
+				for index := 0; index < 4; index++ {
+					if !isHexDigit(text[consumed+2+index]) {
+						return encoded, 0, 0, false
+					}
+					low = low<<4 | rune(hexDigit(text[consumed+2+index]))
+				}
+				if low >= 0xDC00 && low <= 0xDFFF {
+					escaped = utf16.DecodeRune(escaped, low)
+					consumed += 6
+				} else {
+					escaped = utf8.RuneError
+				}
+			} else {
+				escaped = utf8.RuneError
+			}
+		} else if escaped >= 0xDC00 && escaped <= 0xDFFF {
+			escaped = utf8.RuneError
+		}
+	default:
+		return encoded, 0, 0, false
+	}
+	encodedSize := utf8.EncodeRune(encoded[:], escaped)
+	return encoded, encodedSize, consumed, true
 }
 
 func credentialDecodedByteMayChange(value byte, allowPercentEncoding, allowUnicodeEncoding bool) bool {
