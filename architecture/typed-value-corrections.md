@@ -34,6 +34,10 @@ Use the workflow that matches what was wrong in the original observation:
    tool atomically supersedes the caller-owned Relationship and records the
    successor's provenance. Relationships with more than 200 effective supports
    have no complete public correction workflow; a truncated set is rejected.
+   The correction is also rejected with `inactive_relationship_collision` when
+   the corrected identity already exists only as superseded, unsupported, or
+   other inactive history; there is no current public operation that atomically
+   revives that destination.
 2. For a fact that has changed in the world, submit a new `remember` request
    with fresh evidence. Do not use `correction_target` to reuse old evidence
    for a new value.
@@ -256,6 +260,14 @@ search documents, and completes the durable submission in one transaction
 (`internal/knowledge/postgres/relationship_correction_helpers.go:653-839`
 and `841-921`).
 
+Before that supersession, the commit resolves the corrected identity. An
+existing active, supported destination can be reused, but a destination owned
+by another profile or present only as an identity alias, inactive status, or
+zero-support history is rejected with `inactive_relationship_collision`
+(`internal/knowledge/postgres/relationship_correction_helpers.go:732-755`).
+This rejection occurs after planning and before the source is changed, so a
+client must not retry it as though it were a transient version conflict.
+
 The correction request hash includes the source ID, expected version, patch,
 support spans, and reason. Matching retries reuse the durable submission;
 changed requests under the same key conflict
@@ -270,6 +282,7 @@ retraction, but not the repository's internal `RetractRelationship` method
 | Situation | Current `remember` behavior | Current `correct_relationship` behavior | Supported recommendation now | Proposed bounded extension (future scope only) |
 | --- | --- | --- | --- | --- |
 | Entity or predicate was extracted incorrectly from the cited evidence | For predicates allowing multiple active Relationships, can store a new assessed Relationship and optionally attach `correction_target`; the target remains in its prior lifecycle state. For `current_cardinality = one`, a matching active sibling follows the stale-version rollback described below, while a semantically related target outside that selector can receive only a lineage link and remain active. | Can replace the caller-owned Relationship, preserve exact effective supports, and atomically supersede the source when the complete set fits the 200-entry input bound and each support has a distinct public tuple. | Use `correct_relationship` with the current source version only when the complete current support set is known and representable. Public reads stop at 100 rows; larger input capacity does not guarantee a complete read-to-correction workflow. | Keep the existing Entity/predicate correction path; no typed-value extension is needed. |
+| Corrected Entity/predicate identity already exists only as inactive or unsupported history | A new Remember proposal does not revive that destination; it can create a separate Relationship subject to normal placement and cardinality rules. | Identity resolution rejects a destination with an inactive status, zero support, identity alias, or wrong owner as `inactive_relationship_collision` before source supersession. | No complete public correction path exists for reviving that destination; do not retry the deterministic rejection as a stale-version conflict. | Define explicit destination-collision semantics before extending correction, with history and ownership tests. |
 | Typed Value was extracted incorrectly for a `current_cardinality = one` predicate whose target is a matching active sibling | Applying the new active Relationship supersedes the target and increments its version before `correction_target` checks the supplied version; the check returns `ErrCorrectionTargetStale`, so the whole Remember transaction rolls back and no correction link commits. A prior observation in the same request can cause the same stale check for a later proposal even when that later proposal's selector would not match the target. | Cannot patch the object Value or unit; a Value object cannot become an Entity. | No complete public atomic correction exists. Treat the stale result as a rolled-back attempt; do not present `correction_target` as replacement or repeat a deterministic in-batch rollback. | Add a typed-Value patch that resolves or creates the canonical Value, reuses exact supports, and supersedes the source atomically. |
 | Typed Value was extracted incorrectly for a `current_cardinality = one` predicate whose target is semantically related but not a matching active sibling | The target is not selected for one-cardinality supersession, so its expected version remains current and `correction_target` can commit only a `corrects` lineage link; the old Relationship remains active. | Cannot patch the object Value or unit; a Value object cannot become an Entity. | No complete public atomic correction exists. Do not present the lineage link as replacement; track a bounded follow-up. | Add a typed-Value patch that resolves or creates the canonical Value, reuses exact supports, and supersedes the source atomically. |
 | Numeric Value or unit was extracted incorrectly for a predicate allowing multiple active Relationships | Accepts a typed Value and can attach a correction cross-reference, but does not supersede the old Relationship. | Cannot patch the object Value or unit; a Value object cannot become an Entity. | No complete public atomic correction exists. Do not present `correction_target` as replacement; track a bounded follow-up. | Add a typed-Value patch that resolves or creates the canonical Value, reuses exact supports, and supersedes the source atomically. |
