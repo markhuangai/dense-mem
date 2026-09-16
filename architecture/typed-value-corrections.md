@@ -273,12 +273,18 @@ search documents, and completes the durable submission in one transaction
 and `841-921`).
 
 Before that supersession, the commit resolves the corrected identity. An
-existing active, supported destination can be reused, but a destination owned
-by another profile or present only as an identity alias, inactive status, or
-zero-support history is rejected with `inactive_relationship_collision`
+existing active, supported destination can be reused only when its memory space
+and `valid_to` match the source. The identity lookup omits those two fields;
+when a caller-owned row matches the identity but either value differs,
+successor upsert rejects the mismatch and the transaction rolls back after
+planning and provider work. A same-team row owned by another profile is outside
+the owner-scoped identity lookup, so the correction creates a caller-owned
+successor without reusing or mutating that row. A destination present only as
+an identity alias, inactive status, or zero-support history in the caller's own
+identity scope is rejected with `inactive_relationship_collision`
 (`internal/knowledge/postgres/relationship_correction_helpers.go:732-755`).
-This rejection occurs after planning and before the source is changed, so a
-client must not retry it as though it were a transient version conflict.
+Clients must not retry any of these deterministic outcomes as though they were
+a transient version conflict.
 
 The correction request hash includes the source ID, expected version, patch,
 support spans, and reason. Matching retries reuse the durable submission;
