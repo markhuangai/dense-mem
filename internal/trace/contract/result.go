@@ -87,7 +87,7 @@ type RelationshipVerificationEvent struct {
 	VerificationEventID string         `json:"verification_event_id,omitempty"`
 	ObservationID       string         `json:"observation_id,omitempty"`
 	OwnerProfileID      string         `json:"owner_profile_id,omitempty"`
-	EvidenceVerdict     string         `json:"evidence_verdict,omitempty"`
+	EvidenceVerdict     *string        `json:"evidence_verdict"`
 	Confidence          *float64       `json:"confidence,omitempty"`
 	Rationale           string         `json:"rationale,omitempty"`
 	Model               string         `json:"model,omitempty"`

@@ -26,6 +26,13 @@ export async function run({ rpc, expect }) {
   const rememberProperties = rememberSchema.properties || {};
   expect(JSON.stringify(rememberProperties.contract_version?.enum) === JSON.stringify(ACCEPTED_CONTRACT_VERSIONS), "Remember schema must advertise current and retained contract versions");
   expect(!Object.hasOwn(rememberProperties, "status_tool") && !Object.hasOwn(rememberProperties, "check_after_seconds"), "current Remember schema must not expose polling fields");
+  const traceSchema = tools.find((tool) => tool.name === "trace_memory")?.outputSchema || {};
+  const traceSuccessSchema = (traceSchema.oneOf || []).find((branch) => branch?.properties?.verification_events);
+  const traceVerificationSchema = traceSuccessSchema?.properties?.verification_events?.items;
+  const traceVerdictSchema = traceVerificationSchema?.properties?.evidence_verdict;
+  expect(traceSuccessSchema && traceVerificationSchema && traceVerificationSchema.required?.includes("evidence_verdict"), "trace schema must require evidence_verdict");
+  expect(JSON.stringify(traceVerdictSchema?.type) === JSON.stringify(["string", "null"]), "trace schema must advertise a nullable verdict type");
+  expect(JSON.stringify(traceVerdictSchema?.enum) === JSON.stringify(["entailed", "contradicted", "insufficient", null]), "trace schema must advertise exactly the supported verdicts and null");
   for (const toolName of ["remember", "recall_memory", "trace_memory", "export_memory_pack"]) {
     const schema = tools.find((tool) => tool.name === toolName)?.outputSchema || {};
     const errorBranch = (schema.oneOf || []).find((branch) => branch?.properties?.reason_code && branch?.properties?.next_action);
@@ -79,8 +86,16 @@ export async function run({ rpc, expect }) {
   const split = source.relationship_results[0].splits[0];
   const traceRaw = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "trace_memory", arguments: { relationship_id: split.relationship_id } });
   const trace = successfulToolResult(traceRaw, expect);
+  const verificationEvents = trace.verification_events || [];
+  expect(verificationEvents.some((event) => Object.hasOwn(event, "evidence_verdict") && event.evidence_verdict === null), "trace must serialize an absent legacy verdict as explicit null");
+  expect(verificationEvents.every((event) => Object.hasOwn(event, "evidence_verdict") && (event.evidence_verdict === null || ["entailed", "contradicted", "insufficient"].includes(event.evidence_verdict))), "trace verdicts must be null or a supported legacy value");
+  assertTextStructuredParity(traceRaw, expect);
   const support = trace.evidence_supports?.[0];
   expect(support?.evidence_id && Number.isInteger(support.span_start) && Number.isInteger(support.span_end), "trace must expose correction support spans");
+  const traceWithoutVerificationRaw = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "trace_memory", arguments: { relationship_id: split.relationship_id, include_verification: false } });
+  const traceWithoutVerification = successfulToolResult(traceWithoutVerificationRaw, expect);
+  expect(Array.isArray(traceWithoutVerification.verification_events) && traceWithoutVerification.verification_events.length === 0, "trace include_verification=false must suppress verification events");
+  assertTextStructuredParity(traceWithoutVerificationRaw, expect);
   const unknownTrace = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "trace_memory", arguments: { relationship_id: randomUUID() } });
   assertReferenceNotFound(unknownTrace, expect, "unknown trace target");
   const ownership = await assertOwnershipIsolation({ runID, source, split, trace, support, expect });

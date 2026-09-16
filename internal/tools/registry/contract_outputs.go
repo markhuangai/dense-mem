@@ -272,10 +272,14 @@ func traceEvidenceLifecycleEventOutputs(records []tracecontract.TraceEvidenceLif
 func traceVerificationOutputs(records []tracecontract.RelationshipVerificationEvent) []map[string]any {
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
+		var evidenceVerdict any
+		if record.EvidenceVerdict != nil {
+			evidenceVerdict = *record.EvidenceVerdict
+		}
 		item := map[string]any{
 			"verification_event_id": record.VerificationEventID,
 			"observation_id":        record.ObservationID,
-			"evidence_verdict":      record.EvidenceVerdict,
+			"evidence_verdict":      evidenceVerdict,
 		}
 		if record.Confidence != nil {
 			item["confidence"] = *record.Confidence

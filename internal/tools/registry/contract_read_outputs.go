@@ -395,10 +395,13 @@ func traceVerificationSchema() map[string]any {
 		map[string]any{
 			"verification_event_id": schemaString("Verification event ID.", 128),
 			"observation_id":        schemaString("Observation ID.", 128),
-			"evidence_verdict":      schemaEnum([]string{"entailed", "contradicted", "insufficient"}),
-			"confidence":            nullableNumber("Verifier confidence.", 0, 1),
-			"rationale":             schemaString("Bounded verifier rationale.", 1000),
-			"created_at":            map[string]any{"type": "string", "format": "date-time"},
+			"evidence_verdict": map[string]any{
+				"type": []any{"string", "null"},
+				"enum": []any{"entailed", "contradicted", "insufficient", nil},
+			},
+			"confidence": nullableNumber("Verifier confidence.", 0, 1),
+			"rationale":  schemaString("Bounded verifier rationale.", 1000),
+			"created_at": map[string]any{"type": "string", "format": "date-time"},
 		},
 	)
 }
