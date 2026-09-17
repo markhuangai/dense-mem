@@ -85,6 +85,29 @@ correct_relationship
        cross-reference, correction event, search documents, receipt
 ```
 
+The current owners and coverage can be located with these stable symbol and
+test anchors (the report intentionally omits file paths and line numbers):
+
+- Registry and contract boundary: `bindRememberTool`, `bindLifecycleTool`,
+  `validateCorrectRelationship`, `contractToolDescription`, and
+  `ToolCorrectRelationship`.
+- Remember assessment and commit: `buildSubmissionAssessmentPlan`,
+  `submissionAssessmentCommitInput`, `appendSemanticCorrectionTarget`, and
+  `selectRelationshipByIdentity`.
+- Lifecycle correction normalization, support projection, and patch resolution:
+  `normalizeCorrectRelationshipInput`, `validateCorrectRelationshipInput`,
+  `loadEffectiveRelationshipCorrectionSupports`,
+  `relationshipCorrectionSupportsEqual`, and
+  `resolveRelationshipCorrectionPatch`.
+- Trace and export limits: `loadTraceSupports`, `defaultTraceEvents`,
+  `maxTraceEvents`, `MaxEvents`, and the memory-pack trace request.
+- Real-logic and PostgreSQL coverage: `TestLifecycleCorrectRelationshipUsesAuthenticatedOwner`,
+  `TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport`,
+  `TestRelationshipCorrectionRejectsStaleVersionAfterPlan`,
+  `TestRelationshipCorrectionPreservesOccurrenceSupport`,
+  `TestRelationshipCorrectionEqualHashUsesOneEmbeddingForBothDocumentStates`,
+  and `TestSemanticOneCardinalitySupersedesPriorActiveRelationship`.
+
 The registry binds `remember` and `correct_relationship` to separate
 application services. Both services derive
 team and owner from the authenticated request context; the request body cannot
