@@ -659,13 +659,19 @@ func credentialMatchAt(text string, variants []credentialVariant) (credentialVar
 }
 
 func credentialMatchAtDetailed(text string, variants []credentialVariant) (credentialVariant, int, bool, bool) {
+	var longest credentialVariant
+	longestConsumed := 0
 	exhausted := false
 	for _, variant := range variants {
 		consumed, ok, variantExhausted := credentialPrefixDetailed(text, variant)
-		if ok {
-			return variant, consumed, true, false
+		if ok && consumed > longestConsumed {
+			longest = variant
+			longestConsumed = consumed
 		}
 		exhausted = exhausted || variantExhausted
+	}
+	if longestConsumed > 0 {
+		return longest, longestConsumed, true, false
 	}
 	return credentialVariant{}, 0, false, exhausted
 }

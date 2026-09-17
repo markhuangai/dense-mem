@@ -107,6 +107,40 @@ func TestCredentialProtectorUsesLongestOverlappingVariant(t *testing.T) {
 	require.Equal(t, "[REDACTED] [REDACTED]", got.Value)
 }
 
+func TestCredentialProtectorUsesLongestEncodedOverlap(t *testing.T) {
+	shorter := "<>"
+	longer := shorter + "\ncd"
+	jsonPrefix, err := json.Marshal(shorter)
+	require.NoError(t, err)
+
+	for _, format := range []struct {
+		name   string
+		prefix string
+	}{
+		{name: "json", prefix: string(jsonPrefix[1 : len(jsonPrefix)-1])},
+		{name: "url", prefix: url.QueryEscape(shorter)},
+	} {
+		for _, source := range []struct {
+			name          string
+			configured    []string
+			authenticated []string
+		}{
+			{name: "configured", configured: []string{shorter, longer}},
+			{name: "authenticated", configured: []string{shorter}, authenticated: []string{longer}},
+		} {
+			t.Run(format.name+"/"+source.name, func(t *testing.T) {
+				input := "before " + format.prefix + longer[len(shorter):] + " after"
+				got := NewCredentialProtector(source.configured...).Snapshot(input, 128, source.authenticated...)
+				require.Empty(t, got.UnavailableReason)
+				require.Equal(t, "before "+CredentialProtectionRedacted+" after", got.Value)
+				encoded, err := json.Marshal(got.Value)
+				require.NoError(t, err)
+				require.Equal(t, `"before [REDACTED] after"`, string(encoded))
+			})
+		}
+	}
+}
+
 func TestCredentialProtectorMatchesMixedCasePercentEscapes(t *testing.T) {
 	got := NewCredentialProtector("/:").Snapshot("postgres://u:%2f%3A@host/db", 256)
 	require.Empty(t, got.UnavailableReason)
