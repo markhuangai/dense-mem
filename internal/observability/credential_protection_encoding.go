@@ -676,10 +676,6 @@ func credentialMatchAtDetailed(text string, variants []credentialVariant) (crede
 	return credentialVariant{}, 0, false, exhausted
 }
 
-func credentialSnapshotContainsGoQuotedVariant(value any, variants []credentialVariant) (bool, bool) {
-	return credentialSnapshotContainsGoQuotedVariantWithBudget(value, variants, nil)
-}
-
 func credentialSnapshotContainsGoQuotedVariantWithBudget(value any, variants []credentialVariant, budget *credentialSnapshotBudget) (bool, bool) {
 	switch typed := value.(type) {
 	case string:
@@ -713,10 +709,6 @@ func credentialSnapshotContainsGoQuotedVariantWithBudget(value any, variants []c
 	return false, false
 }
 
-func credentialSnapshotContainsURLVariant(value any, variants []credentialVariant) bool {
-	return credentialSnapshotContainsURLVariantWithBudget(value, variants, nil)
-}
-
 func credentialSnapshotContainsURLVariantWithBudget(value any, variants []credentialVariant, budget *credentialSnapshotBudget) bool {
 	switch typed := value.(type) {
 	case string:
@@ -740,10 +732,6 @@ func credentialSnapshotContainsURLVariantWithBudget(value any, variants []creden
 	return false
 }
 
-func credentialTextContainsURLSerializedVariant(text string, variants []credentialVariant) bool {
-	return credentialTextContainsURLSerializedVariantWithBudget(text, variants, nil)
-}
-
 func credentialTextContainsURLSerializedVariantWithBudget(text string, variants []credentialVariant, budget *credentialSnapshotBudget) bool {
 	for _, encoded := range []string{url.QueryEscape(text), url.PathEscape(text), userInfoEscape(text)} {
 		if credentialURLTextContainsVariantWithBudget(encoded, variants, budget) {
@@ -753,10 +741,6 @@ func credentialTextContainsURLSerializedVariantWithBudget(text string, variants 
 	return false
 }
 
-func credentialTextContainsComposedVariant(text string, variants []credentialVariant) bool {
-	return credentialTextContainsComposedVariantWithBudget(text, variants, nil)
-}
-
 func credentialTextContainsCompleteGoQuotedVariantWithBudget(text string, variants []credentialVariant, budget *credentialSnapshotBudget) bool {
 	for _, quoted := range []string{strconv.Quote(text), strconv.QuoteToASCII(text)} {
 		if credentialURLTextContainsVariantWithBudget(quoted, variants, budget) {
@@ -764,22 +748,6 @@ func credentialTextContainsCompleteGoQuotedVariantWithBudget(text string, varian
 		}
 	}
 	return false
-}
-
-func credentialTextContainsComposedVariantWithBudget(text string, variants []credentialVariant, budget *credentialSnapshotBudget) bool {
-	for _, quoted := range []string{strconv.Quote(text), strconv.QuoteToASCII(text)} {
-		if credentialURLTextContainsVariantWithBudget(quoted, variants, budget) {
-			return true
-		}
-		if credentialTextContainsURLSerializedVariantWithBudget(quoted, variants, budget) {
-			return true
-		}
-	}
-	return false
-}
-
-func credentialURLTextContainsVariant(text string, variants []credentialVariant) bool {
-	return credentialURLTextContainsVariantWithBudget(text, variants, nil)
 }
 
 func credentialURLTextContainsVariantWithBudget(text string, variants []credentialVariant, budget *credentialSnapshotBudget) bool {

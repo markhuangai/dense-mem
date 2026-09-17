@@ -20,24 +20,29 @@ const (
 	// CredentialProtectionRedacted is the bounded representation of a protected
 	// credential in an otherwise available diagnostic value.
 	CredentialProtectionRedacted = "[REDACTED]"
-
-	CredentialProtectionInvalidBudget         = "invalid_max_bytes"
-	CredentialProtectionBudgetExceeded        = "max_bytes_exceeded"
-	CredentialProtectionDepthExceeded         = "max_depth_exceeded"
-	CredentialProtectionCycleDetected         = "cycle_detected"
-	CredentialProtectionUnsupported           = "unsupported_value"
-	CredentialProtectionInvalidEncoding       = "invalid_encoding"
-	CredentialProtectionFormattingFailed      = "formatting_failed"
-	CredentialProtectionEncodingLimitExceeded = "max_encoding_layers_exceeded"
-	credentialProtectionGenericUnavailable    = "diagnostic_unavailable"
 )
 
-// ProtectedDiagnostic is a detached operator-facing representation. An empty
-// UnavailableReason means Value is available; a non-empty reason means Value is
-// nil and must not be used as a partial or raw fallback.
+// CredentialProtectionUnavailableReason is fixed status metadata, not diagnostic content.
+type CredentialProtectionUnavailableReason uint8
+
+const (
+	CredentialProtectionAvailable CredentialProtectionUnavailableReason = iota
+	CredentialProtectionInvalidBudget
+	CredentialProtectionBudgetExceeded
+	CredentialProtectionDepthExceeded
+	CredentialProtectionCycleDetected
+	CredentialProtectionUnsupported
+	CredentialProtectionInvalidEncoding
+	CredentialProtectionFormattingFailed
+	CredentialProtectionEncodingLimitExceeded
+)
+
+// ProtectedDiagnostic contains a detached Value and a status callers must inspect.
+// A nonzero UnavailableReason means Value is unavailable; any status rendering is
+// separate fixed metadata, omitted from automatic JSON serialization.
 type ProtectedDiagnostic struct {
 	Value             any
-	UnavailableReason string
+	UnavailableReason CredentialProtectionUnavailableReason `json:"-"`
 }
 
 // CredentialProtector protects exact operational credentials supplied by a
@@ -63,7 +68,7 @@ func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSec
 	result = ProtectedDiagnostic{Value: nil}
 	defer func() {
 		if recover() != nil {
-			result = unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
+			result = unavailableDiagnostic(CredentialProtectionFormattingFailed)
 		}
 	}()
 	if p != nil {
@@ -72,10 +77,10 @@ func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSec
 	variants = mergeCredentialVariants(variants, credentialVariants(authenticatedSecrets))
 
 	if maxBytes <= 0 {
-		return unavailableDiagnostic(CredentialProtectionInvalidBudget, variants)
+		return unavailableDiagnostic(CredentialProtectionInvalidBudget)
 	}
 	if credentialMarkerCollides(variants) {
-		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
+		return unavailableDiagnostic(CredentialProtectionFormattingFailed)
 	}
 	budget := &credentialSnapshotBudget{
 		limit:          maxBytes,
@@ -86,91 +91,62 @@ func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSec
 		active:   make(map[credentialSnapshotVisit]struct{}),
 	}
 	snapshot, reason := walker.walk(reflect.ValueOf(value), 0, budget)
-	if reason != "" {
-		return unavailableDiagnostic(reason, variants)
+	if reason != CredentialProtectionAvailable {
+		return unavailableDiagnostic(reason)
 	}
 	if budget.encoded > maxBytes {
-		return unavailableDiagnostic(CredentialProtectionBudgetExceeded, variants)
+		return unavailableDiagnostic(CredentialProtectionBudgetExceeded)
 	}
 	encoded, err := json.Marshal(snapshot)
 	if err != nil {
-		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
+		return unavailableDiagnostic(CredentialProtectionFormattingFailed)
 	}
 	if len(encoded) > maxBytes {
-		return unavailableDiagnostic(CredentialProtectionBudgetExceeded, variants)
+		return unavailableDiagnostic(CredentialProtectionBudgetExceeded)
 	}
 	contains, exhausted := credentialTextContainsVariantDetailedWithBudget(string(encoded), variants, budget)
 	if budget.matchWorkExceeded {
-		return unavailableDiagnostic(CredentialProtectionBudgetExceeded, variants)
+		return unavailableDiagnostic(CredentialProtectionBudgetExceeded)
 	}
 	if exhausted {
-		return unavailableDiagnostic(CredentialProtectionEncodingLimitExceeded, variants)
+		return unavailableDiagnostic(CredentialProtectionEncodingLimitExceeded)
 	}
 	if contains {
-		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
+		return unavailableDiagnostic(CredentialProtectionFormattingFailed)
 	}
 	contains, exhausted = credentialSnapshotContainsGoQuotedVariantWithBudget(snapshot, variants, budget)
 	if budget.matchWorkExceeded {
-		return unavailableDiagnostic(CredentialProtectionBudgetExceeded, variants)
+		return unavailableDiagnostic(CredentialProtectionBudgetExceeded)
 	}
 	if exhausted {
-		return unavailableDiagnostic(CredentialProtectionEncodingLimitExceeded, variants)
+		return unavailableDiagnostic(CredentialProtectionEncodingLimitExceeded)
 	}
 	if contains {
-		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
+		return unavailableDiagnostic(CredentialProtectionFormattingFailed)
 	}
 	if credentialSnapshotContainsURLVariantWithBudget(snapshot, variants, budget) {
-		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
+		return unavailableDiagnostic(CredentialProtectionFormattingFailed)
 	}
 	if budget.matchWorkExceeded {
-		return unavailableDiagnostic(CredentialProtectionBudgetExceeded, variants)
+		return unavailableDiagnostic(CredentialProtectionBudgetExceeded)
 	}
 	if credentialTextContainsURLSerializedVariantWithBudget(string(encoded), variants, budget) {
-		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
+		return unavailableDiagnostic(CredentialProtectionFormattingFailed)
 	}
 	if budget.matchWorkExceeded {
-		return unavailableDiagnostic(CredentialProtectionBudgetExceeded, variants)
+		return unavailableDiagnostic(CredentialProtectionBudgetExceeded)
 	}
 	if credentialTextContainsCompleteGoQuotedVariantWithBudget(string(encoded), variants, budget) {
-		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
+		return unavailableDiagnostic(CredentialProtectionFormattingFailed)
 	}
 	if budget.matchWorkExceeded {
-		return unavailableDiagnostic(CredentialProtectionBudgetExceeded, variants)
+		return unavailableDiagnostic(CredentialProtectionBudgetExceeded)
 	}
 	return ProtectedDiagnostic{Value: snapshot}
 }
 
-func unavailableDiagnostic(reason string, variants []credentialVariant) ProtectedDiagnostic {
-	if reason == "" || !credentialDiagnosticContainsVariant(reason, variants) {
-		return ProtectedDiagnostic{UnavailableReason: reason}
-	}
-	if !credentialDiagnosticContainsVariant(credentialProtectionGenericUnavailable, variants) {
-		return ProtectedDiagnostic{UnavailableReason: credentialProtectionGenericUnavailable}
-	}
-	for candidate := rune(0xE000); candidate <= utf8.MaxRune; candidate++ {
-		if candidate >= 0xD800 && candidate <= 0xDFFF {
-			continue
-		}
-		text := string(candidate)
-		if !credentialDiagnosticContainsVariant(text, variants) {
-			return ProtectedDiagnostic{UnavailableReason: text}
-		}
-	}
-	return ProtectedDiagnostic{UnavailableReason: credentialProtectionGenericUnavailable}
-}
-
-func credentialDiagnosticContainsVariant(text string, variants []credentialVariant) bool {
-	if credentialTextContainsVariant(text, variants) {
-		return true
-	}
-	contains, exhausted := credentialSnapshotContainsGoQuotedVariant(text, variants)
-	if contains || exhausted {
-		return true
-	}
-	if credentialSnapshotContainsURLVariant(text, variants) {
-		return true
-	}
-	return credentialTextContainsComposedVariant(text, variants)
+func unavailableDiagnostic(reason CredentialProtectionUnavailableReason) ProtectedDiagnostic {
+	return ProtectedDiagnostic{UnavailableReason: reason}
 }
 
 type credentialSnapshotVisit struct {
@@ -230,12 +206,12 @@ func (b *credentialSnapshotBudget) reserveMatchWork(size int) bool {
 
 var errorType = reflect.TypeOf((*error)(nil)).Elem()
 
-func (w *credentialSnapshotWalker) walk(value reflect.Value, depth int, budget *credentialSnapshotBudget) (any, string) {
+func (w *credentialSnapshotWalker) walk(value reflect.Value, depth int, budget *credentialSnapshotBudget) (any, CredentialProtectionUnavailableReason) {
 	if !value.IsValid() {
 		if !budget.reserveEncoded(len("null")) {
 			return nil, CredentialProtectionBudgetExceeded
 		}
-		return nil, ""
+		return nil, CredentialProtectionAvailable
 	}
 	if depth > MaxCredentialProtectionDepth {
 		return nil, CredentialProtectionDepthExceeded
@@ -244,7 +220,7 @@ func (w *credentialSnapshotWalker) walk(value reflect.Value, depth int, budget *
 		if !budget.reserveEncoded(len("null")) {
 			return nil, CredentialProtectionBudgetExceeded
 		}
-		return nil, ""
+		return nil, CredentialProtectionAvailable
 	}
 	if value.Kind() == reflect.Interface {
 		return w.walk(value.Elem(), depth, budget)
@@ -265,7 +241,7 @@ func (w *credentialSnapshotWalker) walk(value reflect.Value, depth int, budget *
 			return nil, CredentialProtectionBudgetExceeded
 		}
 		protected, reason := w.protectText(number, budget, true)
-		if reason != "" {
+		if reason != CredentialProtectionAvailable {
 			return nil, reason
 		}
 		if protected != number {
@@ -273,12 +249,12 @@ func (w *credentialSnapshotWalker) walk(value reflect.Value, depth int, budget *
 			if !ok || !budget.reserveEncoded(encodedLength) {
 				return nil, CredentialProtectionBudgetExceeded
 			}
-			return protected, ""
+			return protected, CredentialProtectionAvailable
 		}
 		if !budget.reserveEncoded(len(number)) {
 			return nil, CredentialProtectionBudgetExceeded
 		}
-		return json.Number(number), ""
+		return json.Number(number), CredentialProtectionAvailable
 	}
 
 	switch value.Kind() {
@@ -286,17 +262,17 @@ func (w *credentialSnapshotWalker) walk(value reflect.Value, depth int, budget *
 		if !budget.reserveEncoded(len(strconv.FormatBool(value.Bool()))) {
 			return nil, CredentialProtectionBudgetExceeded
 		}
-		return value.Bool(), ""
+		return value.Bool(), CredentialProtectionAvailable
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		if !budget.reserveEncoded(len(strconv.FormatInt(value.Int(), 10))) {
 			return nil, CredentialProtectionBudgetExceeded
 		}
-		return value.Int(), ""
+		return value.Int(), CredentialProtectionAvailable
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		if !budget.reserveEncoded(len(strconv.FormatUint(value.Uint(), 10))) {
 			return nil, CredentialProtectionBudgetExceeded
 		}
-		return value.Uint(), ""
+		return value.Uint(), CredentialProtectionAvailable
 	case reflect.Float32, reflect.Float64:
 		floatValue := value.Float()
 		if math.IsNaN(floatValue) || math.IsInf(floatValue, 0) {
@@ -310,7 +286,7 @@ func (w *credentialSnapshotWalker) walk(value reflect.Value, depth int, budget *
 		if err != nil || !budget.reserveEncoded(len(encoded)) {
 			return nil, CredentialProtectionBudgetExceeded
 		}
-		return snapshotValue, ""
+		return snapshotValue, CredentialProtectionAvailable
 	case reflect.String:
 		return w.walkString(value.String(), budget)
 	case reflect.Map:
@@ -329,19 +305,19 @@ func (w *credentialSnapshotWalker) walk(value reflect.Value, depth int, budget *
 	}
 }
 
-func (w *credentialSnapshotWalker) walkString(text string, budget *credentialSnapshotBudget) (any, string) {
+func (w *credentialSnapshotWalker) walkString(text string, budget *credentialSnapshotBudget) (any, CredentialProtectionUnavailableReason) {
 	protected, reason := w.protectText(text, budget, false)
-	if reason != "" {
+	if reason != CredentialProtectionAvailable {
 		return nil, reason
 	}
 	encodedLength, ok := jsonEncodedStringLen(protected)
 	if !ok || !budget.reserveEncoded(encodedLength) {
 		return nil, CredentialProtectionBudgetExceeded
 	}
-	return protected, ""
+	return protected, CredentialProtectionAvailable
 }
 
-func (w *credentialSnapshotWalker) protectText(text string, budget *credentialSnapshotBudget, alreadyProcessed bool) (string, string) {
+func (w *credentialSnapshotWalker) protectText(text string, budget *credentialSnapshotBudget, alreadyProcessed bool) (string, CredentialProtectionUnavailableReason) {
 	if !alreadyProcessed && !w.processingCharged && !budget.process(len(text)) {
 		return "", CredentialProtectionBudgetExceeded
 	}
@@ -350,7 +326,7 @@ func (w *credentialSnapshotWalker) protectText(text string, budget *credentialSn
 	}
 	protected, ok, reason := redactCredentialTextBounded(text, w.variants, budget.remainingEncoded(), budget)
 	if !ok {
-		if reason == "" {
+		if reason == CredentialProtectionAvailable {
 			reason = CredentialProtectionBudgetExceeded
 		}
 		return "", reason
@@ -365,14 +341,14 @@ func (w *credentialSnapshotWalker) protectText(text string, budget *credentialSn
 	if contains {
 		return "", CredentialProtectionFormattingFailed
 	}
-	return protected, ""
+	return protected, CredentialProtectionAvailable
 }
 
-func (w *credentialSnapshotWalker) walkMap(value reflect.Value, depth int, budget *credentialSnapshotBudget) (any, string) {
+func (w *credentialSnapshotWalker) walkMap(value reflect.Value, depth int, budget *credentialSnapshotBudget) (any, CredentialProtectionUnavailableReason) {
 	if value.Type().Key().Kind() != reflect.String {
 		return nil, CredentialProtectionUnsupported
 	}
-	if reason := w.enter(value); reason != "" {
+	if reason := w.enter(value); reason != CredentialProtectionAvailable {
 		return nil, reason
 	}
 	defer w.leave(value)
@@ -389,7 +365,7 @@ func (w *credentialSnapshotWalker) walkMap(value reflect.Value, depth int, budge
 			return nil, CredentialProtectionBudgetExceeded
 		}
 		key, reason := w.protectText(rawKey, budget, true)
-		if reason != "" {
+		if reason != CredentialProtectionAvailable {
 			return nil, reason
 		}
 		encodedKeyLength, ok := jsonEncodedStringLen(key)
@@ -406,7 +382,7 @@ func (w *credentialSnapshotWalker) walkMap(value reflect.Value, depth int, budge
 			return nil, CredentialProtectionFormattingFailed
 		}
 		child, reason := w.walk(iterator.Value(), depth+1, budget)
-		if reason != "" {
+		if reason != CredentialProtectionAvailable {
 			return nil, reason
 		}
 		result[key] = child
@@ -415,14 +391,14 @@ func (w *credentialSnapshotWalker) walkMap(value reflect.Value, depth int, budge
 	if !budget.reserveEncoded(1) {
 		return nil, CredentialProtectionBudgetExceeded
 	}
-	return result, ""
+	return result, CredentialProtectionAvailable
 }
 
-func (w *credentialSnapshotWalker) walkSlice(value reflect.Value, depth int, budget *credentialSnapshotBudget) (any, string) {
+func (w *credentialSnapshotWalker) walkSlice(value reflect.Value, depth int, budget *credentialSnapshotBudget) (any, CredentialProtectionUnavailableReason) {
 	if value.Type().Elem().Kind() == reflect.Uint8 {
 		return w.walkBytes(value, depth, budget)
 	}
-	if reason := w.enter(value); reason != "" {
+	if reason := w.enter(value); reason != CredentialProtectionAvailable {
 		return nil, reason
 	}
 	defer w.leave(value)
@@ -436,7 +412,7 @@ func (w *credentialSnapshotWalker) walkSlice(value reflect.Value, depth int, bud
 			return nil, CredentialProtectionBudgetExceeded
 		}
 		child, reason := w.walk(value.Index(index), depth+1, budget)
-		if reason != "" {
+		if reason != CredentialProtectionAvailable {
 			return nil, reason
 		}
 		result = append(result, child)
@@ -444,10 +420,10 @@ func (w *credentialSnapshotWalker) walkSlice(value reflect.Value, depth int, bud
 	if !budget.reserveEncoded(1) {
 		return nil, CredentialProtectionBudgetExceeded
 	}
-	return result, ""
+	return result, CredentialProtectionAvailable
 }
 
-func (w *credentialSnapshotWalker) walkArray(value reflect.Value, depth int, budget *credentialSnapshotBudget) (any, string) {
+func (w *credentialSnapshotWalker) walkArray(value reflect.Value, depth int, budget *credentialSnapshotBudget) (any, CredentialProtectionUnavailableReason) {
 	if !budget.reserveEncoded(1) {
 		return nil, CredentialProtectionBudgetExceeded
 	}
@@ -457,7 +433,7 @@ func (w *credentialSnapshotWalker) walkArray(value reflect.Value, depth int, bud
 			return nil, CredentialProtectionBudgetExceeded
 		}
 		child, reason := w.walk(value.Index(index), depth+1, budget)
-		if reason != "" {
+		if reason != CredentialProtectionAvailable {
 			return nil, reason
 		}
 		result = append(result, child)
@@ -465,18 +441,18 @@ func (w *credentialSnapshotWalker) walkArray(value reflect.Value, depth int, bud
 	if !budget.reserveEncoded(1) {
 		return nil, CredentialProtectionBudgetExceeded
 	}
-	return result, ""
+	return result, CredentialProtectionAvailable
 }
 
-func (w *credentialSnapshotWalker) walkPointer(value reflect.Value, depth int, budget *credentialSnapshotBudget) (any, string) {
-	if reason := w.enter(value); reason != "" {
+func (w *credentialSnapshotWalker) walkPointer(value reflect.Value, depth int, budget *credentialSnapshotBudget) (any, CredentialProtectionUnavailableReason) {
+	if reason := w.enter(value); reason != CredentialProtectionAvailable {
 		return nil, reason
 	}
 	defer w.leave(value)
 	return w.walk(value.Elem(), depth+1, budget)
 }
 
-func (w *credentialSnapshotWalker) walkBytes(value reflect.Value, depth int, budget *credentialSnapshotBudget) (any, string) {
+func (w *credentialSnapshotWalker) walkBytes(value reflect.Value, depth int, budget *credentialSnapshotBudget) (any, CredentialProtectionUnavailableReason) {
 	if !budget.process(value.Len()) {
 		return nil, CredentialProtectionBudgetExceeded
 	}
@@ -504,26 +480,26 @@ func (w *credentialSnapshotWalker) walkBytes(value reflect.Value, depth int, bud
 		return w.walk(reflect.ValueOf(decoded), depth, budget)
 	}
 	protected, reason := w.protectText(text, budget, true)
-	if reason != "" {
+	if reason != CredentialProtectionAvailable {
 		return nil, reason
 	}
 	encodedLength, ok := jsonEncodedStringLen(protected)
 	if !ok || !budget.reserveEncoded(encodedLength) {
 		return nil, CredentialProtectionBudgetExceeded
 	}
-	return protected, ""
+	return protected, CredentialProtectionAvailable
 }
 
-func (w *credentialSnapshotWalker) enter(value reflect.Value) string {
+func (w *credentialSnapshotWalker) enter(value reflect.Value) CredentialProtectionUnavailableReason {
 	visit := snapshotVisitFor(value)
 	if visit.ptr == 0 {
-		return ""
+		return CredentialProtectionAvailable
 	}
 	if _, exists := w.active[visit]; exists {
 		return CredentialProtectionCycleDetected
 	}
 	w.active[visit] = struct{}{}
-	return ""
+	return CredentialProtectionAvailable
 }
 
 func (w *credentialSnapshotWalker) leave(value reflect.Value) {
@@ -735,7 +711,7 @@ func jsonEncodedStringLen(text string) (int, bool) {
 	return length, true
 }
 
-func redactCredentialTextBounded(text string, variants []credentialVariant, maxOutput int, budget *credentialSnapshotBudget) (string, bool, string) {
+func redactCredentialTextBounded(text string, variants []credentialVariant, maxOutput int, budget *credentialSnapshotBudget) (string, bool, CredentialProtectionUnavailableReason) {
 	if maxOutput < 0 {
 		return "", false, CredentialProtectionBudgetExceeded
 	}
@@ -743,7 +719,7 @@ func redactCredentialTextBounded(text string, variants []credentialVariant, maxO
 		if len(text) > maxOutput {
 			return "", false, CredentialProtectionBudgetExceeded
 		}
-		return text, true, ""
+		return text, true, CredentialProtectionAvailable
 	}
 
 	type credentialTextMatch struct {
@@ -780,7 +756,7 @@ func redactCredentialTextBounded(text string, variants []credentialVariant, maxO
 		outputLength += increment
 	}
 	if len(matches) == 0 {
-		return text, true, ""
+		return text, true, CredentialProtectionAvailable
 	}
 
 	output := make([]byte, outputLength)
@@ -792,7 +768,7 @@ func redactCredentialTextBounded(text string, variants []credentialVariant, maxO
 		textIndex = match.end
 	}
 	copy(output[outputIndex:], text[textIndex:])
-	return string(output), true, ""
+	return string(output), true, CredentialProtectionAvailable
 }
 
 func credentialPrefix(text string, variant credentialVariant) (int, bool) {

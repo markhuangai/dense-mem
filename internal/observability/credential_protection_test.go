@@ -586,14 +586,25 @@ func TestCredentialProtectorRejectsURLSerializedCredential(t *testing.T) {
 	require.Nil(t, got.Value)
 }
 
-func TestCredentialProtectorProtectsURLSerializedUnavailableReason(t *testing.T) {
-	got := NewCredentialProtector("_", "%EE%80%80").Snapshot("safe", 0)
-	require.NotEmpty(t, got.UnavailableReason)
-	require.NotEqual(t, string(rune(0xE000)), got.UnavailableReason)
-	require.NotEqual(t, "%EE%80%80", url.QueryEscape(got.UnavailableReason))
-
-	got = NewCredentialProtector(`%22invalid_max_bytes%22`).Snapshot("safe", 0)
-	require.Equal(t, credentialProtectionGenericUnavailable, got.UnavailableReason)
+func TestCredentialProtectorKeepsUnavailableStatusIndependentOfSecrets(t *testing.T) {
+	tests := []struct {
+		name          string
+		configured    []string
+		authenticated []string
+	}{
+		{name: "exhausted string fallback", configured: []string{"%22", "diagnostic_unavailable"}},
+		{name: "configured reason", configured: []string{"invalid_max_bytes", "_", "%EE%80%80", `\ue000`}},
+		{name: "authenticated reason", authenticated: []string{"%22", "diagnostic_unavailable", "invalid_max_bytes"}},
+		{name: "serialized reason", configured: []string{`%22invalid_max_bytes%22`}},
+		{name: "status digits", configured: []string{"0", "1", "2", "3", "4", "5", "6", "7", "8"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := NewCredentialProtector(test.configured...).Snapshot("safe", 0, test.authenticated...)
+			require.Equal(t, CredentialProtectionInvalidBudget, got.UnavailableReason)
+			require.Nil(t, got.Value)
+		})
+	}
 }
 
 func TestCredentialProtectorLeavesTruncatedEncodedCredentialsUntouched(t *testing.T) {
@@ -641,7 +652,7 @@ func TestCredentialProtectorRejectsUnsafeValuesWithoutRawFallback(t *testing.T) 
 		name   string
 		value  any
 		budget int
-		reason string
+		reason CredentialProtectionUnavailableReason
 	}{
 		{name: "invalid budget", value: "safe", budget: 0, reason: CredentialProtectionInvalidBudget},
 		{name: "budget exceeded", value: strings.Repeat("界", 10), budget: 3, reason: CredentialProtectionBudgetExceeded},
@@ -838,17 +849,15 @@ func TestCredentialProtectorConvertsFormattingPanicsToBoundedFailure(t *testing.
 	require.Nil(t, got.Value)
 
 	got = NewCredentialProtector("formatting_failed").Snapshot(panicDiagnosticError{}, 256)
-	require.Equal(t, credentialProtectionGenericUnavailable, got.UnavailableReason)
-	require.Nil(t, got.Value)
-
-	got = NewCredentialProtector("_").Snapshot("safe", 0)
-	require.Equal(t, string(rune(0xE000)), got.UnavailableReason)
+	require.Equal(t, CredentialProtectionFormattingFailed, got.UnavailableReason)
 	require.Nil(t, got.Value)
 }
 
-func TestCredentialProtectorProtectsUnavailableReasonSerialization(t *testing.T) {
-	got := NewCredentialProtector("_", `\ue000`).Snapshot("safe", 0)
-	require.NotEmpty(t, got.UnavailableReason)
+func TestCredentialProtectorOmitsUnavailableMetadataFromJSON(t *testing.T) {
+	got := NewCredentialProtector("%22", "diagnostic_unavailable").Snapshot("safe", 0)
+	require.Equal(t, CredentialProtectionInvalidBudget, got.UnavailableReason)
 	require.Nil(t, got.Value)
-	require.NotContains(t, strconv.QuoteToASCII(got.UnavailableReason), `\ue000`)
+	encoded, err := json.Marshal(got)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"Value":null}`, string(encoded))
 }
