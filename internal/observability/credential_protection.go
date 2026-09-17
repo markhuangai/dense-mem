@@ -140,7 +140,10 @@ func credentialDiagnosticContainsVariant(text string, variants []credentialVaria
 		return true
 	}
 	contains, exhausted := credentialSnapshotContainsGoQuotedVariant(text, variants)
-	return contains || exhausted
+	if contains || exhausted {
+		return true
+	}
+	return credentialSnapshotContainsURLVariant(text, variants)
 }
 
 type credentialSnapshotVisit struct {
@@ -883,7 +886,7 @@ func credentialSnapshotContainsURLVariant(value any, variants []credentialVarian
 	switch typed := value.(type) {
 	case string:
 		for _, encoded := range []string{url.QueryEscape(typed), url.PathEscape(typed), userInfoEscape(typed)} {
-			if credentialTextContainsVariant(encoded, variants) {
+			if credentialURLTextContainsVariant(encoded, variants) {
 				return true
 			}
 		}
@@ -902,6 +905,21 @@ func credentialSnapshotContainsURLVariant(value any, variants []credentialVarian
 				return true
 			}
 		}
+	}
+	return false
+}
+
+func credentialURLTextContainsVariant(text string, variants []credentialVariant) bool {
+	for index := 0; index < len(text); {
+		_, _, contains, _ := credentialMatchAtDetailed(text[index:], variants)
+		if contains {
+			return true
+		}
+		_, size := utf8.DecodeRuneInString(text[index:])
+		if size == 0 {
+			return false
+		}
+		index += size
 	}
 	return false
 }

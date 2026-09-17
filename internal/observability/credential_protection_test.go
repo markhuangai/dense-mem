@@ -248,6 +248,15 @@ func TestCredentialProtectorBoundsLongEncodedCandidates(t *testing.T) {
 	require.Equal(t, input, got.Value)
 }
 
+func TestCredentialProtectorRejectsDefiniteTruncatedMismatch(t *testing.T) {
+	secret := strings.Repeat("a", credentialLiteralCandidateLimit+1) + "b"
+	input := strings.Repeat(`\u0061`, 1000)
+
+	got := NewCredentialProtector(secret).Snapshot(input, len(input)*2+2)
+	require.Empty(t, got.UnavailableReason)
+	require.Equal(t, input, got.Value)
+}
+
 func encodeCredentialTestUnicodeLayer(text string) string {
 	var builder strings.Builder
 	builder.Grow(len(text) * 6)
@@ -511,6 +520,17 @@ func TestCredentialProtectorRejectsURLSerializedCredential(t *testing.T) {
 	got := NewCredentialProtector("%2F").Snapshot("/", 256)
 	require.Equal(t, CredentialProtectionFormattingFailed, got.UnavailableReason)
 	require.Nil(t, got.Value)
+
+	got = NewCredentialProtector("%2F").Snapshot("%25252578/", 1024)
+	require.NotEmpty(t, got.UnavailableReason)
+	require.Nil(t, got.Value)
+}
+
+func TestCredentialProtectorProtectsURLSerializedUnavailableReason(t *testing.T) {
+	got := NewCredentialProtector("_", "%EE%80%80").Snapshot("safe", 0)
+	require.NotEmpty(t, got.UnavailableReason)
+	require.NotEqual(t, string(rune(0xE000)), got.UnavailableReason)
+	require.NotEqual(t, "%EE%80%80", url.QueryEscape(got.UnavailableReason))
 }
 
 func TestCredentialProtectorLeavesTruncatedEncodedCredentialsUntouched(t *testing.T) {

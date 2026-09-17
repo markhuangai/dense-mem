@@ -320,6 +320,7 @@ func credentialDecodedLiteralCandidateOrder(text, variant string, limit int, all
 		roundChanged := false
 		before := current
 		if percentFirst && allowPercentEncoding {
+			previousStatus := status
 			current = decodeCredentialCandidatePercent(current)
 			roundChanged = roundChanged || !credentialCandidateBuffersEqual(before, current)
 			status = credentialCandidatePrefixStatusFor(current, variant, limit, allowPercentEncoding, allowUnicodeEncoding)
@@ -328,6 +329,9 @@ func credentialDecodedLiteralCandidateOrder(text, variant string, limit int, all
 			}
 			if status == credentialCandidateNoMatch && !allowUnicodeEncoding {
 				return false
+			}
+			if status == credentialCandidateNoMatch && current.truncated && previousStatus == credentialCandidateMayChange && !credentialCandidateBuffersEqual(before, current) {
+				return true
 			}
 		}
 		if allowUnicodeEncoding {
@@ -344,6 +348,7 @@ func credentialDecodedLiteralCandidateOrder(text, variant string, limit int, all
 		}
 		if !percentFirst && allowPercentEncoding {
 			before = current
+			previousStatus := status
 			current = decodeCredentialCandidatePercent(current)
 			roundChanged = roundChanged || !credentialCandidateBuffersEqual(before, current)
 			status = credentialCandidatePrefixStatusFor(current, variant, limit, allowPercentEncoding, allowUnicodeEncoding)
@@ -353,12 +358,15 @@ func credentialDecodedLiteralCandidateOrder(text, variant string, limit int, all
 			if status == credentialCandidateNoMatch && !current.truncated {
 				return false
 			}
+			if status == credentialCandidateNoMatch && current.truncated && previousStatus == credentialCandidateMayChange && !credentialCandidateBuffersEqual(before, current) {
+				return true
+			}
 		}
 		if !roundChanged && !current.truncated {
 			return false
 		}
 		if layer == maxCredentialDecodeLayers-1 {
-			return roundChanged || current.truncated
+			return status != credentialCandidateNoMatch && (roundChanged || current.truncated)
 		}
 	}
 	return current.truncated
