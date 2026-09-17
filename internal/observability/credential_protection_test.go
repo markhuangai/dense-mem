@@ -248,6 +248,15 @@ func TestCredentialProtectorBoundsLongEncodedCandidates(t *testing.T) {
 	require.Equal(t, input, got.Value)
 }
 
+func TestCredentialProtectorBoundsStreamingMatchWork(t *testing.T) {
+	secret := strings.Repeat("a", 3000) + "b"
+	input := strings.Repeat("%61", 3000)
+
+	got := NewCredentialProtector(secret).Snapshot(input, len(input)*2)
+	require.Equal(t, CredentialProtectionBudgetExceeded, got.UnavailableReason)
+	require.Nil(t, got.Value)
+}
+
 func TestCredentialProtectorRejectsDefiniteTruncatedMismatch(t *testing.T) {
 	secret := strings.Repeat("a", credentialLiteralCandidateLimit+1) + "b"
 	input := strings.Repeat(`\u0061`, 1000)
@@ -523,6 +532,10 @@ func TestCredentialProtectorRejectsURLSerializedCredential(t *testing.T) {
 
 	got = NewCredentialProtector("%2F").Snapshot("%25252578/", 1024)
 	require.NotEmpty(t, got.UnavailableReason)
+	require.Nil(t, got.Value)
+
+	got = NewCredentialProtector(`a%22%3A%22b`).Snapshot(map[string]any{"a": "b"}, 256)
+	require.Equal(t, CredentialProtectionFormattingFailed, got.UnavailableReason)
 	require.Nil(t, got.Value)
 }
 

@@ -288,6 +288,36 @@ func credentialDecodedLiteralCandidate(text, variant string, allowPercentEncodin
 
 const credentialCandidateBufferLimit = credentialLiteralCandidateLimit * 10
 
+func credentialMatchWorkLimit(maxBytes int) int {
+	const workPerByte = credentialLiteralCandidateLimit * 4
+	maxInt := int(^uint(0) >> 1)
+	if maxBytes > maxInt/workPerByte {
+		return maxInt
+	}
+	return maxBytes * workPerByte
+}
+
+func credentialMatchWorkEstimate(text string, variants []credentialVariant) int {
+	work := 0
+	maxInt := int(^uint(0) >> 1)
+	for _, variant := range variants {
+		if !variant.allowPercentEncoding && !variant.allowUnicodeEncoding {
+			continue
+		}
+		if !credentialLiteralCandidate(text, variant.text) {
+			continue
+		}
+		if !credentialDecodedLiteralCandidate(text, variant.text, variant.allowPercentEncoding, variant.allowUnicodeEncoding) {
+			continue
+		}
+		if len(variant.text) > maxInt-work {
+			return maxInt
+		}
+		work += len(variant.text)
+	}
+	return work
+}
+
 type credentialCandidateBuffer struct {
 	bytes     [credentialCandidateBufferLimit]byte
 	length    int

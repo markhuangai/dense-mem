@@ -77,7 +77,10 @@ func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSec
 	if credentialMarkerCollides(variants) {
 		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
 	}
-	budget := &credentialSnapshotBudget{limit: maxBytes}
+	budget := &credentialSnapshotBudget{
+		limit:          maxBytes,
+		matchWorkLimit: credentialMatchWorkLimit(maxBytes),
+	}
 	walker := credentialSnapshotWalker{
 		variants: variants,
 		active:   make(map[credentialSnapshotVisit]struct{}),
@@ -111,6 +114,9 @@ func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSec
 		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
 	}
 	if credentialSnapshotContainsURLVariant(snapshot, variants) {
+		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
+	}
+	if credentialTextContainsURLSerializedVariant(string(encoded), variants) {
 		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
 	}
 	return ProtectedDiagnostic{Value: snapshot}
@@ -161,9 +167,11 @@ type credentialSnapshotWalker struct {
 }
 
 type credentialSnapshotBudget struct {
-	limit     int
-	processed int
-	encoded   int
+	limit          int
+	processed      int
+	encoded        int
+	matchWork      int
+	matchWorkLimit int
 }
 
 func (b *credentialSnapshotBudget) process(size int) bool {
@@ -187,6 +195,14 @@ func (b *credentialSnapshotBudget) remainingEncoded() int {
 		return 0
 	}
 	return b.limit - b.encoded
+}
+
+func (b *credentialSnapshotBudget) reserveMatchWork(size int) bool {
+	if size < 0 || b.matchWork > b.matchWorkLimit || size > b.matchWorkLimit-b.matchWork {
+		return false
+	}
+	b.matchWork += size
+	return true
 }
 
 var errorType = reflect.TypeOf((*error)(nil)).Elem()
@@ -309,7 +325,7 @@ func (w *credentialSnapshotWalker) protectText(text string, budget *credentialSn
 	if !utf8.ValidString(text) {
 		return "", CredentialProtectionInvalidEncoding
 	}
-	protected, ok, reason := redactCredentialTextBounded(text, w.variants, budget.remainingEncoded())
+	protected, ok, reason := redactCredentialTextBounded(text, w.variants, budget.remainingEncoded(), budget)
 	if !ok {
 		if reason == "" {
 			reason = CredentialProtectionBudgetExceeded
@@ -693,7 +709,7 @@ func jsonEncodedStringLen(text string) (int, bool) {
 	return length, true
 }
 
-func redactCredentialTextBounded(text string, variants []credentialVariant, maxOutput int) (string, bool, string) {
+func redactCredentialTextBounded(text string, variants []credentialVariant, maxOutput int, budget *credentialSnapshotBudget) (string, bool, string) {
 	if maxOutput < 0 {
 		return "", false, CredentialProtectionBudgetExceeded
 	}
@@ -712,6 +728,9 @@ func redactCredentialTextBounded(text string, variants []credentialVariant, maxO
 	outputLength := 0
 	matches := make([]credentialTextMatch, 0)
 	for index := 0; index < len(text); {
+		if budget != nil && !budget.reserveMatchWork(credentialMatchWorkEstimate(text[index:], variants)) {
+			return "", false, CredentialProtectionBudgetExceeded
+		}
 		_, consumed, ok, exhausted := credentialMatchAtDetailed(text[index:], variants)
 		if exhausted {
 			return "", false, CredentialProtectionEncodingLimitExceeded
@@ -885,11 +904,7 @@ func credentialSnapshotContainsGoQuotedVariant(value any, variants []credentialV
 func credentialSnapshotContainsURLVariant(value any, variants []credentialVariant) bool {
 	switch typed := value.(type) {
 	case string:
-		for _, encoded := range []string{url.QueryEscape(typed), url.PathEscape(typed), userInfoEscape(typed)} {
-			if credentialURLTextContainsVariant(encoded, variants) {
-				return true
-			}
-		}
+		return credentialTextContainsURLSerializedVariant(typed, variants)
 	case map[string]any:
 		for key, child := range typed {
 			if credentialSnapshotContainsURLVariant(key, variants) {
@@ -904,6 +919,15 @@ func credentialSnapshotContainsURLVariant(value any, variants []credentialVarian
 			if credentialSnapshotContainsURLVariant(child, variants) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func credentialTextContainsURLSerializedVariant(text string, variants []credentialVariant) bool {
+	for _, encoded := range []string{url.QueryEscape(text), url.PathEscape(text), userInfoEscape(text)} {
+		if credentialURLTextContainsVariant(encoded, variants) {
+			return true
 		}
 	}
 	return false
