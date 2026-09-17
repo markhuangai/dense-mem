@@ -258,11 +258,15 @@ func (w *credentialSnapshotWalker) walk(value reflect.Value, depth int, budget *
 		if math.IsNaN(floatValue) || math.IsInf(floatValue, 0) {
 			return nil, CredentialProtectionFormattingFailed
 		}
-		encoded, err := json.Marshal(floatValue)
+		var snapshotValue any = floatValue
+		if value.Kind() == reflect.Float32 {
+			snapshotValue = float32(floatValue)
+		}
+		encoded, err := json.Marshal(snapshotValue)
 		if err != nil || !budget.reserveEncoded(len(encoded)) {
 			return nil, CredentialProtectionBudgetExceeded
 		}
-		return floatValue, ""
+		return snapshotValue, ""
 	case reflect.String:
 		return w.walkString(value.String(), budget)
 	case reflect.Map:

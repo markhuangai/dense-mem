@@ -216,9 +216,11 @@ func credentialDecodedLiteralCandidateOrder(text, variant string, limit int, all
 }
 
 func credentialCandidatePrefixStatusFor(candidate credentialCandidateBuffer, variant string, limit int, allowPercentEncoding, allowUnicodeEncoding bool) credentialCandidatePrefixStatus {
+	prefixMayChange := false
 	for index := 0; index < candidate.length && index < limit; index++ {
+		prefixMayChange = prefixMayChange || credentialDecodedByteMayChange(candidate.bytes[index], allowPercentEncoding, allowUnicodeEncoding)
 		if candidate.bytes[index] != variant[index] {
-			if credentialDecodedByteMayChange(candidate.bytes[index], allowPercentEncoding, allowUnicodeEncoding) {
+			if prefixMayChange {
 				return credentialCandidateMayChange
 			}
 			return credentialCandidateNoMatch

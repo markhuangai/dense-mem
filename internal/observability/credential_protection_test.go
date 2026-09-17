@@ -163,6 +163,10 @@ func TestCredentialProtectorMatchesNestedEncodingForPercentPrefixedCredential(t 
 	got := NewCredentialProtector(secret).Snapshot(input, 1024)
 	require.Empty(t, got.UnavailableReason)
 	require.Equal(t, CredentialProtectionRedacted, got.Value)
+
+	got = NewCredentialProtector("%secret").Snapshot("%2525secret", 1000)
+	require.Empty(t, got.UnavailableReason)
+	require.Equal(t, CredentialProtectionRedacted, got.Value)
 }
 
 func TestCredentialProtectorMatchesRepeatedEncodingLayers(t *testing.T) {
@@ -596,6 +600,17 @@ func TestCredentialProtectorSnapshotsScalarAndNilValues(t *testing.T) {
 	encoded, err := json.Marshal(got.Value)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"bool":true,"float":1.5,"int":-3,"nil_map":null,"nil_ptr":null,"number":9007199254740993,"uint":4}`, string(encoded))
+}
+
+func TestCredentialProtectorPreservesFloat32Precision(t *testing.T) {
+	got := NewCredentialProtector("secret").Snapshot(float32(1.2), 3)
+	require.Empty(t, got.UnavailableReason)
+	require.Equal(t, float32(1.2), got.Value)
+
+	encoded, err := json.Marshal(got.Value)
+	require.NoError(t, err)
+	require.Equal(t, "1.2", string(encoded))
+	require.Equal(t, CredentialProtectionBudgetExceeded, NewCredentialProtector("secret").Snapshot(float32(1.2), 2).UnavailableReason)
 }
 
 func TestCredentialProtectorDetachedAuthenticationSecretsAndUnicodeByteBudget(t *testing.T) {
