@@ -6,17 +6,13 @@ It does not change a runtime contract, schema, migration, or accepted ADR.
 
 ## Report provenance
 
-- Audit source: freshly fetched `origin/main` at
-  `23dd4fb9619d499dc8a8f0070f2d8d31e9bd9728`.
-- Report branch and HEAD at inspection: `docs/429-typed-value-corrections` at
-  `1332c63b5bd924ac8b609726f36f55b376401ed0`.
-- Execution checkout: `/tmp/dense-mem-429-typed-value-design`.
+- Audit source: the current `main` revision fetched before the report was written.
 - Before the report was written, the source checkout and task checkout were
   clean, protected Git configuration was recorded without exposing values, and
   no workflow test artifacts existed. Other registered worktrees and their
   pre-existing state were preserved.
-- All source and test references below are against that commit. Test results
-  are recorded by the implementation workflow after the independent plan audit;
+- The behavior observations below describe that audited state. Test results are
+  recorded by the implementation workflow after the independent plan audit;
   this report does not claim that unrun checks passed.
 
 ## Recommendation
@@ -66,7 +62,7 @@ that retracts or replaces one item and then writes another would leave a window
 of inconsistent active state and would not preserve one atomic correction
 operation.
 
-## Actual paths
+## Actual workflows
 
 The two candidate workflows have different owners and state transitions:
 
@@ -90,11 +86,9 @@ correct_relationship
 ```
 
 The registry binds `remember` and `correct_relationship` to separate
-application services (`internal/tools/registry/remember_bindings.go:12-53` and
-`internal/tools/registry/lifecycle_bindings.go:31-60`). Both services derive
+application services. Both services derive
 team and owner from the authenticated request context; the request body cannot
-select a different tenant (`internal/remember/service/service.go:173-205` and
-`internal/lifecycle/service.go:122-149`).
+select a different tenant.
 
 ## Current contracts and behavior
 
@@ -102,36 +96,28 @@ select a different tenant (`internal/remember/service/service.go:173-205` and
 
 The `remember` input requires evidence and an idempotency key. Relationship
 proposals are optional, must cite submitted evidence indices, and accept exactly
-one Entity or typed Value object (`internal/tools/registry/contract_schemas.go:18-23`,
-`64-94`, and `121-169`). The Value schema permits the five server-defined types:
-`string`, `number`, `boolean`, `date`, and `date_time`
-(`internal/domain/contract.go:455-463`). The transport validator then requires
+one Entity or typed Value object. The Value schema permits the five server-defined
+types:
+`string`, `number`, `boolean`, `date`, and `date_time`. The transport validator then requires
 strings for `date` and `date_time`, a number for `number`, and a boolean for
-`boolean` (`internal/tools/registry/contract_validation.go:525-542`). A
-Relationship validity window must be ordered (`internal/tools/registry/contract_validation.go:466-479`).
+`boolean`. A Relationship validity window must be ordered.
 
-`correction_target` contains only a target Relationship ID and expected version
-(`internal/tools/registry/contract_schemas.go:159-169`). The Remember assessor
-plan carries it into the semantic observation without changing the typed Value
-shape (`internal/remember/service/submission_assessment_plan.go:281-310` and
-`internal/remember/service/submission_assessment_commit_input.go:270-320`).
+`correction_target` contains only a target Relationship ID and expected version.
+The Remember assessor plan carries it into the semantic observation without
+changing the typed Value shape.
 
 On commit, the new assessed Relationship is applied first. When the predicate
 has `current_cardinality = one`, applying an active Relationship first
-supersedes matching active siblings and increments their versions
-(`internal/knowledge/postgres/semantic_helpers.go:544-552` and
-`internal/knowledge/postgres/semantic_support_helpers.go:24-99`). If the target
+supersedes matching active siblings and increments their versions. If the target
 matches that selector (same owner, subject, predicate, polarity, validity start,
 scope, active/canonical/support conditions, and predicate-version/cardinality
-fences), `appendSemanticCorrectionTarget` then checks the
-caller-supplied older version, returns `ErrCorrectionTargetStale`, and the
-enclosing Remember transaction rolls back (`internal/knowledge/postgres/placement_commit_helpers.go:28-109`
-and `119-184`; `internal/knowledge/postgres/remember_commit.go:241-247` and
-`298-300`). The target therefore remains active and neither the new Relationship
-nor a cross-reference commits.
+fences), `appendSemanticCorrectionTarget` then checks the caller-supplied older
+version, returns `ErrCorrectionTargetStale`, and the enclosing Remember
+transaction rolls back. The target therefore remains active and neither the new
+Relationship nor a cross-reference commits.
 
 Each relationship observation in a Remember request is applied in input order
-inside the same transaction (`internal/knowledge/postgres/remember_commit.go:240-256`).
+inside the same transaction.
 If an earlier observation supersedes a target under the one-cardinality selector,
 that target's version is incremented before a later observation checks its
 `correction_target`. A later observation with a different validity start can be
@@ -143,7 +129,7 @@ Remember's relationship upsert can reactivate an existing caller-owned canonical
 identity. `selectRelationshipByIdentity` finds the row for the same owner,
 subject, predicate, object, polarity, and `valid_from`; the upsert requires the
 same memory space and `valid_to`, then updates its status to active and attaches
-the new evidence (`internal/knowledge/postgres/semantic_helpers.go:509-647`).
+the new evidence.
 This is a fresh-evidence state update and can supersede matching one-cardinality
 siblings, but it is not the provenance-preserving `correct_relationship` path.
 
@@ -152,69 +138,55 @@ supersession runs. The helper checks the new source version, target version and
 owner, the verification event, and a same-predicate semantic relation, then
 inserts one `corrects` cross-reference. It does not update the target's status,
 version, support, or search document, so an active old Relationship can remain
-alongside the new typed Value (`internal/knowledge/postgres/placement_commit_helpers.go:119-184`).
+alongside the new typed Value.
 
 The ordinary one-cardinality supersession test proves the version-advancing
-state transition (`internal/knowledge/postgres/semantic_repository_integration_test.go:563-624`),
+state transition,
 but no current test directly exercises a Remember `correction_target` outcome
 for either cardinality. That absence is a known coverage gap for this report,
 separate from the larger missing typed-Value replacement capability.
 
 The surrounding Remember commit is all-or-nothing in its PostgreSQL transaction,
-and provider work occurs before that transaction
-(`internal/knowledge/postgres/remember_commit.go:40-61` and
-`229-258`). A correction-target failure can therefore reject the complete
-Remember commit, but a successful correction target is still a lineage link,
+and provider work occurs before that transaction. A correction-target failure can
+therefore reject the complete Remember commit, but a successful correction target
+is still a lineage link,
 not a supersession operation. Request hashing and attempt replay cover the
-whole Remember request (`internal/remember/service/service.go:229-267` and
-`internal/remember/service/processor/remember_processor.go:130-178`).
+whole Remember request.
 
 ### `correct_relationship`
 
 The public correction schema accepts `action`, source Relationship ID and
 version, support spans, reason, idempotency key, and a patch containing only
-`subject_entity`, `predicate`, or `object_entity`
-(`internal/tools/registry/contract_schemas.go:193-245`). There is no
+`subject_entity`, `predicate`, or `object_entity`. There is no
 `object_value`, unit, Value type, or validity-window member. A Value-backed
 Relationship cannot be patched to an Entity; the repository rejects that object
-kind change (`internal/knowledge/postgres/relationship_correction_repository.go:237-245`).
+kind change.
 
-For a submission, the repository requires the source to be caller-owned,
+For a submission, the correction repository requires the source to be caller-owned,
 active, canonical, supported, at the expected version, and in a live memory
 space. The requested support list must exactly equal the effective support
-spans (`internal/knowledge/postgres/relationship_correction_repository.go:214-258`).
-Both the schema and repository validator cap that list at 200 entries
-(`internal/tools/registry/contract_schemas.go:230-238` and
-`internal/knowledge/postgres/relationship_correction_repository.go:519-520`).
-Repeated writes can accumulate more than 200 distinct effective supports on
-one Relationship: insertion and counting impose no aggregate cap
-(`internal/knowledge/postgres/semantic_support_helpers.go:540-568` and
-`804-844`). Sending all of them exceeds the input bound; truncating the list
-fails exact-set comparison (`internal/knowledge/postgres/relationship_correction_repository.go:626-635`).
+spans.
+Both the schema and repository validator cap that list at 200 entries.
+Repeated writes can accumulate more than 200 distinct effective supports on one
+Relationship: insertion and counting impose no aggregate cap. Sending all of
+them exceeds the input bound; truncating the list fails exact-set comparison.
 This is an additional current workflow limit for Entity/predicate corrections.
 
 Support identity has another limit even below those counts. Durable support
 identity includes `occurrence_id`, and the correction loader retains every
-effective support (`migrations/postgres/v2_6/20260903010001_evidence_occurrence_duplicates.sql:711-717`
-and `internal/knowledge/postgres/relationship_correction_helpers.go:128-197`).
-The public support shape contains only `evidence_id`, `start`, and `end`
-(`internal/knowledge/contract/semantic.go:345-349`). If two effective supports
-share that tuple but differ in occurrence, sending one entry fails exact-set
-matching and sending both fails duplicate-span validation
-(`internal/knowledge/postgres/relationship_correction_repository.go:523-535`
-and `626-635`). This supported state has no complete public correction path,
-even when the caller knows both occurrences and the trace is complete.
+effective support.
+The public support shape contains only `evidence_id`, `start`, and `end`. If two
+effective supports share that tuple but differ in occurrence, sending one entry
+fails exact-set matching and sending both fails duplicate-span validation. This
+supported state has no complete public correction path, even when the caller
+knows both occurrences and the trace is complete.
 
 Alias-backed evidence requires an explicit ID conversion without duplicate
 spans. `trace_memory` publishes the canonical fragment ID when a support's raw
 fragment is present in `evidence_exact_aliases`, while correction support
-matching compares the raw `support.fragment_id` loaded from PostgreSQL
-(`internal/trace/postgres/semantic_trace_repository.go:369-400`,
-`internal/knowledge/postgres/relationship_correction_helpers.go:128-197`, and
-`internal/knowledge/postgres/relationship_correction_repository.go:626-635`).
+matching compares the raw `support.fragment_id` loaded from PostgreSQL.
 For migrated alias rows, the backfill sets `occurrence_id` to that raw alias
-fragment ID, and trace exposes `occurrence_id`
-(`migrations/postgres/v2_6/20260903010001_evidence_occurrence_duplicates.sql:550-598`).
+fragment ID, and trace exposes `occurrence_id`.
 If the caller independently retained the raw mapping and knows that the row is
 a migrated alias, it can use that `occurrence_id` as the correction input's
 `evidence_id` with the same span. The public trace shape has no alias marker or
@@ -227,7 +199,7 @@ alone produces `support_set_mismatch`.
 Validity has a separate correction limit. `correct_relationship` copies the
 source `valid_from` and `valid_to` values; it has no validity-window patch.
 One-cardinality supersession also selects only Relationships with the same
-`valid_from` (`internal/knowledge/postgres/semantic_support_helpers.go:18-38`).
+`valid_from`.
 Consequently, a mis-extracted validity window has no current atomic correction
 path: `correction_target` cannot change it, and a new `remember` proposal with a
 different window can leave the original active rather than replacing it. Use
@@ -236,10 +208,8 @@ changed later; do not route a validity mis-extraction through that path.
 
 Obtaining the complete set has a separate read limit. `trace_memory` leaves
 `MaxEvents` unset, which the PostgreSQL adapter defaults to 100, and
-`export_memory_pack` sets it to 100 explicitly (`internal/trace/service.go:70-82`,
-`internal/trace/postgres/semantic_trace_repository.go:23-24` and `162-169`, and
-`internal/memorypack/memory_pack.go:18-20` and `80-86`). Support reads have no
-pagination (`internal/trace/postgres/semantic_trace_repository.go:369-400`).
+`export_memory_pack` sets it to 100 explicitly. Support reads have no
+pagination.
 The limit includes historical support rows, so it can hide part of even a
 smaller effective set. A 101–200-entry correction remains admissible if the
 caller retained the complete current set, but these readers cannot reconstruct
@@ -249,8 +219,7 @@ complete set. The public request exposes no event-limit or pagination parameter.
 Rows below the read ceiling can still overstate the effective set. The trace
 support query returns historical support rows without applying the correction
 loader's latest support-decision, active-quarantine, evidence-lifecycle, and
-current-source-revision filters (`internal/trace/postgres/semantic_trace_repository.go:369-400`
-and `internal/knowledge/postgres/relationship_correction_helpers.go:132-178`).
+current-source-revision filters.
 Trace exposes support decisions and lifecycle events but does not expose enough
 quarantine or current-source state to reproduce every filter. Sending every
 trace row can therefore fail `support_set_mismatch`, while excluding rows from
@@ -258,19 +227,15 @@ the public shape cannot be justified reliably. A caller needs a retained
 effective set or a future read operation that returns the correction projection.
 
 Entity resolution can return bounded candidates and require one owner
-confirmation round (`internal/knowledge/postgres/relationship_correction_repository.go:260-270`).
+confirmation round.
 
 The correction planner only reads the source, support, projection names, and
-active search contract before producing bounded embedding documents
-(`internal/knowledge/postgres/relationship_correction_embedding_plan.go:16-18`
-and `63-148`). The lifecycle service executes those embeddings outside the
-semantic transaction and passes validated results to the repository
-(`internal/lifecycle/service.go:150-180`). The commit then marks the original
+active search contract before producing bounded embedding documents. The
+lifecycle service executes those embeddings outside the semantic transaction and
+passes validated results to the repository. The commit then marks the original
 Relationship `superseded`, applies a successor using the existing support
 lineage, inserts the `corrects` cross-reference and correction event, updates
-search documents, and completes the durable submission in one transaction
-(`internal/knowledge/postgres/relationship_correction_helpers.go:653-839`
-and `841-921`).
+search documents, and completes the durable submission in one transaction.
 
 Before that supersession, the commit resolves the corrected identity. An
 existing active, supported destination can be reused only when its memory space
@@ -284,20 +249,15 @@ excluded from that lookup, so alias presence alone does not cause a collision;
 the canonical row for the identity, when found, determines whether reuse is
 possible. An inactive or zero-support canonical destination in the caller's
 own identity scope is rejected with
-`inactive_relationship_collision`
-(`internal/knowledge/postgres/semantic_helpers.go:649-675` and
-`internal/knowledge/postgres/relationship_correction_helpers.go:732-755`).
+`inactive_relationship_collision`.
 Clients must not retry any of these deterministic outcomes as though they were
 a transient version conflict.
 
 The correction request hash includes the source ID, expected version, patch,
 support spans, and reason. Matching retries reuse the durable submission;
-changed requests under the same key conflict
-(`internal/knowledge/postgres/relationship_correction_repository.go:593-635`).
+changed requests under the same key conflict.
 The public lifecycle port exposes correction planning/commit and evidence
-retraction, but not the repository's internal `RetractRelationship` method
-(`internal/knowledge/contract/write.go:67-71` and
-`internal/knowledge/postgres/semantic_repository.go:225-290`).
+retraction, but not the repository's internal `RetractRelationship` method.
 
 ## Current-versus-proposed behavior matrix
 
@@ -393,37 +353,16 @@ for acceptance by issue #429 itself.
 ## Evidence and known limits
 
 The current contract and policy are covered by real-logic and PostgreSQL tests,
-including:
-
-- typed Value and validity validation in
-  `internal/tools/registry/contract_relationship_semantic_validation_test.go:69-117`;
-- Remember correction-target propagation and complete-commit input in
-  `internal/remember/service/synchronous_assessment_test.go:729-733` and
-  `internal/remember/service/submission_assessment_commit_input_test.go:263-287`;
-- typed Value canonical de-duplication in
-  `internal/knowledge/postgres/semantic_repository_integration_test.go:86-105`;
-- correction replacement, owner isolation, replay, support preservation,
-  active collision, and atomic search behavior in
-  `internal/knowledge/postgres/relationship_correction_repository_integration_test.go:25-203`
-  and `531-625`;
-- stale-version and support-revision fences in
-  `internal/knowledge/postgres/relationship_correction_fence_integration_test.go:13-150`;
-- occurrence provenance in
-  `internal/knowledge/postgres/relationship_correction_occurrence_integration_test.go:14-94`
-  (one occurrence; no existing direct correction case covers colliding tuples
-  from two distinct occurrences);
-- exact-evidence alias canonicalization in
-  `internal/trace/postgres/semantic_trace_repository.go:369-400` and
-  `migrations/postgres/v2_6/20260903010001_evidence_occurrence_duplicates.sql:69-87`
-  (no existing direct correction case covers converting the public canonical
-  ID to the migrated alias's raw ID via `occurrence_id`);
-- known-evidence ownership and support isolation in
-  `internal/knowledge/postgres/known_evidence_support_integration_test.go:316-390`;
-- public correction success, adverse provider cases, stale state, and
-  ownership isolation in
-  `tests/uat/synchronous_write/cases/contract.mjs:89-150`,
-  `tests/uat/synchronous_write/cases/correction.mjs:1-82`, and
-  `tests/uat/synchronous_write/cases/contract.mjs:251-322`.
+including typed Value and validity validation, Remember correction-target
+propagation and complete-commit input, typed Value canonical de-duplication,
+correction replacement, owner isolation, replay, support preservation, active
+collision, atomic search behavior, stale-version and support-revision fences,
+occurrence provenance, exact-evidence alias canonicalization, known-evidence
+ownership and support isolation, and public correction success and adverse
+provider, stale-state, and ownership-isolation scenarios. The occurrence and
+alias suites each record the remaining gap: no direct correction case covers
+two distinct occurrences with one public tuple or conversion of a public
+canonical alias ID to its retained raw ID.
 
 These tests prove the existing Entity/predicate correction path and typed Value
 intake. They do not prove atomic replacement of a Value, because the current
