@@ -279,10 +279,14 @@ when a caller-owned row matches the identity but either value differs,
 successor upsert rejects the mismatch and the transaction rolls back after
 planning and provider work. A same-team row owned by another profile is outside
 the owner-scoped identity lookup, so the correction creates a caller-owned
-successor without reusing or mutating that row. A destination present only as
-an identity alias, inactive status, or zero-support history in the caller's own
-identity scope is rejected with `inactive_relationship_collision`
-(`internal/knowledge/postgres/relationship_correction_helpers.go:732-755`).
+successor without reusing or mutating that row. Identity alias rows are
+excluded from that lookup, so alias presence alone does not cause a collision;
+the canonical row for the identity, when found, determines whether reuse is
+possible. An inactive or zero-support canonical destination in the caller's
+own identity scope is rejected with
+`inactive_relationship_collision`
+(`internal/knowledge/postgres/semantic_helpers.go:649-675` and
+`internal/knowledge/postgres/relationship_correction_helpers.go:732-755`).
 Clients must not retry any of these deterministic outcomes as though they were
 a transient version conflict.
 
