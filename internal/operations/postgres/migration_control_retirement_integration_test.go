@@ -14,29 +14,10 @@ import (
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-// This fixture intentionally exercises the retained control tables. It is
-// separate from normal authority tests because the tables are migration input
-// and are no longer part of fresh-install authority decisions.
-func TestAuthorityRepositoryRetainsMigrationAuditReadOnly(t *testing.T) {
+func TestAuthorityRepositoryOperationLogRetentionSurvivesRepositoryRestart(t *testing.T) {
 	_, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
-	ctx := context.Background()
-
-	err := rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
-		return tx.Exec(`
-			INSERT INTO v2_migration_runs (
-				migration_contract_version, corpus_version, source_kind, state
-			) VALUES (
-				'cleanup-test', 'corpus-test', 'neo4j', 'running'
-			)
-		`).Error
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "row-level security")
-
-	t.Run("operation log retention survives repository restart", func(t *testing.T) {
-		testOperationLogRetentionSurvivesRepositoryRestart(t, appDB, rls)
-	})
+	testOperationLogRetentionSurvivesRepositoryRestart(t, appDB, rls)
 }
 
 func testOperationLogRetentionSurvivesRepositoryRestart(t *testing.T, appDB *gorm.DB, rls *storagepostgres.RLS) {
