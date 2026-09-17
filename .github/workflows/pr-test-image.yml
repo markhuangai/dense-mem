@@ -39,6 +39,7 @@ jobs:
       pr_number: ${{ steps.resolve.outputs.pr_number }}
       should_build: ${{ steps.resolve.outputs.should_build }}
       should_run_ci: ${{ steps.resolve.outputs.should_run_ci }}
+      report_ci: ${{ steps.resolve.outputs.report_ci }}
 
     steps:
       - name: Checkout trusted policy helper
@@ -113,6 +114,8 @@ jobs:
               core.setOutput("should_build", "false");
               return;
             }
+
+            core.setOutput("report_ci", String(resolved.runCI === true));
 
             if (resolved.removeLabel) {
               await github.rest.issues.removeLabel({
@@ -629,6 +632,8 @@ jobs:
     steps:
       - name: Publish controller failure
         uses: actions/github-script@v9
+        env:
+          REPORT_CI: ${{ needs.resolve.outputs.report_ci }}
         with:
           script: |
             const eventHead = context.payload.pull_request.head.sha;
@@ -637,6 +642,7 @@ jobs:
             for (const contextName of [
               process.env.POLICY_STATUS_CONTEXT,
               process.env.E2E_STATUS_CONTEXT,
+              ...(process.env.REPORT_CI === "true" ? [process.env.CI_STATUS_CONTEXT] : []),
             ]) {
               await github.rest.repos.createCommitStatus({
                 owner: context.repo.owner,

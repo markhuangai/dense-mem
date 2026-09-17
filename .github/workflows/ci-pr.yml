@@ -59,8 +59,8 @@ jobs:
       }}
     uses: ./.github/workflows/ci-shared.yml
     with:
-      source-repository: ${{ needs.resolve.outputs.head_repository || github.event.pull_request.head.repo.full_name }}
-      source-revision: ${{ needs.resolve.outputs.head_sha || github.event.pull_request.head.sha }}
+      source-repository: ${{ needs.resolve.outputs.head_repository || github.repository }}
+      source-revision: ${{ needs.resolve.outputs.head_sha || github.sha }}
       migration-base-ref: ${{ needs.resolve.outputs.base_sha || github.event.pull_request.base.sha }}
 
   report:
