@@ -110,6 +110,9 @@ func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSec
 	if contains {
 		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
 	}
+	if credentialSnapshotContainsURLVariant(snapshot, variants) {
+		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
+	}
 	return ProtectedDiagnostic{Value: snapshot}
 }
 
@@ -874,6 +877,33 @@ func credentialSnapshotContainsGoQuotedVariant(value any, variants []credentialV
 		}
 	}
 	return false, false
+}
+
+func credentialSnapshotContainsURLVariant(value any, variants []credentialVariant) bool {
+	switch typed := value.(type) {
+	case string:
+		for _, encoded := range []string{url.QueryEscape(typed), url.PathEscape(typed), userInfoEscape(typed)} {
+			if credentialTextContainsVariant(encoded, variants) {
+				return true
+			}
+		}
+	case map[string]any:
+		for key, child := range typed {
+			if credentialSnapshotContainsURLVariant(key, variants) {
+				return true
+			}
+			if credentialSnapshotContainsURLVariant(child, variants) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if credentialSnapshotContainsURLVariant(child, variants) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isHexDigit(value byte) bool {

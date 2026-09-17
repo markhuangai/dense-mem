@@ -227,6 +227,18 @@ func TestCredentialProtectorMatchesMixedEncodingExpansionWithinBound(t *testing.
 	require.Equal(t, CredentialProtectionRedacted, got.Value)
 }
 
+func TestCredentialProtectorKeepsTruncatedCandidatesThroughDecodePasses(t *testing.T) {
+	encoded := "a+b"
+	for index := 0; index < maxCredentialDecodeLayers-1; index++ {
+		encoded = encodeCredentialTestUnicodeLayer(encoded)
+	}
+	encoded = url.QueryEscape(encoded)
+
+	got := NewCredentialProtector("a+b").Snapshot(encoded, len(encoded)+100)
+	require.Empty(t, got.UnavailableReason)
+	require.Equal(t, CredentialProtectionRedacted, got.Value)
+}
+
 func TestCredentialProtectorBoundsLongEncodedCandidates(t *testing.T) {
 	secret := strings.Repeat("a", credentialCandidateBufferLimit) + "b"
 	input := strings.Repeat("%61", 1000)
@@ -492,6 +504,12 @@ func TestCredentialProtectorRejectsNilChannelsAndFunctions(t *testing.T) {
 	var nilFunction func()
 	got = NewCredentialProtector("secret").Snapshot(nilFunction, 256)
 	require.Equal(t, CredentialProtectionUnsupported, got.UnavailableReason)
+	require.Nil(t, got.Value)
+}
+
+func TestCredentialProtectorRejectsURLSerializedCredential(t *testing.T) {
+	got := NewCredentialProtector("%2F").Snapshot("/", 256)
+	require.Equal(t, CredentialProtectionFormattingFailed, got.UnavailableReason)
 	require.Nil(t, got.Value)
 }
 

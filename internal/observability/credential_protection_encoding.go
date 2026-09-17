@@ -350,7 +350,7 @@ func credentialDecodedLiteralCandidateOrder(text, variant string, limit int, all
 			if status == credentialCandidateMatch {
 				return true
 			}
-			if status == credentialCandidateNoMatch {
+			if status == credentialCandidateNoMatch && !current.truncated {
 				return false
 			}
 		}
