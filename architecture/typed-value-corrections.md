@@ -106,7 +106,8 @@ test anchors (the report intentionally omits file paths and line numbers):
   `TestRelationshipCorrectionRejectsStaleVersionAfterPlan`,
   `TestRelationshipCorrectionPreservesOccurrenceSupport`,
   `TestRelationshipCorrectionEqualHashUsesOneEmbeddingForBothDocumentStates`,
-  and `TestSemanticOneCardinalitySupersedesPriorActiveRelationship`.
+  `TestSemanticOneCardinalitySupersedesPriorActiveRelationship`, and
+  `TestSubmissionAssessmentCommitInputRestoresRelationshipTargetOrder`.
 
 The registry binds `remember` and `correct_relationship` to separate
 application services. Both services derive
@@ -139,9 +140,12 @@ version, returns `ErrCorrectionTargetStale`, and the enclosing Remember
 transaction rolls back. The target therefore remains active and neither the new
 Relationship nor a cross-reference commits.
 
-Each relationship observation in a Remember request is applied in input order
-inside the same transaction.
-If an earlier observation supersedes a target under the one-cardinality selector,
+The commit input keeps `RelationshipObservations` in assessor response order but
+restores the separate public `RelationshipResults` slice to proposal order.
+The PostgreSQL commit loop applies observations sequentially from that
+observation slice, so assessor response order determines which proposal first
+versions a target; a caller cannot rely on submitted input order.
+If an earlier assessor-response observation supersedes a target under the one-cardinality selector,
 that target's version is incremented before a later observation checks its
 `correction_target`. A later observation with a different validity start can be
 outside the selector yet still fail its expected-version check, causing the
