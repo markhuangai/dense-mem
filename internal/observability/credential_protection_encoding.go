@@ -1,6 +1,8 @@
 package observability
 
 import (
+	"net/url"
+	"strconv"
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -289,12 +291,17 @@ func credentialDecodedLiteralCandidate(text, variant string, allowPercentEncodin
 const credentialCandidateBufferLimit = credentialLiteralCandidateLimit * 10
 
 func credentialMatchWorkLimit(maxBytes int) int {
-	const workPerByte = credentialLiteralCandidateLimit * 4
+	const workPerByte = credentialLiteralCandidateLimit * 64
+	const maxMatchWork = 8 << 20
 	maxInt := int(^uint(0) >> 1)
 	if maxBytes > maxInt/workPerByte {
-		return maxInt
+		return maxMatchWork
 	}
-	return maxBytes * workPerByte
+	limit := maxBytes * workPerByte
+	if limit > maxMatchWork {
+		return maxMatchWork
+	}
+	return limit
 }
 
 func credentialMatchWorkEstimate(text string, variants []credentialVariant) int {
@@ -624,7 +631,14 @@ func credentialTextContainsVariant(text string, variants []credentialVariant) bo
 }
 
 func credentialTextContainsVariantDetailed(text string, variants []credentialVariant) (bool, bool) {
+	return credentialTextContainsVariantDetailedWithBudget(text, variants, nil)
+}
+
+func credentialTextContainsVariantDetailedWithBudget(text string, variants []credentialVariant, budget *credentialSnapshotBudget) (bool, bool) {
 	for index := 0; index < len(text); {
+		if budget != nil && !budget.reserveMatchWork(credentialMatchWorkEstimate(text[index:], variants)) {
+			return false, false
+		}
 		if _, _, ok, exhausted := credentialMatchAtDetailed(text[index:], variants); ok {
 			return true, false
 		} else if exhausted {
@@ -654,4 +668,128 @@ func credentialMatchAtDetailed(text string, variants []credentialVariant) (crede
 		exhausted = exhausted || variantExhausted
 	}
 	return credentialVariant{}, 0, false, exhausted
+}
+
+func credentialSnapshotContainsGoQuotedVariant(value any, variants []credentialVariant) (bool, bool) {
+	return credentialSnapshotContainsGoQuotedVariantWithBudget(value, variants, nil)
+}
+
+func credentialSnapshotContainsGoQuotedVariantWithBudget(value any, variants []credentialVariant, budget *credentialSnapshotBudget) (bool, bool) {
+	switch typed := value.(type) {
+	case string:
+		for _, quoted := range []string{strconv.Quote(typed), strconv.QuoteToASCII(typed)} {
+			contains, exhausted := credentialTextContainsVariantDetailedWithBudget(quoted, variants, budget)
+			if exhausted || contains {
+				return contains, exhausted
+			}
+		}
+	case map[string]any:
+		for key, child := range typed {
+			for _, quoted := range []string{strconv.Quote(key), strconv.QuoteToASCII(key)} {
+				contains, exhausted := credentialTextContainsVariantDetailedWithBudget(quoted, variants, budget)
+				if exhausted || contains {
+					return contains, exhausted
+				}
+			}
+			contains, exhausted := credentialSnapshotContainsGoQuotedVariantWithBudget(child, variants, budget)
+			if exhausted || contains {
+				return contains, exhausted
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			contains, exhausted := credentialSnapshotContainsGoQuotedVariantWithBudget(child, variants, budget)
+			if exhausted || contains {
+				return contains, exhausted
+			}
+		}
+	}
+	return false, false
+}
+
+func credentialSnapshotContainsURLVariant(value any, variants []credentialVariant) bool {
+	return credentialSnapshotContainsURLVariantWithBudget(value, variants, nil)
+}
+
+func credentialSnapshotContainsURLVariantWithBudget(value any, variants []credentialVariant, budget *credentialSnapshotBudget) bool {
+	switch typed := value.(type) {
+	case string:
+		return credentialTextContainsURLSerializedVariantWithBudget(typed, variants, budget)
+	case map[string]any:
+		for key, child := range typed {
+			if credentialSnapshotContainsURLVariantWithBudget(key, variants, budget) {
+				return true
+			}
+			if credentialSnapshotContainsURLVariantWithBudget(child, variants, budget) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if credentialSnapshotContainsURLVariantWithBudget(child, variants, budget) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func credentialTextContainsURLSerializedVariant(text string, variants []credentialVariant) bool {
+	return credentialTextContainsURLSerializedVariantWithBudget(text, variants, nil)
+}
+
+func credentialTextContainsURLSerializedVariantWithBudget(text string, variants []credentialVariant, budget *credentialSnapshotBudget) bool {
+	for _, encoded := range []string{url.QueryEscape(text), url.PathEscape(text), userInfoEscape(text)} {
+		if credentialURLTextContainsVariantWithBudget(encoded, variants, budget) {
+			return true
+		}
+	}
+	return false
+}
+
+func credentialTextContainsComposedVariant(text string, variants []credentialVariant) bool {
+	return credentialTextContainsComposedVariantWithBudget(text, variants, nil)
+}
+
+func credentialTextContainsCompleteGoQuotedVariantWithBudget(text string, variants []credentialVariant, budget *credentialSnapshotBudget) bool {
+	for _, quoted := range []string{strconv.Quote(text), strconv.QuoteToASCII(text)} {
+		if credentialURLTextContainsVariantWithBudget(quoted, variants, budget) {
+			return true
+		}
+	}
+	return false
+}
+
+func credentialTextContainsComposedVariantWithBudget(text string, variants []credentialVariant, budget *credentialSnapshotBudget) bool {
+	for _, quoted := range []string{strconv.Quote(text), strconv.QuoteToASCII(text)} {
+		if credentialURLTextContainsVariantWithBudget(quoted, variants, budget) {
+			return true
+		}
+		if credentialTextContainsURLSerializedVariantWithBudget(quoted, variants, budget) {
+			return true
+		}
+	}
+	return false
+}
+
+func credentialURLTextContainsVariant(text string, variants []credentialVariant) bool {
+	return credentialURLTextContainsVariantWithBudget(text, variants, nil)
+}
+
+func credentialURLTextContainsVariantWithBudget(text string, variants []credentialVariant, budget *credentialSnapshotBudget) bool {
+	for index := 0; index < len(text); {
+		if budget != nil && !budget.reserveMatchWork(credentialMatchWorkEstimate(text[index:], variants)) {
+			return false
+		}
+		_, _, contains, _ := credentialMatchAtDetailed(text[index:], variants)
+		if contains {
+			return true
+		}
+		_, size := utf8.DecodeRuneInString(text[index:])
+		if size == 0 {
+			return false
+		}
+		index += size
+	}
+	return false
 }

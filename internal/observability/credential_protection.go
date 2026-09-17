@@ -99,25 +99,37 @@ func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSec
 	if len(encoded) > maxBytes {
 		return unavailableDiagnostic(CredentialProtectionBudgetExceeded, variants)
 	}
-	contains, exhausted := credentialTextContainsVariantDetailed(string(encoded), variants)
+	contains, exhausted := credentialTextContainsVariantDetailedWithBudget(string(encoded), variants, budget)
+	if budget.matchWorkExceeded {
+		return unavailableDiagnostic(CredentialProtectionBudgetExceeded, variants)
+	}
 	if exhausted {
 		return unavailableDiagnostic(CredentialProtectionEncodingLimitExceeded, variants)
 	}
 	if contains {
 		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
 	}
-	contains, exhausted = credentialSnapshotContainsGoQuotedVariant(snapshot, variants)
+	contains, exhausted = credentialSnapshotContainsGoQuotedVariantWithBudget(snapshot, variants, budget)
+	if budget.matchWorkExceeded {
+		return unavailableDiagnostic(CredentialProtectionBudgetExceeded, variants)
+	}
 	if exhausted {
 		return unavailableDiagnostic(CredentialProtectionEncodingLimitExceeded, variants)
 	}
 	if contains {
 		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
 	}
-	if credentialSnapshotContainsURLVariant(snapshot, variants) {
+	if credentialTextContainsURLSerializedVariantWithBudget(string(encoded), variants, budget) {
 		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
 	}
-	if credentialTextContainsURLSerializedVariant(string(encoded), variants) {
+	if budget.matchWorkExceeded {
+		return unavailableDiagnostic(CredentialProtectionBudgetExceeded, variants)
+	}
+	if credentialTextContainsCompleteGoQuotedVariantWithBudget(string(encoded), variants, budget) {
 		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
+	}
+	if budget.matchWorkExceeded {
+		return unavailableDiagnostic(CredentialProtectionBudgetExceeded, variants)
 	}
 	return ProtectedDiagnostic{Value: snapshot}
 }
@@ -149,7 +161,10 @@ func credentialDiagnosticContainsVariant(text string, variants []credentialVaria
 	if contains || exhausted {
 		return true
 	}
-	return credentialSnapshotContainsURLVariant(text, variants)
+	if credentialSnapshotContainsURLVariant(text, variants) {
+		return true
+	}
+	return credentialTextContainsComposedVariant(text, variants)
 }
 
 type credentialSnapshotVisit struct {
@@ -167,11 +182,12 @@ type credentialSnapshotWalker struct {
 }
 
 type credentialSnapshotBudget struct {
-	limit          int
-	processed      int
-	encoded        int
-	matchWork      int
-	matchWorkLimit int
+	limit             int
+	processed         int
+	encoded           int
+	matchWork         int
+	matchWorkLimit    int
+	matchWorkExceeded bool
 }
 
 func (b *credentialSnapshotBudget) process(size int) bool {
@@ -199,6 +215,7 @@ func (b *credentialSnapshotBudget) remainingEncoded() int {
 
 func (b *credentialSnapshotBudget) reserveMatchWork(size int) bool {
 	if size < 0 || b.matchWork > b.matchWorkLimit || size > b.matchWorkLimit-b.matchWork {
+		b.matchWorkExceeded = true
 		return false
 	}
 	b.matchWork += size
@@ -332,7 +349,10 @@ func (w *credentialSnapshotWalker) protectText(text string, budget *credentialSn
 		}
 		return "", reason
 	}
-	contains, exhausted := credentialTextContainsVariantDetailed(protected, w.variants)
+	contains, exhausted := credentialTextContainsVariantDetailedWithBudget(protected, w.variants, budget)
+	if budget.matchWorkExceeded {
+		return "", CredentialProtectionBudgetExceeded
+	}
 	if exhausted {
 		return "", CredentialProtectionEncodingLimitExceeded
 	}
@@ -866,86 +886,6 @@ func literalCredentialPrefixDetailed(text, variant string, allowPercentEncoding,
 		}
 	}
 	return 0, false, exhausted
-}
-
-func credentialSnapshotContainsGoQuotedVariant(value any, variants []credentialVariant) (bool, bool) {
-	switch typed := value.(type) {
-	case string:
-		for _, quoted := range []string{strconv.Quote(typed), strconv.QuoteToASCII(typed)} {
-			contains, exhausted := credentialTextContainsVariantDetailed(quoted, variants)
-			if exhausted || contains {
-				return contains, exhausted
-			}
-		}
-	case map[string]any:
-		for key, child := range typed {
-			for _, quoted := range []string{strconv.Quote(key), strconv.QuoteToASCII(key)} {
-				contains, exhausted := credentialTextContainsVariantDetailed(quoted, variants)
-				if exhausted || contains {
-					return contains, exhausted
-				}
-			}
-			contains, exhausted := credentialSnapshotContainsGoQuotedVariant(child, variants)
-			if exhausted || contains {
-				return contains, exhausted
-			}
-		}
-	case []any:
-		for _, child := range typed {
-			contains, exhausted := credentialSnapshotContainsGoQuotedVariant(child, variants)
-			if exhausted || contains {
-				return contains, exhausted
-			}
-		}
-	}
-	return false, false
-}
-
-func credentialSnapshotContainsURLVariant(value any, variants []credentialVariant) bool {
-	switch typed := value.(type) {
-	case string:
-		return credentialTextContainsURLSerializedVariant(typed, variants)
-	case map[string]any:
-		for key, child := range typed {
-			if credentialSnapshotContainsURLVariant(key, variants) {
-				return true
-			}
-			if credentialSnapshotContainsURLVariant(child, variants) {
-				return true
-			}
-		}
-	case []any:
-		for _, child := range typed {
-			if credentialSnapshotContainsURLVariant(child, variants) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func credentialTextContainsURLSerializedVariant(text string, variants []credentialVariant) bool {
-	for _, encoded := range []string{url.QueryEscape(text), url.PathEscape(text), userInfoEscape(text)} {
-		if credentialURLTextContainsVariant(encoded, variants) {
-			return true
-		}
-	}
-	return false
-}
-
-func credentialURLTextContainsVariant(text string, variants []credentialVariant) bool {
-	for index := 0; index < len(text); {
-		_, _, contains, _ := credentialMatchAtDetailed(text[index:], variants)
-		if contains {
-			return true
-		}
-		_, size := utf8.DecodeRuneInString(text[index:])
-		if size == 0 {
-			return false
-		}
-		index += size
-	}
-	return false
 }
 
 func isHexDigit(value byte) bool {
