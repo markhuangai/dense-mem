@@ -13,7 +13,10 @@ permissions:
 env:
   POLICY_STATUS_CONTEXT: PR test image policy
   E2E_STATUS_CONTEXT: Production image E2E
+  CI_STATUS_CONTEXT: Repository CI
   PREVIEW_LABEL: deploy-test-image
+  REVIEW_GATED_CI: ${{ vars.REVIEW_GATED_CI }}
+  DEFERRED_VALIDATION_DESCRIPTION: Awaiting repository-admin validation request.
 
 concurrency:
   group: pr-test-image-${{ github.event.pull_request.number }}
@@ -35,6 +38,8 @@ jobs:
       main_sha: ${{ steps.resolve.outputs.main_sha }}
       pr_number: ${{ steps.resolve.outputs.pr_number }}
       should_build: ${{ steps.resolve.outputs.should_build }}
+      should_run_ci: ${{ steps.resolve.outputs.should_run_ci }}
+      report_ci: ${{ steps.resolve.outputs.report_ci }}
 
     steps:
       - name: Checkout trusted policy helper
@@ -101,6 +106,7 @@ jobs:
               context,
               actorPermission: process.env.ACTOR_PERMISSION,
               authorPermission: process.env.AUTHOR_PERMISSION,
+              reviewGatedCI: process.env.REVIEW_GATED_CI === "true",
             });
 
             if (resolved.mode === "noop") {
@@ -108,6 +114,8 @@ jobs:
               core.setOutput("should_build", "false");
               return;
             }
+
+            core.setOutput("report_ci", String(resolved.runCI === true));
 
             if (resolved.removeLabel) {
               await github.rest.issues.removeLabel({
@@ -124,17 +132,32 @@ jobs:
 
             const targetUrl = `${context.serverUrl}/${context.repo.owner}/` +
               `${context.repo.repo}/actions/runs/${context.runId}`;
+            const statusContexts = [
+              process.env.POLICY_STATUS_CONTEXT,
+              process.env.E2E_STATUS_CONTEXT,
+              ...(resolved.runCI ? [process.env.CI_STATUS_CONTEXT] : []),
+            ];
             if (resolved.mode === "skipped") {
               if (resolved.headSha) {
-                const description = resolved.reason === "approval_required"
+                const description = process.env.REVIEW_GATED_CI === "true"
+                  ? process.env.DEFERRED_VALIDATION_DESCRIPTION
+                  : resolved.reason === "approval_required"
                   ? "Awaiting repository-admin deploy-test-image approval."
                   : resolved.reason === "deploy-test-image approval requires a repository admin"
                     ? "Awaiting repository-admin approval for deploy-test-image."
                     : "Preview image was not requested.";
-                for (const contextName of [
-                  process.env.POLICY_STATUS_CONTEXT,
-                  process.env.E2E_STATUS_CONTEXT,
-                ]) {
+                const statuses = process.env.REVIEW_GATED_CI === "true" ? await github.paginate(github.rest.repos.listCommitStatusesForRef, {
+                  ...context.repo,
+                  ref: resolved.headSha,
+                  per_page: 100,
+                }) : [];
+                for (const contextName of statusContexts) {
+                  const latest = statuses.filter(status => status.context === contextName)
+                    .sort((left, right) => right.id - left.id)[0];
+                  if (process.env.REVIEW_GATED_CI === "true" && latest &&
+                      (latest.state !== "pending" || latest.description !== description)) {
+                    continue;
+                  }
                   await github.rest.repos.createCommitStatus({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
@@ -166,10 +189,7 @@ jobs:
               basehead: `${mainSha}...${resolved.headSha}`,
             });
             if (!policy.compareContainsMain(comparison.data.status)) {
-              for (const contextName of [
-                process.env.POLICY_STATUS_CONTEXT,
-                process.env.E2E_STATUS_CONTEXT,
-              ]) {
+              for (const contextName of statusContexts) {
                 await github.rest.repos.createCommitStatus({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
@@ -202,10 +222,7 @@ jobs:
             core.setOutput("head_repository", resolved.headRepository);
             core.setOutput("main_sha", mainSha);
             core.setOutput("pr_number", String(resolved.pullNumber));
-            for (const contextName of [
-              process.env.POLICY_STATUS_CONTEXT,
-              process.env.E2E_STATUS_CONTEXT,
-            ]) {
+            for (const contextName of statusContexts) {
               await github.rest.repos.createCommitStatus({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -217,6 +234,45 @@ jobs:
               });
             }
             core.setOutput("should_build", "true");
+            core.setOutput("should_run_ci", String(resolved.runCI === true));
+
+  ci:
+    name: CI
+    needs: resolve
+    if: needs.resolve.outputs.should_run_ci == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci-shared.yml
+    with:
+      source-repository: ${{ needs.resolve.outputs.head_repository }}
+      source-revision: ${{ needs.resolve.outputs.head_sha }}
+      migration-base-ref: ${{ needs.resolve.outputs.main_sha }}
+
+  report-ci:
+    name: Report approved repository CI
+    needs: [resolve, ci]
+    if: always() && needs.resolve.outputs.should_run_ci == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    steps:
+      - name: Publish repository CI result
+        uses: actions/github-script@v9
+        env:
+          EXPECTED_HEAD: ${{ needs.resolve.outputs.head_sha }}
+          CI_RESULT: ${{ needs.ci.result }}
+          CI_PASSED: ${{ needs.ci.outputs.passed }}
+        with:
+          script: |
+            const succeeded = process.env.CI_RESULT === 'success' && process.env.CI_PASSED === 'true';
+            await github.rest.repos.createCommitStatus({
+              ...context.repo,
+              sha: process.env.EXPECTED_HEAD,
+              context: process.env.CI_STATUS_CONTEXT,
+              state: succeeded ? 'success' : 'failure',
+              description: succeeded ? 'All repository CI jobs passed.' : 'Repository CI did not pass every mandatory job.',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
 
   build:
     name: Build untrusted preview
@@ -576,6 +632,8 @@ jobs:
     steps:
       - name: Publish controller failure
         uses: actions/github-script@v9
+        env:
+          REPORT_CI: ${{ needs.resolve.outputs.report_ci }}
         with:
           script: |
             const eventHead = context.payload.pull_request.head.sha;
@@ -584,6 +642,7 @@ jobs:
             for (const contextName of [
               process.env.POLICY_STATUS_CONTEXT,
               process.env.E2E_STATUS_CONTEXT,
+              ...(process.env.REPORT_CI === "true" ? [process.env.CI_STATUS_CONTEXT] : []),
             ]) {
               await github.rest.repos.createCommitStatus({
                 owner: context.repo.owner,

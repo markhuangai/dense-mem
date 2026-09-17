@@ -154,6 +154,47 @@
 
 ## Code Review Rules
 
+### PR validation phases
+
+- `REVIEW_GATED_CI=true` opts this repository into review-first validation.
+  Until the repository Actions variable is enabled, preserve automatic PR CI
+  and the existing owner-admin preview route for rollout compatibility.
+- With the mode enabled, `Z-M-Huang` same-repository PRs run CodeQL and reviews
+  before ordinary CI and production-image E2E. Other same-repository authors
+  retain automatic ordinary CI. External forks, including returning
+  contributors, require repository-admin approval for ordinary CI and E2E.
+- CodeQL runs for both same-repository and fork PRs on GitHub-hosted runners.
+  GitHub's first-time-contributor workflow approval can still hold an initial
+  fork run. Keep that native setting; do not require native approval for all
+  external contributors, which would also hold returning contributors' CodeQL.
+- An admin-applied `deploy-test-image` label requests full validation for the
+  current commit and is consumed. A new commit requires a new request. The
+  delivery workflow may request validation for its own approved PR only after
+  `reviews_clean`; reviewing another author's PR does not authorize approval
+  of that author's CI. Do not alter repository settings or merge automatically.
+- Review-only tooling may defer only `Repository CI`, `PR test image policy`,
+  and `Production image E2E` commit statuses that the trusted image controller
+  publishes as pending with the exact description
+  `Awaiting repository-admin validation request.`. Verify the GitHub Actions
+  creator, current PR commit, and successful `pull_request_target` run of
+  `.github/workflows/pr-test-image.yml` before deferring them.
+  Started work and failures remain part of the review gate.
+- `reviews_clean` requires current-head reviewers, successful `CodeQL` and
+  `CodeQL analysis`, complete finding dispositions, and passing local
+  regression tests. It is not
+  `automation_clean`. The full phase also requires actual successful
+  `Repository CI`, `CodeQL analysis`, `CodeQL`, and `Production image E2E`
+  results on the final head; missing or skipped results do not qualify.
+- Keep phase, head, complete check-set, and review-activity identities in gate
+  receipts. A head or activity change invalidates the previous receipt. After
+  any fix push, repeat review and full validation for the new head.
+- After merging the controller changes, enable `REVIEW_GATED_CI=true`, verify
+  owner, other-author, and external-fork canaries, then activate a separate
+  `PR validation` ruleset on `main` with no bypass actors and up-to-date
+  branches required. Require the four full-phase results above: GitHub Actions
+  supplies all except `CodeQL`, whose source is GitHub Advanced Security.
+  Existing human approval and release requirements still apply.
+
 ### Material supported defects and scope
 
 - Report only a defect introduced or materially worsened by the pull request on
