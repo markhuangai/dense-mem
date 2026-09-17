@@ -676,8 +676,12 @@ func credentialMatchAtDetailed(text string, variants []credentialVariant) (crede
 	return credentialVariant{}, 0, false, exhausted
 }
 
-func credentialSnapshotContainsGoQuotedVariantWithBudget(value any, variants []credentialVariant, budget *credentialSnapshotBudget) (bool, bool) {
+func credentialSnapshotContainsGoFormattedVariantWithBudget(value any, variants []credentialVariant, budget *credentialSnapshotBudget) (bool, bool) {
 	switch typed := value.(type) {
+	case float32:
+		return credentialTextContainsVariantDetailedWithBudget(strconv.FormatFloat(float64(typed), 'g', -1, 32), variants, budget)
+	case float64:
+		return credentialTextContainsVariantDetailedWithBudget(strconv.FormatFloat(typed, 'g', -1, 64), variants, budget)
 	case string:
 		for _, quoted := range []string{strconv.Quote(typed), strconv.QuoteToASCII(typed)} {
 			contains, exhausted := credentialTextContainsVariantDetailedWithBudget(quoted, variants, budget)
@@ -693,14 +697,14 @@ func credentialSnapshotContainsGoQuotedVariantWithBudget(value any, variants []c
 					return contains, exhausted
 				}
 			}
-			contains, exhausted := credentialSnapshotContainsGoQuotedVariantWithBudget(child, variants, budget)
+			contains, exhausted := credentialSnapshotContainsGoFormattedVariantWithBudget(child, variants, budget)
 			if exhausted || contains {
 				return contains, exhausted
 			}
 		}
 	case []any:
 		for _, child := range typed {
-			contains, exhausted := credentialSnapshotContainsGoQuotedVariantWithBudget(child, variants, budget)
+			contains, exhausted := credentialSnapshotContainsGoFormattedVariantWithBudget(child, variants, budget)
 			if exhausted || contains {
 				return contains, exhausted
 			}

@@ -767,6 +767,34 @@ func TestCredentialProtectorPreservesFloat32Precision(t *testing.T) {
 	require.Equal(t, CredentialProtectionBudgetExceeded, NewCredentialProtector("secret").Snapshot(float32(1.2), 2).UnavailableReason)
 }
 
+func TestCredentialProtectorChecksGoFormattedFloatCredentials(t *testing.T) {
+	for _, value := range []any{float32(1e20), float64(1e20), float32(1e-7), float64(1e-7)} {
+		t.Run(fmt.Sprintf("%T/%v", value, value), func(t *testing.T) {
+			secret := fmt.Sprint(value)
+			encoded, err := json.Marshal(value)
+			require.NoError(t, err)
+			require.NotContains(t, string(encoded), secret)
+
+			for _, input := range []any{value, []any{value}, map[string]any{"amount": value}} {
+				got := NewCredentialProtector(secret).Snapshot(input, 256)
+				require.Equal(t, CredentialProtectionFormattingFailed, got.UnavailableReason)
+				require.Nil(t, got.Value)
+
+				got = NewCredentialProtector().Snapshot(input, 256, secret)
+				require.Equal(t, CredentialProtectionFormattingFailed, got.UnavailableReason)
+				require.Nil(t, got.Value)
+			}
+
+			got := NewCredentialProtector("unrelated").Snapshot(value, len(encoded))
+			require.Equal(t, CredentialProtectionAvailable, got.UnavailableReason)
+			require.Equal(t, value, got.Value)
+			require.Equal(t, secret, fmt.Sprint(got.Value))
+			require.Equal(t, CredentialProtectionBudgetExceeded,
+				NewCredentialProtector("unrelated").Snapshot(value, len(encoded)-1).UnavailableReason)
+		})
+	}
+}
+
 func TestCredentialProtectorDetachedAuthenticationSecretsAndUnicodeByteBudget(t *testing.T) {
 	protector := NewCredentialProtector("configured")
 	value := map[string]any{"message": "configured auth-only"}

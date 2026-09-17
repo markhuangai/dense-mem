@@ -114,7 +114,7 @@ func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSec
 	if contains {
 		return unavailableDiagnostic(CredentialProtectionFormattingFailed)
 	}
-	contains, exhausted = credentialSnapshotContainsGoQuotedVariantWithBudget(snapshot, variants, budget)
+	contains, exhausted = credentialSnapshotContainsGoFormattedVariantWithBudget(snapshot, variants, budget)
 	if budget.matchWorkExceeded {
 		return unavailableDiagnostic(CredentialProtectionBudgetExceeded)
 	}
