@@ -5,11 +5,91 @@ on:
     branches:
       - main
     types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_target:
+    branches:
+      - main
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
 
 jobs:
+  resolve:
+    name: Resolve trusted CI request
+    if: vars.REVIEW_GATED_CI == 'true' && github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run_ci: ${{ steps.resolve.outputs.run_ci }}
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      head_repository: ${{ steps.resolve.outputs.head_repository }}
+      base_sha: ${{ steps.resolve.outputs.base_sha }}
+    steps:
+      - name: Checkout trusted policy
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          sparse-checkout: .github/scripts
+      - name: Resolve current PR revision and route
+        id: resolve
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const policy = require('./.github/scripts/image-release-policy.cjs');
+            const result = await policy.resolveRepositoryCI({ github, context });
+            core.setOutput('run_ci', String(result.shouldRun));
+            if (result.shouldRun) {
+              core.setOutput('head_sha', result.headSha);
+              core.setOutput('head_repository', result.headRepository);
+              core.setOutput('base_sha', result.baseSha);
+            }
+
   ci:
     name: CI
+    needs: resolve
+    if: >-
+      ${{
+        always() &&
+        ((vars.REVIEW_GATED_CI != 'true' && github.event_name == 'pull_request') ||
+        (vars.REVIEW_GATED_CI == 'true' && github.event_name == 'pull_request_target' &&
+        needs.resolve.outputs.run_ci == 'true'))
+      }}
     uses: ./.github/workflows/ci-shared.yml
+    with:
+      source-repository: ${{ needs.resolve.outputs.head_repository || github.repository }}
+      source-revision: ${{ needs.resolve.outputs.head_sha || github.sha }}
+      migration-base-ref: ${{ needs.resolve.outputs.base_sha || github.event.pull_request.base.sha }}
+
+  report:
+    name: Report repository CI
+    needs: [resolve, ci]
+    if: >-
+      ${{
+        always() && needs.ci.result != 'skipped' &&
+        (github.event_name == 'pull_request_target' ||
+        github.event.pull_request.head.repo.full_name == github.repository)
+      }}
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    steps:
+      - name: Publish repository CI result
+        uses: actions/github-script@v9
+        env:
+          EXPECTED_HEAD: ${{ needs.resolve.outputs.head_sha || github.event.pull_request.head.sha }}
+          CI_RESULT: ${{ needs.ci.result }}
+          CI_PASSED: ${{ needs.ci.outputs.passed }}
+        with:
+          script: |
+            const succeeded = process.env.CI_RESULT === 'success' && process.env.CI_PASSED === 'true';
+            await github.rest.repos.createCommitStatus({
+              ...context.repo,
+              sha: process.env.EXPECTED_HEAD,
+              context: 'Repository CI',
+              state: succeeded ? 'success' : 'failure',
+              description: succeeded ? 'All repository CI jobs passed.' : 'Repository CI did not pass every mandatory job.',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
