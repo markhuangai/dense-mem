@@ -125,8 +125,8 @@ func credentialLiteralCandidate(text, variant string) bool {
 
 func credentialDecodedLiteralCandidate(text, variant string, allowPercentEncoding, allowUnicodeEncoding bool) bool {
 	limit := len(variant)
-	if limit > credentialLiteralCandidateLimit {
-		limit = credentialLiteralCandidateLimit
+	if limit > credentialCandidateBufferLimit {
+		limit = credentialCandidateBufferLimit
 	}
 	if limit == 0 {
 		return true
@@ -177,7 +177,7 @@ func credentialDecodedLiteralCandidateOrder(text, variant string, limit int, all
 			if status == credentialCandidateMatch {
 				return true
 			}
-			if status == credentialCandidateNoMatch {
+			if status == credentialCandidateNoMatch && !allowUnicodeEncoding {
 				return false
 			}
 		}
@@ -189,7 +189,7 @@ func credentialDecodedLiteralCandidateOrder(text, variant string, limit int, all
 			if status == credentialCandidateMatch {
 				return true
 			}
-			if status == credentialCandidateNoMatch {
+			if status == credentialCandidateNoMatch && (!allowPercentEncoding || percentFirst) {
 				return false
 			}
 		}

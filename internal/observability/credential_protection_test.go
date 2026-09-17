@@ -156,6 +156,15 @@ func TestCredentialProtectorMatchesComposedJSONAndPercentEncoding(t *testing.T) 
 	require.Equal(t, `https://e.test/?payload=%7B%22password%22%3A%22`+CredentialProtectionRedacted+`%22%7D`, got.Value)
 }
 
+func TestCredentialProtectorMatchesNestedEncodingForPercentPrefixedCredential(t *testing.T) {
+	secret := "%secret-key"
+	input := encodeCredentialTestUnicodeLayer(url.QueryEscape(encodeCredentialTestUnicodeLayer(secret)))
+
+	got := NewCredentialProtector(secret).Snapshot(input, 1024)
+	require.Empty(t, got.UnavailableReason)
+	require.Equal(t, CredentialProtectionRedacted, got.Value)
+}
+
 func TestCredentialProtectorMatchesRepeatedEncodingLayers(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -234,6 +243,11 @@ func TestCredentialProtectorLeavesNonmatchingEncodedPrefixesUntouched(t *testing
 	got = NewCredentialProtector(strings.Repeat("a", 31)+"b").Snapshot(nestedPrefix, len(nestedPrefix)+2)
 	require.Empty(t, got.UnavailableReason)
 	require.Equal(t, nestedPrefix, got.Value)
+
+	longSharedPrefix := strings.Repeat("%61", 256)
+	got = NewCredentialProtector(strings.Repeat("a", credentialLiteralCandidateLimit)+"b").Snapshot(longSharedPrefix, len(longSharedPrefix)+2)
+	require.Empty(t, got.UnavailableReason)
+	require.Equal(t, longSharedPrefix, got.Value)
 }
 
 func TestCredentialProtectorLeavesMalformedEscapesAfterCandidateUntouched(t *testing.T) {
