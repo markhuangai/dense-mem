@@ -215,11 +215,41 @@ func TestCredentialProtectorMatchesNestedUnicodeEncodingWithinBound(t *testing.T
 	require.Equal(t, "token="+CredentialProtectionRedacted, got.Value)
 }
 
+func TestCredentialProtectorMatchesMixedEncodingExpansionWithinBound(t *testing.T) {
+	encoded := "a"
+	for index := 0; index < maxCredentialDecodeLayers; index++ {
+		encoded = encodeCredentialTestGoUnicodeLayer(encoded)
+		encoded = url.QueryEscape(encoded)
+	}
+
+	got := NewCredentialProtector("a").Snapshot(encoded, len(encoded)+100)
+	require.Empty(t, got.UnavailableReason)
+	require.Equal(t, CredentialProtectionRedacted, got.Value)
+}
+
+func TestCredentialProtectorBoundsLongEncodedCandidates(t *testing.T) {
+	secret := strings.Repeat("a", credentialCandidateBufferLimit) + "b"
+	input := strings.Repeat("%61", 1000)
+
+	got := NewCredentialProtector(secret).Snapshot(input, len(input)+2)
+	require.Empty(t, got.UnavailableReason)
+	require.Equal(t, input, got.Value)
+}
+
 func encodeCredentialTestUnicodeLayer(text string) string {
 	var builder strings.Builder
 	builder.Grow(len(text) * 6)
 	for index := 0; index < len(text); index++ {
 		fmt.Fprintf(&builder, `\u%04X`, text[index])
+	}
+	return builder.String()
+}
+
+func encodeCredentialTestGoUnicodeLayer(text string) string {
+	var builder strings.Builder
+	builder.Grow(len(text) * 10)
+	for index := 0; index < len(text); index++ {
+		fmt.Fprintf(&builder, `\U%08X`, text[index])
 	}
 	return builder.String()
 }
@@ -453,6 +483,18 @@ func TestCredentialProtectorHandlesNilAndEmptyConfiguration(t *testing.T) {
 	require.Equal(t, CredentialProtectionRedacted, got.Value)
 }
 
+func TestCredentialProtectorRejectsNilChannelsAndFunctions(t *testing.T) {
+	var nilChannel chan int
+	got := NewCredentialProtector("secret").Snapshot(nilChannel, 256)
+	require.Equal(t, CredentialProtectionUnsupported, got.UnavailableReason)
+	require.Nil(t, got.Value)
+
+	var nilFunction func()
+	got = NewCredentialProtector("secret").Snapshot(nilFunction, 256)
+	require.Equal(t, CredentialProtectionUnsupported, got.UnavailableReason)
+	require.Nil(t, got.Value)
+}
+
 func TestCredentialProtectorLeavesTruncatedEncodedCredentialsUntouched(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -658,6 +700,12 @@ func TestCredentialProtectorPreservesLosslessJSONNumbers(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, input, string(encoded))
 	}
+}
+
+func TestCredentialProtectorDoesNotRechargeParsedJSONBytes(t *testing.T) {
+	got := NewCredentialProtector("secret").Snapshot([]byte("123"), 3)
+	require.Empty(t, got.UnavailableReason)
+	require.Equal(t, json.Number("123"), got.Value)
 }
 
 func TestCredentialProtectorRejectsInvalidJSONNumbers(t *testing.T) {

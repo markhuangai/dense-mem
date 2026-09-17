@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -217,7 +216,7 @@ func (w *credentialSnapshotWalker) walk(value reflect.Value, depth int, budget *
 	}
 	if value.Type() == reflect.TypeOf(json.Number("")) {
 		number := value.String()
-		if !budget.process(len(number)) {
+		if !w.processingCharged && !budget.process(len(number)) {
 			return nil, CredentialProtectionBudgetExceeded
 		}
 		protected, reason := w.protectText(number, budget, true)
@@ -501,7 +500,7 @@ func snapshotVisitFor(value reflect.Value) credentialSnapshotVisit {
 
 func isNilSnapshotValue(value reflect.Value) bool {
 	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+	case reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
 		return value.IsNil()
 	default:
 		return false
@@ -828,15 +827,14 @@ func encodedCredentialPrefixDetailed(text, variant string, allowPercentEncoding,
 }
 
 func literalCredentialPrefixDetailed(text, variant string, allowPercentEncoding, allowUnicodeEncoding bool) (int, bool, bool) {
-	raw := rawCredentialPrefix(text, credentialRawByteLimit(len(variant)))
 	exhausted := false
-	if consumed, ok, variantExhausted := matchCredentialLayers(raw, variant, allowPercentEncoding, allowUnicodeEncoding, false); ok {
+	if consumed, ok, variantExhausted := matchCredentialLayersStreaming(text, variant, allowPercentEncoding, allowUnicodeEncoding, false); ok {
 		return consumed, true, false
 	} else {
 		exhausted = exhausted || variantExhausted
 	}
 	if allowPercentEncoding && allowUnicodeEncoding {
-		if consumed, ok, variantExhausted := matchCredentialLayers(raw, variant, true, true, true); ok {
+		if consumed, ok, variantExhausted := matchCredentialLayersStreaming(text, variant, true, true, true); ok {
 			return consumed, true, false
 		} else {
 			exhausted = exhausted || variantExhausted
@@ -876,80 +874,6 @@ func credentialSnapshotContainsGoQuotedVariant(value any, variants []credentialV
 		}
 	}
 	return false, false
-}
-
-func decodeEscapedRune(text string) (rune, int, bool) {
-	if len(text) < 2 || text[0] != '\\' {
-		return 0, 0, false
-	}
-	switch text[1] {
-	case '"', '\\', '\'', '/':
-		return rune(text[1]), 2, true
-	case 'a':
-		return '\a', 2, true
-	case 'b':
-		return '\b', 2, true
-	case 'f':
-		return '\f', 2, true
-	case 'n':
-		return '\n', 2, true
-	case 'r':
-		return '\r', 2, true
-	case 't':
-		return '\t', 2, true
-	case 'v':
-		return '\v', 2, true
-	case 'u':
-		if len(text) < 6 || !isHexDigit(text[2]) || !isHexDigit(text[3]) || !isHexDigit(text[4]) || !isHexDigit(text[5]) {
-			return 0, 0, false
-		}
-	case 'U':
-		if len(text) < 10 || !isHexDigit(text[2]) || !isHexDigit(text[3]) || !isHexDigit(text[4]) || !isHexDigit(text[5]) || !isHexDigit(text[6]) || !isHexDigit(text[7]) || !isHexDigit(text[8]) || !isHexDigit(text[9]) {
-			return 0, 0, false
-		}
-	default:
-		return 0, 0, false
-	}
-	code := rune(hexDigit(text[2]))<<12 | rune(hexDigit(text[3]))<<8 | rune(hexDigit(text[4]))<<4 | rune(hexDigit(text[5]))
-	if text[1] == 'U' {
-		code = code<<16 | rune(hexDigit(text[6]))<<12 | rune(hexDigit(text[7]))<<8 | rune(hexDigit(text[8]))<<4 | rune(hexDigit(text[9]))
-		if code > utf8.MaxRune || code >= 0xD800 && code <= 0xDFFF {
-			return 0, 0, false
-		}
-		return code, 10, true
-	}
-	if code >= 0xD800 && code <= 0xDBFF {
-		if len(text) >= 12 && text[6] == '\\' && text[7] == 'u' && isHexDigit(text[8]) && isHexDigit(text[9]) && isHexDigit(text[10]) && isHexDigit(text[11]) {
-			low := rune(hexDigit(text[8]))<<12 | rune(hexDigit(text[9]))<<8 | rune(hexDigit(text[10]))<<4 | rune(hexDigit(text[11]))
-			if low >= 0xDC00 && low <= 0xDFFF {
-				return utf16.DecodeRune(code, low), 12, true
-			}
-		}
-		return utf8.RuneError, 6, true
-	}
-	if code >= 0xDC00 && code <= 0xDFFF {
-		return utf8.RuneError, 6, true
-	}
-	return code, 6, true
-}
-
-func decodeGoByteEscape(text string) (byte, int, bool) {
-	if len(text) < 2 || text[0] != '\\' {
-		return 0, 0, false
-	}
-	if text[1] == 'x' {
-		if len(text) < 4 || !isHexDigit(text[2]) || !isHexDigit(text[3]) {
-			return 0, 0, false
-		}
-		return hexByte(text[2], text[3]), 4, true
-	}
-	if text[1] < '0' || text[1] > '7' {
-		return 0, 0, false
-	}
-	if len(text) < 4 || text[1] > '3' || text[2] < '0' || text[2] > '7' || text[3] < '0' || text[3] > '7' {
-		return 0, 0, false
-	}
-	return (text[1]-'0')<<6 | (text[2]-'0')<<3 | (text[3] - '0'), 4, true
 }
 
 func isHexDigit(value byte) bool {

@@ -12,87 +12,236 @@ type credentialDecodedByte struct {
 }
 
 func decodedCredentialPrefixDetailed(text, variant string, allowPercentEncoding bool) (int, bool, bool) {
-	raw := rawCredentialPrefix(text, credentialRawByteLimit(len(variant)))
-	return matchCredentialLayers(raw, variant, allowPercentEncoding, true, false)
+	return matchCredentialLayersStreaming(text, variant, allowPercentEncoding, true, false)
 }
 
 func reverseDecodedCredentialPrefixDetailed(text, variant string) (int, bool, bool) {
-	raw := rawCredentialPrefix(text, credentialRawByteLimit(len(variant)))
-	return matchCredentialLayers(raw, variant, true, true, true)
+	return matchCredentialLayersStreaming(text, variant, true, true, true)
 }
 
 const maxCredentialDecodeLayers = 4
 
-func matchCredentialLayers(input []credentialDecodedByte, variant string, allowPercentEncoding, allowUnicodeEncoding, percentFirst bool) (int, bool, bool) {
-	decoded := input
-	for layer := 0; layer < maxCredentialDecodeLayers; layer++ {
-		if consumed, ok := matchDecodedCredentialPrefix(decoded, variant); ok {
-			return consumed, true, false
+const credentialStreamMaxPasses = maxCredentialDecodeLayers*2 + 2
+
+type credentialStreamKind uint8
+
+const (
+	credentialStreamRaw credentialStreamKind = iota
+	credentialStreamPercent
+	credentialStreamEscapes
+)
+
+type credentialDecodeStream struct {
+	kind       credentialStreamKind
+	text       string
+	index      int
+	source     *credentialDecodeStream
+	pending    [12]credentialDecodedByte
+	pendingLen int
+	unread     [16]credentialDecodedByte
+	unreadLen  int
+	changed    *bool
+}
+
+func (stream *credentialDecodeStream) next() (credentialDecodedByte, bool) {
+	if stream.pendingLen > 0 {
+		value := stream.pending[0]
+		copy(stream.pending[:stream.pendingLen-1], stream.pending[1:stream.pendingLen])
+		stream.pendingLen--
+		return value, true
+	}
+	if stream.kind == credentialStreamRaw {
+		if stream.index >= len(stream.text) {
+			return credentialDecodedByte{}, false
 		}
-		before := decoded
-		if percentFirst && allowPercentEncoding {
-			decoded = decodeCredentialPercentLayer(decoded)
-			if consumed, ok := matchDecodedCredentialPrefix(decoded, variant); ok {
-				return consumed, true, false
+		value := credentialDecodedByte{value: stream.text[stream.index], end: stream.index + 1}
+		stream.index++
+		return value, true
+	}
+
+	first, ok := stream.readSource()
+	if !ok {
+		return credentialDecodedByte{}, false
+	}
+	if stream.kind == credentialStreamPercent {
+		if first.value == '%' {
+			second, secondOK := stream.readSource()
+			if !secondOK {
+				return first, true
 			}
+			third, thirdOK := stream.readSource()
+			if !thirdOK {
+				stream.unreadSource([]credentialDecodedByte{second})
+				return first, true
+			}
+			if isHexDigit(second.value) && isHexDigit(third.value) {
+				stream.markChanged()
+				return credentialDecodedByte{
+					value: hexByte(second.value, third.value),
+					end:   third.end,
+				}, true
+			}
+			stream.unreadSource([]credentialDecodedByte{second, third})
+		}
+		if first.value == '+' {
+			stream.markChanged()
+			return credentialDecodedByte{value: ' ', end: first.end}, true
+		}
+		return first, true
+	}
+
+	if first.value != '\\' {
+		return first, true
+	}
+	var encodedInput [12]byte
+	var ends [12]int
+	encodedInput[0] = '\\'
+	ends[0] = first.end
+	length := 1
+	for length < len(encodedInput) {
+		value, valueOK := stream.readSource()
+		if !valueOK {
+			break
+		}
+		encodedInput[length] = value.value
+		ends[length] = value.end
+		length++
+	}
+	encoded, encodedSize, consumed, decodedOK := decodeCredentialCandidateEscape(encodedInput[:length])
+	if !decodedOK {
+		var unread [11]credentialDecodedByte
+		for index := 1; index < length; index++ {
+			unread[index-1] = credentialDecodedByte{
+				value: encodedInput[index],
+				end:   ends[index],
+			}
+		}
+		stream.unreadSource(unread[:length-1])
+		return first, true
+	}
+	stream.markChanged()
+	end := ends[consumed-1]
+	stream.pendingLen = 0
+	for index := 0; index < encodedSize; index++ {
+		stream.pending[stream.pendingLen] = credentialDecodedByte{value: encoded[index], end: end}
+		stream.pendingLen++
+	}
+	var unread [11]credentialDecodedByte
+	for index := consumed; index < length; index++ {
+		unread[index-consumed] = credentialDecodedByte{
+			value: encodedInput[index],
+			end:   ends[index],
+		}
+	}
+	stream.unreadSource(unread[:length-consumed])
+	return stream.next()
+}
+
+func (stream *credentialDecodeStream) readSource() (credentialDecodedByte, bool) {
+	if stream.unreadLen > 0 {
+		value := stream.unread[0]
+		copy(stream.unread[:stream.unreadLen-1], stream.unread[1:stream.unreadLen])
+		stream.unreadLen--
+		return value, true
+	}
+	return stream.source.next()
+}
+
+func (stream *credentialDecodeStream) unreadSource(values []credentialDecodedByte) {
+	if len(values) == 0 {
+		return
+	}
+	if stream.unreadLen != 0 || len(values) > len(stream.unread) {
+		panic("credential decoder unread buffer exhausted")
+	}
+	copy(stream.unread[:], values)
+	stream.unreadLen = len(values)
+}
+
+func (stream *credentialDecodeStream) markChanged() {
+	if stream.changed != nil {
+		*stream.changed = true
+	}
+}
+
+func credentialMatchStreamPrefix(text, variant string, kinds []credentialStreamKind) (int, bool, bool) {
+	var streams [credentialStreamMaxPasses + 1]credentialDecodeStream
+	var changed [credentialStreamMaxPasses + 1]bool
+	streams[0] = credentialDecodeStream{kind: credentialStreamRaw, text: text}
+	for index, kind := range kinds {
+		streams[index+1] = credentialDecodeStream{
+			kind:    kind,
+			source:  &streams[index],
+			changed: &changed[index+1],
+		}
+	}
+	stream := &streams[len(kinds)]
+	consumed := 0
+	for index := 0; index < len(variant); index++ {
+		value, ok := stream.next()
+		if !ok || value.value != variant[index] {
+			return 0, false, len(kinds) > 0 && changed[len(kinds)]
+		}
+		consumed = value.end
+	}
+	return consumed, true, len(kinds) > 0 && changed[len(kinds)]
+}
+
+func matchCredentialLayersStreaming(text, variant string, allowPercentEncoding, allowUnicodeEncoding, percentFirst bool) (int, bool, bool) {
+	if consumed, ok, _ := credentialMatchStreamPrefix(text, variant, nil); ok {
+		return consumed, true, false
+	}
+	var roundKinds [2]credentialStreamKind
+	perRound := 0
+	if percentFirst {
+		if allowPercentEncoding {
+			roundKinds[perRound] = credentialStreamPercent
+			perRound++
 		}
 		if allowUnicodeEncoding {
-			decoded = decodeCredentialEscapeLayer(decoded)
-			if consumed, ok := matchDecodedCredentialPrefix(decoded, variant); ok {
+			roundKinds[perRound] = credentialStreamEscapes
+			perRound++
+		}
+	} else {
+		if allowUnicodeEncoding {
+			roundKinds[perRound] = credentialStreamEscapes
+			perRound++
+		}
+		if allowPercentEncoding {
+			roundKinds[perRound] = credentialStreamPercent
+			perRound++
+		}
+	}
+	if perRound == 0 {
+		return 0, false, false
+	}
+
+	var kinds [credentialStreamMaxPasses]credentialStreamKind
+	depth := 0
+	for round := 0; round < maxCredentialDecodeLayers; round++ {
+		roundChanged := false
+		for index := 0; index < perRound; index++ {
+			kinds[depth] = roundKinds[index]
+			depth++
+			consumed, ok, changed := credentialMatchStreamPrefix(text, variant, kinds[:depth])
+			if ok {
 				return consumed, true, false
 			}
+			roundChanged = roundChanged || changed
 		}
-		if !percentFirst && allowPercentEncoding {
-			decoded = decodeCredentialPercentLayer(decoded)
-			if consumed, ok := matchDecodedCredentialPrefix(decoded, variant); ok {
-				return consumed, true, false
-			}
-		}
-		if credentialDecodedBytesEqual(before, decoded) {
+		if !roundChanged {
 			return 0, false, false
 		}
 	}
-	if credentialDecodedLayerChanges(decoded, allowPercentEncoding, allowUnicodeEncoding, percentFirst) {
-		return 0, false, true
+	for index := 0; index < perRound; index++ {
+		kinds[depth] = roundKinds[index]
+		depth++
+		_, _, changed := credentialMatchStreamPrefix(text, variant, kinds[:depth])
+		if changed {
+			return 0, false, true
+		}
 	}
 	return 0, false, false
-}
-
-func credentialDecodedLayerChanges(input []credentialDecodedByte, allowPercentEncoding, allowUnicodeEncoding, percentFirst bool) bool {
-	decoded := input
-	if percentFirst && allowPercentEncoding {
-		next := decodeCredentialPercentLayer(decoded)
-		if !credentialDecodedBytesEqual(decoded, next) {
-			return true
-		}
-		decoded = next
-	}
-	if allowUnicodeEncoding {
-		next := decodeCredentialEscapeLayer(decoded)
-		if !credentialDecodedBytesEqual(decoded, next) {
-			return true
-		}
-		decoded = next
-	}
-	if !percentFirst && allowPercentEncoding {
-		next := decodeCredentialPercentLayer(decoded)
-		if !credentialDecodedBytesEqual(decoded, next) {
-			return true
-		}
-	}
-	return false
-}
-
-func credentialDecodedBytesEqual(left, right []credentialDecodedByte) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index].value != right[index].value || left[index].end != right[index].end {
-			return false
-		}
-	}
-	return true
 }
 
 const credentialLiteralCandidateLimit = 64
@@ -225,6 +374,12 @@ func credentialCandidatePrefixStatusFor(candidate credentialCandidateBuffer, var
 			}
 			return credentialCandidateNoMatch
 		}
+	}
+	if candidate.length < limit {
+		if candidate.truncated {
+			return credentialCandidateMayChange
+		}
+		return credentialCandidateNoMatch
 	}
 	return credentialCandidateMatch
 }
@@ -423,116 +578,6 @@ func credentialEncodingPrefixIsValid(text string) bool {
 	default:
 		return false
 	}
-}
-
-func credentialRawByteLimit(variantLength int) int {
-	const maxEncodingExpansionPerLayer = 10
-	maxInt := int(^uint(0) >> 1)
-	maxEncodingExpansion := 1
-	for layer := 0; layer < maxCredentialDecodeLayers; layer++ {
-		if maxEncodingExpansion > maxInt/maxEncodingExpansionPerLayer {
-			return maxInt
-		}
-		maxEncodingExpansion *= maxEncodingExpansionPerLayer
-	}
-	if variantLength > maxInt/maxEncodingExpansion {
-		return maxInt
-	}
-	return variantLength * maxEncodingExpansion
-}
-
-func rawCredentialPrefix(text string, maxBytes int) []credentialDecodedByte {
-	if maxBytes <= 0 {
-		return nil
-	}
-	capacity := maxBytes
-	if capacity > len(text) {
-		capacity = len(text)
-	}
-	raw := make([]credentialDecodedByte, 0, capacity)
-	for textIndex := 0; textIndex < len(text) && len(raw) < maxBytes; {
-		_, size := utf8.DecodeRuneInString(text[textIndex:])
-		if size == 0 {
-			break
-		}
-		for index := 0; index < size && len(raw) < maxBytes; index++ {
-			raw = append(raw, credentialDecodedByte{value: text[textIndex+index], end: textIndex + size})
-		}
-		textIndex += size
-	}
-	return raw
-}
-
-func decodeCredentialPercentLayer(input []credentialDecodedByte) []credentialDecodedByte {
-	decoded := make([]credentialDecodedByte, 0, len(input))
-	for index := 0; index < len(input); {
-		if input[index].value == '%' && index+2 < len(input) && isHexDigit(input[index+1].value) && isHexDigit(input[index+2].value) {
-			decoded = append(decoded, credentialDecodedByte{
-				value: hexByte(input[index+1].value, input[index+2].value),
-				end:   input[index+2].end,
-			})
-			index += 3
-			continue
-		}
-		if input[index].value == '+' {
-			decoded = append(decoded, credentialDecodedByte{value: ' ', end: input[index].end})
-			index++
-			continue
-		}
-		decoded = append(decoded, input[index])
-		index++
-	}
-	return decoded
-}
-
-func decodeCredentialEscapeLayer(input []credentialDecodedByte) []credentialDecodedByte {
-	if len(input) == 0 {
-		return nil
-	}
-	raw := make([]byte, len(input))
-	for index, value := range input {
-		raw[index] = value.value
-	}
-	text := string(raw)
-	decoded := make([]credentialDecodedByte, 0, len(input))
-	for index := 0; index < len(input); {
-		if escaped, consumed, ok := decodeGoByteEscape(text[index:]); ok {
-			decoded = append(decoded, credentialDecodedByte{value: escaped, end: input[index+consumed-1].end})
-			index += consumed
-			continue
-		}
-		if escaped, consumed, ok := decodeEscapedRune(text[index:]); ok {
-			var encoded [utf8.UTFMax]byte
-			encodedSize := utf8.EncodeRune(encoded[:], escaped)
-			end := input[index+consumed-1].end
-			for encodedIndex := 0; encodedIndex < encodedSize; encodedIndex++ {
-				decoded = append(decoded, credentialDecodedByte{value: encoded[encodedIndex], end: end})
-			}
-			index += consumed
-			continue
-		}
-		_, size := utf8.DecodeRuneInString(text[index:])
-		if size == 0 {
-			break
-		}
-		for encodedIndex := 0; encodedIndex < size; encodedIndex++ {
-			decoded = append(decoded, input[index+encodedIndex])
-		}
-		index += size
-	}
-	return decoded
-}
-
-func matchDecodedCredentialPrefix(decoded []credentialDecodedByte, variant string) (int, bool) {
-	if len(decoded) < len(variant) {
-		return 0, false
-	}
-	for index := 0; index < len(variant); index++ {
-		if decoded[index].value != variant[index] {
-			return 0, false
-		}
-	}
-	return decoded[len(variant)-1].end, true
 }
 
 func credentialTextContainsVariant(text string, variants []credentialVariant) bool {
