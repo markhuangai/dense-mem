@@ -119,6 +119,12 @@ func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSec
 	if contains {
 		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
 	}
+	if credentialSnapshotContainsURLVariantWithBudget(snapshot, variants, budget) {
+		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
+	}
+	if budget.matchWorkExceeded {
+		return unavailableDiagnostic(CredentialProtectionBudgetExceeded, variants)
+	}
 	if credentialTextContainsURLSerializedVariantWithBudget(string(encoded), variants, budget) {
 		return unavailableDiagnostic(CredentialProtectionFormattingFailed, variants)
 	}

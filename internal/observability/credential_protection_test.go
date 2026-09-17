@@ -539,6 +539,10 @@ func TestCredentialProtectorRejectsURLSerializedCredential(t *testing.T) {
 	require.Equal(t, CredentialProtectionFormattingFailed, got.UnavailableReason)
 	require.Nil(t, got.Value)
 
+	got = NewCredentialProtector("%3C").Snapshot("<", 256)
+	require.Equal(t, CredentialProtectionFormattingFailed, got.UnavailableReason)
+	require.Nil(t, got.Value)
+
 	got = NewCredentialProtector("%2F").Snapshot("%25252578/", 1024)
 	require.NotEmpty(t, got.UnavailableReason)
 	require.Nil(t, got.Value)
