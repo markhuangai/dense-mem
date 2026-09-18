@@ -710,6 +710,7 @@ func TestOperationLogPoolMakesProgressWhileApplicationPoolIsHeld(t *testing.T) {
 	require.NoError(t, err)
 	applicationSQL, err := application.DB()
 	require.NoError(t, err)
+	defer func() { _ = applicationSQL.Close() }()
 	applicationSQL.SetMaxOpenConns(1)
 	conn, err := applicationSQL.Conn(ctx)
 	require.NoError(t, err)

@@ -137,11 +137,19 @@ func TestAuthMiddleware_SSOSessionFailureIsAuditedAndRecorded(t *testing.T) {
 	e := newTestEcho()
 	mockAudit := &mockAuditService{}
 	mockSecurity := &mockSecurityService{}
+	var observed context.Context
 	authenticator := mockSSOSessionAuthenticator{
 		authenticateFunc: func(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.AuthenticatedActor, error) {
 			return nil, accessservice.ErrSSOAccessDenied
 		},
 	}
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			err := next(c)
+			observed = c.Request().Context()
+			return err
+		}
+	})
 	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, mockAudit, mockSecurity, AuthOptions{
 		SSOSessionAuthenticator: authenticator,
 		AllowMissingCredentials: true,
@@ -166,6 +174,8 @@ func TestAuthMiddleware_SSOSessionFailureIsAuditedAndRecorded(t *testing.T) {
 	assert.Equal(t, "SSO_AUTH_INVALID", mockSecurity.recordAuthFailureReason)
 	assert.Equal(t, "api", mockSecurity.recordAuthFailureSurface)
 	assert.Equal(t, "198.51.100.10", mockSecurity.recordAuthFailureIP)
+	require.NotNil(t, observed)
+	assert.Equal(t, []string{"session-token"}, requestctx.AuthenticationSecretsFromContext(observed))
 }
 
 func TestAuthMiddleware_OptionalMissingCredentialsHasNoFailureSideEffects(t *testing.T) {

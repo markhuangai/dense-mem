@@ -14,6 +14,7 @@ import (
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 type userPortalSessionAuthStub struct {
@@ -71,6 +72,14 @@ func TestAuthMiddlewareFailsClosedForInvalidPortalSession(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	stub := &userPortalSessionAuthStub{err: accessservice.ErrUserPortalSessionInvalid}
+	var observed context.Context
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			err := next(c)
+			observed = c.Request().Context()
+			return err
+		}
+	})
 	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, nil, nil, AuthOptions{
 		UserPortalSessionAuthenticator: stub,
 		AllowMissingCredentials:        true,
@@ -84,12 +93,22 @@ func TestAuthMiddlewareFailsClosedForInvalidPortalSession(t *testing.T) {
 
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 	require.Contains(t, rec.Body.String(), `"code":"AUTH_INVALID"`)
+	require.NotNil(t, observed)
+	require.Equal(t, []string{"stale-session"}, requestctx.AuthenticationSecretsFromContext(observed))
 }
 
 func TestAuthMiddlewareRequiresPortalCSRFForUnsafeRequests(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	stub := &userPortalSessionAuthStub{err: accessservice.ErrUserPortalCSRFInvalid}
+	var observed context.Context
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			err := next(c)
+			observed = c.Request().Context()
+			return err
+		}
+	})
 	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, nil, nil, AuthOptions{
 		UserPortalSessionAuthenticator: stub,
 	}))
@@ -105,6 +124,8 @@ func TestAuthMiddlewareRequiresPortalCSRFForUnsafeRequests(t *testing.T) {
 	require.Equal(t, "opaque-session", stub.gotSessionToken)
 	require.Empty(t, stub.gotCSRFToken)
 	require.True(t, stub.gotRequireCSRF)
+	require.NotNil(t, observed)
+	require.Equal(t, []string{"opaque-session"}, requestctx.AuthenticationSecretsFromContext(observed))
 }
 
 var _ accesspostgres.CredentialRepository = (*mockCredentialRepository)(nil)

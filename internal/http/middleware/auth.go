@@ -339,6 +339,12 @@ func authenticateSSOSession(c echo.Context, authenticator SSOSessionAuthenticato
 			csrfToken = csrfCookie.Value
 		}
 	}
+	secrets := []string{cookie.Value}
+	if csrfToken != "" {
+		secrets = append(secrets, csrfToken)
+	}
+	ctx := requestctx.WithAuthenticationSecrets(c.Request().Context(), secrets...)
+	c.SetRequest(c.Request().WithContext(ctx))
 	actor, err := authenticator.AuthenticateSession(c.Request().Context(), cookie.Value, csrfToken, requireCSRF)
 	if err != nil {
 		return ssoAuthError(err)
@@ -353,6 +359,12 @@ func authenticateUserPortalSession(c echo.Context, authenticator UserPortalSessi
 	}
 	requireCSRF := requestRequiresCSRF(c.Request().Method)
 	csrfToken := c.Request().Header.Get(accessservice.SSOCSRFHeaderName)
+	secrets := []string{cookie.Value}
+	if csrfToken != "" {
+		secrets = append(secrets, csrfToken)
+	}
+	ctx := requestctx.WithAuthenticationSecrets(c.Request().Context(), secrets...)
+	c.SetRequest(c.Request().WithContext(ctx))
 	actor, err := authenticator.AuthenticateSession(c.Request().Context(), cookie.Value, csrfToken, requireCSRF)
 	if err != nil {
 		return userPortalSessionAuthError(err)
