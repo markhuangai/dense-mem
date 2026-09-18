@@ -132,18 +132,18 @@ func NewServer(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider
 				attrs = append(attrs, httpcontract.String("request_id", requestID))
 			}
 			if isAnonymousUserSessionProbe(c, v) {
-				logger.Info("http_request", attrs...)
+				httpcontract.LogInfoContext(c.Request().Context(), logger, "http_request", attrs...)
 				return nil
 			}
 			if v.Error != nil {
-				logger.Error("http_request", errors.New(tools.SanitizeError(v.Error)), attrs...)
+				httpcontract.LogErrorContext(c.Request().Context(), logger, "http_request", errors.New(tools.SanitizeError(v.Error)), attrs...)
 				return nil
 			}
 			if v.Status >= http.StatusBadRequest {
-				logger.Warn("http_request", attrs...)
+				httpcontract.LogWarnContext(c.Request().Context(), logger, "http_request", attrs...)
 				return nil
 			}
-			logger.Info("http_request", attrs...)
+			httpcontract.LogInfoContext(c.Request().Context(), logger, "http_request", attrs...)
 			return nil
 		},
 	}))

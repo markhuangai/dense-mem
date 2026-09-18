@@ -1,6 +1,7 @@
 package serverapp
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -9,6 +10,33 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
+
+type contextTransportLogger struct {
+	observability.LogProvider
+	contextSeen context.Context
+}
+
+type transportContextKey struct{}
+
+func (l *contextTransportLogger) InfoContext(ctx context.Context, _ string, _ ...observability.LogAttr) {
+	l.contextSeen = ctx
+}
+
+func (l *contextTransportLogger) ErrorContext(ctx context.Context, _ string, _ error, _ ...observability.LogAttr) {
+	l.contextSeen = ctx
+}
+
+func (l *contextTransportLogger) WarnContext(ctx context.Context, _ string, _ ...observability.LogAttr) {
+	l.contextSeen = ctx
+}
+
+func (l *contextTransportLogger) DebugContext(ctx context.Context, _ string, _ ...observability.LogAttr) {
+	l.contextSeen = ctx
+}
+
+type legacyTransportLogger struct {
+	observability.LogProvider
+}
 
 func TestTransportLoggerAdaptersPreserveAndDropDelegates(t *testing.T) {
 	if transportLogger(nil) != nil {
@@ -37,6 +65,32 @@ func TestTransportLoggerAdaptersPreserveAndDropDelegates(t *testing.T) {
 	if got := observabilityAttrs([]contract.LogAttr{contract.String("key", "value")}); len(got) != 1 || got[0].Key != "key" {
 		t.Fatalf("observability attrs = %#v", got)
 	}
+}
+
+func TestTransportLoggerAdapterForwardsRequestContext(t *testing.T) {
+	logger := &contextTransportLogger{LogProvider: observability.New(0)}
+	adapted := transportLogger(logger)
+	ctx := context.WithValue(context.Background(), transportContextKey{}, "request")
+
+	contract.LogInfoContext(ctx, adapted, "http_request")
+	contract.LogErrorContext(ctx, adapted, "http_request", errors.New("error"))
+	contract.LogWarnContext(ctx, adapted, "http_request")
+	contract.LogDebugContext(ctx, adapted, "http_request")
+
+	if logger.contextSeen != ctx {
+		t.Fatalf("adapter context = %v, want %v", logger.contextSeen, ctx)
+	}
+}
+
+func TestTransportLoggerAdapterFallsBackForLegacyDelegate(t *testing.T) {
+	logger := &legacyTransportLogger{LogProvider: observability.New(0)}
+	adapted := transportLogger(logger)
+	ctx := context.Background()
+
+	contract.LogInfoContext(ctx, adapted, "http_request")
+	contract.LogErrorContext(ctx, adapted, "http_request", errors.New("error"))
+	contract.LogWarnContext(ctx, adapted, "http_request")
+	contract.LogDebugContext(ctx, adapted, "http_request")
 }
 
 func TestTransportCompositionRejectsMissingBoundaryDependencies(t *testing.T) {

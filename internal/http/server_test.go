@@ -9,17 +9,44 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 type captureLogProvider struct {
-	level string
-	msg   string
-	attrs []httpcontract.LogAttr
+	level       string
+	msg         string
+	attrs       []httpcontract.LogAttr
+	contextSeen context.Context
+}
+
+type legacyLogProvider struct {
+	levels []string
+}
+
+func (l *legacyLogProvider) Info(string, ...httpcontract.LogAttr) {
+	l.levels = append(l.levels, "info")
+}
+
+func (l *legacyLogProvider) Error(string, error, ...httpcontract.LogAttr) {
+	l.levels = append(l.levels, "error")
+}
+
+func (l *legacyLogProvider) Warn(string, ...httpcontract.LogAttr) {
+	l.levels = append(l.levels, "warn")
+}
+
+func (l *legacyLogProvider) Debug(string, ...httpcontract.LogAttr) {
+	l.levels = append(l.levels, "debug")
+}
+
+func (l *legacyLogProvider) With(...httpcontract.LogAttr) httpcontract.LogProvider {
+	return l
 }
 
 func (l *captureLogProvider) Info(msg string, attrs ...httpcontract.LogAttr) {
@@ -28,10 +55,20 @@ func (l *captureLogProvider) Info(msg string, attrs ...httpcontract.LogAttr) {
 	l.attrs = append([]httpcontract.LogAttr(nil), attrs...)
 }
 
+func (l *captureLogProvider) InfoContext(ctx context.Context, msg string, attrs ...httpcontract.LogAttr) {
+	l.contextSeen = ctx
+	l.Info(msg, attrs...)
+}
+
 func (l *captureLogProvider) Error(msg string, err error, attrs ...httpcontract.LogAttr) {
 	l.level = "error"
 	l.msg = msg
 	l.attrs = append([]httpcontract.LogAttr(nil), attrs...)
+}
+
+func (l *captureLogProvider) ErrorContext(ctx context.Context, msg string, err error, attrs ...httpcontract.LogAttr) {
+	l.contextSeen = ctx
+	l.Error(msg, err, attrs...)
 }
 
 func (l *captureLogProvider) Warn(msg string, attrs ...httpcontract.LogAttr) {
@@ -40,7 +77,17 @@ func (l *captureLogProvider) Warn(msg string, attrs ...httpcontract.LogAttr) {
 	l.attrs = append([]httpcontract.LogAttr(nil), attrs...)
 }
 
+func (l *captureLogProvider) WarnContext(ctx context.Context, msg string, attrs ...httpcontract.LogAttr) {
+	l.contextSeen = ctx
+	l.Warn(msg, attrs...)
+}
+
 func (l *captureLogProvider) Debug(msg string, attrs ...httpcontract.LogAttr) {}
+
+func (l *captureLogProvider) DebugContext(ctx context.Context, msg string, attrs ...httpcontract.LogAttr) {
+	l.contextSeen = ctx
+	l.Debug(msg, attrs...)
+}
 
 func (l *captureLogProvider) With(attrs ...httpcontract.LogAttr) httpcontract.LogProvider {
 	return l
@@ -325,6 +372,58 @@ func TestRequestLoggerOmitsQueryString(t *testing.T) {
 		}
 		if value == "secret-memory" || value == "raw-token" {
 			t.Fatalf("sensitive query value leaked in attr %q", attr.Key)
+		}
+	}
+}
+
+func TestRequestLoggerPreservesAuthenticatedContext(t *testing.T) {
+	logger := &captureLogProvider{}
+	e := NewServer(config.Config{}, logger, HealthConfig{})
+	e.GET("/context", func(c echo.Context) error {
+		return c.NoContent(http.StatusNoContent)
+	})
+
+	teamID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	profileID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: teamID, OwnerID: profileID})
+	ctx = requestctx.WithAuthenticationSecrets(ctx, "raw-api-key")
+	req := httptest.NewRequest(http.MethodGet, "/context", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if logger.contextSeen == nil {
+		t.Fatal("request logger did not receive the request context")
+	}
+	actor, ok := requestctx.ActorFromContext(logger.contextSeen)
+	if !ok || actor.TeamID != teamID || actor.OwnerID != profileID {
+		t.Fatalf("logged actor = %#v, ok=%v", actor, ok)
+	}
+	if got := requestctx.AuthenticationSecretsFromContext(logger.contextSeen); len(got) != 1 || got[0] != "raw-api-key" {
+		t.Fatalf("logged authentication secrets = %#v", got)
+	}
+}
+
+func TestContextLogHelpersFallbackForLegacyProviders(t *testing.T) {
+	logger := &legacyLogProvider{}
+	ctx := context.Background()
+	httpcontract.LogInfoContext(ctx, logger, "info")
+	httpcontract.LogErrorContext(ctx, logger, "error", errors.New("error"))
+	httpcontract.LogWarnContext(ctx, logger, "warn")
+	httpcontract.LogDebugContext(ctx, logger, "debug")
+	httpcontract.LogInfoContext(ctx, nil, "ignored")
+
+	got := logger.levels
+	want := []string{"info", "error", "warn", "debug"}
+	if len(got) != len(want) {
+		t.Fatalf("legacy log levels = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("legacy log levels = %#v, want %#v", got, want)
 		}
 	}
 }

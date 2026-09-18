@@ -97,10 +97,30 @@ func (a httpLoggerAdapter) Info(message string, attrs ...httpcontract.LogAttr) {
 	}
 }
 
+func (a httpLoggerAdapter) InfoContext(ctx context.Context, message string, attrs ...httpcontract.LogAttr) {
+	if contextual, ok := a.delegate.(interface {
+		InfoContext(context.Context, string, ...observability.LogAttr)
+	}); ok {
+		contextual.InfoContext(ctx, message, observabilityAttrs(attrs)...)
+		return
+	}
+	a.Info(message, attrs...)
+}
+
 func (a httpLoggerAdapter) Error(message string, err error, attrs ...httpcontract.LogAttr) {
 	if a.delegate != nil {
 		a.delegate.Error(message, err, observabilityAttrs(attrs)...)
 	}
+}
+
+func (a httpLoggerAdapter) ErrorContext(ctx context.Context, message string, err error, attrs ...httpcontract.LogAttr) {
+	if contextual, ok := a.delegate.(interface {
+		ErrorContext(context.Context, string, error, ...observability.LogAttr)
+	}); ok {
+		contextual.ErrorContext(ctx, message, err, observabilityAttrs(attrs)...)
+		return
+	}
+	a.Error(message, err, attrs...)
 }
 
 func (a httpLoggerAdapter) Warn(message string, attrs ...httpcontract.LogAttr) {
@@ -109,10 +129,30 @@ func (a httpLoggerAdapter) Warn(message string, attrs ...httpcontract.LogAttr) {
 	}
 }
 
+func (a httpLoggerAdapter) WarnContext(ctx context.Context, message string, attrs ...httpcontract.LogAttr) {
+	if contextual, ok := a.delegate.(interface {
+		WarnContext(context.Context, string, ...observability.LogAttr)
+	}); ok {
+		contextual.WarnContext(ctx, message, observabilityAttrs(attrs)...)
+		return
+	}
+	a.Warn(message, attrs...)
+}
+
 func (a httpLoggerAdapter) Debug(message string, attrs ...httpcontract.LogAttr) {
 	if a.delegate != nil {
 		a.delegate.Debug(message, observabilityAttrs(attrs)...)
 	}
+}
+
+func (a httpLoggerAdapter) DebugContext(ctx context.Context, message string, attrs ...httpcontract.LogAttr) {
+	if contextual, ok := a.delegate.(interface {
+		DebugContext(context.Context, string, ...observability.LogAttr)
+	}); ok {
+		contextual.DebugContext(ctx, message, observabilityAttrs(attrs)...)
+		return
+	}
+	a.Debug(message, attrs...)
 }
 
 func (a httpLoggerAdapter) With(attrs ...httpcontract.LogAttr) httpcontract.LogProvider {

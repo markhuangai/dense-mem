@@ -104,10 +104,10 @@ func newControlPortalServerWithMetricsAndTelemetry(
 				httpcontract.Int("status", v.Status),
 			}
 			if v.Error != nil {
-				logger.Error("control_http_request", errors.New(tools.SanitizeError(v.Error)), attrs...)
+				httpcontract.LogErrorContext(c.Request().Context(), logger, "control_http_request", errors.New(tools.SanitizeError(v.Error)), attrs...)
 				return nil
 			}
-			logger.Info("control_http_request", attrs...)
+			httpcontract.LogInfoContext(c.Request().Context(), logger, "control_http_request", attrs...)
 			return nil
 		},
 	}))
