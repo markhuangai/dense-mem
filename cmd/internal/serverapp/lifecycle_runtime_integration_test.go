@@ -166,6 +166,25 @@ func TestServerLifecycleRejectsOccupiedListenerBeforeWorkers(t *testing.T) {
 	})
 }
 
+func TestServerLifecycleBuildWorkerFailureUsesStartupAbort(t *testing.T) {
+	withLifecyclePostgres(t, func(t *testing.T) {
+		configureLifecycleEnvironment(t, "127.0.0.1:0")
+		var boundAddress string
+		err := RunFromEnvironment(context.Background(), RuntimeOptions{
+			DisableControlPortal: true,
+			BuildWorker: func(_ context.Context, runtime RuntimeContext) (RuntimeWorker, error) {
+				boundAddress = runtime.Echo.Listener.Addr().String()
+				return nil, errors.New("worker construction failed")
+			},
+		})
+		require.ErrorContains(t, err, "failed to start runtime background jobs: worker construction failed")
+		require.NotEmpty(t, boundAddress)
+		listener, listenErr := net.Listen("tcp", boundAddress)
+		require.NoError(t, listenErr)
+		require.NoError(t, listener.Close())
+	})
+}
+
 func TestServerLifecycleForcesListenerCloseAfterCancellation(t *testing.T) {
 	withLifecyclePostgres(t, func(t *testing.T) {
 		configureLifecycleEnvironment(t, "127.0.0.1:0")

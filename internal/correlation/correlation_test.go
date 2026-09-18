@@ -10,6 +10,19 @@ func TestFromContext_ReturnsIDSetByWithID(t *testing.T) {
 	if got := FromContext(ctx); got != "abc-123" {
 		t.Errorf("FromContext() = %q; want %q", got, "abc-123")
 	}
+	if IsClientProvided(ctx) {
+		t.Fatal("WithID must not mark an internal correlation identifier as client-provided")
+	}
+}
+
+func TestWithClientProvidedIDMarksSource(t *testing.T) {
+	ctx := WithClientProvidedID(context.Background(), "header-correlation")
+	if got := FromContext(ctx); got != "header-correlation" {
+		t.Fatalf("FromContext() = %q; want %q", got, "header-correlation")
+	}
+	if !IsClientProvided(ctx) {
+		t.Fatal("WithClientProvidedID must mark the correlation identifier as client-provided")
+	}
 }
 
 func TestFromContext_EmptyWhenUnset(t *testing.T) {

@@ -9,9 +9,21 @@ import "context"
 
 type contextKey struct{}
 
+type value struct {
+	id             string
+	clientProvided bool
+}
+
 // WithID returns a new context carrying id as the correlation identifier.
 func WithID(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, contextKey{}, id)
+	return context.WithValue(ctx, contextKey{}, value{id: id})
+}
+
+// WithClientProvidedID carries a correlation identifier supplied by an HTTP
+// client. The logger can keep it after authentication binds the request while
+// suppressing it on pre-authentication failures.
+func WithClientProvidedID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, contextKey{}, value{id: id, clientProvided: true})
 }
 
 // FromContext returns the correlation ID previously set with WithID.
@@ -20,8 +32,21 @@ func FromContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""
 	}
-	if id, ok := ctx.Value(contextKey{}).(string); ok {
-		return id
+	switch stored := ctx.Value(contextKey{}).(type) {
+	case value:
+		return stored.id
+	case string:
+		return stored
 	}
 	return ""
+}
+
+// IsClientProvided reports whether the current correlation identifier came
+// from an HTTP client rather than an internal caller.
+func IsClientProvided(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	stored, ok := ctx.Value(contextKey{}).(value)
+	return ok && stored.clientProvided
 }

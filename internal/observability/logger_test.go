@@ -428,6 +428,27 @@ func TestTrustedCorrelationProtectionCoversCredentialsAndBounds(t *testing.T) {
 	}
 }
 
+func TestClientProvidedCorrelationIsSuppressedBeforeAuthentication(t *testing.T) {
+	root := New(slog.LevelDebug)
+	sink := &recordingLogSink{}
+	require.NoError(t, root.AttachSink(sink))
+	ctx := correlation.WithClientProvidedID(context.Background(), "presented-bearer")
+	root.InfoContext(ctx, "pre-auth rejection")
+	require.Len(t, sink.records, 1)
+	assert.Empty(t, sink.records[0].CorrelationID)
+}
+
+func TestClientProvidedCorrelationIsRetainedAfterAuthenticationBinding(t *testing.T) {
+	root := New(slog.LevelDebug)
+	sink := &recordingLogSink{}
+	require.NoError(t, root.AttachSink(sink))
+	ctx := correlation.WithClientProvidedID(context.Background(), "request-correlation")
+	ctx = requestctx.WithAuthenticationSecrets(ctx, "presented-bearer")
+	root.InfoContext(ctx, "authenticated request")
+	require.Len(t, sink.records, 1)
+	assert.Equal(t, "request-correlation", sink.records[0].CorrelationID)
+}
+
 func TestLoggerPersistsExternalCallerFunction(t *testing.T) {
 	root := New(LevelTrace)
 	sink := &recordingLogSink{}

@@ -3,8 +3,6 @@ package http
 import (
 	"context"
 	"errors"
-	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
-	settings "github.com/markhuangai/dense-mem/internal/settings"
 	nethttp "net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,6 +14,9 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
+	settings "github.com/markhuangai/dense-mem/internal/settings"
 )
 
 func TestControlPortalMiddlewareIgnoresOriginBehindTLSProxy(t *testing.T) {
@@ -109,6 +110,30 @@ func TestControlPortalMiddlewareAcceptsCurrentSSOSessionAndRecordsSafeFailures(t
 	require.Equal(t, "VALIDATION_ERROR: invalid directory connector request", directoryErr.Error())
 	identityErr := controlIdentityHTTPError(errors.New("control admin constraint failed: duplicate key value violates unique constraint \"admin_group\""))
 	require.Equal(t, "VALIDATION_ERROR: invalid control identity request", identityErr.Error())
+}
+
+func TestControlPortalMiddlewareRetainsPresentedSecretsOnFailure(t *testing.T) {
+	var observed context.Context
+	e := echo.New()
+	e.HTTPErrorHandler = func(_ error, c echo.Context) {
+		observed = c.Request().Context()
+		_ = c.NoContent(nethttp.StatusUnauthorized)
+	}
+	e.Use(controlPortalMiddleware("expected", nil))
+	e.GET("/session", func(c echo.Context) error {
+		return c.NoContent(nethttp.StatusOK)
+	})
+
+	request := httptest.NewRequest(nethttp.MethodGet, "/session", nil)
+	request.Header.Set("X-Control-Portal-Token", "presented-control-token")
+	request.Header.Set(accessservice.ControlCSRFHeaderName, "presented-csrf")
+	request.AddCookie(&nethttp.Cookie{Name: accessservice.ControlSessionCookieName, Value: "presented-session"})
+	response := httptest.NewRecorder()
+	e.ServeHTTP(response, request)
+
+	require.Equal(t, nethttp.StatusUnauthorized, response.Code)
+	require.NotNil(t, observed)
+	require.ElementsMatch(t, []string{"presented-control-token", "presented-session", "presented-csrf"}, requestctx.AuthenticationSecretsFromContext(observed))
 }
 
 type controlAuthFailureRecorder struct {

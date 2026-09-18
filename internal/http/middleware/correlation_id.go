@@ -24,7 +24,10 @@ func CorrelationIDMiddleware() echo.MiddlewareFunc {
 				id = uuid.New().String()
 			}
 
-			ctx := correlation.WithID(c.Request().Context(), id)
+			ctx := correlation.WithClientProvidedID(c.Request().Context(), id)
+			if c.Request().Header.Get(CorrelationIDHeader) == "" {
+				ctx = correlation.WithID(c.Request().Context(), id)
+			}
 			c.SetRequest(c.Request().WithContext(ctx))
 
 			c.Response().Header().Set(CorrelationIDHeader, id)

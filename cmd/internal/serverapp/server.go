@@ -445,8 +445,7 @@ func RunActiveServer(
 	if options.BuildWorker != nil {
 		runtimeWorker, err = options.BuildWorker(lifecycle.Context(), runtimeCtx)
 		if err != nil {
-			closeBoundListeners()
-			return fmt.Errorf("failed to start runtime background jobs: %w", err)
+			return abortStartup(fmt.Errorf("failed to start runtime background jobs: %w", err))
 		}
 	}
 	if err := startupCheck(); err != nil {

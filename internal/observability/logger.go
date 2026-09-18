@@ -762,8 +762,11 @@ func trustedContextAttrs(ctx context.Context, protector *CredentialProtector) ma
 	if ctx == nil {
 		return attrs
 	}
-	if id := correlation.FromContext(ctx); id != "" {
-		attrs["correlation_id"] = protectTrustedCorrelationID(id, protector, AuthenticationSecretsFromContext(ctx))
+	secrets := AuthenticationSecretsFromContext(ctx)
+	_, hasActor := requestctx.ActorFromContext(ctx)
+	if id := correlation.FromContext(ctx); id != "" &&
+		(!correlation.IsClientProvided(ctx) || hasActor || len(secrets) > 0) {
+		attrs["correlation_id"] = protectTrustedCorrelationID(id, protector, secrets)
 	}
 	if actor, ok := requestctx.ActorFromContext(ctx); ok {
 		if actor.TeamID != uuid.Nil {

@@ -8,6 +8,8 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/markhuangai/dense-mem/internal/correlation"
 )
 
 func TestCorrelationIDMiddleware(t *testing.T) {
@@ -26,6 +28,7 @@ func TestCorrelationIDMiddleware(t *testing.T) {
 			ctx := c.Request().Context()
 			correlationID := GetCorrelationID(ctx)
 			assert.Equal(t, "existing-correlation-id-123", correlationID)
+			assert.True(t, correlation.IsClientProvided(ctx))
 			return c.String(http.StatusOK, "ok")
 		})
 
@@ -48,6 +51,7 @@ func TestCorrelationIDMiddleware(t *testing.T) {
 			// Verify it's a valid UUID format (36 chars with dashes)
 			assert.Len(t, generatedID, 36)
 			assert.Contains(t, generatedID, "-")
+			assert.False(t, correlation.IsClientProvided(ctx))
 			return c.String(http.StatusOK, "ok")
 		})
 

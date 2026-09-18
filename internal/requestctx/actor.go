@@ -69,9 +69,10 @@ func ActorOwner(ctx context.Context) (ownerID, ownerName string, ok bool) {
 	return actor.OwnerID.String(), actor.OwnerName, true
 }
 
-// WithAuthenticationSecrets carries already-authenticated raw material to
-// trusted operator logging. Callers attach it only after authentication; the
-// values are copied so downstream code cannot mutate the request context.
+// WithAuthenticationSecrets carries presented authentication material to
+// trusted operator logging for redaction. Callers may attach it before
+// validation without admitting an actor; values are copied so downstream code
+// cannot mutate the request context.
 func WithAuthenticationSecrets(ctx context.Context, secrets ...string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()

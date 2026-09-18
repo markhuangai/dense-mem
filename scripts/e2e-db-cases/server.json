@@ -24,6 +24,13 @@
       "source": "cmd/internal/serverapp/lifecycle_runtime_integration_test.go"
     },
     {
+      "id": "server/TestServerLifecycleBuildWorkerFailureUsesStartupAbort",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestServerLifecycleBuildWorkerFailureUsesStartupAbort$",
+      "phase": "precheck",
+      "source": "cmd/internal/serverapp/lifecycle_runtime_integration_test.go"
+    },
+    {
       "id": "server/TestServerLifecycleForcesListenerCloseAfterCancellation",
       "package": "./cmd/internal/serverapp",
       "run": "^TestServerLifecycleForcesListenerCloseAfterCancellation$",
