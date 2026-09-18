@@ -52,6 +52,20 @@
       "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
     },
     {
+      "id": "postgres/TestMigrationControlRetirementRequiresApprovedOperationalPreflight",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRequiresApprovedOperationalPreflight$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsHiddenLineageColumnWithNOBYPASSRLS",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRejectsHiddenLineageColumnWithNOBYPASSRLS$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
       "id": "postgres/TestMigrationControlRetirementRunsWithNOBYPASSRLS",
       "package": "./internal/storage/postgres",
       "run": "^TestMigrationControlRetirementRunsWithNOBYPASSRLS$",

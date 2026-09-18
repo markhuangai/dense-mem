@@ -6,8 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,9 +14,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"gorm.io/gorm"
 )
 
 const (
@@ -38,6 +33,84 @@ var migrationControlRetirementTables = []string{
 	"v2_migration_operator_actions",
 }
 
+func TestMigrationControlRetirementRequiresApprovedOperationalPreflight(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, migrationControlRetirementBaseVersion)
+	seedMigrationControlRetirementFixture(t, ctx, sqlDB)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE public.v2_migration_runs
+			   SET preflight_approved = false
+		`)
+		return err
+	}))
+
+	err := migrationUpTo(ctx, sqlDB, migrationControlRetirementVersion)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "approved detached-release retirement preflight")
+	require.False(t, migrationControlRetirementApplied(t, ctx, sqlDB))
+	for _, table := range migrationControlRetirementTables {
+		require.True(t, tableExists(t, ctx, sqlDB, table), "%s must remain after preflight rejection", table)
+	}
+}
+
+func TestMigrationControlRetirementRejectsHiddenLineageColumnWithNOBYPASSRLS(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, migrationControlRetirementPredecessorVersion)
+	seedMigrationControlRetirementFixture(t, ctx, sqlDB)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `ALTER TABLE public.knowledge_ingests ADD COLUMN migration_run_id uuid`)
+		return err
+	}))
+
+	roleName := "dense_mem_migration_control_retirement_hidden_column_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	quotedRole := quoteMigrationIdentifier(roleName)
+	if _, err := sqlDB.ExecContext(ctx, "CREATE ROLE "+quotedRole+" NOLOGIN NOSUPERUSER NOBYPASSRLS"); err != nil {
+		if isPostgresInsufficientPrivilege(err) {
+			t.Skipf("migration retirement hidden-column RLS test requires role administration: %v", err)
+		}
+		require.NoError(t, err)
+	}
+
+	for _, statement := range []string{
+		"GRANT USAGE, CREATE ON SCHEMA public TO " + quotedRole,
+		"ALTER TABLE public.goose_db_version OWNER TO " + quotedRole,
+		"ALTER TABLE public.v2_compatibility_markers OWNER TO " + quotedRole,
+	} {
+		require.NoError(t, func() error {
+			_, err := sqlDB.ExecContext(ctx, statement)
+			return err
+		}(), statement)
+	}
+	for _, table := range migrationControlRetirementTables {
+		require.NoError(t, func() error {
+			_, err := sqlDB.ExecContext(ctx, "ALTER TABLE public."+table+" OWNER TO "+quotedRole)
+			return err
+		}(), table)
+	}
+
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+	_, err := sqlDB.ExecContext(ctx, "SET ROLE "+quotedRole)
+	require.NoError(t, err)
+	err = migrationUpTo(ctx, sqlDB, migrationControlRetirementVersion)
+	_, resetErr := sqlDB.ExecContext(ctx, "RESET ROLE")
+	require.NoError(t, resetErr)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "knowledge_ingests.migration_run_id is still present")
+	require.False(t, migrationControlRetirementApplied(t, ctx, sqlDB))
+	for _, table := range migrationControlRetirementTables {
+		require.True(t, tableExists(t, ctx, sqlDB, table), "%s must remain after a hidden-column rejection", table)
+	}
+}
+
 func TestMigrationControlRetirementDropsOnlyApprovedTablesAndPreservesMarker(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
@@ -48,7 +121,11 @@ func TestMigrationControlRetirementDropsOnlyApprovedTablesAndPreservesMarker(t *
 	retainedTeamID, _ := insertMigrationTeamProfile(t, ctx, sqlDB)
 	beforeCounts := migrationControlRetirementTableCounts(t, ctx, sqlDB)
 	for _, table := range migrationControlRetirementTables {
-		require.Equal(t, int64(1), beforeCounts[table], "%s should contain the fixture row", table)
+		want := int64(1)
+		if table == "v2_migration_gate_results" {
+			want = 5
+		}
+		require.Equal(t, want, beforeCounts[table], "%s should contain the fixture row(s)", table)
 	}
 	markerBefore := migrationControlRetirementAllMarkerSnapshot(t, ctx, sqlDB)
 	retainedDataBefore := migrationControlRetirementRetainedDataSnapshot(t, ctx, sqlDB)
@@ -465,6 +542,7 @@ func TestMigrationControlRetirementRejectsUnexpectedDependenciesAndRollsBack(t *
 			ctx := context.Background()
 			sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 			runGooseUpTo(t, ctx, sqlDB, migrationControlRetirementBaseVersion)
+			seedMigrationControlRetirementFixture(t, ctx, sqlDB)
 			require.NoError(t, tt.install(ctx, sqlDB))
 			t.Cleanup(cleanup)
 			t.Cleanup(func() {
@@ -486,6 +564,7 @@ func TestMigrationControlRetirementLockFailureRollsBackAndCanRetry(t *testing.T)
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 	runGooseUpTo(t, ctx, sqlDB, migrationControlRetirementBaseVersion)
+	seedMigrationControlRetirementFixture(t, ctx, sqlDB)
 	sqlDB.SetMaxOpenConns(4)
 
 	blockerConn, err := sqlDB.Conn(ctx)
@@ -620,21 +699,6 @@ func TestMigrationControlRetirementBackupRestoreRecreatesPopulatedPreRetirementS
 	})
 }
 
-func runMigrationControlRetirementOnly(t *testing.T, ctx context.Context, db *sql.DB) error {
-	t.Helper()
-	migrationDir := t.TempDir()
-	releaseDir := filepath.Join(migrationDir, "v2_6")
-	require.NoError(t, os.MkdirAll(releaseDir, 0o755))
-	sourcePath := filepath.Join(MigrationsDir(), "v2_6", "20260917010001_retire_migration_control.sql")
-	contents, err := os.ReadFile(sourcePath)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(releaseDir, "20260917010001_retire_migration_control.sql"), contents, 0o644))
-	provider, err := newMigrationProvider(migrationDir, db, false)
-	require.NoError(t, err)
-	_, err = provider.UpTo(ctx, migrationControlRetirementVersion)
-	return err
-}
-
 func TestMigrationControlRetirementRejectsOlderNodeAfterUpgrade(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
@@ -659,111 +723,6 @@ SELECT 1;
 	require.Equal(t, migrationControlRetirementBaseVersion, state.RepositoryLatest)
 	require.Equal(t, "database migration is newer than this binary", state.Reason)
 	require.Error(t, ValidateStartupMigrationState(ctx, sqlDB, oldMigrationsDir))
-}
-
-func openMigrationControlRetirementBackupContainer(t *testing.T, ctx context.Context) (testcontainers.Container, *sql.DB, string, func()) {
-	t.Helper()
-	container, err := tcpostgres.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", postgresTestContainerOptions()...)
-	require.NoError(t, err)
-	sourceDSN, err := postgresTestContainerDSN(ctx, container)
-	require.NoError(t, err)
-	db, err := Open(ctx, &testConfig{dsn: sourceDSN})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	cleanup := func() {
-		_ = sqlDB.Close()
-		_ = container.Terminate(ctx)
-	}
-	return container, sqlDB, sourceDSN, cleanup
-}
-
-func openRetirementBackupDatabase(t *testing.T, ctx context.Context, sourceDSN, databaseName string) *gorm.DB {
-	t.Helper()
-	parsed, err := url.Parse(sourceDSN)
-	require.NoError(t, err)
-	parsed.Path = "/" + databaseName
-	db, err := Open(ctx, &testConfig{dsn: parsed.String()})
-	require.NoError(t, err)
-	return db
-}
-
-func containerExec(t *testing.T, ctx context.Context, container testcontainers.Container, command []string) {
-	t.Helper()
-	exitCode, output, err := container.Exec(ctx, command)
-	require.NoError(t, err)
-	outputBytes, readErr := io.ReadAll(output)
-	require.NoError(t, readErr)
-	require.Zero(t, exitCode, "container command failed: %s", strings.TrimSpace(string(outputBytes)))
-}
-
-func seedMigrationControlRetirementFixture(t *testing.T, ctx context.Context, db *sql.DB) {
-	t.Helper()
-	runID := uuid.NewString()
-	teamID := uuid.NewString()
-	require.NoError(t, execPostgresTxMode(ctx, db, "migration", func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO v2_migration_runs (
-				run_id, migration_contract_version, corpus_version, source_kind, state
-			) VALUES ($1::uuid, 'retirement-test', 'retirement-test', 'neo4j', 'cut_over')
-		`, runID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO v2_migration_corpus_items (
-				run_id, team_id, source_kind, source_id, item_kind, outcome
-			) VALUES ($1::uuid, $2::uuid, 'neo4j', 'retirement-source', 'evidence', 'accepted')
-		`, runID, teamID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO v2_migration_source_maps (
-				run_id, source_kind, source_id, target_type, target_id
-			) VALUES ($1::uuid, 'neo4j', 'retirement-source', 'evidence', 'retirement-target')
-		`, runID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO v2_migration_checkpoints (run_id, checkpoint_key)
-			VALUES ($1::uuid, 'retirement-checkpoint')
-		`, runID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO v2_migration_errors (run_id, phase, error_code, message)
-			VALUES ($1::uuid, 'retirement', 'fixture', 'fixture error')
-		`, runID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO v2_migration_exclusions (run_id, source_id, reason)
-			VALUES ($1::uuid, 'retirement-source', 'fixture exclusion')
-		`, runID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO v2_migration_gate_results (run_id, gate_name, outcome)
-			VALUES ($1::uuid, 'retirement', 'pass')
-		`, runID); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO v2_migration_operator_actions (run_id, action, actor)
-			VALUES ($1::uuid, 'retirement-fixture', 'integration-test')
-		`, runID)
-		if err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO v2_compatibility_markers (
-				marker_kind, version, status, run_id, corpus_hash, gate_report_hash, metadata
-			) VALUES (
-				'v2_retirement_fixture', 'v1', 'compatible', $1::uuid,
-				'retirement-corpus', 'retirement-gates', '{"fixture":true}'::jsonb
-			)
-		`, runID)
-		return err
-	}))
 }
 
 func migrationControlRetirementAllMarkerSnapshot(t *testing.T, ctx context.Context, db *sql.DB) string {

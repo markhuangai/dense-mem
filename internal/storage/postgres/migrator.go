@@ -260,6 +260,20 @@ func (m *Migrator) RunUp(ctx context.Context) error {
 	return nil
 }
 
+// RunUpTo runs pending up migrations through the requested version. It is used
+// for controlled migration sequencing when a later migration has a separate
+// operational gate.
+func (m *Migrator) RunUpTo(ctx context.Context, version int64) error {
+	provider, err := newMigrationProvider(m.dir, m.db, true)
+	if err != nil {
+		return err
+	}
+	if _, err := provider.UpTo(ctx, version); err != nil {
+		return fmt.Errorf("failed to run up migrations through %d: %w", version, err)
+	}
+	return nil
+}
+
 // RunDown runs all down migrations (rollback).
 func (m *Migrator) RunDown(ctx context.Context) error {
 	provider, err := newMigrationProvider(m.dir, m.db, false)
@@ -308,6 +322,15 @@ func RunUp(ctx context.Context, db *gorm.DB) error {
 		return err
 	}
 	return m.RunUp(ctx)
+}
+
+// RunUpTo runs pending up migrations through the requested version.
+func RunUpTo(ctx context.Context, db *gorm.DB, version int64) error {
+	m, err := NewMigrator(db)
+	if err != nil {
+		return err
+	}
+	return m.RunUpTo(ctx, version)
 }
 
 // RunDown is a standalone function that runs down migrations on the given database.

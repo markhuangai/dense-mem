@@ -21,19 +21,22 @@ an applied Goose version does not satisfy those operational gates.
 Production execution also requires a separate recorded authorization before
 the replacement release starts. The authorization names the approved commit,
 the detached-release deployment receipt, the current-main rehearsal and
-backup/restore evidence, and the planned coordinated stop. Do not start the
-replacement release or allow startup migrations to execute until that record
-is approved by the maintainer.
+backup/restore evidence, and the planned coordinated stop. The migration
+requires that approval in the latest `v2_migration_runs` row, a non-empty
+`backup_reference`, passing evidence for the detached-release, current-main,
+backup/restore, coordinated-stop, and catalog-preflight gates, and a recorded
+`retire_migration_control` operator action. Without those records, Goose fails
+before dropping a table.
 
-The retirement release is applied during a planned stop of every API, worker,
-and demo instance that shares the database. Stop all instances before starting
-the replacement release; a rolling `docker compose up` is not sufficient. The
-operator records the eight table definitions and row counts, the compatibility
-marker identifiers and contents, and the preserved catalog before the stop.
-After the replacement starts, verify that the migration completed, all eight
-tables and only their owned objects are absent, the marker and canonical tables
-are unchanged, and health, Remember, recall, trace, workers, and RLS checks
-pass.
+After stopping every API, worker, and demo instance that shares the database,
+the operator runs the ordered Goose stream once from the authorized
+maintenance process while all instances remain stopped. A rolling
+`docker compose up` is not sufficient. The operator records the eight table
+definitions and row counts, the compatibility marker identifiers and contents,
+and the preserved catalog before the stop. After the replacement starts,
+verify that the migration completed, all eight tables and only their owned
+objects are absent, the marker and canonical tables are unchanged, and health,
+Remember, recall, trace, workers, and RLS checks pass.
 
 The former `repository/TestAuthorityRepositoryRetainsMigrationAuditReadOnly`
 baseline case belonged to #278's retained-table boundary. #279 retires that

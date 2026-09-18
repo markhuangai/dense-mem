@@ -8,6 +8,9 @@
 -- these tables; compatibility markers and all canonical state remain intact.
 -- Rollback: irreversible after commit. Recovery requires a verified backup
 -- restoration or a separately reviewed forward recovery migration.
+-- Execution: the latest migration-control run must contain the explicit
+-- maintenance authorization and every coordinated-stop/recovery gate before
+-- this startup migration is allowed to perform its destructive DDL.
 
 -- +goose Up
 -- +goose StatementBegin
@@ -54,6 +57,11 @@ DECLARE
     marker_id uuid;
     marker_version text;
     marker_status text;
+    retirement_run_id uuid;
+    retirement_state text;
+    retirement_preflight_approved boolean;
+    retirement_backup_reference text;
+    retirement_preflight_checks jsonb;
     unexpected text;
 BEGIN
     SELECT count(*)
@@ -81,10 +89,15 @@ BEGIN
 
     IF EXISTS (
         SELECT 1
-          FROM information_schema.columns
-         WHERE table_schema = 'public'
-           AND table_name = 'knowledge_ingests'
-           AND column_name = 'migration_run_id'
+          FROM pg_attribute AS attribute_row
+          JOIN pg_class AS table_row ON table_row.oid = attribute_row.attrelid
+          JOIN pg_namespace AS namespace_row ON namespace_row.oid = table_row.relnamespace
+         WHERE namespace_row.nspname = 'public'
+           AND table_row.relname = 'knowledge_ingests'
+           AND table_row.relkind = 'r'
+           AND attribute_row.attname = 'migration_run_id'
+           AND attribute_row.attnum > 0
+           AND NOT attribute_row.attisdropped
     ) THEN
         RAISE EXCEPTION
             'migration-control retirement blocked: knowledge_ingests.migration_run_id is still present';
@@ -120,6 +133,71 @@ BEGIN
     THEN
         RAISE EXCEPTION
             'migration-control retirement blocked: latest compatible v2.6.1 cutover marker is required';
+    END IF;
+    SELECT run_row.run_id,
+           run_row.state,
+           run_row.preflight_approved,
+           run_row.backup_reference,
+           run_row.preflight_checks
+      INTO retirement_run_id,
+           retirement_state,
+           retirement_preflight_approved,
+           retirement_backup_reference,
+           retirement_preflight_checks
+      FROM public.v2_migration_runs AS run_row
+     ORDER BY run_row.updated_at DESC, run_row.run_id DESC
+     LIMIT 1;
+    IF NOT FOUND
+       OR retirement_state NOT IN ('ready_to_cutover', 'cut_over')
+       OR retirement_preflight_approved IS DISTINCT FROM true
+       OR btrim(retirement_backup_reference) = ''
+       OR (retirement_preflight_checks @> $preflight$
+           {
+             "detached_release_deployed": true,
+             "current_main_rehearsal": true,
+             "backup_restore_rehearsal": true,
+             "coordinated_stop": true,
+             "catalog_preflight": true
+           }
+           $preflight$::jsonb) IS NOT TRUE
+    THEN
+        RAISE EXCEPTION
+            'migration-control retirement blocked: latest migration run lacks approved detached-release retirement preflight';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+          FROM (VALUES
+              ('detached_release_deployed'),
+              ('current_main_rehearsal'),
+              ('backup_restore_rehearsal'),
+              ('coordinated_stop'),
+              ('catalog_preflight')
+          ) AS required_gate(gate_name)
+         WHERE NOT EXISTS (
+             SELECT 1
+               FROM public.v2_migration_gate_results AS gate_row
+              WHERE gate_row.run_id = retirement_run_id
+                AND gate_row.gate_name = required_gate.gate_name
+                AND gate_row.outcome = 'pass'
+                AND btrim(gate_row.evidence_ref) <> ''
+                AND btrim(gate_row.evidence_hash) <> ''
+         )
+    ) THEN
+        RAISE EXCEPTION
+            'migration-control retirement blocked: required operational gate evidence is incomplete';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+          FROM public.v2_migration_operator_actions AS action_row
+         WHERE action_row.run_id = retirement_run_id
+           AND action_row.action = 'retire_migration_control'
+           AND btrim(action_row.actor) <> ''
+           AND btrim(action_row.reason) <> ''
+    ) THEN
+        RAISE EXCEPTION
+            'migration-control retirement blocked: explicit operator authorization is required';
     END IF;
     PERFORM set_config('app.tx_mode', 'migration', true);
 
