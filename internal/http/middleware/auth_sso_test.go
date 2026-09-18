@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -200,6 +201,44 @@ func TestAuthMiddleware_MalformedScopedTeamRecordsAuthFailure(t *testing.T) {
 	assert.True(t, mockAudit.authFailureCalled)
 	assert.True(t, mockSecurity.recordAuthFailureCalled)
 	assert.Equal(t, "TEAM_PATH_INVALID", mockSecurity.recordAuthFailureReason)
+}
+
+func TestAuthMiddlewareAttachesVerifiedSecretBeforeScopedTeamDenial(t *testing.T) {
+	teamID := uuid.New()
+	requestedTeamID := uuid.New()
+	rawKey := "testprefix12345678901234567890"
+	credential := testCredential(uuid.New(), teamID)
+	credential.KeyHash = "encoded-hash"
+
+	repo := &mockCredentialRepository{getActiveByPrefixFunc: func(context.Context, string) (*domain.Credential, error) {
+		copy := *credential
+		return &copy, nil
+	}}
+	e := newTestEcho()
+	var observed context.Context
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			err := next(c)
+			observed = c.Request().Context()
+			return err
+		}
+	})
+	e.Use(AuthMiddlewareWithOptions(repo, nil, nil, AuthOptions{
+		CredentialVerifier:       stubCredentialVerifier{valid: true},
+		CredentialLookupPrefixes: crypto.GetLookupPrefixes,
+	}))
+	e.GET("/teams/:teamId/mcp", func(c echo.Context) error {
+		return c.NoContent(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/teams/"+requestedTeamID.String()+"/mcp", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	require.NotNil(t, observed)
+	assert.Equal(t, []string{rawKey}, requestctx.AuthenticationSecretsFromContext(observed))
 }
 
 func TestAuthMiddlewareOAuthBearerSetsImmutablePrincipal(t *testing.T) {

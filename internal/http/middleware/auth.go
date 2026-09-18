@@ -241,6 +241,10 @@ func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc acce
 				return httperr.New(httperr.AUTH_INVALID, "invalid api key")
 			}
 
+			// Preserve verified credential material for redaction if later authorization checks reject the request.
+			ctx = requestctx.WithAuthenticationSecrets(ctx, rawKey)
+			c.SetRequest(c.Request().WithContext(ctx))
+
 			// All runtime keys must be team-bound. Legacy team-less keys are
 			// rejected so the server only accepts the multi-tenant bearer model.
 			teamID := key.GetTeamID()
@@ -278,7 +282,6 @@ func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc acce
 			if err != nil {
 				return err
 			}
-			ctx = requestctx.WithAuthenticationSecrets(ctx, rawKey)
 			ctx = context.WithValue(ctx, principalContextKey{}, principal)
 			ctx = requestctx.WithActor(ctx, actorContext)
 
