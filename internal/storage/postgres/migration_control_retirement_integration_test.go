@@ -57,6 +57,31 @@ func TestMigrationControlRetirementRequiresApprovedOperationalPreflight(t *testi
 	}
 }
 
+func TestMigrationControlRetirementRejectsUnboundOperatorMetadata(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, migrationControlRetirementBaseVersion)
+	seedMigrationControlRetirementFixture(t, ctx, sqlDB)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE v2_migration_operator_actions
+			   SET metadata = '{"approved_commit":"fixture"}'::jsonb
+			 WHERE action = 'retire_migration_control'
+		`)
+		return err
+	}))
+
+	err := migrationUpTo(ctx, sqlDB, migrationControlRetirementVersion)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "operator authorization is incomplete")
+	require.False(t, migrationControlRetirementApplied(t, ctx, sqlDB))
+	for _, table := range migrationControlRetirementTables {
+		require.True(t, tableExists(t, ctx, sqlDB, table), "%s must remain after metadata rejection", table)
+	}
+}
+
 func TestMigrationControlRetirementRejectsHiddenLineageColumnWithNOBYPASSRLS(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
@@ -132,7 +157,8 @@ func TestMigrationControlRetirementDropsOnlyApprovedTablesAndPreservesMarker(t *
 	retainedTeamNameBefore := migrationControlRetirementTeamName(t, ctx, sqlDB, retainedTeamID)
 	ownedObjectsBefore := migrationControlRetirementOwnedObjectCounts(t, ctx, sqlDB)
 
-	runGooseUpTo(t, ctx, sqlDB, migrationControlRetirementVersion)
+	migrator := NewMigratorWithDB(sqlDB)
+	require.NoError(t, migrator.RunMigrationControlRetirement(ctx))
 
 	for _, table := range migrationControlRetirementTables {
 		require.False(t, tableExists(t, ctx, sqlDB, table), "%s must be retired", table)
@@ -157,6 +183,33 @@ func TestMigrationControlRetirementDropsOnlyApprovedTablesAndPreservesMarker(t *
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "20260917010001 is irreversible")
 	require.True(t, migrationControlRetirementApplied(t, ctx, sqlDB))
+}
+
+func TestMigrationControlRetirementRejectsChangedApprovedRowCounts(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, migrationControlRetirementBaseVersion)
+	seedMigrationControlRetirementFixture(t, ctx, sqlDB)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO v2_migration_errors (run_id, phase, error_code, message)
+			SELECT run_id, 'retirement', 'late-row', 'added after the approved snapshot'
+			  FROM v2_migration_runs
+			 ORDER BY updated_at DESC, run_id DESC
+			 LIMIT 1
+		`)
+		return err
+	}))
+
+	err := migrationUpTo(ctx, sqlDB, migrationControlRetirementVersion)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "approved row-count snapshot differs for v2_migration_errors")
+	require.False(t, migrationControlRetirementApplied(t, ctx, sqlDB))
+	for _, table := range migrationControlRetirementTables {
+		require.True(t, tableExists(t, ctx, sqlDB, table), "%s must remain after row-count rejection", table)
+	}
 }
 
 func TestMigrationControlRetirementRunsWithNOBYPASSRLS(t *testing.T) {

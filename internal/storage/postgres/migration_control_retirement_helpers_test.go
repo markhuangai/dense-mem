@@ -87,7 +87,17 @@ func seedMigrationControlRetirementFixture(t *testing.T, ctx context.Context, db
 				  "current_main_rehearsal": true,
 				  "backup_restore_rehearsal": true,
 				  "coordinated_stop": true,
-				  "catalog_preflight": true
+				  "catalog_preflight": true,
+				  "row_counts": {
+				    "v2_migration_runs": 1,
+				    "v2_migration_corpus_items": 1,
+				    "v2_migration_source_maps": 1,
+				    "v2_migration_checkpoints": 1,
+				    "v2_migration_errors": 1,
+				    "v2_migration_exclusions": 1,
+				    "v2_migration_gate_results": 5,
+				    "v2_migration_operator_actions": 1
+				  }
 				}'::jsonb
 			)
 		`, runID); err != nil {
@@ -145,7 +155,15 @@ func seedMigrationControlRetirementFixture(t *testing.T, ctx context.Context, db
 			VALUES (
 				$1::uuid, 'retire_migration_control', 'integration-test',
 				'verified retirement preflight fixture',
-				'{"approved_commit":"fixture","coordinated_stop":true}'::jsonb
+				'{
+				  "approved_commit": "fixture",
+				  "detached_release_receipt": "fixture://detached-release",
+				  "current_main_rehearsal": "fixture://current-main",
+				  "backup_restore_rehearsal": "fixture://backup-restore",
+				  "coordinated_stop": "fixture://coordinated-stop",
+				  "node_fence": "fixture://coordinated-stop",
+				  "catalog_preflight": "fixture://catalog"
+				}'::jsonb
 			)
 		`, runID)
 		if err != nil {

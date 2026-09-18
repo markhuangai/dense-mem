@@ -28,6 +28,13 @@ backup/restore, coordinated-stop, and catalog-preflight gates, and a recorded
 `retire_migration_control` operator action. Without those records, Goose fails
 before dropping a table.
 
+Ordinary server startup deliberately does not execute this destructive
+boundary. The maintenance process first runs the normal ordered migrations,
+stages the preflight records through the authorized table-owner/system path
+while the retained audit tables are still writable, and then invokes the
+explicit migration-control retirement runner. The retirement version remains
+pending in normal startup until that maintenance action succeeds.
+
 After stopping every API, worker, and demo instance that shares the database,
 the operator runs the ordered Goose stream once from the authorized
 maintenance process while all instances remain stopped. A rolling

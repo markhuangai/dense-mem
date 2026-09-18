@@ -51,6 +51,11 @@ type migrationSource struct {
 	contents []byte
 }
 
+const (
+	migrationControlRetirementFilename                 = "20260917010001_retire_migration_control.sql"
+	migrationControlRetirementMaintenanceVersion int64 = 20260917010001
+)
+
 func listMigrationSources(dir string) ([]migrationSource, error) {
 	sources := make([]migrationSource, 0)
 	err := filepath.WalkDir(dir, func(filename string, entry fs.DirEntry, walkErr error) error {
@@ -120,6 +125,21 @@ func migrationFilesystem(dir string) (fstest.MapFS, error) {
 	for _, source := range sources {
 		name := path.Base(source.filename)
 		filesystem[name] = &fstest.MapFile{Data: source.contents, Mode: 0o644}
+	}
+	return filesystem, nil
+}
+
+func runtimeMigrationFilesystem(dir string) (fstest.MapFS, error) {
+	sources, err := listMigrationSources(dir)
+	if err != nil {
+		return nil, err
+	}
+	filesystem := make(fstest.MapFS, len(sources))
+	for _, source := range sources {
+		if path.Base(source.filename) == migrationControlRetirementFilename {
+			continue
+		}
+		filesystem[path.Base(source.filename)] = &fstest.MapFile{Data: source.contents, Mode: 0o644}
 	}
 	return filesystem, nil
 }
@@ -197,10 +217,23 @@ func NewMigratorWithDB(sqlDB *sql.DB) *Migrator {
 }
 
 func newMigrationProvider(dir string, db *sql.DB, withLock bool) (*goose.Provider, error) {
+	return newMigrationProviderWithFilesystem(dir, db, withLock, migrationFilesystem)
+}
+
+func newRuntimeMigrationProvider(dir string, db *sql.DB, withLock bool) (*goose.Provider, error) {
+	return newMigrationProviderWithFilesystem(dir, db, withLock, runtimeMigrationFilesystem)
+}
+
+func newMigrationProviderWithFilesystem(
+	dir string,
+	db *sql.DB,
+	withLock bool,
+	filesystemLoader func(string) (fstest.MapFS, error),
+) (*goose.Provider, error) {
 	if db == nil {
 		return nil, fmt.Errorf("migration provider: database is required")
 	}
-	filesystem, err := migrationFilesystem(dir)
+	filesystem, err := filesystemLoader(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +281,7 @@ func migrationDown(ctx context.Context, db *sql.DB) error {
 
 // RunUp runs all pending up migrations.
 func (m *Migrator) RunUp(ctx context.Context) error {
-	provider, err := newMigrationProvider(m.dir, m.db, true)
+	provider, err := newRuntimeMigrationProvider(m.dir, m.db, true)
 	if err != nil {
 		return err
 	}
@@ -260,16 +293,15 @@ func (m *Migrator) RunUp(ctx context.Context) error {
 	return nil
 }
 
-// RunUpTo runs pending up migrations through the requested version. It is used
-// for controlled migration sequencing when a later migration has a separate
-// operational gate.
-func (m *Migrator) RunUpTo(ctx context.Context, version int64) error {
+// RunMigrationControlRetirement runs the explicitly authorized destructive
+// migration. Ordinary startup deliberately excludes this maintenance boundary.
+func (m *Migrator) RunMigrationControlRetirement(ctx context.Context) error {
 	provider, err := newMigrationProvider(m.dir, m.db, true)
 	if err != nil {
 		return err
 	}
-	if _, err := provider.UpTo(ctx, version); err != nil {
-		return fmt.Errorf("failed to run up migrations through %d: %w", version, err)
+	if _, err := provider.UpTo(ctx, migrationControlRetirementMaintenanceVersion); err != nil {
+		return fmt.Errorf("failed to run migration-control retirement: %w", err)
 	}
 	return nil
 }
@@ -324,13 +356,14 @@ func RunUp(ctx context.Context, db *gorm.DB) error {
 	return m.RunUp(ctx)
 }
 
-// RunUpTo runs pending up migrations through the requested version.
-func RunUpTo(ctx context.Context, db *gorm.DB, version int64) error {
+// RunMigrationControlRetirement runs the explicitly authorized destructive
+// migration without including it in the ordinary startup migration stream.
+func RunMigrationControlRetirement(ctx context.Context, db *gorm.DB) error {
 	m, err := NewMigrator(db)
 	if err != nil {
 		return err
 	}
-	return m.RunUpTo(ctx, version)
+	return m.RunMigrationControlRetirement(ctx)
 }
 
 // RunDown is a standalone function that runs down migrations on the given database.

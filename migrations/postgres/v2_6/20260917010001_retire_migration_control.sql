@@ -62,6 +62,15 @@ DECLARE
     retirement_preflight_approved boolean;
     retirement_backup_reference text;
     retirement_preflight_checks jsonb;
+    retirement_operator_metadata jsonb;
+    detached_release_evidence_ref text;
+    current_main_evidence_ref text;
+    backup_restore_evidence_ref text;
+    coordinated_stop_evidence_ref text;
+    catalog_preflight_evidence_ref text;
+    expected_count bigint;
+    current_count bigint;
+    table_name text;
     unexpected text;
 BEGIN
     SELECT count(*)
@@ -188,17 +197,68 @@ BEGIN
             'migration-control retirement blocked: required operational gate evidence is incomplete';
     END IF;
 
-    IF NOT EXISTS (
-        SELECT 1
-          FROM public.v2_migration_operator_actions AS action_row
-         WHERE action_row.run_id = retirement_run_id
-           AND action_row.action = 'retire_migration_control'
-           AND btrim(action_row.actor) <> ''
-           AND btrim(action_row.reason) <> ''
-    ) THEN
+    SELECT max(gate_row.evidence_ref) FILTER (WHERE gate_row.gate_name = 'detached_release_deployed'),
+           max(gate_row.evidence_ref) FILTER (WHERE gate_row.gate_name = 'current_main_rehearsal'),
+           max(gate_row.evidence_ref) FILTER (WHERE gate_row.gate_name = 'backup_restore_rehearsal'),
+           max(gate_row.evidence_ref) FILTER (WHERE gate_row.gate_name = 'coordinated_stop'),
+           max(gate_row.evidence_ref) FILTER (WHERE gate_row.gate_name = 'catalog_preflight')
+      INTO detached_release_evidence_ref,
+           current_main_evidence_ref,
+           backup_restore_evidence_ref,
+           coordinated_stop_evidence_ref,
+           catalog_preflight_evidence_ref
+      FROM public.v2_migration_gate_results AS gate_row
+     WHERE gate_row.run_id = retirement_run_id
+       AND gate_row.outcome = 'pass';
+
+    SELECT action_row.metadata
+      INTO retirement_operator_metadata
+      FROM public.v2_migration_operator_actions AS action_row
+     WHERE action_row.run_id = retirement_run_id
+       AND action_row.action = 'retire_migration_control'
+       AND btrim(action_row.actor) <> ''
+       AND btrim(action_row.reason) <> ''
+     ORDER BY action_row.created_at DESC, action_row.action_id DESC
+     LIMIT 1;
+    IF NOT FOUND
+       OR jsonb_typeof(retirement_operator_metadata) IS DISTINCT FROM 'object'
+       OR btrim(retirement_operator_metadata->>'approved_commit') = ''
+       OR btrim(retirement_operator_metadata->>'detached_release_receipt') IS DISTINCT FROM btrim(detached_release_evidence_ref)
+       OR btrim(retirement_operator_metadata->>'current_main_rehearsal') IS DISTINCT FROM btrim(current_main_evidence_ref)
+       OR btrim(retirement_operator_metadata->>'backup_restore_rehearsal') IS DISTINCT FROM btrim(backup_restore_evidence_ref)
+       OR btrim(retirement_operator_metadata->>'coordinated_stop') IS DISTINCT FROM btrim(coordinated_stop_evidence_ref)
+       OR btrim(retirement_operator_metadata->>'node_fence') IS DISTINCT FROM btrim(coordinated_stop_evidence_ref)
+       OR btrim(retirement_operator_metadata->>'catalog_preflight') IS DISTINCT FROM btrim(catalog_preflight_evidence_ref)
+    THEN
         RAISE EXCEPTION
-            'migration-control retirement blocked: explicit operator authorization is required';
+            'migration-control retirement blocked: explicit operator authorization is incomplete or not bound to gate evidence';
     END IF;
+
+    IF jsonb_typeof(retirement_preflight_checks->'row_counts') IS DISTINCT FROM 'object'
+       OR (
+           SELECT count(*)
+             FROM jsonb_object_keys(retirement_preflight_checks->'row_counts')
+       ) <> cardinality(retired_tables)
+       OR EXISTS (
+           SELECT 1
+             FROM unnest(retired_tables) AS required_table(table_name)
+            WHERE (retirement_preflight_checks->'row_counts'->required_table.table_name) IS NULL
+               OR (retirement_preflight_checks->'row_counts'->>required_table.table_name) !~ '^[0-9]+$'
+       )
+    THEN
+        RAISE EXCEPTION
+            'migration-control retirement blocked: approved row-count snapshot is incomplete';
+    END IF;
+
+    FOREACH table_name IN ARRAY retired_tables LOOP
+        expected_count := (retirement_preflight_checks->'row_counts'->>table_name)::bigint;
+        EXECUTE format('SELECT count(*) FROM public.%I', table_name) INTO current_count;
+        IF current_count IS DISTINCT FROM expected_count THEN
+            RAISE EXCEPTION
+                'migration-control retirement blocked: approved row-count snapshot differs for % (expected %, found %)',
+                table_name, expected_count, current_count;
+        END IF;
+    END LOOP;
     PERFORM set_config('app.tx_mode', 'migration', true);
 
     SELECT string_agg(

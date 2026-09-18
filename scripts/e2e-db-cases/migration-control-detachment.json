@@ -59,9 +59,23 @@
       "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
     },
     {
+      "id": "postgres/TestMigrationControlRetirementRejectsUnboundOperatorMetadata",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRejectsUnboundOperatorMetadata$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
       "id": "postgres/TestMigrationControlRetirementRejectsHiddenLineageColumnWithNOBYPASSRLS",
       "package": "./internal/storage/postgres",
       "run": "^TestMigrationControlRetirementRejectsHiddenLineageColumnWithNOBYPASSRLS$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsChangedApprovedRowCounts",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRejectsChangedApprovedRowCounts$",
       "phase": "precheck",
       "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
     },

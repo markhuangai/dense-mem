@@ -37,8 +37,6 @@ func setupLedgerRepositoryDB(t *testing.T) (*gorm.DB, *gorm.DB, *storagepostgres
 	require.NoError(t, err)
 	migrator, err := storagepostgres.NewMigrator(db)
 	require.NoError(t, err)
-	require.NoError(t, migrator.RunUpTo(context.Background(), 20260913020001))
-	seedMigrationControlRetirementPreflight(t, db, storagepostgres.NewRLS())
 	require.NoError(t, migrator.RunUp(context.Background()))
 
 	rls := storagepostgres.NewRLS()
@@ -81,55 +79,6 @@ func setupLedgerRepositoryDB(t *testing.T) (*gorm.DB, *gorm.DB, *storagepostgres
 	}
 	require.NoError(t, rls.WithSystemTx(context.Background(), db, truncateLedgerFixtures))
 	return db, appDB, rls, cleanup
-}
-
-func seedMigrationControlRetirementPreflight(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS) {
-	t.Helper()
-	runID := uuid.NewString()
-	ctx := context.Background()
-	require.NoError(t, rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
-		if err := tx.Exec(`
-			INSERT INTO v2_migration_runs (
-				run_id, migration_contract_version, corpus_version, source_kind, state,
-				preflight_approved, backup_reference, preflight_checks
-			) VALUES (
-				?, 'retirement-test', 'retirement-test', 'neo4j', 'cut_over',
-				true, 'backup://retirement-fixture',
-				'{
-				  "detached_release_deployed": true,
-				  "current_main_rehearsal": true,
-				  "backup_restore_rehearsal": true,
-				  "coordinated_stop": true,
-				  "catalog_preflight": true
-				}'::jsonb
-			)
-		`, runID).Error; err != nil {
-			return err
-		}
-		if err := tx.Exec(`
-			INSERT INTO v2_migration_gate_results (
-				run_id, gate_name, outcome, evidence_ref, evidence_hash, message
-			)
-			SELECT ?, gate_name, 'pass', evidence_ref, evidence_hash, 'fixture gate passed'
-			  FROM (VALUES
-				  ('detached_release_deployed', 'fixture://detached-release', 'sha256:retirement-detached'),
-				  ('current_main_rehearsal', 'fixture://current-main', 'sha256:retirement-current-main'),
-				  ('backup_restore_rehearsal', 'fixture://backup-restore', 'sha256:retirement-backup-restore'),
-				  ('coordinated_stop', 'fixture://coordinated-stop', 'sha256:retirement-stop'),
-				  ('catalog_preflight', 'fixture://catalog', 'sha256:retirement-catalog')
-				) AS gate_fixture(gate_name, evidence_ref, evidence_hash)
-		`, runID).Error; err != nil {
-			return err
-		}
-		return tx.Exec(`
-			INSERT INTO v2_migration_operator_actions (run_id, action, actor, reason, metadata)
-			VALUES (
-				?, 'retire_migration_control', 'integration-test',
-				'verified retirement preflight fixture',
-				'{"approved_commit":"fixture","coordinated_stop":true}'::jsonb
-			)
-		`, runID).Error
-	}))
 }
 
 func setupLedgerRepositoryDSN(t *testing.T) (string, func()) {
