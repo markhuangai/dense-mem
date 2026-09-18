@@ -102,6 +102,12 @@ func TestMigrationControlRetirementRejectsHiddenLineageColumnWithNOBYPASSRLS(t *
 		}
 		require.NoError(t, err)
 	}
+	defer func() {
+		_, _ = sqlDB.ExecContext(ctx, "RESET ROLE")
+		_, _ = sqlDB.ExecContext(ctx, "REASSIGN OWNED BY "+quotedRole+" TO CURRENT_USER")
+		_, _ = sqlDB.ExecContext(ctx, "DROP OWNED BY "+quotedRole)
+		_, _ = sqlDB.ExecContext(ctx, "DROP ROLE IF EXISTS "+quotedRole)
+	}()
 
 	for _, statement := range []string{
 		"GRANT USAGE, CREATE ON SCHEMA public TO " + quotedRole,
@@ -231,6 +237,12 @@ func TestMigrationControlRetirementRunsWithNOBYPASSRLS(t *testing.T) {
 		}
 		require.NoError(t, err)
 	}
+	defer func() {
+		_, _ = sqlDB.ExecContext(ctx, "RESET ROLE")
+		_, _ = sqlDB.ExecContext(ctx, "REASSIGN OWNED BY "+quotedRole+" TO CURRENT_USER")
+		_, _ = sqlDB.ExecContext(ctx, "DROP OWNED BY "+quotedRole)
+		_, _ = sqlDB.ExecContext(ctx, "DROP ROLE IF EXISTS "+quotedRole)
+	}()
 
 	for _, statement := range []string{
 		"GRANT USAGE, CREATE ON SCHEMA public TO " + quotedRole,
