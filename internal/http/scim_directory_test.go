@@ -513,6 +513,31 @@ func TestDirectorySCIMOuterRequestRetainsAuthenticatedSecrets(t *testing.T) {
 	assert.Equal(t, []string{rawToken}, requestctx.AuthenticationSecretsFromContext(ctx.Request().Context()))
 }
 
+func TestDirectorySCIMFailureRetainsOuterBearerSecretContext(t *testing.T) {
+	connectorID := uuid.New()
+	validToken := "scim-valid-bearer"
+	presentedToken := "scim-presented-bearer"
+	bearerHash, err := cryptoutil.HashKey(validToken)
+	require.NoError(t, err)
+	repo := &directorySCIMRepositoryStub{connector: &domain.DirectoryConnector{
+		ID:              connectorID,
+		Status:          domain.DirectoryConnectorObserve,
+		BearerTokenHash: bearerHash,
+	}}
+	directory := accessservice.NewDirectoryIdentityService(repo, accessservice.DirectoryIdentityConfig{})
+	h := &directorySCIMHandler{directory: directory}
+	e := echo.New()
+	request := httptest.NewRequest(nethttp.MethodGet, "/scim/v2/"+connectorID.String()+"/Users", nil)
+	request.Header.Set(echo.HeaderAuthorization, "Bearer "+presentedToken)
+	ctx := e.NewContext(request, httptest.NewRecorder())
+	ctx.SetParamNames("connectorId", "*")
+	ctx.SetParamValues(connectorID.String(), "Users")
+
+	require.NoError(t, h.serve(ctx))
+	assert.Equal(t, nethttp.StatusUnauthorized, ctx.Response().Status)
+	assert.Equal(t, []string{presentedToken}, requestctx.AuthenticationSecretsFromContext(ctx.Request().Context()))
+}
+
 type directorySCIMRepositoryStub struct {
 	accesspostgres.DirectoryIdentityRepository
 	connector       *domain.DirectoryConnector

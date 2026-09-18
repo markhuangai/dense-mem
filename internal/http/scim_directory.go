@@ -187,6 +187,8 @@ func (h *directorySCIMHandler) serve(c echo.Context) error {
 	if !ok {
 		return directorySCIMError(c, scimerrors.ScimError{Status: nethttp.StatusUnauthorized})
 	}
+	ctx := requestctx.WithAuthenticationSecrets(c.Request().Context(), rawToken)
+	c.SetRequest(c.Request().WithContext(ctx))
 	valid, err := h.directory.AuthenticateSCIM(c.Request().Context(), connectorID, rawToken)
 	if err != nil {
 		if errors.Is(err, accessservice.ErrDirectoryCredentialInvalid) || errors.Is(err, accessservice.ErrDirectoryConnectorDisabled) || errors.Is(err, accessservice.ErrDirectoryResourceNotFound) {

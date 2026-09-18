@@ -1,9 +1,25 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ControlApi } from "../api";
 import { LogsPanel } from "./LogsPanel";
 
 describe("LogsPanel", () => {
+  it("offers every supported operation-log severity", async () => {
+    const api = {
+      listOperationLogs: vi.fn().mockResolvedValue({
+        data: [],
+        pagination: { limit: 100, offset: 0, total: 0 },
+      }),
+    } as unknown as ControlApi;
+
+    render(<LogsPanel api={api} teams={[]} />);
+
+    const severity = await screen.findByLabelText("Severity");
+    for (const level of ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"]) {
+      expect(within(severity).getByRole("option", { name: level })).toBeInTheDocument();
+    }
+  });
+
   it("keeps the next retry time in a full compact lifecycle summary", async () => {
     const api = {
       listOperationLogs: vi.fn().mockResolvedValue({

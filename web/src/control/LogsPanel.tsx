@@ -4,7 +4,7 @@ import { ControlApi, OperationLog, OperationLogQuery, Team } from "../api";
 import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError, shortId } from "./utils";
 
-const SEVERITIES = ["", "DEBUG", "INFO", "WARN", "ERROR"];
+const SEVERITIES = ["", "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"];
 const PAGE_SIZES = [25, 50, 100, 250, 500];
 const DETAIL_KEYS = [
   "route",
