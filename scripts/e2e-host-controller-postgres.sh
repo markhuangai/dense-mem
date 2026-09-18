@@ -311,6 +311,11 @@ verify_identity_cleanup_seed_upgrade() {
     node -e 'let input="";process.stdin.on("data",c=>input+=c);process.stdin.on("end",()=>{const trimmed=input.trim();const dataLine=trimmed.split(/\r?\n/).find(line=>line.startsWith("data: "));const payload=dataLine?dataLine.slice(6):trimmed;try{const p=JSON.parse(payload);if(!p.result||p.error)process.exit(1);}catch{process.exit(1);}});'
 }
 
+run_identity_cleanup_retirement() {
+  ci_compose stop server >/dev/null
+  ci_compose run --rm --no-deps server /app/server migration-control-retirement >/dev/null
+}
+
 assert_identity_cleanup_bridge_intact() {
   local state
   state="$(identity_postgres_scalar "
@@ -413,6 +418,10 @@ run_identity_cleanup_startup_matrix() {
   hold_identity_cleanup_lock
   start_identity_cleanup_server_expect_failure "lock timeout"
   cleanup_identity_cleanup_lock
+  ci_compose up -d --wait --wait-timeout 300 redis prometheus server >/dev/null
+  verify_postgres_runtime_migration_state
+  verify_identity_cleanup_seed_upgrade bridge
+  run_identity_cleanup_retirement
   ci_compose up -d --wait --wait-timeout 300 redis prometheus server >/dev/null
   verify_postgres_runtime_migration_state
   verify_identity_cleanup_seed_upgrade bridge

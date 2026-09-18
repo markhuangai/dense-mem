@@ -222,7 +222,7 @@ BEGIN
      LIMIT 1;
     IF NOT FOUND
        OR jsonb_typeof(retirement_operator_metadata) IS DISTINCT FROM 'object'
-       OR btrim(retirement_operator_metadata->>'approved_commit') = ''
+       OR NULLIF(btrim(retirement_operator_metadata->>'approved_commit'), '') IS NULL
        OR btrim(retirement_operator_metadata->>'detached_release_receipt') IS DISTINCT FROM btrim(detached_release_evidence_ref)
        OR btrim(retirement_operator_metadata->>'current_main_rehearsal') IS DISTINCT FROM btrim(current_main_evidence_ref)
        OR btrim(retirement_operator_metadata->>'backup_restore_rehearsal') IS DISTINCT FROM btrim(backup_restore_evidence_ref)

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -217,11 +218,15 @@ func NewMigratorWithDB(sqlDB *sql.DB) *Migrator {
 }
 
 func newMigrationProvider(dir string, db *sql.DB, withLock bool) (*goose.Provider, error) {
-	return newMigrationProviderWithFilesystem(dir, db, withLock, migrationFilesystem)
+	return newMigrationProviderWithFilesystem(dir, db, withLock, migrationFilesystem, false)
 }
 
 func newRuntimeMigrationProvider(dir string, db *sql.DB, withLock bool) (*goose.Provider, error) {
-	return newMigrationProviderWithFilesystem(dir, db, withLock, runtimeMigrationFilesystem)
+	return newMigrationProviderWithFilesystem(dir, db, withLock, runtimeMigrationFilesystem, false)
+}
+
+func newOutOfOrderMigrationProvider(dir string, db *sql.DB, withLock bool) (*goose.Provider, error) {
+	return newMigrationProviderWithFilesystem(dir, db, withLock, migrationFilesystem, true)
 }
 
 func newMigrationProviderWithFilesystem(
@@ -229,6 +234,7 @@ func newMigrationProviderWithFilesystem(
 	db *sql.DB,
 	withLock bool,
 	filesystemLoader func(string) (fstest.MapFS, error),
+	allowOutOfOrder bool,
 ) (*goose.Provider, error) {
 	if db == nil {
 		return nil, fmt.Errorf("migration provider: database is required")
@@ -244,6 +250,9 @@ func newMigrationProviderWithFilesystem(
 			return nil, fmt.Errorf("failed to create postgres migration lock: %w", err)
 		}
 		options = append(options, goose.WithSessionLocker(locker))
+	}
+	if allowOutOfOrder {
+		options = append(options, goose.WithAllowOutofOrder(true))
 	}
 	provider, err := goose.NewProvider(goose.DialectPostgres, db, filesystem, options...)
 	if err != nil {
@@ -296,11 +305,11 @@ func (m *Migrator) RunUp(ctx context.Context) error {
 // RunMigrationControlRetirement runs the explicitly authorized destructive
 // migration. Ordinary startup deliberately excludes this maintenance boundary.
 func (m *Migrator) RunMigrationControlRetirement(ctx context.Context) error {
-	provider, err := newMigrationProvider(m.dir, m.db, true)
+	provider, err := newOutOfOrderMigrationProvider(m.dir, m.db, true)
 	if err != nil {
 		return err
 	}
-	if _, err := provider.UpTo(ctx, migrationControlRetirementMaintenanceVersion); err != nil {
+	if _, err := provider.ApplyVersion(ctx, migrationControlRetirementMaintenanceVersion, true); err != nil && !errors.Is(err, goose.ErrAlreadyApplied) {
 		return fmt.Errorf("failed to run migration-control retirement: %w", err)
 	}
 	return nil

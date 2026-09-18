@@ -164,6 +164,21 @@ func TestRunFromEnvironmentStopsAtLogLevelAndDatabaseBoundaries(t *testing.T) {
 	}
 }
 
+func TestRunMigrationControlRetirementStopsAtLogLevelAndDatabaseBoundaries(t *testing.T) {
+	t.Setenv("POSTGRES_DSN", "postgres://user:pass@127.0.0.1:1/db?sslmode=disable")
+	t.Setenv("LOG_LEVEL", "not-a-level")
+	if err := RunMigrationControlRetirement(context.Background()); err == nil || !strings.Contains(err.Error(), "parse log level") {
+		t.Fatalf("invalid log level error = %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	t.Setenv("LOG_LEVEL", "info")
+	if err := RunMigrationControlRetirement(ctx); err == nil || !strings.Contains(err.Error(), "connect to postgres") {
+		t.Fatalf("database connection error = %v", err)
+	}
+}
+
 func TestRunActiveServerBootGuardsWithRealGORMWrapper(t *testing.T) {
 	pgDB, mock, cleanup := coveragePostgresDB(t)
 	defer cleanup()

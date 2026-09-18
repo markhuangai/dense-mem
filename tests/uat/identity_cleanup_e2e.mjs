@@ -153,6 +153,15 @@ const migrationDetachment = postgresRow(`
 if (migrationDetachment.some((value) => value !== "true" && value !== "t")) {
   throw new Error(`migration-control retirement catalog is incomplete: ${migrationDetachment}`);
 }
+const retirementApplied = postgresRow(`
+  SELECT EXISTS (
+    SELECT 1 FROM goose_db_version
+    WHERE version_id = 20260917010001 AND is_applied
+  );
+`);
+if (retirementApplied[0] !== "true" && retirementApplied[0] !== "t") {
+  throw new Error("migration-control retirement maintenance command did not apply the retirement version");
+}
 
 await mcpList(upgradeCredential);
 const upgradeState = postgresRow(`
@@ -272,6 +281,7 @@ console.log(JSON.stringify({
   clean_catalog: true,
   direct_foreign_keys: true,
   transitional_objects_removed: true,
+  migration_control_retired: true,
   bridge_seed_authentication: true,
   bridge_seed_history: true,
   stable_ids: true,

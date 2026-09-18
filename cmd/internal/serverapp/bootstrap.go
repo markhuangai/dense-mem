@@ -38,6 +38,38 @@ func checkActiveAuthority(authority authorityBootstrap) error {
 
 const DefaultStartupTimeout = 5 * time.Minute
 
+// RunMigrationControlRetirement runs the explicitly authorized destructive
+// migration without starting the application runtime or ordinary migrations.
+func RunMigrationControlRetirement(processCtx context.Context) error {
+	if processCtx == nil {
+		processCtx = context.Background()
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	level, err := observability.ParseLevel(os.Getenv("LOG_LEVEL"))
+	if err != nil {
+		return fmt.Errorf("parse log level: %w", err)
+	}
+	logger := observability.New(level)
+	retirementTimeout := time.Duration(cfg.GetPostgresMigrationTimeoutSeconds()) * time.Second
+	retirementCtx, cancel := context.WithTimeout(processCtx, retirementTimeout)
+	defer cancel()
+	pgDB, err := postgres.OpenWithClient(retirementCtx, &cfg)
+	if err != nil {
+		return fmt.Errorf("connect to postgres: %w", err)
+	}
+	defer pgDB.Close()
+	if err := postgres.ValidateSinglePrimaryTopology(retirementCtx, pgDB.GetDB()); err != nil {
+		return fmt.Errorf("validate postgres topology: %w", err)
+	}
+	if err := migrationapp.RunMigrationControlRetirement(retirementCtx, pgDB.GetDB(), retirementTimeout, logger.Slog()); err != nil {
+		return fmt.Errorf("run migration-control retirement: %w", err)
+	}
+	return nil
+}
+
 // RunFromEnvironment performs the common release bootstrap and starts the
 // active server. The command owns process cancellation; this function owns
 // bounded startup and database cleanup.

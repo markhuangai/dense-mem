@@ -52,8 +52,6 @@ func TestMigrationStartupClassifierCoversFreshLegacyBridgeAndCleanStates(t *test
 	require.NoError(t, err)
 	require.Equal(t, MigrationStateFresh, state.Kind)
 
-	repositoryLatest, err := latestMigrationVersion(getMigrationsDir())
-	require.NoError(t, err)
 	runGooseUpTo(t, ctx, sqlDB, 2026080905)
 	state, err = ClassifyMigrationState(ctx, sqlDB, getMigrationsDir())
 	require.NoError(t, err)
@@ -64,10 +62,11 @@ func TestMigrationStartupClassifierCoversFreshLegacyBridgeAndCleanStates(t *test
 	require.NoError(t, err)
 	require.Equal(t, MigrationStateBridge, state.Kind)
 
-	runGooseUpTo(t, ctx, sqlDB, repositoryLatest)
+	require.NoError(t, NewMigratorWithDB(sqlDB).RunUp(ctx))
 	state, err = ClassifyMigrationState(ctx, sqlDB, getMigrationsDir())
 	require.NoError(t, err)
 	require.Equal(t, MigrationStateClean, state.Kind)
+	require.False(t, migrationControlRetirementApplied(t, ctx, sqlDB))
 	require.NoError(t, ValidateStartupMigrationState(ctx, sqlDB, getMigrationsDir()))
 }
 

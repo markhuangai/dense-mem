@@ -66,6 +66,13 @@
       "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
     },
     {
+      "id": "postgres/TestMigrationControlRetirementRejectsMissingApprovedCommit",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRejectsMissingApprovedCommit$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_metadata_integration_test.go"
+    },
+    {
       "id": "postgres/TestMigrationControlRetirementRejectsHiddenLineageColumnWithNOBYPASSRLS",
       "package": "./internal/storage/postgres",
       "run": "^TestMigrationControlRetirementRejectsHiddenLineageColumnWithNOBYPASSRLS$",

@@ -35,6 +35,13 @@ while the retained audit tables are still writable, and then invokes the
 explicit migration-control retirement runner. The retirement version remains
 pending in normal startup until that maintenance action succeeds.
 
+The production image exposes the maintenance action through the server binary.
+With every application instance stopped, run `/app/server
+migration-control-retirement` once from the deployed image (for example,
+`docker compose run --rm --no-deps server /app/server
+migration-control-retirement`). The command uses the recorded preflight and
+operator evidence; it does not run ordinary startup migrations.
+
 After stopping every API, worker, and demo instance that shares the database,
 the operator runs the ordered Goose stream once from the authorized
 maintenance process while all instances remain stopped. A rolling
