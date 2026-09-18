@@ -150,6 +150,11 @@ func TestFuseRecallResultsOrdersEqualScoresWithStrictSpaceTieBreak(t *testing.T)
 	})
 }
 
+func TestCompareRecallSpaceKindsOrdersSameRankLexically(t *testing.T) {
+	require.Equal(t, -1, compareRecallSpaceKinds("credential", "profile"))
+	require.Equal(t, 1, compareRecallSpaceKinds("profile", "credential"))
+}
+
 func TestFuseRecallResultsSkipsNilAndClampsLimits(t *testing.T) {
 	empty := fuseRecallResults([]*RecallResult{nil}, 1, 1)
 	require.Empty(t, empty.Results)

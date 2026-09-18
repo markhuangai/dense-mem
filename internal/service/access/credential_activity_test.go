@@ -141,6 +141,23 @@ func TestCredentialActivityWriterFlushesOnContextCancellation(t *testing.T) {
 	require.Equal(t, id, repo.updates[0].ID)
 }
 
+func TestCredentialActivityWriterFlushesOnShutdownSignal(t *testing.T) {
+	repo := &activityBatchRepo{}
+	writer := NewCredentialActivityWriter(repo)
+	writer.Start(context.Background())
+
+	id := uuid.New()
+	writer.RecordLastUsed(id, time.Now().UTC())
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Second)
+	defer shutdownCancel()
+	require.NoError(t, writer.Shutdown(shutdownCtx))
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Len(t, repo.updates, 1)
+	require.Equal(t, id, repo.updates[0].ID)
+}
+
 func TestCredentialActivityWriterReportsFlushFailureAndRequeues(t *testing.T) {
 	repo := &activityBatchRepo{err: errors.New("activity persistence failed")}
 	logger := &activityLogger{}
