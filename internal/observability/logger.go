@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/correlation"
@@ -23,6 +24,8 @@ import (
 const (
 	LevelTrace slog.Level = slog.Level(-8)
 	LevelFatal slog.Level = slog.Level(12)
+
+	maxTrustedCorrelationIDRunes = 128
 
 	// MaxOperationMetadataBytes bounds a single operation-log metadata value.
 	MaxOperationMetadataBytes = 16 << 10
@@ -601,7 +604,7 @@ func (h operationLogHandler) Handle(ctx context.Context, record slog.Record) err
 		h.appendAttr(attrs, attr, secrets, legacy)
 		return true
 	})
-	applyTrustedContext(ctx, attrs)
+	applyTrustedContext(ctx, attrs, h.protector)
 	message := record.Message
 	if legacy {
 		message = legacyRedactSensitiveText(message)
@@ -751,19 +754,19 @@ func (h operationLogHandler) protectValue(value any, attrs map[string]any, secre
 	return protected.Value
 }
 
-func applyTrustedContext(ctx context.Context, attrs map[string]any) {
-	for key, value := range trustedContextAttrs(ctx) {
+func applyTrustedContext(ctx context.Context, attrs map[string]any, protector *CredentialProtector) {
+	for key, value := range trustedContextAttrs(ctx, protector) {
 		attrs[key] = value
 	}
 }
 
-func trustedContextAttrs(ctx context.Context) map[string]string {
+func trustedContextAttrs(ctx context.Context, protector *CredentialProtector) map[string]string {
 	attrs := make(map[string]string, 3)
 	if ctx == nil {
 		return attrs
 	}
 	if id := correlation.FromContext(ctx); id != "" {
-		attrs["correlation_id"] = id
+		attrs["correlation_id"] = protectTrustedCorrelationID(id, protector, AuthenticationSecretsFromContext(ctx))
 	}
 	if actor, ok := requestctx.ActorFromContext(ctx); ok {
 		if actor.TeamID != uuid.Nil {
@@ -776,8 +779,26 @@ func trustedContextAttrs(ctx context.Context) map[string]string {
 	return attrs
 }
 
+func protectTrustedCorrelationID(id string, protector *CredentialProtector, secrets []string) string {
+	if utf8.RuneCountInString(id) > maxTrustedCorrelationIDRunes {
+		return CredentialProtectionRedacted
+	}
+	if protector == nil {
+		return id
+	}
+	protected := protector.Snapshot(id, MaxOperationMetadataBytes, secrets...)
+	if protected.UnavailableReason != CredentialProtectionAvailable {
+		return CredentialProtectionRedacted
+	}
+	value, ok := protected.Value.(string)
+	if !ok {
+		return CredentialProtectionRedacted
+	}
+	return value
+}
+
 func normalizeTrustedRecord(ctx context.Context, record slog.Record) slog.Record {
-	trusted := trustedContextAttrs(ctx)
+	trusted := trustedContextAttrs(ctx, nil)
 	if len(trusted) == 0 {
 		return record
 	}

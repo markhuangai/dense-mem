@@ -390,6 +390,44 @@ func TestContextLoggerUsesTrustedActorAndCorrelationForConsoleAndSink(t *testing
 	assert.NotContains(t, buf.String(), "untrusted")
 }
 
+func TestTrustedCorrelationProtectionCoversCredentialsAndBounds(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		correlationID string
+		secret        string
+	}{
+		{name: "per request credential", correlationID: "per-call-secret", secret: "per-call-secret"},
+		{name: "configured credential", correlationID: "configured-secret"},
+		{name: "oversized header", correlationID: strings.Repeat("x", maxTrustedCorrelationIDRunes+1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var console bytes.Buffer
+			state := &sinkState{}
+			protector := NewCredentialProtector("configured-secret")
+			sink := &recordingLogSink{}
+			root := &Logger{
+				logger: slog.New(newTeeHandler(
+					newCredentialRedactingHandler(slog.NewJSONHandler(&console, &slog.HandlerOptions{Level: LevelTrace}), protector),
+					newOperationLogHandlerWithState(LevelTrace, state, protector),
+				)),
+				root: &loggerRoot{sink: state},
+			}
+			require.NoError(t, root.AttachSink(sink))
+
+			ctx := context.Background()
+			if test.secret != "" {
+				ctx = WithAuthenticationSecrets(ctx, test.secret)
+			}
+			ctx = correlation.WithID(ctx, test.correlationID)
+			root.InfoContext(ctx, "correlation protection")
+
+			require.Len(t, sink.records, 1)
+			assert.Equal(t, CredentialProtectionRedacted, sink.records[0].CorrelationID)
+			assert.NotContains(t, console.String(), test.correlationID)
+		})
+	}
+}
+
 func TestLoggerPersistsExternalCallerFunction(t *testing.T) {
 	root := New(LevelTrace)
 	sink := &recordingLogSink{}

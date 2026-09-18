@@ -147,7 +147,7 @@ func (h credentialRedactingHandler) Enabled(ctx context.Context, level slog.Leve
 
 func (h credentialRedactingHandler) Handle(ctx context.Context, record slog.Record) error {
 	secrets := AuthenticationSecretsFromContext(ctx)
-	trusted := trustedContextAttrs(ctx)
+	trusted := trustedContextAttrs(ctx, h.protector)
 	legacy := h.legacyCompatibility && legacyLogging(ctx)
 	sanitized := slog.NewRecord(record.Time, record.Level, record.Message, record.PC)
 	message := sanitized.Message
