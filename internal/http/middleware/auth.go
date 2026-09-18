@@ -147,6 +147,11 @@ func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc acce
 				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "empty bearer token")
 				return httperr.New(httperr.AUTH_INVALID, "empty bearer token")
 			}
+			// Keep the presented credential available for redaction if authentication
+			// or a later authorization check rejects the request. This does not admit
+			// an actor or principal.
+			ctx := requestctx.WithAuthenticationSecrets(c.Request().Context(), rawKey)
+			c.SetRequest(c.Request().WithContext(ctx))
 
 			pathTeamID, err := authenticatedPathTeamID(c)
 			if err != nil {
@@ -173,7 +178,7 @@ func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc acce
 				if err != nil {
 					return err
 				}
-				ctx := requestctx.WithAuthenticationSecrets(c.Request().Context(), rawKey)
+				ctx := c.Request().Context()
 				ctx = context.WithValue(ctx, principalContextKey{}, principal)
 				ctx = requestctx.WithActor(ctx, actorContext)
 				req := c.Request().Clone(ctx)
@@ -193,7 +198,6 @@ func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc acce
 			}
 
 			// Look up active key by prefix
-			ctx := c.Request().Context()
 			var (
 				key    *domain.Credential
 				prefix string
@@ -240,10 +244,6 @@ func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc acce
 				logAuthFailure(c, auditSvc, securitySvc, &teamID, "AUTH_INVALID", "invalid api key")
 				return httperr.New(httperr.AUTH_INVALID, "invalid api key")
 			}
-
-			// Preserve verified credential material for redaction if later authorization checks reject the request.
-			ctx = requestctx.WithAuthenticationSecrets(ctx, rawKey)
-			c.SetRequest(c.Request().WithContext(ctx))
 
 			// All runtime keys must be team-bound. Legacy team-less keys are
 			// rejected so the server only accepts the multi-tenant bearer model.

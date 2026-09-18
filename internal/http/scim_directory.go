@@ -136,6 +136,7 @@ func (h *directorySCIMHandler) oauthToken(c echo.Context) error {
 		clientSecret = c.FormValue("client_secret")
 	}
 	issueContext := requestctx.WithAuthenticationSecrets(c.Request().Context(), clientSecret)
+	c.SetRequest(c.Request().WithContext(issueContext))
 	token, expiresAt, err := h.directory.IssueOAuthToken(issueContext, clientID, clientSecret)
 	if err != nil {
 		if errors.Is(err, accessservice.ErrDirectoryCredentialInvalid) {
@@ -148,7 +149,6 @@ func (h *directorySCIMHandler) oauthToken(c echo.Context) error {
 	if expiresIn < 1 {
 		expiresIn = 1
 	}
-	c.SetRequest(c.Request().WithContext(issueContext))
 	directoryOAuthNoStore(c)
 	return c.JSON(nethttp.StatusOK, map[string]any{
 		"access_token": token,

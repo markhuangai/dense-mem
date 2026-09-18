@@ -466,6 +466,31 @@ func TestDirectorySCIMOAuthTokenVerificationReceivesProtectedSecretContext(t *te
 	assert.Equal(t, []string{clientSecret}, requestctx.AuthenticationSecretsFromContext(ctx.Request().Context()))
 }
 
+func TestDirectorySCIMOAuthFailureRetainsOuterSecretContext(t *testing.T) {
+	clientID := "scim-client"
+	validSecret := "scim-valid-secret"
+	presentedSecret := "scim-presented-secret"
+	secretHash, err := cryptoutil.HashKey(validSecret)
+	require.NoError(t, err)
+	repo := &directorySCIMRepositoryStub{connector: &domain.DirectoryConnector{
+		ID:                    uuid.New(),
+		Status:                domain.DirectoryConnectorObserve,
+		OAuthClientID:         clientID,
+		OAuthClientSecretHash: secretHash,
+	}}
+	directory := accessservice.NewDirectoryIdentityService(repo, accessservice.DirectoryIdentityConfig{})
+	h := &directorySCIMHandler{directory: directory}
+	e := echo.New()
+	request := httptest.NewRequest(nethttp.MethodPost, "/scim/oauth/token", strings.NewReader("grant_type=client_credentials"))
+	request.SetBasicAuth(clientID, presentedSecret)
+	request.Header.Set(echo.HeaderContentType, "application/x-www-form-urlencoded")
+	ctx := e.NewContext(request, httptest.NewRecorder())
+
+	require.NoError(t, h.oauthToken(ctx))
+	assert.Equal(t, nethttp.StatusUnauthorized, ctx.Response().Status)
+	assert.Equal(t, []string{presentedSecret}, requestctx.AuthenticationSecretsFromContext(ctx.Request().Context()))
+}
+
 func TestDirectorySCIMOuterRequestRetainsAuthenticatedSecrets(t *testing.T) {
 	connectorID := uuid.New()
 	rawToken := "scim-bearer-secret"

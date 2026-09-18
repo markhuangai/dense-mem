@@ -97,6 +97,14 @@ func TestAuthMiddlewareRejectsCredentialVerificationAndEntitlementFailures(t *te
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newTestEcho()
+			var observed context.Context
+			e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+				return func(c echo.Context) error {
+					err := next(c)
+					observed = c.Request().Context()
+					return err
+				}
+			})
 			repo := &mockCredentialRepository{getActiveByPrefixFunc: func(context.Context, string) (*domain.Credential, error) {
 				credential := *baseCredential
 				return &credential, nil
@@ -119,6 +127,8 @@ func TestAuthMiddlewareRejectsCredentialVerificationAndEntitlementFailures(t *te
 
 			assert.False(t, handlerCalled)
 			assert.Equal(t, tt.want, rec.Code)
+			require.NotNil(t, observed)
+			assert.Equal(t, []string{rawKey}, requestctx.AuthenticationSecretsFromContext(observed))
 		})
 	}
 }
@@ -307,7 +317,15 @@ func TestAuthMiddlewareOAuthBearerMapsBoundedErrors(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			audit := &mockAuditService{}
 			security := &mockSecurityService{}
+			var observed context.Context
 			e := newTestEcho()
+			e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+				return func(c echo.Context) error {
+					err := next(c)
+					observed = c.Request().Context()
+					return err
+				}
+			})
 			e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, audit, security, AuthOptions{
 				OAuthBearerAuthenticator: &stubOAuthBearerAuthenticator{err: test.err},
 			}))
@@ -322,6 +340,8 @@ func TestAuthMiddlewareOAuthBearerMapsBoundedErrors(t *testing.T) {
 			assert.True(t, audit.authFailureCalled)
 			assert.Equal(t, "oauth", audit.authFailureParams.entityType)
 			assert.Equal(t, test.wantSecurityFailure, security.recordAuthFailureCalled)
+			require.NotNil(t, observed)
+			assert.Equal(t, []string{"header.payload.signature"}, requestctx.AuthenticationSecretsFromContext(observed))
 		})
 	}
 }
