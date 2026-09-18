@@ -59,6 +59,13 @@
       "source": "internal/storage/postgres/migration_control_retirement_order_integration_test.go"
     },
     {
+      "id": "postgres/TestMigrationControlRetirementRejectsPendingRuntimePredecessor",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRejectsPendingRuntimePredecessor$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_order_integration_test.go"
+    },
+    {
       "id": "postgres/TestMigrationControlRetirementRequiresApprovedOperationalPreflight",
       "package": "./internal/storage/postgres",
       "run": "^TestMigrationControlRetirementRequiresApprovedOperationalPreflight$",

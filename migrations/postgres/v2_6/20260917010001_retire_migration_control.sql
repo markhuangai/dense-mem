@@ -934,6 +934,16 @@ BEGIN
             'migration-control retirement blocked: unexpected retained definition references: %',
             unexpected;
     END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+          FROM public.goose_db_version
+         WHERE version_id = 20260913020001
+           AND is_applied
+    ) THEN
+        RAISE EXCEPTION
+            'migration-control retirement blocked: required runtime migration 20260913020001 is not applied';
+    END IF;
 END
 $$;
 

@@ -25,3 +25,20 @@ func TestMigrationControlRetirementAppliesPendingRuntimeMigrationsFirst(t *testi
 	require.True(t, columnExists(t, ctx, sqlDB, "usage_metric_buckets", "mcp_tool_failures"))
 	require.True(t, migrationControlRetirementApplied(t, ctx, sqlDB))
 }
+
+func TestMigrationControlRetirementRejectsPendingRuntimePredecessor(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, migrationControlRetirementBaseVersion)
+	seedMigrationControlRetirementFixture(t, ctx, sqlDB)
+
+	err := runMigrationControlRetirementOnly(t, ctx, sqlDB)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "required runtime migration 20260913020001 is not applied")
+	require.False(t, migrationControlRetirementApplied(t, ctx, sqlDB))
+	for _, table := range migrationControlRetirementTables {
+		require.True(t, tableExists(t, ctx, sqlDB, table), "%s must remain after predecessor rejection", table)
+	}
+}
