@@ -148,6 +148,7 @@ func (h *directorySCIMHandler) oauthToken(c echo.Context) error {
 	if expiresIn < 1 {
 		expiresIn = 1
 	}
+	c.SetRequest(c.Request().WithContext(issueContext))
 	directoryOAuthNoStore(c)
 	return c.JSON(nethttp.StatusOK, map[string]any{
 		"access_token": token,
@@ -198,6 +199,7 @@ func (h *directorySCIMHandler) serve(c echo.Context) error {
 	}
 
 	request := directorySCIMAuthenticatedRequest(c.Request(), connectorID, rawToken)
+	c.SetRequest(c.Request().WithContext(request.Context()))
 	requestURL := *c.Request().URL
 	request.URL = &requestURL
 	resourcePath := strings.TrimPrefix(c.Param("*"), "/")

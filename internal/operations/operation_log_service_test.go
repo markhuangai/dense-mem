@@ -33,6 +33,11 @@ type shutdownRetryRepo struct {
 	failFirstAppend bool
 }
 
+type ambiguousGapRepo struct {
+	operationLogRepoStub
+	failFirstAppend bool
+}
+
 type operationLogProbeRepo struct {
 	operationLogRepoStub
 	pingCalls int
@@ -59,6 +64,15 @@ func (s *shutdownRetryRepo) AppendBatch(ctx context.Context, logs []domain.Opera
 	if s.failFirstAppend {
 		s.failFirstAppend = false
 		return errors.New("transient shutdown append failure")
+	}
+	return s.operationLogRepoStub.AppendBatch(ctx, logs)
+}
+
+func (s *ambiguousGapRepo) AppendBatch(ctx context.Context, logs []domain.OperationLog) error {
+	if s.failFirstAppend {
+		s.failFirstAppend = false
+		s.appended = append(s.appended, logs...)
+		return errors.New("ambiguous commit")
 	}
 	return s.operationLogRepoStub.AppendBatch(ctx, logs)
 }
@@ -399,6 +413,24 @@ func TestOperationLogServiceRetriesFailedGapRecoveryMarkerWithoutNewTraffic(t *t
 	}
 	require.Len(t, markers, 1)
 	assert.EqualValues(t, 1, markers[0].Attrs["dropped_events"])
+}
+
+func TestOperationLogServicePreservesAmbiguousGapMarkerCount(t *testing.T) {
+	repo := &ambiguousGapRepo{failFirstAppend: true}
+	svc := NewOperationLogService(repo, nil)
+	svc.markGapCount(1)
+	require.Error(t, svc.Flush(context.Background()))
+	svc.markGapCount(2)
+	time.Sleep(operationLogRetryInterval)
+	require.NoError(t, svc.Flush(context.Background()))
+	require.Len(t, repo.appended, 2)
+	assert.EqualValues(t, 1, repo.appended[0].Attrs["dropped_events"])
+	assert.EqualValues(t, 1, repo.appended[1].Attrs["dropped_events"])
+	assert.EqualValues(t, 2, svc.gapPending)
+
+	require.NoError(t, svc.Flush(context.Background()))
+	require.Len(t, repo.appended, 3)
+	assert.EqualValues(t, 2, repo.appended[2].Attrs["dropped_events"])
 }
 
 func TestOperationLogServiceSeverityAndContextualAdmission(t *testing.T) {

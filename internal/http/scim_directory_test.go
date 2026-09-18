@@ -458,10 +458,34 @@ func TestDirectorySCIMOAuthTokenVerificationReceivesProtectedSecretContext(t *te
 	request.SetBasicAuth("scim-client", clientSecret)
 	request.Header.Set(echo.HeaderContentType, "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
-	err := h.oauthToken(e.NewContext(request, response))
+	ctx := e.NewContext(request, response)
+	err := h.oauthToken(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, verifier.ctx)
 	assert.Equal(t, []string{clientSecret}, requestctx.AuthenticationSecretsFromContext(verifier.ctx))
+	assert.Equal(t, []string{clientSecret}, requestctx.AuthenticationSecretsFromContext(ctx.Request().Context()))
+}
+
+func TestDirectorySCIMOuterRequestRetainsAuthenticatedSecrets(t *testing.T) {
+	connectorID := uuid.New()
+	rawToken := "scim-bearer-secret"
+	verifier := &scimContextCapturingVerifier{}
+	bearerHash, err := cryptoutil.HashKey(rawToken)
+	require.NoError(t, err)
+	repo := &directorySCIMRepositoryStub{connector: &domain.DirectoryConnector{
+		ID: connectorID, Status: domain.DirectoryConnectorObserve, BearerTokenHash: bearerHash,
+	}}
+	directory := accessservice.NewDirectoryIdentityService(repo, accessservice.DirectoryIdentityConfig{CredentialVerifier: verifier})
+	h := &directorySCIMHandler{directory: directory}
+	e := echo.New()
+	request := httptest.NewRequest(nethttp.MethodGet, "/scim/v2/"+connectorID.String()+"/ServiceProviderConfig", nil)
+	request.Header.Set(echo.HeaderAuthorization, "Bearer "+rawToken)
+	ctx := e.NewContext(request, httptest.NewRecorder())
+	ctx.SetParamNames("connectorId", "*")
+	ctx.SetParamValues(connectorID.String(), "ServiceProviderConfig")
+
+	require.NoError(t, h.serve(ctx))
+	assert.Equal(t, []string{rawToken}, requestctx.AuthenticationSecretsFromContext(ctx.Request().Context()))
 }
 
 type directorySCIMRepositoryStub struct {

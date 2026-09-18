@@ -62,25 +62,26 @@ type OperationLogServiceImpl struct {
 	stop          chan struct{}
 	stopOnce      sync.Once
 
-	lifecycleMu  sync.Mutex
-	cancel       context.CancelFunc
-	done         chan struct{}
-	admissionMu  sync.Mutex
-	admissionWG  sync.WaitGroup
-	shuttingDown bool
-	flushMu      sync.Mutex
-	stateMu      sync.RWMutex
-	started      bool
-	healthy      bool
-	lastError    error
-	retryAfter   time.Time
-	shutdownErr  error
-	gapPending   int64
-	dropped      int64
-	gapMarker    *domain.OperationLog
-	probeMu      sync.Mutex
-	probeID      uuid.UUID
-	minimumLevel slog.Level
+	lifecycleMu    sync.Mutex
+	cancel         context.CancelFunc
+	done           chan struct{}
+	admissionMu    sync.Mutex
+	admissionWG    sync.WaitGroup
+	shuttingDown   bool
+	flushMu        sync.Mutex
+	stateMu        sync.RWMutex
+	started        bool
+	healthy        bool
+	lastError      error
+	retryAfter     time.Time
+	shutdownErr    error
+	gapPending     int64
+	dropped        int64
+	gapMarker      *domain.OperationLog
+	gapMarkerCount int64
+	probeMu        sync.Mutex
+	probeID        uuid.UUID
+	minimumLevel   slog.Level
 }
 
 var _ OperationLogService = (*OperationLogServiceImpl)(nil)
@@ -395,6 +396,7 @@ func (s *OperationLogServiceImpl) flushGap(ctx context.Context) error {
 	}
 	markerSeverity, markerRank := operationLogGapSeverity(s.minimumLevel)
 	if s.gapMarker == nil {
+		s.gapMarkerCount = s.gapPending
 		s.gapMarker = &domain.OperationLog{
 			ID:           uuid.New(),
 			Timestamp:    time.Now().UTC(),
@@ -410,10 +412,10 @@ func (s *OperationLogServiceImpl) flushGap(ctx context.Context) error {
 	marker.Severity = markerSeverity
 	marker.SeverityRank = markerRank
 	marker.Attrs = map[string]any{
-		"dropped_events": s.gapPending,
+		"dropped_events": s.gapMarkerCount,
 		"event":          "operation_log_gap_recovered",
 	}
-	markerCount := s.gapPending
+	markerCount := s.gapMarkerCount
 	s.stateMu.Unlock()
 	if err := s.persist(ctx, []domain.OperationLog{marker}); err != nil {
 		s.markFailure(err)
@@ -423,9 +425,11 @@ func (s *OperationLogServiceImpl) flushGap(ctx context.Context) error {
 	if s.gapPending <= markerCount {
 		s.gapPending = 0
 		s.gapMarker = nil
+		s.gapMarkerCount = 0
 	} else {
 		s.gapPending -= markerCount
 		s.gapMarker = nil
+		s.gapMarkerCount = 0
 	}
 	s.stateMu.Unlock()
 	return nil
