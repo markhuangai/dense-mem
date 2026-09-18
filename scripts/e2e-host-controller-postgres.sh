@@ -311,6 +311,111 @@ verify_identity_cleanup_seed_upgrade() {
     node -e 'let input="";process.stdin.on("data",c=>input+=c);process.stdin.on("end",()=>{const trimmed=input.trim();const dataLine=trimmed.split(/\r?\n/).find(line=>line.startsWith("data: "));const payload=dataLine?dataLine.slice(6):trimmed;try{const p=JSON.parse(payload);if(!p.result||p.error)process.exit(1);}catch{process.exit(1);}});'
 }
 
+run_identity_cleanup_retirement() {
+  ci_compose stop server >/dev/null
+  ci_compose run --rm --no-deps server /app/server migration-control-retirement >/dev/null
+}
+
+stage_identity_cleanup_retirement_preflight() {
+  local run_id
+  run_id="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
+  ci_compose exec -T \
+    -e "PGPASSWORD=${DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD}" \
+    postgres psql -X -v ON_ERROR_STOP=1 \
+    -h 127.0.0.1 \
+    -U "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" \
+    -d "$DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE" \
+    -v run_id="$run_id" \
+    -v approved_commit="$DENSE_MEM_CI_IMAGE_DIGEST" <<'SQL' >/dev/null
+BEGIN;
+SELECT set_config('app.tx_mode', 'system', true);
+SELECT set_config('app.current_team_id', '', true);
+SELECT set_config('app.current_profile_id', '', true);
+
+INSERT INTO v2_migration_runs (
+  run_id,
+  migration_contract_version,
+  corpus_version,
+  source_kind,
+  state,
+  preflight_approved,
+  backup_reference,
+  preflight_checks
+) VALUES (
+  :'run_id'::uuid,
+  'dense-mem.e2e.retirement.v1',
+  'dense-mem.e2e.identity-cleanup',
+  'neo4j',
+  'cut_over',
+  true,
+  'e2e://identity-cleanup/backup-restore-rehearsal',
+  jsonb_build_object(
+    'detached_release_deployed', true,
+    'current_main_rehearsal', true,
+    'backup_restore_rehearsal', true,
+    'coordinated_stop', true,
+    'catalog_preflight', true
+  )
+);
+
+WITH gate_fixture(gate_name, evidence_ref, evidence_hash) AS (
+  VALUES
+    ('detached_release_deployed', 'e2e://identity-cleanup/detached-release', 'sha256:e2e-detached-release'),
+    ('current_main_rehearsal', 'e2e://identity-cleanup/current-main', 'sha256:e2e-current-main'),
+    ('backup_restore_rehearsal', 'e2e://identity-cleanup/backup-restore', 'sha256:e2e-backup-restore'),
+    ('coordinated_stop', 'e2e://identity-cleanup/coordinated-stop', 'sha256:e2e-coordinated-stop'),
+    ('catalog_preflight', 'e2e://identity-cleanup/catalog', 'sha256:e2e-catalog')
+)
+INSERT INTO v2_migration_gate_results (
+  run_id, gate_name, outcome, evidence_ref, evidence_hash, message
+)
+SELECT :'run_id'::uuid, gate_name, 'pass', evidence_ref, evidence_hash,
+       'identity cleanup retirement rehearsal passed'
+  FROM gate_fixture;
+
+INSERT INTO v2_migration_operator_actions (
+  run_id, action, actor, reason, metadata
+) VALUES (
+  :'run_id'::uuid,
+  'retire_migration_control',
+  'dense-mem-e2e-maintenance',
+  'verified identity cleanup retirement rehearsal',
+  jsonb_build_object(
+    'approved_commit', :'approved_commit',
+    'detached_release_receipt', 'e2e://identity-cleanup/detached-release',
+    'current_main_rehearsal', 'e2e://identity-cleanup/current-main',
+    'backup_restore_rehearsal', 'e2e://identity-cleanup/backup-restore',
+    'coordinated_stop', 'e2e://identity-cleanup/coordinated-stop',
+    'node_fence', 'e2e://identity-cleanup/coordinated-stop',
+    'catalog_preflight', 'e2e://identity-cleanup/catalog'
+  )
+);
+
+UPDATE v2_migration_runs
+   SET preflight_checks = jsonb_build_object(
+     'detached_release_deployed', true,
+     'current_main_rehearsal', true,
+     'backup_restore_rehearsal', true,
+     'coordinated_stop', true,
+     'catalog_preflight', true,
+     'row_counts', jsonb_build_object(
+       'v2_migration_runs', (SELECT count(*) FROM v2_migration_runs),
+       'v2_migration_corpus_items', (SELECT count(*) FROM v2_migration_corpus_items),
+       'v2_migration_source_maps', (SELECT count(*) FROM v2_migration_source_maps),
+       'v2_migration_checkpoints', (SELECT count(*) FROM v2_migration_checkpoints),
+       'v2_migration_errors', (SELECT count(*) FROM v2_migration_errors),
+       'v2_migration_exclusions', (SELECT count(*) FROM v2_migration_exclusions),
+       'v2_migration_gate_results', (SELECT count(*) FROM v2_migration_gate_results),
+       'v2_migration_operator_actions', (SELECT count(*) FROM v2_migration_operator_actions)
+     )
+   ),
+       updated_at = now()
+ WHERE run_id = :'run_id'::uuid;
+
+COMMIT;
+SQL
+}
+
 assert_identity_cleanup_bridge_intact() {
   local state
   state="$(identity_postgres_scalar "
@@ -413,6 +518,11 @@ run_identity_cleanup_startup_matrix() {
   hold_identity_cleanup_lock
   start_identity_cleanup_server_expect_failure "lock timeout"
   cleanup_identity_cleanup_lock
+  ci_compose up -d --wait --wait-timeout 300 redis prometheus server >/dev/null
+  verify_postgres_runtime_migration_state
+  verify_identity_cleanup_seed_upgrade bridge
+  stage_identity_cleanup_retirement_preflight
+  run_identity_cleanup_retirement
   ci_compose up -d --wait --wait-timeout 300 redis prometheus server >/dev/null
   verify_postgres_runtime_migration_state
   verify_identity_cleanup_seed_upgrade bridge

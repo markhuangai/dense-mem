@@ -38,11 +38,158 @@
       "source": "internal/storage/postgres/migration_control_detachment_integration_test.go"
     },
     {
-      "id": "repository/TestAuthorityRepositoryRetainsMigrationAuditReadOnly",
+      "id": "repository/TestAuthorityRepositoryOperationLogRetentionSurvivesRepositoryRestart",
       "package": "./internal/operations/postgres",
-      "run": "^TestAuthorityRepositoryRetainsMigrationAuditReadOnly$",
+      "run": "^TestAuthorityRepositoryOperationLogRetentionSurvivesRepositoryRestart$",
       "phase": "precheck",
       "source": "internal/operations/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementDropsOnlyApprovedTablesAndPreservesMarker",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementDropsOnlyApprovedTablesAndPreservesMarker$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementAppliesPendingRuntimeMigrationsFirst",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementAppliesPendingRuntimeMigrationsFirst$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_order_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsPendingRuntimePredecessor",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRejectsPendingRuntimePredecessor$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_order_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRequiresApprovedOperationalPreflight",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRequiresApprovedOperationalPreflight$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsUnboundOperatorMetadata",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRejectsUnboundOperatorMetadata$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsMissingApprovedCommit",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRejectsMissingApprovedCommit$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_metadata_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsHiddenLineageColumnWithNOBYPASSRLS",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRejectsHiddenLineageColumnWithNOBYPASSRLS$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsChangedApprovedRowCounts",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRejectsChangedApprovedRowCounts$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRunsWithNOBYPASSRLS",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRunsWithNOBYPASSRLS$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRequiresCompatibleMarker",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRequiresCompatibleMarker$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsMissingDetachmentHistory",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRejectsMissingDetachmentHistory$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsIncompleteDetachment",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRejectsIncompleteDetachment$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsMissingTarget",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRejectsMissingTarget$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsAlteredTarget",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRejectsAlteredTarget$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsAlteredIndex",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRejectsAlteredIndex$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsInheritance",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRejectsInheritance$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsUnexpectedDependenciesAndRollsBack",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRejectsUnexpectedDependenciesAndRollsBack$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementLockFailureRollsBackAndCanRetry",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementLockFailureRollsBackAndCanRetry$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsOlderNodeAfterUpgrade",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementRejectsOlderNodeAfterUpgrade$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementFailureAfterFirstDropRollsBack",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementFailureAfterFirstDropRollsBack$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementBackupRestoreRecreatesPopulatedPreRetirementState",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigrationControlRetirementBackupRestoreRecreatesPopulatedPreRetirementState$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/migration_control_retirement_integration_test.go"
     }
   ]
 }

@@ -135,6 +135,16 @@ func TestMigratorRunUp(t *testing.T) {
 	assert.NoError(t, err, "RunUp should succeed")
 	err = m.RunUp(ctx)
 	assert.NoError(t, err, "repeat RunUp should be idempotent")
+	assert.True(t, tableExists(t, ctx, sqlDB, "v2_migration_runs"), "startup must retain the maintenance control tables")
+	var retirementApplied bool
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM goose_db_version
+			WHERE version_id = 20260917010001 AND is_applied
+		)
+	`).Scan(&retirementApplied))
+	assert.False(t, retirementApplied, "destructive retirement must require its explicit maintenance runner")
+	require.NoError(t, ValidateStartupMigrationState(ctx, sqlDB, getMigrationsDir()))
 	for _, indexName := range []string{"community_records_current_logical_unique", "community_sources_group_idx", "community_sources_community_idx"} {
 		assert.True(t, indexExists(t, ctx, sqlDB, indexName), "migration index %s should exist", indexName)
 	}

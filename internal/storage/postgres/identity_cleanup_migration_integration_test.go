@@ -295,9 +295,8 @@ func TestIdentityCleanupUpgradesPopulatedPreBridgeDatabase(t *testing.T) {
 		}
 		require.Positive(t, count)
 	}
-	repositoryLatest, err := latestMigrationVersion(getMigrationsDir())
-	require.NoError(t, err)
-	require.NoError(t, migrationUpTo(ctx, sqlDB, repositoryLatest))
+	require.NoError(t, NewMigratorWithDB(sqlDB).RunUp(ctx))
+	require.False(t, migrationControlRetirementApplied(t, ctx, sqlDB))
 	require.NoError(t, ValidateStartupMigrationState(ctx, sqlDB, getMigrationsDir()))
 }
 

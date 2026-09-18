@@ -80,6 +80,7 @@ func setupLedgerRepositoryDB(t *testing.T) (*gorm.DB, *gorm.DB, *storagepostgres
 	require.NoError(t, rls.WithSystemTx(context.Background(), db, truncateLedgerFixtures))
 	return db, appDB, rls, cleanup
 }
+
 func setupLedgerRepositoryDSN(t *testing.T) (string, func()) {
 	t.Helper()
 	if dsn := storagepostgres.GetTestDSN(); dsn != "" {

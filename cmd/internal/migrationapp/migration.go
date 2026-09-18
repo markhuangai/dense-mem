@@ -22,6 +22,10 @@ func RunUp(parent context.Context, db *gorm.DB, timeout time.Duration, logger in
 	return run(parent, db, timeout, "up", logger, postgres.RunUp)
 }
 
+func RunMigrationControlRetirement(parent context.Context, db *gorm.DB, timeout time.Duration, logger infoLogger) error {
+	return run(parent, db, timeout, "migration-control-retirement", logger, postgres.RunMigrationControlRetirement)
+}
+
 func RunDown(parent context.Context, db *gorm.DB, timeout time.Duration, logger infoLogger) error {
 	return run(parent, db, timeout, "down", logger, postgres.RunDown)
 }

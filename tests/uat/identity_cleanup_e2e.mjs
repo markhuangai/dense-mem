@@ -126,12 +126,41 @@ const migrationDetachment = postgresRow(`
           'v2_migration_operator_actions'
         ])))
     ), '|',
-    (SELECT count(*) = 8 FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'v2_migration_%'), '|',
-    EXISTS (SELECT 1 FROM v2_compatibility_markers)
+    NOT EXISTS (
+      SELECT 1
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name = ANY (ARRAY[
+          'v2_migration_runs',
+          'v2_migration_corpus_items',
+          'v2_migration_source_maps',
+          'v2_migration_checkpoints',
+          'v2_migration_errors',
+          'v2_migration_exclusions',
+          'v2_migration_gate_results',
+          'v2_migration_operator_actions'
+        ]::text[])
+    ), '|',
+    EXISTS (
+      SELECT 1
+      FROM v2_compatibility_markers
+      WHERE marker_kind = 'v2_cutover'
+        AND version = 'dense-mem.v2.6.1.cutover.v1'
+        AND status = 'compatible'
+    )
   );
 `);
 if (migrationDetachment.some((value) => value !== "true" && value !== "t")) {
-  throw new Error(`migration-control detachment catalog is incomplete: ${migrationDetachment}`);
+  throw new Error(`migration-control retirement catalog is incomplete: ${migrationDetachment}`);
+}
+const retirementApplied = postgresRow(`
+  SELECT EXISTS (
+    SELECT 1 FROM goose_db_version
+    WHERE version_id = 20260917010001 AND is_applied
+  );
+`);
+if (retirementApplied[0] !== "true" && retirementApplied[0] !== "t") {
+  throw new Error("migration-control retirement maintenance command did not apply the retirement version");
 }
 
 await mcpList(upgradeCredential);
@@ -252,6 +281,7 @@ console.log(JSON.stringify({
   clean_catalog: true,
   direct_foreign_keys: true,
   transitional_objects_removed: true,
+  migration_control_retired: true,
   bridge_seed_authentication: true,
   bridge_seed_history: true,
   stable_ids: true,

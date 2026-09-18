@@ -116,6 +116,13 @@ func TestRunCompletesBeforeHeartbeat(t *testing.T) {
 	}
 }
 
+func TestRunMigrationControlRetirementRejectsInvalidTimeout(t *testing.T) {
+	err := RunMigrationControlRetirement(context.Background(), nil, 0, newRecordingLogger())
+	if err == nil || !strings.Contains(err.Error(), "migration timeout must be greater than zero") {
+		t.Fatalf("RunMigrationControlRetirement() error = %v, want invalid timeout error", err)
+	}
+}
+
 func TestRunPropagatesMigrationError(t *testing.T) {
 	logger := newRecordingLogger()
 	want := context.DeadlineExceeded

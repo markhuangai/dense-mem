@@ -67,7 +67,7 @@ test("loads the complete independently owned architecture inventory", () => {
   assert.equal(productionManifest.load_diagnostics.length, 0);
   assert.equal(productionManifest.schema_version, 2);
   assert.equal(productionManifest.fragments.length, 63);
-  assert.equal(productionManifest.source_ownership.length, 125);
+  assert.equal(productionManifest.source_ownership.length, 126);
   assert.equal(productionManifest.workers.length, 46);
   assert.equal(Object.hasOwn(productionManifest, "exceptions"), false);
   assert.deepEqual(validateManifest(productionManifest), []);
@@ -436,7 +436,7 @@ test("enforces private visibility and narrow PostgreSQL infrastructure reuse", (
 });
 
 test("retains permanent ownership records and worker anchors", () => {
-  assert.equal(productionManifest.source_ownership.length, 125);
+  assert.equal(productionManifest.source_ownership.length, 126);
   assert.ok(productionManifest.source_ownership.every((entry) => Object.keys(entry).length === 3));
   assert.ok(productionManifest.workers.every((entry) => !Object.hasOwn(entry, "lifecycle_issue")));
   assert.ok(productionManifest.workers.every((entry) => entry.role === "worker"));

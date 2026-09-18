@@ -4,6 +4,9 @@
   "source_ownership": [
     {
       "path": "internal/storage/postgres/migration_control_detachment_integration_test.go"
+    },
+    {
+      "path": "internal/storage/postgres/migration_control_retirement_integration_test.go"
     }
   ],
   "go": {

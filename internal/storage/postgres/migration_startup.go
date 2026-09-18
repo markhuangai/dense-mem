@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path"
 )
 
 type MigrationStateKind string
@@ -155,6 +156,19 @@ func latestMigrationVersion(dir string) (int64, error) {
 	return sources[len(sources)-1].version, nil
 }
 
+func latestRuntimeMigrationVersion(dir string) (int64, error) {
+	sources, err := listMigrationSources(dir)
+	if err != nil {
+		return 0, err
+	}
+	for index := len(sources) - 1; index >= 0; index-- {
+		if path.Base(sources[index].filename) != migrationControlRetirementFilename {
+			return sources[index].version, nil
+		}
+	}
+	return 0, errors.New("migration history: no runtime migrations")
+}
+
 // ValidateStartupMigrationState is called after Goose has finished. It keeps
 // the application from starting on a partially applied identity bridge or on
 // a database that was upgraded by a newer binary.
@@ -169,7 +183,11 @@ func ValidateStartupMigrationState(ctx context.Context, db *sql.DB, migrationsDi
 	if state.Kind != MigrationStateClean {
 		return fmt.Errorf("%w: migration did not complete the v2.5 identity cleanup", ErrInvalidMigrationState)
 	}
-	if state.DatabaseLatest != state.RepositoryLatest {
+	runtimeLatest, err := latestRuntimeMigrationVersion(migrationsDir)
+	if err != nil {
+		return err
+	}
+	if state.DatabaseLatest != state.RepositoryLatest && state.DatabaseLatest != runtimeLatest {
 		return fmt.Errorf("%w: database version %d does not match repository version %d", ErrInvalidMigrationState, state.DatabaseLatest, state.RepositoryLatest)
 	}
 	return nil
