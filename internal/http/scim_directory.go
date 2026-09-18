@@ -18,6 +18,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	settings "github.com/markhuangai/dense-mem/internal/settings"
 )
@@ -134,7 +135,8 @@ func (h *directorySCIMHandler) oauthToken(c echo.Context) error {
 		clientID = c.FormValue("client_id")
 		clientSecret = c.FormValue("client_secret")
 	}
-	token, expiresAt, err := h.directory.IssueOAuthToken(c.Request().Context(), clientID, clientSecret)
+	issueContext := requestctx.WithAuthenticationSecrets(c.Request().Context(), clientSecret)
+	token, expiresAt, err := h.directory.IssueOAuthToken(issueContext, clientID, clientSecret)
 	if err != nil {
 		if errors.Is(err, accessservice.ErrDirectoryCredentialInvalid) {
 			recordDirectoryOAuthAuthFailure(c, h.security)
@@ -195,7 +197,7 @@ func (h *directorySCIMHandler) serve(c echo.Context) error {
 		return directorySCIMError(c, scimerrors.ScimError{Status: nethttp.StatusUnauthorized})
 	}
 
-	request := c.Request().Clone(context.WithValue(c.Request().Context(), directorySCIMContextKey{}, connectorID))
+	request := directorySCIMAuthenticatedRequest(c.Request(), connectorID, rawToken)
 	requestURL := *c.Request().URL
 	request.URL = &requestURL
 	resourcePath := strings.TrimPrefix(c.Param("*"), "/")
@@ -206,7 +208,7 @@ func (h *directorySCIMHandler) serve(c echo.Context) error {
 	}
 	publicBaseURL := h.publicBaseURL
 	if h.runtimeConfigSource != nil {
-		runtime, err := h.runtimeConfigSource.SSORuntimeConfig(c.Request().Context())
+		runtime, err := h.runtimeConfigSource.SSORuntimeConfig(request.Context())
 		if err != nil {
 			return directorySCIMError(c, scimerrors.ScimErrorInternal)
 		}
@@ -224,6 +226,17 @@ func (h *directorySCIMHandler) serve(c echo.Context) error {
 	}
 	server.ServeHTTP(c.Response(), request)
 	return nil
+}
+
+func directorySCIMAuthenticatedRequest(request *nethttp.Request, connectorID uuid.UUID, rawToken string) *nethttp.Request {
+	if request == nil {
+		return nil
+	}
+	ctx := requestctx.WithAuthenticationSecrets(request.Context(), rawToken)
+	ctx = context.WithValue(ctx, directorySCIMContextKey{}, connectorID)
+	forwarded := request.Clone(ctx)
+	forwarded.Header.Del(echo.HeaderAuthorization)
+	return forwarded
 }
 
 func directoryBearerToken(request *nethttp.Request) (string, bool) {

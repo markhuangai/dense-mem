@@ -51,7 +51,8 @@ services:
   demo:
     image: ${DENSE_MEM_DEMO_IMAGE:-ghcr.io/markhuangai/dense-mem:demo-latest}
     environment:
-      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_LEVEL: ${LOG_LEVEL:-trace}
+      POSTGRES_SLOW_QUERY_THRESHOLD_MS: ${POSTGRES_SLOW_QUERY_THRESHOLD_MS:-200}
       DEMO_PUBLIC_BASE_URL: ${DEMO_PUBLIC_BASE_URL:-}
       POSTGRES_USER: ${POSTGRES_USER:-densemem}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}

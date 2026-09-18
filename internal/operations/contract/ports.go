@@ -17,6 +17,12 @@ type OperationLogRepository interface {
 	PruneBefore(context.Context, time.Time) error
 }
 
+// OperationLogSinkProber verifies the required operation-log write path
+// without committing a readiness probe row.
+type OperationLogSinkProber interface {
+	ProbeOperationLogSink(context.Context) error
+}
+
 // UsageMetricsRepository persists bounded runtime usage aggregates.
 type UsageMetricsRepository interface {
 	UpsertBuckets(context.Context, uuid.UUID, []domain.UsageMetricBucket) error

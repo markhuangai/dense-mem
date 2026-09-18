@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 // clearEnv clears all config-related environment variables
@@ -21,6 +23,7 @@ func clearEnv() {
 		"POSTGRES_MAX_IDLE_CONNS",
 		"POSTGRES_CONN_MAX_LIFETIME_SECONDS",
 		"POSTGRES_MIGRATION_TIMEOUT_SECONDS",
+		"POSTGRES_SLOW_QUERY_THRESHOLD_MS",
 		"REDIS_ADDR",
 		"REDIS_PASSWORD",
 		"REDIS_DB",
@@ -77,6 +80,7 @@ func clearEnv() {
 		"SSO_STATE_TTL_SECONDS",
 		"SSO_HTTP_TIMEOUT_SECONDS",
 		"SSO_COOKIE_SECURE",
+		"LOG_LEVEL",
 	}
 	for _, v := range envVars {
 		os.Unsetenv(v)
@@ -122,6 +126,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.HTTPMaxBodyBytes != 1048576 {
 		t.Errorf("HTTPMaxBodyBytes default = %d, want %d", cfg.HTTPMaxBodyBytes, 1048576)
+	}
+	if cfg.GetPostgresSlowQueryThresholdMS() != DefaultPostgresSlowQueryThresholdMS {
+		t.Errorf("PostgresSlowQueryThresholdMS default = %d, want %d", cfg.GetPostgresSlowQueryThresholdMS(), DefaultPostgresSlowQueryThresholdMS)
 	}
 	if cfg.AuthVerifyMaxConcurrency != 8 {
 		t.Errorf("AuthVerifyMaxConcurrency default = %d, want %d", cfg.AuthVerifyMaxConcurrency, 8)
@@ -183,6 +190,26 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.TelemetryPrometheusJob != "" {
 		t.Errorf("TelemetryPrometheusJob default = %q, want empty", cfg.TelemetryPrometheusJob)
+	}
+	if cfg.GetLogLevel() != observability.LevelTrace {
+		t.Errorf("LogLevel default = %v, want TRACE", cfg.GetLogLevel())
+	}
+}
+
+func TestLoadValidatesSharedLogLevel(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	t.Setenv("LOG_LEVEL", "fatal")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+	if cfg.GetLogLevel() != observability.LevelFatal {
+		t.Fatalf("LogLevel = %v, want FATAL", cfg.GetLogLevel())
+	}
+	t.Setenv("LOG_LEVEL", "invalid")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "parse log level") {
+		t.Fatalf("invalid LOG_LEVEL error = %v", err)
 	}
 }
 

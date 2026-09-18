@@ -16,6 +16,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 type stubCredentialVerifier struct {
@@ -210,6 +211,7 @@ func TestAuthMiddlewareOAuthBearerSetsImmutablePrincipal(t *testing.T) {
 	actor := testSSOActor(teamID, identityID, membershipID, ownerID, &providerID, []string{"read"})
 	actor.Membership.MemorySpaceID = uuid.New()
 	authenticator := &stubOAuthBearerAuthenticator{actor: actor}
+	rawToken := "header.payload.signature"
 	e := newTestEcho()
 	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, nil, nil, AuthOptions{
 		OAuthBearerAuthenticator: authenticator,
@@ -229,10 +231,10 @@ func TestAuthMiddlewareOAuthBearerSetsImmutablePrincipal(t *testing.T) {
 			{ID: actor.Membership.MemorySpaceID, Kind: domain.MemorySpaceProfilePrivate},
 		}, principal.AllowedSpaces)
 		assert.Empty(t, c.Request().Header.Get("Authorization"))
+		assert.Equal(t, []string{rawToken}, requestctx.AuthenticationSecretsFromContext(c.Request().Context()))
 		return c.NoContent(http.StatusOK)
 	})
 
-	rawToken := "header.payload.signature"
 	req := httptest.NewRequest(http.MethodGet, "/teams/"+teamID.String()+"/mcp", nil)
 	req.Header.Set("Authorization", "Bearer "+rawToken)
 	rec := httptest.NewRecorder()

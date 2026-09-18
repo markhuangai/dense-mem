@@ -2,7 +2,10 @@ package operations
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +28,21 @@ type operationLogRepoStub struct {
 	appendDeadlines []time.Time
 }
 
+type shutdownRetryRepo struct {
+	operationLogRepoStub
+	failFirstAppend bool
+}
+
+type operationLogProbeRepo struct {
+	operationLogRepoStub
+	pingCalls int
+}
+
+func (r *operationLogProbeRepo) ProbeOperationLogSink(context.Context) error {
+	r.pingCalls++
+	return nil
+}
+
 func (s *operationLogRepoStub) AppendBatch(ctx context.Context, logs []domain.OperationLog) error {
 	s.appendCalls++
 	if s.appendErr != nil {
@@ -35,6 +53,14 @@ func (s *operationLogRepoStub) AppendBatch(ctx context.Context, logs []domain.Op
 	}
 	s.appended = append(s.appended, logs...)
 	return nil
+}
+
+func (s *shutdownRetryRepo) AppendBatch(ctx context.Context, logs []domain.OperationLog) error {
+	if s.failFirstAppend {
+		s.failFirstAppend = false
+		return errors.New("transient shutdown append failure")
+	}
+	return s.operationLogRepoStub.AppendBatch(ctx, logs)
 }
 
 func (s *operationLogRepoStub) List(_ context.Context, filter domain.OperationLogFilter) (*domain.OperationLogPage, error) {
@@ -134,6 +160,7 @@ func TestOperationLogServiceBatchesAndPropagatesErrors(t *testing.T) {
 	require.ErrorContains(t, svc.Flush(ctx), "append failed")
 	assert.Empty(t, repo.appended)
 	repo.appendErr = nil
+	time.Sleep(operationLogRetryInterval)
 	require.NoError(t, svc.Flush(ctx))
 	require.Len(t, repo.appended, 1)
 	assert.Equal(t, "queued", repo.appended[0].Message)
@@ -196,6 +223,239 @@ func TestOperationLogServiceRetainsFailedBatchUntilRetrySucceeds(t *testing.T) {
 	require.Error(t, svc.Flush(context.Background()))
 	require.Error(t, svc.Flush(context.Background()))
 	repo.appendErr = nil
+	time.Sleep(operationLogRetryInterval)
 	require.NoError(t, svc.Flush(context.Background()))
 	require.Len(t, repo.appended, 1)
+}
+
+func TestOperationLogServiceShutdownDoesNotMarkRecoveredBatchAsDropped(t *testing.T) {
+	repo := &shutdownRetryRepo{failFirstAppend: true}
+	svc := NewOperationLogService(repo, nil)
+	svc.Start(context.Background())
+	require.NoError(t, svc.WriteLog(context.Background(), observability.LogRecord{Message: "shutdown retry", Contextual: true}))
+
+	require.NoError(t, svc.Shutdown(context.Background()))
+	require.Len(t, repo.appended, 1)
+	assert.Equal(t, "shutdown retry", repo.appended[0].Message)
+	assert.Zero(t, svc.DroppedEvents())
+	for _, entry := range repo.appended {
+		assert.NotEqual(t, "operation log gap recovered", entry.Message)
+	}
+}
+
+func TestOperationLogServiceShutdownDropsRetainedBatchAfterFinalFailure(t *testing.T) {
+	repo := &operationLogRepoStub{appendErr: errors.New("persistent shutdown append failure")}
+	svc := NewOperationLogService(repo, nil)
+	svc.Start(context.Background())
+	require.NoError(t, svc.WriteLog(context.Background(), observability.LogRecord{Message: "shutdown drop", Contextual: true}))
+
+	require.Error(t, svc.Shutdown(context.Background()))
+	assert.EqualValues(t, 1, svc.DroppedEvents())
+	assert.Empty(t, repo.appended)
+}
+
+func TestOperationLogServiceTriggersFlushAtBatchCapacity(t *testing.T) {
+	svc := NewOperationLogService(&operationLogRepoStub{}, nil)
+	for i := 0; i < operationLogBatchSize; i++ {
+		require.NoError(t, svc.WriteLog(context.Background(), observability.LogRecord{Message: "capacity"}))
+	}
+	select {
+	case <-svc.flushRequests:
+	default:
+		t.Fatal("batch capacity did not request an immediate flush")
+	}
+}
+
+func TestOperationLogServiceContextualAdmissionHonorsCancellation(t *testing.T) {
+	svc := NewOperationLogService(&operationLogRepoStub{}, nil)
+	for i := 0; i < operationLogQueueSize; i++ {
+		require.NoError(t, svc.WriteLog(context.Background(), observability.LogRecord{Message: "queued"}))
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := svc.WriteLog(ctx, observability.LogRecord{Message: "canceled", Contextual: true})
+	require.ErrorIs(t, err, ErrOperationLogAdmissionCanceled)
+	assert.EqualValues(t, 1, svc.DroppedEvents())
+}
+
+func TestOperationLogServiceBoundsServiceAddedCallerMetadata(t *testing.T) {
+	repo := &operationLogRepoStub{}
+	svc := NewOperationLogService(repo, nil)
+	teamID, profileID := uuid.New(), uuid.New()
+	attrs := map[string]any{
+		"ordinary":        strings.Repeat("x", observability.MaxOperationMetadataBytes*2),
+		"team_id":         teamID.String(),
+		"profile_id":      profileID.String(),
+		"caller_function": "forged.Function",
+	}
+	require.NoError(t, svc.WriteLog(context.Background(), observability.LogRecord{
+		Message: "bounded", TeamID: teamID.String(), ProfileID: profileID.String(), Function: "producer.Function", Attrs: attrs,
+	}))
+	require.NoError(t, svc.Flush(context.Background()))
+	require.Len(t, repo.appended, 1)
+	encoded, err := json.Marshal(repo.appended[0].Attrs)
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(encoded), observability.MaxOperationMetadataBytes)
+	assert.Equal(t, teamID, *repo.appended[0].TeamID)
+	assert.Equal(t, profileID, *repo.appended[0].ProfileID)
+	assert.Equal(t, "producer.Function", repo.appended[0].Attrs["caller_function"])
+	assert.Equal(t, "forged.Function", attrs["caller_function"], "the service must not mutate the caller's metadata")
+}
+
+func TestDefaultSlogBridgeRetainsNonblockingLegacyAdmission(t *testing.T) {
+	svc := NewOperationLogService(&operationLogRepoStub{}, nil)
+	root := observability.New(observability.LevelTrace)
+	require.NoError(t, root.AttachSink(svc))
+	for i := 0; i < operationLogQueueSize; i++ {
+		require.NoError(t, svc.WriteLog(context.Background(), observability.LogRecord{Message: "queued"}))
+	}
+	started := time.Now()
+	root.Slog().Info("legacy overflow")
+	assert.Less(t, time.Since(started), 250*time.Millisecond)
+	assert.EqualValues(t, 1, svc.DroppedEvents())
+}
+
+func TestOperationLogServiceReadinessRecoversAfterPersistenceFailure(t *testing.T) {
+	repo := &operationLogRepoStub{appendErr: errors.New("database unavailable")}
+	svc := NewOperationLogService(repo, nil)
+	require.NoError(t, svc.WriteLog(context.Background(), observability.LogRecord{Message: "pending"}))
+	require.ErrorIs(t, svc.CheckReadiness(context.Background()), ErrOperationLogSinkUnavailable)
+	repo.appendErr = nil
+	time.Sleep(operationLogRetryInterval)
+	require.NoError(t, svc.CheckReadiness(context.Background()))
+	require.Len(t, repo.appended, 2)
+	assert.NotEqual(t, uuid.Nil, repo.appended[0].ID)
+	assert.Equal(t, "operation log sink readiness probe", repo.appended[1].Message)
+	repo.appendErr = errors.New("sink outage")
+	require.ErrorIs(t, svc.CheckReadiness(context.Background()), ErrOperationLogSinkUnavailable)
+	repo.appendErr = nil
+	time.Sleep(operationLogRetryInterval)
+	require.NoError(t, svc.CheckReadiness(context.Background()))
+}
+
+func TestOperationLogServiceReadinessProbeUsesDirectPingWhenInfoIsFiltered(t *testing.T) {
+	repo := &operationLogProbeRepo{}
+	svc := NewOperationLogService(repo, nil)
+	svc.SetMinimumLevel(slog.LevelError)
+	require.NoError(t, svc.CheckReadiness(context.Background()))
+	assert.Equal(t, 1, repo.pingCalls)
+	assert.Empty(t, repo.appended)
+}
+
+func TestOperationLogServicePersistsGapRecoveryMarker(t *testing.T) {
+	repo := &operationLogRepoStub{}
+	svc := NewOperationLogService(repo, nil)
+	for i := 0; i < operationLogQueueSize; i++ {
+		require.NoError(t, svc.WriteLog(context.Background(), observability.LogRecord{Message: "queued"}))
+	}
+	require.ErrorIs(t, svc.WriteLog(context.Background(), observability.LogRecord{Message: "overflow"}), ErrOperationLogQueueFull)
+	require.NoError(t, svc.Flush(context.Background()))
+	found := false
+	for _, entry := range repo.appended {
+		if entry.Message == "operation log gap recovered" {
+			found = true
+			assert.EqualValues(t, 1, entry.Attrs["dropped_events"])
+		}
+	}
+	assert.True(t, found)
+	require.NoError(t, svc.CheckReadiness(context.Background()))
+}
+
+func TestOperationLogServiceGapRecoveryUsesEnabledSeverity(t *testing.T) {
+	repo := &operationLogRepoStub{}
+	svc := NewOperationLogService(repo, nil)
+	svc.SetMinimumLevel(slog.LevelError)
+	for i := 0; i < operationLogQueueSize; i++ {
+		require.NoError(t, svc.WriteLog(context.Background(), observability.LogRecord{Message: "queued"}))
+	}
+	require.ErrorIs(t, svc.WriteLog(context.Background(), observability.LogRecord{Message: "overflow"}), ErrOperationLogQueueFull)
+	require.NoError(t, svc.Flush(context.Background()))
+	for _, entry := range repo.appended {
+		if entry.Message == "operation log gap recovered" {
+			assert.Equal(t, "ERROR", entry.Severity)
+			assert.Equal(t, 40, entry.SeverityRank)
+			return
+		}
+	}
+	t.Fatal("missing recovery marker")
+}
+
+func TestOperationLogServiceRetriesFailedGapRecoveryMarkerWithoutNewTraffic(t *testing.T) {
+	repo := &operationLogRepoStub{appendErr: errors.New("sink unavailable")}
+	svc := NewOperationLogService(repo, nil)
+	for i := 0; i < operationLogQueueSize; i++ {
+		require.NoError(t, svc.WriteLog(context.Background(), observability.LogRecord{Message: "queued"}))
+	}
+	require.ErrorIs(t, svc.WriteLog(context.Background(), observability.LogRecord{Message: "overflow"}), ErrOperationLogQueueFull)
+	require.Error(t, svc.Flush(context.Background()))
+	repo.appendErr = nil
+	time.Sleep(operationLogRetryInterval)
+	require.NoError(t, svc.Flush(context.Background()))
+	var markers []domain.OperationLog
+	for _, entry := range repo.appended {
+		if entry.Message == "operation log gap recovered" {
+			markers = append(markers, entry)
+		}
+	}
+	require.Len(t, markers, 1)
+	assert.EqualValues(t, 1, markers[0].Attrs["dropped_events"])
+}
+
+func TestOperationLogServiceSeverityAndContextualAdmission(t *testing.T) {
+	for _, test := range []struct {
+		severity string
+		want     int
+	}{
+		{severity: "fatal", want: 50},
+		{severity: "error", want: 40},
+		{severity: "warn", want: 30},
+		{severity: "debug", want: 10},
+		{severity: "trace", want: 0},
+		{severity: "info", want: 20},
+	} {
+		assert.Equal(t, test.want, operationLogSeverityRank(test.severity))
+	}
+
+	repo := &operationLogRepoStub{}
+	svc := NewOperationLogService(repo, nil)
+	var nilCtx context.Context
+	require.NoError(t, svc.WriteLog(nilCtx, observability.LogRecord{Message: "contextual", Contextual: true}))
+	require.NoError(t, svc.Flush(nilCtx))
+	require.Len(t, repo.appended, 1)
+
+	var nilSvc *OperationLogServiceImpl
+	assert.Zero(t, nilSvc.DroppedEvents())
+	svc.markGapCount(0)
+	require.NoError(t, svc.Shutdown(nilCtx))
+	assert.ErrorIs(t, svc.WriteLog(context.Background(), observability.LogRecord{}), ErrOperationLogShutdown)
+}
+
+func TestParseLogUUIDBoundsInvalidAndValidValues(t *testing.T) {
+	assert.Nil(t, parseLogUUID(""))
+	assert.Nil(t, parseLogUUID("not-a-uuid"))
+	want := uuid.New()
+	got := parseLogUUID("  " + want.String() + " ")
+	require.NotNil(t, got)
+	assert.Equal(t, want, *got)
+}
+
+func TestOperationLogContextualWriterBoundsQueueAdmissionAndShutdownClosesAdmission(t *testing.T) {
+	svc := NewOperationLogService(&operationLogRepoStub{}, nil)
+	for i := 0; i < operationLogQueueSize; i++ {
+		require.NoError(t, svc.WriteLog(context.Background(), observability.LogRecord{Message: "queued"}))
+	}
+
+	started := time.Now()
+	require.ErrorIs(t, svc.WriteLog(context.Background(), observability.LogRecord{Message: "bounded", Contextual: true}), ErrOperationLogQueueFull)
+	assert.Less(t, time.Since(started), 250*time.Millisecond)
+	assert.EqualValues(t, 1, svc.DroppedEvents())
+
+	repo := &operationLogRepoStub{}
+	svc = NewOperationLogService(repo, nil)
+	for i := 0; i < operationLogQueueSize; i++ {
+		require.NoError(t, svc.WriteLog(context.Background(), observability.LogRecord{Message: "queued"}))
+	}
+	require.NoError(t, svc.Shutdown(context.Background()))
+	require.ErrorIs(t, svc.WriteLog(context.Background(), observability.LogRecord{Message: "shutdown", Contextual: true}), ErrOperationLogShutdown)
+	assert.Len(t, repo.appended, operationLogQueueSize)
 }

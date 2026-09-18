@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
@@ -21,6 +23,29 @@ type OperationLogRepository = operationscontract.OperationLogRepository
 type OperationLogRepositoryImpl struct {
 	db  *gorm.DB
 	rls postgres.RLSHelper
+}
+
+var errOperationLogProbeRollback = errors.New("operation log readiness probe rollback")
+
+// ProbeOperationLogSink exercises the operation_logs write path and always
+// rolls back the synthetic row, so trigger and permission failures remain
+// visible without adding an INFO record to the control-panel store.
+func (r *OperationLogRepositoryImpl) ProbeOperationLogSink(ctx context.Context) error {
+	probeID := uuid.New()
+	err := r.withSystemTx(observability.WithSinkSuppressed(ctx), func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO operation_logs (
+				id, timestamp, severity, severity_rank, message, source, attrs
+			) VALUES ($1, $2, 'INFO', 20, 'operation log sink readiness probe', 'readiness', $3::jsonb)
+		`, probeID, time.Now().UTC(), `{"event":"operation_log_sink_readiness_probe"}`).Error; err != nil {
+			return err
+		}
+		return errOperationLogProbeRollback
+	})
+	if errors.Is(err, errOperationLogProbeRollback) {
+		return nil
+	}
+	return err
 }
 
 var _ OperationLogRepository = (*OperationLogRepositoryImpl)(nil)
@@ -41,13 +66,16 @@ func (r *OperationLogRepositoryImpl) AppendBatch(ctx context.Context, logs []dom
 			}
 			if err := tx.Exec(`
 				INSERT INTO operation_logs (
+					id,
 					timestamp, severity, severity_rank, message, source,
 					team_id, profile_id, correlation_id, error, attrs
 				) VALUES (
-					$1, $2, $3, $4, $5,
-					$6, $7, $8, $9, $10::jsonb
+					$1, $2, $3, $4, $5, $6,
+					$7, $8, $9, $10, $11::jsonb
 				)
+				ON CONFLICT (id) DO NOTHING
 			`,
+				operationLogID(entry.ID),
 				entry.Timestamp.UTC(),
 				normalizeOperationLogSeverity(entry.Severity),
 				entry.SeverityRank,
@@ -146,10 +174,18 @@ func (r *OperationLogRepositoryImpl) PruneBefore(ctx context.Context, cutoff tim
 }
 
 func (r *OperationLogRepositoryImpl) withSystemTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	ctx = observability.WithSinkSuppressed(ctx)
 	if r.rls != nil {
 		return r.rls.WithSystemTx(ctx, r.db, fn)
 	}
 	return r.db.WithContext(ctx).Transaction(fn)
+}
+
+func operationLogID(id uuid.UUID) uuid.UUID {
+	if id == uuid.Nil {
+		return uuid.New()
+	}
+	return id
 }
 
 func normalizeOperationLogFilter(filter domain.OperationLogFilter) domain.OperationLogFilter {

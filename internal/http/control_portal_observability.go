@@ -191,9 +191,9 @@ func controlOperationLogsFilter(c echo.Context) (domain.OperationLogFilter, erro
 	}
 	severity := strings.ToUpper(strings.TrimSpace(c.QueryParam("severity")))
 	switch severity {
-	case "", "DEBUG", "INFO", "WARN", "ERROR":
+	case "", "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL":
 	default:
-		return domain.OperationLogFilter{}, httperr.New(httperr.VALIDATION_ERROR, "severity must be one of DEBUG, INFO, WARN, ERROR")
+		return domain.OperationLogFilter{}, httperr.New(httperr.VALIDATION_ERROR, "severity must be one of TRACE, DEBUG, INFO, WARN, ERROR, FATAL")
 	}
 	sort := strings.ToLower(strings.TrimSpace(c.QueryParam("sort")))
 	switch sort {

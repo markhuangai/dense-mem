@@ -107,7 +107,6 @@ func RunActiveServer(
 	appConfigRepo := settingspostgres.NewAppConfigRepository(pgDB.GetDB(), rlsHelper)
 	securityRepo := settingspostgres.NewSecurityRepository(pgDB.GetDB(), rlsHelper)
 	usageMetricsRepo := operationspostgres.NewUsageMetricsRepository(pgDB.GetDB(), rlsHelper)
-	operationLogRepo := operationspostgres.NewOperationLogRepository(pgDB.GetDB(), rlsHelper)
 	telemetryLifecycleRepo := operationspostgres.NewTelemetryLifecycleRepository(pgDB.GetDB(), rlsHelper)
 	recallFeedbackEventRepo := recallpostgres.NewFeedbackStore(pgDB.GetDB(), rlsHelper)
 	privateMemoryRepo := privacy.NewStore(pgDB.GetDB(), rlsHelper)
@@ -132,6 +131,17 @@ func RunActiveServer(
 		pgDB.GetDB(), rlsHelper, searchRepo,
 		searchRecallConflictReader(), recallpostgres.LoadRecallEvidenceConflictRecords,
 	)
+	operationLogDB, err := postgres.OpenOperationLogClient(startupCtx, &cfg, logger)
+	if err != nil {
+		return fmt.Errorf("open operation log sink pool: %w", err)
+	}
+	closeOperationLogDB := true
+	defer func() {
+		if closeOperationLogDB {
+			_ = operationLogDB.Close()
+		}
+	}()
+	operationLogRepo := operationspostgres.NewOperationLogRepository(operationLogDB.GetDB(), rlsHelper)
 	logger.Info(
 		"postgres authority enabled",
 		observability.String("mode", string(authority.Mode)),
@@ -146,9 +156,28 @@ func RunActiveServer(
 	auditService := buildAuditApplication(pgDB.GetDB())
 	appConfigService := buildConfigurationApplication(appConfigRepo, auditService)
 	operationLogService := buildOperationLogApplication(operationLogRepo, appConfigService)
-	activeLogger := buildActiveApplicationLogger(level, operationLogService)
-	logger = activeLogger
-	slog.SetDefault(activeLogger.Slog())
+	operationLogService.SetMinimumLevel(level)
+	if root, ok := logger.(observability.SinkAttacher); ok {
+		if err := root.AttachSink(operationLogService); err != nil {
+			return fmt.Errorf("attach operation log sink: %w", err)
+		}
+	}
+	if root, ok := logger.(*observability.Logger); ok {
+		slog.SetDefault(root.Slog())
+	}
+	// Keep the sink worker alive until lifecycle.shutdown reaches its first
+	// registered worker, after listeners and producers have drained.
+	operationLogService.Start(context.Background())
+	// Every bootstrap return path after Start must stop the worker before the
+	// dedicated pool's close defer runs.
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), writerShutdownTimeout)
+		_ = operationLogService.Shutdown(shutdownCtx)
+		cancel()
+	}()
+	if err := operationLogService.CheckReadiness(startupCtx); err != nil {
+		return fmt.Errorf("operation log sink readiness failed: %w", err)
+	}
 	securityService := buildSecurityApplication(securityRepo, auditService)
 	usageMetricsService := buildUsageMetricsApplication(usageMetricsRepo, logger)
 	accessApplication := buildAccessApplication(accessApplicationDependencies{
@@ -317,6 +346,7 @@ func RunActiveServer(
 		securityService:          securityService,
 		appConfig:                appConfigService,
 		operationLogs:            operationLogService,
+		operationLogHealth:       operationLogService.CheckReadiness,
 		usageMetrics:             usageMetricsService,
 		conflictQueue:            conflictQueueService,
 		evidenceConflicts:        evidenceConflictService,
@@ -395,6 +425,9 @@ func RunActiveServer(
 		}
 		return lifecycle.Context().Err()
 	}
+	// The operation sink is added first so reverse-order shutdown flushes it
+	// after producers have stopped emitting records.
+	lifecycle.add(managedRuntimeWorker{name: "operation log", shutdown: operationLogService.Shutdown, shutdownTimeout: writerShutdownTimeout})
 	abortStartup := func(startupErr error) error {
 		closeBoundListeners()
 		workerCtx, workerCancel := context.WithTimeout(context.Background(), workerJoinTimeout)
@@ -404,6 +437,7 @@ func RunActiveServer(
 			startupErr = errors.Join(startupErr, shutdownErr)
 			if errors.Is(shutdownErr, ErrRuntimeShutdownTimeout) {
 				closeBackend = false
+				closeOperationLogDB = false
 			}
 		}
 		return startupErr
@@ -428,8 +462,6 @@ func RunActiveServer(
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)
 	}
-	operationLogService.Start(lifecycle.Context())
-	lifecycle.add(managedRuntimeWorker{name: "operation log", shutdown: operationLogService.Shutdown, shutdownTimeout: writerShutdownTimeout})
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)
 	}
@@ -582,6 +614,7 @@ func RunActiveServer(
 		if errors.Is(err, ErrRuntimeShutdownTimeout) {
 			runErr = errors.Join(runErr, ErrRuntimeShutdownTimeout)
 			closeBackend = false
+			closeOperationLogDB = false
 		}
 	}
 	workerCancel()

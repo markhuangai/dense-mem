@@ -3,6 +3,20 @@
   "capability": "postgres",
   "cases": [
     {
+      "id": "postgres/TestOpenOperationLogClientUsesDedicatedTwoConnectionPool",
+      "package": "./internal/storage/postgres",
+      "run": "^TestOpenOperationLogClientUsesDedicatedTwoConnectionPool$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/client_integration_test.go"
+    },
+    {
+      "id": "postgres/TestOperationLogPoolMakesProgressWhileApplicationPoolIsHeld",
+      "package": "./internal/storage/postgres",
+      "run": "^TestOperationLogPoolMakesProgressWhileApplicationPoolIsHeld$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/client_integration_test.go"
+    },
+    {
       "id": "postgres/TestCoreSchemaAuditLogTable",
       "package": "./internal/storage/postgres",
       "run": "^TestCoreSchemaAuditLogTable$",

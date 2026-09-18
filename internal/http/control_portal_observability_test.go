@@ -277,7 +277,7 @@ func TestControlPortalObservabilityValidation(t *testing.T) {
 	_, err = controlTelemetryFilter(c)
 	require.ErrorContains(t, err, "scope must be one of system, team, profile")
 
-	req = httptest.NewRequest(http.MethodGet, "/control/api/logs?severity=trace", nil)
+	req = httptest.NewRequest(http.MethodGet, "/control/api/logs?severity=verbose", nil)
 	c = e.NewContext(req, rec)
 	_, err = controlOperationLogsFilter(c)
 	require.ErrorContains(t, err, "severity must be one of")
@@ -357,6 +357,13 @@ func TestControlPortalObservabilityValidation(t *testing.T) {
 	c = e.NewContext(req, rec)
 	_, err = controlDreamListOptions(c)
 	require.ErrorContains(t, err, "direction must be asc or desc")
+}
+
+func TestControlPortalRequestLogURIOmitsCallbackCredentials(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/control/auth/callback?state=oauth-state&code=authorization-code", nil)
+	c := e.NewContext(req, httptest.NewRecorder())
+	assert.Equal(t, "/control/auth/callback", requestLogURI(c))
 }
 
 var _ dream.ControlService = (*controlDreamServiceStub)(nil)

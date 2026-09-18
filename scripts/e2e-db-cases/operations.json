@@ -3,6 +3,41 @@
   "capability": "operations",
   "cases": [
     {
+      "id": "repository/TestOperationLogRootFanoutPersistsOneEventWithoutRepositoryRecursion",
+      "package": "./internal/operations/postgres",
+      "run": "^TestOperationLogRootFanoutPersistsOneEventWithoutRepositoryRecursion$",
+      "phase": "precheck",
+      "source": "internal/operations/postgres/operation_log_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestOperationLogServicePersistsQueueGapRecoveryInPostgres",
+      "package": "./internal/operations/postgres",
+      "run": "^TestOperationLogServicePersistsQueueGapRecoveryInPostgres$",
+      "phase": "precheck",
+      "source": "internal/operations/postgres/operation_log_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestOperationLogServiceShutdownFlushPersistsPendingEventInPostgres",
+      "package": "./internal/operations/postgres",
+      "run": "^TestOperationLogServiceShutdownFlushPersistsPendingEventInPostgres$",
+      "phase": "precheck",
+      "source": "internal/operations/postgres/operation_log_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestOperationLogRepositoryRetriesStableEventIDWithoutDuplication",
+      "package": "./internal/operations/postgres",
+      "run": "^TestOperationLogRepositoryRetriesStableEventIDWithoutDuplication$",
+      "phase": "precheck",
+      "source": "internal/operations/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
+      "id": "repository/TestOperationLogSinkPoolAppendsAttributedEventWhileApplicationPoolIsHeld",
+      "package": "./internal/operations/postgres",
+      "run": "^TestOperationLogSinkPoolAppendsAttributedEventWhileApplicationPoolIsHeld$",
+      "phase": "precheck",
+      "source": "internal/operations/postgres/migration_control_retirement_integration_test.go"
+    },
+    {
       "id": "repository/TestAuthorityRepositoryBlocksFreshAuthorityWhenApplicationDataExists",
       "package": "./internal/operations/postgres",
       "run": "^TestAuthorityRepositoryBlocksFreshAuthorityWhenApplicationDataExists$",

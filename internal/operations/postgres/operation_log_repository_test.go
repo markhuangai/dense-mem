@@ -108,7 +108,7 @@ func TestOperationLogRepositoryAppendsListsAndPrunes(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO operation_logs")).WithArgs(
-		now, "WARN", 30, "warning", "test", teamID.String(), profileID.String(), "corr", "", "{}",
+		sqlmock.AnyArg(), now, "WARN", 30, "warning", "test", teamID.String(), profileID.String(), "corr", "", "{}",
 	).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT count(*)")).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT\n\t\t\t\tid::text")).WillReturnRows(sqlmock.NewRows([]string{

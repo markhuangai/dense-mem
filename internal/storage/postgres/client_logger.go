@@ -5,11 +5,14 @@ import (
 	"errors"
 	"io"
 	"log"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
+
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 type parameterFilteringGORMLogger interface {
@@ -17,25 +20,38 @@ type parameterFilteringGORMLogger interface {
 }
 
 type sanitizingGORMLogger struct {
-	delegate gormlogger.Interface
+	delegate       gormlogger.Interface
+	operatorLogger observability.LogProvider
+	slowThreshold  time.Duration
 }
 
 func newGORMLogger(output io.Writer) gormlogger.Interface {
+	return newSanitizingGORMLogger(output, nil, 200*time.Millisecond, gormlogger.Warn)
+}
+
+func newGORMLoggerWithRoot(logger observability.LogProvider, threshold time.Duration) gormlogger.Interface {
+	if threshold <= 0 {
+		threshold = 200 * time.Millisecond
+	}
+	return newSanitizingGORMLogger(io.Discard, logger, threshold, gormlogger.Silent)
+}
+
+func newSanitizingGORMLogger(output io.Writer, logger observability.LogProvider, threshold time.Duration, level gormlogger.LogLevel) gormlogger.Interface {
 	delegate := gormlogger.New(
 		log.New(output, "\r\n", log.LstdFlags),
 		gormlogger.Config{
-			SlowThreshold:             200 * time.Millisecond,
-			LogLevel:                  gormlogger.Warn,
+			SlowThreshold:             threshold,
+			LogLevel:                  level,
 			IgnoreRecordNotFoundError: false,
 			ParameterizedQueries:      true,
 			Colorful:                  false,
 		},
 	)
-	return &sanitizingGORMLogger{delegate: delegate}
+	return &sanitizingGORMLogger{delegate: delegate, operatorLogger: logger, slowThreshold: threshold}
 }
 
 func (l *sanitizingGORMLogger) LogMode(level gormlogger.LogLevel) gormlogger.Interface {
-	return &sanitizingGORMLogger{delegate: l.delegate.LogMode(level)}
+	return &sanitizingGORMLogger{delegate: l.delegate.LogMode(level), operatorLogger: l.operatorLogger, slowThreshold: l.slowThreshold}
 }
 
 func (l *sanitizingGORMLogger) Info(ctx context.Context, message string, args ...interface{}) {
@@ -56,7 +72,55 @@ func (l *sanitizingGORMLogger) Trace(
 	sql func() (string, int64),
 	err error,
 ) {
+	query, rows := sql()
+	duration := time.Since(begin)
+	if l.operatorLogger != nil && !observability.SinkSuppressed(ctx) {
+		attrs := []observability.LogAttr{
+			observability.String("sql", query),
+			observability.Int("rows", int(rows)),
+			observability.Int("duration_ms", int(duration/time.Millisecond)),
+		}
+		if err != nil {
+			logWithContext(l.operatorLogger, ctx, slogLevelError, "postgres query", sanitizeGORMError(err), attrs...)
+		} else if duration >= l.slowThreshold {
+			logWithContext(l.operatorLogger, ctx, slogLevelWarn, "slow postgres query", nil, attrs...)
+		} else {
+			logWithContext(l.operatorLogger, ctx, slogLevelDebug, "postgres query", nil, attrs...)
+		}
+	}
 	l.delegate.Trace(ctx, begin, sql, sanitizeGORMError(err))
+}
+
+const (
+	slogLevelDebug slog.Level = slog.LevelDebug
+	slogLevelWarn  slog.Level = slog.LevelWarn
+	slogLevelError slog.Level = slog.LevelError
+)
+
+func logWithContext(logger observability.LogProvider, ctx context.Context, level slog.Level, message string, err error, attrs ...observability.LogAttr) {
+	if contextual, ok := logger.(observability.ContextLogProvider); ok {
+		contextual.LogContext(ctx, level, message, attrsWithError(err, attrs...)...)
+		return
+	}
+	if err != nil {
+		logger.Error(message, err, attrs...)
+		return
+	}
+	switch level {
+	case slogLevelWarn:
+		logger.Warn(message, attrs...)
+	case slogLevelDebug:
+		logger.Debug(message, attrs...)
+	default:
+		logger.Info(message, attrs...)
+	}
+}
+
+func attrsWithError(err error, attrs ...observability.LogAttr) []observability.LogAttr {
+	if err == nil {
+		return attrs
+	}
+	return append([]observability.LogAttr{{Key: "error", Value: err.Error()}}, attrs...)
 }
 
 func (l *sanitizingGORMLogger) ParamsFilter(

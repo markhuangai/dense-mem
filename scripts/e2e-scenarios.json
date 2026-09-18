@@ -131,6 +131,14 @@
       "playwright": false
     },
     {
+      "name": "operation_logging",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": [],
+      "timeout_minutes": 35,
+      "playwright": false
+    },
+    {
       "name": "submission_terminal_errors",
       "isolation": "shared_team",
       "runtime": "production",

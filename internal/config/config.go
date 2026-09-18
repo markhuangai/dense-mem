@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 const (
@@ -20,6 +22,7 @@ const (
 	DefaultHTTPAddr                            = ":" + DefaultHTTPPort
 	DefaultPostgresMigrationTimeoutSeconds     = 1800
 	MaxPostgresMigrationTimeoutSeconds         = 86400
+	DefaultPostgresSlowQueryThresholdMS        = 200
 	DefaultAIEmbeddingMaxConcurrency           = 8
 	DefaultAIVerifierMaxConcurrency            = 5
 	DefaultAIVerifierMaxInputTokens            = 200000
@@ -114,6 +117,8 @@ type Config struct {
 	PostgresMaxIdleConns            int
 	PostgresConnMaxLifetimeSeconds  int
 	PostgresMigrationTimeoutSeconds int
+	PostgresSlowQueryThresholdMS    int
+	LogLevel                        slog.Level `json:"-"`
 	RedisAddr                       string
 	RedisPassword                   string `json:"-"`
 	RedisDB                         int
@@ -174,6 +179,13 @@ func (c *Config) GetPostgresConnMaxLifetimeSeconds() int { return c.PostgresConn
 func (c *Config) GetPostgresMigrationTimeoutSeconds() int {
 	return c.PostgresMigrationTimeoutSeconds
 }
+func (c *Config) GetPostgresSlowQueryThresholdMS() int {
+	if c.PostgresSlowQueryThresholdMS <= 0 {
+		return DefaultPostgresSlowQueryThresholdMS
+	}
+	return c.PostgresSlowQueryThresholdMS
+}
+func (c *Config) GetLogLevel() slog.Level  { return c.LogLevel }
 func (c *Config) GetRedisAddr() string     { return c.RedisAddr }
 func (c *Config) GetRedisPassword() string { return c.RedisPassword }
 func (c *Config) GetRedisDB() int          { return c.RedisDB }
@@ -447,6 +459,10 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 	if err := rejectObsoleteAssessorConfig(); err != nil {
 		return cfg, err
 	}
+	cfg.LogLevel, err = observability.ParseLevel(os.Getenv("LOG_LEVEL"))
+	if err != nil {
+		return cfg, fmt.Errorf("parse log level: %w", err)
+	}
 
 	// String fields with defaults
 	cfg.PostgresDSN = postgresDSN
@@ -475,6 +491,7 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		{"POSTGRES_MAX_IDLE_CONNS", 10, func(c *Config, value int) { c.PostgresMaxIdleConns = value }},
 		{"POSTGRES_CONN_MAX_LIFETIME_SECONDS", 1800, func(c *Config, value int) { c.PostgresConnMaxLifetimeSeconds = value }},
 		{"POSTGRES_MIGRATION_TIMEOUT_SECONDS", DefaultPostgresMigrationTimeoutSeconds, func(c *Config, value int) { c.PostgresMigrationTimeoutSeconds = value }},
+		{"POSTGRES_SLOW_QUERY_THRESHOLD_MS", DefaultPostgresSlowQueryThresholdMS, func(c *Config, value int) { c.PostgresSlowQueryThresholdMS = value }},
 		{"HTTP_MAX_BODY_BYTES", 1048576, func(c *Config, value int) { c.HTTPMaxBodyBytes = value }},
 		{"AUTH_VERIFY_MAX_CONCURRENCY", 8, func(c *Config, value int) { c.AuthVerifyMaxConcurrency = value }},
 		{"RATE_LIMIT_PER_MINUTE", 100, func(c *Config, value int) { c.RateLimitPerMinute = value }},
@@ -600,6 +617,7 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		{"POSTGRES_MAX_IDLE_CONNS", cfg.PostgresMaxIdleConns},
 		{"POSTGRES_CONN_MAX_LIFETIME_SECONDS", cfg.PostgresConnMaxLifetimeSeconds},
 		{"POSTGRES_MIGRATION_TIMEOUT_SECONDS", cfg.PostgresMigrationTimeoutSeconds},
+		{"POSTGRES_SLOW_QUERY_THRESHOLD_MS", cfg.PostgresSlowQueryThresholdMS},
 		{"HTTP_MAX_BODY_BYTES", cfg.HTTPMaxBodyBytes},
 		{"AUTH_VERIFY_MAX_CONCURRENCY", cfg.AuthVerifyMaxConcurrency},
 		{"RATE_LIMIT_PER_MINUTE", cfg.RateLimitPerMinute},
@@ -733,6 +751,19 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		return cfg, &ValidationError{
 			Field:   "POSTGRES_MIGRATION_TIMEOUT_SECONDS",
 			Message: fmt.Sprintf("must be less than or equal to %d, got %d", MaxPostgresMigrationTimeoutSeconds, cfg.PostgresMigrationTimeoutSeconds),
+		}
+	}
+	if cfg.PostgresSlowQueryThresholdMS <= 0 {
+		return cfg, &ValidationError{
+			Field:   "POSTGRES_SLOW_QUERY_THRESHOLD_MS",
+			Message: fmt.Sprintf("must be positive, got %d", cfg.PostgresSlowQueryThresholdMS),
+		}
+	}
+	maxSlowQueryMS := int64(time.Duration(1<<63-1) / time.Millisecond)
+	if int64(cfg.PostgresSlowQueryThresholdMS) > maxSlowQueryMS {
+		return cfg, &ValidationError{
+			Field:   "POSTGRES_SLOW_QUERY_THRESHOLD_MS",
+			Message: fmt.Sprintf("must be less than or equal to %d", maxSlowQueryMS),
 		}
 	}
 

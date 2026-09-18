@@ -189,6 +189,7 @@ case "$SCENARIO" in
   mcp_sdk_transport) run_node_case tests/uat/mcp_sdk_transport_e2e.mjs ;;
   security_runtime) run_node_case tests/uat/security_runtime_e2e.mjs ;;
   infrastructure_credentials) run_node_case tests/uat/infrastructure_credentials_e2e.mjs ;;
+  operation_logging) run_node_case tests/uat/operation_logging_e2e.mjs ;;
   submission_terminal_errors) run_node_case tests/uat/submission_terminal_errors_e2e.mjs ;;
   security_intake) run_node_case tests/uat/security_intake_mcp_e2e.mjs ;;
   memory_space_backfill|memory_space_isolation|space_aware_recall|credential_memory_binding)

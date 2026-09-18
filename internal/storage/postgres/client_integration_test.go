@@ -678,6 +678,41 @@ func TestOpenWithClient(t *testing.T) {
 	assert.NoError(t, err, "Close should not error")
 }
 
+func TestOpenOperationLogClientUsesDedicatedTwoConnectionPool(t *testing.T) {
+	ctx := context.Background()
+	dsn, cleanup := skipIfNoPostgres(t, ctx)
+	defer cleanup()
+	client, err := OpenOperationLogClient(ctx, &testConfig{dsn: dsn}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, client)
+	sqlDB, err := client.GetDB().DB()
+	require.NoError(t, err)
+	stats := sqlDB.Stats()
+	assert.Equal(t, 2, stats.MaxOpenConnections)
+	require.NoError(t, client.Close())
+}
+
+func TestOperationLogPoolMakesProgressWhileApplicationPoolIsHeld(t *testing.T) {
+	ctx := context.Background()
+	dsn, cleanup := skipIfNoPostgres(t, ctx)
+	defer cleanup()
+	application, err := Open(ctx, &testConfig{dsn: dsn})
+	require.NoError(t, err)
+	applicationSQL, err := application.DB()
+	require.NoError(t, err)
+	applicationSQL.SetMaxOpenConns(1)
+	conn, err := applicationSQL.Conn(ctx)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	operationLogs, err := OpenOperationLogClient(ctx, &testConfig{dsn: dsn}, nil)
+	require.NoError(t, err)
+	defer operationLogs.Close()
+	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	require.NoError(t, operationLogs.Ping(checkCtx))
+}
+
 // TestDBPingTimeout verifies ping respects timeout.
 func openMigrationSQLDB(t *testing.T, ctx context.Context) (*sql.DB, func()) {
 	t.Helper()

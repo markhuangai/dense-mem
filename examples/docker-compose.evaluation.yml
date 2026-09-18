@@ -59,7 +59,9 @@ services:
     environment:
       HTTP_ADDR: :8080
       CONTROL_HTTP_ADDR: :8090
+      LOG_LEVEL: ${LOG_LEVEL:-trace}
       POSTGRES_DSN: ""
+      POSTGRES_SLOW_QUERY_THRESHOLD_MS: ${POSTGRES_SLOW_QUERY_THRESHOLD_MS:-200}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       POSTGRES_SSLMODE: disable

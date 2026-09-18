@@ -85,3 +85,39 @@ func TestActorOwnerEmptyWithoutPermanentOwner(t *testing.T) {
 		t.Fatalf("ActorOwner nil owner = %q,%q,%v; want empty,false", ownerID, ownerName, ok)
 	}
 }
+
+func TestAuthenticationSecretsContextCopiesValuesAndHandlesNil(t *testing.T) {
+	var nilCtx context.Context
+	if got := AuthenticationSecretsFromContext(nilCtx); got != nil {
+		t.Fatalf("AuthenticationSecretsFromContext(nil) = %#v; want nil", got)
+	}
+	secrets := []string{"first", "second"}
+	ctx := WithAuthenticationSecrets(nilCtx, secrets...)
+	secrets[0] = "mutated"
+	got := AuthenticationSecretsFromContext(ctx)
+	if !reflect.DeepEqual(got, []string{"first", "second"}) {
+		t.Fatalf("AuthenticationSecretsFromContext = %#v", got)
+	}
+	got[1] = "changed"
+	if again := AuthenticationSecretsFromContext(ctx); !reflect.DeepEqual(again, []string{"first", "second"}) {
+		t.Fatalf("AuthenticationSecretsFromContext returned mutable values: %#v", again)
+	}
+	if got := AuthenticationSecretsFromContext(context.Background()); got != nil {
+		t.Fatalf("AuthenticationSecretsFromContext(unset) = %#v; want nil", got)
+	}
+}
+
+func TestAllowedSpacesContextCopiesValues(t *testing.T) {
+	spaces := []domain.MemorySpaceAccess{{ID: uuid.New(), Kind: domain.MemorySpaceTeamShared}}
+	ctx := WithAllowedSpaces(context.Background(), spaces)
+	spaces[0].Kind = domain.MemorySpaceProfilePrivate
+	got := AllowedSpacesFromContext(ctx)
+	if len(got) != 1 || got[0].Kind != domain.MemorySpaceTeamShared {
+		t.Fatalf("AllowedSpacesFromContext = %#v", got)
+	}
+	got[0].Kind = domain.MemorySpaceCredentialPrivate
+	again := AllowedSpacesFromContext(ctx)
+	if len(again) != 1 || again[0].Kind != domain.MemorySpaceTeamShared {
+		t.Fatalf("AllowedSpacesFromContext returned mutable values: %#v", again)
+	}
+}

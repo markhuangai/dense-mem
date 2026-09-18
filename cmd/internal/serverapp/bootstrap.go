@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/markhuangai/dense-mem/cmd/internal/migrationapp"
@@ -57,16 +56,20 @@ func RunFromEnvironment(processCtx context.Context, options RuntimeOptions) erro
 		return fmt.Errorf("validate startup config: %w", err)
 	}
 
-	level, err := observability.ParseLevel(os.Getenv("LOG_LEVEL"))
-	if err != nil {
-		return fmt.Errorf("parse log level: %w", err)
-	}
-	logger := observability.New(level)
+	level := cfg.GetLogLevel()
+	logger := observability.NewWithSecrets(level,
+		cfg.PostgresDSN,
+		cfg.RedisPassword,
+		cfg.AIAPIKey,
+		cfg.AIVerifierAPIKey,
+		cfg.ControlPortalToken,
+		cfg.TelemetryScrapeToken,
+	)
 	slog.SetDefault(logger.Slog())
 
 	startupCtx, startupCancel := context.WithTimeout(processCtx, DefaultStartupTimeout)
 	defer startupCancel()
-	pgDB, err := postgres.OpenWithClient(startupCtx, &cfg)
+	pgDB, err := postgres.OpenWithClientAndLogger(startupCtx, &cfg, logger)
 	if err != nil {
 		return fmt.Errorf("connect to postgres: %w", err)
 	}

@@ -65,6 +65,7 @@ type transportCompositionInputs struct {
 	securityService    settings.SecurityService
 	appConfig          settings.AppConfigService
 	operationLogs      operations.OperationLogReader
+	operationLogHealth func(context.Context) error
 	usageMetrics       operations.UsageMetricsService
 	conflictQueue      conflictqueue.Reader
 	evidenceConflicts  conflictevidence.Reader
@@ -176,6 +177,9 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 	}
 	if deps.backend.redisPingFn != nil {
 		checks = append(checks, densehttp.HealthCheck{Name: "redis", Check: deps.backend.redisPingFn})
+	}
+	if deps.operationLogHealth != nil {
+		checks = append(checks, densehttp.HealthCheck{Name: "operation_log_sink", Check: deps.operationLogHealth})
 	}
 	healthConfig := (densehttp.HealthConfig{
 		Checks:   checks,

@@ -173,7 +173,8 @@ func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc acce
 				if err != nil {
 					return err
 				}
-				ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
+				ctx := requestctx.WithAuthenticationSecrets(c.Request().Context(), rawKey)
+				ctx = context.WithValue(ctx, principalContextKey{}, principal)
 				ctx = requestctx.WithActor(ctx, actorContext)
 				req := c.Request().Clone(ctx)
 				req.Header.Del("Authorization")
@@ -277,6 +278,7 @@ func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc acce
 			if err != nil {
 				return err
 			}
+			ctx = requestctx.WithAuthenticationSecrets(ctx, rawKey)
 			ctx = context.WithValue(ctx, principalContextKey{}, principal)
 			ctx = requestctx.WithActor(ctx, actorContext)
 
@@ -338,7 +340,7 @@ func authenticateSSOSession(c echo.Context, authenticator SSOSessionAuthenticato
 	if err != nil {
 		return ssoAuthError(err)
 	}
-	return setSessionPrincipal(c, actor, "sso_session")
+	return setSessionPrincipal(c, actor, "sso_session", cookie.Value, csrfToken)
 }
 
 func authenticateUserPortalSession(c echo.Context, authenticator UserPortalSessionAuthenticator, entitlementValidator SSOEntitlementValidator) error {
@@ -365,15 +367,16 @@ func authenticateUserPortalSession(c echo.Context, authenticator UserPortalSessi
 		}
 		actor = authenticatedActorFromCredential(validated)
 	}
-	return setSessionPrincipal(c, actor, "credential_session")
+	return setSessionPrincipal(c, actor, "credential_session", cookie.Value, csrfToken)
 }
 
-func setSessionPrincipal(c echo.Context, actor *domain.AuthenticatedActor, authMethod string) error {
+func setSessionPrincipal(c echo.Context, actor *domain.AuthenticatedActor, authMethod string, secrets ...string) error {
 	principal, actorContext, err := principalAndActorContext(actor, authMethod, "")
 	if err != nil {
 		return err
 	}
-	ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
+	ctx := requestctx.WithAuthenticationSecrets(c.Request().Context(), secrets...)
+	ctx = context.WithValue(ctx, principalContextKey{}, principal)
 	ctx = requestctx.WithActor(ctx, actorContext)
 	c.SetRequest(c.Request().WithContext(ctx))
 	return nil

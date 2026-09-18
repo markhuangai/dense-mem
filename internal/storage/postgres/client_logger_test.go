@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
+
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 type gormParamsFilter interface {
@@ -96,4 +99,31 @@ func TestSanitizeGORMErrorUsesBoundedCategories(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGORMLoggerRoutesStructuredQueriesThroughRoot(t *testing.T) {
+	root := observability.New(slog.LevelDebug)
+	sink := &recordingPostgresLogSink{}
+	if err := root.AttachSink(sink); err != nil {
+		t.Fatal(err)
+	}
+	logger := newGORMLoggerWithRoot(root, time.Millisecond)
+	logger.Trace(context.Background(), time.Now().Add(-10*time.Millisecond), func() (string, int64) {
+		return "SELECT $1", 1
+	}, nil)
+	if len(sink.records) != 1 {
+		t.Fatalf("structured query records = %d, want 1", len(sink.records))
+	}
+	if sink.records[0].Message != "slow postgres query" {
+		t.Fatalf("message = %q, want slow postgres query", sink.records[0].Message)
+	}
+}
+
+type recordingPostgresLogSink struct {
+	records []observability.LogRecord
+}
+
+func (s *recordingPostgresLogSink) WriteLog(_ context.Context, record observability.LogRecord) error {
+	s.records = append(s.records, record)
+	return nil
 }

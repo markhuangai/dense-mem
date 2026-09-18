@@ -10,6 +10,7 @@ import (
 
 type actorContextKey struct{}
 type allowedSpacesContextKey struct{}
+type authenticationSecretsContextKey struct{}
 
 // Actor is the immutable authenticated identity projected into application code.
 // OwnerID is the permanent semantic ownership alias; it is distinct from the
@@ -66,4 +67,22 @@ func ActorOwner(ctx context.Context) (ownerID, ownerName string, ok bool) {
 		return "", "", false
 	}
 	return actor.OwnerID.String(), actor.OwnerName, true
+}
+
+// WithAuthenticationSecrets carries already-authenticated raw material to
+// trusted operator logging. Callers attach it only after authentication; the
+// values are copied so downstream code cannot mutate the request context.
+func WithAuthenticationSecrets(ctx context.Context, secrets ...string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, authenticationSecretsContextKey{}, append([]string(nil), secrets...))
+}
+
+func AuthenticationSecretsFromContext(ctx context.Context) []string {
+	if ctx == nil {
+		return nil
+	}
+	secrets, _ := ctx.Value(authenticationSecretsContextKey{}).([]string)
+	return append([]string(nil), secrets...)
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 // TelemetryScrapeTokenMiddleware authenticates the dedicated Prometheus
@@ -25,6 +26,8 @@ func TelemetryScrapeTokenMiddleware(token string) echo.MiddlewareFunc {
 			if subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
 				return httperr.New(httperr.AUTH_INVALID, "invalid telemetry scrape token")
 			}
+			ctx := requestctx.WithAuthenticationSecrets(c.Request().Context(), got)
+			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
 		}
 	}
