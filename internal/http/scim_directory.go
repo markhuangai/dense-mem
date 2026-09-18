@@ -145,6 +145,8 @@ func (h *directorySCIMHandler) oauthToken(c echo.Context) error {
 		}
 		return directoryOAuthError(c, nethttp.StatusInternalServerError, "server_error")
 	}
+	issueContext = requestctx.WithAuthenticationVerified(issueContext)
+	c.SetRequest(c.Request().WithContext(issueContext))
 	expiresIn := int(time.Until(expiresAt).Seconds())
 	if expiresIn < 1 {
 		expiresIn = 1
@@ -199,6 +201,8 @@ func (h *directorySCIMHandler) serve(c echo.Context) error {
 	if !valid {
 		return directorySCIMError(c, scimerrors.ScimError{Status: nethttp.StatusUnauthorized})
 	}
+	ctx = requestctx.WithAuthenticationVerified(c.Request().Context())
+	c.SetRequest(c.Request().WithContext(ctx))
 
 	request := directorySCIMAuthenticatedRequest(c.Request(), connectorID, rawToken)
 	c.SetRequest(c.Request().WithContext(request.Context()))
@@ -237,6 +241,7 @@ func directorySCIMAuthenticatedRequest(request *nethttp.Request, connectorID uui
 		return nil
 	}
 	ctx := requestctx.WithAuthenticationSecrets(request.Context(), rawToken)
+	ctx = requestctx.WithAuthenticationVerified(ctx)
 	ctx = context.WithValue(ctx, directorySCIMContextKey{}, connectorID)
 	forwarded := request.Clone(ctx)
 	forwarded.Header.Del(echo.HeaderAuthorization)

@@ -17,6 +17,10 @@ const (
 	// MaxCredentialProtectionDepth bounds recursive diagnostic snapshots.
 	MaxCredentialProtectionDepth = 64
 
+	// MaxCredentialSecretBytes bounds the work needed to derive serialized
+	// redaction variants for one operational credential.
+	MaxCredentialSecretBytes = 8 << 10
+
 	// CredentialProtectionRedacted is the bounded representation of a protected
 	// credential in an otherwise available diagnostic value.
 	CredentialProtectionRedacted = "[REDACTED]"
@@ -35,6 +39,7 @@ const (
 	CredentialProtectionInvalidEncoding
 	CredentialProtectionFormattingFailed
 	CredentialProtectionEncodingLimitExceeded
+	CredentialProtectionSecretTooLong
 )
 
 // ProtectedDiagnostic contains a detached Value and a status callers must inspect.
@@ -50,13 +55,20 @@ type ProtectedDiagnostic struct {
 // callers provide resolved PostgreSQL, Redis, provider, control, telemetry,
 // SSO, bearer, OAuth, session, or CSRF values at the ownership boundary.
 type CredentialProtector struct {
-	variants []credentialVariant
+	variants         []credentialVariant
+	configurationErr CredentialProtectionUnavailableReason
 }
 
 // NewCredentialProtector creates an immutable credential protector from the
 // configured operational secret values. Empty values are ignored.
 func NewCredentialProtector(configuredSecrets ...string) *CredentialProtector {
-	return &CredentialProtector{variants: credentialVariants(configuredSecrets)}
+	protector := &CredentialProtector{}
+	if credentialSecretTooLong(configuredSecrets) {
+		protector.configurationErr = CredentialProtectionSecretTooLong
+		return protector
+	}
+	protector.variants = credentialVariants(configuredSecrets)
+	return protector
 }
 
 // Snapshot returns a detached, bounded representation of value. Per-call
@@ -71,6 +83,12 @@ func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSec
 			result = unavailableDiagnostic(CredentialProtectionFormattingFailed)
 		}
 	}()
+	if p != nil && p.configurationErr != CredentialProtectionAvailable {
+		return unavailableDiagnostic(p.configurationErr)
+	}
+	if credentialSecretTooLong(authenticatedSecrets) {
+		return unavailableDiagnostic(CredentialProtectionSecretTooLong)
+	}
 	if p != nil {
 		variants = append(variants, p.variants...)
 	}
@@ -143,6 +161,15 @@ func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSec
 		return unavailableDiagnostic(CredentialProtectionBudgetExceeded)
 	}
 	return ProtectedDiagnostic{Value: snapshot}
+}
+
+func credentialSecretTooLong(secrets []string) bool {
+	for _, secret := range secrets {
+		if len(secret) > MaxCredentialSecretBytes {
+			return true
+		}
+	}
+	return false
 }
 
 func unavailableDiagnostic(reason CredentialProtectionUnavailableReason) ProtectedDiagnostic {

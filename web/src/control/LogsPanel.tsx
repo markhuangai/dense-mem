@@ -257,11 +257,13 @@ export function LogsPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
 
 function severityClass(severity: string): string {
   switch (severity) {
+    case "FATAL":
     case "ERROR":
       return "status-pill error";
     case "WARN":
       return "status-pill warning";
     case "DEBUG":
+    case "TRACE":
       return "status-pill neutral";
     default:
       return "status-pill";

@@ -433,6 +433,7 @@ func TestDirectorySCIMAuthenticatedRequestProtectsBearerAndPreservesOriginal(t *
 	assert.Empty(t, forwarded.Header.Get(echo.HeaderAuthorization))
 	assert.Equal(t, "Bearer "+rawToken, original.Header.Get(echo.HeaderAuthorization))
 	assert.Equal(t, []string{rawToken}, requestctx.AuthenticationSecretsFromContext(forwarded.Context()))
+	assert.True(t, requestctx.AuthenticationVerifiedFromContext(forwarded.Context()))
 	gotConnectorID, err := directorySCIMConnectorID(forwarded)
 	require.NoError(t, err)
 	assert.Equal(t, connectorID, gotConnectorID)

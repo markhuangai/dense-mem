@@ -20,6 +20,51 @@ describe("LogsPanel", () => {
     }
   });
 
+  it("distinguishes fatal and trace log rows", async () => {
+    const api = {
+      listOperationLogs: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "fatal-log",
+            timestamp: "2026-08-18T01:05:00Z",
+            severity: "FATAL",
+            severity_rank: 60,
+            message: "fatal event",
+            source: "worker",
+            team_id: null,
+            profile_id: null,
+            correlation_id: "",
+            error: "",
+            attrs: {},
+          },
+          {
+            id: "trace-log",
+            timestamp: "2026-08-18T01:06:00Z",
+            severity: "TRACE",
+            severity_rank: 5,
+            message: "trace event",
+            source: "worker",
+            team_id: null,
+            profile_id: null,
+            correlation_id: "",
+            error: "",
+            attrs: {},
+          },
+        ],
+        pagination: { limit: 100, offset: 0, total: 2 },
+      }),
+    } as unknown as ControlApi;
+
+    render(<LogsPanel api={api} teams={[]} />);
+
+    const fatalRow = (await screen.findByText("fatal event")).closest("tr");
+    const traceRow = screen.getByText("trace event").closest("tr");
+    expect(fatalRow).not.toBeNull();
+    expect(traceRow).not.toBeNull();
+    expect(within(fatalRow as HTMLElement).getByText("FATAL")).toHaveClass("status-pill", "error");
+    expect(within(traceRow as HTMLElement).getByText("TRACE")).toHaveClass("status-pill", "neutral");
+  });
+
   it("keeps the next retry time in a full compact lifecycle summary", async () => {
     const api = {
       listOperationLogs: vi.fn().mockResolvedValue({

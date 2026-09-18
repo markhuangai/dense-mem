@@ -82,6 +82,7 @@ func controlPortalMiddleware(token string, securitySvc settings.SecurityService,
 			if actorIdentity != "" {
 				ctx = context.WithValue(ctx, controlPortalActorIdentityContextKey{}, actorIdentity)
 			}
+			ctx = requestctx.WithAuthenticationVerified(ctx)
 			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
 		}

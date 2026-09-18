@@ -567,9 +567,9 @@ func TestAuthMiddleware_SSOEntitlementValidatorOverridesPrincipal(t *testing.T) 
 	e.GET("/test", func(c echo.Context) error {
 		capturedPrincipal = GetPrincipal(c.Request().Context())
 		capturedActor, actorOK = requestctx.ActorFromContext(c.Request().Context())
+		assert.True(t, requestctx.AuthenticationVerifiedFromContext(c.Request().Context()))
 		return c.String(http.StatusOK, "ok")
 	})
-
 	e.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)

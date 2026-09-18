@@ -30,6 +30,8 @@ func TelemetryScrapeTokenMiddleware(token string) echo.MiddlewareFunc {
 			if subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
 				return httperr.New(httperr.AUTH_INVALID, "invalid telemetry scrape token")
 			}
+			ctx := requestctx.WithAuthenticationVerified(c.Request().Context())
+			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
 		}
 	}

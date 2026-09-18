@@ -81,6 +81,19 @@ func TestCredentialProtectorProtectsJSONByteContentAndErrors(t *testing.T) {
 	require.Equal(t, map[string]any{"x": "1234567890"}, budgeted.Value)
 }
 
+func TestCredentialProtectorBoundsPresentedSecretBeforeVariantDerivation(t *testing.T) {
+	secret := strings.Repeat("x", MaxCredentialSecretBytes+1)
+
+	got := NewCredentialProtector().Snapshot("request failed", 256, secret)
+	require.Equal(t, CredentialProtectionSecretTooLong, got.UnavailableReason)
+	require.Nil(t, got.Value)
+
+	configured := NewCredentialProtector(secret)
+	got = configured.Snapshot("request failed", 256)
+	require.Equal(t, CredentialProtectionSecretTooLong, got.UnavailableReason)
+	require.Nil(t, got.Value)
+}
+
 func TestCredentialProtectorSnapshotsWithoutMutation(t *testing.T) {
 	value := map[string]any{
 		"nested": []any{map[string]any{"message": "before configured"}},

@@ -444,9 +444,33 @@ func TestClientProvidedCorrelationIsRetainedAfterAuthenticationBinding(t *testin
 	require.NoError(t, root.AttachSink(sink))
 	ctx := correlation.WithClientProvidedID(context.Background(), "request-correlation")
 	ctx = requestctx.WithAuthenticationSecrets(ctx, "presented-bearer")
+	ctx = requestctx.WithAuthenticationVerified(ctx)
 	root.InfoContext(ctx, "authenticated request")
 	require.Len(t, sink.records, 1)
 	assert.Equal(t, "request-correlation", sink.records[0].CorrelationID)
+}
+
+func TestClientProvidedCorrelationRejectsUnverifiedPresentedSecret(t *testing.T) {
+	root := New(slog.LevelDebug)
+	sink := &recordingLogSink{}
+	require.NoError(t, root.AttachSink(sink))
+	ctx := correlation.WithClientProvidedID(context.Background(), "different-credential")
+	ctx = requestctx.WithAuthenticationSecrets(ctx, "presented-credential")
+	root.InfoContext(ctx, "authentication rejected")
+	require.Len(t, sink.records, 1)
+	assert.Empty(t, sink.records[0].CorrelationID)
+}
+
+func TestOversizedPresentedSecretMakesDiagnosticUnavailable(t *testing.T) {
+	root := New(slog.LevelDebug)
+	sink := &recordingLogSink{}
+	require.NoError(t, root.AttachSink(sink))
+	secret := strings.Repeat("x", MaxCredentialSecretBytes+1)
+	ctx := requestctx.WithAuthenticationSecrets(context.Background(), secret)
+	root.InfoContext(ctx, "authentication rejected", String("detail", "safe"))
+	require.Len(t, sink.records, 1)
+	assert.Equal(t, "[diagnostic unavailable]", sink.records[0].Message)
+	assert.NotContains(t, sink.records[0].Message, secret)
 }
 
 func TestLoggerPersistsExternalCallerFunction(t *testing.T) {

@@ -136,6 +136,24 @@ func TestControlPortalMiddlewareRetainsPresentedSecretsOnFailure(t *testing.T) {
 	require.ElementsMatch(t, []string{"presented-control-token", "presented-session", "presented-csrf"}, requestctx.AuthenticationSecretsFromContext(observed))
 }
 
+func TestControlPortalMiddlewareMarksSuccessfulAuthentication(t *testing.T) {
+	var observed context.Context
+	e := echo.New()
+	e.Use(controlPortalMiddleware("expected", nil))
+	e.GET("/session", func(c echo.Context) error {
+		observed = c.Request().Context()
+		return c.NoContent(nethttp.StatusOK)
+	})
+
+	request := httptest.NewRequest(nethttp.MethodGet, "/session", nil)
+	request.Header.Set("X-Control-Portal-Token", "expected")
+	response := httptest.NewRecorder()
+	e.ServeHTTP(response, request)
+
+	require.Equal(t, nethttp.StatusOK, response.Code)
+	require.True(t, requestctx.AuthenticationVerifiedFromContext(observed))
+}
+
 type controlAuthFailureRecorder struct {
 	settings.SecurityService
 	calls int

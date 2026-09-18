@@ -54,9 +54,9 @@ func SinkSuppressed(ctx context.Context) bool {
 	return suppressed
 }
 
-// WithAuthenticationSecrets carries already-authenticated secret values to
-// the operator logger. The values are used transiently for protection and are
-// never copied into LogRecord.
+// WithAuthenticationSecrets carries presented authentication material to the
+// operator logger for redaction. The values are used transiently for
+// protection and are never copied into LogRecord.
 func WithAuthenticationSecrets(ctx context.Context, secrets ...string) context.Context {
 	return requestctx.WithAuthenticationSecrets(ctx, secrets...)
 }
@@ -765,7 +765,7 @@ func trustedContextAttrs(ctx context.Context, protector *CredentialProtector) ma
 	secrets := AuthenticationSecretsFromContext(ctx)
 	_, hasActor := requestctx.ActorFromContext(ctx)
 	if id := correlation.FromContext(ctx); id != "" &&
-		(!correlation.IsClientProvided(ctx) || hasActor || len(secrets) > 0) {
+		(!correlation.IsClientProvided(ctx) || hasActor || requestctx.AuthenticationVerifiedFromContext(ctx)) {
 		attrs["correlation_id"] = protectTrustedCorrelationID(id, protector, secrets)
 	}
 	if actor, ok := requestctx.ActorFromContext(ctx); ok {

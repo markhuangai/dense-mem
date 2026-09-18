@@ -107,6 +107,20 @@ func TestAuthenticationSecretsContextCopiesValuesAndHandlesNil(t *testing.T) {
 	}
 }
 
+func TestAuthenticationVerifiedContextIsIndependentFromPresentedSecrets(t *testing.T) {
+	ctx := WithAuthenticationSecrets(context.Background(), "presented")
+	if AuthenticationVerifiedFromContext(ctx) {
+		t.Fatal("presented authentication material must not imply verified authentication")
+	}
+	ctx = WithAuthenticationVerified(ctx)
+	if !AuthenticationVerifiedFromContext(ctx) {
+		t.Fatal("verified authentication marker missing")
+	}
+	if got := AuthenticationSecretsFromContext(ctx); !reflect.DeepEqual(got, []string{"presented"}) {
+		t.Fatalf("AuthenticationSecretsFromContext = %#v; want presented secret retained", got)
+	}
+}
+
 func TestAllowedSpacesContextCopiesValues(t *testing.T) {
 	spaces := []domain.MemorySpaceAccess{{ID: uuid.New(), Kind: domain.MemorySpaceTeamShared}}
 	ctx := WithAllowedSpaces(context.Background(), spaces)

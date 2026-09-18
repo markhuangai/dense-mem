@@ -181,6 +181,7 @@ func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc acce
 				ctx := c.Request().Context()
 				ctx = context.WithValue(ctx, principalContextKey{}, principal)
 				ctx = requestctx.WithActor(ctx, actorContext)
+				ctx = requestctx.WithAuthenticationVerified(ctx)
 				req := c.Request().Clone(ctx)
 				req.Header.Del("Authorization")
 				c.SetRequest(req)
@@ -284,6 +285,7 @@ func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc acce
 			}
 			ctx = context.WithValue(ctx, principalContextKey{}, principal)
 			ctx = requestctx.WithActor(ctx, actorContext)
+			ctx = requestctx.WithAuthenticationVerified(ctx)
 
 			// Remove the Authorization header to prevent downstream access to raw key
 			req := c.Request().Clone(ctx)
@@ -393,6 +395,7 @@ func setSessionPrincipal(c echo.Context, actor *domain.AuthenticatedActor, authM
 	ctx := requestctx.WithAuthenticationSecrets(c.Request().Context(), secrets...)
 	ctx = context.WithValue(ctx, principalContextKey{}, principal)
 	ctx = requestctx.WithActor(ctx, actorContext)
+	ctx = requestctx.WithAuthenticationVerified(ctx)
 	c.SetRequest(c.Request().WithContext(ctx))
 	return nil
 }
