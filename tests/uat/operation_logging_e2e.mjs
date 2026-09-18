@@ -59,7 +59,8 @@ try {
     throw new Error(`business MCP result changed during sink failure: ${JSON.stringify(duringFault.body)}`);
   }
   faultReady = await waitForSinkFailure();
-  if (faultReady.response.status === 200 && faultReady.body?.dependencies?.operation_log_sink === "ok") {
+  const sinkStatus = faultReady.body?.dependencies?.operation_log_sink;
+  if (sinkStatus == null || sinkStatus === "ok") {
     throw new Error(`sink failure was not visible in readiness: ${JSON.stringify(faultReady.body)}`);
   }
   saturation = await runBoundedHealthLoad();
