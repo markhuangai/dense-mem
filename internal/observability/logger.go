@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/correlation"
@@ -24,8 +23,6 @@ import (
 const (
 	LevelTrace slog.Level = slog.Level(-8)
 	LevelFatal slog.Level = slog.Level(12)
-
-	maxTrustedCorrelationIDRunes = 128
 
 	// MaxOperationMetadataBytes bounds a single operation-log metadata value.
 	MaxOperationMetadataBytes = 16 << 10
@@ -777,24 +774,6 @@ func trustedContextAttrs(ctx context.Context, protector *CredentialProtector) ma
 		}
 	}
 	return attrs
-}
-
-func protectTrustedCorrelationID(id string, protector *CredentialProtector, secrets []string) string {
-	if utf8.RuneCountInString(id) > maxTrustedCorrelationIDRunes {
-		return CredentialProtectionRedacted
-	}
-	if protector == nil {
-		return id
-	}
-	protected := protector.Snapshot(id, MaxOperationMetadataBytes, secrets...)
-	if protected.UnavailableReason != CredentialProtectionAvailable {
-		return CredentialProtectionRedacted
-	}
-	value, ok := protected.Value.(string)
-	if !ok {
-		return CredentialProtectionRedacted
-	}
-	return value
 }
 
 func normalizeTrustedRecord(ctx context.Context, record slog.Record) slog.Record {

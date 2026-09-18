@@ -6,7 +6,10 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
+
+const maxTrustedCorrelationIDRunes = 128
 
 var (
 	legacyBearerSecretPattern   = regexp.MustCompile(`(?i)(bearer\s+)[^\s,;]+`)
@@ -182,6 +185,24 @@ func (h credentialRedactingHandler) Handle(ctx context.Context, record slog.Reco
 		sanitized.AddAttrs(slog.String(key, value))
 	}
 	return h.delegate.Handle(ctx, sanitized)
+}
+
+func protectTrustedCorrelationID(id string, protector *CredentialProtector, secrets []string) string {
+	if utf8.RuneCountInString(id) > maxTrustedCorrelationIDRunes {
+		return CredentialProtectionRedacted
+	}
+	if protector == nil {
+		return id
+	}
+	protected := protector.Snapshot(id, MaxOperationMetadataBytes, secrets...)
+	if protected.UnavailableReason != CredentialProtectionAvailable {
+		return CredentialProtectionRedacted
+	}
+	value, ok := protected.Value.(string)
+	if !ok {
+		return CredentialProtectionRedacted
+	}
+	return value
 }
 
 func (h credentialRedactingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
