@@ -185,6 +185,26 @@ func TestHarnessCompletionLoggingDetachesCanceledContext(t *testing.T) {
 	require.Equal(t, "disconnect_observed", sink.records[0].Attrs["delivery_stage"])
 }
 
+func TestCanonicalOAuthRouteUsesExactConfiguredPaths(t *testing.T) {
+	resourcePath := "/base/mcp"
+	metadataPath := "/.well-known/oauth-protected-resource/base/mcp"
+	for _, test := range []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "health", path: "/health", want: "/health"},
+		{name: "metadata", path: metadataPath, want: "/.well-known/oauth-protected-resource/:resource"},
+		{name: "resource", path: resourcePath, want: "/oauth-resource"},
+		{name: "metadata substring", path: "/unmatched/.well-known/oauth-protected-resource", want: "/unmatched"},
+		{name: "resource suffix", path: resourcePath + "/extra", want: "/unmatched"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.want, canonicalOAuthRoute(test.path, resourcePath, metadataPath))
+		})
+	}
+}
+
 func TestNewHarnessHandlerRejectsInvalidBasePaths(t *testing.T) {
 	for _, raw := range []string{
 		"https://harness.example/%7Btenant%7D",

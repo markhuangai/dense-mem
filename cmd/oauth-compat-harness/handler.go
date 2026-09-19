@@ -128,12 +128,14 @@ func newHarnessHandler(publicBaseURL string, profiles []domain.OAuthProtectedRes
 	if len(loggers) == 0 || loggers[0] == nil {
 		return mux, nil
 	}
-	return oauthRequestLogger{next: mux, logger: loggers[0]}, nil
+	return oauthRequestLogger{next: mux, logger: loggers[0], resourcePath: resourcePath, metadataPath: metadataPath}, nil
 }
 
 type oauthRequestLogger struct {
-	next   http.Handler
-	logger observability.LogProvider
+	next         http.Handler
+	logger       observability.LogProvider
+	resourcePath string
+	metadataPath string
 }
 
 func (h oauthRequestLogger) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -151,7 +153,7 @@ func (h oauthRequestLogger) ServeHTTP(writer http.ResponseWriter, request *http.
 	logContext := context.WithoutCancel(request.Context())
 	attrs := []observability.LogAttr{
 		observability.String("method", request.Method),
-		observability.String("route", canonicalOAuthRoute(request.URL.EscapedPath())),
+		observability.String("route", canonicalOAuthRoute(request.URL.Path, h.resourcePath, h.metadataPath)),
 		observability.Int("status", status),
 		observability.Int("duration_ms", int(time.Since(started).Milliseconds())),
 		observability.String("delivery_stage", delivery.Stage(request.Context(), nil)),
@@ -185,14 +187,16 @@ func (h oauthRequestLogger) ServeHTTP(writer http.ResponseWriter, request *http.
 	}
 }
 
-func canonicalOAuthRoute(path string) string {
+func canonicalOAuthRoute(requestPath, resourcePath, metadataPath string) string {
 	switch {
-	case path == "/health":
+	case requestPath == "/health":
 		return "/health"
-	case strings.Contains(path, "/.well-known/oauth-protected-resource"):
+	case requestPath == metadataPath:
 		return "/.well-known/oauth-protected-resource/:resource"
-	default:
+	case requestPath == resourcePath:
 		return "/oauth-resource"
+	default:
+		return "/unmatched"
 	}
 }
 
