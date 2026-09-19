@@ -198,56 +198,66 @@ async function assertTransportLogOutcomes() {
 }
 
 async function assertCancelledTransportOutcome(markerFrom) {
-  const correlationIDs = Array.from({ length: 4 }, () => `mcp-cancel-${randomUUID()}`);
+  const batchSize = 8;
+  const maxBatches = 3;
   let aborted = false;
-  await Promise.all(correlationIDs.map(async (correlationID) => {
-    const controller = new AbortController();
-    const request = fetch(`${userURL}/mcp`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        Accept: "application/json, text/event-stream",
-        "Content-Type": "application/json",
-        "MCP-Protocol-Version": "2025-11-25",
-        "X-Correlation-ID": correlationID,
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: ++rpcID,
-        method: "tools/call",
-        params: {
-          name: "recall_memory",
-          arguments: { query: `transport-cancel-${randomUUID()}`, limit: 100 },
+  for (let batch = 0; batch < maxBatches; batch += 1) {
+    const correlationIDs = Array.from({ length: batchSize }, () => randomUUID());
+    await Promise.all(correlationIDs.map(async (correlationID) => {
+      const controller = new AbortController();
+      const request = fetch(`${userURL}/mcp`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Accept: "application/json, text/event-stream",
+          "Content-Type": "application/json",
+          "MCP-Protocol-Version": "2025-11-25",
+          "X-Correlation-ID": correlationID,
         },
-      }),
-      signal: controller.signal,
-    }).then(async (response) => {
-      await response.arrayBuffer();
-    });
-    const abortTimer = setTimeout(() => controller.abort(), 25);
-    try {
-      await request;
-    } catch (error) {
-      if (error?.name === "AbortError") {
-        aborted = true;
-      } else {
-        throw error;
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: ++rpcID,
+          method: "tools/call",
+          params: {
+            name: "recall_memory",
+            arguments: {
+              query: `transport-cancel-${randomUUID()}`,
+              limit: 50,
+              relationship_limit: 20,
+              community_limit: 10,
+              community_relationship_limit: 20,
+            },
+          },
+        }),
+        signal: controller.signal,
+      }).then(async (response) => {
+        await response.arrayBuffer();
+      });
+      const abortTimer = setTimeout(() => controller.abort(), 25);
+      try {
+        await request;
+      } catch (error) {
+        if (error?.name === "AbortError") {
+          aborted = true;
+        } else {
+          throw error;
+        }
+      } finally {
+        clearTimeout(abortTimer);
       }
-    } finally {
-      clearTimeout(abortTimer);
-    }
-  }));
+    }));
 
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const page = await controlJSON(`/logs?limit=500&sort=timestamp&direction=desc&from=${encodeURIComponent(markerFrom)}`, { method: "GET" });
-    const rows = Array.isArray(page.data) ? page.data : [];
-    for (const correlationID of correlationIDs) {
-      const correlated = rows.filter((row) => rowCorrelationID(row) === correlationID);
-      const applicationOutcome = correlated.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "cancelled");
-      const deliveryStage = correlated.some((row) => row?.message === "http_request" && row?.attrs?.delivery_stage === "disconnect_observed");
-      if (applicationOutcome && deliveryStage) return;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const page = await controlJSON(`/logs?limit=500&sort=timestamp&direction=desc&from=${encodeURIComponent(markerFrom)}`, { method: "GET" });
+      const rows = Array.isArray(page.data) ? page.data : [];
+      for (const correlationID of correlationIDs) {
+        const correlated = rows.filter((row) => rowCorrelationID(row) === correlationID);
+        const applicationOutcome = correlated.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "cancelled");
+        const deliveryStage = correlated.some((row) => row?.message === "http_request" && row?.attrs?.delivery_stage === "disconnect_observed");
+        if (applicationOutcome && deliveryStage) return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(`canceled MCP transport outcome was missing (client_aborted=${aborted})`);
 }
