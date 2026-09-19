@@ -867,3 +867,15 @@ func TestRememberInvocationDiagnosticsDoesNotCaptureStatuslessCallerResponse(t *
 	require.Equal(t, "not_captured", ledger.invocation.CallerResponseCaptureState)
 	require.Empty(t, ledger.invocation.CallerResponse)
 }
+
+func TestRememberInvocationLoggingDistinguishesRetentionDegradation(t *testing.T) {
+	ledger := &rememberFailureLedgerStub{invocationErr: knowledgecontract.ErrRememberFailureRetentionDegraded}
+	logger := &rememberProcessorLogCapture{}
+	processor := &rememberSynchronousProcessor{ledger: ledger, logger: logger}
+	processor.recordRememberInvocation(context.Background(), rememberapp.RememberProcessRequest{
+		TeamID: "11111111-1111-4111-8111-111111111111", OwnerProfileID: "22222222-2222-4222-8222-222222222222",
+		RequestHash: "sha256:retention", InvocationStartedAt: time.Now().UTC(), OriginalRequest: []byte(`{"evidence":[]}`),
+	}, "33333333-3333-4333-8333-333333333333", "execution", "", "commit", errors.New("remember failed"), nil, nil)
+
+	require.Equal(t, []string{"remember_invocation_retention_degraded"}, logger.warns)
+}

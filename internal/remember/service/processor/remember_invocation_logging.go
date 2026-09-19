@@ -129,10 +129,23 @@ func (p *rememberSynchronousProcessor) recordRememberInvocation(
 	writeCtx, cancel := rememberFailureRecoveryContext(ctx)
 	defer cancel()
 	if err := writer.RecordRememberInvocationDiagnostic(writeCtx, record); err != nil && p.logger != nil {
+		warningEvent := "remember_invocation_diagnostic_unavailable"
+		errorCode := "diagnostic_record_failed"
+		diagnosticState := "unavailable"
+		if errors.Is(err, repository.ErrRememberFailureRetentionDegraded) {
+			warningEvent = "remember_invocation_retention_degraded"
+			errorCode = "retention_sync_failed"
+			diagnosticState = "recorded_retention_degraded"
+		}
+		warningAttrs := []observability.LogAttr{
+			observability.String("error_code", errorCode),
+			observability.String("diagnostic_state", diagnosticState),
+			observability.String("invocation_id", invocationID),
+		}
 		if contextual, ok := p.logger.(observability.ContextLogProvider); ok {
-			contextual.WarnContext(ctx, "remember_invocation_diagnostic_unavailable", observability.String("error_code", "diagnostic_record_failed"), observability.String("invocation_id", invocationID), observability.String("error", err.Error()))
+			contextual.WarnContext(ctx, warningEvent, append(warningAttrs, observability.String("error", err.Error()))...)
 		} else {
-			p.logger.Warn("remember_invocation_diagnostic_unavailable", observability.String("error_code", "diagnostic_record_failed"), observability.String("invocation_id", invocationID), observability.String("error", err.Error()))
+			p.logger.Warn(warningEvent, append(warningAttrs, observability.String("error", err.Error()))...)
 		}
 	}
 	if p.logger != nil {
