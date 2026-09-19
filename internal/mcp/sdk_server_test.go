@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
@@ -301,6 +302,33 @@ func TestSDKToolOutcomeLoggingCoversAllApplicationOutcomesAndReferenceShapes(t *
 	require.GreaterOrEqual(t, len(attrs), 4)
 	require.Contains(t, logger.events, "mcp_tool_outcome")
 	(&Server{}).logSDKToolOutcome(context.Background(), "tool", started, nil, nil)
+}
+
+type cancellationRejectingMCPLogSink struct {
+	records []observability.LogRecord
+}
+
+func (s *cancellationRejectingMCPLogSink) WriteLog(ctx context.Context, record observability.LogRecord) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.records = append(s.records, record)
+	return nil
+}
+
+func TestSDKToolOutcomeLoggingDetachesCancelledContextForPersistence(t *testing.T) {
+	root := observability.NewWithHandler(slog.NewJSONHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	sink := &cancellationRejectingMCPLogSink{}
+	require.NoError(t, root.AttachSink(sink))
+	server := &Server{logger: testLoggerAdapter{delegate: root}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	server.logSDKToolOutcome(ctx, "tool", time.Now(), &sdkmcp.CallToolResult{}, nil)
+
+	require.Len(t, sink.records, 1)
+	require.Equal(t, "mcp_tool_outcome", sink.records[0].Message)
+	require.Equal(t, "cancelled", sink.records[0].Attrs["application_outcome"])
 }
 
 func TestSDKHTTPHandlerRejectsUnknownProtocolHeader(t *testing.T) {

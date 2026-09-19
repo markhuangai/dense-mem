@@ -235,11 +235,15 @@ func (s *Server) logSDKToolOutcome(ctx context.Context, name string, started tim
 	if result != nil {
 		attrs = appendSDKApplicationRefs(attrs, result.StructuredContent)
 	}
+	logCtx := ctx
+	if outcome == "cancelled" && ctx != nil {
+		logCtx = context.WithoutCancel(ctx)
+	}
 	if outcome == "success" {
 		if contextual, ok := s.logger.(interface {
 			InfoContext(context.Context, string, ...LogField)
 		}); ok {
-			contextual.InfoContext(ctx, "mcp_tool_outcome", attrs...)
+			contextual.InfoContext(logCtx, "mcp_tool_outcome", attrs...)
 		} else if loggerWithInfo, ok := s.logger.(interface{ Info(string, ...LogField) }); ok {
 			loggerWithInfo.Info("mcp_tool_outcome", attrs...)
 		}
@@ -251,7 +255,7 @@ func (s *Server) logSDKToolOutcome(ctx context.Context, name string, started tim
 		if err == nil {
 			err = errors.New(outcome)
 		}
-		contextual.ErrorContext(ctx, "mcp_tool_outcome", err, attrs...)
+		contextual.ErrorContext(logCtx, "mcp_tool_outcome", err, attrs...)
 		return
 	}
 	s.logger.Error("mcp_tool_outcome", err, attrs...)
