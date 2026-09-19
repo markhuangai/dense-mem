@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { randomUUID } from "node:crypto";
+
 const userURL = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
@@ -38,6 +40,7 @@ await assertNotificationIsNotCounted();
 await assertSSELookupRejection();
 await assertConcurrentToolCalls();
 await assertUsageMetricDeltas();
+await assertTransportLogOutcomes();
 
 await updateRecallFeedback(true);
 names = await listedToolNames();
@@ -163,6 +166,32 @@ async function assertUsageMetricDeltas() {
   const route = (after.data?.routes ?? []).find((item) => item.route === "/mcp" && item.method === "POST" && item.status_class === "2xx");
   const previousRoute = (before.data?.routes ?? []).find((item) => item.route === "/mcp" && item.method === "POST" && item.status_class === "2xx");
   assertUsageDelta(previousRoute, route, "route", 8, 7, 2);
+}
+
+async function assertTransportLogOutcomes() {
+  const marker = `transport-pre-admission-${randomUUID()}`;
+  const unmatchedMarker = `transport-unmatched-${randomUUID()}`;
+  await fetch(`${userURL}/unmatched/${unmatchedMarker}`, { method: "GET" });
+  await rpc("tools/call", { name: "remember", arguments: { unexpected: marker } });
+  let rows = [];
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const page = await controlJSON("/logs?limit=500&sort=timestamp&direction=desc", { method: "GET" });
+    rows = Array.isArray(page.data) ? page.data : [];
+    const hasFailure = rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "tool_error");
+    const hasSuccess = rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "success");
+    if (hasFailure && hasSuccess) break;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  const serialized = JSON.stringify(rows);
+  if (serialized.includes(marker) || serialized.includes(unmatchedMarker) || serialized.includes("missing-observability-tool")) {
+    throw new Error("transport logs retained rejected request content");
+  }
+  if (!rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "tool_error")) {
+    throw new Error("persisted MCP tool failure outcome was missing");
+  }
+  if (!rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "success")) {
+    throw new Error("persisted MCP tool success outcome was missing");
+  }
 }
 
 async function usageSnapshot() {

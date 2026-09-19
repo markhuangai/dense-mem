@@ -83,26 +83,27 @@ func newControlPortalServerWithMetricsAndTelemetry(
 	}
 
 	e := echo.New()
+	configureEchoLogger(e, logger)
 	applyServerLimits(e)
 	applyIPExtractor(e)
 	e.HTTPErrorHandler = httperr.ErrorHandler
-	e.Use(echomw.Recover())
+	e.Use(rootRecover(logger))
 	e.Use(echomw.BodyLimit(fmt.Sprintf("%dB", controlMaxBodyBytes(cfg))))
 	e.Use(httpmw.CorrelationIDMiddleware())
+	e.Use(observeDelivery)
 	e.Use(echomw.RequestLoggerWithConfig(echomw.RequestLoggerConfig{
-		HandleError: true,
-		LogMethod:   true,
-		LogURI:      true,
-		LogStatus:   true,
+		HandleError:  true,
+		LogMethod:    true,
+		LogURI:       true,
+		LogStatus:    true,
+		LogLatency:   true,
+		LogError:     true,
+		LogRoutePath: true,
 		LogValuesFunc: func(c echo.Context, v echomw.RequestLoggerValues) error {
 			if logger == nil {
 				return nil
 			}
-			attrs := []httpcontract.LogAttr{
-				httpcontract.String("method", v.Method),
-				httpcontract.String("uri", requestLogURI(c)),
-				httpcontract.Int("status", v.Status),
-			}
+			attrs := transportRequestAttrs(c, v)
 			if v.Error != nil {
 				httpcontract.LogErrorContext(c.Request().Context(), logger, "control_http_request", errors.New(tools.SanitizeError(v.Error)), attrs...)
 				return nil
@@ -978,7 +979,6 @@ func toControlCredential(credential *domain.Credential) controlCredentialRespons
 		MemorySpaceKind: string(binding.SpaceKind()),
 	}
 }
-
 func controlTimePtr(t *time.Time) *string {
 	if t == nil {
 		return nil

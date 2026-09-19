@@ -88,6 +88,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // The health and ready endpoints are not behind auth, team, or rate-limit middleware.
 func NewServer(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider, health HealthConfig) *echo.Echo {
 	e := echo.New()
+	if rootLogger := NewEchoLogger(logger); rootLogger != nil {
+		e.Logger = rootLogger
+		e.StdLogger = echoServerErrorLogger(logger)
+	}
 	if health.dependencyFlights == nil {
 		health.dependencyFlights = newDependencyCheckFlightRegistry()
 	}
@@ -98,12 +102,13 @@ func NewServer(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider
 	e.HTTPErrorHandler = httperr.ErrorHandler
 
 	// Global middleware (applies to all routes)
-	e.Use(middleware.Recover())
+	e.Use(rootRecover(logger))
 	maxBodyBytes := 0
 	if cfg != nil {
 		maxBodyBytes = cfg.GetHTTPMaxBodyBytes()
 	}
 	e.Use(middleware.BodyLimit(fmt.Sprintf("%dB", effectiveMaxBodyBytes(maxBodyBytes))))
+	e.Use(observeDelivery)
 	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
 		HandleError:  true,
 		LogMethod:    true,
@@ -118,13 +123,8 @@ func NewServer(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider
 				return nil
 			}
 
-			attrs := []httpcontract.LogAttr{
-				httpcontract.String("method", v.Method),
-				httpcontract.String("uri", requestLogURI(c)),
-				httpcontract.Int("status", v.Status),
-				httpcontract.String("latency", v.Latency.String()),
-				httpcontract.String("remote_ip", v.RemoteIP),
-			}
+			attrs := transportRequestAttrs(c, v)
+			attrs = append(attrs, httpcontract.String("latency", v.Latency.String()), httpcontract.String("remote_ip", v.RemoteIP))
 			if v.RoutePath != "" {
 				attrs = append(attrs, httpcontract.String("route", v.RoutePath))
 			}

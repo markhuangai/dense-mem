@@ -252,6 +252,9 @@ function assertNoOAuthMaterialInLogs(tokens, sentinel) {
   if (logs.includes(sentinel) || tokens.some((token) => logs.includes(token))) {
     throw new Error("OAuth bearer or claim material crossed a log boundary");
   }
+  if (!logs.includes('"msg":"oauth_http_request"') || !logs.includes('"correlation_id"') || !logs.includes('"profile":"entra"')) {
+    throw new Error("OAuth transport observations were missing from the root-backed harness logs");
+  }
 }
 
 function postgresCommand(sql) {

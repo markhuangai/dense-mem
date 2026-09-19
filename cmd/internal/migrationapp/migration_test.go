@@ -22,6 +22,16 @@ type recordingLogger struct {
 	notify  chan struct{}
 }
 
+type contextRecordingLogger struct {
+	*recordingLogger
+	seen context.Context
+}
+
+func (l *contextRecordingLogger) InfoContext(ctx context.Context, message string, args ...any) {
+	l.seen = ctx
+	l.recordingLogger.Info(message, args...)
+}
+
 func newRecordingLogger() *recordingLogger {
 	return &recordingLogger{notify: make(chan struct{}, 32)}
 }
@@ -113,6 +123,21 @@ func TestRunCompletesBeforeHeartbeat(t *testing.T) {
 		if entry.message == "postgres migrations still running" {
 			t.Fatal("unexpected heartbeat for immediate completion")
 		}
+	}
+}
+
+func TestRunForwardsMigrationContextToRootLogger(t *testing.T) {
+	type contextKey struct{}
+	parent := context.WithValue(context.Background(), contextKey{}, "migration")
+	logger := &contextRecordingLogger{recordingLogger: newRecordingLogger()}
+	err := runWithInterval(parent, nil, time.Second, "up", logger, time.Hour, func(context.Context, *gorm.DB) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("runWithInterval() error = %v", err)
+	}
+	if logger.seen == nil || logger.seen.Value(contextKey{}) != "migration" {
+		t.Fatalf("migration logger context = %v, want parent marker", logger.seen)
 	}
 }
 
