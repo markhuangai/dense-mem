@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
+import { request as httpRequest } from "node:http";
 
 const userURL = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
 const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const apiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
+const providerURL = requiredEnv("DENSE_MEM_E2E_PROVIDER_URL").replace(/\/$/, "");
 
 const feedbackTool = "submit_recall_session_feedback";
 const dreamTools = ["list_dreams", "get_dream", "resolve_dream_feedback"];
@@ -175,6 +177,7 @@ async function assertTransportLogOutcomes() {
   await mcpSuccess("recall_memory", { query: `transport-success-${randomUUID()}`, limit: 1 });
   await fetch(`${userURL}/unmatched/${unmatchedMarker}`, { method: "GET" });
   await rpc("tools/call", { name: "remember", arguments: { unexpected: marker } });
+  await assertToolNotFound("missing-transport-failure-tool", {});
   await assertCancelledTransportOutcome(markerFrom);
   let rows = [];
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -198,68 +201,91 @@ async function assertTransportLogOutcomes() {
 }
 
 async function assertCancelledTransportOutcome(markerFrom) {
-  const batchSize = 8;
-  const maxBatches = 3;
-  let aborted = false;
-  for (let batch = 0; batch < maxBatches; batch += 1) {
-    const correlationIDs = Array.from({ length: batchSize }, () => randomUUID());
-    await Promise.all(correlationIDs.map(async (correlationID) => {
-      const controller = new AbortController();
-      const request = fetch(`${userURL}/mcp`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          Accept: "application/json, text/event-stream",
-          "Content-Type": "application/json",
-          "MCP-Protocol-Version": "2025-11-25",
-          "X-Correlation-ID": correlationID,
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: ++rpcID,
-          method: "tools/call",
-          params: {
-            name: "recall_memory",
-            arguments: {
-              query: `transport-cancel-${randomUUID()}`,
-              limit: 50,
-              relationship_limit: 20,
-              community_limit: 10,
-              community_relationship_limit: 20,
-            },
-          },
-        }),
-        signal: controller.signal,
-      }).then(async (response) => {
-        await response.arrayBuffer();
-      });
-      const abortTimer = setTimeout(() => controller.abort(), 25);
-      try {
-        await request;
-      } catch (error) {
-        if (error?.name === "AbortError") {
-          aborted = true;
-        } else {
-          throw error;
-        }
-      } finally {
-        clearTimeout(abortTimer);
-      }
-    }));
+  const baseline = await httpJSON(`${providerURL}/health`);
+  const baselineEmbeddingCalls = Number(baseline.embedding_calls || 0);
+  const correlationID = randomUUID();
+  const suffix = `${Date.now()}-${randomUUID()}`;
+  const request = cancellableJSONPost(`${userURL}/mcp`, {
+    Authorization: `Bearer ${apiKey}`,
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    "MCP-Protocol-Version": "2026-07-28",
+    "Mcp-Method": "tools/call",
+    "Mcp-Name": "remember",
+    "X-Correlation-ID": correlationID,
+  }, {
+    jsonrpc: "2.0",
+    id: ++rpcID,
+    method: "tools/call",
+    params: {
+      name: "remember",
+      arguments: {
+        evidence: [{
+          content: `Dense-Mem stores durable memory in PostgreSQL. [fixture:transport-cancel] [fixture-fault:embedding-cancel] ${suffix}`,
+          source_type: "manual",
+        }],
+        relationships: [{
+          ref: "durable-store",
+          subject: { name: "Dense-Mem", entity_kind: "project" },
+          predicate: { proposed_key: "stores_memory_in" },
+          object: { value: { type: "string", value: "PostgreSQL" } },
+          polarity: "+",
+          evidence_indices: [0],
+        }],
+        idempotency_key: `mcp-boundaries-transport-cancel-${suffix}`,
+      },
+      _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {} },
+    },
+  });
 
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      const page = await controlJSON(`/logs?limit=500&sort=timestamp&direction=desc&from=${encodeURIComponent(markerFrom)}`, { method: "GET" });
-      const rows = Array.isArray(page.data) ? page.data : [];
-      for (const correlationID of correlationIDs) {
-        const correlated = rows.filter((row) => rowCorrelationID(row) === correlationID);
-        const applicationOutcome = correlated.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "cancelled");
-        const deliveryStage = correlated.some((row) => row?.message === "http_request" && row?.attrs?.delivery_stage === "disconnect_observed");
-        if (applicationOutcome && deliveryStage) return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 250));
+  let providerObserved = false;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const health = await httpJSON(`${providerURL}/health`);
+    if (Number(health.embedding_calls || 0) > baselineEmbeddingCalls) {
+      providerObserved = true;
+      break;
     }
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  throw new Error(`canceled MCP transport outcome was missing (client_aborted=${aborted})`);
+  if (!providerObserved) throw new Error("cancellation provider fixture did not observe the embedding request");
+
+  request.abort();
+  let aborted = true;
+  try {
+    await request.promise;
+  } catch {}
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const page = await controlJSON(`/logs?limit=500&sort=timestamp&direction=desc&from=${encodeURIComponent(markerFrom)}`, { method: "GET" });
+    const rows = Array.isArray(page.data) ? page.data : [];
+    const correlated = rows.filter((row) => rowCorrelationID(row) === correlationID);
+    const applicationOutcome = correlated.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "cancelled");
+    const deliveryStage = correlated.some((row) => row?.message === "http_request" && row?.attrs?.delivery_stage === "disconnect_observed");
+    if (applicationOutcome && deliveryStage) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`canceled MCP transport outcome was missing (client_aborted=${aborted}, provider_observed=${providerObserved})`);
+}
+
+function cancellableJSONPost(url, headers, payload) {
+  const target = new URL(url);
+  const body = JSON.stringify(payload);
+  let abort;
+  const promise = new Promise((resolve, reject) => {
+    const request = httpRequest({
+      hostname: target.hostname,
+      port: target.port,
+      path: `${target.pathname}${target.search}`,
+      method: "POST",
+      headers,
+    }, (response) => {
+      response.resume();
+      response.on("end", () => resolve(response.statusCode));
+    });
+    request.on("error", reject);
+    abort = () => request.destroy();
+    request.end(body);
+  });
+  return { promise, abort: () => abort?.() };
 }
 
 function rowCorrelationID(row) {

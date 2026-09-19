@@ -6,7 +6,7 @@
       "name": "mcp_boundaries",
       "isolation": "exclusive",
       "runtime": "production",
-      "helper_profiles": [],
+      "helper_profiles": ["synchronous_write"],
       "timeout_minutes": 30,
       "playwright": false
     },

@@ -148,6 +148,7 @@ func (h oauthRequestLogger) ServeHTTP(writer http.ResponseWriter, request *http.
 	if status == 0 {
 		status = http.StatusOK
 	}
+	logContext := context.WithoutCancel(request.Context())
 	attrs := []observability.LogAttr{
 		observability.String("method", request.Method),
 		observability.String("route", canonicalOAuthRoute(request.URL.EscapedPath())),
@@ -169,7 +170,7 @@ func (h oauthRequestLogger) ServeHTTP(writer http.ResponseWriter, request *http.
 		if contextual, ok := h.logger.(interface {
 			WarnContext(context.Context, string, ...observability.LogAttr)
 		}); ok {
-			contextual.WarnContext(request.Context(), "oauth_http_request", attrs...)
+			contextual.WarnContext(logContext, "oauth_http_request", attrs...)
 		} else {
 			h.logger.Warn("oauth_http_request", attrs...)
 		}
@@ -178,7 +179,7 @@ func (h oauthRequestLogger) ServeHTTP(writer http.ResponseWriter, request *http.
 	if contextual, ok := h.logger.(interface {
 		InfoContext(context.Context, string, ...observability.LogAttr)
 	}); ok {
-		contextual.InfoContext(request.Context(), "oauth_http_request", attrs...)
+		contextual.InfoContext(logContext, "oauth_http_request", attrs...)
 	} else {
 		h.logger.Info("oauth_http_request", attrs...)
 	}
