@@ -101,13 +101,9 @@ func NewServer(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider
 	// Set custom error handler
 	e.HTTPErrorHandler = httperr.ErrorHandler
 
-	// Global middleware (applies to all routes)
-	e.Use(rootRecover(logger))
-	maxBodyBytes := 0
-	if cfg != nil {
-		maxBodyBytes = cfg.GetHTTPMaxBodyBytes()
-	}
-	e.Use(middleware.BodyLimit(fmt.Sprintf("%dB", effectiveMaxBodyBytes(maxBodyBytes))))
+	// Global middleware (applies to all routes). Completion observers stay
+	// outside recovery and body-limit middleware so early failures still emit
+	// their final transport record.
 	e.Use(observeDelivery)
 	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
 		HandleError:  true,
@@ -147,6 +143,12 @@ func NewServer(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider
 			return nil
 		},
 	}))
+	e.Use(rootRecover(logger))
+	maxBodyBytes := 0
+	if cfg != nil {
+		maxBodyBytes = cfg.GetHTTPMaxBodyBytes()
+	}
+	e.Use(middleware.BodyLimit(fmt.Sprintf("%dB", effectiveMaxBodyBytes(maxBodyBytes))))
 
 	// Register public routes (no auth/team/rate-limit middleware).
 	registerPublicRoutes(e, health)

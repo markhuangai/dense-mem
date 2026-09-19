@@ -7,6 +7,7 @@ import (
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -373,6 +374,94 @@ func TestRequestLoggerOmitsQueryString(t *testing.T) {
 		if value == "secret-memory" || value == "raw-token" {
 			t.Fatalf("sensitive query value leaked in attr %q", attr.Key)
 		}
+	}
+}
+
+func TestRequestLoggerCapturesRecoveredPanic(t *testing.T) {
+	logger := &captureLogProvider{}
+	e := NewServer(config.Config{}, logger, HealthConfig{})
+	e.GET("/panic", func(echo.Context) error {
+		panic("handler panic")
+	})
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/panic", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if logger.msg != "http_request" {
+		t.Fatalf("last log = %q, want http_request", logger.msg)
+	}
+	attrs := make(map[string]any, len(logger.attrs))
+	for _, attr := range logger.attrs {
+		attrs[attr.Key] = attr.Value
+	}
+	if got := attrs["status"]; got != http.StatusInternalServerError {
+		t.Fatalf("status attr = %#v, want %d", got, http.StatusInternalServerError)
+	}
+	if got := attrs["delivery_stage"]; got != "write_observed" {
+		t.Fatalf("delivery stage = %#v, want write_observed", got)
+	}
+}
+
+func TestRequestLoggerCapturesBodyLimitRejection(t *testing.T) {
+	logger := &captureLogProvider{}
+	e := NewServer(config.Config{HTTPMaxBodyBytes: 1}, logger, HealthConfig{})
+	e.POST("/limited", func(c echo.Context) error {
+		return c.NoContent(http.StatusNoContent)
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/limited", strings.NewReader("too large"))
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+	if logger.msg != "http_request" {
+		t.Fatalf("last log = %q, want http_request", logger.msg)
+	}
+	attrs := make(map[string]any, len(logger.attrs))
+	for _, attr := range logger.attrs {
+		attrs[attr.Key] = attr.Value
+	}
+	if got := attrs["status"]; got != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status attr = %#v, want %d", got, http.StatusRequestEntityTooLarge)
+	}
+	if got := attrs["delivery_stage"]; got != "write_observed" {
+		t.Fatalf("delivery stage = %#v, want write_observed", got)
+	}
+}
+
+func TestControlPortalRequestLoggerCapturesRecoveredPanic(t *testing.T) {
+	logger := &captureLogProvider{}
+	e, err := NewControlPortalServer(&config.Config{ControlPortalToken: "secret"}, nil, nil, logger)
+	if err != nil {
+		t.Fatalf("control portal: %v", err)
+	}
+	e.GET("/panic", func(echo.Context) error {
+		panic("handler panic")
+	})
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/panic", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if logger.msg != "control_http_request" {
+		t.Fatalf("last log = %q, want control_http_request", logger.msg)
+	}
+	attrs := make(map[string]any, len(logger.attrs))
+	for _, attr := range logger.attrs {
+		attrs[attr.Key] = attr.Value
+	}
+	if got := attrs["status"]; got != http.StatusInternalServerError {
+		t.Fatalf("status attr = %#v, want %d", got, http.StatusInternalServerError)
+	}
+	if got := attrs["delivery_stage"]; got != "write_observed" {
+		t.Fatalf("delivery stage = %#v, want write_observed", got)
 	}
 }
 

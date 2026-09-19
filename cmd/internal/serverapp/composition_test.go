@@ -129,3 +129,27 @@ func TestTelemetryListenerUsesRootBackedTransportObservations(t *testing.T) {
 		t.Fatalf("rejected transport observation missing: %s", logs.String())
 	}
 }
+
+func TestTelemetryListenerCapturesRecoveredPanic(t *testing.T) {
+	var logs bytes.Buffer
+	logger := observability.NewWithHandler(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	server, err := newTelemetryScrapeServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("scrape panic")
+	}), "token", transportLogger(logger))
+	if err != nil {
+		t.Fatalf("telemetry server: %v", err)
+	}
+	t.Cleanup(func() { _ = shutdownTelemetryScrapeServer(server) })
+
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	request.Header.Set("Authorization", "Bearer token")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("panic status = %d, want %d", response.Code, http.StatusInternalServerError)
+	}
+	if !strings.Contains(logs.String(), `"msg":"telemetry_http_request"`) || !strings.Contains(logs.String(), `"delivery_stage":"write_observed"`) {
+		t.Fatalf("recovered panic transport observation missing: %s", logs.String())
+	}
+}

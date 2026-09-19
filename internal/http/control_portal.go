@@ -87,9 +87,6 @@ func newControlPortalServerWithMetricsAndTelemetry(
 	applyServerLimits(e)
 	applyIPExtractor(e)
 	e.HTTPErrorHandler = httperr.ErrorHandler
-	e.Use(rootRecover(logger))
-	e.Use(echomw.BodyLimit(fmt.Sprintf("%dB", controlMaxBodyBytes(cfg))))
-	e.Use(httpmw.CorrelationIDMiddleware())
 	e.Use(observeDelivery)
 	e.Use(echomw.RequestLoggerWithConfig(echomw.RequestLoggerConfig{
 		HandleError:  true,
@@ -112,6 +109,9 @@ func newControlPortalServerWithMetricsAndTelemetry(
 			return nil
 		},
 	}))
+	e.Use(rootRecover(logger))
+	e.Use(echomw.BodyLimit(fmt.Sprintf("%dB", controlMaxBodyBytes(cfg))))
+	e.Use(httpmw.CorrelationIDMiddleware())
 
 	var securitySvc settings.SecurityService
 	if len(securitySvcs) > 0 {

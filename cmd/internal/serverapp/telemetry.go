@@ -40,8 +40,6 @@ func newTelemetryScrapeServer(scrapeHandler nethttp.Handler, scrapeToken string,
 	e.Server.IdleTimeout = 60 * time.Second
 	e.IPExtractor = echo.ExtractIPFromXFFHeader()
 	e.HTTPErrorHandler = httperr.ErrorHandler
-	e.Use(densehttp.RootRecover(logger))
-	e.Use(httpmw.CorrelationIDMiddleware())
 	e.Use(densehttp.DeliveryObservationMiddleware)
 	e.Use(echomw.RequestLoggerWithConfig(echomw.RequestLoggerConfig{
 		HandleError:  true,
@@ -68,6 +66,8 @@ func newTelemetryScrapeServer(scrapeHandler nethttp.Handler, scrapeToken string,
 			return nil
 		},
 	}))
+	e.Use(densehttp.RootRecover(logger))
+	e.Use(httpmw.CorrelationIDMiddleware())
 	e.GET("/metrics", echo.WrapHandler(scrapeHandler), httpmw.TelemetryScrapeTokenMiddleware(scrapeToken))
 	return e, nil
 }
