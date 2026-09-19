@@ -47,14 +47,36 @@ func (s dreamingConfigStub) EffectiveConfig(context.Context, string) (dream.Effe
 
 // testLogger returns a LogProvider that writes to a bytes.Buffer.
 func testLogger(t *testing.T) (Logger, *bytes.Buffer) {
+	return testLoggerWithLevel(t, slog.LevelDebug)
+}
+
+func testLoggerWithLevel(t *testing.T, level slog.Level) (Logger, *bytes.Buffer) {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	h := slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	h := slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: level})
 	return testLoggerAdapter{delegate: observability.NewWithHandler(h)}, buf
 }
 
 type testLoggerAdapter struct {
 	delegate observability.LogProvider
+}
+
+func (l testLoggerAdapter) Trace(message string, fields ...LogField) {
+	if logger, ok := l.delegate.(interface {
+		Trace(string, ...observability.LogAttr)
+	}); ok {
+		logger.Trace(message, testObservabilityFields(fields)...)
+		return
+	}
+	l.delegate.Debug(message, testObservabilityFields(fields)...)
+}
+
+func (l testLoggerAdapter) Debug(message string, fields ...LogField) {
+	l.delegate.Debug(message, testObservabilityFields(fields)...)
+}
+
+func (l testLoggerAdapter) Info(message string, fields ...LogField) {
+	l.delegate.Info(message, testObservabilityFields(fields)...)
 }
 
 func (l testLoggerAdapter) Error(message string, err error, fields ...LogField) {
@@ -71,6 +93,56 @@ func (l testLoggerAdapter) WarnContext(ctx context.Context, message string, fiel
 		return
 	}
 	l.delegate.Warn(message, testObservabilityFields(fields)...)
+}
+
+func (l testLoggerAdapter) TraceContext(ctx context.Context, message string, fields ...LogField) {
+	if logger, ok := l.delegate.(interface {
+		TraceContext(context.Context, string, ...observability.LogAttr)
+	}); ok {
+		logger.TraceContext(ctx, message, testObservabilityFields(fields)...)
+		return
+	}
+	l.Debug(message, fields...)
+}
+
+func (l testLoggerAdapter) DebugContext(ctx context.Context, message string, fields ...LogField) {
+	if logger, ok := l.delegate.(interface {
+		DebugContext(context.Context, string, ...observability.LogAttr)
+	}); ok {
+		logger.DebugContext(ctx, message, testObservabilityFields(fields)...)
+		return
+	}
+	l.Debug(message, fields...)
+}
+
+func (l testLoggerAdapter) InfoContext(ctx context.Context, message string, fields ...LogField) {
+	if logger, ok := l.delegate.(interface {
+		InfoContext(context.Context, string, ...observability.LogAttr)
+	}); ok {
+		logger.InfoContext(ctx, message, testObservabilityFields(fields)...)
+		return
+	}
+	l.Info(message, fields...)
+}
+
+func (l testLoggerAdapter) Fatal(message string, fields ...LogField) {
+	if logger, ok := l.delegate.(interface {
+		Fatal(string, ...observability.LogAttr)
+	}); ok {
+		logger.Fatal(message, testObservabilityFields(fields)...)
+		return
+	}
+	l.delegate.Error(message, nil, testObservabilityFields(fields)...)
+}
+
+func (l testLoggerAdapter) FatalContext(ctx context.Context, message string, fields ...LogField) {
+	if logger, ok := l.delegate.(interface {
+		FatalContext(context.Context, string, ...observability.LogAttr)
+	}); ok {
+		logger.FatalContext(ctx, message, testObservabilityFields(fields)...)
+		return
+	}
+	l.delegate.Error(message, nil, testObservabilityFields(fields)...)
 }
 
 func testObservabilityFields(fields []LogField) []observability.LogAttr {

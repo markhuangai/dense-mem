@@ -49,7 +49,7 @@ func runWithInterval(parent context.Context, db *gorm.DB, timeout time.Duration,
 	defer cancel()
 
 	startedAt := time.Now()
-	logger.Info(
+	logInfo(ctx, logger,
 		"running postgres migrations",
 		"direction", direction,
 		"timeout_seconds", int64(timeout/time.Second),
@@ -57,7 +57,7 @@ func runWithInterval(parent context.Context, db *gorm.DB, timeout time.Duration,
 
 	stopHeartbeat := make(chan struct{})
 	heartbeatStopped := make(chan struct{})
-	go reportHeartbeat(stopHeartbeat, heartbeatStopped, startedAt, timeout, direction, logger, interval)
+	go reportHeartbeat(ctx, stopHeartbeat, heartbeatStopped, startedAt, timeout, direction, logger, interval)
 
 	var stopOnce sync.Once
 	stop := func() {
@@ -74,7 +74,7 @@ func runWithInterval(parent context.Context, db *gorm.DB, timeout time.Duration,
 		return err
 	}
 
-	logger.Info(
+	logInfo(ctx, logger,
 		"postgres migrations completed",
 		"direction", direction,
 		"elapsed_seconds", int64(time.Since(startedAt)/time.Second),
@@ -82,7 +82,7 @@ func runWithInterval(parent context.Context, db *gorm.DB, timeout time.Duration,
 	return nil
 }
 
-func reportHeartbeat(stop <-chan struct{}, stopped chan<- struct{}, startedAt time.Time, timeout time.Duration, direction string, logger infoLogger, interval time.Duration) {
+func reportHeartbeat(ctx context.Context, stop <-chan struct{}, stopped chan<- struct{}, startedAt time.Time, timeout time.Duration, direction string, logger infoLogger, interval time.Duration) {
 	defer close(stopped)
 
 	ticker := time.NewTicker(interval)
@@ -97,7 +97,7 @@ func reportHeartbeat(stop <-chan struct{}, stopped chan<- struct{}, startedAt ti
 				return
 			default:
 			}
-			logger.Info(
+			logInfo(ctx, logger,
 				"postgres migrations still running",
 				"direction", direction,
 				"elapsed_seconds", int64(time.Since(startedAt)/time.Second),
@@ -105,4 +105,14 @@ func reportHeartbeat(stop <-chan struct{}, stopped chan<- struct{}, startedAt ti
 			)
 		}
 	}
+}
+
+func logInfo(ctx context.Context, logger infoLogger, message string, args ...any) {
+	if contextual, ok := logger.(interface {
+		InfoContext(context.Context, string, ...any)
+	}); ok {
+		contextual.InfoContext(ctx, message, args...)
+		return
+	}
+	logger.Info(message, args...)
 }

@@ -7,6 +7,7 @@ import (
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
+	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
@@ -376,6 +378,122 @@ func TestRequestLoggerOmitsQueryString(t *testing.T) {
 	}
 }
 
+func TestRequestLoggerCapturesRecoveredPanic(t *testing.T) {
+	logger := &captureLogProvider{}
+	e := NewServer(config.Config{}, logger, HealthConfig{})
+	e.GET("/panic", func(echo.Context) error {
+		panic("handler panic")
+	})
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/panic", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if logger.msg != "http_request" {
+		t.Fatalf("last log = %q, want http_request", logger.msg)
+	}
+	attrs := make(map[string]any, len(logger.attrs))
+	for _, attr := range logger.attrs {
+		attrs[attr.Key] = attr.Value
+	}
+	if got := attrs["status"]; got != http.StatusInternalServerError {
+		t.Fatalf("status attr = %#v, want %d", got, http.StatusInternalServerError)
+	}
+	if got := attrs["delivery_stage"]; got != "write_observed" {
+		t.Fatalf("delivery stage = %#v, want write_observed", got)
+	}
+}
+
+func TestRequestLoggerCapturesBodyLimitRejection(t *testing.T) {
+	logger := &captureLogProvider{}
+	e := NewServer(config.Config{HTTPMaxBodyBytes: 1}, logger, HealthConfig{})
+	e.POST("/limited", func(c echo.Context) error {
+		return c.NoContent(http.StatusNoContent)
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/limited", strings.NewReader("too large"))
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+	if logger.msg != "http_request" {
+		t.Fatalf("last log = %q, want http_request", logger.msg)
+	}
+	attrs := make(map[string]any, len(logger.attrs))
+	for _, attr := range logger.attrs {
+		attrs[attr.Key] = attr.Value
+	}
+	if got := attrs["status"]; got != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status attr = %#v, want %d", got, http.StatusRequestEntityTooLarge)
+	}
+	if got := attrs["delivery_stage"]; got != "write_observed" {
+		t.Fatalf("delivery stage = %#v, want write_observed", got)
+	}
+	if rec.Header().Get(httpmw.CorrelationIDHeader) == "" {
+		t.Fatal("body-limit response did not include a correlation ID")
+	}
+}
+
+func TestControlPortalRequestLoggerCapturesBodyLimitCorrelation(t *testing.T) {
+	logger := &captureLogProvider{}
+	e, err := NewControlPortalServer(&config.Config{ControlPortalToken: "secret", HTTPMaxBodyBytes: 1}, nil, nil, logger)
+	if err != nil {
+		t.Fatalf("control portal: %v", err)
+	}
+	e.POST("/limited", func(c echo.Context) error {
+		return c.NoContent(http.StatusNoContent)
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/limited", strings.NewReader("too large"))
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+	if logger.msg != "control_http_request" {
+		t.Fatalf("last log = %q, want control_http_request", logger.msg)
+	}
+	if rec.Header().Get(httpmw.CorrelationIDHeader) == "" {
+		t.Fatal("control body-limit response did not include a correlation ID")
+	}
+}
+
+func TestControlPortalRequestLoggerCapturesRecoveredPanic(t *testing.T) {
+	logger := &captureLogProvider{}
+	e, err := NewControlPortalServer(&config.Config{ControlPortalToken: "secret"}, nil, nil, logger)
+	if err != nil {
+		t.Fatalf("control portal: %v", err)
+	}
+	e.GET("/panic", func(echo.Context) error {
+		panic("handler panic")
+	})
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/panic", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if logger.msg != "control_http_request" {
+		t.Fatalf("last log = %q, want control_http_request", logger.msg)
+	}
+	attrs := make(map[string]any, len(logger.attrs))
+	for _, attr := range logger.attrs {
+		attrs[attr.Key] = attr.Value
+	}
+	if got := attrs["status"]; got != http.StatusInternalServerError {
+		t.Fatalf("status attr = %#v, want %d", got, http.StatusInternalServerError)
+	}
+	if got := attrs["delivery_stage"]; got != "write_observed" {
+		t.Fatalf("delivery stage = %#v, want write_observed", got)
+	}
+}
+
 func TestRequestLoggerPreservesAuthenticatedContext(t *testing.T) {
 	logger := &captureLogProvider{}
 	e := NewServer(config.Config{}, logger, HealthConfig{})
@@ -404,6 +522,33 @@ func TestRequestLoggerPreservesAuthenticatedContext(t *testing.T) {
 	}
 	if got := requestctx.AuthenticationSecretsFromContext(logger.contextSeen); len(got) != 1 || got[0] != "raw-api-key" {
 		t.Fatalf("logged authentication secrets = %#v", got)
+	}
+}
+
+func TestRequestLoggerDetachesCanceledContextForCompletion(t *testing.T) {
+	logger := &captureLogProvider{}
+	e := NewServer(config.Config{}, logger, HealthConfig{})
+	e.GET("/canceled", func(c echo.Context) error {
+		return c.NoContent(http.StatusNoContent)
+	})
+
+	teamID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	profileID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
+	ctx, cancel := context.WithCancel(requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: teamID, OwnerID: profileID}))
+	cancel()
+	req := httptest.NewRequest(http.MethodGet, "/canceled", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if logger.contextSeen == nil || logger.contextSeen.Err() != nil {
+		t.Fatalf("completion logger retained cancellation: %v", logger.contextSeen)
+	}
+	actor, ok := requestctx.ActorFromContext(logger.contextSeen)
+	if !ok || actor.TeamID != teamID || actor.OwnerID != profileID {
+		t.Fatalf("detached logger context lost actor = %#v, ok=%v", actor, ok)
 	}
 }
 

@@ -258,6 +258,9 @@ run_scenario() {
   if [[ "$scenario" == "oauth_provider_compatibility" ]]; then
     docker_args+=(-e "DENSE_MEM_ENTRA_MOCK_URL=https://entra-mock:9443")
   fi
+  if has_helper "$helpers" synchronous_write; then
+    docker_args+=(-e "DENSE_MEM_E2E_PROVIDER_URL=http://synchronous-write-provider:8787")
+  fi
   docker_args+=(
     "$test_image" bash -euc '
       set -euo pipefail

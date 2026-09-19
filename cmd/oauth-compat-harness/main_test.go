@@ -1,10 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 func TestLoadHarnessConfigIsBoundedAndStrict(t *testing.T) {
@@ -123,6 +126,65 @@ func TestHarnessMetadataAndChallengeUseConfiguredHTTPSURL(t *testing.T) {
 	require.NotContains(t, ambiguousResponse.Body.String(), "second-token")
 }
 
+func TestHarnessLogsBoundedCorrelationAndValidatedIdentity(t *testing.T) {
+	var output bytes.Buffer
+	logger := observability.NewWithHandler(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	profiles := []domain.OAuthProtectedResourceProfile{{
+		Name: "entra", Issuer: "https://issuer.example/entra",
+		ProtectedResource: domain.OAuthProtectedResourceConfig{
+			Audiences: []string{"api://dense-mem"}, JWKSSource: "discovery", Algorithms: []string{"RS256"}, ScopeClaim: "scp",
+		},
+	}}
+	validHandler, err := newHarnessHandler("https://harness.example", profiles, harnessValidatorStub{result: &domain.OAuthValidatedToken{ProfileName: "entra", Scopes: []string{"read"}}}, logger)
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPost, "https://harness.example/mcp", nil)
+	request.Header.Set("Authorization", "Bearer secret-token")
+	response := httptest.NewRecorder()
+	validHandler.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Contains(t, output.String(), "\"msg\":\"oauth_http_request\"")
+	require.Contains(t, output.String(), "\"profile\":\"entra\"")
+	require.Contains(t, output.String(), "\"correlation_id\"")
+	require.NotContains(t, output.String(), "secret-token")
+
+	output.Reset()
+	rejectedHandler, err := newHarnessHandler("https://harness.example", profiles, harnessValidatorStub{err: errors.New("invalid token")}, logger)
+	require.NoError(t, err)
+	rejected := httptest.NewRecorder()
+	rejectedRequest := httptest.NewRequest(http.MethodPost, "https://harness.example/mcp", nil)
+	rejectedRequest.Header.Set("Authorization", "Bearer rejected-secret")
+	rejectedHandler.ServeHTTP(rejected, rejectedRequest)
+	require.Equal(t, http.StatusUnauthorized, rejected.Code)
+	require.Contains(t, output.String(), "\"correlation_id\"")
+	require.NotContains(t, output.String(), "rejected-secret")
+	require.NotContains(t, output.String(), "\"profile\":\"entra\"")
+}
+
+func TestHarnessCompletionLoggingDetachesCanceledContext(t *testing.T) {
+	root := observability.NewWithHandler(slog.NewJSONHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	sink := &cancellationRejectingHarnessLogSink{}
+	require.NoError(t, root.AttachSink(sink))
+	handler, err := newHarnessHandler("https://harness.example", []domain.OAuthProtectedResourceProfile{{
+		Name: "entra",
+		ProtectedResource: domain.OAuthProtectedResourceConfig{
+			Audiences: []string{"api://dense-mem"}, JWKSSource: "discovery", Algorithms: []string{"RS256"}, ScopeClaim: "scp",
+		},
+	}}, harnessValidatorStub{result: &domain.OAuthValidatedToken{ProfileName: "entra"}}, root)
+	require.NoError(t, err)
+
+	requestContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := httptest.NewRequest(http.MethodPost, "https://harness.example/mcp", nil).WithContext(requestContext)
+	request.Header.Set("Authorization", "Bearer canceled-request-token")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Len(t, sink.records, 1)
+	require.Equal(t, "oauth_http_request", sink.records[0].Message)
+	require.Equal(t, "disconnect_observed", sink.records[0].Attrs["delivery_stage"])
+}
+
 func TestNewHarnessHandlerRejectsInvalidBasePaths(t *testing.T) {
 	for _, raw := range []string{
 		"https://harness.example/%7Btenant%7D",
@@ -214,6 +276,18 @@ func TestValidatePublicBaseURLRequiresTrustedHTTPSIdentifier(t *testing.T) {
 type harnessValidatorStub struct {
 	result *domain.OAuthValidatedToken
 	err    error
+}
+
+type cancellationRejectingHarnessLogSink struct {
+	records []observability.LogRecord
+}
+
+func (s *cancellationRejectingHarnessLogSink) WriteLog(ctx context.Context, record observability.LogRecord) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.records = append(s.records, record)
+	return nil
 }
 
 func (stub harnessValidatorStub) Validate(context.Context, string) (*domain.OAuthValidatedToken, error) {
