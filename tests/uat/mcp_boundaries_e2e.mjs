@@ -171,11 +171,13 @@ async function assertUsageMetricDeltas() {
 async function assertTransportLogOutcomes() {
   const marker = `transport-pre-admission-${randomUUID()}`;
   const unmatchedMarker = `transport-unmatched-${randomUUID()}`;
+  const markerFrom = new Date().toISOString();
+  await mcpSuccess("recall_memory", { query: `transport-success-${randomUUID()}`, limit: 1 });
   await fetch(`${userURL}/unmatched/${unmatchedMarker}`, { method: "GET" });
   await rpc("tools/call", { name: "remember", arguments: { unexpected: marker } });
   let rows = [];
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    const page = await controlJSON("/logs?limit=500&sort=timestamp&direction=desc", { method: "GET" });
+    const page = await controlJSON(`/logs?limit=500&sort=timestamp&direction=desc&from=${encodeURIComponent(markerFrom)}`, { method: "GET" });
     rows = Array.isArray(page.data) ? page.data : [];
     const hasFailure = rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "tool_error");
     const hasSuccess = rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "success");
