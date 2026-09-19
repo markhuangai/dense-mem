@@ -161,6 +161,15 @@ jobs:
           node --test tests/uat/architecture_conformance.test.mjs
           node --test tests/uat/coverage_policy.test.mjs
 
+      - name: Run synchronous-write harness tests
+        run: node --test tests/uat/synchronous_write/*.test.mjs
+
+      - name: Run E2E scenario-registry tests
+        run: node --test tests/uat/e2e_scenario_registry.test.mjs
+
+      - name: Run E2E host-controller unit tests
+        run: node --test tests/uat/e2e_host_controller.test.mjs
+
       - name: Run MCP proxy tests
         run: npm run test:coverage --prefix packages/mcp-proxy
 
