@@ -60,9 +60,10 @@ func (p *rememberSynchronousProcessor) recordRememberInvocation(
 		callerAvailable = true
 		callerResponse, _ = capture.ProjectResponse(publicResult, status != nil && len(status.Errors) > 0)
 	}
-	diagnostics := rememberFailureDiagnosticsWithCapture(
+	diagnostics := rememberFailureDiagnosticsWithAuthenticationSecrets(
 		input, publicResult, exchanges, callerResponse,
-		rememberCallerResponseDelivered(ctx, cause), callerAvailable, p.protector,
+		rememberCallerResponseDelivered(ctx, cause), callerAvailable,
+		observability.AuthenticationSecretsFromContext(ctx), p.protector,
 	)
 	requestBody := []byte(nil)
 	requestCaptureState, requestCaptureReason := "", ""

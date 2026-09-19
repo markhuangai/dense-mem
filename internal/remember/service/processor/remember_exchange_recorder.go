@@ -40,7 +40,7 @@ type rememberDiagnosticCapture struct {
 	reason string
 }
 
-func captureRememberDiagnosticBody(body []byte, protector observability.DiagnosticProtector) rememberDiagnosticCapture {
+func captureRememberDiagnosticBody(body []byte, protector observability.DiagnosticProtector, authenticatedSecrets ...string) rememberDiagnosticCapture {
 	if len(body) == 0 {
 		return rememberDiagnosticCapture{state: "not_captured"}
 	}
@@ -51,7 +51,7 @@ func captureRememberDiagnosticBody(body []byte, protector observability.Diagnost
 		}
 	}
 	bounded, truncated := boundedRememberDiagnosticBody(body)
-	protected, reason := protector.ProtectDiagnosticBytes(bounded, rememberDiagnosticMaxBodyBytes+2)
+	protected, reason := protector.ProtectDiagnosticBytes(bounded, rememberDiagnosticMaxBodyBytes+2, authenticatedSecrets...)
 	if reason != observability.CredentialProtectionAvailable {
 		return rememberDiagnosticCapture{
 			state:  "unavailable",
@@ -85,8 +85,8 @@ func combineRememberDiagnosticCapture(explicitState, explicitReason string, capt
 	return state, reason
 }
 
-func protectedRememberDiagnosticBody(body []byte, protector observability.DiagnosticProtector) ([]byte, bool) {
-	capture := captureRememberDiagnosticBody(body, protector)
+func protectedRememberDiagnosticBody(body []byte, protector observability.DiagnosticProtector, authenticatedSecrets ...string) ([]byte, bool) {
+	capture := captureRememberDiagnosticBody(body, protector, authenticatedSecrets...)
 	return capture.body, capture.state == "truncated" || capture.state == "unavailable"
 }
 
@@ -119,6 +119,22 @@ func rememberFailureDiagnosticsWithCapture(
 	callerResponseCaptureAvailable bool,
 	protectors ...observability.DiagnosticProtector,
 ) []repository.RememberAttemptDiagnosticInput {
+	return rememberFailureDiagnosticsWithAuthenticationSecrets(
+		input, publicResult, exchanges, callerResponse, callerResponseDelivered,
+		callerResponseCaptureAvailable, nil, protectors...,
+	)
+}
+
+func rememberFailureDiagnosticsWithAuthenticationSecrets(
+	input rememberapp.RememberProcessRequest,
+	publicResult map[string]any,
+	exchanges []modelprovider.ProviderExchange,
+	callerResponse []byte,
+	callerResponseDelivered bool,
+	callerResponseCaptureAvailable bool,
+	authenticatedSecrets []string,
+	protectors ...observability.DiagnosticProtector,
+) []repository.RememberAttemptDiagnosticInput {
 	var protector observability.DiagnosticProtector
 	if len(protectors) > 0 {
 		protector = protectors[0]
@@ -147,7 +163,7 @@ func rememberFailureDiagnosticsWithCapture(
 				RequestBody: requestBody, RequestContentType: "application/json", Outcome: "hash_only", CaptureState: "hash_only",
 			})
 		} else {
-			capture := captureRememberDiagnosticBody(input.OriginalRequest, protector)
+			capture := captureRememberDiagnosticBody(input.OriginalRequest, protector, authenticatedSecrets...)
 			items = append(items, repository.RememberAttemptDiagnosticInput{
 				SequenceNo: 1, Kind: "original_request", Component: "remember",
 				RequestBody: capture.body, RequestContentType: "application/json", Outcome: "captured", CaptureState: capture.state, CaptureReason: capture.reason,
@@ -168,8 +184,8 @@ func rememberFailureDiagnosticsWithCapture(
 		if capturedAt.IsZero() {
 			capturedAt = time.Now().UTC()
 		}
-		requestCapture := captureRememberDiagnosticBody(exchange.RequestBody, protector)
-		responseCapture := captureRememberDiagnosticBody(exchange.ResponseBody, protector)
+		requestCapture := captureRememberDiagnosticBody(exchange.RequestBody, protector, authenticatedSecrets...)
+		responseCapture := captureRememberDiagnosticBody(exchange.ResponseBody, protector, authenticatedSecrets...)
 		captureState, captureReason := combineRememberDiagnosticCapture(
 			rememberDiagnosticCaptureStateForExchange(exchange), exchange.CaptureReason,
 			requestCapture, responseCapture,
@@ -199,7 +215,7 @@ func rememberFailureDiagnosticsWithCapture(
 			SequenceNo: sequence, Kind: "caller_response", Component: "mcp", Outcome: "not_delivered", CaptureState: "not_delivered",
 		})
 	} else if len(callerResponse) > 0 {
-		capture := captureRememberDiagnosticBody(callerResponse, protector)
+		capture := captureRememberDiagnosticBody(callerResponse, protector, authenticatedSecrets...)
 		items = append(items, repository.RememberAttemptDiagnosticInput{
 			SequenceNo: sequence, Kind: "caller_response", Component: "mcp", ResponseBody: capture.body, ResponseContentType: "application/json", Outcome: "captured", CaptureState: capture.state, CaptureReason: capture.reason,
 		})
@@ -263,7 +279,7 @@ type rememberExchangeRecorder struct {
 	protector observability.DiagnosticProtector
 }
 
-func (r *rememberExchangeRecorder) RecordProviderExchange(_ context.Context, exchange modelprovider.ProviderExchange) {
+func (r *rememberExchangeRecorder) RecordProviderExchange(ctx context.Context, exchange modelprovider.ProviderExchange) {
 	if r == nil {
 		return
 	}
@@ -271,13 +287,14 @@ func (r *rememberExchangeRecorder) RecordProviderExchange(_ context.Context, exc
 	if originalResponseBytes == 0 {
 		originalResponseBytes = len(exchange.ResponseBody)
 	}
-	requestCapture := captureRememberDiagnosticBody(exchange.RequestBody, r.protector)
+	authenticatedSecrets := observability.AuthenticationSecretsFromContext(ctx)
+	requestCapture := captureRememberDiagnosticBody(exchange.RequestBody, r.protector, authenticatedSecrets...)
 	exchange.RequestBody = requestCapture.body
 	responseBody := exchange.ResponseBody
 	if len(exchange.ResponseBodyProjection) > 0 {
 		responseBody = exchange.ResponseBodyProjection
 	}
-	responseCapture := captureRememberDiagnosticBody(responseBody, r.protector)
+	responseCapture := captureRememberDiagnosticBody(responseBody, r.protector, authenticatedSecrets...)
 	exchange.ResponseBody = responseCapture.body
 	exchange.CaptureState, exchange.CaptureReason = combineRememberDiagnosticCapture(
 		exchange.CaptureState, exchange.CaptureReason, requestCapture, responseCapture,

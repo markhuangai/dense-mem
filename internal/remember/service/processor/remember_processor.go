@@ -416,7 +416,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		callerResponseCaptureAvailable = true
 		callerResponse, _ = capture.ProjectResponse(publicResult, true)
 	}
-	diagnostics := rememberFailureDiagnosticsWithCapture(input, publicResult, exchanges, callerResponse, rememberCallerResponseDelivered(ctx, failure), callerResponseCaptureAvailable, p.protector)
+	diagnostics := rememberFailureDiagnosticsWithAuthenticationSecrets(input, publicResult, exchanges, callerResponse, rememberCallerResponseDelivered(ctx, failure), callerResponseCaptureAvailable, observability.AuthenticationSecretsFromContext(ctx), p.protector)
 	assessorValidation := rememberapp.SynchronousAssessmentValidationDiagnostics(failure)
 	recoveryCtx, cancel := rememberFailureRecoveryContext(ctx)
 	defer cancel()
