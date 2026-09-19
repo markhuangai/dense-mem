@@ -227,7 +227,7 @@ func (s *Server) logSDKToolOutcome(ctx context.Context, name string, started tim
 		attrs = appendSDKApplicationRefs(attrs, result.StructuredContent)
 	}
 	logCtx := ctx
-	if outcome == "cancelled" && ctx != nil {
+	if ctx != nil && ctx.Err() != nil {
 		logCtx = context.WithoutCancel(ctx)
 	}
 	if outcome == "success" {
@@ -325,7 +325,7 @@ func appendSDKApplicationRefs(attrs []LogField, value any) []LogField {
 	case []byte:
 		_ = json.Unmarshal(typed, &fields)
 	}
-	for _, key := range []string{"submission_id", "attempt_id", "canonical_attempt_id", "correlation_id"} {
+	for _, key := range []string{"submission_id", "attempt_id", "canonical_attempt_id"} {
 		if text, ok := fields[key].(string); ok && strings.TrimSpace(text) != "" {
 			attrs = append(attrs, LogField{Key: key, Value: text})
 		}

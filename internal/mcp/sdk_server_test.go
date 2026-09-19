@@ -17,8 +17,10 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
@@ -361,11 +363,51 @@ func TestSDKToolOutcomeLoggingDetachesCancelledContextForPersistence(t *testing.
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	server.logSDKToolOutcome(ctx, "tool", time.Now(), nil, nil)
+	for _, test := range []struct {
+		name    string
+		result  *sdkmcp.CallToolResult
+		err     error
+		outcome string
+	}{
+		{name: "success", result: &sdkmcp.CallToolResult{}, outcome: "success"},
+		{name: "tool error", result: &sdkmcp.CallToolResult{IsError: true}, outcome: "tool_error"},
+		{name: "rpc error", err: errors.New("rpc failure"), outcome: "rpc_error"},
+		{name: "cancelled", outcome: "cancelled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server.logSDKToolOutcome(ctx, "tool", time.Now(), test.result, test.err)
+		})
+	}
 
-	require.Len(t, sink.records, 1)
-	require.Equal(t, "mcp_tool_outcome", sink.records[0].Message)
-	require.Equal(t, "cancelled", sink.records[0].Attrs["application_outcome"])
+	require.Len(t, sink.records, 4)
+	for index, want := range []string{"success", "tool_error", "rpc_error", "cancelled"} {
+		require.Equal(t, "mcp_tool_outcome", sink.records[index].Message)
+		require.Equal(t, want, sink.records[index].Attrs["application_outcome"])
+	}
+}
+
+func TestSDKToolOutcomeLoggingUsesTrustedCorrelationContext(t *testing.T) {
+	root := observability.NewWithHandler(slog.NewJSONHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	sink := &cancellationRejectingMCPLogSink{}
+	require.NoError(t, root.AttachSink(sink))
+	server := &Server{logger: testLoggerAdapter{delegate: root}}
+
+	clientContext := correlation.WithClientProvidedID(context.Background(), "client-controlled-correlation")
+	clientContext = requestctx.WithAuthenticationVerified(clientContext)
+	server.logSDKToolOutcome(clientContext, "tool", time.Now(), &sdkmcp.CallToolResult{
+		StructuredContent: map[string]any{"correlation_id": "payload-correlation"},
+	}, nil)
+
+	trustedContext := correlation.WithID(context.Background(), "trusted-correlation")
+	server.logSDKToolOutcome(trustedContext, "tool", time.Now(), &sdkmcp.CallToolResult{
+		StructuredContent: map[string]any{"correlation_id": "payload-correlation"},
+	}, nil)
+
+	require.Len(t, sink.records, 2)
+	require.Empty(t, sink.records[0].CorrelationID)
+	_, hasUntrusted := sink.records[0].Attrs["correlation_id"]
+	require.False(t, hasUntrusted)
+	require.Equal(t, "trusted-correlation", sink.records[1].CorrelationID)
 }
 
 func TestSDKToolLookupFailureLoggingDetachesCancelledContextForPersistence(t *testing.T) {
