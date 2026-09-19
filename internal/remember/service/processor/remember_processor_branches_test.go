@@ -834,3 +834,36 @@ func TestRememberExchangeRecorderProtectsRequestScopedAuthenticationSecrets(t *t
 	require.Len(t, exchanges, 1)
 	require.NotContains(t, string(exchanges[0].RequestBody), requestSecret)
 }
+
+func TestRememberProcessorWaiterRecordsReplayLoadFailure(t *testing.T) {
+	base := &rememberFailureLedgerStub{loadErr: errors.New("replay database down")}
+	locker := &rememberWaitAwareLedgerStub{rememberFailureLedgerStub: base, waited: true}
+	processor := &rememberSynchronousProcessor{ledger: locker}
+
+	status, err := processor.ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
+	})
+
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.ErrorIs(t, err, rememberapp.ErrRememberPersistence)
+	require.NotNil(t, status)
+	require.Equal(t, "replay", base.invocation.Classification)
+	require.Equal(t, "failed", base.invocation.Outcome)
+	require.Equal(t, "database_failure", base.invocation.ErrorCode)
+	require.True(t, base.invocation.Retryable)
+	require.Equal(t, "idempotency_wait", base.invocation.FailedPhase)
+}
+
+func TestRememberInvocationDiagnosticsDoesNotCaptureStatuslessCallerResponse(t *testing.T) {
+	ledger := &rememberFailureLedgerStub{}
+	processor := &rememberSynchronousProcessor{ledger: ledger}
+	ctx := rememberapp.WithDiagnosticCapture(context.Background(), rememberapp.NewDiagnosticCapture([]byte(`{"request":true}`)))
+	processor.recordRememberInvocation(ctx, rememberapp.RememberProcessRequest{
+		TeamID: "11111111-1111-4111-8111-111111111111", OwnerProfileID: "22222222-2222-4222-8222-222222222222",
+		RequestHash: "sha256:statusless", InvocationStartedAt: time.Now().UTC(), OriginalRequest: []byte(`{"evidence":[]}`),
+	}, "33333333-3333-4333-8333-333333333333", "execution", "", "idempotency_lock", errors.New("lock busy"), nil, nil)
+
+	require.Equal(t, "not_captured", ledger.invocation.CallerResponseCaptureState)
+	require.Empty(t, ledger.invocation.CallerResponse)
+}

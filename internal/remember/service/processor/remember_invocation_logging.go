@@ -56,9 +56,11 @@ func (p *rememberSynchronousProcessor) recordRememberInvocation(
 	}
 	var callerResponse []byte
 	callerAvailable := false
-	if capture := rememberapp.DiagnosticCaptureFromContext(ctx); capture != nil {
-		callerAvailable = true
-		callerResponse, _ = capture.ProjectResponse(publicResult, status != nil && len(status.Errors) > 0)
+	if status != nil {
+		if capture := rememberapp.DiagnosticCaptureFromContext(ctx); capture != nil {
+			callerAvailable = true
+			callerResponse, _ = capture.ProjectResponse(publicResult, status != nil && len(status.Errors) > 0)
+		}
 	}
 	diagnostics := rememberFailureDiagnosticsWithAuthenticationSecrets(
 		input, publicResult, exchanges, callerResponse,

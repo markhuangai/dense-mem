@@ -146,19 +146,24 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		p.recordRememberInvocation(ctx, input, waiterInvocationID, "execution", "", "idempotency_wait", lockErr, nil, nil)
 		return nil, lockErr
 	}
-	if replay, err := p.loadRememberReplay(ctx, input, ""); err == nil {
+	replay, replayErr := p.loadRememberReplay(ctx, input, "")
+	if replayErr == nil {
 		p.recordRememberInvocation(ctx, input, waiterInvocationID, "replay", replay.SubmissionID, "idempotency_wait", nil, replay, nil)
 		return replay, nil
-	} else if processErr := new(rememberapp.RememberProcessError); errors.As(err, &processErr) && processErr.Status != nil {
+	} else if processErr := new(rememberapp.RememberProcessError); errors.As(replayErr, &processErr) && processErr.Status != nil {
 		classification := "replay"
-		if errors.Is(err, rememberapp.ErrRememberConflict) || errors.Is(err, repository.ErrIdempotencyConflict) {
+		if errors.Is(replayErr, rememberapp.ErrRememberConflict) || errors.Is(replayErr, repository.ErrIdempotencyConflict) {
 			classification = "conflict"
 		}
-		p.recordRememberInvocation(ctx, input, waiterInvocationID, classification, processErr.Status.SubmissionID, "idempotency_wait", err, processErr.Status, nil)
-		return processErr.Status, err
+		p.recordRememberInvocation(ctx, input, waiterInvocationID, classification, processErr.Status.SubmissionID, "idempotency_wait", replayErr, processErr.Status, nil)
+		return processErr.Status, replayErr
 	}
-	p.recordRememberInvocation(ctx, input, waiterInvocationID, "conflict", "", "idempotency_wait", lockErr, nil, nil)
-	return nil, lockErr
+	classification := "replay"
+	if errors.Is(replayErr, rememberapp.ErrRememberConflict) || errors.Is(replayErr, repository.ErrIdempotencyConflict) {
+		classification = "conflict"
+	}
+	p.recordRememberInvocation(ctx, input, waiterInvocationID, classification, "", "idempotency_wait", replayErr, nil, nil)
+	return nil, replayErr
 }
 
 func (p *rememberSynchronousProcessor) processRememberUnlocked(
