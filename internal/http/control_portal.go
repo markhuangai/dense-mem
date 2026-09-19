@@ -102,16 +102,16 @@ func newControlPortalServerWithMetricsAndTelemetry(
 			}
 			attrs := transportRequestAttrs(c, v)
 			if v.Error != nil {
-				httpcontract.LogErrorContext(c.Request().Context(), logger, "control_http_request", errors.New(tools.SanitizeError(v.Error)), attrs...)
+				httpcontract.LogErrorContext(TransportLogContext(c), logger, "control_http_request", errors.New(tools.SanitizeError(v.Error)), attrs...)
 				return nil
 			}
-			httpcontract.LogInfoContext(c.Request().Context(), logger, "control_http_request", attrs...)
+			httpcontract.LogInfoContext(TransportLogContext(c), logger, "control_http_request", attrs...)
 			return nil
 		},
 	}))
 	e.Use(rootRecover(logger))
-	e.Use(echomw.BodyLimit(fmt.Sprintf("%dB", controlMaxBodyBytes(cfg))))
 	e.Use(httpmw.CorrelationIDMiddleware())
+	e.Use(echomw.BodyLimit(fmt.Sprintf("%dB", controlMaxBodyBytes(cfg))))
 
 	var securitySvc settings.SecurityService
 	if len(securitySvcs) > 0 {

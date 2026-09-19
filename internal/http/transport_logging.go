@@ -53,6 +53,15 @@ func transportRequestAttrs(c echo.Context, values middleware.RequestLoggerValues
 	return attrs
 }
 
+// TransportLogContext keeps request values available to completion logging
+// after the client has canceled the request or its deadline has elapsed.
+func TransportLogContext(c echo.Context) context.Context {
+	if c == nil || c.Request() == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(c.Request().Context())
+}
+
 // TransportRequestAttrs exposes the bounded completion fields to the private
 // metrics listener, which shares the same root-backed transport contract.
 func TransportRequestAttrs(c echo.Context, values middleware.RequestLoggerValues) []httpcontract.LogAttr {

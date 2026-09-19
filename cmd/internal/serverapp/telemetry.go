@@ -55,14 +55,14 @@ func newTelemetryScrapeServer(scrapeHandler nethttp.Handler, scrapeToken string,
 			}
 			attrs := densehttp.TransportRequestAttrs(c, values)
 			if values.Error != nil {
-				httpcontract.LogErrorContext(c.Request().Context(), logger, "telemetry_http_request", errors.New(tools.SanitizeError(values.Error)), attrs...)
+				httpcontract.LogErrorContext(densehttp.TransportLogContext(c), logger, "telemetry_http_request", errors.New(tools.SanitizeError(values.Error)), attrs...)
 				return nil
 			}
 			if values.Status >= nethttp.StatusBadRequest {
-				httpcontract.LogWarnContext(c.Request().Context(), logger, "telemetry_http_request", attrs...)
+				httpcontract.LogWarnContext(densehttp.TransportLogContext(c), logger, "telemetry_http_request", attrs...)
 				return nil
 			}
-			httpcontract.LogInfoContext(c.Request().Context(), logger, "telemetry_http_request", attrs...)
+			httpcontract.LogInfoContext(densehttp.TransportLogContext(c), logger, "telemetry_http_request", attrs...)
 			return nil
 		},
 	}))

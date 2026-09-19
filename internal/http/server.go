@@ -14,6 +14,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
+	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	httperr "github.com/markhuangai/dense-mem/internal/httperr"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"github.com/markhuangai/dense-mem/internal/tools"
@@ -128,22 +129,23 @@ func NewServer(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider
 				attrs = append(attrs, httpcontract.String("request_id", requestID))
 			}
 			if isAnonymousUserSessionProbe(c, v) {
-				httpcontract.LogInfoContext(c.Request().Context(), logger, "http_request", attrs...)
+				httpcontract.LogInfoContext(TransportLogContext(c), logger, "http_request", attrs...)
 				return nil
 			}
 			if v.Error != nil {
-				httpcontract.LogErrorContext(c.Request().Context(), logger, "http_request", errors.New(tools.SanitizeError(v.Error)), attrs...)
+				httpcontract.LogErrorContext(TransportLogContext(c), logger, "http_request", errors.New(tools.SanitizeError(v.Error)), attrs...)
 				return nil
 			}
 			if v.Status >= http.StatusBadRequest {
-				httpcontract.LogWarnContext(c.Request().Context(), logger, "http_request", attrs...)
+				httpcontract.LogWarnContext(TransportLogContext(c), logger, "http_request", attrs...)
 				return nil
 			}
-			httpcontract.LogInfoContext(c.Request().Context(), logger, "http_request", attrs...)
+			httpcontract.LogInfoContext(TransportLogContext(c), logger, "http_request", attrs...)
 			return nil
 		},
 	}))
 	e.Use(rootRecover(logger))
+	e.Use(httpmw.CorrelationIDMiddleware())
 	maxBodyBytes := 0
 	if cfg != nil {
 		maxBodyBytes = cfg.GetHTTPMaxBodyBytes()

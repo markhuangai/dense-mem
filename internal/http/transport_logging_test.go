@@ -55,6 +55,19 @@ func TestRequestDeliveryStageReportsCancellationBeforeWrite(t *testing.T) {
 	require.Equal(t, "disconnect_observed", stage)
 }
 
+func TestTransportLogContextDetachesCancellationAndPreservesValues(t *testing.T) {
+	type contextKey struct{}
+	requestContext, cancel := context.WithCancel(context.WithValue(context.Background(), contextKey{}, "preserved"))
+	cancel()
+	req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(requestContext)
+	e := echo.New()
+	ctx := e.NewContext(req, httptest.NewRecorder())
+
+	logContext := TransportLogContext(ctx)
+	require.NoError(t, logContext.Err())
+	require.Equal(t, "preserved", logContext.Value(contextKey{}))
+}
+
 func TestRequestTransportStatusAndCommittedResponseStages(t *testing.T) {
 	require.Equal(t, "error", requestTransportStatus(middleware.RequestLoggerValues{
 		Status: http.StatusOK,

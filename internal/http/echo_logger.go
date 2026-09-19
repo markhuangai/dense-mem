@@ -154,7 +154,7 @@ func rootRecover(logger httpcontract.LogProvider) echo.MiddlewareFunc {
 			httpcontract.String("route", c.Path()),
 			httpcontract.Int("stack_bytes", len(stack)),
 		}
-		httpcontract.LogErrorContext(c.Request().Context(), logger, "http_panic_recovered", fmt.Errorf("%s", tools.SanitizeError(err)), attrs...)
+		httpcontract.LogErrorContext(TransportLogContext(c), logger, "http_panic_recovered", fmt.Errorf("%s", tools.SanitizeError(err)), attrs...)
 		return err
 	}
 	return echomw.RecoverWithConfig(config)
