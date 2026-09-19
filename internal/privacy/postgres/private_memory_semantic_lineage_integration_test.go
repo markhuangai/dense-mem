@@ -35,7 +35,8 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 	invocationRepo := knowledgepostgres.NewStore(appDB, rls, knowledgecontract.ConflictRuntimeConfig{})
 	require.NoError(t, invocationRepo.RecordRememberInvocationDiagnostic(ctx, knowledgecontract.RememberInvocationDiagnosticInput{
 		TeamID: teamID.String(), OwnerProfileID: ownerID.String(), InvocationID: invocationID.String(),
-		SpaceID: target.MemorySpaceID.String(), Classification: "execution", Outcome: "failed",
+		SpaceID: target.MemorySpaceID.String(), SpaceGeneration: target.MemorySpaceGeneration,
+		Classification: "execution", Outcome: "failed",
 		CreatedAt: time.Now().UTC(), CompletedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
 	}))
 

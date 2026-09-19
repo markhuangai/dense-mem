@@ -1,5 +1,14 @@
 -- +goose NO TRANSACTION
 
+-- Lock/rewrite impact: replaces one CHECK constraint under a bounded
+-- ACCESS EXCLUSIVE lock; validation scans the existing table after the DDL.
+-- RLS impact: no policies or visibility paths change.
+-- Backfill: none; existing capture-state values remain untouched.
+-- Backward compatibility: adds the unavailable state while preserving all
+-- existing capture-state values and retained diagnostic rows.
+-- Rollback: refuses while unavailable rows exist; the state vocabulary is
+-- irreversible once retained diagnostics use it.
+
 -- +goose Up
 
 -- Existing attempt diagnostics use the same protected-capture state vocabulary

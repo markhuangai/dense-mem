@@ -1,3 +1,15 @@
+-- Lock/rewrite impact: creates an empty append-only diagnostics table and
+-- three indexes; table, policy, function, and trigger definitions are
+-- metadata-only and do not rewrite existing heaps.
+-- RLS impact: enables FORCE RLS with explicit system, migration, and
+-- owner-scoped insert paths; retention and erasure updates remain system-only.
+-- Backfill: none; invocation diagnostics are written only for new requests
+-- after this migration is applied.
+-- Backward compatibility: older binaries ignore this additive table and the
+-- existing Remember attempt authority and capture contracts remain unchanged.
+-- Rollback: irreversible after diagnostics are written because retained
+-- payloads and append-only history cannot be reconstructed safely.
+
 -- +goose Up
 
 -- Invocation diagnostics are append-only operator records. They deliberately
