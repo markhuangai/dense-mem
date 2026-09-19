@@ -194,8 +194,8 @@ function setOperationLogFault(enabled) {
 function composeServerLogs() {
   const result = spawnSync("docker", [
     "compose", "-p", composeProject, "-f", composeFile, "logs", "--no-color", "server",
-  ], { cwd: fileURLToPath(new URL("../..", import.meta.url)), encoding: "utf8" });
-  if (result.status !== 0) throw new Error(`could not inspect server console logs: ${result.stderr || result.stdout}`);
+  ], { cwd: fileURLToPath(new URL("../..", import.meta.url)), encoding: "utf8", maxBuffer: 20 * 1024 * 1024 });
+  if (result.status !== 0) throw new Error(`could not inspect server console logs: ${result.error?.message || result.stderr || result.stdout}`);
   return `${result.stdout}\n${result.stderr}`;
 }
 
