@@ -463,8 +463,11 @@ func TestDirectorySCIMOAuthTokenVerificationReceivesProtectedSecretContext(t *te
 	err := h.oauthToken(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, verifier.ctx)
-	assert.Equal(t, []string{clientSecret}, requestctx.AuthenticationSecretsFromContext(verifier.ctx))
-	assert.Equal(t, []string{clientSecret}, requestctx.AuthenticationSecretsFromContext(ctx.Request().Context()))
+	authorization := request.Header.Get(echo.HeaderAuthorization)
+	basicToken := strings.TrimSpace(strings.TrimPrefix(authorization, "Basic "))
+	wantSecrets := []string{clientSecret, basicToken, authorization}
+	assert.ElementsMatch(t, wantSecrets, requestctx.AuthenticationSecretsFromContext(verifier.ctx))
+	assert.ElementsMatch(t, wantSecrets, requestctx.AuthenticationSecretsFromContext(ctx.Request().Context()))
 }
 
 func TestDirectorySCIMOAuthFailureRetainsOuterSecretContext(t *testing.T) {
@@ -489,7 +492,9 @@ func TestDirectorySCIMOAuthFailureRetainsOuterSecretContext(t *testing.T) {
 
 	require.NoError(t, h.oauthToken(ctx))
 	assert.Equal(t, nethttp.StatusUnauthorized, ctx.Response().Status)
-	assert.Equal(t, []string{presentedSecret}, requestctx.AuthenticationSecretsFromContext(ctx.Request().Context()))
+	authorization := request.Header.Get(echo.HeaderAuthorization)
+	basicToken := strings.TrimSpace(strings.TrimPrefix(authorization, "Basic "))
+	assert.ElementsMatch(t, []string{presentedSecret, basicToken, authorization}, requestctx.AuthenticationSecretsFromContext(ctx.Request().Context()))
 }
 
 func TestDirectorySCIMOuterRequestRetainsAuthenticatedSecrets(t *testing.T) {

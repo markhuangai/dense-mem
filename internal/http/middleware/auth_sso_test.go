@@ -447,6 +447,43 @@ func TestAuthMiddlewareStaticCredentialMustMatchScopedTeam(t *testing.T) {
 	}
 }
 
+func TestAuthMiddlewareScopedTeamMismatchRetainsVerifiedActorWithoutPrincipal(t *testing.T) {
+	credentialTeamID := uuid.New()
+	credentialID := uuid.New()
+	otherTeamID := uuid.New()
+	rawKey := "testprefix12345678901234567890"
+	credential := testCredential(credentialID, credentialTeamID)
+	credential.KeyHash = "encoded-hash"
+	credential.KeyPrefix = crypto.GetKeyPrefix(rawKey)
+
+	e := newTestEcho()
+	var observed context.Context
+	e.HTTPErrorHandler = func(_ error, c echo.Context) {
+		observed = c.Request().Context()
+		_ = c.NoContent(http.StatusForbidden)
+	}
+	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{getActiveByPrefixFunc: func(context.Context, string) (*domain.Credential, error) {
+		copy := *credential
+		return &copy, nil
+	}}, nil, nil, AuthOptions{
+		CredentialVerifier:       stubCredentialVerifier{valid: true},
+		CredentialLookupPrefixes: crypto.GetLookupPrefixes,
+	}))
+	e.GET("/teams/:teamId/mcp", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
+
+	request := httptest.NewRequest(http.MethodGet, "/teams/"+otherTeamID.String()+"/mcp", nil)
+	request.Header.Set("Authorization", "Bearer "+rawKey)
+	response := httptest.NewRecorder()
+	e.ServeHTTP(response, request)
+
+	assert.Equal(t, http.StatusForbidden, response.Code)
+	actor, ok := requestctx.ActorFromContext(observed)
+	require.True(t, ok)
+	assert.Equal(t, credentialTeamID, actor.TeamID)
+	assert.True(t, requestctx.AuthenticationVerifiedFromContext(observed))
+	assert.Nil(t, GetPrincipal(observed))
+}
+
 func TestAuthMiddlewareOAuthOnlyRejectsBrowserCookies(t *testing.T) {
 	authenticator := &stubOAuthBearerAuthenticator{}
 	e := newTestEcho()

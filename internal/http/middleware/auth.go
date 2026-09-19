@@ -272,20 +272,22 @@ func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc acce
 				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "api credential is not team bound")
 				return httperr.New(httperr.AUTH_INVALID, "invalid api key")
 			}
-			if pathTeamID != nil && teamID != *pathTeamID {
-				teamIDStr := teamID.String()
-				logAuthFailure(c, auditSvc, securitySvc, &teamIDStr, "TEAM_PATH_MISMATCH", "scoped mcp team does not match credential")
-				return httperr.New(httperr.FORBIDDEN, "access denied to this team")
-			}
 
 			actor := authenticatedActorFromCredential(key)
 			principal, actorContext, err := principalAndActorContext(actor, "api_key", prefix)
 			if err != nil {
 				return err
 			}
-			ctx = context.WithValue(ctx, principalContextKey{}, principal)
 			ctx = requestctx.WithActor(ctx, actorContext)
 			ctx = requestctx.WithAuthenticationVerified(ctx)
+			if pathTeamID != nil && teamID != *pathTeamID {
+				c.SetRequest(c.Request().WithContext(ctx))
+				teamIDStr := teamID.String()
+				logAuthFailure(c, auditSvc, securitySvc, &teamIDStr, "TEAM_PATH_MISMATCH", "scoped mcp team does not match credential")
+				return httperr.New(httperr.FORBIDDEN, "access denied to this team")
+			}
+
+			ctx = context.WithValue(ctx, principalContextKey{}, principal)
 
 			// Remove the Authorization header to prevent downstream access to raw key
 			req := c.Request().Clone(ctx)

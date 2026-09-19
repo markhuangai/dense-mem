@@ -135,7 +135,8 @@ func (h *directorySCIMHandler) oauthToken(c echo.Context) error {
 		clientID = c.FormValue("client_id")
 		clientSecret = c.FormValue("client_secret")
 	}
-	issueContext := requestctx.WithAuthenticationSecrets(c.Request().Context(), clientSecret)
+	presentedSecrets := directoryOAuthPresentedSecrets(c.Request(), clientSecret)
+	issueContext := requestctx.WithAuthenticationSecrets(c.Request().Context(), presentedSecrets...)
 	c.SetRequest(c.Request().WithContext(issueContext))
 	token, expiresAt, err := h.directory.IssueOAuthToken(issueContext, clientID, clientSecret)
 	if err != nil {
@@ -167,6 +168,31 @@ func directoryOAuthError(c echo.Context, status int, code string) error {
 func directoryOAuthNoStore(c echo.Context) {
 	c.Response().Header().Set(echo.HeaderCacheControl, "no-store")
 	c.Response().Header().Set("Pragma", "no-cache")
+}
+
+func directoryOAuthPresentedSecrets(request *nethttp.Request, clientSecret string) []string {
+	secrets := make([]string, 0, 3)
+	appendSecret := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range secrets {
+			if existing == value {
+				return
+			}
+		}
+		secrets = append(secrets, value)
+	}
+	appendSecret(clientSecret)
+	if request != nil {
+		authorization := strings.TrimSpace(request.Header.Get(echo.HeaderAuthorization))
+		if len(authorization) > len("Basic ") && strings.EqualFold(authorization[:len("Basic ")], "Basic ") {
+			appendSecret(authorization[len("Basic "):])
+			appendSecret(authorization)
+		}
+	}
+	return secrets
 }
 
 func recordDirectoryOAuthAuthFailure(c echo.Context, securitySvc settings.SecurityService) {
