@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"strings"
@@ -32,6 +33,16 @@ func (l mcpTestLogger) Warn(message string, attrs ...httpcontract.LogAttr) {
 	}
 	l.delegate.Warn(message, mcpObservabilityAttrs(attrs)...)
 }
+func (l mcpTestLogger) WarnContext(ctx context.Context, message string, attrs ...httpcontract.LogAttr) {
+	if l.delegate == nil {
+		return
+	}
+	if contextual, ok := l.delegate.(observability.ContextLogProvider); ok {
+		contextual.WarnContext(ctx, message, mcpObservabilityAttrs(attrs)...)
+		return
+	}
+	l.delegate.Warn(message, mcpObservabilityAttrs(attrs)...)
+}
 func (l mcpTestLogger) Debug(message string, attrs ...httpcontract.LogAttr) {
 	if l.delegate == nil {
 		return
@@ -56,15 +67,17 @@ func TestNewMCPLoggerPreservesSanitizedLogging(t *testing.T) {
 	var output bytes.Buffer
 	logger := observability.NewWithHandler(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	adapted := NewMCPLogger(mcpTestLogger{delegate: logger})
+	secret := "mcp-context-auth-secret"
+	ctx := observability.WithAuthenticationSecrets(context.Background(), secret)
 
-	adapted.Warn("mcp_tool_input_rejected", mcp.LogField{Key: "token", Value: "secret-token"}, mcp.LogField{Key: "tool", Value: "remember"})
+	adapted.WarnContext(ctx, "mcp_tool_input_rejected", mcp.LogField{Key: "correlation_id", Value: secret}, mcp.LogField{Key: "tool", Value: "remember"})
 	adapted.Error("mcp tool failed", errors.New("upstream password=secret-password"), mcp.LogField{Key: "team_id", Value: "team-a"})
 
 	text := output.String()
 	if !strings.Contains(text, `"msg":"mcp_tool_input_rejected"`) || !strings.Contains(text, `"tool":"remember"`) {
 		t.Fatalf("adapted warning = %s", text)
 	}
-	if strings.Contains(text, "secret-token") || strings.Contains(text, "secret-password") {
+	if strings.Contains(text, secret) || strings.Contains(text, "secret-password") {
 		t.Fatalf("adapted logger leaked sensitive data: %s", text)
 	}
 }

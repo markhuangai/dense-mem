@@ -234,7 +234,7 @@ func (s *Server) logToolInputRejected(ctx context.Context, toolName, reasonCode 
 	if actor, ok := requestctx.ActorFromContext(ctx); ok && actor.OwnerID != uuid.Nil {
 		attrs = append(attrs, LogField{Key: "profile_id", Value: actor.OwnerID.String()})
 	}
-	s.logger.Warn("mcp_tool_input_rejected", attrs...)
+	s.logger.WarnContext(ctx, "mcp_tool_input_rejected", attrs...)
 }
 
 func (s *Server) canUseTool(tool registry.Tool) bool {

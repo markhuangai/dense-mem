@@ -65,6 +65,14 @@ func (l testLoggerAdapter) Warn(message string, fields ...LogField) {
 	l.delegate.Warn(message, testObservabilityFields(fields)...)
 }
 
+func (l testLoggerAdapter) WarnContext(ctx context.Context, message string, fields ...LogField) {
+	if contextual, ok := l.delegate.(observability.ContextLogProvider); ok {
+		contextual.WarnContext(ctx, message, testObservabilityFields(fields)...)
+		return
+	}
+	l.delegate.Warn(message, testObservabilityFields(fields)...)
+}
+
 func testObservabilityFields(fields []LogField) []observability.LogAttr {
 	converted := make([]observability.LogAttr, 0, len(fields))
 	for _, field := range fields {

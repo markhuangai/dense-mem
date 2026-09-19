@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"context"
+
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/mcp"
 )
@@ -24,6 +26,17 @@ func (a mcpLoggerAdapter) Error(message string, err error, fields ...mcp.LogFiel
 
 func (a mcpLoggerAdapter) Warn(message string, fields ...mcp.LogField) {
 	a.logger.Warn(message, httpFields(fields)...)
+}
+
+func (a mcpLoggerAdapter) WarnContext(ctx context.Context, message string, fields ...mcp.LogField) {
+	attrs := httpFields(fields)
+	if contextual, ok := a.logger.(interface {
+		WarnContext(context.Context, string, ...httpcontract.LogAttr)
+	}); ok {
+		contextual.WarnContext(ctx, message, attrs...)
+		return
+	}
+	a.logger.Warn(message, attrs...)
 }
 
 func httpFields(fields []mcp.LogField) []httpcontract.LogAttr {

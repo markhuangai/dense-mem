@@ -1,9 +1,11 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -11,9 +13,19 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
+
+type recordingMCPLogSink struct {
+	records []observability.LogRecord
+}
+
+func (s *recordingMCPLogSink) WriteLog(_ context.Context, record observability.LogRecord) error {
+	s.records = append(s.records, record)
+	return nil
+}
 
 func TestServerIgnoresProfileOverride(t *testing.T) {
 	logger, _ := testLogger(t)
@@ -174,6 +186,41 @@ func TestServerLogsContractInputRejectionWithoutArgumentsOrValidationText(t *tes
 	require.Contains(t, logged, `"correlation_id":"corr-input-rejected"`)
 	require.NotContains(t, logged, "must-never-appear-in-logs")
 	require.NotContains(t, logged, "relationships is required")
+}
+
+func TestServerInputRejectionPreservesSecretRedactionContext(t *testing.T) {
+	var output bytes.Buffer
+	root := observability.NewWithHandler(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	sink := &recordingMCPLogSink{}
+	require.NoError(t, root.AttachSink(sink))
+
+	reg := registry.New()
+	tool := registry.ContractTools()[0]
+	tool.Visibility = "active"
+	tool.Invoke = func(context.Context, string, map[string]any) (map[string]any, error) {
+		t.Fatal("invalid contract input invoked remember")
+		return nil, nil
+	}
+	require.NoError(t, reg.Register(tool))
+
+	teamID := uuid.New()
+	secret := "mcp-client-correlation-auth-secret"
+	ctx := correlation.WithClientProvidedID(context.Background(), secret)
+	ctx = observability.WithAuthenticationSecrets(ctx, secret)
+	server := NewServer(reg, teamID.String(), testLoggerAdapter{delegate: root})
+
+	_, rpcErr := server.invokeTool(ctx, registry.ToolRemember, map[string]any{
+		"team_id": uuid.NewString(),
+	})
+	require.NotNil(t, rpcErr)
+	require.Equal(t, errCodeInvalidParams, rpcErr.Code)
+	require.Len(t, sink.records, 1)
+
+	recordJSON, err := json.Marshal(sink.records[0])
+	require.NoError(t, err)
+	require.NotContains(t, string(recordJSON), secret)
+	require.NotContains(t, output.String(), secret)
+	require.Contains(t, strings.TrimSpace(output.String()), "mcp_tool_input_rejected")
 }
 
 func TestServerProjectsDynamicRememberPreflightAsInvalidParams(t *testing.T) {

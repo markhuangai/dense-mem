@@ -1,5 +1,7 @@
 package mcp
 
+import "context"
+
 // LogField is the bounded attribute shape accepted by the MCP transport
 // logger. The transport owns this shape so it does not depend on a logging
 // implementation or backend package.
@@ -13,4 +15,5 @@ type LogField struct {
 type Logger interface {
 	Error(string, error, ...LogField)
 	Warn(string, ...LogField)
+	WarnContext(context.Context, string, ...LogField)
 }
