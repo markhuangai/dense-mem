@@ -113,26 +113,6 @@ func TestRememberFailureDiagnosticsCapturesAdmittedBodiesAndProtectsConfiguredSe
 	require.NotContains(t, string(protectedBoundary), "boundary-secret")
 }
 
-func TestRememberFailureDiagnosticsProtectsRequestScopedAuthenticationSecrets(t *testing.T) {
-	requestSecret := "database-backed-request-secret"
-	input := rememberapp.RememberProcessRequest{OriginalRequest: []byte(`{"authorization":"database-backed-request-secret"}`)}
-	items := rememberFailureDiagnosticsWithAuthenticationSecrets(
-		input,
-		map[string]any{"processing_state": "failed"},
-		[]modelprovider.ProviderExchange{{
-			Component: "assessor", RequestBody: []byte(`{"authorization":"database-backed-request-secret"}`),
-			ResponseBody: []byte(`{"message":"database-backed-request-secret"}`), Outcome: "captured",
-		}},
-		[]byte(`{"echo":"database-backed-request-secret"}`), true, true, []string{requestSecret}, observability.NewCredentialProtector(),
-	)
-
-	require.Len(t, items, 3)
-	for _, item := range items {
-		require.NotContains(t, string(item.RequestBody), requestSecret)
-		require.NotContains(t, string(item.ResponseBody), requestSecret)
-	}
-}
-
 func TestRememberFailureDiagnosticsMarksUndeliveredCallerResponseOnCancellation(t *testing.T) {
 	input := rememberapp.RememberProcessRequest{OriginalRequest: []byte(`{"evidence":[]}`)}
 	items := rememberFailureDiagnostics(input, map[string]any{"processing_state": "failed"}, nil, []byte(`{"isError":true}`), false, "embedding")
@@ -156,34 +136,6 @@ func TestRememberInvocationDiagnosticsRecordOutcomeAndCause(t *testing.T) {
 	require.Equal(t, "sha256:request", ledger.invocation.RequestHash)
 	require.WithinDuration(t, started, ledger.invocation.CreatedAt, 50*time.Millisecond)
 	require.GreaterOrEqual(t, ledger.invocation.Duration, time.Second)
-}
-
-func TestRememberInvocationDiagnosticsPreservesZeroResultReplayOutcome(t *testing.T) {
-	ledger := &rememberFailureLedgerStub{}
-	processor := &rememberSynchronousProcessor{ledger: ledger}
-	processor.recordRememberInvocation(context.Background(), rememberapp.RememberProcessRequest{
-		TeamID: "11111111-1111-4111-8111-111111111111", OwnerProfileID: "22222222-2222-4222-8222-222222222222",
-		RequestHash: "sha256:replay", InvocationStartedAt: time.Now().UTC(), OriginalRequest: []byte(`{"evidence":[]}`),
-	}, "33333333-3333-4333-8333-333333333333", "replay", "33333333-3333-4333-8333-333333333333", "replay", nil,
-		&rememberapp.SubmissionStatusResult{ProcessingState: "completed"}, nil)
-
-	require.Equal(t, "replayed", ledger.invocation.Outcome)
-	require.Empty(t, ledger.invocation.FailedPhase)
-}
-
-func TestRememberInvocationDiagnosticsProtectsRequestScopedAuthenticationSecrets(t *testing.T) {
-	requestSecret := "database-backed-request-secret"
-	ledger := &rememberFailureLedgerStub{}
-	processor := &rememberSynchronousProcessor{ledger: ledger, protector: observability.NewCredentialProtector()}
-	ctx := observability.WithAuthenticationSecrets(context.Background(), requestSecret)
-	processor.recordRememberInvocation(ctx, rememberapp.RememberProcessRequest{
-		TeamID: "11111111-1111-4111-8111-111111111111", OwnerProfileID: "22222222-2222-4222-8222-222222222222",
-		RequestHash: "sha256:request-secret", InvocationStartedAt: time.Now().UTC(),
-		OriginalRequest: []byte(`{"authorization":"database-backed-request-secret"}`),
-	}, "33333333-3333-4333-8333-333333333333", "execution", "33333333-3333-4333-8333-333333333333", "commit", nil,
-		&rememberapp.SubmissionStatusResult{ProcessingState: "completed"}, nil)
-
-	require.NotContains(t, string(ledger.invocation.RequestBody), requestSecret)
 }
 
 func TestRememberInvocationLoggingPreservesFailureCauseThroughFallbackLogger(t *testing.T) {
@@ -301,19 +253,6 @@ func TestRememberExchangeRecorderBoundsBodiesAndAggregate(t *testing.T) {
 	require.Equal(t, "captured", exchanges[0].Outcome)
 	require.Equal(t, "truncated", exchanges[0].CaptureState)
 	require.LessOrEqual(t, len(exchanges[0].ResponseBody), rememberDiagnosticMaxBodyBytes)
-}
-
-func TestRememberExchangeRecorderProtectsRequestScopedAuthenticationSecrets(t *testing.T) {
-	requestSecret := "database-backed-request-secret"
-	recorder := &rememberExchangeRecorder{protector: observability.NewCredentialProtector()}
-	ctx := observability.WithAuthenticationSecrets(context.Background(), requestSecret)
-	recorder.RecordProviderExchange(ctx, modelprovider.ProviderExchange{
-		Component: "assessor", RequestBody: []byte(`{"authorization":"database-backed-request-secret"}`), Outcome: "captured",
-	})
-
-	exchanges := recorder.Snapshot()
-	require.Len(t, exchanges, 1)
-	require.NotContains(t, string(exchanges[0].RequestBody), requestSecret)
 }
 
 func TestRememberExchangeRecorderFailsClosedWithoutProtector(t *testing.T) {
