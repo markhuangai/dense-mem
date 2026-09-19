@@ -38,6 +38,27 @@
       "source": "internal/knowledge/postgres/remember_attempt_diagnostics_repository_integration_test.go"
     },
     {
+      "id": "repository/TestRememberProcessorPersistsInvocationDiagnosticsThroughPostgres",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestRememberProcessorPersistsInvocationDiagnosticsThroughPostgres$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/remember_invocation_diagnostics_integration_test.go"
+    },
+    {
+      "id": "repository/TestRememberInvocationDiagnosticsScopesBodiesAndPurgesExpiredRows",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestRememberInvocationDiagnosticsScopesBodiesAndPurgesExpiredRows$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/remember_invocation_diagnostics_integration_test.go"
+    },
+    {
+      "id": "repository/TestRememberInvocationDiagnosticsRejectsPrivateSpaceSealRace",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestRememberInvocationDiagnosticsRejectsPrivateSpaceSealRace$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/remember_invocation_diagnostics_integration_test.go"
+    },
+    {
       "id": "server/TestRememberServiceRejectsHistoricalOutcomesThroughPostgres",
       "package": "./cmd/internal/serverapp",
       "run": "^TestRememberServiceRejectsHistoricalOutcomesThroughPostgres$",

@@ -38,34 +38,12 @@ type RememberAttemptDiagnosticEvent = knowledgecontract.RememberAttemptDiagnosti
 type RememberAttemptDiagnosticRecordItem = knowledgecontract.RememberAttemptDiagnosticRecordItem
 type RememberAttemptDiagnosticRecordPage = knowledgecontract.RememberAttemptDiagnosticRecordPage
 
-// RememberAttemptDiagnosticsRepository is the narrow application port for
-// control-only attempt diagnostics and retention.
-type RememberAttemptDiagnosticsRepository interface {
-	ListRememberAttemptDiagnostics(context.Context, RememberAttemptDiagnosticFilter) (*RememberAttemptDiagnosticRecordPage, error)
-	GetRememberAttemptDiagnostic(context.Context, string, string) (*RememberAttemptDiagnosticRecord, error)
-}
-
-var _ RememberAttemptDiagnosticsRepository = (*Store)(nil)
-
 const (
 	maxRememberDiagnosticBodyBytes    = 16 * 1024 * 1024
 	maxRememberDiagnosticAttemptBytes = 64 * 1024 * 1024
 	rememberDiagnosticPurgeBatchSize  = 100
 	rememberDiagnosticRetention       = 7 * 24 * time.Hour
 )
-
-func validRememberDiagnosticCaptureState(value string) bool {
-	switch strings.TrimSpace(value) {
-	case "captured", "truncated", "not_captured", "hash_only", "provider_not_called", "no_response", "interrupted", "not_delivered":
-		return true
-	default:
-		return false
-	}
-}
-
-func rememberDiagnosticCaptureState(outcome string, requestBody, responseBody []byte) string {
-	return knowledgecontract.DiagnosticCaptureState("", outcome, len(requestBody), len(responseBody))
-}
 
 func lockRememberIdempotencyKeyInTx(ctx context.Context, tx *gorm.DB, teamID, ownerProfileID, key string) error {
 	digest := sha256.Sum256([]byte(teamID + "\x00" + ownerProfileID + "\x00" + key))
@@ -719,7 +697,11 @@ func loadRememberAttemptDiagnosticEvents(ctx context.Context, tx *gorm.DB, teamI
 
 func (r *Store) PurgeExpiredRememberAttemptDiagnostics(ctx context.Context, batchSize int) (int, error) {
 	deleted, err := r.purgeExpiredRememberAttemptDiagnostics(ctx, batchSize)
-	return deleted, err
+	if err != nil {
+		return deleted, err
+	}
+	invocationDeleted, err := r.purgeExpiredRememberInvocationDiagnostics(ctx, batchSize)
+	return deleted + invocationDeleted, err
 }
 
 func (r *Store) purgeExpiredRememberAttemptDiagnostics(ctx context.Context, batchSize int) (int, error) {
@@ -920,9 +902,6 @@ func (r *Store) StartRememberAttemptDiagnosticPurger(ctx context.Context, interv
 	if interval <= 0 {
 		interval = time.Hour
 	}
-	if logger == nil {
-		logger = slog.Default()
-	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -947,9 +926,9 @@ func (r *Store) StartRememberAttemptDiagnosticPurger(ctx context.Context, interv
 				return
 			case <-ticker.C:
 				deleted, err := r.purgeRememberAttemptDiagnostics(workerCtx)
-				if err != nil && workerCtx.Err() == nil {
-					logger.Warn("remember attempt diagnostic purge failed", "error_code", "diagnostic_purge_failed")
-				} else if deleted > 0 {
+				if err != nil && workerCtx.Err() == nil && logger != nil {
+					logger.Error("remember attempt diagnostic purge failed", "error_code", "diagnostic_purge_failed", "error", err)
+				} else if deleted > 0 && logger != nil {
 					logger.Info("remember attempt diagnostics purged", "count", deleted)
 				}
 			}
@@ -962,7 +941,12 @@ func (r *Store) purgeRememberAttemptDiagnostics(ctx context.Context) (int, error
 	if r != nil && r.rememberDiagnosticPurgeFn != nil {
 		return r.rememberDiagnosticPurgeFn(ctx)
 	}
-	return drainExpiredRememberAttemptDiagnostics(ctx, r)
+	deleted, err := drainExpiredRememberAttemptDiagnostics(ctx, r)
+	if err != nil {
+		return deleted, err
+	}
+	invocationDeleted, err := drainExpiredRememberInvocationDiagnostics(ctx, r)
+	return deleted + invocationDeleted, err
 }
 
 // ShutdownRememberAttemptDiagnosticPurger cancels the diagnostic retention

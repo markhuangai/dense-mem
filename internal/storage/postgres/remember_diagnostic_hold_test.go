@@ -29,6 +29,9 @@ func TestSetRememberAttemptDiagnosticHoldStateTxUsesCallerTransaction(t *testing
 	mock.ExpectExec(regexp.QuoteMeta("UPDATE remember_attempt_diagnostics AS diagnostic")).
 		WithArgs(true, spaceID, true).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE remember_invocation_diagnostics")).
+		WithArgs(true, spaceID, true).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.remember_attempt_diagnostic_retention_space_id', '', true)")).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 

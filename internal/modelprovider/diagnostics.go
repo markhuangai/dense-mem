@@ -27,6 +27,7 @@ type ProviderExchange struct {
 	StatusCode             int
 	Outcome                string
 	CaptureState           string
+	CaptureReason          string
 	StartedAt              time.Time
 	CompletedAt            time.Time
 }

@@ -618,6 +618,13 @@
       "source": "internal/storage/postgres/remember_attempt_diagnostics_migration_integration_test.go"
     },
     {
+      "id": "postgres/TestRememberAttemptDiagnosticsUnavailableMigrationSerializesRollbackAndResetsLockTimeout",
+      "package": "./internal/storage/postgres",
+      "run": "^TestRememberAttemptDiagnosticsUnavailableMigrationSerializesRollbackAndResetsLockTimeout$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/remember_attempt_diagnostics_migration_integration_test.go"
+    },
+    {
       "id": "postgres/TestSupporterConflictPolicyMigrationRewritesActiveWorkflow",
       "package": "./internal/storage/postgres",
       "run": "^TestSupporterConflictPolicyMigrationRewritesActiveWorkflow$",

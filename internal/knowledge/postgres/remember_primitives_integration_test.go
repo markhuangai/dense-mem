@@ -252,6 +252,23 @@ func TestRememberPolicyDiagnosticLegalHoldReleaseAndErasure(t *testing.T) {
 			ResponseContentType: "application/json", Outcome: "captured", CaptureState: "captured",
 		}},
 	}))
+	unavailableAttemptID := uuid.NewString()
+	require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
+		Attempt: RememberAttemptRecordInput{
+			TeamID: teamID, OwnerProfileID: credential.ID.String(), AttemptID: unavailableAttemptID,
+			SpaceID: credential.MemorySpaceID.String(), SpaceGeneration: credential.MemorySpaceGeneration,
+			IdempotencyKey: "remember-primitives-unavailable", RequestHash: "remember-primitives-unavailable-hash",
+			ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed",
+			FailedPhase: "embedding", ErrorCode: "embedding_unavailable", PublicResult: map[string]any{},
+		},
+		Diagnostics: []RememberAttemptDiagnosticInput{{
+			SequenceNo: 1, Kind: "provider_exchange", Component: "assessor", Outcome: "provider_not_called",
+			CaptureState: "unavailable", CaptureReason: "credential_protection_2",
+		}},
+	}))
+	unavailableDetail, err := repo.GetRememberAttemptDiagnostic(ctx, teamID, unavailableAttemptID)
+	require.NoError(t, err)
+	require.Equal(t, "unavailable", unavailableDetail.Diagnostics[0].CaptureState)
 	operation, created, err := privateRepo.RequestControlErasure(ctx, credential.MemorySpaceID, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "remember-primitives-erasure")
 	require.NoError(t, err)
 	require.True(t, created)

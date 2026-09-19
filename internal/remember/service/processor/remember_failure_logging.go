@@ -30,6 +30,7 @@ func (p *rememberSynchronousProcessor) logRememberFailureRetentionDegraded(
 	input rememberapp.RememberProcessRequest,
 	attemptID string,
 	phase string,
+	cause error,
 ) {
 	if p == nil || p.logger == nil {
 		return
@@ -42,6 +43,7 @@ func (p *rememberSynchronousProcessor) logRememberFailureRetentionDegraded(
 func (p *rememberSynchronousProcessor) logRememberIdempotencyLockCleanupFailure(
 	input rememberapp.RememberProcessRequest,
 	submissionID string,
+	cause error,
 ) {
 	if p == nil || p.logger == nil {
 		return
@@ -62,6 +64,8 @@ func rememberFailureRecoveryLogError(err error) error {
 		return fmt.Errorf("remember failure record persistence timed out: %w", context.DeadlineExceeded)
 	case errors.Is(err, context.Canceled):
 		return fmt.Errorf("remember failure record persistence was cancelled: %w", context.Canceled)
+	case err != nil:
+		return fmt.Errorf("remember failure record persistence failed: %w", err)
 	default:
 		return errors.New("remember failure record persistence failed")
 	}
