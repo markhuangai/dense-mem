@@ -77,3 +77,14 @@ func TestRememberAttemptDiagnosticsMigrationContract(t *testing.T) {
 	require.Equal(t, 1, strings.Count(migration, "CREATE TABLE IF NOT EXISTS remember_attempt_diagnostics"))
 	require.NotContains(t, migration, "DROP TABLE IF EXISTS remember_failure_artifacts")
 }
+
+func TestRememberAttemptDiagnosticsUnavailableCaptureMigrationContract(t *testing.T) {
+	migrationFile, err := migrationPath(getMigrationsDir(), 20260919010002)
+	require.NoError(t, err)
+	body, err := os.ReadFile(migrationFile)
+	require.NoError(t, err)
+	migration := string(body)
+	require.Contains(t, migration, "DROP CONSTRAINT IF EXISTS remember_attempt_diagnostics_capture_state_check")
+	require.Contains(t, migration, "'unavailable'")
+	require.Contains(t, migration, "cannot remove unavailable capture state while diagnostics exist")
+}

@@ -10,6 +10,7 @@ import (
 // ErrRememberAttemptDiagnosticNotFound is the stable storage/application
 // boundary error for a missing control-only diagnostic record.
 var ErrRememberAttemptDiagnosticNotFound = errors.New("remember attempt diagnostic not found")
+var ErrRememberInvocationDiagnosticNotFound = errors.New("remember invocation diagnostic not found")
 
 // DiagnosticCaptureState derives the bounded state used by both the capture
 // recorder and durable repository when a caller did not provide one.
@@ -90,8 +91,87 @@ type RememberAttemptDiagnosticInput struct {
 	StatusCode          int
 	Outcome             string
 	CaptureState        string
+	CaptureReason       string
 	CapturedAt          time.Time
 	ExpiresAt           time.Time
+}
+
+// RememberInvocationDiagnosticInput is the application-owned record for one
+// admitted Remember invocation. It is intentionally separate from
+// RememberAttemptRecordInput so replay and conflict captures cannot influence
+// canonical idempotency selection.
+type RememberInvocationDiagnosticInput struct {
+	TeamID                      string
+	OwnerProfileID              string
+	InvocationID                string
+	CanonicalAttemptID          string
+	SpaceID                     string
+	SpaceGeneration             int64
+	RequestHash                 string
+	CorrelationID               string
+	Classification              string
+	Outcome                     string
+	FailedPhase                 string
+	ErrorCode                   string
+	Retryable                   bool
+	Duration                    time.Duration
+	RequestBody                 []byte
+	RequestCaptureState         string
+	RequestCaptureReason        string
+	ProviderExchanges           []RememberAttemptDiagnosticInput
+	CallerResponse              []byte
+	CallerResponseCaptureState  string
+	CallerResponseCaptureReason string
+	CreatedAt                   time.Time
+	CompletedAt                 time.Time
+	ExpiresAt                   time.Time
+}
+
+type RememberInvocationDiagnosticRecord struct {
+	TeamID                      string
+	OwnerProfileID              string
+	InvocationID                string
+	CanonicalAttemptID          string
+	SpaceID                     string
+	SpaceGeneration             int64
+	RequestHash                 string
+	CorrelationID               string
+	Classification              string
+	Outcome                     string
+	FailedPhase                 string
+	ErrorCode                   string
+	Retryable                   bool
+	Duration                    time.Duration
+	RequestBody                 []byte
+	RequestCaptureState         string
+	RequestCaptureReason        string
+	ProviderExchanges           []RememberAttemptDiagnosticInput
+	CallerResponse              []byte
+	CallerResponseCaptureState  string
+	CallerResponseCaptureReason string
+	CreatedAt                   time.Time
+	CompletedAt                 time.Time
+	ExpiresAt                   time.Time
+	RetainedByLegalHold         bool
+}
+
+type RememberInvocationDiagnosticFilter struct {
+	TeamID         string
+	OwnerProfileID string
+	Outcome        string
+	Limit          int
+	Offset         int
+}
+
+type RememberInvocationDiagnosticRecordPage struct {
+	Records []RememberInvocationDiagnosticRecord
+	Total   int64
+}
+
+type RememberInvocationDiagnosticsRepository interface {
+	RecordRememberInvocationDiagnostic(context.Context, RememberInvocationDiagnosticInput) error
+	ListRememberInvocationDiagnostics(context.Context, RememberInvocationDiagnosticFilter) (*RememberInvocationDiagnosticRecordPage, error)
+	GetRememberInvocationDiagnostic(context.Context, string, string) (*RememberInvocationDiagnosticRecord, error)
 }
 
 // RememberAttemptDiagnosticFilter is the normalized filter supplied by the

@@ -87,7 +87,7 @@ func TestRememberFailureRecoveryErrorsAndCodes(t *testing.T) {
 	}{
 		{name: "deadline", err: context.DeadlineExceeded, want: "remember failure record persistence timed out: context deadline exceeded", code: "deadline_exceeded"},
 		{name: "cancelled", err: context.Canceled, want: "remember failure record persistence was cancelled: context canceled", code: "request_cancelled"},
-		{name: "other", err: errors.New("database down"), want: "remember failure record persistence failed", code: "persistence_failed"},
+		{name: "other", err: errors.New("database down"), want: "remember failure record persistence failed: database down", code: "persistence_failed"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			require.EqualError(t, rememberFailureRecoveryLogError(test.err), test.want)
@@ -97,8 +97,8 @@ func TestRememberFailureRecoveryErrorsAndCodes(t *testing.T) {
 	var nilLoggerProcessor *rememberSynchronousProcessor
 	input := rememberapp.RememberProcessRequest{TeamID: "team", OwnerProfileID: "owner"}
 	nilLoggerProcessor.logRememberFailureRecordError(input, "attempt", "assessment", "provider_unavailable", "corr", errors.New("x"))
-	nilLoggerProcessor.logRememberFailureRetentionDegraded(input, "attempt", "assessment")
-	nilLoggerProcessor.logRememberIdempotencyLockCleanupFailure(input, "attempt")
+	nilLoggerProcessor.logRememberFailureRetentionDegraded(input, "attempt", "assessment", errors.New("retention failed"))
+	nilLoggerProcessor.logRememberIdempotencyLockCleanupFailure(input, "attempt", errors.New("cleanup failed"))
 }
 
 func TestRememberFailureRecoveryLoggingCapturesFailureKinds(t *testing.T) {
@@ -110,8 +110,8 @@ func TestRememberFailureRecoveryLoggingCapturesFailureKinds(t *testing.T) {
 	processor.logRememberFailureRecordError(input, "attempt", "assessment", "provider_unavailable", "corr", context.DeadlineExceeded)
 	processor.logRememberFailureRecordError(input, "attempt", "assessment", "provider_unavailable", "corr", context.Canceled)
 	processor.logRememberFailureRecordError(input, "attempt", "assessment", "provider_unavailable", "corr", errors.New("x"))
-	processor.logRememberFailureRetentionDegraded(input, "attempt", "assessment")
-	processor.logRememberIdempotencyLockCleanupFailure(input, "attempt")
+	processor.logRememberFailureRetentionDegraded(input, "attempt", "assessment", errors.New("retention failed"))
+	processor.logRememberIdempotencyLockCleanupFailure(input, "attempt", errors.New("cleanup failed"))
 	require.Equal(t, []string{
 		"remember_failure_record_failed", "remember_failure_record_failed", "remember_failure_record_failed",
 	}, logger.errors)
@@ -156,6 +156,24 @@ func TestRememberProcessorOwnerReturnsProcessingFailureFromLockCallback(t *testi
 	require.Equal(t, 1, locker.lockCalls)
 }
 
+func TestRememberProcessorRecordsPreCallbackLockFailureAsExecutionFailure(t *testing.T) {
+	base := &rememberFailureLedgerStub{}
+	locker := &rememberWaitAwareLedgerStub{
+		rememberFailureLedgerStub: base,
+		lockErr:                   knowledgecontract.ErrRememberIdempotencyBusy,
+		skipCallback:              true,
+	}
+	processor := &rememberSynchronousProcessor{ledger: locker}
+	_, err := processor.ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "busy-key", RequestHash: "hash",
+		OriginalRequest: []byte(`{"evidence":[{"content":"admitted"}]}`),
+	})
+	require.ErrorIs(t, err, knowledgecontract.ErrRememberIdempotencyBusy)
+	require.Equal(t, "execution", base.invocation.Classification)
+	require.Equal(t, "failed", base.invocation.Outcome)
+	require.Equal(t, "database_failure", base.invocation.ErrorCode)
+}
+
 func TestRememberProcessorCoversPipelineFailurePhases(t *testing.T) {
 	input := rememberapp.RememberProcessRequest{
 		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "key", RequestHash: "hash",
@@ -170,6 +188,8 @@ func TestRememberProcessorCoversPipelineFailurePhases(t *testing.T) {
 		var processErr *rememberapp.RememberProcessError
 		require.ErrorAs(t, err, &processErr)
 		require.Equal(t, "embedding", ledger.failure.Attempt.FailedPhase)
+		require.Equal(t, "failed", ledger.invocation.Outcome)
+		require.Equal(t, "embedding", ledger.invocation.FailedPhase)
 	})
 	t.Run("duplicate resolution", func(t *testing.T) {
 		ledger := &rememberPipelineLedgerStub{
@@ -180,6 +200,8 @@ func TestRememberProcessorCoversPipelineFailurePhases(t *testing.T) {
 		var processErr *rememberapp.RememberProcessError
 		require.ErrorAs(t, err, &processErr)
 		require.Equal(t, "embedding", ledger.failure.Attempt.FailedPhase)
+		require.Equal(t, "failed", ledger.invocation.Outcome)
+		require.Equal(t, "embedding", ledger.invocation.FailedPhase)
 	})
 	t.Run("duplicate embedding provider unavailable", func(t *testing.T) {
 		ledger := &rememberPipelineLedgerStub{
@@ -193,6 +215,8 @@ func TestRememberProcessorCoversPipelineFailurePhases(t *testing.T) {
 		require.ErrorAs(t, err, &processErr)
 		require.Equal(t, "embedding", ledger.failure.Attempt.FailedPhase)
 		require.Equal(t, string(rememberapp.SubmissionErrorConfigurationInvalid), processErr.Status.Errors[0].Code)
+		require.Equal(t, "failed", ledger.invocation.Outcome)
+		require.Equal(t, "embedding", ledger.invocation.FailedPhase)
 	})
 
 	var nilProcessor *rememberSynchronousProcessor
@@ -223,6 +247,44 @@ func TestRememberProcessorCommitsValidatedAssessmentAndResult(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "committed", status.SubmissionID)
 	require.Equal(t, "completed", status.ProcessingState)
+	require.Equal(t, "evaluated_zero", ledger.invocation.Outcome)
+	require.Equal(t, "execution", ledger.invocation.Classification)
+}
+
+func TestRememberProcessorRecordsAssessmentRejectionTrails(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "key", RequestHash: "hash",
+		OriginalRequest: []byte(`{"evidence":[{"content":"admitted"}]}`),
+		Evidence:        []rememberapp.EvidenceInput{{Content: "admitted", ForceInsert: true}},
+	}
+
+	t.Run("repeated invalid assessor output", func(t *testing.T) {
+		ledger := &rememberPipelineLedgerStub{rememberFailureLedgerStub: &rememberFailureLedgerStub{}}
+		provider := &processorAssessmentProviderStub{invalid: true}
+		processor := &rememberSynchronousProcessor{ledger: ledger, catalog: &processorAssessmentCatalogStub{}, provider: provider}
+		_, err := processor.ProcessRemember(context.Background(), input)
+		var processErr *rememberapp.RememberProcessError
+		require.ErrorAs(t, err, &processErr)
+		require.Equal(t, "failed", ledger.invocation.Outcome)
+		require.Equal(t, "assessment", ledger.invocation.FailedPhase)
+		require.Equal(t, string(rememberapp.SubmissionErrorProviderResponseInvalid), ledger.invocation.ErrorCode)
+		require.Equal(t, 1, provider.assessCalls)
+		require.Equal(t, assessor.SemanticAssessmentMaxProviderTurns-1, provider.repairCalls)
+	})
+
+	t.Run("later assessor rejection retains admitted request", func(t *testing.T) {
+		ledger := &rememberPipelineLedgerStub{rememberFailureLedgerStub: &rememberFailureLedgerStub{}}
+		provider := &processorAssessmentProviderStub{reject: true}
+		processor := &rememberSynchronousProcessor{ledger: ledger, catalog: &processorAssessmentCatalogStub{}, provider: provider}
+		_, err := processor.ProcessRemember(context.Background(), input)
+		var processErr *rememberapp.RememberProcessError
+		require.ErrorAs(t, err, &processErr)
+		require.ErrorIs(t, err, rememberapp.ErrRememberPolicyRejected)
+		require.Equal(t, "failed", ledger.invocation.Outcome)
+		require.Equal(t, "assessment", ledger.invocation.FailedPhase)
+		require.Contains(t, string(ledger.invocation.RequestBody), "admitted")
+		require.NotContains(t, string(ledger.invocation.RequestBody), "hash_only")
+	})
 }
 
 func TestRememberProcessorExistingAttemptsTakeTerminalAndConflictPaths(t *testing.T) {
@@ -501,26 +563,48 @@ type processorAssessmentSessionStub struct{}
 
 func (*processorAssessmentSessionStub) SessionID() string { return "processor-assessment" }
 
-type processorAssessmentProviderStub struct{}
-
-func (*processorAssessmentProviderStub) Assess(_ context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
-	security := make([]assessor.SemanticAssessmentEvidenceSecurityResult, 0, len(request.Evidence))
-	for _, evidence := range request.Evidence {
-		security = append(security, assessor.SemanticAssessmentEvidenceSecurityResult{EvidenceID: evidence.EvidenceID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}})
-	}
-	return &processorAssessmentSessionStub{}, assessor.SemanticAssessmentTurn{
-		Response: assessor.SemanticAssessmentResponse{
-			RequestID: request.RequestID, EvidenceSecurityResults: security,
-			EvidenceEquivalenceResults: []assessor.SemanticAssessmentEvidenceEquivalenceResult{},
-			EvidenceConflictResults:    []assessor.SemanticAssessmentEvidenceConflictResult{},
-			EntityResults:              []assessor.SemanticAssessmentEntityResult{},
-			RelationshipResults:        []assessor.SemanticAssessmentRelationshipResult{},
-		},
-	}, nil
+type processorAssessmentProviderStub struct {
+	reject      bool
+	invalid     bool
+	assessCalls int
+	repairCalls int
 }
 
-func (*processorAssessmentProviderStub) Repair(context.Context, assessor.SemanticAssessmentSession, assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
-	return assessor.SemanticAssessmentTurn{}, errors.New("unexpected assessment repair")
+func (p *processorAssessmentProviderStub) Assess(_ context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
+	p.assessCalls++
+	return &processorAssessmentSessionStub{}, assessor.SemanticAssessmentTurn{Response: p.response(request)}, nil
+}
+
+func (p *processorAssessmentProviderStub) response(request assessor.SemanticAssessmentRequest) assessor.SemanticAssessmentResponse {
+	if p.invalid {
+		return assessor.SemanticAssessmentResponse{RequestID: request.RequestID}
+	}
+	security := make([]assessor.SemanticAssessmentEvidenceSecurityResult, 0, len(request.Evidence))
+	for _, evidence := range request.Evidence {
+		result := assessor.SemanticAssessmentEvidenceSecurityResult{EvidenceID: evidence.EvidenceID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}}
+		if p.reject {
+			startRef, _ := assessor.SemanticAssessmentBoundaryRef(evidence, 0)
+			endRef, _ := assessor.SemanticAssessmentBoundaryRef(evidence, 1)
+			result.Decision = "reject"
+			result.Signals = []assessor.SemanticAssessmentSecuritySignal{{EvidenceID: evidence.EvidenceID, Kind: "instruction_override", StartRef: startRef, EndRef: endRef}}
+		}
+		security = append(security, result)
+	}
+	return assessor.SemanticAssessmentResponse{
+		RequestID: request.RequestID, EvidenceSecurityResults: security,
+		EvidenceEquivalenceResults: []assessor.SemanticAssessmentEvidenceEquivalenceResult{},
+		EvidenceConflictResults:    []assessor.SemanticAssessmentEvidenceConflictResult{},
+		EntityResults:              []assessor.SemanticAssessmentEntityResult{},
+		RelationshipResults:        []assessor.SemanticAssessmentRelationshipResult{},
+	}
+}
+
+func (p *processorAssessmentProviderStub) Repair(_ context.Context, _ assessor.SemanticAssessmentSession, request assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
+	p.repairCalls++
+	if !p.invalid {
+		return assessor.SemanticAssessmentTurn{}, errors.New("unexpected assessment repair")
+	}
+	return assessor.SemanticAssessmentTurn{Response: p.response(request.Request)}, nil
 }
 
 func (*processorAssessmentProviderStub) ModelName() string { return "processor-assessment-model" }

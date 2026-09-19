@@ -252,7 +252,8 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 		}
 	}
 	processInput := RememberProcessRequest{
-		TeamID: actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), SpaceID: rememberSpaceID(space),
+		InvocationStartedAt: started,
+		TeamID:              actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), SpaceID: rememberSpaceID(space),
 		SpaceGeneration: space.Generation, IdempotencyKey: strings.TrimSpace(req.IdempotencyKey), RequestHash: requestHash,
 		SourceSummary: sourceSummary(req.Evidence), Proposal: proposal, Metadata: metadata,
 		Evidence:        repositoryEvidenceInputs(req.Evidence),
@@ -262,6 +263,7 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 		processInput.SecuritySignals = append([]SubmissionSecurityBatchSignal(nil), scan.Signals...)
 		processInput.SecuritySignalsTruncated = scan.SignalsTruncated
 		processInput.SecurityRejected = true
+		processInput.InitialSecurityRejected = true
 	}
 	if s.synchronous != nil {
 		terminal, err := s.synchronous.ProcessRemember(ctx, processInput)

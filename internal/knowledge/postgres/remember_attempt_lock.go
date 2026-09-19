@@ -65,7 +65,8 @@ func (r *Store) withRememberIdempotencyLock(
 			r.rememberIdempotencyLockMu.Lock()
 			err := existing.err
 			r.rememberIdempotencyLockMu.Unlock()
-			return err
+			callbackErr := fn(true)
+			return errors.Join(err, callbackErr)
 		case <-ctx.Done():
 			return ctx.Err()
 		}

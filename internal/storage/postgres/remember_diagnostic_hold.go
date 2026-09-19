@@ -32,6 +32,15 @@ func SetRememberAttemptDiagnosticHoldStateTx(ctx context.Context, tx *gorm.DB, s
 	if result.Error != nil {
 		return result.Error
 	}
+	result = tx.WithContext(ctx).Exec(`
+		UPDATE remember_invocation_diagnostics
+		SET retained_by_legal_hold = ?
+		WHERE space_id = ?::uuid
+		  AND retained_by_legal_hold IS DISTINCT FROM ?
+	`, retained, spaceID, retained)
+	if result.Error != nil {
+		return result.Error
+	}
 	return tx.WithContext(ctx).Exec(
 		"SELECT set_config('app.remember_attempt_diagnostic_retention_space_id', '', true)",
 	).Error

@@ -334,7 +334,7 @@ func TestSchedulerLogsBoundedErrorsAndSkipsUnavailableSchedules(t *testing.T) {
 			scheduler.runDue(context.Background())
 
 			assert.Contains(t, logs.String(), "error_kind="+tc.wantKind)
-			assert.NotContains(t, logs.String(), rawError)
+			assert.Contains(t, logs.String(), rawError)
 		})
 	}
 

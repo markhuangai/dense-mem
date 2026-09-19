@@ -30,18 +30,23 @@ func (p *rememberSynchronousProcessor) logRememberFailureRetentionDegraded(
 	input rememberapp.RememberProcessRequest,
 	attemptID string,
 	phase string,
+	cause error,
 ) {
 	if p == nil || p.logger == nil {
 		return
 	}
 	attrs := rememberFailureLogAttrs(input, attemptID, phase, "retention_sync_failed", rememberProcessCorrelationID(input.Metadata))
 	attrs = append(attrs, observability.String("degradation_code", "legal_hold_retention_sync_failed"))
+	if cause != nil {
+		attrs = append(attrs, observability.String("error", cause.Error()))
+	}
 	p.logger.Warn("remember_failure_retention_degraded", attrs...)
 }
 
 func (p *rememberSynchronousProcessor) logRememberIdempotencyLockCleanupFailure(
 	input rememberapp.RememberProcessRequest,
 	submissionID string,
+	cause error,
 ) {
 	if p == nil || p.logger == nil {
 		return
@@ -53,6 +58,9 @@ func (p *rememberSynchronousProcessor) logRememberIdempotencyLockCleanupFailure(
 		"coordination_cleanup_failed",
 		rememberProcessCorrelationID(input.Metadata),
 	)
+	if cause != nil {
+		attrs = append(attrs, observability.String("error", cause.Error()))
+	}
 	p.logger.Warn("remember_idempotency_lock_cleanup_failed", attrs...)
 }
 
@@ -62,6 +70,8 @@ func rememberFailureRecoveryLogError(err error) error {
 		return fmt.Errorf("remember failure record persistence timed out: %w", context.DeadlineExceeded)
 	case errors.Is(err, context.Canceled):
 		return fmt.Errorf("remember failure record persistence was cancelled: %w", context.Canceled)
+	case err != nil:
+		return fmt.Errorf("remember failure record persistence failed: %w", err)
 	default:
 		return errors.New("remember failure record persistence failed")
 	}
