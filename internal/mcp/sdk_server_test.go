@@ -345,6 +345,15 @@ type contextualMCPLogger struct {
 	testLoggerAdapter
 }
 
+type sdkCancellingLogWriter struct {
+	cancel context.CancelFunc
+}
+
+func (w sdkCancellingLogWriter) Write(data []byte) (int, error) {
+	w.cancel()
+	return len(data), nil
+}
+
 func (l contextualMCPLogger) ErrorContext(ctx context.Context, message string, err error, fields ...LogField) {
 	if logger, ok := l.delegate.(interface {
 		ErrorContext(context.Context, string, error, ...observability.LogAttr)
@@ -356,13 +365,6 @@ func (l contextualMCPLogger) ErrorContext(ctx context.Context, message string, e
 }
 
 func TestSDKToolOutcomeLoggingDetachesCancelledContextForPersistence(t *testing.T) {
-	root := observability.NewWithHandler(slog.NewJSONHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	sink := &cancellationRejectingMCPLogSink{}
-	require.NoError(t, root.AttachSink(sink))
-	server := &Server{logger: testLoggerAdapter{delegate: root}}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
 	for _, test := range []struct {
 		name    string
 		result  *sdkmcp.CallToolResult
@@ -375,14 +377,26 @@ func TestSDKToolOutcomeLoggingDetachesCancelledContextForPersistence(t *testing.
 		{name: "cancelled", outcome: "cancelled"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			server.logSDKToolOutcome(ctx, "tool", time.Now(), test.result, test.err)
-		})
-	}
+			for _, cancelBeforeLog := range []bool{true, false} {
+				ctx, cancel := context.WithCancel(correlation.WithID(context.Background(), "trusted-correlation"))
+				defer cancel()
+				root := observability.NewWithHandler(slog.NewJSONHandler(sdkCancellingLogWriter{cancel: cancel}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+				sink := &cancellationRejectingMCPLogSink{}
+				require.NoError(t, root.AttachSink(sink))
+				server := &Server{logger: contextualMCPLogger{testLoggerAdapter{delegate: root}}}
+				if cancelBeforeLog || test.outcome == "cancelled" {
+					cancel()
+				}
 
-	require.Len(t, sink.records, 4)
-	for index, want := range []string{"success", "tool_error", "rpc_error", "cancelled"} {
-		require.Equal(t, "mcp_tool_outcome", sink.records[index].Message)
-		require.Equal(t, want, sink.records[index].Attrs["application_outcome"])
+				server.logSDKToolOutcome(ctx, "tool", time.Now(), test.result, test.err)
+
+				require.ErrorIs(t, ctx.Err(), context.Canceled)
+				require.Len(t, sink.records, 1)
+				require.Equal(t, "mcp_tool_outcome", sink.records[0].Message)
+				require.Equal(t, test.outcome, sink.records[0].Attrs["application_outcome"])
+				require.Equal(t, "trusted-correlation", sink.records[0].CorrelationID)
+			}
+		})
 	}
 }
 

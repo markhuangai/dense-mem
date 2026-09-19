@@ -227,7 +227,7 @@ func (s *Server) logSDKToolOutcome(ctx context.Context, name string, started tim
 		attrs = appendSDKApplicationRefs(attrs, result.StructuredContent)
 	}
 	logCtx := ctx
-	if ctx != nil && ctx.Err() != nil {
+	if ctx != nil {
 		logCtx = context.WithoutCancel(ctx)
 	}
 	if outcome == "success" {
