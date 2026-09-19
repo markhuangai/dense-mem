@@ -8,7 +8,6 @@ const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
 const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const apiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
-const providerURL = requiredEnv("DENSE_MEM_E2E_PROVIDER_URL").replace(/\/$/, "");
 
 const feedbackTool = "submit_recall_session_feedback";
 const dreamTools = ["list_dreams", "get_dream", "resolve_dream_feedback"];
@@ -178,7 +177,9 @@ async function assertTransportLogOutcomes() {
   await fetch(`${userURL}/unmatched/${unmatchedMarker}`, { method: "GET" });
   await rpc("tools/call", { name: "remember", arguments: { unexpected: marker } });
   await assertToolNotFound("missing-transport-failure-tool", {});
-  await assertCancelledTransportOutcome(markerFrom);
+  if (process.env.DENSE_MEM_E2E_SCENARIO === "mcp_transport_cancellation") {
+    await assertCancelledTransportOutcome(markerFrom);
+  }
   let rows = [];
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const page = await controlJSON(`/logs?limit=500&sort=timestamp&direction=desc&from=${encodeURIComponent(markerFrom)}`, { method: "GET" });
@@ -201,6 +202,7 @@ async function assertTransportLogOutcomes() {
 }
 
 async function assertCancelledTransportOutcome(markerFrom) {
+  const providerURL = requiredEnv("DENSE_MEM_E2E_PROVIDER_URL").replace(/\/$/, "");
   const baseline = await httpJSON(`${providerURL}/health`);
   const baselineEmbeddingCalls = Number(baseline.embedding_calls || 0);
   const correlationID = randomUUID();

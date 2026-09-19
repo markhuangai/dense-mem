@@ -6,6 +6,14 @@
       "name": "mcp_boundaries",
       "isolation": "exclusive",
       "runtime": "production",
+      "helper_profiles": [],
+      "timeout_minutes": 30,
+      "playwright": false
+    },
+    {
+      "name": "mcp_transport_cancellation",
+      "isolation": "exclusive",
+      "runtime": "production",
       "helper_profiles": ["synchronous_write"],
       "timeout_minutes": 30,
       "playwright": false
