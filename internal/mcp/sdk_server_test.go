@@ -316,6 +316,20 @@ func (s *cancellationRejectingMCPLogSink) WriteLog(ctx context.Context, record o
 	return nil
 }
 
+type contextualMCPLogger struct {
+	testLoggerAdapter
+}
+
+func (l contextualMCPLogger) ErrorContext(ctx context.Context, message string, err error, fields ...LogField) {
+	if logger, ok := l.delegate.(interface {
+		ErrorContext(context.Context, string, error, ...observability.LogAttr)
+	}); ok {
+		logger.ErrorContext(ctx, message, err, testObservabilityFields(fields)...)
+		return
+	}
+	l.Error(message, err, fields...)
+}
+
 func TestSDKToolOutcomeLoggingDetachesCancelledContextForPersistence(t *testing.T) {
 	root := observability.NewWithHandler(slog.NewJSONHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	sink := &cancellationRejectingMCPLogSink{}
@@ -329,6 +343,21 @@ func TestSDKToolOutcomeLoggingDetachesCancelledContextForPersistence(t *testing.
 	require.Len(t, sink.records, 1)
 	require.Equal(t, "mcp_tool_outcome", sink.records[0].Message)
 	require.Equal(t, "cancelled", sink.records[0].Attrs["application_outcome"])
+}
+
+func TestSDKToolLookupFailureLoggingDetachesCancelledContextForPersistence(t *testing.T) {
+	root := observability.NewWithHandler(slog.NewJSONHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	sink := &cancellationRejectingMCPLogSink{}
+	require.NoError(t, root.AttachSink(sink))
+	server := &Server{logger: contextualMCPLogger{testLoggerAdapter{delegate: root}}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	server.logSDKToolLookupFailure(ctx, registry.Tool{}, false, false, errCodeMethodNotFound)
+
+	require.Len(t, sink.records, 1)
+	require.Equal(t, "mcp_tool_outcome", sink.records[0].Message)
+	require.Equal(t, "tool_error", sink.records[0].Attrs["application_outcome"])
 }
 
 func TestSDKHTTPHandlerRejectsUnknownProtocolHeader(t *testing.T) {

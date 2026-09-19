@@ -442,10 +442,14 @@ func (s *Server) logSDKToolLookupFailure(ctx context.Context, tool registry.Tool
 	if visible && strings.TrimSpace(tool.Name) != "" {
 		attrs = append(attrs, LogField{Key: "tool", Value: tool.Name})
 	}
+	logCtx := ctx
+	if ctx != nil {
+		logCtx = context.WithoutCancel(ctx)
+	}
 	if contextual, ok := s.logger.(interface {
 		ErrorContext(context.Context, string, error, ...LogField)
 	}); ok {
-		contextual.ErrorContext(ctx, "mcp_tool_outcome", errors.New("mcp tool lookup rejected"), attrs...)
+		contextual.ErrorContext(logCtx, "mcp_tool_outcome", errors.New("mcp tool lookup rejected"), attrs...)
 		return
 	}
 	s.logger.Error("mcp_tool_outcome", errors.New("mcp tool lookup rejected"), attrs...)
