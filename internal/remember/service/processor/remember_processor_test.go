@@ -132,9 +132,23 @@ func TestRememberInvocationDiagnosticsRecordOutcomeAndCause(t *testing.T) {
 		InvocationStartedAt: started, RequestHash: "sha256:request", OriginalRequest: []byte(`{"evidence":[{"content":"admitted"}]}`),
 	}, "33333333-3333-4333-8333-333333333333", "execution", "33333333-3333-4333-8333-333333333333", "commit", nil, status, nil)
 	require.Equal(t, "evaluated_zero", ledger.invocation.Outcome)
+	require.Empty(t, ledger.invocation.FailedPhase)
 	require.Equal(t, "sha256:request", ledger.invocation.RequestHash)
 	require.WithinDuration(t, started, ledger.invocation.CreatedAt, 50*time.Millisecond)
 	require.GreaterOrEqual(t, ledger.invocation.Duration, time.Second)
+}
+
+func TestRememberInvocationDiagnosticsPreservesZeroResultReplayOutcome(t *testing.T) {
+	ledger := &rememberFailureLedgerStub{}
+	processor := &rememberSynchronousProcessor{ledger: ledger}
+	processor.recordRememberInvocation(context.Background(), rememberapp.RememberProcessRequest{
+		TeamID: "11111111-1111-4111-8111-111111111111", OwnerProfileID: "22222222-2222-4222-8222-222222222222",
+		RequestHash: "sha256:replay", InvocationStartedAt: time.Now().UTC(), OriginalRequest: []byte(`{"evidence":[]}`),
+	}, "33333333-3333-4333-8333-333333333333", "replay", "33333333-3333-4333-8333-333333333333", "replay", nil,
+		&rememberapp.SubmissionStatusResult{ProcessingState: "completed"}, nil)
+
+	require.Equal(t, "replayed", ledger.invocation.Outcome)
+	require.Empty(t, ledger.invocation.FailedPhase)
 }
 
 func TestRememberInvocationLoggingPreservesFailureCauseThroughFallbackLogger(t *testing.T) {
@@ -605,6 +619,7 @@ func TestRememberProcessorWaiterRejectsRequestHashMismatch(t *testing.T) {
 	require.Equal(t, processErr.Status, status)
 	require.Equal(t, "conflict", ledger.invocation.Classification)
 	require.Equal(t, "conflict", ledger.invocation.Outcome)
+	require.Empty(t, ledger.invocation.FailedPhase)
 }
 
 func TestRememberProcessorWaiterLockCancellationReturnsBeforeReplayLoad(t *testing.T) {
@@ -627,6 +642,9 @@ func TestRememberProcessorWaiterLockCancellationReturnsBeforeReplayLoad(t *testi
 	require.Empty(t, ledger.loadContexts, "a cancelled lock waiter must not load a replay")
 	require.Equal(t, "execution", ledger.invocation.Classification)
 	require.Equal(t, "cancelled", ledger.invocation.Outcome)
+	require.Equal(t, "request_timeout", ledger.invocation.ErrorCode)
+	require.True(t, ledger.invocation.Retryable)
+	require.Equal(t, "idempotency_wait", ledger.invocation.FailedPhase)
 	require.Empty(t, ledger.invocation.CanonicalAttemptID)
 }
 

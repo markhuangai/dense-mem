@@ -173,6 +173,7 @@ func TestRememberProcessorRecordsPreCallbackLockFailureAsExecutionFailure(t *tes
 	require.Equal(t, "execution", base.invocation.Classification)
 	require.Equal(t, "failed", base.invocation.Outcome)
 	require.Equal(t, "database_failure", base.invocation.ErrorCode)
+	require.True(t, base.invocation.Retryable)
 }
 
 func TestRememberProcessorCoversPipelineFailurePhases(t *testing.T) {

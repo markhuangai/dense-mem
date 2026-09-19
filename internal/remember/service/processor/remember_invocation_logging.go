@@ -88,13 +88,12 @@ func (p *rememberSynchronousProcessor) recordRememberInvocation(
 	if status != nil && len(status.Errors) > 0 {
 		outcome = "failed"
 	}
-	if outcome == "completed" && status != nil && len(status.RelationshipResults) == 0 {
-		outcome = "evaluated_zero"
-	}
 	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
 		outcome = "cancelled"
 	} else if outcome == "completed" && classification == "replay" {
 		outcome = "replayed"
+	} else if outcome == "completed" && status != nil && len(status.RelationshipResults) == 0 {
+		outcome = "evaluated_zero"
 	}
 	if classification == "conflict" && (outcome == "completed" || outcome == "evaluated_zero" || errors.Is(cause, rememberapp.ErrRememberConflict) || errors.Is(cause, repository.ErrIdempotencyConflict)) {
 		outcome = "conflict"
@@ -105,13 +104,19 @@ func (p *rememberSynchronousProcessor) recordRememberInvocation(
 		errorCode = status.Errors[0].Code
 		retryable = status.Errors[0].Retryable
 	} else if cause != nil {
-		errorCode = string(rememberFailureCode(phase, cause))
+		code := rememberFailureCode(phase, cause)
+		errorCode = string(code)
+		retryable = rememberapp.StatusError(code).Retryable
+	}
+	failedPhase := ""
+	if outcome == "failed" || outcome == "cancelled" {
+		failedPhase = phase
 	}
 	record := repository.RememberInvocationDiagnosticInput{
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, InvocationID: invocationID,
 		CanonicalAttemptID: canonicalAttemptID, SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
 		RequestHash: input.RequestHash, CorrelationID: rememberProcessCorrelationID(input.Metadata),
-		Classification: classification, Outcome: outcome, FailedPhase: phase, ErrorCode: errorCode,
+		Classification: classification, Outcome: outcome, FailedPhase: failedPhase, ErrorCode: errorCode,
 		Retryable: retryable, RequestBody: requestBody, RequestCaptureState: requestCaptureState, RequestCaptureReason: requestCaptureReason,
 		ProviderExchanges: providerExchanges, CallerResponse: callerBody,
 		CallerResponseCaptureState: callerCaptureState, CallerResponseCaptureReason: callerCaptureReason,
