@@ -25,6 +25,15 @@ func TestWithClientProvidedIDMarksSource(t *testing.T) {
 	}
 }
 
+func TestIsSafeClientIDRequiresUUIDFormat(t *testing.T) {
+	if !IsSafeClientID("123e4567-e89b-12d3-a456-426614174000") {
+		t.Fatal("canonical UUID should be safe for operator attribution")
+	}
+	if IsSafeClientID("dm_live_client_secret") {
+		t.Fatal("credential-shaped correlation ID must not be trusted")
+	}
+}
+
 func TestFromContext_EmptyWhenUnset(t *testing.T) {
 	if got := FromContext(context.Background()); got != "" {
 		t.Errorf("FromContext() = %q; want empty string", got)

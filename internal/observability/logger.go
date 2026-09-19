@@ -765,6 +765,7 @@ func trustedContextAttrs(ctx context.Context, protector *CredentialProtector) ma
 	secrets := AuthenticationSecretsFromContext(ctx)
 	_, hasActor := requestctx.ActorFromContext(ctx)
 	if id := correlation.FromContext(ctx); id != "" &&
+		(!correlation.IsClientProvided(ctx) || correlation.IsSafeClientID(id)) &&
 		(!correlation.IsClientProvided(ctx) || hasActor || requestctx.AuthenticationVerifiedFromContext(ctx)) {
 		attrs["correlation_id"] = protectTrustedCorrelationID(id, protector, secrets)
 	}

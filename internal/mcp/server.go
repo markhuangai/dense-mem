@@ -17,7 +17,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/promptcatalog"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/tools"
@@ -227,9 +226,6 @@ func (s *Server) logToolInputRejected(ctx context.Context, toolName, reasonCode 
 		{Key: "reference_type", Value: "mcp_tool"},
 		{Key: "reference_id", Value: toolName},
 		{Key: "reason_code", Value: reasonCode},
-	}
-	if correlationID := correlation.FromContext(ctx); correlationID != "" {
-		attrs = append(attrs, LogField{Key: "correlation_id", Value: correlationID})
 	}
 	if actor, ok := requestctx.ActorFromContext(ctx); ok && actor.OwnerID != uuid.Nil {
 		attrs = append(attrs, LogField{Key: "profile_id", Value: actor.OwnerID.String()})

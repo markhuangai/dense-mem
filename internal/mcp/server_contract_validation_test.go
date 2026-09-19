@@ -204,9 +204,10 @@ func TestServerInputRejectionPreservesSecretRedactionContext(t *testing.T) {
 	require.NoError(t, reg.Register(tool))
 
 	teamID := uuid.New()
-	secret := "mcp-client-correlation-auth-secret"
-	ctx := correlation.WithClientProvidedID(context.Background(), secret)
-	ctx = observability.WithAuthenticationSecrets(ctx, secret)
+	correlationSecret := "dm_live_client-b"
+	authenticationSecret := "dm_live_client-a"
+	ctx := correlation.WithClientProvidedID(context.Background(), correlationSecret)
+	ctx = observability.WithAuthenticationSecrets(ctx, authenticationSecret)
 	server := NewServer(reg, teamID.String(), testLoggerAdapter{delegate: root})
 
 	_, rpcErr := server.invokeTool(ctx, registry.ToolRemember, map[string]any{
@@ -218,8 +219,10 @@ func TestServerInputRejectionPreservesSecretRedactionContext(t *testing.T) {
 
 	recordJSON, err := json.Marshal(sink.records[0])
 	require.NoError(t, err)
-	require.NotContains(t, string(recordJSON), secret)
-	require.NotContains(t, output.String(), secret)
+	require.NotContains(t, string(recordJSON), correlationSecret)
+	require.NotContains(t, string(recordJSON), authenticationSecret)
+	require.NotContains(t, output.String(), correlationSecret)
+	require.NotContains(t, output.String(), authenticationSecret)
 	require.Contains(t, strings.TrimSpace(output.String()), "mcp_tool_input_rejected")
 }
 

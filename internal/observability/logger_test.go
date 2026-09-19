@@ -442,12 +442,25 @@ func TestClientProvidedCorrelationIsRetainedAfterAuthenticationBinding(t *testin
 	root := New(slog.LevelDebug)
 	sink := &recordingLogSink{}
 	require.NoError(t, root.AttachSink(sink))
-	ctx := correlation.WithClientProvidedID(context.Background(), "request-correlation")
+	correlationID := "123e4567-e89b-12d3-a456-426614174000"
+	ctx := correlation.WithClientProvidedID(context.Background(), correlationID)
 	ctx = requestctx.WithAuthenticationSecrets(ctx, "presented-bearer")
 	ctx = requestctx.WithAuthenticationVerified(ctx)
 	root.InfoContext(ctx, "authenticated request")
 	require.Len(t, sink.records, 1)
-	assert.Equal(t, "request-correlation", sink.records[0].CorrelationID)
+	assert.Equal(t, correlationID, sink.records[0].CorrelationID)
+}
+
+func TestClientProvidedCredentialShapedCorrelationIsSuppressedAfterAuthenticationBinding(t *testing.T) {
+	root := New(slog.LevelDebug)
+	sink := &recordingLogSink{}
+	require.NoError(t, root.AttachSink(sink))
+	ctx := correlation.WithClientProvidedID(context.Background(), "dm_live_client-b")
+	ctx = requestctx.WithAuthenticationSecrets(ctx, "dm_live_client-a")
+	ctx = requestctx.WithAuthenticationVerified(ctx)
+	root.InfoContext(ctx, "authenticated request")
+	require.Len(t, sink.records, 1)
+	assert.Empty(t, sink.records[0].CorrelationID)
 }
 
 func TestClientProvidedCorrelationRejectsUnverifiedPresentedSecret(t *testing.T) {

@@ -5,7 +5,11 @@
 // the key here keeps the service layer from importing http/middleware.
 package correlation
 
-import "context"
+import (
+	"context"
+
+	"github.com/google/uuid"
+)
 
 type contextKey struct{}
 
@@ -20,8 +24,8 @@ func WithID(ctx context.Context, id string) context.Context {
 }
 
 // WithClientProvidedID carries a correlation identifier supplied by an HTTP
-// client. The logger can keep it after authentication binds the request while
-// suppressing it on pre-authentication failures.
+// client. Operator attribution retains it only when authentication binds the
+// request and the value passes IsSafeClientID.
 func WithClientProvidedID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, contextKey{}, value{id: id, clientProvided: true})
 }
@@ -49,4 +53,11 @@ func IsClientProvided(ctx context.Context) bool {
 	}
 	stored, ok := ctx.Value(contextKey{}).(value)
 	return ok && stored.clientProvided
+}
+
+// IsSafeClientID reports whether a client-provided correlation ID has the
+// server-safe UUID format allowed for trusted operator attribution.
+func IsSafeClientID(id string) bool {
+	_, err := uuid.Parse(id)
+	return err == nil
 }
