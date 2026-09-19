@@ -15,6 +15,7 @@ import (
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
@@ -261,7 +262,7 @@ func TestRememberProcessorRecordsAssessmentRejectionTrails(t *testing.T) {
 	t.Run("repeated invalid assessor output", func(t *testing.T) {
 		ledger := &rememberPipelineLedgerStub{rememberFailureLedgerStub: &rememberFailureLedgerStub{}}
 		provider := &processorAssessmentProviderStub{invalid: true}
-		processor := &rememberSynchronousProcessor{ledger: ledger, catalog: &processorAssessmentCatalogStub{}, provider: provider}
+		processor := &rememberSynchronousProcessor{ledger: ledger, catalog: &processorAssessmentCatalogStub{}, provider: provider, protector: observability.NewCredentialProtector()}
 		_, err := processor.ProcessRemember(context.Background(), input)
 		var processErr *rememberapp.RememberProcessError
 		require.ErrorAs(t, err, &processErr)
@@ -275,7 +276,7 @@ func TestRememberProcessorRecordsAssessmentRejectionTrails(t *testing.T) {
 	t.Run("later assessor rejection retains admitted request", func(t *testing.T) {
 		ledger := &rememberPipelineLedgerStub{rememberFailureLedgerStub: &rememberFailureLedgerStub{}}
 		provider := &processorAssessmentProviderStub{reject: true}
-		processor := &rememberSynchronousProcessor{ledger: ledger, catalog: &processorAssessmentCatalogStub{}, provider: provider}
+		processor := &rememberSynchronousProcessor{ledger: ledger, catalog: &processorAssessmentCatalogStub{}, provider: provider, protector: observability.NewCredentialProtector()}
 		_, err := processor.ProcessRemember(context.Background(), input)
 		var processErr *rememberapp.RememberProcessError
 		require.ErrorAs(t, err, &processErr)
@@ -760,7 +761,7 @@ func TestRememberDiagnosticsRecordsUncapturedPhasesAndDerivedSecurityHash(t *tes
 
 	items = rememberFailureDiagnosticsWithCapture(rememberapp.RememberProcessRequest{}, nil, []modelprovider.ProviderExchange{{
 		Component: "provider", RequestBody: []byte("request"), ResponseBody: []byte("response"),
-	}}, nil, true, true)
+	}}, nil, true, true, observability.NewCredentialProtector())
 	require.Len(t, items, 3)
 	require.Equal(t, "not_captured", items[0].CaptureState)
 	require.Equal(t, "captured", items[1].Outcome)

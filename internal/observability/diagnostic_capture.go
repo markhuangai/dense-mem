@@ -1,6 +1,10 @@
 package observability
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+)
 
 // DiagnosticProtector is the narrow root-owned capture seam used by
 // application capabilities. It keeps retained payload policy out of services.
@@ -15,8 +19,10 @@ func (p *CredentialProtector) ProtectDiagnosticBytes(body []byte, maxBytes int, 
 	if len(body) == 0 {
 		return nil, CredentialProtectionAvailable
 	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
 	var value any
-	if err := json.Unmarshal(body, &value); err != nil {
+	if err := decoder.Decode(&value); err != nil {
 		protected := p.Snapshot(string(body), maxBytes, authenticatedSecrets...)
 		if protected.UnavailableReason != CredentialProtectionAvailable {
 			return nil, protected.UnavailableReason
@@ -26,6 +32,10 @@ func (p *CredentialProtector) ProtectDiagnosticBytes(body []byte, maxBytes int, 
 			return nil, CredentialProtectionFormattingFailed
 		}
 		return []byte(text), CredentialProtectionAvailable
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, CredentialProtectionFormattingFailed
 	}
 	protected := p.Snapshot(value, maxBytes, authenticatedSecrets...)
 	if protected.UnavailableReason != CredentialProtectionAvailable {

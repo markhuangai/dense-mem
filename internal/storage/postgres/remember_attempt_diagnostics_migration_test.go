@@ -86,5 +86,7 @@ func TestRememberAttemptDiagnosticsUnavailableCaptureMigrationContract(t *testin
 	migration := string(body)
 	require.Contains(t, migration, "DROP CONSTRAINT IF EXISTS remember_attempt_diagnostics_capture_state_check")
 	require.Contains(t, migration, "'unavailable'")
+	require.Contains(t, migration, "NOT VALID")
+	require.Contains(t, migration, "VALIDATE CONSTRAINT remember_attempt_diagnostics_capture_state_check")
 	require.Contains(t, migration, "cannot remove unavailable capture state while diagnostics exist")
 }

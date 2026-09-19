@@ -1,14 +1,24 @@
+-- +goose NO TRANSACTION
+
 -- +goose Up
 
 -- Existing attempt diagnostics use the same protected-capture state vocabulary
 -- as invocation diagnostics. This additive constraint update admits an explicit
 -- unavailable state when credential protection cannot safely retain a body.
--- Lock impact: replacing the check takes a short ACCESS EXCLUSIVE lock.
+-- Lock impact: replacing the check takes a short ACCESS EXCLUSIVE lock; the
+-- validation scan runs after that lock is released.
+SET lock_timeout = '30s';
 ALTER TABLE remember_attempt_diagnostics
     DROP CONSTRAINT IF EXISTS remember_attempt_diagnostics_capture_state_check,
     ADD CONSTRAINT remember_attempt_diagnostics_capture_state_check CHECK (
         capture_state IN ('captured', 'truncated', 'not_captured', 'hash_only', 'provider_not_called', 'no_response', 'interrupted', 'not_delivered', 'unavailable')
-    );
+    ) NOT VALID;
+
+-- +goose StatementBegin
+SET lock_timeout = '30s';
+ALTER TABLE remember_attempt_diagnostics
+    VALIDATE CONSTRAINT remember_attempt_diagnostics_capture_state_check;
+-- +goose StatementEnd
 
 -- +goose Down
 -- Irreversible while unavailable diagnostics exist because reverting the state
@@ -27,4 +37,10 @@ ALTER TABLE remember_attempt_diagnostics
     DROP CONSTRAINT IF EXISTS remember_attempt_diagnostics_capture_state_check,
     ADD CONSTRAINT remember_attempt_diagnostics_capture_state_check CHECK (
         capture_state IN ('captured', 'truncated', 'not_captured', 'hash_only', 'provider_not_called', 'no_response', 'interrupted', 'not_delivered')
-    );
+    ) NOT VALID;
+
+-- +goose StatementBegin
+SET lock_timeout = '30s';
+ALTER TABLE remember_attempt_diagnostics
+    VALIDATE CONSTRAINT remember_attempt_diagnostics_capture_state_check;
+-- +goose StatementEnd

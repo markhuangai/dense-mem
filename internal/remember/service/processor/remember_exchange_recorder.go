@@ -45,23 +45,22 @@ func captureRememberDiagnosticBody(body []byte, protector observability.Diagnost
 		return rememberDiagnosticCapture{state: "not_captured"}
 	}
 	if protector == nil {
-		captured, truncated := boundedRememberDiagnosticBody(body)
-		state := "captured"
-		if truncated {
-			state = "truncated"
+		return rememberDiagnosticCapture{
+			state:  "unavailable",
+			reason: "credential_protection_" + strconv.Itoa(int(observability.CredentialProtectionUnsupported)),
 		}
-		return rememberDiagnosticCapture{body: captured, state: state}
 	}
-	protected, reason := protector.ProtectDiagnosticBytes(body, rememberDiagnosticMaxBodyBytes)
+	bounded, truncated := boundedRememberDiagnosticBody(body)
+	protected, reason := protector.ProtectDiagnosticBytes(bounded, rememberDiagnosticMaxBodyBytes+2)
 	if reason != observability.CredentialProtectionAvailable {
 		return rememberDiagnosticCapture{
 			state:  "unavailable",
 			reason: "credential_protection_" + strconv.Itoa(int(reason)),
 		}
 	}
-	captured, truncated := boundedRememberDiagnosticBody(protected)
+	captured, protectedTruncated := boundedRememberDiagnosticBody(protected)
 	state := "captured"
-	if truncated {
+	if truncated || protectedTruncated {
 		state = "truncated"
 	}
 	return rememberDiagnosticCapture{body: captured, state: state}
@@ -274,15 +273,15 @@ func (r *rememberExchangeRecorder) RecordProviderExchange(_ context.Context, exc
 	}
 	requestCapture := captureRememberDiagnosticBody(exchange.RequestBody, r.protector)
 	exchange.RequestBody = requestCapture.body
-	if len(exchange.ResponseBodyProjection) > 0 && r.protector == nil {
-		exchange.ResponseBody = append([]byte(nil), exchange.ResponseBodyProjection...)
-	} else {
-		responseCapture := captureRememberDiagnosticBody(exchange.ResponseBody, r.protector)
-		exchange.ResponseBody = responseCapture.body
-		exchange.CaptureState, exchange.CaptureReason = combineRememberDiagnosticCapture(
-			exchange.CaptureState, exchange.CaptureReason, requestCapture, responseCapture,
-		)
+	responseBody := exchange.ResponseBody
+	if len(exchange.ResponseBodyProjection) > 0 {
+		responseBody = exchange.ResponseBodyProjection
 	}
+	responseCapture := captureRememberDiagnosticBody(responseBody, r.protector)
+	exchange.ResponseBody = responseCapture.body
+	exchange.CaptureState, exchange.CaptureReason = combineRememberDiagnosticCapture(
+		exchange.CaptureState, exchange.CaptureReason, requestCapture, responseCapture,
+	)
 	var requestTruncated, responseTruncated bool
 	exchange.RequestBody, requestTruncated = boundedRememberDiagnosticBody(exchange.RequestBody)
 	exchange.ResponseBody, responseTruncated = boundedRememberDiagnosticBody(exchange.ResponseBody)

@@ -209,7 +209,7 @@ func TestRememberFailureDiagnosticsUsesHashOnlyRequestForSecurityRejection(t *te
 		SecurityRejected: true,
 		Evidence:         []rememberapp.EvidenceInput{{Content: "my production password is hunter2"}},
 	}
-	items := rememberFailureDiagnostics(input, nil, nil, nil, true, "assessment")
+	items := rememberFailureDiagnostics(input, nil, nil, nil, true, "assessment", observability.NewCredentialProtector())
 	require.Equal(t, "hash_only", items[0].Outcome)
 	require.Equal(t, "hash_only", items[0].CaptureState)
 	require.Contains(t, string(items[0].RequestBody), "sha256:request-hash")
@@ -237,13 +237,13 @@ func TestRememberCallerResponseDeliveryUsesRequestContext(t *testing.T) {
 
 func TestRememberFailureDiagnosticsPreservesTruncationState(t *testing.T) {
 	input := rememberapp.RememberProcessRequest{OriginalRequest: []byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes+1))}
-	items := rememberFailureDiagnostics(input, nil, nil, nil, true, "assessment")
+	items := rememberFailureDiagnostics(input, nil, nil, nil, true, "assessment", observability.NewCredentialProtector())
 	require.Equal(t, "truncated", items[0].CaptureState)
 	require.Len(t, items[0].RequestBody, rememberDiagnosticMaxBodyBytes)
 }
 
 func TestRememberExchangeRecorderBoundsBodiesAndAggregate(t *testing.T) {
-	recorder := &rememberExchangeRecorder{}
+	recorder := &rememberExchangeRecorder{protector: observability.NewCredentialProtector()}
 	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
 		Component: "assessor", RequestBody: []byte("request"), ResponseBody: []byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes+1)), Outcome: "captured",
 	})
@@ -254,8 +254,37 @@ func TestRememberExchangeRecorderBoundsBodiesAndAggregate(t *testing.T) {
 	require.LessOrEqual(t, len(exchanges[0].ResponseBody), rememberDiagnosticMaxBodyBytes)
 }
 
-func TestRememberExchangeRecorderPreservesUnavailableStateAfterAggregateBudget(t *testing.T) {
+func TestRememberExchangeRecorderFailsClosedWithoutProtector(t *testing.T) {
 	recorder := &rememberExchangeRecorder{}
+	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
+		Component: "assessor", ResponseBody: []byte(`{"message":"admitted"}`), Outcome: "captured",
+	})
+
+	exchanges := recorder.Snapshot()
+	require.Len(t, exchanges, 1)
+	require.Equal(t, "unavailable", exchanges[0].CaptureState)
+	require.Equal(t, "credential_protection_5", exchanges[0].CaptureReason)
+	require.Empty(t, exchanges[0].ResponseBody)
+}
+
+func TestBoundRememberDiagnosticItemsStopsAfterAggregateBudget(t *testing.T) {
+	body := []byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes))
+	items := make([]knowledgecontract.RememberAttemptDiagnosticInput, 5)
+	for index := range items {
+		items[index] = knowledgecontract.RememberAttemptDiagnosticInput{
+			RequestBody:  body,
+			CaptureState: "captured",
+		}
+	}
+
+	boundRememberDiagnosticItems(items)
+	require.Len(t, items[0].RequestBody, rememberDiagnosticMaxBodyBytes)
+	require.Empty(t, items[4].RequestBody)
+	require.Equal(t, "truncated", items[4].CaptureState)
+}
+
+func TestRememberExchangeRecorderPreservesUnavailableStateAfterAggregateBudget(t *testing.T) {
+	recorder := &rememberExchangeRecorder{protector: observability.NewCredentialProtector()}
 	for range 4 {
 		recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
 			Component: "assessor", ResponseBody: []byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes)), Outcome: "captured",
@@ -273,7 +302,7 @@ func TestRememberExchangeRecorderPreservesUnavailableStateAfterAggregateBudget(t
 }
 
 func TestRememberExchangeRecorderProjectsProviderExchangeOnce(t *testing.T) {
-	recorder := &rememberExchangeRecorder{}
+	recorder := &rememberExchangeRecorder{protector: observability.NewCredentialProtector()}
 	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
 		Component:    "embedding",
 		RequestBody:  []byte(`{"model":"embedding-model","input":["private evidence"],"dimensions":2}`),
@@ -287,7 +316,7 @@ func TestRememberExchangeRecorderProjectsProviderExchangeOnce(t *testing.T) {
 }
 
 func TestRememberExchangeRecorderUsesPrecomputedProviderProjection(t *testing.T) {
-	recorder := &rememberExchangeRecorder{}
+	recorder := &rememberExchangeRecorder{protector: observability.NewCredentialProtector()}
 	rawResponse := []byte(`{"model":"embedding-model","data":[{"index":0,"embedding":[0.1,0.2]}]}`)
 	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
 		Component:              "embedding",
@@ -303,7 +332,7 @@ func TestRememberExchangeRecorderUsesPrecomputedProviderProjection(t *testing.T)
 }
 
 func TestRememberExchangeRecorderRetainsLaterMetadataAfterAggregateLimit(t *testing.T) {
-	recorder := &rememberExchangeRecorder{}
+	recorder := &rememberExchangeRecorder{protector: observability.NewCredentialProtector()}
 	body := []byte(strings.Repeat("x", rememberDiagnosticMaxAttemptBytes/2))
 	for index := 0; index < 3; index++ {
 		recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{

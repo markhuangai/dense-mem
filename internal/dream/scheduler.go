@@ -142,7 +142,7 @@ func (s *Scheduler) runDue(ctx context.Context) {
 		if recovery, ok := s.service.(scheduledRecoveryService); ok {
 			recovered, recoverErr := recovery.RecoverScheduledCycle(ctx, teamID)
 			if recoverErr != nil {
-				s.logError("dreaming scheduler: recovery failed", slog.String("team_id", teamID), slog.String("error_kind", "recovery_failed"), slog.Any("error", recoverErr))
+				s.logError("dreaming scheduler: recovery failed", slog.String("team_id", teamID), slog.String("error_kind", "recovery_failed"))
 			} else if recovered != nil {
 				s.logInfo("dreaming scheduler: expired cycle recovered",
 					slog.String("team_id", teamID),
@@ -183,7 +183,7 @@ func (s *Scheduler) runDue(ctx context.Context) {
 				result, cycleErr = s.service.RecordMissedScheduledCycle(ctx, teamID, runDate)
 			}
 			if cycleErr != nil {
-				s.logError("dreaming scheduler: cycle failed", slog.String("team_id", teamID), slog.String("error_kind", "cycle_failed"), slog.Any("error", cycleErr))
+				s.logError("dreaming scheduler: cycle failed", slog.String("team_id", teamID), slog.String("error_kind", "cycle_failed"))
 			} else if result == nil || result.Status == "skipped" {
 				s.logWarn("dreaming scheduler: cycle skipped before it could claim the window", slog.String("team_id", teamID), slog.String("run_date", runDate))
 			} else {
@@ -197,7 +197,7 @@ func (s *Scheduler) runDue(ctx context.Context) {
 	for offset := 0; ; offset += schedulerTeamPageSize {
 		teams, err := s.teams.List(ctx, schedulerTeamPageSize, offset)
 		if err != nil {
-			s.logError("dreaming scheduler: list teams failed", slog.Int("offset", offset), slog.String("error_kind", "team_list_failed"), slog.Any("error", err))
+			s.logError("dreaming scheduler: list teams failed", slog.Int("offset", offset), slog.String("error_kind", "team_list_failed"))
 			return
 		}
 		pageStates := make([]schedulerTeamState, 0, len(teams))
@@ -208,7 +208,7 @@ func (s *Scheduler) runDue(ctx context.Context) {
 			teamID := team.ID.String()
 			cfg, err := s.service.EffectiveConfig(ctx, teamID)
 			if err != nil {
-				s.logError("dreaming scheduler: config resolve failed", slog.String("team_id", teamID), slog.String("error_kind", "config_resolve_failed"), slog.Any("error", err))
+				s.logError("dreaming scheduler: config resolve failed", slog.String("team_id", teamID), slog.String("error_kind", "config_resolve_failed"))
 				continue
 			}
 			state := schedulerTeamState{team: team, teamID: teamID, cfg: cfg}
@@ -231,7 +231,7 @@ func (s *Scheduler) runDue(ctx context.Context) {
 		if recovery, ok := s.service.(evidenceScheduledService); ok {
 			recovered, recoverErr := recovery.RecoverScheduledEvidenceCycle(ctx, teamID)
 			if recoverErr != nil {
-				s.logError("dreaming scheduler: evidence recovery failed", slog.String("team_id", teamID), slog.String("error_kind", "evidence_recovery_failed"), slog.Any("error", recoverErr))
+				s.logError("dreaming scheduler: evidence recovery failed", slog.String("team_id", teamID), slog.String("error_kind", "evidence_recovery_failed"))
 			} else if recovered != nil {
 				s.logInfo("dreaming scheduler: expired evidence cycle recovered",
 					slog.String("team_id", teamID), slog.String("run_id", recovered.RunID), slog.String("status", recovered.Status))
@@ -267,7 +267,7 @@ func (s *Scheduler) runEvidenceDue(ctx context.Context, teamID string, cfg Effec
 				slog.String("team_id", teamID), slog.String("run_id", result.RunID),
 				slog.String("window_key", windowKey), slog.String("status", result.Status))
 		}
-		s.logError("dreaming scheduler: evidence cycle failed", slog.String("team_id", teamID), slog.String("error_kind", "evidence_cycle_failed"), slog.Any("error", err))
+		s.logError("dreaming scheduler: evidence cycle failed", slog.String("team_id", teamID), slog.String("error_kind", "evidence_cycle_failed"))
 		return
 	}
 	if result == nil || result.Status == "skipped" {

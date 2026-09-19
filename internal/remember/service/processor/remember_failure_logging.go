@@ -37,9 +37,6 @@ func (p *rememberSynchronousProcessor) logRememberFailureRetentionDegraded(
 	}
 	attrs := rememberFailureLogAttrs(input, attemptID, phase, "retention_sync_failed", rememberProcessCorrelationID(input.Metadata))
 	attrs = append(attrs, observability.String("degradation_code", "legal_hold_retention_sync_failed"))
-	if cause != nil {
-		attrs = append(attrs, observability.String("error", cause.Error()))
-	}
 	p.logger.Warn("remember_failure_retention_degraded", attrs...)
 }
 
@@ -58,9 +55,6 @@ func (p *rememberSynchronousProcessor) logRememberIdempotencyLockCleanupFailure(
 		"coordination_cleanup_failed",
 		rememberProcessCorrelationID(input.Metadata),
 	)
-	if cause != nil {
-		attrs = append(attrs, observability.String("error", cause.Error()))
-	}
 	p.logger.Warn("remember_idempotency_lock_cleanup_failed", attrs...)
 }
 

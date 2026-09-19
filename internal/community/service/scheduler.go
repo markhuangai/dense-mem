@@ -89,7 +89,7 @@ func (s *Scheduler) runDue(ctx context.Context) {
 	for offset := 0; ; offset += schedulerPageSize {
 		teams, err := s.teams.List(ctx, schedulerPageSize, offset)
 		if err != nil {
-			s.logError("community scheduler: team listing failed", slog.String("error_kind", "team_list_failed"), slog.Any("error", err))
+			s.logError("community scheduler: team listing failed", slog.String("error_kind", "team_list_failed"))
 			return
 		}
 		for _, team := range teams {
@@ -115,7 +115,7 @@ func (s *Scheduler) runDue(ctx context.Context) {
 				}
 				defer func() { <-semaphore }()
 				if _, runErr := s.service.RunScheduled(ctx, teamID, now); runErr != nil {
-					s.logError("community scheduler: run failed", slog.String("error_kind", "run_failed"), slog.Any("error", runErr))
+					s.logError("community scheduler: run failed", slog.String("error_kind", "run_failed"))
 				}
 			}(teamID)
 		}

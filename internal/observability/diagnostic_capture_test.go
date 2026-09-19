@@ -34,3 +34,21 @@ func TestCredentialProtectorProtectDiagnosticBytesReportsUnavailableProtection(t
 	require.Nil(t, body)
 	require.Equal(t, CredentialProtectionSecretTooLong, reason)
 }
+
+func TestCredentialProtectorProtectDiagnosticBytesPreservesNumbersAndRejectsTrailingValues(t *testing.T) {
+	protector := NewCredentialProtector()
+	body, reason := protector.ProtectDiagnosticBytes([]byte(`{"value":9007199254740993}`), 128)
+	require.Equal(t, CredentialProtectionAvailable, reason)
+	require.Equal(t, `{"value":9007199254740993}`, string(body))
+
+	body, reason = protector.ProtectDiagnosticBytes([]byte(`{"value":1} {"value":2}`), 128)
+	require.Nil(t, body)
+	require.Equal(t, CredentialProtectionFormattingFailed, reason)
+}
+
+func TestCredentialProtectorProtectDiagnosticBytesReportsUnavailableInvalidJSONProtection(t *testing.T) {
+	protector := NewCredentialProtector(strings.Repeat("x", MaxCredentialSecretBytes+1))
+	body, reason := protector.ProtectDiagnosticBytes([]byte("not-json"), 128)
+	require.Nil(t, body)
+	require.Equal(t, CredentialProtectionSecretTooLong, reason)
+}
