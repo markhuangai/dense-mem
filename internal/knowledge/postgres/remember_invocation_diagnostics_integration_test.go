@@ -4,11 +4,13 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/google/uuid"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
@@ -63,12 +65,18 @@ func TestRememberProcessorPersistsInvocationDiagnosticsThroughPostgres(t *testin
 	})
 	require.ErrorIs(t, err, rememberapp.ErrRememberPersistence)
 	replayedPage, err := repo.ListRememberInvocationDiagnostics(ctx, knowledgecontract.RememberInvocationDiagnosticFilter{
-		TeamID: teamID, OwnerProfileID: ownerID, Outcome: "replayed", Limit: 10,
+		TeamID: teamID, OwnerProfileID: ownerID, Outcome: "failed", Limit: 10,
 	})
 	require.NoError(t, err)
-	require.Len(t, replayedPage.Records, 1)
-	require.Equal(t, "replay", replayedPage.Records[0].Classification)
-	require.Equal(t, page.Records[0].InvocationID, replayedPage.Records[0].CanonicalAttemptID)
+	var replayed *knowledgecontract.RememberInvocationDiagnosticRecord
+	for index := range replayedPage.Records {
+		if replayedPage.Records[index].Classification == "replay" {
+			replayed = &replayedPage.Records[index]
+			break
+		}
+	}
+	require.NotNil(t, replayed)
+	require.Equal(t, page.Records[0].InvocationID, replayed.CanonicalAttemptID)
 
 	_, err = rememberProcessor.ProcessRemember(ctx, rememberapp.RememberProcessRequest{
 		TeamID: teamID, OwnerProfileID: ownerID, SpaceID: space.ID.String(), SpaceGeneration: spaceGeneration,
@@ -99,6 +107,71 @@ func TestRememberProcessorPersistsInvocationDiagnosticsThroughPostgres(t *testin
 	require.Len(t, cancelledPage.Records, 1)
 	require.Equal(t, "execution", cancelledPage.Records[0].Classification)
 	require.Empty(t, cancelledPage.Records[0].CanonicalAttemptID)
+}
+
+func TestRememberInvocationDiagnosticsRejectsPrivateSpaceSealRace(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "remember-invocation-diagnostics-space-race")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-invocation-diagnostics-space-race-owner")
+	space, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureProfilePrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
+	require.NoError(t, err)
+	generation := privateSpaceGeneration(t, ctx, adminDB, rls, space.ID)
+	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	invocationID := uuid.NewString()
+
+	sealReady := make(chan struct{})
+	releaseSeal := make(chan struct{})
+	sealErr := make(chan error, 1)
+	go func() {
+		sealErr <- rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+			result := tx.Exec(`
+				UPDATE memory_spaces
+				SET lifecycle_state = 'sealed', generation = generation + 1,
+				    sealed_at = now(), updated_at = now()
+				WHERE team_id = ?::uuid AND id = ?::uuid AND lifecycle_state = 'active'
+			`, teamID, space.ID)
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return fmt.Errorf("private diagnostic space was not sealed")
+			}
+			close(sealReady)
+			<-releaseSeal
+			return nil
+		})
+	}()
+	select {
+	case <-sealReady:
+	case err := <-sealErr:
+		require.NoError(t, err)
+		return
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for private-space seal")
+	}
+
+	recordErr := repo.RecordRememberInvocationDiagnostic(ctx, knowledgecontract.RememberInvocationDiagnosticInput{
+		TeamID: teamID, OwnerProfileID: ownerID, InvocationID: invocationID,
+		Classification: "execution", Outcome: "failed", SpaceID: space.ID.String(), SpaceGeneration: generation,
+		RequestBody: []byte(`{"private":"diagnostic"}`), RequestCaptureState: "captured",
+	})
+	require.Error(t, recordErr, "a sealed private space must reject a diagnostic while its erasure fence is held")
+	require.NoError(t, func() error {
+		close(releaseSeal)
+		return <-sealErr
+	}())
+
+	_, err = repo.GetRememberInvocationDiagnostic(ctx, teamID, invocationID)
+	require.ErrorIs(t, err, ErrRememberInvocationDiagnosticNotFound)
+
+	recordErr = repo.RecordRememberInvocationDiagnostic(ctx, knowledgecontract.RememberInvocationDiagnosticInput{
+		TeamID: teamID, OwnerProfileID: ownerID, InvocationID: uuid.NewString(),
+		Classification: "execution", Outcome: "failed", SpaceID: space.ID.String(), SpaceGeneration: generation,
+		RequestBody: []byte(`{"private":"diagnostic"}`), RequestCaptureState: "captured",
+	})
+	require.Error(t, recordErr, "a stale generation must remain rejected after the erasure fence commits")
 }
 
 func TestRememberInvocationDiagnosticsScopesBodiesAndPurgesExpiredRows(t *testing.T) {

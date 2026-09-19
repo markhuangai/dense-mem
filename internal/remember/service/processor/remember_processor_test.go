@@ -550,7 +550,7 @@ func TestRememberProcessorWaiterReplaysWithoutProcessing(t *testing.T) {
 	require.Len(t, base.loadContexts, 1)
 	require.Empty(t, base.failure.Attempt.AttemptID, "a distributed waiter must not run a second processing attempt")
 	require.Equal(t, "replay", base.invocation.Classification)
-	require.Equal(t, "replayed", base.invocation.Outcome)
+	require.Equal(t, "failed", base.invocation.Outcome)
 	require.Equal(t, "77777777-7777-7777-7777-777777777777", base.invocation.CanonicalAttemptID)
 }
 

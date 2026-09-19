@@ -93,10 +93,10 @@ func (p *rememberSynchronousProcessor) recordRememberInvocation(
 	}
 	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
 		outcome = "cancelled"
-	} else if classification == "replay" {
+	} else if outcome == "completed" && classification == "replay" {
 		outcome = "replayed"
 	}
-	if classification == "conflict" {
+	if classification == "conflict" && (outcome == "completed" || outcome == "evaluated_zero" || errors.Is(cause, rememberapp.ErrRememberConflict) || errors.Is(cause, repository.ErrIdempotencyConflict)) {
 		outcome = "conflict"
 	}
 	errorCode := ""

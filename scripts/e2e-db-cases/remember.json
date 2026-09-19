@@ -52,6 +52,13 @@
       "source": "internal/knowledge/postgres/remember_invocation_diagnostics_integration_test.go"
     },
     {
+      "id": "repository/TestRememberInvocationDiagnosticsRejectsPrivateSpaceSealRace",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestRememberInvocationDiagnosticsRejectsPrivateSpaceSealRace$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/remember_invocation_diagnostics_integration_test.go"
+    },
+    {
       "id": "server/TestRememberServiceRejectsHistoricalOutcomesThroughPostgres",
       "package": "./cmd/internal/serverapp",
       "run": "^TestRememberServiceRejectsHistoricalOutcomesThroughPostgres$",

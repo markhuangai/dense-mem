@@ -222,6 +222,29 @@ func (r *Store) RecordRememberInvocationDiagnostic(ctx context.Context, input kn
 		responseBody = []byte{}
 	}
 	err = r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+		if input.SpaceID != "" {
+			var locked bool
+			if err := tx.WithContext(ctx).Raw(`
+				SELECT dense_mem_lock_memory_space(?::uuid, ?::uuid)
+			`, input.TeamID, input.SpaceID).Row().Scan(&locked); err != nil {
+				return err
+			}
+			if !locked {
+				return fmt.Errorf("remember invocation: private memory space is unavailable")
+			}
+			var currentGeneration sql.NullInt64
+			if err := tx.WithContext(ctx).Raw(`
+				SELECT dense_mem_active_space_generation(?::uuid, ?::uuid)
+			`, input.TeamID, input.SpaceID).Row().Scan(&currentGeneration); err != nil {
+				return err
+			}
+			if !currentGeneration.Valid {
+				return fmt.Errorf("remember invocation: private memory space is unavailable")
+			}
+			if currentGeneration.Int64 != input.SpaceGeneration {
+				return fmt.Errorf("remember invocation: private memory space generation is stale")
+			}
+		}
 		var providerExchangeBytes int64
 		if err := tx.WithContext(ctx).Raw(
 			`SELECT octet_length(?::jsonb::text)`, string(exchangesJSON),
