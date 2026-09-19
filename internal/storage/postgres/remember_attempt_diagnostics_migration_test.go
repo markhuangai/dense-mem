@@ -89,4 +89,7 @@ func TestRememberAttemptDiagnosticsUnavailableCaptureMigrationContract(t *testin
 	require.Contains(t, migration, "NOT VALID")
 	require.Contains(t, migration, "VALIDATE CONSTRAINT remember_attempt_diagnostics_capture_state_check")
 	require.Contains(t, migration, "cannot remove unavailable capture state while diagnostics exist")
+	require.Contains(t, migration, "LOCK TABLE remember_attempt_diagnostics IN ACCESS EXCLUSIVE MODE")
+	require.Contains(t, migration, "SET LOCAL lock_timeout = '30s';")
+	require.Equal(t, 4, strings.Count(migration, "RESET lock_timeout;"))
 }
