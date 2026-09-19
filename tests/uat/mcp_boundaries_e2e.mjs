@@ -189,7 +189,7 @@ async function assertTransportLogOutcomes() {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   const serialized = JSON.stringify(rows);
-  if (serialized.includes(marker) || serialized.includes(unmatchedMarker) || serialized.includes("missing-observability-tool")) {
+  if (serialized.includes(marker) || serialized.includes(unmatchedMarker) || serialized.includes("missing-transport-failure-tool")) {
     throw new Error("transport logs retained rejected request content");
   }
   if (!rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "tool_error")) {

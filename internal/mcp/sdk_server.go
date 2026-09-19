@@ -217,16 +217,7 @@ func (s *Server) logSDKToolOutcome(ctx context.Context, name string, started tim
 	if s.logger == nil {
 		return
 	}
-	outcome := "success"
-	if ctx != nil && ctx.Err() != nil {
-		outcome = "cancelled"
-	} else if err != nil {
-		outcome = "rpc_error"
-	} else if result == nil {
-		outcome = "missing_result"
-	} else if result.IsError {
-		outcome = "tool_error"
-	}
+	outcome := sdkToolApplicationOutcome(ctx, result, err)
 	attrs := []LogField{
 		{Key: "tool", Value: name},
 		{Key: "application_outcome", Value: outcome},
@@ -259,6 +250,69 @@ func (s *Server) logSDKToolOutcome(ctx context.Context, name string, started tim
 		return
 	}
 	s.logger.Error("mcp_tool_outcome", err, attrs...)
+}
+
+func sdkToolApplicationOutcome(ctx context.Context, result *sdkmcp.CallToolResult, err error) string {
+	if err != nil {
+		if ctx != nil && ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			return "cancelled"
+		}
+		return "rpc_error"
+	}
+	if result == nil {
+		if ctx != nil && ctx.Err() != nil {
+			return "cancelled"
+		}
+		return "missing_result"
+	}
+	if result.IsError {
+		if ctx != nil && ctx.Err() != nil && sdkToolResultWasCancelled(result) {
+			return "cancelled"
+		}
+		return "tool_error"
+	}
+	return "success"
+}
+
+func sdkToolResultWasCancelled(result *sdkmcp.CallToolResult) bool {
+	if result == nil || !result.IsError {
+		return false
+	}
+	fields, ok := result.StructuredContent.(map[string]any)
+	if !ok {
+		return false
+	}
+	if reasonCode, ok := fields["reason_code"].(string); ok && reasonCode == "request_cancelled" {
+		return true
+	}
+	errorsValue, ok := fields["errors"]
+	if !ok {
+		return false
+	}
+	switch values := errorsValue.(type) {
+	case []any:
+		for _, value := range values {
+			if errorFields, ok := value.(map[string]any); ok && toolErrorFieldsWereCancelled(errorFields) {
+				return true
+			}
+		}
+	case []map[string]any:
+		for _, errorFields := range values {
+			if toolErrorFieldsWereCancelled(errorFields) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func toolErrorFieldsWereCancelled(fields map[string]any) bool {
+	for _, key := range []string{"code", "reason_code"} {
+		if value, ok := fields[key].(string); ok && value == "request_cancelled" {
+			return true
+		}
+	}
+	return false
 }
 
 func appendSDKApplicationRefs(attrs []LogField, value any) []LogField {

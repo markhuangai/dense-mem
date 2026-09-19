@@ -286,7 +286,7 @@ func TestSDKToolOutcomeLoggingCoversAllApplicationOutcomesAndReferenceShapes(t *
 	server.logSDKToolOutcome(context.Background(), "tool", started, nil, errors.New("rpc failure"))
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	server.logSDKToolOutcome(cancelled, "tool", started, &sdkmcp.CallToolResult{}, nil)
+	server.logSDKToolOutcome(cancelled, "tool", started, nil, nil)
 	server.logSDKToolOutcome(context.Background(), "tool", started, nil, nil)
 
 	attrs := []LogField{{Key: "existing", Value: true}}
@@ -302,6 +302,29 @@ func TestSDKToolOutcomeLoggingCoversAllApplicationOutcomesAndReferenceShapes(t *
 	require.GreaterOrEqual(t, len(attrs), 4)
 	require.Contains(t, logger.events, "mcp_tool_outcome")
 	(&Server{}).logSDKToolOutcome(context.Background(), "tool", started, nil, nil)
+}
+
+func TestSDKToolApplicationOutcomePreservesTerminalResultsAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	require.Equal(t, "success", sdkToolApplicationOutcome(ctx, &sdkmcp.CallToolResult{}, nil))
+	require.Equal(t, "tool_error", sdkToolApplicationOutcome(ctx, &sdkmcp.CallToolResult{IsError: true}, nil))
+	require.Equal(t, "tool_error", sdkToolApplicationOutcome(ctx, &sdkmcp.CallToolResult{
+		IsError: true,
+		StructuredContent: map[string]any{
+			"errors": []any{map[string]any{"code": "provider_unavailable"}},
+		},
+	}, nil))
+	require.Equal(t, "cancelled", sdkToolApplicationOutcome(ctx, &sdkmcp.CallToolResult{
+		IsError: true,
+		StructuredContent: map[string]any{
+			"errors": []any{map[string]any{"code": "request_cancelled"}},
+		},
+	}, nil))
+	require.Equal(t, "rpc_error", sdkToolApplicationOutcome(ctx, nil, errors.New("provider failure")))
+	require.Equal(t, "cancelled", sdkToolApplicationOutcome(ctx, nil, context.Canceled))
+	require.Equal(t, "cancelled", sdkToolApplicationOutcome(ctx, nil, nil))
 }
 
 type cancellationRejectingMCPLogSink struct {
@@ -338,7 +361,7 @@ func TestSDKToolOutcomeLoggingDetachesCancelledContextForPersistence(t *testing.
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	server.logSDKToolOutcome(ctx, "tool", time.Now(), &sdkmcp.CallToolResult{}, nil)
+	server.logSDKToolOutcome(ctx, "tool", time.Now(), nil, nil)
 
 	require.Len(t, sink.records, 1)
 	require.Equal(t, "mcp_tool_outcome", sink.records[0].Message)
