@@ -184,10 +184,17 @@ func TestRememberProcessorRecordsPreCallbackLockFailureAsExecutionFailure(t *tes
 		skipCallback:              true,
 	}
 	processor := &rememberSynchronousProcessor{ledger: locker}
-	_, err := processor.ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{
+	status, err := processor.ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{
 		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "busy-key", RequestHash: "hash",
 		OriginalRequest: []byte(`{"evidence":[{"content":"admitted"}]}`),
 	})
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.NotNil(t, status)
+	require.NotNil(t, processErr.Status)
+	require.NotEmpty(t, processErr.Status.SubmissionID)
+	require.Equal(t, processErr.Status.SubmissionID, status.SubmissionID)
+	require.Equal(t, processErr.Status.SubmissionID, base.invocation.InvocationID)
 	require.ErrorIs(t, err, knowledgecontract.ErrRememberIdempotencyBusy)
 	require.Equal(t, "execution", base.invocation.Classification)
 	require.Equal(t, "failed", base.invocation.Outcome)

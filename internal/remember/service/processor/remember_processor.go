@@ -136,8 +136,9 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		return ownerResult, nil
 	}
 	if !callbackEntered && lockErr != nil {
-		p.recordRememberInvocation(ctx, input, waiterInvocationID, "execution", "", "idempotency_lock", lockErr, nil, nil)
-		return nil, lockErr
+		processErr := rememberFailurePersistenceProcessError(input, waiterInvocationID, lockErr)
+		p.recordRememberInvocation(ctx, input, waiterInvocationID, "execution", "", "idempotency_lock", processErr, processErr.Status, nil)
+		return processErr.Status, processErr
 	}
 	// A waiter must replay the owner's durable result, including a retryable
 	// failure. It may retry only after the lock owner has returned and a later
