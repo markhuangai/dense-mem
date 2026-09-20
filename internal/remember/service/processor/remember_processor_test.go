@@ -275,11 +275,12 @@ func TestRememberCallerResponseDeliveryUsesRequestContext(t *testing.T) {
 	))
 }
 
-func TestRememberFailureDiagnosticsPreservesTruncationState(t *testing.T) {
+func TestRememberFailureDiagnosticsMarksOversizedRequestUnavailable(t *testing.T) {
 	input := rememberapp.RememberProcessRequest{OriginalRequest: []byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes+1))}
 	items := rememberFailureDiagnostics(input, nil, nil, nil, true, "assessment", observability.NewCredentialProtector())
-	require.Equal(t, "truncated", items[0].CaptureState)
-	require.Len(t, items[0].RequestBody, rememberDiagnosticMaxBodyBytes)
+	require.Equal(t, "unavailable", items[0].CaptureState)
+	require.Equal(t, "credential_protection_2", items[0].CaptureReason)
+	require.Empty(t, items[0].RequestBody)
 }
 
 func TestRememberFailureCodeMapsAssessmentDatabaseFailure(t *testing.T) {

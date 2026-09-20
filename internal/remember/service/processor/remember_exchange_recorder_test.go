@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -14,7 +15,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
-func TestRememberExchangeRecorderBoundsBodiesAndAggregate(t *testing.T) {
+func TestRememberExchangeRecorderMarksOversizedResponseUnavailable(t *testing.T) {
 	recorder := &rememberExchangeRecorder{protector: observability.NewCredentialProtector()}
 	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
 		Component: "assessor", RequestBody: []byte("request"), ResponseBody: []byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes+1)), Outcome: "captured",
@@ -22,8 +23,10 @@ func TestRememberExchangeRecorderBoundsBodiesAndAggregate(t *testing.T) {
 	exchanges := recorder.Snapshot()
 	require.Len(t, exchanges, 1)
 	require.Equal(t, "captured", exchanges[0].Outcome)
-	require.Equal(t, "truncated", exchanges[0].CaptureState)
-	require.LessOrEqual(t, len(exchanges[0].ResponseBody), rememberDiagnosticMaxBodyBytes)
+	require.Equal(t, "unavailable", exchanges[0].CaptureState)
+	require.Equal(t, "credential_protection_2", exchanges[0].CaptureReason)
+	require.Equal(t, "request", string(exchanges[0].RequestBody))
+	require.Empty(t, exchanges[0].ResponseBody)
 }
 
 func TestRememberExchangeRecorderDerivesOutcomeCaptureStateBeforeExplicitCaptured(t *testing.T) {
@@ -70,10 +73,13 @@ func TestRememberDiagnosticCaptureProtectsCredentialsAcrossBodyLimit(t *testing.
 
 			capture := captureRememberDiagnosticBody(body, observability.NewCredentialProtector(), test.secret)
 
-			require.Equal(t, "truncated", capture.state)
-			require.LessOrEqual(t, len(capture.body), rememberDiagnosticMaxBodyBytes)
-			require.True(t, strings.Contains(string(capture.body), observability.CredentialProtectionRedacted), "credential must be redacted before truncation")
-			require.False(t, strings.Contains(string(capture.body), prefix), "capture must not retain the credential prefix")
+			require.Equal(t, "unavailable", capture.state)
+			require.Equal(t, "credential_protection_2", capture.reason)
+			require.Empty(t, capture.body)
+
+			withinBudget := captureRememberDiagnosticBody([]byte(test.encoded), observability.NewCredentialProtector(), test.secret)
+			require.Equal(t, "captured", withinBudget.state)
+			require.Equal(t, observability.CredentialProtectionRedacted, string(withinBudget.body))
 		})
 	}
 }
@@ -96,6 +102,22 @@ func TestRememberDiagnosticCaptureAllowsRedactionMarkerExpansion(t *testing.T) {
 	require.Equal(t, "captured", capture.state)
 	require.Greater(t, len(capture.body), len(body)*6)
 	require.Contains(t, string(capture.body), observability.CredentialProtectionRedacted)
+}
+
+func TestRememberDiagnosticCaptureBoundsRedactionAllocation(t *testing.T) {
+	body := []byte(strings.Repeat("x", 7<<20))
+	protector := observability.NewCredentialProtector("x")
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+
+	capture := captureRememberDiagnosticBody(body, protector)
+
+	runtime.ReadMemStats(&after)
+	require.Equal(t, "unavailable", capture.state)
+	require.Equal(t, "credential_protection_2", capture.reason)
+	require.Empty(t, capture.body)
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(256<<20))
 }
 
 func TestRememberExchangeRecorderFailsClosedWithoutProtector(t *testing.T) {
@@ -177,7 +199,7 @@ func TestRememberExchangeRecorderUsesPrecomputedProviderProjection(t *testing.T)
 
 func TestRememberExchangeRecorderRetainsLaterMetadataAfterAggregateLimit(t *testing.T) {
 	recorder := &rememberExchangeRecorder{protector: observability.NewCredentialProtector()}
-	body := []byte(strings.Repeat("x", rememberDiagnosticMaxAttemptBytes/2))
+	body := []byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes))
 	for index := 0; index < 3; index++ {
 		recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
 			Component: fmt.Sprintf("provider-%d", index), Model: "test-model", RequestBody: body,

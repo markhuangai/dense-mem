@@ -19,8 +19,6 @@ import (
 const (
 	rememberDiagnosticMaxBodyBytes    = modelprovider.MaxProviderDiagnosticBodyBytes
 	rememberDiagnosticMaxAttemptBytes = 64 << 20
-	// JSON escaping and redaction may expand the protected representation.
-	rememberDiagnosticProtectionExpansion = len(observability.CredentialProtectionRedacted)
 )
 
 func boundedRememberDiagnosticBody(body []byte) ([]byte, bool) {
@@ -52,8 +50,8 @@ func captureRememberDiagnosticBody(body []byte, protector observability.Diagnost
 			reason: "credential_protection_" + strconv.Itoa(int(observability.CredentialProtectionUnsupported)),
 		}
 	}
-	budget := min(len(body), rememberDiagnosticMaxBodyBytes)*rememberDiagnosticProtectionExpansion + 2
-	protected, reason := protector.ProtectDiagnosticBytes(body, budget, authenticatedSecrets...)
+	// The extra bytes cover the root's JSON string envelope.
+	protected, reason := protector.ProtectDiagnosticBytes(body, rememberDiagnosticMaxBodyBytes+2, authenticatedSecrets...)
 	if reason != observability.CredentialProtectionAvailable {
 		return rememberDiagnosticCapture{
 			state:  "unavailable",
