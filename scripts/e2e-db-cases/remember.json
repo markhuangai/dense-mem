@@ -59,6 +59,13 @@
       "source": "internal/knowledge/postgres/remember_invocation_diagnostics_integration_test.go"
     },
     {
+      "id": "repository/TestRememberInvocationLeavesCanonicalAttemptEmptyAfterRollback",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestRememberInvocationLeavesCanonicalAttemptEmptyAfterRollback$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/remember_invocation_diagnostics_integration_test.go"
+    },
+    {
       "id": "repository/TestRememberInvocationDiagnosticsScopesBodiesAndPurgesExpiredRows",
       "package": "./internal/knowledge/postgres",
       "run": "^TestRememberInvocationDiagnosticsScopesBodiesAndPurgesExpiredRows$",

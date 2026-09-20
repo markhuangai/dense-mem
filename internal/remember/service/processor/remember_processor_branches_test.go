@@ -560,9 +560,10 @@ func TestRememberFailureHelpersCoverReplayAndInputConversions(t *testing.T) {
 	ledger := &rememberReplayFailureLedgerStub{rememberFailureLedgerStub: &rememberFailureLedgerStub{load: winner}, failureErr: knowledgecontract.ErrRememberReplay}
 	processor := &rememberSynchronousProcessor{ledger: ledger}
 	snapshot, _ = rememberAssessmentSnapshot(input, "attempt")
-	status, err := processor.recordRememberFailure(context.Background(), input, "attempt", snapshot, time.Now(), "assessment", 0, rememberapp.ErrRememberProviderUnavailable)
+	status, canonicalAttemptID, err := processor.recordRememberFailure(context.Background(), input, "attempt", snapshot, time.Now(), "assessment", 0, rememberapp.ErrRememberProviderUnavailable)
 	require.NoError(t, err)
 	require.Equal(t, "winner", status.SubmissionID)
+	require.Equal(t, "winner", canonicalAttemptID)
 }
 
 type processorEmbeddingProviderStub struct {

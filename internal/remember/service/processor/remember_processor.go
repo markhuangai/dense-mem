@@ -181,7 +181,7 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 	snapshot, scope := rememberAssessmentSnapshot(input, ingestID)
 	assessorTurns := 0
 	fail := func(err error, phase string) (*rememberapp.SubmissionStatusResult, error) {
-		status, processErr := p.recordRememberFailure(ctx, input, ingestID, snapshot, started, phase, assessorTurns, err)
+		status, canonicalAttemptID, processErr := p.recordRememberFailure(ctx, input, ingestID, snapshot, started, phase, assessorTurns, err)
 		invocationStatus := status
 		if invocationStatus == nil {
 			var statusErr *rememberapp.RememberProcessError
@@ -190,10 +190,8 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 			}
 		}
 		classification := "execution"
-		canonicalAttemptID := ingestID
-		if invocationStatus != nil && invocationStatus.SubmissionID != "" && invocationStatus.SubmissionID != ingestID {
+		if canonicalAttemptID != "" && canonicalAttemptID != ingestID {
 			classification = "replay"
-			canonicalAttemptID = invocationStatus.SubmissionID
 		}
 		if errors.Is(processErr, rememberapp.ErrRememberConflict) || errors.Is(processErr, repository.ErrIdempotencyConflict) {
 			classification = "conflict"
@@ -386,13 +384,13 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	phase string,
 	assessorTurns int,
 	failure error,
-) (*rememberapp.SubmissionStatusResult, error) {
+) (*rememberapp.SubmissionStatusResult, string, error) {
 	if failure == nil {
 		failure = errors.New("remember execution failed")
 	}
 	failure = p.normalizeRememberFailure(failure)
 	if errors.Is(failure, rememberapp.ErrRememberConflict) || errors.Is(failure, repository.ErrIdempotencyConflict) {
-		return nil, rememberConflictProcessError(input, attemptID, failure)
+		return nil, "", rememberConflictProcessError(input, attemptID, failure)
 	}
 	code := rememberFailureCode(phase, failure)
 	reasonCode, details := rememberapp.SynchronousAssessmentFailureDetails(failure)
@@ -442,26 +440,31 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		if errors.Is(recordErr, repository.ErrRememberFailureRetentionDegraded) {
 			p.logRememberFailure(ctx, input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
 			p.logRememberFailureRetentionDegraded(input, attemptID, phase, recordErr)
-			return nil, &rememberapp.RememberProcessError{Status: status, Result: terminalResult, Err: failure}
+			return nil, attemptID, &rememberapp.RememberProcessError{Status: status, Result: terminalResult, Err: failure}
 		}
 		if errors.Is(recordErr, repository.ErrRememberReplay) {
 			winner, loadErr := p.ledger.LoadRememberAttempt(recoveryCtx, repository.RememberAttemptLookupInput{
 				TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey,
 			})
 			if loadErr != nil {
-				return nil, loadErr
+				return nil, "", loadErr
 			}
-			return rememberAttemptReplay(winner, input)
+			canonicalAttemptID := ""
+			if winner != nil {
+				canonicalAttemptID = winner.AttemptID
+			}
+			replay, replayErr := rememberAttemptReplay(winner, input)
+			return replay, canonicalAttemptID, replayErr
 		}
 		if errors.Is(recordErr, repository.ErrIdempotencyConflict) {
-			return nil, rememberConflictProcessError(input, attemptID, errors.Join(rememberapp.ErrRememberConflict, recordErr))
+			return nil, "", rememberConflictProcessError(input, attemptID, errors.Join(rememberapp.ErrRememberConflict, recordErr))
 		}
 		p.logRememberFailure(ctx, input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
 		p.logRememberFailureRecordError(ctx, input, attemptID, phase, publicError.Code, correlationID, recordErr)
-		return nil, rememberFailurePersistenceProcessError(input, attemptID, failure)
+		return nil, "", rememberFailurePersistenceProcessError(input, attemptID, failure)
 	}
 	p.logRememberFailure(ctx, input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
-	return nil, &rememberapp.RememberProcessError{Status: status, Result: terminalResult, Err: failure}
+	return nil, attemptID, &rememberapp.RememberProcessError{Status: status, Result: terminalResult, Err: failure}
 }
 
 func normalizeRememberFailure(failure error) error {

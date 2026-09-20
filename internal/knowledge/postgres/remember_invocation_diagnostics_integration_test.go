@@ -86,6 +86,7 @@ func TestRememberProcessorPersistsInvocationDiagnosticsThroughPostgres(t *testin
 	detail, err := repo.GetRememberInvocationDiagnostic(ctx, teamID, page.Records[0].InvocationID)
 	require.NoError(t, err)
 	require.Equal(t, "execution", detail.Classification)
+	require.Equal(t, detail.InvocationID, detail.CanonicalAttemptID)
 	require.Equal(t, "failed", detail.Outcome)
 	require.Equal(t, "assessment", detail.FailedPhase)
 	require.Equal(t, "hash_only", detail.RequestCaptureState)
@@ -331,4 +332,42 @@ func TestRememberInvocationDiagnosticsScopesBodiesAndPurgesExpiredRows(t *testin
 	require.GreaterOrEqual(t, deleted, 2)
 	_, err = repo.GetRememberInvocationDiagnostic(ctx, teamA, lateHeldID)
 	require.ErrorIs(t, err, ErrRememberInvocationDiagnosticNotFound)
+}
+
+func TestRememberInvocationLeavesCanonicalAttemptEmptyAfterRollback(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "canonical-failure-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "canonical-failure-owner")
+	space, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureProfilePrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
+	require.NoError(t, err)
+	generation := privateSpaceGeneration(t, ctx, adminDB, rls, space.ID)
+	require.NoError(t, adminDB.Exec(`
+        CREATE FUNCTION reject_remember_failure_for_test() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN RAISE EXCEPTION 'injected attempt persistence failure' USING ERRCODE = '40001'; END $$;
+        CREATE TRIGGER reject_remember_failure_for_test BEFORE INSERT ON remember_attempts
+        FOR EACH ROW EXECUTE FUNCTION reject_remember_failure_for_test();
+    `).Error)
+	defer func() {
+		require.NoError(t, adminDB.Exec(`DROP TRIGGER reject_remember_failure_for_test ON remember_attempts; DROP FUNCTION reject_remember_failure_for_test();`).Error)
+	}()
+	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	rememberProcessor := processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: repo, DiagnosticProtector: observability.NewCredentialProtector()})
+	_, err = rememberProcessor.ProcessRemember(ctx, rememberapp.RememberProcessRequest{
+		TeamID: teamID, OwnerProfileID: ownerID, SpaceID: space.ID.String(), SpaceGeneration: generation,
+		IdempotencyKey: "canonical-failure", RequestHash: "sha256:canonical-failure", SecurityRejected: true, InitialSecurityRejected: true,
+		Evidence:        []rememberapp.EvidenceInput{{Content: "admitted evidence"}},
+		OriginalRequest: []byte(`{"evidence":[{"content":"admitted evidence"}]}`),
+	})
+	require.ErrorIs(t, err, rememberapp.ErrRememberPersistence)
+	var attempts int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Table("remember_attempts").Where("team_id = ?::uuid", teamID).Count(&attempts).Error
+	}))
+	require.Zero(t, attempts)
+	page, err := repo.ListRememberInvocationDiagnostics(ctx, knowledgecontract.RememberInvocationDiagnosticFilter{TeamID: teamID, OwnerProfileID: ownerID, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, page.Records, 1)
+	require.Empty(t, page.Records[0].CanonicalAttemptID, "a failed canonical write must not create a dangling canonical link")
 }

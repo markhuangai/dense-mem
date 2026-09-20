@@ -636,7 +636,7 @@ func TestRememberProcessorPersistsBoundedAssessorValidationDiagnostics(t *testin
 		Evidence: []rememberapp.EvidenceInput{{Content: "first"}},
 	}
 	snapshot, _ := rememberAssessmentSnapshot(input, "88888888-8888-8888-8888-888888888888")
-	_, err := processor.recordRememberFailure(context.Background(), input, "88888888-8888-8888-8888-888888888888", snapshot, time.Now(), "assessment", 3, &assessor.MalformedResponseError{
+	_, _, err := processor.recordRememberFailure(context.Background(), input, "88888888-8888-8888-8888-888888888888", snapshot, time.Now(), "assessment", 3, &assessor.MalformedResponseError{
 		FailureClass: "malformed_exhausted", Attempts: 3, ValidationStage: "response_contract",
 		ValidationFieldFamilies: []string{"relationship_results[0].object_value", "unknown-secret-field"},
 	})
@@ -655,7 +655,7 @@ func TestRememberProcessorInputBudgetUsesCanonicalTerminalGuidance(t *testing.T)
 	}
 	snapshot, _ := rememberAssessmentSnapshot(input, "88888888-8888-8888-8888-888888888888")
 
-	_, err := processor.recordRememberFailure(
+	_, _, err := processor.recordRememberFailure(
 		context.Background(), input, "88888888-8888-8888-8888-888888888888", snapshot,
 		time.Now(), "assessment", 0, rememberapp.ErrRememberInputBudgetExceeded,
 	)
@@ -680,10 +680,11 @@ func TestRememberProcessorFailurePersistencePreservesDatabaseResult(t *testing.T
 	}
 	snapshot, _ := rememberAssessmentSnapshot(input, "88888888-8888-8888-8888-888888888888")
 
-	_, err := processor.recordRememberFailure(
+	_, canonicalAttemptID, err := processor.recordRememberFailure(
 		context.Background(), input, "88888888-8888-8888-8888-888888888888", snapshot,
 		time.Now(), "assessment", 0, rememberapp.ErrRememberProviderUnavailable,
 	)
+	require.Empty(t, canonicalAttemptID)
 	var processErr *rememberapp.RememberProcessError
 	require.ErrorAs(t, err, &processErr)
 	require.ErrorIs(t, err, rememberapp.ErrRememberPersistence)
@@ -713,10 +714,12 @@ func TestRememberProcessorRetentionDegradationPreservesCommittedFailure(t *testi
 	}
 	snapshot, _ := rememberAssessmentSnapshot(input, "88888888-8888-8888-8888-888888888888")
 
-	_, err := processor.recordRememberFailure(
+	_, canonicalAttemptID, err := processor.recordRememberFailure(
 		context.Background(), input, "88888888-8888-8888-8888-888888888888", snapshot,
 		time.Now(), "assessment", 0, rememberapp.ErrRememberProviderUnavailable,
 	)
+	require.Equal(t, "88888888-8888-8888-8888-888888888888", canonicalAttemptID)
+
 	var processErr *rememberapp.RememberProcessError
 	require.ErrorAs(t, err, &processErr)
 	require.ErrorIs(t, err, rememberapp.ErrRememberProviderUnavailable)
