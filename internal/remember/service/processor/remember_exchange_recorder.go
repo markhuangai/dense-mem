@@ -19,11 +19,7 @@ import (
 const (
 	rememberDiagnosticMaxBodyBytes    = modelprovider.MaxProviderDiagnosticBodyBytes
 	rememberDiagnosticMaxAttemptBytes = 64 << 20
-	// Credential variants can expand one configured secret to JSON or percent
-	// escapes; retain enough suffix to protect a boundary-spanning variant.
-	rememberDiagnosticCredentialOverlapBytes = observability.MaxCredentialSecretBytes * 8
-	// JSON escaping and the ten-byte redaction marker are the largest supported
-	// per-byte expansions used by the credential protector.
+	// JSON escaping and redaction may expand the protected representation.
 	rememberDiagnosticProtectionExpansion = len(observability.CredentialProtectionRedacted)
 )
 
@@ -38,25 +34,6 @@ func boundedRememberDiagnosticBody(body []byte) ([]byte, bool) {
 		truncated = true
 	}
 	return append([]byte(nil), sanitized...), truncated
-}
-
-func boundedRememberDiagnosticBodyForProtection(body []byte) ([]byte, bool) {
-	if len(body) <= rememberDiagnosticMaxBodyBytes {
-		return boundedRememberDiagnosticBody(body)
-	}
-	limit := rememberDiagnosticMaxBodyBytes + rememberDiagnosticCredentialOverlapBytes
-	if limit > len(body) {
-		limit = len(body)
-	}
-	return append([]byte(nil), body[:limit]...), true
-}
-
-func rememberDiagnosticProtectionBudget(bodyBytes int) int {
-	maxInt := int(^uint(0) >> 1)
-	if bodyBytes > (maxInt-2)/rememberDiagnosticProtectionExpansion {
-		return maxInt
-	}
-	return bodyBytes*rememberDiagnosticProtectionExpansion + 2
 }
 
 type rememberDiagnosticCapture struct {
@@ -75,8 +52,8 @@ func captureRememberDiagnosticBody(body []byte, protector observability.Diagnost
 			reason: "credential_protection_" + strconv.Itoa(int(observability.CredentialProtectionUnsupported)),
 		}
 	}
-	bounded, truncated := boundedRememberDiagnosticBodyForProtection(body)
-	protected, reason := protector.ProtectDiagnosticBytes(bounded, rememberDiagnosticProtectionBudget(len(bounded)), authenticatedSecrets...)
+	budget := min(len(body), rememberDiagnosticMaxBodyBytes)*rememberDiagnosticProtectionExpansion + 2
+	protected, reason := protector.ProtectDiagnosticBytes(body, budget, authenticatedSecrets...)
 	if reason != observability.CredentialProtectionAvailable {
 		return rememberDiagnosticCapture{
 			state:  "unavailable",
@@ -85,7 +62,7 @@ func captureRememberDiagnosticBody(body []byte, protector observability.Diagnost
 	}
 	captured, protectedTruncated := boundedRememberDiagnosticBody(protected)
 	state := "captured"
-	if truncated || protectedTruncated {
+	if len(body) > rememberDiagnosticMaxBodyBytes || protectedTruncated {
 		state = "truncated"
 	}
 	return rememberDiagnosticCapture{body: captured, state: state}

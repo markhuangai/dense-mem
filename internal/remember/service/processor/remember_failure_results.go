@@ -1,7 +1,9 @@
 package processor
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -113,4 +115,23 @@ func rememberFailureRelationshipRefs(proposal map[string]any) []string {
 		refs = append(refs, strings.TrimSpace(ref))
 	}
 	return refs
+}
+
+func rememberPreLockProcessError(
+	input rememberapp.RememberProcessRequest,
+	submissionID string,
+	cause error,
+) *rememberapp.RememberProcessError {
+	code := rememberapp.TerminalErrorDatabaseFailure
+	reasonCode := "idempotency_lock"
+	if errors.Is(cause, context.DeadlineExceeded) {
+		code = rememberapp.TerminalErrorRequestTimeout
+		reasonCode = "idempotency_lock_timeout"
+	} else if errors.Is(cause, context.Canceled) {
+		code = rememberapp.TerminalErrorRequestCancelled
+		reasonCode = "idempotency_lock_cancelled"
+	}
+	processErr := rememberFailureProcessErrorWithStatus(input, submissionID, cause, code, reasonCode, "remember.idempotency_lock")
+	processErr.Err = cause
+	return processErr
 }

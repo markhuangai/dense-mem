@@ -26,6 +26,14 @@ func TestCredentialProtectorProtectDiagnosticBytesPreservesBoundedCaptureStates(
 	body, reason = protector.ProtectDiagnosticBytes([]byte(`{"message":"too large"}`), 2)
 	require.Nil(t, body)
 	require.Equal(t, CredentialProtectionBudgetExceeded, reason)
+
+	body, reason = protector.ProtectDiagnosticBytes([]byte(strings.Repeat(" ", 129)+`{}`), 128)
+	require.Nil(t, body)
+	require.Equal(t, CredentialProtectionBudgetExceeded, reason)
+
+	body, reason = protector.ProtectDiagnosticBytes([]byte(`{}`), 0)
+	require.Nil(t, body)
+	require.Equal(t, CredentialProtectionInvalidBudget, reason)
 }
 
 func TestCredentialProtectorProtectDiagnosticBytesReportsUnavailableProtection(t *testing.T) {

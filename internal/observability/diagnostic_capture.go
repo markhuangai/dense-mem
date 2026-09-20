@@ -19,6 +19,12 @@ func (p *CredentialProtector) ProtectDiagnosticBytes(body []byte, maxBytes int, 
 	if len(body) == 0 {
 		return nil, CredentialProtectionAvailable
 	}
+	if maxBytes <= 0 {
+		return nil, CredentialProtectionInvalidBudget
+	}
+	if len(body) > maxBytes {
+		return nil, CredentialProtectionBudgetExceeded
+	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
 	var value any

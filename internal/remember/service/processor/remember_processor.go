@@ -533,25 +533,6 @@ func rememberFailurePersistenceProcessError(
 	)
 }
 
-func rememberPreLockProcessError(
-	input rememberapp.RememberProcessRequest,
-	submissionID string,
-	cause error,
-) *rememberapp.RememberProcessError {
-	code := rememberapp.TerminalErrorDatabaseFailure
-	reasonCode := "idempotency_lock"
-	if errors.Is(cause, context.DeadlineExceeded) {
-		code = rememberapp.TerminalErrorRequestTimeout
-		reasonCode = "idempotency_lock_timeout"
-	} else if errors.Is(cause, context.Canceled) {
-		code = rememberapp.TerminalErrorRequestCancelled
-		reasonCode = "idempotency_lock_cancelled"
-	}
-	processErr := rememberFailureProcessErrorWithStatus(input, submissionID, cause, code, reasonCode, "remember.idempotency_lock")
-	processErr.Err = cause
-	return processErr
-}
-
 func rememberFailureProcessErrorWithStatus(
 	input rememberapp.RememberProcessRequest,
 	submissionID string,

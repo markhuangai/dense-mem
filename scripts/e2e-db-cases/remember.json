@@ -3,6 +3,20 @@
   "capability": "remember",
   "cases": [
     {
+      "id": "repository/TestRecordRememberFailurePreservesUnavailableCaptureStateAfterAttemptBudget",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestRecordRememberFailurePreservesUnavailableCaptureStateAfterAttemptBudget$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/remember_attempt_repository_integration_test.go"
+    },
+    {
+      "id": "repository/TestRememberInvocationDiagnosticsTrimsAgainstJSONBTextLimit",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestRememberInvocationDiagnosticsTrimsAgainstJSONBTextLimit$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/remember_invocation_diagnostics_integration_test.go"
+    },
+    {
       "id": "repository/TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndExchanges",
       "package": "./internal/knowledge/postgres",
       "run": "^TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndExchanges$",
