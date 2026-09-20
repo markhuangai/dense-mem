@@ -209,7 +209,7 @@ func TestLogMigrationFailureUsesRootErrorEvent(t *testing.T) {
 
 func TestMigrationRootLoggerProtectsConfiguredSecrets(t *testing.T) {
 	postgresDSN := "postgres://user:postgres-secret@db.example/memory"
-	logger := newRootLogger(config.Config{
+	logger, err := newRootLogger(config.Config{
 		PostgresDSN:          postgresDSN,
 		RedisPassword:        "redis-secret",
 		AIAPIKey:             "embedding-secret",
@@ -217,11 +217,15 @@ func TestMigrationRootLoggerProtectsConfiguredSecrets(t *testing.T) {
 		ControlPortalToken:   "control-secret",
 		TelemetryScrapeToken: "telemetry-secret",
 	}, slog.LevelDebug)
+	if err != nil {
+		t.Fatal(err)
+	}
 	sink := &migrationRootLogSink{}
 	if err := logger.AttachSink(sink); err != nil {
 		t.Fatalf("attach migration root sink: %v", err)
 	}
 	logger.Error("migration failure", errors.New(postgresDSN),
+		observability.String("postgres_password", "postgres-secret"),
 		observability.String("redis_password", "redis-secret"),
 		observability.String("api_key", "embedding-secret"),
 	)
@@ -232,10 +236,54 @@ func TestMigrationRootLoggerProtectsConfiguredSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal migration root record: %v", err)
 	}
-	for _, secret := range []string{postgresDSN, "redis-secret", "embedding-secret", "verifier-secret", "control-secret", "telemetry-secret"} {
+	for _, secret := range []string{postgresDSN, "postgres-secret", "redis-secret", "embedding-secret", "verifier-secret", "control-secret", "telemetry-secret"} {
 		if strings.Contains(string(encoded), secret) {
 			t.Fatalf("migration root record exposed %q: %s", secret, encoded)
 		}
+	}
+}
+
+func TestRootProtectorProtectsPostgresPasswords(t *testing.T) {
+	for _, test := range []struct {
+		name, dsn, password string
+	}{
+		{"URL", "postgres://user:database-secret@localhost/memory?sslmode=disable", "database-secret"},
+		{"escaped URL", "postgres://user:database%20p%40ss%3A%2F%25@localhost/memory?sslmode=disable", "database p@ss:/%"},
+		{"keyword", `host=localhost user=user password='database p\'ass\\word' dbname=memory sslmode=disable`, `database p'ass\word`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			protector, err := newRootProtector(config.Config{PostgresDSN: test.dsn})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := json.Marshal(map[string]string{"details": test.password, "evidence": "ordinary admitted text"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			protected, reason := protector.ProtectDiagnosticBytes(body, 1024)
+			if reason != observability.CredentialProtectionAvailable {
+				t.Fatalf("capture unavailable: %v", reason)
+			}
+			var capture map[string]string
+			if err := json.Unmarshal(protected, &capture); err != nil {
+				t.Fatal(err)
+			}
+			if capture["details"] != observability.CredentialProtectionRedacted || capture["evidence"] != "ordinary admitted text" {
+				t.Fatalf("protected capture = %#v", capture)
+			}
+		})
+	}
+}
+
+func TestRootLoggerRejectsInvalidPostgresDSNWithoutExposingIt(t *testing.T) {
+	dsn := "postgres://user:private%zz@localhost/memory"
+	logger, err := newRootLogger(config.Config{PostgresDSN: dsn}, slog.LevelDebug)
+	var validationError *config.ValidationError
+	if logger != nil || !errors.As(err, &validationError) || validationError.Field != "POSTGRES_DSN" {
+		t.Fatalf("invalid DSN result = %v, %v", logger, err)
+	}
+	if strings.Contains(err.Error(), "private") || strings.Contains(err.Error(), dsn) {
+		t.Fatalf("configuration error exposes connection credentials: %v", err)
 	}
 }
 

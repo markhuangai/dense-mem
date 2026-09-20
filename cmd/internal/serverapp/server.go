@@ -247,6 +247,10 @@ func RunActiveServer(
 	if err != nil {
 		return fmt.Errorf("failed to build conflict review runner: %w", err)
 	}
+	diagnosticProtector, err := newRootProtector(cfg)
+	if err != nil {
+		return fmt.Errorf("configure diagnostic protection: %w", err)
+	}
 	applications := buildApplicationBundle(applicationCompositionDependencies{
 		Knowledge:              knowledgeStore,
 		Dream:                  dreamStore,
@@ -265,7 +269,7 @@ func RunActiveServer(
 		AssessmentLimits:       assessmentLimits,
 		Metrics:                discoverabilityMetrics,
 		Logger:                 logger,
-		DiagnosticProtector:    observability.NewCredentialProtector(cfg.PostgresDSN, cfg.RedisPassword, cfg.AIAPIKey, cfg.AIVerifierAPIKey, cfg.ControlPortalToken, cfg.TelemetryScrapeToken),
+		DiagnosticProtector:    diagnosticProtector,
 		Audit:                  auditService,
 		AppConfig:              appConfigService,
 		Teams:                  teamService,

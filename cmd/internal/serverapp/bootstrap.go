@@ -8,6 +8,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/markhuangai/dense-mem/cmd/internal/migrationapp"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -52,7 +54,10 @@ func RunMigrationControlRetirement(processCtx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("parse log level: %w", err)
 	}
-	logger := newRootLogger(cfg, level)
+	logger, err := newRootLogger(cfg, level)
+	if err != nil {
+		return fmt.Errorf("configure root logger: %w", err)
+	}
 	slog.SetDefault(logger.Slog())
 	retirementTimeout := time.Duration(cfg.GetPostgresMigrationTimeoutSeconds()) * time.Second
 	retirementCtx, cancel := context.WithTimeout(processCtx, retirementTimeout)
@@ -92,7 +97,10 @@ func RunFromEnvironment(processCtx context.Context, options RuntimeOptions) erro
 	}
 
 	level := cfg.GetLogLevel()
-	logger := newRootLogger(cfg, level)
+	logger, err := newRootLogger(cfg, level)
+	if err != nil {
+		return fmt.Errorf("configure root logger: %w", err)
+	}
 	slog.SetDefault(logger.Slog())
 
 	startupCtx, startupCancel := context.WithTimeout(processCtx, DefaultStartupTimeout)
@@ -156,13 +164,26 @@ func logMigrationFailure(ctx context.Context, logger *observability.Logger, dire
 	logger.ErrorContext(context.WithoutCancel(ctx), "postgres migrations failed", err, observability.String("direction", direction))
 }
 
-func newRootLogger(cfg config.Config, level slog.Level) *observability.Logger {
-	return observability.NewWithSecrets(level,
+func newRootLogger(cfg config.Config, level slog.Level) (*observability.Logger, error) {
+	protector, err := newRootProtector(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return observability.NewWithProtector(level, protector), nil
+}
+
+func newRootProtector(cfg config.Config) (*observability.CredentialProtector, error) {
+	postgresConfig, err := pgconn.ParseConfig(cfg.PostgresDSN)
+	if err != nil {
+		return nil, &config.ValidationError{Field: "POSTGRES_DSN", Message: "invalid connection configuration"}
+	}
+	return observability.NewCredentialProtector(
 		cfg.PostgresDSN,
+		postgresConfig.Password,
 		cfg.RedisPassword,
 		cfg.AIAPIKey,
 		cfg.AIVerifierAPIKey,
 		cfg.ControlPortalToken,
 		cfg.TelemetryScrapeToken,
-	)
+	), nil
 }
