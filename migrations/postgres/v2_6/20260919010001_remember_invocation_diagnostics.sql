@@ -137,3 +137,9 @@ CREATE TRIGGER remember_invocation_diagnostics_append_only
 
 -- +goose Down
 -- Irreversible: retained operator diagnostics cannot be reconstructed safely.
+-- +goose StatementBegin
+DO $$
+BEGIN
+    RAISE EXCEPTION 'remember invocation diagnostics migration is irreversible; restore from backup or roll forward';
+END $$;
+-- +goose StatementEnd

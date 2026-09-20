@@ -29,6 +29,7 @@ func TestRememberInvocationDiagnosticsMigrationDefinesAppendOnlyBoundedRLSStore(
 		"CREATE POLICY remember_invocation_diagnostics_update",
 		"CREATE POLICY remember_invocation_diagnostics_delete",
 		"CREATE TRIGGER remember_invocation_diagnostics_append_only",
+		"RAISE EXCEPTION 'remember invocation diagnostics migration is irreversible",
 	} {
 		require.Contains(t, sql, fragment)
 	}

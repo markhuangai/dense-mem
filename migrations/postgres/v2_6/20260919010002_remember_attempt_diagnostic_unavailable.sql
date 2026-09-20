@@ -16,13 +16,16 @@
 -- unavailable state when credential protection cannot safely retain a body.
 -- Lock impact: replacing the check takes a short ACCESS EXCLUSIVE lock; the
 -- validation scan runs after that lock is released.
-SET lock_timeout = '30s';
+-- +goose StatementBegin
+BEGIN;
+SET LOCAL lock_timeout = '30s';
 ALTER TABLE remember_attempt_diagnostics
     DROP CONSTRAINT IF EXISTS remember_attempt_diagnostics_capture_state_check,
     ADD CONSTRAINT remember_attempt_diagnostics_capture_state_check CHECK (
         capture_state IN ('captured', 'truncated', 'not_captured', 'hash_only', 'provider_not_called', 'no_response', 'interrupted', 'not_delivered', 'unavailable')
     ) NOT VALID;
-RESET lock_timeout;
+COMMIT;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
 BEGIN;
