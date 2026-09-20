@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 	searchpostgres "github.com/markhuangai/dense-mem/internal/search/postgres"
@@ -172,18 +173,38 @@ func TestTeamHardDeleteRemovesEmptyTeamMemorySpaceCatalog(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "team-hard-delete-empty"))
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID.String(), "team-hard-delete-diagnostic")
+	var spaceID uuid.UUID
+	var spaceGeneration int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT id, generation
+			FROM memory_spaces
+			WHERE team_id = ? AND kind = 'team_shared'
+		`, teamID).Row().Scan(&spaceID, &spaceGeneration)
+	}))
+	invocationID := uuid.New()
+	require.NoError(t, knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{}).RecordRememberInvocationDiagnostic(ctx, knowledgecontract.RememberInvocationDiagnosticInput{
+		TeamID: teamID.String(), OwnerProfileID: ownerID, InvocationID: invocationID.String(),
+		SpaceID: spaceID.String(), SpaceGeneration: spaceGeneration,
+		Classification: "execution", Outcome: "failed", RequestBody: []byte(`{"secret":"team-delete"}`), RequestCaptureState: "captured",
+	}))
 
 	require.NoError(t, NewTeamRepository(appDB, rls).HardDelete(ctx, teamID))
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		var teamCount, spaceCount int64
+		var teamCount, spaceCount, invocationCount int64
 		if err := tx.Raw(`SELECT COUNT(*) FROM teams WHERE id = ?`, teamID).Scan(&teamCount).Error; err != nil {
 			return err
 		}
 		if err := tx.Raw(`SELECT COUNT(*) FROM memory_spaces WHERE team_id = ?`, teamID).Scan(&spaceCount).Error; err != nil {
 			return err
 		}
+		if err := tx.Raw(`SELECT COUNT(*) FROM remember_invocation_diagnostics WHERE team_id = ?`, teamID).Scan(&invocationCount).Error; err != nil {
+			return err
+		}
 		require.Zero(t, teamCount)
 		require.Zero(t, spaceCount)
+		require.Zero(t, invocationCount)
 		return nil
 	}))
 }

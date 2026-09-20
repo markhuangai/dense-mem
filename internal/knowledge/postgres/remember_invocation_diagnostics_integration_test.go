@@ -215,7 +215,8 @@ func TestRememberInvocationDiagnosticsScopesBodiesAndPurgesExpiredRows(t *testin
 	lateHeldID := "00000000-0000-4000-8000-000000000805"
 	require.NoError(t, repo.RecordRememberInvocationDiagnostic(ctx, knowledgecontract.RememberInvocationDiagnosticInput{
 		TeamID: teamA, OwnerProfileID: ownerA, InvocationID: heldID, SpaceID: privateSpace.ID.String(), SpaceGeneration: 1,
-		Classification: "execution", Outcome: "cancelled", CreatedAt: old, CompletedAt: old.Add(time.Minute), ExpiresAt: old.Add(24 * time.Hour),
+		Classification: "execution", Outcome: "cancelled", RequestBody: []byte(`{"held":true}`), RequestCaptureState: "captured",
+		CreatedAt: old, CompletedAt: old.Add(time.Minute), ExpiresAt: old.Add(24 * time.Hour),
 	}))
 	privateRepo := privacypostgres.NewPrivateMemoryRepository(appDB, rls)
 	_, _, err = privateRepo.PlaceLegalHold(ctx, privateSpace.ID, "retention_case")
@@ -223,6 +224,8 @@ func TestRememberInvocationDiagnosticsScopesBodiesAndPurgesExpiredRows(t *testin
 	heldDetail, err := repo.GetRememberInvocationDiagnostic(ctx, teamA, heldID)
 	require.NoError(t, err)
 	require.True(t, heldDetail.RetainedByLegalHold)
+	require.Equal(t, []byte(`{"held":true}`), heldDetail.RequestBody)
+	require.Equal(t, "captured", heldDetail.RequestCaptureState)
 	require.NoError(t, repo.RecordRememberInvocationDiagnostic(ctx, knowledgecontract.RememberInvocationDiagnosticInput{
 		TeamID: teamA, OwnerProfileID: ownerA, InvocationID: expiredID, Classification: "execution", Outcome: "cancelled",
 		CreatedAt: old, CompletedAt: old.Add(time.Minute), ExpiresAt: old.Add(24 * time.Hour),

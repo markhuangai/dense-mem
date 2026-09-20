@@ -366,6 +366,16 @@ func (r *TeamRepositoryImpl) HardDelete(ctx context.Context, id uuid.UUID) error
 		if err := tx.Exec("SELECT set_config('app.tx_mode', 'system', true)").Error; err != nil {
 			return err
 		}
+		// Invocation diagnostics have no foreign key to memory_spaces, so purge them before deleting the catalog.
+		if err := tx.Exec("SELECT set_config('app.remember_attempt_diagnostic_purge', 'true', true)").Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`DELETE FROM remember_invocation_diagnostics WHERE team_id = $1`, id).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("SELECT set_config('app.remember_attempt_diagnostic_purge', 'false', true)").Error; err != nil {
+			return err
+		}
 		if err := tx.Exec(`DELETE FROM memory_spaces WHERE team_id = $1`, id).Error; err != nil {
 			return err
 		}
