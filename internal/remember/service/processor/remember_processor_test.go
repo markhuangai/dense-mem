@@ -632,6 +632,12 @@ func TestRememberProcessorWaiterReplaysWithoutProcessing(t *testing.T) {
 	require.Equal(t, "77777777-7777-7777-7777-777777777777", base.invocation.CanonicalAttemptID)
 }
 
+func TestReplayCanonicalAttemptIDIgnoresSyntheticFailureStatus(t *testing.T) {
+	require.Empty(t, replayCanonicalAttemptID(nil, "synthetic"))
+	require.Empty(t, replayCanonicalAttemptID(&rememberapp.SubmissionStatusResult{SubmissionID: "synthetic"}, "synthetic"))
+	require.Equal(t, "attempt", replayCanonicalAttemptID(&rememberapp.SubmissionStatusResult{SubmissionID: "attempt"}, "synthetic"))
+}
+
 func TestRememberProcessorPreservesCompletedResultWhenLockCleanupFails(t *testing.T) {
 	attemptID := "77777777-7777-7777-7777-777777777777"
 	ledger := &rememberFailureLedgerStub{load: &knowledgecontract.RememberAttempt{
@@ -945,6 +951,7 @@ func (s *rememberWaitAwareLedgerStub) WithRememberAttemptLock(_ context.Context,
 type rememberProcessorLogCapture struct {
 	infos      []string
 	warns      []string
+	warnTexts  []string
 	errors     []string
 	errorTexts []string
 }
@@ -960,8 +967,13 @@ func (l *rememberProcessorLogCapture) Error(message string, err error, _ ...obse
 	}
 }
 
-func (l *rememberProcessorLogCapture) Warn(message string, _ ...observability.LogAttr) {
+func (l *rememberProcessorLogCapture) Warn(message string, attrs ...observability.LogAttr) {
 	l.warns = append(l.warns, message)
+	for _, attr := range attrs {
+		if attr.Key == "error" {
+			l.warnTexts = append(l.warnTexts, fmt.Sprint(attr.Value))
+		}
+	}
 }
 
 func (*rememberProcessorLogCapture) Debug(string, ...observability.LogAttr) {}

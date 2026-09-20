@@ -156,7 +156,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		if errors.Is(replayErr, rememberapp.ErrRememberConflict) || errors.Is(replayErr, repository.ErrIdempotencyConflict) {
 			classification = "conflict"
 		}
-		p.recordRememberInvocation(ctx, input, waiterInvocationID, classification, processErr.Status.SubmissionID, "idempotency_wait", replayErr, processErr.Status, nil)
+		p.recordRememberInvocation(ctx, input, waiterInvocationID, classification, replayCanonicalAttemptID(processErr.Status, waiterInvocationID), "idempotency_wait", replayErr, processErr.Status, nil)
 		return processErr.Status, replayErr
 	}
 	classification := "replay"
@@ -338,8 +338,8 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 			var processErr *rememberapp.RememberProcessError
 			if errors.As(replayErr, &processErr) {
 				invocationStatus = processErr.Status
-				if canonicalAttemptID == "" && processErr.Status != nil {
-					canonicalAttemptID = processErr.Status.SubmissionID
+				if canonicalAttemptID == "" {
+					canonicalAttemptID = replayCanonicalAttemptID(processErr.Status, ingestID)
 				}
 			}
 		}
@@ -849,6 +849,13 @@ func rememberReplayLoadFailure(
 	return nil, rememberFailurePersistenceProcessError(input, submissionID, cause)
 }
 
+func replayCanonicalAttemptID(status *rememberapp.SubmissionStatusResult, syntheticSubmissionID string) string {
+	if status == nil || status.SubmissionID == "" || status.SubmissionID == syntheticSubmissionID {
+		return ""
+	}
+	return status.SubmissionID
+}
+
 func rememberAssessmentSnapshot(
 	input rememberapp.RememberProcessRequest,
 	ingestID string,
@@ -968,7 +975,7 @@ func (p *rememberSynchronousProcessor) embedSearchDocumentBatch(
 			return nil, fmt.Errorf("%w: embedding phase canceled", rememberapp.ErrRememberRequestCancelled)
 		}
 		if errors.Is(embedCtx.Err(), context.DeadlineExceeded) || errors.Is(embedCtx.Err(), rememberapp.ErrRememberRequestTimeout) ||
-			errors.Is(err, rememberapp.ErrRememberRequestTimeout) {
+			errors.Is(err, context.DeadlineExceeded) || errors.Is(err, rememberapp.ErrRememberRequestTimeout) {
 			return nil, fmt.Errorf("%w: embedding phase exceeded 10 seconds", rememberapp.ErrRememberRequestTimeout)
 		}
 		return nil, &rememberEmbeddingProviderFailure{cause: err}

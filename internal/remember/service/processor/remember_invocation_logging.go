@@ -145,7 +145,8 @@ func (p *rememberSynchronousProcessor) recordRememberInvocation(
 		if contextual, ok := p.logger.(observability.ContextLogProvider); ok {
 			contextual.WarnContext(ctx, warningEvent, append(warningAttrs, observability.String("error", err.Error()))...)
 		} else {
-			p.logger.Warn(warningEvent, append(warningAttrs, observability.String("error", err.Error()))...)
+			protectedError := protectRememberLogError(err, p.protector, observability.AuthenticationSecretsFromContext(ctx))
+			p.logger.Warn(warningEvent, append(warningAttrs, observability.String("error", protectedError.Error()))...)
 		}
 	}
 	if p.logger != nil {

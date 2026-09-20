@@ -133,7 +133,7 @@ func TestRememberFailureLoggingFallbackProtectsRequestSecrets(t *testing.T) {
 
 	processor.logRememberFailure(ctx, input, "attempt", time.Now(), "commit", "database_failure", "corr", 0, failure)
 	processor.logRememberFailureRecordError(ctx, input, "attempt", "commit", "database_failure", "corr", failure)
-	processor.ledger = &rememberFailureLedgerStub{}
+	processor.ledger = &rememberFailureLedgerStub{invocationErr: failure}
 	processor.recordRememberInvocation(ctx, input, "invocation", "execution", "", "commit", failure, nil, nil)
 
 	require.Len(t, logger.errorTexts, 3)
@@ -141,6 +141,9 @@ func TestRememberFailureLoggingFallbackProtectsRequestSecrets(t *testing.T) {
 		require.NotContains(t, text, secret)
 		require.Contains(t, text, observability.CredentialProtectionRedacted)
 	}
+	require.Len(t, logger.warnTexts, 1)
+	require.NotContains(t, logger.warnTexts[0], secret)
+	require.Contains(t, logger.warnTexts[0], observability.CredentialProtectionRedacted)
 }
 
 func TestRememberProcessorPreCallbackLockFailurePreservesCancellationCode(t *testing.T) {
@@ -753,6 +756,9 @@ func TestEmbedSearchDocumentBatchValidatesProviderAndVectors(t *testing.T) {
 	provider.err = rememberapp.ErrRememberRequestTimeout
 	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, rememberapp.ErrRememberRequestTimeout)
+	provider.err = context.DeadlineExceeded
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	require.ErrorIs(t, err, rememberapp.ErrRememberRequestTimeout)
 
 	provider.err = nil
 	provider.vectors = [][]float32{}
@@ -943,6 +949,7 @@ func TestRememberProcessorWaiterRecordsReplayLoadFailure(t *testing.T) {
 	require.Equal(t, "database_failure", base.invocation.ErrorCode)
 	require.True(t, base.invocation.Retryable)
 	require.Equal(t, "idempotency_wait", base.invocation.FailedPhase)
+	require.Empty(t, base.invocation.CanonicalAttemptID)
 }
 
 func TestRememberInvocationDiagnosticsDoesNotCaptureStatuslessCallerResponse(t *testing.T) {
