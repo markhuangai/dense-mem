@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
 
 const TEST_TAG_PATTERN = /^test-([1-9][0-9]*)$/;
+const PRERELEASE_TAG_PATTERN = /^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$/;
 const PREVIEW_LABELS = Object.freeze([
   "io.dense-mem.preview.pr",
   "io.dense-mem.preview.head",
@@ -16,6 +17,8 @@ const DEFAULT_BATCH_LIMIT = 200;
 const TARGET_CONCURRENCY = 8;
 const DEFAULT_PREVIEW_QUIESCE_MAX_POLLS = 90;
 const DEFAULT_PREVIEW_QUIESCE_POLL_MILLISECONDS = 60_000;
+const PREVIEW_ACTIVE_STATUSES = Object.freeze(["queued", "in_progress", "waiting", "requested", "pending"]);
+const PREVIEW_PUBLICATION_JOB_NAMES = Object.freeze(["Build untrusted preview", "Publish trusted preview"]);
 
 function testPrFromTag(tag) {
   const match = TEST_TAG_PATTERN.exec(tag || "");
@@ -75,6 +78,23 @@ function previewRunForPull(run, pullNumber) {
   return title === `PR test image: PR #${pullNumber}`;
 }
 
+function isActivePreviewStatus(status) {
+  return PREVIEW_ACTIVE_STATUSES.includes(status);
+}
+
+async function previewPublicationIsActive(api, run) {
+  if (!isActivePreviewStatus(run.status)) return false;
+  const jobs = await api.jobs(run.id);
+  if (jobs.some((job) => PREVIEW_PUBLICATION_JOB_NAMES.includes(job.name) && isActivePreviewStatus(job.status))) {
+    return true;
+  }
+  const publish = jobs.find((job) => job.name === "Publish trusted preview");
+  if (publish?.status === "completed") return false;
+  const build = jobs.find((job) => job.name === "Build untrusted preview");
+  if (build?.status === "completed" && build.conclusion !== "success") return false;
+  return true;
+}
+
 function releaseOutcome({ run, jobs, mergeCommitSha }) {
   if (!run || releaseTargetSha(run) !== mergeCommitSha || run.conclusion !== "success") {
     return { eligible: false, reason: "the prerelease workflow did not complete successfully for the merge" };
@@ -128,6 +148,13 @@ function cleanupEligibility({ pull, release, releasedImage = false }) {
   return outcome.eligible
     ? { eligible: true, reason: outcome.reason }
     : { eligible: false, reason: outcome.reason };
+}
+
+function hasReleasedImage(versions, mergeCommitSha) {
+  return versions.some((version) =>
+    version.imageRevision === mergeCommitSha &&
+    (version.tags || []).some((tag) => PRERELEASE_TAG_PATTERN.test(tag)),
+  );
 }
 
 function reachableFrom(versions, roots) {
@@ -541,10 +568,13 @@ async function waitForPreviewQuiescence(api, pullNumbers, {
 } = {}) {
   const numbers = [...new Set(pullNumbers.filter((number) => Number.isSafeInteger(number) && number > 0))];
   if (numbers.length === 0) return;
-  const activeStatuses = new Set(["queued", "in_progress", "waiting", "requested", "pending"]);
   for (let attempt = 0; attempt < maxPolls; attempt += 1) {
     const runs = await api.previewRuns();
-    const active = runs.filter((run) => numbers.some((number) => previewRunForPull(run, number)) && activeStatuses.has(run.status));
+    const candidates = runs.filter((run) => numbers.some((number) => previewRunForPull(run, number)) && isActivePreviewStatus(run.status));
+    const active = [];
+    for (const run of candidates) {
+      if (await previewPublicationIsActive(api, run)) active.push(run);
+    }
     if (active.length === 0) return;
     if (attempt + 1 >= maxPolls) {
       throw new Error(`preview publication is still active for pull requests: ${numbers.join(", ")}`);
@@ -559,9 +589,9 @@ function eventPayload() {
   return JSON.parse(fs.readFileSync(eventPath, "utf8"));
 }
 
-async function resolveTargets(api, event, versions) {
-  const eventName = process.env.GITHUB_EVENT_NAME;
-  const requested = process.env.CLEANUP_PR_NUMBER;
+async function resolveTargets(api, event, versions, environment = process.env) {
+  const eventName = environment.GITHUB_EVENT_NAME;
+  const requested = environment.CLEANUP_PR_NUMBER;
   if (requested) {
     const number = Number(requested);
     if (!Number.isSafeInteger(number) || number < 1) throw new Error("CLEANUP_PR_NUMBER must be a positive integer");
@@ -575,7 +605,7 @@ async function resolveTargets(api, event, versions) {
     const release = await releaseForPull(api, pull);
     return [{ number, pull, release }];
   }
-  if (eventName === "workflow_run" && process.env.CLEANUP_MANUAL_SWEEP !== "true") {
+  if (eventName === "workflow_run" && environment.CLEANUP_MANUAL_SWEEP !== "true") {
     const targetSha = releaseTargetSha(event.workflow_run);
     if (!targetSha) return [];
     const pulls = await api.associatedPulls(targetSha);
@@ -584,7 +614,7 @@ async function resolveTargets(api, event, versions) {
     const pull = await pullForNumber(api, merged[0].number);
     return [{ number: merged[0].number, pull, release: { run: event.workflow_run, jobs: await api.jobs(event.workflow_run.id) } }];
   }
-  if (process.env.CLEANUP_MANUAL_SWEEP === "true") {
+  if (environment.CLEANUP_MANUAL_SWEEP === "true") {
     const numbers = new Set();
     for (const version of versions) {
       for (const tag of version.tags || []) {
@@ -643,10 +673,7 @@ async function main() {
   const prepareTarget = (target) => {
     if (!target.pull) return { target, eligibility: { eligible: false, reason: "pull request not found" }, plan: null };
     const eligiblePrs = new Set([target.number]);
-    const releasedImage = Boolean(target.pull.merged_at && versions.some((version) =>
-      version.imageRevision === target.pull.merge_commit_sha &&
-      version.tags.some((tag) => /^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$/.test(tag)),
-    ));
+    const releasedImage = Boolean(target.pull.merged_at && hasReleasedImage(versions, target.pull.merge_commit_sha));
     const eligibility = cleanupEligibility({ ...target, releasedImage });
     if (!eligibility.eligible) return { target, eligibility, plan: null };
     const plan = buildDeletionPlan({ versions, eligiblePrs, targetPr: target.number, maxActions });
@@ -709,10 +736,7 @@ async function main() {
           throw new Error(`cleanup tag ${action.tags.join(", ")} changed before deletion`);
         }
       }
-      const refreshedReleasedImage = Boolean(refreshedPull.merged_at && refreshedVersions.some((version) =>
-        version.tags.some((tag) => /^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$/.test(tag)) &&
-        version.imageRevision === refreshedPull.merge_commit_sha,
-      ));
+      const refreshedReleasedImage = Boolean(refreshedPull.merged_at && hasReleasedImage(refreshedVersions, refreshedPull.merge_commit_sha));
       validateCleanupState({
         pull: refreshedPull,
         release: refreshedRelease,
@@ -781,6 +805,7 @@ module.exports = {
   assertPlanUnchanged,
   cleanupEligibility,
   GitHubApi,
+  hasReleasedImage,
   isTestTag,
   labelsPreviewPr,
   mapWithConcurrency,
@@ -788,6 +813,7 @@ module.exports = {
   previewRunForPull,
   releaseOutcome,
   releaseTargetSha,
+  resolveTargets,
   selectedTestTags,
   testPrFromTag,
   validateCleanupState,

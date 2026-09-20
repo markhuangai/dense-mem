@@ -66,6 +66,63 @@ test("released image metadata permits cleanup when the release receipt is not av
   });
 });
 
+test("released-image detection requires a matching revision and prerelease tag", () => {
+  const revision = "a".repeat(40);
+  assert.equal(policy.hasReleasedImage([
+    { imageRevision: revision, tags: ["v2.6.4-rc.1"] },
+  ], revision), true);
+  assert.equal(policy.hasReleasedImage([
+    { imageRevision: "b".repeat(40), tags: ["v2.6.4-rc.1"] },
+  ], revision), false);
+  assert.equal(policy.hasReleasedImage([
+    { imageRevision: revision, tags: ["v2.6.4"] },
+  ], revision), false);
+});
+
+test("cleanup target resolution is fenced to the intended trigger", async () => {
+  const pull = { number: 42, state: "closed", merged_at: null };
+  const api = {
+    pull: async (number) => number === 42 ? pull : null,
+  };
+  const direct = await policy.resolveTargets(api, { pull_request: { number: 42 } }, [], {
+    GITHUB_EVENT_NAME: "pull_request_target",
+  });
+  assert.deepEqual(direct.map(({ number }) => number), [42]);
+
+  const mergeSha = "c".repeat(40);
+  const releaseRun = {
+    id: 7,
+    name: "Release prerelease",
+    display_title: `Release prerelease: ${mergeSha}`,
+  };
+  const workflowApi = {
+    associatedPulls: async () => [{ number: 42, merged_at: "2026-09-20T10:00:00Z", merge_commit_sha: mergeSha }],
+    pull: async () => ({ ...pull, number: 42, merged_at: "2026-09-20T10:00:00Z", merge_commit_sha: mergeSha }),
+    jobs: async () => [],
+  };
+  const workflow = await policy.resolveTargets(workflowApi, { workflow_run: releaseRun }, [], {
+    GITHUB_EVENT_NAME: "workflow_run",
+  });
+  assert.deepEqual(workflow.map(({ number }) => number), [42]);
+  assert.equal(workflow[0].release.run, releaseRun);
+
+  for (const associatedPulls of [[], [
+    { number: 42, merged_at: "2026-09-20T10:00:00Z", merge_commit_sha: mergeSha },
+    { number: 43, merged_at: "2026-09-20T10:00:00Z", merge_commit_sha: mergeSha },
+  ]]) {
+    const ambiguous = await policy.resolveTargets({
+      ...workflowApi,
+      associatedPulls: async () => associatedPulls,
+    }, { workflow_run: releaseRun }, [], { GITHUB_EVENT_NAME: "workflow_run" });
+    assert.deepEqual(ambiguous, []);
+  }
+
+  await assert.rejects(
+    policy.resolveTargets(api, {}, [], { CLEANUP_PR_NUMBER: "not-a-number" }),
+    /CLEANUP_PR_NUMBER must be a positive integer/,
+  );
+});
+
 test("cleanup revalidation rejects a reopened PR and an incomplete release", () => {
   assert.throws(
     () => policy.validateCleanupState({ pull: { state: "open", merged_at: null }, release: null }),
@@ -317,17 +374,37 @@ test("manual target fanout stays within its concurrency bound", async () => {
 
 test("cleanup waits for active preview publication before rescanning", async () => {
   let reads = 0;
-  let sleeps = 0;
+  let jobs = 0;
+  const sleeps = [];
   await policy.waitForPreviewQuiescence({
     previewRuns: async () => {
       reads += 1;
-      return reads === 1
-        ? [{ display_title: "PR test image: PR #42", status: "in_progress" }]
-        : [];
+      return [{ id: 7, display_title: "PR test image: PR #42", status: "in_progress" }];
     },
-  }, [42], { maxPolls: 3, pollMilliseconds: 0, sleep: async () => { sleeps += 1; } });
+    jobs: async () => [{
+      name: "Publish trusted preview",
+      status: reads === 1 ? "in_progress" : "completed",
+      conclusion: reads === 1 ? null : "success",
+    }],
+  }, [42], { maxPolls: 3, pollMilliseconds: 0, sleep: async (milliseconds) => { sleeps.push(milliseconds); } });
   assert.equal(reads, 2);
-  assert.equal(sleeps, 1);
+  assert.deepEqual(sleeps, [0]);
+});
+
+test("cleanup does not wait for production E2E after publication", async () => {
+  let jobs = 0;
+  await policy.waitForPreviewQuiescence({
+    previewRuns: async () => [{ id: 8, display_title: "PR test image: PR #42", status: "in_progress" }],
+    jobs: async () => {
+      jobs += 1;
+      return [
+        { name: "Build untrusted preview", status: "completed", conclusion: "success" },
+        { name: "Publish trusted preview", status: "completed", conclusion: "success" },
+        { name: "Run production-image E2E", status: "in_progress" },
+      ];
+    },
+  }, [42], { maxPolls: 3, pollMilliseconds: 0 });
+  assert.equal(jobs, 1);
 });
 
 test("preview quiescence default covers the preview publication window", async () => {
@@ -337,8 +414,12 @@ test("preview quiescence default covers the preview publication window", async (
     policy.waitForPreviewQuiescence({
       previewRuns: async () => {
         reads += 1;
-        return [{ display_title: "PR test image: PR #42", status: "in_progress" }];
+        return [{ id: 9, display_title: "PR test image: PR #42", status: "in_progress" }];
       },
+      jobs: async () => [
+        { name: "Build untrusted preview", status: "in_progress" },
+        { name: "Publish trusted preview", status: "queued" },
+      ],
     }, [42], { sleep: async (milliseconds) => { delays.push(milliseconds); } }),
     /preview publication is still active for pull requests: 42/,
   );
