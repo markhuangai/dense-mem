@@ -189,7 +189,7 @@ function buildDetachedDeletionPlan({ versions, detachedDigest, selectedTags = []
   }
   const blocked = [];
   const actions = [];
-  for (const digest of postOrder(normalized, detachedDigest)) {
+  for (const digest of postOrder(normalized, detachedDigest).reverse()) {
     const version = byDigest.get(digest);
     if (!version) {
       blocked.push({ digest, reason: "generated manifest is absent from package versions" });
@@ -415,7 +415,8 @@ class GitHubApi {
   }
 
   previewRuns() {
-    return this.paged(`/repos/${this.repository}/actions/workflows/pr-test-image.yml/runs?event=pull_request_target`);
+    return this.request(`/repos/${this.repository}/actions/workflows/pr-test-image.yml/runs?event=pull_request_target&per_page=100&page=1`)
+      .then((response) => response.workflow_runs || []);
   }
 
   async jobs(runId) {

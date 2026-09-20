@@ -211,6 +211,17 @@ test("detached cleanup deletes generated descendants but protects retained graph
   assert.ok(plan.protectedDigests.includes(sourceChild));
   assert.ok(plan.protectedDigests.includes(externalRoot));
   assert.ok(plan.protectedDigests.includes(detachedChild));
+
+  const ordered = policy.buildDetachedDeletionPlan({
+    versions: [
+      { id: 53, name: detachedRoot, tags: ["test-42"], children: [detachedChild] },
+      { id: 54, name: detachedChild, tags: [], children: [detachedGrandchild] },
+      { id: 55, name: detachedGrandchild, tags: [], children: [] },
+    ],
+    detachedDigest: detachedRoot,
+    selectedTags: ["test-42"],
+  });
+  assert.deepEqual(ordered.actions.map(({ versionId }) => versionId), [53, 54, 55]);
 });
 
 test("detached cleanup blocks retained tags and plan drift", () => {
