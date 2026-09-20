@@ -144,6 +144,7 @@ func TestHarnessLogsBoundedCorrelationAndValidatedIdentity(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code)
 	require.Contains(t, output.String(), "\"msg\":\"oauth_http_request\"")
 	require.Contains(t, output.String(), "\"profile\":\"entra\"")
+	require.Contains(t, output.String(), "\"transport_status\":\"success\"")
 	require.Contains(t, output.String(), "\"correlation_id\"")
 	require.NotContains(t, output.String(), "secret-token")
 
@@ -156,8 +157,38 @@ func TestHarnessLogsBoundedCorrelationAndValidatedIdentity(t *testing.T) {
 	rejectedHandler.ServeHTTP(rejected, rejectedRequest)
 	require.Equal(t, http.StatusUnauthorized, rejected.Code)
 	require.Contains(t, output.String(), "\"correlation_id\"")
+	require.Contains(t, output.String(), "\"transport_status\":\"client_error\"")
 	require.NotContains(t, output.String(), "rejected-secret")
 	require.NotContains(t, output.String(), "\"profile\":\"entra\"")
+}
+
+func TestHarnessRecoversValidatorPanicWithoutLoggingBearer(t *testing.T) {
+	var output bytes.Buffer
+	logger := observability.NewWithHandler(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	handler, err := newHarnessHandler("https://harness.example", nil, harnessValidatorStub{panicValue: errors.New("panic includes panic-bearer")}, logger)
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPost, "https://harness.example/mcp", nil)
+	request.Header.Set("Authorization", "Bearer panic-bearer")
+	response := httptest.NewRecorder()
+	require.NotPanics(t, func() { handler.ServeHTTP(response, request) })
+	require.Equal(t, http.StatusInternalServerError, response.Code)
+	require.Contains(t, output.String(), "\"msg\":\"oauth_handler_panic\"")
+	require.Contains(t, output.String(), "panic includes")
+	require.Contains(t, output.String(), "\"msg\":\"oauth_http_request\"")
+	require.Contains(t, output.String(), "\"transport_status\":\"error\"")
+	require.NotContains(t, output.String(), "panic-bearer")
+}
+
+func TestOAuthLogWriterEmitsFixedServerError(t *testing.T) {
+	var output bytes.Buffer
+	logger := observability.NewWithHandler(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	payload := []byte("http: panic serving bearer server-secret")
+	count, err := (oauthLogWriter{logger: logger}).Write(payload)
+	require.NoError(t, err)
+	require.Equal(t, len(payload), count)
+	require.Contains(t, output.String(), "\"msg\":\"oauth_http_server_error\"")
+	require.NotContains(t, output.String(), "server-secret")
+	require.NotContains(t, output.String(), "panic serving")
 }
 
 func TestHarnessCompletionLoggingDetachesCanceledContext(t *testing.T) {
@@ -294,8 +325,9 @@ func TestValidatePublicBaseURLRequiresTrustedHTTPSIdentifier(t *testing.T) {
 }
 
 type harnessValidatorStub struct {
-	result *domain.OAuthValidatedToken
-	err    error
+	result     *domain.OAuthValidatedToken
+	err        error
+	panicValue any
 }
 
 type cancellationRejectingHarnessLogSink struct {
@@ -311,6 +343,9 @@ func (s *cancellationRejectingHarnessLogSink) WriteLog(ctx context.Context, reco
 }
 
 func (stub harnessValidatorStub) Validate(context.Context, string) (*domain.OAuthValidatedToken, error) {
+	if stub.panicValue != nil {
+		panic(stub.panicValue)
+	}
 	if stub.err != nil {
 		return nil, stub.err
 	}

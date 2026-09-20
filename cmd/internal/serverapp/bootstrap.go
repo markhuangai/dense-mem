@@ -52,11 +52,12 @@ func RunMigrationControlRetirement(processCtx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("parse log level: %w", err)
 	}
-	logger := observability.New(level)
+	logger := newRootLogger(cfg, level)
+	slog.SetDefault(logger.Slog())
 	retirementTimeout := time.Duration(cfg.GetPostgresMigrationTimeoutSeconds()) * time.Second
 	retirementCtx, cancel := context.WithTimeout(processCtx, retirementTimeout)
 	defer cancel()
-	pgDB, err := postgres.OpenWithClient(retirementCtx, &cfg)
+	pgDB, err := postgres.OpenWithClientAndLogger(retirementCtx, &cfg, logger)
 	if err != nil {
 		return fmt.Errorf("connect to postgres: %w", err)
 	}
@@ -65,6 +66,7 @@ func RunMigrationControlRetirement(processCtx context.Context) error {
 		return fmt.Errorf("validate postgres topology: %w", err)
 	}
 	if err := migrationapp.RunMigrationControlRetirement(retirementCtx, pgDB.GetDB(), retirementTimeout, logger.Slog()); err != nil {
+		logMigrationFailure(retirementCtx, logger, "migration-control-retirement", err)
 		return fmt.Errorf("run migration-control retirement: %w", err)
 	}
 	return nil
@@ -90,14 +92,7 @@ func RunFromEnvironment(processCtx context.Context, options RuntimeOptions) erro
 	}
 
 	level := cfg.GetLogLevel()
-	logger := observability.NewWithSecrets(level,
-		cfg.PostgresDSN,
-		cfg.RedisPassword,
-		cfg.AIAPIKey,
-		cfg.AIVerifierAPIKey,
-		cfg.ControlPortalToken,
-		cfg.TelemetryScrapeToken,
-	)
+	logger := newRootLogger(cfg, level)
 	slog.SetDefault(logger.Slog())
 
 	startupCtx, startupCancel := context.WithTimeout(processCtx, DefaultStartupTimeout)
@@ -119,6 +114,7 @@ func RunFromEnvironment(processCtx context.Context, options RuntimeOptions) erro
 	migrationTimeout := time.Duration(cfg.GetPostgresMigrationTimeoutSeconds()) * time.Second
 	migrationCtx, migrationCancel := context.WithTimeout(processCtx, migrationTimeout)
 	if err := migrationapp.RunUp(migrationCtx, pgDB.GetDB(), migrationTimeout, logger.Slog()); err != nil {
+		logMigrationFailure(migrationCtx, logger, "up", err)
 		migrationCancel()
 		return fmt.Errorf("run postgres migrations: %w", err)
 	}
@@ -151,4 +147,22 @@ func RunFromEnvironment(processCtx context.Context, options RuntimeOptions) erro
 		return fmt.Errorf("active server runtime: %w", err)
 	}
 	return nil
+}
+
+func logMigrationFailure(ctx context.Context, logger *observability.Logger, direction string, err error) {
+	if logger == nil || err == nil {
+		return
+	}
+	logger.ErrorContext(context.WithoutCancel(ctx), "postgres migrations failed", err, observability.String("direction", direction))
+}
+
+func newRootLogger(cfg config.Config, level slog.Level) *observability.Logger {
+	return observability.NewWithSecrets(level,
+		cfg.PostgresDSN,
+		cfg.RedisPassword,
+		cfg.AIAPIKey,
+		cfg.AIVerifierAPIKey,
+		cfg.ControlPortalToken,
+		cfg.TelemetryScrapeToken,
+	)
 }

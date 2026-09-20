@@ -196,3 +196,9 @@ func transportStatus(status int) string {
 	}
 	return "success"
 }
+
+// TransportStatus classifies an HTTP completion for transport observations
+// emitted by first-party handlers outside Echo middleware.
+func TransportStatus(status int) string {
+	return transportStatus(status)
+}

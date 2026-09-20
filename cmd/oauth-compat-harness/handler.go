@@ -143,18 +143,48 @@ func (h oauthRequestLogger) ServeHTTP(writer http.ResponseWriter, request *http.
 	responseWriter, delivery := densehttp.NewDeliveryResponseWriter(writer)
 	oauthMeta := &oauthObservation{}
 	requestContext := correlation.WithID(request.Context(), uuid.NewString())
+	if authorization := request.Header.Values("Authorization"); len(authorization) == 1 {
+		if raw, ok := parseHarnessBearer(authorization[0]); ok {
+			requestContext = observability.WithAuthenticationSecrets(requestContext, raw)
+		}
+	}
 	requestContext = context.WithValue(requestContext, oauthObservationContextKey{}, oauthMeta)
 	request = request.WithContext(requestContext)
-	h.next.ServeHTTP(responseWriter, request)
+	var recovered any
+	func() {
+		defer func() {
+			recovered = recover()
+		}()
+		h.next.ServeHTTP(responseWriter, request)
+	}()
+	panicked := recovered != nil
 	status := delivery.Status()
+	if panicked && status == 0 {
+		http.Error(responseWriter, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		status = delivery.Status()
+	}
 	if status == 0 {
 		status = http.StatusOK
 	}
 	logContext := context.WithoutCancel(request.Context())
+	if panicked {
+		attrs := []observability.LogAttr{
+			observability.String("route", canonicalOAuthRoute(request.URL.Path, h.resourcePath, h.metadataPath)),
+			observability.String("correlation_id", correlation.FromContext(request.Context())),
+		}
+		if contextual, ok := h.logger.(interface {
+			ErrorContext(context.Context, string, error, ...observability.LogAttr)
+		}); ok {
+			contextual.ErrorContext(logContext, "oauth_handler_panic", boundedOAuthPanicError(logContext, recovered), attrs...)
+		} else {
+			h.logger.Error("oauth_handler_panic", boundedOAuthPanicError(logContext, recovered), attrs...)
+		}
+	}
 	attrs := []observability.LogAttr{
 		observability.String("method", request.Method),
 		observability.String("route", canonicalOAuthRoute(request.URL.Path, h.resourcePath, h.metadataPath)),
 		observability.Int("status", status),
+		observability.String("transport_status", densehttp.TransportStatus(status)),
 		observability.Int("duration_ms", int(time.Since(started).Milliseconds())),
 		observability.String("delivery_stage", delivery.Stage(request.Context(), nil)),
 		observability.String("caller_receipt", "unknown"),
@@ -185,6 +215,22 @@ func (h oauthRequestLogger) ServeHTTP(writer http.ResponseWriter, request *http.
 	} else {
 		h.logger.Info("oauth_http_request", attrs...)
 	}
+}
+
+func boundedOAuthPanicError(ctx context.Context, recovered any) error {
+	protected := observability.NewCredentialProtector().Snapshot(
+		recovered,
+		observability.MaxOperationMetadataBytes,
+		observability.AuthenticationSecretsFromContext(ctx)...,
+	)
+	if protected.UnavailableReason != 0 {
+		return errors.New("handler panic")
+	}
+	cause := strings.TrimSpace(fmt.Sprint(protected.Value))
+	if cause == "" || cause == "<nil>" {
+		return errors.New("handler panic")
+	}
+	return errors.New(cause)
 }
 
 func canonicalOAuthRoute(requestPath, resourcePath, metadataPath string) string {

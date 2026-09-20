@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -126,7 +125,7 @@ type oauthLogWriter struct{ logger observability.LogProvider }
 
 func (w oauthLogWriter) Write(value []byte) (int, error) {
 	if w.logger != nil {
-		w.logger.Error("oauth_http_server_error", errors.New(strings.TrimSpace(string(value))))
+		w.logger.Error("oauth_http_server_error", errors.New("server error"))
 	}
 	return len(value), nil
 }
