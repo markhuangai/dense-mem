@@ -394,17 +394,39 @@ func TestRememberProcessingFailureLoggingClassifiesFailureSources(t *testing.T) 
 		commitFailureStage: func(error) string { return "persist" },
 	}
 	input := rememberapp.RememberProcessRequest{TeamID: "team", OwnerProfileID: "owner"}
-	processor.logRememberFailure(input, "attempt", time.Now(), "embedding", "embedding_unavailable", "corr", 0, &rememberEmbeddingPlanFailure{cause: knowledgecontract.ErrInlineEmbeddingPlanTooLarge})
-	processor.logRememberFailure(input, "attempt", time.Now(), "embedding", "configuration_invalid", "corr", 0, &rememberEmbeddingConfigurationFailure{})
-	processor.logRememberFailure(input, "attempt", time.Now(), "embedding", "embedding_response_invalid", "corr", 0, &rememberEmbeddingProviderFailure{cause: &embeddingcontract.ProviderError{
+	processor.logRememberFailure(context.Background(), input, "attempt", time.Now(), "embedding", "embedding_unavailable", "corr", 0, &rememberEmbeddingPlanFailure{cause: knowledgecontract.ErrInlineEmbeddingPlanTooLarge})
+	processor.logRememberFailure(context.Background(), input, "attempt", time.Now(), "embedding", "configuration_invalid", "corr", 0, &rememberEmbeddingConfigurationFailure{})
+	processor.logRememberFailure(context.Background(), input, "attempt", time.Now(), "embedding", "embedding_response_invalid", "corr", 0, &rememberEmbeddingProviderFailure{cause: &embeddingcontract.ProviderError{
 		FailureCode: "provider_response_invalid", FailureClass: "provider_action_required", StatusCode: 422,
 	}})
-	processor.logRememberFailure(input, "attempt", time.Now(), "commit", "database_failure", "corr", 0, context.DeadlineExceeded)
-	processor.logRememberFailure(input, "attempt", time.Now(), "assessment", "provider_unavailable", "corr", 0, errors.New("assessor failed"))
+	processor.logRememberFailure(context.Background(), input, "attempt", time.Now(), "commit", "database_failure", "corr", 0, context.DeadlineExceeded)
+	processor.logRememberFailure(context.Background(), input, "attempt", time.Now(), "assessment", "provider_unavailable", "corr", 0, errors.New("assessor failed"))
 	require.Equal(t, []string{
 		"remember_processing_failed", "remember_processing_failed", "remember_processing_failed",
 		"remember_processing_failed", "remember_processing_failed",
 	}, logger.errors)
+}
+
+func TestRememberProcessingFailureLoggingUsesRequestAuthenticationSecrets(t *testing.T) {
+	sink := &rememberFailureLogSink{}
+	logger := observability.NewWithSinks(observability.LevelTrace, sink)
+	processor := &rememberSynchronousProcessor{logger: logger}
+	secret := "per-call-secret"
+	ctx := observability.WithAuthenticationSecrets(context.Background(), secret)
+
+	processor.logRememberFailure(ctx, rememberapp.RememberProcessRequest{}, "attempt", time.Now(), "commit", "database_failure", "corr", 0, errors.New("provider failed "+secret))
+
+	require.Len(t, sink.records, 1)
+	require.NotContains(t, sink.records[0].Error, secret)
+}
+
+type rememberFailureLogSink struct {
+	records []observability.LogRecord
+}
+
+func (s *rememberFailureLogSink) WriteLog(_ context.Context, record observability.LogRecord) error {
+	s.records = append(s.records, record)
+	return nil
 }
 
 func TestRememberAttemptStatusValidatesAndFillsDefaults(t *testing.T) {

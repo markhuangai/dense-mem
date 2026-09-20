@@ -439,7 +439,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	})
 	if recordErr != nil {
 		if errors.Is(recordErr, repository.ErrRememberFailureRetentionDegraded) {
-			p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
+			p.logRememberFailure(ctx, input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
 			p.logRememberFailureRetentionDegraded(input, attemptID, phase, recordErr)
 			return nil, &rememberapp.RememberProcessError{Status: status, Result: terminalResult, Err: failure}
 		}
@@ -455,11 +455,11 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		if errors.Is(recordErr, repository.ErrIdempotencyConflict) {
 			return nil, rememberConflictProcessError(input, attemptID, errors.Join(rememberapp.ErrRememberConflict, recordErr))
 		}
-		p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
+		p.logRememberFailure(ctx, input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
 		p.logRememberFailureRecordError(input, attemptID, phase, publicError.Code, correlationID, recordErr)
 		return nil, rememberFailurePersistenceProcessError(input, attemptID, failure)
 	}
-	p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
+	p.logRememberFailure(ctx, input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
 	return nil, &rememberapp.RememberProcessError{Status: status, Result: terminalResult, Err: failure}
 }
 
@@ -537,6 +537,7 @@ func rememberFailurePersistenceProcessError(
 }
 
 func (p *rememberSynchronousProcessor) logRememberFailure(
+	ctx context.Context,
 	input rememberapp.RememberProcessRequest,
 	attemptID string,
 	started time.Time,
@@ -600,6 +601,10 @@ func (p *rememberSynchronousProcessor) logRememberFailure(
 		if stage := p.commitStage(failure); stage != "" {
 			attrs = append(attrs, observability.String("commit_stage", stage))
 		}
+	}
+	if contextual, ok := p.logger.(observability.ContextLogProvider); ok {
+		contextual.ErrorContext(ctx, "remember_processing_failed", logError, attrs...)
+		return
 	}
 	p.logger.Error("remember_processing_failed", logError, attrs...)
 }
