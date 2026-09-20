@@ -1,0 +1,111 @@
+name: Clean PR test image
+run-name: "PR image cleanup: ${{ github.event.pull_request.number || github.event.workflow_run.head_sha || 'manual' }}"
+
+on:
+  pull_request_target:
+    branches:
+      - main
+    types: [closed]
+  workflow_run:
+    workflows:
+      - Release prerelease
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Closed pull request number; blank scans known preview tags"
+        required: false
+        type: string
+      dry_run:
+        description: "Report the deletion plan without changing GHCR"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+  packages: write
+  pull-requests: read
+
+concurrency:
+  group: pr-test-image-${{ github.event.pull_request.number || github.event.workflow_run.head_sha || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Resolve and clean preview versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout trusted cleanup helper
+        uses: actions/checkout@v7
+        with:
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+          ref: main
+          sparse-checkout: .github/scripts
+
+      - name: Install pinned regctl
+        shell: bash
+        env:
+          REGCTL_SHA256: c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467
+        run: |
+          set -euo pipefail
+          export REGCTL_CONFIG="${RUNNER_TEMP}/regctl-config.json"
+          echo "REGCTL_CONFIG=${REGCTL_CONFIG}" >> "${GITHUB_ENV}"
+          curl -fsSL -o "${RUNNER_TEMP}/regctl" \
+            https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64
+          printf '%s  %s\n' "${REGCTL_SHA256}" "${RUNNER_TEMP}/regctl" | sha256sum -c -
+          chmod +x "${RUNNER_TEMP}/regctl"
+          "${RUNNER_TEMP}/regctl" config set --docker-cred=false --docker-cert=false
+
+      - name: Log in to GHCR
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: echo "${GITHUB_TOKEN}" | "${RUNNER_TEMP}/regctl" registry login ghcr.io -u "${GITHUB_ACTOR}" --pass-stdin
+
+      - name: Resolve cleanup mode
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MANUAL_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            case "${MANUAL_DRY_RUN}" in
+              true|false) printf 'CLEANUP_DRY_RUN=%s\n' "${MANUAL_DRY_RUN}" >> "${GITHUB_ENV}" ;;
+              *) echo "::error::workflow_dispatch dry_run must be true or false"; exit 1 ;;
+            esac
+          else
+            echo 'CLEANUP_DRY_RUN=false' >> "${GITHUB_ENV}"
+          fi
+
+      - name: Require admin for destructive manual cleanup
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == false
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: context.actor,
+            });
+            if (data.permission !== "admin") {
+              core.setFailed("destructive manual cleanup requires repository-admin permission");
+            }
+
+      - name: Clean closed pull request images
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CLEANUP_PR_NUMBER: ${{ inputs.pr_number }}
+          CLEANUP_BATCH_LIMIT: "200"
+          REGCTL_BIN: ${{ runner.temp }}/regctl
+        run: node .github/scripts/pr-image-cleanup.cjs

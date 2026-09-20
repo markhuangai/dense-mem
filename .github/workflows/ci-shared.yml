@@ -187,7 +187,10 @@ jobs:
         run: node --test tests/uat/team_dreaming_schedule.test.mjs
 
       - name: Run image release policy tests
-        run: node --test tests/uat/image_release_policy.test.mjs
+        run: |
+          node --test tests/uat/image_release_policy.test.mjs
+          node --test tests/uat/pr_image_cleanup.test.mjs
+          node --test tests/uat/pr_image_cleanup_registry.test.mjs
 
       - name: Run prerelease version tests
         run: node --test tests/uat/prerelease_version.test.mjs
