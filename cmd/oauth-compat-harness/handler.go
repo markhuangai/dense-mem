@@ -11,8 +11,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	densehttp "github.com/markhuangai/dense-mem/internal/http"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
@@ -38,7 +43,15 @@ type harnessError struct {
 	Error string `json:"error"`
 }
 
-func newHarnessHandler(publicBaseURL string, profiles []domain.OAuthProtectedResourceProfile, validator harnessTokenValidator) (http.Handler, error) {
+type oauthObservationContextKey struct{}
+
+type oauthObservation struct {
+	profile          string
+	scopeCount       int
+	teamClaimPresent bool
+}
+
+func newHarnessHandler(publicBaseURL string, profiles []domain.OAuthProtectedResourceProfile, validator harnessTokenValidator, loggers ...observability.LogProvider) (http.Handler, error) {
 	trustedBaseURL, err := validatePublicBaseURL(publicBaseURL)
 	if err != nil {
 		return nil, err
@@ -100,6 +113,11 @@ func newHarnessHandler(publicBaseURL string, profiles []domain.OAuthProtectedRes
 			writeHarnessJSON(response, status, harnessError{Error: code})
 			return
 		}
+		if observation, ok := request.Context().Value(oauthObservationContextKey{}).(*oauthObservation); ok {
+			observation.profile = validated.ProfileName
+			observation.scopeCount = len(validated.Scopes)
+			observation.teamClaimPresent = validated.Team != ""
+		}
 		writeHarnessJSON(response, http.StatusOK, harnessValidationResult{
 			Valid:            true,
 			Profile:          validated.ProfileName,
@@ -107,7 +125,125 @@ func newHarnessHandler(publicBaseURL string, profiles []domain.OAuthProtectedRes
 			TeamClaimPresent: validated.Team != "",
 		})
 	})
-	return mux, nil
+	if len(loggers) == 0 || loggers[0] == nil {
+		return mux, nil
+	}
+	return oauthRequestLogger{next: mux, logger: loggers[0], resourcePath: resourcePath, metadataPath: metadataPath}, nil
+}
+
+type oauthRequestLogger struct {
+	next         http.Handler
+	logger       observability.LogProvider
+	resourcePath string
+	metadataPath string
+}
+
+func (h oauthRequestLogger) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	started := time.Now()
+	responseWriter, delivery := densehttp.NewDeliveryResponseWriter(writer)
+	oauthMeta := &oauthObservation{}
+	requestContext := correlation.WithID(request.Context(), uuid.NewString())
+	if authorization := request.Header.Values("Authorization"); len(authorization) == 1 {
+		if raw, ok := parseHarnessBearer(authorization[0]); ok {
+			requestContext = observability.WithAuthenticationSecrets(requestContext, raw)
+		}
+	}
+	requestContext = context.WithValue(requestContext, oauthObservationContextKey{}, oauthMeta)
+	request = request.WithContext(requestContext)
+	var recovered any
+	func() {
+		defer func() {
+			recovered = recover()
+		}()
+		h.next.ServeHTTP(responseWriter, request)
+	}()
+	panicked := recovered != nil
+	status := delivery.Status()
+	if panicked && status == 0 {
+		http.Error(responseWriter, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		status = delivery.Status()
+	}
+	if status == 0 {
+		status = http.StatusOK
+	}
+	logContext := context.WithoutCancel(request.Context())
+	if panicked {
+		attrs := []observability.LogAttr{
+			observability.String("route", canonicalOAuthRoute(request.URL.Path, h.resourcePath, h.metadataPath)),
+			observability.String("correlation_id", correlation.FromContext(request.Context())),
+		}
+		if contextual, ok := h.logger.(interface {
+			ErrorContext(context.Context, string, error, ...observability.LogAttr)
+		}); ok {
+			contextual.ErrorContext(logContext, "oauth_handler_panic", boundedOAuthPanicError(logContext, recovered), attrs...)
+		} else {
+			h.logger.Error("oauth_handler_panic", boundedOAuthPanicError(logContext, recovered), attrs...)
+		}
+	}
+	attrs := []observability.LogAttr{
+		observability.String("method", request.Method),
+		observability.String("route", canonicalOAuthRoute(request.URL.Path, h.resourcePath, h.metadataPath)),
+		observability.Int("status", status),
+		observability.String("transport_status", densehttp.TransportStatus(status)),
+		observability.Int("duration_ms", int(time.Since(started).Milliseconds())),
+		observability.String("delivery_stage", delivery.Stage(request.Context(), nil)),
+		observability.String("caller_receipt", "unknown"),
+		observability.Int("write_bytes", int(delivery.WriteBytes())),
+		observability.String("correlation_id", correlation.FromContext(request.Context())),
+	}
+	if oauthMeta.profile != "" {
+		attrs = append(attrs,
+			observability.String("profile", oauthMeta.profile),
+			observability.Int("scope_count", oauthMeta.scopeCount),
+			observability.Bool("team_claim_present", oauthMeta.teamClaimPresent),
+		)
+	}
+	if status >= http.StatusBadRequest {
+		if contextual, ok := h.logger.(interface {
+			WarnContext(context.Context, string, ...observability.LogAttr)
+		}); ok {
+			contextual.WarnContext(logContext, "oauth_http_request", attrs...)
+		} else {
+			h.logger.Warn("oauth_http_request", attrs...)
+		}
+		return
+	}
+	if contextual, ok := h.logger.(interface {
+		InfoContext(context.Context, string, ...observability.LogAttr)
+	}); ok {
+		contextual.InfoContext(logContext, "oauth_http_request", attrs...)
+	} else {
+		h.logger.Info("oauth_http_request", attrs...)
+	}
+}
+
+func boundedOAuthPanicError(ctx context.Context, recovered any) error {
+	protected := observability.NewCredentialProtector().Snapshot(
+		recovered,
+		observability.MaxOperationMetadataBytes,
+		observability.AuthenticationSecretsFromContext(ctx)...,
+	)
+	if protected.UnavailableReason != 0 {
+		return errors.New("handler panic")
+	}
+	cause := strings.TrimSpace(fmt.Sprint(protected.Value))
+	if cause == "" || cause == "<nil>" {
+		return errors.New("handler panic")
+	}
+	return errors.New(cause)
+}
+
+func canonicalOAuthRoute(requestPath, resourcePath, metadataPath string) string {
+	switch {
+	case requestPath == "/health":
+		return "/health"
+	case requestPath == metadataPath:
+		return "/.well-known/oauth-protected-resource/:resource"
+	case requestPath == resourcePath:
+		return "/oauth-resource"
+	default:
+		return "/unmatched"
+	}
 }
 
 func validatePublicBaseURL(raw string) (string, error) {

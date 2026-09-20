@@ -14,6 +14,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
+	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	httperr "github.com/markhuangai/dense-mem/internal/httperr"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"github.com/markhuangai/dense-mem/internal/tools"
@@ -88,6 +89,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // The health and ready endpoints are not behind auth, team, or rate-limit middleware.
 func NewServer(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider, health HealthConfig) *echo.Echo {
 	e := echo.New()
+	if rootLogger := NewEchoLogger(logger); rootLogger != nil {
+		e.Logger = rootLogger
+		e.StdLogger = echoServerErrorLogger(logger)
+	}
 	if health.dependencyFlights == nil {
 		health.dependencyFlights = newDependencyCheckFlightRegistry()
 	}
@@ -97,13 +102,10 @@ func NewServer(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider
 	// Set custom error handler
 	e.HTTPErrorHandler = httperr.ErrorHandler
 
-	// Global middleware (applies to all routes)
-	e.Use(middleware.Recover())
-	maxBodyBytes := 0
-	if cfg != nil {
-		maxBodyBytes = cfg.GetHTTPMaxBodyBytes()
-	}
-	e.Use(middleware.BodyLimit(fmt.Sprintf("%dB", effectiveMaxBodyBytes(maxBodyBytes))))
+	// Global middleware (applies to all routes). Completion observers stay
+	// outside recovery and body-limit middleware so early failures still emit
+	// their final transport record.
+	e.Use(observeDelivery)
 	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
 		HandleError:  true,
 		LogMethod:    true,
@@ -118,13 +120,8 @@ func NewServer(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider
 				return nil
 			}
 
-			attrs := []httpcontract.LogAttr{
-				httpcontract.String("method", v.Method),
-				httpcontract.String("uri", requestLogURI(c)),
-				httpcontract.Int("status", v.Status),
-				httpcontract.String("latency", v.Latency.String()),
-				httpcontract.String("remote_ip", v.RemoteIP),
-			}
+			attrs := transportRequestAttrs(c, v)
+			attrs = append(attrs, httpcontract.String("latency", v.Latency.String()), httpcontract.String("remote_ip", v.RemoteIP))
 			if v.RoutePath != "" {
 				attrs = append(attrs, httpcontract.String("route", v.RoutePath))
 			}
@@ -132,21 +129,28 @@ func NewServer(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider
 				attrs = append(attrs, httpcontract.String("request_id", requestID))
 			}
 			if isAnonymousUserSessionProbe(c, v) {
-				httpcontract.LogInfoContext(c.Request().Context(), logger, "http_request", attrs...)
+				httpcontract.LogInfoContext(TransportLogContext(c), logger, "http_request", attrs...)
 				return nil
 			}
 			if v.Error != nil {
-				httpcontract.LogErrorContext(c.Request().Context(), logger, "http_request", errors.New(tools.SanitizeError(v.Error)), attrs...)
+				httpcontract.LogErrorContext(TransportLogContext(c), logger, "http_request", errors.New(tools.SanitizeError(v.Error)), attrs...)
 				return nil
 			}
 			if v.Status >= http.StatusBadRequest {
-				httpcontract.LogWarnContext(c.Request().Context(), logger, "http_request", attrs...)
+				httpcontract.LogWarnContext(TransportLogContext(c), logger, "http_request", attrs...)
 				return nil
 			}
-			httpcontract.LogInfoContext(c.Request().Context(), logger, "http_request", attrs...)
+			httpcontract.LogInfoContext(TransportLogContext(c), logger, "http_request", attrs...)
 			return nil
 		},
 	}))
+	e.Use(rootRecover(logger))
+	e.Use(httpmw.CorrelationIDMiddleware())
+	maxBodyBytes := 0
+	if cfg != nil {
+		maxBodyBytes = cfg.GetHTTPMaxBodyBytes()
+	}
+	e.Use(middleware.BodyLimit(fmt.Sprintf("%dB", effectiveMaxBodyBytes(maxBodyBytes))))
 
 	// Register public routes (no auth/team/rate-limit middleware).
 	registerPublicRoutes(e, health)

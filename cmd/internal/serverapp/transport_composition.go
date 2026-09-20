@@ -145,6 +145,26 @@ func (a httpLoggerAdapter) Debug(message string, attrs ...httpcontract.LogAttr) 
 	}
 }
 
+func (a httpLoggerAdapter) Trace(message string, attrs ...httpcontract.LogAttr) {
+	if contextual, ok := a.delegate.(interface {
+		Trace(string, ...observability.LogAttr)
+	}); ok {
+		contextual.Trace(message, observabilityAttrs(attrs)...)
+		return
+	}
+	a.Debug(message, attrs...)
+}
+
+func (a httpLoggerAdapter) Fatal(message string, attrs ...httpcontract.LogAttr) {
+	if contextual, ok := a.delegate.(interface {
+		Fatal(string, ...observability.LogAttr)
+	}); ok {
+		contextual.Fatal(message, observabilityAttrs(attrs)...)
+		return
+	}
+	a.Error(message, nil, attrs...)
+}
+
 func (a httpLoggerAdapter) DebugContext(ctx context.Context, message string, attrs ...httpcontract.LogAttr) {
 	if contextual, ok := a.delegate.(interface {
 		DebugContext(context.Context, string, ...observability.LogAttr)
@@ -153,6 +173,26 @@ func (a httpLoggerAdapter) DebugContext(ctx context.Context, message string, att
 		return
 	}
 	a.Debug(message, attrs...)
+}
+
+func (a httpLoggerAdapter) TraceContext(ctx context.Context, message string, attrs ...httpcontract.LogAttr) {
+	if contextual, ok := a.delegate.(interface {
+		TraceContext(context.Context, string, ...observability.LogAttr)
+	}); ok {
+		contextual.TraceContext(ctx, message, observabilityAttrs(attrs)...)
+		return
+	}
+	a.DebugContext(ctx, message, attrs...)
+}
+
+func (a httpLoggerAdapter) FatalContext(ctx context.Context, message string, attrs ...httpcontract.LogAttr) {
+	if contextual, ok := a.delegate.(interface {
+		FatalContext(context.Context, string, ...observability.LogAttr)
+	}); ok {
+		contextual.FatalContext(ctx, message, observabilityAttrs(attrs)...)
+		return
+	}
+	a.ErrorContext(ctx, message, nil, attrs...)
 }
 
 func (a httpLoggerAdapter) With(attrs ...httpcontract.LogAttr) httpcontract.LogProvider {
@@ -346,7 +386,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 		if addr == "" {
 			addr = ":8091"
 		}
-		telemetryServer, err := newTelemetryScrapeServer(deps.telemetry.ScrapeHandler, deps.cfg.GetTelemetryScrapeToken())
+		telemetryServer, err := newTelemetryScrapeServer(deps.telemetry.ScrapeHandler, deps.cfg.GetTelemetryScrapeToken(), transportLogger(deps.logger))
 		if err != nil {
 			return nil, fmt.Errorf("build telemetry scrape server: %w", err)
 		}

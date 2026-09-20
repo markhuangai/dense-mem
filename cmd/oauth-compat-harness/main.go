@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
@@ -36,13 +38,28 @@ type harnessOptions struct {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, os.Args[1:], os.Stderr); err != nil {
-		log.Printf("oauth compatibility harness stopped: %v", err)
+	logger, err := newHarnessLogger(os.Stderr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if err := run(ctx, os.Args[1:], os.Stderr, logger); err != nil {
+		logger.Error("oauth_compatibility_harness_stopped", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, args []string, errorOutput io.Writer) error {
+func run(ctx context.Context, args []string, errorOutput io.Writer, provided ...observability.LogProvider) error {
+	var logger observability.LogProvider
+	if len(provided) > 0 {
+		logger = provided[0]
+	} else {
+		var err error
+		logger, err = newHarnessLogger(errorOutput)
+		if err != nil {
+			return err
+		}
+	}
 	options, err := parseHarnessOptions(args, errorOutput)
 	if err != nil {
 		return err
@@ -59,7 +76,7 @@ func run(ctx context.Context, args []string, errorOutput io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("validate OAuth compatibility config: %w", err)
 	}
-	handler, err := newHarnessHandler(publicBaseURL, config.Profiles, validator)
+	handler, err := newHarnessHandler(publicBaseURL, config.Profiles, validator, logger)
 	if err != nil {
 		return err
 	}
@@ -73,7 +90,7 @@ func run(ctx context.Context, args []string, errorOutput io.Writer) error {
 		IdleTimeout:       30 * time.Second,
 		MaxHeaderBytes:    600 * 1024,
 		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
-		ErrorLog:          log.New(errorOutput, "oauth-compat-harness: ", log.LstdFlags),
+		ErrorLog:          log.New(oauthLogWriter{logger: logger}, "oauth-compat-harness: ", 0),
 	}
 	serverErrors := make(chan error, 1)
 	go func() {
@@ -94,6 +111,23 @@ func run(ctx context.Context, args []string, errorOutput io.Writer) error {
 		}
 		return nil
 	}
+}
+
+func newHarnessLogger(output io.Writer) (observability.LogProvider, error) {
+	level, err := observability.ParseLevel(os.Getenv("LOG_LEVEL"))
+	if err != nil {
+		return nil, fmt.Errorf("parse log level: %w", err)
+	}
+	return observability.NewWithHandler(slog.NewJSONHandler(output, &slog.HandlerOptions{Level: level})), nil
+}
+
+type oauthLogWriter struct{ logger observability.LogProvider }
+
+func (w oauthLogWriter) Write(value []byte) (int, error) {
+	if w.logger != nil {
+		w.logger.Error("oauth_http_server_error", errors.New("server error"))
+	}
+	return len(value), nil
 }
 
 func parseHarnessOptions(args []string, errorOutput io.Writer) (harnessOptions, error) {

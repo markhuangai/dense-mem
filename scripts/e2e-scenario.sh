@@ -62,7 +62,7 @@ if [[ "$SCENARIO" == "conflict" ]]; then
   conflict_health_url="${DENSE_MEM_E2E_CONFLICT_PROVIDER_URL%/}"
   conflict_health_url="${conflict_health_url%/v1}/health"
   wait_for_url "conflict provider" "$conflict_health_url"
-elif [[ "$SCENARIO" == "synchronous_write" || "$SCENARIO" == "synchronous_write_primitives" || "$SCENARIO" == "synchronous_write_telemetry_disabled" ]]; then
+elif [[ "$SCENARIO" == "mcp_transport_cancellation" || "$SCENARIO" == "synchronous_write" || "$SCENARIO" == "synchronous_write_primitives" || "$SCENARIO" == "synchronous_write_telemetry_disabled" ]]; then
   wait_for_url "synchronous-write provider" "http://synchronous-write-provider:8787/health"
 fi
 
@@ -163,7 +163,7 @@ run_playwright() {
 }
 
 case "$SCENARIO" in
-  mcp_boundaries) run_node_case tests/uat/mcp_boundaries_e2e.mjs ;;
+  mcp_boundaries|mcp_transport_cancellation) run_node_case tests/uat/mcp_boundaries_e2e.mjs ;;
   oauth_provider_compatibility)
     run_node_case tests/uat/oauth_provider_compatibility_e2e.mjs
     if [[ -n "${DENSE_MEM_ENTRA_MOCK_URL:-}" ]]; then

@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+import { randomUUID } from "node:crypto";
+import { request as httpRequest } from "node:http";
+
 const userURL = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
@@ -38,6 +41,7 @@ await assertNotificationIsNotCounted();
 await assertSSELookupRejection();
 await assertConcurrentToolCalls();
 await assertUsageMetricDeltas();
+await assertTransportLogOutcomes();
 
 await updateRecallFeedback(true);
 names = await listedToolNames();
@@ -163,6 +167,131 @@ async function assertUsageMetricDeltas() {
   const route = (after.data?.routes ?? []).find((item) => item.route === "/mcp" && item.method === "POST" && item.status_class === "2xx");
   const previousRoute = (before.data?.routes ?? []).find((item) => item.route === "/mcp" && item.method === "POST" && item.status_class === "2xx");
   assertUsageDelta(previousRoute, route, "route", 8, 7, 2);
+}
+
+async function assertTransportLogOutcomes() {
+  const marker = `transport-pre-admission-${randomUUID()}`;
+  const unmatchedMarker = `transport-unmatched-${randomUUID()}`;
+  const markerFrom = new Date().toISOString();
+  await mcpSuccess("recall_memory", { query: `transport-success-${randomUUID()}`, limit: 1 });
+  await fetch(`${userURL}/unmatched/${unmatchedMarker}`, { method: "GET" });
+  await rpc("tools/call", { name: "remember", arguments: { unexpected: marker } });
+  await assertToolNotFound("missing-transport-failure-tool", {});
+  if (process.env.DENSE_MEM_E2E_SCENARIO === "mcp_transport_cancellation") {
+    await assertCancelledTransportOutcome(markerFrom);
+  }
+  let rows = [];
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const page = await controlJSON(`/logs?limit=500&sort=timestamp&direction=desc&from=${encodeURIComponent(markerFrom)}`, { method: "GET" });
+    rows = Array.isArray(page.data) ? page.data : [];
+    const hasFailure = rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "tool_error");
+    const hasSuccess = rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "success");
+    if (hasFailure && hasSuccess) break;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  const serialized = JSON.stringify(rows);
+  if (serialized.includes(marker) || serialized.includes(unmatchedMarker) || serialized.includes("missing-transport-failure-tool")) {
+    throw new Error("transport logs retained rejected request content");
+  }
+  if (!rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "tool_error")) {
+    throw new Error("persisted MCP tool failure outcome was missing");
+  }
+  if (!rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "success")) {
+    throw new Error("persisted MCP tool success outcome was missing");
+  }
+}
+
+async function assertCancelledTransportOutcome(markerFrom) {
+  const providerURL = requiredEnv("DENSE_MEM_E2E_PROVIDER_URL").replace(/\/$/, "");
+  const baseline = await httpJSON(`${providerURL}/health`);
+  const baselineEmbeddingCalls = Number(baseline.embedding_calls || 0);
+  const correlationID = randomUUID();
+  const suffix = `${Date.now()}-${randomUUID()}`;
+  const request = cancellableJSONPost(`${userURL}/mcp`, {
+    Authorization: `Bearer ${apiKey}`,
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    "MCP-Protocol-Version": "2026-07-28",
+    "Mcp-Method": "tools/call",
+    "Mcp-Name": "remember",
+    "X-Correlation-ID": correlationID,
+  }, {
+    jsonrpc: "2.0",
+    id: ++rpcID,
+    method: "tools/call",
+    params: {
+      name: "remember",
+      arguments: {
+        evidence: [{
+          content: `Dense-Mem stores durable memory in PostgreSQL. [fixture:transport-cancel] [fixture-fault:embedding-cancel] ${suffix}`,
+          source_type: "manual",
+        }],
+        relationships: [{
+          ref: "durable-store",
+          subject: { name: "Dense-Mem", entity_kind: "project" },
+          predicate: { proposed_key: "stores_memory_in" },
+          object: { value: { type: "string", value: "PostgreSQL" } },
+          polarity: "+",
+          evidence_indices: [0],
+        }],
+        idempotency_key: `mcp-boundaries-transport-cancel-${suffix}`,
+      },
+      _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {} },
+    },
+  });
+
+  let providerObserved = false;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const health = await httpJSON(`${providerURL}/health`);
+    if (Number(health.embedding_calls || 0) > baselineEmbeddingCalls) {
+      providerObserved = true;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  if (!providerObserved) throw new Error("cancellation provider fixture did not observe the embedding request");
+
+  request.abort();
+  let aborted = true;
+  try {
+    await request.promise;
+  } catch {}
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const page = await controlJSON(`/logs?limit=500&sort=timestamp&direction=desc&from=${encodeURIComponent(markerFrom)}`, { method: "GET" });
+    const rows = Array.isArray(page.data) ? page.data : [];
+    const correlated = rows.filter((row) => rowCorrelationID(row) === correlationID);
+    const applicationOutcome = correlated.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "cancelled");
+    const deliveryStage = correlated.some((row) => row?.message === "http_request" && row?.attrs?.delivery_stage === "disconnect_observed");
+    if (applicationOutcome && deliveryStage) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`canceled MCP transport outcome was missing (client_aborted=${aborted}, provider_observed=${providerObserved})`);
+}
+
+function cancellableJSONPost(url, headers, payload) {
+  const target = new URL(url);
+  const body = JSON.stringify(payload);
+  let abort;
+  const promise = new Promise((resolve, reject) => {
+    const request = httpRequest({
+      hostname: target.hostname,
+      port: target.port,
+      path: `${target.pathname}${target.search}`,
+      method: "POST",
+      headers,
+    }, (response) => {
+      response.resume();
+      response.on("end", () => resolve(response.statusCode));
+    });
+    request.on("error", reject);
+    abort = () => request.destroy();
+    request.end(body);
+  });
+  return { promise, abort: () => abort?.() };
+}
+
+function rowCorrelationID(row) {
+  return row?.correlation_id || row?.attrs?.correlation_id || "";
 }
 
 async function usageSnapshot() {

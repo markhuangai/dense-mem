@@ -1,9 +1,11 @@
 package serverapp
 
 import (
+	"bytes"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,5 +94,62 @@ func TestCompositionHelpersCoverNilPortsAndTelemetryBranches(t *testing.T) {
 	}
 	if err := shutdownTelemetryScrapeServer(server); err != nil {
 		t.Fatalf("shutdown telemetry server: %v", err)
+	}
+}
+
+func TestTelemetryListenerUsesRootBackedTransportObservations(t *testing.T) {
+	var logs bytes.Buffer
+	logger := observability.NewWithHandler(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	server, err := newTelemetryScrapeServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), "token", transportLogger(logger))
+	if err != nil {
+		t.Fatalf("telemetry server: %v", err)
+	}
+	t.Cleanup(func() { _ = shutdownTelemetryScrapeServer(server) })
+
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	request.Header.Set("Authorization", "Bearer token")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("successful scrape status = %d", response.Code)
+	}
+	if !strings.Contains(logs.String(), `"msg":"telemetry_http_request"`) || !strings.Contains(logs.String(), `"correlation_id"`) {
+		t.Fatalf("root transport observation missing: %s", logs.String())
+	}
+
+	logs.Reset()
+	rejected := httptest.NewRecorder()
+	server.ServeHTTP(rejected, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rejected.Code != http.StatusUnauthorized {
+		t.Fatalf("rejected scrape status = %d", rejected.Code)
+	}
+	if !strings.Contains(logs.String(), `"msg":"telemetry_http_request"`) {
+		t.Fatalf("rejected transport observation missing: %s", logs.String())
+	}
+}
+
+func TestTelemetryListenerCapturesRecoveredPanic(t *testing.T) {
+	var logs bytes.Buffer
+	logger := observability.NewWithHandler(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	server, err := newTelemetryScrapeServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("scrape panic")
+	}), "token", transportLogger(logger))
+	if err != nil {
+		t.Fatalf("telemetry server: %v", err)
+	}
+	t.Cleanup(func() { _ = shutdownTelemetryScrapeServer(server) })
+
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	request.Header.Set("Authorization", "Bearer token")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("panic status = %d, want %d", response.Code, http.StatusInternalServerError)
+	}
+	if !strings.Contains(logs.String(), `"msg":"telemetry_http_request"`) || !strings.Contains(logs.String(), `"delivery_stage":"write_observed"`) {
+		t.Fatalf("recovered panic transport observation missing: %s", logs.String())
 	}
 }

@@ -1,8 +1,11 @@
 package serverapp
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"reflect"
 	"strings"
@@ -165,6 +168,8 @@ func TestRunFromEnvironmentStopsAtLogLevelAndDatabaseBoundaries(t *testing.T) {
 }
 
 func TestRunMigrationControlRetirementStopsAtLogLevelAndDatabaseBoundaries(t *testing.T) {
+	previousLogger := slog.Default()
+	defer slog.SetDefault(previousLogger)
 	t.Setenv("POSTGRES_DSN", "postgres://user:pass@127.0.0.1:1/db?sslmode=disable")
 	t.Setenv("LOG_LEVEL", "not-a-level")
 	if err := RunMigrationControlRetirement(context.Background()); err == nil || !strings.Contains(err.Error(), "parse log level") {
@@ -177,6 +182,70 @@ func TestRunMigrationControlRetirementStopsAtLogLevelAndDatabaseBoundaries(t *te
 	if err := RunMigrationControlRetirement(ctx); err == nil || !strings.Contains(err.Error(), "connect to postgres") {
 		t.Fatalf("database connection error = %v", err)
 	}
+	if slog.Default() == previousLogger {
+		t.Fatal("migration retirement did not install the root standard-log bridge")
+	}
+}
+
+func TestLogMigrationFailureUsesRootErrorEvent(t *testing.T) {
+	var output bytes.Buffer
+	logger := observability.NewWithHandler(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logMigrationFailure(context.Background(), logger, "up", errors.New("migration failed"))
+
+	var record map[string]any
+	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+		t.Fatalf("migration failure log is not JSON: %v", err)
+	}
+	if record["msg"] != "postgres migrations failed" {
+		t.Fatalf("migration failure message = %v", record["msg"])
+	}
+	if record["level"] != "ERROR" {
+		t.Fatalf("migration failure level = %v, want ERROR", record["level"])
+	}
+	if record["direction"] != "up" || record["error"] != "migration failed" {
+		t.Fatalf("migration failure fields = %#v", record)
+	}
+}
+
+func TestMigrationRootLoggerProtectsConfiguredSecrets(t *testing.T) {
+	postgresDSN := "postgres://user:postgres-secret@db.example/memory"
+	logger := newRootLogger(config.Config{
+		PostgresDSN:          postgresDSN,
+		RedisPassword:        "redis-secret",
+		AIAPIKey:             "embedding-secret",
+		AIVerifierAPIKey:     "verifier-secret",
+		ControlPortalToken:   "control-secret",
+		TelemetryScrapeToken: "telemetry-secret",
+	}, slog.LevelDebug)
+	sink := &migrationRootLogSink{}
+	if err := logger.AttachSink(sink); err != nil {
+		t.Fatalf("attach migration root sink: %v", err)
+	}
+	logger.Error("migration failure", errors.New(postgresDSN),
+		observability.String("redis_password", "redis-secret"),
+		observability.String("api_key", "embedding-secret"),
+	)
+	if len(sink.records) != 1 {
+		t.Fatalf("migration root records = %d, want 1", len(sink.records))
+	}
+	encoded, err := json.Marshal(sink.records[0])
+	if err != nil {
+		t.Fatalf("marshal migration root record: %v", err)
+	}
+	for _, secret := range []string{postgresDSN, "redis-secret", "embedding-secret", "verifier-secret", "control-secret", "telemetry-secret"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("migration root record exposed %q: %s", secret, encoded)
+		}
+	}
+}
+
+type migrationRootLogSink struct {
+	records []observability.LogRecord
+}
+
+func (s *migrationRootLogSink) WriteLog(_ context.Context, record observability.LogRecord) error {
+	s.records = append(s.records, record)
+	return nil
 }
 
 func TestRunActiveServerBootGuardsWithRealGORMWrapper(t *testing.T) {

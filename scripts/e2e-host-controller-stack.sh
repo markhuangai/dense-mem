@@ -305,7 +305,7 @@ if (has("oauth") || has("oauth_compatibility")) {
 if (has("oauth_compatibility")) {
   helperServices.push(["oauth-compat-harness", [
     `    image: ${JSON.stringify(harnessImage)}`,
-    "    command: [\"sh\", \"-c\", \"sleep infinity\"]",
+    "    command: [\"sh\", \"-ec\", \"while [ ! -f /e2e/harness-ready ]; do sleep 1; done; exec /app/oauth-compat-harness --listen=:9445 --public-base-url=https://oauth-compat-harness:9445 --config=/e2e/config.json --tls-cert=/e2e/ca.pem --tls-key=/e2e/server.key\"]",
     "    environment:",
     "      SSL_CERT_FILE: \"/e2e/ca.pem\"",
   ]]);
@@ -353,12 +353,8 @@ start_stack_helpers() {
       local harness
       harness="$(ci_compose ps -q oauth-compat-harness)"
       [[ -n "$harness" ]] || fail "OAuth compatibility harness was not created"
-      docker exec -d "$harness" /app/oauth-compat-harness \
-        --listen=:9445 \
-        --public-base-url=https://oauth-compat-harness:9445 \
-        --config=/e2e/config.json \
-        --tls-cert=/e2e/ca.pem \
-        --tls-key=/e2e/server.key >/dev/null
+      docker exec --user root "$harness" sh -ec \
+        'chown densemem:densemem /e2e/ca.pem /e2e/server.key /e2e/config.json && touch /e2e/harness-ready'
       local entra
       entra="$(ci_compose ps -q entra-mock)"
       [[ -n "$entra" ]] || fail "Entra mock helper was not created"

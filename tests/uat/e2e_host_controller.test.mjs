@@ -710,6 +710,13 @@ test("scenario runner executes Entra and diagnostics through the shared path", (
   assert.match(runtime, /ci_compose logs --no-color --timestamps --tail 200/);
 });
 
+test("OAuth compatibility harness keeps root logs in the Compose stream", () => {
+  assert.match(stack, /while \[ ! -f \/e2e\/harness-ready \]/);
+  assert.match(stack, /chown densemem:densemem \/e2e\/ca\.pem \/e2e\/server\.key \/e2e\/config\.json/);
+  assert.match(stack, /exec \/app\/oauth-compat-harness --listen=:9445/);
+  assert.doesNotMatch(stack, /docker exec -d "\$harness" \/app\/oauth-compat-harness/);
+});
+
 test("production workflows use capability-matched runners and one OCI handoff", () => {
   assert.match(productionWorkflow, /runs-on: ubuntu-latest/);
   assert.match(productionWorkflow, /runs-on: rootless-docker/);
