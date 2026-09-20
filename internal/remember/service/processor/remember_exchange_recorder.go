@@ -22,7 +22,9 @@ const (
 	// Credential variants can expand one configured secret to JSON or percent
 	// escapes; retain enough suffix to protect a boundary-spanning variant.
 	rememberDiagnosticCredentialOverlapBytes = observability.MaxCredentialSecretBytes * 8
-	rememberDiagnosticProtectionExpansion    = 6
+	// JSON escaping and the ten-byte redaction marker are the largest supported
+	// per-byte expansions used by the credential protector.
+	rememberDiagnosticProtectionExpansion = len(observability.CredentialProtectionRedacted)
 )
 
 func boundedRememberDiagnosticBody(body []byte) ([]byte, bool) {

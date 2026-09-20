@@ -323,6 +323,15 @@ func TestRememberDiagnosticCaptureAllowsJSONExpansionInProtectionBudget(t *testi
 	}
 }
 
+func TestRememberDiagnosticCaptureAllowsRedactionMarkerExpansion(t *testing.T) {
+	body := []byte(strings.Repeat("x", 256<<10))
+	capture := captureRememberDiagnosticBody(body, observability.NewCredentialProtector(), "x")
+
+	require.Equal(t, "captured", capture.state)
+	require.Greater(t, len(capture.body), len(body)*6)
+	require.Contains(t, string(capture.body), observability.CredentialProtectionRedacted)
+}
+
 func TestRememberExchangeRecorderFailsClosedWithoutProtector(t *testing.T) {
 	recorder := &rememberExchangeRecorder{}
 	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{

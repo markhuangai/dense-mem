@@ -547,7 +547,9 @@ func rememberPreLockProcessError(
 		code = rememberapp.TerminalErrorRequestCancelled
 		reasonCode = "idempotency_lock_cancelled"
 	}
-	return rememberFailureProcessErrorWithStatus(input, submissionID, cause, code, reasonCode, "remember.idempotency_lock")
+	processErr := rememberFailureProcessErrorWithStatus(input, submissionID, cause, code, reasonCode, "remember.idempotency_lock")
+	processErr.Err = cause
+	return processErr
 }
 
 func rememberFailureProcessErrorWithStatus(

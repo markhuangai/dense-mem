@@ -162,6 +162,7 @@ func TestRememberProcessorPreCallbackLockFailurePreservesCancellationCode(t *tes
 			var processErr *rememberapp.RememberProcessError
 			require.ErrorAs(t, err, &processErr)
 			require.ErrorIs(t, err, test.cause)
+			require.NotErrorIs(t, err, rememberapp.ErrRememberPersistence)
 			require.NotNil(t, status)
 			require.Equal(t, string(test.code), status.Errors[0].Code)
 			require.Equal(t, status.SubmissionID, base.invocation.InvocationID)
