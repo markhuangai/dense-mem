@@ -317,6 +317,7 @@ class GitHubApi {
     this.apiUrl = apiUrl.replace(/\/$/, "");
     this.token = token;
     this.repository = repository;
+    this.releaseRunsPromise = null;
   }
 
   async request(path, options = {}) {
@@ -359,8 +360,11 @@ class GitHubApi {
     return this.paged(`/orgs/${this.repository.split("/")[0]}/packages/container/${encodeURIComponent(packageName)}/versions`);
   }
 
-  async releaseRuns() {
-    return this.paged(`/repos/${this.repository}/actions/workflows/release-rc.yml/runs?branch=main`);
+  releaseRuns() {
+    if (!this.releaseRunsPromise) {
+      this.releaseRunsPromise = this.paged(`/repos/${this.repository}/actions/workflows/release-rc.yml/runs?branch=main`);
+    }
+    return this.releaseRunsPromise;
   }
 
   async jobs(runId) {
@@ -700,6 +704,7 @@ module.exports = {
   buildDetachedDeletionPlan,
   aggregateBatch,
   cleanupEligibility,
+  GitHubApi,
   isTestTag,
   labelsPreviewPr,
   normalizeVersion,

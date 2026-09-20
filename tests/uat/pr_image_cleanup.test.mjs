@@ -231,6 +231,17 @@ test("registry scanning records OCI children and propagates preview ownership", 
   assert.equal(versions[0].imageRevision, labels["org.opencontainers.image.revision"]);
 });
 
+test("release history pagination is shared across a cleanup invocation", async () => {
+  const api = new policy.GitHubApi({ apiUrl: "https://api.github.com", token: "test", repository: "markhuangai/dense-mem" });
+  let calls = 0;
+  api.paged = async () => {
+    calls += 1;
+    return [];
+  };
+  await Promise.all([api.releaseRuns(), api.releaseRuns(), api.releaseRuns()]);
+  assert.equal(calls, 1);
+});
+
 test("retained tags and unknown untagged children block destructive cleanup", () => {
   const versions = [
     { id: 21, name: digest("g"), tags: ["test-42"], children: [digest("h")] },
@@ -278,6 +289,8 @@ test("workflow is trusted, event-fenced, dry-run capable, and registered in CI",
   assert.match(workflow, /CLEANUP_BATCH_LIMIT: "200"/);
   assert.match(release, /run-name: "Release prerelease: \$\{\{ github\.event\.workflow_run\.head_sha \}\}"/);
   assert.match(release, /name: No prerelease required/);
+  assert.match(release, /needs:\n      - classify-release\n      - prepare-prerelease/);
+  assert.match(release, /needs\.prepare-prerelease\.outputs\.should_publish == 'false'/);
   assert.match(ci, /node --test tests\/uat\/pr_image_cleanup\.test\.mjs/);
   assert.match(ci, /node --test tests\/uat\/pr_image_cleanup_registry\.test\.mjs/);
 });

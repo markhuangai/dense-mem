@@ -194,8 +194,21 @@ jobs:
 
   no-release:
     name: No prerelease required
-    needs: classify-release
-    if: needs.classify-release.outputs.should_release == 'false'
+    needs:
+      - classify-release
+      - prepare-prerelease
+    if: >-
+      ${{
+        always() &&
+        needs.classify-release.result == 'success' &&
+        (
+          needs.classify-release.outputs.should_release == 'false' ||
+          (
+            needs.prepare-prerelease.result == 'success' &&
+            needs.prepare-prerelease.outputs.should_publish == 'false'
+          )
+        )
+      }}
     permissions: {}
     runs-on: ubuntu-latest
     steps:
