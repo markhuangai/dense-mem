@@ -171,7 +171,7 @@ func (p *rememberSynchronousProcessor) recordRememberInvocation(
 			if contextual, ok := p.logger.(observability.ContextLogProvider); ok {
 				contextual.ErrorContext(ctx, "remember_invocation_completed", logErr, attrs...)
 			} else {
-				p.logger.Error("remember_invocation_completed", logErr, attrs...)
+				p.logger.Error("remember_invocation_completed", protectRememberLogError(logErr, p.protector, observability.AuthenticationSecretsFromContext(ctx)), attrs...)
 			}
 		default:
 			if contextual, ok := p.logger.(observability.ContextLogProvider); ok {

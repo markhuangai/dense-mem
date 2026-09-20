@@ -133,11 +133,39 @@ func TestRememberFailureLoggingFallbackProtectsRequestSecrets(t *testing.T) {
 
 	processor.logRememberFailure(ctx, input, "attempt", time.Now(), "commit", "database_failure", "corr", 0, failure)
 	processor.logRememberFailureRecordError(ctx, input, "attempt", "commit", "database_failure", "corr", failure)
+	processor.ledger = &rememberFailureLedgerStub{}
+	processor.recordRememberInvocation(ctx, input, "invocation", "execution", "", "commit", failure, nil, nil)
 
-	require.Len(t, logger.errorTexts, 2)
+	require.Len(t, logger.errorTexts, 3)
 	for _, text := range logger.errorTexts {
 		require.NotContains(t, text, secret)
 		require.Contains(t, text, observability.CredentialProtectionRedacted)
+	}
+}
+
+func TestRememberProcessorPreCallbackLockFailurePreservesCancellationCode(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		cause error
+		code  rememberapp.SubmissionErrorCode
+	}{
+		{name: "cancelled", cause: context.Canceled, code: rememberapp.SubmissionErrorRequestCancelled},
+		{name: "deadline", cause: context.DeadlineExceeded, code: rememberapp.SubmissionErrorRequestTimeout},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			base := &rememberFailureLedgerStub{}
+			locker := &rememberWaitAwareLedgerStub{rememberFailureLedgerStub: base, lockErr: test.cause, skipCallback: true}
+			status, err := (&rememberSynchronousProcessor{ledger: locker}).ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{
+				TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "cancelled-lock", RequestHash: "hash",
+			})
+
+			var processErr *rememberapp.RememberProcessError
+			require.ErrorAs(t, err, &processErr)
+			require.ErrorIs(t, err, test.cause)
+			require.NotNil(t, status)
+			require.Equal(t, string(test.code), status.Errors[0].Code)
+			require.Equal(t, status.SubmissionID, base.invocation.InvocationID)
+		})
 	}
 }
 

@@ -136,7 +136,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		return ownerResult, nil
 	}
 	if !callbackEntered && lockErr != nil {
-		processErr := rememberFailurePersistenceProcessError(input, waiterInvocationID, lockErr)
+		processErr := rememberPreLockProcessError(input, waiterInvocationID, lockErr)
 		p.recordRememberInvocation(ctx, input, waiterInvocationID, "execution", "", "idempotency_lock", processErr, processErr.Status, nil)
 		return processErr.Status, processErr
 	}
@@ -527,12 +527,43 @@ func rememberFailurePersistenceProcessError(
 	submissionID string,
 	cause error,
 ) *rememberapp.RememberProcessError {
+	return rememberFailureProcessErrorWithStatus(
+		input, submissionID, cause, rememberapp.TerminalErrorDatabaseFailure,
+		"failure_retention", "remember.failure_record",
+	)
+}
+
+func rememberPreLockProcessError(
+	input rememberapp.RememberProcessRequest,
+	submissionID string,
+	cause error,
+) *rememberapp.RememberProcessError {
+	code := rememberapp.TerminalErrorDatabaseFailure
+	reasonCode := "idempotency_lock"
+	if errors.Is(cause, context.DeadlineExceeded) {
+		code = rememberapp.TerminalErrorRequestTimeout
+		reasonCode = "idempotency_lock_timeout"
+	} else if errors.Is(cause, context.Canceled) {
+		code = rememberapp.TerminalErrorRequestCancelled
+		reasonCode = "idempotency_lock_cancelled"
+	}
+	return rememberFailureProcessErrorWithStatus(input, submissionID, cause, code, reasonCode, "remember.idempotency_lock")
+}
+
+func rememberFailureProcessErrorWithStatus(
+	input rememberapp.RememberProcessRequest,
+	submissionID string,
+	cause error,
+	code rememberapp.TerminalErrorCode,
+	reasonCode string,
+	component string,
+) *rememberapp.RememberProcessError {
 	evidence, relationshipResults := rememberFailureResults(input, "internal_failure")
 	status := &rememberapp.SubmissionStatusResult{
 		ContractVersion: domain.ContractVersion, SubmissionID: submissionID, SubmissionKind: "remember",
 		ProcessingState: "failed", SearchState: "not_required", CorrelationID: rememberProcessCorrelationID(input.Metadata),
 		Evidence: evidence, RelationshipResults: relationshipResults,
-		Errors: []rememberapp.SubmissionStatusError{rememberapp.TerminalStatusErrorWithDetails(rememberapp.TerminalErrorDatabaseFailure, "failure_retention", map[string]any{"component": "remember.failure_record", "server_owned": true})},
+		Errors: []rememberapp.SubmissionStatusError{rememberapp.TerminalStatusErrorWithDetails(code, reasonCode, map[string]any{"component": component, "server_owned": true})},
 	}
 	return &rememberapp.RememberProcessError{Status: status, Err: rememberFailurePersistenceError(cause)}
 }
