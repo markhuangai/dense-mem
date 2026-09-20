@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -16,7 +17,7 @@ func TestRememberAttemptLockLocalWaiterReturnsItsOwnCallbackResult(t *testing.T)
 	store := &Store{
 		db: &gorm.DB{},
 		rememberIdempotencyLocks: map[string]*rememberIdempotencyLockEntry{
-			localKey: {ready: ready, err: context.Canceled},
+			localKey: {ready: ready, err: context.Canceled, callbackStarted: true},
 		},
 	}
 	var waited bool
@@ -31,5 +32,31 @@ func TestRememberAttemptLockLocalWaiterReturnsItsOwnCallbackResult(t *testing.T)
 	}
 	if !waited {
 		t.Fatal("local waiter callback did not receive waited=true")
+	}
+}
+
+func TestRememberAttemptLockLocalWaiterPreservesPreCallbackFailure(t *testing.T) {
+	teamID, ownerProfileID, idempotencyKey := uuid.NewString(), uuid.NewString(), "local-waiter-failure"
+	localKey := rememberIdempotencyLockNamespace + teamID + ":" + ownerProfileID + ":" + idempotencyKey
+	ready := make(chan struct{})
+	close(ready)
+	store := &Store{
+		db: &gorm.DB{},
+		rememberIdempotencyLocks: map[string]*rememberIdempotencyLockEntry{
+			localKey: {ready: ready, err: ErrRememberIdempotencyBusy},
+		},
+	}
+	called := false
+
+	err := store.WithRememberAttemptLock(context.Background(), teamID, ownerProfileID, idempotencyKey, func(bool) error {
+		called = true
+		return nil
+	})
+
+	if !errors.Is(err, ErrRememberIdempotencyBusy) {
+		t.Fatalf("local waiter error = %v, want idempotency busy", err)
+	}
+	if called {
+		t.Fatal("local waiter callback ran after a pre-callback owner failure")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,40 @@ import (
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/markhuangai/dense-mem/internal/remember/service/processor"
 )
+
+func TestRememberInvocationDiagnosticsTrimsAgainstJSONBTextLimit(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "remember-invocation-jsonb-limit-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-invocation-jsonb-limit-owner")
+	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	body := []byte(strings.Repeat("x", 16<<20))
+	exchanges := make([]knowledgecontract.RememberAttemptDiagnosticInput, 4)
+	for index := range exchanges {
+		exchanges[index] = knowledgecontract.RememberAttemptDiagnosticInput{
+			SequenceNo: index + 1, Kind: "provider_exchange", Component: "provider",
+			ResponseBody: body, Outcome: "captured", CaptureState: "captured",
+		}
+	}
+	invocationID := uuid.NewString()
+	require.NoError(t, repo.RecordRememberInvocationDiagnostic(ctx, knowledgecontract.RememberInvocationDiagnosticInput{
+		TeamID: teamID, OwnerProfileID: ownerID, InvocationID: invocationID,
+		Classification: "execution", Outcome: "completed", ProviderExchanges: exchanges,
+	}))
+
+	var providerBytes int64
+	require.NoError(t, adminDB.Raw(`
+		SELECT octet_length(provider_exchanges::text)
+		FROM remember_invocation_diagnostics
+		WHERE team_id = ?::uuid AND invocation_id = ?::uuid
+	`, teamID, invocationID).Scan(&providerBytes).Error)
+	require.LessOrEqual(t, providerBytes, int64(64<<20))
+	detail, err := repo.GetRememberInvocationDiagnostic(ctx, teamID, invocationID)
+	require.NoError(t, err)
+	require.Len(t, detail.ProviderExchanges, 4)
+	require.Equal(t, "truncated", detail.ProviderExchanges[3].CaptureState)
+}
 
 func TestRememberProcessorPersistsInvocationDiagnosticsThroughPostgres(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)

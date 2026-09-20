@@ -98,6 +98,40 @@ func rememberInvocationExchanges(input []knowledgecontract.RememberAttemptDiagno
 	return result, nil
 }
 
+func rememberInvocationExchangesForJSONB(
+	ctx context.Context,
+	tx *gorm.DB,
+	input []knowledgecontract.RememberAttemptDiagnosticInput,
+	maxBytes int,
+) ([]byte, int64, error) {
+	compactLimit := maxBytes
+	for range 16 {
+		exchanges, err := rememberInvocationExchanges(input, compactLimit)
+		if err != nil {
+			return nil, 0, err
+		}
+		exchangesJSON, err := json.Marshal(exchanges)
+		if err != nil {
+			return nil, 0, err
+		}
+		var providerExchangeBytes int64
+		if err := tx.WithContext(ctx).Raw(
+			`SELECT octet_length(?::jsonb::text)`, string(exchangesJSON),
+		).Row().Scan(&providerExchangeBytes); err != nil {
+			return nil, 0, err
+		}
+		if providerExchangeBytes <= int64(maxBytes) {
+			return exchangesJSON, providerExchangeBytes, nil
+		}
+		excess := providerExchangeBytes - int64(maxBytes)
+		if excess >= int64(compactLimit) {
+			return nil, 0, fmt.Errorf("remember invocation: provider exchanges exceed %d bytes", maxBytes)
+		}
+		compactLimit -= int(excess)
+	}
+	return nil, 0, fmt.Errorf("remember invocation: provider exchanges could not be bounded to %d bytes", maxBytes)
+}
+
 func validateRememberInvocationDiagnostic(input knowledgecontract.RememberInvocationDiagnosticInput) error {
 	for name, value := range map[string]string{
 		"team_id": input.TeamID, "owner_profile_id": input.OwnerProfileID, "invocation_id": input.InvocationID,
@@ -205,14 +239,6 @@ func (r *Store) RecordRememberInvocationDiagnostic(ctx context.Context, input kn
 	if maxExchangeBytes <= 0 {
 		return fmt.Errorf("remember invocation: payload exceeds %d bytes", 64<<20)
 	}
-	exchanges, err := rememberInvocationExchanges(input.ProviderExchanges, maxExchangeBytes)
-	if err != nil {
-		return err
-	}
-	exchangesJSON, err := json.Marshal(exchanges)
-	if err != nil {
-		return err
-	}
 	requestBody := input.RequestBody
 	if requestBody == nil {
 		requestBody = []byte{}
@@ -221,7 +247,7 @@ func (r *Store) RecordRememberInvocationDiagnostic(ctx context.Context, input kn
 	if responseBody == nil {
 		responseBody = []byte{}
 	}
-	err = r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
 		if input.SpaceID != "" {
 			var locked bool
 			if err := tx.WithContext(ctx).Raw(`
@@ -245,10 +271,8 @@ func (r *Store) RecordRememberInvocationDiagnostic(ctx context.Context, input kn
 				return fmt.Errorf("remember invocation: private memory space generation is stale")
 			}
 		}
-		var providerExchangeBytes int64
-		if err := tx.WithContext(ctx).Raw(
-			`SELECT octet_length(?::jsonb::text)`, string(exchangesJSON),
-		).Row().Scan(&providerExchangeBytes); err != nil {
+		exchangesJSON, providerExchangeBytes, err := rememberInvocationExchangesForJSONB(ctx, tx, input.ProviderExchanges, maxExchangeBytes)
+		if err != nil {
 			return err
 		}
 		if int64(len(requestBody))+int64(len(responseBody))+providerExchangeBytes > 64<<20 {
