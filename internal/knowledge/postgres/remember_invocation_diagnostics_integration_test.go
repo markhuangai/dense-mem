@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 
 	"github.com/google/uuid"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
@@ -27,6 +28,8 @@ func TestRememberInvocationDiagnosticsTrimsAgainstJSONBTextLimit(t *testing.T) {
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "remember-invocation-jsonb-limit-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-invocation-jsonb-limit-owner")
+	// Keep the synthetic 64 MiB payload out of slow-query logs consumed by the CI output filter.
+	appDB = appDB.Session(&gorm.Session{Logger: appDB.Logger.LogMode(gormlogger.Error)})
 	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
 	body := []byte(strings.Repeat("x", 16<<20))
 	exchanges := make([]knowledgecontract.RememberAttemptDiagnosticInput, 4)
