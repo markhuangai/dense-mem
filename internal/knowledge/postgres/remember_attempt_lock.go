@@ -62,11 +62,8 @@ func (r *Store) withRememberIdempotencyLock(
 		r.rememberIdempotencyLockMu.Unlock()
 		select {
 		case <-ready:
-			r.rememberIdempotencyLockMu.Lock()
-			err := existing.err
-			r.rememberIdempotencyLockMu.Unlock()
 			callbackErr := fn(true)
-			return errors.Join(err, callbackErr)
+			return callbackErr
 		case <-ctx.Done():
 			return ctx.Err()
 		}
