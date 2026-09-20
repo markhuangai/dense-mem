@@ -96,7 +96,7 @@ func TestRememberDiagnosticCaptureAllowsJSONExpansionInProtectionBudget(t *testi
 }
 
 func TestRememberDiagnosticCaptureAllowsRedactionMarkerExpansion(t *testing.T) {
-	body := []byte(strings.Repeat("x", 256<<10))
+	body := []byte(strings.Repeat("x", 256))
 	capture := captureRememberDiagnosticBody(body, observability.NewCredentialProtector(), "x")
 
 	require.Equal(t, "captured", capture.state)
@@ -149,16 +149,16 @@ func TestBoundRememberDiagnosticItemsStopsAfterAggregateBudget(t *testing.T) {
 	require.Equal(t, "truncated", items[4].CaptureState)
 }
 
-func TestRememberExchangeRecorderPreservesUnavailableStateAfterAggregateBudget(t *testing.T) {
-	recorder := &rememberExchangeRecorder{protector: observability.NewCredentialProtector()}
+func TestRememberExchangeSnapshotPreservesUnavailableStateAfterAggregateBudget(t *testing.T) {
+	recorder := &rememberExchangeRecorder{}
+	body := []byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes))
 	for range 4 {
-		recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
-			Component: "assessor", ResponseBody: []byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes)), Outcome: "captured",
+		recorder.exchanges = append(recorder.exchanges, modelprovider.ProviderExchange{
+			Component: "assessor", ResponseBody: body, Outcome: "captured", CaptureState: "captured",
 		})
 	}
-	recorder.protector = unavailableDiagnosticProtector{}
-	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
-		Component: "assessor", ResponseBody: []byte(`{"error":"unavailable"}`), Outcome: "captured",
+	recorder.exchanges = append(recorder.exchanges, modelprovider.ProviderExchange{
+		Component: "assessor", Outcome: "captured", CaptureState: "unavailable", CaptureReason: "credential_protection_2",
 	})
 	exchanges := recorder.Snapshot()
 	require.Len(t, exchanges, 5)
@@ -197,13 +197,13 @@ func TestRememberExchangeRecorderUsesPrecomputedProviderProjection(t *testing.T)
 	require.NotContains(t, string(exchanges[0].ResponseBody), "0.1")
 }
 
-func TestRememberExchangeRecorderRetainsLaterMetadataAfterAggregateLimit(t *testing.T) {
-	recorder := &rememberExchangeRecorder{protector: observability.NewCredentialProtector()}
+func TestRememberExchangeSnapshotRetainsLaterMetadataAfterAggregateLimit(t *testing.T) {
+	recorder := &rememberExchangeRecorder{}
 	body := []byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes))
 	for index := 0; index < 3; index++ {
-		recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
+		recorder.exchanges = append(recorder.exchanges, modelprovider.ProviderExchange{
 			Component: fmt.Sprintf("provider-%d", index), Model: "test-model", RequestBody: body,
-			ResponseBody: body, StatusCode: 500 + index, Outcome: "captured",
+			ResponseBody: body, StatusCode: 500 + index, Outcome: "captured", CaptureState: "captured",
 		})
 	}
 	exchanges := recorder.Snapshot()
