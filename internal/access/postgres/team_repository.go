@@ -345,6 +345,19 @@ func (r *TeamRepositoryImpl) SoftDelete(ctx context.Context, id uuid.UUID) error
 // live FKs to teams/api_keys, so historical audit entries remain immutable.
 func (r *TeamRepositoryImpl) HardDelete(ctx context.Context, id uuid.UUID) error {
 	err := r.rls.WithTeamTx(ctx, r.db, id.String(), func(tx *gorm.DB) error {
+		// Serialize all team-scoped diagnostic inserts, including global records
+		// that cannot take a memory-space lock, before purging their rows.
+		var lockedID string
+		if err := tx.WithContext(ctx).Raw(`
+			SELECT id::text
+			FROM teams
+			WHERE id = $1
+			FOR UPDATE
+		`, id).Row().Scan(&lockedID); errors.Is(err, sql.ErrNoRows) {
+			return gorm.ErrRecordNotFound
+		} else if err != nil {
+			return err
+		}
 		if err := tx.Exec(`
 			DELETE FROM ownership_aliases
 			WHERE team_id = $1

@@ -164,6 +164,13 @@
       "source": "internal/access/postgres/team_soft_delete_integration_test.go"
     },
     {
+      "id": "repository/TestTeamHardDeleteSerializesGlobalInvocationDiagnosticInsert",
+      "package": "./internal/access/postgres",
+      "run": "^TestTeamHardDeleteSerializesGlobalInvocationDiagnosticInsert$",
+      "phase": "precheck",
+      "source": "internal/access/postgres/team_soft_delete_integration_test.go"
+    },
+    {
       "id": "repository/TestTeamRepositoryJSONBMapsRoundTrip",
       "package": "./internal/access/postgres",
       "run": "^TestTeamRepositoryJSONBMapsRoundTrip$",

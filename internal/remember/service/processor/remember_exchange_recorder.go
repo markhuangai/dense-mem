@@ -95,7 +95,11 @@ func rememberDiagnosticCaptureStateForExchange(exchange modelprovider.ProviderEx
 	if responseBytes == 0 {
 		responseBytes = len(exchange.ResponseBody)
 	}
-	return repository.DiagnosticCaptureState(exchange.CaptureState, exchange.Outcome, len(exchange.RequestBody), responseBytes)
+	state := strings.TrimSpace(exchange.CaptureState)
+	if state == "captured" {
+		state = ""
+	}
+	return repository.DiagnosticCaptureState(state, exchange.Outcome, len(exchange.RequestBody), responseBytes)
 }
 
 func rememberFailureDiagnostics(

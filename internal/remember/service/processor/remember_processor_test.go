@@ -122,6 +122,29 @@ func TestRememberFailureDiagnosticsMarksUndeliveredCallerResponseOnCancellation(
 	require.Empty(t, items[2].ResponseBody)
 }
 
+func TestRememberFailureDiagnosticsDerivesProviderOutcomeCaptureState(t *testing.T) {
+	for _, test := range []struct {
+		outcome string
+		want    string
+	}{
+		{outcome: "no_response", want: "no_response"},
+		{outcome: "response_read_failed", want: "interrupted"},
+	} {
+		t.Run(test.outcome, func(t *testing.T) {
+			items := rememberFailureDiagnosticsWithCapture(
+				rememberapp.RememberProcessRequest{}, nil,
+				[]modelprovider.ProviderExchange{{
+					Component: "assessor", RequestBody: []byte(`{"request":true}`),
+					Outcome: test.outcome, CaptureState: "captured",
+				}},
+				nil, true, false, observability.NewCredentialProtector(),
+			)
+			require.Len(t, items, 3)
+			require.Equal(t, test.want, items[1].CaptureState)
+		})
+	}
+}
+
 func TestRememberInvocationDiagnosticsRecordOutcomeAndCause(t *testing.T) {
 	started := time.Now().UTC().Add(-time.Second)
 	ledger := &rememberFailureLedgerStub{}

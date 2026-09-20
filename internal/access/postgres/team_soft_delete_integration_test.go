@@ -320,6 +320,66 @@ func TestTeamHardDeleteSerializesInvocationDiagnosticInsert(t *testing.T) {
 	require.Zero(t, remaining)
 }
 
+func TestTeamHardDeleteSerializesGlobalInvocationDiagnosticInsert(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "team-hard-delete-global-diagnostic-race"))
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID.String(), "team-hard-delete-global-diagnostic-owner")
+	invocationID := uuid.New()
+	insertReady := make(chan struct{})
+	releaseInsert := make(chan struct{})
+	insertErr := make(chan error, 1)
+	go func() {
+		insertErr <- rls.WithTeamProfileTx(ctx, appDB, teamID.String(), ownerID, func(tx *gorm.DB) error {
+			if err := ensureActiveTeamForMutation(ctx, tx, teamID.String()); err != nil {
+				return err
+			}
+			if err := tx.Exec(`
+				INSERT INTO remember_invocation_diagnostics (
+					team_id, invocation_id, owner_profile_id,
+					classification, outcome, request_bytes, request_capture_state,
+					created_at, completed_at, expires_at
+				) VALUES (?, ?, ?, 'execution', 'failed', ?, 'captured', now(), now(), now() + interval '1 day')
+			`, teamID, invocationID, ownerID, []byte(`{"race":"global-in-flight"}`)).Error; err != nil {
+				return err
+			}
+			close(insertReady)
+			<-releaseInsert
+			return nil
+		})
+	}()
+	select {
+	case <-insertReady:
+	case err := <-insertErr:
+		require.NoError(t, err)
+		return
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for in-flight global diagnostic insert")
+	}
+
+	hardDeleteErr := make(chan error, 1)
+	go func() {
+		hardDeleteErr <- NewTeamRepository(appDB, rls).HardDelete(ctx, teamID)
+	}()
+	select {
+	case err := <-hardDeleteErr:
+		close(releaseInsert)
+		require.NoError(t, <-insertErr)
+		t.Fatalf("hard delete completed while global diagnostic insert held the team lock: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	close(releaseInsert)
+	require.NoError(t, <-insertErr)
+	require.NoError(t, <-hardDeleteErr)
+	var remaining int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT COUNT(*) FROM remember_invocation_diagnostics WHERE invocation_id = ?`, invocationID).Scan(&remaining).Error
+	}))
+	require.Zero(t, remaining)
+}
+
 func TestSSORuntimeEntitlementsExcludeArchivedTeams(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
