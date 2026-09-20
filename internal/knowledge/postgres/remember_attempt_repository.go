@@ -214,20 +214,26 @@ func (r *Store) RecordRememberFailure(ctx context.Context, input RememberFailure
 		if remainingDiagnosticBytes <= 0 {
 			diagnostic.RequestBody = nil
 			diagnostic.ResponseBody = nil
-			diagnostic.CaptureState = "truncated"
+			if diagnostic.CaptureState != "unavailable" {
+				diagnostic.CaptureState = "truncated"
+			}
 			continue
 		}
 		if len(diagnostic.RequestBody) > remainingDiagnosticBytes {
 			diagnostic.RequestBody = diagnostic.RequestBody[:remainingDiagnosticBytes]
 			diagnostic.ResponseBody = nil
-			diagnostic.CaptureState = "truncated"
+			if diagnostic.CaptureState != "unavailable" {
+				diagnostic.CaptureState = "truncated"
+			}
 			remainingDiagnosticBytes = 0
 			continue
 		}
 		remainingDiagnosticBytes -= len(diagnostic.RequestBody)
 		if len(diagnostic.ResponseBody) > remainingDiagnosticBytes {
 			diagnostic.ResponseBody = diagnostic.ResponseBody[:remainingDiagnosticBytes]
-			diagnostic.CaptureState = "truncated"
+			if diagnostic.CaptureState != "unavailable" {
+				diagnostic.CaptureState = "truncated"
+			}
 			remainingDiagnosticBytes = 0
 			continue
 		}
