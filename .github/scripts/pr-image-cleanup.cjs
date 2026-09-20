@@ -14,6 +14,8 @@ const PREVIEW_LABELS = Object.freeze([
 const RELEASE_WORKFLOW = "Release prerelease";
 const DEFAULT_BATCH_LIMIT = 200;
 const TARGET_CONCURRENCY = 8;
+const DEFAULT_PREVIEW_QUIESCE_MAX_POLLS = 90;
+const DEFAULT_PREVIEW_QUIESCE_POLL_MILLISECONDS = 60_000;
 
 function testPrFromTag(tag) {
   const match = TEST_TAG_PATTERN.exec(tag || "");
@@ -533,8 +535,8 @@ async function pullForNumber(api, number) {
 }
 
 async function waitForPreviewQuiescence(api, pullNumbers, {
-  maxPolls = 60,
-  pollMilliseconds = 5000,
+  maxPolls = DEFAULT_PREVIEW_QUIESCE_MAX_POLLS,
+  pollMilliseconds = DEFAULT_PREVIEW_QUIESCE_POLL_MILLISECONDS,
   sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 } = {}) {
   const numbers = [...new Set(pullNumbers.filter((number) => Number.isSafeInteger(number) && number > 0))];

@@ -330,6 +330,22 @@ test("cleanup waits for active preview publication before rescanning", async () 
   assert.equal(sleeps, 1);
 });
 
+test("preview quiescence default covers the preview publication window", async () => {
+  let reads = 0;
+  const delays = [];
+  await assert.rejects(
+    policy.waitForPreviewQuiescence({
+      previewRuns: async () => {
+        reads += 1;
+        return [{ display_title: "PR test image: PR #42", status: "in_progress" }];
+      },
+    }, [42], { sleep: async (milliseconds) => { delays.push(milliseconds); } }),
+    /preview publication is still active for pull requests: 42/,
+  );
+  assert.equal(reads, 90);
+  assert.deepEqual(delays, Array(89).fill(60_000));
+});
+
 test("retained tags and unknown untagged children block destructive cleanup", () => {
   const versions = [
     { id: 21, name: digest("g"), tags: ["test-42"], children: [digest("h")] },
@@ -375,6 +391,7 @@ test("workflow is trusted, event-fenced, dry-run capable, and registered in CI",
   assert.match(workflow, /ref: main/);
   assert.match(workflow, /REGCTL_SHA256/);
   assert.match(workflow, /CLEANUP_BATCH_LIMIT: "200"/);
+  assert.match(workflow, /timeout-minutes: 100/);
   assert.match(workflow, /triggering_actor/);
   assert.match(workflow, /github\.triggering_actor/);
   assert.match(release, /run-name: "Release prerelease: \$\{\{ github\.event\.workflow_run\.head_sha \}\}"/);
