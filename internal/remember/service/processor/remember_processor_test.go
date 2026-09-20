@@ -278,6 +278,27 @@ func TestRememberExchangeRecorderBoundsBodiesAndAggregate(t *testing.T) {
 	require.LessOrEqual(t, len(exchanges[0].ResponseBody), rememberDiagnosticMaxBodyBytes)
 }
 
+func TestRememberExchangeRecorderDerivesOutcomeCaptureStateBeforeExplicitCaptured(t *testing.T) {
+	for _, test := range []struct {
+		outcome string
+		want    string
+	}{
+		{outcome: "no_response", want: "no_response"},
+		{outcome: "response_read_failed", want: "interrupted"},
+	} {
+		t.Run(test.outcome, func(t *testing.T) {
+			recorder := &rememberExchangeRecorder{protector: observability.NewCredentialProtector()}
+			recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
+				Component: "assessor", RequestBody: []byte(`{"request":true}`), CaptureState: "captured", Outcome: test.outcome,
+			})
+
+			exchanges := recorder.Snapshot()
+			require.Len(t, exchanges, 1)
+			require.Equal(t, test.want, exchanges[0].CaptureState)
+		})
+	}
+}
+
 func TestRememberExchangeRecorderFailsClosedWithoutProtector(t *testing.T) {
 	recorder := &rememberExchangeRecorder{}
 	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
@@ -889,17 +910,21 @@ func (s *rememberWaitAwareLedgerStub) WithRememberAttemptLock(_ context.Context,
 }
 
 type rememberProcessorLogCapture struct {
-	infos  []string
-	warns  []string
-	errors []string
+	infos      []string
+	warns      []string
+	errors     []string
+	errorTexts []string
 }
 
 func (l *rememberProcessorLogCapture) Info(message string, _ ...observability.LogAttr) {
 	l.infos = append(l.infos, message)
 }
 
-func (l *rememberProcessorLogCapture) Error(message string, _ error, _ ...observability.LogAttr) {
+func (l *rememberProcessorLogCapture) Error(message string, err error, _ ...observability.LogAttr) {
 	l.errors = append(l.errors, message)
+	if err != nil {
+		l.errorTexts = append(l.errorTexts, err.Error())
+	}
 }
 
 func (l *rememberProcessorLogCapture) Warn(message string, _ ...observability.LogAttr) {

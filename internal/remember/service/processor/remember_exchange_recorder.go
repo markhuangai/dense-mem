@@ -301,7 +301,7 @@ func (r *rememberExchangeRecorder) RecordProviderExchange(ctx context.Context, e
 	responseCapture := captureRememberDiagnosticBody(responseBody, r.protector, authenticatedSecrets...)
 	exchange.ResponseBody = responseCapture.body
 	exchange.CaptureState, exchange.CaptureReason = combineRememberDiagnosticCapture(
-		exchange.CaptureState, exchange.CaptureReason, requestCapture, responseCapture,
+		rememberDiagnosticCaptureStateForExchange(exchange), exchange.CaptureReason, requestCapture, responseCapture,
 	)
 	var requestTruncated, responseTruncated bool
 	exchange.RequestBody, requestTruncated = boundedRememberDiagnosticBody(exchange.RequestBody)

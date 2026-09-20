@@ -456,7 +456,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 			return nil, rememberConflictProcessError(input, attemptID, errors.Join(rememberapp.ErrRememberConflict, recordErr))
 		}
 		p.logRememberFailure(ctx, input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
-		p.logRememberFailureRecordError(input, attemptID, phase, publicError.Code, correlationID, recordErr)
+		p.logRememberFailureRecordError(ctx, input, attemptID, phase, publicError.Code, correlationID, recordErr)
 		return nil, rememberFailurePersistenceProcessError(input, attemptID, failure)
 	}
 	p.logRememberFailure(ctx, input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
@@ -606,7 +606,7 @@ func (p *rememberSynchronousProcessor) logRememberFailure(
 		contextual.ErrorContext(ctx, "remember_processing_failed", logError, attrs...)
 		return
 	}
-	p.logger.Error("remember_processing_failed", logError, attrs...)
+	p.logger.Error("remember_processing_failed", protectRememberLogError(logError, p.protector, observability.AuthenticationSecretsFromContext(ctx)), attrs...)
 }
 
 func clampAssessorTurns(value int) int {

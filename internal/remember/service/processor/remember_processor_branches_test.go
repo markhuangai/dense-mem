@@ -98,7 +98,7 @@ func TestRememberFailureRecoveryErrorsAndCodes(t *testing.T) {
 	}
 	var nilLoggerProcessor *rememberSynchronousProcessor
 	input := rememberapp.RememberProcessRequest{TeamID: "team", OwnerProfileID: "owner"}
-	nilLoggerProcessor.logRememberFailureRecordError(input, "attempt", "assessment", "provider_unavailable", "corr", errors.New("x"))
+	nilLoggerProcessor.logRememberFailureRecordError(context.Background(), input, "attempt", "assessment", "provider_unavailable", "corr", errors.New("x"))
 	nilLoggerProcessor.logRememberFailureRetentionDegraded(input, "attempt", "assessment", errors.New("retention failed"))
 	nilLoggerProcessor.logRememberIdempotencyLockCleanupFailure(input, "attempt", errors.New("cleanup failed"))
 }
@@ -109,9 +109,9 @@ func TestRememberFailureRecoveryLoggingCapturesFailureKinds(t *testing.T) {
 	input := rememberapp.RememberProcessRequest{
 		TeamID: "team", OwnerProfileID: "owner", Metadata: map[string]any{"actor": map[string]any{"correlation_id": "corr"}},
 	}
-	processor.logRememberFailureRecordError(input, "attempt", "assessment", "provider_unavailable", "corr", context.DeadlineExceeded)
-	processor.logRememberFailureRecordError(input, "attempt", "assessment", "provider_unavailable", "corr", context.Canceled)
-	processor.logRememberFailureRecordError(input, "attempt", "assessment", "provider_unavailable", "corr", errors.New("x"))
+	processor.logRememberFailureRecordError(context.Background(), input, "attempt", "assessment", "provider_unavailable", "corr", context.DeadlineExceeded)
+	processor.logRememberFailureRecordError(context.Background(), input, "attempt", "assessment", "provider_unavailable", "corr", context.Canceled)
+	processor.logRememberFailureRecordError(context.Background(), input, "attempt", "assessment", "provider_unavailable", "corr", errors.New("x"))
 	processor.logRememberFailureRetentionDegraded(input, "attempt", "assessment", errors.New("retention failed"))
 	processor.logRememberIdempotencyLockCleanupFailure(input, "attempt", errors.New("cleanup failed"))
 	require.Equal(t, []string{
@@ -121,6 +121,24 @@ func TestRememberFailureRecoveryLoggingCapturesFailureKinds(t *testing.T) {
 	require.Equal(t, "corr", rememberProcessCorrelationID(input.Metadata))
 	require.Empty(t, rememberProcessCorrelationID(map[string]any{"actor": "wrong"}))
 	require.Empty(t, rememberProcessCorrelationID(nil))
+}
+
+func TestRememberFailureLoggingFallbackProtectsRequestSecrets(t *testing.T) {
+	secret := "database-backed-request-secret"
+	logger := &rememberProcessorLogCapture{}
+	processor := &rememberSynchronousProcessor{logger: logger, protector: observability.NewCredentialProtector()}
+	ctx := observability.WithAuthenticationSecrets(context.Background(), secret)
+	input := rememberapp.RememberProcessRequest{TeamID: "team", OwnerProfileID: "owner"}
+	failure := errors.New("database rejected authorization=" + secret)
+
+	processor.logRememberFailure(ctx, input, "attempt", time.Now(), "commit", "database_failure", "corr", 0, failure)
+	processor.logRememberFailureRecordError(ctx, input, "attempt", "commit", "database_failure", "corr", failure)
+
+	require.Len(t, logger.errorTexts, 2)
+	for _, text := range logger.errorTexts {
+		require.NotContains(t, text, secret)
+		require.Contains(t, text, observability.CredentialProtectionRedacted)
+	}
 }
 
 func TestNewSynchronousProcessorUsesDefaultClassifiersAndCommitStage(t *testing.T) {
