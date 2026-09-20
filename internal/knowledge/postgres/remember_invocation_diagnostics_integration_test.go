@@ -58,6 +58,31 @@ func TestRememberProcessorPersistsInvocationDiagnosticsThroughPostgres(t *testin
 	require.NotEmpty(t, detail.ProviderExchanges)
 	require.Equal(t, "provider_not_called", detail.ProviderExchanges[0].CaptureState)
 
+	completedID := uuid.NewString()
+	require.NoError(t, repo.RecordRememberInvocationDiagnostic(ctx, knowledgecontract.RememberInvocationDiagnosticInput{
+		TeamID: teamID, OwnerProfileID: ownerID, InvocationID: completedID, SpaceID: space.ID.String(), SpaceGeneration: spaceGeneration,
+		Classification: "execution", Outcome: "completed", RequestBody: []byte(`{"completed":true}`), RequestCaptureState: "captured",
+		ProviderExchanges: []knowledgecontract.RememberAttemptDiagnosticInput{{
+			SequenceNo: 1, Kind: "provider_exchange", Component: "verifier", Outcome: "captured", CaptureState: "captured",
+		}},
+	}))
+	completed, err := repo.GetRememberInvocationDiagnostic(ctx, teamID, completedID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", completed.Outcome)
+	require.Equal(t, []byte(`{"completed":true}`), completed.RequestBody)
+	require.Equal(t, "captured", completed.RequestCaptureState)
+
+	evaluatedZeroID := uuid.NewString()
+	require.NoError(t, repo.RecordRememberInvocationDiagnostic(ctx, knowledgecontract.RememberInvocationDiagnosticInput{
+		TeamID: teamID, OwnerProfileID: ownerID, InvocationID: evaluatedZeroID, SpaceID: space.ID.String(), SpaceGeneration: spaceGeneration,
+		Classification: "execution", Outcome: "evaluated_zero", RequestBody: []byte(`{"relationships":[]}`), RequestCaptureState: "captured",
+	}))
+	evaluatedZero, err := repo.GetRememberInvocationDiagnostic(ctx, teamID, evaluatedZeroID)
+	require.NoError(t, err)
+	require.Equal(t, "evaluated_zero", evaluatedZero.Outcome)
+	require.Equal(t, []byte(`{"relationships":[]}`), evaluatedZero.RequestBody)
+	require.Equal(t, "captured", evaluatedZero.RequestCaptureState)
+
 	_, err = rememberProcessor.ProcessRemember(ctx, rememberapp.RememberProcessRequest{
 		TeamID: teamID, OwnerProfileID: ownerID, SpaceID: space.ID.String(), SpaceGeneration: spaceGeneration,
 		IdempotencyKey: "processor-policy-rejection", RequestHash: "sha256:policy-rejection",
