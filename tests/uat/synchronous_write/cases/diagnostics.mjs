@@ -156,8 +156,8 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
       expect(Array.isArray(terminalDetail.data?.events) && terminalDetail.data.events.length >= 1, "completed attempt detail must expose its event transcript");
     } else {
       if (label === "policy") {
-        expect(diagnostics.original_request?.capture_state === "hash_only", `${label} detail must expose hash-only request state`);
-        expect(!diagnostics.original_request?.request_body?.includes("diagnostics-persisted-secret"), `${label} hash-only request must not expose rejected evidence`);
+        expect(diagnostics.original_request?.request_body?.includes('"name":"remember"'), `${label} detail must retain the admitted request`);
+        expect(!diagnostics.original_request?.request_body?.includes("diagnostics-persisted-secret"), `${label} request must not expose rejected evidence`);
       } else {
         expect(diagnostics.original_request?.request_body?.includes('"name":"remember"'), `${label} detail must expose the logical original request`);
       }
