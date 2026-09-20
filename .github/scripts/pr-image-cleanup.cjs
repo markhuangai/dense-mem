@@ -13,6 +13,7 @@ const PREVIEW_LABELS = Object.freeze([
 ]);
 const RELEASE_WORKFLOW = "Release prerelease";
 const DEFAULT_BATCH_LIMIT = 200;
+const TARGET_CONCURRENCY = 8;
 
 function testPrFromTag(tag) {
   const match = TEST_TAG_PATTERN.exec(tag || "");
@@ -59,8 +60,16 @@ function normalizeVersion(version) {
   };
 }
 
+function releaseTargetSha(run) {
+  const title = run?.display_title || run?.displayTitle;
+  const prefix = `${RELEASE_WORKFLOW}: `;
+  if (run?.name !== RELEASE_WORKFLOW || typeof title !== "string" || !title.startsWith(prefix)) return null;
+  const sha = title.slice(prefix.length).trim();
+  return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+}
+
 function releaseOutcome({ run, jobs, mergeCommitSha }) {
-  if (!run || run.name !== RELEASE_WORKFLOW || run.head_sha !== mergeCommitSha || run.conclusion !== "success") {
+  if (!run || releaseTargetSha(run) !== mergeCommitSha || run.conclusion !== "success") {
     return { eligible: false, reason: "the prerelease workflow did not complete successfully for the merge" };
   }
   const classifier = (jobs || []).find((job) => job.name === "Classify release changes");
@@ -157,9 +166,22 @@ function buildDetachedDeletionPlan({ versions, detachedDigest, selectedTags = []
     };
   }
 
-  const retainedRoots = normalized.filter((version) => version.digest !== detachedDigest &&
+  const detachedSubtree = reachableFrom(normalized, [detachedDigest]);
+  const externalRoots = normalized.filter((version) => !detachedSubtree.has(version.digest));
+  const retainedRoots = normalized.filter((version) => version.digest !== detachedDigest && detachedSubtree.has(version.digest) &&
     version.tags.some((tag) => !isTestTag(tag) || !selectedTags.includes(tag)));
-  const protectedDigests = reachableFrom(normalized, retainedRoots.map((version) => version.digest));
+  const protectedDigests = reachableFrom(normalized, [
+    ...externalRoots.map((version) => version.digest),
+    ...retainedRoots.map((version) => version.digest),
+  ]);
+  if (protectedDigests.has(detachedDigest)) {
+    return {
+      actions: [],
+      blocked: [{ digest: detachedDigest, reason: "detached manifest is referenced by a retained manifest graph" }],
+      protectedDigests: [...protectedDigests],
+      cost: 0,
+    };
+  }
   const blocked = [];
   const actions = [];
   for (const digest of postOrder(normalized, detachedDigest)) {
@@ -310,6 +332,26 @@ function planSignature(plan) {
     actions: [...(plan.actions || [])].map(({ type, versionId, digest, tags }) => ({ type, versionId, digest, tags })).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
     blocked: [...(plan.blocked || [])].sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
   });
+}
+
+function assertPlanUnchanged(expected, actual) {
+  if (planSignature(expected) !== planSignature(actual)) {
+    throw new Error("cleanup plan changed before deletion");
+  }
+}
+
+async function mapWithConcurrency(values, concurrency, mapper) {
+  const results = new Array(values.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < values.length) {
+      const index = next;
+      next += 1;
+      results[index] = await mapper(values[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, worker));
+  return results;
 }
 
 class GitHubApi {
@@ -466,7 +508,7 @@ class RegistryClient {
 async function releaseForPull(api, pull) {
   if (!pull?.merged_at) return null;
   const runs = await api.releaseRuns();
-  const run = runs.find((candidate) => candidate.name === RELEASE_WORKFLOW && candidate.head_sha === pull.merge_commit_sha);
+  const run = runs.find((candidate) => releaseTargetSha(candidate) === pull.merge_commit_sha);
   if (!run) return null;
   return { run, jobs: await api.jobs(run.id) };
 }
@@ -503,9 +545,10 @@ async function resolveTargets(api, event, versions) {
     return [{ number, pull, release }];
   }
   if (eventName === "workflow_run" && process.env.CLEANUP_MANUAL_SWEEP !== "true") {
-    const headSha = event.workflow_run?.head_sha;
-    const pulls = await api.associatedPulls(headSha);
-    const merged = pulls.filter((pull) => pull.merged_at && pull.merge_commit_sha === headSha);
+    const targetSha = releaseTargetSha(event.workflow_run);
+    if (!targetSha) return [];
+    const pulls = await api.associatedPulls(targetSha);
+    const merged = pulls.filter((pull) => pull.merged_at && pull.merge_commit_sha === targetSha);
     if (merged.length !== 1) return [];
     const pull = await pullForNumber(api, merged[0].number);
     return [{ number: merged[0].number, pull, release: { run: event.workflow_run, jobs: await api.jobs(event.workflow_run.id) } }];
@@ -519,11 +562,11 @@ async function resolveTargets(api, event, versions) {
       }
       if (version.previewPr !== null && version.previewPr !== undefined) numbers.add(version.previewPr);
     }
-    return Promise.all([...numbers].sort((a, b) => a - b).map(async (number) => {
+    return mapWithConcurrency([...numbers].sort((a, b) => a - b), TARGET_CONCURRENCY, async (number) => {
       const pull = await pullForNumber(api, number);
       const release = await releaseForPull(api, pull);
       return { number, pull, release };
-    }));
+    });
   }
   const numbers = new Set();
   for (const version of versions) {
@@ -533,11 +576,11 @@ async function resolveTargets(api, event, versions) {
     }
     if (version.previewPr !== null && version.previewPr !== undefined) numbers.add(version.previewPr);
   }
-  return Promise.all([...numbers].sort((a, b) => a - b).map(async (number) => {
+  return mapWithConcurrency([...numbers].sort((a, b) => a - b), TARGET_CONCURRENCY, async (number) => {
     const pull = await pullForNumber(api, number);
     const release = await releaseForPull(api, pull);
     return { number, pull, release };
-  }));
+  });
 }
 
 function outputSummary(summary) {
@@ -622,9 +665,7 @@ async function main() {
         targetPr: target.number,
         maxActions,
       });
-      if (planSignature(refreshedPlan) !== planSignature(plan)) {
-        throw new Error(`cleanup plan changed before deletion for pull request #${target.number}`);
-      }
+      assertPlanUnchanged(plan, refreshedPlan);
       for (const action of refreshedPlan.actions) {
         const current = refreshedVersions.find((version) => version.id === action.versionId);
         if (!current || current.digest !== action.digest) {
@@ -703,12 +744,15 @@ module.exports = {
   buildDeletionPlan,
   buildDetachedDeletionPlan,
   aggregateBatch,
+  assertPlanUnchanged,
   cleanupEligibility,
   GitHubApi,
   isTestTag,
   labelsPreviewPr,
+  mapWithConcurrency,
   normalizeVersion,
   releaseOutcome,
+  releaseTargetSha,
   selectedTestTags,
   testPrFromTag,
   validateCleanupState,

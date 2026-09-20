@@ -123,18 +123,24 @@ jobs:
         uses: actions/github-script@v9
         with:
           script: |
-            const actor = context.payload.workflow_run?.actor?.login;
-            if (!actor) {
+            const run = context.payload.workflow_run;
+            const originalActor = run?.actor?.login;
+            const triggeringActor = run?.triggering_actor?.login;
+            if (!originalActor || (Number(run.run_attempt || 1) > 1 && !triggeringActor)) {
               core.setFailed("manual cleanup request has no authenticated actor");
               return;
             }
-            const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              username: actor,
-            });
-            if (data.permission !== "admin") {
-              core.setFailed("destructive manual cleanup requires repository-admin permission");
+            const actors = [...new Set([originalActor, triggeringActor].filter(Boolean))];
+            for (const actor of actors) {
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: actor,
+              });
+              if (data.permission !== "admin") {
+                core.setFailed(`destructive manual cleanup requires repository-admin permission for ${actor}`);
+                return;
+              }
             }
 
       - name: Clean closed pull request images

@@ -37,7 +37,8 @@ test("closed unmerged PRs are eligible while merged PRs wait for an explicit rel
   assert.match(policy.cleanupEligibility({ pull: merged, release: null }).reason, /waiting/);
   const run = {
     name: "Release prerelease",
-    head_sha: merged.merge_commit_sha,
+    head_sha: "f".repeat(40),
+    display_title: `Release prerelease: ${merged.merge_commit_sha}`,
     conclusion: "success",
   };
   const jobs = [
@@ -49,6 +50,7 @@ test("closed unmerged PRs are eligible while merged PRs wait for an explicit rel
     eligible: true,
     reason: "prerelease publication completed",
   });
+  assert.equal(policy.releaseTargetSha(run), merged.merge_commit_sha);
   assert.equal(policy.cleanupEligibility({ pull: merged, release: { run, jobs } }).eligible, true);
 });
 
@@ -78,7 +80,7 @@ test("cleanup revalidation rejects a reopened PR and an incomplete release", () 
     () => policy.validateCleanupState({
       pull,
       release: {
-        run: { name: "Release prerelease", head_sha: pull.merge_commit_sha, conclusion: "failure" },
+        run: { name: "Release prerelease", head_sha: pull.merge_commit_sha, display_title: `Release prerelease: ${pull.merge_commit_sha}`, conclusion: "failure" },
         jobs: [],
       },
     }),
@@ -88,7 +90,7 @@ test("cleanup revalidation rejects a reopened PR and an incomplete release", () 
 
 test("release failure and incomplete no-release decisions retain the preview", () => {
   const sha = "c".repeat(40);
-  const run = { name: "Release prerelease", head_sha: sha, conclusion: "success" };
+  const run = { name: "Release prerelease", head_sha: sha, display_title: `Release prerelease: ${sha}`, conclusion: "success" };
   const classifier = { name: "Classify release changes", conclusion: "success" };
   assert.equal(policy.releaseOutcome({
     run: { ...run, conclusion: "failure" },
@@ -105,6 +107,14 @@ test("release failure and incomplete no-release decisions retain the preview", (
     jobs: [classifier, { name: "Prepare prerelease", conclusion: "success" }],
     mergeCommitSha: sha,
   }).eligible, false);
+  assert.deepEqual(policy.releaseOutcome({
+    run,
+    jobs: [classifier, { name: "Promote preview image", conclusion: "success" }, { name: "No prerelease required", conclusion: "success" }],
+    mergeCommitSha: sha,
+  }), {
+    eligible: false,
+    reason: "release workflow reported both publication and no-release decisions",
+  });
 });
 
 test("deletion planning removes preview roots and owned untagged children", () => {
@@ -182,6 +192,7 @@ test("detached cleanup deletes generated descendants but protects retained graph
   const detachedRoot = digest("u");
   const detachedChild = digest("v");
   const detachedGrandchild = digest("w");
+  const externalRoot = digest("q");
   const plan = policy.buildDetachedDeletionPlan({
     versions: [
       { id: 51, name: sourceRoot, tags: ["v2.6.4-rc.9"], children: [sourceChild] },
@@ -189,14 +200,53 @@ test("detached cleanup deletes generated descendants but protects retained graph
       { id: 53, name: detachedRoot, tags: ["test-42"], children: [detachedChild] },
       { id: 54, name: detachedChild, tags: [], children: [detachedGrandchild] },
       { id: 55, name: detachedGrandchild, tags: [], children: [] },
+      { id: 56, name: externalRoot, tags: [], children: [detachedChild] },
     ],
     detachedDigest: detachedRoot,
     selectedTags: ["test-42"],
   });
-  assert.deepEqual(plan.actions.map(({ versionId }) => versionId), [55, 54, 53]);
+  assert.deepEqual(plan.actions.map(({ versionId }) => versionId), [53]);
   assert.deepEqual(plan.blocked, []);
   assert.ok(plan.protectedDigests.includes(sourceRoot));
   assert.ok(plan.protectedDigests.includes(sourceChild));
+  assert.ok(plan.protectedDigests.includes(externalRoot));
+  assert.ok(plan.protectedDigests.includes(detachedChild));
+});
+
+test("detached cleanup blocks retained tags and plan drift", () => {
+  const root = digest("1");
+  const child = digest("2");
+  const retainedRoot = policy.buildDetachedDeletionPlan({
+    versions: [
+      { id: 71, name: root, tags: ["test-42", "latest"], children: [child] },
+      { id: 72, name: child, tags: [], children: [] },
+    ],
+    detachedDigest: root,
+    selectedTags: ["test-42"],
+  });
+  assert.deepEqual(retainedRoot.blocked, [{ digest: root, reason: "detached manifest has a retained tag" }]);
+
+  const retainedChild = policy.buildDetachedDeletionPlan({
+    versions: [
+      { id: 73, name: root, tags: ["test-42"], children: [child] },
+      { id: 74, name: child, tags: ["test-42"], children: [] },
+    ],
+    detachedDigest: root,
+    selectedTags: ["test-42"],
+  });
+  assert.deepEqual(retainedChild.blocked, [{ digest: child, reason: "generated manifest has a retained tag" }]);
+
+  const before = policy.buildDeletionPlan({
+    versions: [{ id: 75, name: root, tags: ["test-42"], children: [] }],
+    eligiblePrs: new Set([42]),
+    targetPr: 42,
+  });
+  const changed = policy.buildDeletionPlan({
+    versions: [{ id: 75, name: root, tags: ["latest", "test-42"], children: [] }],
+    eligiblePrs: new Set([42]),
+    targetPr: 42,
+  });
+  assert.throws(() => policy.assertPlanUnchanged(before, changed), /cleanup plan changed before deletion/);
 });
 
 test("registry scanning records OCI children and propagates preview ownership", () => {
@@ -240,6 +290,18 @@ test("release history pagination is shared across a cleanup invocation", async (
   };
   await Promise.all([api.releaseRuns(), api.releaseRuns(), api.releaseRuns()]);
   assert.equal(calls, 1);
+});
+
+test("manual target fanout stays within its concurrency bound", async () => {
+  let active = 0;
+  let peak = 0;
+  await policy.mapWithConcurrency(Array.from({ length: 20 }, (_, index) => index), 3, async () => {
+    active += 1;
+    peak = Math.max(peak, active);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    active -= 1;
+  });
+  assert.equal(peak, 3);
 });
 
 test("retained tags and unknown untagged children block destructive cleanup", () => {
@@ -287,6 +349,7 @@ test("workflow is trusted, event-fenced, dry-run capable, and registered in CI",
   assert.match(workflow, /ref: main/);
   assert.match(workflow, /REGCTL_SHA256/);
   assert.match(workflow, /CLEANUP_BATCH_LIMIT: "200"/);
+  assert.match(workflow, /triggering_actor/);
   assert.match(release, /run-name: "Release prerelease: \$\{\{ github\.event\.workflow_run\.head_sha \}\}"/);
   assert.match(release, /name: No prerelease required/);
   assert.match(release, /needs:\n      - classify-release\n      - prepare-prerelease/);
