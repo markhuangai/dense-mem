@@ -121,16 +121,19 @@ jobs:
       - name: Require admin for destructive manual cleanup
         if: github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Request PR image cleanup' && github.event.workflow_run.event == 'workflow_dispatch' && steps.request.outputs.dry_run == 'false'
         uses: actions/github-script@v9
+        env:
+          DOWNSTREAM_ACTOR: ${{ github.triggering_actor }}
         with:
           script: |
             const run = context.payload.workflow_run;
             const originalActor = run?.actor?.login;
-            const triggeringActor = run?.triggering_actor?.login;
-            if (!originalActor || (Number(run.run_attempt || 1) > 1 && !triggeringActor)) {
+            const upstreamTriggeringActor = run?.triggering_actor?.login;
+            const downstreamTriggeringActor = process.env.DOWNSTREAM_ACTOR;
+            if (!originalActor || (Number(run.run_attempt || 1) > 1 && !upstreamTriggeringActor) || !downstreamTriggeringActor) {
               core.setFailed("manual cleanup request has no authenticated actor");
               return;
             }
-            const actors = [...new Set([originalActor, triggeringActor].filter(Boolean))];
+            const actors = [...new Set([originalActor, upstreamTriggeringActor, downstreamTriggeringActor].filter(Boolean))];
             for (const actor of actors) {
               const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
                 owner: context.repo.owner,

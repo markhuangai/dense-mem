@@ -304,6 +304,21 @@ test("manual target fanout stays within its concurrency bound", async () => {
   assert.equal(peak, 3);
 });
 
+test("cleanup waits for active preview publication before rescanning", async () => {
+  let reads = 0;
+  let sleeps = 0;
+  await policy.waitForPreviewQuiescence({
+    previewRuns: async () => {
+      reads += 1;
+      return reads === 1
+        ? [{ display_title: "PR test image: PR #42", status: "in_progress" }]
+        : [];
+    },
+  }, [42], { maxPolls: 3, pollMilliseconds: 0, sleep: async () => { sleeps += 1; } });
+  assert.equal(reads, 2);
+  assert.equal(sleeps, 1);
+});
+
 test("retained tags and unknown untagged children block destructive cleanup", () => {
   const versions = [
     { id: 21, name: digest("g"), tags: ["test-42"], children: [digest("h")] },
@@ -350,6 +365,7 @@ test("workflow is trusted, event-fenced, dry-run capable, and registered in CI",
   assert.match(workflow, /REGCTL_SHA256/);
   assert.match(workflow, /CLEANUP_BATCH_LIMIT: "200"/);
   assert.match(workflow, /triggering_actor/);
+  assert.match(workflow, /github\.triggering_actor/);
   assert.match(release, /run-name: "Release prerelease: \$\{\{ github\.event\.workflow_run\.head_sha \}\}"/);
   assert.match(release, /name: No prerelease required/);
   assert.match(release, /needs:\n      - classify-release\n      - prepare-prerelease/);

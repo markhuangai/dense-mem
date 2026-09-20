@@ -68,6 +68,11 @@ function releaseTargetSha(run) {
   return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
 }
 
+function previewRunForPull(run, pullNumber) {
+  const title = run?.display_title || run?.displayTitle;
+  return title === `PR test image: PR #${pullNumber}`;
+}
+
 function releaseOutcome({ run, jobs, mergeCommitSha }) {
   if (!run || releaseTargetSha(run) !== mergeCommitSha || run.conclusion !== "success") {
     return { eligible: false, reason: "the prerelease workflow did not complete successfully for the merge" };
@@ -409,6 +414,10 @@ class GitHubApi {
     return this.releaseRunsPromise;
   }
 
+  previewRuns() {
+    return this.paged(`/repos/${this.repository}/actions/workflows/pr-test-image.yml/runs?event=pull_request_target`);
+  }
+
   async jobs(runId) {
     return this.paged(`/repos/${this.repository}/actions/runs/${runId}/jobs`);
   }
@@ -522,6 +531,25 @@ async function pullForNumber(api, number) {
   }
 }
 
+async function waitForPreviewQuiescence(api, pullNumbers, {
+  maxPolls = 60,
+  pollMilliseconds = 5000,
+  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+} = {}) {
+  const numbers = [...new Set(pullNumbers.filter((number) => Number.isSafeInteger(number) && number > 0))];
+  if (numbers.length === 0) return;
+  const activeStatuses = new Set(["queued", "in_progress", "waiting", "requested", "pending"]);
+  for (let attempt = 0; attempt < maxPolls; attempt += 1) {
+    const runs = await api.previewRuns();
+    const active = runs.filter((run) => numbers.some((number) => previewRunForPull(run, number)) && activeStatuses.has(run.status));
+    if (active.length === 0) return;
+    if (attempt + 1 >= maxPolls) {
+      throw new Error(`preview publication is still active for pull requests: ${numbers.join(", ")}`);
+    }
+    await sleep(pollMilliseconds);
+  }
+}
+
 function eventPayload() {
   const eventPath = process.env.GITHUB_EVENT_PATH;
   if (!eventPath) throw new Error("GITHUB_EVENT_PATH is required");
@@ -597,7 +625,7 @@ async function main() {
   const packageName = repository?.split("/")[1]?.toLowerCase();
   if (!repository || !token || !packageName) throw new Error("GITHUB_REPOSITORY, GITHUB_TOKEN, and a repository package are required");
   const api = new GitHubApi({ apiUrl: process.env.GITHUB_API_URL || "https://api.github.com", token, repository });
-  const versions = (await api.versions(packageName)).map(normalizeVersion);
+  let versions = (await api.versions(packageName)).map(normalizeVersion);
   const dryRun = process.env.CLEANUP_DRY_RUN === "true";
   const maxActions = Number(process.env.CLEANUP_BATCH_LIMIT || DEFAULT_BATCH_LIMIT);
   const image = `ghcr.io/${repository.toLowerCase()}`;
@@ -605,6 +633,9 @@ async function main() {
   const event = eventPayload();
   registry.scanVersions(versions);
   const targets = await resolveTargets(api, event, versions);
+  await waitForPreviewQuiescence(api, targets.map(({ number }) => number));
+  versions = (await api.versions(packageName)).map(normalizeVersion);
+  registry.scanVersions(versions);
 
   const prepareTarget = (target) => {
     if (!target.pull) return { target, eligibility: { eligible: false, reason: "pull request not found" }, plan: null };
@@ -751,10 +782,12 @@ module.exports = {
   labelsPreviewPr,
   mapWithConcurrency,
   normalizeVersion,
+  previewRunForPull,
   releaseOutcome,
   releaseTargetSha,
   selectedTestTags,
   testPrFromTag,
   validateCleanupState,
+  waitForPreviewQuiescence,
   RegistryClient,
 };
