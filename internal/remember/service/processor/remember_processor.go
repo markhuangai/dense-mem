@@ -963,10 +963,12 @@ func (p *rememberSynchronousProcessor) embedSearchDocumentBatch(
 	}
 	vectors, model, err := p.embedder.EmbedBatch(embedCtx, texts)
 	if err != nil {
-		if errors.Is(embedCtx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+		if errors.Is(embedCtx.Err(), context.Canceled) || errors.Is(embedCtx.Err(), rememberapp.ErrRememberRequestCancelled) ||
+			errors.Is(err, context.Canceled) || errors.Is(err, rememberapp.ErrRememberRequestCancelled) {
 			return nil, fmt.Errorf("%w: embedding phase canceled", rememberapp.ErrRememberRequestCancelled)
 		}
-		if errors.Is(embedCtx.Err(), context.DeadlineExceeded) {
+		if errors.Is(embedCtx.Err(), context.DeadlineExceeded) || errors.Is(embedCtx.Err(), rememberapp.ErrRememberRequestTimeout) ||
+			errors.Is(err, rememberapp.ErrRememberRequestTimeout) {
 			return nil, fmt.Errorf("%w: embedding phase exceeded 10 seconds", rememberapp.ErrRememberRequestTimeout)
 		}
 		return nil, &rememberEmbeddingProviderFailure{cause: err}

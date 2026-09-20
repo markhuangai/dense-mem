@@ -741,11 +741,17 @@ func TestEmbedSearchDocumentBatchValidatesProviderAndVectors(t *testing.T) {
 	provider.err = context.Canceled
 	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, rememberapp.ErrRememberRequestCancelled)
+	provider.err = rememberapp.ErrRememberRequestCancelled
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	require.ErrorIs(t, err, rememberapp.ErrRememberRequestCancelled)
 
 	provider.err = errors.New("provider timeout")
 	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	cancel()
 	_, err = processor.embedSearchDocumentBatch(expired, "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	require.ErrorIs(t, err, rememberapp.ErrRememberRequestTimeout)
+	provider.err = rememberapp.ErrRememberRequestTimeout
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, rememberapp.ErrRememberRequestTimeout)
 
 	provider.err = nil
