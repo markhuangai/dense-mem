@@ -299,6 +299,19 @@ func TestRememberExchangeRecorderDerivesOutcomeCaptureStateBeforeExplicitCapture
 	}
 }
 
+func TestRememberDiagnosticCaptureProtectsCredentialsAcrossBodyLimit(t *testing.T) {
+	secret := strings.Repeat("s", 64)
+	body := []byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes+len(secret)))
+	start := rememberDiagnosticMaxBodyBytes - len(secret)/2
+	copy(body[start:], secret)
+
+	capture := captureRememberDiagnosticBody(body, observability.NewCredentialProtector(), secret)
+
+	require.Equal(t, "truncated", capture.state)
+	require.Contains(t, string(capture.body), observability.CredentialProtectionRedacted)
+	require.NotContains(t, string(capture.body), strings.Repeat("s", len(secret)/2))
+}
+
 func TestRememberExchangeRecorderFailsClosedWithoutProtector(t *testing.T) {
 	recorder := &rememberExchangeRecorder{}
 	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{

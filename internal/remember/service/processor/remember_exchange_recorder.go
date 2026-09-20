@@ -19,6 +19,9 @@ import (
 const (
 	rememberDiagnosticMaxBodyBytes    = modelprovider.MaxProviderDiagnosticBodyBytes
 	rememberDiagnosticMaxAttemptBytes = 64 << 20
+	// Credential variants can expand one configured secret to JSON or percent
+	// escapes; retain enough suffix to protect a boundary-spanning variant.
+	rememberDiagnosticCredentialOverlapBytes = observability.MaxCredentialSecretBytes * 8
 )
 
 func boundedRememberDiagnosticBody(body []byte) ([]byte, bool) {
@@ -32,6 +35,17 @@ func boundedRememberDiagnosticBody(body []byte) ([]byte, bool) {
 		truncated = true
 	}
 	return append([]byte(nil), sanitized...), truncated
+}
+
+func boundedRememberDiagnosticBodyForProtection(body []byte) ([]byte, bool) {
+	if len(body) <= rememberDiagnosticMaxBodyBytes {
+		return boundedRememberDiagnosticBody(body)
+	}
+	limit := rememberDiagnosticMaxBodyBytes + rememberDiagnosticCredentialOverlapBytes
+	if limit > len(body) {
+		limit = len(body)
+	}
+	return append([]byte(nil), body[:limit]...), true
 }
 
 type rememberDiagnosticCapture struct {
@@ -50,8 +64,8 @@ func captureRememberDiagnosticBody(body []byte, protector observability.Diagnost
 			reason: "credential_protection_" + strconv.Itoa(int(observability.CredentialProtectionUnsupported)),
 		}
 	}
-	bounded, truncated := boundedRememberDiagnosticBody(body)
-	protected, reason := protector.ProtectDiagnosticBytes(bounded, rememberDiagnosticMaxBodyBytes+2, authenticatedSecrets...)
+	bounded, truncated := boundedRememberDiagnosticBodyForProtection(body)
+	protected, reason := protector.ProtectDiagnosticBytes(bounded, len(bounded)+2, authenticatedSecrets...)
 	if reason != observability.CredentialProtectionAvailable {
 		return rememberDiagnosticCapture{
 			state:  "unavailable",
