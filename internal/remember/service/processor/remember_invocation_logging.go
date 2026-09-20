@@ -91,7 +91,8 @@ func (p *rememberSynchronousProcessor) recordRememberInvocation(
 	if status != nil && len(status.Errors) > 0 {
 		outcome = "failed"
 	}
-	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) ||
+		errors.Is(cause, rememberapp.ErrRememberRequestCancelled) || errors.Is(cause, rememberapp.ErrRememberRequestTimeout) {
 		outcome = "cancelled"
 	} else if outcome == "completed" && classification == "replay" {
 		outcome = "replayed"

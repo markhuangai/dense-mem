@@ -161,6 +161,22 @@ func TestRememberInvocationDiagnosticsRecordOutcomeAndCause(t *testing.T) {
 	require.GreaterOrEqual(t, ledger.invocation.Duration, time.Second)
 }
 
+func TestRememberInvocationDiagnosticsClassifiesRememberCancellationSentinels(t *testing.T) {
+	for _, cause := range []error{rememberapp.ErrRememberRequestCancelled, rememberapp.ErrRememberRequestTimeout} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			ledger := &rememberFailureLedgerStub{}
+			processor := &rememberSynchronousProcessor{ledger: ledger}
+			processor.recordRememberInvocation(context.Background(), rememberapp.RememberProcessRequest{
+				TeamID: "11111111-1111-4111-8111-111111111111", OwnerProfileID: "22222222-2222-4222-8222-222222222222",
+				RequestHash: "sha256:sentinel", InvocationStartedAt: time.Now().UTC(), OriginalRequest: []byte(`{"evidence":[]}`),
+			}, "33333333-3333-4333-8333-333333333333", "execution", "", "embedding", fmt.Errorf("phase failed: %w", cause), nil, nil)
+
+			require.Equal(t, "cancelled", ledger.invocation.Outcome)
+			require.Equal(t, "embedding", ledger.invocation.FailedPhase)
+		})
+	}
+}
+
 func TestRememberInvocationLoggingPreservesFailureCauseThroughFallbackLogger(t *testing.T) {
 	ledger := &rememberFailureLedgerStub{invocationErr: errors.New("diagnostic write failed")}
 	logger := &rememberProcessorLogCapture{}
