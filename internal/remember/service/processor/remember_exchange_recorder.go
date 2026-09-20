@@ -22,6 +22,7 @@ const (
 	// Credential variants can expand one configured secret to JSON or percent
 	// escapes; retain enough suffix to protect a boundary-spanning variant.
 	rememberDiagnosticCredentialOverlapBytes = observability.MaxCredentialSecretBytes * 8
+	rememberDiagnosticProtectionExpansion    = 6
 )
 
 func boundedRememberDiagnosticBody(body []byte) ([]byte, bool) {
@@ -48,6 +49,14 @@ func boundedRememberDiagnosticBodyForProtection(body []byte) ([]byte, bool) {
 	return append([]byte(nil), body[:limit]...), true
 }
 
+func rememberDiagnosticProtectionBudget(bodyBytes int) int {
+	maxInt := int(^uint(0) >> 1)
+	if bodyBytes > (maxInt-2)/rememberDiagnosticProtectionExpansion {
+		return maxInt
+	}
+	return bodyBytes*rememberDiagnosticProtectionExpansion + 2
+}
+
 type rememberDiagnosticCapture struct {
 	body   []byte
 	state  string
@@ -65,7 +74,7 @@ func captureRememberDiagnosticBody(body []byte, protector observability.Diagnost
 		}
 	}
 	bounded, truncated := boundedRememberDiagnosticBodyForProtection(body)
-	protected, reason := protector.ProtectDiagnosticBytes(bounded, len(bounded)+2, authenticatedSecrets...)
+	protected, reason := protector.ProtectDiagnosticBytes(bounded, rememberDiagnosticProtectionBudget(len(bounded)), authenticatedSecrets...)
 	if reason != observability.CredentialProtectionAvailable {
 		return rememberDiagnosticCapture{
 			state:  "unavailable",

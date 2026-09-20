@@ -312,6 +312,17 @@ func TestRememberDiagnosticCaptureProtectsCredentialsAcrossBodyLimit(t *testing.
 	require.NotContains(t, string(capture.body), strings.Repeat("s", len(secret)/2))
 }
 
+func TestRememberDiagnosticCaptureAllowsJSONExpansionInProtectionBudget(t *testing.T) {
+	for _, body := range [][]byte{
+		[]byte(`{"message":"<>&"}`),
+		[]byte(`<html><body>provider failure & retry</body></html>`),
+	} {
+		capture := captureRememberDiagnosticBody(body, observability.NewCredentialProtector())
+		require.Equal(t, "captured", capture.state)
+		require.NotEmpty(t, capture.body)
+	}
+}
+
 func TestRememberExchangeRecorderFailsClosedWithoutProtector(t *testing.T) {
 	recorder := &rememberExchangeRecorder{}
 	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
