@@ -52,6 +52,40 @@ test("closed unmerged PRs are eligible while merged PRs wait for an explicit rel
   assert.equal(policy.cleanupEligibility({ pull: merged, release: { run, jobs } }).eligible, true);
 });
 
+test("released image metadata permits cleanup when the release receipt is not available", () => {
+  const pull = {
+    state: "closed",
+    merged_at: "2026-09-20T10:00:00Z",
+    merge_commit_sha: "a".repeat(40),
+  };
+  assert.deepEqual(policy.cleanupEligibility({ pull, release: null, releasedImage: true }), {
+    eligible: true,
+    reason: "verified prerelease image metadata",
+  });
+});
+
+test("cleanup revalidation rejects a reopened PR and an incomplete release", () => {
+  assert.throws(
+    () => policy.validateCleanupState({ pull: { state: "open", merged_at: null }, release: null }),
+    /pull request changed state before cleanup/,
+  );
+  const pull = {
+    state: "closed",
+    merged_at: "2026-09-20T10:00:00Z",
+    merge_commit_sha: "b".repeat(40),
+  };
+  assert.throws(
+    () => policy.validateCleanupState({
+      pull,
+      release: {
+        run: { name: "Release prerelease", head_sha: pull.merge_commit_sha, conclusion: "failure" },
+        jobs: [],
+      },
+    }),
+    /cleanup eligibility changed before deletion/,
+  );
+});
+
 test("release failure and incomplete no-release decisions retain the preview", () => {
   const sha = "c".repeat(40);
   const run = { name: "Release prerelease", head_sha: sha, conclusion: "success" };
@@ -142,6 +176,61 @@ test("shared test and release tags detach only the selected test alias", () => {
   }]);
 });
 
+test("detached cleanup deletes generated descendants but protects retained graphs", () => {
+  const sourceRoot = digest("s");
+  const sourceChild = digest("t");
+  const detachedRoot = digest("u");
+  const detachedChild = digest("v");
+  const detachedGrandchild = digest("w");
+  const plan = policy.buildDetachedDeletionPlan({
+    versions: [
+      { id: 51, name: sourceRoot, tags: ["v2.6.4-rc.9"], children: [sourceChild] },
+      { id: 52, name: sourceChild, tags: [], children: [] },
+      { id: 53, name: detachedRoot, tags: ["test-42"], children: [detachedChild] },
+      { id: 54, name: detachedChild, tags: [], children: [detachedGrandchild] },
+      { id: 55, name: detachedGrandchild, tags: [], children: [] },
+    ],
+    detachedDigest: detachedRoot,
+    selectedTags: ["test-42"],
+  });
+  assert.deepEqual(plan.actions.map(({ versionId }) => versionId), [55, 54, 53]);
+  assert.deepEqual(plan.blocked, []);
+  assert.ok(plan.protectedDigests.includes(sourceRoot));
+  assert.ok(plan.protectedDigests.includes(sourceChild));
+});
+
+test("registry scanning records OCI children and propagates preview ownership", () => {
+  const root = digest("x");
+  const child = digest("y");
+  const labels = {
+    "io.dense-mem.preview.pr": "42",
+    "io.dense-mem.preview.head": "a".repeat(40),
+    "io.dense-mem.preview.main": "b".repeat(40),
+    "io.dense-mem.preview.run-id": "123",
+    "io.dense-mem.preview.run-attempt": "1",
+    "org.opencontainers.image.revision": "c".repeat(40),
+  };
+  const registry = new policy.RegistryClient({ image: "ghcr.io/example/image" });
+  registry.run = (args) => {
+    if (args[0] === "manifest") {
+      return args[2].endsWith(root)
+        ? JSON.stringify({ manifests: [{ digest: child, platform: { os: "linux", architecture: "amd64" } }] })
+        : JSON.stringify({ config: { digest: digest("z") } });
+    }
+    if (args[0] === "image") return JSON.stringify({ config: { Labels: labels } });
+    throw new Error(`unexpected registry command: ${args.join(" ")}`);
+  };
+  const versions = [
+    { id: 61, digest: root, tags: ["test-42"] },
+    { id: 62, digest: child, tags: [] },
+  ];
+  registry.scanVersions(versions);
+  assert.deepEqual(versions[0].children, [child]);
+  assert.equal(versions[1].previewPr, 42);
+  assert.equal(versions[0].previewPr, 42);
+  assert.equal(versions[0].imageRevision, labels["org.opencontainers.image.revision"]);
+});
+
 test("retained tags and unknown untagged children block destructive cleanup", () => {
   const versions = [
     { id: 21, name: digest("g"), tags: ["test-42"], children: [digest("h")] },
@@ -167,16 +256,21 @@ test("batch limits fail closed", () => {
 });
 
 test("workflow is trusted, event-fenced, dry-run capable, and registered in CI", async () => {
-  const [workflow, release, ci] = await Promise.all([
+  const [workflow, request, release, ci] = await Promise.all([
     readFile(new URL("../../.github/workflows/pr-image-cleanup.yml", import.meta.url), "utf8"),
+    readFile(new URL("../../.github/workflows/pr-image-cleanup-request.yml", import.meta.url), "utf8"),
     readFile(new URL("../../.github/workflows/release-rc.yml", import.meta.url), "utf8"),
     readFile(new URL("../../.github/workflows/ci-shared.yml", import.meta.url), "utf8"),
   ]);
   assert.match(workflow, /pull_request_target:/);
   assert.match(workflow, /types: \[closed\]/);
   assert.match(workflow, /workflow_run:/);
-  assert.match(workflow, /workflow_dispatch:/);
-  assert.match(workflow, /default: true/);
+  assert.match(workflow, /Request PR image cleanup/);
+  assert.match(workflow, /group: pr-test-image-cleanup/);
+  assert.doesNotMatch(workflow, /workflow_dispatch:/);
+  assert.match(request, /workflow_dispatch:/);
+  assert.match(request, /default: true/);
+  assert.doesNotMatch(request, /packages: write/);
   assert.match(workflow, /packages: write/);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /ref: main/);

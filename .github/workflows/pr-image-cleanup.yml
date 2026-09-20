@@ -9,21 +9,9 @@ on:
   workflow_run:
     workflows:
       - Release prerelease
+      - Request PR image cleanup
     types:
       - completed
-    branches:
-      - main
-  workflow_dispatch:
-    inputs:
-      pr_number:
-        description: "Closed pull request number; blank scans known preview tags"
-        required: false
-        type: string
-      dry_run:
-        description: "Report the deletion plan without changing GHCR"
-        required: true
-        default: true
-        type: boolean
 
 permissions:
   contents: read
@@ -32,12 +20,23 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: pr-test-image-${{ github.event.pull_request.number || github.event.workflow_run.head_sha || github.run_id }}
+  group: pr-test-image-cleanup
   cancel-in-progress: false
 
 jobs:
   cleanup:
     name: Resolve and clean preview versions
+    if: >-
+      ${{
+        github.event_name != 'workflow_run' ||
+        (
+          github.event.workflow_run.conclusion == 'success' &&
+          (
+            github.event.workflow_run.name == 'Release prerelease' ||
+            (github.event.workflow_run.name == 'Request PR image cleanup' && github.event.workflow_run.event == 'workflow_dispatch')
+          )
+        )
+      }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -71,31 +70,68 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: echo "${GITHUB_TOKEN}" | "${RUNNER_TEMP}/regctl" registry login ghcr.io -u "${GITHUB_ACTOR}" --pass-stdin
 
+      - name: Download manual cleanup request
+        if: github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Request PR image cleanup' && github.event.workflow_run.event == 'workflow_dispatch'
+        uses: actions/download-artifact@v8
+        with:
+          name: pr-image-cleanup-request
+          path: ${{ runner.temp }}/pr-image-cleanup-request
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Resolve manual cleanup request
+        id: request
+        if: github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Request PR image cleanup' && github.event.workflow_run.event == 'workflow_dispatch'
+        shell: bash
+        env:
+          REQUEST_FILE: ${{ runner.temp }}/pr-image-cleanup-request/request.json
+        run: |
+          set -euo pipefail
+          test -f "${REQUEST_FILE}"
+          pr_number="$(jq -r '.pr_number' "${REQUEST_FILE}")"
+          dry_run="$(jq -r '.dry_run' "${REQUEST_FILE}")"
+          if [[ -n "${pr_number}" && ! "${pr_number}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::manual cleanup request has an invalid pull request number"
+            exit 1
+          fi
+          case "${dry_run}" in
+            true|false) ;;
+            *) echo "::error::manual cleanup request has an invalid dry_run value"; exit 1 ;;
+          esac
+          printf 'pr_number=%s\n' "${pr_number}" >> "${GITHUB_OUTPUT}"
+          printf 'dry_run=%s\n' "${dry_run}" >> "${GITHUB_OUTPUT}"
+
       - name: Resolve cleanup mode
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
-          MANUAL_DRY_RUN: ${{ inputs.dry_run }}
+          REQUEST_PR_NUMBER: ${{ steps.request.outputs.pr_number }}
+          REQUEST_DRY_RUN: ${{ steps.request.outputs.dry_run }}
         run: |
           set -euo pipefail
-          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
-            case "${MANUAL_DRY_RUN}" in
-              true|false) printf 'CLEANUP_DRY_RUN=%s\n' "${MANUAL_DRY_RUN}" >> "${GITHUB_ENV}" ;;
-              *) echo "::error::workflow_dispatch dry_run must be true or false"; exit 1 ;;
-            esac
+          if [[ "${EVENT_NAME}" == "workflow_run" && -n "${REQUEST_DRY_RUN}" ]]; then
+            printf 'CLEANUP_PR_NUMBER=%s\n' "${REQUEST_PR_NUMBER}" >> "${GITHUB_ENV}"
+            printf 'CLEANUP_DRY_RUN=%s\n' "${REQUEST_DRY_RUN}" >> "${GITHUB_ENV}"
+            echo 'CLEANUP_MANUAL_SWEEP=true' >> "${GITHUB_ENV}"
           else
             echo 'CLEANUP_DRY_RUN=false' >> "${GITHUB_ENV}"
+            echo 'CLEANUP_MANUAL_SWEEP=false' >> "${GITHUB_ENV}"
           fi
 
       - name: Require admin for destructive manual cleanup
-        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == false
+        if: github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Request PR image cleanup' && github.event.workflow_run.event == 'workflow_dispatch' && steps.request.outputs.dry_run == 'false'
         uses: actions/github-script@v9
         with:
           script: |
+            const actor = context.payload.workflow_run?.actor?.login;
+            if (!actor) {
+              core.setFailed("manual cleanup request has no authenticated actor");
+              return;
+            }
             const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              username: context.actor,
+              username: actor,
             });
             if (data.permission !== "admin") {
               core.setFailed("destructive manual cleanup requires repository-admin permission");
@@ -105,7 +141,7 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          CLEANUP_PR_NUMBER: ${{ inputs.pr_number }}
+          CLEANUP_PR_NUMBER: ${{ steps.request.outputs.pr_number }}
           CLEANUP_BATCH_LIMIT: "200"
           REGCTL_BIN: ${{ runner.temp }}/regctl
         run: node .github/scripts/pr-image-cleanup.cjs

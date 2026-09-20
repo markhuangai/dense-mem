@@ -130,6 +130,83 @@ function reachableFrom(versions, roots) {
   return reachable;
 }
 
+function postOrder(versions, rootDigest) {
+  const byDigest = new Map(versions.map((version) => [version.digest, version]));
+  const visited = new Set();
+  const ordered = [];
+  const visit = (digest) => {
+    if (visited.has(digest)) return;
+    visited.add(digest);
+    for (const child of byDigest.get(digest)?.children || []) visit(child);
+    ordered.push(digest);
+  };
+  visit(rootDigest);
+  return ordered;
+}
+
+function buildDetachedDeletionPlan({ versions, detachedDigest, selectedTags = [] }) {
+  const normalized = versions.map(normalizeVersion);
+  const byDigest = new Map(normalized.map((version) => [version.digest, version]));
+  const detached = byDigest.get(detachedDigest);
+  if (!detached) {
+    return {
+      actions: [],
+      blocked: [{ digest: detachedDigest, reason: "detached manifest is absent from package versions" }],
+      protectedDigests: [],
+      cost: 0,
+    };
+  }
+
+  const retainedRoots = normalized.filter((version) => version.digest !== detachedDigest &&
+    version.tags.some((tag) => !isTestTag(tag) || !selectedTags.includes(tag)));
+  const protectedDigests = reachableFrom(normalized, retainedRoots.map((version) => version.digest));
+  const blocked = [];
+  const actions = [];
+  for (const digest of postOrder(normalized, detachedDigest)) {
+    const version = byDigest.get(digest);
+    if (!version) {
+      blocked.push({ digest, reason: "generated manifest is absent from package versions" });
+      continue;
+    }
+    if (protectedDigests.has(digest)) continue;
+    if (digest === detachedDigest) {
+      const unexpectedTags = version.tags.filter((tag) => !selectedTags.includes(tag));
+      if (unexpectedTags.length > 0) {
+        blocked.push({ digest, reason: "detached manifest has a retained tag" });
+        continue;
+      }
+    } else if (version.tags.length > 0) {
+      blocked.push({ digest, reason: "generated manifest has a retained tag" });
+      continue;
+    }
+    actions.push({
+      type: "delete",
+      versionId: version.id,
+      digest: version.digest,
+      tags: digest === detachedDigest ? [...selectedTags] : [],
+    });
+  }
+  return { actions, blocked, protectedDigests: [...protectedDigests], cost: actions.length };
+}
+
+function validateCleanupState({ pull, release, releasedImage = false }) {
+  if (!pull || String(pull.state).toLowerCase() !== "closed") {
+    throw new Error("pull request changed state before cleanup");
+  }
+  const eligibility = cleanupEligibility({ pull, release, releasedImage });
+  if (!eligibility.eligible) {
+    throw new Error(`cleanup eligibility changed before deletion: ${eligibility.reason}`);
+  }
+  return eligibility;
+}
+
+function deletionCost(versions, actions) {
+  return actions.reduce((total, action) => {
+    if (action.type !== "detach") return total + 1;
+    return total + action.tags.length * reachableFrom(versions, [action.digest]).size;
+  }, 0);
+}
+
 function buildDeletionPlan({ versions, eligiblePrs = new Set(), targetPr = null, maxActions = DEFAULT_BATCH_LIMIT }) {
   const normalized = versions.map(normalizeVersion);
   const byDigest = new Map(normalized.map((version) => [version.digest, version]));
@@ -211,18 +288,20 @@ function buildDeletionPlan({ versions, eligiblePrs = new Set(), targetPr = null,
       uniqueActions.push(action);
     }
   }
-  if (uniqueActions.length > maxActions) {
+  const cost = deletionCost(normalized, uniqueActions);
+  if (cost > maxActions) {
     return {
       actions: [],
-      blocked: [{ reason: `deletion set contains ${uniqueActions.length} versions; batch limit is ${maxActions}` }],
+      blocked: [{ reason: `deletion set contains ${cost} versions; batch limit is ${maxActions}` }],
       protectedDigests: [...protectedDigests],
+      cost,
     };
   }
-  return { actions: uniqueActions, blocked, protectedDigests: [...protectedDigests] };
+  return { actions: uniqueActions, blocked, protectedDigests: [...protectedDigests], cost };
 }
 
 function aggregateBatch({ plans, maxActions = DEFAULT_BATCH_LIMIT }) {
-  const total = plans.reduce((sum, plan) => sum + (plan?.actions?.length || 0), 0);
+  const total = plans.reduce((sum, plan) => sum + (plan?.cost ?? plan?.actions?.length ?? 0), 0);
   return { total, allowed: total <= maxActions };
 }
 
@@ -419,13 +498,28 @@ async function resolveTargets(api, event, versions) {
     const release = await releaseForPull(api, pull);
     return [{ number, pull, release }];
   }
-  if (eventName === "workflow_run") {
+  if (eventName === "workflow_run" && process.env.CLEANUP_MANUAL_SWEEP !== "true") {
     const headSha = event.workflow_run?.head_sha;
     const pulls = await api.associatedPulls(headSha);
     const merged = pulls.filter((pull) => pull.merged_at && pull.merge_commit_sha === headSha);
     if (merged.length !== 1) return [];
     const pull = await pullForNumber(api, merged[0].number);
     return [{ number: merged[0].number, pull, release: { run: event.workflow_run, jobs: await api.jobs(event.workflow_run.id) } }];
+  }
+  if (process.env.CLEANUP_MANUAL_SWEEP === "true") {
+    const numbers = new Set();
+    for (const version of versions) {
+      for (const tag of version.tags || []) {
+        const number = testPrFromTag(tag);
+        if (number !== null) numbers.add(number);
+      }
+      if (version.previewPr !== null && version.previewPr !== undefined) numbers.add(version.previewPr);
+    }
+    return Promise.all([...numbers].sort((a, b) => a - b).map(async (number) => {
+      const pull = await pullForNumber(api, number);
+      const release = await releaseForPull(api, pull);
+      return { number, pull, release };
+    }));
   }
   const numbers = new Set();
   for (const version of versions) {
@@ -478,7 +572,8 @@ async function main() {
     return { target, eligibility, plan };
   };
   const preparedTargets = targets.map(prepareTarget);
-  const manualSweep = process.env.GITHUB_EVENT_NAME === "workflow_dispatch" && !process.env.CLEANUP_PR_NUMBER;
+  const manualSweep = process.env.CLEANUP_MANUAL_SWEEP === "true" ||
+    (process.env.GITHUB_EVENT_NAME === "workflow_dispatch" && !process.env.CLEANUP_PR_NUMBER);
   if (manualSweep) {
     const batch = aggregateBatch({ plans: preparedTargets.map(({ plan }) => plan), maxActions });
     if (!batch.allowed) {
@@ -539,23 +634,39 @@ async function main() {
         version.tags.some((tag) => /^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$/.test(tag)) &&
         version.imageRevision === refreshedPull.merge_commit_sha,
       ));
-      const refreshedEligibility = cleanupEligibility({
+      validateCleanupState({
         pull: refreshedPull,
         release: refreshedRelease,
         releasedImage: refreshedReleasedImage,
       });
-      if (!refreshedEligibility.eligible) {
-        throw new Error(`cleanup eligibility changed before deletion: ${refreshedEligibility.reason}`);
-      }
       const completed = [];
       for (const action of refreshedPlan.actions.filter(({ type }) => type === "detach")) {
         for (const tag of action.tags) {
           const detachedDigest = registry.detachTag(action.digest, tag, `${target.number}-${Date.now()}`);
           const refreshed = (await api.versions(packageName)).map(normalizeVersion);
+          registry.scanVersions(refreshed);
           const detached = refreshed.find((version) => version.digest === detachedDigest);
           if (!detached) throw new Error(`detached version ${detachedDigest} was not visible in GitHub Packages`);
-          await api.deleteVersion(packageName, detached.id);
-          completed.push({ type: "detach", tag, deletedVersionId: detached.id, digest: detachedDigest });
+          const detachedPlan = buildDetachedDeletionPlan({
+            versions: refreshed,
+            detachedDigest,
+            selectedTags: [tag],
+          });
+          if (detachedPlan.blocked.length > 0) {
+            throw new Error(`detached manifest graph is unsafe to delete: ${JSON.stringify(detachedPlan.blocked)}`);
+          }
+          if (detachedPlan.cost > maxActions) {
+            throw new Error(`detached manifest graph contains ${detachedPlan.cost} versions; batch limit is ${maxActions}`);
+          }
+          for (const generated of detachedPlan.actions) {
+            try {
+              await api.deleteVersion(packageName, generated.versionId);
+              completed.push({ ...generated, type: "detach", tag, generated: true });
+            } catch (error) {
+              if (error.status === 404) completed.push({ ...generated, type: "detach", tag, generated: true, alreadyDeleted: true });
+              else throw error;
+            }
+          }
         }
       }
       for (const action of refreshedPlan.actions.filter(({ type }) => type === "delete")) {
@@ -586,6 +697,7 @@ module.exports = {
   PREVIEW_LABELS,
   TEST_TAG_PATTERN,
   buildDeletionPlan,
+  buildDetachedDeletionPlan,
   aggregateBatch,
   cleanupEligibility,
   isTestTag,
@@ -594,4 +706,6 @@ module.exports = {
   releaseOutcome,
   selectedTestTags,
   testPrFromTag,
+  validateCleanupState,
+  RegistryClient,
 };
