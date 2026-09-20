@@ -443,9 +443,15 @@ class GitHubApi {
     return this.releaseRunsPromise;
   }
 
-  previewRuns() {
-    return this.request(`/repos/${this.repository}/actions/workflows/pr-test-image.yml/runs?event=pull_request_target&per_page=100&page=1`)
-      .then((response) => response.workflow_runs || []);
+  async previewRuns() {
+    const pages = await Promise.all(PREVIEW_ACTIVE_STATUSES.map((status) =>
+      this.paged(`/repos/${this.repository}/actions/workflows/pr-test-image.yml/runs?event=pull_request_target&status=${status}`),
+    ));
+    const runs = new Map();
+    for (const page of pages) {
+      for (const run of page) runs.set(run.id, run);
+    }
+    return [...runs.values()];
   }
 
   async jobs(runId) {

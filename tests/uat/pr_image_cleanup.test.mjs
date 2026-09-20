@@ -121,6 +121,33 @@ test("cleanup target resolution is fenced to the intended trigger", async () => 
     policy.resolveTargets(api, {}, [], { CLEANUP_PR_NUMBER: "not-a-number" }),
     /CLEANUP_PR_NUMBER must be a positive integer/,
   );
+
+  const manualRelease = {
+    id: 8,
+    name: "Release prerelease",
+    display_title: `Release prerelease: ${mergeSha}`,
+  };
+  const manual = await policy.resolveTargets({
+    pull: workflowApi.pull,
+    releaseRuns: async () => [manualRelease],
+    jobs: async () => [],
+  }, {}, [], { CLEANUP_PR_NUMBER: "42" });
+  assert.deepEqual(manual.map(({ number }) => number), [42]);
+  assert.equal(manual[0].release.run, manualRelease);
+
+  const sweep = await policy.resolveTargets({
+    pull: async (number) => number === 44 ? null : { ...pull, number },
+    releaseRuns: async () => [],
+  }, {}, [
+    { tags: ["test-42"], previewPr: null },
+    { tags: [], previewPr: 43 },
+    { tags: ["test-44"], previewPr: null },
+  ], { CLEANUP_MANUAL_SWEEP: "true" });
+  assert.deepEqual(sweep.map(({ number, pull: resolved }) => [number, Boolean(resolved)]), [
+    [42, true],
+    [43, true],
+    [44, false],
+  ]);
 });
 
 test("cleanup revalidation rejects a reopened PR and an incomplete release", () => {
@@ -358,6 +385,21 @@ test("release history pagination is shared across a cleanup invocation", async (
   };
   await Promise.all([api.releaseRuns(), api.releaseRuns(), api.releaseRuns()]);
   assert.equal(calls, 1);
+});
+
+test("preview run polling paginates only active workflow statuses", async () => {
+  const api = new policy.GitHubApi({ apiUrl: "https://api.github.com", token: "test", repository: "markhuangai/dense-mem" });
+  const paths = [];
+  api.paged = async (path) => {
+    paths.push(path);
+    const status = new URL(`https://api.github.com${path}`).searchParams.get("status");
+    return [{ id: status, status }];
+  };
+  const runs = await api.previewRuns();
+  assert.deepEqual(paths.map((path) => new URL(`https://api.github.com${path}`).searchParams.get("status")).sort(), [
+    "in_progress", "pending", "queued", "requested", "waiting",
+  ].sort());
+  assert.equal(runs.length, 5);
 });
 
 test("manual target fanout stays within its concurrency bound", async () => {
