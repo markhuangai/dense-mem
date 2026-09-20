@@ -146,7 +146,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		p.recordRememberInvocation(ctx, input, waiterInvocationID, "execution", "", "idempotency_wait", lockErr, nil, nil)
 		return nil, lockErr
 	}
-	replay, replayErr := p.loadRememberReplay(ctx, input, "")
+	replay, replayErr := p.loadRememberReplay(ctx, input, waiterInvocationID)
 	if replayErr == nil {
 		p.recordRememberInvocation(ctx, input, waiterInvocationID, "replay", replay.SubmissionID, "idempotency_wait", nil, replay, nil)
 		return replay, nil

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
@@ -870,6 +871,13 @@ func TestRememberProcessorWaiterRecordsReplayLoadFailure(t *testing.T) {
 	require.ErrorAs(t, err, &processErr)
 	require.ErrorIs(t, err, rememberapp.ErrRememberPersistence)
 	require.NotNil(t, status)
+	require.NotNil(t, processErr.Status)
+	require.NotEmpty(t, processErr.Status.SubmissionID)
+	require.Equal(t, processErr.Status.SubmissionID, status.SubmissionID)
+	require.NoError(t, func() error {
+		_, parseErr := uuid.Parse(processErr.Status.SubmissionID)
+		return parseErr
+	}())
 	require.Equal(t, "replay", base.invocation.Classification)
 	require.Equal(t, "failed", base.invocation.Outcome)
 	require.Equal(t, "database_failure", base.invocation.ErrorCode)
