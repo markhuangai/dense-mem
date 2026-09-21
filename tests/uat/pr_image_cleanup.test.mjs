@@ -205,6 +205,25 @@ test("cleanup revalidation rejects a reopened PR and an incomplete release", () 
     }),
     /cleanup eligibility changed before deletion/,
   );
+  const eligible = policy.validateCleanupState({
+    pull: {
+      state: "closed",
+      merged_at: "2026-09-20T10:00:00Z",
+      merge_commit_sha: "e".repeat(40),
+    },
+    release: {
+      run: {
+        name: "Release prerelease",
+        display_title: `Release prerelease: ${"e".repeat(40)}`,
+        conclusion: "success",
+      },
+      jobs: [
+        { name: "Classify release changes", conclusion: "success" },
+        { name: "Promote preview image", conclusion: "success" },
+      ],
+    },
+  });
+  assert.deepEqual(eligible, { eligible: true, reason: "prerelease publication completed" });
 });
 
 test("release failure and incomplete no-release decisions retain the preview", () => {
@@ -488,6 +507,17 @@ test("detached manifests retain synthetic preview ownership for retry discovery"
     "--label", "io.dense-mem.preview.run-attempt=1",
     "--label", "org.opencontainers.image.version=cleanup-42-123",
   ]);
+
+  assert.throws(
+    () => registry.detachTag(source, "latest", "42-124"),
+    /cannot detach a non-preview tag/,
+  );
+  const unchanged = new policy.RegistryClient({ image: "ghcr.io/example/image" });
+  unchanged.run = (args) => args[0] === "manifest" && args[1] === "head" ? source : "";
+  assert.throws(
+    () => unchanged.detachTag(source, "test-42", "42-125"),
+    /did not create a new manifest/,
+  );
 });
 
 test("preview run polling paginates only active workflow statuses", async () => {
