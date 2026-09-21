@@ -82,6 +82,7 @@ export type RememberInvocationDiagnosticDetail = RememberInvocationDiagnosticSum
   caller_response?: string;
   caller_response_capture_state: string;
   caller_response_capture_reason?: string;
+  enrichment_unavailable?: boolean;
 };
 
 export type RememberError = {

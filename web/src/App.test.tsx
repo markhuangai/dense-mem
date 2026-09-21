@@ -327,6 +327,36 @@ describe("App", () => {
     });
   });
 
+  it("clears a related-log query on normal Logs navigation", async () => {
+    const invocation = {
+      team_id: profileA.id, owner_profile_id: "owner-1", invocation_id: "invocation-app", canonical_attempt_id: "",
+      request_hash: "hash-app", correlation_id: "stale-correlation", classification: "execution", outcome: "completed",
+      phase: "", protected_cause: "", delivery_stage: "unknown_receipt", retryable: false,
+      duration_ms: 1, created_at: "2026-08-18T01:00:00Z", expires_at: "2026-08-25T01:00:00Z", retained_by_legal_hold: false,
+    };
+    mockPortalFetch({
+      teams: [profileA],
+      keys: [keyA()],
+      rememberInvocation: {
+        summary: invocation,
+        detail: { ...invocation, request_capture_state: "captured", provider_exchanges: [], caller_response_capture_state: "captured" },
+      },
+    });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    render(<App />);
+    await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("button", { name: /^Remember Attempts$/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "Inspect Remember call invocation-app" }));
+    await userEvent.click(await screen.findByRole("button", { name: "View related logs" }));
+    expect(await screen.findByRole("heading", { name: "Operation Logs" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Correlation ID")).toHaveValue("stale-correlation");
+    await userEvent.click(screen.getByRole("button", { name: /^Teams$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^Logs$/i }));
+    expect(await screen.findByRole("heading", { name: "Operation Logs" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Correlation ID")).toHaveValue(""));
+  });
+
   it("shows dream rationale behind an info tooltip", async () => {
     mockPortalFetch({ teams: [profileA], keys: [keyA()] });
     sessionStorage.setItem("denseMem.controlToken", "secret");

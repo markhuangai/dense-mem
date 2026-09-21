@@ -328,7 +328,10 @@ function Portal({
           label: "Logs",
           icon: <ListFilter size={17} aria-hidden="true" />,
           active: activeTab === "logs",
-          onClick: () => setActiveTab("logs"),
+          onClick: () => {
+            setLogsInitialQuery({});
+            setActiveTab("logs");
+          },
         },
         {
           id: "credentials",

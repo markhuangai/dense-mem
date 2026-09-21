@@ -84,13 +84,19 @@ func (h *controlPortalHandler) getRememberInvocationDiagnostic(c echo.Context) e
 }
 
 func (h *controlPortalHandler) enrichRememberInvocationDiagnostic(ctx context.Context, teamID uuid.UUID, detail *rememberapp.RememberInvocationDiagnosticDetail) {
-	if h == nil || h.operationLogs == nil || detail == nil {
+	if detail == nil {
 		return
 	}
+	if h == nil || h.operationLogs == nil {
+		detail.EnrichmentUnavailable = true
+		return
+	}
+	enrichmentUnavailable := false
 	read := func(filter domain.OperationLogFilter) []domain.OperationLog {
 		filter.Limit = 100
 		page, err := h.operationLogs.ListOperationLogs(ctx, filter)
 		if err != nil || page == nil {
+			enrichmentUnavailable = true
 			return nil
 		}
 		return page.Items
@@ -101,6 +107,7 @@ func (h *controlPortalHandler) enrichRememberInvocationDiagnostic(ctx context.Co
 		transportLogs := read(domain.OperationLogFilter{TeamID: &teamID, CorrelationID: detail.CorrelationID})
 		enrichRememberInvocationFromTransportLogs(detail, transportLogs)
 	}
+	detail.EnrichmentUnavailable = enrichmentUnavailable
 }
 
 func enrichRememberInvocationFromInvocationLogs(detail *rememberapp.RememberInvocationDiagnosticDetail, logs []domain.OperationLog) {

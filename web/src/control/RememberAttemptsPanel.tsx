@@ -381,6 +381,7 @@ function RememberCallsView({
 
 function RememberInvocationDetailView({ detail, onOpenLogs }: { detail: RememberInvocationDiagnosticDetail; onOpenLogs: (query: OperationLogQuery) => void }) {
   const deliveryState = detail.caller_response_capture_state || "unknown";
+  const deliveryStage = detail.delivery_stage === "unknown_receipt" ? "" : detail.delivery_stage;
   return (
     <section className="overview-panel remember-attempt-detail" aria-label="Remember call details">
       <SectionHeading title="Call Detail" actions={<span className={attemptOutcomeClass(detail.outcome)}>{outcomeLabel(detail.outcome)}</span>} />
@@ -389,12 +390,13 @@ function RememberInvocationDetailView({ detail, onOpenLogs }: { detail: Remember
         <Fact label="Classification" value={detail.classification} />
         <Fact label="Phase" value={detail.phase || "Unknown"} />
         <Fact label="Protected cause" value={detail.protected_cause || "No failure cause"} />
-        <Fact label="Delivery" value={detail.delivery_stage ? `${detail.delivery_stage} (Caller receipt unknown)` : "Unknown (Caller receipt unknown)"} />
+        <Fact label="Delivery" value={deliveryStage ? `${deliveryStage} (Caller receipt unknown)` : "Unknown (Caller receipt unknown)"} />
         <Fact label="Correlation" value={detail.correlation_id || "Not recorded"} code={Boolean(detail.correlation_id)} />
         <Fact label="Request hash" value={detail.request_hash || "Not recorded"} code={Boolean(detail.request_hash)} />
         <Fact label="Capture expiry" value={detail.retained_by_legal_hold ? "Legal hold" : formatDate(detail.expires_at)} />
       </div>
       <section className="remember-diagnostics" aria-label="Remember call captures">
+        {detail.enrichment_unavailable && <div className="banner warning" role="status">Related operation-log context is unavailable; cause and delivery details may be incomplete.</div>}
         <div className="button-row">
           <button className="ghost-button" type="button" onClick={() => onOpenLogs({ team_id: detail.team_id, correlation_id: detail.correlation_id })}>View related logs</button>
         </div>

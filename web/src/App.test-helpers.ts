@@ -275,6 +275,7 @@ export function mockPortalFetch({
   logs = operationLogsSnapshot,
   dreams = [dreamSnapshot],
   metrics = metricsSnapshot,
+  rememberInvocation,
 }: {
   teams: Team[];
   keys: Credential[];
@@ -283,6 +284,7 @@ export function mockPortalFetch({
   logs?: OperationLog[];
   dreams?: Dream[];
   metrics?: ControlMetrics | "error";
+  rememberInvocation?: { summary: Record<string, unknown>; detail: Record<string, unknown> };
 }) {
   let currentProfiles = teams;
   let currentKeys = keys;
@@ -392,6 +394,12 @@ export function mockPortalFetch({
         data: filtered.slice(offset, offset + limit),
         pagination: { limit, offset, total: filtered.length },
       });
+    }
+    if (rememberInvocation && parsedUrl.pathname.endsWith("/control/api/remember-invocations") && method === "GET") {
+      return jsonResponse({ data: [rememberInvocation.summary], pagination: { limit: 50, offset: 0, total: 1 } });
+    }
+    if (rememberInvocation && parsedUrl.pathname.includes("/control/api/teams/") && parsedUrl.pathname.includes("/remember-invocations/") && method === "GET") {
+      return jsonResponse({ data: rememberInvocation.detail });
     }
     if (url.includes(`/teams/${profileA.id}/dreaming/status`) && method === "GET") {
       return jsonResponse({ data: dreamStatusSnapshot });

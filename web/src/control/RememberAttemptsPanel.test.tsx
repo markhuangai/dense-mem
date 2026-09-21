@@ -148,6 +148,26 @@ describe("RememberAttemptsPanel", () => {
     expect(await screen.findAllByText("The capture exceeded the diagnostic size limit; the displayed body is truncated.")).toHaveLength(2);
   });
 
+  it("renders unknown delivery and operation-log degradation explicitly", async () => {
+    const invocation = {
+      team_id: "team-1", owner_profile_id: "owner-1", invocation_id: "degraded-call", canonical_attempt_id: "",
+      request_hash: "hash-1", correlation_id: "corr-1", classification: "execution", outcome: "failed",
+      phase: "assessment", protected_cause: "", delivery_stage: "unknown_receipt", retryable: true,
+      duration_ms: 3, created_at: "2026-08-18T01:00:00Z", expires_at: "2026-08-25T01:00:00Z", retained_by_legal_hold: false,
+    } as const;
+    const api = {
+      listRememberInvocationDiagnostics: vi.fn().mockResolvedValue({ data: [invocation], pagination: { limit: 50, offset: 0, total: 1 } }),
+      getRememberInvocationDiagnostic: vi.fn().mockResolvedValue({
+        ...invocation, request_capture_state: "captured", provider_exchanges: [], caller_response_capture_state: "captured", enrichment_unavailable: true,
+      }),
+    } as unknown as ControlApi;
+
+    render(<RememberAttemptsPanel api={api} team={team()} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Inspect Remember call degraded-call" }));
+    expect(await screen.findByText("Unknown (Caller receipt unknown)")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Related operation-log context is unavailable");
+  });
+
   it("clears prior-team calls and ignores late list and detail responses", async () => {
     let resolveTeamOneList!: (value: unknown) => void;
     let resolveTeamOneDetail!: (value: unknown) => void;

@@ -88,6 +88,7 @@ type RememberInvocationDiagnosticDetail struct {
 	CallerResponse              string                                 `json:"caller_response,omitempty"`
 	CallerResponseCaptureState  string                                 `json:"caller_response_capture_state"`
 	CallerResponseCaptureReason string                                 `json:"caller_response_capture_reason,omitempty"`
+	EnrichmentUnavailable       bool                                   `json:"enrichment_unavailable,omitempty"`
 }
 
 var ErrRememberInvocationDiagnosticsUnavailable = fmt.Errorf("remember invocation diagnostics unavailable")

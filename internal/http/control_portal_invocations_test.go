@@ -133,10 +133,14 @@ func withInvocationParams(ctx echo.Context, teamID, invocationID string) echo.Co
 type invocationLogReaderStub struct {
 	rows    []domain.OperationLog
 	filters []domain.OperationLogFilter
+	err     error
 }
 
 func (s *invocationLogReaderStub) ListOperationLogs(_ context.Context, filter domain.OperationLogFilter) (*domain.OperationLogPage, error) {
 	s.filters = append(s.filters, filter)
+	if s.err != nil {
+		return nil, s.err
+	}
 	items := make([]domain.OperationLog, 0, len(s.rows))
 	for _, row := range s.rows {
 		if filter.InvocationID != "" {
@@ -185,6 +189,27 @@ func TestInvocationDetailUsesExactInvocationAndSameTeamTransportRows(t *testing.
 	require.Equal(t, "replay", detail.Phase)
 	require.Equal(t, "protected-cause", detail.ProtectedCause)
 	require.Equal(t, "write_observed", detail.DeliveryStage)
+	require.False(t, detail.EnrichmentUnavailable)
+}
+
+func TestInvocationDetailSurfacesEnrichmentUnavailable(t *testing.T) {
+	teamID := uuid.New()
+	invocationID := uuid.New()
+	detail := &rememberapp.RememberInvocationDiagnosticDetail{
+		RememberInvocationDiagnosticSummary: rememberapp.RememberInvocationDiagnosticSummary{
+			TeamID: teamID.String(), InvocationID: invocationID.String(), CorrelationID: "corr-error",
+		},
+	}
+	h := &controlPortalHandler{
+		rememberInvocations: &invocationReaderStub{detail: detail},
+		operationLogs:       &invocationLogReaderStub{err: errors.New("operation logs unavailable")},
+	}
+	e := echo.New()
+	ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), httptest.NewRecorder())
+	ctx.SetParamNames("teamId", "invocationId")
+	ctx.SetParamValues(teamID.String(), invocationID.String())
+	require.NoError(t, h.getRememberInvocationDiagnostic(ctx))
+	require.True(t, detail.EnrichmentUnavailable)
 }
 
 func TestInvocationDetailLeavesDeliveryStageUnknownForAmbiguousCorrelation(t *testing.T) {
