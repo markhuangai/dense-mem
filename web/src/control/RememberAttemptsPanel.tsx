@@ -414,7 +414,7 @@ function RememberInvocationDetailView({ detail, onOpenLogs }: { detail: Remember
       <section className="remember-diagnostics" aria-label="Remember call captures">
         {detail.enrichment_unavailable && <div className="banner warning" role="status">Related operation-log context is unavailable; cause and delivery details may be incomplete.</div>}
         <div className="button-row">
-          <button className="ghost-button" type="button" onClick={() => onOpenLogs({ team_id: detail.team_id, correlation_id: detail.correlation_id })}>View related logs</button>
+          <button className="ghost-button" type="button" onClick={() => onOpenLogs({ team_id: detail.team_id, correlation_id: detail.correlation_id, invocation_id: detail.invocation_id })}>View related logs</button>
         </div>
         <h3>Original request</h3>
         {detail.request_capture_state === "expired" ? <DiagnosticUnavailable message="This request capture expired and its body is no longer available." /> : detail.request_body ? <><DiagnosticBody label="Request body" content={detail.request_body} />{detail.request_capture_state === "truncated" && <DiagnosticUnavailable message={TRUNCATED_CAPTURE_MESSAGE} />}</> : <DiagnosticUnavailable message={`Request capture is ${detail.request_capture_state || "unavailable"}.`} />}

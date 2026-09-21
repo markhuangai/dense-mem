@@ -24,7 +24,7 @@ describe("RememberAttemptsPanel", () => {
     expect(screen.getByText(/Caller receipt unknown/)).toBeInTheDocument();
     expect(screen.getByText("write_observed (Caller receipt unknown)")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "View related logs" }));
-    expect(onOpenLogs).toHaveBeenCalledWith({ team_id: "team-1", correlation_id: "corr-1" });
+    expect(onOpenLogs).toHaveBeenCalledWith({ team_id: "team-1", correlation_id: "corr-1", invocation_id: "invocation-1" });
     await userEvent.click(screen.getByRole("button", { name: /Attempt attempt-/ }));
     expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
   });
