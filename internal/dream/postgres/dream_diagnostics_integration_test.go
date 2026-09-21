@@ -36,6 +36,18 @@ func TestDreamDiagnosticsAreTeamScopedAndExpirePayloads(t *testing.T) {
 		TeamID: teamID, RunID: run.RunID, Phase: "run", Outcome: "completed",
 		CaptureState: "captured", Payload: []byte(`{"provider_exchanges":[{"response_body":"safe"}]}`), CapturedAt: &captured,
 	}))
+	var expiryWithinRetention bool
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT expires_at >= created_at
+			   AND expires_at <= created_at + INTERVAL '7 days'
+			FROM dream_diagnostic_captures
+			WHERE team_id = ?::uuid AND run_id = ?::uuid
+			ORDER BY created_at ASC
+			LIMIT 1
+		`, teamID, run.RunID).Scan(&expiryWithinRetention).Error
+	}))
+	require.True(t, expiryWithinRetention)
 
 	page, err := store.ListDreamDiagnostics(ctx, dreamcontract.DreamDiagnosticListInput{TeamID: teamID, RunID: run.RunID, Limit: 25})
 	require.NoError(t, err)
@@ -87,6 +99,22 @@ func TestDreamDiagnosticsAreTeamScopedAndExpirePayloads(t *testing.T) {
 	require.Equal(t, "retention_expired", expired.CaptureReason)
 	require.Empty(t, expired.Payload)
 	require.Empty(t, expired.Details)
+	require.Zero(t, func() int {
+		purged, purgeErr := store.PurgeExpiredDreamDiagnostics(ctx, 25)
+		require.NoError(t, purgeErr)
+		return purged
+	}(), "a fresh expired tombstone remains available during its bounded window")
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE dream_diagnostic_captures
+			SET tombstone_expires_at = clock_timestamp() - INTERVAL '1 second'
+			WHERE team_id = ?::uuid AND capture_id = ?::uuid
+		`, teamID, expiredID).Error
+	}))
+	deleted, err = store.PurgeExpiredDreamDiagnostics(ctx, 25)
+	require.Equal(t, 1, deleted)
+	_, err = store.GetDreamDiagnostic(ctx, teamID, run.RunID, expiredID)
+	require.ErrorIs(t, err, dreamcontract.ErrDreamDiagnosticNotFound)
 }
 
 func TestDreamDiagnosticsPersistBothLanesWithScopedPagination(t *testing.T) {

@@ -415,9 +415,9 @@ func (s *service) runClaimedEvidenceCycle(
 							"target_evidence_id": target.Target.EvidenceID, "pass_number": attempt.PassNumber,
 							"accepted": len(proposals), "rejected": invalid,
 						})
-						appendRunDiagnosticPhase(result, "disposition", diagnosticDispositionOutcome(persisted.Created, invalid+persisted.Rejected), "", map[string]any{
+						appendRunDiagnosticPhase(result, "disposition", diagnosticHypothesisDispositionOutcome(persisted.Created, invalid+persisted.Rejected), "", map[string]any{
 							"target_evidence_id": target.Target.EvidenceID, "pass_number": attempt.PassNumber,
-							"accepted": persisted.Created, "rejected": invalid + persisted.Rejected,
+							"created": persisted.Created, "rejected": invalid + persisted.Rejected,
 						})
 						rejected += invalid
 						created += persisted.Created
@@ -847,7 +847,11 @@ func evidenceProposalsFromGeneratedWithReasons(generated []GeneratedDream, targe
 		reasons[reason]++
 	}
 	for _, generatedDream := range generated {
-		if len(proposals) >= maxOutputs || strings.TrimSpace(generatedDream.Hypothesis) == "" ||
+		if len(proposals) >= maxOutputs {
+			reject("output_limit_exceeded")
+			continue
+		}
+		if strings.TrimSpace(generatedDream.Hypothesis) == "" ||
 			generatedDream.SubjectEntityID == "" || generatedDream.PredicateKey == "" ||
 			(generatedDream.ObjectEntityID == "") == (generatedDream.ObjectValueID == "") {
 			reject("hypothesis_shape_invalid")

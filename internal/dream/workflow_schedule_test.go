@@ -88,6 +88,19 @@ func TestScheduledCycleSkipsDisabledAndNonDueWindows(t *testing.T) {
 	require.Equal(t, "skipped", result.Status)
 	require.Equal(t, teamID.String(), disabledRepo.claimInput.TeamID)
 
+	disabledNonDueRepo := &dreamRepositoryStub{}
+	disabledNonDue := New(Dependencies{
+		Store:          disabledNonDueRepo,
+		ScheduledStore: disabledNonDueRepo,
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{
+			Enabled: false, StartTimeLocal: "03:00", Timezone: "UTC", MaxOutputs: 5,
+		}},
+	})
+	result, err = disabledNonDue.RunScheduledCycle(context.Background(), teamID.String(), windowAt.Add(time.Minute))
+	require.NoError(t, err)
+	require.Equal(t, "skipped", result.Status)
+	require.Empty(t, disabledNonDueRepo.claimInput.TeamID)
+
 	nonDueRepo := &dreamRepositoryStub{}
 	nonDue := New(Dependencies{
 		Store:          nonDueRepo,

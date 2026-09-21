@@ -608,7 +608,7 @@ async function controlJSON(path, options = {}, retryTransport = (options.method 
 }
 
 async function controlResponse(path, options = {}) {
-  const response = await fetch(`${controlURL}/control/api${path}`, {
+  const response = await fetchWithTransportRetry(`${controlURL}/control/api${path}`, {
     ...options,
     headers: {
       Authorization: `Bearer ${controlToken}`,
@@ -654,6 +654,15 @@ async function mcpTool(token, name, args, retryTransport = false) {
 }
 
 async function httpJSON(url, options, retryTransport = false) {
+  const response = await fetchWithTransportRetry(url, options, retryTransport);
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} ${url}: ${redactHTTPBody(text)}`);
+  }
+  return text ? JSON.parse(text) : {};
+}
+
+async function fetchWithTransportRetry(url, options, retryTransport = true) {
   let response;
   const attempts = retryTransport ? 3 : 1;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -667,11 +676,7 @@ async function httpJSON(url, options, retryTransport = false) {
       await delay(1_000);
     }
   }
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status} ${url}: ${redactHTTPBody(text)}`);
-  }
-  return text ? JSON.parse(text) : {};
+  return response;
 }
 
 function postgresQuery(sql) {

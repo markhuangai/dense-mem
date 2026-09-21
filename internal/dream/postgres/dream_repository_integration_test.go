@@ -105,6 +105,28 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 		`, teamID).Scan(&linkedRunID).Error
 	}))
 	require.Equal(t, run.RunID, linkedRunID)
+	secondRun, err := semanticRepo.ClaimDreamCycle(ctx, DreamCycleClaimInput{
+		TeamID: teamID, InitiatedByProfileID: ownerID, RunDate: "2026-07-18",
+		WindowKey: "manual:dream-lifecycle-repeat", LeaseToken: uuid.NewString(), LeaseUntil: time.Now().UTC().Add(time.Minute),
+	})
+	require.NoError(t, err)
+	require.True(t, secondRun.Claimed)
+	_, err = semanticRepo.PersistDreamGeneration(ctx, DreamGenerationPersistInput{
+		TeamID: teamID, CreatedByProfileID: ownerID, RunID: secondRun.RunID, LeaseToken: secondRun.LeaseToken,
+		ProviderModel: "test-provider", Proposals: nil, EvaluatedPaths: []DreamPathEvaluationInput{path},
+	})
+	require.NoError(t, err)
+	var linkedRunIDs []string
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT run_id::text
+			FROM dream_path_evaluations
+			WHERE team_id = ?::uuid
+			  AND first_relationship_id = ?::uuid
+			ORDER BY created_at ASC
+		`, teamID, firstInput.RelationshipID).Scan(&linkedRunIDs).Error
+	}))
+	require.ElementsMatch(t, []string{run.RunID, secondRun.RunID}, linkedRunIDs)
 	diagnosticsStore := semanticRepo
 	require.NoError(t, diagnosticsStore.RecordDreamRunDiagnostics(ctx, dreamcontract.DreamDiagnosticCaptureInput{
 		TeamID: teamID, RunID: run.RunID, Phase: "run", Outcome: "completed",
@@ -113,9 +135,15 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 	diagnosticPage, err := diagnosticsStore.ListDreamDiagnostics(ctx, dreamcontract.DreamDiagnosticListInput{TeamID: teamID, RunID: run.RunID, Limit: 25})
 	require.NoError(t, err)
 	for _, diagnostic := range diagnosticPage.Items {
-		if diagnostic.Phase == "proposal" || diagnostic.Phase == "disposition" {
+		if diagnostic.Phase == "proposal" {
 			require.Equal(t, "not_captured", diagnostic.CaptureState)
 			require.Equal(t, "phase_metadata_only", diagnostic.CaptureReason)
+			require.Equal(t, "created", diagnostic.Outcome)
+		}
+		if diagnostic.Phase == "disposition" {
+			require.Equal(t, "not_captured", diagnostic.CaptureState)
+			require.Equal(t, "phase_metadata_only", diagnostic.CaptureReason)
+			require.Equal(t, "proposed", diagnostic.Outcome)
 		}
 	}
 

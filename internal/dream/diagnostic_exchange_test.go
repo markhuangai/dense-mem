@@ -63,10 +63,27 @@ func TestDreamDiagnosticExchangeRecorderHandlesUnavailableAndRunBudgets(t *testi
 	tooLarge.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{ResponseBody: []byte(`{"ok":true}`)})
 	require.Empty(t, tooLarge.items)
 	state, reason = tooLarge.State()
-	require.Equal(t, "not_captured", state)
-	require.Equal(t, "provider_not_called", reason)
+	require.Equal(t, "truncated", state)
+	require.Equal(t, "run_payload_budget_exceeded", reason)
 
 	empty := newDreamDiagnosticExchangeRecorder(observability.NewCredentialProtector())
 	require.Equal(t, []byte(`{}`), empty.Payload())
 	require.Equal(t, "not_captured", func() string { state, _ := empty.State(); return state }())
+}
+
+func TestDreamDiagnosticExchangeRecorderAggregatesAttemptStateMonotonically(t *testing.T) {
+	recorder := newDreamDiagnosticExchangeRecorder(nil)
+	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{RequestBody: []byte(`{"secret":true}`)})
+	recorder.protector = observability.NewCredentialProtector()
+	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{ResponseBody: []byte(`{"ok":true}`)})
+	state, reason := recorder.State()
+	require.Equal(t, "unavailable", state)
+	require.Equal(t, "credential_protection_unavailable", reason)
+
+	budgeted := newDreamDiagnosticExchangeRecorder(observability.NewCredentialProtector())
+	budgeted.bytes = dreamDiagnosticRunPayloadLimit
+	budgeted.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{})
+	state, reason = budgeted.State()
+	require.Equal(t, "truncated", state)
+	require.Equal(t, "run_payload_budget_exceeded", reason)
 }

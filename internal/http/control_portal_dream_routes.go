@@ -3,7 +3,7 @@ package http
 import "github.com/labstack/echo/v4"
 
 func registerControlDreamDiagnosticRoutes(api *echo.Group, control *controlPortalHandler, dreams, diagnostics bool) {
-	if dreams {
+	if dreams && diagnostics {
 		api.GET("/teams/:teamId/dreams/:dreamId/diagnostics", control.listTeamDreamDiagnosticsForHypothesis)
 	}
 	if diagnostics {

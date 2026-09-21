@@ -161,6 +161,7 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
     const requestTeamId = team.id;
     const selectionKey = diagnosticRun ? `run:${diagnosticRun.run_id}` : diagnosticHypothesis ? `hypothesis:${diagnosticHypothesis}` : "";
     if (!selectionKey || !diagnostic.run_id) return;
+    setSelectedDiagnostic(null);
     try {
       const detail = await api.getTeamDreamDiagnostic(requestTeamId, diagnostic.run_id, diagnostic.capture_id);
       if (requestSeq !== diagnosticDetailSeqRef.current || requestTeamId !== activeTeamIdRef.current || diagnosticSelectionRef.current !== selectionKey) {

@@ -226,14 +226,48 @@ func (s *service) resolveConfirmation(
 	s.recordHypothesisDiagnostic(ctx, record, "confirmation", decision, cause, map[string]any{
 		"submitted_ingest_id": ingestID,
 		"decision":            decision,
-		"relationship_results": func() any {
+		"relationship_results": diagnosticRelationshipResults(func() []rememberapp.SubmissionRelationshipResult {
 			if remember == nil || remember.Terminal == nil {
 				return nil
 			}
 			return remember.Terminal.RelationshipResults
-		}(),
+		}()),
 	})
 	return result, feedbackErr
+}
+
+func diagnosticRelationshipResults(results []rememberapp.SubmissionRelationshipResult) []map[string]any {
+	projected := make([]map[string]any, 0, len(results))
+	for _, result := range results {
+		item := map[string]any{
+			"disposition": result.Disposition,
+			"splits":      make([]map[string]any, 0, len(result.Splits)),
+		}
+		if diagnosticRelationshipReasonAllowed(result.Reason) {
+			item["reason"] = result.Reason
+		}
+		splits := item["splits"].([]map[string]any)
+		for _, split := range result.Splits {
+			splits = append(splits, map[string]any{
+				"split_index":          split.SplitIndex,
+				"relationship_id":      split.RelationshipID,
+				"relationship_version": split.RelationshipVersion,
+				"status":               split.Status,
+			})
+		}
+		item["splits"] = splits
+		projected = append(projected, item)
+	}
+	return projected
+}
+
+func diagnosticRelationshipReasonAllowed(reason string) bool {
+	switch strings.TrimSpace(reason) {
+	case "not_supported_by_evidence", "stale_input", "submission_policy_rejected", "security_quarantine", "internal_failure":
+		return true
+	default:
+		return false
+	}
 }
 
 func dreamEvidenceHypothesisOwnedBy(record *dreamcontract.HypothesisRecord, profileID string) bool {

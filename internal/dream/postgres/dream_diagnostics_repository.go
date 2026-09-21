@@ -25,9 +25,6 @@ const (
 var _ dreamcontract.DreamDiagnosticRepository = (*Store)(nil)
 
 func (r *Store) RecordDreamRunDiagnostics(ctx context.Context, input dreamcontract.DreamDiagnosticCaptureInput) error {
-	if input.ExpiresAt.IsZero() {
-		input.ExpiresAt = time.Now().UTC().Add(dreamDiagnosticRetention)
-	}
 	if input.CaptureState == "" {
 		input.CaptureState = "not_captured"
 	}
@@ -40,7 +37,13 @@ func (r *Store) RecordDreamRunDiagnostics(ctx context.Context, input dreamcontra
 	// Add bounded proposal and disposition rows for every committed Hypothesis.
 	// The Hypothesis table remains the authority for identity and derivation.
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		if err := tx.WithContext(ctx).Exec(`
+		expirySQL := "?"
+		expiryArgs := []any{input.ExpiresAt}
+		if input.ExpiresAt.IsZero() {
+			expirySQL = "CURRENT_TIMESTAMP + INTERVAL '7 days'"
+			expiryArgs = nil
+		}
+		proposalQuery := fmt.Sprintf(`
 				INSERT INTO dream_diagnostic_captures (
 					team_id, run_id, hypothesis_id, phase, outcome, details,
 					capture_state, capture_reason, expires_at
@@ -48,7 +51,7 @@ func (r *Store) RecordDreamRunDiagnostics(ctx context.Context, input dreamcontra
 			SELECT hypothesis.team_id, hypothesis.cycle_run_id, hypothesis.hypothesis_id,
 			       'proposal', 'created',
 			       jsonb_build_object('lane', hypothesis.lane, 'predicate_key', hypothesis.predicate_key),
-			       ?, ?, ?
+			       ?, ?, %s
 			FROM hypotheses AS hypothesis
 				WHERE hypothesis.team_id = ?::uuid
 				  AND hypothesis.cycle_run_id = ?::uuid
@@ -60,10 +63,14 @@ func (r *Store) RecordDreamRunDiagnostics(ctx context.Context, input dreamcontra
 			        AND existing.hypothesis_id = hypothesis.hypothesis_id
 			        AND existing.phase = 'proposal'
 			  )
-			`, "not_captured", "phase_metadata_only", input.ExpiresAt, input.TeamID, input.RunID).Error; err != nil {
+			`, expirySQL)
+		proposalArgs := []any{"not_captured", "phase_metadata_only"}
+		proposalArgs = append(proposalArgs, expiryArgs...)
+		proposalArgs = append(proposalArgs, input.TeamID, input.RunID)
+		if err := tx.WithContext(ctx).Exec(proposalQuery, proposalArgs...).Error; err != nil {
 			return err
 		}
-		return tx.WithContext(ctx).Exec(`
+		dispositionQuery := fmt.Sprintf(`
 				INSERT INTO dream_diagnostic_captures (
 					team_id, run_id, hypothesis_id, phase, outcome, details,
 					capture_state, capture_reason, expires_at
@@ -71,7 +78,7 @@ func (r *Store) RecordDreamRunDiagnostics(ctx context.Context, input dreamcontra
 				SELECT hypothesis.team_id, hypothesis.cycle_run_id, hypothesis.hypothesis_id,
 				       'disposition',
 				       CASE
-				           WHEN hypothesis.status IN ('proposed', 'reinforced') THEN 'accepted'
+			           WHEN hypothesis.status IN ('proposed', 'reinforced') THEN hypothesis.status
 				           WHEN hypothesis.status = 'rejected' THEN 'rejected'
 				           WHEN hypothesis.status = 'stale' THEN 'stale'
 				           WHEN hypothesis.status = 'submitted' THEN 'submitted'
@@ -79,7 +86,7 @@ func (r *Store) RecordDreamRunDiagnostics(ctx context.Context, input dreamcontra
 				       END,
 				       jsonb_build_object('status', hypothesis.status,
 				                          'invalidated_reason', COALESCE(hypothesis.invalidated_reason, '')),
-				       ?, ?, ?
+			       ?, ?, %s
 				FROM hypotheses AS hypothesis
 				WHERE hypothesis.team_id = ?::uuid
 				  AND hypothesis.cycle_run_id = ?::uuid
@@ -91,7 +98,11 @@ func (r *Store) RecordDreamRunDiagnostics(ctx context.Context, input dreamcontra
 				        AND existing.hypothesis_id = hypothesis.hypothesis_id
 				        AND existing.phase = 'disposition'
 				  )
-			`, "not_captured", "phase_metadata_only", input.ExpiresAt, input.TeamID, input.RunID).Error
+			`, expirySQL)
+		dispositionArgs := []any{"not_captured", "phase_metadata_only"}
+		dispositionArgs = append(dispositionArgs, expiryArgs...)
+		dispositionArgs = append(dispositionArgs, input.TeamID, input.RunID)
+		return tx.WithContext(ctx).Exec(dispositionQuery, dispositionArgs...).Error
 	})
 	if err != nil {
 		return fmt.Errorf("dream diagnostic proposal links: %w", err)
@@ -156,27 +167,35 @@ func (r *Store) RecordDreamDiagnostic(ctx context.Context, input dreamcontract.D
 	if err := json.Unmarshal(payload, &payloadValue); err != nil {
 		return fmt.Errorf("dream diagnostic payload: %w", err)
 	}
-	now := time.Now().UTC()
 	if input.CapturedAt != nil {
 		captured := input.CapturedAt.UTC()
 		input.CapturedAt = &captured
 	}
-	if input.ExpiresAt.IsZero() {
-		input.ExpiresAt = now.Add(dreamDiagnosticRetention)
-	}
-	input.ExpiresAt = input.ExpiresAt.UTC()
-	if input.ExpiresAt.Before(now) || input.ExpiresAt.After(now.Add(dreamDiagnosticRetention)) {
-		return errors.New("dream diagnostic expiry is outside retention")
+	expirySQL := "CURRENT_TIMESTAMP + INTERVAL '7 days'"
+	var expiryArg any
+	if !input.ExpiresAt.IsZero() {
+		now := time.Now().UTC()
+		input.ExpiresAt = input.ExpiresAt.UTC()
+		if input.ExpiresAt.Before(now) || input.ExpiresAt.After(now.Add(dreamDiagnosticRetention)) {
+			return errors.New("dream diagnostic expiry is outside retention")
+		}
+		expirySQL = "?"
+		expiryArg = input.ExpiresAt
 	}
 	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		return tx.WithContext(ctx).Exec(`
+		query := fmt.Sprintf(`
 			INSERT INTO dream_diagnostic_captures (
 				team_id, run_id, hypothesis_id, phase, outcome, cause, details, payload, capture_state,
 				capture_reason, captured_at, expires_at
 			)
-			VALUES (?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?)
-		`, input.TeamID, input.RunID, input.HypothesisID, input.Phase, input.Outcome, input.Cause,
-			string(details), string(payload), input.CaptureState, input.CaptureReason, input.CapturedAt, input.ExpiresAt).Error
+			VALUES (?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, %s)
+		`, expirySQL)
+		args := []any{input.TeamID, input.RunID, input.HypothesisID, input.Phase, input.Outcome, input.Cause,
+			string(details), string(payload), input.CaptureState, input.CaptureReason, input.CapturedAt}
+		if expiryArg != nil {
+			args = append(args, expiryArg)
+		}
+		return tx.WithContext(ctx).Exec(query, args...).Error
 	})
 	if err != nil {
 		return fmt.Errorf("dream diagnostic record: %w", err)
@@ -311,13 +330,37 @@ func (r *Store) PurgeExpiredDreamDiagnostics(ctx context.Context, batchSize int)
 	var deleted int64
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		result := tx.WithContext(ctx).Exec(`
+			WITH expired_tombstones AS (
+				SELECT team_id, capture_id
+				FROM dream_diagnostic_captures
+				WHERE capture_state = 'expired'
+				  AND (tombstone_expires_at IS NULL OR tombstone_expires_at <= clock_timestamp())
+				ORDER BY expires_at, capture_id
+				LIMIT ?
+				FOR UPDATE SKIP LOCKED
+			)
+			DELETE FROM dream_diagnostic_captures capture
+			USING expired_tombstones
+			WHERE capture.team_id = expired_tombstones.team_id
+			  AND capture.capture_id = expired_tombstones.capture_id
+		`, batchSize)
+		if result.Error != nil {
+			return result.Error
+		}
+		deleted = result.RowsAffected
+		remaining := batchSize - int(deleted)
+		if remaining <= 0 {
+			return nil
+		}
+		result = tx.WithContext(ctx).Exec(`
 			UPDATE dream_diagnostic_captures
 			SET payload = '{}'::jsonb,
 			    details = '{}'::jsonb,
 			    capture_state = 'expired',
-			    capture_reason = 'retention_expired'
-			WHERE capture_id IN (
-				SELECT capture_id
+			    capture_reason = 'retention_expired',
+			    tombstone_expires_at = CURRENT_TIMESTAMP + INTERVAL '24 hours'
+			WHERE (team_id, capture_id) IN (
+				SELECT team_id, capture_id
 				FROM dream_diagnostic_captures
 				WHERE expires_at <= clock_timestamp()
 				  AND capture_state <> 'expired'
@@ -325,8 +368,8 @@ func (r *Store) PurgeExpiredDreamDiagnostics(ctx context.Context, batchSize int)
 				LIMIT ?
 				FOR UPDATE SKIP LOCKED
 			)
-		`, batchSize)
-		deleted = result.RowsAffected
+			`, remaining)
+		deleted += result.RowsAffected
 		return result.Error
 	})
 	if err != nil {

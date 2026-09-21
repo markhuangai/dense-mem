@@ -19,6 +19,7 @@ type dreamDiagnosticExchangeRecorder struct {
 	mu        sync.Mutex
 	items     []map[string]any
 	bytes     int
+	attempted bool
 	state     string
 	reason    string
 }
@@ -47,6 +48,7 @@ func (r *dreamDiagnosticExchangeRecorder) RecordProviderExchange(ctx context.Con
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.attempted = true
 	item := map[string]any{
 		"component":     exchange.Component,
 		"model":         exchange.Model,
@@ -62,10 +64,8 @@ func (r *dreamDiagnosticExchangeRecorder) RecordProviderExchange(ctx context.Con
 	response, responseState := r.protect(ctx, responseBody)
 	if requestState == "unavailable" || responseState == "unavailable" {
 		r.state = "unavailable"
-		if r.reason == "" {
-			r.reason = "credential_protection_unavailable"
-		}
-	} else if requestState == "truncated" || responseState == "truncated" {
+		r.reason = "credential_protection_unavailable"
+	} else if (requestState == "truncated" || responseState == "truncated") && r.state != "unavailable" {
 		r.state = "truncated"
 		if r.reason == "" {
 			r.reason = "provider_body_budget_exceeded"
@@ -86,8 +86,10 @@ func (r *dreamDiagnosticExchangeRecorder) RecordProviderExchange(ctx context.Con
 		item["capture_state"] = "truncated"
 		item["capture_reason"] = "run_payload_budget_exceeded"
 		encoded, _ = json.Marshal(item)
-		r.state = "truncated"
-		r.reason = "run_payload_budget_exceeded"
+		if r.state != "unavailable" {
+			r.state = "truncated"
+			r.reason = "run_payload_budget_exceeded"
+		}
 	}
 	if r.bytes+len(encoded) > dreamDiagnosticRunPayloadLimit {
 		return
@@ -139,7 +141,7 @@ func (r *dreamDiagnosticExchangeRecorder) State() (string, string) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(r.items) == 0 {
+	if !r.attempted {
 		return "not_captured", "provider_not_called"
 	}
 	return r.state, r.reason

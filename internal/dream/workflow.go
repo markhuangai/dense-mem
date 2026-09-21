@@ -24,26 +24,25 @@ import (
 var ErrDreamAuthContext = errors.New("dream: authenticated actor context is required")
 
 type dreamGenerationResult struct {
-	proposals                   []dreamcontract.UpsertHypothesisInput
-	rejected                    int
-	paths                       []DreamPath
-	model                       string
-	candidatePaths              int
-	candidateTargets            int
-	availableTargets            int
-	previouslyAssessedPaths     int
-	targetLookupFailed          bool
-	pathAssessmentLookupFailed  bool
-	providerTurns               int
-	providerInputTokens         int
-	providerOutputTokens        int
-	providerProposals           int
-	providerFailed              bool
-	persistencePolicyRejected   int
-	persistenceRejectionReasons map[string]int
-	providerPayload             []byte
-	providerCaptureState        string
-	diagnosticPhases            []runDiagnosticPhase
+	proposals                  []dreamcontract.UpsertHypothesisInput
+	rejected                   int
+	paths                      []DreamPath
+	model                      string
+	candidatePaths             int
+	candidateTargets           int
+	availableTargets           int
+	previouslyAssessedPaths    int
+	targetLookupFailed         bool
+	pathAssessmentLookupFailed bool
+	providerTurns              int
+	providerInputTokens        int
+	providerOutputTokens       int
+	providerProposals          int
+	providerFailed             bool
+	persistencePolicyRejected  int
+	providerPayload            []byte
+	providerCaptureState       string
+	diagnosticPhases           []runDiagnosticPhase
 }
 
 func (s *service) runTeamCycle(
@@ -382,8 +381,8 @@ func (s *service) persistHypotheses(
 		}
 		generation.persistencePolicyRejected = persisted.Rejected
 		generation.diagnosticPhases = append(generation.diagnosticPhases,
-			runDiagnosticPhase{phase: "disposition", outcome: diagnosticDispositionOutcome(persisted.Created, rejected+persisted.Rejected), details: map[string]any{
-				"accepted": persisted.Created, "rejected": rejected + persisted.Rejected,
+			runDiagnosticPhase{phase: "disposition", outcome: diagnosticHypothesisDispositionOutcome(persisted.Created, rejected+persisted.Rejected), details: map[string]any{
+				"created": persisted.Created, "rejected": rejected + persisted.Rejected,
 			}},
 		)
 		return persisted.Created, rejected + persisted.Rejected, generation, nil
@@ -416,8 +415,8 @@ func (s *service) persistHypotheses(
 		}
 	}
 	generation.diagnosticPhases = append(generation.diagnosticPhases,
-		runDiagnosticPhase{phase: "disposition", outcome: diagnosticDispositionOutcome(created, rejected), details: map[string]any{
-			"accepted": created, "rejected": rejected,
+		runDiagnosticPhase{phase: "disposition", outcome: diagnosticHypothesisDispositionOutcome(created, rejected), details: map[string]any{
+			"created": created, "rejected": rejected,
 		}},
 	)
 	return created, rejected, generation, nil
@@ -429,6 +428,19 @@ func diagnosticDispositionOutcome(accepted, rejected int) string {
 		return "partially_accepted"
 	case accepted > 0:
 		return "accepted"
+	case rejected > 0:
+		return "rejected"
+	default:
+		return "no_change"
+	}
+}
+
+func diagnosticHypothesisDispositionOutcome(created, rejected int) string {
+	switch {
+	case created > 0 && rejected > 0:
+		return "partially_proposed"
+	case created > 0:
+		return "proposed"
 	case rejected > 0:
 		return "rejected"
 	default:

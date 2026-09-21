@@ -35,11 +35,11 @@ func (s *service) runScheduledCycle(ctx context.Context, teamID string, windowAt
 	}
 	windowAt = windowAt.UTC()
 	runDate := localRunDate(windowAt, cfg)
-	if !cfg.Enabled {
-		return s.runTeamCycle(ctx, teamID, "", cfg, RunCycleRequest{}, true, windowAt)
-	}
 	if !isDueAt(windowAt, cfg) {
 		return &RunCycleResult{TeamID: teamID, RunDate: runDate, Status: "skipped"}, nil
+	}
+	if !cfg.Enabled {
+		return s.runTeamCycle(ctx, teamID, "", cfg, RunCycleRequest{}, true, windowAt)
 	}
 	return s.runTeamCycle(ctx, teamID, "", cfg, RunCycleRequest{}, true, windowAt)
 }

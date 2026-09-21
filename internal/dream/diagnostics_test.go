@@ -13,6 +13,7 @@ import (
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 type diagnosticRepositoryStub struct {
@@ -208,6 +209,19 @@ func TestRecordRunDiagnosticPersistsPhaseTraceAndCaptureFailureMarker(t *testing
 	require.Equal(t, "unavailable", repo.recorded[1].CaptureState)
 	require.Equal(t, "diagnostic_capture_failed", repo.recorded[1].CaptureReason)
 	require.Equal(t, "target", repo.recorded[2].Phase)
+}
+
+func TestDiagnosticRelationshipResultsOmitCallerReferences(t *testing.T) {
+	projected := diagnosticRelationshipResults([]rememberapp.SubmissionRelationshipResult{{
+		RelationshipRef: "caller-secret-token",
+		Disposition:     "stored",
+		Splits: []rememberapp.SubmissionRelationshipSplit{{
+			SplitIndex: 0, RelationshipID: uuid.NewString(), RelationshipVersion: 2, Status: "active",
+		}},
+	}})
+	require.Len(t, projected, 1)
+	require.NotContains(t, projected[0], "ref")
+	require.Equal(t, "stored", projected[0]["disposition"])
 }
 
 func TestRecordRunDiagnosticStopsAfterRunCaptureFailure(t *testing.T) {

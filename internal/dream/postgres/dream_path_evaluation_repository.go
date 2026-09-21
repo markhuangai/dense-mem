@@ -131,6 +131,9 @@ func (r *Store) recordDreamPathEvaluations(ctx context.Context, input DreamPathE
 	if len(input.Paths) == 0 {
 		return nil
 	}
+	if _, err := uuid.Parse(input.RunID); err != nil {
+		return fmt.Errorf("run_id is required: %w", err)
+	}
 	err := r.withDreamWriteTx(ctx, input.TeamID, input.CreatedByProfileID, system, func(tx *gorm.DB) error {
 		return insertDreamPathEvaluationsTx(ctx, tx, input.TeamID, input.RunID, input.ProviderModel, input.Paths)
 	})
@@ -201,7 +204,7 @@ func insertDreamPathEvaluationsTx(
 		)
 		ON CONFLICT (team_id, first_relationship_id, first_relationship_version,
 		             second_relationship_id, second_relationship_version,
-		             allowed_predicate_fingerprint)
+		             allowed_predicate_fingerprint, run_id)
 		DO NOTHING
 		`, string(payload), teamID, runID, teamID, teamID, providerModel, teamID, teamID).Error
 }
