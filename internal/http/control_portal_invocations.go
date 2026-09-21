@@ -104,12 +104,19 @@ func (h *controlPortalHandler) enrichRememberInvocationDiagnostic(ctx context.Co
 }
 
 func enrichRememberInvocationFromInvocationLogs(detail *rememberapp.RememberInvocationDiagnosticDetail, logs []domain.OperationLog) {
+	phaseSet := false
 	for _, log := range logs {
-		if phase, ok := log.Attrs["phase"].(string); ok && strings.TrimSpace(phase) != "" {
-			detail.Phase = phase
+		if !phaseSet {
+			if phase, ok := log.Attrs["phase"].(string); ok && strings.TrimSpace(phase) != "" {
+				detail.Phase = phase
+				phaseSet = true
+			}
 		}
 		if strings.TrimSpace(log.Error) != "" && strings.TrimSpace(detail.ProtectedCause) == "" {
 			detail.ProtectedCause = log.Error
+		}
+		if phaseSet && strings.TrimSpace(detail.ProtectedCause) != "" {
+			break
 		}
 	}
 }
@@ -121,6 +128,7 @@ func enrichRememberInvocationFromTransportLogs(detail *rememberapp.RememberInvoc
 		}
 		if stage, ok := log.Attrs["delivery_stage"].(string); ok && strings.TrimSpace(stage) != "" {
 			detail.DeliveryStage = stage
+			break
 		}
 	}
 }

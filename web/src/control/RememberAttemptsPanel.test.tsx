@@ -29,6 +29,55 @@ describe("RememberAttemptsPanel", () => {
     expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
   });
 
+  it("does not load hidden attempts until the Attempts view is opened", async () => {
+    const invocation = {
+      team_id: "team-1", owner_profile_id: "owner-1", invocation_id: "calls-only", canonical_attempt_id: "attempt-1",
+      request_hash: "hash-1", correlation_id: "corr-1", classification: "execution", outcome: "completed",
+      phase: "commit", protected_cause: "", delivery_stage: "write_observed", retryable: false,
+      duration_ms: 3, created_at: "2026-08-18T01:00:00Z", expires_at: "2026-08-25T01:00:00Z", retained_by_legal_hold: false,
+    } as const;
+    const listRememberInvocationDiagnostics = vi.fn().mockResolvedValue({ data: [invocation], pagination: { limit: 50, offset: 0, total: 1 } });
+    const listRememberAttemptDiagnostics = vi.fn().mockResolvedValue({ data: [], pagination: { limit: 50, offset: 0, total: 0 } });
+    const api = {
+      listRememberInvocationDiagnostics,
+      getRememberInvocationDiagnostic: vi.fn().mockResolvedValue({ ...invocation, request_capture_state: "captured", provider_exchanges: [], caller_response_capture_state: "captured" }),
+      listRememberAttemptDiagnostics,
+    } as unknown as ControlApi;
+
+    render(<RememberAttemptsPanel api={api} team={team()} />);
+
+    expect(await screen.findByRole("heading", { name: "Remember Calls" })).toBeInTheDocument();
+    expect(listRememberAttemptDiagnostics).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: /^Attempts$/ }));
+    await waitFor(() => expect(listRememberAttemptDiagnostics).toHaveBeenCalledWith({ team_id: "team-1", outcome: "", limit: 50, offset: 0 }));
+  });
+
+  it("clears the previous call detail while a new selection is loading", async () => {
+    let resolveSecond!: (value: unknown) => void;
+    const secondDetail = new Promise((resolve) => { resolveSecond = resolve; });
+    const first = {
+      team_id: "team-1", owner_profile_id: "owner-1", invocation_id: "call-a", canonical_attempt_id: "",
+      request_hash: "hash-a", correlation_id: "corr-a", classification: "execution", outcome: "failed",
+      phase: "assessment", protected_cause: "old-cause", delivery_stage: "write_observed", retryable: true,
+      duration_ms: 3, created_at: "2026-08-18T01:00:00Z", expires_at: "2026-08-25T01:00:00Z", retained_by_legal_hold: false,
+    } as const;
+    const second = { ...first, invocation_id: "call-b", correlation_id: "corr-b", protected_cause: "new-cause" } as const;
+    const listRememberInvocationDiagnostics = vi.fn().mockResolvedValue({ data: [first, second], pagination: { limit: 50, offset: 0, total: 2 } });
+    const getRememberInvocationDiagnostic = vi.fn().mockImplementation((_teamID: string, invocationID: string) => invocationID === "call-a"
+      ? Promise.resolve({ ...first, request_capture_state: "captured", request_body: "old-request", provider_exchanges: [], caller_response_capture_state: "captured" })
+      : secondDetail);
+    const api = { listRememberInvocationDiagnostics, getRememberInvocationDiagnostic } as unknown as ControlApi;
+
+    render(<RememberAttemptsPanel api={api} team={team()} />);
+
+    expect(await screen.findByText("old-request")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Inspect Remember call call-b" }));
+    expect(screen.queryByText("old-request")).not.toBeInTheDocument();
+    expect(await screen.findByText("Loading Remember call details")).toBeInTheDocument();
+    await act(async () => resolveSecond({ ...second, request_capture_state: "captured", request_body: "new-request", provider_exchanges: [], caller_response_capture_state: "captured" }));
+    expect(await screen.findByText("new-request")).toBeInTheDocument();
+  });
+
   it("clears prior-team calls and ignores late list and detail responses", async () => {
     let resolveTeamOneList!: (value: unknown) => void;
     let resolveTeamOneDetail!: (value: unknown) => void;

@@ -131,6 +131,10 @@ run_playwright() {
       validation_attempt_id="$(node -e 'const fs=require("node:fs");const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(value.validation_attempt_id||"");' "$fixture_file")"
       [[ -n "$validation_attempt_id" ]] || fail "diagnostics validation Playwright attempt is missing"
       export DENSE_MEM_E2E_DIAGNOSTIC_VALIDATION_ATTEMPT_ID="$validation_attempt_id"
+      local expired_invocation_id
+      expired_invocation_id="$(node -e 'const fs=require("node:fs");const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(value.expired_invocation_id||"");' "$fixture_file")"
+      [[ -n "$expired_invocation_id" ]] || fail "diagnostics expired invocation handoff is missing"
+      export DENSE_MEM_E2E_DIAGNOSTIC_EXPIRED_INVOCATION_ID="$expired_invocation_id"
       ;;
     full) [[ -n "${DENSE_MEM_E2E_DREAM_STATEMENT:-}" ]] || fail "Dream Playwright handoff is missing" ;;
   esac

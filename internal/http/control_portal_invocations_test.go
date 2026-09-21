@@ -159,8 +159,10 @@ func TestInvocationDetailUsesExactInvocationAndSameTeamTransportRows(t *testing.
 	correlationID := "corr-328"
 	logs := &invocationLogReaderStub{rows: []domain.OperationLog{
 		{Message: "remember_invocation_completed", CorrelationID: correlationID, Attrs: map[string]any{"invocation_id": invocationID.String(), "phase": "replay"}, Error: "protected-cause"},
+		{Message: "remember_invocation_completed", CorrelationID: correlationID, Attrs: map[string]any{"invocation_id": invocationID.String(), "phase": "assessment"}, Error: "older-cause"},
 		{Message: "remember_invocation_completed", CorrelationID: correlationID, Attrs: map[string]any{"invocation_id": uuid.NewString(), "phase": "wrong-phase"}, Error: "wrong-cause"},
 		{Message: "http_request", CorrelationID: correlationID, Attrs: map[string]any{"delivery_stage": "write_observed"}},
+		{Message: "http_request", CorrelationID: correlationID, Attrs: map[string]any{"delivery_stage": "prepared"}},
 	}}
 	h := &controlPortalHandler{
 		rememberInvocations: &invocationReaderStub{detail: &rememberapp.RememberInvocationDiagnosticDetail{

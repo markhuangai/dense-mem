@@ -6,6 +6,7 @@ const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const teamName = requiredEnv("DENSE_MEM_E2E_TEAM_NAME");
 const fixtureAttemptID = requiredEnv("DENSE_MEM_E2E_DIAGNOSTIC_ATTEMPT_ID");
 const validationAttemptID = requiredEnv("DENSE_MEM_E2E_DIAGNOSTIC_VALIDATION_ATTEMPT_ID");
+const expiredInvocationID = requiredEnv("DENSE_MEM_E2E_DIAGNOSTIC_EXPIRED_INVOCATION_ID");
 
 test("control panel shows the Remember Attempts diagnostic transcript", async ({ page, request }) => {
   const listResponse = await request.get(`${controlURL}/control/api/remember-attempts?team_id=${encodeURIComponent(teamID)}&outcome=failed&limit=100`, { headers: { Authorization: `Bearer ${controlToken}` } });
@@ -19,6 +20,20 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
   await page.getByRole("button", { name: "Unlock" }).click();
   await expect(page.getByRole("heading", { name: "Teams" })).toBeVisible();
   await page.getByRole("button", { name: new RegExp(escapeRegExp(teamName)) }).click();
+  await page.getByRole("button", { name: /team remember attempts/i }).click();
+  await expect(page.getByRole("heading", { name: "Remember Calls" })).toBeVisible();
+  const canonicalAttemptRow = page.locator(".remember-attempts-table tbody tr").filter({ has: page.getByRole("button", { name: /Attempt / }) }).first();
+  await canonicalAttemptRow.getByRole("button", { name: /Attempt / }).click();
+  await expect(page.getByRole("heading", { name: "Remember Attempts" })).toBeVisible();
+  await page.getByRole("button", { name: "Calls", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Remember Calls" })).toBeVisible();
+  await page.getByRole("button", { name: `Inspect Remember call ${expiredInvocationID}` }).click();
+  await expect(page.getByRole("heading", { name: "Call Detail" })).toBeVisible();
+  await expect(page.getByText("This capture expired after seven days and its body is no longer available.")).toBeVisible();
+  await page.getByRole("button", { name: "View related logs" }).click();
+  await expect(page.getByRole("heading", { name: "Operation Logs" })).toBeVisible();
+  await expect(page.getByLabel("Correlation ID")).toHaveValue("expired-invocation-correlation");
+  await page.getByRole("button", { name: "Teams", exact: true }).click();
   await page.getByRole("button", { name: /team remember attempts/i }).click();
   await expect(page.getByRole("heading", { name: "Remember Calls" })).toBeVisible();
   await page.getByRole("button", { name: "Attempts", exact: true }).click();

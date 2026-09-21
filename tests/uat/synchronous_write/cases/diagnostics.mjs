@@ -255,12 +255,33 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   expect(!serializedLogs.includes("Diagnostics provider failure") && !serializedLogs.includes("diagnostics-persisted-secret") && !serializedLogs.includes("dense-mem-e2e-verifier-key"), "diagnostics content and credentials must not reach logs");
   const serverLogs = composeServerLogs();
   expect(!serverLogs.includes("Diagnostics provider failure") && !serverLogs.includes("diagnostics-persisted-secret") && !serverLogs.includes("dense-mem-e2e-verifier-key"), "diagnostics content and credentials must not reach server logs");
+
+  const expiredInvocationID = randomUUID();
+  postgresQuery(`
+    INSERT INTO remember_invocation_diagnostics (
+      team_id, invocation_id, owner_profile_id, request_hash, correlation_id,
+      classification, outcome, failed_phase, error_code, retryable, duration_ms,
+      request_bytes, request_capture_state, provider_exchanges,
+      response_bytes, response_capture_state, created_at, completed_at, expires_at
+    ) SELECT team_id, '${expiredInvocationID}'::uuid, owner_profile_id, 'expired-invocation-hash', 'expired-invocation-correlation',
+      'execution', 'failed', 'commit', 'provider_unavailable', false, 1,
+      convert_to('{"expired":true}', 'UTF8'), 'captured',
+      '[{"diagnostic_id":"expired-invocation-provider","sequence_no":1,"kind":"provider_exchange","component":"fixture","outcome":"captured","capture_state":"expired","expires_at":"2026-08-01T00:00:00Z"}]'::jsonb,
+      convert_to('{"expired":true}', 'UTF8'), 'captured',
+      clock_timestamp() + interval '1 day', clock_timestamp() + interval '1 day', clock_timestamp() + interval '2 days'
+    FROM remember_attempts
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND attempt_id = '${sqlLiteral(item.attempt_id)}'::uuid;
+  `);
+  const expiredInvocation = await controlJSON(controlURL, token, `/control/api/teams/${teamID}/remember-invocations/${expiredInvocationID}`);
+  expect(expiredInvocation.data?.provider_exchanges?.[0]?.capture_state === "expired" && !Object.hasOwn(expiredInvocation.data.provider_exchanges[0], "request_body"), "expired invocation capture must retain state without its body");
+
   const fixtureFile = process.env.DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE;
   if (fixtureFile) {
     await writeFile(fixtureFile, JSON.stringify({
       failed_attempt_id: item.attempt_id,
       diagnostic_id: failedDiagnostics.original_request?.diagnostic_id || "",
       validation_attempt_id: diagnosticAttemptIDs["assessment-invalid"],
+      expired_invocation_id: expiredInvocationID,
     }), "utf8");
   }
   return {
@@ -269,6 +290,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     attempt_id: item.attempt_id,
     diagnostic_id: failedDiagnostics.original_request?.diagnostic_id || "",
     validation_attempt_id: diagnosticAttemptIDs["assessment-invalid"],
+    expired_invocation_id: expiredInvocationID,
     assessment_disconnect: "request_cancelled",
   };
 }

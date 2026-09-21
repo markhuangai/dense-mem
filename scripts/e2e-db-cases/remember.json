@@ -17,6 +17,13 @@
       "source": "internal/knowledge/postgres/remember_invocation_diagnostics_integration_test.go"
     },
     {
+      "id": "repository/TestRememberInvocationDiagnosticsFiltersIdentityAndRetryable",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestRememberInvocationDiagnosticsFiltersIdentityAndRetryable$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/remember_invocation_diagnostics_integration_test.go"
+    },
+    {
       "id": "repository/TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndExchanges",
       "package": "./internal/knowledge/postgres",
       "run": "^TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndExchanges$",

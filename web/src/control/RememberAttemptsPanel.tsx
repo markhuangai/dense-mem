@@ -35,16 +35,21 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
   const [selectedInvocationID, setSelectedInvocationID] = useState("");
   const [invocationDetail, setInvocationDetail] = useState<RememberInvocationDiagnosticDetail | null>(null);
   const [invocationLoading, setInvocationLoading] = useState(false);
+  const [invocationDetailLoading, setInvocationDetailLoading] = useState(false);
   const listRequestRef = useRef(0);
   const detailRequestRef = useRef(0);
   const invocationListRequestRef = useRef(0);
   const invocationDetailRequestRef = useRef(0);
   const selectedIDRef = useRef("");
+  const attemptsLoadedRef = useRef(false);
 
   async function loadInvocationDetail(invocationID: string, listRequest = invocationListRequestRef.current) {
     if (typeof api.getRememberInvocationDiagnostic !== "function" || !invocationID) return;
     const detailRequest = invocationDetailRequestRef.current + 1;
     invocationDetailRequestRef.current = detailRequest;
+    setInvocationDetail(null);
+    setInvocationDetailLoading(true);
+    setError("");
     try {
       const nextDetail = await api.getRememberInvocationDiagnostic(team.id, invocationID);
       if (listRequest !== invocationListRequestRef.current || detailRequest !== invocationDetailRequestRef.current) return;
@@ -53,17 +58,24 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
       if (listRequest === invocationListRequestRef.current && detailRequest === invocationDetailRequestRef.current) {
         setError(readError(caught));
       }
+    } finally {
+      if (listRequest === invocationListRequestRef.current && detailRequest === invocationDetailRequestRef.current) {
+        setInvocationDetailLoading(false);
+      }
     }
   }
 
   async function loadInvocations(nextOffset = invocationOffset, preferredID = selectedInvocationID) {
     if (typeof api.listRememberInvocationDiagnostics !== "function") {
       setView("attempts");
+      if (!attemptsLoadedRef.current) void loadAttempts("", 0);
       return;
     }
     const listRequest = invocationListRequestRef.current + 1;
     invocationListRequestRef.current = listRequest;
     invocationDetailRequestRef.current += 1;
+    setInvocationDetail(null);
+    setInvocationDetailLoading(false);
     setInvocationLoading(true);
     setError("");
     try {
@@ -93,6 +105,13 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
     setSelectedID(attemptID);
   }
 
+  function selectView(nextView: "calls" | "attempts") {
+    setView(nextView);
+    if (nextView === "attempts" && !attemptsLoadedRef.current) {
+      void loadAttempts(outcome, offset);
+    }
+  }
+
   async function loadAttempts(nextOutcome = outcome, nextOffset = offset) {
     const requestID = ++listRequestRef.current;
     detailRequestRef.current += 1;
@@ -111,6 +130,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
       setItems(page.data);
       setTotal(page.pagination.total);
       setOffset(page.pagination.offset);
+      attemptsLoadedRef.current = true;
       const currentSelected = selectedIDRef.current;
       const nextSelected = page.data.some((item) => item.attempt_id === currentSelected)
         ? currentSelected
@@ -148,6 +168,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
   useEffect(() => {
     invocationListRequestRef.current += 1;
     invocationDetailRequestRef.current += 1;
+    attemptsLoadedRef.current = false;
     setInvocations([]);
     setInvocationTotal(0);
     setInvocationOffset(0);
@@ -161,7 +182,6 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
     setSelectedID("");
     setDetail(null);
     setError("");
-    void loadAttempts("", 0);
     void loadInvocations(0, "");
     return () => {
       listRequestRef.current += 1;
@@ -180,8 +200,9 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
         loading={invocationLoading}
         error={error}
         detail={invocationDetail}
+        detailLoading={invocationDetailLoading}
         selectedID={selectedInvocationID}
-        onSelectView={(next) => setView(next)}
+        onSelectView={selectView}
         onRefresh={() => void loadInvocations(invocationOffset)}
         onSelect={(id) => {
           setSelectedInvocationID(id);
@@ -189,7 +210,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
         }}
         onOpenLogs={(query) => onOpenLogs?.(query)}
         onOpenAttempt={(attemptID) => {
-          setView("attempts");
+          selectView("attempts");
           selectAttempt(attemptID);
           void loadDetail(attemptID);
         }}
@@ -210,7 +231,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
           meta={total}
           actions={(
             <div className="button-row">
-              <button className="ghost-button" type="button" onClick={() => setView("calls")}>Calls</button>
+              <button className="ghost-button" type="button" onClick={() => selectView("calls")}>Calls</button>
               <button className="icon-button" type="button" aria-label="Refresh Remember attempts" onClick={() => void loadAttempts()}>
                 <RefreshCw size={16} aria-hidden="true" />
               </button>
@@ -283,6 +304,7 @@ function RememberCallsView({
   loading,
   error,
   detail,
+  detailLoading,
   selectedID,
   onSelectView,
   onRefresh,
@@ -298,6 +320,7 @@ function RememberCallsView({
   loading: boolean;
   error: string;
   detail: RememberInvocationDiagnosticDetail | null;
+  detailLoading: boolean;
   selectedID: string;
   onSelectView: (view: "calls" | "attempts") => void;
   onRefresh: () => void;
@@ -349,7 +372,7 @@ function RememberCallsView({
           <button className="ghost-button" type="button" disabled={loading || offset + items.length >= total} onClick={onNext}>Next</button>
         </div>
       </section>
-      {detail && <RememberInvocationDetailView detail={detail} onOpenLogs={onOpenLogs} />}
+      {detailLoading && !detail ? <LoadingState label="Loading Remember call details" /> : detail && <RememberInvocationDetailView detail={detail} onOpenLogs={onOpenLogs} />}
     </div>
   );
 }
