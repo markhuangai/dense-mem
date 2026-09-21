@@ -2,6 +2,8 @@ name: Clean PR test image
 run-name: "PR image cleanup: ${{ github.event.pull_request.number || github.event.workflow_run.head_sha || 'manual' }}"
 
 on:
+  schedule:
+    - cron: "*/15 * * * *"
   pull_request_target:
     branches:
       - main
@@ -20,13 +22,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: >-
-    pr-test-image-cleanup-${{
-      github.event_name == 'pull_request_target' && format('pr-{0}', github.event.pull_request.number) ||
-      github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Release prerelease' && format('release-{0}', github.event.workflow_run.head_sha) ||
-      github.event_name == 'workflow_run' && format('run-{0}', github.event.workflow_run.id) ||
-      format('run-{0}', github.run_id)
-    }}
+  group: pr-test-image-cleanup
   cancel-in-progress: false
 
 jobs:
@@ -118,6 +114,9 @@ jobs:
           if [[ "${EVENT_NAME}" == "workflow_run" && -n "${REQUEST_DRY_RUN}" ]]; then
             printf 'CLEANUP_PR_NUMBER=%s\n' "${REQUEST_PR_NUMBER}" >> "${GITHUB_ENV}"
             printf 'CLEANUP_DRY_RUN=%s\n' "${REQUEST_DRY_RUN}" >> "${GITHUB_ENV}"
+            echo 'CLEANUP_MANUAL_SWEEP=true' >> "${GITHUB_ENV}"
+          elif [[ "${EVENT_NAME}" == "schedule" ]]; then
+            echo 'CLEANUP_DRY_RUN=false' >> "${GITHUB_ENV}"
             echo 'CLEANUP_MANUAL_SWEEP=true' >> "${GITHUB_ENV}"
           else
             echo 'CLEANUP_DRY_RUN=false' >> "${GITHUB_ENV}"

@@ -546,9 +546,10 @@ test("workflow is trusted, event-fenced, dry-run capable, and registered in CI",
   ]);
   assert.match(workflow, /pull_request_target:/);
   assert.match(workflow, /types: \[closed\]/);
+  assert.match(workflow, /schedule:\n    - cron: "\*\/15 \* \* \* \*"/);
   assert.match(workflow, /workflow_run:/);
   assert.match(workflow, /Request PR image cleanup/);
-  assert.match(workflow, /group: >-\s+pr-test-image-cleanup-\$\{\{/);
+  assert.match(workflow, /group: pr-test-image-cleanup/);
   assert.doesNotMatch(workflow, /workflow_dispatch:/);
   assert.match(request, /workflow_dispatch:/);
   assert.match(request, /default: true/);

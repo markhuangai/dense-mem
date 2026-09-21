@@ -675,7 +675,9 @@ async function main() {
   const event = eventPayload();
   registry.scanVersions(versions);
   const targets = await resolveTargets(api, event, versions);
-  await waitForPreviewQuiescence(api, targets.map(({ number }) => number));
+  await waitForPreviewQuiescence(api, targets
+    .filter(({ pull }) => String(pull?.state).toLowerCase() === "closed")
+    .map(({ number }) => number));
   versions = (await api.versions(packageName)).map(normalizeVersion);
   registry.scanVersions(versions);
 
