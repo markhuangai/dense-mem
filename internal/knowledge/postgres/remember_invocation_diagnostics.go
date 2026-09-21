@@ -313,9 +313,20 @@ func (r *Store) ListRememberInvocationDiagnostics(ctx context.Context, filter kn
 	err := r.withSystemReadOnlyRepeatableTx(ctx, func(tx *gorm.DB) error {
 		where := `WHERE (NULLIF(?, '')::uuid IS NULL OR team_id = NULLIF(?, '')::uuid)
 			AND (NULLIF(?, '')::uuid IS NULL OR owner_profile_id = NULLIF(?, '')::uuid)
-			AND (? = '' OR outcome = ?)`
+			AND (NULLIF(?, '')::uuid IS NULL OR invocation_id = NULLIF(?, '')::uuid)
+			AND (NULLIF(?, '')::uuid IS NULL OR canonical_attempt_id = NULLIF(?, '')::uuid)
+			AND (? = '' OR request_hash = ?)
+			AND (? = '' OR correlation_id = ?)
+			AND (? = '' OR classification = ?)
+			AND (? = '' OR outcome = ?)
+			AND (?::boolean IS NULL OR retryable = ?::boolean)`
+		args := []any{filter.TeamID, filter.TeamID, filter.OwnerProfileID, filter.OwnerProfileID,
+			filter.InvocationID, filter.InvocationID, filter.CanonicalAttemptID, filter.CanonicalAttemptID,
+			filter.RequestHash, filter.RequestHash, filter.CorrelationID, filter.CorrelationID,
+			filter.Classification, filter.Classification, filter.Outcome, filter.Outcome,
+			invocationRetryableFilterValue(filter.Retryable), invocationRetryableFilterValue(filter.Retryable)}
 		if err := tx.WithContext(ctx).Raw(`SELECT count(*) FROM remember_invocation_diagnostics `+where,
-			filter.TeamID, filter.TeamID, filter.OwnerProfileID, filter.OwnerProfileID, filter.Outcome, filter.Outcome).Scan(&page.Total).Error; err != nil {
+			args...).Scan(&page.Total).Error; err != nil {
 			return err
 		}
 		rows, err := tx.WithContext(ctx).Raw(`
@@ -326,8 +337,7 @@ func (r *Store) ListRememberInvocationDiagnostics(ctx context.Context, filter kn
 			       retained_by_legal_hold
 			FROM remember_invocation_diagnostics `+where+`
 			ORDER BY created_at DESC, invocation_id DESC LIMIT ? OFFSET ?`,
-			filter.TeamID, filter.TeamID, filter.OwnerProfileID, filter.OwnerProfileID, filter.Outcome, filter.Outcome,
-			filter.Limit, filter.Offset).Rows()
+			append(args, filter.Limit, filter.Offset)...).Rows()
 		if err != nil {
 			return err
 		}
@@ -345,6 +355,13 @@ func (r *Store) ListRememberInvocationDiagnostics(ctx context.Context, filter kn
 		return nil, fmt.Errorf("list remember invocation diagnostics: %w", err)
 	}
 	return page, nil
+}
+
+func invocationRetryableFilterValue(value *bool) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 func (r *Store) GetRememberInvocationDiagnostic(ctx context.Context, teamID, invocationID string) (*knowledgecontract.RememberInvocationDiagnosticRecord, error) {

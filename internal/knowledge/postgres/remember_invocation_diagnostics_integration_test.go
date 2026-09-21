@@ -58,6 +58,42 @@ func TestRememberInvocationDiagnosticsTrimsAgainstJSONBTextLimit(t *testing.T) {
 	require.Equal(t, "truncated", detail.ProviderExchanges[3].CaptureState)
 }
 
+func TestRememberInvocationDiagnosticsFiltersIdentityAndRetryable(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "remember-invocation-filter-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-invocation-filter-owner")
+	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	canonicalID := uuid.NewString()
+	retryableID := uuid.NewString()
+	nonRetryableID := uuid.NewString()
+	for _, input := range []knowledgecontract.RememberInvocationDiagnosticInput{
+		{TeamID: teamID, OwnerProfileID: ownerID, InvocationID: canonicalID, CanonicalAttemptID: canonicalID, RequestHash: "hash-filter", CorrelationID: "corr-filter", Classification: "execution", Outcome: "failed", Retryable: true},
+		{TeamID: teamID, OwnerProfileID: ownerID, InvocationID: retryableID, CanonicalAttemptID: canonicalID, RequestHash: "hash-filter", CorrelationID: "corr-filter", Classification: "replay", Outcome: "replayed", Retryable: true},
+		{TeamID: teamID, OwnerProfileID: ownerID, InvocationID: nonRetryableID, RequestHash: "other-hash", CorrelationID: "other-corr", Classification: "conflict", Outcome: "conflict", Retryable: false},
+	} {
+		require.NoError(t, repo.RecordRememberInvocationDiagnostic(ctx, input))
+	}
+
+	retryable := true
+	page, err := repo.ListRememberInvocationDiagnostics(ctx, knowledgecontract.RememberInvocationDiagnosticFilter{
+		TeamID: teamID, OwnerProfileID: ownerID, CanonicalAttemptID: canonicalID,
+		RequestHash: "hash-filter", CorrelationID: "corr-filter", Classification: "replay", Retryable: &retryable, Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, page.Records, 1)
+	require.Equal(t, retryableID, page.Records[0].InvocationID)
+
+	nonRetryable := false
+	page, err = repo.ListRememberInvocationDiagnostics(ctx, knowledgecontract.RememberInvocationDiagnosticFilter{
+		TeamID: teamID, OwnerProfileID: ownerID, InvocationID: nonRetryableID, Retryable: &nonRetryable, Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, page.Records, 1)
+	require.Equal(t, nonRetryableID, page.Records[0].InvocationID)
+}
+
 func TestRememberProcessorPersistsInvocationDiagnosticsThroughPostgres(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

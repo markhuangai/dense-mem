@@ -139,11 +139,11 @@ func TestRememberFailureLoggingFallbackProtectsRequestSecrets(t *testing.T) {
 	require.Len(t, logger.errorTexts, 3)
 	for _, text := range logger.errorTexts {
 		require.NotContains(t, text, secret)
-		require.Contains(t, text, observability.CredentialProtectionRedacted)
+		require.Equal(t, "[diagnostic unavailable]", text)
 	}
 	require.Len(t, logger.warnTexts, 1)
 	require.NotContains(t, logger.warnTexts[0], secret)
-	require.Contains(t, logger.warnTexts[0], observability.CredentialProtectionRedacted)
+	require.Equal(t, "[diagnostic unavailable]", logger.warnTexts[0])
 }
 
 func TestRememberProcessorPreCallbackLockFailurePreservesCancellationCode(t *testing.T) {

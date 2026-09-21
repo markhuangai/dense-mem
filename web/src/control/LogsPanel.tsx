@@ -38,13 +38,15 @@ const DETAIL_KEYS = [
   "userinfo_claim_count",
   "status",
   "latency",
+  "delivery_stage",
 ];
 const RAW_DUPLICATE_KEYS = new Set(["time", "timestamp", "level", "severity", "msg", "message"]);
+const EMPTY_LOG_QUERY: OperationLogQuery = {};
 
-export function LogsPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
+export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api: ControlApi; teams: Team[]; initialQuery?: OperationLogQuery }) {
   const [logs, setLogs] = useState<OperationLog[]>([]);
   const [total, setTotal] = useState(0);
-  const [query, setQuery] = useState<OperationLogQuery>({ limit: 100, offset: 0, sort: "timestamp", direction: "desc" });
+  const [query, setQuery] = useState<OperationLogQuery>({ limit: 100, offset: 0, sort: "timestamp", direction: "desc", ...initialQuery });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [expandedLogId, setExpandedLogId] = useState("");
@@ -76,8 +78,8 @@ export function LogsPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
   }
 
   useEffect(() => {
-    void loadLogs();
-  }, []);
+    void loadLogs({ limit: 100, offset: 0, sort: "timestamp", direction: "desc", ...initialQuery });
+  }, [initialQuery]);
 
   const teamNames = new Map(teams.map((team) => [team.id, team.name]));
   const offset = query.offset ?? 0;
@@ -139,6 +141,89 @@ export function LogsPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
           >
             <option value="desc">Desc</option>
             <option value="asc">Asc</option>
+          </select>
+        </label>
+        <label>
+          Correlation
+          <input
+            aria-label="Correlation ID"
+            value={query.correlation_id ?? ""}
+            onChange={(event) => {
+              const next = { ...query, correlation_id: event.target.value, offset: 0 };
+              setQuery(next);
+              void loadLogs(next);
+            }}
+          />
+        </label>
+        <label>
+          Request hash
+          <input
+            aria-label="Request hash"
+            value={query.request_hash ?? ""}
+            onChange={(event) => {
+              const next = { ...query, request_hash: event.target.value, offset: 0 };
+              setQuery(next);
+              void loadLogs(next);
+            }}
+          />
+        </label>
+        <label>
+          Invocation
+          <input
+            aria-label="Invocation ID"
+            value={query.invocation_id ?? ""}
+            onChange={(event) => {
+              const next = { ...query, invocation_id: event.target.value, offset: 0 };
+              setQuery(next);
+              void loadLogs(next);
+            }}
+          />
+        </label>
+        <label>
+          Attempt
+          <input
+            aria-label="Attempt ID"
+            value={query.attempt_id ?? ""}
+            onChange={(event) => {
+              const next = { ...query, attempt_id: event.target.value, offset: 0 };
+              setQuery(next);
+              void loadLogs(next);
+            }}
+          />
+        </label>
+        <label>
+          Call kind
+          <select
+            aria-label="Call classification"
+            value={query.classification ?? ""}
+            onChange={(event) => {
+              const next = { ...query, classification: event.target.value as OperationLogQuery["classification"], offset: 0 };
+              setQuery(next);
+              void loadLogs(next);
+            }}
+          >
+            <option value="">All calls</option>
+            <option value="execution">Execution</option>
+            <option value="replay">Replay</option>
+            <option value="conflict">Conflict</option>
+          </select>
+        </label>
+        <label>
+          Retryable
+          <select
+            aria-label="Retryable"
+            value={query.retryable === "" || query.retryable === undefined ? "" : String(query.retryable)}
+            onChange={(event) => {
+              const raw = event.target.value;
+              const retryable: OperationLogQuery["retryable"] = raw === "" ? "" : raw === "true";
+              const next = { ...query, retryable, offset: 0 };
+              setQuery(next);
+              void loadLogs(next);
+            }}
+          >
+            <option value="">Any</option>
+            <option value="true">Yes</option>
+            <option value="false">No</option>
           </select>
         </label>
       </div>

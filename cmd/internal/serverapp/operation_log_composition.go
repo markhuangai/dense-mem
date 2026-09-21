@@ -13,5 +13,9 @@ func buildOperationLogApplication(repo operationscontract.OperationLogRepository
 }
 
 func buildActiveApplicationLogger(level slog.Level, sink *operations.OperationLogServiceImpl) *observability.Logger {
-	return observability.NewWithSinks(level, sink)
+	root := observability.NewWithProtector(level, nil)
+	if sink != nil {
+		_ = root.AttachSink(sink)
+	}
+	return root
 }

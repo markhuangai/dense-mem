@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 
@@ -62,7 +63,7 @@ func NewTeamService(repo TeamStore, auditService AuditService, statePurger TeamS
 		repo:         repo,
 		auditService: auditService,
 		statePurger:  statePurger,
-		logger:       slog.Default(),
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

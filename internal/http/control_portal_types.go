@@ -18,46 +18,48 @@ import (
 )
 
 type ControlPortalTelemetry struct {
-	Reader            operations.TelemetryReader
-	HTTPMetrics       httpcontract.HTTPMetrics
-	ScrapeHandler     nethttp.Handler
-	ScrapeToken       string
-	SSO               *accessservice.SSOService
-	Directory         *accessservice.DirectoryIdentityService
-	ControlIdentity   *accessservice.ControlIdentityService
-	Config            settings.AppConfigService
-	Logs              operations.OperationLogReader
-	RecallFeedback    recall.RecallFeedbackEventReader
-	Dreams            dream.ControlService
-	Communities       communityapp.Service
-	ConflictQueue     conflictqueue.Reader
-	EvidenceConflicts evidenceconflict.Reader
-	Convergence       searchapp.SearchConvergenceReader
-	RememberAttempts  rememberapp.RememberAttemptDiagnosticsReader
-	PrivateMemory     PrivateMemoryServiceInterface
+	Reader              operations.TelemetryReader
+	HTTPMetrics         httpcontract.HTTPMetrics
+	ScrapeHandler       nethttp.Handler
+	ScrapeToken         string
+	SSO                 *accessservice.SSOService
+	Directory           *accessservice.DirectoryIdentityService
+	ControlIdentity     *accessservice.ControlIdentityService
+	Config              settings.AppConfigService
+	Logs                operations.OperationLogReader
+	RecallFeedback      recall.RecallFeedbackEventReader
+	Dreams              dream.ControlService
+	Communities         communityapp.Service
+	ConflictQueue       conflictqueue.Reader
+	EvidenceConflicts   evidenceconflict.Reader
+	Convergence         searchapp.SearchConvergenceReader
+	RememberAttempts    rememberapp.RememberAttemptDiagnosticsReader
+	RememberInvocations rememberapp.RememberInvocationDiagnosticsReader
+	PrivateMemory       PrivateMemoryServiceInterface
 }
 
 type controlPortalHandler struct {
-	teams             handler.TeamServiceInterface
-	credentials       handler.CredentialServiceInterface
-	security          settings.SecurityService
-	metrics           operations.UsageMetricsReader
-	telemetry         operations.TelemetryReader
-	operationLogs     operations.OperationLogReader
-	recallFeedback    recall.RecallFeedbackEventReader
-	dreams            dream.ControlService
-	communities       communityapp.Service
-	conflictQueue     conflictqueue.Reader
-	evidenceConflicts evidenceconflict.Reader
-	convergence       searchapp.SearchConvergenceReader
-	rememberAttempts  rememberapp.RememberAttemptDiagnosticsReader
-	privateMemory     PrivateMemoryServiceInterface
-	health            HealthConfig
-	sso               *accessservice.SSOService
-	directory         *accessservice.DirectoryIdentityService
-	controlIdentity   *accessservice.ControlIdentityService
-	appConfig         settings.AppConfigService
-	logger            httpcontract.LogProvider
-	verifierModel     string
-	embeddingModel    string
+	teams               handler.TeamServiceInterface
+	credentials         handler.CredentialServiceInterface
+	security            settings.SecurityService
+	metrics             operations.UsageMetricsReader
+	telemetry           operations.TelemetryReader
+	operationLogs       operations.OperationLogReader
+	recallFeedback      recall.RecallFeedbackEventReader
+	dreams              dream.ControlService
+	communities         communityapp.Service
+	conflictQueue       conflictqueue.Reader
+	evidenceConflicts   evidenceconflict.Reader
+	convergence         searchapp.SearchConvergenceReader
+	rememberAttempts    rememberapp.RememberAttemptDiagnosticsReader
+	rememberInvocations rememberapp.RememberInvocationDiagnosticsReader
+	privateMemory       PrivateMemoryServiceInterface
+	health              HealthConfig
+	sso                 *accessservice.SSOService
+	directory           *accessservice.DirectoryIdentityService
+	controlIdentity     *accessservice.ControlIdentityService
+	appConfig           settings.AppConfigService
+	logger              httpcontract.LogProvider
+	verifierModel       string
+	embeddingModel      string
 }

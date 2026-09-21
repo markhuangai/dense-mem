@@ -50,6 +50,7 @@ type transportCompositionInputs struct {
 	toolRegistry             registry.Registry
 	convergence              searchapp.SearchConvergenceReader
 	rememberAttempts         rememberapp.RememberAttemptDiagnosticsReader
+	rememberInvocations      rememberapp.RememberInvocationDiagnosticsReader
 
 	credentialRepo     accessservice.CredentialStore
 	credentialVerifier crypto.CredentialVerifier
@@ -355,23 +356,24 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 			deps.credentialService,
 			deps.usageMetrics,
 			densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{
-				Reader:            deps.telemetry.Reader,
-				HTTPMetrics:       deps.telemetry.HTTPMetrics,
-				ScrapeHandler:     deps.telemetry.ScrapeHandler,
-				ScrapeToken:       deps.cfg.GetTelemetryScrapeToken(),
-				SSO:               deps.ssoService,
-				Directory:         deps.directoryIdentity,
-				ControlIdentity:   deps.controlIdentity,
-				Config:            deps.appConfig,
-				Logs:              deps.operationLogs,
-				RecallFeedback:    deps.recallFeedback,
-				Dreams:            deps.controlDream,
-				Communities:       deps.community,
-				ConflictQueue:     deps.conflictQueue,
-				EvidenceConflicts: deps.evidenceConflicts,
-				Convergence:       deps.convergence,
-				RememberAttempts:  deps.rememberAttempts,
-				PrivateMemory:     deps.privateMemory,
+				Reader:              deps.telemetry.Reader,
+				HTTPMetrics:         deps.telemetry.HTTPMetrics,
+				ScrapeHandler:       deps.telemetry.ScrapeHandler,
+				ScrapeToken:         deps.cfg.GetTelemetryScrapeToken(),
+				SSO:                 deps.ssoService,
+				Directory:           deps.directoryIdentity,
+				ControlIdentity:     deps.controlIdentity,
+				Config:              deps.appConfig,
+				Logs:                deps.operationLogs,
+				RecallFeedback:      deps.recallFeedback,
+				Dreams:              deps.controlDream,
+				Communities:         deps.community,
+				ConflictQueue:       deps.conflictQueue,
+				EvidenceConflicts:   deps.evidenceConflicts,
+				Convergence:         deps.convergence,
+				RememberAttempts:    deps.rememberAttempts,
+				RememberInvocations: deps.rememberInvocations,
+				PrivateMemory:       deps.privateMemory,
 			}},
 			healthConfig,
 			transportLogger(deps.logger),

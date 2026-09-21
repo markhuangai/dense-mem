@@ -723,7 +723,7 @@ func TestNewWithSinksAndTeeHandler(t *testing.T) {
 	assert.Equal(t, "WARN", secondSink.records[0].Severity)
 
 	var nilLogger *Logger
-	assert.NotNil(t, nilLogger.Slog())
+	assert.Nil(t, nilLogger.Slog())
 }
 
 func TestLogSeverityHelpers(t *testing.T) {

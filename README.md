@@ -121,6 +121,25 @@ curl -fsS -X POST http://127.0.0.1:8090/control/api/teams/<team-id>/credentials 
   -d '{"name":"default credential"}'
 ```
 
+Operational diagnostics use one process logger for console and the private
+control portal. `LOG_LEVEL` accepts `trace`, `debug`, `info`, `warn`, `error`,
+or `fatal` and defaults to `trace`; `fatal` records severity and does not stop
+the process. PostgreSQL slow-query logging uses
+`POSTGRES_SLOW_QUERY_THRESHOLD_MS`, which defaults to 200 and must be a
+positive value. The operation-log sink is required for readiness and reports
+gaps and recovery when it is unavailable. Startup and the OAuth compatibility
+harness use console-only logging until a PostgreSQL operation-log sink is
+available; they do not claim that pre-attachment events were persisted.
+
+The control portal's Logs view filters by severity, correlation ID, request
+hash, Remember attempt, execution/replay/conflict classification, and retry
+eligibility. A team's Remember diagnostics open on admitted calls and link to
+canonical attempts. Capture bodies are loaded only for an authorized detail
+view and are labelled as observed preparation, write, disconnect, or unknown
+receipt; a captured response does not prove delivery to the caller. Existing
+seven-day capture expiry, legal holds, erasure, and bounded unavailable or
+truncated states remain in force.
+
 The release image contains one project executable, `/app/server`. It applies
 pending PostgreSQL migrations under a database session lock before serving, so
 the Compose stack does not need a separate migration container. Multiple server

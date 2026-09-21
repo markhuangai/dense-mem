@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"regexp"
 	"testing"
@@ -127,6 +128,29 @@ func TestOperationLogRepositoryAppendsListsAndPrunes(t *testing.T) {
 	require.Len(t, page.Items, 1)
 	require.Equal(t, "warning", page.Items[0].Message)
 	require.NoError(t, repo.PruneBefore(context.Background(), now))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOperationLogRepositoryAppliesRememberIdentityFilters(t *testing.T) {
+	sqlDB, mock, db := newOperationsMockDB(t)
+	defer sqlDB.Close()
+	retryable := true
+	filter := domain.OperationLogFilter{
+		CorrelationID: "corr-1", InvocationID: "invocation-1", RequestHash: "hash-1", AttemptID: "attempt-1",
+		Classification: "replay", Retryable: &retryable, Limit: 7, Offset: 14,
+	}
+	args := []driver.Value{"", "", nil, "corr-1", "invocation-1", "hash-1", "attempt-1", "replay", "true", "", "", nil, nil}
+	filterPattern := `(?s)SELECT count\(\*\).*attrs ->> 'invocation_id'.*attrs ->> 'request_hash'.*attrs ->> 'submission_id'.*attrs ->> 'classification'.*attrs ->> 'retryable'`
+	mock.ExpectQuery(filterPattern).WithArgs(args...).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(0)))
+	rowsPattern := `(?s)SELECT\s+id::text.*attrs ->> 'invocation_id'.*attrs ->> 'request_hash'.*attrs ->> 'submission_id'.*attrs ->> 'classification'.*attrs ->> 'retryable'`
+	mock.ExpectQuery(rowsPattern).WithArgs(append(args, driver.Value(7), driver.Value(14))...).WillReturnRows(sqlmock.NewRows([]string{
+		"id", "timestamp", "severity", "severity_rank", "message", "source", "team_id", "profile_id", "correlation_id", "error", "attrs",
+	}))
+
+	page, err := NewOperationLogRepository(db, passthroughRLS{}).List(context.Background(), filter)
+	require.NoError(t, err)
+	require.Empty(t, page.Items)
+	require.Zero(t, page.Total)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

@@ -40,3 +40,7 @@ func buildRememberApplication(deps rememberApplicationDependencies) rememberapp.
 func buildRememberAttemptDiagnostics(repo remembercontract.DiagnosticsRepository) *rememberapp.RememberAttemptDiagnosticsService {
 	return rememberapp.NewRememberAttemptDiagnosticsService(repo)
 }
+
+func buildRememberInvocationDiagnostics(repo remembercontract.RememberInvocationDiagnosticsRepository) *rememberapp.RememberInvocationDiagnosticsService {
+	return rememberapp.NewRememberInvocationDiagnosticsService(repo)
+}

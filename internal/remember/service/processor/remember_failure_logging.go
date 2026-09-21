@@ -29,7 +29,7 @@ func (p *rememberSynchronousProcessor) logRememberFailureRecordError(
 		contextual.ErrorContext(ctx, "remember_failure_record_failed", logError, attrs...)
 		return
 	}
-	p.logger.Error("remember_failure_record_failed", protectRememberLogError(logError, p.protector, observability.AuthenticationSecretsFromContext(ctx)), attrs...)
+	p.logger.Error("remember_failure_record_failed", errors.New("[diagnostic unavailable]"), attrs...)
 }
 
 func (p *rememberSynchronousProcessor) logRememberFailureRetentionDegraded(
@@ -113,20 +113,4 @@ func rememberFailureRecoveryErrorCode(err error) string {
 	default:
 		return "persistence_failed"
 	}
-}
-
-func protectRememberLogError(err error, protector observability.DiagnosticProtector, authenticatedSecrets []string) error {
-	if err == nil {
-		return nil
-	}
-	if protector == nil {
-		return errors.New("[diagnostic unavailable]")
-	}
-	protected, reason := protector.ProtectDiagnosticBytes(
-		[]byte(err.Error()), observability.MaxOperationMetadataBytes, authenticatedSecrets...,
-	)
-	if reason != observability.CredentialProtectionAvailable {
-		return errors.New("[diagnostic unavailable]")
-	}
-	return errors.New(string(protected))
 }

@@ -624,7 +624,7 @@ func (p *rememberSynchronousProcessor) logRememberFailure(
 		contextual.ErrorContext(ctx, "remember_processing_failed", logError, attrs...)
 		return
 	}
-	p.logger.Error("remember_processing_failed", protectRememberLogError(logError, p.protector, observability.AuthenticationSecretsFromContext(ctx)), attrs...)
+	p.logger.Error("remember_processing_failed", errors.New("[diagnostic unavailable]"), attrs...)
 }
 
 func clampAssessorTurns(value int) int {

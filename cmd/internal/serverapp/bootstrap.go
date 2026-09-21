@@ -58,7 +58,6 @@ func RunMigrationControlRetirement(processCtx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("configure root logger: %w", err)
 	}
-	slog.SetDefault(logger.Slog())
 	retirementTimeout := time.Duration(cfg.GetPostgresMigrationTimeoutSeconds()) * time.Second
 	retirementCtx, cancel := context.WithTimeout(processCtx, retirementTimeout)
 	defer cancel()
@@ -101,7 +100,6 @@ func RunFromEnvironment(processCtx context.Context, options RuntimeOptions) erro
 	if err != nil {
 		return fmt.Errorf("configure root logger: %w", err)
 	}
-	slog.SetDefault(logger.Slog())
 
 	startupCtx, startupCancel := context.WithTimeout(processCtx, DefaultStartupTimeout)
 	defer startupCancel()

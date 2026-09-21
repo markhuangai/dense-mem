@@ -118,7 +118,7 @@ func newHarnessLogger(output io.Writer) (observability.LogProvider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse log level: %w", err)
 	}
-	return observability.NewWithHandler(slog.NewJSONHandler(output, &slog.HandlerOptions{Level: level})), nil
+	return observability.NewConsoleWithHandler(slog.NewJSONHandler(output, &slog.HandlerOptions{Level: level})), nil
 }
 
 type oauthLogWriter struct{ logger observability.LogProvider }

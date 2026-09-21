@@ -59,7 +59,7 @@ describe("App coverage additions", () => {
     expect(await screen.findByRole("heading", { name: "Conflict queue" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Teams" }));
     await userEvent.click(screen.getByRole("button", { name: "Remember Attempts" }));
-    expect(await screen.findByRole("heading", { name: /Remember attempts/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /Remember calls/i })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByRole("heading", { name: /Search convergence/i })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /^Config$/i }));

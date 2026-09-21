@@ -6,6 +6,9 @@ import {
   RememberAttemptDiagnosticEvent,
   RememberAttemptDiagnosticSummary,
   RememberDiagnosticExchange,
+  RememberInvocationDiagnosticDetail,
+  RememberInvocationDiagnosticSummary,
+  type OperationLogQuery,
   Team,
   type RememberAttemptOutcome,
 } from "../api";
@@ -15,7 +18,7 @@ import { formatCount, formatDate, readError, shortId } from "./utils";
 const OUTCOMES = ["", "completed", "rejected", "quarantined", "failed", "replayed"] as const;
 const PAGE_SIZE = 50;
 
-export function RememberAttemptsPanel({ api, team }: { api: ControlApi; team: Team }) {
+export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlApi; team: Team; onOpenLogs?: (query: OperationLogQuery) => void }) {
   const [items, setItems] = useState<RememberAttemptDiagnosticSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [outcome, setOutcome] = useState("");
@@ -25,9 +28,65 @@ export function RememberAttemptsPanel({ api, team }: { api: ControlApi; team: Te
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState("");
+  const [view, setView] = useState<"calls" | "attempts">("calls");
+  const [invocations, setInvocations] = useState<RememberInvocationDiagnosticSummary[]>([]);
+  const [invocationTotal, setInvocationTotal] = useState(0);
+  const [invocationOffset, setInvocationOffset] = useState(0);
+  const [selectedInvocationID, setSelectedInvocationID] = useState("");
+  const [invocationDetail, setInvocationDetail] = useState<RememberInvocationDiagnosticDetail | null>(null);
+  const [invocationLoading, setInvocationLoading] = useState(false);
   const listRequestRef = useRef(0);
   const detailRequestRef = useRef(0);
+  const invocationListRequestRef = useRef(0);
+  const invocationDetailRequestRef = useRef(0);
   const selectedIDRef = useRef("");
+
+  async function loadInvocationDetail(invocationID: string, listRequest = invocationListRequestRef.current) {
+    if (typeof api.getRememberInvocationDiagnostic !== "function" || !invocationID) return;
+    const detailRequest = invocationDetailRequestRef.current + 1;
+    invocationDetailRequestRef.current = detailRequest;
+    try {
+      const nextDetail = await api.getRememberInvocationDiagnostic(team.id, invocationID);
+      if (listRequest !== invocationListRequestRef.current || detailRequest !== invocationDetailRequestRef.current) return;
+      setInvocationDetail(nextDetail);
+    } catch (caught) {
+      if (listRequest === invocationListRequestRef.current && detailRequest === invocationDetailRequestRef.current) {
+        setError(readError(caught));
+      }
+    }
+  }
+
+  async function loadInvocations(nextOffset = invocationOffset, preferredID = selectedInvocationID) {
+    if (typeof api.listRememberInvocationDiagnostics !== "function") {
+      setView("attempts");
+      return;
+    }
+    const listRequest = invocationListRequestRef.current + 1;
+    invocationListRequestRef.current = listRequest;
+    invocationDetailRequestRef.current += 1;
+    setInvocationLoading(true);
+    setError("");
+    try {
+      const page = await api.listRememberInvocationDiagnostics({ team_id: team.id, limit: PAGE_SIZE, offset: nextOffset });
+      if (listRequest !== invocationListRequestRef.current) return;
+      setInvocations(page.data);
+      setInvocationTotal(page.pagination.total);
+      setInvocationOffset(page.pagination.offset);
+      const nextID = page.data.some((item) => item.invocation_id === preferredID)
+        ? preferredID
+        : page.data[0]?.invocation_id ?? "";
+      setSelectedInvocationID(nextID);
+      if (nextID) {
+        await loadInvocationDetail(nextID, listRequest);
+      } else {
+        setInvocationDetail(null);
+      }
+    } catch (caught) {
+      if (listRequest === invocationListRequestRef.current) setError(readError(caught));
+    } finally {
+      if (listRequest === invocationListRequestRef.current) setInvocationLoading(false);
+    }
+  }
 
   function selectAttempt(attemptID: string) {
     selectedIDRef.current = attemptID;
@@ -87,6 +146,13 @@ export function RememberAttemptsPanel({ api, team }: { api: ControlApi; team: Te
   }
 
   useEffect(() => {
+    invocationListRequestRef.current += 1;
+    invocationDetailRequestRef.current += 1;
+    setInvocations([]);
+    setInvocationTotal(0);
+    setInvocationOffset(0);
+    setSelectedInvocationID("");
+    setInvocationDetail(null);
     selectedIDRef.current = "";
     setItems([]);
     setTotal(0);
@@ -96,11 +162,42 @@ export function RememberAttemptsPanel({ api, team }: { api: ControlApi; team: Te
     setDetail(null);
     setError("");
     void loadAttempts("", 0);
+    void loadInvocations(0, "");
     return () => {
       listRequestRef.current += 1;
       detailRequestRef.current += 1;
+      invocationListRequestRef.current += 1;
+      invocationDetailRequestRef.current += 1;
     };
   }, [api, team.id]);
+
+  if (view === "calls") {
+    return (
+      <RememberCallsView
+        items={invocations}
+        total={invocationTotal}
+        offset={invocationOffset}
+        loading={invocationLoading}
+        error={error}
+        detail={invocationDetail}
+        selectedID={selectedInvocationID}
+        onSelectView={(next) => setView(next)}
+        onRefresh={() => void loadInvocations(invocationOffset)}
+        onSelect={(id) => {
+          setSelectedInvocationID(id);
+          void loadInvocationDetail(id);
+        }}
+        onOpenLogs={(query) => onOpenLogs?.(query)}
+        onOpenAttempt={(attemptID) => {
+          setView("attempts");
+          selectAttempt(attemptID);
+          void loadDetail(attemptID);
+        }}
+        onPrevious={() => void loadInvocations(Math.max(0, invocationOffset - PAGE_SIZE))}
+        onNext={() => void loadInvocations(invocationOffset + PAGE_SIZE)}
+      />
+    );
+  }
 
   const rangeStart = total === 0 ? 0 : offset + 1;
   const rangeEnd = Math.min(offset + items.length, total);
@@ -112,9 +209,12 @@ export function RememberAttemptsPanel({ api, team }: { api: ControlApi; team: Te
           title="Remember Attempts"
           meta={total}
           actions={(
-            <button className="icon-button" type="button" aria-label="Refresh Remember attempts" onClick={() => void loadAttempts()}>
-              <RefreshCw size={16} aria-hidden="true" />
-            </button>
+            <div className="button-row">
+              <button className="ghost-button" type="button" onClick={() => setView("calls")}>Calls</button>
+              <button className="icon-button" type="button" aria-label="Refresh Remember attempts" onClick={() => void loadAttempts()}>
+                <RefreshCw size={16} aria-hidden="true" />
+              </button>
+            </div>
           )}
         />
         <p className="panel-intro">A durable, chronological transcript of synchronous Remember processing. Failure bytes are retained only for seven days.</p>
@@ -173,6 +273,114 @@ export function RememberAttemptsPanel({ api, team }: { api: ControlApi; team: Te
 
       {detailLoading && !detail ? <LoadingState label="Loading Remember attempt details" /> : detail && <RememberAttemptDetailView detail={detail} />}
     </div>
+  );
+}
+
+function RememberCallsView({
+  items,
+  total,
+  offset,
+  loading,
+  error,
+  detail,
+  selectedID,
+  onSelectView,
+  onRefresh,
+  onSelect,
+  onOpenLogs,
+  onOpenAttempt,
+  onPrevious,
+  onNext,
+}: {
+  items: RememberInvocationDiagnosticSummary[];
+  total: number;
+  offset: number;
+  loading: boolean;
+  error: string;
+  detail: RememberInvocationDiagnosticDetail | null;
+  selectedID: string;
+  onSelectView: (view: "calls" | "attempts") => void;
+  onRefresh: () => void;
+  onSelect: (id: string) => void;
+  onOpenLogs: (query: OperationLogQuery) => void;
+  onOpenAttempt: (id: string) => void;
+  onPrevious: () => void;
+  onNext: () => void;
+}) {
+  const rangeStart = total === 0 ? 0 : offset + 1;
+  const rangeEnd = Math.min(offset + items.length, total);
+  return (
+    <div className="team-embedded-panel remember-attempts">
+      <section className="overview-panel">
+        <SectionHeading
+          title="Remember Calls"
+          meta={total}
+          actions={(
+            <div className="button-row">
+              <button className="ghost-button" type="button" onClick={() => onSelectView("attempts")}>Attempts</button>
+              <button className="icon-button" type="button" aria-label="Refresh Remember calls" onClick={onRefresh}>
+                <RefreshCw size={16} aria-hidden="true" />
+              </button>
+            </div>
+          )}
+        />
+        <p className="panel-intro">Admitted Remember calls, including executions, replays, conflicts, and cancellations. Capture bodies remain bounded and load only for an inspected call.</p>
+        {error && <div className="banner error" role="alert">{error}</div>}
+        {loading && items.length === 0 ? <LoadingState label="Loading Remember calls" /> : items.length === 0 ? <div className="table-placeholder">No Remember calls</div> : (
+          <div className="table-wrap">
+            <table className="data-table remember-attempts-table">
+              <thead><tr><th>Created</th><th>Classification</th><th>Outcome</th><th>Phase / error</th><th>Identity</th><th>Action</th></tr></thead>
+              <tbody>{items.map((item) => (
+                <tr key={item.invocation_id} className={item.invocation_id === selectedID ? "selected-row" : undefined}>
+                  <td><strong>{formatDate(item.created_at)}</strong><small className="table-subline">{shortId(item.invocation_id)}</small></td>
+                  <td><span>{item.classification}</span><small className="table-subline">{item.retryable ? "Retryable" : "Not retryable"}</small></td>
+                  <td><span className={attemptOutcomeClass(item.outcome)}>{outcomeLabel(item.outcome)}</span></td>
+                  <td><span>{item.failed_phase ? outcomeLabel(item.failed_phase) : "Completed"}</span>{item.error_code && <small className="table-subline">{outcomeLabel(item.error_code)}</small>}</td>
+                  <td><code>{item.correlation_id || "No correlation"}</code><small className="table-subline">{item.canonical_attempt_id ? <button className="text-button" type="button" onClick={() => onOpenAttempt(item.canonical_attempt_id as string)}>Attempt {shortId(item.canonical_attempt_id)}</button> : "No canonical attempt"}</small></td>
+                  <td><button className="text-button" type="button" aria-label={`Inspect Remember call ${item.invocation_id}`} onClick={() => onSelect(item.invocation_id)}>Inspect <ArrowRight size={14} aria-hidden="true" /></button></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+        <div className="table-actions">
+          <span className="form-meta">{rangeStart}-{rangeEnd} of {total}</span>
+          <button className="ghost-button" type="button" disabled={loading || offset === 0} onClick={onPrevious}>Previous</button>
+          <button className="ghost-button" type="button" disabled={loading || offset + items.length >= total} onClick={onNext}>Next</button>
+        </div>
+      </section>
+      {detail && <RememberInvocationDetailView detail={detail} onOpenLogs={onOpenLogs} />}
+    </div>
+  );
+}
+
+function RememberInvocationDetailView({ detail, onOpenLogs }: { detail: RememberInvocationDiagnosticDetail; onOpenLogs: (query: OperationLogQuery) => void }) {
+  const deliveryState = detail.caller_response_capture_state || "unknown";
+  return (
+    <section className="overview-panel remember-attempt-detail" aria-label="Remember call details">
+      <SectionHeading title="Call Detail" actions={<span className={attemptOutcomeClass(detail.outcome)}>{outcomeLabel(detail.outcome)}</span>} />
+      <div className="submission-facts">
+        <Fact label="Invocation" value={detail.invocation_id} code />
+        <Fact label="Classification" value={detail.classification} />
+        <Fact label="Phase" value={detail.phase || "Unknown"} />
+        <Fact label="Protected cause" value={detail.protected_cause || "No failure cause"} />
+        <Fact label="Delivery" value={detail.delivery_stage ? `${detail.delivery_stage} (Caller receipt unknown)` : "Unknown (Caller receipt unknown)"} />
+        <Fact label="Correlation" value={detail.correlation_id || "Not recorded"} code={Boolean(detail.correlation_id)} />
+        <Fact label="Request hash" value={detail.request_hash || "Not recorded"} code={Boolean(detail.request_hash)} />
+        <Fact label="Capture expiry" value={detail.retained_by_legal_hold ? "Legal hold" : formatDate(detail.expires_at)} />
+      </div>
+      <section className="remember-diagnostics" aria-label="Remember call captures">
+        <div className="button-row">
+          <button className="ghost-button" type="button" onClick={() => onOpenLogs({ team_id: detail.team_id, correlation_id: detail.correlation_id })}>View related logs</button>
+        </div>
+        <h3>Original request</h3>
+        {detail.request_capture_state === "expired" ? <DiagnosticUnavailable message="This request capture expired and its body is no longer available." /> : detail.request_body ? <DiagnosticBody label="Request body" content={detail.request_body} /> : <DiagnosticUnavailable message={`Request capture is ${detail.request_capture_state || "unavailable"}.`} />}
+        <h3>AI provider exchanges</h3>
+        {detail.provider_exchanges.length === 0 ? <DiagnosticUnavailable message="No provider exchange was captured for this call." /> : detail.provider_exchanges.map((exchange) => <DiagnosticExchange exchange={{ ...exchange, diagnostic_id: exchange.diagnostic_id || `${exchange.sequence_no}:${exchange.component}`, captured_at: exchange.captured_at || detail.created_at, expires_at: exchange.expires_at || detail.expires_at, retained_by_legal_hold: detail.retained_by_legal_hold } as RememberDiagnosticExchange} key={`${exchange.sequence_no}:${exchange.diagnostic_id || exchange.component}`} />)}
+        <h3>Caller response</h3>
+        {detail.caller_response ? <DiagnosticBody label="Captured response (Caller receipt unknown)" content={detail.caller_response} /> : <DiagnosticUnavailable message={`Caller response capture is ${deliveryState || "unknown"}; receipt is not inferred.`} />}
+      </section>
+    </section>
   );
 }
 

@@ -162,9 +162,6 @@ func RunActiveServer(
 			return fmt.Errorf("attach operation log sink: %w", err)
 		}
 	}
-	if root, ok := logger.(*observability.Logger); ok {
-		slog.SetDefault(root.Slog())
-	}
 	// Keep the sink worker alive until lifecycle.shutdown reaches its first
 	// registered worker, after listeners and producers have drained.
 	operationLogService.Start(context.Background())
@@ -337,6 +334,7 @@ func RunActiveServer(
 		toolRegistry:             toolRegistry,
 		convergence:              searchApplication.Convergence,
 		rememberAttempts:         buildRememberAttemptDiagnostics(knowledgeStore),
+		rememberInvocations:      buildRememberInvocationDiagnostics(knowledgeStore),
 		credentialRepo:           credentialRepo,
 		credentialVerifier:       credentialVerifier,
 		activityWriter:           activityWriter,

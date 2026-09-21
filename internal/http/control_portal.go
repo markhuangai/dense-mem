@@ -128,7 +128,7 @@ func newControlPortalServerWithMetricsAndTelemetry(
 		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), httpmw.TelemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
 	}
 
-	control := &controlPortalHandler{teams: teamSvc, credentials: credentialSvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, communities: telemetry.Communities, conflictQueue: telemetry.ConflictQueue, evidenceConflicts: telemetry.EvidenceConflicts, convergence: telemetry.Convergence, rememberAttempts: telemetry.RememberAttempts, privateMemory: telemetry.PrivateMemory, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, logger: logger, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
+	control := &controlPortalHandler{teams: teamSvc, credentials: credentialSvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, communities: telemetry.Communities, conflictQueue: telemetry.ConflictQueue, evidenceConflicts: telemetry.EvidenceConflicts, convergence: telemetry.Convergence, rememberAttempts: telemetry.RememberAttempts, rememberInvocations: telemetry.RememberInvocations, privateMemory: telemetry.PrivateMemory, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, logger: logger, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
 	if telemetry.ControlIdentity != nil {
 		registerControlIdentityRoutes(e, control)
 	}
@@ -148,6 +148,7 @@ func newControlPortalServerWithMetricsAndTelemetry(
 		api.GET("/remember-attempts", control.listRememberAttemptDiagnostics)
 		api.GET("/teams/:teamId/remember-attempts/:attemptId", control.getRememberAttemptDiagnostic)
 	}
+	registerRememberInvocationDiagnosticsRoutes(api, control, telemetry)
 	if telemetry.RecallFeedback != nil {
 		api.GET("/recall-feedback-events", control.listRecallFeedbackEvents)
 		api.GET("/recall-feedback-events/:recallId", control.getRecallFeedbackEvent)
@@ -986,7 +987,6 @@ func controlTimePtr(t *time.Time) *string {
 	formatted := t.Format(time.RFC3339)
 	return &formatted
 }
-
 // ShutdownControlPortal gracefully shuts down the control portal server.
 func ShutdownControlPortal(e *echo.Echo, logger httpcontract.LogProvider) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -1,7 +1,7 @@
 export type OperationLog = {
   id: string;
   timestamp: string;
-  severity: "DEBUG" | "INFO" | "WARN" | "ERROR" | string;
+  severity: "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR" | "FATAL" | string;
   severity_rank: number;
   message: string;
   source: string;
@@ -24,6 +24,64 @@ export type OperationLogQuery = {
   reference_id?: string;
   from?: string;
   to?: string;
+  correlation_id?: string;
+  invocation_id?: string;
+  request_hash?: string;
+  attempt_id?: string;
+  classification?: "execution" | "replay" | "conflict" | "";
+  retryable?: boolean | "";
+};
+
+export type RememberInvocationOutcome = "completed" | "evaluated_zero" | "failed" | "cancelled" | "replayed" | "conflict";
+export type RememberInvocationClassification = "execution" | "replay" | "conflict";
+
+export type RememberInvocationDiagnosticSummary = {
+  team_id: string;
+  owner_profile_id: string;
+  invocation_id: string;
+  canonical_attempt_id?: string;
+  request_hash: string;
+  correlation_id: string;
+  classification: RememberInvocationClassification;
+  outcome: RememberInvocationOutcome;
+  phase: string;
+  protected_cause?: string;
+  delivery_stage: string;
+  failed_phase?: string;
+  error_code?: string;
+  retryable: boolean;
+  duration_ms: number;
+  created_at: string;
+  completed_at?: string;
+  expires_at: string;
+  retained_by_legal_hold: boolean;
+};
+
+export type RememberInvocationDiagnosticExchange = {
+  diagnostic_id?: string;
+  sequence_no: number;
+  kind: string;
+  component: string;
+  model?: string;
+  request_body?: string;
+  response_body?: string;
+  request_content_type?: string;
+  response_content_type?: string;
+  status_code?: number;
+  outcome: string;
+  capture_state: string;
+  captured_at?: string;
+  expires_at?: string;
+};
+
+export type RememberInvocationDiagnosticDetail = RememberInvocationDiagnosticSummary & {
+  request_body?: string;
+  request_capture_state: string;
+  request_capture_reason?: string;
+  provider_exchanges: RememberInvocationDiagnosticExchange[];
+  caller_response?: string;
+  caller_response_capture_state: string;
+  caller_response_capture_reason?: string;
 };
 
 export type RememberError = {
@@ -51,6 +109,7 @@ export type RememberAttemptDiagnosticSummary = {
   error_code?: string;
   retryable: boolean;
   correlation_id?: string;
+  invocation_id?: string;
   evidence_count: number;
   relationship_count: number;
   document_count: number;
@@ -143,6 +202,12 @@ export function buildOperationLogsPath(query: OperationLogQuery): string {
   appendParam(params, "reference_id", query.reference_id);
   appendParam(params, "from", query.from);
   appendParam(params, "to", query.to);
+  appendParam(params, "correlation_id", query.correlation_id);
+  appendParam(params, "invocation_id", query.invocation_id);
+  appendParam(params, "request_hash", query.request_hash);
+  appendParam(params, "attempt_id", query.attempt_id);
+  appendParam(params, "classification", query.classification);
+  appendParam(params, "retryable", query.retryable);
   return pathWithQuery("/logs", params);
 }
 
@@ -159,7 +224,41 @@ export function buildRememberAttemptDiagnosticPath(teamId: string, attemptId: st
   return `/teams/${encodeURIComponent(teamId)}/remember-attempts/${encodeURIComponent(attemptId)}`;
 }
 
-function appendParam(params: URLSearchParams, key: string, value: string | number | undefined): void {
+export type RememberInvocationDiagnosticQuery = {
+  team_id?: string;
+  owner_profile_id?: string;
+  invocation_id?: string;
+  canonical_attempt_id?: string;
+  request_hash?: string;
+  correlation_id?: string;
+  classification?: RememberInvocationClassification | "";
+  outcome?: RememberInvocationOutcome | "";
+  retryable?: boolean | "";
+  limit?: number;
+  offset?: number;
+};
+
+export function buildRememberInvocationDiagnosticsPath(query: RememberInvocationDiagnosticQuery): string {
+  const params = new URLSearchParams();
+  appendParam(params, "team_id", query.team_id);
+  appendParam(params, "owner_profile_id", query.owner_profile_id);
+  appendParam(params, "invocation_id", query.invocation_id);
+  appendParam(params, "canonical_attempt_id", query.canonical_attempt_id);
+  appendParam(params, "request_hash", query.request_hash);
+  appendParam(params, "correlation_id", query.correlation_id);
+  appendParam(params, "classification", query.classification);
+  appendParam(params, "outcome", query.outcome);
+  appendParam(params, "retryable", query.retryable);
+  appendParam(params, "limit", query.limit);
+  appendParam(params, "offset", query.offset);
+  return pathWithQuery("/remember-invocations", params);
+}
+
+export function buildRememberInvocationDiagnosticPath(teamId: string, invocationID: string): string {
+  return `/teams/${encodeURIComponent(teamId)}/remember-invocations/${encodeURIComponent(invocationID)}`;
+}
+
+function appendParam(params: URLSearchParams, key: string, value: string | number | boolean | undefined): void {
   if (value !== undefined && value !== "") {
     params.set(key, String(value));
   }

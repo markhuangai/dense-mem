@@ -199,22 +199,28 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 
 	logFrom := "2026-06-01T00:00:00Z"
 	logTo := "2026-06-23T00:00:00Z"
-	rec := do("/control/api/logs?limit=5&offset=2&severity=warn&sort=severity&direction=asc&event=submission_failed&team_id=" + teamID.String() + "&reference_type=submission&reference_id=submission-1&from=" + logFrom + "&to=" + logTo)
+	rec := do("/control/api/logs?limit=5&offset=2&severity=warn&sort=severity&direction=asc&event=submission_failed&team_id=" + teamID.String() + "&reference_type=submission&reference_id=submission-1&from=" + logFrom + "&to=" + logTo + "&correlation_id=corr-1&invocation_id=inv-1&request_hash=hash-1&attempt_id=attempt-1&classification=replay&retryable=true")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "dream cycle completed")
 	expectedLogFrom, expectedLogTo := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 23, 0, 0, 0, 0, time.UTC)
 	assert.Equal(t, domain.OperationLogFilter{
-		Limit:         5,
-		Offset:        2,
-		Severity:      "WARN",
-		Sort:          "severity",
-		Direction:     "asc",
-		Event:         "submission_failed",
-		TeamID:        &teamID,
-		ReferenceType: "submission",
-		ReferenceID:   "submission-1",
-		From:          &expectedLogFrom,
-		To:            &expectedLogTo,
+		Limit:          5,
+		Offset:         2,
+		Severity:       "WARN",
+		Sort:           "severity",
+		Direction:      "asc",
+		Event:          "submission_failed",
+		CorrelationID:  "corr-1",
+		InvocationID:   "inv-1",
+		RequestHash:    "hash-1",
+		AttemptID:      "attempt-1",
+		Classification: "replay",
+		Retryable:      boolPtr(true),
+		TeamID:         &teamID,
+		ReferenceType:  "submission",
+		ReferenceID:    "submission-1",
+		From:           &expectedLogFrom,
+		To:             &expectedLogTo,
 	}, logs.filter)
 
 	rec = do("/control/api/recall-feedback-events?limit=5&offset=2&quality=low&include_pending=true&missing_context=true&irrelevant=false&from=2026-06-01T00:00:00Z&to=2026-06-23T00:00:00Z")
@@ -263,6 +269,8 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 
 }
 
+func boolPtr(value bool) *bool { return &value }
+
 func TestControlPortalObservabilityValidation(t *testing.T) {
 	e := echo.New()
 	rec := httptest.NewRecorder()
@@ -291,6 +299,16 @@ func TestControlPortalObservabilityValidation(t *testing.T) {
 	c = e.NewContext(req, rec)
 	_, err = controlOperationLogsFilter(c)
 	require.ErrorContains(t, err, "direction must be asc or desc")
+
+	req = httptest.NewRequest(http.MethodGet, "/control/api/logs?classification=unknown", nil)
+	c = e.NewContext(req, rec)
+	_, err = controlOperationLogsFilter(c)
+	require.ErrorContains(t, err, "classification")
+
+	req = httptest.NewRequest(http.MethodGet, "/control/api/logs?retryable=maybe", nil)
+	c = e.NewContext(req, rec)
+	_, err = controlOperationLogsFilter(c)
+	require.ErrorContains(t, err, "retryable")
 
 	req = httptest.NewRequest(http.MethodGet, "/control/api/logs?team_id=bad", nil)
 	c = e.NewContext(req, rec)

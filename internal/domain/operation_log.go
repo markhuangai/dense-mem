@@ -24,17 +24,23 @@ type OperationLog struct {
 
 // OperationLogFilter controls control-portal log listing.
 type OperationLogFilter struct {
-	Limit         int
-	Offset        int
-	Severity      string
-	Sort          string
-	Direction     string
-	Event         string
-	TeamID        *uuid.UUID
-	ReferenceType string
-	ReferenceID   string
-	From          *time.Time
-	To            *time.Time
+	Limit          int
+	Offset         int
+	Severity       string
+	Sort           string
+	Direction      string
+	Event          string
+	CorrelationID  string
+	InvocationID   string
+	RequestHash    string
+	AttemptID      string
+	Classification string
+	Retryable      *bool
+	TeamID         *uuid.UUID
+	ReferenceType  string
+	ReferenceID    string
+	From           *time.Time
+	To             *time.Time
 }
 
 // OperationLogPage is a paginated operation log response.

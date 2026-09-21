@@ -7,8 +7,10 @@ import { getEvidenceConflict as getEvidenceConflictRequest, listEvidenceConflict
 import { requestJson } from "./http";
 import {
   buildRememberAttemptDiagnosticPath, buildRememberAttemptDiagnosticsPath,
+  buildRememberInvocationDiagnosticPath, buildRememberInvocationDiagnosticsPath,
   buildOperationLogsPath,
   type RememberAttemptDiagnosticDetail, type RememberAttemptDiagnosticQuery, type RememberAttemptDiagnosticSummary,
+  type RememberInvocationDiagnosticDetail, type RememberInvocationDiagnosticQuery, type RememberInvocationDiagnosticSummary,
   type OperationLog, type OperationLogQuery,
 } from "./control-observability-api";
 export { ApiError } from "./http";
@@ -18,6 +20,7 @@ export type {
   RememberError,
   RememberAttemptDiagnosticDetail, RememberAttemptDiagnosticEvent, RememberAttemptDiagnosticQuery,
   RememberAttemptDiagnosticSummary, RememberAttemptOutcome, RememberAttemptPublicResult, RememberDiagnosticExchange,
+  RememberInvocationDiagnosticDetail, RememberInvocationDiagnosticQuery, RememberInvocationDiagnosticSummary,
 } from "./control-observability-api";
 export type {
   ConflictQueueItem,
@@ -894,6 +897,14 @@ export class ControlApi {
 
   getRememberAttemptDiagnostic(teamId: string, attemptId: string): Promise<RememberAttemptDiagnosticDetail> {
     return this.requestEnvelope<RememberAttemptDiagnosticDetail>(buildRememberAttemptDiagnosticPath(teamId, attemptId));
+  }
+
+  listRememberInvocationDiagnostics(query: RememberInvocationDiagnosticQuery = {}): Promise<Page<RememberInvocationDiagnosticSummary>> {
+    return this.request<Page<RememberInvocationDiagnosticSummary>>(buildRememberInvocationDiagnosticsPath(query));
+  }
+
+  getRememberInvocationDiagnostic(teamId: string, invocationID: string): Promise<RememberInvocationDiagnosticDetail> {
+    return this.requestEnvelope<RememberInvocationDiagnosticDetail>(buildRememberInvocationDiagnosticPath(teamId, invocationID));
   }
 
   listRecallFeedbackEvents(query: RecallFeedbackEventQuery = {}): Promise<Page<RecallFeedbackEvent>> {

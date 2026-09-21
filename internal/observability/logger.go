@@ -301,8 +301,9 @@ func NewWithSecrets(level slog.Level, secrets ...string) *Logger {
 	return NewWithProtector(level, NewCredentialProtector(secrets...))
 }
 
-// NewWithHandler creates a new Logger with a custom handler.
-func NewWithHandler(handler slog.Handler) *Logger {
+// NewConsoleWithHandler creates a root-backed console adapter for isolated
+// support binaries and tests. It does not attach an operation-log sink.
+func NewConsoleWithHandler(handler slog.Handler) *Logger {
 	state := &sinkState{}
 	protector := NewCredentialProtector()
 	operation := newOperationLogHandlerWithState(LevelTrace, state, protector)
@@ -311,6 +312,12 @@ func NewWithHandler(handler slog.Handler) *Logger {
 		logger: slog.New(newTeeHandler(newLegacyCredentialRedactingHandler(handler, protector), operation)),
 		root:   &loggerRoot{sink: state},
 	}
+}
+
+// NewWithHandler is retained for existing test constructors. Production
+// support binaries use NewConsoleWithHandler.
+func NewWithHandler(handler slog.Handler) *Logger {
+	return NewConsoleWithHandler(handler)
 }
 
 // AttachSink attaches the required secondary sink exactly once. The handler
@@ -346,7 +353,7 @@ func (l *Logger) SinkAttached() bool {
 // Slog returns the underlying slog logger for packages that require *slog.Logger.
 func (l *Logger) Slog() *slog.Logger {
 	if l == nil {
-		return slog.Default()
+		return nil
 	}
 	return slog.New(legacyBridgeHandler{delegate: l.logger.Handler()})
 }
@@ -444,7 +451,6 @@ func (l *Logger) logContextWithPC(ctx context.Context, level slog.Level, msg str
 		ctx = context.Background()
 	}
 	if l == nil || l.logger == nil {
-		slog.Default().Handler().Handle(ctx, slogRecord(time.Now(), level, msg, pc, attrs...))
 		return
 	}
 	if !l.logger.Handler().Enabled(ctx, level) {

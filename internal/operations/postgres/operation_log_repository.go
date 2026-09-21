@@ -104,6 +104,7 @@ func (r *OperationLogRepositoryImpl) List(ctx context.Context, filter domain.Ope
 	severity := strings.ToUpper(strings.TrimSpace(normalized.Severity))
 	teamID := uuidPtrValue(normalized.TeamID)
 	from, to := timePtrValue(normalized.From), timePtrValue(normalized.To)
+	retryable := retryableFilterValue(normalized.Retryable)
 
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		var total int64
@@ -113,11 +114,17 @@ func (r *OperationLogRepositoryImpl) List(ctx context.Context, filter domain.Ope
 			WHERE ($1 = '' OR severity = $1)
 			  AND ($2 = '' OR message = $2)
 			  AND ($3::uuid IS NULL OR team_id = $3::uuid)
-			  AND ($4 = '' OR attrs ->> 'reference_type' = $4)
-			  AND ($5 = '' OR attrs ->> 'reference_id' = $5)
-			  AND ($6::timestamptz IS NULL OR timestamp >= $6::timestamptz)
-			  AND ($7::timestamptz IS NULL OR timestamp <= $7::timestamptz)
-		`, severity, normalized.Event, teamID, normalized.ReferenceType, normalized.ReferenceID, from, to).Scan(&total).Error; err != nil {
+			  AND ($4 = '' OR correlation_id = $4)
+			  AND ($5 = '' OR attrs ->> 'invocation_id' = $5)
+			  AND ($6 = '' OR attrs ->> 'request_hash' = $6)
+			  AND ($7 = '' OR attrs ->> 'submission_id' = $7 OR attrs ->> 'attempt_id' = $7 OR attrs ->> 'canonical_attempt_id' = $7)
+			  AND ($8 = '' OR attrs ->> 'classification' = $8)
+			  AND ($9 = '' OR attrs ->> 'retryable' = $9)
+			  AND ($10 = '' OR attrs ->> 'reference_type' = $10)
+			  AND ($11 = '' OR attrs ->> 'reference_id' = $11)
+			  AND ($12::timestamptz IS NULL OR timestamp >= $12::timestamptz)
+			  AND ($13::timestamptz IS NULL OR timestamp <= $13::timestamptz)
+		`, severity, normalized.Event, teamID, normalized.CorrelationID, normalized.InvocationID, normalized.RequestHash, normalized.AttemptID, normalized.Classification, retryable, normalized.ReferenceType, normalized.ReferenceID, from, to).Scan(&total).Error; err != nil {
 			return err
 		}
 		page.Total = total
@@ -130,13 +137,20 @@ func (r *OperationLogRepositoryImpl) List(ctx context.Context, filter domain.Ope
 			WHERE ($1 = '' OR severity = $1)
 			  AND ($2 = '' OR message = $2)
 			  AND ($3::uuid IS NULL OR team_id = $3::uuid)
-			  AND ($4 = '' OR attrs ->> 'reference_type' = $4)
-			  AND ($5 = '' OR attrs ->> 'reference_id' = $5)
-			  AND ($6::timestamptz IS NULL OR timestamp >= $6::timestamptz)
-			  AND ($7::timestamptz IS NULL OR timestamp <= $7::timestamptz)
+			  AND ($4 = '' OR correlation_id = $4)
+			  AND ($5 = '' OR attrs ->> 'invocation_id' = $5)
+			  AND ($6 = '' OR attrs ->> 'request_hash' = $6)
+			  AND ($7 = '' OR attrs ->> 'submission_id' = $7 OR attrs ->> 'attempt_id' = $7 OR attrs ->> 'canonical_attempt_id' = $7)
+			  AND ($8 = '' OR attrs ->> 'classification' = $8)
+			  AND ($9 = '' OR attrs ->> 'retryable' = $9)
+			  AND ($10 = '' OR attrs ->> 'reference_type' = $10)
+			  AND ($11 = '' OR attrs ->> 'reference_id' = $11)
+			  AND ($12::timestamptz IS NULL OR timestamp >= $12::timestamptz)
+			  AND ($13::timestamptz IS NULL OR timestamp <= $13::timestamptz)
 			`+operationLogOrderClause(normalized)+`
-			LIMIT $8 OFFSET $9
-		`, severity, normalized.Event, teamID, normalized.ReferenceType, normalized.ReferenceID,
+			LIMIT $14 OFFSET $15
+		`, severity, normalized.Event, teamID, normalized.CorrelationID, normalized.InvocationID, normalized.RequestHash, normalized.AttemptID,
+			normalized.Classification, retryable, normalized.ReferenceType, normalized.ReferenceID,
 			from, to, normalized.Limit, normalized.Offset).Rows()
 		if err != nil {
 			return err
@@ -208,6 +222,11 @@ func normalizeOperationLogFilter(filter domain.OperationLogFilter) domain.Operat
 	}
 	filter.Severity = strings.ToUpper(strings.TrimSpace(filter.Severity))
 	filter.Event = strings.TrimSpace(filter.Event)
+	filter.CorrelationID = strings.TrimSpace(filter.CorrelationID)
+	filter.InvocationID = strings.TrimSpace(filter.InvocationID)
+	filter.RequestHash = strings.TrimSpace(filter.RequestHash)
+	filter.AttemptID = strings.TrimSpace(filter.AttemptID)
+	filter.Classification = strings.TrimSpace(filter.Classification)
 	filter.ReferenceType = strings.TrimSpace(filter.ReferenceType)
 	filter.ReferenceID = strings.TrimSpace(filter.ReferenceID)
 	if filter.From != nil {
@@ -219,6 +238,16 @@ func normalizeOperationLogFilter(filter domain.OperationLogFilter) domain.Operat
 		filter.To = &value
 	}
 	return filter
+}
+
+func retryableFilterValue(value *bool) string {
+	if value == nil {
+		return ""
+	}
+	if *value {
+		return "true"
+	}
+	return "false"
 }
 
 func operationLogOrderClause(filter domain.OperationLogFilter) string {

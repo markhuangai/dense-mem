@@ -156,11 +156,17 @@ type RememberInvocationDiagnosticRecord struct {
 }
 
 type RememberInvocationDiagnosticFilter struct {
-	TeamID         string
-	OwnerProfileID string
-	Outcome        string
-	Limit          int
-	Offset         int
+	TeamID             string
+	OwnerProfileID     string
+	InvocationID       string
+	CanonicalAttemptID string
+	RequestHash        string
+	CorrelationID      string
+	Classification     string
+	Outcome            string
+	Retryable          *bool
+	Limit              int
+	Offset             int
 }
 
 type RememberInvocationDiagnosticRecordPage struct {

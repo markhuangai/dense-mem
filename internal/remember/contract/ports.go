@@ -24,6 +24,14 @@ type DiagnosticsRepository interface {
 	GetRememberAttemptDiagnostic(context.Context, string, string) (*knowledgecontract.RememberAttemptDiagnosticRecord, error)
 }
 
+// RememberInvocationDiagnosticsRepository is the narrow persistence port for
+// the admitted-call diagnostic read model. Knowledge storage owns the durable
+// records; Remember owns filtering and safe projection.
+type RememberInvocationDiagnosticsRepository interface {
+	ListRememberInvocationDiagnostics(context.Context, knowledgecontract.RememberInvocationDiagnosticFilter) (*knowledgecontract.RememberInvocationDiagnosticRecordPage, error)
+	GetRememberInvocationDiagnostic(context.Context, string, string) (*knowledgecontract.RememberInvocationDiagnosticRecord, error)
+}
+
 type RememberValidationIssue struct {
 	Path    string `json:"path"`
 	Code    string `json:"code"`

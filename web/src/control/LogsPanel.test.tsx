@@ -1,4 +1,5 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ControlApi } from "../api";
 import { LogsPanel } from "./LogsPanel";
@@ -131,5 +132,45 @@ describe("LogsPanel", () => {
     expect(await screen.findByText("submission_id=submission-1", { exact: true })).toBeInTheDocument();
     expect(screen.getByText("failure_reason_code=assessor_provider_failed")).toBeInTheDocument();
     expect(screen.getByText("failure_class=timeout")).toBeInTheDocument();
+  });
+
+  it("applies Remember identity filters and expands the raw record", async () => {
+    const user = userEvent.setup();
+    const listOperationLogs = vi.fn().mockResolvedValue({
+      data: [{
+        id: "http-log",
+        timestamp: "2026-08-18T01:05:00Z",
+        severity: "INFO",
+        severity_rank: 20,
+        message: "http_request",
+        source: "control",
+        team_id: "team-1",
+        profile_id: null,
+        correlation_id: "corr-1",
+        error: "",
+        attrs: {
+          method: "GET", uri: "/control/api/remember-invocations", status: 200,
+          invocation_id: "invocation-1", request_hash: "hash-1", attempt_id: "attempt-1",
+          classification: "replay", retryable: true, delivery_stage: "write_observed",
+        },
+      }],
+      pagination: { limit: 100, offset: 0, total: 101 },
+    });
+    const api = { listOperationLogs } as unknown as ControlApi;
+
+    render(<LogsPanel api={api} teams={[{ id: "team-1", name: "Staging", description: "", metadata: null, config: null, created_at: "", updated_at: "" }]} />);
+    expect(await screen.findByText("GET /control/api/remember-invocations status 200")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Correlation ID"), "corr-1");
+    await user.type(screen.getByLabelText("Request hash"), "hash-1");
+    await user.type(screen.getByLabelText("Invocation ID"), "invocation-1");
+    await user.type(screen.getByLabelText("Attempt ID"), "attempt-1");
+    await user.selectOptions(screen.getByLabelText("Call classification"), "replay");
+    await user.selectOptions(screen.getByLabelText("Retryable"), "true");
+    await waitFor(() => expect(listOperationLogs).toHaveBeenLastCalledWith(expect.objectContaining({
+      correlation_id: "corr-1", request_hash: "hash-1", invocation_id: "invocation-1", attempt_id: "attempt-1",
+      classification: "replay", retryable: true, offset: 0,
+    })));
+    await user.click(screen.getByRole("button", { name: /View raw log/ }));
+    expect(screen.getByLabelText(/Raw log body/)).toHaveTextContent("delivery_stage");
   });
 });

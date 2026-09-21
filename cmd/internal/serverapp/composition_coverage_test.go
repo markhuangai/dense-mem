@@ -182,8 +182,8 @@ func TestRunMigrationControlRetirementStopsAtLogLevelAndDatabaseBoundaries(t *te
 	if err := RunMigrationControlRetirement(ctx); err == nil || !strings.Contains(err.Error(), "connect to postgres") {
 		t.Fatalf("database connection error = %v", err)
 	}
-	if slog.Default() == previousLogger {
-		t.Fatal("migration retirement did not install the root standard-log bridge")
+	if slog.Default() != previousLogger {
+		t.Fatal("migration retirement changed the process-global standard logger")
 	}
 }
 

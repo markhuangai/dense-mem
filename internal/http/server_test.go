@@ -552,7 +552,7 @@ func TestRequestLoggerDetachesCanceledContextForCompletion(t *testing.T) {
 	}
 }
 
-func TestContextLogHelpersFallbackForLegacyProviders(t *testing.T) {
+func TestContextLogHelpersRequireContextualProviders(t *testing.T) {
 	logger := &legacyLogProvider{}
 	ctx := context.Background()
 	httpcontract.LogInfoContext(ctx, logger, "info")
@@ -562,14 +562,8 @@ func TestContextLogHelpersFallbackForLegacyProviders(t *testing.T) {
 	httpcontract.LogInfoContext(ctx, nil, "ignored")
 
 	got := logger.levels
-	want := []string{"info", "error", "warn", "debug"}
-	if len(got) != len(want) {
-		t.Fatalf("legacy log levels = %#v, want %#v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("legacy log levels = %#v, want %#v", got, want)
-		}
+	if len(got) != 0 {
+		t.Fatalf("legacy provider received contextual logs = %#v", got)
 	}
 }
 

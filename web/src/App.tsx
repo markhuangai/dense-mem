@@ -25,6 +25,7 @@ import {
   Team,
   listControlIdentityProviders,
 } from "./api";
+import type { OperationLogQuery } from "./api";
 import { TeamCredentialsPanel } from "./control/TeamCredentialsPanel";
 import { TeamOverviewPanel, TeamWorkspaceShell } from "./control/TeamWorkspace";
 import type { TeamWorkspaceTab } from "./control/TeamWorkspace";
@@ -208,6 +209,7 @@ function Portal({
   const [creatingTeam, setCreatingTeam] = useState(false);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState("");
+  const [logsInitialQuery, setLogsInitialQuery] = useState<OperationLogQuery>({});
 
   async function loadTeams(nextSelectedId?: string) {
     setLoadState("loading");
@@ -407,6 +409,10 @@ function Portal({
                 activeTab={teamWorkspaceTab}
                 onSelectTab={openTeamWorkspace}
                 onOpenMetrics={() => setActiveTab("metrics")}
+                onOpenLogs={(query) => {
+                  setLogsInitialQuery(query ?? {});
+                  setActiveTab("logs");
+                }}
                 onUpdated={(team) => {
                   setTeams((current) => current.map((item) => (item.id === team.id ? team : item)));
                 }}
@@ -420,7 +426,7 @@ function Portal({
         {activeTab === "metrics" && <MetricsPanel api={api} teams={teams} />}
         {activeTab === "search" && <SearchConvergencePanel api={api} />}
         {activeTab === "recall-feedback" && <RecallFeedbackPanel api={api} teams={teams} />}
-        {activeTab === "logs" && <LogsPanel api={api} teams={teams} />}
+        {activeTab === "logs" && <LogsPanel api={api} teams={teams} initialQuery={logsInitialQuery} />}
         {activeTab === "security" && <SecurityPanel api={api} />}
         {activeTab === "sso" && <SSOPanel api={api} teams={teams} />}
         {activeTab === "config" && <ConfigPanel api={api} />}
@@ -564,6 +570,7 @@ function TeamWorkspace({
   activeTab,
   onSelectTab,
   onOpenMetrics,
+  onOpenLogs,
   onUpdated,
   onDeleted,
 }: {
@@ -572,6 +579,7 @@ function TeamWorkspace({
   activeTab: TeamWorkspaceTab;
   onSelectTab: (tab: TeamWorkspaceTab) => void;
   onOpenMetrics: () => void;
+  onOpenLogs: (query?: OperationLogQuery) => void;
   onUpdated: (team: Team) => void;
   onDeleted: () => void;
 }) {
@@ -581,7 +589,7 @@ function TeamWorkspace({
       {activeTab === "credentials" && <TeamCredentialsPanel api={api} team={team} embedded />}
       {activeTab === "remember-attempts" && (
         <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading Remember attempts" /></div>}>
-          <RememberAttemptsPanel api={api} team={team} />
+          <RememberAttemptsPanel api={api} team={team} onOpenLogs={onOpenLogs} />
         </Suspense>
       )}
       {activeTab === "conflicts" && (

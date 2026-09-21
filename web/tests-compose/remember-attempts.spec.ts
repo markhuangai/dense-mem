@@ -20,6 +20,8 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
   await expect(page.getByRole("heading", { name: "Teams" })).toBeVisible();
   await page.getByRole("button", { name: new RegExp(escapeRegExp(teamName)) }).click();
   await page.getByRole("button", { name: /team remember attempts/i }).click();
+  await expect(page.getByRole("heading", { name: "Remember Calls" })).toBeVisible();
+  await page.getByRole("button", { name: "Attempts", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Remember Attempts" })).toBeVisible();
   await page.getByLabel("Remember attempt outcome").selectOption("failed");
   await expect(page.locator(".remember-attempts-table")).toContainText("Provider Unavailable");

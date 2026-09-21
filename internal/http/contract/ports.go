@@ -54,9 +54,7 @@ func LogInfoContext(ctx context.Context, logger LogProvider, message string, att
 	}
 	if contextual, ok := logger.(ContextLogProvider); ok {
 		contextual.InfoContext(ctx, message, attrs...)
-		return
 	}
-	logger.Info(message, attrs...)
 }
 
 func LogErrorContext(ctx context.Context, logger LogProvider, message string, err error, attrs ...LogAttr) {
@@ -65,9 +63,7 @@ func LogErrorContext(ctx context.Context, logger LogProvider, message string, er
 	}
 	if contextual, ok := logger.(ContextLogProvider); ok {
 		contextual.ErrorContext(ctx, message, err, attrs...)
-		return
 	}
-	logger.Error(message, err, attrs...)
 }
 
 func LogWarnContext(ctx context.Context, logger LogProvider, message string, attrs ...LogAttr) {
@@ -76,9 +72,7 @@ func LogWarnContext(ctx context.Context, logger LogProvider, message string, att
 	}
 	if contextual, ok := logger.(ContextLogProvider); ok {
 		contextual.WarnContext(ctx, message, attrs...)
-		return
 	}
-	logger.Warn(message, attrs...)
 }
 
 func LogDebugContext(ctx context.Context, logger LogProvider, message string, attrs ...LogAttr) {
@@ -87,9 +81,7 @@ func LogDebugContext(ctx context.Context, logger LogProvider, message string, at
 	}
 	if contextual, ok := logger.(ContextLogProvider); ok {
 		contextual.DebugContext(ctx, message, attrs...)
-		return
 	}
-	logger.Debug(message, attrs...)
 }
 
 func String(key, value string) LogAttr { return LogAttr{Key: key, Value: value} }

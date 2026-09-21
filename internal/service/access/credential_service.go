@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"slices"
 	"strings"
@@ -258,7 +259,7 @@ func NewCredentialService(
 		teamService:        teamService,
 		auditService:       auditService,
 		sessionInvalidator: sessionInvalidator,
-		logger:             slog.Default(),
+		logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

@@ -219,6 +219,36 @@ func controlOperationLogsFilter(c echo.Context) (domain.OperationLogFilter, erro
 	if len(event) > 128 {
 		return domain.OperationLogFilter{}, httperr.New(httperr.VALIDATION_ERROR, "event must be at most 128 characters")
 	}
+	correlationID := strings.TrimSpace(c.QueryParam("correlation_id"))
+	if len(correlationID) > 128 {
+		return domain.OperationLogFilter{}, httperr.New(httperr.VALIDATION_ERROR, "correlation_id must be at most 128 characters")
+	}
+	invocationID := strings.TrimSpace(c.QueryParam("invocation_id"))
+	if len(invocationID) > 128 {
+		return domain.OperationLogFilter{}, httperr.New(httperr.VALIDATION_ERROR, "invocation_id must be at most 128 characters")
+	}
+	requestHash := strings.TrimSpace(c.QueryParam("request_hash"))
+	if len(requestHash) > 256 {
+		return domain.OperationLogFilter{}, httperr.New(httperr.VALIDATION_ERROR, "request_hash must be at most 256 characters")
+	}
+	attemptID := strings.TrimSpace(c.QueryParam("attempt_id"))
+	if len(attemptID) > 128 {
+		return domain.OperationLogFilter{}, httperr.New(httperr.VALIDATION_ERROR, "attempt_id must be at most 128 characters")
+	}
+	classification := strings.TrimSpace(c.QueryParam("classification"))
+	switch classification {
+	case "", "execution", "replay", "conflict":
+	default:
+		return domain.OperationLogFilter{}, httperr.New(httperr.VALIDATION_ERROR, "classification must be execution, replay, or conflict")
+	}
+	var retryable *bool
+	if raw := strings.TrimSpace(c.QueryParam("retryable")); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return domain.OperationLogFilter{}, httperr.New(httperr.VALIDATION_ERROR, "retryable must be true or false")
+		}
+		retryable = &parsed
+	}
 	referenceType := strings.TrimSpace(c.QueryParam("reference_type"))
 	if len(referenceType) > 64 {
 		return domain.OperationLogFilter{}, httperr.New(httperr.VALIDATION_ERROR, "reference_type must be at most 64 characters")
@@ -239,17 +269,23 @@ func controlOperationLogsFilter(c echo.Context) (domain.OperationLogFilter, erro
 		return domain.OperationLogFilter{}, httperr.New(httperr.VALIDATION_ERROR, "from must be before or equal to to")
 	}
 	return domain.OperationLogFilter{
-		Limit:         limit,
-		Offset:        offset,
-		Severity:      severity,
-		Sort:          sort,
-		Direction:     direction,
-		Event:         event,
-		TeamID:        teamID,
-		ReferenceType: referenceType,
-		ReferenceID:   referenceID,
-		From:          from,
-		To:            to,
+		Limit:          limit,
+		Offset:         offset,
+		Severity:       severity,
+		Sort:           sort,
+		Direction:      direction,
+		Event:          event,
+		CorrelationID:  correlationID,
+		InvocationID:   invocationID,
+		RequestHash:    requestHash,
+		AttemptID:      attemptID,
+		Classification: classification,
+		Retryable:      retryable,
+		TeamID:         teamID,
+		ReferenceType:  referenceType,
+		ReferenceID:    referenceID,
+		From:           from,
+		To:             to,
 	}, nil
 }
 

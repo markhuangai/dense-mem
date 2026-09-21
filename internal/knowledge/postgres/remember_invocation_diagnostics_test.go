@@ -50,3 +50,11 @@ func TestRememberInvocationExchangeEncodingRetainsAdmittedBodies(t *testing.T) {
 	require.Contains(t, exchanges[0].RequestBody, "admitted text")
 	require.Contains(t, exchanges[0].ResponseBody, "database unavailable")
 }
+
+func TestInvocationRetryableFilterValueUsesNullableBoolean(t *testing.T) {
+	require.Nil(t, invocationRetryableFilterValue(nil))
+	value := true
+	require.Equal(t, true, invocationRetryableFilterValue(&value))
+	value = false
+	require.Equal(t, false, invocationRetryableFilterValue(&value))
+}
