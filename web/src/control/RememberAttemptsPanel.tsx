@@ -227,7 +227,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
           setSelectedInvocationID(id);
           void loadInvocationDetail(id);
         }}
-        onOpenLogs={(query) => onOpenLogs?.(query)}
+        onOpenLogs={onOpenLogs}
         onOpenAttempt={(attemptID) => {
           selectAttempt(attemptID);
           selectView("attempts", attemptID);
@@ -343,7 +343,7 @@ function RememberCallsView({
   onSelectView: (view: "calls" | "attempts") => void;
   onRefresh: () => void;
   onSelect: (id: string) => void;
-  onOpenLogs: (query: OperationLogQuery) => void;
+  onOpenLogs?: (query: OperationLogQuery) => void;
   onOpenAttempt: (id: string) => void;
   onPrevious: () => void;
   onNext: () => void;
@@ -378,7 +378,7 @@ function RememberCallsView({
                   <td><span className={attemptOutcomeClass(item.outcome)}>{outcomeLabel(item.outcome)}</span></td>
                   <td><span>{item.failed_phase ? outcomeLabel(item.failed_phase) : "Completed"}</span>{item.error_code && <small className="table-subline">{outcomeLabel(item.error_code)}</small>}</td>
                   <td><code>{item.correlation_id || "No correlation"}</code><small className="table-subline">{item.canonical_attempt_id ? <button className="text-button" type="button" onClick={() => onOpenAttempt(item.canonical_attempt_id as string)}>Attempt {shortId(item.canonical_attempt_id)}</button> : "No canonical attempt"}</small></td>
-                  <td><button className="text-button" type="button" aria-label={`Inspect Remember call ${item.invocation_id}`} onClick={() => onSelect(item.invocation_id)}>Inspect <ArrowRight size={14} aria-hidden="true" /></button></td>
+                  <td><button className="text-button" type="button" disabled={loading} aria-label={`Inspect Remember call ${item.invocation_id}`} onClick={() => onSelect(item.invocation_id)}>Inspect <ArrowRight size={14} aria-hidden="true" /></button></td>
                 </tr>
               ))}</tbody>
             </table>
@@ -395,7 +395,7 @@ function RememberCallsView({
   );
 }
 
-function RememberInvocationDetailView({ detail, onOpenLogs }: { detail: RememberInvocationDiagnosticDetail; onOpenLogs: (query: OperationLogQuery) => void }) {
+function RememberInvocationDetailView({ detail, onOpenLogs }: { detail: RememberInvocationDiagnosticDetail; onOpenLogs?: (query: OperationLogQuery) => void }) {
   const deliveryState = detail.caller_response_capture_state || "unknown";
   const deliveryStage = detail.delivery_stage === "unknown_receipt" ? "" : detail.delivery_stage;
   return (
@@ -413,9 +413,9 @@ function RememberInvocationDetailView({ detail, onOpenLogs }: { detail: Remember
       </div>
       <section className="remember-diagnostics" aria-label="Remember call captures">
         {detail.enrichment_unavailable && <div className="banner warning" role="status">Related operation-log context is unavailable; cause and delivery details may be incomplete.</div>}
-        <div className="button-row">
+        {onOpenLogs && <div className="button-row">
           <button className="ghost-button" type="button" onClick={() => onOpenLogs({ team_id: detail.team_id, correlation_id: detail.correlation_id, invocation_id: detail.invocation_id })}>View related logs</button>
-        </div>
+        </div>}
         <h3>Original request</h3>
         {detail.request_capture_state === "expired" ? <DiagnosticUnavailable message="This request capture expired and its body is no longer available." /> : detail.request_body ? <><DiagnosticBody label="Request body" content={detail.request_body} />{detail.request_capture_state === "truncated" && <DiagnosticUnavailable message={TRUNCATED_CAPTURE_MESSAGE} />}</> : <DiagnosticUnavailable message={`Request capture is ${detail.request_capture_state || "unavailable"}.`} />}
         <h3>AI provider exchanges</h3>
