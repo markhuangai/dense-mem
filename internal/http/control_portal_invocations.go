@@ -104,15 +104,28 @@ func (h *controlPortalHandler) enrichRememberInvocationDiagnostic(ctx context.Co
 	}
 	invocationLogs := read(domain.OperationLogFilter{TeamID: &teamID, InvocationID: detail.InvocationID})
 	enrichRememberInvocationFromInvocationLogs(detail, invocationLogs)
-	enrichRememberInvocationFromTransportLogs(detail, invocationLogs)
+	completionObserved := rememberInvocationCompletionObserved(detail.InvocationID, invocationLogs)
+	transportObserved := enrichRememberInvocationFromTransportLogs(detail, invocationLogs)
 	if (detail.DeliveryStage == "" || detail.DeliveryStage == "unknown_receipt") && strings.TrimSpace(detail.CorrelationID) != "" {
 		transportLogs = read(domain.OperationLogFilter{TeamID: &teamID, CorrelationID: detail.CorrelationID})
-		enrichRememberInvocationFromTransportLogs(detail, transportLogs)
+		transportObserved = enrichRememberInvocationFromTransportLogs(detail, transportLogs) || transportObserved
 	}
-	if len(invocationLogs) == 0 && len(transportLogs) == 0 {
+	if !completionObserved || (strings.TrimSpace(detail.CorrelationID) != "" && !transportObserved) {
 		enrichmentUnavailable = true
 	}
 	detail.EnrichmentUnavailable = enrichmentUnavailable
+}
+
+func rememberInvocationCompletionObserved(invocationID string, logs []domain.OperationLog) bool {
+	for _, log := range logs {
+		if log.Message != "remember_invocation_completed" {
+			continue
+		}
+		if loggedInvocationID, ok := log.Attrs["invocation_id"].(string); ok && strings.TrimSpace(loggedInvocationID) == invocationID {
+			return true
+		}
+	}
+	return false
 }
 
 func enrichRememberInvocationFromInvocationLogs(detail *rememberapp.RememberInvocationDiagnosticDetail, logs []domain.OperationLog) {
@@ -133,7 +146,7 @@ func enrichRememberInvocationFromInvocationLogs(detail *rememberapp.RememberInvo
 	}
 }
 
-func enrichRememberInvocationFromTransportLogs(detail *rememberapp.RememberInvocationDiagnosticDetail, logs []domain.OperationLog) {
+func enrichRememberInvocationFromTransportLogs(detail *rememberapp.RememberInvocationDiagnosticDetail, logs []domain.OperationLog) bool {
 	for _, log := range logs {
 		if log.Message != "http_request" && log.Message != "control_http_request" {
 			continue
@@ -145,10 +158,11 @@ func enrichRememberInvocationFromTransportLogs(detail *rememberapp.RememberInvoc
 		if invocationID, ok := log.Attrs["invocation_id"].(string); ok && strings.TrimSpace(invocationID) != "" {
 			if invocationID == detail.InvocationID {
 				detail.DeliveryStage = stage
-				return
+				return true
 			}
 		}
 	}
+	return false
 }
 
 func controlRememberInvocationDiagnosticFilter(c echo.Context) (rememberapp.RememberInvocationDiagnosticFilter, error) {

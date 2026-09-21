@@ -190,6 +190,33 @@ func TestInvocationDetailUsesExactInvocationAndSameTeamTransportRows(t *testing.
 	require.False(t, detail.EnrichmentUnavailable)
 }
 
+func TestInvocationDetailMarksPartialLogEnrichmentUnavailable(t *testing.T) {
+	teamID := uuid.New()
+	invocationID := uuid.New()
+	correlationID := "partial-correlation"
+	detail := &rememberapp.RememberInvocationDiagnosticDetail{
+		RememberInvocationDiagnosticSummary: rememberapp.RememberInvocationDiagnosticSummary{
+			TeamID: teamID.String(), InvocationID: invocationID.String(), CorrelationID: correlationID,
+		},
+	}
+	h := &controlPortalHandler{
+		rememberInvocations: &invocationReaderStub{detail: detail},
+		operationLogs: &invocationLogReaderStub{rows: []domain.OperationLog{
+			{Message: "http_request", CorrelationID: correlationID, Attrs: map[string]any{
+				"invocation_id": invocationID.String(), "delivery_stage": "write_observed",
+			}},
+		}},
+	}
+	e := echo.New()
+	ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), httptest.NewRecorder())
+	ctx.SetParamNames("teamId", "invocationId")
+	ctx.SetParamValues(teamID.String(), invocationID.String())
+
+	require.NoError(t, h.getRememberInvocationDiagnostic(ctx))
+	require.Equal(t, "write_observed", detail.DeliveryStage)
+	require.True(t, detail.EnrichmentUnavailable)
+}
+
 func TestInvocationDetailSurfacesEnrichmentUnavailable(t *testing.T) {
 	teamID := uuid.New()
 	invocationID := uuid.New()
