@@ -1,4 +1,5 @@
 name: Release prerelease
+run-name: "Release prerelease: ${{ github.event.workflow_run.head_sha }}"
 
 on:
   workflow_run:
@@ -190,6 +191,29 @@ jobs:
                 prerelease: true,
               });
             }
+
+  no-release:
+    name: No prerelease required
+    needs:
+      - classify-release
+      - prepare-prerelease
+    if: >-
+      ${{
+        always() &&
+        needs.classify-release.result == 'success' &&
+        (
+          needs.classify-release.outputs.should_release == 'false' ||
+          (
+            needs.prepare-prerelease.result == 'success' &&
+            needs.prepare-prerelease.outputs.should_publish == 'false'
+          )
+        )
+      }}
+    permissions: {}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record explicit no-release decision
+        run: echo "The release classifier selected no prerelease publication for this revision."
 
   resolve-production-source:
     name: Resolve production image source
