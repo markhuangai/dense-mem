@@ -78,6 +78,76 @@ describe("RememberAttemptsPanel", () => {
     expect(await screen.findByText("new-request")).toBeInTheDocument();
   });
 
+  it("resets to Calls when the team changes while Attempts is active", async () => {
+    const invocation = {
+      team_id: "team-1", owner_profile_id: "owner-1", invocation_id: "call-1", canonical_attempt_id: "",
+      request_hash: "hash-1", correlation_id: "corr-1", classification: "execution", outcome: "completed",
+      phase: "commit", protected_cause: "", delivery_stage: "write_observed", retryable: false,
+      duration_ms: 3, created_at: "2026-08-18T01:00:00Z", expires_at: "2026-08-25T01:00:00Z", retained_by_legal_hold: false,
+    } as const;
+    const listRememberInvocationDiagnostics = vi.fn().mockImplementation(({ team_id }: { team_id: string }) => Promise.resolve({
+      data: [{ ...invocation, team_id, invocation_id: `${team_id}-call` }], pagination: { limit: 50, offset: 0, total: 1 },
+    }));
+    const listRememberAttemptDiagnostics = vi.fn().mockResolvedValue({ data: [summary("attempt-1")], pagination: { limit: 50, offset: 0, total: 1 } });
+    const api = {
+      listRememberInvocationDiagnostics,
+      getRememberInvocationDiagnostic: vi.fn().mockResolvedValue({ ...invocation, request_capture_state: "captured", provider_exchanges: [], caller_response_capture_state: "captured" }),
+      listRememberAttemptDiagnostics,
+      getRememberAttemptDiagnostic: vi.fn().mockResolvedValue(detailFor("attempt-1")),
+    } as unknown as ControlApi;
+
+    const { rerender } = render(<RememberAttemptsPanel api={api} team={team()} />);
+    await screen.findByRole("heading", { name: "Remember Calls" });
+    await userEvent.click(screen.getByRole("button", { name: /^Attempts$/ }));
+    expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
+    rerender(<RememberAttemptsPanel api={api} team={{ ...team(), id: "team-2" }} />);
+    expect(await screen.findByRole("heading", { name: "Remember Calls" })).toBeInTheDocument();
+  });
+
+  it("preserves an explicitly linked canonical attempt during lazy loading", async () => {
+    const invocation = {
+      team_id: "team-1", owner_profile_id: "owner-1", invocation_id: "call-1", canonical_attempt_id: "attempt-51",
+      request_hash: "hash-1", correlation_id: "corr-1", classification: "replay", outcome: "replayed",
+      phase: "replay", protected_cause: "", delivery_stage: "write_observed", retryable: false,
+      duration_ms: 3, created_at: "2026-08-18T01:00:00Z", expires_at: "2026-08-25T01:00:00Z", retained_by_legal_hold: false,
+    } as const;
+    const listRememberAttemptDiagnostics = vi.fn().mockResolvedValue({ data: [summary("attempt-1"), summary("attempt-2")], pagination: { limit: 50, offset: 0, total: 51 } });
+    const getRememberAttemptDiagnostic = vi.fn().mockImplementation((_teamID: string, attemptID: string) => Promise.resolve(detailFor(attemptID)));
+    const api = {
+      listRememberInvocationDiagnostics: vi.fn().mockResolvedValue({ data: [invocation], pagination: { limit: 50, offset: 0, total: 1 } }),
+      getRememberInvocationDiagnostic: vi.fn().mockResolvedValue({ ...invocation, request_capture_state: "captured", provider_exchanges: [], caller_response_capture_state: "captured" }),
+      listRememberAttemptDiagnostics,
+      getRememberAttemptDiagnostic,
+    } as unknown as ControlApi;
+
+    render(<RememberAttemptsPanel api={api} team={team()} />);
+    await screen.findByRole("button", { name: /Attempt attempt-/ });
+    await userEvent.click(screen.getByRole("button", { name: /Attempt attempt-/ }));
+    expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
+    await screen.findByText("attempt-51");
+    expect(getRememberAttemptDiagnostic).toHaveBeenLastCalledWith("team-1", "attempt-51");
+  });
+
+  it("warns when top-level invocation bodies are truncated", async () => {
+    const invocation = {
+      team_id: "team-1", owner_profile_id: "owner-1", invocation_id: "truncated-call", canonical_attempt_id: "",
+      request_hash: "hash-1", correlation_id: "corr-1", classification: "execution", outcome: "failed",
+      phase: "assessment", protected_cause: "", delivery_stage: "write_observed", retryable: true,
+      duration_ms: 3, created_at: "2026-08-18T01:00:00Z", expires_at: "2026-08-25T01:00:00Z", retained_by_legal_hold: false,
+    } as const;
+    const api = {
+      listRememberInvocationDiagnostics: vi.fn().mockResolvedValue({ data: [invocation], pagination: { limit: 50, offset: 0, total: 1 } }),
+      getRememberInvocationDiagnostic: vi.fn().mockResolvedValue({
+        ...invocation, request_body: "truncated-request", request_capture_state: "truncated",
+        provider_exchanges: [], caller_response: "truncated-response", caller_response_capture_state: "truncated",
+      }),
+    } as unknown as ControlApi;
+
+    render(<RememberAttemptsPanel api={api} team={team()} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Inspect Remember call truncated-call" }));
+    expect(await screen.findAllByText("The capture exceeded the diagnostic size limit; the displayed body is truncated.")).toHaveLength(2);
+  });
+
   it("clears prior-team calls and ignores late list and detail responses", async () => {
     let resolveTeamOneList!: (value: unknown) => void;
     let resolveTeamOneDetail!: (value: unknown) => void;

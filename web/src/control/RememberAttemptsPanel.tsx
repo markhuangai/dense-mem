@@ -17,6 +17,7 @@ import { formatCount, formatDate, readError, shortId } from "./utils";
 
 const OUTCOMES = ["", "completed", "rejected", "quarantined", "failed", "replayed"] as const;
 const PAGE_SIZE = 50;
+const TRUNCATED_CAPTURE_MESSAGE = "The capture exceeded the diagnostic size limit; the displayed body is truncated.";
 
 export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlApi; team: Team; onOpenLogs?: (query: OperationLogQuery) => void }) {
   const [items, setItems] = useState<RememberAttemptDiagnosticSummary[]>([]);
@@ -105,14 +106,16 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
     setSelectedID(attemptID);
   }
 
-  function selectView(nextView: "calls" | "attempts") {
+  function selectView(nextView: "calls" | "attempts", preferredAttemptID?: string) {
     setView(nextView);
     if (nextView === "attempts" && !attemptsLoadedRef.current) {
-      void loadAttempts(outcome, offset);
+      void loadAttempts(outcome, offset, preferredAttemptID);
+    } else if (nextView === "attempts" && preferredAttemptID) {
+      void loadDetail(preferredAttemptID);
     }
   }
 
-  async function loadAttempts(nextOutcome = outcome, nextOffset = offset) {
+  async function loadAttempts(nextOutcome = outcome, nextOffset = offset, preferredAttemptID?: string) {
     const requestID = ++listRequestRef.current;
     detailRequestRef.current += 1;
     setDetail(null);
@@ -131,10 +134,9 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
       setTotal(page.pagination.total);
       setOffset(page.pagination.offset);
       attemptsLoadedRef.current = true;
-      const currentSelected = selectedIDRef.current;
-      const nextSelected = page.data.some((item) => item.attempt_id === currentSelected)
-        ? currentSelected
-        : page.data[0]?.attempt_id ?? "";
+      const currentSelected = preferredAttemptID ?? selectedIDRef.current;
+      const nextSelected = preferredAttemptID
+        || (page.data.some((item) => item.attempt_id === currentSelected) ? currentSelected : page.data[0]?.attempt_id ?? "");
       selectAttempt(nextSelected);
       if (nextSelected) {
         void loadDetail(nextSelected);
@@ -169,6 +171,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
     invocationListRequestRef.current += 1;
     invocationDetailRequestRef.current += 1;
     attemptsLoadedRef.current = false;
+    setView("calls");
     setInvocations([]);
     setInvocationTotal(0);
     setInvocationOffset(0);
@@ -210,9 +213,8 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
         }}
         onOpenLogs={(query) => onOpenLogs?.(query)}
         onOpenAttempt={(attemptID) => {
-          selectView("attempts");
           selectAttempt(attemptID);
-          void loadDetail(attemptID);
+          selectView("attempts", attemptID);
         }}
         onPrevious={() => void loadInvocations(Math.max(0, invocationOffset - PAGE_SIZE))}
         onNext={() => void loadInvocations(invocationOffset + PAGE_SIZE)}
@@ -397,11 +399,11 @@ function RememberInvocationDetailView({ detail, onOpenLogs }: { detail: Remember
           <button className="ghost-button" type="button" onClick={() => onOpenLogs({ team_id: detail.team_id, correlation_id: detail.correlation_id })}>View related logs</button>
         </div>
         <h3>Original request</h3>
-        {detail.request_capture_state === "expired" ? <DiagnosticUnavailable message="This request capture expired and its body is no longer available." /> : detail.request_body ? <DiagnosticBody label="Request body" content={detail.request_body} /> : <DiagnosticUnavailable message={`Request capture is ${detail.request_capture_state || "unavailable"}.`} />}
+        {detail.request_capture_state === "expired" ? <DiagnosticUnavailable message="This request capture expired and its body is no longer available." /> : detail.request_body ? <><DiagnosticBody label="Request body" content={detail.request_body} />{detail.request_capture_state === "truncated" && <DiagnosticUnavailable message={TRUNCATED_CAPTURE_MESSAGE} />}</> : <DiagnosticUnavailable message={`Request capture is ${detail.request_capture_state || "unavailable"}.`} />}
         <h3>AI provider exchanges</h3>
         {detail.provider_exchanges.length === 0 ? <DiagnosticUnavailable message="No provider exchange was captured for this call." /> : detail.provider_exchanges.map((exchange) => <DiagnosticExchange exchange={{ ...exchange, diagnostic_id: exchange.diagnostic_id || `${exchange.sequence_no}:${exchange.component}`, captured_at: exchange.captured_at || detail.created_at, expires_at: exchange.expires_at || detail.expires_at, retained_by_legal_hold: detail.retained_by_legal_hold } as RememberDiagnosticExchange} key={`${exchange.sequence_no}:${exchange.diagnostic_id || exchange.component}`} />)}
         <h3>Caller response</h3>
-        {detail.caller_response ? <DiagnosticBody label="Captured response (Caller receipt unknown)" content={detail.caller_response} /> : <DiagnosticUnavailable message={`Caller response capture is ${deliveryState || "unknown"}; receipt is not inferred.`} />}
+        {detail.caller_response ? <><DiagnosticBody label="Captured response (Caller receipt unknown)" content={detail.caller_response} />{detail.caller_response_capture_state === "truncated" && <DiagnosticUnavailable message={TRUNCATED_CAPTURE_MESSAGE} />}</> : <DiagnosticUnavailable message={`Caller response capture is ${deliveryState || "unknown"}; receipt is not inferred.`} />}
       </section>
     </section>
   );
@@ -540,7 +542,7 @@ function DiagnosticExchange({ exchange, requestOnly = false, responseOnly = fals
           {state === "no_response" && <DiagnosticUnavailable message="The provider call did not produce an HTTP response." />}
           {state === "interrupted" && <DiagnosticUnavailable message="Capture was interrupted before the provider response was fully read." />}
           {state === "not_delivered" && <DiagnosticUnavailable message="No response was delivered to the caller because the request ended before the server could return it." />}
-          {state === "truncated" && <DiagnosticUnavailable message="The capture exceeded the diagnostic size limit; the displayed body is truncated." />}
+          {state === "truncated" && <DiagnosticUnavailable message={TRUNCATED_CAPTURE_MESSAGE} />}
         </>
       )}
     </article>
