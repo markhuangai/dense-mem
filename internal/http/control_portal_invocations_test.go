@@ -165,7 +165,7 @@ func TestInvocationDetailUsesExactInvocationAndSameTeamTransportRows(t *testing.
 		{Message: "remember_invocation_completed", CorrelationID: correlationID, Attrs: map[string]any{"invocation_id": invocationID.String(), "phase": "replay"}, Error: "protected-cause"},
 		{Message: "remember_invocation_completed", CorrelationID: correlationID, Attrs: map[string]any{"invocation_id": invocationID.String(), "phase": "assessment"}, Error: "older-cause"},
 		{Message: "remember_invocation_completed", CorrelationID: correlationID, Attrs: map[string]any{"invocation_id": uuid.NewString(), "phase": "wrong-phase"}, Error: "wrong-cause"},
-		{Message: "http_request", CorrelationID: correlationID, Attrs: map[string]any{"delivery_stage": "write_observed"}},
+		{Message: "http_request", CorrelationID: correlationID, Attrs: map[string]any{"invocation_id": invocationID.String(), "delivery_stage": "write_observed"}},
 	}}
 	h := &controlPortalHandler{
 		rememberInvocations: &invocationReaderStub{detail: &rememberapp.RememberInvocationDiagnosticDetail{
@@ -228,6 +228,29 @@ func TestInvocationDetailLeavesDeliveryStageUnknownForAmbiguousCorrelation(t *te
 	h := &controlPortalHandler{
 		rememberInvocations: &invocationReaderStub{detail: detail},
 		operationLogs:       logs,
+	}
+	e := echo.New()
+	ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), httptest.NewRecorder())
+	ctx.SetParamNames("teamId", "invocationId")
+	ctx.SetParamValues(teamID.String(), invocationID.String())
+	require.NoError(t, h.getRememberInvocationDiagnostic(ctx))
+	require.Equal(t, "unknown_receipt", detail.DeliveryStage)
+}
+
+func TestInvocationDetailLeavesDeliveryStageUnknownForCorrelationOnlyTransportRow(t *testing.T) {
+	teamID := uuid.New()
+	invocationID := uuid.New()
+	correlationID := "reused-correlation"
+	detail := &rememberapp.RememberInvocationDiagnosticDetail{
+		RememberInvocationDiagnosticSummary: rememberapp.RememberInvocationDiagnosticSummary{
+			TeamID: teamID.String(), InvocationID: invocationID.String(), CorrelationID: correlationID, DeliveryStage: "unknown_receipt",
+		},
+	}
+	h := &controlPortalHandler{
+		rememberInvocations: &invocationReaderStub{detail: detail},
+		operationLogs: &invocationLogReaderStub{rows: []domain.OperationLog{
+			{Message: "http_request", CorrelationID: correlationID, Attrs: map[string]any{"delivery_stage": "write_observed"}},
+		}},
 	}
 	e := echo.New()
 	ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), httptest.NewRecorder())

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ControlApi } from "../api";
@@ -172,5 +172,28 @@ describe("LogsPanel", () => {
     })));
     await user.click(screen.getByRole("button", { name: /View raw log/ }));
     expect(screen.getByLabelText(/Raw log body/)).toHaveTextContent("delivery_stage");
+  });
+
+  it("debounces free-text identity filters", async () => {
+    vi.useFakeTimers();
+    try {
+      const listOperationLogs = vi.fn().mockResolvedValue({
+        data: [],
+        pagination: { limit: 100, offset: 0, total: 0 },
+      });
+      const api = { listOperationLogs } as unknown as ControlApi;
+
+      render(<LogsPanel api={api} teams={[]} />);
+      fireEvent.change(screen.getByLabelText("Correlation ID"), { target: { value: "corr" } });
+      expect(listOperationLogs).toHaveBeenCalledTimes(1);
+
+      act(() => vi.advanceTimersByTime(299));
+      expect(listOperationLogs).toHaveBeenCalledTimes(1);
+      act(() => vi.advanceTimersByTime(1));
+      expect(listOperationLogs).toHaveBeenCalledTimes(2);
+      expect(listOperationLogs).toHaveBeenLastCalledWith(expect.objectContaining({ correlation_id: "corr", offset: 0 }));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

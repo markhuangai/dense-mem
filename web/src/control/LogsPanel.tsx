@@ -42,6 +42,7 @@ const DETAIL_KEYS = [
 ];
 const RAW_DUPLICATE_KEYS = new Set(["time", "timestamp", "level", "severity", "msg", "message"]);
 const EMPTY_LOG_QUERY: OperationLogQuery = {};
+const FREE_TEXT_FILTER_DEBOUNCE_MS = 300;
 
 export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api: ControlApi; teams: Team[]; initialQuery?: OperationLogQuery }) {
   const [logs, setLogs] = useState<OperationLog[]>([]);
@@ -51,8 +52,17 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
   const [error, setError] = useState("");
   const [expandedLogId, setExpandedLogId] = useState("");
   const requestSeqRef = useRef(0);
+  const freeTextFilterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function clearFreeTextFilterTimer() {
+    if (freeTextFilterTimerRef.current !== null) {
+      clearTimeout(freeTextFilterTimerRef.current);
+      freeTextFilterTimerRef.current = null;
+    }
+  }
 
   async function loadLogs(nextQuery = query) {
+    clearFreeTextFilterTimer();
     const requestSeq = requestSeqRef.current + 1;
     requestSeqRef.current = requestSeq;
     setLoading(true);
@@ -77,9 +87,20 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
     }
   }
 
+  function scheduleFreeTextLoad(nextQuery: OperationLogQuery) {
+    clearFreeTextFilterTimer();
+    requestSeqRef.current += 1;
+    freeTextFilterTimerRef.current = setTimeout(() => {
+      freeTextFilterTimerRef.current = null;
+      void loadLogs(nextQuery);
+    }, FREE_TEXT_FILTER_DEBOUNCE_MS);
+  }
+
   useEffect(() => {
     void loadLogs({ limit: 100, offset: 0, sort: "timestamp", direction: "desc", ...initialQuery });
   }, [initialQuery]);
+
+  useEffect(() => clearFreeTextFilterTimer, []);
 
   const teamNames = new Map(teams.map((team) => [team.id, team.name]));
   const offset = query.offset ?? 0;
@@ -151,7 +172,7 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
             onChange={(event) => {
               const next = { ...query, correlation_id: event.target.value, offset: 0 };
               setQuery(next);
-              void loadLogs(next);
+              scheduleFreeTextLoad(next);
             }}
           />
         </label>
@@ -163,7 +184,7 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
             onChange={(event) => {
               const next = { ...query, request_hash: event.target.value, offset: 0 };
               setQuery(next);
-              void loadLogs(next);
+              scheduleFreeTextLoad(next);
             }}
           />
         </label>
@@ -175,7 +196,7 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
             onChange={(event) => {
               const next = { ...query, invocation_id: event.target.value, offset: 0 };
               setQuery(next);
-              void loadLogs(next);
+              scheduleFreeTextLoad(next);
             }}
           />
         </label>
@@ -187,7 +208,7 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
             onChange={(event) => {
               const next = { ...query, attempt_id: event.target.value, offset: 0 };
               setQuery(next);
-              void loadLogs(next);
+              scheduleFreeTextLoad(next);
             }}
           />
         </label>

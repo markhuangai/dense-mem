@@ -129,7 +129,6 @@ func enrichRememberInvocationFromInvocationLogs(detail *rememberapp.RememberInvo
 }
 
 func enrichRememberInvocationFromTransportLogs(detail *rememberapp.RememberInvocationDiagnosticDetail, logs []domain.OperationLog) {
-	var correlationOnlyStages []string
 	for _, log := range logs {
 		if log.Message != "http_request" && log.Message != "control_http_request" {
 			continue
@@ -143,12 +142,7 @@ func enrichRememberInvocationFromTransportLogs(detail *rememberapp.RememberInvoc
 				detail.DeliveryStage = stage
 				return
 			}
-			continue
 		}
-		correlationOnlyStages = append(correlationOnlyStages, stage)
-	}
-	if len(correlationOnlyStages) == 1 {
-		detail.DeliveryStage = correlationOnlyStages[0]
 	}
 }
 

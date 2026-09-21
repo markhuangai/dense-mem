@@ -217,13 +217,17 @@ func rememberInvocationDiagnosticDetail(record knowledgecontract.RememberInvocat
 		ProviderExchanges:           make([]RememberInvocationDiagnosticExchange, 0, len(record.ProviderExchanges)),
 	}
 	for _, exchange := range record.ProviderExchanges {
+		capturedAt := exchange.CapturedAt
+		if capturedAt.IsZero() {
+			capturedAt = record.CreatedAt
+		}
 		result.ProviderExchanges = append(result.ProviderExchanges, RememberInvocationDiagnosticExchange{
 			DiagnosticID: exchange.DiagnosticID, SequenceNo: exchange.SequenceNo, Kind: exchange.Kind,
 			Component: exchange.Component, Model: exchange.Model, RequestBody: string(exchange.RequestBody),
 			ResponseBody: string(exchange.ResponseBody), RequestContentType: exchange.RequestContentType,
 			ResponseContentType: exchange.ResponseContentType, StatusCode: exchange.StatusCode,
 			Outcome: exchange.Outcome, CaptureState: exchange.CaptureState, CaptureReason: exchange.CaptureReason,
-			CapturedAt: exchange.CapturedAt.UTC(), ExpiresAt: exchange.ExpiresAt.UTC(),
+			CapturedAt: capturedAt.UTC(), ExpiresAt: record.ExpiresAt.UTC(),
 		})
 	}
 	return result

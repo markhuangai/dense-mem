@@ -35,13 +35,15 @@ func (s *invocationDiagnosticsRepoStub) GetRememberInvocationDiagnostic(context.
 }
 
 func TestRememberInvocationDiagnosticsProjectsBoundedListAndDetail(t *testing.T) {
+	createdAt := time.Date(2026, 8, 18, 1, 0, 0, 0, time.UTC)
+	expiresAt := createdAt.Add(24 * time.Hour)
 	repo := &invocationDiagnosticsRepoStub{page: &knowledgecontract.RememberInvocationDiagnosticRecordPage{
 		Total: 1,
 		Records: []knowledgecontract.RememberInvocationDiagnosticRecord{{
 			TeamID: "00000000-0000-4000-8000-000000000001", OwnerProfileID: "00000000-0000-4000-8000-000000000002",
 			InvocationID: "00000000-0000-4000-8000-000000000003", RequestHash: "hash", Classification: "replay", Outcome: "replayed",
-			Retryable: true, CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour),
-			RequestBody: []byte(`{"secret":"admitted"}`), ProviderExchanges: []knowledgecontract.RememberAttemptDiagnosticInput{{SequenceNo: 1, Kind: "provider_exchange", Component: "assessor", ResponseBody: []byte(`{"status":200}`)}},
+			Retryable: true, CreatedAt: createdAt, ExpiresAt: expiresAt,
+			RequestBody: []byte(`{"secret":"admitted"}`), ProviderExchanges: []knowledgecontract.RememberAttemptDiagnosticInput{{SequenceNo: 1, Kind: "provider_exchange", Component: "assessor", ResponseBody: []byte(`{"status":200}`), ExpiresAt: createdAt.Add(7 * 24 * time.Hour)}},
 		}},
 	}}
 	service := NewRememberInvocationDiagnosticsService(repo)
@@ -60,6 +62,8 @@ func TestRememberInvocationDiagnosticsProjectsBoundedListAndDetail(t *testing.T)
 	require.Equal(t, "unknown_receipt", detail.DeliveryStage)
 	require.Contains(t, detail.RequestBody, "admitted")
 	require.Len(t, detail.ProviderExchanges, 1)
+	require.Equal(t, createdAt, detail.ProviderExchanges[0].CapturedAt)
+	require.Equal(t, expiresAt, detail.ProviderExchanges[0].ExpiresAt)
 }
 
 func boolPtr(value bool) *bool { return &value }
