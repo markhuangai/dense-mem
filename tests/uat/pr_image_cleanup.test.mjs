@@ -83,6 +83,22 @@ test("released image metadata permits cleanup when the release receipt is not av
     eligible: true,
     reason: "verified prerelease image metadata",
   });
+  assert.deepEqual(policy.cleanupEligibility({ pull, release: null, allowLegacy: true }), {
+    eligible: true,
+    reason: "explicit legacy cleanup override",
+  });
+  assert.equal(policy.cleanupEligibility({
+    pull,
+    release: {
+      run: {
+        name: "Release prerelease",
+        display_title: `Release prerelease: ${pull.merge_commit_sha}`,
+        conclusion: "failure",
+      },
+      jobs: [],
+    },
+    allowLegacy: true,
+  }).eligible, false);
 });
 
 test("released-image detection requires a matching revision and prerelease tag", () => {
@@ -587,6 +603,16 @@ test("batch limits fail closed", () => {
     total: 3,
     allowed: false,
   });
+  assert.deepEqual(policy.aggregateBatch({
+    plans: [
+      { actions: [{}, {}], blocked: [{ reason: "retained child" }], cost: 2 },
+      { actions: [{}], blocked: [], cost: 1 },
+    ],
+    maxActions: 1,
+  }), {
+    total: 1,
+    allowed: true,
+  });
 });
 
 test("workflow is trusted, event-fenced, dry-run capable, and registered in CI", async () => {
@@ -605,12 +631,14 @@ test("workflow is trusted, event-fenced, dry-run capable, and registered in CI",
   assert.doesNotMatch(workflow, /workflow_dispatch:/);
   assert.match(request, /workflow_dispatch:/);
   assert.match(request, /default: true/);
+  assert.match(request, /allow_legacy:/);
   assert.doesNotMatch(request, /packages: write/);
   assert.match(workflow, /packages: write/);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /ref: main/);
   assert.match(workflow, /REGCTL_SHA256/);
   assert.match(workflow, /CLEANUP_BATCH_LIMIT: "200"/);
+  assert.match(workflow, /CLEANUP_ALLOW_LEGACY/);
   assert.match(workflow, /timeout-minutes: 100/);
   assert.match(workflow, /triggering_actor/);
   assert.match(workflow, /github\.triggering_actor/);

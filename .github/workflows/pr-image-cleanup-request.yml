@@ -12,6 +12,11 @@ on:
         required: true
         default: true
         type: boolean
+      allow_legacy:
+        description: "Allow a destructive single-PR cleanup when no historical release receipt exists"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -27,6 +32,7 @@ jobs:
         env:
           REQUEST_PR_NUMBER: ${{ inputs.pr_number }}
           REQUEST_DRY_RUN: ${{ inputs.dry_run }}
+          REQUEST_ALLOW_LEGACY: ${{ inputs.allow_legacy }}
         run: |
           set -euo pipefail
           if [[ -n "${REQUEST_PR_NUMBER}" && ! "${REQUEST_PR_NUMBER}" =~ ^[1-9][0-9]*$ ]]; then
@@ -37,11 +43,20 @@ jobs:
             true|false) ;;
             *) echo "::error::dry_run must be true or false"; exit 1 ;;
           esac
+          case "${REQUEST_ALLOW_LEGACY}" in
+            true|false) ;;
+            *) echo "::error::allow_legacy must be true or false"; exit 1 ;;
+          esac
+          if [[ "${REQUEST_ALLOW_LEGACY}" == "true" && -z "${REQUEST_PR_NUMBER}" ]]; then
+            echo "::error::allow_legacy requires a single pr_number"
+            exit 1
+          fi
           mkdir -p "${RUNNER_TEMP}/pr-image-cleanup-request"
           jq -n \
             --arg pr_number "${REQUEST_PR_NUMBER}" \
             --argjson dry_run "${REQUEST_DRY_RUN}" \
-            '{pr_number: $pr_number, dry_run: $dry_run}' \
+            --argjson allow_legacy "${REQUEST_ALLOW_LEGACY}" \
+            '{pr_number: $pr_number, dry_run: $dry_run, allow_legacy: $allow_legacy}' \
             > "${RUNNER_TEMP}/pr-image-cleanup-request/request.json"
 
       - name: Upload trusted-workflow request

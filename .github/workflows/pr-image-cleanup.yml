@@ -92,6 +92,7 @@ jobs:
           test -f "${REQUEST_FILE}"
           pr_number="$(jq -r '.pr_number' "${REQUEST_FILE}")"
           dry_run="$(jq -r '.dry_run' "${REQUEST_FILE}")"
+          allow_legacy="$(jq -r '.allow_legacy' "${REQUEST_FILE}")"
           if [[ -n "${pr_number}" && ! "${pr_number}" =~ ^[1-9][0-9]*$ ]]; then
             echo "::error::manual cleanup request has an invalid pull request number"
             exit 1
@@ -100,8 +101,17 @@ jobs:
             true|false) ;;
             *) echo "::error::manual cleanup request has an invalid dry_run value"; exit 1 ;;
           esac
+          case "${allow_legacy}" in
+            true|false) ;;
+            *) echo "::error::manual cleanup request has an invalid allow_legacy value"; exit 1 ;;
+          esac
+          if [[ "${allow_legacy}" == "true" && -z "${pr_number}" ]]; then
+            echo "::error::allow_legacy requires a single pull request number"
+            exit 1
+          fi
           printf 'pr_number=%s\n' "${pr_number}" >> "${GITHUB_OUTPUT}"
           printf 'dry_run=%s\n' "${dry_run}" >> "${GITHUB_OUTPUT}"
+          printf 'allow_legacy=%s\n' "${allow_legacy}" >> "${GITHUB_OUTPUT}"
 
       - name: Resolve cleanup mode
         shell: bash
@@ -109,11 +119,13 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REQUEST_PR_NUMBER: ${{ steps.request.outputs.pr_number }}
           REQUEST_DRY_RUN: ${{ steps.request.outputs.dry_run }}
+          REQUEST_ALLOW_LEGACY: ${{ steps.request.outputs.allow_legacy }}
         run: |
           set -euo pipefail
           if [[ "${EVENT_NAME}" == "workflow_run" && -n "${REQUEST_DRY_RUN}" ]]; then
             printf 'CLEANUP_PR_NUMBER=%s\n' "${REQUEST_PR_NUMBER}" >> "${GITHUB_ENV}"
             printf 'CLEANUP_DRY_RUN=%s\n' "${REQUEST_DRY_RUN}" >> "${GITHUB_ENV}"
+            printf 'CLEANUP_ALLOW_LEGACY=%s\n' "${REQUEST_ALLOW_LEGACY}" >> "${GITHUB_ENV}"
             echo 'CLEANUP_MANUAL_SWEEP=true' >> "${GITHUB_ENV}"
           elif [[ "${EVENT_NAME}" == "schedule" ]]; then
             echo 'CLEANUP_DRY_RUN=false' >> "${GITHUB_ENV}"

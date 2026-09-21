@@ -124,7 +124,7 @@ function releaseOutcome({ run, jobs, mergeCommitSha }) {
   return { eligible: false, reason: "the release workflow has no complete publication decision" };
 }
 
-function cleanupEligibility({ pull, release, releasedImage = false }) {
+function cleanupEligibility({ pull, release, releasedImage = false, allowLegacy = false }) {
   if (!pull || String(pull.state).toLowerCase() !== "closed") {
     return { eligible: false, reason: "the pull request is not closed" };
   }
@@ -137,6 +137,9 @@ function cleanupEligibility({ pull, release, releasedImage = false }) {
   if (!release) {
     if (releasedImage) {
       return { eligible: true, reason: "verified prerelease image metadata" };
+    }
+    if (allowLegacy) {
+      return { eligible: true, reason: "explicit legacy cleanup override" };
     }
     return { eligible: false, reason: "waiting for the prerelease workflow" };
   }
@@ -248,11 +251,11 @@ function buildDetachedDeletionPlan({ versions, detachedDigest, selectedTags = []
   return { actions, blocked, protectedDigests: [...protectedDigests], cost: actions.length };
 }
 
-function validateCleanupState({ pull, release, releasedImage = false }) {
+function validateCleanupState({ pull, release, releasedImage = false, allowLegacy = false }) {
   if (!pull || String(pull.state).toLowerCase() !== "closed") {
     throw new Error("pull request changed state before cleanup");
   }
-  const eligibility = cleanupEligibility({ pull, release, releasedImage });
+  const eligibility = cleanupEligibility({ pull, release, releasedImage, allowLegacy });
   if (!eligibility.eligible) {
     throw new Error(`cleanup eligibility changed before deletion: ${eligibility.reason}`);
   }
@@ -360,7 +363,10 @@ function buildDeletionPlan({ versions, eligiblePrs = new Set(), targetPr = null,
 }
 
 function aggregateBatch({ plans, maxActions = DEFAULT_BATCH_LIMIT }) {
-  const total = plans.reduce((sum, plan) => sum + (plan?.cost ?? plan?.actions?.length ?? 0), 0);
+  const total = plans.reduce((sum, plan) => {
+    if (!plan || (plan.blocked || []).length > 0) return sum;
+    return sum + (plan.cost ?? plan.actions?.length ?? 0);
+  }, 0);
   return { total, allowed: total <= maxActions };
 }
 
@@ -682,6 +688,7 @@ async function main() {
   const api = new GitHubApi({ apiUrl: process.env.GITHUB_API_URL || "https://api.github.com", token, repository });
   let versions = (await api.versions(packageName)).map(normalizeVersion);
   const dryRun = process.env.CLEANUP_DRY_RUN === "true";
+  const allowLegacy = process.env.CLEANUP_ALLOW_LEGACY === "true" && Boolean(process.env.CLEANUP_PR_NUMBER);
   const maxActions = Number(process.env.CLEANUP_BATCH_LIMIT || DEFAULT_BATCH_LIMIT);
   const image = `ghcr.io/${repository.toLowerCase()}`;
   const registry = new RegistryClient({ image });
@@ -698,7 +705,7 @@ async function main() {
     if (!target.pull) return { target, eligibility: { eligible: false, reason: "pull request not found" }, plan: null };
     const eligiblePrs = new Set([target.number]);
     const releasedImage = Boolean(target.pull.merged_at && hasReleasedImage(versions, target.pull.merge_commit_sha));
-    const eligibility = cleanupEligibility({ ...target, releasedImage });
+    const eligibility = cleanupEligibility({ ...target, releasedImage, allowLegacy });
     if (!eligibility.eligible) return { target, eligibility, plan: null };
     const plan = buildDeletionPlan({ versions, eligiblePrs, targetPr: target.number, maxActions });
     return { target, eligibility, plan };
@@ -784,6 +791,7 @@ async function main() {
         pull: refreshedPull,
         release: refreshedRelease,
         releasedImage: refreshedReleasedImage,
+        allowLegacy,
       });
       const completed = [];
       for (const action of refreshedPlan.actions.filter(({ type }) => type === "detach")) {
