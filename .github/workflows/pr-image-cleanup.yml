@@ -20,7 +20,13 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: pr-test-image-cleanup
+  group: >-
+    pr-test-image-cleanup-${{
+      github.event_name == 'pull_request_target' && format('pr-{0}', github.event.pull_request.number) ||
+      github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Release prerelease' && format('release-{0}', github.event.workflow_run.head_sha) ||
+      github.event_name == 'workflow_run' && format('run-{0}', github.event.workflow_run.id) ||
+      format('run-{0}', github.run_id)
+    }}
   cancel-in-progress: false
 
 jobs:

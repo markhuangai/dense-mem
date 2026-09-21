@@ -706,6 +706,7 @@ async function main() {
   }
 
   const summaries = [];
+  let executedBatchCost = 0;
   for (const prepared of preparedTargets) {
     const { target, eligibility, plan } = prepared;
     if (!target.pull) {
@@ -732,7 +733,25 @@ async function main() {
         targetPr: target.number,
         maxActions,
       });
-      assertPlanUnchanged(plan, refreshedPlan);
+      if (!manualSweep) assertPlanUnchanged(plan, refreshedPlan);
+      if (refreshedPlan.blocked.length > 0) {
+        result.status = "blocked";
+        result.reason = refreshedPlan.blocked[0].reason;
+        result.actions = [];
+        result.blocked = refreshedPlan.blocked;
+        summaries.push(result);
+        continue;
+      }
+      if (manualSweep && executedBatchCost + refreshedPlan.cost > maxActions) {
+        result.status = "blocked";
+        result.reason = `manual batch contains more than ${maxActions} versions after revalidation`;
+        result.actions = [];
+        result.blocked = [{ reason: result.reason }];
+        summaries.push(result);
+        continue;
+      }
+      result.actions = refreshedPlan.actions;
+      result.blocked = refreshedPlan.blocked;
       for (const action of refreshedPlan.actions) {
         const current = refreshedVersions.find((version) => version.id === action.versionId);
         if (!current || current.digest !== action.digest) {
@@ -788,6 +807,7 @@ async function main() {
         }
       }
       result.completed = completed;
+      if (manualSweep) executedBatchCost += refreshedPlan.cost;
     }
     summaries.push(result);
   }
