@@ -508,8 +508,14 @@ class RegistryClient {
   detachTag(digest, tag, suffix) {
     const target = `${this.image}:${tag}`;
     const source = `${this.image}@${digest}`;
+    const previewPr = testPrFromTag(tag);
+    if (previewPr === null) throw new Error(`cannot detach a non-preview tag: ${tag}`);
     const labels = [
-      ...PREVIEW_LABELS.map((label) => ["--label", `${label}=`]).flat(),
+      "--label", `io.dense-mem.preview.pr=${previewPr}`,
+      "--label", `io.dense-mem.preview.head=cleanup-${suffix}`,
+      "--label", `io.dense-mem.preview.main=cleanup-${suffix}`,
+      "--label", `io.dense-mem.preview.run-id=${suffix}`,
+      "--label", "io.dense-mem.preview.run-attempt=1",
       "--label", `org.opencontainers.image.version=cleanup-${suffix}`,
     ];
     this.run(["image", "mod", source, "--create", target, ...labels]);
@@ -556,9 +562,16 @@ class RegistryClient {
 async function releaseForPull(api, pull) {
   if (!pull?.merged_at) return null;
   const runs = await api.releaseRuns();
-  const run = runs.find((candidate) => releaseTargetSha(candidate) === pull.merge_commit_sha);
-  if (!run) return null;
-  return { run, jobs: await api.jobs(run.id) };
+  const matching = runs.filter((candidate) => releaseTargetSha(candidate) === pull.merge_commit_sha);
+  if (matching.length === 0) return null;
+  let newestUnresolved = null;
+  for (const run of matching) {
+    const jobs = await api.jobs(run.id);
+    const receipt = { run, jobs };
+    if (!newestUnresolved) newestUnresolved = receipt;
+    if (releaseOutcome({ run, jobs, mergeCommitSha: pull.merge_commit_sha }).eligible) return receipt;
+  }
+  return newestUnresolved;
 }
 
 async function pullForNumber(api, number) {
@@ -842,6 +855,7 @@ module.exports = {
   mapWithConcurrency,
   normalizeVersion,
   previewRunForPull,
+  releaseForPull,
   releaseOutcome,
   releaseTargetSha,
   resolveTargets,

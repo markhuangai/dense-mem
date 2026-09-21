@@ -422,6 +422,58 @@ test("release history pagination is shared across a cleanup invocation", async (
   assert.equal(calls, 1);
 });
 
+test("release target resolution skips failed reruns in favor of a complete receipt", async () => {
+  const mergeCommitSha = "d".repeat(40);
+  const failedRerun = {
+    id: 12,
+    name: "Release prerelease",
+    display_title: `Release prerelease: ${mergeCommitSha}`,
+    conclusion: "failure",
+  };
+  const successfulNoRelease = {
+    id: 11,
+    name: "Release prerelease",
+    display_title: `Release prerelease: ${mergeCommitSha}`,
+    conclusion: "success",
+  };
+  const api = {
+    releaseRuns: async () => [failedRerun, successfulNoRelease],
+    jobs: async (runId) => runId === failedRerun.id
+      ? [{ name: "Classify release changes", conclusion: "success" }]
+      : [
+        { name: "Classify release changes", conclusion: "success" },
+        { name: "No prerelease required", conclusion: "success" },
+      ],
+  };
+  const receipt = await policy.releaseForPull(api, {
+    merged_at: "2026-09-20T10:00:00Z",
+    merge_commit_sha: mergeCommitSha,
+  });
+  assert.equal(receipt.run.id, successfulNoRelease.id);
+});
+
+test("detached manifests retain synthetic preview ownership for retry discovery", () => {
+  const registry = new policy.RegistryClient({ image: "ghcr.io/example/image" });
+  const source = digest("a");
+  const detached = digest("b");
+  const calls = [];
+  registry.run = (args) => {
+    calls.push(args);
+    if (args[0] === "manifest" && args[1] === "head") return detached;
+    return "";
+  };
+  assert.equal(registry.detachTag(source, "test-42", "42-123"), detached);
+  const mod = calls.find((args) => args[0] === "image");
+  assert.deepEqual(mod.slice(-12), [
+    "--label", "io.dense-mem.preview.pr=42",
+    "--label", "io.dense-mem.preview.head=cleanup-42-123",
+    "--label", "io.dense-mem.preview.main=cleanup-42-123",
+    "--label", "io.dense-mem.preview.run-id=42-123",
+    "--label", "io.dense-mem.preview.run-attempt=1",
+    "--label", "org.opencontainers.image.version=cleanup-42-123",
+  ]);
+});
+
 test("preview run polling paginates only active workflow statuses", async () => {
   const api = new policy.GitHubApi({ apiUrl: "https://api.github.com", token: "test", repository: "markhuangai/dense-mem" });
   const paths = [];
