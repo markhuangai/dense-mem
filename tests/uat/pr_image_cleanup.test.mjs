@@ -591,8 +591,9 @@ test("cleanup does not wait after a failed preview build", async () => {
   assert.equal(sleeps, 0);
 });
 
-test("preview quiescence default covers the preview publication window", async () => {
+test("preview quiescence backs off to a five-minute polling cap", async () => {
   let reads = 0;
+  let clock = 0;
   const delays = [];
   await assert.rejects(
     policy.waitForPreviewQuiescence({
@@ -604,11 +605,163 @@ test("preview quiescence default covers the preview publication window", async (
         { name: "Build untrusted preview", status: "in_progress" },
         { name: "Publish trusted preview", status: "queued" },
       ],
-    }, [42], { sleep: async (milliseconds) => { delays.push(milliseconds); } }),
+    }, [42], {
+      sleep: async (milliseconds) => { delays.push(milliseconds); clock += milliseconds; },
+      now: () => clock,
+    }),
     /preview publication is still active for pull requests: 42/,
   );
-  assert.equal(reads, 90);
-  assert.deepEqual(delays, Array(89).fill(60_000));
+  assert.equal(reads, 20);
+  assert.deepEqual(delays, [60_000, 120_000, 240_000, ...Array(16).fill(300_000), 180_000]);
+});
+
+test("preview quiescence deadline includes API time and fails closed", async () => {
+  let clock = 0;
+  let reads = 0;
+  await assert.rejects(
+    policy.waitForPreviewQuiescence({
+      previewRuns: async () => {
+        reads += 1;
+        clock = 101;
+        return [{ id: 11, display_title: "PR test image: PR #42", status: "in_progress" }];
+      },
+      jobs: async () => [],
+    }, [42], {
+      maxPolls: 20,
+      maxWaitMilliseconds: 100,
+      now: () => clock,
+      sleep: async () => {},
+    }),
+    /preview publication is still active for pull requests: 42/,
+  );
+  assert.equal(reads, 1);
+});
+
+test("preview quiescence deadline includes job API time", async () => {
+  let clock = 0;
+  let reads = 0;
+  await assert.rejects(
+    policy.waitForPreviewQuiescence({
+      previewRuns: async () => [{ id: 12, display_title: "PR test image: PR #42", status: "in_progress" }],
+      jobs: async () => {
+        reads += 1;
+        clock = 101;
+        return [{ name: "Publish trusted preview", status: "completed", conclusion: "success" }];
+      },
+    }, [42], {
+      maxWaitMilliseconds: 100,
+      now: () => clock,
+      sleep: async () => {},
+    }),
+    /preview publication is still active for pull requests: 42/,
+  );
+  assert.equal(reads, 1);
+});
+
+test("preview quiescence fails closed before returning after the deadline", async () => {
+  let nowCalls = 0;
+  await assert.rejects(
+    policy.waitForPreviewQuiescence({
+      previewRuns: async () => [{ id: 15, display_title: "PR test image: PR #42", status: "in_progress" }],
+      jobs: async () => [{ name: "Publish trusted preview", status: "completed", conclusion: "success" }],
+    }, [42], {
+      maxWaitMilliseconds: 100,
+      now: () => (nowCalls++ >= 4 ? 101 : 0),
+      sleep: async () => {},
+    }),
+    /preview publication is still active for pull requests: 42/,
+  );
+});
+
+test("preview quiescence observes a newly appearing preview rerun", async () => {
+  let reads = 0;
+  let jobs = 0;
+  await policy.waitForPreviewQuiescence({
+    previewRuns: async () => {
+      reads += 1;
+      if (reads < 3) {
+        return [{ id: reads === 1 ? 13 : 14, display_title: "PR test image: PR #42", status: "in_progress" }];
+      }
+      return [];
+    },
+    jobs: async () => {
+      jobs += 1;
+      return [{ name: "Publish trusted preview", status: "in_progress" }];
+    },
+  }, [42], { maxPolls: 3, pollMilliseconds: 0, sleep: async () => {} });
+  assert.equal(reads, 3);
+  assert.equal(jobs, 2);
+});
+
+test("preview quiescence fails through the production GitHub API on a polling error", async () => {
+  const api = new policy.GitHubApi({ apiUrl: "https://api.github.com", token: "test", repository: "markhuangai/dense-mem" });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("temporary outage", { status: 503 });
+  try {
+    await assert.rejects(
+      policy.waitForPreviewQuiescence(api, [42], { maxPolls: 1, pollMilliseconds: 0 }),
+      /GitHub API 503 for .*pr-test-image\.yml\/runs/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("preview quiescence bounds 100 matching runs to 2,100 production API requests", async () => {
+  const api = new policy.GitHubApi({ apiUrl: "https://api.github.com", token: "test", repository: "markhuangai/dense-mem" });
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  let clock = 0;
+  globalThis.fetch = async (url) => {
+    requests += 1;
+    const parsed = new URL(url);
+    if (/\/actions\/runs\/\d+\/jobs$/.test(parsed.pathname)) {
+      return new Response(JSON.stringify([{ name: "Publish trusted preview", status: "in_progress" }]), { status: 200 });
+    }
+    if (parsed.pathname.includes("/actions/workflows/pr-test-image.yml/runs")) {
+      const status = parsed.searchParams.get("status");
+      const offset = ["queued", "in_progress", "waiting", "requested", "pending"].indexOf(status) * 20;
+      return new Response(JSON.stringify(Array.from({ length: 20 }, (_, index) => ({
+        id: 1_000 + offset + index,
+        display_title: `PR test image: PR #${(offset + index) % 2 === 0 ? 42 : 43}`,
+        status: "in_progress",
+      }))), { status: 200 });
+    }
+    throw new Error(`unexpected request: ${url}`);
+  };
+  try {
+    await assert.rejects(
+      policy.waitForPreviewQuiescence(api, [42, 43], {
+        now: () => clock,
+        sleep: async (milliseconds) => { clock += milliseconds; },
+      }),
+      /preview publication is still active for pull requests: 42, 43/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(requests, 2_100);
+});
+
+test("preview run polling uses production pagination for each active status", async () => {
+  const api = new policy.GitHubApi({ apiUrl: "https://api.github.com", token: "test", repository: "markhuangai/dense-mem" });
+  const originalFetch = globalThis.fetch;
+  const pages = [];
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(url);
+    pages.push(parsed.searchParams.get("status") + ":" + parsed.searchParams.get("page"));
+    const page = Number(parsed.searchParams.get("page"));
+    const offset = ["queued", "in_progress", "waiting", "requested", "pending"].indexOf(parsed.searchParams.get("status")) * 100;
+    return new Response(JSON.stringify(page === 1 ? Array.from({ length: 100 }, (_, index) => ({ id: offset + index, status: parsed.searchParams.get("status") })) : []), { status: 200 });
+  };
+  try {
+    const runs = await api.previewRuns();
+    assert.equal(runs.length, 500);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(pages.length, 10);
+  assert.equal(pages.filter((page) => page.endsWith(":2")).length, 5);
 });
 
 test("retained tags and unknown untagged children block destructive cleanup", () => {
@@ -658,10 +811,12 @@ test("workflow is trusted, event-fenced, dry-run capable, and registered in CI",
   assert.match(workflow, /workflow_run:/);
   assert.match(workflow, /Request PR image cleanup/);
   assert.match(workflow, /group: pr-test-image-cleanup/);
+  assert.match(workflow, /queue: max/);
   assert.doesNotMatch(workflow, /workflow_dispatch:/);
   assert.match(request, /workflow_dispatch:/);
   assert.match(request, /default: true/);
   assert.match(request, /allow_legacy:/);
+  assert.match(request, /retention-days: 14/);
   assert.doesNotMatch(request, /packages: write/);
   assert.match(workflow, /packages: write/);
   assert.match(workflow, /persist-credentials: false/);

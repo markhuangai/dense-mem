@@ -65,4 +65,4 @@ jobs:
           name: pr-image-cleanup-request
           path: ${{ runner.temp }}/pr-image-cleanup-request/request.json
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 14

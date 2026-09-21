@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
+const { performance } = require("node:perf_hooks");
 
 const TEST_TAG_PATTERN = /^test-([1-9][0-9]*)$/;
 const PRERELEASE_TAG_PATTERN = /^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$/;
@@ -15,8 +16,9 @@ const PREVIEW_LABELS = Object.freeze([
 const RELEASE_WORKFLOW = "Release prerelease";
 const DEFAULT_BATCH_LIMIT = 200;
 const TARGET_CONCURRENCY = 8;
-const DEFAULT_PREVIEW_QUIESCE_MAX_POLLS = 90;
 const DEFAULT_PREVIEW_QUIESCE_POLL_MILLISECONDS = 60_000;
+const DEFAULT_PREVIEW_QUIESCE_MAX_POLL_MILLISECONDS = 300_000;
+const DEFAULT_PREVIEW_QUIESCE_MAX_WAIT_MILLISECONDS = 90 * 60 * 1_000;
 const PREVIEW_ACTIVE_STATUSES = Object.freeze(["queued", "in_progress", "waiting", "requested", "pending"]);
 const PREVIEW_PUBLICATION_JOB_NAMES = Object.freeze(["Build untrusted preview", "Publish trusted preview"]);
 
@@ -590,24 +592,51 @@ async function pullForNumber(api, number) {
 }
 
 async function waitForPreviewQuiescence(api, pullNumbers, {
-  maxPolls = DEFAULT_PREVIEW_QUIESCE_MAX_POLLS,
+  maxPolls = null,
   pollMilliseconds = DEFAULT_PREVIEW_QUIESCE_POLL_MILLISECONDS,
+  maxPollMilliseconds = DEFAULT_PREVIEW_QUIESCE_MAX_POLL_MILLISECONDS,
+  maxWaitMilliseconds = DEFAULT_PREVIEW_QUIESCE_MAX_WAIT_MILLISECONDS,
   sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  now = () => performance.now(),
 } = {}) {
   const numbers = [...new Set(pullNumbers.filter((number) => Number.isSafeInteger(number) && number > 0))];
   if (numbers.length === 0) return;
-  for (let attempt = 0; attempt < maxPolls; attempt += 1) {
+  const deadline = now() + maxWaitMilliseconds;
+  let delay = Math.min(pollMilliseconds, maxPollMilliseconds);
+  for (let attempt = 0; ; attempt += 1) {
+    if (now() >= deadline) {
+      throw new Error(`preview publication is still active for pull requests: ${numbers.join(", ")}`);
+    }
+    if (maxPolls !== null && attempt >= maxPolls) {
+      throw new Error(`preview publication is still active for pull requests: ${numbers.join(", ")}`);
+    }
     const runs = await api.previewRuns();
+    if (now() >= deadline) {
+      throw new Error(`preview publication is still active for pull requests: ${numbers.join(", ")}`);
+    }
     const candidates = runs.filter((run) => numbers.some((number) => previewRunForPull(run, number)) && isActivePreviewStatus(run.status));
     const active = [];
     for (const run of candidates) {
       if (await previewPublicationIsActive(api, run)) active.push(run);
+      if (now() >= deadline) {
+        throw new Error(`preview publication is still active for pull requests: ${numbers.join(", ")}`);
+      }
     }
-    if (active.length === 0) return;
-    if (attempt + 1 >= maxPolls) {
+    if (active.length === 0) {
+      if (now() >= deadline) {
+        throw new Error(`preview publication is still active for pull requests: ${numbers.join(", ")}`);
+      }
+      return;
+    }
+    if (maxPolls !== null && attempt + 1 >= maxPolls) {
       throw new Error(`preview publication is still active for pull requests: ${numbers.join(", ")}`);
     }
-    await sleep(pollMilliseconds);
+    const remaining = deadline - now();
+    if (remaining <= 0) {
+      throw new Error(`preview publication is still active for pull requests: ${numbers.join(", ")}`);
+    }
+    await sleep(Math.min(delay, remaining));
+    delay = Math.min(delay * 2, maxPollMilliseconds);
   }
 }
 

@@ -24,6 +24,7 @@ permissions:
 concurrency:
   group: pr-test-image-cleanup
   cancel-in-progress: false
+  queue: max
 
 jobs:
   cleanup:
