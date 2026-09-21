@@ -1,0 +1,417 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+)
+
+const (
+	dreamDiagnosticRetention = 7 * 24 * time.Hour
+	maxDreamDiagnosticBytes  = 64 << 10
+	maxDreamDiagnosticPage   = 100
+)
+
+var _ dreamcontract.DreamDiagnosticRepository = (*Store)(nil)
+
+func (r *Store) RecordDreamRunDiagnostics(ctx context.Context, input dreamcontract.DreamDiagnosticCaptureInput) error {
+	if input.ExpiresAt.IsZero() {
+		input.ExpiresAt = time.Now().UTC().Add(dreamDiagnosticRetention)
+	}
+	if input.CaptureState == "" {
+		input.CaptureState = "not_captured"
+	}
+	if input.Phase != "run" {
+		input.Phase = "run"
+	}
+	if err := r.RecordDreamDiagnostic(ctx, input); err != nil {
+		return err
+	}
+	// Add bounded proposal and disposition rows for every committed Hypothesis.
+	// The Hypothesis table remains the authority for identity and derivation.
+	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		if err := tx.WithContext(ctx).Exec(`
+				INSERT INTO dream_diagnostic_captures (
+					team_id, run_id, hypothesis_id, phase, outcome, details,
+					capture_state, capture_reason, expires_at
+			)
+			SELECT hypothesis.team_id, hypothesis.cycle_run_id, hypothesis.hypothesis_id,
+			       'proposal', 'created',
+			       jsonb_build_object('lane', hypothesis.lane, 'predicate_key', hypothesis.predicate_key),
+			       ?, ?, ?
+			FROM hypotheses AS hypothesis
+				WHERE hypothesis.team_id = ?::uuid
+				  AND hypothesis.cycle_run_id = ?::uuid
+				  AND hypothesis.canonical_hypothesis_id IS NULL
+			  AND NOT EXISTS (
+			      SELECT 1 FROM dream_diagnostic_captures existing
+			      WHERE existing.team_id = hypothesis.team_id
+			        AND existing.run_id = hypothesis.cycle_run_id
+			        AND existing.hypothesis_id = hypothesis.hypothesis_id
+			        AND existing.phase = 'proposal'
+			  )
+			`, "not_captured", "phase_metadata_only", input.ExpiresAt, input.TeamID, input.RunID).Error; err != nil {
+			return err
+		}
+		return tx.WithContext(ctx).Exec(`
+				INSERT INTO dream_diagnostic_captures (
+					team_id, run_id, hypothesis_id, phase, outcome, details,
+					capture_state, capture_reason, expires_at
+				)
+				SELECT hypothesis.team_id, hypothesis.cycle_run_id, hypothesis.hypothesis_id,
+				       'disposition',
+				       CASE
+				           WHEN hypothesis.status IN ('proposed', 'reinforced') THEN 'accepted'
+				           WHEN hypothesis.status = 'rejected' THEN 'rejected'
+				           WHEN hypothesis.status = 'stale' THEN 'stale'
+				           WHEN hypothesis.status = 'submitted' THEN 'submitted'
+				           ELSE COALESCE(NULLIF(hypothesis.status, ''), 'unchanged')
+				       END,
+				       jsonb_build_object('status', hypothesis.status,
+				                          'invalidated_reason', COALESCE(hypothesis.invalidated_reason, '')),
+				       ?, ?, ?
+				FROM hypotheses AS hypothesis
+				WHERE hypothesis.team_id = ?::uuid
+				  AND hypothesis.cycle_run_id = ?::uuid
+				  AND hypothesis.canonical_hypothesis_id IS NULL
+				  AND NOT EXISTS (
+				      SELECT 1 FROM dream_diagnostic_captures existing
+				      WHERE existing.team_id = hypothesis.team_id
+				        AND existing.run_id = hypothesis.cycle_run_id
+				        AND existing.hypothesis_id = hypothesis.hypothesis_id
+				        AND existing.phase = 'disposition'
+				  )
+			`, "not_captured", "phase_metadata_only", input.ExpiresAt, input.TeamID, input.RunID).Error
+	})
+	if err != nil {
+		return fmt.Errorf("dream diagnostic proposal links: %w", err)
+	}
+	return nil
+}
+
+func (r *Store) RecordDreamDiagnostic(ctx context.Context, input dreamcontract.DreamDiagnosticCaptureInput) error {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.RunID = strings.TrimSpace(input.RunID)
+	input.HypothesisID = strings.TrimSpace(input.HypothesisID)
+	input.Phase = strings.TrimSpace(input.Phase)
+	input.Outcome = strings.TrimSpace(input.Outcome)
+	input.Cause = strings.TrimSpace(input.Cause)
+	input.CaptureState = strings.TrimSpace(input.CaptureState)
+	input.CaptureReason = strings.TrimSpace(input.CaptureReason)
+	if _, err := uuid.Parse(input.TeamID); err != nil {
+		return fmt.Errorf("dream diagnostic team_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.RunID); err != nil {
+		return fmt.Errorf("dream diagnostic run_id is required: %w", err)
+	}
+	if input.HypothesisID != "" {
+		if _, err := uuid.Parse(input.HypothesisID); err != nil {
+			return fmt.Errorf("dream diagnostic hypothesis_id is invalid: %w", err)
+		}
+	}
+	switch input.Phase {
+	case "run", "target", "provider", "proposal", "validation", "disposition", "feedback", "confirmation":
+	default:
+		return fmt.Errorf("dream diagnostic phase is unsupported")
+	}
+	if input.Outcome == "" {
+		return errors.New("dream diagnostic outcome is required")
+	}
+	if input.CaptureState == "" {
+		input.CaptureState = "not_captured"
+	}
+	switch input.CaptureState {
+	case "captured", "truncated", "expired", "unavailable", "not_captured":
+	default:
+		return fmt.Errorf("dream diagnostic capture state is unsupported")
+	}
+	if input.Details == nil {
+		input.Details = map[string]any{}
+	}
+	details, err := json.Marshal(input.Details)
+	if err != nil {
+		return fmt.Errorf("dream diagnostic details: %w", err)
+	}
+	if len(details) > maxDreamDiagnosticBytes {
+		return fmt.Errorf("dream diagnostic details exceed %d bytes", maxDreamDiagnosticBytes)
+	}
+	payload := input.Payload
+	if len(payload) == 0 {
+		payload = []byte(`{}`)
+	}
+	if len(payload) > 64<<20 {
+		return fmt.Errorf("dream diagnostic payload exceeds 64 MiB")
+	}
+	var payloadValue any
+	if err := json.Unmarshal(payload, &payloadValue); err != nil {
+		return fmt.Errorf("dream diagnostic payload: %w", err)
+	}
+	now := time.Now().UTC()
+	if input.CapturedAt != nil {
+		captured := input.CapturedAt.UTC()
+		input.CapturedAt = &captured
+	}
+	if input.ExpiresAt.IsZero() {
+		input.ExpiresAt = now.Add(dreamDiagnosticRetention)
+	}
+	input.ExpiresAt = input.ExpiresAt.UTC()
+	if input.ExpiresAt.Before(now) || input.ExpiresAt.After(now.Add(dreamDiagnosticRetention)) {
+		return errors.New("dream diagnostic expiry is outside retention")
+	}
+	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		return tx.WithContext(ctx).Exec(`
+			INSERT INTO dream_diagnostic_captures (
+				team_id, run_id, hypothesis_id, phase, outcome, cause, details, payload, capture_state,
+				capture_reason, captured_at, expires_at
+			)
+			VALUES (?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?)
+		`, input.TeamID, input.RunID, input.HypothesisID, input.Phase, input.Outcome, input.Cause,
+			string(details), string(payload), input.CaptureState, input.CaptureReason, input.CapturedAt, input.ExpiresAt).Error
+	})
+	if err != nil {
+		return fmt.Errorf("dream diagnostic record: %w", err)
+	}
+	return nil
+}
+
+func (r *Store) ListDreamDiagnostics(ctx context.Context, input dreamcontract.DreamDiagnosticListInput) (dreamcontract.DreamDiagnosticPage, error) {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.RunID = strings.TrimSpace(input.RunID)
+	input.HypothesisID = strings.TrimSpace(input.HypothesisID)
+	if _, err := uuid.Parse(input.TeamID); err != nil {
+		return dreamcontract.DreamDiagnosticPage{}, fmt.Errorf("dream diagnostic team_id is required: %w", err)
+	}
+	if input.RunID == "" && input.HypothesisID == "" {
+		return dreamcontract.DreamDiagnosticPage{}, fmt.Errorf("run_id or hypothesis_id is required")
+	}
+	if input.RunID != "" {
+		if _, err := uuid.Parse(input.RunID); err != nil {
+			return dreamcontract.DreamDiagnosticPage{}, fmt.Errorf("dream diagnostic run_id is required: %w", err)
+		}
+	}
+	if input.HypothesisID != "" {
+		if _, err := uuid.Parse(input.HypothesisID); err != nil {
+			return dreamcontract.DreamDiagnosticPage{}, fmt.Errorf("dream diagnostic hypothesis_id is required: %w", err)
+		}
+	}
+	if input.RunID == "" {
+		input.RunID = uuid.Nil.String()
+	}
+	if _, err := uuid.Parse(input.RunID); err != nil {
+		return dreamcontract.DreamDiagnosticPage{}, fmt.Errorf("dream diagnostic run_id is required: %w", err)
+	}
+	limit := input.Limit
+	if limit <= 0 {
+		limit = 25
+	}
+	if limit > maxDreamDiagnosticPage {
+		limit = maxDreamDiagnosticPage
+	}
+	cursor, err := decodeDreamDiagnosticCursor(input.Cursor)
+	if err != nil {
+		return dreamcontract.DreamDiagnosticPage{}, err
+	}
+	page := dreamcontract.DreamDiagnosticPage{Items: []dreamcontract.DreamDiagnosticCapture{}}
+	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		query := `
+			SELECT capture_id::text, run_id::text, COALESCE(hypothesis_id::text, ''), phase, outcome, cause, details, '{}'::jsonb,
+			       capture_state, capture_reason, captured_at, expires_at, created_at
+			FROM dream_diagnostic_captures
+			WHERE team_id = ?::uuid`
+		args := []any{input.TeamID}
+		if input.RunID != uuid.Nil.String() {
+			query += " AND run_id = ?::uuid"
+			args = append(args, input.RunID)
+		}
+		if input.HypothesisID != "" {
+			query += " AND hypothesis_id = ?::uuid"
+			args = append(args, input.HypothesisID)
+		}
+		if cursor != nil {
+			query += " AND (created_at, capture_id) < (?, ?::uuid)"
+			args = append(args, cursor.createdAt, cursor.captureID)
+		}
+		query += " ORDER BY created_at DESC, capture_id DESC LIMIT ?"
+		args = append(args, limit+1)
+		rows, err := tx.WithContext(ctx).Raw(query, args...).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			item, err := scanDreamDiagnosticCapture(rows, input.TeamID)
+			if err != nil {
+				return err
+			}
+			item.Payload = nil
+			page.Items = append(page.Items, *item)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return dreamcontract.DreamDiagnosticPage{}, fmt.Errorf("dream diagnostic list: %w", err)
+	}
+	if len(page.Items) > limit {
+		last := page.Items[limit-1]
+		page.Items = page.Items[:limit]
+		page.NextCursor = encodeDreamDiagnosticCursor(last.CreatedAt, last.CaptureID)
+	}
+	return page, nil
+}
+
+func (r *Store) GetDreamDiagnostic(ctx context.Context, teamID, runID, captureID string) (*dreamcontract.DreamDiagnosticCapture, error) {
+	teamID, runID, captureID = strings.TrimSpace(teamID), strings.TrimSpace(runID), strings.TrimSpace(captureID)
+	if _, err := uuid.Parse(teamID); err != nil {
+		return nil, fmt.Errorf("dream diagnostic team_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(runID); err != nil {
+		return nil, fmt.Errorf("dream diagnostic run_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(captureID); err != nil {
+		return nil, fmt.Errorf("dream diagnostic capture_id is required: %w", err)
+	}
+	var result *dreamcontract.DreamDiagnosticCapture
+	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
+		row := tx.WithContext(ctx).Raw(`
+			SELECT capture_id::text, run_id::text, COALESCE(hypothesis_id::text, ''), phase, outcome, cause, details, payload,
+			       capture_state, capture_reason, captured_at, expires_at, created_at
+			FROM dream_diagnostic_captures
+			WHERE team_id = ?::uuid AND run_id = ?::uuid AND capture_id = ?::uuid
+		`, teamID, runID, captureID).Row()
+		item, err := scanDreamDiagnosticCaptureRow(row, teamID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return dreamcontract.ErrDreamDiagnosticNotFound
+		}
+		if err != nil {
+			return err
+		}
+		result = item
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("dream diagnostic get: %w", err)
+	}
+	return result, nil
+}
+
+func (r *Store) PurgeExpiredDreamDiagnostics(ctx context.Context, batchSize int) (int, error) {
+	if batchSize <= 0 || batchSize > maxDreamDiagnosticPage {
+		batchSize = maxDreamDiagnosticPage
+	}
+	var deleted int64
+	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		result := tx.WithContext(ctx).Exec(`
+			UPDATE dream_diagnostic_captures
+			SET payload = '{}'::jsonb,
+			    details = '{}'::jsonb,
+			    capture_state = 'expired',
+			    capture_reason = 'retention_expired'
+			WHERE capture_id IN (
+				SELECT capture_id
+				FROM dream_diagnostic_captures
+				WHERE expires_at <= clock_timestamp()
+				  AND capture_state <> 'expired'
+				ORDER BY expires_at, capture_id
+				LIMIT ?
+				FOR UPDATE SKIP LOCKED
+			)
+		`, batchSize)
+		deleted = result.RowsAffected
+		return result.Error
+	})
+	if err != nil {
+		return 0, fmt.Errorf("dream diagnostic purge: %w", err)
+	}
+	return int(deleted), nil
+}
+
+func scanDreamDiagnosticCapture(rows *sql.Rows, teamID string) (*dreamcontract.DreamDiagnosticCapture, error) {
+	var item dreamcontract.DreamDiagnosticCapture
+	var details []byte
+	var payload []byte
+	var captured sql.NullTime
+	if err := rows.Scan(&item.CaptureID, &item.RunID, &item.HypothesisID, &item.Phase, &item.Outcome, &item.Cause, &details, &payload,
+		&item.CaptureState, &item.CaptureReason, &captured, &item.ExpiresAt, &item.CreatedAt); err != nil {
+		return nil, err
+	}
+	item.TeamID = teamID
+	if string(payload) != "{}" {
+		item.Payload = append([]byte(nil), payload...)
+	}
+	return finishDreamDiagnosticCapture(&item, details, captured)
+}
+
+func scanDreamDiagnosticCaptureRow(row *sql.Row, teamID string) (*dreamcontract.DreamDiagnosticCapture, error) {
+	var item dreamcontract.DreamDiagnosticCapture
+	var details []byte
+	var payload []byte
+	var captured sql.NullTime
+	if err := row.Scan(&item.CaptureID, &item.RunID, &item.HypothesisID, &item.Phase, &item.Outcome, &item.Cause, &details, &payload,
+		&item.CaptureState, &item.CaptureReason, &captured, &item.ExpiresAt, &item.CreatedAt); err != nil {
+		return nil, err
+	}
+	item.TeamID = teamID
+	if string(payload) != "{}" {
+		item.Payload = append([]byte(nil), payload...)
+	}
+	return finishDreamDiagnosticCapture(&item, details, captured)
+}
+
+func finishDreamDiagnosticCapture(item *dreamcontract.DreamDiagnosticCapture, details []byte, captured sql.NullTime) (*dreamcontract.DreamDiagnosticCapture, error) {
+	item.Details = map[string]any{}
+	if len(details) > 0 {
+		if err := json.Unmarshal(details, &item.Details); err != nil {
+			return nil, err
+		}
+	}
+	if captured.Valid {
+		value := captured.Time.UTC()
+		item.CapturedAt = &value
+	}
+	item.ExpiresAt = item.ExpiresAt.UTC()
+	item.CreatedAt = item.CreatedAt.UTC()
+	return item, nil
+}
+
+type dreamDiagnosticCursor struct {
+	createdAt time.Time
+	captureID string
+}
+
+func encodeDreamDiagnosticCursor(createdAt time.Time, captureID string) string {
+	raw := createdAt.UTC().Format(time.RFC3339Nano) + "|" + captureID
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+func decodeDreamDiagnosticCursor(value string) (*dreamDiagnosticCursor, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return nil, dreamcontract.ErrInvalidDreamDiagnosticCursor
+	}
+	parts := strings.Split(string(raw), "|")
+	if len(parts) != 2 {
+		return nil, dreamcontract.ErrInvalidDreamDiagnosticCursor
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, parts[0])
+	if err != nil {
+		return nil, dreamcontract.ErrInvalidDreamDiagnosticCursor
+	}
+	if _, err := uuid.Parse(parts[1]); err != nil {
+		return nil, dreamcontract.ErrInvalidDreamDiagnosticCursor
+	}
+	return &dreamDiagnosticCursor{createdAt: createdAt, captureID: parts[1]}, nil
+}

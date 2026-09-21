@@ -58,16 +58,17 @@ type applicationCompositionDependencies struct {
 }
 
 type applicationBundle struct {
-	Remember       rememberapp.Service
-	Recall         recall.RecallService
-	Community      communityapp.Service
-	Lifecycle      lifecycle.LifecycleService
-	Context        traceapp.Service
-	Dream          dream.Service
-	ControlDream   dream.ControlService
-	Graph          graph.Service
-	MemoryPack     memorypack.MemoryPackService
-	RecallFeedback *recall.RecallFeedbackEventServiceImpl
+	Remember                rememberapp.Service
+	Recall                  recall.RecallService
+	Community               communityapp.Service
+	Lifecycle               lifecycle.LifecycleService
+	Context                 traceapp.Service
+	Dream                   dream.Service
+	ControlDream            dream.ControlService
+	ControlDreamDiagnostics dream.DiagnosticService
+	Graph                   graph.Service
+	MemoryPack              memorypack.MemoryPackService
+	RecallFeedback          *recall.RecallFeedbackEventServiceImpl
 }
 
 func buildApplicationBundle(deps applicationCompositionDependencies) applicationBundle {
@@ -103,17 +104,20 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 	})
 	contextService := buildContextApplication(deps.TraceStore)
 	dreamService := buildDreamApplication(dreamApplicationDependencies{
-		Remember:           rememberService,
-		Store:              deps.Dream,
-		ScheduledStore:     deps.Dream,
-		AppConfig:          deps.AppConfig,
-		Teams:              deps.Teams,
-		GeneratorTransport: deps.GeneratorTransport,
-		EvidenceStore:      deps.DreamEvidenceStore,
-		Model:              deps.DreamModel,
-		Limits:             deps.AssessmentLimits,
-		Metrics:            deps.Metrics,
-		ProviderCycleLease: deps.ProviderCycleLease,
+		Remember:            rememberService,
+		Store:               deps.Dream,
+		ScheduledStore:      deps.Dream,
+		AppConfig:           deps.AppConfig,
+		Teams:               deps.Teams,
+		GeneratorTransport:  deps.GeneratorTransport,
+		EvidenceStore:       deps.DreamEvidenceStore,
+		Diagnostics:         deps.Dream,
+		DiagnosticProtector: deps.DiagnosticProtector,
+		Model:               deps.DreamModel,
+		Limits:              deps.AssessmentLimits,
+		Metrics:             deps.Metrics,
+		Logger:              deps.Logger,
+		ProviderCycleLease:  deps.ProviderCycleLease,
 	})
 	configureTelemetryFeatures(deps.TelemetryPrometheus, deps.AppConfig, dreamService)
 	controlDreamService := buildControlDreamApplication(controlDreamApplicationDependencies{
@@ -122,16 +126,17 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 		Teams:     deps.Teams,
 	})
 	return applicationBundle{
-		Remember:       rememberService,
-		Recall:         recallService,
-		Community:      communityService,
-		Lifecycle:      lifecycleService,
-		Context:        contextService,
-		Dream:          dreamService,
-		ControlDream:   controlDreamService,
-		Graph:          buildGraphApplication(deps.GraphStore),
-		MemoryPack:     buildMemoryPackApplication(memoryPackApplicationDependencies{Trace: deps.TraceStore}),
-		RecallFeedback: buildRecallFeedbackApplication(recallFeedbackApplicationDependencies{Events: deps.RecallFeedbackEvents, Config: deps.AppConfig}),
+		Remember:                rememberService,
+		Recall:                  recallService,
+		Community:               communityService,
+		Lifecycle:               lifecycleService,
+		Context:                 contextService,
+		Dream:                   dreamService,
+		ControlDream:            controlDreamService,
+		ControlDreamDiagnostics: dream.NewDiagnosticService(deps.Dream),
+		Graph:                   buildGraphApplication(deps.GraphStore),
+		MemoryPack:              buildMemoryPackApplication(memoryPackApplicationDependencies{Trace: deps.TraceStore}),
+		RecallFeedback:          buildRecallFeedbackApplication(recallFeedbackApplicationDependencies{Events: deps.RecallFeedbackEvents, Config: deps.AppConfig}),
 	}
 }
 

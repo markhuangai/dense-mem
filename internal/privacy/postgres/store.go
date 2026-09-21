@@ -77,6 +77,9 @@ var privateMemoryErasureManifest = []string{
 var privateMemoryCatalogExclusions = []string{
 	"private_memory_erasure_operations",
 	"private_memory_legal_holds",
+	// Team-shared Dream diagnostics are governed by their own seven-day
+	// retention worker and cascade with their run/hypothesis owners.
+	"dream_diagnostic_captures",
 }
 
 type PrivateMemoryErasureRequest = privacycontract.PrivateMemoryErasureRequest

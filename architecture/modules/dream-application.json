@@ -36,6 +36,21 @@
       "path": "internal/dreamgeneration/provider_test.go"
     },
     {
+      "path": "internal/dream/diagnostics.go"
+    },
+    {
+      "path": "internal/dream/diagnostic_recording.go"
+    },
+    {
+      "path": "internal/dream/diagnostic_purger.go"
+    },
+    {
+      "path": "internal/dream/diagnostic_exchange.go"
+    },
+    {
+      "path": "internal/dream/postgres/dream_diagnostics_repository.go"
+    },
+    {
       "path": "internal/tools/registry/dream_bindings.go"
     }
   ],

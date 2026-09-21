@@ -185,6 +185,11 @@ func dreamInputObjectID(input dreamcontract.DreamInput) string {
 }
 
 func dreamProposalsFromPaths(generated []GeneratedDream, paths []DreamPath, maxOutputs int, generatorModel string) ([]dreamcontract.UpsertHypothesisInput, int) {
+	proposals, rejected, _ := dreamProposalsFromPathsWithReasons(generated, paths, maxOutputs, generatorModel)
+	return proposals, rejected
+}
+
+func dreamProposalsFromPathsWithReasons(generated []GeneratedDream, paths []DreamPath, maxOutputs int, generatorModel string) ([]dreamcontract.UpsertHypothesisInput, int, map[string]int) {
 	if maxOutputs <= 0 {
 		maxOutputs = DefaultMaxOutputs
 	}
@@ -194,20 +199,25 @@ func dreamProposalsFromPaths(generated []GeneratedDream, paths []DreamPath, maxO
 	}
 	proposals := make([]dreamcontract.UpsertHypothesisInput, 0, maxOutputs)
 	rejected := 0
+	reasons := map[string]int{}
+	reject := func(reason string) {
+		rejected++
+		reasons[reason]++
+	}
 	for _, generatedDream := range generated {
 		path, ok := byPathRef[strings.TrimSpace(generatedDream.PathRef)]
 		if !ok || len(path.Premises) != 2 {
-			rejected++
+			reject("unknown_path_or_premises")
 			continue
 		}
 		predicate, ok := dreamPathPredicate(path, generatedDream.PredicateRef)
 		if !ok || !dreamPathEvidenceRefsValid(path, generatedDream.EvidenceRefs) {
-			rejected++
+			reject("predicate_or_evidence_reference_invalid")
 			continue
 		}
 		statement := strings.TrimSpace(generatedDream.Hypothesis)
 		if statement == "" {
-			rejected++
+			reject("hypothesis_empty")
 			continue
 		}
 		proposal := dreamProposalFromPath(path, predicate, generatedDream)
@@ -219,7 +229,7 @@ func dreamProposalsFromPaths(generated []GeneratedDream, paths []DreamPath, maxO
 			break
 		}
 	}
-	return proposals, rejected
+	return proposals, rejected, reasons
 }
 
 func dreamPathPredicate(path DreamPath, predicateRef string) (dreamcontract.DreamTargetPredicate, bool) {

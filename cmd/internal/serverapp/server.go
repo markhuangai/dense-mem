@@ -356,6 +356,7 @@ func RunActiveServer(
 		recallFeedback:           recallFeedbackEventService,
 		community:                communitySvc,
 		controlDream:             controlDreamSvc,
+		controlDreamDiagnostics:  applications.ControlDreamDiagnostics,
 		graph:                    graphViewSvc,
 		recall:                   recallSvc,
 		dream:                    dreamSvc,
@@ -499,6 +500,9 @@ func RunActiveServer(
 	}
 	diagnosticDone := knowledgeStore.StartRememberAttemptDiagnosticPurger(lifecycle.Context(), time.Hour, rootSlogLogger(logger))
 	lifecycle.add(managedRuntimeWorker{name: "remember diagnostics", done: diagnosticDone, shutdown: knowledgeStore.ShutdownRememberAttemptDiagnosticPurger})
+	lifecycle.start("dream diagnostics", func(ctx context.Context) {
+		dream.RunDiagnosticPurger(ctx, dreamStore, time.Hour, rootSlogLogger(logger))
+	})
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)
 	}

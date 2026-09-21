@@ -132,7 +132,7 @@ func (r *Store) recordDreamPathEvaluations(ctx context.Context, input DreamPathE
 		return nil
 	}
 	err := r.withDreamWriteTx(ctx, input.TeamID, input.CreatedByProfileID, system, func(tx *gorm.DB) error {
-		return insertDreamPathEvaluationsTx(ctx, tx, input.TeamID, input.ProviderModel, input.Paths)
+		return insertDreamPathEvaluationsTx(ctx, tx, input.TeamID, input.RunID, input.ProviderModel, input.Paths)
 	})
 	if err != nil {
 		return fmt.Errorf("dream: record path evaluations: %w", err)
@@ -144,6 +144,7 @@ func insertDreamPathEvaluationsTx(
 	ctx context.Context,
 	tx *gorm.DB,
 	teamID string,
+	runID string,
 	providerModel string,
 	paths []DreamPathEvaluationInput,
 ) error {
@@ -168,11 +169,11 @@ func insertDreamPathEvaluationsTx(
 			)
 		)
 		INSERT INTO dream_path_evaluations (
-		    team_id, space_id, space_generation, first_relationship_id, first_relationship_version,
+		    team_id, run_id, space_id, space_generation, first_relationship_id, first_relationship_version,
 		    second_relationship_id, second_relationship_version,
 		    allowed_predicate_fingerprint, provider_model
 		)
-		SELECT ?::uuid, dense_mem_team_shared_space(?::uuid), dense_mem_team_shared_generation(?::uuid),
+		SELECT ?::uuid, NULLIF(?, '')::uuid, dense_mem_team_shared_space(?::uuid), dense_mem_team_shared_generation(?::uuid),
 		       first_relationship_id,
 		       first_relationship_version,
 		       second_relationship_id,
@@ -202,7 +203,7 @@ func insertDreamPathEvaluationsTx(
 		             second_relationship_id, second_relationship_version,
 		             allowed_predicate_fingerprint)
 		DO NOTHING
-	`, string(payload), teamID, teamID, teamID, providerModel, teamID, teamID).Error
+		`, string(payload), teamID, runID, teamID, teamID, providerModel, teamID, teamID).Error
 }
 
 func normalizeDreamPathEvaluationInputs(paths []DreamPathEvaluationInput) []DreamPathEvaluationInput {

@@ -36,7 +36,7 @@ func (s *service) runScheduledCycle(ctx context.Context, teamID string, windowAt
 	windowAt = windowAt.UTC()
 	runDate := localRunDate(windowAt, cfg)
 	if !cfg.Enabled {
-		return &RunCycleResult{TeamID: teamID, RunDate: runDate, Status: "skipped"}, nil
+		return s.runTeamCycle(ctx, teamID, "", cfg, RunCycleRequest{}, true, windowAt)
 	}
 	if !isDueAt(windowAt, cfg) {
 		return &RunCycleResult{TeamID: teamID, RunDate: runDate, Status: "skipped"}, nil
@@ -76,6 +76,7 @@ func (s *service) recoverScheduledCycle(ctx context.Context, teamID string) (*Ru
 		result.CompletedAt = s.now().UTC()
 		result.Status = "cancelled"
 		result.OutcomeSummary = map[string]int{"disabled_before_recovery": 1}
+		appendRunDiagnosticPhase(result, "target", "cancelled", "dreaming_disabled", map[string]any{"enabled": false})
 		if err := s.completeTeamCycle(ctx, true, dreamcontract.DreamCycleCompleteInput{
 			TeamID:         teamID,
 			RunID:          claimed.RunID,
@@ -83,8 +84,13 @@ func (s *service) recoverScheduledCycle(ctx context.Context, teamID string) (*Ru
 			Status:         "cancelled",
 			OutcomeSummary: result.OutcomeSummary,
 		}); err != nil {
+			result.Status = "error"
+			result.Error = err.Error()
+			appendRunDiagnosticPhase(result, "disposition", "failed", err.Error(), map[string]any{"finalization": "complete_cycle"})
+			s.recordRunDiagnostic(ctx, result)
 			return result, err
 		}
+		s.recordRunDiagnostic(ctx, result)
 		return result, nil
 	}
 	return s.runClaimedTeamCycle(ctx, teamID, "", cfg, RunCycleRequest{}, true, result, claimed)
@@ -116,7 +122,12 @@ func (s *service) recordMissedScheduledCycle(ctx context.Context, teamID, runDat
 	if err != nil {
 		return nil, translateDreamRepositoryError(err)
 	}
-	return cycleRunResult(run), nil
+	result := cycleRunResult(run)
+	if result != nil {
+		appendRunDiagnosticPhase(result, "target", "missed", "scheduled_window_missed", map[string]any{"run_date": runDate})
+		s.recordRunDiagnostic(ctx, result)
+	}
+	return result, nil
 }
 
 func optionalScheduledFor(scheduledFor time.Time, ok bool) *time.Time {

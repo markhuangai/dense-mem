@@ -117,7 +117,7 @@ func TestScheduledEvidenceCycleAcceptsMidHourAndSkipsDisabledWindows(t *testing.
 	disabled, err := service.RunScheduledEvidenceCycle(context.Background(), teamID, time.Date(2026, 9, 4, 3, 0, 0, 0, time.UTC))
 	require.NoError(t, err)
 	require.Equal(t, "skipped", disabled.Status)
-	require.Empty(t, store.claimInput.TeamID)
+	require.Equal(t, teamID, store.claimInput.TeamID)
 }
 
 func TestRecoverScheduledEvidenceCycleCompletesDisabledRun(t *testing.T) {

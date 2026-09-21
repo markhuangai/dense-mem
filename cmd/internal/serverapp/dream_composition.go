@@ -14,17 +14,20 @@ import (
 )
 
 type dreamApplicationDependencies struct {
-	Remember           rememberapp.Service
-	Store              dreamcontract.DreamRepository
-	ScheduledStore     dreamcontract.ScheduledDreamRepository
-	AppConfig          dream.AppConfig
-	Teams              dream.TeamService
-	GeneratorTransport modelprovider.StructuredTransport
-	EvidenceStore      dreamcontract.EvidenceDiscoveryRepository
-	Model              string
-	Limits             assessor.SemanticAssessmentLimits
-	Metrics            observability.DiscoverabilityMetrics
-	ProviderCycleLease time.Duration
+	Remember            rememberapp.Service
+	Store               dreamcontract.DreamRepository
+	ScheduledStore      dreamcontract.ScheduledDreamRepository
+	AppConfig           dream.AppConfig
+	Teams               dream.TeamService
+	GeneratorTransport  modelprovider.StructuredTransport
+	EvidenceStore       dreamcontract.EvidenceDiscoveryRepository
+	Diagnostics         dreamcontract.DreamDiagnosticRepository
+	DiagnosticProtector observability.DiagnosticProtector
+	Model               string
+	Limits              assessor.SemanticAssessmentLimits
+	Metrics             observability.DiscoverabilityMetrics
+	Logger              observability.LogProvider
+	ProviderCycleLease  time.Duration
 }
 
 func dreamProviderCycleLease(cfg config.Config) time.Duration {
@@ -37,16 +40,19 @@ func buildDreamApplication(deps dreamApplicationDependencies) dream.Service {
 	scheduledStore := deps.ScheduledStore
 	evidenceStore := deps.EvidenceStore
 	return dream.New(dream.Dependencies{
-		Remember:           deps.Remember,
-		Store:              store,
-		ScheduledStore:     scheduledStore,
-		AppConfig:          deps.AppConfig,
-		Teams:              deps.Teams,
-		Generator:          dream.NewProviderGenerator(dreamgeneration.NewProvider(deps.GeneratorTransport, deps.Model, deps.Limits)),
-		EvidenceStore:      evidenceStore,
-		EvidenceGenerator:  dream.NewEvidenceProviderGenerator(deps.GeneratorTransport, deps.Model, deps.Limits),
-		Metrics:            deps.Metrics,
-		ProviderCycleLease: deps.ProviderCycleLease,
+		Remember:            deps.Remember,
+		Store:               store,
+		ScheduledStore:      scheduledStore,
+		AppConfig:           deps.AppConfig,
+		Teams:               deps.Teams,
+		Generator:           dream.NewProviderGenerator(dreamgeneration.NewProvider(deps.GeneratorTransport, deps.Model, deps.Limits)),
+		EvidenceStore:       evidenceStore,
+		EvidenceGenerator:   dream.NewEvidenceProviderGenerator(deps.GeneratorTransport, deps.Model, deps.Limits),
+		Diagnostics:         deps.Diagnostics,
+		DiagnosticProtector: deps.DiagnosticProtector,
+		Metrics:             deps.Metrics,
+		Logger:              deps.Logger,
+		ProviderCycleLease:  deps.ProviderCycleLease,
 	})
 }
 

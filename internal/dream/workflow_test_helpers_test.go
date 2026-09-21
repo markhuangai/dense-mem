@@ -159,6 +159,7 @@ func (s *dreamRepositoryStub) PersistDreamGeneration(ctx context.Context, input 
 	}
 	if err := s.RecordDreamPathEvaluations(ctx, dreamcontract.DreamPathEvaluationRecordInput{
 		TeamID:             input.TeamID,
+		RunID:              input.RunID,
 		CreatedByProfileID: input.CreatedByProfileID,
 		ProviderModel:      input.ProviderModel,
 		Paths:              input.EvaluatedPaths,

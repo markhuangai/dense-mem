@@ -102,6 +102,52 @@ func TestRunCycleReturnsInputSelectionOutcome(t *testing.T) {
 	assert.Equal(t, map[string]int{"input_selection_error": 1}, result.OutcomeSummary)
 }
 
+func TestRunCycleRecordsSelectionFailurePhases(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	repo := &dreamRepositoryStub{listInputsErr: errors.New("list inputs failed")}
+	diagnostics := &diagnosticRepositoryStub{}
+	svc := New(Dependencies{
+		Store:       repo,
+		Diagnostics: diagnostics,
+		AppConfig:   cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5}},
+	})
+
+	_, err := svc.RunCycle(dreamTestContext(teamID, ownerID), "ignored-profile", RunCycleRequest{Manual: true})
+	require.Error(t, err)
+	var phases []string
+	for _, item := range diagnostics.recorded {
+		if item.Phase != "run" {
+			phases = append(phases, item.Phase)
+		}
+	}
+	assert.Contains(t, phases, "target")
+	assert.Contains(t, phases, "validation")
+}
+
+func TestDisabledScheduledCycleRecordsFinalizationFailure(t *testing.T) {
+	teamID := uuid.New()
+	repo := &dreamRepositoryStub{completeErr: errors.New("completion failed")}
+	diagnostics := &diagnosticRepositoryStub{}
+	svc := New(Dependencies{
+		Store:          repo,
+		ScheduledStore: repo,
+		Diagnostics:    diagnostics,
+		AppConfig:      cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: false, StartTimeLocal: "03:00", Timezone: "UTC"}},
+	})
+
+	result, err := svc.RunScheduledCycle(context.Background(), teamID.String(), time.Date(2026, 7, 17, 3, 0, 0, 0, time.UTC))
+	require.ErrorContains(t, err, "completion failed")
+	require.Equal(t, "error", result.Status)
+	var dispositionFailed bool
+	for _, item := range diagnostics.recorded {
+		if item.Phase == "disposition" && item.Outcome == "failed" {
+			dispositionFailed = true
+		}
+	}
+	assert.True(t, dispositionFailed)
+}
+
 func TestGenerateDreamProposalsRetainsFailedLookupDiagnostics(t *testing.T) {
 	inputs := testDreamPathInputs()
 	predicates := testDreamPathPredicates()

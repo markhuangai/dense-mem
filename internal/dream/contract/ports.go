@@ -10,6 +10,17 @@ type DreamControlRepository interface {
 	ListDreamCyclesForTeam(context.Context, string, int) ([]DreamCycleRun, error)
 }
 
+// DreamDiagnosticRepository owns the private control-plane projection of
+// Dream execution. It is separate from semantic repositories so diagnostics
+// cannot become a second source of truth.
+type DreamDiagnosticRepository interface {
+	RecordDreamDiagnostic(context.Context, DreamDiagnosticCaptureInput) error
+	RecordDreamRunDiagnostics(context.Context, DreamDiagnosticCaptureInput) error
+	ListDreamDiagnostics(context.Context, DreamDiagnosticListInput) (DreamDiagnosticPage, error)
+	GetDreamDiagnostic(context.Context, string, string, string) (*DreamDiagnosticCapture, error)
+	PurgeExpiredDreamDiagnostics(context.Context, int) (int, error)
+}
+
 // EvidenceDiscoveryRepository is the scheduler-only port for the hourly lane.
 type EvidenceDiscoveryRepository interface {
 	ListEvidenceDiscoveryTargets(context.Context, string, int, int) ([]EvidenceDiscoveryTargetInput, error)

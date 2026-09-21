@@ -38,6 +38,20 @@
       "source": "internal/dream/postgres/dream_repository_integration_test.go"
     },
     {
+      "id": "repository/TestDreamDiagnosticsAreTeamScopedAndExpirePayloads",
+      "package": "./internal/dream/postgres",
+      "run": "^TestDreamDiagnosticsAreTeamScopedAndExpirePayloads$",
+      "phase": "precheck",
+      "source": "internal/dream/postgres/dream_diagnostics_integration_test.go"
+    },
+    {
+      "id": "repository/TestDreamDiagnosticsPersistBothLanesWithScopedPagination",
+      "package": "./internal/dream/postgres",
+      "run": "^TestDreamDiagnosticsPersistBothLanesWithScopedPagination$",
+      "phase": "precheck",
+      "source": "internal/dream/postgres/dream_diagnostics_integration_test.go"
+    },
+    {
       "id": "repository/TestEvidenceDiscoveryContextsPrioritizeSameSourceAndExcludePrivateSpaces",
       "package": "./internal/dream/postgres",
       "run": "^TestEvidenceDiscoveryContextsPrioritizeSameSourceAndExcludePrivateSpaces$",

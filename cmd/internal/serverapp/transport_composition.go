@@ -52,30 +52,31 @@ type transportCompositionInputs struct {
 	rememberAttempts         rememberapp.RememberAttemptDiagnosticsReader
 	rememberInvocations      rememberapp.RememberInvocationDiagnosticsReader
 
-	credentialRepo     accessservice.CredentialStore
-	credentialVerifier crypto.CredentialVerifier
-	activityWriter     *accessservice.CredentialActivityWriter
-	teamService        accessservice.TeamService
-	credentialService  accessservice.CredentialService
-	ssoService         *accessservice.SSOService
-	portalSession      accessservice.UserPortalSessionManager
-	directoryIdentity  *accessservice.DirectoryIdentityService
-	controlIdentity    *accessservice.ControlIdentityService
-	privateMemory      densehttp.PrivateMemoryServiceInterface
-	auditService       accessservice.AuditService
-	securityService    settings.SecurityService
-	appConfig          settings.AppConfigService
-	operationLogs      operations.OperationLogReader
-	operationLogHealth func(context.Context) error
-	usageMetrics       operations.UsageMetricsService
-	conflictQueue      conflictqueue.Reader
-	evidenceConflicts  conflictevidence.Reader
-	recallFeedback     recall.RecallFeedbackEventReader
-	community          communityapp.Service
-	controlDream       dream.ControlService
-	graph              graph.Service
-	recall             recall.RecallService
-	dream              dream.Service
+	credentialRepo          accessservice.CredentialStore
+	credentialVerifier      crypto.CredentialVerifier
+	activityWriter          *accessservice.CredentialActivityWriter
+	teamService             accessservice.TeamService
+	credentialService       accessservice.CredentialService
+	ssoService              *accessservice.SSOService
+	portalSession           accessservice.UserPortalSessionManager
+	directoryIdentity       *accessservice.DirectoryIdentityService
+	controlIdentity         *accessservice.ControlIdentityService
+	privateMemory           densehttp.PrivateMemoryServiceInterface
+	auditService            accessservice.AuditService
+	securityService         settings.SecurityService
+	appConfig               settings.AppConfigService
+	operationLogs           operations.OperationLogReader
+	operationLogHealth      func(context.Context) error
+	usageMetrics            operations.UsageMetricsService
+	conflictQueue           conflictqueue.Reader
+	evidenceConflicts       conflictevidence.Reader
+	recallFeedback          recall.RecallFeedbackEventReader
+	community               communityapp.Service
+	controlDream            dream.ControlService
+	controlDreamDiagnostics dream.DiagnosticService
+	graph                   graph.Service
+	recall                  recall.RecallService
+	dream                   dream.Service
 }
 
 type transportComposition struct {
@@ -367,6 +368,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 				Logs:                deps.operationLogs,
 				RecallFeedback:      deps.recallFeedback,
 				Dreams:              deps.controlDream,
+				DreamDiagnostics:    deps.controlDreamDiagnostics,
 				Communities:         deps.community,
 				ConflictQueue:       deps.conflictQueue,
 				EvidenceConflicts:   deps.evidenceConflicts,

@@ -90,7 +90,7 @@ func (r *Store) persistDreamGeneration(
 				result.Created++
 			}
 		}
-		return insertDreamPathEvaluationsTx(ctx, tx, input.TeamID, input.ProviderModel, input.EvaluatedPaths)
+		return insertDreamPathEvaluationsTx(ctx, tx, input.TeamID, input.RunID, input.ProviderModel, input.EvaluatedPaths)
 	})
 	if err != nil {
 		return DreamGenerationPersistResult{}, fmt.Errorf("dream: persist generation: %w", err)

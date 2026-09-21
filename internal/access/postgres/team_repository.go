@@ -414,6 +414,11 @@ func (r *TeamRepositoryImpl) HardDelete(ctx context.Context, id uuid.UUID) error
 		if err := tx.Exec("SELECT set_config('app.remember_attempt_diagnostic_purge', 'false', true)").Error; err != nil {
 			return err
 		}
+		// Dream diagnostics are team-shared control projections rather than
+		// private-memory rows; erase them under the same team deletion fence.
+		if err := tx.Exec(`DELETE FROM dream_diagnostic_captures WHERE team_id = $1`, id).Error; err != nil {
+			return err
+		}
 		if err := tx.Exec(`DELETE FROM memory_spaces WHERE team_id = $1`, id).Error; err != nil {
 			return err
 		}

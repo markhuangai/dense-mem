@@ -76,17 +76,20 @@ type RememberService interface {
 }
 
 type Dependencies struct {
-	Remember           RememberService
-	Store              dreamcontract.DreamRepository
-	ScheduledStore     dreamcontract.ScheduledDreamRepository
-	AppConfig          AppConfig
-	Teams              TeamService
-	Generator          Generator
-	EvidenceStore      dreamcontract.EvidenceDiscoveryRepository
-	EvidenceGenerator  EvidenceGenerator
-	Metrics            observability.DiscoverabilityMetrics
-	ProviderCycleLease time.Duration
-	Now                func() time.Time
+	Remember            RememberService
+	Store               dreamcontract.DreamRepository
+	ScheduledStore      dreamcontract.ScheduledDreamRepository
+	AppConfig           AppConfig
+	Teams               TeamService
+	Generator           Generator
+	EvidenceStore       dreamcontract.EvidenceDiscoveryRepository
+	EvidenceGenerator   EvidenceGenerator
+	Diagnostics         dreamcontract.DreamDiagnosticRepository
+	DiagnosticProtector observability.DiagnosticProtector
+	Metrics             observability.DiscoverabilityMetrics
+	Logger              observability.LogProvider
+	ProviderCycleLease  time.Duration
+	Now                 func() time.Time
 }
 
 type Service interface {
@@ -132,6 +135,9 @@ type RunCycleResult struct {
 	EvidenceTargets          int              `json:"evidence_targets,omitempty"`
 	EvaluatedEvidenceTargets int              `json:"evaluated_evidence_targets,omitempty"`
 	durablyFinalized         bool
+	providerPayload          []byte
+	providerCaptureState     string
+	diagnosticPhases         []runDiagnosticPhase
 }
 
 type ListOptions struct {

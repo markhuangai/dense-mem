@@ -15,30 +15,35 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/requestctx"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 var ErrDreamAuthContext = errors.New("dream: authenticated actor context is required")
 
 type dreamGenerationResult struct {
-	proposals                  []dreamcontract.UpsertHypothesisInput
-	rejected                   int
-	paths                      []DreamPath
-	model                      string
-	candidatePaths             int
-	candidateTargets           int
-	availableTargets           int
-	previouslyAssessedPaths    int
-	targetLookupFailed         bool
-	pathAssessmentLookupFailed bool
-	providerTurns              int
-	providerInputTokens        int
-	providerOutputTokens       int
-	providerProposals          int
-	providerFailed             bool
-	persistencePolicyRejected  int
+	proposals                   []dreamcontract.UpsertHypothesisInput
+	rejected                    int
+	paths                       []DreamPath
+	model                       string
+	candidatePaths              int
+	candidateTargets            int
+	availableTargets            int
+	previouslyAssessedPaths     int
+	targetLookupFailed          bool
+	pathAssessmentLookupFailed  bool
+	providerTurns               int
+	providerInputTokens         int
+	providerOutputTokens        int
+	providerProposals           int
+	providerFailed              bool
+	persistencePolicyRejected   int
+	persistenceRejectionReasons map[string]int
+	providerPayload             []byte
+	providerCaptureState        string
+	diagnosticPhases            []runDiagnosticPhase
 }
 
 func (s *service) runTeamCycle(
@@ -54,9 +59,6 @@ func (s *service) runTeamCycle(
 	runDate := localRunDate(started, cfg)
 	if scheduled {
 		runDate = localRunDate(scheduledWindowAt, cfg)
-	}
-	if !cfg.Enabled && !req.Manual {
-		return &RunCycleResult{TeamID: teamID, RunDate: runDate, Status: "skipped"}, nil
 	}
 	if req.MaxOutputs > 0 {
 		cfg.MaxOutputs = req.MaxOutputs
@@ -109,6 +111,27 @@ func (s *service) runTeamCycle(
 	if !claimed.Claimed && !req.Manual {
 		result.CompletedAt = s.now().UTC()
 		result.Status = "skipped"
+		appendRunDiagnosticPhase(result, "target", "skipped", "cycle_already_claimed", nil)
+		s.recordRunDiagnostic(ctx, result)
+		return result, nil
+	}
+	if !cfg.Enabled && !req.Manual {
+		result.CompletedAt = s.now().UTC()
+		result.Status = "skipped"
+		result.OutcomeSummary = map[string]int{"disabled_before_evaluation": 1}
+		appendRunDiagnosticPhase(result, "target", "skipped", "dreaming_disabled", map[string]any{"enabled": false})
+		if err := s.completeTeamCycle(ctx, scheduled, dreamcontract.DreamCycleCompleteInput{
+			TeamID: teamID, InitiatedByProfileID: initiatedByProfileID, RunID: claimed.RunID,
+			LeaseToken: claimed.LeaseToken, Status: "skipped", OutcomeSummary: result.OutcomeSummary,
+			Lane: claimed.Lane,
+		}); err != nil {
+			result.Status = "error"
+			result.Error = err.Error()
+			appendRunDiagnosticPhase(result, "disposition", "failed", err.Error(), map[string]any{"finalization": "complete_cycle"})
+			s.recordRunDiagnostic(ctx, result)
+			return result, err
+		}
+		s.recordRunDiagnostic(ctx, result)
 		return result, nil
 	}
 	return s.runClaimedTeamCycle(ctx, teamID, initiatedByProfileID, cfg, req, scheduled, result, claimed)
@@ -146,6 +169,8 @@ func (s *service) runClaimedTeamCycle(
 		result.Status = "error"
 		result.Error = err.Error()
 		result.OutcomeSummary = map[string]int{"input_selection_error": 1}
+		appendRunDiagnosticPhase(result, "target", "failed", err.Error(), map[string]any{"selection": "input_relationships"})
+		appendRunDiagnosticPhase(result, "validation", "failed", err.Error(), map[string]any{"selection": "input_relationships"})
 		completeErr := s.completeTeamCycle(ctx, scheduled, dreamcontract.DreamCycleCompleteInput{
 			TeamID:                   teamID,
 			InitiatedByProfileID:     initiatedByProfileID,
@@ -159,8 +184,10 @@ func (s *service) runClaimedTeamCycle(
 			EvaluatedEvidenceTargets: result.EvaluatedEvidenceTargets,
 		})
 		if completeErr != nil {
+			s.recordRunDiagnostic(ctx, result)
 			return result, errors.Join(err, completeErr)
 		}
+		s.recordRunDiagnostic(ctx, result)
 		return result, err
 	}
 	created, rejected, generation, runErr := s.persistHypotheses(ctx, teamID, initiatedByProfileID, claimed.RunID, claimed.LeaseToken, inputs, req.SeedDreams, cfg.MaxOutputs, scheduled)
@@ -202,8 +229,10 @@ func (s *service) runClaimedTeamCycle(
 		err = translateDreamRepositoryError(err)
 		result.Status = "error"
 		result.Error = err.Error()
+		s.recordRunDiagnostic(ctx, result)
 		return result, err
 	}
+	s.recordRunDiagnostic(ctx, result)
 	return result, runErr
 }
 
@@ -236,6 +265,9 @@ func applyDreamGenerationDiagnostics(
 	result.ProviderOutputTokens = generation.providerOutputTokens
 	result.AttemptedPaths = len(generation.paths)
 	result.ProviderProposals = generation.providerProposals
+	result.providerPayload = append([]byte(nil), generation.providerPayload...)
+	result.providerCaptureState = generation.providerCaptureState
+	result.diagnosticPhases = append([]runDiagnosticPhase(nil), generation.diagnosticPhases...)
 	blockedTargets := max(0, generation.candidateTargets-generation.availableTargets)
 	if generation.targetLookupFailed {
 		blockedTargets = 0
@@ -305,6 +337,10 @@ func (s *service) persistHypotheses(
 	generation := dreamGenerationResult{}
 	if len(seeds) > 0 {
 		proposals = dreamProposalsFromSeeds(seeds, byID, maxOutputs)
+		generation.diagnosticPhases = append(generation.diagnosticPhases,
+			runDiagnosticPhase{phase: "target", outcome: "selected", details: map[string]any{"source": "seed_dreams", "count": len(proposals)}},
+			runDiagnosticPhase{phase: "proposal", outcome: "generated", details: map[string]any{"accepted": len(proposals), "rejected": 0}},
+		)
 	} else {
 		generated, err := s.generateDreamProposals(ctx, teamID, inputs, maxOutputs)
 		generation = generated
@@ -338,9 +374,18 @@ func (s *service) persistHypotheses(
 			persisted, err = s.deps.Store.PersistDreamGeneration(ctx, input)
 		}
 		if err != nil {
+			generation.diagnosticPhases = append(generation.diagnosticPhases, runDiagnosticPhase{
+				phase: "disposition", outcome: "failed", cause: err.Error(),
+				details: map[string]any{"accepted": persisted.Created, "rejected": persisted.Rejected},
+			})
 			return 0, rejected, generation, err
 		}
 		generation.persistencePolicyRejected = persisted.Rejected
+		generation.diagnosticPhases = append(generation.diagnosticPhases,
+			runDiagnosticPhase{phase: "disposition", outcome: diagnosticDispositionOutcome(persisted.Created, rejected+persisted.Rejected), details: map[string]any{
+				"accepted": persisted.Created, "rejected": rejected + persisted.Rejected,
+			}},
+		)
 		return persisted.Created, rejected + persisted.Rejected, generation, nil
 	}
 	for _, proposal := range proposals {
@@ -370,7 +415,25 @@ func (s *service) persistHypotheses(
 			created++
 		}
 	}
+	generation.diagnosticPhases = append(generation.diagnosticPhases,
+		runDiagnosticPhase{phase: "disposition", outcome: diagnosticDispositionOutcome(created, rejected), details: map[string]any{
+			"accepted": created, "rejected": rejected,
+		}},
+	)
 	return created, rejected, generation, nil
+}
+
+func diagnosticDispositionOutcome(accepted, rejected int) string {
+	switch {
+	case accepted > 0 && rejected > 0:
+		return "partially_accepted"
+	case accepted > 0:
+		return "accepted"
+	case rejected > 0:
+		return "rejected"
+	default:
+		return "no_change"
+	}
 }
 
 func (s *service) generateDreamProposals(
@@ -380,11 +443,14 @@ func (s *service) generateDreamProposals(
 	maxOutputs int,
 ) (dreamGenerationResult, error) {
 	if len(inputs) == 0 || s.deps.Generator == nil {
-		return dreamGenerationResult{}, nil
+		return dreamGenerationResult{diagnosticPhases: []runDiagnosticPhase{
+			{phase: "target", outcome: "evaluated_zero", details: map[string]any{"input_relationships": len(inputs)}},
+			{phase: "proposal", outcome: "no_change", details: map[string]any{"accepted": 0, "rejected": 0}},
+		}}, nil
 	}
 	predicates, err := s.deps.Store.ListDreamTargetPredicates(ctx, teamID)
 	if err != nil {
-		return dreamGenerationResult{}, err
+		return dreamGenerationResult{diagnosticPhases: []runDiagnosticPhase{{phase: "target", outcome: "failed", cause: err.Error(), details: map[string]any{"selection": "predicate_lookup"}}}}, err
 	}
 	paths := buildDreamPaths(inputs, predicates, maxOutputs)
 	result := dreamGenerationResult{candidatePaths: len(paths)}
@@ -394,6 +460,9 @@ func (s *service) generateDreamProposals(
 		availableTargets, err := s.deps.Store.ListAvailableDreamTargets(ctx, teamID, targets)
 		if err != nil {
 			result.targetLookupFailed = true
+			result.diagnosticPhases = append(result.diagnosticPhases, runDiagnosticPhase{phase: "target", outcome: "failed", cause: err.Error(), details: map[string]any{
+				"candidate_paths": len(paths), "candidate_targets": result.candidateTargets, "selection": "target_lookup",
+			}})
 			return result, err
 		}
 		result.availableTargets = len(availableTargets)
@@ -404,11 +473,27 @@ func (s *service) generateDreamProposals(
 		unassessed, err := s.deps.Store.ListUnassessedDreamPaths(ctx, teamID, dreamPathEvaluationInputs(paths))
 		if err != nil {
 			result.pathAssessmentLookupFailed = true
+			result.diagnosticPhases = append(result.diagnosticPhases, runDiagnosticPhase{phase: "validation", outcome: "failed", cause: err.Error(), details: map[string]any{
+				"candidate_paths": beforeAssessment, "selection": "path_assessment_lookup",
+			}})
 			return result, err
 		}
 		paths = dreamPathsForEvaluationInputs(paths, unassessed)
 		result.previouslyAssessedPaths = beforeAssessment - len(paths)
 	}
+	result.diagnosticPhases = append(result.diagnosticPhases, runDiagnosticPhase{
+		phase: "target", outcome: func() string {
+			if len(paths) == 0 {
+				return "evaluated_zero"
+			}
+			return "selected"
+		}(),
+		details: map[string]any{
+			"candidate_paths": len(paths), "candidate_targets": result.candidateTargets,
+			"available_targets": result.availableTargets, "previously_assessed_paths": result.previouslyAssessedPaths,
+			"path_refs": dreamDiagnosticPathRefs(paths),
+		},
+	})
 	if len(paths) == 0 {
 		return result, nil
 	}
@@ -417,6 +502,7 @@ func (s *service) generateDreamProposals(
 	if strings.TrimSpace(model) == "" {
 		result.paths = paths
 		result.providerFailed = true
+		result.diagnosticPhases = append(result.diagnosticPhases, runDiagnosticPhase{phase: "provider", outcome: "failed", cause: "provider model unavailable", details: map[string]any{"path_count": len(paths)}})
 		return result, ErrDreamProviderUnavailable
 	}
 	result.paths = paths
@@ -428,6 +514,9 @@ func (s *service) generateDreamProposals(
 		Paths:          paths,
 		GeneratorModel: model,
 	}
+	exchangeRecorder := newDreamDiagnosticExchangeRecorder(s.deps.DiagnosticProtector)
+	ctx = withDreamDiagnosticRecorder(ctx, exchangeRecorder)
+	ctx = modelprovider.WithExchangeRecorder(ctx, exchangeRecorder)
 	var diagnostics GenerationDiagnostics
 	var generated []GeneratedDream
 	if generatorWithDiagnostics, ok := generator.(DiagnosticsGenerator); ok {
@@ -437,17 +526,52 @@ func (s *service) generateDreamProposals(
 		diagnostics.ProviderProposals = len(generated)
 	}
 	if err != nil {
+		result.providerPayload = exchangeRecorder.Payload()
+		result.providerCaptureState, _ = exchangeRecorder.State()
 		result.providerFailed = true
+		result.diagnosticPhases = append(result.diagnosticPhases, runDiagnosticPhase{phase: "provider", outcome: "failed", cause: err.Error(), details: map[string]any{
+			"model": model, "provider_turns": diagnostics.ProviderTurns, "provider_proposals": diagnostics.ProviderProposals,
+		}})
 		return result, err
 	}
-	proposals, rejected := dreamProposalsFromPaths(generated, paths, maxOutputs, model)
+	proposals, rejected, rejectionReasons := dreamProposalsFromPathsWithReasons(generated, paths, maxOutputs, model)
 	result.proposals = proposals
 	result.rejected = rejected
 	result.providerTurns = diagnostics.ProviderTurns
 	result.providerInputTokens = diagnostics.ProviderInputTokens
 	result.providerOutputTokens = diagnostics.ProviderOutputTokens
 	result.providerProposals = diagnostics.ProviderProposals
+	result.providerPayload = exchangeRecorder.Payload()
+	result.providerCaptureState, _ = exchangeRecorder.State()
+	result.diagnosticPhases = append(result.diagnosticPhases,
+		runDiagnosticPhase{phase: "provider", outcome: "completed", details: map[string]any{
+			"model": model, "provider_turns": diagnostics.ProviderTurns, "provider_proposals": diagnostics.ProviderProposals,
+		}},
+		runDiagnosticPhase{phase: "validation", outcome: diagnosticValidationOutcome(len(proposals), rejected), details: map[string]any{
+			"accepted": len(proposals), "rejected": rejected, "rejection_reasons": rejectionReasons,
+		}},
+		runDiagnosticPhase{phase: "proposal", outcome: diagnosticValidationOutcome(len(proposals), rejected), details: map[string]any{
+			"accepted": len(proposals), "rejected": rejected, "path_refs": dreamDiagnosticPathRefs(paths),
+		}},
+	)
 	return result, nil
+}
+
+func diagnosticValidationOutcome(accepted, rejected int) string {
+	return diagnosticDispositionOutcome(accepted, rejected)
+}
+
+func dreamDiagnosticPathRefs(paths []DreamPath) []string {
+	refs := make([]string, 0, min(len(paths), 64))
+	for _, path := range paths {
+		if len(refs) >= 64 {
+			break
+		}
+		if ref := strings.TrimSpace(path.PathRef); ref != "" {
+			refs = append(refs, ref)
+		}
+	}
+	return refs
 }
 
 func (s *service) listDreams(ctx context.Context, opts ListOptions) ([]*domain.Dream, string, error) {

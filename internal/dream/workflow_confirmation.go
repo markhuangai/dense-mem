@@ -102,7 +102,21 @@ func (s *service) resolveLifecycleFeedback(
 		Decision:          decision,
 		InvalidatedReason: req.Feedback,
 	})
-	return s.feedbackResult(ctx, decision, dreamRecord(record), updated, nil, err)
+	result, feedbackErr := s.feedbackResult(ctx, decision, dreamRecord(record), updated, nil, err)
+	status := ""
+	if updated != nil {
+		status = updated.Status
+	}
+	cause := ""
+	if feedbackErr != nil {
+		cause = feedbackErr.Error()
+	}
+	s.recordHypothesisDiagnostic(ctx, record, "feedback", decision, cause, map[string]any{
+		"status_before":    record.Status,
+		"status_after":     status,
+		"feedback_present": strings.TrimSpace(req.Feedback) != "",
+	})
+	return result, feedbackErr
 }
 
 func lifecycleStatus(decision string) string {
@@ -191,6 +205,9 @@ func (s *service) resolveConfirmation(
 	if !completed {
 		applyDreamTerminalRetryGuidance(remember, record.HypothesisID, decision)
 		s.recordDreamFeedback(ctx, decision, dream, "error")
+		s.recordHypothesisDiagnostic(ctx, record, "confirmation", "failed", "remember did not complete", map[string]any{
+			"decision": decision,
+		})
 		return &ResolveFeedbackResult{Dream: dream, Memory: remember}, nil
 	}
 	updated, err := s.submitDreamHypothesisWithRetry(ctx, store, dreamcontract.SubmitHypothesisInput{
@@ -201,7 +218,22 @@ func (s *service) resolveConfirmation(
 		SubmittedIngestID: ingestID,
 		InvalidatedReason: req.Feedback,
 	})
-	return s.feedbackResult(ctx, decision, dream, updated, remember, err)
+	result, feedbackErr := s.feedbackResult(ctx, decision, dream, updated, remember, err)
+	cause := ""
+	if feedbackErr != nil {
+		cause = feedbackErr.Error()
+	}
+	s.recordHypothesisDiagnostic(ctx, record, "confirmation", decision, cause, map[string]any{
+		"submitted_ingest_id": ingestID,
+		"decision":            decision,
+		"relationship_results": func() any {
+			if remember == nil || remember.Terminal == nil {
+				return nil
+			}
+			return remember.Terminal.RelationshipResults
+		}(),
+	})
+	return result, feedbackErr
 }
 
 func dreamEvidenceHypothesisOwnedBy(record *dreamcontract.HypothesisRecord, profileID string) bool {

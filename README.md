@@ -377,6 +377,13 @@ visibility checks to `tools/call`.
 | `eval_run_dream_cycle` | Evaluation harness | Evaluation image only | Run an isolated, bounded manual Dream cycle, optionally with seed Hypotheses, for evaluation. |
 | `eval_run_recall_case` | Evaluation harness | Evaluation image only | Execute current recall logic and return ranked/context references for deterministic scoring. |
 
+The private control portal exposes bounded Dream investigation reads at
+`/control/api/teams/:teamId/dreaming/runs/:runId/diagnostics` and
+`/control/api/teams/:teamId/dreams/:dreamId/diagnostics`. They explain run,
+proposal, feedback, and confirmation outcomes without entering the memory
+graph. Retained provider projections expire after seven days and report
+unavailable or expired captures explicitly.
+
 The production release binary is compiled without the `evaluation` build tag,
 so no environment variable or control-panel setting can register evaluation
 tools in a live release. The evaluation target adds only the three harness tools

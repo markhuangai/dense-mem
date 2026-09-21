@@ -36,6 +36,7 @@ type RecallHypothesesInput = dreamcontract.RecallHypothesesInput
 type UpdateHypothesisStatusInput = dreamcontract.UpdateHypothesisStatusInput
 type SubmitHypothesisInput = dreamcontract.SubmitHypothesisInput
 type DreamControlRepository = dreamcontract.DreamControlRepository
+type DreamDiagnosticRepository = dreamcontract.DreamDiagnosticRepository
 type EvidenceDiscoveryRepository = dreamcontract.EvidenceDiscoveryRepository
 type EvidenceDiscoveryInputValidator = dreamcontract.EvidenceDiscoveryInputValidator
 type EvaluationRepository = dreamcontract.EvaluationRepository
@@ -44,7 +45,7 @@ type EvaluationGetInput = dreamcontract.EvaluationGetInput
 type EvaluationPage = dreamcontract.EvaluationPage
 
 var (
-	ErrTeamInactive                       = dreamcontract.ErrTeamInactive
+	ErrTeamInactive                        = dreamcontract.ErrTeamInactive
 	ErrDreamCycleAlreadyClaimed            = dreamcontract.ErrDreamCycleAlreadyClaimed
 	ErrDreamHypothesisNotFound             = dreamcontract.ErrDreamHypothesisNotFound
 	ErrDreamHypothesisIDInvalid            = dreamcontract.ErrDreamHypothesisIDInvalid

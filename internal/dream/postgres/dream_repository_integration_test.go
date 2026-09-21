@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 )
 
 const testDreamPathPredicateFingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -92,6 +94,30 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 	require.NoError(t, err)
 	require.Equal(t, 1, persisted.Created)
 	require.Zero(t, persisted.Rejected)
+	var linkedRunID string
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT run_id::text
+			FROM dream_path_evaluations
+			WHERE team_id = ?::uuid
+			ORDER BY created_at DESC
+			LIMIT 1
+		`, teamID).Scan(&linkedRunID).Error
+	}))
+	require.Equal(t, run.RunID, linkedRunID)
+	diagnosticsStore := semanticRepo
+	require.NoError(t, diagnosticsStore.RecordDreamRunDiagnostics(ctx, dreamcontract.DreamDiagnosticCaptureInput{
+		TeamID: teamID, RunID: run.RunID, Phase: "run", Outcome: "completed",
+		CaptureState: "captured", Payload: []byte(`{"provider_exchanges":[{"response_body":"captured"}]}`),
+	}))
+	diagnosticPage, err := diagnosticsStore.ListDreamDiagnostics(ctx, dreamcontract.DreamDiagnosticListInput{TeamID: teamID, RunID: run.RunID, Limit: 25})
+	require.NoError(t, err)
+	for _, diagnostic := range diagnosticPage.Items {
+		if diagnostic.Phase == "proposal" || diagnostic.Phase == "disposition" {
+			require.Equal(t, "not_captured", diagnostic.CaptureState)
+			require.Equal(t, "phase_metadata_only", diagnostic.CaptureReason)
+		}
+	}
 
 	var hiddenDerivations, hiddenEvaluations int
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, otherTeamID, otherOwnerID, func(tx *gorm.DB) error {

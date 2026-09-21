@@ -50,6 +50,13 @@ await assertSystemRun(scheduledRun.run_id);
 const controlDreams = await controlJSON(`/teams/${teamID}/dreams?limit=10`);
 const scheduledDream = findDream(controlDreams.data?.items, scheduledRun.run_id, "control portal API");
 assertEvidenceDerivedDream(scheduledDream, seeded, "control portal API");
+  const runDiagnostics = await controlJSON(`/teams/${teamID}/dreaming/runs/${scheduledRun.run_id}/diagnostics?limit=10`);
+  assertEqual(Array.isArray(runDiagnostics.data?.items), true, "Dream run diagnostics page");
+  assertAtLeast(runDiagnostics.data.items.length, 1, "Dream run diagnostic capture");
+  const diagnosticPhases = new Set(runDiagnostics.data.items.map((item) => item.phase));
+  for (const phase of ["run", "target", "provider", "validation", "proposal", "disposition"]) {
+    assertEqual(diagnosticPhases.has(phase), true, `Dream diagnostic phase ${phase}`);
+  }
 const hypothesisID = scheduledDream.dream_id;
 const statement = scheduledDream.hypothesis;
 const reviewer = await createTeamCredential("Team Dreaming E2E reviewer");
@@ -61,6 +68,9 @@ const feedback = await mcpTool(reviewer.apiKey, "resolve_dream_feedback", {
 assertEqual(feedback.hypothesis_id, hypothesisID, "feedback hypothesis");
 assertEqual(feedback.status, "reinforced", "feedback status");
 await assertFeedbackActor(hypothesisID, reviewer.credentialID);
+  const hypothesisDiagnostics = await controlJSON(`/teams/${teamID}/dreams/${hypothesisID}/diagnostics?limit=10`);
+  assertEqual(Array.isArray(hypothesisDiagnostics.data?.items), true, "Dream hypothesis diagnostics page");
+  assertEqual(hypothesisDiagnostics.data.items.some((item) => item.phase === "feedback"), true, "Dream feedback diagnostic phase");
 
 assertContainsDream(controlDreams.data?.items, hypothesisID, statement, "control portal API");
 const userDreams = await userJSON("/ui/api/dreams?limit=10");
