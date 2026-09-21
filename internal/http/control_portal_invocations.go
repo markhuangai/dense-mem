@@ -103,7 +103,8 @@ func (h *controlPortalHandler) enrichRememberInvocationDiagnostic(ctx context.Co
 	}
 	invocationLogs := read(domain.OperationLogFilter{TeamID: &teamID, InvocationID: detail.InvocationID})
 	enrichRememberInvocationFromInvocationLogs(detail, invocationLogs)
-	if strings.TrimSpace(detail.CorrelationID) != "" {
+	enrichRememberInvocationFromTransportLogs(detail, invocationLogs)
+	if (detail.DeliveryStage == "" || detail.DeliveryStage == "unknown_receipt") && strings.TrimSpace(detail.CorrelationID) != "" {
 		transportLogs := read(domain.OperationLogFilter{TeamID: &teamID, CorrelationID: detail.CorrelationID})
 		enrichRememberInvocationFromTransportLogs(detail, transportLogs)
 	}

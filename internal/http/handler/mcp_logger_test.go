@@ -191,3 +191,36 @@ func TestMCPLoggerAdapterUsesOptionalContextualSurface(t *testing.T) {
 	}
 	require.Len(t, logger.contexts, 6)
 }
+
+type baseMCPLogger struct{ events []string }
+
+func (l *baseMCPLogger) Info(message string, _ ...httpcontract.LogAttr) {
+	l.events = append(l.events, message)
+}
+func (l *baseMCPLogger) Error(message string, _ error, _ ...httpcontract.LogAttr) {
+	l.events = append(l.events, message)
+}
+func (l *baseMCPLogger) Warn(message string, _ ...httpcontract.LogAttr) {
+	l.events = append(l.events, message)
+}
+func (l *baseMCPLogger) Debug(message string, _ ...httpcontract.LogAttr) {
+	l.events = append(l.events, message)
+}
+func (l *baseMCPLogger) With(_ ...httpcontract.LogAttr) httpcontract.LogProvider { return l }
+
+func TestMCPLoggerAdapterFallsBackForBaseLoggerContextMethods(t *testing.T) {
+	logger := &baseMCPLogger{}
+	adapted := NewMCPLogger(logger).(mcpLoggerAdapter)
+	ctx := context.Background()
+
+	adapted.WarnContext(ctx, "warn-context")
+	adapted.TraceContext(ctx, "trace-context")
+	adapted.DebugContext(ctx, "debug-context")
+	adapted.InfoContext(ctx, "info-context")
+	adapted.ErrorContext(ctx, "error-context", errors.New("failure"))
+	adapted.FatalContext(ctx, "fatal-context")
+
+	require.Equal(t, []string{
+		"warn-context", "trace-context", "debug-context", "info-context", "error-context", "fatal-context",
+	}, logger.events)
+}
