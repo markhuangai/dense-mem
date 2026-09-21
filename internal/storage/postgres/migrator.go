@@ -238,7 +238,10 @@ func newMigrationProviderWithFilesystem(
 	if err != nil {
 		return nil, err
 	}
-	options := make([]goose.ProviderOption, 0, 1)
+	options := make([]goose.ProviderOption, 0, 2)
+	// This migration is registered as a no-transaction Go migration so it can reserve one
+	// connection and restore session settings even when concurrent DDL fails.
+	options = append(options, goose.WithExcludeNames([]string{operationLogInvocationIndexMigrationSQLName}))
 	if withLock {
 		locker, err := gooselock.NewPostgresSessionLocker()
 		if err != nil {

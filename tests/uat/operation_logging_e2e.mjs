@@ -97,7 +97,7 @@ for (const literal of ["true", "false"]) {
 }
 for (const literal of ["1", "0", "t", "f", "TRUE", "False"]) {
   const retryableFilter = await controlJSON(`/logs?retryable=${literal}&limit=1`);
-  if (retryableFilter.response.status < 400 || retryableFilter.response.status >= 500 || JSON.stringify(retryableFilter.body).length >= 2048) {
+  if (retryableFilter.response.status !== 422 || JSON.stringify(retryableFilter.body).length >= 2048) {
     throw new Error(`invalid retryable operation-log filter was not bounded for ${literal}: ${retryableFilter.response.status}`);
   }
 }

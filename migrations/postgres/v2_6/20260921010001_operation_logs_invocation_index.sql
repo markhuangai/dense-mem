@@ -1,5 +1,9 @@
 -- +goose NO TRANSACTION
 
+-- Runtime Goose providers execute this version through the registered no-transaction Go migration
+-- so session settings and concurrent DDL stay on one reserved connection. This SQL remains the
+-- migration contract and history source for tooling that inspects the repository files.
+
 -- +goose Up
 
 -- Lock/rewrite impact: every index operation is concurrent; operation_logs is not rewritten and writes remain available.

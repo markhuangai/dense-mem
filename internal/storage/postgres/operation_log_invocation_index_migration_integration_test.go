@@ -12,13 +12,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const operationLogInvocationIndexMigrationVersion int64 = 20260921010001
-
 func TestOperationLogInvocationIndexMigrationCreatesRecoverablePartialIndex(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
-	db.SetMaxOpenConns(1)
+	// Goose reserves one provider connection while the no-transaction Go migration
+	// reserves another connection for its session-scoped DDL settings.
+	db.SetMaxOpenConns(2)
 	db.SetMaxIdleConns(1)
 
 	require.NoError(t, runtimeMigrationUpTo(ctx, db, operationLogInvocationIndexMigrationVersion))
@@ -50,6 +50,7 @@ func TestOperationLogInvocationIndexMigrationCreatesRecoverablePartialIndex(t *t
 	// A held table lock must bound the concurrent DDL, after which the same
 	// migration can retry successfully once the lock is released.
 	assertOperationLogMigrationLockTimeout(t, ctx, db)
+	assertOperationLogInvocationIndexMigrationSessionReset(t, ctx, db)
 	require.NoError(t, runtimeMigrationUpTo(ctx, db, operationLogInvocationIndexMigrationVersion))
 	assertOperationLogInvocationIndex(t, ctx, db)
 	require.NoError(t, runtimeMigrationDownTo(ctx, db, 20260919010002))
@@ -72,6 +73,28 @@ func TestOperationLogInvocationIndexMigrationCreatesRecoverablePartialIndex(t *t
 	createCanceledRelationshipTelemetryIndex(t, ctx, db, "operation_logs_team_invocation_timestamp_idx", "operation_logs", "team_id, (attrs ->> 'invocation_id'), timestamp DESC, id DESC")
 	require.NoError(t, runtimeMigrationUpTo(ctx, db, operationLogInvocationIndexMigrationVersion))
 	assertOperationLogInvocationIndex(t, ctx, db)
+}
+
+func assertOperationLogInvocationIndexMigrationSessionReset(t *testing.T, ctx context.Context, db *sql.DB) {
+	t.Helper()
+	connections := make([]*sql.Conn, 0, 2)
+	for range 2 {
+		conn, err := db.Conn(ctx)
+		require.NoError(t, err)
+		connections = append(connections, conn)
+	}
+	defer func() {
+		for _, conn := range connections {
+			_ = conn.Close()
+		}
+	}()
+	for _, conn := range connections {
+		var lockTimeout, txMode string
+		require.NoError(t, conn.QueryRowContext(ctx, "SHOW lock_timeout").Scan(&lockTimeout))
+		require.Equal(t, "0", lockTimeout)
+		require.NoError(t, conn.QueryRowContext(ctx, "SELECT current_setting('app.tx_mode', true)").Scan(&txMode))
+		require.Empty(t, txMode)
+	}
 }
 
 func runtimeMigrationUpTo(ctx context.Context, db *sql.DB, version int64) error {
