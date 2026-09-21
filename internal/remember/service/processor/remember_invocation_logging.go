@@ -146,7 +146,7 @@ func (p *rememberSynchronousProcessor) recordRememberInvocation(
 			observability.String("invocation_id", invocationID),
 		}
 		if contextual, ok := p.logger.(observability.ContextLogProvider); ok {
-			contextual.WarnContext(ctx, warningEvent, append(warningAttrs, observability.String("error", err.Error()))...)
+			contextual.WarnContext(writeCtx, warningEvent, append(warningAttrs, observability.String("error", err.Error()))...)
 		} else {
 			p.logger.Warn(warningEvent, append(warningAttrs, observability.String("error", "[diagnostic unavailable]"))...)
 		}
@@ -173,13 +173,13 @@ func (p *rememberSynchronousProcessor) recordRememberInvocation(
 				logErr = errors.New("remember invocation completed with an error outcome")
 			}
 			if contextual, ok := p.logger.(observability.ContextLogProvider); ok {
-				contextual.ErrorContext(ctx, "remember_invocation_completed", logErr, attrs...)
+				contextual.ErrorContext(writeCtx, "remember_invocation_completed", logErr, attrs...)
 			} else {
 				p.logger.Error("remember_invocation_completed", errors.New("[diagnostic unavailable]"), attrs...)
 			}
 		default:
 			if contextual, ok := p.logger.(observability.ContextLogProvider); ok {
-				contextual.InfoContext(ctx, "remember_invocation_completed", attrs...)
+				contextual.InfoContext(writeCtx, "remember_invocation_completed", attrs...)
 			} else {
 				p.logger.Info("remember_invocation_completed", attrs...)
 			}

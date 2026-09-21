@@ -482,11 +482,13 @@ func TestRememberProcessingFailureLoggingUsesRequestAuthenticationSecrets(t *tes
 }
 
 type rememberFailureLogSink struct {
-	records []observability.LogRecord
+	records       []observability.LogRecord
+	contextErrors []error
 }
 
-func (s *rememberFailureLogSink) WriteLog(_ context.Context, record observability.LogRecord) error {
+func (s *rememberFailureLogSink) WriteLog(ctx context.Context, record observability.LogRecord) error {
 	s.records = append(s.records, record)
+	s.contextErrors = append(s.contextErrors, ctx.Err())
 	return nil
 }
 

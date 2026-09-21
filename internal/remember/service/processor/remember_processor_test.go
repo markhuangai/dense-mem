@@ -177,6 +177,25 @@ func TestRememberInvocationDiagnosticsClassifiesRememberCancellationSentinels(t 
 	}
 }
 
+func TestRememberInvocationLoggingUsesRecoveryContextAfterCancellation(t *testing.T) {
+	sink := &rememberFailureLogSink{}
+	processor := &rememberSynchronousProcessor{
+		ledger: &rememberFailureLedgerStub{},
+		logger: observability.NewWithSinks(observability.LevelTrace, sink),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	processor.recordRememberInvocation(ctx, rememberapp.RememberProcessRequest{
+		TeamID: "11111111-1111-4111-8111-111111111111", OwnerProfileID: "22222222-2222-4222-8222-222222222222",
+		RequestHash: "sha256:cancelled", InvocationStartedAt: time.Now().UTC(), OriginalRequest: []byte(`{"evidence":[]}`),
+	}, "33333333-3333-4333-8333-333333333333", "execution", "", "assessment", context.Canceled, nil, nil)
+
+	require.Len(t, sink.records, 1)
+	require.Equal(t, "remember_invocation_completed", sink.records[0].Message)
+	require.NoError(t, sink.contextErrors[0])
+}
+
 func TestRememberInvocationLoggingPreservesFailureCauseThroughFallbackLogger(t *testing.T) {
 	ledger := &rememberFailureLedgerStub{invocationErr: errors.New("diagnostic write failed")}
 	logger := &rememberProcessorLogCapture{}
