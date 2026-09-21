@@ -309,6 +309,12 @@ func TestControlPortalObservabilityValidation(t *testing.T) {
 	c = e.NewContext(req, rec)
 	_, err = controlOperationLogsFilter(c)
 	require.ErrorContains(t, err, "retryable")
+	for _, literal := range []string{"1", "0", "t", "f", "TRUE", "False"} {
+		req = httptest.NewRequest(http.MethodGet, "/control/api/logs?retryable="+literal, nil)
+		c = e.NewContext(req, rec)
+		_, err = controlOperationLogsFilter(c)
+		require.ErrorContains(t, err, "retryable must be true or false", literal)
+	}
 
 	req = httptest.NewRequest(http.MethodGet, "/control/api/logs?team_id=bad", nil)
 	c = e.NewContext(req, rec)

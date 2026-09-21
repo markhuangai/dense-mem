@@ -243,11 +243,11 @@ func controlOperationLogsFilter(c echo.Context) (domain.OperationLogFilter, erro
 	}
 	var retryable *bool
 	if raw := strings.TrimSpace(c.QueryParam("retryable")); raw != "" {
-		parsed, err := strconv.ParseBool(raw)
+		var err error
+		retryable, err = optionalStrictControlBool(raw, "retryable")
 		if err != nil {
 			return domain.OperationLogFilter{}, httperr.New(httperr.VALIDATION_ERROR, "retryable must be true or false")
 		}
-		retryable = &parsed
 	}
 	referenceType := strings.TrimSpace(c.QueryParam("reference_type"))
 	if len(referenceType) > 64 {
@@ -402,6 +402,23 @@ func optionalControlBool(raw string, name string) (*bool, error) {
 	}
 	parsed, err := strconv.ParseBool(raw)
 	if err != nil {
+		return nil, httperr.New(httperr.VALIDATION_ERROR, name+" must be true or false")
+	}
+	return &parsed, nil
+}
+
+func optionalStrictControlBool(raw string, name string) (*bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var parsed bool
+	switch raw {
+	case "true":
+		parsed = true
+	case "false":
+		parsed = false
+	default:
 		return nil, httperr.New(httperr.VALIDATION_ERROR, name+" must be true or false")
 	}
 	return &parsed, nil

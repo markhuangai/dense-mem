@@ -17,6 +17,13 @@
       "source": "internal/storage/postgres/client_integration_test.go"
     },
     {
+      "id": "postgres/TestOperationLogInvocationIndexMigrationCreatesRecoverablePartialIndex",
+      "package": "./internal/storage/postgres",
+      "run": "^TestOperationLogInvocationIndexMigrationCreatesRecoverablePartialIndex$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/operation_log_invocation_index_migration_integration_test.go"
+    },
+    {
       "id": "postgres/TestCoreSchemaAuditLogTable",
       "package": "./internal/storage/postgres",
       "run": "^TestCoreSchemaAuditLogTable$",

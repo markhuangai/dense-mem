@@ -38,6 +38,13 @@
       "source": "internal/operations/postgres/migration_control_retirement_integration_test.go"
     },
     {
+      "id": "repository/TestOperationLogRepositoryInvocationLookupUsesIdentityIndex",
+      "package": "./internal/operations/postgres",
+      "run": "^TestOperationLogRepositoryInvocationLookupUsesIdentityIndex$",
+      "phase": "precheck",
+      "source": "internal/operations/postgres/operation_log_repository_integration_test.go"
+    },
+    {
       "id": "repository/TestAuthorityRepositoryBlocksFreshAuthorityWhenApplicationDataExists",
       "package": "./internal/operations/postgres",
       "run": "^TestAuthorityRepositoryBlocksFreshAuthorityWhenApplicationDataExists$",
