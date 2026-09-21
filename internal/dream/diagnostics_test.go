@@ -28,6 +28,7 @@ type diagnosticRepositoryStub struct {
 	purgeDeleted    int
 	purgeErr        error
 	purgeCalled     chan struct{}
+	purgeSequence   []int
 }
 
 func (s *diagnosticRepositoryStub) RecordDreamDiagnostic(_ context.Context, input dreamcontract.DreamDiagnosticCaptureInput) error {
@@ -72,6 +73,11 @@ func (s *diagnosticRepositoryStub) PurgeExpiredDreamDiagnostics(context.Context,
 		case s.purgeCalled <- struct{}{}:
 		default:
 		}
+	}
+	if len(s.purgeSequence) > 0 {
+		deleted := s.purgeSequence[0]
+		s.purgeSequence = s.purgeSequence[1:]
+		return deleted, s.purgeErr
 	}
 	return s.purgeDeleted, s.purgeErr
 }
@@ -204,6 +210,17 @@ func TestRecordRunDiagnosticPersistsPhaseTraceAndCaptureFailureMarker(t *testing
 	require.Equal(t, "target", repo.recorded[2].Phase)
 }
 
+func TestRecordRunDiagnosticStopsAfterRunCaptureFailure(t *testing.T) {
+	repo := &diagnosticRepositoryStub{failRun: 2}
+	svc := &service{deps: Dependencies{Diagnostics: repo}}
+	result := &RunCycleResult{
+		TeamID: "11111111-1111-4111-8111-111111111111", RunID: "22222222-2222-4222-8222-222222222222",
+		Status: "completed", diagnosticPhases: make([]runDiagnosticPhase, 256),
+	}
+	svc.recordRunDiagnostic(context.Background(), result)
+	require.Len(t, repo.recorded, 2, "a failed run capture must not retry every phase")
+}
+
 type diagnosticTestLogger struct{ errors int }
 
 func (l *diagnosticTestLogger) Info(string, ...observability.LogAttr)                   {}
@@ -308,5 +325,30 @@ func TestDiagnosticPurgerCancellationAndDefaultInterval(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("purger failure path did not stop")
+	}
+}
+
+func TestDiagnosticPurgerDrainsFullBatches(t *testing.T) {
+	called := make(chan struct{}, 3)
+	repo := &diagnosticRepositoryStub{purgeCalled: called, purgeSequence: []int{100, 100, 3}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		RunDiagnosticPurger(ctx, repo, time.Millisecond, nil)
+		close(done)
+	}()
+	for range 3 {
+		select {
+		case <-called:
+		case <-time.After(time.Second):
+			cancel()
+			t.Fatal("purger did not drain all full batches")
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("purger did not stop")
 	}
 }

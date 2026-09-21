@@ -24,11 +24,26 @@ func RunDiagnosticPurger(ctx context.Context, repo dreamcontract.DreamDiagnostic
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			deleted, err := repo.PurgeExpiredDreamDiagnostics(ctx, 100)
-			if err != nil && ctx.Err() == nil && logger != nil {
-				logger.Error("dream diagnostic purge failed", "error_code", "dream_diagnostic_purge_failed", "error", err)
-			} else if deleted > 0 && logger != nil {
-				logger.Info("dream diagnostics purged", "count", deleted)
+			const batchSize = 100
+			deletedTotal := 0
+			for {
+				if err := ctx.Err(); err != nil {
+					return
+				}
+				deleted, err := repo.PurgeExpiredDreamDiagnostics(ctx, batchSize)
+				deletedTotal += deleted
+				if err != nil {
+					if ctx.Err() == nil && logger != nil {
+						logger.Error("dream diagnostic purge failed", "error_code", "dream_diagnostic_purge_failed", "error", err)
+					}
+					break
+				}
+				if deleted < batchSize {
+					break
+				}
+			}
+			if deletedTotal > 0 && logger != nil {
+				logger.Info("dream diagnostics purged", "count", deletedTotal)
 			}
 		}
 	}

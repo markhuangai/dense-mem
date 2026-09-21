@@ -50,13 +50,19 @@ await assertSystemRun(scheduledRun.run_id);
 const controlDreams = await controlJSON(`/teams/${teamID}/dreams?limit=10`);
 const scheduledDream = findDream(controlDreams.data?.items, scheduledRun.run_id, "control portal API");
 assertEvidenceDerivedDream(scheduledDream, seeded, "control portal API");
-  const runDiagnostics = await controlJSON(`/teams/${teamID}/dreaming/runs/${scheduledRun.run_id}/diagnostics?limit=10`);
-  assertEqual(Array.isArray(runDiagnostics.data?.items), true, "Dream run diagnostics page");
-  assertAtLeast(runDiagnostics.data.items.length, 1, "Dream run diagnostic capture");
-  const diagnosticPhases = new Set(runDiagnostics.data.items.map((item) => item.phase));
-  for (const phase of ["run", "target", "provider", "validation", "proposal", "disposition"]) {
-    assertEqual(diagnosticPhases.has(phase), true, `Dream diagnostic phase ${phase}`);
-  }
+const runDiagnostics = await controlJSON(`/teams/${teamID}/dreaming/runs/${scheduledRun.run_id}/diagnostics?limit=10`);
+assertEqual(Array.isArray(runDiagnostics.data?.items), true, "Dream run diagnostics page");
+assertAtLeast(runDiagnostics.data.items.length, 1, "Dream run diagnostic capture");
+const diagnosticPhases = new Set(runDiagnostics.data.items.map((item) => item.phase));
+for (const phase of ["run", "target", "provider", "validation", "proposal", "disposition"]) {
+  assertEqual(diagnosticPhases.has(phase), true, `Dream diagnostic phase ${phase}`);
+}
+const retainedCapture = runDiagnostics.data.items.find((item) => item.capture_state !== "expired") ?? runDiagnostics.data.items[0];
+const retainedDetail = await controlJSON(`/teams/${teamID}/dreaming/runs/${scheduledRun.run_id}/diagnostics/${retainedCapture.capture_id}`);
+assertEqual(retainedDetail.data?.capture_id, retainedCapture.capture_id, "Dream diagnostic detail capture");
+assertEqual(retainedDetail.data?.run_id, scheduledRun.run_id, "Dream diagnostic detail run");
+const crossTeamDetail = await controlResponse(`/teams/${adverseTeam.teamID}/dreaming/runs/${scheduledRun.run_id}/diagnostics/${retainedCapture.capture_id}`);
+assertEqual(crossTeamDetail.status, 404, "cross-team Dream diagnostic detail");
 const hypothesisID = scheduledDream.dream_id;
 const statement = scheduledDream.hypothesis;
 const reviewer = await createTeamCredential("Team Dreaming E2E reviewer");
@@ -599,6 +605,19 @@ async function controlJSON(path, options = {}, retryTransport = (options.method 
       ...(options.headers ?? {}),
     },
   }, retryTransport);
+}
+
+async function controlResponse(path, options = {}) {
+  const response = await fetch(`${controlURL}/control/api${path}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${controlToken}`,
+      "Content-Type": "application/json",
+      ...(options.headers ?? {}),
+    },
+  });
+  const text = await response.text();
+  return { status: response.status, body: text ? JSON.parse(text) : {} };
 }
 
 async function userJSON(path) {
