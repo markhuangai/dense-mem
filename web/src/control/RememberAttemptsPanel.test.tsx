@@ -104,6 +104,34 @@ describe("RememberAttemptsPanel", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("reloads Calls after switching away from a pending initial request", async () => {
+    let resolveInitial!: (value: unknown) => void;
+    const initialList = new Promise((resolve) => { resolveInitial = resolve; });
+    const invocation = {
+      team_id: "team-1", owner_profile_id: "owner-1", invocation_id: "call-1", canonical_attempt_id: "",
+      request_hash: "hash-1", correlation_id: "corr-1", classification: "execution", outcome: "completed",
+      phase: "commit", protected_cause: "", delivery_stage: "unknown_receipt", retryable: false,
+      duration_ms: 3, created_at: "2026-08-18T01:00:00Z", expires_at: "2026-08-25T01:00:00Z", retained_by_legal_hold: false,
+    } as const;
+    const listRememberInvocationDiagnostics = vi.fn()
+      .mockReturnValueOnce(initialList)
+      .mockResolvedValue({ data: [invocation], pagination: { limit: 50, offset: 0, total: 1 } });
+    const api = {
+      listRememberInvocationDiagnostics,
+      getRememberInvocationDiagnostic: vi.fn().mockResolvedValue({ ...invocation, request_capture_state: "captured", provider_exchanges: [], caller_response_capture_state: "captured" }),
+      listRememberAttemptDiagnostics: vi.fn().mockResolvedValue({ data: [], pagination: { limit: 50, offset: 0, total: 0 } }),
+    } as unknown as ControlApi;
+
+    render(<RememberAttemptsPanel api={api} team={team()} />);
+    await screen.findByRole("heading", { name: "Remember Calls" });
+    await userEvent.click(screen.getByRole("button", { name: /^Attempts$/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Calls$/ }));
+    await waitFor(() => expect(listRememberInvocationDiagnostics).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole("button", { name: "Inspect Remember call call-1" })).toBeInTheDocument();
+    await act(async () => resolveInitial({ data: [], pagination: { limit: 50, offset: 0, total: 0 } }));
+    expect(screen.getByRole("button", { name: "Inspect Remember call call-1" })).toBeInTheDocument();
+  });
+
   it("resets to Calls when the team changes while Attempts is active", async () => {
     const invocation = {
       team_id: "team-1", owner_profile_id: "owner-1", invocation_id: "call-1", canonical_attempt_id: "",
