@@ -107,6 +107,20 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
   }
 
   function selectView(nextView: "calls" | "attempts", preferredAttemptID?: string) {
+    if (nextView !== view) {
+      if (nextView === "calls") {
+        listRequestRef.current += 1;
+        detailRequestRef.current += 1;
+        setLoading(false);
+        setDetailLoading(false);
+      } else {
+        invocationListRequestRef.current += 1;
+        invocationDetailRequestRef.current += 1;
+        setInvocationLoading(false);
+        setInvocationDetailLoading(false);
+      }
+      setError("");
+    }
     setView(nextView);
     if (nextView === "attempts" && !attemptsLoadedRef.current) {
       void loadAttempts(outcome, offset, preferredAttemptID);

@@ -18,6 +18,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 func TestInlineEmbeddingResultsFromDocumentsCopiesPlanMetadataAndVectors(t *testing.T) {
@@ -303,12 +304,14 @@ func TestRememberProcessorCommitsValidatedAssessmentAndResult(t *testing.T) {
 		catalog:  &processorAssessmentCatalogStub{},
 		provider: &processorAssessmentProviderStub{},
 	}
-	status, err := processor.ProcessRemember(context.Background(), input)
+	ctx := requestctx.WithRememberInvocationIDSink(context.Background())
+	status, err := processor.ProcessRemember(ctx, input)
 	require.NoError(t, err)
 	require.Equal(t, "committed", status.SubmissionID)
 	require.Equal(t, "completed", status.ProcessingState)
 	require.Equal(t, "evaluated_zero", ledger.invocation.Outcome)
 	require.Equal(t, "execution", ledger.invocation.Classification)
+	require.NotEmpty(t, requestctx.RememberInvocationIDFromContext(ctx))
 }
 
 func TestRememberProcessorRecordsAssessmentRejectionTrails(t *testing.T) {

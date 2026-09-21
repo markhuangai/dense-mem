@@ -78,6 +78,32 @@ describe("RememberAttemptsPanel", () => {
     expect(await screen.findByText("new-request")).toBeInTheDocument();
   });
 
+  it("does not surface a hidden attempt failure after switching back to Calls", async () => {
+    let rejectAttempt!: (reason?: unknown) => void;
+    const pendingAttempt = new Promise((_, reject) => { rejectAttempt = reject; });
+    const invocation = {
+      team_id: "team-1", owner_profile_id: "owner-1", invocation_id: "call-1", canonical_attempt_id: "",
+      request_hash: "hash-1", correlation_id: "corr-1", classification: "execution", outcome: "completed",
+      phase: "commit", protected_cause: "", delivery_stage: "unknown_receipt", retryable: false,
+      duration_ms: 3, created_at: "2026-08-18T01:00:00Z", expires_at: "2026-08-25T01:00:00Z", retained_by_legal_hold: false,
+    } as const;
+    const api = {
+      listRememberInvocationDiagnostics: vi.fn().mockResolvedValue({ data: [invocation], pagination: { limit: 50, offset: 0, total: 1 } }),
+      getRememberInvocationDiagnostic: vi.fn().mockResolvedValue({ ...invocation, request_capture_state: "captured", provider_exchanges: [], caller_response_capture_state: "captured" }),
+      listRememberAttemptDiagnostics: vi.fn().mockResolvedValue({ data: [summary("attempt-1")], pagination: { limit: 50, offset: 0, total: 1 } }),
+      getRememberAttemptDiagnostic: vi.fn().mockReturnValue(pendingAttempt),
+    } as unknown as ControlApi;
+
+    render(<RememberAttemptsPanel api={api} team={team()} />);
+    await screen.findByRole("heading", { name: "Remember Calls" });
+    await userEvent.click(screen.getByRole("button", { name: /^Attempts$/ }));
+    expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^Calls$/ }));
+    expect(await screen.findByRole("heading", { name: "Remember Calls" })).toBeInTheDocument();
+    await act(async () => rejectAttempt(new Error("hidden attempt failed")));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("resets to Calls when the team changes while Attempts is active", async () => {
     const invocation = {
       team_id: "team-1", owner_profile_id: "owner-1", invocation_id: "call-1", canonical_attempt_id: "",

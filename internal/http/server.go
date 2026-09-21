@@ -146,6 +146,7 @@ func NewServer(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider
 	}))
 	e.Use(rootRecover(logger))
 	e.Use(httpmw.CorrelationIDMiddleware())
+	e.Use(httpmw.RememberInvocationIDMiddleware())
 	maxBodyBytes := 0
 	if cfg != nil {
 		maxBodyBytes = cfg.GetHTTPMaxBodyBytes()

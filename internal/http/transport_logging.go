@@ -10,6 +10,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 func transportRequestAttrs(c echo.Context, values middleware.RequestLoggerValues) []httpcontract.LogAttr {
@@ -50,6 +51,9 @@ func transportRequestAttrs(c echo.Context, values middleware.RequestLoggerValues
 		httpcontract.String("delivery_stage", requestDeliveryStage(c, values, observer)),
 		httpcontract.Int("write_bytes", int(observerWriteBytes(observer))),
 	)
+	if invocationID := requestctx.RememberInvocationIDFromContext(ctx); invocationID != "" {
+		attrs = append(attrs, httpcontract.String("invocation_id", invocationID))
+	}
 	return attrs
 }
 

@@ -19,6 +19,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	remembercontract "github.com/markhuangai/dense-mem/internal/remember/contract"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 // rememberSynchronousProcessor owns the request-scoped Remember boundary:
@@ -109,6 +110,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		return p.processRememberUnlocked(ctx, input)
 	}
 	waiterInvocationID := uuid.NewString()
+	requestctx.SetRememberInvocationID(ctx, waiterInvocationID)
 	var ownerResult *rememberapp.SubmissionStatusResult
 	var ownerErr error
 	owner := false
@@ -178,6 +180,7 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 	exchangeRecorder := &rememberExchangeRecorder{protector: p.protector}
 	ctx = modelprovider.WithExchangeRecorder(ctx, exchangeRecorder)
 	ingestID := uuid.NewString()
+	requestctx.SetRememberInvocationID(ctx, ingestID)
 	snapshot, scope := rememberAssessmentSnapshot(input, ingestID)
 	assessorTurns := 0
 	fail := func(err error, phase string) (*rememberapp.SubmissionStatusResult, error) {

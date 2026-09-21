@@ -10,6 +10,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 type rememberInvocationWriter interface {
@@ -37,6 +38,7 @@ func (p *rememberSynchronousProcessor) recordRememberInvocation(
 	if p == nil || p.ledger == nil {
 		return
 	}
+	requestctx.SetRememberInvocationID(ctx, invocationID)
 	writer, ok := p.ledger.(rememberInvocationWriter)
 	if !ok {
 		return

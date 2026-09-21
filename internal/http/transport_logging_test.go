@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 func TestTransportRequestAttrsSeparatesApplicationAndDeliveryOutcomes(t *testing.T) {
@@ -43,6 +44,21 @@ func TestTransportRequestAttrsSeparatesApplicationAndDeliveryOutcomes(t *testing
 	require.Equal(t, "tool_error", got["application_outcome"])
 	require.Equal(t, "write_observed", got["delivery_stage"])
 	require.Equal(t, "unknown", got["caller_receipt"])
+}
+
+func TestTransportRequestAttrsIncludesPublishedRememberInvocationID(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	ctx := requestctx.WithRememberInvocationIDSink(req.Context())
+	requestctx.SetRememberInvocationID(ctx, "invocation-1")
+	req = req.WithContext(ctx)
+	e := echo.New()
+	echoContext := e.NewContext(req, httptest.NewRecorder())
+	attrs := transportRequestAttrs(echoContext, middleware.RequestLoggerValues{Method: http.MethodPost, RoutePath: "/mcp", Status: http.StatusOK})
+	got := make(map[string]any, len(attrs))
+	for _, attr := range attrs {
+		got[attr.Key] = attr.Value
+	}
+	require.Equal(t, "invocation-1", got["invocation_id"])
 }
 
 func TestRequestDeliveryStageReportsCancellationBeforeWrite(t *testing.T) {
