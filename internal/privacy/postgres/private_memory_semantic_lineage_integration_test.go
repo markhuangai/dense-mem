@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"testing"
 	"time"
@@ -30,6 +31,14 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 	ownerID := target.ID
 	sharedSpaceID, err := credentialRepo.GetTeamSharedSpaceID(ctx, teamID)
 	require.NoError(t, err)
+	invocationID := uuid.New()
+	invocationRepo := knowledgepostgres.NewStore(appDB, rls, knowledgecontract.ConflictRuntimeConfig{})
+	require.NoError(t, invocationRepo.RecordRememberInvocationDiagnostic(ctx, knowledgecontract.RememberInvocationDiagnosticInput{
+		TeamID: teamID.String(), OwnerProfileID: ownerID.String(), InvocationID: invocationID.String(),
+		SpaceID: target.MemorySpaceID.String(), SpaceGeneration: target.MemorySpaceGeneration,
+		Classification: "execution", Outcome: "failed",
+		CreatedAt: time.Now().UTC(), CompletedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
+	}))
 
 	privateSubjectID, privateObjectID, correctedObjectID := uuid.New(), uuid.New(), uuid.New()
 	ingestID, fragmentID := uuid.New(), uuid.New()
@@ -203,6 +212,11 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 			}
 			require.Zero(t, count, table+" rows remain after private erasure")
 		}
+		var invocationCount int64
+		if err := tx.Raw(`SELECT COUNT(*) FROM remember_invocation_diagnostics WHERE invocation_id = ?`, invocationID).Scan(&invocationCount).Error; err != nil {
+			return err
+		}
+		require.Zero(t, invocationCount, "remember invocation diagnostic survived private erasure")
 		return nil
 	}))
 }

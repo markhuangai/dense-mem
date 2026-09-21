@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -129,6 +130,7 @@ func (e *RememberProcessError) Unwrap() error {
 }
 
 type RememberProcessRequest struct {
+	InvocationStartedAt      time.Time
 	TeamID                   string
 	OwnerProfileID           string
 	SpaceID                  string
@@ -141,7 +143,12 @@ type RememberProcessRequest struct {
 	Evidence                 []EvidenceInput
 	SecuritySignals          []SubmissionSecurityBatchSignal
 	SecuritySignalsTruncated bool
+	// SecurityRejected is set only when the initial deterministic security scan
+	// rejects the request. Assessor decisions are tracked separately so a later
+	// rejection still retains the admitted request diagnostic.
 	SecurityRejected         bool
+	InitialSecurityRejected  bool
+	AssessorSecurityRejected bool
 	SecurityRejectionAudit   *SecurityRejectionAuditInput
 	// OriginalRequest is the bounded public Remember body captured for an
 	// operator diagnostic record. It never contains transport headers.

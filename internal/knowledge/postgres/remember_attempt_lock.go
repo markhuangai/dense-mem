@@ -25,8 +25,9 @@ var ErrRememberIdempotencyBusy = knowledgecontract.ErrRememberIdempotencyBusy
 var errRememberIdempotencyCallbackPanic = errors.New("remember idempotency lock callback panicked")
 
 type rememberIdempotencyLockEntry struct {
-	ready chan struct{}
-	err   error
+	ready           chan struct{}
+	err             error
+	callbackStarted bool
 }
 
 func (r *Store) withRememberIdempotencyLock(
@@ -63,9 +64,13 @@ func (r *Store) withRememberIdempotencyLock(
 		select {
 		case <-ready:
 			r.rememberIdempotencyLockMu.Lock()
-			err := existing.err
+			callbackStarted, ownerErr := existing.callbackStarted, existing.err
 			r.rememberIdempotencyLockMu.Unlock()
-			return err
+			if !callbackStarted {
+				return ownerErr
+			}
+			callbackErr := fn(true)
+			return callbackErr
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -126,6 +131,9 @@ func (r *Store) withRememberIdempotencyLock(
 		return err
 	}
 
+	r.rememberIdempotencyLockMu.Lock()
+	entry.callbackStarted = true
+	r.rememberIdempotencyLockMu.Unlock()
 	callbackReturned := false
 	defer func() {
 		if callbackReturned {

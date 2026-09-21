@@ -12,18 +12,24 @@ import (
 	"gorm.io/gorm"
 
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 // Store is the complete Dream PostgreSQL adapter. Its methods are implemented
 // in this package so the application service can depend on Dream-owned ports.
 type Store struct {
-	db  *gorm.DB
-	rls postgres.RLSHelper
+	db     *gorm.DB
+	rls    postgres.RLSHelper
+	logger observability.LogProvider
 }
 
 func NewStore(db *gorm.DB, rls postgres.RLSHelper) *Store {
 	return &Store{db: db, rls: rls}
+}
+
+func NewStoreWithLogger(db *gorm.DB, rls postgres.RLSHelper, logger observability.LogProvider) *Store {
+	return &Store{db: db, rls: rls, logger: logger}
 }
 
 var _ dreamcontract.DreamRepository = (*Store)(nil)

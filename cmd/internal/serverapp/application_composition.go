@@ -43,6 +43,7 @@ type applicationCompositionDependencies struct {
 	AssessmentLimits       assessor.SemanticAssessmentLimits
 	Metrics                observability.DiscoverabilityMetrics
 	Logger                 observability.LogProvider
+	DiagnosticProtector    observability.DiagnosticProtector
 	Audit                  securityRejectionAuditAppender
 	AppConfig              settings.AppConfigService
 	Teams                  dream.TeamService
@@ -71,14 +72,15 @@ type applicationBundle struct {
 
 func buildApplicationBundle(deps applicationCompositionDependencies) applicationBundle {
 	rememberService := buildRememberApplication(rememberApplicationDependencies{
-		Persistence: deps.RememberPersistence,
-		Catalog:     deps.RememberCatalog,
-		Assessor:    deps.Assessor,
-		Embedder:    deps.EmbeddingProvider,
-		Limits:      deps.AssessmentLimits,
-		Metrics:     deps.Metrics,
-		Logger:      deps.Logger,
-		Audit:       deps.Audit,
+		Persistence:         deps.RememberPersistence,
+		Catalog:             deps.RememberCatalog,
+		Assessor:            deps.Assessor,
+		Embedder:            deps.EmbeddingProvider,
+		Limits:              deps.AssessmentLimits,
+		Metrics:             deps.Metrics,
+		Logger:              deps.Logger,
+		DiagnosticProtector: deps.DiagnosticProtector,
+		Audit:               deps.Audit,
 	})
 	recallService := buildRecallApplication(recallApplicationDependencies{
 		Search:          deps.RecallSearch,

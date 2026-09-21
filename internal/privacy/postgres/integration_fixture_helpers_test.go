@@ -206,7 +206,7 @@ func truncateLedgerFixtures(tx *gorm.DB) error {
 				'private_memory_legal_holds', 'telemetry_first_disposition_backfill_state',
 				'predicate_registration_events', 'v2_compatibility_markers',
 				'recall_feedback_events', 'dream_evidence_target_attempts', 'dream_evidence_target_evaluations', 'hypothesis_evidence_derivation_sources',
-				'remember_attempt_diagnostics', 'remember_attempt_events',
+				'remember_attempt_diagnostics', 'remember_invocation_diagnostics', 'remember_attempt_events',
 				'remember_attempts', 'semantic_assessments', 'search_documents',
 				'search_index_generations', 'embedding_contracts', 'community_sources',
 				'community_memberships', 'community_records', 'community_snapshot_runs',

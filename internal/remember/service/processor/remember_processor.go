@@ -31,6 +31,7 @@ type rememberSynchronousProcessor struct {
 	limits             assessor.SemanticAssessmentLimits
 	metrics            observability.DiscoverabilityMetrics
 	logger             observability.LogProvider
+	protector          observability.DiagnosticProtector
 	isStaleInput       func(error) bool
 	commitFailureStage func(error) string
 }
@@ -44,15 +45,16 @@ type rememberSynchronousLedger = remembercontract.Persistence
 // ProcessorDependencies contains only provider, policy, and persistence ports
 // needed for one request-owned Remember execution.
 type ProcessorDependencies struct {
-	Ledger             Persistence
-	Catalog            rememberapp.SubmissionAssessmentCatalog
-	Assessor           assessor.Provider
-	Embedder           embeddingcontract.EmbeddingProviderInterface
-	Limits             assessor.SemanticAssessmentLimits
-	Metrics            observability.DiscoverabilityMetrics
-	Logger             observability.LogProvider
-	IsStaleInput       func(error) bool
-	CommitFailureStage func(error) string
+	Ledger              Persistence
+	Catalog             rememberapp.SubmissionAssessmentCatalog
+	Assessor            assessor.Provider
+	Embedder            embeddingcontract.EmbeddingProviderInterface
+	Limits              assessor.SemanticAssessmentLimits
+	Metrics             observability.DiscoverabilityMetrics
+	Logger              observability.LogProvider
+	DiagnosticProtector observability.DiagnosticProtector
+	IsStaleInput        func(error) bool
+	CommitFailureStage  func(error) string
 }
 
 type rememberSynchronousIdempotencyLocker interface {
@@ -70,7 +72,7 @@ func NewSynchronousProcessor(deps ProcessorDependencies) *rememberSynchronousPro
 	}
 	return &rememberSynchronousProcessor{
 		ledger: deps.Ledger, catalog: deps.Catalog, provider: deps.Assessor, embedder: deps.Embedder,
-		limits: deps.Limits, metrics: deps.Metrics, logger: deps.Logger,
+		limits: deps.Limits, metrics: deps.Metrics, logger: deps.Logger, protector: deps.DiagnosticProtector,
 		isStaleInput: staleInput, commitFailureStage: deps.CommitFailureStage,
 	}
 }
@@ -99,14 +101,20 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 	if p == nil || p.ledger == nil {
 		return nil, errors.New("remember processor: ledger is required")
 	}
+	if input.InvocationStartedAt.IsZero() {
+		input.InvocationStartedAt = time.Now().UTC()
+	}
 	locker, hasLocker := p.ledger.(rememberSynchronousIdempotencyLocker)
 	if !hasLocker {
 		return p.processRememberUnlocked(ctx, input)
 	}
+	waiterInvocationID := uuid.NewString()
 	var ownerResult *rememberapp.SubmissionStatusResult
 	var ownerErr error
 	owner := false
+	callbackEntered := false
 	lockErr := locker.WithRememberAttemptLock(ctx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, func(waited bool) error {
+		callbackEntered = true
 		if waited {
 			return nil
 		}
@@ -120,25 +128,43 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		}
 		if lockErr != nil {
 			if ownerResult != nil {
-				p.logRememberIdempotencyLockCleanupFailure(input, ownerResult.SubmissionID)
+				p.logRememberIdempotencyLockCleanupFailure(input, ownerResult.SubmissionID, lockErr)
 				return ownerResult, nil
 			}
 			return ownerResult, lockErr
 		}
 		return ownerResult, nil
 	}
+	if !callbackEntered && lockErr != nil {
+		processErr := rememberPreLockProcessError(input, waiterInvocationID, lockErr)
+		p.recordRememberInvocation(ctx, input, waiterInvocationID, "execution", "", "idempotency_lock", processErr, processErr.Status, nil)
+		return processErr.Status, processErr
+	}
 	// A waiter must replay the owner's durable result, including a retryable
 	// failure. It may retry only after the lock owner has returned and a later
 	// call acquires the key.
 	if errors.Is(lockErr, context.Canceled) || errors.Is(lockErr, context.DeadlineExceeded) {
+		p.recordRememberInvocation(ctx, input, waiterInvocationID, "execution", "", "idempotency_wait", lockErr, nil, nil)
 		return nil, lockErr
 	}
-	if replay, err := p.loadRememberReplay(ctx, input, ""); err == nil {
+	replay, replayErr := p.loadRememberReplay(ctx, input, waiterInvocationID)
+	if replayErr == nil {
+		p.recordRememberInvocation(ctx, input, waiterInvocationID, "replay", replay.SubmissionID, "idempotency_wait", nil, replay, nil)
 		return replay, nil
-	} else if processErr := new(rememberapp.RememberProcessError); errors.As(err, &processErr) && processErr.Status != nil {
-		return processErr.Status, err
+	} else if processErr := new(rememberapp.RememberProcessError); errors.As(replayErr, &processErr) && processErr.Status != nil {
+		classification := "replay"
+		if errors.Is(replayErr, rememberapp.ErrRememberConflict) || errors.Is(replayErr, repository.ErrIdempotencyConflict) {
+			classification = "conflict"
+		}
+		p.recordRememberInvocation(ctx, input, waiterInvocationID, classification, replayCanonicalAttemptID(processErr.Status, waiterInvocationID), "idempotency_wait", replayErr, processErr.Status, nil)
+		return processErr.Status, replayErr
 	}
-	return nil, lockErr
+	classification := "replay"
+	if errors.Is(replayErr, rememberapp.ErrRememberConflict) || errors.Is(replayErr, repository.ErrIdempotencyConflict) {
+		classification = "conflict"
+	}
+	p.recordRememberInvocation(ctx, input, waiterInvocationID, classification, "", "idempotency_wait", replayErr, nil, nil)
+	return nil, replayErr
 }
 
 func (p *rememberSynchronousProcessor) processRememberUnlocked(
@@ -149,36 +175,66 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		return nil, errors.New("remember processor: ledger is required")
 	}
 	started := time.Now()
-	exchangeRecorder := &rememberExchangeRecorder{}
+	exchangeRecorder := &rememberExchangeRecorder{protector: p.protector}
 	ctx = modelprovider.WithExchangeRecorder(ctx, exchangeRecorder)
 	ingestID := uuid.NewString()
 	snapshot, scope := rememberAssessmentSnapshot(input, ingestID)
 	assessorTurns := 0
 	fail := func(err error, phase string) (*rememberapp.SubmissionStatusResult, error) {
-		return p.recordRememberFailure(ctx, input, ingestID, snapshot, started, phase, assessorTurns, err)
+		status, canonicalAttemptID, processErr := p.recordRememberFailure(ctx, input, ingestID, snapshot, started, phase, assessorTurns, err)
+		invocationStatus := status
+		if invocationStatus == nil {
+			var statusErr *rememberapp.RememberProcessError
+			if errors.As(processErr, &statusErr) {
+				invocationStatus = statusErr.Status
+			}
+		}
+		classification := "execution"
+		if canonicalAttemptID != "" && canonicalAttemptID != ingestID {
+			classification = "replay"
+		}
+		if errors.Is(processErr, rememberapp.ErrRememberConflict) || errors.Is(processErr, repository.ErrIdempotencyConflict) {
+			classification = "conflict"
+		}
+		p.recordRememberInvocation(ctx, input, ingestID, classification, canonicalAttemptID, phase, processErrOrCause(processErr, err), invocationStatus, exchangeRecorder.Snapshot())
+		return status, processErr
 	}
 	attempt, lookupErr := p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey,
 	})
 	if lookupErr == nil && attempt != nil {
 		if !rememberAttemptMatchesRequest(attempt, input) {
-			return nil, rememberConflictProcessError(input, ingestID, rememberapp.ErrRememberConflict)
+			processErr := rememberConflictProcessError(input, ingestID, rememberapp.ErrRememberConflict)
+			p.recordRememberInvocation(ctx, input, ingestID, "conflict", attempt.AttemptID, "idempotency", processErr, processErr.Status, exchangeRecorder.Snapshot())
+			return nil, processErr
 		}
 		if version := strings.TrimSpace(attempt.ContractVersion); version != "" && !domain.ContractVersionCompatible(version) {
-			return nil, rememberConflictProcessError(input, ingestID, rememberapp.ErrRememberConflict)
+			processErr := rememberConflictProcessError(input, ingestID, rememberapp.ErrRememberConflict)
+			p.recordRememberInvocation(ctx, input, ingestID, "conflict", attempt.AttemptID, "idempotency", processErr, processErr.Status, exchangeRecorder.Snapshot())
+			return nil, processErr
 		}
 		if attempt.Outcome == "completed" || (attempt.Outcome == "failed" && !attempt.Retryable) {
 			replay, replayErr := rememberAttemptStatusForRequest(attempt, input)
 			if replayErr != nil {
+				classification := "replay"
+				if errors.Is(replayErr, rememberapp.ErrRememberConflict) || errors.Is(replayErr, repository.ErrIdempotencyConflict) {
+					classification = "conflict"
+				}
+				p.recordRememberInvocation(ctx, input, ingestID, classification, attempt.AttemptID, "replay", replayErr, nil, exchangeRecorder.Snapshot())
 				return nil, replayErr
 			}
 			if attempt.Outcome == "failed" {
-				return nil, &rememberapp.RememberProcessError{Status: replay, Err: rememberapp.ErrRememberPersistence}
+				processErr := &rememberapp.RememberProcessError{Status: replay, Err: rememberapp.ErrRememberPersistence}
+				p.recordRememberInvocation(ctx, input, ingestID, "replay", attempt.AttemptID, "replay", processErr, replay, exchangeRecorder.Snapshot())
+				return nil, processErr
 			}
+			p.recordRememberInvocation(ctx, input, ingestID, "replay", attempt.AttemptID, "replay", nil, replay, exchangeRecorder.Snapshot())
 			return replay, nil
 		}
 		if attempt.Outcome != "failed" {
-			return nil, rememberConflictProcessError(input, ingestID, rememberapp.ErrRememberConflict)
+			processErr := rememberConflictProcessError(input, ingestID, rememberapp.ErrRememberConflict)
+			p.recordRememberInvocation(ctx, input, ingestID, "conflict", attempt.AttemptID, "idempotency", processErr, processErr.Status, exchangeRecorder.Snapshot())
+			return nil, processErr
 		}
 	} else if lookupErr != nil && !errors.Is(lookupErr, repository.ErrRememberAttemptNotFound) {
 		return fail(lookupErr, "commit")
@@ -241,7 +297,7 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		return fail(buildErr, "assessment")
 	}
 	if input.SecurityRejected || rememberAssessmentSecurityRejected(prepared) {
-		input.SecurityRejected = true
+		input.AssessorSecurityRejected = true
 		return fail(rememberapp.ErrRememberPolicyRejected, "assessment")
 	}
 	embeddingCtx, embeddingCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)
@@ -270,15 +326,37 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 	defer commitCancel()
 	committed, err := p.ledger.CommitRememberWithEmbeddings(commitCtx, commitInput, inlineEmbeddings)
 	if errors.Is(err, repository.ErrRememberReplay) {
-		return p.loadRememberReplay(ctx, input, ingestID)
+		replay, replayErr := p.loadRememberReplay(ctx, input, ingestID)
+		canonicalAttemptID := ""
+		if replay != nil {
+			canonicalAttemptID = replay.SubmissionID
+		}
+		invocationStatus := replay
+		if invocationStatus == nil {
+			var processErr *rememberapp.RememberProcessError
+			if errors.As(replayErr, &processErr) {
+				invocationStatus = processErr.Status
+				if canonicalAttemptID == "" {
+					canonicalAttemptID = replayCanonicalAttemptID(processErr.Status, ingestID)
+				}
+			}
+		}
+		classification := "replay"
+		if errors.Is(replayErr, rememberapp.ErrRememberConflict) || errors.Is(replayErr, repository.ErrIdempotencyConflict) {
+			classification = "conflict"
+		}
+		p.recordRememberInvocation(ctx, input, ingestID, classification, canonicalAttemptID, "commit", replayErr, invocationStatus, exchangeRecorder.Snapshot())
+		return replay, replayErr
 	}
 	if err != nil {
 		return fail(normalizeRememberCommitFailure(err), "commit")
 	}
 	if committed == nil {
-		return nil, errors.New("remember processor: nil Remember commit result")
+		return fail(errors.New("remember processor: nil Remember commit result"), "commit")
 	}
-	return rememberAttemptStatusForRequest(&repository.RememberAttempt{AttemptID: committed.IngestID, Outcome: committed.Outcome, PublicResult: committed.PublicResult}, input)
+	result, resultErr := rememberAttemptStatusForRequest(&repository.RememberAttempt{AttemptID: committed.IngestID, Outcome: committed.Outcome, PublicResult: committed.PublicResult}, input)
+	p.recordRememberInvocation(ctx, input, committed.IngestID, "execution", committed.IngestID, "commit", resultErr, result, exchangeRecorder.Snapshot())
+	return result, resultErr
 }
 
 func rememberAssessmentSecurityRejected(prepared *rememberapp.SynchronousAssessmentResult) bool {
@@ -306,13 +384,13 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	phase string,
 	assessorTurns int,
 	failure error,
-) (*rememberapp.SubmissionStatusResult, error) {
+) (*rememberapp.SubmissionStatusResult, string, error) {
 	if failure == nil {
 		failure = errors.New("remember execution failed")
 	}
 	failure = p.normalizeRememberFailure(failure)
 	if errors.Is(failure, rememberapp.ErrRememberConflict) || errors.Is(failure, repository.ErrIdempotencyConflict) {
-		return nil, rememberConflictProcessError(input, attemptID, failure)
+		return nil, "", rememberConflictProcessError(input, attemptID, failure)
 	}
 	code := rememberFailureCode(phase, failure)
 	reasonCode, details := rememberapp.SynchronousAssessmentFailureDetails(failure)
@@ -342,7 +420,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		callerResponseCaptureAvailable = true
 		callerResponse, _ = capture.ProjectResponse(publicResult, true)
 	}
-	diagnostics := rememberFailureDiagnosticsWithCapture(input, publicResult, exchanges, callerResponse, rememberCallerResponseDelivered(ctx, failure), callerResponseCaptureAvailable)
+	diagnostics := rememberFailureDiagnosticsWithAuthenticationSecrets(input, publicResult, exchanges, callerResponse, rememberCallerResponseDelivered(ctx, failure), callerResponseCaptureAvailable, observability.AuthenticationSecretsFromContext(ctx), p.protector)
 	assessorValidation := rememberapp.SynchronousAssessmentValidationDiagnostics(failure)
 	recoveryCtx, cancel := rememberFailureRecoveryContext(ctx)
 	defer cancel()
@@ -360,135 +438,33 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	})
 	if recordErr != nil {
 		if errors.Is(recordErr, repository.ErrRememberFailureRetentionDegraded) {
-			p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
-			p.logRememberFailureRetentionDegraded(input, attemptID, phase)
-			return nil, &rememberapp.RememberProcessError{Status: status, Result: terminalResult, Err: failure}
+			p.logRememberFailure(ctx, input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
+			p.logRememberFailureRetentionDegraded(input, attemptID, phase, recordErr)
+			return nil, attemptID, &rememberapp.RememberProcessError{Status: status, Result: terminalResult, Err: failure}
 		}
 		if errors.Is(recordErr, repository.ErrRememberReplay) {
 			winner, loadErr := p.ledger.LoadRememberAttempt(recoveryCtx, repository.RememberAttemptLookupInput{
 				TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey,
 			})
 			if loadErr != nil {
-				return nil, loadErr
+				return nil, "", loadErr
 			}
-			return rememberAttemptReplay(winner, input)
+			canonicalAttemptID := ""
+			if winner != nil {
+				canonicalAttemptID = winner.AttemptID
+			}
+			replay, replayErr := rememberAttemptReplay(winner, input)
+			return replay, canonicalAttemptID, replayErr
 		}
 		if errors.Is(recordErr, repository.ErrIdempotencyConflict) {
-			return nil, rememberConflictProcessError(input, attemptID, errors.Join(rememberapp.ErrRememberConflict, recordErr))
+			return nil, "", rememberConflictProcessError(input, attemptID, errors.Join(rememberapp.ErrRememberConflict, recordErr))
 		}
-		p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
-		p.logRememberFailureRecordError(input, attemptID, phase, publicError.Code, correlationID, recordErr)
-		return nil, rememberFailurePersistenceProcessError(input, attemptID, failure)
+		p.logRememberFailure(ctx, input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
+		p.logRememberFailureRecordError(ctx, input, attemptID, phase, publicError.Code, correlationID, recordErr)
+		return nil, "", rememberFailurePersistenceProcessError(input, attemptID, failure)
 	}
-	p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
-	return nil, &rememberapp.RememberProcessError{Status: status, Result: terminalResult, Err: failure}
-}
-
-func terminalRememberFailureResult(status *rememberapp.SubmissionStatusResult) (map[string]any, *rememberapp.TerminalRememberResult) {
-	if status == nil {
-		return map[string]any{}, nil
-	}
-	encoded, err := json.Marshal(status)
-	if err != nil {
-		return map[string]any{}, nil
-	}
-	var publicResult map[string]any
-	var terminal rememberapp.TerminalRememberResult
-	if json.Unmarshal(encoded, &publicResult) != nil || json.Unmarshal(encoded, &terminal) != nil {
-		return map[string]any{}, nil
-	}
-	terminal.Kind = rememberapp.ResultKindTerminal
-	return publicResult, &terminal
-}
-
-func rememberConflictProcessError(
-	input rememberapp.RememberProcessRequest,
-	submissionID string,
-	cause error,
-) *rememberapp.RememberProcessError {
-	if cause == nil {
-		cause = rememberapp.ErrRememberConflict
-	}
-	evidence, relationshipResults := rememberFailureResults(input, "internal_failure")
-	status := &rememberapp.SubmissionStatusResult{
-		ContractVersion: domain.ContractVersion, SubmissionID: submissionID, SubmissionKind: "remember",
-		ProcessingState: "failed", SearchState: "not_required", CorrelationID: rememberProcessCorrelationID(input.Metadata),
-		Evidence: evidence, RelationshipResults: relationshipResults,
-		Errors: []rememberapp.SubmissionStatusError{rememberapp.StatusErrorWithDetails(rememberapp.SubmissionErrorIdempotencyConflict, "idempotency_conflict", map[string]any{"component": "remember.idempotency", "server_owned": true})},
-	}
-	return &rememberapp.RememberProcessError{Status: status, Err: cause}
-}
-
-func rememberFailureNotStoredReason(code rememberapp.SubmissionErrorCode) string {
-	switch code {
-	case rememberapp.SubmissionErrorPolicyRejected:
-		return "submission_policy_rejected"
-	case rememberapp.SubmissionErrorStaleInput:
-		return "stale_input"
-	default:
-		return "internal_failure"
-	}
-}
-
-func rememberFailureResults(
-	input rememberapp.RememberProcessRequest,
-	notStoredReason string,
-) ([]rememberapp.SubmissionEvidenceStatus, []rememberapp.SubmissionRelationshipResult) {
-	evidence := make([]rememberapp.SubmissionEvidenceStatus, len(input.Evidence))
-	for index := range evidence {
-		evidence[index] = rememberapp.SubmissionEvidenceStatus{
-			Disposition:           "not_stored",
-			ContentHash:           input.Evidence[index].ContentHash,
-			EvidenceIndex:         index,
-			SupersededEvidenceIDs: []string{},
-			SearchState:           "not_required",
-			Reason:                notStoredReason,
-		}
-	}
-	refs := rememberFailureRelationshipRefs(input.Proposal)
-	relationships := make([]rememberapp.SubmissionRelationshipResult, len(refs))
-	for index, ref := range refs {
-		relationships[index] = rememberapp.SubmissionRelationshipResult{
-			RelationshipRef: ref,
-			Disposition:     "not_stored",
-			Reason:          notStoredReason,
-			Splits:          []rememberapp.SubmissionRelationshipSplit{},
-		}
-	}
-	return evidence, relationships
-}
-
-func rememberFailureRelationshipRefs(proposal map[string]any) []string {
-	if proposal == nil {
-		return []string{}
-	}
-	raw := proposal["relationship_hints"]
-	if raw == nil {
-		raw = proposal["relationships"]
-	}
-	var values []any
-	switch typed := raw.(type) {
-	case []any:
-		values = typed
-	case []map[string]any:
-		values = make([]any, 0, len(typed))
-		for _, value := range typed {
-			values = append(values, value)
-		}
-	default:
-		return []string{}
-	}
-	refs := make([]string, 0, len(values))
-	for _, value := range values {
-		fields, ok := value.(map[string]any)
-		if !ok {
-			refs = append(refs, "")
-			continue
-		}
-		ref, _ := fields["ref"].(string)
-		refs = append(refs, strings.TrimSpace(ref))
-	}
-	return refs
+	p.logRememberFailure(ctx, input, attemptID, started, phase, publicError.Code, correlationID, assessorTurns, failure)
+	return nil, attemptID, &rememberapp.RememberProcessError{Status: status, Result: terminalResult, Err: failure}
 }
 
 func normalizeRememberFailure(failure error) error {
@@ -554,17 +530,32 @@ func rememberFailurePersistenceProcessError(
 	submissionID string,
 	cause error,
 ) *rememberapp.RememberProcessError {
+	return rememberFailureProcessErrorWithStatus(
+		input, submissionID, cause, rememberapp.TerminalErrorDatabaseFailure,
+		"failure_retention", "remember.failure_record",
+	)
+}
+
+func rememberFailureProcessErrorWithStatus(
+	input rememberapp.RememberProcessRequest,
+	submissionID string,
+	cause error,
+	code rememberapp.TerminalErrorCode,
+	reasonCode string,
+	component string,
+) *rememberapp.RememberProcessError {
 	evidence, relationshipResults := rememberFailureResults(input, "internal_failure")
 	status := &rememberapp.SubmissionStatusResult{
 		ContractVersion: domain.ContractVersion, SubmissionID: submissionID, SubmissionKind: "remember",
 		ProcessingState: "failed", SearchState: "not_required", CorrelationID: rememberProcessCorrelationID(input.Metadata),
 		Evidence: evidence, RelationshipResults: relationshipResults,
-		Errors: []rememberapp.SubmissionStatusError{rememberapp.TerminalStatusErrorWithDetails(rememberapp.TerminalErrorDatabaseFailure, "failure_retention", map[string]any{"component": "remember.failure_record", "server_owned": true})},
+		Errors: []rememberapp.SubmissionStatusError{rememberapp.TerminalStatusErrorWithDetails(code, reasonCode, map[string]any{"component": component, "server_owned": true})},
 	}
 	return &rememberapp.RememberProcessError{Status: status, Err: rememberFailurePersistenceError(cause)}
 }
 
 func (p *rememberSynchronousProcessor) logRememberFailure(
+	ctx context.Context,
 	input rememberapp.RememberProcessRequest,
 	attemptID string,
 	started time.Time,
@@ -577,7 +568,10 @@ func (p *rememberSynchronousProcessor) logRememberFailure(
 	if p == nil || p.logger == nil {
 		return
 	}
-	logError := errors.New("remember processing failed")
+	logError := failure
+	if logError == nil {
+		logError = errors.New("remember processing failed")
+	}
 	attrs := rememberFailureLogAttrs(input, attemptID, phase, errorCode, correlationID)
 	attrs = append(attrs, observability.Int("duration_ms", int(time.Since(started)/time.Millisecond)))
 	attrs = append(attrs, observability.Int("assessor_turns", clampAssessorTurns(assessorTurns)))
@@ -589,7 +583,7 @@ func (p *rememberSynchronousProcessor) logRememberFailure(
 	var providerFailure *rememberEmbeddingProviderFailure
 	switch {
 	case errors.As(failure, &planFailure):
-		logError = errors.New("remember embedding plan failed")
+		logError = planFailure.cause
 		failureClass, failureCode := rememberEmbeddingPlanFailureMetadata(planFailure.cause)
 		attrs = append(attrs,
 			observability.String("failure_source", "embedding_plan"),
@@ -597,7 +591,7 @@ func (p *rememberSynchronousProcessor) logRememberFailure(
 			observability.String("failure_code", failureCode),
 		)
 	case errors.As(failure, &configurationFailure):
-		logError = errors.New("remember embedding provider configuration is invalid")
+		logError = failure
 		attrs = append(attrs,
 			observability.String("failure_source", "provider_configuration"),
 			observability.String("failure_class", "configuration"),
@@ -615,7 +609,7 @@ func (p *rememberSynchronousProcessor) logRememberFailure(
 			attrs = append(attrs, observability.Int("provider_status_code", metadata.StatusCode))
 		}
 	case phase == "commit":
-		logError = rememberCommitOperationalLogError(failure, p.commitFailureStage)
+		logError = failure
 		failureClass, failureCode := rememberCommitFailureMetadata(failure)
 		attrs = append(attrs,
 			observability.String("failure_source", "semantic_commit"),
@@ -626,7 +620,11 @@ func (p *rememberSynchronousProcessor) logRememberFailure(
 			attrs = append(attrs, observability.String("commit_stage", stage))
 		}
 	}
-	p.logger.Error("remember_processing_failed", logError, attrs...)
+	if contextual, ok := p.logger.(observability.ContextLogProvider); ok {
+		contextual.ErrorContext(ctx, "remember_processing_failed", logError, attrs...)
+		return
+	}
+	p.logger.Error("remember_processing_failed", protectRememberLogError(logError, p.protector, observability.AuthenticationSecretsFromContext(ctx)), attrs...)
 }
 
 func clampAssessorTurns(value int) int {
@@ -835,6 +833,13 @@ func rememberReplayLoadFailure(
 	return nil, rememberFailurePersistenceProcessError(input, submissionID, cause)
 }
 
+func replayCanonicalAttemptID(status *rememberapp.SubmissionStatusResult, syntheticSubmissionID string) string {
+	if status == nil || status.SubmissionID == "" || status.SubmissionID == syntheticSubmissionID {
+		return ""
+	}
+	return status.SubmissionID
+}
+
 func rememberAssessmentSnapshot(
 	input rememberapp.RememberProcessRequest,
 	ingestID string,
@@ -949,10 +954,12 @@ func (p *rememberSynchronousProcessor) embedSearchDocumentBatch(
 	}
 	vectors, model, err := p.embedder.EmbedBatch(embedCtx, texts)
 	if err != nil {
-		if errors.Is(embedCtx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+		if errors.Is(embedCtx.Err(), context.Canceled) || errors.Is(embedCtx.Err(), rememberapp.ErrRememberRequestCancelled) ||
+			errors.Is(err, context.Canceled) || errors.Is(err, rememberapp.ErrRememberRequestCancelled) {
 			return nil, fmt.Errorf("%w: embedding phase canceled", rememberapp.ErrRememberRequestCancelled)
 		}
-		if errors.Is(embedCtx.Err(), context.DeadlineExceeded) {
+		if errors.Is(embedCtx.Err(), context.DeadlineExceeded) || errors.Is(embedCtx.Err(), rememberapp.ErrRememberRequestTimeout) ||
+			errors.Is(err, context.DeadlineExceeded) || errors.Is(err, rememberapp.ErrRememberRequestTimeout) {
 			return nil, fmt.Errorf("%w: embedding phase exceeded 10 seconds", rememberapp.ErrRememberRequestTimeout)
 		}
 		return nil, &rememberEmbeddingProviderFailure{cause: err}

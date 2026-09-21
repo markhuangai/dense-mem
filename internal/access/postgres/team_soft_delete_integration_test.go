@@ -4,6 +4,8 @@ package postgres
 
 import (
 	"context"
+	"fmt"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 	searchpostgres "github.com/markhuangai/dense-mem/internal/search/postgres"
@@ -172,18 +174,38 @@ func TestTeamHardDeleteRemovesEmptyTeamMemorySpaceCatalog(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "team-hard-delete-empty"))
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID.String(), "team-hard-delete-diagnostic")
+	var spaceID uuid.UUID
+	var spaceGeneration int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT id, generation
+			FROM memory_spaces
+			WHERE team_id = ? AND kind = 'team_shared'
+		`, teamID).Row().Scan(&spaceID, &spaceGeneration)
+	}))
+	invocationID := uuid.New()
+	require.NoError(t, knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{}).RecordRememberInvocationDiagnostic(ctx, knowledgecontract.RememberInvocationDiagnosticInput{
+		TeamID: teamID.String(), OwnerProfileID: ownerID, InvocationID: invocationID.String(),
+		SpaceID: spaceID.String(), SpaceGeneration: spaceGeneration,
+		Classification: "execution", Outcome: "failed", RequestBody: []byte(`{"secret":"team-delete"}`), RequestCaptureState: "captured",
+	}))
 
 	require.NoError(t, NewTeamRepository(appDB, rls).HardDelete(ctx, teamID))
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		var teamCount, spaceCount int64
+		var teamCount, spaceCount, invocationCount int64
 		if err := tx.Raw(`SELECT COUNT(*) FROM teams WHERE id = ?`, teamID).Scan(&teamCount).Error; err != nil {
 			return err
 		}
 		if err := tx.Raw(`SELECT COUNT(*) FROM memory_spaces WHERE team_id = ?`, teamID).Scan(&spaceCount).Error; err != nil {
 			return err
 		}
+		if err := tx.Raw(`SELECT COUNT(*) FROM remember_invocation_diagnostics WHERE team_id = ?`, teamID).Scan(&invocationCount).Error; err != nil {
+			return err
+		}
 		require.Zero(t, teamCount)
 		require.Zero(t, spaceCount)
+		require.Zero(t, invocationCount)
 		return nil
 	}))
 }
@@ -222,6 +244,140 @@ func TestTeamHardDeletePreservesAuditRowWhenMemorySpaceIsRemoved(t *testing.T) {
 	assert.Nil(t, retainedSpaceID)
 	assert.JSONEq(t, `{"before":"retained"}`, string(beforePayload))
 	assert.JSONEq(t, `{"source":"test"}`, string(metadata))
+}
+
+func TestTeamHardDeleteSerializesInvocationDiagnosticInsert(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "team-hard-delete-diagnostic-race"))
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID.String(), "team-hard-delete-diagnostic-race-owner")
+	var spaceID uuid.UUID
+	var spaceGeneration int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT id, generation
+			FROM memory_spaces
+			WHERE team_id = ? AND kind = 'team_shared'
+		`, teamID).Row().Scan(&spaceID, &spaceGeneration)
+	}))
+
+	invocationID := uuid.New()
+	insertReady := make(chan struct{})
+	releaseInsert := make(chan struct{})
+	insertErr := make(chan error, 1)
+	go func() {
+		insertErr <- rls.WithTeamProfileTx(ctx, appDB, teamID.String(), ownerID, func(tx *gorm.DB) error {
+			var locked bool
+			if err := tx.Raw(`SELECT dense_mem_lock_memory_space(?::uuid, ?::uuid)`, teamID, spaceID).Row().Scan(&locked); err != nil {
+				return err
+			}
+			if !locked {
+				return fmt.Errorf("team hard-delete race could not lock shared space")
+			}
+			if err := tx.Exec(`
+				INSERT INTO remember_invocation_diagnostics (
+					team_id, invocation_id, owner_profile_id, space_id, space_generation,
+					classification, outcome, request_bytes, request_capture_state,
+					created_at, completed_at, expires_at
+				) VALUES (?, ?, ?, ?, ?, 'execution', 'failed', ?, 'captured', now(), now(), now() + interval '1 day')
+			`, teamID, invocationID, ownerID, spaceID, spaceGeneration, []byte(`{"race":"in-flight"}`)).Error; err != nil {
+				return err
+			}
+			close(insertReady)
+			<-releaseInsert
+			return nil
+		})
+	}()
+	select {
+	case <-insertReady:
+	case err := <-insertErr:
+		require.NoError(t, err)
+		return
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for in-flight diagnostic insert")
+	}
+
+	hardDeleteErr := make(chan error, 1)
+	go func() {
+		hardDeleteErr <- NewTeamRepository(appDB, rls).HardDelete(ctx, teamID)
+	}()
+	select {
+	case err := <-hardDeleteErr:
+		close(releaseInsert)
+		require.NoError(t, <-insertErr)
+		t.Fatalf("hard delete completed while diagnostic insert held its space lock: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	close(releaseInsert)
+	require.NoError(t, <-insertErr)
+	require.NoError(t, <-hardDeleteErr)
+	var remaining int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT COUNT(*) FROM remember_invocation_diagnostics WHERE invocation_id = ?`, invocationID).Scan(&remaining).Error
+	}))
+	require.Zero(t, remaining)
+}
+
+func TestTeamHardDeleteSerializesGlobalInvocationDiagnosticInsert(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "team-hard-delete-global-diagnostic-race"))
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID.String(), "team-hard-delete-global-diagnostic-owner")
+	invocationID := uuid.New()
+	insertReady := make(chan struct{})
+	releaseInsert := make(chan struct{})
+	insertErr := make(chan error, 1)
+	go func() {
+		insertErr <- rls.WithTeamProfileTx(ctx, appDB, teamID.String(), ownerID, func(tx *gorm.DB) error {
+			if err := ensureActiveTeamForMutation(ctx, tx, teamID.String()); err != nil {
+				return err
+			}
+			if err := tx.Exec(`
+				INSERT INTO remember_invocation_diagnostics (
+					team_id, invocation_id, owner_profile_id,
+					classification, outcome, request_bytes, request_capture_state,
+					created_at, completed_at, expires_at
+				) VALUES (?, ?, ?, 'execution', 'failed', ?, 'captured', now(), now(), now() + interval '1 day')
+			`, teamID, invocationID, ownerID, []byte(`{"race":"global-in-flight"}`)).Error; err != nil {
+				return err
+			}
+			close(insertReady)
+			<-releaseInsert
+			return nil
+		})
+	}()
+	select {
+	case <-insertReady:
+	case err := <-insertErr:
+		require.NoError(t, err)
+		return
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for in-flight global diagnostic insert")
+	}
+
+	hardDeleteErr := make(chan error, 1)
+	go func() {
+		hardDeleteErr <- NewTeamRepository(appDB, rls).HardDelete(ctx, teamID)
+	}()
+	select {
+	case err := <-hardDeleteErr:
+		close(releaseInsert)
+		require.NoError(t, <-insertErr)
+		t.Fatalf("hard delete completed while global diagnostic insert held the team lock: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	close(releaseInsert)
+	require.NoError(t, <-insertErr)
+	require.NoError(t, <-hardDeleteErr)
+	var remaining int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT COUNT(*) FROM remember_invocation_diagnostics WHERE invocation_id = ?`, invocationID).Scan(&remaining).Error
+	}))
+	require.Zero(t, remaining)
 }
 
 func TestSSORuntimeEntitlementsExcludeArchivedTeams(t *testing.T) {

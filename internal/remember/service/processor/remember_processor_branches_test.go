@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
@@ -15,6 +16,7 @@ import (
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
@@ -87,7 +89,7 @@ func TestRememberFailureRecoveryErrorsAndCodes(t *testing.T) {
 	}{
 		{name: "deadline", err: context.DeadlineExceeded, want: "remember failure record persistence timed out: context deadline exceeded", code: "deadline_exceeded"},
 		{name: "cancelled", err: context.Canceled, want: "remember failure record persistence was cancelled: context canceled", code: "request_cancelled"},
-		{name: "other", err: errors.New("database down"), want: "remember failure record persistence failed", code: "persistence_failed"},
+		{name: "other", err: errors.New("database down"), want: "remember failure record persistence failed: database down", code: "persistence_failed"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			require.EqualError(t, rememberFailureRecoveryLogError(test.err), test.want)
@@ -96,9 +98,9 @@ func TestRememberFailureRecoveryErrorsAndCodes(t *testing.T) {
 	}
 	var nilLoggerProcessor *rememberSynchronousProcessor
 	input := rememberapp.RememberProcessRequest{TeamID: "team", OwnerProfileID: "owner"}
-	nilLoggerProcessor.logRememberFailureRecordError(input, "attempt", "assessment", "provider_unavailable", "corr", errors.New("x"))
-	nilLoggerProcessor.logRememberFailureRetentionDegraded(input, "attempt", "assessment")
-	nilLoggerProcessor.logRememberIdempotencyLockCleanupFailure(input, "attempt")
+	nilLoggerProcessor.logRememberFailureRecordError(context.Background(), input, "attempt", "assessment", "provider_unavailable", "corr", errors.New("x"))
+	nilLoggerProcessor.logRememberFailureRetentionDegraded(input, "attempt", "assessment", errors.New("retention failed"))
+	nilLoggerProcessor.logRememberIdempotencyLockCleanupFailure(input, "attempt", errors.New("cleanup failed"))
 }
 
 func TestRememberFailureRecoveryLoggingCapturesFailureKinds(t *testing.T) {
@@ -107,11 +109,11 @@ func TestRememberFailureRecoveryLoggingCapturesFailureKinds(t *testing.T) {
 	input := rememberapp.RememberProcessRequest{
 		TeamID: "team", OwnerProfileID: "owner", Metadata: map[string]any{"actor": map[string]any{"correlation_id": "corr"}},
 	}
-	processor.logRememberFailureRecordError(input, "attempt", "assessment", "provider_unavailable", "corr", context.DeadlineExceeded)
-	processor.logRememberFailureRecordError(input, "attempt", "assessment", "provider_unavailable", "corr", context.Canceled)
-	processor.logRememberFailureRecordError(input, "attempt", "assessment", "provider_unavailable", "corr", errors.New("x"))
-	processor.logRememberFailureRetentionDegraded(input, "attempt", "assessment")
-	processor.logRememberIdempotencyLockCleanupFailure(input, "attempt")
+	processor.logRememberFailureRecordError(context.Background(), input, "attempt", "assessment", "provider_unavailable", "corr", context.DeadlineExceeded)
+	processor.logRememberFailureRecordError(context.Background(), input, "attempt", "assessment", "provider_unavailable", "corr", context.Canceled)
+	processor.logRememberFailureRecordError(context.Background(), input, "attempt", "assessment", "provider_unavailable", "corr", errors.New("x"))
+	processor.logRememberFailureRetentionDegraded(input, "attempt", "assessment", errors.New("retention failed"))
+	processor.logRememberIdempotencyLockCleanupFailure(input, "attempt", errors.New("cleanup failed"))
 	require.Equal(t, []string{
 		"remember_failure_record_failed", "remember_failure_record_failed", "remember_failure_record_failed",
 	}, logger.errors)
@@ -119,6 +121,56 @@ func TestRememberFailureRecoveryLoggingCapturesFailureKinds(t *testing.T) {
 	require.Equal(t, "corr", rememberProcessCorrelationID(input.Metadata))
 	require.Empty(t, rememberProcessCorrelationID(map[string]any{"actor": "wrong"}))
 	require.Empty(t, rememberProcessCorrelationID(nil))
+}
+
+func TestRememberFailureLoggingFallbackProtectsRequestSecrets(t *testing.T) {
+	secret := "database-backed-request-secret"
+	logger := &rememberProcessorLogCapture{}
+	processor := &rememberSynchronousProcessor{logger: logger, protector: observability.NewCredentialProtector()}
+	ctx := observability.WithAuthenticationSecrets(context.Background(), secret)
+	input := rememberapp.RememberProcessRequest{TeamID: "team", OwnerProfileID: "owner"}
+	failure := errors.New("database rejected authorization=" + secret)
+
+	processor.logRememberFailure(ctx, input, "attempt", time.Now(), "commit", "database_failure", "corr", 0, failure)
+	processor.logRememberFailureRecordError(ctx, input, "attempt", "commit", "database_failure", "corr", failure)
+	processor.ledger = &rememberFailureLedgerStub{invocationErr: failure}
+	processor.recordRememberInvocation(ctx, input, "invocation", "execution", "", "commit", failure, nil, nil)
+
+	require.Len(t, logger.errorTexts, 3)
+	for _, text := range logger.errorTexts {
+		require.NotContains(t, text, secret)
+		require.Contains(t, text, observability.CredentialProtectionRedacted)
+	}
+	require.Len(t, logger.warnTexts, 1)
+	require.NotContains(t, logger.warnTexts[0], secret)
+	require.Contains(t, logger.warnTexts[0], observability.CredentialProtectionRedacted)
+}
+
+func TestRememberProcessorPreCallbackLockFailurePreservesCancellationCode(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		cause error
+		code  rememberapp.SubmissionErrorCode
+	}{
+		{name: "cancelled", cause: context.Canceled, code: rememberapp.SubmissionErrorRequestCancelled},
+		{name: "deadline", cause: context.DeadlineExceeded, code: rememberapp.SubmissionErrorRequestTimeout},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			base := &rememberFailureLedgerStub{}
+			locker := &rememberWaitAwareLedgerStub{rememberFailureLedgerStub: base, lockErr: test.cause, skipCallback: true}
+			status, err := (&rememberSynchronousProcessor{ledger: locker}).ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{
+				TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "cancelled-lock", RequestHash: "hash",
+			})
+
+			var processErr *rememberapp.RememberProcessError
+			require.ErrorAs(t, err, &processErr)
+			require.ErrorIs(t, err, test.cause)
+			require.NotErrorIs(t, err, rememberapp.ErrRememberPersistence)
+			require.NotNil(t, status)
+			require.Equal(t, string(test.code), status.Errors[0].Code)
+			require.Equal(t, status.SubmissionID, base.invocation.InvocationID)
+		})
+	}
 }
 
 func TestNewSynchronousProcessorUsesDefaultClassifiersAndCommitStage(t *testing.T) {
@@ -156,6 +208,32 @@ func TestRememberProcessorOwnerReturnsProcessingFailureFromLockCallback(t *testi
 	require.Equal(t, 1, locker.lockCalls)
 }
 
+func TestRememberProcessorRecordsPreCallbackLockFailureAsExecutionFailure(t *testing.T) {
+	base := &rememberFailureLedgerStub{}
+	locker := &rememberWaitAwareLedgerStub{
+		rememberFailureLedgerStub: base,
+		lockErr:                   knowledgecontract.ErrRememberIdempotencyBusy,
+		skipCallback:              true,
+	}
+	processor := &rememberSynchronousProcessor{ledger: locker}
+	status, err := processor.ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "busy-key", RequestHash: "hash",
+		OriginalRequest: []byte(`{"evidence":[{"content":"admitted"}]}`),
+	})
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.NotNil(t, status)
+	require.NotNil(t, processErr.Status)
+	require.NotEmpty(t, processErr.Status.SubmissionID)
+	require.Equal(t, processErr.Status.SubmissionID, status.SubmissionID)
+	require.Equal(t, processErr.Status.SubmissionID, base.invocation.InvocationID)
+	require.ErrorIs(t, err, knowledgecontract.ErrRememberIdempotencyBusy)
+	require.Equal(t, "execution", base.invocation.Classification)
+	require.Equal(t, "failed", base.invocation.Outcome)
+	require.Equal(t, "database_failure", base.invocation.ErrorCode)
+	require.True(t, base.invocation.Retryable)
+}
+
 func TestRememberProcessorCoversPipelineFailurePhases(t *testing.T) {
 	input := rememberapp.RememberProcessRequest{
 		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "key", RequestHash: "hash",
@@ -170,6 +248,8 @@ func TestRememberProcessorCoversPipelineFailurePhases(t *testing.T) {
 		var processErr *rememberapp.RememberProcessError
 		require.ErrorAs(t, err, &processErr)
 		require.Equal(t, "embedding", ledger.failure.Attempt.FailedPhase)
+		require.Equal(t, "failed", ledger.invocation.Outcome)
+		require.Equal(t, "embedding", ledger.invocation.FailedPhase)
 	})
 	t.Run("duplicate resolution", func(t *testing.T) {
 		ledger := &rememberPipelineLedgerStub{
@@ -180,6 +260,8 @@ func TestRememberProcessorCoversPipelineFailurePhases(t *testing.T) {
 		var processErr *rememberapp.RememberProcessError
 		require.ErrorAs(t, err, &processErr)
 		require.Equal(t, "embedding", ledger.failure.Attempt.FailedPhase)
+		require.Equal(t, "failed", ledger.invocation.Outcome)
+		require.Equal(t, "embedding", ledger.invocation.FailedPhase)
 	})
 	t.Run("duplicate embedding provider unavailable", func(t *testing.T) {
 		ledger := &rememberPipelineLedgerStub{
@@ -193,6 +275,8 @@ func TestRememberProcessorCoversPipelineFailurePhases(t *testing.T) {
 		require.ErrorAs(t, err, &processErr)
 		require.Equal(t, "embedding", ledger.failure.Attempt.FailedPhase)
 		require.Equal(t, string(rememberapp.SubmissionErrorConfigurationInvalid), processErr.Status.Errors[0].Code)
+		require.Equal(t, "failed", ledger.invocation.Outcome)
+		require.Equal(t, "embedding", ledger.invocation.FailedPhase)
 	})
 
 	var nilProcessor *rememberSynchronousProcessor
@@ -223,6 +307,44 @@ func TestRememberProcessorCommitsValidatedAssessmentAndResult(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "committed", status.SubmissionID)
 	require.Equal(t, "completed", status.ProcessingState)
+	require.Equal(t, "evaluated_zero", ledger.invocation.Outcome)
+	require.Equal(t, "execution", ledger.invocation.Classification)
+}
+
+func TestRememberProcessorRecordsAssessmentRejectionTrails(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "key", RequestHash: "hash",
+		OriginalRequest: []byte(`{"evidence":[{"content":"admitted"}]}`),
+		Evidence:        []rememberapp.EvidenceInput{{Content: "admitted", ForceInsert: true}},
+	}
+
+	t.Run("repeated invalid assessor output", func(t *testing.T) {
+		ledger := &rememberPipelineLedgerStub{rememberFailureLedgerStub: &rememberFailureLedgerStub{}}
+		provider := &processorAssessmentProviderStub{invalid: true}
+		processor := &rememberSynchronousProcessor{ledger: ledger, catalog: &processorAssessmentCatalogStub{}, provider: provider, protector: observability.NewCredentialProtector()}
+		_, err := processor.ProcessRemember(context.Background(), input)
+		var processErr *rememberapp.RememberProcessError
+		require.ErrorAs(t, err, &processErr)
+		require.Equal(t, "failed", ledger.invocation.Outcome)
+		require.Equal(t, "assessment", ledger.invocation.FailedPhase)
+		require.Equal(t, string(rememberapp.SubmissionErrorProviderResponseInvalid), ledger.invocation.ErrorCode)
+		require.Equal(t, 1, provider.assessCalls)
+		require.Equal(t, assessor.SemanticAssessmentMaxProviderTurns-1, provider.repairCalls)
+	})
+
+	t.Run("later assessor rejection retains admitted request", func(t *testing.T) {
+		ledger := &rememberPipelineLedgerStub{rememberFailureLedgerStub: &rememberFailureLedgerStub{}}
+		provider := &processorAssessmentProviderStub{reject: true}
+		processor := &rememberSynchronousProcessor{ledger: ledger, catalog: &processorAssessmentCatalogStub{}, provider: provider, protector: observability.NewCredentialProtector()}
+		_, err := processor.ProcessRemember(context.Background(), input)
+		var processErr *rememberapp.RememberProcessError
+		require.ErrorAs(t, err, &processErr)
+		require.ErrorIs(t, err, rememberapp.ErrRememberPolicyRejected)
+		require.Equal(t, "failed", ledger.invocation.Outcome)
+		require.Equal(t, "assessment", ledger.invocation.FailedPhase)
+		require.Contains(t, string(ledger.invocation.RequestBody), "admitted")
+		require.NotContains(t, string(ledger.invocation.RequestBody), "hash_only")
+	})
 }
 
 func TestRememberProcessorExistingAttemptsTakeTerminalAndConflictPaths(t *testing.T) {
@@ -330,17 +452,39 @@ func TestRememberProcessingFailureLoggingClassifiesFailureSources(t *testing.T) 
 		commitFailureStage: func(error) string { return "persist" },
 	}
 	input := rememberapp.RememberProcessRequest{TeamID: "team", OwnerProfileID: "owner"}
-	processor.logRememberFailure(input, "attempt", time.Now(), "embedding", "embedding_unavailable", "corr", 0, &rememberEmbeddingPlanFailure{cause: knowledgecontract.ErrInlineEmbeddingPlanTooLarge})
-	processor.logRememberFailure(input, "attempt", time.Now(), "embedding", "configuration_invalid", "corr", 0, &rememberEmbeddingConfigurationFailure{})
-	processor.logRememberFailure(input, "attempt", time.Now(), "embedding", "embedding_response_invalid", "corr", 0, &rememberEmbeddingProviderFailure{cause: &embeddingcontract.ProviderError{
+	processor.logRememberFailure(context.Background(), input, "attempt", time.Now(), "embedding", "embedding_unavailable", "corr", 0, &rememberEmbeddingPlanFailure{cause: knowledgecontract.ErrInlineEmbeddingPlanTooLarge})
+	processor.logRememberFailure(context.Background(), input, "attempt", time.Now(), "embedding", "configuration_invalid", "corr", 0, &rememberEmbeddingConfigurationFailure{})
+	processor.logRememberFailure(context.Background(), input, "attempt", time.Now(), "embedding", "embedding_response_invalid", "corr", 0, &rememberEmbeddingProviderFailure{cause: &embeddingcontract.ProviderError{
 		FailureCode: "provider_response_invalid", FailureClass: "provider_action_required", StatusCode: 422,
 	}})
-	processor.logRememberFailure(input, "attempt", time.Now(), "commit", "database_failure", "corr", 0, context.DeadlineExceeded)
-	processor.logRememberFailure(input, "attempt", time.Now(), "assessment", "provider_unavailable", "corr", 0, errors.New("assessor failed"))
+	processor.logRememberFailure(context.Background(), input, "attempt", time.Now(), "commit", "database_failure", "corr", 0, context.DeadlineExceeded)
+	processor.logRememberFailure(context.Background(), input, "attempt", time.Now(), "assessment", "provider_unavailable", "corr", 0, errors.New("assessor failed"))
 	require.Equal(t, []string{
 		"remember_processing_failed", "remember_processing_failed", "remember_processing_failed",
 		"remember_processing_failed", "remember_processing_failed",
 	}, logger.errors)
+}
+
+func TestRememberProcessingFailureLoggingUsesRequestAuthenticationSecrets(t *testing.T) {
+	sink := &rememberFailureLogSink{}
+	logger := observability.NewWithSinks(observability.LevelTrace, sink)
+	processor := &rememberSynchronousProcessor{logger: logger}
+	secret := "per-call-secret"
+	ctx := observability.WithAuthenticationSecrets(context.Background(), secret)
+
+	processor.logRememberFailure(ctx, rememberapp.RememberProcessRequest{}, "attempt", time.Now(), "commit", "database_failure", "corr", 0, errors.New("provider failed "+secret))
+
+	require.Len(t, sink.records, 1)
+	require.NotContains(t, sink.records[0].Error, secret)
+}
+
+type rememberFailureLogSink struct {
+	records []observability.LogRecord
+}
+
+func (s *rememberFailureLogSink) WriteLog(_ context.Context, record observability.LogRecord) error {
+	s.records = append(s.records, record)
+	return nil
 }
 
 func TestRememberAttemptStatusValidatesAndFillsDefaults(t *testing.T) {
@@ -416,9 +560,10 @@ func TestRememberFailureHelpersCoverReplayAndInputConversions(t *testing.T) {
 	ledger := &rememberReplayFailureLedgerStub{rememberFailureLedgerStub: &rememberFailureLedgerStub{load: winner}, failureErr: knowledgecontract.ErrRememberReplay}
 	processor := &rememberSynchronousProcessor{ledger: ledger}
 	snapshot, _ = rememberAssessmentSnapshot(input, "attempt")
-	status, err := processor.recordRememberFailure(context.Background(), input, "attempt", snapshot, time.Now(), "assessment", 0, rememberapp.ErrRememberProviderUnavailable)
+	status, canonicalAttemptID, err := processor.recordRememberFailure(context.Background(), input, "attempt", snapshot, time.Now(), "assessment", 0, rememberapp.ErrRememberProviderUnavailable)
 	require.NoError(t, err)
 	require.Equal(t, "winner", status.SubmissionID)
+	require.Equal(t, "winner", canonicalAttemptID)
 }
 
 type processorEmbeddingProviderStub struct {
@@ -501,26 +646,48 @@ type processorAssessmentSessionStub struct{}
 
 func (*processorAssessmentSessionStub) SessionID() string { return "processor-assessment" }
 
-type processorAssessmentProviderStub struct{}
-
-func (*processorAssessmentProviderStub) Assess(_ context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
-	security := make([]assessor.SemanticAssessmentEvidenceSecurityResult, 0, len(request.Evidence))
-	for _, evidence := range request.Evidence {
-		security = append(security, assessor.SemanticAssessmentEvidenceSecurityResult{EvidenceID: evidence.EvidenceID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}})
-	}
-	return &processorAssessmentSessionStub{}, assessor.SemanticAssessmentTurn{
-		Response: assessor.SemanticAssessmentResponse{
-			RequestID: request.RequestID, EvidenceSecurityResults: security,
-			EvidenceEquivalenceResults: []assessor.SemanticAssessmentEvidenceEquivalenceResult{},
-			EvidenceConflictResults:    []assessor.SemanticAssessmentEvidenceConflictResult{},
-			EntityResults:              []assessor.SemanticAssessmentEntityResult{},
-			RelationshipResults:        []assessor.SemanticAssessmentRelationshipResult{},
-		},
-	}, nil
+type processorAssessmentProviderStub struct {
+	reject      bool
+	invalid     bool
+	assessCalls int
+	repairCalls int
 }
 
-func (*processorAssessmentProviderStub) Repair(context.Context, assessor.SemanticAssessmentSession, assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
-	return assessor.SemanticAssessmentTurn{}, errors.New("unexpected assessment repair")
+func (p *processorAssessmentProviderStub) Assess(_ context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
+	p.assessCalls++
+	return &processorAssessmentSessionStub{}, assessor.SemanticAssessmentTurn{Response: p.response(request)}, nil
+}
+
+func (p *processorAssessmentProviderStub) response(request assessor.SemanticAssessmentRequest) assessor.SemanticAssessmentResponse {
+	if p.invalid {
+		return assessor.SemanticAssessmentResponse{RequestID: request.RequestID}
+	}
+	security := make([]assessor.SemanticAssessmentEvidenceSecurityResult, 0, len(request.Evidence))
+	for _, evidence := range request.Evidence {
+		result := assessor.SemanticAssessmentEvidenceSecurityResult{EvidenceID: evidence.EvidenceID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}}
+		if p.reject {
+			startRef, _ := assessor.SemanticAssessmentBoundaryRef(evidence, 0)
+			endRef, _ := assessor.SemanticAssessmentBoundaryRef(evidence, 1)
+			result.Decision = "reject"
+			result.Signals = []assessor.SemanticAssessmentSecuritySignal{{EvidenceID: evidence.EvidenceID, Kind: "instruction_override", StartRef: startRef, EndRef: endRef}}
+		}
+		security = append(security, result)
+	}
+	return assessor.SemanticAssessmentResponse{
+		RequestID: request.RequestID, EvidenceSecurityResults: security,
+		EvidenceEquivalenceResults: []assessor.SemanticAssessmentEvidenceEquivalenceResult{},
+		EvidenceConflictResults:    []assessor.SemanticAssessmentEvidenceConflictResult{},
+		EntityResults:              []assessor.SemanticAssessmentEntityResult{},
+		RelationshipResults:        []assessor.SemanticAssessmentRelationshipResult{},
+	}
+}
+
+func (p *processorAssessmentProviderStub) Repair(_ context.Context, _ assessor.SemanticAssessmentSession, request assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
+	p.repairCalls++
+	if !p.invalid {
+		return assessor.SemanticAssessmentTurn{}, errors.New("unexpected assessment repair")
+	}
+	return assessor.SemanticAssessmentTurn{Response: p.response(request.Request)}, nil
 }
 
 func (*processorAssessmentProviderStub) ModelName() string { return "processor-assessment-model" }
@@ -578,11 +745,20 @@ func TestEmbedSearchDocumentBatchValidatesProviderAndVectors(t *testing.T) {
 	provider.err = context.Canceled
 	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, rememberapp.ErrRememberRequestCancelled)
+	provider.err = rememberapp.ErrRememberRequestCancelled
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	require.ErrorIs(t, err, rememberapp.ErrRememberRequestCancelled)
 
 	provider.err = errors.New("provider timeout")
 	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	cancel()
 	_, err = processor.embedSearchDocumentBatch(expired, "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	require.ErrorIs(t, err, rememberapp.ErrRememberRequestTimeout)
+	provider.err = rememberapp.ErrRememberRequestTimeout
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	require.ErrorIs(t, err, rememberapp.ErrRememberRequestTimeout)
+	provider.err = context.DeadlineExceeded
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, rememberapp.ErrRememberRequestTimeout)
 
 	provider.err = nil
@@ -676,7 +852,7 @@ func TestRememberDiagnosticsRecordsUncapturedPhasesAndDerivedSecurityHash(t *tes
 
 	items = rememberFailureDiagnosticsWithCapture(rememberapp.RememberProcessRequest{}, nil, []modelprovider.ProviderExchange{{
 		Component: "provider", RequestBody: []byte("request"), ResponseBody: []byte("response"),
-	}}, nil, true, true)
+	}}, nil, true, true, observability.NewCredentialProtector())
 	require.Len(t, items, 3)
 	require.Equal(t, "not_captured", items[0].CaptureState)
 	require.Equal(t, "captured", items[1].Outcome)
@@ -686,4 +862,118 @@ func TestRememberDiagnosticsRecordsUncapturedPhasesAndDerivedSecurityHash(t *tes
 	var nilRecorder *rememberExchangeRecorder
 	nilRecorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{})
 	require.Nil(t, nilRecorder.Snapshot())
+}
+
+func TestRememberFailureDiagnosticsProtectsRequestScopedAuthenticationSecrets(t *testing.T) {
+	requestSecret := "database-backed-request-secret"
+	input := rememberapp.RememberProcessRequest{OriginalRequest: []byte(`{"authorization":"database-backed-request-secret"}`)}
+	items := rememberFailureDiagnosticsWithAuthenticationSecrets(
+		input,
+		map[string]any{"processing_state": "failed"},
+		[]modelprovider.ProviderExchange{{
+			Component: "assessor", RequestBody: []byte(`{"authorization":"database-backed-request-secret"}`),
+			ResponseBody: []byte(`{"message":"database-backed-request-secret"}`), Outcome: "captured",
+		}},
+		[]byte(`{"echo":"database-backed-request-secret"}`), true, true, []string{requestSecret}, observability.NewCredentialProtector(),
+	)
+
+	require.Len(t, items, 3)
+	for _, item := range items {
+		require.NotContains(t, string(item.RequestBody), requestSecret)
+		require.NotContains(t, string(item.ResponseBody), requestSecret)
+	}
+}
+
+func TestRememberInvocationDiagnosticsPreservesZeroResultReplayOutcome(t *testing.T) {
+	ledger := &rememberFailureLedgerStub{}
+	processor := &rememberSynchronousProcessor{ledger: ledger}
+	processor.recordRememberInvocation(context.Background(), rememberapp.RememberProcessRequest{
+		TeamID: "11111111-1111-4111-8111-111111111111", OwnerProfileID: "22222222-2222-4222-8222-222222222222",
+		RequestHash: "sha256:replay", InvocationStartedAt: time.Now().UTC(), OriginalRequest: []byte(`{"evidence":[]}`),
+	}, "33333333-3333-4333-8333-333333333333", "replay", "33333333-3333-4333-8333-333333333333", "replay", nil,
+		&rememberapp.SubmissionStatusResult{ProcessingState: "completed"}, nil)
+
+	require.Equal(t, "replayed", ledger.invocation.Outcome)
+	require.Empty(t, ledger.invocation.FailedPhase)
+}
+
+func TestRememberInvocationDiagnosticsProtectsRequestScopedAuthenticationSecrets(t *testing.T) {
+	requestSecret := "database-backed-request-secret"
+	ledger := &rememberFailureLedgerStub{}
+	processor := &rememberSynchronousProcessor{ledger: ledger, protector: observability.NewCredentialProtector()}
+	ctx := observability.WithAuthenticationSecrets(context.Background(), requestSecret)
+	processor.recordRememberInvocation(ctx, rememberapp.RememberProcessRequest{
+		TeamID: "11111111-1111-4111-8111-111111111111", OwnerProfileID: "22222222-2222-4222-8222-222222222222",
+		RequestHash: "sha256:request-secret", InvocationStartedAt: time.Now().UTC(),
+		OriginalRequest: []byte(`{"authorization":"database-backed-request-secret"}`),
+	}, "33333333-3333-4333-8333-333333333333", "execution", "33333333-3333-4333-8333-333333333333", "commit", nil,
+		&rememberapp.SubmissionStatusResult{ProcessingState: "completed"}, nil)
+
+	require.NotContains(t, string(ledger.invocation.RequestBody), requestSecret)
+}
+
+func TestRememberExchangeRecorderProtectsRequestScopedAuthenticationSecrets(t *testing.T) {
+	requestSecret := "database-backed-request-secret"
+	recorder := &rememberExchangeRecorder{protector: observability.NewCredentialProtector()}
+	ctx := observability.WithAuthenticationSecrets(context.Background(), requestSecret)
+	recorder.RecordProviderExchange(ctx, modelprovider.ProviderExchange{
+		Component: "assessor", RequestBody: []byte(`{"authorization":"database-backed-request-secret"}`), Outcome: "captured",
+	})
+
+	exchanges := recorder.Snapshot()
+	require.Len(t, exchanges, 1)
+	require.NotContains(t, string(exchanges[0].RequestBody), requestSecret)
+}
+
+func TestRememberProcessorWaiterRecordsReplayLoadFailure(t *testing.T) {
+	base := &rememberFailureLedgerStub{loadErr: errors.New("replay database down")}
+	locker := &rememberWaitAwareLedgerStub{rememberFailureLedgerStub: base, waited: true}
+	processor := &rememberSynchronousProcessor{ledger: locker}
+
+	status, err := processor.ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
+	})
+
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.ErrorIs(t, err, rememberapp.ErrRememberPersistence)
+	require.NotNil(t, status)
+	require.NotNil(t, processErr.Status)
+	require.NotEmpty(t, processErr.Status.SubmissionID)
+	require.Equal(t, processErr.Status.SubmissionID, status.SubmissionID)
+	require.NoError(t, func() error {
+		_, parseErr := uuid.Parse(processErr.Status.SubmissionID)
+		return parseErr
+	}())
+	require.Equal(t, "replay", base.invocation.Classification)
+	require.Equal(t, "failed", base.invocation.Outcome)
+	require.Equal(t, "database_failure", base.invocation.ErrorCode)
+	require.True(t, base.invocation.Retryable)
+	require.Equal(t, "idempotency_wait", base.invocation.FailedPhase)
+	require.Empty(t, base.invocation.CanonicalAttemptID)
+}
+
+func TestRememberInvocationDiagnosticsDoesNotCaptureStatuslessCallerResponse(t *testing.T) {
+	ledger := &rememberFailureLedgerStub{}
+	processor := &rememberSynchronousProcessor{ledger: ledger}
+	ctx := rememberapp.WithDiagnosticCapture(context.Background(), rememberapp.NewDiagnosticCapture([]byte(`{"request":true}`)))
+	processor.recordRememberInvocation(ctx, rememberapp.RememberProcessRequest{
+		TeamID: "11111111-1111-4111-8111-111111111111", OwnerProfileID: "22222222-2222-4222-8222-222222222222",
+		RequestHash: "sha256:statusless", InvocationStartedAt: time.Now().UTC(), OriginalRequest: []byte(`{"evidence":[]}`),
+	}, "33333333-3333-4333-8333-333333333333", "execution", "", "idempotency_lock", errors.New("lock busy"), nil, nil)
+
+	require.Equal(t, "not_captured", ledger.invocation.CallerResponseCaptureState)
+	require.Empty(t, ledger.invocation.CallerResponse)
+}
+
+func TestRememberInvocationLoggingDistinguishesRetentionDegradation(t *testing.T) {
+	ledger := &rememberFailureLedgerStub{invocationErr: knowledgecontract.ErrRememberFailureRetentionDegraded}
+	logger := &rememberProcessorLogCapture{}
+	processor := &rememberSynchronousProcessor{ledger: ledger, logger: logger}
+	processor.recordRememberInvocation(context.Background(), rememberapp.RememberProcessRequest{
+		TeamID: "11111111-1111-4111-8111-111111111111", OwnerProfileID: "22222222-2222-4222-8222-222222222222",
+		RequestHash: "sha256:retention", InvocationStartedAt: time.Now().UTC(), OriginalRequest: []byte(`{"evidence":[]}`),
+	}, "33333333-3333-4333-8333-333333333333", "execution", "", "commit", errors.New("remember failed"), nil, nil)
+
+	require.Equal(t, []string{"remember_invocation_retention_degraded"}, logger.warns)
 }

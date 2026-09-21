@@ -345,6 +345,19 @@ func (r *TeamRepositoryImpl) SoftDelete(ctx context.Context, id uuid.UUID) error
 // live FKs to teams/api_keys, so historical audit entries remain immutable.
 func (r *TeamRepositoryImpl) HardDelete(ctx context.Context, id uuid.UUID) error {
 	err := r.rls.WithTeamTx(ctx, r.db, id.String(), func(tx *gorm.DB) error {
+		// Serialize all team-scoped diagnostic inserts, including global records
+		// that cannot take a memory-space lock, before purging their rows.
+		var lockedID string
+		if err := tx.WithContext(ctx).Raw(`
+			SELECT id::text
+			FROM teams
+			WHERE id = $1
+			FOR UPDATE
+		`, id).Row().Scan(&lockedID); errors.Is(err, sql.ErrNoRows) {
+			return gorm.ErrRecordNotFound
+		} else if err != nil {
+			return err
+		}
 		if err := tx.Exec(`
 			DELETE FROM ownership_aliases
 			WHERE team_id = $1
@@ -364,6 +377,41 @@ func (r *TeamRepositoryImpl) HardDelete(ctx context.Context, id uuid.UUID) error
 		// it after credential deletion while retaining RESTRICT protection for
 		// any semantic/search rows that still reference a space.
 		if err := tx.Exec("SELECT set_config('app.tx_mode', 'system', true)").Error; err != nil {
+			return err
+		}
+		// Lock spaces before purging diagnostics so in-flight Remember inserts cannot commit after the purge.
+		spaceRows, err := tx.WithContext(ctx).Raw(`
+			SELECT id
+			FROM memory_spaces
+			WHERE team_id = $1
+			ORDER BY id
+			FOR UPDATE
+		`, id).Rows()
+		if err != nil {
+			return err
+		}
+		for spaceRows.Next() {
+			var spaceID uuid.UUID
+			if err := spaceRows.Scan(&spaceID); err != nil {
+				_ = spaceRows.Close()
+				return err
+			}
+		}
+		if err := spaceRows.Err(); err != nil {
+			_ = spaceRows.Close()
+			return err
+		}
+		if err := spaceRows.Close(); err != nil {
+			return err
+		}
+		// Invocation diagnostics have no foreign key to memory_spaces, so purge them before deleting the catalog.
+		if err := tx.Exec("SELECT set_config('app.remember_attempt_diagnostic_purge', 'true', true)").Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`DELETE FROM remember_invocation_diagnostics WHERE team_id = $1`, id).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("SELECT set_config('app.remember_attempt_diagnostic_purge', 'false', true)").Error; err != nil {
 			return err
 		}
 		if err := tx.Exec(`DELETE FROM memory_spaces WHERE team_id = $1`, id).Error; err != nil {

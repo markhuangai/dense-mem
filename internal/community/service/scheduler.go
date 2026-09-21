@@ -24,10 +24,13 @@ type Scheduler struct {
 }
 
 func NewScheduler(service Service, teams TeamService, config AppConfig, logger *slog.Logger) *Scheduler {
-	if logger == nil {
-		logger = slog.Default()
-	}
 	return &Scheduler{service: service, teams: teams, config: config, logger: logger, now: func() time.Time { return time.Now().UTC() }}
+}
+
+func (s *Scheduler) logError(message string, args ...any) {
+	if s != nil && s.logger != nil {
+		s.logger.Error(message, args...)
+	}
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
@@ -86,7 +89,7 @@ func (s *Scheduler) runDue(ctx context.Context) {
 	for offset := 0; ; offset += schedulerPageSize {
 		teams, err := s.teams.List(ctx, schedulerPageSize, offset)
 		if err != nil {
-			s.logger.Warn("community scheduler: team listing failed", slog.String("error_kind", "team_list_failed"))
+			s.logError("community scheduler: team listing failed", slog.String("error_kind", "team_list_failed"))
 			return
 		}
 		for _, team := range teams {
@@ -112,7 +115,7 @@ func (s *Scheduler) runDue(ctx context.Context) {
 				}
 				defer func() { <-semaphore }()
 				if _, runErr := s.service.RunScheduled(ctx, teamID, now); runErr != nil {
-					s.logger.Warn("community scheduler: run failed", slog.String("error_kind", "run_failed"))
+					s.logError("community scheduler: run failed", slog.String("error_kind", "run_failed"))
 				}
 			}(teamID)
 		}

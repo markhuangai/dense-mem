@@ -114,7 +114,7 @@ func RunActiveServer(
 		ReviewTTLDays: cfg.GetConflictReviewTTLDays(),
 		Timezone:      cfg.GetAppTimezone(),
 	})
-	dreamStore := dreampostgres.NewStore(pgDB.GetDB(), rlsHelper)
+	dreamStore := dreampostgres.NewStoreWithLogger(pgDB.GetDB(), rlsHelper, logger)
 	conflictStore := conflictpostgres.NewStore(pgDB.GetDB(), rlsHelper, knowledgeStore)
 	graphStore := graphpostgres.NewStore(pgDB.GetDB(), rlsHelper)
 	traceStore := buildTraceStore(pgDB.GetDB(), rlsHelper)
@@ -247,6 +247,10 @@ func RunActiveServer(
 	if err != nil {
 		return fmt.Errorf("failed to build conflict review runner: %w", err)
 	}
+	diagnosticProtector, err := newRootProtector(cfg)
+	if err != nil {
+		return fmt.Errorf("configure diagnostic protection: %w", err)
+	}
 	applications := buildApplicationBundle(applicationCompositionDependencies{
 		Knowledge:              knowledgeStore,
 		Dream:                  dreamStore,
@@ -265,6 +269,7 @@ func RunActiveServer(
 		AssessmentLimits:       assessmentLimits,
 		Metrics:                discoverabilityMetrics,
 		Logger:                 logger,
+		DiagnosticProtector:    diagnosticProtector,
 		Audit:                  auditService,
 		AppConfig:              appConfigService,
 		Teams:                  teamService,
@@ -494,19 +499,19 @@ func RunActiveServer(
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)
 	}
-	diagnosticDone := knowledgeStore.StartRememberAttemptDiagnosticPurger(lifecycle.Context(), time.Hour, slog.Default())
+	diagnosticDone := knowledgeStore.StartRememberAttemptDiagnosticPurger(lifecycle.Context(), time.Hour, rootSlogLogger(logger))
 	lifecycle.add(managedRuntimeWorker{name: "remember diagnostics", done: diagnosticDone, shutdown: knowledgeStore.ShutdownRememberAttemptDiagnosticPurger})
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)
 	}
 	lifecycle.start("dream scheduler", func(ctx context.Context) {
-		dream.NewScheduler(dreamSvc, teamService, slog.Default()).Start(ctx)
+		dream.NewScheduler(dreamSvc, teamService, rootSlogLogger(logger)).Start(ctx)
 	})
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)
 	}
 	lifecycle.start("community scheduler", func(ctx context.Context) {
-		communityapp.NewScheduler(communitySvc, teamService, appConfigService, slog.Default()).Start(ctx)
+		communityapp.NewScheduler(communitySvc, teamService, appConfigService, rootSlogLogger(logger)).Start(ctx)
 	})
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)

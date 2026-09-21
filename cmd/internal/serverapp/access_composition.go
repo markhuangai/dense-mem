@@ -71,8 +71,9 @@ func buildAccessApplication(deps accessApplicationDependencies) accessApplicatio
 			deps.Logger,
 		)
 	}
-	teamService := accessservice.NewTeamService(deps.TeamRepo, deps.Audit, deps.StatePurger)
-	credentialService := accessservice.NewCredentialService(deps.CredentialRepo, teamService, deps.Audit, deps.SessionInvalidator)
+	rootLogger := rootSlogLogger(deps.Logger)
+	teamService := accessservice.NewTeamServiceWithLogger(deps.TeamRepo, deps.Audit, deps.StatePurger, rootLogger)
+	credentialService := accessservice.NewCredentialServiceWithLogger(deps.CredentialRepo, teamService, deps.Audit, deps.SessionInvalidator, rootLogger)
 	ssoService := accessservice.NewSSOService(deps.SSORepo, accessservice.SSOConfig{
 		RuntimeConfig: deps.RuntimeConfig,
 		Logger:        deps.Logger,

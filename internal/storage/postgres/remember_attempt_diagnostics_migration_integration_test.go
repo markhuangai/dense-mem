@@ -245,3 +245,67 @@ func TestRememberAttemptDiagnosticsMigrationRejectsCorruptLegacyRows(t *testing.
 	`, teamID, artifactID).Scan(&retained))
 	require.Equal(t, 1, retained)
 }
+
+func TestRememberAttemptDiagnosticsUnavailableMigrationSerializesRollbackAndResetsLockTimeout(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	const migrationControlRetirementBase int64 = 20260913010001
+	const migrationControlRetirement int64 = 20260917010001
+	const unavailableMigration int64 = 20260919010002
+	const unavailableMigrationBase int64 = 20260919010001
+	runGooseUpTo(t, ctx, db, migrationControlRetirementBase)
+	seedMigrationControlRetirementFixture(t, ctx, db)
+	runGooseUpTo(t, ctx, db, migrationControlRetirement)
+	runGooseUpTo(t, ctx, db, unavailableMigration)
+
+	var lockTimeout string
+	require.NoError(t, db.QueryRowContext(ctx, "SHOW lock_timeout").Scan(&lockTimeout))
+	require.Equal(t, "0", lockTimeout, "the migration must not leak its session lock timeout into the application pool")
+
+	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
+	attemptID := uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO remember_attempts (
+				team_id, attempt_id, owner_profile_id, idempotency_key, request_hash,
+				contract_version, submission_kind, outcome, public_result, completed_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'unavailable-migration', 'unavailable-migration-hash',
+			          'dense-mem.v2.6', 'remember', 'failed', '{}'::jsonb, now())
+		`, teamID, attemptID, profileID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO remember_attempt_diagnostics (
+				team_id, attempt_id, owner_profile_id, sequence_no, kind, component,
+				capture_state, captured_at, expires_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, 1, 'original_request', 'migration-test',
+			          'unavailable', now(), now() + interval '1 day')
+		`, teamID, attemptID, profileID)
+		return err
+	}))
+
+	err := migrationDownTo(ctx, db, unavailableMigrationBase)
+	require.ErrorContains(t, err, "cannot remove unavailable capture state while diagnostics exist")
+	var constraintValidated bool
+	var constraintDefinition string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT convalidated, pg_get_constraintdef(oid)
+		FROM pg_constraint
+		WHERE conname = 'remember_attempt_diagnostics_capture_state_check'
+	`).Scan(&constraintValidated, &constraintDefinition))
+	require.True(t, constraintValidated)
+	require.Contains(t, constraintDefinition, "unavailable")
+
+	require.NoError(t, execPostgresTxMode(ctx, db, "migration", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `TRUNCATE TABLE remember_attempt_diagnostics`); err != nil {
+			return err
+		}
+		return nil
+	}))
+	require.NoError(t, migrationDownTo(ctx, db, unavailableMigrationBase))
+	require.NoError(t, db.QueryRowContext(ctx, "SHOW lock_timeout").Scan(&lockTimeout))
+	require.Equal(t, "0", lockTimeout, "the migration down path must not leak its session lock timeout")
+}

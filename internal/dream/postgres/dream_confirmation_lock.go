@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 const (
@@ -112,8 +113,8 @@ func (r *Store) WithHypothesisConfirmationLock(
 	if callbackErr != nil {
 		return errors.Join(callbackErr, cleanupErr)
 	}
-	if cleanupErr != nil && r.db.Logger != nil {
-		r.db.Logger.Warn(ctx, "dream confirmation lock cleanup failed", "error_class", "database_cleanup")
+	if cleanupErr != nil && r.logger != nil {
+		r.logger.Error("dream_confirmation_lock_cleanup_failed", nil, observability.String("error_class", "database_cleanup"), observability.String("team_id", teamID), observability.String("hypothesis_id", canonicalID))
 	}
 	return nil
 }

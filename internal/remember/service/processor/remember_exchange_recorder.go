@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	repository "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
@@ -19,44 +21,11 @@ const (
 	rememberDiagnosticMaxAttemptBytes = 64 << 20
 )
 
-var (
-	rememberDiagnosticJSONSecretPattern       = regexp.MustCompile(`(?is)("(?:authorization|proxy-authorization|api[_-]?key|client[_-]?secret|password|token|access[_-]?token|refresh[_-]?token|secret|stack(?:[_-]?trace)?|traceback|backtrace|database[_ -]?error|db[_ -]?error|sqlstate)"\s*:\s*)(?:"(?:\\.|[^"\\])*"|null|true|false|-?[0-9]+(?:\.[0-9]+)?)`)
-	rememberDiagnosticAuthorizationPattern    = regexp.MustCompile(`(?i)(\b(?:authorization|proxy-authorization)\s*:\s*(?:bearer|basic)\s+)[^\s,}\]]+`)
-	rememberDiagnosticBearerPattern           = regexp.MustCompile(`(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/-]{8,}`)
-	rememberDiagnosticProviderSecretPattern   = regexp.MustCompile(`(?i)\b(?:sk|rk|pk|api[_-]?key|token)[_-][A-Za-z0-9][A-Za-z0-9_-]{8,}\b`)
-	rememberDiagnosticAssignmentSecretPattern = regexp.MustCompile(`(?i)(\b(?:api[_-]?key|client[_-]?secret|password|token|access[_-]?token|refresh[_-]?token|secret)\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'[^'\r\n]*'|[^\s,;}\]]+)`)
-	rememberDiagnosticStackPattern            = regexp.MustCompile(`(?im)(\b(?:stack(?:[_ -]?trace)?|traceback|backtrace|panic|goroutine)\b\s*[:=]?\s*)[^\r\n]+`)
-	rememberDiagnosticMultilineStackPattern   = regexp.MustCompile(`(?im)(^|\n)[ \t]*(?:stack(?:[_ -]?trace)?|traceback|backtrace|panic|goroutine)\b[^\r\n]*(?:\r?\n[^\r\n]*){0,8}`)
-	rememberDiagnosticStackFramePattern       = regexp.MustCompile(`(?im)(^|\n)[ \t]*(?:[A-Za-z_][A-Za-z0-9_./]*\.[A-Za-z0-9_]+\([^\r\n]*\)|(?:/|[A-Za-z]:\\)[^\r\n]*:\d+(?:\s+\+0x[0-9a-f]+)?)\s*$`)
-	rememberDiagnosticDatabasePattern         = regexp.MustCompile(`(?im)(\b(?:database|db|sql)\s*(?:error|exception|failure)\b\s*[:=]?\s*)[^\r\n]+`)
-	rememberDiagnosticDriverErrorPattern      = regexp.MustCompile(`(?im)(\b(?:pq|pgx|postgres(?:ql)?|lib/pq)(?:\s+(?:driver\s+)?error)?\s*:\s*)[^\r\n]+`)
-	rememberDiagnosticSQLStatePattern         = regexp.MustCompile(`(?im)(\b(?:sqlstate|database/sql|driver\s+error)\s*[:=]\s*)[^\r\n]+`)
-	rememberDiagnosticSQLStateLinePattern     = regexp.MustCompile(`(?im)(^|\n)[^\r\n]*\bSQLSTATE\s+[0-9A-Z]{5}\b[^\r\n]*`)
-	rememberDiagnosticPostgresErrorPattern    = regexp.MustCompile(`(?im)(\b(?:fatal|error)\s*:\s*)(?:password authentication failed|no pg_hba\.conf entry|database [^\r\n]*|role [^\r\n]*|connection [^\r\n]*)[^\r\n]*`)
-)
-
-func redactRememberDiagnosticContent(body []byte) []byte {
-	body = rememberDiagnosticJSONSecretPattern.ReplaceAll(body, []byte(`${1}"[REDACTED]"`))
-	body = rememberDiagnosticAuthorizationPattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
-	body = rememberDiagnosticBearerPattern.ReplaceAll(body, []byte(`[REDACTED]`))
-	body = rememberDiagnosticProviderSecretPattern.ReplaceAll(body, []byte(`[REDACTED]`))
-	body = rememberDiagnosticAssignmentSecretPattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
-	body = rememberDiagnosticMultilineStackPattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
-	body = rememberDiagnosticStackPattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
-	body = rememberDiagnosticStackFramePattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
-	body = rememberDiagnosticDatabasePattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
-	body = rememberDiagnosticDriverErrorPattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
-	body = rememberDiagnosticSQLStatePattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
-	body = rememberDiagnosticSQLStateLinePattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
-	body = rememberDiagnosticPostgresErrorPattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
-	return body
-}
-
 func boundedRememberDiagnosticBody(body []byte) ([]byte, bool) {
 	if len(body) == 0 {
 		return nil, false
 	}
-	sanitized := redactRememberDiagnosticContent(body)
+	sanitized := body
 	truncated := false
 	if len(sanitized) > rememberDiagnosticMaxBodyBytes {
 		sanitized = sanitized[:rememberDiagnosticMaxBodyBytes]
@@ -65,8 +34,60 @@ func boundedRememberDiagnosticBody(body []byte) ([]byte, bool) {
 	return append([]byte(nil), sanitized...), truncated
 }
 
-func rememberDiagnosticBodyState(body []byte) ([]byte, bool) {
-	return boundedRememberDiagnosticBody(body)
+type rememberDiagnosticCapture struct {
+	body   []byte
+	state  string
+	reason string
+}
+
+func captureRememberDiagnosticBody(body []byte, protector observability.DiagnosticProtector, authenticatedSecrets ...string) rememberDiagnosticCapture {
+	if len(body) == 0 {
+		return rememberDiagnosticCapture{state: "not_captured"}
+	}
+	if protector == nil {
+		return rememberDiagnosticCapture{
+			state:  "unavailable",
+			reason: "credential_protection_" + strconv.Itoa(int(observability.CredentialProtectionUnsupported)),
+		}
+	}
+	// The extra bytes cover the root's JSON string envelope.
+	protected, reason := protector.ProtectDiagnosticBytes(body, rememberDiagnosticMaxBodyBytes+2, authenticatedSecrets...)
+	if reason != observability.CredentialProtectionAvailable {
+		return rememberDiagnosticCapture{
+			state:  "unavailable",
+			reason: "credential_protection_" + strconv.Itoa(int(reason)),
+		}
+	}
+	captured, protectedTruncated := boundedRememberDiagnosticBody(protected)
+	state := "captured"
+	if len(body) > rememberDiagnosticMaxBodyBytes || protectedTruncated {
+		state = "truncated"
+	}
+	return rememberDiagnosticCapture{body: captured, state: state}
+}
+
+func combineRememberDiagnosticCapture(explicitState, explicitReason string, captures ...rememberDiagnosticCapture) (string, string) {
+	state := strings.TrimSpace(explicitState)
+	reason := strings.TrimSpace(explicitReason)
+	for _, capture := range captures {
+		if capture.state == "unavailable" {
+			return "unavailable", capture.reason
+		}
+	}
+	for _, capture := range captures {
+		if capture.state == "truncated" {
+			return "truncated", capture.reason
+		}
+	}
+	if state == "" {
+		state = "captured"
+	}
+	return state, reason
+}
+
+func protectedRememberDiagnosticBody(body []byte, protector observability.DiagnosticProtector, authenticatedSecrets ...string) ([]byte, bool) {
+	capture := captureRememberDiagnosticBody(body, protector, authenticatedSecrets...)
+	return capture.body, capture.state == "truncated" || capture.state == "unavailable"
 }
 
 func rememberDiagnosticCaptureStateForExchange(exchange modelprovider.ProviderExchange) string {
@@ -74,7 +95,11 @@ func rememberDiagnosticCaptureStateForExchange(exchange modelprovider.ProviderEx
 	if responseBytes == 0 {
 		responseBytes = len(exchange.ResponseBody)
 	}
-	return repository.DiagnosticCaptureState(exchange.CaptureState, exchange.Outcome, len(exchange.RequestBody), responseBytes)
+	state := strings.TrimSpace(exchange.CaptureState)
+	if state == "captured" {
+		state = ""
+	}
+	return repository.DiagnosticCaptureState(state, exchange.Outcome, len(exchange.RequestBody), responseBytes)
 }
 
 func rememberFailureDiagnostics(
@@ -84,8 +109,9 @@ func rememberFailureDiagnostics(
 	callerResponse []byte,
 	callerResponseDelivered bool,
 	_ string,
+	protectors ...observability.DiagnosticProtector,
 ) []repository.RememberAttemptDiagnosticInput {
-	return rememberFailureDiagnosticsWithCapture(input, publicResult, exchanges, callerResponse, callerResponseDelivered, len(callerResponse) > 0)
+	return rememberFailureDiagnosticsWithCapture(input, publicResult, exchanges, callerResponse, callerResponseDelivered, len(callerResponse) > 0, protectors...)
 }
 
 func rememberFailureDiagnosticsWithCapture(
@@ -95,7 +121,28 @@ func rememberFailureDiagnosticsWithCapture(
 	callerResponse []byte,
 	callerResponseDelivered bool,
 	callerResponseCaptureAvailable bool,
+	protectors ...observability.DiagnosticProtector,
 ) []repository.RememberAttemptDiagnosticInput {
+	return rememberFailureDiagnosticsWithAuthenticationSecrets(
+		input, publicResult, exchanges, callerResponse, callerResponseDelivered,
+		callerResponseCaptureAvailable, nil, protectors...,
+	)
+}
+
+func rememberFailureDiagnosticsWithAuthenticationSecrets(
+	input rememberapp.RememberProcessRequest,
+	publicResult map[string]any,
+	exchanges []modelprovider.ProviderExchange,
+	callerResponse []byte,
+	callerResponseDelivered bool,
+	callerResponseCaptureAvailable bool,
+	authenticatedSecrets []string,
+	protectors ...observability.DiagnosticProtector,
+) []repository.RememberAttemptDiagnosticInput {
+	var protector observability.DiagnosticProtector
+	if len(protectors) > 0 {
+		protector = protectors[0]
+	}
 	if !callerResponseCaptureAvailable {
 		callerResponse = nil
 	} else if !callerResponseDelivered {
@@ -103,7 +150,7 @@ func rememberFailureDiagnosticsWithCapture(
 	}
 	items := make([]repository.RememberAttemptDiagnosticInput, 0, len(exchanges)+2)
 	if len(input.OriginalRequest) > 0 {
-		if input.SecurityRejected {
+		if input.SecurityRejected || input.InitialSecurityRejected {
 			requestHash := input.RequestHash
 			if requestHash == "" {
 				digest := sha256.Sum256(input.OriginalRequest)
@@ -120,14 +167,10 @@ func rememberFailureDiagnosticsWithCapture(
 				RequestBody: requestBody, RequestContentType: "application/json", Outcome: "hash_only", CaptureState: "hash_only",
 			})
 		} else {
-			requestBody, truncated := rememberDiagnosticBodyState(input.OriginalRequest)
-			captureState := "captured"
-			if truncated {
-				captureState = "truncated"
-			}
+			capture := captureRememberDiagnosticBody(input.OriginalRequest, protector, authenticatedSecrets...)
 			items = append(items, repository.RememberAttemptDiagnosticInput{
 				SequenceNo: 1, Kind: "original_request", Component: "remember",
-				RequestBody: requestBody, RequestContentType: "application/json", Outcome: "captured", CaptureState: captureState,
+				RequestBody: capture.body, RequestContentType: "application/json", Outcome: "captured", CaptureState: capture.state, CaptureReason: capture.reason,
 			})
 		}
 	} else {
@@ -145,18 +188,18 @@ func rememberFailureDiagnosticsWithCapture(
 		if capturedAt.IsZero() {
 			capturedAt = time.Now().UTC()
 		}
-		requestBody, requestTruncated := rememberDiagnosticBodyState(exchange.RequestBody)
-		responseBody, responseTruncated := rememberDiagnosticBodyState(exchange.ResponseBody)
-		captureState := rememberDiagnosticCaptureStateForExchange(exchange)
-		if requestTruncated || responseTruncated {
-			captureState = "truncated"
-		}
+		requestCapture := captureRememberDiagnosticBody(exchange.RequestBody, protector, authenticatedSecrets...)
+		responseCapture := captureRememberDiagnosticBody(exchange.ResponseBody, protector, authenticatedSecrets...)
+		captureState, captureReason := combineRememberDiagnosticCapture(
+			rememberDiagnosticCaptureStateForExchange(exchange), exchange.CaptureReason,
+			requestCapture, responseCapture,
+		)
 		items = append(items, repository.RememberAttemptDiagnosticInput{
 			SequenceNo: sequence, Kind: "provider_exchange", Component: exchange.Component,
-			Model: exchange.Model, RequestBody: requestBody,
-			ResponseBody:       responseBody,
+			Model: exchange.Model, RequestBody: requestCapture.body,
+			ResponseBody:       responseCapture.body,
 			RequestContentType: exchange.RequestContentType, ResponseContentType: exchange.ResponseContentType,
-			StatusCode: exchange.StatusCode, Outcome: outcome, CaptureState: captureState,
+			StatusCode: exchange.StatusCode, Outcome: outcome, CaptureState: captureState, CaptureReason: captureReason,
 			CapturedAt: capturedAt, ExpiresAt: capturedAt.Add(7 * 24 * time.Hour),
 		})
 		sequence++
@@ -176,13 +219,9 @@ func rememberFailureDiagnosticsWithCapture(
 			SequenceNo: sequence, Kind: "caller_response", Component: "mcp", Outcome: "not_delivered", CaptureState: "not_delivered",
 		})
 	} else if len(callerResponse) > 0 {
-		responseBody, truncated := rememberDiagnosticBodyState(callerResponse)
-		captureState := "captured"
-		if truncated {
-			captureState = "truncated"
-		}
+		capture := captureRememberDiagnosticBody(callerResponse, protector, authenticatedSecrets...)
 		items = append(items, repository.RememberAttemptDiagnosticInput{
-			SequenceNo: sequence, Kind: "caller_response", Component: "mcp", ResponseBody: responseBody, ResponseContentType: "application/json", Outcome: "captured", CaptureState: captureState,
+			SequenceNo: sequence, Kind: "caller_response", Component: "mcp", ResponseBody: capture.body, ResponseContentType: "application/json", Outcome: "captured", CaptureState: capture.state, CaptureReason: capture.reason,
 		})
 	} else {
 		items = append(items, repository.RememberAttemptDiagnosticInput{
@@ -221,7 +260,7 @@ func boundRememberDiagnosticItems(items []repository.RememberAttemptDiagnosticIn
 			responseTruncated = true
 		}
 		item.RequestBody, item.ResponseBody = request, response
-		if requestTruncated || responseTruncated {
+		if (requestTruncated || responseTruncated) && item.CaptureState != "unavailable" {
 			item.CaptureState = "truncated"
 		}
 		remaining -= len(request) + len(response)
@@ -229,7 +268,9 @@ func boundRememberDiagnosticItems(items []repository.RememberAttemptDiagnosticIn
 			for next := index + 1; next < len(items); next++ {
 				items[next].RequestBody = nil
 				items[next].ResponseBody = nil
-				items[next].CaptureState = "truncated"
+				if items[next].CaptureState != "unavailable" {
+					items[next].CaptureState = "truncated"
+				}
 			}
 			return
 		}
@@ -239,9 +280,10 @@ func boundRememberDiagnosticItems(items []repository.RememberAttemptDiagnosticIn
 type rememberExchangeRecorder struct {
 	mu        sync.Mutex
 	exchanges []modelprovider.ProviderExchange
+	protector observability.DiagnosticProtector
 }
 
-func (r *rememberExchangeRecorder) RecordProviderExchange(_ context.Context, exchange modelprovider.ProviderExchange) {
+func (r *rememberExchangeRecorder) RecordProviderExchange(ctx context.Context, exchange modelprovider.ProviderExchange) {
 	if r == nil {
 		return
 	}
@@ -249,19 +291,25 @@ func (r *rememberExchangeRecorder) RecordProviderExchange(_ context.Context, exc
 	if originalResponseBytes == 0 {
 		originalResponseBytes = len(exchange.ResponseBody)
 	}
-	exchange.RequestBody, _ = modelprovider.ProjectProviderExchangeBodies(exchange.Component, exchange.RequestBody, nil)
+	authenticatedSecrets := observability.AuthenticationSecretsFromContext(ctx)
+	requestCapture := captureRememberDiagnosticBody(exchange.RequestBody, r.protector, authenticatedSecrets...)
+	exchange.RequestBody = requestCapture.body
+	responseBody := exchange.ResponseBody
 	if len(exchange.ResponseBodyProjection) > 0 {
-		exchange.ResponseBody = append([]byte(nil), exchange.ResponseBodyProjection...)
-	} else {
-		_, exchange.ResponseBody = modelprovider.ProjectProviderExchangeBodies(exchange.Component, nil, exchange.ResponseBody)
+		responseBody = exchange.ResponseBodyProjection
 	}
+	responseCapture := captureRememberDiagnosticBody(responseBody, r.protector, authenticatedSecrets...)
+	exchange.ResponseBody = responseCapture.body
+	exchange.CaptureState, exchange.CaptureReason = combineRememberDiagnosticCapture(
+		rememberDiagnosticCaptureStateForExchange(exchange), exchange.CaptureReason, requestCapture, responseCapture,
+	)
 	var requestTruncated, responseTruncated bool
 	exchange.RequestBody, requestTruncated = boundedRememberDiagnosticBody(exchange.RequestBody)
 	exchange.ResponseBody, responseTruncated = boundedRememberDiagnosticBody(exchange.ResponseBody)
 	if exchange.CaptureState == "" {
 		exchange.CaptureState = rememberDiagnosticCaptureStateForExchange(exchange)
 	}
-	if requestTruncated || responseTruncated || originalRequestBytes > rememberDiagnosticMaxBodyBytes || originalResponseBytes > rememberDiagnosticMaxBodyBytes {
+	if (requestTruncated || responseTruncated || originalRequestBytes > rememberDiagnosticMaxBodyBytes || originalResponseBytes > rememberDiagnosticMaxBodyBytes) && exchange.CaptureState != "unavailable" {
 		exchange.CaptureState = "truncated"
 	}
 	r.mu.Lock()
@@ -298,7 +346,7 @@ func (r *rememberExchangeRecorder) Snapshot() []modelprovider.ProviderExchange {
 		if bounded.CaptureState == "" {
 			bounded.CaptureState = rememberDiagnosticCaptureStateForExchange(bounded)
 		}
-		if requestTruncated || responseTruncated {
+		if (requestTruncated || responseTruncated) && bounded.CaptureState != "unavailable" {
 			bounded.CaptureState = "truncated"
 		}
 		result[index] = bounded
@@ -308,7 +356,9 @@ func (r *rememberExchangeRecorder) Snapshot() []modelprovider.ProviderExchange {
 				result[next] = r.exchanges[next]
 				result[next].RequestBody = nil
 				result[next].ResponseBody = nil
-				result[next].CaptureState = "truncated"
+				if result[next].CaptureState != "unavailable" {
+					result[next].CaptureState = "truncated"
+				}
 			}
 			return result
 		}

@@ -11,21 +11,22 @@ import (
 )
 
 type rememberApplicationDependencies struct {
-	Persistence remembercontract.Persistence
-	Catalog     remembercontract.SubmissionAssessmentCatalog
-	Assessor    assessor.Provider
-	Embedder    embeddingcontract.EmbeddingProviderInterface
-	Limits      assessor.SemanticAssessmentLimits
-	Metrics     observability.DiscoverabilityMetrics
-	Logger      observability.LogProvider
-	Audit       securityRejectionAuditAppender
+	Persistence         remembercontract.Persistence
+	Catalog             remembercontract.SubmissionAssessmentCatalog
+	Assessor            assessor.Provider
+	Embedder            embeddingcontract.EmbeddingProviderInterface
+	Limits              assessor.SemanticAssessmentLimits
+	Metrics             observability.DiscoverabilityMetrics
+	Logger              observability.LogProvider
+	DiagnosticProtector observability.DiagnosticProtector
+	Audit               securityRejectionAuditAppender
 }
 
 func buildRememberApplication(deps rememberApplicationDependencies) rememberapp.Service {
 	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
 		Ledger: deps.Persistence, Catalog: deps.Catalog, Assessor: deps.Assessor,
 		Embedder: deps.Embedder, Limits: deps.Limits, Metrics: deps.Metrics,
-		Logger: deps.Logger, IsStaleInput: rememberapp.IsRememberStaleInputError,
+		Logger: deps.Logger, DiagnosticProtector: deps.DiagnosticProtector, IsStaleInput: rememberapp.IsRememberStaleInputError,
 		CommitFailureStage: knowledgepostgres.RememberCommitFailureStage,
 	})
 	return rememberapp.NewService(rememberapp.Dependencies{
