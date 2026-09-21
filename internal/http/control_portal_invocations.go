@@ -92,6 +92,7 @@ func (h *controlPortalHandler) enrichRememberInvocationDiagnostic(ctx context.Co
 		return
 	}
 	enrichmentUnavailable := false
+	var transportLogs []domain.OperationLog
 	read := func(filter domain.OperationLogFilter) []domain.OperationLog {
 		filter.Limit = 100
 		page, err := h.operationLogs.ListOperationLogs(ctx, filter)
@@ -105,8 +106,11 @@ func (h *controlPortalHandler) enrichRememberInvocationDiagnostic(ctx context.Co
 	enrichRememberInvocationFromInvocationLogs(detail, invocationLogs)
 	enrichRememberInvocationFromTransportLogs(detail, invocationLogs)
 	if (detail.DeliveryStage == "" || detail.DeliveryStage == "unknown_receipt") && strings.TrimSpace(detail.CorrelationID) != "" {
-		transportLogs := read(domain.OperationLogFilter{TeamID: &teamID, CorrelationID: detail.CorrelationID})
+		transportLogs = read(domain.OperationLogFilter{TeamID: &teamID, CorrelationID: detail.CorrelationID})
 		enrichRememberInvocationFromTransportLogs(detail, transportLogs)
+	}
+	if len(invocationLogs) == 0 && len(transportLogs) == 0 {
+		enrichmentUnavailable = true
 	}
 	detail.EnrichmentUnavailable = enrichmentUnavailable
 }

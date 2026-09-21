@@ -257,3 +257,22 @@ func TestInvocationDetailLeavesDeliveryStageUnknownForCorrelationOnlyTransportRo
 	require.NoError(t, h.getRememberInvocationDiagnostic(ctx))
 	require.Equal(t, "unknown_receipt", detail.DeliveryStage)
 }
+
+func TestInvocationDetailMarksEmptyLogEnrichmentUnavailable(t *testing.T) {
+	teamID := uuid.New()
+	detail := &rememberapp.RememberInvocationDiagnosticDetail{
+		RememberInvocationDiagnosticSummary: rememberapp.RememberInvocationDiagnosticSummary{
+			TeamID: teamID.String(), InvocationID: uuid.NewString(), CorrelationID: "filtered-correlation", DeliveryStage: "unknown_receipt",
+		},
+	}
+	h := &controlPortalHandler{
+		rememberInvocations: &invocationReaderStub{detail: detail},
+		operationLogs:       &invocationLogReaderStub{},
+	}
+	e := echo.New()
+	ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), httptest.NewRecorder())
+	ctx.SetParamNames("teamId", "invocationId")
+	ctx.SetParamValues(teamID.String(), detail.InvocationID)
+	require.NoError(t, h.getRememberInvocationDiagnostic(ctx))
+	require.True(t, detail.EnrichmentUnavailable)
+}
