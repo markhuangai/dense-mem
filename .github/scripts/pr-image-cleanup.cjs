@@ -145,6 +145,9 @@ function cleanupEligibility({ pull, release, releasedImage = false }) {
     jobs: release.jobs,
     mergeCommitSha: pull.merge_commit_sha,
   });
+  if (!outcome.eligible && releasedImage) {
+    return { eligible: true, reason: "verified prerelease image metadata" };
+  }
   return outcome.eligible
     ? { eligible: true, reason: outcome.reason }
     : { eligible: false, reason: outcome.reason };

@@ -22,6 +22,17 @@ test("preview tags and ownership labels are strict", () => {
   assert.equal(policy.labelsPreviewPr({ "io.dense-mem.preview.pr": "42" }), null);
 });
 
+test("package version identity validation fails closed", () => {
+  assert.throws(
+    () => policy.normalizeVersion({ id: "42", name: digest("a") }),
+    /package version has an invalid id or digest/,
+  );
+  assert.throws(
+    () => policy.normalizeVersion({ id: 42, name: "not-a-digest" }),
+    /package version has an invalid id or digest/,
+  );
+});
+
 test("closed unmerged PRs are eligible while merged PRs wait for an explicit release result", () => {
   const closed = { state: "closed", merged_at: null };
   assert.deepEqual(policy.cleanupEligibility({ pull: closed, release: null }), {
@@ -52,6 +63,14 @@ test("closed unmerged PRs are eligible while merged PRs wait for an explicit rel
   });
   assert.equal(policy.releaseTargetSha(run), merged.merge_commit_sha);
   assert.equal(policy.cleanupEligibility({ pull: merged, release: { run, jobs } }).eligible, true);
+  assert.deepEqual(policy.cleanupEligibility({
+    pull: merged,
+    release: { run: { ...run, conclusion: "failure" }, jobs: [] },
+    releasedImage: true,
+  }), {
+    eligible: true,
+    reason: "verified prerelease image metadata",
+  });
 });
 
 test("released image metadata permits cleanup when the release receipt is not available", () => {
@@ -181,6 +200,22 @@ test("release failure and incomplete no-release decisions retain the preview", (
     jobs: [classifier],
     mergeCommitSha: sha,
   }).eligible, false);
+  assert.deepEqual(policy.releaseOutcome({
+    run,
+    jobs: [{ name: "Classify release changes", conclusion: "failure" }],
+    mergeCommitSha: sha,
+  }), {
+    eligible: false,
+    reason: "the release classifier did not complete successfully",
+  });
+  assert.deepEqual(policy.releaseOutcome({
+    run,
+    jobs: [classifier, { name: "Promote preview image", conclusion: "failure" }],
+    mergeCommitSha: sha,
+  }), {
+    eligible: false,
+    reason: "a prerelease publication job failed",
+  });
   assert.equal(policy.releaseOutcome({
     run,
     jobs: [classifier, { name: "No prerelease required", conclusion: "success" }],
@@ -447,6 +482,15 @@ test("cleanup does not wait for production E2E after publication", async () => {
     },
   }, [42], { maxPolls: 3, pollMilliseconds: 0 });
   assert.equal(jobs, 1);
+});
+
+test("cleanup does not wait after a failed preview build", async () => {
+  let sleeps = 0;
+  await policy.waitForPreviewQuiescence({
+    previewRuns: async () => [{ id: 10, display_title: "PR test image: PR #42", status: "in_progress" }],
+    jobs: async () => [{ name: "Build untrusted preview", status: "completed", conclusion: "failure" }],
+  }, [42], { maxPolls: 3, pollMilliseconds: 0, sleep: async () => { sleeps += 1; } });
+  assert.equal(sleeps, 0);
 });
 
 test("preview quiescence default covers the preview publication window", async () => {
