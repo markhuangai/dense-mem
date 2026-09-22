@@ -15,25 +15,29 @@ func TestDreamDiagnosticsMigrationRetriesAndRejectsRollback(t *testing.T) {
 	defer cleanup()
 
 	require.NoError(t, runtimeMigrationUpTo(ctx, db, operationLogInvocationIndexMigrationVersion))
+	require.NoError(t, runtimeMigrationUpTo(ctx, db, 20260921010005))
 	_, err := db.ExecContext(ctx, `
-		CREATE TABLE dream_diagnostic_constraint_collision (
-			id INTEGER PRIMARY KEY,
-			CONSTRAINT dream_path_evaluations_run_fk CHECK (id > 0)
+		EXPLAIN INSERT INTO dream_path_evaluations (
+			team_id, space_id, space_generation, first_relationship_id, first_relationship_version,
+			second_relationship_id, second_relationship_version, allowed_predicate_fingerprint, provider_model
+		) VALUES (
+			'00000000-0000-0000-0000-000000000001'::uuid,
+			'00000000-0000-0000-0000-000000000002'::uuid,
+			1,
+			'00000000-0000-0000-0000-000000000003'::uuid,
+			1,
+			'00000000-0000-0000-0000-000000000004'::uuid,
+			1,
+			repeat('a', 64),
+			'legacy-writer'
 		)
+		ON CONFLICT (
+			team_id, first_relationship_id, first_relationship_version,
+			second_relationship_id, second_relationship_version,
+			allowed_predicate_fingerprint
+		) DO NOTHING
 	`)
 	require.NoError(t, err)
-	require.NoError(t, runtimeMigrationUpTo(ctx, db, 20260921010005))
-	var foreignKeyExists bool
-	err = db.QueryRowContext(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM pg_constraint
-			WHERE conrelid = 'dream_path_evaluations'::regclass
-			  AND conname = 'dream_path_evaluations_run_fk'
-		)
-	`).Scan(&foreignKeyExists)
-	require.NoError(t, err)
-	require.True(t, foreignKeyExists)
 
 	_, err = db.ExecContext(ctx, "DELETE FROM goose_db_version WHERE version_id = 20260921010005")
 	require.NoError(t, err)

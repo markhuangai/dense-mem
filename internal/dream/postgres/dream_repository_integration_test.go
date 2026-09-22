@@ -97,10 +97,13 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 	var linkedRunID string
 	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
 		return tx.Raw(`
-			SELECT run_id::text
-			FROM dream_path_evaluations
-			WHERE team_id = ?::uuid
-			ORDER BY created_at DESC
+			SELECT link.run_id::text
+			FROM dream_path_evaluation_run_links AS link
+			JOIN dream_path_evaluations AS evaluation
+			  ON evaluation.team_id = link.team_id
+			 AND evaluation.path_evaluation_id = link.path_evaluation_id
+			WHERE link.team_id = ?::uuid
+			ORDER BY link.created_at DESC, link.run_id DESC
 			LIMIT 1
 		`, teamID).Scan(&linkedRunID).Error
 	}))
@@ -119,14 +122,27 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 	var linkedRunIDs []string
 	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
 		return tx.Raw(`
-			SELECT run_id::text
-			FROM dream_path_evaluations
-			WHERE team_id = ?::uuid
-			  AND first_relationship_id = ?::uuid
-			ORDER BY created_at ASC
+			SELECT link.run_id::text
+			FROM dream_path_evaluation_run_links AS link
+			JOIN dream_path_evaluations AS evaluation
+			  ON evaluation.team_id = link.team_id
+			 AND evaluation.path_evaluation_id = link.path_evaluation_id
+			WHERE link.team_id = ?::uuid
+			  AND evaluation.first_relationship_id = ?::uuid
+			ORDER BY link.created_at ASC, link.run_id ASC
 		`, teamID, firstInput.RelationshipID).Scan(&linkedRunIDs).Error
 	}))
 	require.ElementsMatch(t, []string{run.RunID, secondRun.RunID}, linkedRunIDs)
+	var pathEvaluationCount int
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)
+			FROM dream_path_evaluations
+			WHERE team_id = ?::uuid
+			  AND first_relationship_id = ?::uuid
+		`, teamID, firstInput.RelationshipID).Scan(&pathEvaluationCount).Error
+	}))
+	require.Equal(t, 1, pathEvaluationCount)
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			UPDATE hypotheses
@@ -160,7 +176,7 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 	require.True(t, proposalSeen)
 	require.True(t, dispositionSeen)
 
-	var hiddenDerivations, hiddenEvaluations int
+	var hiddenDerivations, hiddenEvaluations, hiddenPathEvaluationRunLinks int
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, otherTeamID, otherOwnerID, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
 			SELECT count(*)
@@ -169,14 +185,22 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 		`, teamID).Scan(&hiddenDerivations).Error; err != nil {
 			return err
 		}
-		return tx.Raw(`
+		if err := tx.Raw(`
 			SELECT count(*)
 			FROM dream_path_evaluations
 			WHERE team_id = ?::uuid
-		`, teamID).Scan(&hiddenEvaluations).Error
+		`, teamID).Scan(&hiddenEvaluations).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT count(*)
+			FROM dream_path_evaluation_run_links
+			WHERE team_id = ?::uuid
+		`, teamID).Scan(&hiddenPathEvaluationRunLinks).Error
 	}))
 	assert.Zero(t, hiddenDerivations)
 	assert.Zero(t, hiddenEvaluations)
+	assert.Zero(t, hiddenPathEvaluationRunLinks)
 
 	available, err := semanticRepo.ListAvailableDreamTargets(ctx, teamID, []DreamTargetCandidate{
 		{
