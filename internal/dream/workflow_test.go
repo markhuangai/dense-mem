@@ -148,6 +148,24 @@ func TestDisabledScheduledCycleRecordsFinalizationFailure(t *testing.T) {
 	assert.True(t, dispositionFailed)
 }
 
+func TestUnclaimedScheduledCycleDoesNotRecordDiagnostics(t *testing.T) {
+	teamID := uuid.New()
+	repo := &dreamRepositoryStub{run: dreamcontract.DreamCycleRun{
+		TeamID: teamID.String(), RunID: uuid.NewString(), Status: "running", Claimed: false,
+	}}
+	diagnostics := &diagnosticRepositoryStub{}
+	svc := New(Dependencies{
+		Store: repo, ScheduledStore: repo, Diagnostics: diagnostics,
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, StartTimeLocal: "03:00", Timezone: "UTC"}},
+	})
+
+	result, err := svc.RunScheduledCycle(context.Background(), teamID.String(), time.Date(2026, 7, 17, 3, 0, 0, 0, time.UTC))
+
+	require.NoError(t, err)
+	require.Equal(t, "skipped", result.Status)
+	require.Empty(t, diagnostics.recorded)
+}
+
 func TestGenerateDreamProposalsRetainsFailedLookupDiagnostics(t *testing.T) {
 	inputs := testDreamPathInputs()
 	predicates := testDreamPathPredicates()

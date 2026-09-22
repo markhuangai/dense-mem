@@ -201,7 +201,7 @@ func TestSchedulerDoesNotObserveSkippedMissedWindow(t *testing.T) {
 	}))
 }
 
-func TestSchedulerRecordsMissedWindowAfterDueCycleSkips(t *testing.T) {
+func TestSchedulerObservesWindowAfterDueCycleLosesClaim(t *testing.T) {
 	teamID := uuid.New()
 	profiles := &schedulerProfileStub{profiles: []*domain.Team{{ID: teamID}}}
 	dreams := &schedulerDreamStub{cfg: dueSchedulerConfig(), scheduledStatus: "skipped"}
@@ -211,12 +211,12 @@ func TestSchedulerRecordsMissedWindowAfterDueCycleSkips(t *testing.T) {
 	scheduler.runDue(context.Background())
 
 	require.Equal(t, []string{teamID.String()}, dreams.scheduledTeams)
-	require.False(t, scheduler.alreadyObserved(teamID.String(), "2026-06-11"))
+	require.True(t, scheduler.alreadyObserved(teamID.String(), "2026-06-11"))
 
 	scheduler.now = func() time.Time { return time.Date(2026, 6, 11, 3, 1, 0, 0, time.UTC) }
 	scheduler.runDue(context.Background())
 
-	require.Equal(t, []string{teamID.String()}, dreams.missedTeams)
+	require.Empty(t, dreams.missedTeams)
 	require.True(t, scheduler.alreadyObserved(teamID.String(), "2026-06-11"))
 }
 

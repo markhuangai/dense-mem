@@ -128,8 +128,10 @@ func (r *dreamDiagnosticExchangeRecorder) Payload() []byte {
 	}
 	payload, err := json.Marshal(map[string]any{"provider_exchanges": r.items})
 	if err != nil || len(payload) > dreamDiagnosticRunPayloadLimit {
-		r.state = "truncated"
-		r.reason = "run_payload_budget_exceeded"
+		if r.state != "unavailable" {
+			r.state = "truncated"
+			r.reason = "run_payload_budget_exceeded"
+		}
 		return []byte(`{"provider_exchanges":[]}`)
 	}
 	return payload

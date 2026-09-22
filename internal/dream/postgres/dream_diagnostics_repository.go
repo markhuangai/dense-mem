@@ -24,30 +24,132 @@ const (
 
 var _ dreamcontract.DreamDiagnosticRepository = (*Store)(nil)
 
+type preparedDreamDiagnostic struct {
+	input     dreamcontract.DreamDiagnosticCaptureInput
+	details   []byte
+	payload   []byte
+	expirySQL string
+	expiryArg any
+}
+
+func prepareDreamDiagnosticInput(input dreamcontract.DreamDiagnosticCaptureInput) (preparedDreamDiagnostic, error) {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.RunID = strings.TrimSpace(input.RunID)
+	input.HypothesisID = strings.TrimSpace(input.HypothesisID)
+	input.Phase = strings.TrimSpace(input.Phase)
+	input.Outcome = strings.TrimSpace(input.Outcome)
+	input.Cause = strings.TrimSpace(input.Cause)
+	input.CaptureState = strings.TrimSpace(input.CaptureState)
+	input.CaptureReason = strings.TrimSpace(input.CaptureReason)
+	if _, err := uuid.Parse(input.TeamID); err != nil {
+		return preparedDreamDiagnostic{}, fmt.Errorf("dream diagnostic team_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.RunID); err != nil {
+		return preparedDreamDiagnostic{}, fmt.Errorf("dream diagnostic run_id is required: %w", err)
+	}
+	if input.HypothesisID != "" {
+		if _, err := uuid.Parse(input.HypothesisID); err != nil {
+			return preparedDreamDiagnostic{}, fmt.Errorf("dream diagnostic hypothesis_id is invalid: %w", err)
+		}
+	}
+	switch input.Phase {
+	case "run", "target", "provider", "proposal", "validation", "disposition", "feedback", "confirmation":
+	default:
+		return preparedDreamDiagnostic{}, fmt.Errorf("dream diagnostic phase is unsupported")
+	}
+	if input.Outcome == "" {
+		return preparedDreamDiagnostic{}, errors.New("dream diagnostic outcome is required")
+	}
+	if input.CaptureState == "" {
+		input.CaptureState = "not_captured"
+	}
+	switch input.CaptureState {
+	case "captured", "truncated", "expired", "unavailable", "not_captured":
+	default:
+		return preparedDreamDiagnostic{}, fmt.Errorf("dream diagnostic capture state is unsupported")
+	}
+	if input.Details == nil {
+		input.Details = map[string]any{}
+	}
+	details, err := json.Marshal(input.Details)
+	if err != nil {
+		return preparedDreamDiagnostic{}, fmt.Errorf("dream diagnostic details: %w", err)
+	}
+	if len(details) > maxDreamDiagnosticBytes {
+		return preparedDreamDiagnostic{}, fmt.Errorf("dream diagnostic details exceed %d bytes", maxDreamDiagnosticBytes)
+	}
+	payload := input.Payload
+	if len(payload) == 0 {
+		payload = []byte(`{}`)
+	}
+	if len(payload) > 64<<20 {
+		return preparedDreamDiagnostic{}, fmt.Errorf("dream diagnostic payload exceeds 64 MiB")
+	}
+	var payloadValue any
+	if err := json.Unmarshal(payload, &payloadValue); err != nil {
+		return preparedDreamDiagnostic{}, fmt.Errorf("dream diagnostic payload: %w", err)
+	}
+	if input.CapturedAt != nil {
+		captured := input.CapturedAt.UTC()
+		input.CapturedAt = &captured
+	}
+	expirySQL := "CURRENT_TIMESTAMP + INTERVAL '7 days'"
+	var expiryArg any
+	if !input.ExpiresAt.IsZero() {
+		now := time.Now().UTC()
+		input.ExpiresAt = input.ExpiresAt.UTC()
+		if input.ExpiresAt.Before(now) || input.ExpiresAt.After(now.Add(dreamDiagnosticRetention)) {
+			return preparedDreamDiagnostic{}, errors.New("dream diagnostic expiry is outside retention")
+		}
+		expirySQL = "?"
+		expiryArg = input.ExpiresAt
+	}
+	return preparedDreamDiagnostic{
+		input: input, details: details, payload: payload,
+		expirySQL: expirySQL, expiryArg: expiryArg,
+	}, nil
+}
+
+func insertDreamDiagnosticTx(ctx context.Context, tx *gorm.DB, prepared preparedDreamDiagnostic) error {
+	query := fmt.Sprintf(`
+		INSERT INTO dream_diagnostic_captures (
+			team_id, run_id, hypothesis_id, phase, outcome, cause, details, payload, capture_state,
+			capture_reason, captured_at, expires_at
+		)
+		VALUES (?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, %s)
+	`, prepared.expirySQL)
+	args := []any{
+		prepared.input.TeamID, prepared.input.RunID, prepared.input.HypothesisID,
+		prepared.input.Phase, prepared.input.Outcome, prepared.input.Cause,
+		string(prepared.details), string(prepared.payload), prepared.input.CaptureState,
+		prepared.input.CaptureReason, prepared.input.CapturedAt,
+	}
+	if prepared.expiryArg != nil {
+		args = append(args, prepared.expiryArg)
+	}
+	return tx.WithContext(ctx).Exec(query, args...).Error
+}
+
 func (r *Store) RecordDreamRunDiagnostics(ctx context.Context, input dreamcontract.DreamDiagnosticCaptureInput) error {
 	if input.CaptureState == "" {
 		input.CaptureState = "not_captured"
 	}
-	if input.Phase != "run" {
-		input.Phase = "run"
-	}
-	if err := r.RecordDreamDiagnostic(ctx, input); err != nil {
+	input.Phase = "run"
+	prepared, err := prepareDreamDiagnosticInput(input)
+	if err != nil {
 		return err
 	}
 	// Add bounded proposal and disposition rows for every committed Hypothesis.
 	// The Hypothesis table remains the authority for identity and derivation.
-	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		expirySQL := "?"
-		expiryArgs := []any{input.ExpiresAt}
-		if input.ExpiresAt.IsZero() {
-			expirySQL = "CURRENT_TIMESTAMP + INTERVAL '7 days'"
-			expiryArgs = nil
+	err = r.withTeamTx(ctx, prepared.input.TeamID, func(tx *gorm.DB) error {
+		if err := insertDreamDiagnosticTx(ctx, tx, prepared); err != nil {
+			return err
 		}
 		proposalQuery := fmt.Sprintf(`
 				INSERT INTO dream_diagnostic_captures (
 					team_id, run_id, hypothesis_id, phase, outcome, details,
 					capture_state, capture_reason, expires_at
-			)
+				)
 			SELECT hypothesis.team_id, hypothesis.cycle_run_id, hypothesis.hypothesis_id,
 			       'proposal', 'created',
 			       jsonb_build_object('lane', hypothesis.lane, 'predicate_key', hypothesis.predicate_key),
@@ -63,10 +165,12 @@ func (r *Store) RecordDreamRunDiagnostics(ctx context.Context, input dreamcontra
 			        AND existing.hypothesis_id = hypothesis.hypothesis_id
 			        AND existing.phase = 'proposal'
 			  )
-			`, expirySQL)
+			`, prepared.expirySQL)
 		proposalArgs := []any{"not_captured", "phase_metadata_only"}
-		proposalArgs = append(proposalArgs, expiryArgs...)
-		proposalArgs = append(proposalArgs, input.TeamID, input.RunID)
+		if prepared.expiryArg != nil {
+			proposalArgs = append(proposalArgs, prepared.expiryArg)
+		}
+		proposalArgs = append(proposalArgs, prepared.input.TeamID, prepared.input.RunID)
 		if err := tx.WithContext(ctx).Exec(proposalQuery, proposalArgs...).Error; err != nil {
 			return err
 		}
@@ -75,32 +179,34 @@ func (r *Store) RecordDreamRunDiagnostics(ctx context.Context, input dreamcontra
 					team_id, run_id, hypothesis_id, phase, outcome, details,
 					capture_state, capture_reason, expires_at
 				)
-				SELECT hypothesis.team_id, hypothesis.cycle_run_id, hypothesis.hypothesis_id,
-				       'disposition',
-				       CASE
-			           WHEN hypothesis.status IN ('proposed', 'reinforced') THEN hypothesis.status
-				           WHEN hypothesis.status = 'rejected' THEN 'rejected'
-				           WHEN hypothesis.status = 'stale' THEN 'stale'
-				           WHEN hypothesis.status = 'submitted' THEN 'submitted'
-				           ELSE COALESCE(NULLIF(hypothesis.status, ''), 'unchanged')
-				       END,
-				       jsonb_build_object('status', hypothesis.status),
+			SELECT hypothesis.team_id, hypothesis.cycle_run_id, hypothesis.hypothesis_id,
+			       'disposition',
+			       CASE
+		           WHEN hypothesis.status IN ('proposed', 'reinforced') THEN hypothesis.status
+		           WHEN hypothesis.status = 'rejected' THEN 'rejected'
+		           WHEN hypothesis.status = 'stale' THEN 'stale'
+		           WHEN hypothesis.status = 'submitted' THEN 'submitted'
+		           ELSE COALESCE(NULLIF(hypothesis.status, ''), 'unchanged')
+		       END,
+			       jsonb_build_object('status', hypothesis.status),
 			       ?, ?, %s
-				FROM hypotheses AS hypothesis
-				WHERE hypothesis.team_id = ?::uuid
-				  AND hypothesis.cycle_run_id = ?::uuid
-				  AND hypothesis.canonical_hypothesis_id IS NULL
-				  AND NOT EXISTS (
-				      SELECT 1 FROM dream_diagnostic_captures existing
-				      WHERE existing.team_id = hypothesis.team_id
-				        AND existing.run_id = hypothesis.cycle_run_id
-				        AND existing.hypothesis_id = hypothesis.hypothesis_id
-				        AND existing.phase = 'disposition'
-				  )
-			`, expirySQL)
+			FROM hypotheses AS hypothesis
+			WHERE hypothesis.team_id = ?::uuid
+			  AND hypothesis.cycle_run_id = ?::uuid
+			  AND hypothesis.canonical_hypothesis_id IS NULL
+			  AND NOT EXISTS (
+			      SELECT 1 FROM dream_diagnostic_captures existing
+			      WHERE existing.team_id = hypothesis.team_id
+			        AND existing.run_id = hypothesis.cycle_run_id
+			        AND existing.hypothesis_id = hypothesis.hypothesis_id
+			        AND existing.phase = 'disposition'
+			  )
+			`, prepared.expirySQL)
 		dispositionArgs := []any{"not_captured", "phase_metadata_only"}
-		dispositionArgs = append(dispositionArgs, expiryArgs...)
-		dispositionArgs = append(dispositionArgs, input.TeamID, input.RunID)
+		if prepared.expiryArg != nil {
+			dispositionArgs = append(dispositionArgs, prepared.expiryArg)
+		}
+		dispositionArgs = append(dispositionArgs, prepared.input.TeamID, prepared.input.RunID)
 		return tx.WithContext(ctx).Exec(dispositionQuery, dispositionArgs...).Error
 	})
 	if err != nil {
@@ -110,91 +216,12 @@ func (r *Store) RecordDreamRunDiagnostics(ctx context.Context, input dreamcontra
 }
 
 func (r *Store) RecordDreamDiagnostic(ctx context.Context, input dreamcontract.DreamDiagnosticCaptureInput) error {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.RunID = strings.TrimSpace(input.RunID)
-	input.HypothesisID = strings.TrimSpace(input.HypothesisID)
-	input.Phase = strings.TrimSpace(input.Phase)
-	input.Outcome = strings.TrimSpace(input.Outcome)
-	input.Cause = strings.TrimSpace(input.Cause)
-	input.CaptureState = strings.TrimSpace(input.CaptureState)
-	input.CaptureReason = strings.TrimSpace(input.CaptureReason)
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("dream diagnostic team_id is required: %w", err)
-	}
-	if _, err := uuid.Parse(input.RunID); err != nil {
-		return fmt.Errorf("dream diagnostic run_id is required: %w", err)
-	}
-	if input.HypothesisID != "" {
-		if _, err := uuid.Parse(input.HypothesisID); err != nil {
-			return fmt.Errorf("dream diagnostic hypothesis_id is invalid: %w", err)
-		}
-	}
-	switch input.Phase {
-	case "run", "target", "provider", "proposal", "validation", "disposition", "feedback", "confirmation":
-	default:
-		return fmt.Errorf("dream diagnostic phase is unsupported")
-	}
-	if input.Outcome == "" {
-		return errors.New("dream diagnostic outcome is required")
-	}
-	if input.CaptureState == "" {
-		input.CaptureState = "not_captured"
-	}
-	switch input.CaptureState {
-	case "captured", "truncated", "expired", "unavailable", "not_captured":
-	default:
-		return fmt.Errorf("dream diagnostic capture state is unsupported")
-	}
-	if input.Details == nil {
-		input.Details = map[string]any{}
-	}
-	details, err := json.Marshal(input.Details)
+	prepared, err := prepareDreamDiagnosticInput(input)
 	if err != nil {
-		return fmt.Errorf("dream diagnostic details: %w", err)
+		return err
 	}
-	if len(details) > maxDreamDiagnosticBytes {
-		return fmt.Errorf("dream diagnostic details exceed %d bytes", maxDreamDiagnosticBytes)
-	}
-	payload := input.Payload
-	if len(payload) == 0 {
-		payload = []byte(`{}`)
-	}
-	if len(payload) > 64<<20 {
-		return fmt.Errorf("dream diagnostic payload exceeds 64 MiB")
-	}
-	var payloadValue any
-	if err := json.Unmarshal(payload, &payloadValue); err != nil {
-		return fmt.Errorf("dream diagnostic payload: %w", err)
-	}
-	if input.CapturedAt != nil {
-		captured := input.CapturedAt.UTC()
-		input.CapturedAt = &captured
-	}
-	expirySQL := "CURRENT_TIMESTAMP + INTERVAL '7 days'"
-	var expiryArg any
-	if !input.ExpiresAt.IsZero() {
-		now := time.Now().UTC()
-		input.ExpiresAt = input.ExpiresAt.UTC()
-		if input.ExpiresAt.Before(now) || input.ExpiresAt.After(now.Add(dreamDiagnosticRetention)) {
-			return errors.New("dream diagnostic expiry is outside retention")
-		}
-		expirySQL = "?"
-		expiryArg = input.ExpiresAt
-	}
-	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		query := fmt.Sprintf(`
-			INSERT INTO dream_diagnostic_captures (
-				team_id, run_id, hypothesis_id, phase, outcome, cause, details, payload, capture_state,
-				capture_reason, captured_at, expires_at
-			)
-			VALUES (?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, %s)
-		`, expirySQL)
-		args := []any{input.TeamID, input.RunID, input.HypothesisID, input.Phase, input.Outcome, input.Cause,
-			string(details), string(payload), input.CaptureState, input.CaptureReason, input.CapturedAt}
-		if expiryArg != nil {
-			args = append(args, expiryArg)
-		}
-		return tx.WithContext(ctx).Exec(query, args...).Error
+	err = r.withTeamTx(ctx, prepared.input.TeamID, func(tx *gorm.DB) error {
+		return insertDreamDiagnosticTx(ctx, tx, prepared)
 	})
 	if err != nil {
 		return fmt.Errorf("dream diagnostic record: %w", err)
