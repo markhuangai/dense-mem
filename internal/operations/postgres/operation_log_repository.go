@@ -108,50 +108,24 @@ func (r *OperationLogRepositoryImpl) List(ctx context.Context, filter domain.Ope
 
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		var total int64
-		if err := tx.Raw(`
-			SELECT count(*)
-			FROM operation_logs
-			WHERE ($1 = '' OR severity = $1)
-			  AND ($2 = '' OR message = $2)
-			  AND ($3::uuid IS NULL OR team_id = $3::uuid)
-			  AND ($4 = '' OR correlation_id = $4)
-			  AND ($5 = '' OR attrs ->> 'invocation_id' = $5)
-			  AND ($6 = '' OR attrs ->> 'request_hash' = $6)
-			  AND ($7 = '' OR attrs ->> 'submission_id' = $7 OR attrs ->> 'attempt_id' = $7 OR attrs ->> 'canonical_attempt_id' = $7)
-			  AND ($8 = '' OR attrs ->> 'classification' = $8)
-			  AND ($9 = '' OR attrs ->> 'retryable' = $9)
-			  AND ($10 = '' OR attrs ->> 'reference_type' = $10)
-			  AND ($11 = '' OR attrs ->> 'reference_id' = $11)
-			  AND ($12::timestamptz IS NULL OR timestamp >= $12::timestamptz)
-			  AND ($13::timestamptz IS NULL OR timestamp <= $13::timestamptz)
-		`, severity, normalized.Event, teamID, normalized.CorrelationID, normalized.InvocationID, normalized.RequestHash, normalized.AttemptID, normalized.Classification, retryable, normalized.ReferenceType, normalized.ReferenceID, from, to).Scan(&total).Error; err != nil {
+		whereClause := operationLogWhereClause(normalized)
+		filterArgs := operationLogFilterArgs(normalized, severity, teamID, retryable, from, to)
+		if err := tx.Raw(`SELECT count(*) FROM operation_logs WHERE `+whereClause, filterArgs...).Scan(&total).Error; err != nil {
 			return err
 		}
 		page.Total = total
 
+		pageArgs := append([]any{}, filterArgs...)
+		pageArgs = append(pageArgs, normalized.Limit, normalized.Offset)
 		rows, err := tx.Raw(`
-			SELECT
-				id::text, timestamp, severity, severity_rank, message, source,
-				team_id::text, profile_id::text, correlation_id, error, attrs
-			FROM operation_logs
-			WHERE ($1 = '' OR severity = $1)
-			  AND ($2 = '' OR message = $2)
-			  AND ($3::uuid IS NULL OR team_id = $3::uuid)
-			  AND ($4 = '' OR correlation_id = $4)
-			  AND ($5 = '' OR attrs ->> 'invocation_id' = $5)
-			  AND ($6 = '' OR attrs ->> 'request_hash' = $6)
-			  AND ($7 = '' OR attrs ->> 'submission_id' = $7 OR attrs ->> 'attempt_id' = $7 OR attrs ->> 'canonical_attempt_id' = $7)
-			  AND ($8 = '' OR attrs ->> 'classification' = $8)
-			  AND ($9 = '' OR attrs ->> 'retryable' = $9)
-			  AND ($10 = '' OR attrs ->> 'reference_type' = $10)
-			  AND ($11 = '' OR attrs ->> 'reference_id' = $11)
-			  AND ($12::timestamptz IS NULL OR timestamp >= $12::timestamptz)
-			  AND ($13::timestamptz IS NULL OR timestamp <= $13::timestamptz)
-			`+operationLogOrderClause(normalized)+`
-			LIMIT $14 OFFSET $15
-		`, severity, normalized.Event, teamID, normalized.CorrelationID, normalized.InvocationID, normalized.RequestHash, normalized.AttemptID,
-			normalized.Classification, retryable, normalized.ReferenceType, normalized.ReferenceID,
-			from, to, normalized.Limit, normalized.Offset).Rows()
+				SELECT
+					id::text, timestamp, severity, severity_rank, message, source,
+					team_id::text, profile_id::text, correlation_id, error, attrs
+				FROM operation_logs
+				WHERE `+whereClause+`
+				`+operationLogOrderClause(normalized)+`
+				LIMIT $14 OFFSET $15
+			`, pageArgs...).Rows()
 		if err != nil {
 			return err
 		}
@@ -238,6 +212,46 @@ func normalizeOperationLogFilter(filter domain.OperationLogFilter) domain.Operat
 		filter.To = &value
 	}
 	return filter
+}
+
+func operationLogWhereClause(filter domain.OperationLogFilter) string {
+	teamPredicate := "($3::uuid IS NULL OR team_id = $3::uuid)"
+	invocationPredicate := "($5 = '' OR attrs ->> 'invocation_id' = $5)"
+	if filter.TeamID != nil && *filter.TeamID != uuid.Nil && filter.InvocationID != "" {
+		teamPredicate = "team_id = $3::uuid"
+		invocationPredicate = "attrs ->> 'invocation_id' = $5"
+	}
+	return `($1 = '' OR severity = $1)
+	  AND ($2 = '' OR message = $2)
+	  AND ` + teamPredicate + `
+	  AND ($4 = '' OR correlation_id = $4)
+	  AND ` + invocationPredicate + `
+	  AND ($6 = '' OR attrs ->> 'request_hash' = $6)
+	  AND ($7 = '' OR attrs ->> 'submission_id' = $7 OR attrs ->> 'attempt_id' = $7 OR attrs ->> 'canonical_attempt_id' = $7)
+	  AND ($8 = '' OR attrs ->> 'classification' = $8)
+	  AND ($9 = '' OR attrs ->> 'retryable' = $9)
+	  AND ($10 = '' OR attrs ->> 'reference_type' = $10)
+	  AND ($11 = '' OR attrs ->> 'reference_id' = $11)
+	  AND ($12::timestamptz IS NULL OR timestamp >= $12::timestamptz)
+	  AND ($13::timestamptz IS NULL OR timestamp <= $13::timestamptz)`
+}
+
+func operationLogFilterArgs(filter domain.OperationLogFilter, severity string, teamID any, retryable string, from, to any) []any {
+	return []any{
+		severity,
+		filter.Event,
+		teamID,
+		filter.CorrelationID,
+		filter.InvocationID,
+		filter.RequestHash,
+		filter.AttemptID,
+		filter.Classification,
+		retryable,
+		filter.ReferenceType,
+		filter.ReferenceID,
+		from,
+		to,
+	}
 }
 
 func retryableFilterValue(value *bool) string {

@@ -216,11 +216,11 @@ func controlRememberInvocationDiagnosticFilter(c echo.Context) (rememberapp.Reme
 		return rememberapp.RememberInvocationDiagnosticFilter{}, httperr.New(httperr.VALIDATION_ERROR, "outcome is unsupported")
 	}
 	if raw := strings.TrimSpace(c.QueryParam("retryable")); raw != "" {
-		value, err := strconv.ParseBool(raw)
+		value, err := optionalStrictControlBool(raw, "retryable")
 		if err != nil {
 			return rememberapp.RememberInvocationDiagnosticFilter{}, httperr.New(httperr.VALIDATION_ERROR, "retryable must be true or false")
 		}
-		filter.Retryable = &value
+		filter.Retryable = value
 	}
 	return filter, nil
 }

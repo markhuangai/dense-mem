@@ -238,7 +238,24 @@ func newMigrationProviderWithFilesystem(
 	if err != nil {
 		return nil, err
 	}
-	options := make([]goose.ProviderOption, 0, 1)
+	options := []goose.ProviderOption{
+		// Registered Go migrations are global in Goose. Disable that implicit registry so
+		// isolated migration providers do not receive runtime-only migrations whose source
+		// is not part of their filesystem.
+		goose.WithDisableGlobalRegistry(true),
+	}
+	if _, ok := filesystem[operationLogInvocationIndexMigrationSQLName]; ok {
+		// This migration is registered as a no-transaction Go migration so it can reserve one
+		// connection and restore session settings even when concurrent DDL fails.
+		options = append(options,
+			goose.WithExcludeNames([]string{operationLogInvocationIndexMigrationSQLName}),
+			goose.WithGoMigrations(goose.NewGoMigration(
+				operationLogInvocationIndexMigrationVersion,
+				&goose.GoFunc{RunDB: operationLogInvocationIndexMigrationUp, Mode: goose.TransactionDisabled},
+				&goose.GoFunc{RunDB: operationLogInvocationIndexMigrationDown, Mode: goose.TransactionDisabled},
+			)),
+		)
+	}
 	if withLock {
 		locker, err := gooselock.NewPostgresSessionLocker()
 		if err != nil {

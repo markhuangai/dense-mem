@@ -275,6 +275,15 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   const expiredInvocation = await controlJSON(controlURL, token, `/control/api/teams/${teamID}/remember-invocations/${expiredInvocationID}`);
   expect(expiredInvocation.data?.provider_exchanges?.[0]?.capture_state === "expired" && !Object.hasOwn(expiredInvocation.data.provider_exchanges[0], "request_body"), "expired invocation capture must retain state without its body");
 
+  for (const literal of ["true", "false"]) {
+    const retryableFilter = await controlResponse(controlURL, token, `/control/api/remember-invocations?team_id=${teamID}&retryable=${literal}&limit=1`);
+    expect(retryableFilter.response.status === 200, `${literal} Remember invocation retryable filter must be accepted: ${retryableFilter.text}`);
+  }
+  for (const literal of ["1", "0", "t", "f", "TRUE", "False"]) {
+    const retryableFilter = await controlResponse(controlURL, token, `/control/api/remember-invocations?team_id=${teamID}&retryable=${literal}&limit=1`);
+    expect(retryableFilter.response.status === 422 && retryableFilter.text.length < 2048, `invalid Remember invocation retryable filter must be bounded for ${literal}: ${retryableFilter.text}`);
+  }
+
   const fixtureFile = process.env.DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE;
   if (fixtureFile) {
     await writeFile(fixtureFile, JSON.stringify({
@@ -317,10 +326,14 @@ function rememberArguments(label, marker) {
 }
 
 async function controlJSON(base, token, path) {
+  const result = await controlResponse(base, token, path);
+  assert.equal(result.response.status, 200, `control request ${path} failed with ${result.response.status}: ${result.text}`);
+  return result.text ? JSON.parse(result.text) : {};
+}
+
+async function controlResponse(base, token, path) {
   const response = await fetch(`${base}${path}`, { headers: { Authorization: `Bearer ${token}` } });
-  const text = await response.text();
-  assert.equal(response.status, 200, `control request ${path} failed with ${response.status}: ${text}`);
-  return text ? JSON.parse(text) : {};
+  return { response, text: await response.text() };
 }
 
 function terminalPayload(result) {

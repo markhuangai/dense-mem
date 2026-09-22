@@ -100,7 +100,11 @@ func TestControlPortalRememberInvocationValidationAndErrors(t *testing.T) {
 	require.NotNil(t, filter.Retryable)
 	require.False(t, *filter.Retryable)
 
-	for _, path := range []string{"/?limit=101", "/?offset=-1", "/?team_id=bad", "/?request_hash=" + strings.Repeat("x", 257), "/?classification=unknown", "/?outcome=unknown", "/?retryable=maybe"} {
+	for _, path := range []string{
+		"/?limit=101", "/?offset=-1", "/?team_id=bad", "/?request_hash=" + strings.Repeat("x", 257),
+		"/?classification=unknown", "/?outcome=unknown", "/?retryable=maybe", "/?retryable=1",
+		"/?retryable=0", "/?retryable=t", "/?retryable=f", "/?retryable=TRUE", "/?retryable=False",
+	} {
 		_, err := controlRememberInvocationDiagnosticFilter(newContext(path))
 		require.Error(t, err, path)
 	}

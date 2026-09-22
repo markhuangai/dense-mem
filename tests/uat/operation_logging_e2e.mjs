@@ -89,6 +89,19 @@ if (fatalFilter.response.status !== 200) {
   throw new Error(`FATAL operation-log filter was rejected: ${fatalFilter.response.status}`);
 }
 
+for (const literal of ["true", "false"]) {
+  const retryableFilter = await controlJSON(`/logs?retryable=${literal}&limit=1`);
+  if (retryableFilter.response.status !== 200) {
+    throw new Error(`${literal} retryable operation-log filter was rejected: ${retryableFilter.response.status}`);
+  }
+}
+for (const literal of ["1", "0", "t", "f", "TRUE", "False"]) {
+  const retryableFilter = await controlJSON(`/logs?retryable=${literal}&limit=1`);
+  if (retryableFilter.response.status !== 422 || JSON.stringify(retryableFilter.body).length >= 2048) {
+    throw new Error(`invalid retryable operation-log filter was not bounded for ${literal}: ${retryableFilter.response.status}`);
+  }
+}
+
 const invalidFilter = await controlJSON("/logs?severity=INVALID&limit=1");
 if (invalidFilter.response.status < 400 || invalidFilter.response.status >= 500) {
   throw new Error(`invalid operation-log filter was not bounded: ${invalidFilter.response.status}`);
@@ -101,6 +114,7 @@ console.log(JSON.stringify({
   exact_fanout: true,
   trace_filter: true,
   fatal_filter: true,
+  strict_retryable_filter: true,
   bounded_adverse_filter: true,
   bounded_saturation: true,
   saturation_requests: saturation.requests,

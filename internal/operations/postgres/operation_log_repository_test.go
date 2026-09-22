@@ -154,6 +154,21 @@ func TestOperationLogRepositoryAppliesRememberIdentityFilters(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestOperationLogRepositoryUsesDirectTeamInvocationPredicates(t *testing.T) {
+	teamID := uuid.New()
+	filter := normalizeOperationLogFilter(domain.OperationLogFilter{
+		TeamID:       &teamID,
+		InvocationID: "invocation-1",
+		Limit:        10,
+	})
+
+	where := operationLogWhereClause(filter)
+	require.Contains(t, where, "team_id = $3::uuid")
+	require.Contains(t, where, "attrs ->> 'invocation_id' = $5")
+	require.NotContains(t, where, "$3::uuid IS NULL OR team_id = $3::uuid")
+	require.NotContains(t, where, "$5 = '' OR attrs ->> 'invocation_id' = $5")
+}
+
 func TestOperationLogRepositoryHelpersNormalizeFiltersAndValues(t *testing.T) {
 	from := time.Date(2026, 9, 1, 12, 0, 0, 0, time.FixedZone("offset", 2*60*60))
 	to := from.Add(time.Hour)
