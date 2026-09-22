@@ -224,6 +224,20 @@ func TestFinishEvidenceCycleSurfacesRunAndCompletionErrors(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestFinishEvidenceCycleDoesNotRecordDiagnosticsAfterLeaseLoss(t *testing.T) {
+	teamID := uuid.NewString()
+	claimed := &dreamcontract.DreamCycleRun{TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), Claimed: true}
+	store := &dreamRepositoryStub{completeErr: dreamcontract.ErrDreamCycleLeaseLost}
+	diagnostics := &diagnosticRepositoryStub{}
+	service := &service{deps: Dependencies{ScheduledStore: store, Diagnostics: diagnostics}, now: time.Now}
+
+	result, err := service.finishEvidenceCycle(context.Background(), teamID, EffectiveConfig{}, &RunCycleResult{}, claimed, 0, 0, 0, 0, 0, nil)
+
+	require.ErrorIs(t, err, dreamcontract.ErrDreamCycleLeaseLost)
+	require.Equal(t, "error", result.Status)
+	require.Empty(t, diagnostics.recorded)
+}
+
 func TestFinishEvidenceCycleMarksProviderFailureWithoutLeakingDetails(t *testing.T) {
 	teamID := uuid.NewString()
 	claimed := &dreamcontract.DreamCycleRun{TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), Claimed: true}

@@ -915,6 +915,31 @@ func TestRunCycleControlAndErrorBranches(t *testing.T) {
 	}
 }
 
+func TestRunClaimedTeamCycleDoesNotRecordDiagnosticsAfterLeaseLoss(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	repo := &dreamRepositoryStub{
+		inputs: []dreamcontract.DreamInput{
+			{RelationshipID: "relationship_a", OwnerProfileID: ownerID.String(), Version: 1, Status: "active", SubjectEntityID: uuid.NewString(), SubjectName: "Dense-Mem", SubjectKind: "project", PredicateKey: "works_on", PredicateVersion: 1, ObjectEntityID: uuid.NewString(), ObjectName: "PostgreSQL", ObjectKind: "product", Evidence: []dreamcontract.DreamEvidence{{Content: "Dense-Mem works on PostgreSQL.", Authority: "primary"}}},
+			{RelationshipID: "relationship_b", OwnerProfileID: ownerID.String(), Version: 1, Status: "pending_evidence", SubjectEntityID: uuid.NewString(), SubjectName: "PostgreSQL", SubjectKind: "product", PredicateKey: "informs", PredicateVersion: 1, ObjectEntityID: uuid.NewString(), ObjectName: "Search freshness", ObjectKind: "concept", Evidence: []dreamcontract.DreamEvidence{{Content: "PostgreSQL informs search freshness.", Authority: "primary"}}},
+		},
+		predicates:  []dreamcontract.DreamTargetPredicate{{PredicateKey: "uses", Version: 1, AllowedSubjectKinds: []string{"project"}, AllowedObjectKinds: []string{"concept"}, RelationshipKind: "state", CurrentCardinality: "many"}},
+		completeErr: dreamcontract.ErrDreamCycleLeaseLost,
+	}
+	diagnostics := &diagnosticRepositoryStub{}
+	svc := New(Dependencies{
+		Store: repo, Diagnostics: diagnostics,
+		Generator: &dreamGeneratorStub{generated: []GeneratedDream{{PathRef: "path_1", PredicateRef: "predicate_1", EvidenceRefs: []string{"evidence_1", "evidence_2"}, Hypothesis: "Dense-Mem may use search freshness.", Rationale: "The two premises support a possibility.", WhatIf: "What if it needs independent confirmation?", PossibleOutcome: "Collect independent evidence."}}},
+	}).(*service)
+	claimed := &dreamcontract.DreamCycleRun{TeamID: teamID.String(), RunID: uuid.NewString(), LeaseToken: uuid.NewString(), Status: "running", Claimed: true, Lane: domain.DreamLaneGraph}
+
+	result, err := svc.runClaimedTeamCycle(context.Background(), teamID.String(), ownerID.String(), EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5}}, RunCycleRequest{}, false, &RunCycleResult{TeamID: teamID.String(), RunID: claimed.RunID, Lane: domain.DreamLaneGraph}, claimed)
+
+	require.ErrorIs(t, err, dreamcontract.ErrDreamCycleLeaseLost)
+	require.Equal(t, "error", result.Status)
+	require.Empty(t, diagnostics.recorded)
+}
+
 func TestResolveFeedbackErrorBranches(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()

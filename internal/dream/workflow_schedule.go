@@ -123,7 +123,7 @@ func (s *service) recordMissedScheduledCycle(ctx context.Context, teamID, runDat
 		return nil, translateDreamRepositoryError(err)
 	}
 	result := cycleRunResult(run)
-	if result != nil {
+	if result != nil && run != nil && run.Claimed {
 		appendRunDiagnosticPhase(result, "target", "missed", "scheduled_window_missed", map[string]any{"run_date": runDate})
 		s.recordRunDiagnostic(ctx, result)
 	}

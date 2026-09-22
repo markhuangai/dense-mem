@@ -753,7 +753,9 @@ func (s *service) finishEvidenceCycle(
 		if runErr == nil {
 			result.Error = evidenceCyclePublicError(completeErr)
 		}
-		s.recordRunDiagnostic(ctx, result)
+		if !errors.Is(completeErr, dreamcontract.ErrDreamCycleLeaseLost) {
+			s.recordRunDiagnostic(ctx, result)
+		}
 		if runErr != nil {
 			return result, errors.Join(runErr, completeErr)
 		}

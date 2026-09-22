@@ -203,7 +203,7 @@ func (s *service) runClaimedTeamCycle(
 		result.Error = runErr.Error()
 		completeStatus = "failed"
 	}
-	if err := s.completeTeamCycle(ctx, scheduled, dreamcontract.DreamCycleCompleteInput{
+	completeErr := s.completeTeamCycle(ctx, scheduled, dreamcontract.DreamCycleCompleteInput{
 		TeamID:                   teamID,
 		InitiatedByProfileID:     initiatedByProfileID,
 		RunID:                    claimed.RunID,
@@ -224,12 +224,18 @@ func (s *service) runClaimedTeamCycle(
 		Lane:                     claimed.Lane,
 		EvidenceTargets:          result.EvidenceTargets,
 		EvaluatedEvidenceTargets: result.EvaluatedEvidenceTargets,
-	}); err != nil && runErr == nil {
-		err = translateDreamRepositoryError(err)
+	})
+	if completeErr != nil && runErr == nil {
+		err = completeErr
 		result.Status = "error"
 		result.Error = err.Error()
-		s.recordRunDiagnostic(ctx, result)
+		if !errors.Is(err, dreamcontract.ErrDreamCycleLeaseLost) {
+			s.recordRunDiagnostic(ctx, result)
+		}
 		return result, err
+	}
+	if errors.Is(completeErr, dreamcontract.ErrDreamCycleLeaseLost) {
+		return result, runErr
 	}
 	s.recordRunDiagnostic(ctx, result)
 	return result, runErr

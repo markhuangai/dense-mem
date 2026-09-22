@@ -38,6 +38,7 @@ type dreamRepositoryStub struct {
 	claimNil            bool
 	completeInput       dreamcontract.DreamCycleCompleteInput
 	missedInput         dreamcontract.DreamCycleClaimInput
+	missedRun           *dreamcontract.DreamCycleRun
 	upserts             []dreamcontract.UpsertHypothesisInput
 	submitInput         dreamcontract.SubmitHypothesisInput
 	updateInput         dreamcontract.UpdateHypothesisStatusInput
@@ -340,6 +341,9 @@ func (s *dreamRepositoryStub) UpsertScheduledHypothesis(ctx context.Context, inp
 
 func (s *dreamRepositoryStub) RecordMissedScheduledDreamCycle(_ context.Context, input dreamcontract.DreamCycleClaimInput) (*dreamcontract.DreamCycleRun, error) {
 	s.missedInput = input
+	if s.missedRun != nil {
+		return s.missedRun, nil
+	}
 	return &dreamcontract.DreamCycleRun{
 		TeamID:    input.TeamID,
 		RunID:     uuid.NewString(),
