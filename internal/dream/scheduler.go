@@ -184,7 +184,7 @@ func (s *Scheduler) runDue(ctx context.Context) {
 			}
 			if cycleErr != nil {
 				s.logError("dreaming scheduler: cycle failed", slog.String("team_id", teamID), slog.String("error_kind", "cycle_failed"))
-			} else if result != nil && result.Status == "skipped" && state == scheduledWindowDue {
+			} else if result != nil && result.Status == "skipped" && state == scheduledWindowDue && result.RunID != "" {
 				s.markObserved(teamID, runDate)
 				s.logInfo("dreaming scheduler: cycle observed after claim loss",
 					slog.String("team_id", teamID), slog.String("run_id", result.RunID),
