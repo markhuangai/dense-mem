@@ -76,6 +76,15 @@ func TestDreamDiagnosticExchangeRecorderHandlesUnavailableAndRunBudgets(t *testi
 	require.Equal(t, "unavailable", state)
 	require.Equal(t, "credential_protection_unavailable", reason)
 
+	monotonicReason := newDreamDiagnosticExchangeRecorder(observability.NewCredentialProtector())
+	monotonicReason.state = "unavailable"
+	monotonicReason.reason = "credential_protection_unavailable"
+	monotonicReason.attempted = true
+	_, _ = monotonicReason.protect(context.Background(), []byte(strings.Repeat("x", dreamDiagnosticProviderBodyLimit+1)))
+	state, reason = monotonicReason.State()
+	require.Equal(t, "unavailable", state)
+	require.Equal(t, "credential_protection_unavailable", reason)
+
 	empty := newDreamDiagnosticExchangeRecorder(observability.NewCredentialProtector())
 	require.Equal(t, []byte(`{}`), empty.Payload())
 	require.Equal(t, "not_captured", func() string { state, _ := empty.State(); return state }())

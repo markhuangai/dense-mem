@@ -240,17 +240,27 @@ func (s *service) resolveConfirmation(
 }
 
 func diagnosticRelationshipResults(results []rememberapp.SubmissionRelationshipResult) []map[string]any {
-	projected := make([]map[string]any, 0, len(results))
-	for _, result := range results {
+	const (
+		maxDiagnosticRelationshipResults = 24
+		maxDiagnosticRelationshipSplits  = 8
+	)
+	projected := make([]map[string]any, 0, min(len(results), maxDiagnosticRelationshipResults))
+	for resultIndex, result := range results {
+		if resultIndex >= maxDiagnosticRelationshipResults {
+			break
+		}
 		item := map[string]any{
 			"disposition": result.Disposition,
-			"splits":      make([]map[string]any, 0, len(result.Splits)),
+			"splits":      make([]map[string]any, 0, min(len(result.Splits), maxDiagnosticRelationshipSplits)),
 		}
 		if diagnosticRelationshipReasonAllowed(result.Reason) {
 			item["reason"] = result.Reason
 		}
 		splits := item["splits"].([]map[string]any)
-		for _, split := range result.Splits {
+		for splitIndex, split := range result.Splits {
+			if splitIndex >= maxDiagnosticRelationshipSplits {
+				break
+			}
 			splits = append(splits, map[string]any{
 				"split_index":          split.SplitIndex,
 				"relationship_id":      split.RelationshipID,

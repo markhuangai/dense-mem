@@ -107,7 +107,9 @@ func (r *dreamDiagnosticExchangeRecorder) protect(ctx context.Context, body []by
 	}
 	protected, reason := r.protector.ProtectDiagnosticBytes(body, dreamDiagnosticProviderBodyLimit, observability.AuthenticationSecretsFromContext(ctx)...)
 	if reason == observability.CredentialProtectionBudgetExceeded {
-		r.reason = "provider_body_budget_exceeded"
+		if r.state != "unavailable" {
+			r.reason = "provider_body_budget_exceeded"
+		}
 		return nil, "truncated"
 	}
 	if reason != observability.CredentialProtectionAvailable {

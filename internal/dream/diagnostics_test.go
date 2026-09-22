@@ -239,6 +239,19 @@ func TestDiagnosticRelationshipResultsOmitCallerReferences(t *testing.T) {
 	require.Equal(t, "stored", projected[0]["disposition"])
 }
 
+func TestDiagnosticRelationshipResultsStayBounded(t *testing.T) {
+	results := make([]rememberapp.SubmissionRelationshipResult, 200)
+	for index := range results {
+		results[index].Disposition = "stored"
+		results[index].Splits = make([]rememberapp.SubmissionRelationshipSplit, 32)
+	}
+
+	projected := diagnosticRelationshipResults(results)
+
+	require.Len(t, projected, 24)
+	require.Len(t, projected[0]["splits"], 8)
+}
+
 func TestRecordRunDiagnosticStopsAfterRunCaptureFailure(t *testing.T) {
 	repo := &diagnosticRepositoryStub{failRun: 2}
 	svc := &service{deps: Dependencies{Diagnostics: repo}}

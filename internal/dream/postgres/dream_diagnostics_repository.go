@@ -188,7 +188,7 @@ func (r *Store) RecordDreamRunDiagnostics(ctx context.Context, input dreamcontra
 		           WHEN hypothesis.status = 'submitted' THEN 'submitted'
 		           ELSE COALESCE(NULLIF(hypothesis.status, ''), 'unchanged')
 		       END,
-			       jsonb_build_object('status', hypothesis.status),
+			       jsonb_build_object('status', hypothesis.status, 'status_source', 'current_state_at_capture'),
 			       ?, ?, %s
 			FROM hypotheses AS hypothesis
 			WHERE hypothesis.team_id = ?::uuid
