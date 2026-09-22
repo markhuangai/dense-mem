@@ -181,7 +181,7 @@ func TestDiagnosticServiceHidesExpiredDetails(t *testing.T) {
 	teamID, runID := uuid.NewString(), uuid.NewString()
 	repo := &diagnosticRepositoryStub{item: &dreamcontract.DreamDiagnosticCapture{
 		TeamID: teamID, RunID: runID, CaptureID: uuid.NewString(), Phase: "run", Outcome: "completed",
-		CaptureState: "captured", Details: map[string]any{"provider_proposals": 1},
+		CaptureState: "expired", CaptureReason: "retention_expired", Details: map[string]any{"provider_proposals": 1},
 		ExpiresAt: time.Now().UTC().Add(-time.Minute),
 	}}
 	svc := NewDiagnosticService(repo)

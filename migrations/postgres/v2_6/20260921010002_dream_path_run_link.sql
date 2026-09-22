@@ -1,3 +1,4 @@
+-- +goose NO TRANSACTION
 -- +goose Up
 
 ALTER TABLE dream_path_evaluations
@@ -13,10 +14,13 @@ BEGIN
         ALTER TABLE dream_path_evaluations
             ADD CONSTRAINT dream_path_evaluations_run_fk
             FOREIGN KEY (team_id, run_id)
-            REFERENCES dream_cycle_runs(team_id, run_id) ON DELETE RESTRICT;
+            REFERENCES dream_cycle_runs(team_id, run_id) ON DELETE RESTRICT NOT VALID;
     END IF;
 END $$;
 -- +goose StatementEnd
+
+ALTER TABLE dream_path_evaluations
+    VALIDATE CONSTRAINT dream_path_evaluations_run_fk;
 
 CREATE INDEX IF NOT EXISTS dream_path_evaluations_run_idx
     ON dream_path_evaluations(team_id, run_id, created_at DESC)

@@ -90,6 +90,12 @@ func TestDreamDiagnosticsAreTeamScopedAndExpirePayloads(t *testing.T) {
 			          clock_timestamp() - INTERVAL '1 hour', clock_timestamp() - INTERVAL '2 hours')
 		`, teamID, expiredID, run.RunID).Error
 	}))
+	expiredBeforePurge, err := store.GetDreamDiagnostic(ctx, teamID, run.RunID, expiredID)
+	require.NoError(t, err)
+	require.Equal(t, "expired", expiredBeforePurge.CaptureState)
+	require.Equal(t, "retention_expired", expiredBeforePurge.CaptureReason)
+	require.Empty(t, expiredBeforePurge.Details)
+	require.Empty(t, expiredBeforePurge.Payload)
 	deleted, err := store.PurgeExpiredDreamDiagnostics(ctx, 25)
 	require.NoError(t, err)
 	require.Equal(t, 1, deleted)

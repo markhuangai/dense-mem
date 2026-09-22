@@ -141,9 +141,7 @@ func projectDreamDiagnostic(record *dreamcontract.DreamDiagnosticCapture) *Dream
 		CaptureState: record.CaptureState, CaptureReason: record.CaptureReason,
 		CapturedAt: record.CapturedAt, ExpiresAt: record.ExpiresAt, CreatedAt: record.CreatedAt,
 	}
-	if !record.ExpiresAt.IsZero() && !time.Now().UTC().Before(record.ExpiresAt) {
-		result.CaptureState = "expired"
-		result.CaptureReason = "retention_expired"
+	if result.CaptureState == "expired" || result.CaptureReason == "retention_expired" {
 		return result
 	}
 	if record.Details != nil {

@@ -127,6 +127,13 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 		`, teamID, firstInput.RelationshipID).Scan(&linkedRunIDs).Error
 	}))
 	require.ElementsMatch(t, []string{run.RunID, secondRun.RunID}, linkedRunIDs)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE hypotheses
+			SET invalidated_reason = ?
+			WHERE team_id = ?::uuid AND cycle_run_id = ?::uuid
+		`, "provider-token=do-not-retain", teamID, run.RunID).Error
+	}))
 	diagnosticsStore := semanticRepo
 	require.NoError(t, diagnosticsStore.RecordDreamRunDiagnostics(ctx, dreamcontract.DreamDiagnosticCaptureInput{
 		TeamID: teamID, RunID: run.RunID, Phase: "run", Outcome: "completed",
@@ -147,6 +154,7 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 			require.Equal(t, "not_captured", diagnostic.CaptureState)
 			require.Equal(t, "phase_metadata_only", diagnostic.CaptureReason)
 			require.Equal(t, "proposed", diagnostic.Outcome)
+			require.NotContains(t, diagnostic.Details, "invalidated_reason")
 		}
 	}
 	require.True(t, proposalSeen)

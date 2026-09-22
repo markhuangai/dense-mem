@@ -84,8 +84,7 @@ func (r *Store) RecordDreamRunDiagnostics(ctx context.Context, input dreamcontra
 				           WHEN hypothesis.status = 'submitted' THEN 'submitted'
 				           ELSE COALESCE(NULLIF(hypothesis.status, ''), 'unchanged')
 				       END,
-				       jsonb_build_object('status', hypothesis.status,
-				                          'invalidated_reason', COALESCE(hypothesis.invalidated_reason, '')),
+				       jsonb_build_object('status', hypothesis.status),
 			       ?, ?, %s
 				FROM hypotheses AS hypothesis
 				WHERE hypothesis.team_id = ?::uuid
@@ -243,8 +242,12 @@ func (r *Store) ListDreamDiagnostics(ctx context.Context, input dreamcontract.Dr
 	page := dreamcontract.DreamDiagnosticPage{Items: []dreamcontract.DreamDiagnosticCapture{}}
 	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		query := `
-			SELECT capture_id::text, run_id::text, COALESCE(hypothesis_id::text, ''), phase, outcome, cause, details, '{}'::jsonb,
-			       capture_state, capture_reason, captured_at, expires_at, created_at
+			SELECT capture_id::text, run_id::text, COALESCE(hypothesis_id::text, ''), phase, outcome, cause,
+			       CASE WHEN expires_at <= CURRENT_TIMESTAMP THEN '{}'::jsonb ELSE details END,
+			       '{}'::jsonb,
+			       CASE WHEN expires_at <= CURRENT_TIMESTAMP THEN 'expired' ELSE capture_state END,
+			       CASE WHEN expires_at <= CURRENT_TIMESTAMP THEN 'retention_expired' ELSE capture_reason END,
+			       captured_at, expires_at, created_at
 			FROM dream_diagnostic_captures
 			WHERE team_id = ?::uuid`
 		args := []any{input.TeamID}
@@ -302,8 +305,12 @@ func (r *Store) GetDreamDiagnostic(ctx context.Context, teamID, runID, captureID
 	var result *dreamcontract.DreamDiagnosticCapture
 	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
 		row := tx.WithContext(ctx).Raw(`
-			SELECT capture_id::text, run_id::text, COALESCE(hypothesis_id::text, ''), phase, outcome, cause, details, payload,
-			       capture_state, capture_reason, captured_at, expires_at, created_at
+			SELECT capture_id::text, run_id::text, COALESCE(hypothesis_id::text, ''), phase, outcome, cause,
+			       CASE WHEN expires_at <= CURRENT_TIMESTAMP THEN '{}'::jsonb ELSE details END,
+			       CASE WHEN expires_at <= CURRENT_TIMESTAMP THEN '{}'::jsonb ELSE payload END,
+			       CASE WHEN expires_at <= CURRENT_TIMESTAMP THEN 'expired' ELSE capture_state END,
+			       CASE WHEN expires_at <= CURRENT_TIMESTAMP THEN 'retention_expired' ELSE capture_reason END,
+			       captured_at, expires_at, created_at
 			FROM dream_diagnostic_captures
 			WHERE team_id = ?::uuid AND run_id = ?::uuid AND capture_id = ?::uuid
 		`, teamID, runID, captureID).Row()
