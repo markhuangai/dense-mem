@@ -276,16 +276,15 @@ func (s *Scheduler) runEvidenceDue(ctx context.Context, teamID string, cfg Effec
 		return
 	}
 	if result == nil || result.Status == "skipped" {
-		s.markHourlyObserved(teamID, windowKey)
-		status := "nil"
-		runID := ""
-		if result != nil {
-			status = result.Status
-			runID = result.RunID
+		if result != nil && result.RunID != "" {
+			s.markHourlyObserved(teamID, windowKey)
+			s.logInfo("dreaming scheduler: evidence cycle observed after claim loss",
+				slog.String("team_id", teamID), slog.String("run_id", result.RunID),
+				slog.String("window_key", windowKey), slog.String("status", result.Status))
+		} else {
+			s.logWarn("dreaming scheduler: evidence cycle skipped before it could claim the window",
+				slog.String("team_id", teamID), slog.String("window_key", windowKey))
 		}
-		s.logInfo("dreaming scheduler: evidence cycle observed",
-			slog.String("team_id", teamID), slog.String("run_id", runID),
-			slog.String("window_key", windowKey), slog.String("status", status))
 		return
 	}
 	s.markHourlyObserved(teamID, windowKey)

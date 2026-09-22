@@ -234,28 +234,37 @@ func (s *service) resolveConfirmation(
 	if feedbackErr != nil {
 		confirmationOutcome = "failed"
 	}
-	s.recordHypothesisDiagnostic(ctx, record, "confirmation", confirmationOutcome, cause, map[string]any{
-		"submitted_ingest_id": ingestID,
-		"decision":            decision,
-		"relationship_results": diagnosticRelationshipResults(func() []rememberapp.SubmissionRelationshipResult {
-			if remember == nil || remember.Terminal == nil {
-				return nil
-			}
-			return remember.Terminal.RelationshipResults
-		}()),
-	})
+	relationshipResults, relationshipResultsTruncated := diagnosticRelationshipResults(func() []rememberapp.SubmissionRelationshipResult {
+		if remember == nil || remember.Terminal == nil {
+			return nil
+		}
+		return remember.Terminal.RelationshipResults
+	}())
+	details := map[string]any{
+		"submitted_ingest_id":  ingestID,
+		"decision":             decision,
+		"relationship_results": relationshipResults,
+	}
+	if relationshipResultsTruncated {
+		details["relationship_results_truncated"] = true
+	}
+	s.recordHypothesisDiagnostic(ctx, record, "confirmation", confirmationOutcome, cause, details)
 	return result, feedbackErr
 }
 
-func diagnosticRelationshipResults(results []rememberapp.SubmissionRelationshipResult) []map[string]any {
+func diagnosticRelationshipResults(results []rememberapp.SubmissionRelationshipResult) ([]map[string]any, bool) {
 	const (
 		maxDiagnosticRelationshipResults = 24
 		maxDiagnosticRelationshipSplits  = 8
 	)
+	truncated := len(results) > maxDiagnosticRelationshipResults
 	projected := make([]map[string]any, 0, min(len(results), maxDiagnosticRelationshipResults))
 	for resultIndex, result := range results {
 		if resultIndex >= maxDiagnosticRelationshipResults {
 			break
+		}
+		if len(result.Splits) > maxDiagnosticRelationshipSplits {
+			truncated = true
 		}
 		item := map[string]any{
 			"disposition": result.Disposition,
@@ -279,7 +288,7 @@ func diagnosticRelationshipResults(results []rememberapp.SubmissionRelationshipR
 		item["splits"] = splits
 		projected = append(projected, item)
 	}
-	return projected
+	return projected, truncated
 }
 
 func diagnosticRelationshipReasonAllowed(reason string) bool {

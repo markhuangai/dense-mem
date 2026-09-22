@@ -140,6 +140,22 @@ func TestSchedulerRetriesEvidenceWindowWhenFinalizationFails(t *testing.T) {
 	require.Len(t, dreams.evidenceWindows, 2)
 }
 
+func TestSchedulerDoesNotObserveEvidenceSkipWithoutDurableRun(t *testing.T) {
+	teamID := uuid.New()
+	dreams := &schedulerEvidenceStub{
+		schedulerDreamStub: &schedulerDreamStub{cfg: dueSchedulerConfig()},
+		evidenceResult:     &RunCycleResult{Status: "skipped"},
+	}
+	scheduler := NewScheduler(dreams, &schedulerProfileStub{profiles: []*domain.Team{{ID: teamID}}}, discardSchedulerLogger())
+	scheduler.now = func() time.Time { return time.Date(2026, 9, 4, 3, 0, 0, 0, time.UTC) }
+
+	scheduler.runDue(context.Background())
+	scheduler.runDue(context.Background())
+
+	require.False(t, scheduler.hourlyAlreadyObserved(teamID.String(), "hour:2026-09-04T03"))
+	require.Len(t, dreams.evidenceWindows, 2)
+}
+
 type schedulerEvidenceStub struct {
 	*schedulerDreamStub
 	evidenceWindows       []time.Time

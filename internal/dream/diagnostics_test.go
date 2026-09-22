@@ -227,7 +227,7 @@ func TestRecordRunDiagnosticPreservesProviderCaptureReason(t *testing.T) {
 }
 
 func TestDiagnosticRelationshipResultsOmitCallerReferences(t *testing.T) {
-	projected := diagnosticRelationshipResults([]rememberapp.SubmissionRelationshipResult{{
+	projected, truncated := diagnosticRelationshipResults([]rememberapp.SubmissionRelationshipResult{{
 		RelationshipRef: "caller-secret-token",
 		Disposition:     "stored",
 		Splits: []rememberapp.SubmissionRelationshipSplit{{
@@ -235,6 +235,7 @@ func TestDiagnosticRelationshipResultsOmitCallerReferences(t *testing.T) {
 		}},
 	}})
 	require.Len(t, projected, 1)
+	require.False(t, truncated)
 	require.NotContains(t, projected[0], "ref")
 	require.Equal(t, "stored", projected[0]["disposition"])
 }
@@ -246,10 +247,11 @@ func TestDiagnosticRelationshipResultsStayBounded(t *testing.T) {
 		results[index].Splits = make([]rememberapp.SubmissionRelationshipSplit, 32)
 	}
 
-	projected := diagnosticRelationshipResults(results)
+	projected, truncated := diagnosticRelationshipResults(results)
 
 	require.Len(t, projected, 24)
 	require.Len(t, projected[0]["splits"], 8)
+	require.True(t, truncated)
 }
 
 func TestRecordRunDiagnosticStopsAfterRunCaptureFailure(t *testing.T) {
