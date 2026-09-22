@@ -22,6 +22,7 @@ func TestGraphProviderPreservesProviderUsageAccounting(t *testing.T) {
 	require.Equal(t, 23, response.OutputTokens)
 	require.Equal(t, 1, response.ProviderTurns)
 	require.Len(t, transport.requests, 1)
+	require.Equal(t, "graph-model", transport.requests[0].Model)
 }
 
 func TestProviderHandlesUnavailableTransportAndModelName(t *testing.T) {

@@ -12,6 +12,7 @@ const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 const reviewDriver = requiredEnv("DENSE_MEM_E2E_CONFLICT_REVIEW_DRIVER");
 const conflictProviderURL = requiredEnv("DENSE_MEM_E2E_CONFLICT_PROVIDER_URL");
 const runID = `conflict-e2e-${Date.now()}`;
+const conflictReviewModel = "dense-mem-e2e-conflict-review";
 
 let rpcID = 0;
 
@@ -24,6 +25,7 @@ const selected = await runStage("AI selection", aiSelectionScenario);
 const abstained = await runStage("AI abstention", aiAbstentionScenario);
 const failedDays = await runStage("five failed review days", fiveFailedDaysScenario);
 const provenance = await runStage("supporter provenance and isolation", provenanceAndIsolationScenario);
+const conflictModelRouting = await assertConflictReviewModelRouting(selected.team_id, failedDays.team_id);
 
 console.log(JSON.stringify({
   status: "ok",
@@ -36,6 +38,7 @@ console.log(JSON.stringify({
   ai_abstention_last_write_wins: abstained,
   five_failed_days_last_write_wins: failedDays,
   supporter_provenance: provenance,
+  conflict_review_model: conflictModelRouting,
   removed_placement_tools_absent: true,
 }, null, 2));
 
@@ -163,7 +166,7 @@ async function aiSelectionScenario() {
   const plan = latestResolutionPlan(fixture.teamID, fixture.conflictID);
   assert(plan.method === "ai" && plan.status === "applied" && plan.preferred_position_id === fixture.positionAID, `AI selection plan is invalid: ${JSON.stringify(plan)}`);
   assert(conflictDerivationCount(fixture.teamID, fixture.conflictID) >= 1, "AI selection did not preserve retraction derivation lineage");
-  return { conflict_id: fixture.conflictID, preferred_position_id: fixture.positionAID, method: plan.method };
+  return { conflict_id: fixture.conflictID, team_id: fixture.teamID, preferred_position_id: fixture.positionAID, method: plan.method };
 }
 
 async function aiAbstentionScenario() {
@@ -204,7 +207,29 @@ async function fiveFailedDaysScenario() {
   assertReview(finalResult, "resolve", "overdue_last_write_wins", fixture.positionAID, "last_write_wins");
   const plan = latestResolutionPlan(fixture.teamID, fixture.conflictID);
   assert(plan.method === "last_write_wins" && plan.status === "applied", `fifth-day fallback plan is invalid: ${JSON.stringify(plan)}`);
-  return { conflict_id: fixture.conflictID, failed_assessment_days: 5, preferred_position_id: fixture.positionAID, method: plan.method };
+  return { conflict_id: fixture.conflictID, team_id: fixture.teamID, failed_assessment_days: 5, preferred_position_id: fixture.positionAID, method: plan.method };
+}
+
+async function assertConflictReviewModelRouting(selectedTeamID, failedTeamID) {
+  for (const [label, teamID] of [["selected", selectedTeamID], ["failed", failedTeamID]]) {
+    const persistedModels = postgresQuery(`
+      SELECT string_agg(DISTINCT model, ',' ORDER BY model)
+      FROM relationship_conflict_ai_assessment_attempts
+      WHERE team_id = ${sqlLiteral(teamID)}::uuid
+        AND btrim(model) <> ''
+    `);
+    assert(persistedModels === conflictReviewModel, `${label} conflict assessment model = ${persistedModels}, want ${conflictReviewModel}`);
+  }
+
+  const providerURL = conflictProviderURL.replace(/\/v1\/?$/, "");
+  const response = await fetch(`${providerURL}/health`);
+  const state = await response.json();
+  assert(response.ok, `conflict provider fixture health returned HTTP ${response.status}`);
+  const assessments = (state.chat_requests || []).filter((request) => request.schema_name === "dense_mem_conflict_assessment_response");
+  assert(assessments.length > 0, "conflict review must call the deterministic provider fixture");
+  assert(assessments.every((request) => request.model === conflictReviewModel), `conflict review used a fallback or unexpected model: ${JSON.stringify(assessments)}`);
+  assert(assessments.some((request) => request.fault === "unavailable"), "conflict review provider failure did not reach the configured session model");
+  return { model: conflictReviewModel, assessment_calls: assessments.length, no_fallback: true };
 }
 
 async function provenanceAndIsolationScenario() {

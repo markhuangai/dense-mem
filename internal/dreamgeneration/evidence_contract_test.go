@@ -77,6 +77,8 @@ func TestEvidenceDiscoveryProviderRepairsOneCompleteMalformedResponse(t *testing
 	require.Empty(t, response.Proposals)
 	require.Equal(t, 2, response.ProviderTurns)
 	require.Len(t, transport.requests, 2)
+	require.Equal(t, "dream-model", transport.requests[0].Model)
+	require.Equal(t, "dream-model", transport.requests[1].Model)
 	require.Contains(t, transport.requests[1].Messages[3].Content, "complete replacement JSON object")
 }
 

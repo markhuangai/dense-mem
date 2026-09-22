@@ -15,13 +15,16 @@ const prometheusURL = requiredEnv("DENSE_MEM_PROMETHEUS_URL").replace(/\/$/, "")
 const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
 const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 const communityRunWaitAttempts = 140;
+const communitySummaryModel = "dense-mem-e2e-community-summary";
 
 let rpcID = 0;
 const runID = `community-recall-e2e-${Date.now()}`;
 const scheduledAt = nextScheduledUTCMinute(Date.now(), 4);
 const runDate = scheduledAt.toISOString().slice(0, 10);
 const ownerProfileID = await apiCredentialOwnerID();
-const seeded = seedCommunityGraph(ownerProfileID);
+const seeded = seedCommunityGraph(ownerProfileID, teamID);
+const adverseTeam = await createIsolatedTeam("provider failure");
+seedCommunityGraph(adverseTeam.profileID, adverseTeam.teamID, " [fixture-fault:unavailable]");
 
 await updateControlConfig("/config/general", [{ key: "APP_TIMEZONE", value: "UTC" }]);
 await updateControlConfig("/config/community-detection", [
@@ -39,6 +42,8 @@ const communityStatus = await controlJSON(`/teams/${teamID}/community/status`);
 if (communityStatus.data?.effective_config?.enabled !== true || Number(communityStatus.data?.current_community_count ?? 0) < 1) {
   throw new Error(`community status did not expose the completed snapshot: ${JSON.stringify(communityStatus)}`);
 }
+const failedCommunityRun = await waitForFailedCommunityRun(adverseTeam.teamID);
+const communityModelRouting = await assertCommunitySummaryModelRouting(completed, failedCommunityRun);
 
 const recalled = await mcpSuccess("recall_memory", {
   query: "Dense-Mem Runtime PostgreSQL",
@@ -141,6 +146,8 @@ console.log(JSON.stringify({
   nested_relationship_limit: 2,
   temporal_skip: true,
   team_isolation: true,
+  community_summary_model: communityModelRouting,
+  failed_community_run_id: failedCommunityRun.run_id,
   telemetry: { runs: communityMetric, summaries: summaryMetric, recalls: recallMetric },
 }, null, 2));
 
@@ -160,7 +167,57 @@ async function waitForCommunityRun() {
   throw new Error(`timed out waiting for community run at ${scheduledAt.toISOString()}: ${JSON.stringify(latest)}`);
 }
 
-function seedCommunityGraph(ownerProfileID) {
+async function waitForFailedCommunityRun(adverseTeamID) {
+  let latest = null;
+  for (let attempt = 0; attempt < communityRunWaitAttempts; attempt += 1) {
+    const response = await controlJSON(`/teams/${adverseTeamID}/community/status`);
+    latest = response.data?.latest_run ?? null;
+    if (latest?.window_key === runDate && latest.status === "failed") return latest;
+    if (latest?.window_key === runDate && ["completed", "too_large", "cancelled"].includes(latest.status)) {
+      throw new Error(`adverse community run ended with ${latest.status}: ${JSON.stringify(latest)}`);
+    }
+    await delay(3_000);
+  }
+  throw new Error(`timed out waiting for failed community run at ${scheduledAt.toISOString()}: ${JSON.stringify(latest)}`);
+}
+
+async function assertCommunitySummaryModelRouting(completedRun, failedRun) {
+  const persistedRecordModels = postgresQuery(`
+    SELECT string_agg(DISTINCT summary_provider_model, ',' ORDER BY summary_provider_model)
+    FROM community_records
+    WHERE team_id = ${sqlLiteral(teamID)}::uuid
+      AND run_id = ${sqlLiteral(completedRun.run_id)}::uuid
+  `);
+  if (persistedRecordModels !== communitySummaryModel) {
+    throw new Error(`persisted community summary model = ${persistedRecordModels}, want ${communitySummaryModel}`);
+  }
+  for (const [label, targetTeamID, runID] of [["completed", teamID, completedRun.run_id], ["failed", adverseTeam.teamID, failedRun.run_id]]) {
+    const persistedAttemptModels = postgresQuery(`
+      SELECT string_agg(DISTINCT provider_model, ',' ORDER BY provider_model)
+      FROM community_summary_attempts
+      WHERE team_id = ${sqlLiteral(targetTeamID)}::uuid
+        AND run_id = ${sqlLiteral(runID)}::uuid
+    `);
+    if (persistedAttemptModels !== communitySummaryModel) {
+      throw new Error(`${label} community summary attempt model = ${persistedAttemptModels}, want ${communitySummaryModel}`);
+    }
+  }
+  const providerURL = (process.env.DENSE_MEM_E2E_PROVIDER_URL || "").replace(/\/$/, "");
+  if (!providerURL) throw new Error("community model routing requires the deterministic provider fixture");
+  const response = await fetch(`${providerURL}/health`);
+  const state = await response.json();
+  if (!response.ok) throw new Error(`community provider fixture health returned HTTP ${response.status}`);
+  const requests = (state.chat_requests || []).filter((request) => request.schema_name === "community_summary");
+  if (requests.length === 0 || !requests.every((request) => request.model === communitySummaryModel)) {
+    throw new Error(`community summary requests used an unexpected model: ${JSON.stringify(requests)}`);
+  }
+  if (!requests.some((request) => request.fault === "unavailable")) {
+    throw new Error("community summary provider failure did not reach the configured session model");
+  }
+  return { model: communitySummaryModel, summary_calls: requests.length, no_fallback: true };
+}
+
+function seedCommunityGraph(ownerProfileID, teamID, marker = "") {
   const entities = ["Dense-Mem", "Runtime service", "PostgreSQL"].map(() => randomUUID());
   const relationships = [randomUUID(), randomUUID(), randomUUID()];
   const searchDocuments = [randomUUID(), randomUUID(), randomUUID()];
@@ -171,7 +228,7 @@ function seedCommunityGraph(ownerProfileID) {
   const ingestID = randomUUID();
   const names = ["Dense-Mem", "Runtime service", "PostgreSQL"];
   const quotes = [
-    "Dense-Mem uses the Runtime service for durable memory workflows.",
+    `Dense-Mem uses the Runtime service for durable memory workflows.${marker}`,
     "The Runtime service uses PostgreSQL for durable memory storage.",
     "PostgreSQL supports the Dense-Mem memory service.",
   ];
@@ -271,14 +328,17 @@ function seedCommunityGraph(ownerProfileID) {
   return { relationships, groups, entities, fragments };
 }
 
-async function createIsolatedTeam() {
-  const team = await controlJSON("/teams", { method: "POST", body: JSON.stringify({ name: `${runID} isolated`, description: "community isolation check" }) });
+async function createIsolatedTeam(label = "isolation") {
+  const team = await controlJSON("/teams", { method: "POST", body: JSON.stringify({ name: `${runID} ${label}`, description: "community isolation check" }) });
   const id = team.data?.id;
-  if (typeof id !== "string" || !id) throw new Error("isolated team creation did not return an id");
-  const credential = await controlJSON(`/teams/${id}/credentials`, { method: "POST", body: JSON.stringify({ name: `${runID} isolated key`, scopes: ["read", "write"], rate_limit: 300 }) });
+  if (typeof id !== "string" || !id) throw new Error(`${label} team creation did not return an id`);
+  const credential = await controlJSON(`/teams/${id}/credentials`, { method: "POST", body: JSON.stringify({ name: `${runID} ${label} key`, scopes: ["read", "write"], rate_limit: 300 }) });
   const isolatedCredential = credential.data?.api_key;
-  if (typeof isolatedCredential !== "string" || !isolatedCredential) throw new Error("isolated team credential did not return an API key");
-  return { teamID: id, apiKey: isolatedCredential };
+  const profileID = credential.data?.credential?.id;
+  if (typeof isolatedCredential !== "string" || !isolatedCredential || typeof profileID !== "string" || !profileID) {
+    throw new Error(`${label} team credential did not return an API key and profile ID`);
+  }
+  return { teamID: id, apiKey: isolatedCredential, profileID };
 }
 
 function assertCommunityContract(payload) {

@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 
 export const name = "diagnostics";
+const rememberModel = "dense-mem-synchronous-write-e2e-remember";
 
 export async function run({ rpc, rawRPC = rpc, expect }) {
   const attempts = {};
@@ -171,6 +172,11 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     expect(diagnostics.original_request?.request_body?.includes('"name":"remember"'), `${label} detail must expose the logical original request`);
     expect(diagnostics.provider_exchanges?.length >= 1, `${label} detail must expose provider exchanges`);
     expect(diagnostics.caller_response?.response_body?.includes('"isError":true'), `${label} detail must expose the caller response envelope`);
+    if (label === "failed") {
+      const assessorExchanges = diagnostics.provider_exchanges.filter((exchange) => exchange.component === "assessor");
+      expect(assessorExchanges.length >= 1, "failed Remember diagnostic must retain the assessor exchange");
+      expect(assessorExchanges.every((exchange) => exchange.model === rememberModel), `Remember diagnostic used an unexpected model: ${JSON.stringify(assessorExchanges)}`);
+    }
   }
 
   const validationAttempt = await controlJSON(controlURL, token, `/control/api/teams/${teamID}/remember-attempts/${diagnosticAttemptIDs["assessment-invalid"]}`);

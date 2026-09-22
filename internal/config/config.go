@@ -141,6 +141,11 @@ type Config struct {
 	AIVerifierAPIURL                      string
 	AIVerifierAPIKey                      string `json:"-"`
 	AIVerifierModel                       string
+	AIRememberModel                       string
+	AIConflictReviewModel                 string
+	AIDreamGraphModel                     string
+	AIDreamEvidenceModel                  string
+	AICommunitySummaryModel               string
 	AIVerifierDisableTemperature          bool
 	AIVerifierTimeoutSeconds              int
 	AIVerifierMaxConcurrency              int
@@ -227,6 +232,28 @@ func (c *Config) GetAIVerifierAPIKey() string {
 	return c.AIAPIKey
 }
 func (c *Config) GetAIVerifierModel() string { return c.AIVerifierModel }
+func (c *Config) GetAIRememberModel() string {
+	return effectiveAISessionModel(c.AIRememberModel, c.AIVerifierModel)
+}
+func (c *Config) GetAIConflictReviewModel() string {
+	return effectiveAISessionModel(c.AIConflictReviewModel, c.AIVerifierModel)
+}
+func (c *Config) GetAIDreamGraphModel() string {
+	return effectiveAISessionModel(c.AIDreamGraphModel, c.AIVerifierModel)
+}
+func (c *Config) GetAIDreamEvidenceModel() string {
+	return effectiveAISessionModel(c.AIDreamEvidenceModel, c.AIVerifierModel)
+}
+func (c *Config) GetAICommunitySummaryModel() string {
+	return effectiveAISessionModel(c.AICommunitySummaryModel, c.AIVerifierModel)
+}
+
+func effectiveAISessionModel(override, fallback string) string {
+	if override = strings.TrimSpace(override); override != "" {
+		return override
+	}
+	return strings.TrimSpace(fallback)
+}
 func (c *Config) GetAIVerifierDisableTemperature() bool {
 	return c.AIVerifierDisableTemperature
 }
@@ -345,7 +372,7 @@ func (c *Config) ValidateServerStartup() error {
 	budget := AIVerifierAssessmentBudgetFor(c)
 	if err := assessor.ValidateSemanticAssessmentLimits(assessor.SemanticAssessmentLimits{
 		Tokenizer:                   budget.Tokenizer,
-		ProviderModel:               c.GetAIVerifierModel(),
+		ProviderModel:               c.GetAIRememberModel(),
 		ProviderSchemaName:          assessor.SemanticAssessmentSchemaName,
 		ProviderTemperatureDisabled: AIVerifierTemperatureDisabled(c),
 		MaxInputTokens:              budget.MaxInputTokens,
@@ -536,6 +563,11 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		cfg.AIVerifierAPIKey = cfg.AIAPIKey
 	}
 	cfg.AIVerifierModel = os.Getenv("AI_VERIFIER_MODEL")
+	cfg.AIRememberModel = os.Getenv("AI_REMEMBER_MODEL")
+	cfg.AIConflictReviewModel = os.Getenv("AI_CONFLICT_REVIEW_MODEL")
+	cfg.AIDreamGraphModel = os.Getenv("AI_DREAM_GRAPH_MODEL")
+	cfg.AIDreamEvidenceModel = os.Getenv("AI_DREAM_EVIDENCE_MODEL")
+	cfg.AICommunitySummaryModel = os.Getenv("AI_COMMUNITY_SUMMARY_MODEL")
 	cfg.AIVerifierDisableTemperature, err = parseBoolOrDefault("AI_VERIFIER_DISABLE_TEMPERATURE", false)
 	if err != nil {
 		return cfg, err

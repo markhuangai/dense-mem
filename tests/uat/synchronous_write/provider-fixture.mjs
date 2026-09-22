@@ -14,6 +14,7 @@ const assessmentAttempts = new Map();
 const embeddingCallsByFault = new Map();
 let assessmentCalls = 0;
 let embeddingCalls = 0;
+const chatRequests = [];
 
 function vectorFor(text, width) {
   const output = [];
@@ -35,7 +36,7 @@ function sendJSON(response, status, payload) {
 
 const server = createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
-    sendJSON(response, 200, { status: "ok", fault, assessment_calls: assessmentCalls, embedding_calls: embeddingCalls });
+    sendJSON(response, 200, { status: "ok", fault, assessment_calls: assessmentCalls, embedding_calls: embeddingCalls, chat_requests: chatRequests });
     return;
   }
   let body = "";
@@ -51,6 +52,13 @@ const server = createServer(async (request, response) => {
   const requestFault = fixtureFault(payload) || fault;
   const route = request.url?.endsWith("/embeddings") ? "embedding" : request.url?.endsWith("/chat/completions") ? "assessment" : "other";
   const routeFault = faultForRoute(requestFault, route);
+  if (route === "assessment" && chatRequests.length < 2048) {
+    chatRequests.push({
+      model: typeof payload.model === "string" ? payload.model : "",
+      schema_name: typeof payload.response_format?.json_schema?.name === "string" ? payload.response_format.json_schema.name : "",
+      fault: routeFault,
+    });
+  }
   let embeddingFaultCall = 0;
   if (route === "embedding") embeddingCalls += 1;
   if (route === "embedding") {
@@ -447,6 +455,7 @@ function fixtureFault(payload) {
   const structuredContent = structuredInputs.flatMap((item) => [
     ...(Array.isArray(item?.contexts) ? item.contexts.map((context) => context?.content) : []),
     ...(Array.isArray(item?.evidence) ? item.evidence.map((item) => item?.content) : []),
+    JSON.stringify(item),
   ]);
   const serialized = [...evidence.map((item) => String(item?.content || "")), ...structuredContent.map((item) => String(item || "")), ...embeddingInputs.map((item) => String(item || ""))].join("\n");
   const match = serialized.match(/\[fixture-fault:([a-z0-9_-]+)\]/i);

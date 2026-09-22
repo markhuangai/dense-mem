@@ -48,6 +48,27 @@ func (e runtimeWorkerFailure) Error() string { return "runtime worker failed" }
 
 func (e runtimeWorkerFailure) Unwrap() error { return e.cause }
 
+type aiSessionModels struct {
+	remember         string
+	conflictReview   string
+	dreamGraph       string
+	dreamEvidence    string
+	communitySummary string
+}
+
+func aiSessionModelsForConfig(cfg *config.Config) aiSessionModels {
+	if cfg == nil {
+		return aiSessionModels{}
+	}
+	return aiSessionModels{
+		remember:         cfg.GetAIRememberModel(),
+		conflictReview:   cfg.GetAIConflictReviewModel(),
+		dreamGraph:       cfg.GetAIDreamGraphModel(),
+		dreamEvidence:    cfg.GetAIDreamEvidenceModel(),
+		communitySummary: cfg.GetAICommunitySummaryModel(),
+	}
+}
+
 func RunActiveServer(
 	processCtx context.Context,
 	startupCtx context.Context,
@@ -225,12 +246,16 @@ func RunActiveServer(
 	searchApplication := buildSearchProviders(cfg, searchRepo, searchContract, knowledgeStore, discoverabilityMetrics, logger)
 	openaiProvider := searchApplication.EmbeddingProvider
 	retryEmbedder := searchApplication.RetryEmbedding
+	sessionModels := aiSessionModelsForConfig(&cfg)
 	assessmentLimits := assessorprovider.SemanticAssessmentLimitsForConfig(&cfg)
+	assessmentLimits.ProviderModel = sessionModels.remember
+	conflictAssessmentLimits := assessmentLimits
+	conflictAssessmentLimits.ProviderModel = sessionModels.conflictReview
 	aiHTTPClient := &nethttp.Client{Timeout: time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second}
 	aiConcurrencyGate := modelprovider.NewConcurrencyGate(config.AIVerifierMaxConcurrency(&cfg))
-	verifierProvider := verifier.NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGate(&cfg, aiHTTPClient, verifier.SemanticAssessmentLimits(assessmentLimits), aiConcurrencyGate)
+	verifierProvider := verifier.NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, verifier.SemanticAssessmentLimits(conflictAssessmentLimits), aiConcurrencyGate, sessionModels.conflictReview)
 	verifierProvider.SetMetrics(discoverabilityMetrics)
-	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(&cfg, aiHTTPClient, assessmentLimits, aiConcurrencyGate)
+	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, assessmentLimits, aiConcurrencyGate, sessionModels.remember)
 	assessorProvider.SetMetrics(discoverabilityMetrics)
 	conflictReviewRunner, err := buildConflictReviewApplication(conflictReviewApplicationDependencies{
 		Store:            conflictStore,
@@ -238,7 +263,7 @@ func RunActiveServer(
 		Embeddings:       retryEmbedder,
 		EmbeddingTimeout: time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
 		Timezone:         cfg.GetAppTimezone(),
-		Limits:           conflictassessment.SemanticAssessmentLimits(assessmentLimits),
+		Limits:           conflictassessment.SemanticAssessmentLimits(conflictAssessmentLimits),
 		Metrics:          discoverabilityMetrics,
 	})
 	if err != nil {
@@ -271,11 +296,12 @@ func RunActiveServer(
 		AppConfig:              appConfigService,
 		Teams:                  teamService,
 		CommunitySummary: communitySummaryProvider{
-			model:    cfg.GetAIVerifierModel(),
+			model:    sessionModels.communitySummary,
 			complete: verifierProvider.StructuredChatJSON,
 		},
 		DreamEvidenceStore:  dreamStore,
-		DreamModel:          cfg.GetAIVerifierModel(),
+		DreamGraphModel:     sessionModels.dreamGraph,
+		DreamEvidenceModel:  sessionModels.dreamEvidence,
 		ProviderCycleLease:  dreamProviderCycleLease(cfg),
 		CorrectionTimeout:   time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
 		CorrectionExecutor:  buildSemanticWriteCorrectionExecutor(openaiProvider),
