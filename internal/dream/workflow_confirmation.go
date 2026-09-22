@@ -192,6 +192,9 @@ func (s *service) resolveConfirmation(
 	if err != nil {
 		var processErr *rememberapp.RememberProcessError
 		if !errors.As(err, &processErr) || processErr.Result == nil {
+			s.recordHypothesisDiagnostic(ctx, record, "confirmation", "failed", err.Error(), map[string]any{
+				"decision": decision,
+			})
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}

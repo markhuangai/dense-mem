@@ -32,6 +32,7 @@ func appendRunDiagnosticPhase(result *RunCycleResult, phase, outcome, cause stri
 		return
 	}
 	if len(result.diagnosticPhases) >= 256 {
+		result.diagnosticPhasesTruncated = true
 		return
 	}
 	result.diagnosticPhases = append(result.diagnosticPhases, runDiagnosticPhase{
@@ -44,6 +45,7 @@ func appendRunDiagnosticHypothesisPhase(result *RunCycleResult, phase, outcome, 
 		return
 	}
 	if len(result.diagnosticPhases) >= 256 {
+		result.diagnosticPhasesTruncated = true
 		return
 	}
 	result.diagnosticPhases = append(result.diagnosticPhases, runDiagnosticPhase{
@@ -58,7 +60,7 @@ func (s *service) recordRunDiagnostic(ctx context.Context, result *RunCycleResul
 	if len(result.providerPayload) == 0 {
 		if recorder := dreamDiagnosticRecorderFromContext(ctx); recorder != nil {
 			result.providerPayload = recorder.Payload()
-			result.providerCaptureState, _ = recorder.State()
+			result.providerCaptureState, result.providerCaptureReason = recorder.State()
 		}
 	}
 	outcome := result.Status
@@ -83,6 +85,9 @@ func (s *service) recordRunDiagnostic(ctx context.Context, result *RunCycleResul
 		"evaluated_evidence_targets": result.EvaluatedEvidenceTargets,
 		"outcome_summary":            result.OutcomeSummary,
 	}
+	if result.diagnosticPhasesTruncated {
+		details["phase_trace_truncated"] = true
+	}
 	if result.Error != "" {
 		details["error_code"] = diagnosticErrorCode(result.Error)
 	}
@@ -90,11 +95,14 @@ func (s *service) recordRunDiagnostic(ctx context.Context, result *RunCycleResul
 	if state == "" {
 		state = "not_captured"
 	}
-	reason := "provider_payload_not_retained"
-	if state == "unavailable" {
-		reason = "credential_protection_unavailable"
-	} else if len(result.providerPayload) > 2 {
-		reason = ""
+	reason := result.providerCaptureReason
+	if reason == "" {
+		reason = "provider_payload_not_retained"
+		if state == "unavailable" {
+			reason = "credential_protection_unavailable"
+		} else if len(result.providerPayload) > 2 {
+			reason = ""
+		}
 	}
 	if result.Error != "" {
 		if state == "not_captured" {

@@ -134,18 +134,23 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 	}))
 	diagnosticPage, err := diagnosticsStore.ListDreamDiagnostics(ctx, dreamcontract.DreamDiagnosticListInput{TeamID: teamID, RunID: run.RunID, Limit: 25})
 	require.NoError(t, err)
+	proposalSeen, dispositionSeen := false, false
 	for _, diagnostic := range diagnosticPage.Items {
 		if diagnostic.Phase == "proposal" {
+			proposalSeen = true
 			require.Equal(t, "not_captured", diagnostic.CaptureState)
 			require.Equal(t, "phase_metadata_only", diagnostic.CaptureReason)
 			require.Equal(t, "created", diagnostic.Outcome)
 		}
 		if diagnostic.Phase == "disposition" {
+			dispositionSeen = true
 			require.Equal(t, "not_captured", diagnostic.CaptureState)
 			require.Equal(t, "phase_metadata_only", diagnostic.CaptureReason)
 			require.Equal(t, "proposed", diagnostic.Outcome)
 		}
 	}
+	require.True(t, proposalSeen)
+	require.True(t, dispositionSeen)
 
 	var hiddenDerivations, hiddenEvaluations int
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, otherTeamID, otherOwnerID, func(tx *gorm.DB) error {

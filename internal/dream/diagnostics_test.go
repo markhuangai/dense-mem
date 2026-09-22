@@ -211,6 +211,21 @@ func TestRecordRunDiagnosticPersistsPhaseTraceAndCaptureFailureMarker(t *testing
 	require.Equal(t, "target", repo.recorded[2].Phase)
 }
 
+func TestRecordRunDiagnosticPreservesProviderCaptureReason(t *testing.T) {
+	teamID, runID := uuid.NewString(), uuid.NewString()
+	recorder := newDreamDiagnosticExchangeRecorder(observability.NewCredentialProtector())
+	recorder.bytes = dreamDiagnosticRunPayloadLimit
+	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{ResponseBody: []byte(`{"ok":true}`)})
+	payload := recorder.Payload()
+	state, reason := recorder.State()
+	repo := &diagnosticRepositoryStub{}
+	svc := &service{deps: Dependencies{Diagnostics: repo}}
+	result := &RunCycleResult{TeamID: teamID, RunID: runID, Status: "completed", providerPayload: payload, providerCaptureState: state, providerCaptureReason: reason}
+	svc.recordRunDiagnostic(context.Background(), result)
+	require.Equal(t, "truncated", repo.recorded[0].CaptureState)
+	require.Equal(t, "run_payload_budget_exceeded", repo.recorded[0].CaptureReason)
+}
+
 func TestDiagnosticRelationshipResultsOmitCallerReferences(t *testing.T) {
 	projected := diagnosticRelationshipResults([]rememberapp.SubmissionRelationshipResult{{
 		RelationshipRef: "caller-secret-token",
@@ -257,6 +272,7 @@ func TestDiagnosticPhaseHelpersAndRecorderBranches(t *testing.T) {
 	appendRunDiagnosticPhase(result, "ignored", "ok", "", nil)
 	appendRunDiagnosticHypothesisPhase(result, "ignored", "ok", "", uuid.NewString(), nil)
 	require.Len(t, result.diagnosticPhases, 256)
+	require.True(t, result.diagnosticPhasesTruncated)
 
 	teamID, runID := uuid.NewString(), uuid.NewString()
 	repo := &diagnosticRepositoryStub{}

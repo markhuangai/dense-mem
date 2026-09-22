@@ -112,6 +112,7 @@ func TestDreamDiagnosticsAreTeamScopedAndExpirePayloads(t *testing.T) {
 		`, teamID, expiredID).Error
 	}))
 	deleted, err = store.PurgeExpiredDreamDiagnostics(ctx, 25)
+	require.NoError(t, err)
 	require.Equal(t, 1, deleted)
 	_, err = store.GetDreamDiagnostic(ctx, teamID, run.RunID, expiredID)
 	require.ErrorIs(t, err, dreamcontract.ErrDreamDiagnosticNotFound)

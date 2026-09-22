@@ -184,7 +184,7 @@ func TestResolveFeedbackReplaysCompletedRememberResult(t *testing.T) {
 	hypothesisID := uuid.NewString()
 	ingestID := uuid.NewString()
 	repo := &dreamRepositoryStub{getRecord: dreamcontract.HypothesisRecord{
-		TeamID: teamID.String(), HypothesisID: hypothesisID, CreatedByProfileID: ownerID.String(),
+		TeamID: teamID.String(), HypothesisID: hypothesisID, CreatedByProfileID: ownerID.String(), CycleRunID: uuid.NewString(),
 		Status: string(domain.DreamStatusProposed), Statement: "Dense-Mem may use PostgreSQL.",
 	}}
 	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), ingestID)}
@@ -213,6 +213,29 @@ func TestResolveFeedbackReplaysCompletedRememberResult(t *testing.T) {
 	require.Equal(t, request.IdempotencyKey, remember.requests[0].IdempotencyKey)
 	require.Equal(t, request.IdempotencyKey, remember.requests[1].IdempotencyKey)
 	require.Equal(t, remember.requests[0].Evidence, remember.requests[1].Evidence)
+}
+
+func TestResolveFeedbackRecordsConfirmationFailureWhenRememberReturnsOrdinaryError(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	hypothesisID := uuid.NewString()
+	repo := &dreamRepositoryStub{getRecord: dreamcontract.HypothesisRecord{
+		TeamID: teamID.String(), HypothesisID: hypothesisID, CreatedByProfileID: ownerID.String(), CycleRunID: uuid.NewString(),
+		Status: string(domain.DreamStatusProposed), Statement: "Dense-Mem may use PostgreSQL.",
+	}}
+	diagnostics := &diagnosticRepositoryStub{}
+	remember := &rememberServiceStub{err: errors.New("database unavailable")}
+	svc := New(Dependencies{Store: repo, Remember: remember, Diagnostics: diagnostics})
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID: hypothesisID, Decision: "confirm_true", IdempotencyKey: "ordinary-error",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent evidence."}},
+	})
+	require.Error(t, err)
+	require.NotEmpty(t, diagnostics.recorded)
+	last := diagnostics.recorded[len(diagnostics.recorded)-1]
+	require.Equal(t, "confirmation", last.Phase)
+	require.Equal(t, "failed", last.Outcome)
+	require.Equal(t, "error_present:sha256:0a67cc6110b121fb", last.Cause)
 }
 
 func TestResolveFeedbackReplaysPreUpgradeSubmittedRememberWithoutCallingRemember(t *testing.T) {

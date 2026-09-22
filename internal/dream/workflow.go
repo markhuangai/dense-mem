@@ -42,6 +42,8 @@ type dreamGenerationResult struct {
 	persistencePolicyRejected  int
 	providerPayload            []byte
 	providerCaptureState       string
+	providerCaptureReason      string
+	diagnosticPhasesTruncated  bool
 	diagnosticPhases           []runDiagnosticPhase
 }
 
@@ -266,6 +268,8 @@ func applyDreamGenerationDiagnostics(
 	result.ProviderProposals = generation.providerProposals
 	result.providerPayload = append([]byte(nil), generation.providerPayload...)
 	result.providerCaptureState = generation.providerCaptureState
+	result.providerCaptureReason = generation.providerCaptureReason
+	result.diagnosticPhasesTruncated = generation.diagnosticPhasesTruncated
 	result.diagnosticPhases = append([]runDiagnosticPhase(nil), generation.diagnosticPhases...)
 	blockedTargets := max(0, generation.candidateTargets-generation.availableTargets)
 	if generation.targetLookupFailed {
@@ -539,7 +543,7 @@ func (s *service) generateDreamProposals(
 	}
 	if err != nil {
 		result.providerPayload = exchangeRecorder.Payload()
-		result.providerCaptureState, _ = exchangeRecorder.State()
+		result.providerCaptureState, result.providerCaptureReason = exchangeRecorder.State()
 		result.providerFailed = true
 		result.diagnosticPhases = append(result.diagnosticPhases, runDiagnosticPhase{phase: "provider", outcome: "failed", cause: err.Error(), details: map[string]any{
 			"model": model, "provider_turns": diagnostics.ProviderTurns, "provider_proposals": diagnostics.ProviderProposals,
@@ -554,7 +558,7 @@ func (s *service) generateDreamProposals(
 	result.providerOutputTokens = diagnostics.ProviderOutputTokens
 	result.providerProposals = diagnostics.ProviderProposals
 	result.providerPayload = exchangeRecorder.Payload()
-	result.providerCaptureState, _ = exchangeRecorder.State()
+	result.providerCaptureState, result.providerCaptureReason = exchangeRecorder.State()
 	result.diagnosticPhases = append(result.diagnosticPhases,
 		runDiagnosticPhase{phase: "provider", outcome: "completed", details: map[string]any{
 			"model": model, "provider_turns": diagnostics.ProviderTurns, "provider_proposals": diagnostics.ProviderProposals,

@@ -306,11 +306,12 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
           ) : (
             <div className="table-wrap">
               <table className="data-table dream-diagnostics-table">
-                <thead><tr><th>Phase</th><th>Outcome</th><th>Cause</th><th>Capture</th><th>Details</th><th>Payload</th></tr></thead>
+                <thead><tr><th>Phase</th><th>Hypothesis</th><th>Outcome</th><th>Cause</th><th>Capture</th><th>Details</th><th>Payload</th></tr></thead>
                 <tbody>
                   {diagnostics.map((diagnostic) => (
                     <tr key={diagnostic.capture_id}>
                       <td>{diagnostic.phase}</td>
+                      <td><code>{diagnostic.hypothesis_id?.slice(0, 8) || "-"}</code></td>
                       <td>{diagnostic.outcome}</td>
                       <td>{diagnostic.cause || "-"}</td>
                       <td>{diagnostic.capture_state}{diagnostic.capture_reason ? ` · ${diagnostic.capture_reason}` : ""}</td>
@@ -325,6 +326,7 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
           {selectedDiagnostic && (
             <div className="dream-diagnostic-detail" role="status">
               <strong>Selected capture</strong>
+              <span>Hypothesis: {selectedDiagnostic.hypothesis_id || "-"}</span>
               <span>{selectedDiagnostic.capture_state}{selectedDiagnostic.capture_reason ? ` · ${selectedDiagnostic.capture_reason}` : ""}</span>
               <code>{selectedDiagnostic.payload ? JSON.stringify(selectedDiagnostic.payload) : "Payload unavailable or expired"}</code>
             </div>
