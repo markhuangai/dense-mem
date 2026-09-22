@@ -16,6 +16,30 @@ import (
 
 const dreamConfirmationFinalizationTimeout = 5 * time.Second
 
+type deferredHypothesisDiagnostic struct {
+	record  *dreamcontract.HypothesisRecord
+	phase   string
+	outcome string
+	cause   string
+	details map[string]any
+}
+
+func (d *deferredHypothesisDiagnostic) capture(record *dreamcontract.HypothesisRecord, phase, outcome, cause string, details map[string]any) {
+	if d == nil {
+		return
+	}
+	*d = deferredHypothesisDiagnostic{
+		record: record, phase: phase, outcome: outcome, cause: cause, details: details,
+	}
+}
+
+func (d *deferredHypothesisDiagnostic) recordAfterLock(s *service, ctx context.Context) {
+	if d == nil || d.record == nil {
+		return
+	}
+	s.recordHypothesisDiagnostic(ctx, d.record, d.phase, d.outcome, d.cause, d.details)
+}
+
 func isDreamConfirmationDecision(decision string) bool {
 	switch decision {
 	case "confirm_true", "confirm_false", "promote_candidate":
@@ -43,14 +67,16 @@ func (s *service) resolveConfirmationWithLock(
 	req ResolveFeedbackRequest,
 ) (*ResolveFeedbackResult, error) {
 	var result *ResolveFeedbackResult
+	var diagnostic deferredHypothesisDiagnostic
 	err := s.deps.Store.WithHypothesisConfirmationLock(ctx, teamID, dreamID, func(store dreamcontract.DreamRepository) error {
 		var err error
-		result, err = s.resolveConfirmation(ctx, store, teamID, actorProfileID, dreamID, decision, req)
+		result, err = s.resolveConfirmation(ctx, store, teamID, actorProfileID, dreamID, decision, req, &diagnostic)
 		return err
 	})
 	if errors.Is(err, dreamcontract.ErrDreamConfirmationBusy) {
 		return nil, &ConfirmationBusyError{Decision: decision}
 	}
+	diagnostic.recordAfterLock(s, ctx)
 	return result, err
 }
 
@@ -63,14 +89,16 @@ func (s *service) resolveLifecycleFeedbackWithLock(
 	req ResolveFeedbackRequest,
 ) (*ResolveFeedbackResult, error) {
 	var result *ResolveFeedbackResult
+	var diagnostic deferredHypothesisDiagnostic
 	err := s.deps.Store.WithHypothesisConfirmationLock(ctx, teamID, dreamID, func(store dreamcontract.DreamRepository) error {
 		var err error
-		result, err = s.resolveLifecycleFeedback(ctx, store, teamID, actorProfileID, dreamID, decision, req)
+		result, err = s.resolveLifecycleFeedback(ctx, store, teamID, actorProfileID, dreamID, decision, req, &diagnostic)
 		return err
 	})
 	if errors.Is(err, dreamcontract.ErrDreamConfirmationBusy) {
 		return nil, &ConfirmationBusyError{Decision: decision}
 	}
+	diagnostic.recordAfterLock(s, ctx)
 	return result, err
 }
 
@@ -82,6 +110,7 @@ func (s *service) resolveLifecycleFeedback(
 	dreamID string,
 	decision string,
 	req ResolveFeedbackRequest,
+	diagnostic *deferredHypothesisDiagnostic,
 ) (*ResolveFeedbackResult, error) {
 	record, err := store.GetHypothesis(ctx, dreamcontract.GetHypothesisInput{
 		TeamID:       teamID,
@@ -115,7 +144,7 @@ func (s *service) resolveLifecycleFeedback(
 	if feedbackErr != nil {
 		feedbackOutcome = "failed"
 	}
-	s.recordHypothesisDiagnostic(ctx, record, "feedback", feedbackOutcome, cause, map[string]any{
+	diagnostic.capture(record, "feedback", feedbackOutcome, cause, map[string]any{
 		"status_before":    record.Status,
 		"status_after":     status,
 		"feedback_present": strings.TrimSpace(req.Feedback) != "",
@@ -144,6 +173,7 @@ func (s *service) resolveConfirmation(
 	dreamID string,
 	decision string,
 	req ResolveFeedbackRequest,
+	diagnostic *deferredHypothesisDiagnostic,
 ) (*ResolveFeedbackResult, error) {
 	record, err := store.GetHypothesis(ctx, dreamcontract.GetHypothesisInput{
 		TeamID:       teamID,
@@ -196,7 +226,7 @@ func (s *service) resolveConfirmation(
 	if err != nil {
 		var processErr *rememberapp.RememberProcessError
 		if !errors.As(err, &processErr) || processErr.Result == nil {
-			s.recordHypothesisDiagnostic(ctx, record, "confirmation", "failed", err.Error(), map[string]any{
+			diagnostic.capture(record, "confirmation", "failed", err.Error(), map[string]any{
 				"decision": decision,
 			})
 			s.recordDreamFeedback(ctx, decision, dream, "error")
@@ -212,7 +242,7 @@ func (s *service) resolveConfirmation(
 	if !completed {
 		applyDreamTerminalRetryGuidance(remember, record.HypothesisID, decision)
 		s.recordDreamFeedback(ctx, decision, dream, "error")
-		s.recordHypothesisDiagnostic(ctx, record, "confirmation", "failed", "remember did not complete", map[string]any{
+		diagnostic.capture(record, "confirmation", "failed", "remember did not complete", map[string]any{
 			"decision": decision,
 		})
 		return &ResolveFeedbackResult{Dream: dream, Memory: remember}, nil
@@ -248,7 +278,7 @@ func (s *service) resolveConfirmation(
 	if relationshipResultsTruncated {
 		details["relationship_results_truncated"] = true
 	}
-	s.recordHypothesisDiagnostic(ctx, record, "confirmation", confirmationOutcome, cause, details)
+	diagnostic.capture(record, "confirmation", confirmationOutcome, cause, details)
 	return result, feedbackErr
 }
 
