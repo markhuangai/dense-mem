@@ -127,7 +127,7 @@ func (s *service) runTeamCycle(
 			result.Status = "error"
 			result.Error = err.Error()
 			appendRunDiagnosticPhase(result, "disposition", "failed", err.Error(), map[string]any{"finalization": "complete_cycle"})
-			s.recordRunDiagnostic(ctx, result)
+			s.recordRunDiagnosticAfterCompletion(ctx, result, err)
 			return result, err
 		}
 		s.recordRunDiagnostic(ctx, result)
@@ -183,7 +183,7 @@ func (s *service) runClaimedTeamCycle(
 			EvaluatedEvidenceTargets: result.EvaluatedEvidenceTargets,
 		})
 		if completeErr != nil {
-			s.recordRunDiagnostic(ctx, result)
+			s.recordRunDiagnosticAfterCompletion(ctx, result, completeErr)
 			return result, errors.Join(err, completeErr)
 		}
 		s.recordRunDiagnostic(ctx, result)
@@ -229,9 +229,7 @@ func (s *service) runClaimedTeamCycle(
 		err = completeErr
 		result.Status = "error"
 		result.Error = err.Error()
-		if !errors.Is(err, dreamcontract.ErrDreamCycleLeaseLost) {
-			s.recordRunDiagnostic(ctx, result)
-		}
+		s.recordRunDiagnosticAfterCompletion(ctx, result, err)
 		return result, err
 	}
 	if errors.Is(completeErr, dreamcontract.ErrDreamCycleLeaseLost) {

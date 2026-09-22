@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"time"
 
@@ -202,6 +203,13 @@ func (s *service) recordRunDiagnostic(ctx context.Context, result *RunCycleResul
 			observability.String("error_code", "dream_diagnostic_capture_unavailable"),
 		)
 	}
+}
+
+func (s *service) recordRunDiagnosticAfterCompletion(ctx context.Context, result *RunCycleResult, completionErr error) {
+	if errors.Is(completionErr, dreamcontract.ErrDreamCycleLeaseLost) {
+		return
+	}
+	s.recordRunDiagnostic(ctx, result)
 }
 
 func diagnosticErrorCode(value string) string {

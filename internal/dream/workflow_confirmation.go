@@ -111,7 +111,11 @@ func (s *service) resolveLifecycleFeedback(
 	if feedbackErr != nil {
 		cause = feedbackErr.Error()
 	}
-	s.recordHypothesisDiagnostic(ctx, record, "feedback", decision, cause, map[string]any{
+	feedbackOutcome := decision
+	if feedbackErr != nil {
+		feedbackOutcome = "failed"
+	}
+	s.recordHypothesisDiagnostic(ctx, record, "feedback", feedbackOutcome, cause, map[string]any{
 		"status_before":    record.Status,
 		"status_after":     status,
 		"feedback_present": strings.TrimSpace(req.Feedback) != "",
@@ -226,7 +230,11 @@ func (s *service) resolveConfirmation(
 	if feedbackErr != nil {
 		cause = feedbackErr.Error()
 	}
-	s.recordHypothesisDiagnostic(ctx, record, "confirmation", decision, cause, map[string]any{
+	confirmationOutcome := decision
+	if feedbackErr != nil {
+		confirmationOutcome = "failed"
+	}
+	s.recordHypothesisDiagnostic(ctx, record, "confirmation", confirmationOutcome, cause, map[string]any{
 		"submitted_ingest_id": ingestID,
 		"decision":            decision,
 		"relationship_results": diagnosticRelationshipResults(func() []rememberapp.SubmissionRelationshipResult {

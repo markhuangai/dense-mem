@@ -82,7 +82,7 @@ func (s *service) runScheduledEvidenceCycle(ctx context.Context, teamID string, 
 			result.Status = "error"
 			result.Error = err.Error()
 			appendRunDiagnosticPhase(result, "disposition", "failed", err.Error(), map[string]any{"finalization": "complete_cycle"})
-			s.recordRunDiagnostic(ctx, result)
+			s.recordRunDiagnosticAfterCompletion(ctx, result, err)
 			return result, err
 		}
 		s.recordRunDiagnostic(ctx, result)
@@ -144,7 +144,7 @@ func (s *service) RecoverScheduledEvidenceCycle(ctx context.Context, teamID stri
 			result.Status = "error"
 			result.Error = err.Error()
 			appendRunDiagnosticPhase(result, "disposition", "failed", err.Error(), map[string]any{"finalization": "complete_cycle"})
-			s.recordRunDiagnostic(ctx, result)
+			s.recordRunDiagnosticAfterCompletion(ctx, result, err)
 			return result, err
 		}
 		s.recordRunDiagnostic(ctx, result)
@@ -753,9 +753,7 @@ func (s *service) finishEvidenceCycle(
 		if runErr == nil {
 			result.Error = evidenceCyclePublicError(completeErr)
 		}
-		if !errors.Is(completeErr, dreamcontract.ErrDreamCycleLeaseLost) {
-			s.recordRunDiagnostic(ctx, result)
-		}
+		s.recordRunDiagnosticAfterCompletion(ctx, result, completeErr)
 		if runErr != nil {
 			return result, errors.Join(runErr, completeErr)
 		}

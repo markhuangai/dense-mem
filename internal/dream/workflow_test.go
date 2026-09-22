@@ -940,6 +940,26 @@ func TestRunClaimedTeamCycleDoesNotRecordDiagnosticsAfterLeaseLoss(t *testing.T)
 	require.Empty(t, diagnostics.recorded)
 }
 
+func TestRunClaimedTeamCycleDoesNotRecordInputFailureAfterLeaseLoss(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	repo := &dreamRepositoryStub{
+		listInputsErr: errors.New("input lookup failed"),
+		completeErr:   dreamcontract.ErrDreamCycleLeaseLost,
+	}
+	diagnostics := &diagnosticRepositoryStub{}
+	svc := New(Dependencies{
+		Store: repo, Diagnostics: diagnostics,
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5}},
+	}).(*service)
+
+	result, err := svc.RunCycle(dreamTestContext(teamID, ownerID), "ignored-profile", RunCycleRequest{Manual: true})
+
+	require.ErrorContains(t, err, "input lookup failed")
+	require.Equal(t, "error", result.Status)
+	require.Empty(t, diagnostics.recorded)
+}
+
 func TestResolveFeedbackErrorBranches(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()

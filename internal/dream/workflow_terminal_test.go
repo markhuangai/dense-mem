@@ -238,6 +238,58 @@ func TestResolveFeedbackRecordsConfirmationFailureWhenRememberReturnsOrdinaryErr
 	require.Equal(t, "error_present:sha256:0a67cc6110b121fb", last.Cause)
 }
 
+func TestResolveFeedbackLabelsHypothesisFinalizationFailureAsFailed(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	hypothesisID := uuid.NewString()
+	repo := &dreamRepositoryStub{
+		getRecord: dreamcontract.HypothesisRecord{
+			TeamID: teamID.String(), HypothesisID: hypothesisID, CreatedByProfileID: ownerID.String(), CycleRunID: uuid.NewString(),
+			Status: string(domain.DreamStatusProposed), Statement: "Dense-Mem may use PostgreSQL.",
+		},
+		submitErrs: []error{errors.New("submit failed"), errors.New("submit retry failed")},
+	}
+	diagnostics := &diagnosticRepositoryStub{}
+	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), uuid.NewString())}
+	svc := New(Dependencies{Store: repo, Remember: remember, Diagnostics: diagnostics})
+
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID: hypothesisID, Decision: "confirm_true", IdempotencyKey: "submit-failure",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent evidence."}},
+	})
+
+	require.Error(t, err)
+	require.NotEmpty(t, diagnostics.recorded)
+	last := diagnostics.recorded[len(diagnostics.recorded)-1]
+	require.Equal(t, "confirmation", last.Phase)
+	require.Equal(t, "failed", last.Outcome)
+}
+
+func TestResolveLifecycleFeedbackLabelsFinalizationFailureAsFailed(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	hypothesisID := uuid.NewString()
+	repo := &dreamRepositoryStub{
+		getRecord: dreamcontract.HypothesisRecord{
+			TeamID: teamID.String(), HypothesisID: hypothesisID, CreatedByProfileID: ownerID.String(), CycleRunID: uuid.NewString(),
+			Status: string(domain.DreamStatusProposed), Statement: "Dense-Mem may use PostgreSQL.",
+		},
+		updateErr: errors.New("update failed"),
+	}
+	diagnostics := &diagnosticRepositoryStub{}
+	svc := New(Dependencies{Store: repo, Diagnostics: diagnostics})
+
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID: hypothesisID, Decision: "reject", Feedback: "no longer useful",
+	})
+
+	require.Error(t, err)
+	require.NotEmpty(t, diagnostics.recorded)
+	last := diagnostics.recorded[len(diagnostics.recorded)-1]
+	require.Equal(t, "feedback", last.Phase)
+	require.Equal(t, "failed", last.Outcome)
+}
+
 func TestResolveFeedbackReplaysPreUpgradeSubmittedRememberWithoutCallingRemember(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()

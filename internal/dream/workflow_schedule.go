@@ -87,7 +87,7 @@ func (s *service) recoverScheduledCycle(ctx context.Context, teamID string) (*Ru
 			result.Status = "error"
 			result.Error = err.Error()
 			appendRunDiagnosticPhase(result, "disposition", "failed", err.Error(), map[string]any{"finalization": "complete_cycle"})
-			s.recordRunDiagnostic(ctx, result)
+			s.recordRunDiagnosticAfterCompletion(ctx, result, err)
 			return result, err
 		}
 		s.recordRunDiagnostic(ctx, result)
