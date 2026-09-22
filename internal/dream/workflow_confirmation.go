@@ -37,7 +37,7 @@ func (d *deferredHypothesisDiagnostic) recordAfterLock(s *service, ctx context.C
 	if d == nil || d.record == nil {
 		return
 	}
-	s.recordHypothesisDiagnostic(ctx, d.record, d.phase, d.outcome, d.cause, d.details)
+	s.recordHypothesisDiagnostic(context.WithoutCancel(ctx), d.record, d.phase, d.outcome, d.cause, d.details)
 }
 
 func isDreamConfirmationDecision(decision string) bool {
@@ -293,6 +293,9 @@ func (s *service) resolveConfirmation(
 	}
 	completed, ingestID, err := dreamRememberCompletion(remember)
 	if err != nil {
+		diagnostic.capture(record, "confirmation", "failed", err.Error(), map[string]any{
+			"decision": decision,
+		})
 		s.recordDreamFeedback(ctx, decision, dream, "error")
 		return nil, err
 	}

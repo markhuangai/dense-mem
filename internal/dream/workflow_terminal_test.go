@@ -105,6 +105,32 @@ func TestResolveFeedbackUsesExplicitRememberResultKind(t *testing.T) {
 	}
 }
 
+func TestResolveFeedbackRecordsMalformedTerminalResultDiagnostic(t *testing.T) {
+	teamID, ownerID := uuid.New(), uuid.New()
+	hypothesisID, runID := uuid.NewString(), uuid.NewString()
+	diagnostics := &diagnosticRepositoryStub{}
+	svc := New(Dependencies{
+		Store: &dreamRepositoryStub{getRecord: dreamcontract.HypothesisRecord{
+			TeamID: teamID.String(), HypothesisID: hypothesisID, CycleRunID: runID,
+			CreatedByProfileID: ownerID.String(), Status: string(domain.DreamStatusProposed),
+			Statement: "Dense-Mem may use PostgreSQL.",
+		}},
+		Remember:    &rememberServiceStub{result: &rememberapp.RememberResult{Kind: rememberapp.ResultKind("future")}},
+		Diagnostics: diagnostics,
+	})
+
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID: hypothesisID, Decision: "confirm_true",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "An independent deployment note."}},
+	})
+
+	require.ErrorContains(t, err, "terminal Remember result is required")
+	require.Len(t, diagnostics.recorded, 1)
+	require.Equal(t, "confirmation", diagnostics.recorded[0].Phase)
+	require.Equal(t, "failed", diagnostics.recorded[0].Outcome)
+	require.Equal(t, "confirm_true", diagnostics.recorded[0].Details["decision"])
+}
+
 func TestResolveFeedbackHonorsCancellationBeforeHypothesisFinalization(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()

@@ -104,6 +104,23 @@ func TestDreamConfirmationReplayMatchingBranches(t *testing.T) {
 	require.False(t, dreamConfirmationReplayMatches(record, req, "confirm_false"))
 }
 
+func TestDeferredHypothesisDiagnosticPersistsAfterCallerCancellation(t *testing.T) {
+	teamID, runID, hypothesisID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	diagnostics := &diagnosticRepositoryStub{rejectCanceled: true}
+	deferred := deferredHypothesisDiagnostic{}
+	deferred.capture(&dreamcontract.HypothesisRecord{
+		TeamID: teamID, CycleRunID: runID, HypothesisID: hypothesisID,
+	}, "confirmation", "failed", "terminal result rejected", map[string]any{"decision": "confirm_true"})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	deferred.recordAfterLock(&service{deps: Dependencies{Diagnostics: diagnostics}}, ctx)
+
+	require.Len(t, diagnostics.recorded, 1)
+	require.NoError(t, diagnostics.phaseContextErr)
+	require.Equal(t, "confirmation", diagnostics.recorded[0].Phase)
+}
+
 func TestResolveFeedbackErrorBranches(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()

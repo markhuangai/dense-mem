@@ -65,6 +65,39 @@ func TestControlPortalDreamDiagnosticsUsesScopedRunAndCursor(t *testing.T) {
 	require.Equal(t, "abc", service.cursor)
 }
 
+func TestControlPortalDreamDiagnosticDetailPreventsCachingAndRecordsAccess(t *testing.T) {
+	e := echo.New()
+	teamID, runID, diagnosticID := uuid.New(), uuid.New(), uuid.New()
+	service := &dreamDiagnosticsServiceStub{item: &dream.DreamDiagnostic{}}
+	logger := &rememberAttemptLogCapture{}
+	h := &controlPortalHandler{dreamDiagnostics: service, logger: logger}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("teamId", "runId", "diagnosticId")
+	c.SetParamValues(teamID.String(), runID.String(), diagnosticID.String())
+
+	require.NoError(t, h.getTeamDreamDiagnostic(c))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
+	require.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
+	require.Equal(t, teamID.String(), service.teamID)
+	require.Equal(t, runID.String(), service.runID)
+	require.Equal(t, diagnosticID.String(), service.item.CaptureID)
+
+	var access *rememberAttemptLogEntry
+	for index := range logger.entries {
+		if logger.entries[index].message == "control_dream_diagnostic_access" {
+			access = &logger.entries[index]
+			break
+		}
+	}
+	require.NotNil(t, access)
+	require.Equal(t, teamID.String(), logAttrValue(access.attrs, "team_id"))
+	require.Equal(t, runID.String(), logAttrValue(access.attrs, "run_id"))
+	require.Equal(t, diagnosticID.String(), logAttrValue(access.attrs, "diagnostic_id"))
+}
+
 func TestControlPortalDreamDiagnosticsRejectsInvalidLimit(t *testing.T) {
 	e := echo.New()
 	teamID, runID := uuid.New(), uuid.New()

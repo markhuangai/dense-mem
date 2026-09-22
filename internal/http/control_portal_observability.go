@@ -13,7 +13,9 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/dream"
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
+	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 )
 
@@ -177,6 +179,18 @@ func (h *controlPortalHandler) getTeamDreamDiagnostic(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	if h.logger != nil {
+		h.logger.Info("control_dream_diagnostic_access",
+			httpcontract.String("actor", controlPortalActorFromContext(c.Request().Context())),
+			httpcontract.String("actor_identity_id", controlPortalActorIdentityFromContext(c.Request().Context())),
+			httpcontract.String("team_id", teamID.String()),
+			httpcontract.String("run_id", runID.String()),
+			httpcontract.String("diagnostic_id", diagnosticID.String()),
+			httpcontract.String("correlation_id", httpmw.GetCorrelationID(c.Request().Context())),
+		)
+	}
+	c.Response().Header().Set("Cache-Control", "no-store")
+	c.Response().Header().Set("X-Content-Type-Options", "nosniff")
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": diagnostic})
 }
 

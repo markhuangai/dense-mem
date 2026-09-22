@@ -30,10 +30,16 @@ type diagnosticRepositoryStub struct {
 	purgeErr        error
 	purgeCalled     chan struct{}
 	purgeSequence   []int
+	phaseContextErr error
+	rejectCanceled  bool
 }
 
-func (s *diagnosticRepositoryStub) RecordDreamDiagnostic(_ context.Context, input dreamcontract.DreamDiagnosticCaptureInput) error {
+func (s *diagnosticRepositoryStub) RecordDreamDiagnostic(ctx context.Context, input dreamcontract.DreamDiagnosticCaptureInput) error {
+	s.phaseContextErr = ctx.Err()
 	s.recorded = append(s.recorded, input)
+	if s.rejectCanceled && s.phaseContextErr != nil {
+		return s.phaseContextErr
+	}
 	if s.failPhaseAlways {
 		return context.DeadlineExceeded
 	}

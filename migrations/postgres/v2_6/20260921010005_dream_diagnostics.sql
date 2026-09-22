@@ -105,6 +105,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'dream_path_evaluations_run_fk'
+          AND conrelid = 'dream_path_evaluations'::regclass
     ) THEN
         ALTER TABLE dream_path_evaluations
             ADD CONSTRAINT dream_path_evaluations_run_fk

@@ -58,9 +58,12 @@ for (const phase of ["run", "target", "provider", "validation", "proposal", "dis
   assertEqual(diagnosticPhases.has(phase), true, `Dream diagnostic phase ${phase}`);
 }
 const retainedCapture = runDiagnostics.data.items.find((item) => item.capture_state !== "expired") ?? runDiagnostics.data.items[0];
-const retainedDetail = await controlJSON(`/teams/${teamID}/dreaming/runs/${scheduledRun.run_id}/diagnostics/${retainedCapture.capture_id}`);
-assertEqual(retainedDetail.data?.capture_id, retainedCapture.capture_id, "Dream diagnostic detail capture");
-assertEqual(retainedDetail.data?.run_id, scheduledRun.run_id, "Dream diagnostic detail run");
+const retainedDetail = await controlResponse(`/teams/${teamID}/dreaming/runs/${scheduledRun.run_id}/diagnostics/${retainedCapture.capture_id}`);
+assertEqual(retainedDetail.status, 200, "Dream diagnostic detail status");
+assertEqual(retainedDetail.body?.data?.capture_id, retainedCapture.capture_id, "Dream diagnostic detail capture");
+assertEqual(retainedDetail.body?.data?.run_id, scheduledRun.run_id, "Dream diagnostic detail run");
+assertEqual(retainedDetail.cacheControl, "no-store", "Dream diagnostic detail cache policy");
+assertEqual(retainedDetail.contentTypeOptions, "nosniff", "Dream diagnostic detail content type policy");
 const crossTeamDetail = await controlResponse(`/teams/${adverseTeam.teamID}/dreaming/runs/${scheduledRun.run_id}/diagnostics/${retainedCapture.capture_id}`);
 assertEqual(crossTeamDetail.status, 404, "cross-team Dream diagnostic detail");
 const hypothesisID = scheduledDream.dream_id;
@@ -621,7 +624,12 @@ async function controlResponse(path, options = {}) {
     },
   });
   const text = await response.text();
-  return { status: response.status, body: text ? JSON.parse(text) : {} };
+  return {
+    status: response.status,
+    body: text ? JSON.parse(text) : {},
+    cacheControl: response.headers.get("cache-control"),
+    contentTypeOptions: response.headers.get("x-content-type-options"),
+  };
 }
 
 async function userJSON(path) {
