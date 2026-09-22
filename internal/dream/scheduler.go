@@ -271,6 +271,16 @@ func (s *Scheduler) runEvidenceDue(ctx context.Context, teamID string, cfg Effec
 		return
 	}
 	if result == nil || result.Status == "skipped" {
+		s.markHourlyObserved(teamID, windowKey)
+		status := "nil"
+		runID := ""
+		if result != nil {
+			status = result.Status
+			runID = result.RunID
+		}
+		s.logInfo("dreaming scheduler: evidence cycle observed",
+			slog.String("team_id", teamID), slog.String("run_id", runID),
+			slog.String("window_key", windowKey), slog.String("status", status))
 		return
 	}
 	s.markHourlyObserved(teamID, windowKey)

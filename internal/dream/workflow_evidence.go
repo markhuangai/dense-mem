@@ -67,8 +67,6 @@ func (s *service) runScheduledEvidenceCycle(ctx context.Context, teamID string, 
 	if !claim.Claimed {
 		result.CompletedAt = s.now().UTC()
 		result.Status = "skipped"
-		appendRunDiagnosticPhase(result, "target", "skipped", "cycle_already_claimed", nil)
-		s.recordRunDiagnostic(ctx, result)
 		return result, nil
 	}
 	if !cfg.Enabled {

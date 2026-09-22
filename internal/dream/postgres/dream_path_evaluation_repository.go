@@ -202,10 +202,7 @@ func insertDreamPathEvaluationsTx(
 		      AND relationship.space_id = dense_mem_team_shared_space(relationship.team_id)
 		      AND relationship.space_generation = dense_mem_team_shared_generation(relationship.team_id)
 		)
-		ON CONFLICT (team_id, first_relationship_id, first_relationship_version,
-		             second_relationship_id, second_relationship_version,
-		             allowed_predicate_fingerprint, run_id)
-		DO NOTHING
+		ON CONFLICT DO NOTHING
 		`, string(payload), teamID, runID, teamID, teamID, providerModel, teamID, teamID).Error
 }
 

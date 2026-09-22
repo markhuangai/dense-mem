@@ -99,6 +99,24 @@ func TestScheduledEvidenceCycleSkipsInactiveTeamBeforeClaim(t *testing.T) {
 	require.Nil(t, recovered, "inactive teams must not claim evidence recovery")
 }
 
+func TestScheduledEvidenceCycleDoesNotRecordDiagnosticsAfterAnotherClaimWins(t *testing.T) {
+	teamID := uuid.NewString()
+	store := &dreamRepositoryStub{run: dreamcontract.DreamCycleRun{
+		TeamID: teamID, RunID: uuid.NewString(), Status: "running", Claimed: false,
+	}}
+	diagnostics := &diagnosticRepositoryStub{}
+	service := New(Dependencies{
+		Store: store, ScheduledStore: store, Diagnostics: diagnostics,
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, Timezone: "UTC", StartTimeLocal: "03:00"}},
+	}).(*service)
+
+	result, err := service.RunScheduledEvidenceCycle(context.Background(), teamID, time.Date(2026, 9, 4, 3, 0, 0, 0, time.UTC))
+
+	require.NoError(t, err)
+	require.Equal(t, "skipped", result.Status)
+	require.Empty(t, diagnostics.recorded)
+}
+
 func TestScheduledEvidenceCycleAcceptsMidHourAndSkipsDisabledWindows(t *testing.T) {
 	teamID := uuid.NewString()
 	store := &dreamRepositoryStub{}

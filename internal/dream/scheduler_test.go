@@ -411,7 +411,7 @@ func TestSchedulerCoversRecoveryDisabledAndEvidenceSkipBranches(t *testing.T) {
 		evidence := &schedulerEvidenceSkipStub{schedulerEvidenceStub: &schedulerEvidenceStub{schedulerDreamStub: &schedulerDreamStub{cfg: dueSchedulerConfig()}}, result: result}
 		evidenceScheduler := NewScheduler(evidence, &schedulerProfileStub{}, discardSchedulerLogger())
 		evidenceScheduler.runEvidenceDue(context.Background(), teamID.String(), dueSchedulerConfig(), time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC))
-		require.False(t, evidenceScheduler.hourlyAlreadyObserved(teamID.String(), "hour:2026-06-11T03"))
+		require.True(t, evidenceScheduler.hourlyAlreadyObserved(teamID.String(), "hour:2026-06-11T03"))
 	}
 
 	hourly := NewScheduler(&schedulerEvidenceRecoveryStub{schedulerEvidenceStub: &schedulerEvidenceStub{schedulerDreamStub: &schedulerDreamStub{cfg: dueSchedulerConfig()}}}, &schedulerProfileStub{}, discardSchedulerLogger())

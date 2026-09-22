@@ -77,6 +77,10 @@ await assertFeedbackActor(hypothesisID, reviewer.credentialID);
   const hypothesisDiagnostics = await controlJSON(`/teams/${teamID}/dreams/${hypothesisID}/diagnostics?limit=10`);
   assertEqual(Array.isArray(hypothesisDiagnostics.data?.items), true, "Dream hypothesis diagnostics page");
   assertEqual(hypothesisDiagnostics.data.items.some((item) => item.phase === "feedback"), true, "Dream feedback diagnostic phase");
+  const crossTeamHypothesisDiagnostics = await controlResponse(`/teams/${adverseTeam.teamID}/dreams/${hypothesisID}/diagnostics?limit=10`);
+  assertEqual(crossTeamHypothesisDiagnostics.status, 200, "cross-team Dream hypothesis diagnostics response");
+  assertEqual(Array.isArray(crossTeamHypothesisDiagnostics.body?.data?.items), true, "cross-team Dream hypothesis diagnostics page");
+  assertEqual(crossTeamHypothesisDiagnostics.body.data.items.length, 0, "cross-team Dream hypothesis diagnostics empty");
 
 assertContainsDream(controlDreams.data?.items, hypothesisID, statement, "control portal API");
 const userDreams = await userJSON("/ui/api/dreams?limit=10");
