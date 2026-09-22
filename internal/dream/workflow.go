@@ -126,7 +126,6 @@ func (s *service) runTeamCycle(
 		}); err != nil {
 			result.Status = "error"
 			result.Error = err.Error()
-			appendRunDiagnosticPhase(result, "disposition", "failed", err.Error(), map[string]any{"finalization": "complete_cycle"})
 			s.recordRunDiagnosticAfterCompletion(ctx, result, err)
 			return result, err
 		}
@@ -235,7 +234,11 @@ func (s *service) runClaimedTeamCycle(
 	if errors.Is(completeErr, dreamcontract.ErrDreamCycleLeaseLost) {
 		return result, runErr
 	}
-	s.recordRunDiagnostic(ctx, result)
+	if completeErr != nil {
+		s.recordRunDiagnosticAfterCompletion(ctx, result, completeErr)
+	} else {
+		s.recordRunDiagnostic(ctx, result)
+	}
 	return result, runErr
 }
 

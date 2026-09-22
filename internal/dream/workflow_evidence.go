@@ -81,7 +81,6 @@ func (s *service) runScheduledEvidenceCycle(ctx context.Context, teamID string, 
 		}); err != nil {
 			result.Status = "error"
 			result.Error = err.Error()
-			appendRunDiagnosticPhase(result, "disposition", "failed", err.Error(), map[string]any{"finalization": "complete_cycle"})
 			s.recordRunDiagnosticAfterCompletion(ctx, result, err)
 			return result, err
 		}
@@ -143,7 +142,6 @@ func (s *service) RecoverScheduledEvidenceCycle(ctx context.Context, teamID stri
 		}); err != nil {
 			result.Status = "error"
 			result.Error = err.Error()
-			appendRunDiagnosticPhase(result, "disposition", "failed", err.Error(), map[string]any{"finalization": "complete_cycle"})
 			s.recordRunDiagnosticAfterCompletion(ctx, result, err)
 			return result, err
 		}

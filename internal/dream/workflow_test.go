@@ -139,13 +139,13 @@ func TestDisabledScheduledCycleRecordsFinalizationFailure(t *testing.T) {
 	result, err := svc.RunScheduledCycle(context.Background(), teamID.String(), time.Date(2026, 7, 17, 3, 0, 0, 0, time.UTC))
 	require.ErrorContains(t, err, "completion failed")
 	require.Equal(t, "error", result.Status)
-	var dispositionFailed bool
+	var dispositionFailures int
 	for _, item := range diagnostics.recorded {
 		if item.Phase == "disposition" && item.Outcome == "failed" {
-			dispositionFailed = true
+			dispositionFailures++
 		}
 	}
-	assert.True(t, dispositionFailed)
+	assert.Equal(t, 1, dispositionFailures)
 }
 
 func TestUnclaimedScheduledCycleDoesNotRecordDiagnostics(t *testing.T) {
@@ -958,6 +958,36 @@ func TestRunClaimedTeamCycleDoesNotRecordInputFailureAfterLeaseLoss(t *testing.T
 	require.ErrorContains(t, err, "input lookup failed")
 	require.Equal(t, "error", result.Status)
 	require.Empty(t, diagnostics.recorded)
+}
+
+func TestRunClaimedTeamCycleRecordsFinalizationFailureAfterInputError(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	repo := &dreamRepositoryStub{
+		listInputsErr: errors.New("input lookup failed"),
+		completeErr:   errors.New("completion failed"),
+	}
+	diagnostics := &diagnosticRepositoryStub{}
+	svc := New(Dependencies{
+		Store: repo, Diagnostics: diagnostics,
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5}},
+	}).(*service)
+
+	result, err := svc.RunCycle(dreamTestContext(teamID, ownerID), "ignored-profile", RunCycleRequest{Manual: true})
+
+	require.ErrorContains(t, err, "input lookup failed")
+	require.ErrorContains(t, err, "completion failed")
+	require.Equal(t, "error", result.Status)
+	var dispositions []dreamcontract.DreamDiagnosticCaptureInput
+	for _, item := range diagnostics.recorded {
+		if item.Phase == "disposition" {
+			dispositions = append(dispositions, item)
+		}
+	}
+	require.Len(t, dispositions, 1)
+	require.Equal(t, "failed", dispositions[0].Outcome)
+	require.Equal(t, diagnosticErrorCode("completion failed"), dispositions[0].Cause)
+	require.Equal(t, "complete_cycle", dispositions[0].Details["finalization"])
 }
 
 func TestResolveFeedbackErrorBranches(t *testing.T) {

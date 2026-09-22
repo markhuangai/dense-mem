@@ -209,6 +209,7 @@ func (s *service) recordRunDiagnosticAfterCompletion(ctx context.Context, result
 	if errors.Is(completionErr, dreamcontract.ErrDreamCycleLeaseLost) {
 		return
 	}
+	appendRunDiagnosticPhase(result, "disposition", "failed", completionErr.Error(), map[string]any{"finalization": "complete_cycle"})
 	s.recordRunDiagnostic(ctx, result)
 }
 
