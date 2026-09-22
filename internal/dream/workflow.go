@@ -17,7 +17,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
@@ -662,63 +661,6 @@ func (s *service) recallDreams(ctx context.Context, query string, limit int) ([]
 		return nil, err
 	}
 	return dreamRecords(records), nil
-}
-
-func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackRequest) (*ResolveFeedbackResult, error) {
-	teamID, actorProfileID, err := dreamActor(ctx)
-	if err != nil {
-		return nil, err
-	}
-	dreamID := strings.TrimSpace(req.DreamID)
-	if dreamID == "" {
-		return nil, fmt.Errorf("resolve dream feedback: dream_id is required")
-	}
-	decision := strings.TrimSpace(req.Decision)
-	if isDreamConfirmationDecision(decision) {
-		return s.resolveConfirmationWithLock(ctx, teamID, actorProfileID, dreamID, decision, req)
-	}
-	if isDreamLifecycleDecision(decision) {
-		return s.resolveLifecycleFeedbackWithLock(ctx, teamID, actorProfileID, dreamID, decision, req)
-	}
-	record, err := s.deps.Store.GetHypothesis(ctx, dreamcontract.GetHypothesisInput{
-		TeamID:       teamID,
-		HypothesisID: dreamID,
-	})
-	if err != nil {
-		s.recordDreamFeedback(ctx, decision, nil, "error")
-		if errors.Is(err, dreamcontract.ErrDreamHypothesisNotFound) {
-			return nil, ErrDreamNotFound
-		}
-		return nil, err
-	}
-	dream := dreamRecord(record)
-	switch decision {
-	case "ignore":
-		s.recordDreamFeedback(ctx, decision, dream, "ok")
-		return &ResolveFeedbackResult{Dream: dream}, nil
-	default:
-		s.recordDreamFeedback(ctx, decision, dream, "error")
-		return nil, fmt.Errorf("%w: %s", ErrInvalidDreamStatus, decision)
-	}
-}
-
-func (s *service) feedbackResult(
-	ctx context.Context,
-	decision string,
-	original *domain.Dream,
-	updated *dreamcontract.HypothesisRecord,
-	remember *rememberapp.RememberResult,
-	err error,
-) (*ResolveFeedbackResult, error) {
-	if err != nil {
-		s.recordDreamFeedback(ctx, decision, original, "error")
-		if errors.Is(err, dreamcontract.ErrDreamHypothesisNotFound) {
-			return nil, ErrDreamNotFound
-		}
-		return nil, err
-	}
-	s.recordDreamFeedback(ctx, decision, original, "ok")
-	return &ResolveFeedbackResult{Dream: dreamRecord(updated), Memory: remember}, nil
 }
 
 func (s *service) status(ctx context.Context) (*StatusResult, error) {

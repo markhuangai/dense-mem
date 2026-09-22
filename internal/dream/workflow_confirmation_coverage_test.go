@@ -2,8 +2,10 @@ package dream
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -100,4 +102,75 @@ func TestDreamConfirmationReplayMatchingBranches(t *testing.T) {
 	record.SubmittedDecision = req.Decision
 	require.True(t, dreamConfirmationReplayMatches(record, req, req.Decision))
 	require.False(t, dreamConfirmationReplayMatches(record, req, "confirm_false"))
+}
+
+func TestResolveFeedbackErrorBranches(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	hypothesisID := uuid.NewString()
+	record := dreamcontract.HypothesisRecord{
+		TeamID:             teamID.String(),
+		HypothesisID:       hypothesisID,
+		CreatedByProfileID: ownerID.String(),
+		Status:             string(domain.DreamStatusProposed),
+		Statement:          "Dense-Mem may use PostgreSQL.",
+		CreatedAt:          time.Now().UTC(),
+		UpdatedAt:          time.Now().UTC(),
+	}
+	ctx := dreamTestContext(teamID, ownerID)
+
+	svc := New(Dependencies{
+		Store:     &dreamRepositoryStub{getErr: dreamcontract.ErrDreamHypothesisNotFound},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
+	})
+	_, err := svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{DreamID: hypothesisID, Decision: "reject"})
+	require.ErrorIs(t, err, ErrDreamNotFound)
+
+	svc = New(Dependencies{
+		Store: &dreamRepositoryStub{
+			getRecord:           record,
+			confirmationLockErr: dreamcontract.ErrDreamConfirmationBusy,
+		},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
+	})
+	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{DreamID: hypothesisID, Decision: "reject"})
+	var busyErr *ConfirmationBusyError
+	require.ErrorAs(t, err, &busyErr)
+
+	svc = New(Dependencies{
+		Store:     &dreamRepositoryStub{getRecord: record},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
+	})
+	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
+		DreamID:  hypothesisID,
+		Decision: "confirm_true",
+		Evidence: []rememberapp.RememberEvidenceInput{{
+			Content: "The deployment note says Dense-Mem uses PostgreSQL.",
+		}},
+	})
+	require.ErrorContains(t, err, "remember service is required")
+
+	svc = New(Dependencies{
+		Store: &dreamRepositoryStub{
+			getRecord: record,
+			updateErr: dreamcontract.ErrDreamHypothesisNotFound,
+		},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
+	})
+	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{DreamID: hypothesisID, Decision: "reject"})
+	require.ErrorIs(t, err, ErrDreamNotFound)
+
+	svc = New(Dependencies{
+		Store:     &dreamRepositoryStub{getRecord: record},
+		Remember:  &rememberServiceStub{err: errors.New("remember failed")},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
+	})
+	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
+		DreamID:  hypothesisID,
+		Decision: "confirm_false",
+		Evidence: []rememberapp.RememberEvidenceInput{{
+			Content: "The deployment note says Dense-Mem does not use PostgreSQL.",
+		}},
+	})
+	require.ErrorContains(t, err, "remember failed")
 }
