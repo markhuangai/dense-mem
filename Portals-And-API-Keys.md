@@ -3,14 +3,14 @@
 Dense-Mem has a team/user portal on the main listener and a deployment control
 portal on a separate private listener.
 
-The control portal lists terminal Remember attempts and their chronological
-events. It does not expose placement-worker receipts, normal embedding-job
-queues, or client polling controls. Attempt detail is owner/team-isolated and
-failure artifacts are fetched lazily only through audited control access.
+The control portal links admitted Remember invocations to canonical attempts,
+shows protected diagnostic details, and exposes Dream investigation and
+operation logs. Raw capture payloads are fetched only in authorized detail
+views.
 
 | Portal | Local URL | Authentication | Purpose |
 | --- | --- | --- | --- |
-| user | `http://127.0.0.1:8080/ui` | Dense-Mem key or configured SSO | same-team recall, graph/trace, reviews, keys, and self telemetry |
+| user | `http://127.0.0.1:8080/ui` | Dense-Mem key or configured SSO | same-team recall, graph/trace, Dreams, keys, and self telemetry |
 | control | `http://127.0.0.1:8090/` | control-plane authentication | cross-team administration, config, security, logs, and operations |
 
 Keep the control portal private.
@@ -46,10 +46,9 @@ identity, credentials, SSO/OAuth/SCIM entitlements, sessions, and rate limits.
 They do not import PostgreSQL, Redis, or in-process access adapters and cannot
 replace the authenticated team or permanent owner with route or body data.
 
-The only supported application API prefixes are `/mcp`, `/ui/api/*`, and
-`/control/api/*`. `/ui` is the user-portal document route. Health endpoints are
-operational probes, not memory APIs. Retired generic REST paths, including
-`/api/v1`, must not be exposed.
+MCP routes are `/mcp` and `/teams/{team_id}/mcp`. First-party browser APIs
+use `/ui/api/*` and `/control/api/*`; `/ui` is the user document route.
+Health and identity-discovery endpoints serve their own bounded purposes.
 
 User-portal authentication remains either a Dense-Mem API key or configured
 SSO. API-key login uses the bearer path by default. When the user explicitly
@@ -70,7 +69,7 @@ CSRF cookie is readable by the first-party UI and is sent as
 
 ## User Portal
 
-The target user portal provides:
+The user portal provides:
 
 - authenticated team/membership/credential/session display
 - full selected team UUID and copyable `/teams/{team_id}/mcp` URL, refreshed
@@ -78,7 +77,7 @@ The target user portal provides:
 - ranked Evidence recall with separate compact Relationship and Community frontiers
 - Entity/Value graph exploration
 - Relationship trace with evidence/history panels
-- caller-owned correction workflow
+- Relationship details for use in the MCP correction workflow
 - separate Hypothesis/community views
 - self/team-scoped telemetry according to role
 - current-credential key rotation
@@ -86,7 +85,7 @@ The target user portal provides:
 - same-team credential management for managers
 - SSO login/team switching when configured
 
-It does not expose raw Cypher, embeddings, provider prompts, or cross-team
+It does not expose raw database queries, embeddings, provider prompts, or cross-team
 candidates.
 
 ## Graph Explorer
@@ -115,12 +114,9 @@ visually group equivalent edges for clarity only when it retains every
 `relationship_id` and author in the expandable group; visual grouping never
 merges their lifecycle or data.
 
-This is a read-only visualization consequence, not a cross-profile Conflict
-inbox. The initial Conflict workflow is MCP-only; the portal cannot select a
-preferred position or submit a bare confirmation. Caller-owned corrections use
-the authenticated `correct_relationship` MCP workflow and never expose the
-retired placement-review controls. The browser never edits a SemanticEdge or
-current-state row directly.
+Graph visualization is read-only. Owned corrections use MCP. The control
+portal has separate Relationship-conflict queue and evidence-conflict views;
+those capabilities do not turn the graph canvas into a general memory editor.
 
 ## User Portal SSO
 
@@ -151,8 +147,8 @@ The control portal manages:
 - dream/community scheduler state
 - memory-pack export and bounded omission reporting
 
-It is not a general memory editor. Semantic changes use versioned review,
-correction, merge/split, retraction, or import workflows with audit.
+Semantic changes use the supported Remember, evidence lifecycle, correction,
+and governed conflict workflows with audit.
 
 The control usage rollup shows the dependency observation time, `healthy/total`,
 every unhealthy dependency name, bounded reason code, and check latency. The
@@ -174,20 +170,15 @@ Overview, usage rollup, and telemetry refresh every 60 seconds while visible.
 Changing a scope or window cancels the previous request, and manual refresh is
 kept available without allowing overlapping requests.
 
-The Search convergence view is read-only. It has no retry button or provider
-credential editor. It reports expected/current/drifted documents and the latest
-document-centric reconciliation run. Legacy quota, authentication, access, and
-provider failure groups may be shown for migration diagnostics only; they are
-not a normal Remember queue. Public users see only bounded terminal errors,
-while operators see the exact allowlisted code and guidance. A provider change
-is guidance only and must keep the active model and dimensions compatible.
+The Search convergence view is read-only. It reports current
+expected/current/drifted documents, compatible contract/generation, failure
+guidance, and reconciliation state through `GET /control/api/search/convergence`.
+It has no generic retry button or provider credential editor. Fix configuration
+or provider faults through their supported administrative path.
 
-The corresponding operator endpoint is `GET /control/api/search/convergence`.
-It is protected by the control-plane authentication boundary and returns only
-the active contract summary, bounded expected/current/drifted document data,
-team names, guidance, and durable run state. Legacy queue/failure projections
-are historical migration diagnostics and do not expose or mutate a separate
-incident lifecycle.
+Dream diagnostics explain run phases and protected provider exchanges. Remember
+diagnostics distinguish execution, replay, conflict, and observed response
+delivery. Details are in [Telemetry](Telemetry) and [Dreaming](Dreaming).
 
 ## Credentials And API Keys
 
@@ -278,9 +269,8 @@ credential bearer active.
 Team deletion is a soft tombstone: the team row is marked deleted, active
 team credentials are revoked, and future writes/jobs for that team are
 rejected. Existing knowledge, support history, source lineage, conflicts, and
-audit rows remain durable. There is no active restore/re-enable workflow in the
-current contract; a future restore policy would need explicit authorization and
-fresh entitlement/key issuance.
+audit rows remain durable. There is no public restore/re-enable operation.
+Recovery requires a separately authorized procedure.
 
 ## SSO-Owned Keys
 
@@ -366,12 +356,11 @@ procedure and does not re-enable a credential.
 ## Canonical Identity And Credentials
 
 `actor_identities`, `team_memberships`, and `credentials` are the only current
-identity authority. Existing API-key IDs and key material survive the ordered
-bridge and cleanup migrations. `team_admin` controls governance; it does not
+identity authority. `team_admin` controls governance; it does not
 imply private-memory access to another owner. Effective scopes are the
 intersection of membership maximum grants and the credential's scopes.
-Permanent ownership aliases keep correction, forget, audit, portal-session,
-and usage history addressable by old owner IDs after `team_profiles` removal.
+Permanent ownership aliases preserve authored-memory, correction, audit, and
+usage references independently of credential rotation.
 
 Every authenticated request carries immutable `team_id`, actor identity,
 membership, permanent owner alias, role/grants, and an optional credential ID.
@@ -391,11 +380,9 @@ The current first-party credential routes are:
 /ui/api/sso/credentials/{credential_id}/rotate
 ```
 
-Private `/profiles` and `/ui/api/key` aliases are not registered.
-
 Rotation changes bearer material in place. Deletion disables the credential
-and revokes its membership and actor while retaining the credential and alias
-as an audit tombstone. No portal or public API can invoke schema cleanup.
+while retaining the credential and alias for audit. Actor deactivation depends
+on remaining active memberships, so another team membership is preserved. No portal or public API can invoke schema cleanup.
 
 ## Immutable Memory Bindings
 
@@ -407,9 +394,8 @@ credentials may rotate in place only while still active. SSO self-service
 creation requires the selected membership's existing grants. A token-derived
 portal session cannot create or link credentials. Linking requires SSO
 authentication plus proof of an existing same-team token and never unions token
-grants into membership grants. Existing token writes remain team-shared.
+grants into membership grants. The immutable binding determines the authenticated write destination.
 
-The normal `remember` contract has no caller-selectable space parameter and
-writes to `team_shared`. Any private-ingestion path derives its destination
-from the authenticated binding; request payloads cannot select or broaden a
-memory space.
+`remember` has no caller-selectable space parameter. It uses the authenticated
+private space when present, otherwise `team_shared`. Read-only grants still
+cannot write, and the payload cannot broaden the allowed spaces.

@@ -64,12 +64,10 @@ Follow [MCP Clients](MCP-Clients) with:
 https://demo-dense-mem.markhuang.ai/mcp
 ```
 
-Run tool discovery. Verify that the current closed schema is returned, that
-`remember` requires logical Relationships with `evidence_indices`, one
-top-level `idempotency_key`, and no evidence-level key or public `modality`; the
-server/assessor own grounding and repair. The catalog contains ten current
-tools; `get_submission_status` is removed and the retired placement/review
-tools are absent.
+Run tool discovery and use the deployed schema. Remember requires exact
+evidence and one retained top-level idempotency key; Relationship proposals are
+optional. Scope and feature policy determine the visible tools. The demo's
+currently deployed version must be verified separately from this source manual.
 
 ## Step 3: Test Shared Memory
 
@@ -102,23 +100,21 @@ Normal recall should be compact and trace should use
 ## Step 5: Test Identity Ambiguity
 
 Store two clearly distinguished people with the same first name, then submit an
-underspecified statement about that name. The safe behavior is a server-owned
-terminal rejection or non-active outcome, with no speculative Entity/edge and
-no client identity-choice tool.
+underspecified statement about that name. The server must not guess an identity. An unsupported proposal can be
+`not_stored` while the safe evidence is stored; inspect the complete result.
 
-Submit a new complete evidence/proposal package only when the source identifies
-which person.
+Supply distinguishing evidence before expecting a supported identity-specific
+Relationship.
 
 ## Step 6: Test A Correction
 
-Ask to correct a prior preference and provide the new user statement as
-evidence. The safe behavior is:
+For a changed preference, submit new exact evidence through Remember. For a
+misresolved Entity or predicate on an owned active Relationship, use
+`correct_relationship` with the current version and complete effective support
+set. Typed-Value replacement is not supported by that patch.
 
-1. preserve prior evidence/history
-2. re-enter the integrated assessment and deterministic policy
-3. make the required embedding batch before commit
-4. update PostgreSQL SemanticEdge/current rows and vectors atomically
-5. return the terminal correction result directly
+See [Conflicts And Corrections](Conflicts-And-Corrections) before treating any
+operation as a completed correction.
 
 ## Troubleshooting
 
@@ -127,11 +123,11 @@ evidence. The safe behavior is:
 | tool names/fields differ | reconnect and compare the current `tools/list` schema |
 | another client sees nothing | both clients use exactly the same key |
 | submission is not searchable | inspect the original terminal result and bounded error guidance |
-| rejected or quarantined status | do not use the content; submit a new complete request only when appropriate |
+| failed operation or unsupported proposal | inspect errors/dispositions and follow the returned remediation |
 | quota/expiry error | current limits on demo page/runtime response |
 | deployed behavior differs from this page | check the current release tag and `tools/list` schema |
 
 ## Next
 
 Use [Quick Start](Quick-Start) for a pinned local deployment and
-[Using Dense-Mem](Using-Dense-Mem) for the target workflow.
+[Using Dense-Mem](Using-Dense-Mem) for the current workflow.

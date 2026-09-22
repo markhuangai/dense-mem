@@ -4,14 +4,12 @@ Dense-Mem exports a small, active Prometheus inventory for authenticated HTTP,
 synchronous Remember terminal calls, assessor repair/validation,
 provider work, recall, feedback, conflict-review timing, and bounded community
 snapshot/summary/recall outcomes. Per-ref `stored`/`not_stored` results and
-closed rejection codes remain owner-scoped terminal results, not metric
-labels. It does not export raw evidence, retired evidence/Relationship state,
-promotion, advisory-lock, or generic graph metric families.
+closed failure codes remain owner-scoped terminal results, not metric
+labels. Metric labels never contain raw evidence or provider payloads.
 
-The current Remember telemetry measures synchronous end-to-end and phase
-latency, assessor turns, embedded document count, terminal outcome, failure
-phase/code, cancellation before commit, and idempotency replay/winner reuse.
-It does not expose polling, placement-worker, or embedding-job labels.
+Remember metrics cover terminal calls and provider/assessor activity.
+Detailed phases, replay/conflict classification, and delivery observations live
+in authorized diagnostic records. A counter is not a current-state ledger.
 
 The scrape endpoint is private. Browser telemetry is first-party only through
 `/ui/api/telemetry` and `/control/api/telemetry`; it is not a public memory
@@ -60,6 +58,9 @@ records, not Prometheus.
 | `densemem_recall_feedback_quality_score` | none | Numeric quality histogram: low `0`, medium `0.5`, high `1`. |
 | `densemem_dream_feedback_total` | `decision`, `outcome`, `from_status` | Hypothesis feedback decisions. |
 | `densemem_conflict_review_duration_seconds` | `outcome` | Relationship conflict-review duration. |
+| `densemem_assessor_confidence_gate_total` | `band` | Bounded confidence-gate observations on applicable verifier paths; not Remember truth scoring. |
+| `densemem_conflict_assessments_total` | `team_id`, `decision`, `failure_class` | Durably recorded conflict assessment decisions. |
+| `densemem_conflict_resolutions_total` | `team_id`, `method`, `outcome` | Durably recorded conflict resolutions. |
 | `densemem_assessor_terminal_failures_total` | `stage` | Terminal integrated-assessor failures by bounded stage; system-only, with no team/profile labels. |
 | `densemem_assessor_requests_total` | `outcome` | Integrated-assessor conversations by bounded outcome; system-only. |
 | `densemem_assessor_duration_seconds` | `outcome` | Integrated-assessor conversation duration; system-only. |
@@ -78,14 +79,53 @@ The conflict-review histogram uses second buckets of `0.1`, `1`, `5`, `15`,
 
 Reconciliation and assessor counters are operator health signals, not evidence
 or team content. Failure labels are the closed provider/input contract only.
-Use the terminal Remember result to distinguish `no_supported_memory`/`stale_input`
-rejections from `failed` operational errors and to inspect every relationship
-disposition. Query the
+Use the terminal Remember result to distinguish a failed operation from
+unsupported proposals within a completed operation. Query the
 control Search convergence projection for current drift counts, affected teams,
 guidance, and run state; do not infer current state
 from counter values alone. Bounded `embedding_failure_recorded` and
 `embedding_recovery_completed` operation logs provide retained transition
 evidence without storing a second current-state incident model.
+
+## Operation Logs And Protected Captures
+
+One process logger supplies structured console output and the PostgreSQL
+operation-log sink. The unset `LOG_LEVEL` default is `trace`; the environment
+example explicitly sets `info`. Invalid levels fail startup. `fatal` records
+severity without exiting. Slow PostgreSQL queries use
+`POSTGRES_SLOW_QUERY_THRESHOLD_MS`, default 200.
+
+The operation sink is required for readiness. Sink failures produce visible
+gap/recovery diagnostics. Startup events emitted before sink attachment remain
+console-only; the server does not claim they were persisted.
+
+The private Logs view supports severity and correlation filtering. Remember
+investigation starts with admitted invocations and links execution, replay,
+and conflict calls to canonical attempts:
+
+```text
+GET /control/api/logs
+GET /control/api/remember-invocations
+GET /control/api/teams/{teamId}/remember-invocations/{invocationId}
+GET /control/api/remember-attempts
+GET /control/api/teams/{teamId}/remember-attempts/{attemptId}
+```
+
+Protected body captures load only for authorized detail views. They distinguish
+preparation, write observation, disconnect, and unknown receipt; observing a
+response write does not prove delivery to the client.
+
+Configured operational secrets and authentication material are protected,
+including supported encoded/serialized forms. Ordinary field names or
+secret-like user text alone do not trigger masking. After schema validation and
+the initial security scan, admitted fields may remain exact in bounded operator
+diagnostics. Initial security rejection remains content-free. Public errors,
+audit projections, exports, and metric labels have separate narrower contracts.
+
+Remember body captures have seven-day expiry with applicable legal-hold,
+erasure, and bounded unavailable/truncated states. Operation-log retention is
+configured separately. Dream run/target/provider/proposal/confirmation captures
+are documented in [Dreaming](Dreaming#run-diagnostics).
 
 ## Cost Rate Card
 
@@ -99,10 +139,8 @@ USD per million tokens:
 | `TELEMETRY_COST_EMBEDDING_INPUT_USD_PER_MILLION_TOKENS` | embedding input tokens |
 
 The panel displays the configured `AI_VERIFIER_MODEL` and
-`AI_API_EMBEDDING_MODEL` as read-only context. It does not introduce
-`TELEMETRY_COST_VERIFIER_MODEL` or `TELEMETRY_COST_EMBEDDING_MODEL`: a
-separate model setting would duplicate runtime responsibility and could make
-cost reports disagree with the provider actually used.
+`AI_API_EMBEDDING_MODEL` as read-only context. Pricing applies to the configured runtime models; there is no separate pricing
+model selector.
 
 Costs cover Remember assessment, recall-query embedding, and conflict-review
 embedding. They are estimates, not provider invoices. Verifier cost remains
@@ -113,7 +151,7 @@ usage, or unavailable pricing service increments the bounded
 cost. Token source is `provider` when the provider reports usage; verifier
 fallback estimates use the configured tokenizer and are labeled `tokenizer`.
 Because provider usage is aggregate for a mixed-owner background batch, its
-cost is team-only in this PoC. The profile-scoped dashboard labels that card as
+cost is team-only for the current accounting contract. The profile-scoped dashboard labels that card as
 team-only and queries the selected team rather than fabricating a per-profile
 amount.
 
@@ -144,9 +182,9 @@ transition/correction ledger counts. The terminal Remember result remains the
 source for per-ref `stored`/`not_stored` results and semantic rejection reasons.
 Current cards show all eight Relationship statuses. The control dashboard also
 shows estimated USD costs and system-only assessor cards. User dashboards never
-receive cost or assessor cards. The raw verifier-verdict collector remains for
-compatibility, but `verify_verdicts` and `dream_promote_candidates` are not
-dashboard items.
+receive cost or assessor cards. Collector presence and dashboard availability are distinct. The ordered
+telemetry catalog defines audience, supported scope, prerequisites, and
+zero-value policy for each rendered item.
 
 Every card and chart reports `ready`, `inactive`, `unavailable`, or
 `unsupported`. `ready` includes a proven zero. `inactive` explains no activity
@@ -155,7 +193,7 @@ Prometheus query, or a failed lifecycle ledger remains unavailable. Unsupported
 items are returned only where the operator catalog needs to explain a scope
 boundary; user responses omit operator-only items. Partial failures keep
 successful items visible and mark the snapshot degraded. An all-source failure
-marks it unavailable. Empty legacy series are not converted into zero lines.
+marks it unavailable. Missing series are not converted into zero lines.
 
 When `TELEMETRY_PROMETHEUS_JOB` is configured, dashboard queries add that
 Prometheus `job` selector. A missing or failed source marks only the affected
@@ -194,13 +232,10 @@ sum(rate(densemem_embedding_errors_total{team_id="<team-uuid>"}[15m]))
   lifecycle actions.
 - Investigate elevated conflict-review duration through authorized audit and
   trace data; the histogram does not identify a Relationship or evidence item.
-- For a rejected Remember, inspect the terminal result and its
-  `relationship_results`; for a failed Remember, query
-  `densemem_assessor_terminal_failures_total` by `stage` and correlate the
-  bounded stage with the owner-scoped terminal attempt. This metric is system-only
-  and cannot identify a team, profile, evidence item, or prompt.
-- Do not recreate retired metric names in dashboards. Their absence is
-  intentional, not a zero-valued signal.
+- For a failed Remember, follow its correlation ID to admitted-invocation and
+  attempt diagnostics. Inspect the bounded failed phase and retry eligibility.
+- For a completed Remember, inspect evidence and proposal dispositions before
+  inferring what became accepted memory.
 
 ## Risks
 
@@ -213,16 +248,10 @@ sum(rate(densemem_embedding_errors_total{team_id="<team-uuid>"}[15m]))
 | Model drift | an operator changes a pricing model name independently of runtime configuration | show the existing verifier and embedding model settings read-only; price the model the server actually uses. |
 | Lifecycle inferred from metrics | an operator assumes a counter proves evidence state | use authorized trace/audit records for individual lifecycle decisions. |
 
-## Acceptance
+## Verification
 
-1. Prometheus exposes only the active names listed above.
-2. Every first-party telemetry query uses the active metric names and optional
-   configured job selector.
-3. No dashboard depends on retired evidence/Relationship/promotion/lifecycle
-   state metrics.
-4. Metric labels contain no raw evidence, query, provider response, credential,
-   or record ID beyond the documented team/profile scope.
-5. Cost estimates use the existing runtime model settings and only the three
-   documented rate-card keys.
-6. A user dashboard exposes no cost card, and an unpriced operation is visible
-   as unpriced rather than zero cost.
+Compare collector names with the live source registry and dashboard items with
+the ordered telemetry catalog. Test unavailable sources, zero activity, pricing
+absence, audience/scope restrictions, protected credentials, initial rejection,
+and authorized capture details. A green scrape alone does not prove the
+PostgreSQL diagnostic sink is healthy.

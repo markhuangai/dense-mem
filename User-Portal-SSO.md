@@ -185,7 +185,8 @@ specific `credentialId`; the server never selects an arbitrary or newest key.
 Each credential has a stable ID and one immutable `memory_binding`:
 `profile_private` credentials share that identity's team-scoped profile-private
 space, `credential_private` credentials use an isolated credential space, and
-`shared_only` credentials use only the team-shared space. Rotation preserves
+`shared_only` credentials use only the team-shared space. Remember derives its write destination from that authenticated binding;
+callers cannot select a space in tool arguments. Rotation preserves
 the ID and binding; revocation affects only the selected credential. The
 plaintext key is returned only from create or rotate and is not stored by the
 browser after the one-time notice is dismissed.
@@ -549,5 +550,5 @@ ZITADEL example references:
 ## Related Configuration
 
 The canonical setting names and defaults remain in
-[Configuration](Configuration#authentication-limits-and-sso). This page owns the setup process
+[Configuration](Configuration#runtime-sso-oauth-and-private-memory). This page owns the setup process
 and behavior; the configuration page owns the setting reference.

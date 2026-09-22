@@ -1,74 +1,32 @@
 # Documentation Maintenance
 
-This wiki is the current project manual and architecture contract. It describes
-the supported current behavior, not a changelog.
+This wiki covers current installations and fresh setup. Remove obsolete
+release narratives, upgrade procedures, compatibility guides, and completed
+implementation plans. Git history retains removed prose.
 
-For v2.6.1, current pages must describe synchronous terminal Remember and
-direct correction results, the ten-tool catalog, fixed 180/160/10/10 budgets,
-structured MCP `isError` remediation, inline write embeddings, terminal attempt
-diagnostics, and the stopped-service cutover. Any placement, status-reader, or
-embedding-job wording must be explicitly labeled historical migration context.
+Keep exact identifiers still emitted by current code, such as the memory-pack
+format. A historical `known_at` query is current product functionality, not
+obsolete documentation.
 
-## Status Classes
+## Sources And Authority
 
-Every deep technical page uses one status:
+Accepted repository ADRs govern architecture. Current registries,
+implementations, migrations, callers, and tests establish implemented behavior.
+An old wiki statement or recalled memory does not override verified source and
+explicit maintainer direction.
 
-| Status | Meaning |
-| --- | --- |
-| current architecture | approved contract the implementation must satisfy |
-| current runtime | verified behavior of an exact commit/image |
-| operational procedure | commands for a named supported release |
-| retired compatibility | temporary compatibility behavior with a removal condition |
+Trace a claim through its supported caller and authoritative owner. A source
+checkout does not establish which release is deployed. Identify the revision
+and worktree state used for an audit, and report unresolved implementation/ADR
+mismatches without silently changing either contract.
 
-Do not mix architecture, runtime findings, and history in one paragraph.
-Runtime findings, dated score reports, and work-in-progress deltas belong in
-project memory or evaluation reports unless they are part of a supported
-operator procedure.
+Record source context with:
 
-## Authority Depends On The Question
-
-### Architecture question
-
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart TD
-  Decision["Explicit approved design decision"] --> Memory["Recorded project decision<br/>or accepted design record"]
-  Memory --> Canonical["Canonical target manual page"]
-  Canonical --> Tests["Target contract and invariant tests"]
-  Tests --> Code["Refactor implementation"]
-  Code --> Old["Older wiki prose or retired code"]
+```bash
+git status --short --branch
+git rev-parse HEAD
+git log -1 --format='%cI %s'
 ```
-
-Current code is conformance evidence; it does not silently supersede the
-architecture.
-A design change needs an explicit decision, a concrete risk analysis, and an
-update to the canonical page before dependent implementation is treated as the
-new contract.
-
-### Current-runtime question
-
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart TD
-  Runtime["Reproduced runtime behavior<br/>on exact image"] --> Tests["Passing tests for that revision"]
-  Tests --> Code["Source and registry declarations"]
-  Code --> Schema["Migrations and schema bootstrap"]
-  Schema --> Workflow["CI/deployment workflow"]
-  Workflow --> Docs["Current-runtime prose"]
-```
-
-When runtime and source disagree, reproduce with the exact image, configuration,
-database version, and feature flags before deciding what shipped.
-
-### Resolving a conflict
-
-| Conflict | Interpretation |
-| --- | --- |
-| architecture page versus current code | implementation/conformance gap |
-| explicit new design decision versus architecture page | manual update required before implementation proceeds |
-| current-runtime page versus tested code | documentation defect |
-| deployed runtime versus source checkout | version/config mismatch until reproduced |
-| project memory versus explicit later user decision | later explicit decision wins; update the durable record and manual |
 
 ## Canonical Page Ownership
 
@@ -80,11 +38,11 @@ database version, and feature flags before deciding what shipped.
 | Relationship vocabulary, identity, cardinality, status/effective support, trace, and SemanticEdge contract | [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle) |
 | remember stage order, provider retries, commit order, and review orchestration | [Memory Write Pipeline](Write-Pipeline) |
 | PostgreSQL/pgvector/Redis ownership, graph-shaped/search reads, jobs, and recovery | [Data Model And Storage](Data-Model-And-Storage) |
-| cluster-safe tenant keys, table placement, composite constraints, RLS/query locality, and queue routing | [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema) |
+| cluster-safe tenant keys, table placement, composite constraints, RLS/query locality, and scheduler routing | [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema) |
 | recall branches, eligibility, frontier, trace escalation, and degradation | [Recall Ranking](Recall-Ranking) |
 | embedding and distance meaning, candidate fusion, RRF, and post-fusion reranking | [Vector Search And Ranking](Vector-Search-And-Ranking) |
 | exact/ANN execution, HNSW, halfvec, vector index lifecycle/load, and vector-search topology | [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
-| exact versioned MCP tool schemas | [Technical Reference](Technical-Reference) |
+| current MCP contract, examples, and schema discovery | [Technical Reference](Technical-Reference) |
 | authentication, tenant identity, scopes, MCP discovery/execution, and portal boundaries | [Request Lifecycle And Security](Request-Lifecycle-And-Security) |
 | durable team Conflict cases, recall disposition, and evidence-backed correction | [Conflicts And Corrections](Conflicts-And-Corrections) |
 | community derivation and analytical summaries | [Community And Dreaming](Community-And-Dreaming) |
@@ -102,302 +60,82 @@ database version, and feature flags before deciding what shipped.
 [Home](Home#start-here) is the navigation map. This table is the ownership map.
 Do not reproduce either map on another page.
 
+
 ## Single-Source Rules
 
-A referencing page may state the local consequence of a rule, then link to its
-owner. It must not copy the owner's:
+Keep detailed schemas/examples in Technical Reference, configuration names and
+defaults in Configuration, operator procedures in the runbook, and lifecycle
+rules in their owning pages. Other pages should explain the local consequence
+and link to that owner.
 
-- request/response schema
-- lifecycle table or decision matrix
-- limits/defaults/configuration table
-- complete process diagram
-- detailed storage shape
-- troubleshooting decision tree
-- full operational procedure
+Preserve useful page URLs. When a heading changes, update its inbound anchors.
+Avoid copied package inventories: link to the checked schema-version-2
+architecture manifest and describe only the ownership needed by the reader.
 
-When content gains its own responsibility, move it to a new canonical page and
-replace old copies with narrow links. Git history preserves removed prose.
+## Updating A Page
 
-Examples:
+1. Read its current content and the relevant source owners, tests, and accepted
+   ADRs.
+2. Verify supported inputs, outputs, defaults, authorization, failure behavior,
+   and any current operational constraints.
+3. Replace stale prose and examples in place; update dependent summaries and
+   diagrams in the same change.
+4. Check a concrete adverse example, such as an unsupported proposal, stale
+   correction, private-bound read, or required provider failure.
+5. Validate the changed documentation and inspect the final diff.
 
-| Local page needs to say | Correct form |
-| --- | --- |
-| recall is fast because it omits assessor history | state that consequence; link to Relationship trace and Recall |
-| aliases do not become edges | state the local effect; link to Entity Identity |
-| vector build follows commit | show only the local consequence; link to Data Model for embedding-job semantics |
-| Relationship correlation rank is independent from lifecycle | state the local consequence; link to Recall Ranking and Vector Search |
-
-## Design Change Process
-
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart LR
-  Problem["Concrete problem or ambiguity"] --> Verify["Inspect memory, manual,<br/>source, tests, and data"]
-  Verify --> Options["Compare valid designs"]
-  Options --> Risk["Falsify proposal and<br/>document failure modes"]
-  Risk --> Decision["Obtain explicit design decision"]
-  Decision --> Record["Record durable project decision"]
-  Record --> Canonical["Update canonical page"]
-  Canonical --> Dependents["Update dependent summaries"]
-  Dependents --> Tests["Define conformance tests"]
-  Tests --> Implement["Begin refactor slice"]
-```
-
-Do not change a high-blast-radius design because it is convenient for the
-current code. Identify the mismatch and obtain the decision.
-
-## Implementation Documentation Process
-
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart LR
-  Slice["Refactor slice"] --> Trace["Trace transport, service,<br/>domain, store, and tests"]
-  Trace --> Compare["Compare with target invariants"]
-  Compare --> Code["Implement and verify"]
-  Code --> Conformance["Update conformance status"]
-  Conformance --> Ops["Update affected operational pages"]
-  Ops --> Validate["Links, Mermaid, terminology,<br/>schemas, and diff"]
-```
-
-### Fix the source context
-
-Record without modifying either worktree:
-
-```bash
-git -C ../dense-mem status --short --branch
-git -C ../dense-mem rev-parse HEAD
-git -C ../dense-mem log -1 --format='%cI %s'
-```
-
-A dirty working tree is not a stable revision. State whether evidence comes from
-`HEAD`, a named branch, a working tree, or a deployed image.
-
-### Keep architecture ownership current
-
-`architecture/ownership.v1.json` is the canonical source for current package,
-browser-module, and worker ownership. When a package or entry point is added,
-removed, or moved, update that manifest in the same implementation slice and
-run the repository conformance fixtures. Record only verified current
-ownership; future moves belong in an exact exception with a reason and a later
-removal issue. The checker must remain deterministic and fail on unclassified
-or stale units, forbidden imports, unresolved browser edges, missing worker
-anchors, and expired or unused exceptions.
-
-Architecture pages should explain the role matrix and the maintenance rule,
-then link to the manifest and checker. They should not copy the generated
-inventory or describe a future package split as if it already shipped.
-
-### Trace the path
-
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart LR
-  Contract["Versioned interface contract"] --> Transport["MCP and first-party portal mapping"]
-  Transport --> Application["Application service"]
-  Application --> Domain["Domain policy"]
-  Application --> Port["Repository/provider interface"]
-  Port --> Adapter["PostgreSQL, Redis,<br/>or AI adapter"]
-  Adapter --> Tests["Contract, integration,<br/>and failure tests"]
-```
-
-For configuration, trace parsing, startup validation, effective lookup,
-deployment examples, and operator output. For database behavior, trace
-migrations, constraints, transaction boundaries, repository queries, and
-recovery tests.
-
-### Try to falsify the claim
-
-Ask:
-
-- Can the authenticated role and scope perform this operation?
-- Does the response prove a terminal semantic commit with current vectors, or is
-  it a bounded operational `isError` with no canonical write?
-- Can an empty candidate set be confused with a retrieval error?
-- Can two request-scoped writers create duplicate Entities or Relationships?
-- Can graph context accidentally count as evidence?
-- What remains readable when a required embedding call fails?
-- Does Redis contain the only copy of anything important?
-- Can a same-name Entity cross a team boundary?
-- Can same-team visibility mutate another profile's knowledge?
-- Can a Hypothesis enter primary recall?
-- Can an older client silently misread the current response contract?
-
-If the failure changes the contract, add a specific Risk and mitigation before
-implementation.
-
-## Removing Stale Material
-
-Remove material that no longer describes a supported or required path. Keep old
-terminology only when:
-
-- a compatibility adapter currently accepts it
-- an operator must handle stored data containing it
-- an explicit tombstone behavior matters
-
-Mark the removal condition. Do not keep old architecture prose for history.
-
-The retired term `Assertion` may appear in the single retirement note or a
-retired compatibility mapping. It must not name an active target record,
-metric, API field, graph label, or service.
-
-## Page Template
-
-Deep target pages should use the parts that fit:
-
-```markdown
-# Feature
-
-## Outcome and responsibility
-
-## End-to-end flow
-
-## Decision or state model
-
-## Failure semantics
-
-## Security and tenant boundary
-
-## Risks and mitigations
-
-## Acceptance invariants
-```
-
-Current-runtime or operational pages additionally name the exact supported
-release/commit and link to runtime discovery where appropriate.
-
-## Mermaid Conventions
-
-Every flowchart begins with:
-
-```text
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-```
-
-Every sequence begins with:
-
-```text
-%%{init: {"sequence": {"rightAngles": true}}}%%
-```
-
-Use flowcharts instead of diagram types that cannot guarantee the required
-straight-line rendering.
-
-Guidelines:
-
-- keep labels short
-- quote labels containing punctuation
-- show failure/retry branches
-- distinguish durable stores from calls
-- avoid color as the only meaning
-- split unreadably large diagrams
-- parse every Mermaid block
-- reject a diagram missing its type-specific directive
+Do not convert implementation proposals into supported capabilities. Describe
+current limitations plainly and leave unimplemented designs out of usage
+instructions.
 
 ## Validation
 
-### Workspace and diff
-
-```bash
-git status --short
-git diff --check
-```
-
-Do not stage, commit, or discard unrelated user changes.
-
-### Links
-
-Resolve each wiki target after stripping an optional anchor. For anchored links,
-verify the target heading's GitHub-style slug.
-
-### Mermaid
-
-Extract and parse every `mermaid` fence with the repository's pinned Mermaid
-CLI/parser. Syntax success is not enough; spot-check large diagrams for readable
-layout.
-
-### Terminology
-
-```bash
-rg -n -i 'assertion|assertion_id|43f3e38' --glob '*.md'
-```
-
-Inspect every match. Target pages should contain only deliberate retirement
-references.
-
-Also scan for target terms used inconsistently:
-
-```bash
-rg -n 'RelationshipObservation|VerificationEvent|RelationshipRecord|SemanticEdge|Hypothesis|entity_id|relationship_id' --glob '*.md'
-```
-
-### Contract reconciliation
-
-| Documentation | Compare against |
+| Material | Verify against |
 | --- | --- |
-| tool names/scopes | registry declarations plus `tools/list`/`tools/call` tests |
-| first-party portal behavior | user/control portal route and browser tests |
-| input/output schemas | generated MCP schema fixtures |
-| environment defaults | configuration parser and deployment examples |
-| database configuration | migrations and effective-config readers |
-| Entity/Relationship states | domain constants, constraints, and invariant tests |
-| release behavior | CI/release workflows |
-| full-text/vector/adjacency indexes | PostgreSQL migrations, plans, and integration/evaluation tests |
-| durable records | PostgreSQL migrations and repository integration tests |
+| Tools, inputs, results, actions | Registry schemas, validated tool examples, and MCP contract tests. |
+| HTTP/portal procedures | Registered routes, DTOs, browser callers, and their tests. |
+| Settings and defaults | Startup parser, effective runtime settings, and deployment examples. |
+| Storage and lifecycle | Current migrations, adapter queries, domain policy, and real PostgreSQL tests. |
+| Development and release commands | Existing scripts, scenario registries, and workflows. |
 
-## Freshness Metadata
+Resolve every wiki target and GitHub-style heading anchor. Parse complete JSON
+examples; mark fragments as fragments. Validate request examples against the
+current registry, substituting only clearly identified returned-ID placeholders
+in the validation harness.
 
-Architecture pages describe the current approved contract and should not
-carry dated runtime-conformance notes. Current-runtime pages say:
+Extract both backtick and tilde Mermaid fences and parse each diagram.
+Use a pinned parser in temporary validation tooling; the application repository
+does not currently declare a Mermaid dependency. Spot-check substantial diagrams
+for readable layout as well as syntax.
+
+Flowcharts use:
 
 ```text
-This page documents runtime behavior at <commit or image digest> on <date>.
+%%{init: {"flowchart": {"curve": "linear"}}}%%
 ```
 
-Do not write “latest” without a resolved tag, digest, commit, or explicit target
-decision.
+Sequence diagrams use:
 
-## Reviewing A Reported Mismatch
-
-```mermaid
+```text
 %%{init: {"sequence": {"rightAngles": true}}}%%
-sequenceDiagram
-  actor User
-  participant Manual as Canonical manual
-  participant Source as Source and tests
-  participant Runtime as Exact runtime
-
-  User->>Manual: Ask whether behavior is correct
-  Manual->>Manual: Identify target or current question
-  Manual->>Source: Trace contract through implementation
-  alt Current runtime remains uncertain
-    Source->>Runtime: Reproduce on exact revision/config
-    Runtime-->>Manual: Observed result
-  end
-  Manual-->>User: Target, implemented, deployed,<br/>and remaining gap
 ```
 
-Answer with actual file/line paths for current-code claims. Keep four categories
-separate:
+Check source references, configuration identifiers, retired-tool descriptions,
+and claims of queued Remember work. Inspect matches in context; literal current
+schema names and temporal history must not be removed by a blanket text sweep.
 
-- approved target behavior
-- implemented source behavior
-- deployed runtime behavior
-- historical compatibility behavior
+```bash
+git diff --check
+git diff --stat
+git status --short
+```
 
-## Review Checklist
+## Handoff
 
-- [ ] page status and source context are explicit
-- [ ] the relevant canonical owner was identified
-- [ ] current behavior and target behavior are not conflated
-- [ ] conflicting project decisions were resolved and recorded
-- [ ] tenant, role, scope, and feature gates are explicit
-- [ ] processing state and vector-search freshness are distinct
-- [ ] Entity reuse/create/ambiguity occurs before Relationship identity
-- [ ] graph context is not evidence
-- [ ] Redis is not described as durable memory
-- [ ] failure, retry, job recovery, schema-change, and rollback boundaries are explicit
-- [ ] Risk contains specific failure modes and mitigations
-- [ ] stale material was removed instead of accumulated
-- [ ] schemas/defaults live on one owner page
-- [ ] links, headings, Mermaid, terminology, and `git diff --check` pass
-- [ ] unrelated user changes remain untouched
+Report the source baseline, changed responsibilities, verification performed,
+and remaining uncertainty. Distinguish executed checks from static inspection.
+Preserve concurrent edits. Commit or publish only when authorized.
+
+A documentation refresh is complete when current behavior is consistent across
+the relevant canonical pages, examples and commands are usable, obsolete
+sections are gone, and navigation and diagrams validate.

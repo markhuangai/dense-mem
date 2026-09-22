@@ -1,330 +1,133 @@
 # Evaluation
 
-Dense-Mem evaluates retrieval through the production MCP submission and recall
-paths. The evaluation corpus, downloaded datasets, runtime databases,
-credentials, and full run outputs are local-only ignored artifacts. The
-generator, source locks, validation, scoring, and compact baseline evidence are
-reviewed with code.
-
-## v2.6.1 Synchronous Remember Exception
-
-This change intentionally does not run the deterministic 1k retrieval
-evaluation, the 100-row smoke, or publish an accuracy comparison. The semantic
-node model is unchanged, and the acceptance evidence is the complete no-skip
-Compose/UAT matrix plus focused real-PostgreSQL/service tests. Those checks prove
-the v2.6.1 request contract, assessor repair, inline embedding, atomic
-commit,
-idempotency, isolation, and rejected-versus-failed status behavior. They do not
-measure duplicate-Entity or dropped-hint rates. Later retrieval-quality or
-ranking changes restore the normal 1k gate.
+Dense-Mem evaluates retrieval through real MCP Remember and recall paths on a
+dedicated local stack. Deterministic qrels score retrieval; model-generated
+answers are not the acceptance oracle.
 
 ## Image Boundary And Tool Surface
 
-The release Docker target is `production`; its binary is compiled without the
-`evaluation` build tag and contains no evaluation MCP tools. The local
-`evaluation` target adds only:
+The production image contains production memory tools. The separately built
+`evaluation` target adds `eval_list_knowledge_refs`,
+`eval_run_dream_cycle`, and `eval_run_recall_case`. No runtime switch exposes
+these in the production binary.
 
-- `eval_list_knowledge_refs`
-- `eval_run_dream_cycle`
-- `eval_run_recall_case`
-
-There is no runtime evaluation-mode setting. The removed manifest/item/feedback
-event/scoring `eval_*` tools had no current harness callers. The committed
-`examples/docker-compose.evaluation.yml` builds the evaluation target, binds
-ports to loopback, stores state under the ignored evaluation runtime, and loads
-the ignored repository-root `.env` by default. When overriding
-`DENSE_MEM_EVAL_ENV_FILE`, use an absolute path; the monitor canonicalizes a
-relative input before passing it to Compose.
-
-## 100-Row Smoke
-
-`cmd/eval-seedgen --preset local_eval_100` produces the stable
-`local_eval_100_v2` identity: 100 corpus rows and 25 scored sanity cases. It
-checks the evaluation image, real synchronous Remember import, knowledge mapping,
-recall-case execution, scoring, and artifact identity without running the 1k
-release evaluation.
-
-The smoke run requires all 100 latest Remember attempts/fragments to be terminal
-with no failed or quarantined rows; all 25 cases must score; unmapped refs,
-bad rank one, and average bad@k must be zero. It may reuse the public gate's
-recall@k and required-rank-one floors as smoke thresholds, but the output must
-be labeled smoke-only. `dataset_identity.json` records seed/suite hashes,
-runner hash, server image ID, team, and provider fingerprints. This smoke never
-replaces the deterministic 1k gate when a change affects retrieval quality.
-Use `IMPORT_CONCURRENCY=5` for the smoke run; the full harness still supports
-up to 10 concurrent imports.
+`examples/docker-compose.evaluation.yml` provides the local evaluation stack.
+Keep its team and persistent runtime separate from manual memory use.
 
 ## Current Retrieval Evaluation
 
-The release retrieval gate is the public six-axis 1k corpus:
+The required quality comparison uses the approved deterministic 1k corpus.
+Its six public axes cover SciFact, MS MARCO, HotpotQA, MuSiQue, QASPER, and
+LongMemEval oracle retrieval.
 
-| Axis | Dataset | Purpose |
-| --- | --- | --- |
-| scifact | BEIR SciFact | Scientific claim/document retrieval. |
-| msmarco | BEIR MS MARCO | Web-passage retrieval. |
-| hotpotqa | BEIR HotpotQA | Public passage retrieval. |
-| musique | MuSiQue answerable dev | Multi-hop Relationship retrieval. |
-| qasper | QASPER | Paper QA evidence retrieval. |
-| longmem_oracle | LongMemEval-S cleaned | Long-memory chat recall. |
+Seed manifests, suites, qrels, cohort locks, and policy hashes establish the
+evaluation identity. Preserve approved source text and source metadata.
+Relationship-enriched datasets add non-authoritative proposals; the production
+assessor still owns grounding and acceptance.
 
-The historical V1 seed cannot enter the current submission API because it lacks
-the required Relationship properties. The V2 seed is a
-source-locked derivative of a declared V1 cohort: every retained evidence item
-is identical to V1, and V2 adds only the required `relationships` property.
+Current Remember accepts evidence without proposals. A particular enriched
+evaluation fixture may require proposals for its benchmark purpose; that is a
+dataset contract, not a universal public write requirement.
 
-~~~text
-V1 source-locked cohort
-  -> declared relationship-ineligible exclusions
-  -> retain evidence and source metadata unchanged
-  -> add logical relationships array with evidence_indices
-  -> real Go relationship validation
-  -> retained-evidence identity comparison
-  -> live write-time scanner, assessor, and retrieval evaluation
-~~~
+## Seed Validation And Provenance
 
-## V1-to-V2 Seed Comparison Gate
+The runner validates the manifest, corpus, suite, mappings, and public request
+shape before a live import. Content must fit the 999-code-point evidence bound
+without silent truncation.
 
-No live evaluation begins until the generated V2 seed has passed both
-validation and a detailed V1/V2 comparison.
+For derived cohorts, validate the parent/source hashes, declared exclusions,
+retained row order and content, copied sidecars, and proposal-ledger provenance.
+Do not regenerate an approved seed and claim it has the same identity.
 
-The comparison reports, without exposing raw restricted corpus content:
+```bash
+go run ./cmd/eval-runner --mode validate \
+  --seed "<approved-seed-manifest>" \
+  --suite "<approved-suite-jsonl>" \
+  --out "<ignored-validation-directory>"
+```
 
-| Check | Required result |
-| --- | --- |
-| Source lock | V1 manifest/hash matches the approved source. |
-| Cohort | A committed cohort lock binds the frozen source and filtered cohort hashes. It explicitly declares corpus rows with no directly supported Relationship and their dependent QASPER cases before either run. |
-| Count and order | The retained V1 and V2 corpus rows have the same count and source_doc_id order. |
-| Evidence identity | Every retained V1/V2 evidence item has the same ID, content hash, and source metadata. Any evidence difference is a hard failure. |
-| Metadata projections | Retained suite, qrels, licenses, transforms, and non-content metadata are unchanged. |
-| Relationship-property audit | Every V2 row has a nonempty spanless `relationships` array with valid `evidence_indices`, accepted by the real Go contract validator. |
-| Deterministic security gate | The live V2 import passes every row through the same write-time scanner used by production before assessment. |
-| Relationship provenance | The manifest records its parent seed ID/hash, retained-evidence identity hash, relationship-ledger hash, and relationship count without recording raw restricted corpus content. The local derivation report records copied-artifact/suite hashes plus fallback source IDs and excluded-ledger count. |
+Angle-bracket values are placeholders. The runner has no default seed/suite;
+supply the approved paths explicitly.
 
-The comparison is not a retrieval-score comparison. It proves that V1 and V2
-measure the same retained evidence cohort before measuring live system behavior.
+## 100-Row Smoke
 
-## V2 Seed Generation
+The `local_eval_100` preset generates 100 corpus rows and 25 sanity cases
+under the current `local_eval_100_v2` dataset identifier:
 
-The committed cohort lock records the declared exclusions and binds both V1
-hashes. The V2 manifest keeps the parent V1 ID/hash, evidence-identity hash,
-relationship-ledger hash, and relationship count; its local derivation report
-records copied-artifact/suite hashes, fallback source IDs, and the
-excluded-ledger count. The executable cohort validator proves that each
-retained V1 row and copied sidecar is unchanged before it accepts the V2
-derivation. It must not normalize, repair, truncate, or otherwise rewrite
-retained evidence, source metadata, answers, suite rows, qrels, licenses, or
-transforms.
+```bash
+go run ./cmd/eval-seedgen \
+  --preset local_eval_100 \
+  --out tests/eval/seeds/local_eval_100 \
+  --suite tests/eval/suites/local_eval_100.jsonl
+```
 
-It adds one or more self-contained Relationship proposals to each retained
-corpus item. An evidence item is currently bounded to 999 characters, so a
-single fixed proposal is insufficient: `relationships` is an array and every
-entry supplies its own inline subject, predicate, object, and
-`evidence_indices`. The generator does not emit text ranges or decide canonical
-IDs, predicate registration, durable support, or accepted semantic state.
+Smoke checks validate image composition, real terminal Remember import,
+knowledge mapping, recall-case execution, scoring, and artifact identity.
+Report them as smoke evidence. They do not replace the deterministic 1k
+comparison.
 
-If a historical ledger term is no longer present in its recorded support window
-in the frozen V1 evidence, the generator records that source ID and uses a
-sentence-bounded best-effort logical proposal instead. This changes only the
-non-authoritative proposal; it never changes the evidence, and the live server
- still owns exact grounding, repair, and terminal disposition policy.
+## Live Import And Retrieval Run
 
-Before release use, every row is checked by the same Go code as production:
-
-1. required Relationships use only the current closed fields, cite unique
-   in-range `evidence_indices`, and collectively cover the evidence;
-2. derivation verifies the selected subject, predicate, and object terms against
-   the frozen evidence without serializing their offsets;
-3. the source metadata and source revision rules are valid; and
-4. the manifest and suite cross-checks pass.
-
-The normal live import then runs the deterministic evidence scanner before the
-assessor sees the client relationship proposals.
-
-## Relationship-Property Audit
-
-The generator validates every V2 relationship property with the production Go
-contract before release use. Its local derivation report records only parent and
-derived seed hashes, the evidence-identity hash, aggregate corpus/relationship/
-contract-validation counts, copied-artifact/suite hashes, fallback source IDs,
-and excluded-ledger count. It does not write raw evidence, credentials, prompts,
-or provider responses to review artifacts.
-
-An incomplete checkpoint, schema mismatch, evidence-identity mismatch, or real
-Go contract failure stops seed generation. The live assessor remains the
-security and semantic-normalization authority during actual import.
-
-## Live Import and Retrieval Run
-
-A live run uses a dedicated disposable local team against the local Compose
-server. It imports through the same public MCP route as normal clients:
-
-~~~text
-corpus row
-  -> tools/call remember
-  -> terminal completed/rejected/quarantined result
-  -> current/not_required search state
-  -> canonical evidence mapping
-  -> tools/call eval_run_recall_case
+```text
+approved corpus row
+  -> production remember through MCP
+  -> terminal result and canonical evidence/Relationship mapping
+  -> evaluation recall cases
   -> deterministic qrel scoring
-~~~
+  -> baseline/candidate comparison
+```
 
-The runner fails the import gate if a corpus row fails, times out, or cannot
-produce its canonical mapping. Completed rows must
-reach `current` or `not_required` search state. A rejected, quarantined, or
-awaiting-review placement is accepted for evidence scoring only when the
-terminal response includes a canonical evidence ID; its review burden remains
-in the terminal-state counts. The runner does not fake a successful row with a
-mock or manual database write.
+Import must report failed operations and every corpus mapping. A completed
+evidence-only write does not prove the expected Relationship was accepted or
+that a qrel is retrievable.
 
-A quarantined placement is terminal only for retry accounting: the monitor does
-not resend it and records it separately. After every row is terminal, the
-monitor may retain complete deterministic scores for a V1/V2 diagnostic
-comparison, but writes a failed `import_gate_result.json` with
-`status: "comparison_only"`. That result is never release-ready, even when the
-retrieval-metric `release_gate_result.json` passes.
+The persistent monitor is
+`tests/eval/scripts/run_full_public_rag_eval_until_done.sh`.
+Configure its approved `SEED`, `SUITE`, release policy, and dedicated
+runtime before starting it. A deliberately ungated diagnostic run must be
+labeled as such and cannot be presented as a release-gate pass.
 
-Any terminal import/placement-monitor failure overwrites
-`import_gate_result.json` with `status: "failed"`, `passed: false`, and a
-bounded reason. When PostgreSQL counts cannot be read, the count fields are
-`null` and `counts_observed` is `false`; a prior passing count must never be
-presented as current.
+The committed runner and monitor own accepted options and identity checks.
+Consult their help and
+[the evaluation harness](https://github.com/markhuangai/dense-mem/tree/main/tests/eval)
+for execution details. Do not apply old ticket-specific waivers to a new change.
 
-Run outputs contain mapping hashes, run identity, model/configuration
-fingerprints, scorer versions, submission terminal-state counts, search-state
-counts, recall traces, score summaries, and safe bounded errors. Credentials and
-raw provider data remain outside artifacts.
+## Baseline, Candidate, And Comparison
 
-## Baseline, Candidate, and Comparison
+Baseline and candidate runs must use the same declared evaluation identity and
+record source/image, runner/scorer, provider fingerprints, contract, mapping
+hash, and timing. Generic comparison is same-seed only; an explicitly validated
+cohort comparison is required for different derived identities.
 
-Run the pre-change baseline against the validated filtered V1 cohort,
-then run the post-change candidate against V2 with the same retained cohort and
-suite. The evidence-identity comparison is the apples-to-apples guard; the run
-comparison then measures the behavioral effect of adding relationships.
+```bash
+go run ./cmd/eval-runner --mode compare \
+  --baseline-run "<ignored-baseline-directory>" \
+  --candidate-run "<ignored-candidate-directory>" \
+  --out "<ignored-comparison-directory>"
+```
 
-~~~bash
-go run ./cmd/eval-runner \
-  --mode baseline \
-  --seed "$FILTERED_V1_SEED" \
-  --suite "$FILTERED_V1_SUITE" \
-  --out "$V1_BASELINE_OUT"
-
-go run ./cmd/eval-runner \
-  --mode candidate \
-  --seed "$V2_SEED" \
-  --suite "$V2_SUITE" \
-  --out "$V2_CANDIDATE_OUT"
-
-go run ./cmd/eval-runner \
-  --mode compare-v2-cohort \
-  --baseline-run "$V1_BASELINE_OUT" \
-  --candidate-run "$V2_CANDIDATE_OUT" \
-  --parent-v1-seed "$PARENT_V1_SEED" \
-  --parent-v1-suite "$PARENT_V1_SUITE" \
-  --filtered-v1-seed "$FILTERED_V1_SEED" \
-  --filtered-v1-suite "$FILTERED_V1_SUITE" \
-  --derived-v2-seed "$V2_SEED" \
-  --derived-v2-suite "$V2_SUITE" \
-  --cohort-lock "$COHORT_LOCK" \
-  --out "$V1_V2_COMPARISON_OUT"
-~~~
-
-Generic `compare` accepts only two runs with the same seed hash. It must not be
-used for this V1-to-V2 comparison.
-
-The comparison reports recall@k, MRR, nDCG, bad-at-k, rank-one rates, and
-available context/evidence/dream dimensions. Its interpretation must include
-submission acceptance/rejection/quarantine counts and retrieval degradations;
-a good score does not excuse unsafe or incomplete ingestion.
-
-`import_gate_result.json` records corpus acceptance separately from the
-retrieval-metric `release_gate_result.json`. Both must pass for a release-ready
-evaluation. A complete score artifact with `comparison_only` import status may
-be used only to diagnose a V1/V2 delta, and the PR must label it non-release-
-ready.
-
-## Local E2E Security Gate
-
-As a local, on-demand release gate, use the real Compose server and a live
-ephemeral credential to prove the public integration path:
-
-1. tools/list exposes exactly ten current tools and omits
-   `get_submission_status`, placement, and review tools;
-2. a safe spanless remember call with complete evidence-index coverage returns
-   a terminal result with current/not_required search state;
-3. Base64 evidence is rejected before provider or persistence work;
-4. role-control and prompt-injection evidence are rejected before provider or
-   persistence work;
-5. operational failures use MCP `isError: true` with structured JSON content;
-6. recall/trace preserve evidence-first output and flag returned evidence as
-   untrusted data; and
-7. the migration and repository integration tests prove deterministic
-   quarantine retains no raw payload, while control-only operational failure
-   artifacts are physically purged within seven days; immutable accepted source
-   evidence and lineage remain restricted audit history.
-
-This is a real PostgreSQL/service test, not a mocked method-call test.
+Report quality, required rank-one coverage, bad-result rates, unmapped refs,
+ingestion outcomes, degradations, latency, and provider cost where measured.
+Do not average away failed imports or missing scored cases.
 
 ## PR Evaluation Rule
 
-The v2.6 Remember reliability branch is the documented exception above: do not
-require a 1k score artifact for it. Record the complete no-skip Compose/UAT
-commands and outcomes instead. The normal rule below resumes for subsequent
-changes outside that exception.
+Retrieval quality, ranking, placement accuracy, verifier/reviewer behavior,
+embeddings, search-document, migration-placement, or performance changes require
+the deterministic 1k evaluation/comparison unless the linked issue records an
+explicit maintainer-approved waiver and replacement verification.
 
-A pull request that can affect retrieval quality, ranking, submission
-assessment, deterministic security scanning, embedding/search documents,
-predicate normalization, migration placement, or performance must include:
+Documentation-only changes do not alter retrieval and do not require running
+that evaluation. Public behavior still has its appropriate regression and
+production-entry gates under [Development And Testing](Development-And-Testing).
 
-- passed V2 seed validation;
-- passed detailed V1/V2 seed comparison before live evaluation;
-- passed Compose-backed MCP security E2E;
-- baseline and candidate 1k summaries plus their deterministic comparison;
-- terminal submission and search-state counts; and
-- any degradation or failure analysis.
+## Artifact Handling And Risks
 
-A failed mandatory gate blocks the PR. Generated seed files, datasets,
-credentials, runtime databases, and full outputs remain ignored. Commit only
-the generator/source lock/provenance/validation/scoring code and a compact
-safe baseline record.
+Downloaded data, generated seeds/suites, credentials, runtime databases, full
+runs, and comparisons stay in ignored local paths. Commit reproducible
+generators, source locks, validation/scoring logic, and compact safe evidence.
 
-## Reproducibility Manifest
-
-Every run records:
-
-- seed and suite IDs/hashes;
-- for V2, parent V1 ID/hash, retained-evidence identity hash,
-  relationship-ledger hash, and relationship count;
-- generator and runner versions;
-- contract version;
-- local server image/revision and relevant provider configuration fingerprints;
-- team-scoped mapping hash;
-- scorer version and metric configuration; and
-- start/end timestamps and safe terminal-state counts.
-
-An identity mismatch is a hard error. The runner must not adopt, overwrite, or
-erase a pre-existing runtime with a different identity.
-
-## Evaluation Risks
-
-| Risk | Concrete failure mode | Mitigation |
-| --- | --- | --- |
-| Unsafe corpus input | Historical data contains encoded or injected text. | Keep retained evidence unchanged and run the real scanner; a deterministic rejection fails import before any assessor call, while only passing rows require a live assessor disposition. |
-| Seed semantic drift | Proposal generation changes evidence or cohort while making V2 valid. | Source lock, explicit exclusions, and retained-evidence identity comparison before evaluation. |
-| False pass from mock | Import test checks a stub rather than server behavior. | Use public MCP calls against real Compose PostgreSQL/service. |
-| Search race | Retrieval starts before required derived documents are current. | Embed before the fenced semantic commit and fail the original call on a vector/provider error. |
-| Cross-team leakage | Eval client reads another profile’s submission or evidence. | Dedicated team/profile tests under RLS and public status boundary. |
-| Credential exposure | Evaluation artifacts capture live keys. | Store credential/profile files only in ignored restricted paths; never print or commit them. |
-| Score-only decision | Retrieval score hides rejected/quarantined corpus rows. | Publish terminal-state counts and treat ingestion failure as a hard gate. |
-
-## Evaluation Acceptance
-
-1. the V2 seed passes real contract/scanner validation;
-2. its detailed V1/V2 comparison passes before any live run;
-3. every live corpus row reaches an acceptable terminal submission/search state;
-4. baseline, candidate, and comparison artifacts are reproducible from their
-   manifests;
-5. security E2E uses a real local service and live credential;
-6. no raw evidence, provider response, or credential enters committed output;
-7. recall metrics and submission outcomes are reported together; and
-8. a failing required security, seed, import, or scoring gate cannot produce a
-   release-ready result.
+A different seed, provider, or image can make scores incomparable. Missing
+mapping rows can make a weak run look good. A mocked import can bypass actual
+authorization and validation. Bind artifact identity, use real production
+intake, and fail incomplete evaluations visibly.

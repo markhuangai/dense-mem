@@ -102,7 +102,7 @@ Redis coordinates:
 - rate-limit counters
 - SSE concurrency
 - bounded wakeups/leases/cleanup coordination
-- optional provider-quota coordination across replicas
+- coordination through the implemented distributed ports
 
 Rate-limit policy remains in the access application boundary. Redis implements
 the distributed coordination port when replicas require it; a single process
@@ -116,14 +116,14 @@ Redis never owns:
 - Entity/EntityName records
 - Relationship records/support/transitions
 - verifier/submission assessment decisions
-- submission/embedding queues and results
+- terminal write results and durable background operations
 - API keys/audit
 
 Compose Redis healthchecks authenticate with `REDISCLI_AUTH` so the password is
 not placed in the `redis-cli` argument list. Keep the healthcheck and server
 credentials in the same secret environment or secret-manager scope.
 
-PostgreSQL remains the authoritative queue/ledger. Redis loss does not remove
+PostgreSQL remains the authoritative workflow and knowledge ledger. Redis loss does not remove
 memory.
 
 ## Single Instance

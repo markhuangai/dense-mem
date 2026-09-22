@@ -5,17 +5,16 @@ private control portal. Protected requests share one identity model:
 authentication fixes the team, actor identity, membership, permanent owner
 alias, and optional credential; later layers may only restrict access.
 
-This page defines the target request/security contract for the full refactor.
+This page describes the current request and authorization boundaries.
 
 ## Current Remember execution
 
-After authentication and strict binding, Remember snapshots the owner, memory
-space, source revisions, candidate allowlists, and active search contract. It
-then runs the bounded assessor conversation, one ordered embedding batch, and a
-single fenced PostgreSQL transaction. The original MCP call returns the
-terminal outcome; no status reader, placement lease, or post-response worker is
-part of this path. Cancellation is checked before transaction entry, and a late
-fence race returns `commit_conflict` without semantic writes.
+After authentication and strict binding, Remember scans the request and
+serializes its scoped retry key. It prepares authorized duplicate/candidate
+context, assesses the complete response, embeds required documents, and commits
+accepted effects in one fenced transaction. Duplicate-detection embeddings can
+precede assessment. The originating call returns the terminal result; earlier
+cancellation and source/space/version races remain authoritative.
 Key provisioning is in [Portals And API Keys](Portals-And-API-Keys).
 
 ## Network Surfaces
@@ -245,10 +244,10 @@ Redis namespacing is not an authorization boundary. Search over-fetch never
 returns raw cross-team candidates. Every ID supplied by a provider/client is
 revalidated against the principal before hydration or mutation.
 
-Team scope grants read visibility to eligible knowledge authored by any active
-same-team owner. It does not grant mutation authority. Ordinary updates to a
-Relationship, support decision, supersession, forget, merge, split, or Entity
-resolution additionally require the durable owner alias to equal the
+Team scope permits eligible shared knowledge reads across owners; private
+records additionally require the allowed space. It does not grant mutation
+authority. Ordinary Relationship correction, evidence retraction, supersession,
+and their support/lifecycle changes require the durable owner alias to equal the
 authenticated actor's owner alias. Cross-owner correction creates caller-owned knowledge
 and an append-only same-team cross-reference.
 
@@ -261,7 +260,7 @@ dependencies and appends the resulting events.
 
 ## Role Versus Scope
 
-| Control | Target values | Meaning |
+| Control | Values | Meaning |
 | --- | --- | --- |
 | role | `manager`, `member` | same-team administrative authority |
 | scope | `read`, `write`, `feedback:read` | operation capabilities |
@@ -285,9 +284,9 @@ flowchart TD
 | recall, trace, context, Entity/Relationship inspection | `read` | member or manager |
 | remember, retraction, and owned correction | `write` | submits caller-owned evidence/proposals or applies authorized owned lifecycle work; authoritative evidence additionally follows authority policy |
 | advance owned source revision | `write` | exact source ownership and prior-revision compare-and-set; effects follow indexed support dependencies |
-| merge/split/supersede/forget | `write` | caller-owned observations and Relationships only |
+| evidence replacement/retraction | `write` | Owned evidence IDs; canonical support/lifecycle changes follow accepted server policy. |
 | confirm/challenge another owner | `write` | submit caller-owned evidence through normal remember; target remains immutable |
-| replace quarantined submission | `write` | submit a fresh complete evidence/proposal package; no release action exists |
+| submit corrected safe evidence | `write` | Follow the returned remediation and retain a complete new operation when input changes. |
 | recall-feedback submission | `write` | feature enabled |
 | stored feedback inspection | `read + feedback:read` | feature enabled; same-team/control restrictions |
 | evaluation tools | `read + write` | compiled into the evaluation image only; disposable teams only |
@@ -339,13 +338,13 @@ read/write behavior.
 ### Remember admission boundary
 
 After transport validation and immutable principal binding, Remember enters the
-`internal/service/remember` application boundary. The boundary converts the
-strict request, verifies evidence-index coverage, scans evidence and structured
+`internal/remember/service` application boundary. The boundary converts the
+strict request, validates each proposal's evidence indexes, scans evidence and structured
 proposal values, and records only bounded security-rejection metadata on an
 admission failure. A successful call invokes one request-owned processor; the
 MCP result is returned only after assessment, required embedding, and the
 fenced transaction produce a terminal result. The port does not expose
-provider, placement, search, or database types. Control-only attempt reads use
+concrete provider or storage adapters. Control-only attempt reads use
 the same team/profile scope and never serve as a public polling contract.
 
 ```mermaid
@@ -459,22 +458,20 @@ weaken the promised global limit.
 | `GET /health` | liveness; process can respond even when degraded |
 | `GET /ready` | readiness; returns non-success when required dependencies/policies fail |
 
-Readiness includes PostgreSQL migrations/RLS, `pgvector`, the persisted
+Readiness includes PostgreSQL schema and RLS, `pgvector`, the persisted
 embedding contract, active search-index generation/topology parity, required
 provider contracts, complete Relationship text projection, and Redis when
 distributed coordination is required. Current Remember writes require vectors
-before commit; legacy drift is reported by the optional document-centric
+before commit; derived search drift is reported by the optional document-centric
 `search_convergence` projection and never acknowledged as a normal write queue.
 Incomplete Relationship text projection is still a readiness failure.
 
 Do not use liveness as a readiness gate.
 
-The daily reconciliation scheduler reserves one durable local-date run per
-active embedding contract. It fences workers with a lease token, marks the
-canary before the provider call, calls the raw provider exactly once, and
-releases the recoverable backlog only after successful completion. Ambiguous
-provider or database completion is fail-closed and remains visible to
-operators.
+Maintenance reconciliation runs with durable state and source/document/contract
+fences. It is separate from a successful Remember write. Operators inspect
+convergence and bounded failure guidance; a maintenance failure cannot be
+reported as successful recovery.
 
 ## Error Boundary
 
@@ -499,50 +496,38 @@ Typed error schema is in
 
 ## Provider Isolation
 
-Raw staged evidence, logical client Relationship proposals, server-issued
-grounding choices, bounded same-team Entity candidates, and predicate options
-are untrusted prompt data. The write path
-first runs a deterministic Base64/encoding, hidden-control, instruction,
-role-spoofing, markup, secret-extraction, and exfiltration scan over every
-provider-bound user field, including the structured proposal, before it stages
-anything. An intake hit returns a bounded error and appends only safe audit
-metadata; no submission, fragment, search document, or assessor
-request exists. The worker repeats that scan over the staged evidence and
-provider-bound proposal before it claims candidate context or calls the assessor.
-The scanner normalizes covered format controls and one bounded layer of percent,
-hexadecimal, Unicode, and HTML-entity escapes before matching. Escape notation,
-backslashes, quotes, and brackets are not threats by themselves. It rejects a
-hidden-control flood or normalized threat pattern and treats an external tool or
-network request as unsafe only when it has directive wording at a structural
-boundary or after an imperative cue. Direct quoted or bracketed directives still
-reject; valid bidirectional prose and descriptive quotations remain eligible.
-Safe audit metadata contains bounded decisions, rules, sources, and spans, not a
-scanner version or policy hash.
+Submitted evidence and proposal values are untrusted data. Strict binding and
+the initial deterministic scan precede provider work. An initial security
+rejection retains only bounded rule/span/correlation metadata and does not send
+the content to a model.
 
-The Remember assessor receives the complete request-local submission snapshot plus bounded
-candidate/predicate context in one capability-free structured request. It has no
-tools, credentials, environment data, request headers, cross-team records, or
-prior raw evidence history. It returns structure only: complete security
-signals, allowlisted groundings, predicate/range selections, and submitted
-endpoints. It cannot return confidence, rationale, ownership, lifecycle,
-review, or promotion fields. It may repair grounding, identity, predicate
-selection, and supported splits, or mark a hint `not_stored`. The server
-validates the complete response and applies all durable policy before the atomic
-commit.
+The assessor receives exact submitted evidence, allowed grounding boundaries,
+bounded authorized candidate/predicate/duplicate context, and explicit
+known-evidence context when supplied. It receives no operational credentials,
+authentication headers, tools, or cross-team/private data outside the
+authenticated allowlist.
 
-A `hidden_control_markup` output must cite an exact span with a covered hidden
-control or active markup. Otherwise the closed assessor response is invalid and
-cannot create a quarantine.
+Every submitted evidence item receives security review. The server validates
+the complete response and all references before applying durable policy.
+Unsupported proposals can be `not_stored` while safe evidence is stored.
+A security rejection fails the batch; required failures cannot partially
+commit canonical state. Complete regeneration is bounded within the request.
 
-A deterministic or assessor security concern returns a quarantined terminal
-result. PostgreSQL atomically records bounded attempt, event, and security
-metadata without creating canonical evidence, search documents, vectors, or a
-raw quarantine payload. A client can only submit a new independent complete
-batch; it cannot negotiate, release, or append evidence to quarantined input.
-Complete closed-schema assessor validation is required before one atomic
-canonical promotion; no partial semantic commit is allowed. Assessor repair is
-bounded to the same session. Exhaustion is a typed operational failure;
-semantic rejection is limited to `no_supported_memory` and `stale_input`.
+## Operator Diagnostics And Credential Protection
+
+One root logger protects configured operational secrets and request
+authentication material before console or PostgreSQL output. Protection covers
+supported serialized forms. A field name or secret-like user text alone does
+not trigger masking.
+
+After schema validation and the initial scan, admitted user fields can remain
+exact in bounded authorized operator diagnostics, including later provider or
+validation failures. Initial security rejection remains content-free.
+Protected body captures are loaded only by authorized control detail routes and
+honor expiry, availability/truncation, and applicable erasure/hold rules.
+
+This operator contract does not broaden public errors, metric labels, audit
+projections, or exports. See [Telemetry](Telemetry).
 
 ## Audit
 
@@ -552,7 +537,7 @@ Audit high-value events:
 - authority changes and submission terminal outcomes
 - source revision activation, direct evidence supersession/retraction, and resulting
   support/status transitions
-- deterministic intake rejection audits, assessor quarantine decisions, and
+- deterministic intake rejection audits, assessor security rejection decisions, and
   control-only failure-artifact expiry
 - Entity merge/split
 - Relationship retraction/supersession corrections
@@ -587,39 +572,12 @@ audit ledger.
 | Source-key takeover | a writer advances another integration's source and demotes team knowledge | bind source identity to immutable owner and require exact prior-revision compare-and-set |
 | Private erasure crosses a space | deleting one SSO-owned credential removes profile-private or team-shared knowledge | seal and generation-fence the exact credential-private space, delete through a catalog-complete manifest, and verify zero rows before completion |
 
-## Acceptance Invariants
+## Verification
 
-1. request data cannot override authenticated team
-2. raw credentials never reach services/providers/logs
-3. `tools/list` and `tools/call` use the same registry, feature visibility, and
-   scope policy
-4. every durable, full-text, vector, and adjacency access is team-scoped
-5. role and scopes are checked independently
-6. write idempotency is durable
-7. multi-instance limits do not silently fall back
-8. background workers preserve original team scope
-9. public errors cannot reveal cross-team existence
-10. same-team read visibility never authorizes cross-profile lifecycle,
-    support, or identity mutation
-11. user/control portal handlers remain first-party views and do not become a
-    public memory automation contract
-12. user-portal API-key login remains supported alongside configured SSO;
-    explicit API-key portal sessions and SSO sessions use HttpOnly/SameSite
-    cookies, CSRF protection, and current-authorization revalidation
-13. no client can release a quarantine or append evidence to an existing
-    submission; recovery is a fresh complete submission with a new idempotency key
-14. a source revision can be advanced only by its immutable source owner and an
-    exact expected prior token
-15. semantic memory tools are visible and executable through MCP only; generic
-    HTTP discovery and execution routes cannot expose them
-16. deterministic security rejection happens before provider work, and every
-    Remember-assessor response contains complete, exact security signals for
-    the request-owned evidence boundary
-17. deterministic quarantine stores no raw payload or canonical memory, while
-    operational failure-artifact bytes are control-only and physically purged
-    within seven days; immutable accepted source evidence and lineage remain
-    restricted audit history;
-    recalled evidence remains untrusted data after any successful write
+Exercise authentication, team/owner/space isolation, strict schemas, feature
+visibility, cancellation, private erasure, credential protection, and operator
+capture access through real supported callers. Required PostgreSQL/RLS behavior
+needs database-backed tests. Public errors must not reveal inaccessible IDs.
 
 ## Canonical Identity Context
 
@@ -638,9 +596,8 @@ substituted for `owner_id` by request payloads or provider output. `team_admin`
 never grants another owner's mutation authority. System actors preserve the
 `system` actor kind.
 
-The ordered Goose cleanup is boot-only and transactional. No public request can
-select migration mode or trigger cleanup. The removed legacy tables cannot
-become a fallback read or write path after startup.
+System and migration modes are never request-selectable. Startup schema work
+uses its own controlled boundary.
 
 ## Memory Space Authorization
 
@@ -655,7 +612,9 @@ team-shared. A shared-only or read-only integration authorizes team-shared only
 unless policy explicitly grants a private binding; read-only still cannot
 mutate. Team-manager role does not grant access to another member's private
 space. PostgreSQL RLS and every repository query enforce this set, including
-hydration, trace, graph expansion, conflict handling, and background jobs.
+hydration, trace, conflict handling, and applicable background jobs. Remember
+writes to the authenticated private space when present, otherwise shared.
+Current recall related graph/community/Hypothesis frontiers remain shared-only.
 
 ## Private-Memory Erasure Boundary
 

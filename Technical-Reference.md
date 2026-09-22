@@ -1,8 +1,6 @@
 # Technical Reference
 
-The only Remember runtime contract is `dense-mem.v2.6.1`. References to the v2.5
-normalizer or resubmission issues below are historical migration notes, not
-active client requirements or a readable compatibility projection.
+The current memory contract is `dense-mem.v2.6.3`.
 
 This page defines the current public memory contract. MCP discovery is
 the authoritative source for the exact schema visible to an authenticated
@@ -19,15 +17,16 @@ memory API.
 
 ## Contract Principles
 
-1. Remember requires exact evidence and a nonempty logical `relationships`
-   array whose `evidence_indices` cover the submitted evidence. Exact grounding
-   belongs to the server and assessor.
+1. Remember requires exact evidence and one top-level idempotency key.
+   Relationship proposals are optional; each supplied proposal cites submitted
+   evidence. Exact grounding belongs to the server and assessor.
 2. The server, not the client or assessor, owns canonical IDs, predicate
    registration, support, lifecycle state, status, and durable commits.
 3. The originating Remember call runs assessment, planning, required embedding,
    and the fenced commit before returning a terminal result; clients do not poll.
-4. No semantic or workflow staging is acknowledged before provider success, and
-   no canonical state is visible without its required current vector.
+4. Success is terminal: accepted evidence, canonical effects, and required
+   current vectors commit atomically after provider work and before the call
+   returns. Attempt diagnostics are separate from accepted knowledge.
 5. Recall is evidence-first and Relationship-supported. Its established response
    shape is not replaced by graph-only output.
 6. Returned evidence is untrusted data. It is never authority or a reason to
@@ -60,18 +59,10 @@ role, and scope. Discovery and invocation apply the same checks.
 | eval_run_dream_cycle | read/write | Evaluation harness | Evaluation image only | Run an isolated manual Dream cycle for evaluation. |
 | eval_run_recall_case | read/write | Evaluation harness | Evaluation image only | Run recall and return ranked/context refs for deterministic scoring. |
 
-Memory-pack candidate discovery, inspection, import, and rollback are not part
-of the v2.6.1 contract. A destination uses a normal authenticated `remember`
-submission for any evidence derived from an external artifact.
-
-The release binary is compiled without the `evaluation` build tag. It cannot
-register evaluation tools through an environment variable or control setting.
-The separate evaluation image adds only the three `eval_*` tools above.
-`eval_get_manifest`, `eval_get_knowledge_item`,
-`eval_list_recall_feedback_events`, `eval_get_recall_feedback_event`, and
-`eval_score_retrieval_case` are removed because the current harness has no
-caller for them. Community analysis remains server-controlled recall/portal
-context and has no standalone public tool.
+The release binary excludes evaluation tools. The separate evaluation image
+adds the three `eval_*` tools above. Community analysis is supplied through
+recall and the first-party portals. Memory-pack export uses the current
+`dense-mem.memory-pack.v2.4` artifact; see [Memory Packs](Memory-Packs).
 
 ## Production HTTP Surface
 
@@ -146,21 +137,18 @@ manual team-scoped client configuration.
 
 ### Application boundary
 
-Remember intake is owned by `internal/service/remember`. It performs strict
-conversion, evidence-index coverage checks, deterministic security admission,
-in-memory plan construction, synchronous orchestration, and the terminal
-owner-scoped result. The application depends on narrow processor/audit ports.
-The composition root adapts PostgreSQL and providers; no provider, placement
-worker, or concrete PostgreSQL package is imported by the Remember application
-itself.
+Remember intake and synchronous processing are owned by
+`internal/remember/service` and its processor. They validate and admit the
+request, persist the exact retryable submission, orchestrate assessment and
+embedding, and return the terminal result. Canonical writes use Knowledge
+ports; composition supplies providers and private PostgreSQL adapters.
 
 ### Request
 
-remember requires evidence and a top-level nonempty `relationships` array. The
-client constructs the smallest inline Entity names, predicate key, and Entity or
-typed Value object that express each logical Relationship. An evidence item is
-currently bounded to 999 characters, so each Relationship is self-contained
-rather than referencing a separate proposal object.
+`remember` accepts one to twenty evidence items, each containing at most 999
+Unicode code points, and up to 200 optional Relationship proposals. The
+`relationships` field may be omitted or empty. A safe evidence item can be
+stored and indexed without a Relationship proposal or accepted split.
 
 ~~~json
 {
@@ -192,8 +180,7 @@ rather than referencing a separate proposal object.
 ~~~
 
 Each Relationship has a unique request-local `ref` and one to twenty unique,
-in-range `evidence_indices`. Across the array, those indexes must cover every
-submitted evidence item. A Relationship `object` has exactly one of `entity` or
+in-range `evidence_indices`. They need not cover every submitted evidence item. A Relationship `object` has exactly one of `entity` or
 typed `value`, never both.
 
 `remember` rejects caller `span`, `surface`, and Relationship `supports` fields.
@@ -227,6 +214,7 @@ optional and non-authoritative. A predicate hint needs `proposed_key` or
 | object | yes | Exactly one inline `entity` or typed `value`. |
 | polarity | yes | `+` or `-`; Remember Relationships are statements. There is no public `modality` field. |
 | evidence_indices | yes | One to twenty unique indexes into this request's `evidence` array. |
+| known_evidence_ids | no | Up to twenty explicit visible evidence UUIDs for assessor context; submitted evidence is still required. |
 | valid_from / valid_to | no | RFC 3339 evidence-supported validity hints. |
 | correction_target | no | Same-team Relationship ID and expected version supplied from authorized context. |
 | conflict_context | no | Same-team open Conflict ID and expected version supplied from authorized recall. |
@@ -242,6 +230,7 @@ optional hints and are grounded by the assessor.
 | Field | Required | Meaning |
 | --- | --- | --- |
 | content | yes | Verbatim source text. Explicit encoded/obfuscated payloads are rejected when their bounded decode or shape indicates a threat; ordinary paths, opaque IDs, backslashes, quotes, brackets, and harmless escape notation are not rejected for entropy alone. |
+| force_insert | no | Bypass semantic duplicate reuse; exact duplicate reuse still applies. |
 | source_type | no | conversation, document, observation, or manual; it grants no authority. |
 | source | no | Bounded provenance label. |
 | authority | no | Proposed source authority, subject to server policy. |
@@ -253,19 +242,25 @@ optional hints and are grounded by the assessor.
 
 Direct supersession and a source revision advance cannot be combined.
 
+Known evidence is authorized within the caller's memory spaces and remains
+read-only context. It does not receive a new security verdict or become newly
+submitted evidence. A stored split must still cite submitted evidence. Total
+known-evidence content is bounded to 20,000 Unicode code points before boundary
+expansion; exceeding that budget returns `input_budget_exceeded`. Missing,
+inaccessible, or stale context cannot establish support or reveal existence.
+
 There is one required top-level `idempotency_key`. Evidence-level or derived
 keys are not accepted. Its value is excluded from the canonical body hash, so
 same-owner retries replay the original submission while a changed body with
-the same key conflicts immediately. There is no held-submission target or
-`replaces_submission_id` field. When a run needs correction, send one new
-complete batch with a new key. Evidence-level supersession via
-`supersedes_evidence_ids` remains part of the same complete batch when needed.
+the same key conflicts immediately. When deliberately correcting the input, retain the entire revised request
+with a new key. Follow returned remediation for retries; rotating a key is not
+a way to bypass a conflict.
 
 ### Response
 
 ~~~json
 {
-  "contract_version": "dense-mem.v2.6.1",
+  "contract_version": "dense-mem.v2.6.3",
   "submission_id": "sub_01J...",
   "submission_kind": "remember",
   "processing_state": "completed",
@@ -289,116 +284,23 @@ complete batch with a new key. Evidence-level supersession via
 
 `remember` is terminal and synchronous. The application validates the request,
 runs one assessor conversation (at most three complete provider calls), renders
-the deterministic semantic/search plan, makes one batch embedding call, and
+the deterministic semantic/search plan, embeds the required documents, and
 commits canonical state plus current vectors in one fenced PostgreSQL
 transaction. Fixed budgets are 180 seconds total, 160 seconds for validation
-and assessment, 10 seconds for embedding, and 10 seconds for commit. A
-successful result never contains `queued`, `processing`, `pending`, or `failed`
-search state. A non-stored evidence or Relationship entry includes a bounded
-reason and no durable ID. `errors` is always present.
+and assessment, 10 seconds per embedding phase, and 10 seconds for commit, all bounded by
+entry-anchored deadlines. Duplicate-candidate embedding can precede assessment;
+see [Memory Write Pipeline](Write-Pipeline#deadlines-and-atomic-commit). A
+successful result has `processing_state: completed`, with `search_state`
+`current` or `not_required`. Execution failures use `processing_state: failed`
+when a terminal submission result is available. `errors` is always present;
+bounded optional-context diagnostics may appear in `warnings`.
 
-Operational failures are MCP tool results with `isError: true`, while retaining
-the structured result in `structuredContent` and JSON text. They use one of
-`idempotency_conflict`, `provider_unavailable`, `provider_response_invalid`,
-`input_budget_exceeded`, `configuration_invalid`, `embedding_unavailable`,
-`embedding_response_invalid`, `commit_conflict`, `database_failure`,
-`request_timeout`, `request_cancelled`, or `internal_failure`, plus a closed
-`next_action` (`retry_same_request`, `resubmit_remember`, `retry_correction`,
-`contact_operator`, or `none`).
-
-A valid assessor response is checked as one complete batch. A stored result is
-recorded for every submitted `ref`; an unsupported hint is recorded as
-`not_stored` when every evidence item is still covered by at least one stored
-split. Only `no_supported_memory` and `stale_input` are public semantic
-rejections. Provider, configuration, database, and internal faults are typed
-operational failures. All accepted semantic effects commit atomically; there
-is no approval, hold, replacement slot, or partial semantic state.
-
-## Historical `get_submission_status` (removed)
-
-The status reader is not part of the v2.6.1 catalog. Calling it returns MCP
-method/tool not found. The following request/response is migration history only;
-current clients use the terminal `remember` result above.
-
-### Request
-
-~~~json
-{"submission_id": "sub_01J..."}
-~~~
-
-The historical submission reader was owner-scoped. It is retained only for
-offline migration fixtures and is not a supported endpoint or alias.
-
-### Response
-
-~~~json
-{
-  "submission_id": "sub_01J...",
-  "submission_kind": "remember",
-  "processing_state": "completed",
-  "search_state": "current",
-  "check_after_seconds": 60,
-  "correlation_id": "corr_01J...",
-  "attempts": 1,
-  "max_attempts": 5,
-  "submitted_at": "2026-08-18T01:00:00Z",
-  "started_at": "2026-08-18T01:00:01Z",
-  "updated_at": "2026-08-18T01:00:03Z",
-  "completed_at": "2026-08-18T01:00:03Z",
-  "relationship_results": [{
-    "ref": "uses-postgresql",
-    "disposition": "stored",
-    "splits": [{"split_index": 0, "relationship_id": "rel_01J...", "relationship_version": 1, "status": "active"}]
-  }],
-  "evidence": [{
-    "evidence_id": "evidence_01J...",
-    "evidence_index": 0,
-    "superseded_evidence_ids": [],
-    "search_state": "current"
-  }],
-  "errors": []
-}
-~~~
-
-The historical processing states were queued, processing, completed, rejected,
-quarantined, and failed. Relationship correction may also return
-awaiting_confirmation. Current Remember exposes only completed, rejected, or
-quarantined terminal outcomes.
-
-| State | Meaning |
-| --- | --- |
-| completed | Atomic canonical promotion completed. |
-| rejected | Server semantic/contract policy rejected it with no client review path. |
-| quarantined | A deterministic or assessor security concern was isolated and returned directly. |
-
-There is no `awaiting_review` response, `semantic_hold` projection, or
-`resubmission_issues` client repair list. The terminal result exposes a deduplicated
-closed error. For Remember, semantic rejection is limited to
-`no_supported_memory` and `stale_input`; both require a complete new batch with
-a new key. Provider/network/configuration/database/internal faults remain
-typed operational failures. Required write-embedding trouble is also an
-operational `isError` result; a completed semantic submission never exposes a
-pending or failed required vector.
-
-Historical search projections distinguished processing from vector freshness:
-
-| Search state | Meaning |
-| --- | --- |
-| not_required | No derived search document is required. |
-| pending | Canonical knowledge may exist while derived embedding/search work runs. |
-| current | Linked required derived documents are current. |
-| failed | A derived search failure is visible as a degradation. |
-
-A quarantined attempt's control diagnostics contain bounded metadata only;
-there is no raw quarantine payload or release path. Operational failures may
-attach bounded control-only artifacts whose bytes are physically purged within
-seven days while attempt/event hashes remain.
-
-Remember-attempt diagnostics expose only bounded evidence dispositions, terminal
-states, and error codes. They never return raw assessor prompts or responses,
-placement IDs, review tasks, security override controls, credentials, or
-cross-profile data. Legacy placement and review tools are absent from the
-catalog.
+Every submitted Relationship `ref` has a `stored` or `not_stored`
+disposition. Unsupported proposals are warnings within a completed operation;
+they do not prevent safe evidence from being stored. Assessor security rejection
+fails the entire batch with `submission_policy_rejected` and no canonical,
+search, or embedding writes. Operational and stale-input failures retain their
+typed error and remediation. All accepted effects commit atomically.
 
 ## Deterministic Security Gate and Remember Assessor
 
@@ -409,9 +311,7 @@ and exfiltration or tool-invocation instructions. Opaque UUIDs, hashes, provider
 IDs, and other high-entropy identifiers do not trigger `encoded_evidence_not_allowed`
 by entropy alone. A rejection returns a bounded error and records safe audit
 metadata only; it creates no fragment, provider request, or search document.
-The request path also performs a defensive pre-commit scan, so a
-deterministic concern quarantines the request without background processing. The
-scanner inspects
+The request path also enforces security before commit. The scanner inspects
 one bounded decoded view of percent, hexadecimal, Unicode, and HTML-entity
 escapes while preserving exact source text. Punctuation has no security meaning
 by itself: quoted or bracketed directives still reject, while descriptive
@@ -419,7 +319,7 @@ quoted tool/network examples remain eligible. Audit and security-event records
 retain bounded rules and spans without a scanner version or policy hash.
 
 A passed submission receives one capability-free assessor conversation for the
-whole run. It contains the full staged evidence, raw logical client
+whole run. It contains the full submitted evidence, raw logical client
 Relationships, server-generated Entity occurrence groundings and complete
 matching candidate sets, exact active predicate matches, and bounded
 evidence-relevant predicate options. A limit-plus-one query proves that exact
@@ -434,14 +334,14 @@ and creates no semantic state. The closed response contains:
 - an allowlisted existing predicate choice or a typed registration-required
   result.
 
-The assessor cannot clear a deterministic signal, access tools or secrets,
-invent unrelated claims, override exact IDs or keys, choose ownership or
-lifecycle, set durable state, or commit a record. It may repair grounding,
-reuse/create Entities, reconcile predicates, split supported hints, or mark a
-hint `not_stored`. Invalid complete responses are regenerated in the same
-session for at most three total provider turns. An exhausted or unavailable provider
-terminalizes the whole submission with zero semantic commit and a bounded
-operational error.
+The assessor reviews every submitted evidence item for security and grounds
+only submitted proposals against allowlisted evidence. It does not search
+memory or discover additional Relationships. It cannot clear a deterministic
+signal, access tools or secrets, override exact IDs, choose ownership or
+lifecycle, or commit state. Invalid complete responses receive bounded
+regeneration within the same session, with at most three total provider turns.
+Exhaustion or provider failure produces a typed error with zero partial
+canonical commit.
 
 ## Evidence Lifecycle and Corrections
 
@@ -459,15 +359,25 @@ owner-confirmation round; the original stays active until confirmation. A
 missing, inactive, or cross-team Entity ID is a bounded rejected submission;
 it never becomes a raw lookup error or creates an Entity. An expired
 confirmation returns a conflict and durably records `confirmation_expired`.
-Completed correction status reports the successor search document's actual
-`pending`, `current`, or `failed` state. A normal factual correction that needs
-different evidence still uses a fresh complete remember submission.
+A successful correction completes its required embedding and commit within
+the originating call. A factual change with new evidence uses `remember`.
+
+`correct_relationship` cannot patch a typed Value, its unit/type, or the
+validity window. Trace returns support lineage rather than a correction-ready
+support set: select the latest grant/reinstate decision for each support and
+exclude revoked support. The input requires the entire effective set, bounded
+to 200 tuples. Public trace/export reads stop at 100 support rows without
+pagination; a truncated read is not enough to reconstruct a larger set.
+See [Conflicts And Corrections](Conflicts-And-Corrections) for supported
+workflows and their limits.
 
 ## recall_memory and trace_memory
 
 recall_memory returns active evidence contexts in results plus separate related
 Relationships, communities, Hypotheses, search states, conflicts, and
-degradations. Candidates and Hypotheses are not default memory results. When
+degradations. Its `conflicts` array can contain Relationship conflicts or
+`kind: evidence_conflict` positions with authorized occurrence IDs, exact
+quotes, authority, and disposition. Candidates and Hypotheses are not default memory results. When
 recall feedback is enabled and its snapshot persists, suggested_actions points
 to submit_recall_session_feedback with the recall ID. When effective team
 Dreaming returns Hypotheses, it also suggests resolve_dream_feedback: confirm
@@ -578,71 +488,36 @@ with a different request hash remains a conflict. A held SSO credential-delete
 operation is accepted and the credential is disabled immediately, but the
 worker cannot claim its physical purge until the hold is released.
 
-## Contract Risks
+## Errors and client actions
 
-| Risk | Concrete failure mode | Mitigation |
-| --- | --- | --- |
-| Encoded prompt injection | A real encoded instruction survives textual inspection, or an opaque identifier is rejected as if it were encoded evidence. | Inspect one bounded decode layer and explicit encoded shapes before provider work, require meaningful decoded/binary evidence rather than entropy alone, and record only bounded quarantine metadata. |
-| Assessor coercion | Evidence tells the model to leak secrets or call an API. | Treat evidence as data, provide no tools/secrets/environment, require closed schema, and quarantine a security concern. |
-| Client follows recalled text | Recalled evidence asks the host to exfiltrate a key. | Mark all returned evidence untrusted and require client-side action/tool policy. |
-| Partial canonical commit | One malformed assessor item leaves another Relationship promoted. | Validate complete coverage, then promote all accepted state in one PostgreSQL transaction. |
-| Quarantine bypass | A later submission tries to reuse or release malicious quarantined input. | Deterministic quarantine writes no canonical memory or raw quarantine payload; only bounded terminal/audit metadata remains, and a replacement is a fresh complete request. |
-| Cross-profile mutation | One profile changes another profile's attempt or Relationship. | Owner-scoped attempt and mutation predicates under RLS. |
+MCP execution failures use `isError: true` with structured data and a JSON
+text projection. Submission errors include `code`, `message`, `retryable`,
+`next_action`, and `remediation`, with bounded reason/details when available.
+The terminal submission actions are `retry_same_request`,
+`resubmit_remember`, `retry_correction`, `contact_operator`, and `none`.
+Dream confirmation can additionally return `retry_dream_feedback`.
 
-## Contract Acceptance
+Other tool failures use an actionable error object with a correlation ID and
+actions such as `correct_and_resubmit`, `refresh_state`,
+`obtain_authorization`, or `stop`. Follow the action returned by that tool;
+do not translate every failure into an automatic retry.
 
-1. tools/list and tools/call share registry, contract, feature, and scope checks;
-2. remember requires one top-level idempotency key, rejects evidence-level keys,
-   public modality, unknown span/surface/support fields,
-   duplicate or out-of-range evidence indexes, and incomplete evidence-index
-   coverage;
-3. deterministic security rejection creates no canonical or pre-provider workflow row;
-4. every assessor response covers every submitted evidence item with security
-   justification;
-5. only one fenced server transaction promotes planned evidence and current vectors;
-6. no public review/resolution tool exists;
-7. deterministic quarantine retains no raw payload, while operational
-   failure-artifact bytes are control-only and physically purged within seven
-   days; immutable accepted source evidence and lineage remain restricted audit
-   history;
-8. recall remains evidence-first and returned evidence cannot authorize actions;
-9. provider output never overrides authentication, server policy, or durable
-   ownership; and
-10. public errors and logs remain bounded and secret-safe.
+A retry of an idempotent operation resends its saved complete request.
+`idempotency_conflict` requires investigation of the existing operation.
+Stale versions or support sets require refreshed authorized state before a
+deliberately changed operation. Provider, embedding, deadline, configuration,
+and database failures stay distinguishable.
 
-## Submission Errors And MCP Versions
+## Contract risks
 
-Every terminal `rejected` or `quarantined` result exposes at
-least one `errors[]` item. Each item has a closed `code`, bounded `message`,
-boolean `retryable`, closed `next_action`, and bounded `remediation`. Operational
-execution failures use MCP `isError: true` with the same structured fields. The
-allowed actions are `retry_same_request`, `resubmit_remember`,
-`retry_correction`, `contact_operator`, and `none`.
-For Remember, semantic rejection codes are only `no_supported_memory` and
-`stale_input`. Operational codes are `provider_unavailable`,
-`provider_response_invalid`, `input_budget_exceeded`,
-`configuration_invalid`, `embedding_unavailable`, `embedding_response_invalid`,
-`commit_conflict`, `database_failure`, `request_timeout`,
-`request_cancelled`, and `internal_failure`. Item errors and the aggregate list are
-deterministically deduplicated. Provider output, SQL, prompts, credentials,
-stack traces, and cross-owner existence are never returned.
+| Failure mode | Protection |
+| --- | --- |
+| A host follows instructions in recalled text | Treat evidence as untrusted data; the host's tool and disclosure policy remains authoritative. |
+| One valid assessor item is committed beside an invalid item | Validate the complete response, then commit all accepted effects atomically. |
+| A same-team reader changes another owner's memory | Enforce owner authorization and memory-space scope again at mutation. |
+| A retry changes metadata or proposal content | Compare the canonical request hash under the same scoped key. |
+| A partial trace is treated as a full correction support set | Respect bounds and latest support decisions; stop when the complete set is unavailable. |
 
-A submission whose stored contract is not exactly `dense-mem.v2.6.1` is outside
-the runtime contract and returns the same bounded not-found response as an
-unavailable submission. Its historical migration stage remains internal audit
-data; it is not negotiated, relabeled as v2.6.1, or exposed as a public error.
-
-The correction-only rejection code is `submission_policy_rejected`. The
-remaining closed correction codes are `relationship_version_stale`,
-`relationship_not_active`, `object_kind_change_forbidden`,
-`support_set_mismatch`, `entity_not_found`, `too_many_entity_candidates`,
-`predicate_not_found`, `predicate_subject_kind_mismatch`,
-`predicate_object_kind_mismatch`, `no_change`, `confirmation_expired`,
-`relationship_changed`, `support_set_changed`, `persistent_ambiguity`, and
-`inactive_relationship_collision`. Unknown persisted reasons map to
-`internal_failure` rather than crossing the public boundary.
-
-The SDK transport accepts `2024-11-05`, `2025-03-26`, `2025-06-18`,
-`2025-11-25`, and `2026-07-28`. The first four use the compatibility
-`initialize` exchange; `2026-07-28` uses `server/discover` and its `_meta`
-protocol metadata. Unsupported revisions fail with a bounded JSON-RPC error.
+Protocol negotiation and client configuration are documented in
+[MCP Clients](MCP-Clients). Source contracts and validated request examples live
+in [the registry](https://github.com/markhuangai/dense-mem/tree/main/internal/tools/registry).

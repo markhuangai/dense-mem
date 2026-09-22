@@ -1,511 +1,108 @@
 # Entity Identity And Resolution
 
-This page is the single source of truth for how the v2.6 assessor decides
-whether a mention reuses an Entity or creates a grounded Entity. Remember does
-not ask the client to choose between same-team candidates during intake.
-
-The stage order and strict assessor response are defined in
-[Memory Write Pipeline](Write-Pipeline). Storage is defined in
-[Data Model And Storage](Data-Model-And-Storage). Relationship identity is
-defined in
-[Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle).
+An Entity has an opaque durable ID. Its display name, aliases, and kind describe
+it; a string match alone does not establish real-world identity. All resolution
+is bounded by the authenticated team and memory space.
 
 ## Core Rule
 
-Within one team, one real-world identity has one canonical `entity_id`. A new
-Entity is created only when the evidence introduces a distinct identity.
-Spelling, alias, title, source, or a new Relationship does not make a new
-identity.
+Reuse an existing Entity when the supplied evidence and allowed context support
+that identity. Create an Entity only when accepted evidence establishes a new
+identity. Do not guess through genuine ambiguity.
 
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart TB
-  Evidence["Evidence<br/>DM uses Redis"] --> Extract["Mentions<br/>DM and Redis"]
-  Existing["Entity ent_dense_mem<br/>canonical: Dense-Mem<br/>alias: DM"] --> Candidates["Candidate retrieval"]
-  Extract --> Candidates
-  Candidates --> ResolveDM{"Resolve DM"}
-  ResolveDM -- reuse --> Subject["ent_dense_mem"]
-  Extract --> ResolveRedis{"Resolve Redis"}
-  ResolveRedis -- create --> Object["ent_redis"]
-  Subject ==>|"uses"| Object
-```
-
-The result is one Dense-Mem Entity, one Redis Entity, and one Relationship.
-Dense-Mem does not create a `DM` node or an alias edge.
-
-## Entity, Node, ID, Name, And Value
-
-| Term | Meaning |
-| --- | --- |
-| Entity | One canonical, team-scoped real-world identity. |
-| Entity node | Graph-shaped API view of the Entity's PostgreSQL record; not a second object. |
-| `entity_id` | Opaque stable identifier allocated by Dense-Mem. |
-| Canonical name | Current preferred display name. |
-| Alias | Alternate evidence-supported surface attached to the same Entity. |
-| Former name | Time-bounded prior name attached to the same Entity. |
-| Mention | Evidence-local text that may refer to an Entity. |
-| Assessor ref | Request-local token used before durable identity resolution. |
-| Identity context | Evidence-supported discriminator such as employer, role, location, product, or namespace. |
-| Candidate | Existing same-team Entity supplied to the assessor for comparison. |
-| Value | Canonical typed scalar endpoint such as a number, boolean, date, date-time, or literal string. |
-
-`entity_id` is not node text:
-
-```json
-{
-  "entity_id": "ent_01J...",
-  "team_id": "team-1",
-  "canonical_name": "Mark Huang",
-  "entity_kind": "person",
-  "identity_context": {
-    "team": "Dense-Mem",
-    "role": "maintainer"
-  },
-  "status": "active",
-  "version": 3
-}
-```
-
-The display name may change while the ID remains stable. Two people displayed
-as `Mark` have different IDs.
-
-Typed scalars do not become Entities to make a graph endpoint. For example:
-
-```text
-(Dense-Mem:Entity)-[released_on]->(2026-07-11:Value<date>)
-```
-
-An occurrence may be an Entity when it needs its own stable identity and
-Relationships; the date on which it occurred remains a Value.
-
-### Typed Value identity
-
-Value resolution is deterministic; the assessor does not decide whether two
-well-formed scalars are equal. A Value record contains:
-
-```json
-{
-  "value_id": "val_01J...",
-  "team_id": "team-1",
-  "value_type": "number",
-  "canonical_value": "42",
-  "unit": "percent",
-  "display": "42%",
-  "normalization_version": 1
-}
-```
-
-Canonical identity is:
-
-```text
-team_id
-value_type
-canonical_value
-normalized unit or null
-normalization_version
-```
-
-| Type | Canonicalization |
-| --- | --- |
-| `number` | exact decimal representation; never binary floating-point formatting |
-| `boolean` | `true` or `false` |
-| `date` | ISO calendar date |
-| `date_time` | one normalized instant; original offset/text remains on the observation |
-| `string` | bounded Unicode-normalized literal under a versioned, conservative subtype policy |
-
-Equivalent input reuses one `value_id`. Display formatting and original text do
-not create another Value. Units are normalized through a server registry; an
-unknown or incompatible unit is held for review rather than guessed.
-
-Long prose, explanations, documents, and unresolved concepts remain evidence,
-not string Value nodes. A named concept that needs identity and Relationships
-is an Entity, not a string Value.
+A subject is an Entity. A Relationship object is exactly one Entity or typed
+Value. Scalar Values have canonical type/value/unit semantics and should not
+be turned into Entity names merely to fit a graph shape.
 
 ## Names And Aliases
 
-Names are identity metadata with provenance, never Relationships.
+Canonical and alias names are metadata on an Entity. They are not edges.
+A normalized name is an indexed lookup value, not a unique Entity ID:
+different people or systems can share a name.
 
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart LR
-  Entity["Entity ent_dense_mem"] --> Canonical["EntityName<br/>canonical: Dense-Mem"]
-  Entity --> Alias["EntityName<br/>alias: DM"]
-  Entity --> Former["EntityName<br/>former: Project X"]
-```
+Candidate queries remain scoped before IDs leave storage. An identity in
+shared memory and a similarly named identity in private memory cannot be
+merged by cross-space lookup.
 
-A name record retains:
+## Submitted Identity Hints
 
-```text
-entity_id
-display_name
-normalized_name
-name_kind: canonical | alias | former
-locale
-valid_from / valid_to
-evidence span or client-decision provenance
-recorded_at
-```
+A Remember Entity hint supplies a name or a server-issued `known_entity_id`.
+An exact ID constrains selection and is revalidated for scope/currentness.
+An optional kind is a non-authoritative hint. Callers must not fabricate IDs.
 
-The normalized name is a candidate-retrieval key, not a unique identity key.
-Aliases are attached only when evidence or a client decision supports
-equivalence.
+Without a known ID, the server builds bounded exact canonical/alias candidate
+sets and occurrence groundings from the proposal's cited evidence. Candidate
+overflow is a visible failure; silently hiding one exact match would make
+ambiguity look like certainty.
 
-## Resolution Outcomes
+Known evidence is explicit read-only context. It does not become a new
+observation or receive submitted-evidence security results.
 
-Every Entity mention receives exactly one result before its dependent
-Relationship identity can be computed.
+## Grounding And Assessment
 
-| Action | When | Durable effect |
-| --- | --- | --- |
-| `reuse` | exactly one supplied Entity is materially plausible and no evidence discriminator contradicts it | map the ref to that candidate and append the resolution event |
-| `create` | no plausible candidate exists and the evidence sufficiently introduces a distinct identity | allocate one opaque ID and append the new Entity, names, and resolution event |
-| `ambiguous` | an intermediate assessor response cannot safely choose among candidates | server repairs it in-session; without an exact client constraint it creates a new grounded Entity or marks the dependent hint `not_stored`; no client review task is created |
+The server finds token-bounded name/alias occurrences and issues opaque
+boundary references. The assessor chooses within those references.
+Pronouns can use only the supplied server-issued anchor for an earlier exact
+name span; an unsupported pronoun does not authorize an invented identity.
 
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart TD
-  Start["Mention, evidence,<br/>server candidate set"] --> Exact{"Supported stable identifier<br/>matches one candidate?"}
-  Exact -- Yes --> Reuse["reuse"]
-  Exact -- No --> Contrary{"Evidence contradicts a<br/>candidate's identity context?"}
-  Contrary -- Yes --> Distinct{"Enough evidence for a<br/>distinct new identity?"}
-  Contrary -- No --> Plausible{"How many candidates remain<br/>materially plausible?"}
-  Plausible -- one --> Reuse
-  Plausible -- several --> Repair["repair in same assessor session"]
-  Plausible -- none --> Distinct
-  Distinct -- Yes --> Create["create"]
-  Distinct -- No --> Repair
-```
+The assessor returns a complete batch of normalized Entity and Relationship
+results. Server validation checks coverage, uniqueness, allowed candidates,
+kind compatibility, cited ranges, and exact constraints. Repairs regenerate
+the complete response within the same bounded conversation.
 
-This intentionally prefers reuse only when one compatible identity is grounded.
-When reuse is unsafe, v2.6 prefers a traceable new grounded Entity over a false
-merge. If the endpoint cannot be grounded at all, the hint is `not_stored`
-provided every evidence item remains covered by another stored Relationship.
-Later contradictory context can still surface a split through the correction
-workflow.
+Unsupported proposals receive `not_stored`; safe evidence can still be
+stored. New facts and Relationships are not discovered during this assessment.
 
-Remember has no candidate confidence field. Candidate compatibility and
-evidence grounding are deterministic server inputs; they cannot make an
-unknown candidate valid or turn several plausible candidates into one.
+## Identity At Commit
 
-Entity kind is a classification aid, not identity. Calling Dense-Mem a
-project, product, or system does not create parallel Entities when the referent
-is the same. A materially incompatible kind is a contradiction/review signal,
-not an automatic split.
+Accepted proposals reference canonical endpoints selected through server
+policy. The transaction rechecks current identity and source/space fences.
+Within a request and across concurrent requests, name text is not a global
+deduplication key and cannot erase valid homonyms.
 
-## Same Name Over Time
-
-Assume the team has one known Mark:
-
-```text
-ent_mark_1: Mark, Dense-Mem team
-new evidence: "Mark works on the recall pipeline."
-```
-
-With no contrary discriminator, the assessor returns `reuse ent_mark_1`. This
-avoids creating `Mark 2` merely because the evidence is brief.
-
-Later evidence says:
-
-```text
-"Mark from the finance team approved the budget."
-```
-
-If `ent_mark_1` is known not to be that person, the assessor repairs toward a
-new grounded Entity when the evidence distinguishes the finance-team Mark. It
-does not silently merge the two people or overwrite the first Entity. If no
-grounded endpoint can be established, that Relationship is `not_stored` and
-the other supported evidence can still complete atomically.
-
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart TD
-  First["Only one plausible Mark"] --> Reuse["Reuse ent_mark_1"]
-  Later["Later contradictory context"] --> Assess["Assessor repairs identity"]
-  Assess --> Keep["Reuse ent_mark_1 when grounded"]
-  Assess --> New["Create ent_mark_2 when reuse is unsafe"]
-  New --> Select["Select observations belonging<br/>to ent_mark_2"]
-  Select --> Rebuild["Recompute only affected<br/>Relationships"]
-```
-
-## Candidate Prefetch And Integrated Assessment
-
-Candidate prefetch occurs before the only model call. The server revalidates an
-exact client `known_entity_id` under the authenticated team; when no ID is
-supplied, it uses the current-name index to find exact canonical/alias
-candidates for the submitted Entity name. Within only the Relationship's cited
-evidence, it locates whole-token occurrences of the submitted name and active
-candidate aliases, then assigns opaque grounding and boundary references. It
-does not send all team Entities and does not use vector similarity in the
-automatic write allowlist.
-
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart TD
-  Evidence["Verbatim evidence, logical Entity names,<br/>and evidence_indices"] --> Scope["Authenticated team only"]
-  Scope --> Hint["Revalidate exact server-issued ID constraints"]
-  Scope --> Name["Exact current canonical/alias lookup"]
-  Name --> Ground["Locate submitted names and active aliases<br/>in cited evidence"]
-  Hint --> Context["Deduplicate candidate IDs;<br/>attach kind and identity context"]
-  Name --> Context
-  Ground --> Refs["Issue opaque grounding and boundary refs"]
-  Context --> Limit["At most 20 candidates and 20 groundings<br/>per Entity target"]
-  Refs --> Limit
-  Limit --> Assess["One integrated assessor conversation"]
-```
-
-| Signal | Useful for | Cannot do by itself |
-| --- | --- | --- |
-| valid server ID hint | recover a previously recalled Entity | bypass team or active-state validation |
-| exact normalized current name | find canonical/alias candidates anchored in evidence | merge homonyms |
-| alias | retrieve an evidence-present acronym or rename | prove the alias is unique |
-| Entity kind | remove implausible candidates | define identity |
-| identity context | distinguish same-name candidates | invent missing context |
-| vector similarity outside placement | surface possible duplicates for a separate review | enter the assessor allowlist or authorize reuse |
-
-One revalidated known ID or one unique compatible exact match may be reused.
-Multiple/conflicting matches are repaired in the same assessor session; more
-than 20 exact candidates or groundings fails preflight as
-`input_budget_exceeded` rather than silently truncating the allowlist. An empty
-candidate list permits `create` only when the submitted evidence grounds the
-mention. A name with no eligible grounding makes that hint `not_stored`; it is
-not a client-facing `entity_grounding_missing` rejection. A retrieval error is
-an operational failure, not an empty result.
-
-## One Assessor Conversation
-
-One integrated assessor conversation grounds submitted Entity and Relationship
-targets and returns separate `entity_results` and
-`relationship_results`. The exact input, closed output schema, retry behavior,
-and no-coercion rule belong only in
-[Memory Write Pipeline](Write-Pipeline#server-owned-assessment).
-
-For identity, the server enforces:
-
-- exactly one result for every submitted Entity ref
-- every stored result selects one server-issued grounding ref
-- `reuse` names exactly one active candidate supplied for that ref
-- `create` contains no pre-existing `entity_id`
-- an assessor `ambiguous` result is a bounded “not safely groundable” outcome;
-  the server never invents a grounding or durable Entity from it, and dependent
-  Relationships become `not_stored` rather than a client-review state
-- no result crosses the authenticated team
-- names, aliases, kinds, and context are bounded and evidence-supported
-- every dependent Relationship remains non-active until its endpoints and
-  predicate resolve
-
-Malformed or incomplete assistant content is returned in the same transient
-history with exact validation errors for at most three total provider calls. A
-third malformed response is a typed operational failure. Provider failures end
-the request and leave a replayable failed attempt for retry with the same
-idempotency key; no later claim or background conversation starts. No subset
-commits and application code does not coerce provider JSON.
-
-## Build Relationships After Resolution
-
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart TD
-  Refs["Submitted Entity refs and<br/>server-issued groundings"] --> Results["One Entity result per ref"]
-  Results --> Map["Map refs to Entity IDs<br/>or typed Value IDs"]
-  Map --> Ready{"All required endpoints resolved?"}
-  Ready -- No --> Omit["Mark dependent hint not_stored<br/>or return no_supported_memory"]
-  Ready -- Yes --> Predicate{"Predicate resolved or<br/>safe to register?"}
-  Predicate -- No --> Omit
-  Predicate -- Yes --> Identity["Compute Relationship identity"]
-  Identity --> Policy["Apply stored-support coverage and lifecycle policy"]
-  Policy --> Commit["Commit PostgreSQL ledger<br/>and current state"]
-```
-
-Several refs may resolve to one Entity. The service coalesces the Entity write
-while retaining every original mention and decision as provenance.
-
-Conceptual service logic:
-
-```go
-resolved := make(map[string]EntityResolution)
-
-for _, result := range assessment.EntityResults {
-	grounding := allowedGrounding(result.GroundingRef)
-	resolved[result.Ref] = validateResolution(teamID, grounding, result)
-	if resolved[result.Ref].Ambiguous {
-		markDependentRelationshipsNotStored(result.Ref)
-	}
-}
-
-for _, result := range assessment.RelationshipResults {
-	subject, object := resolveEndpoints(result, resolved)
-	if err := validateGroundedRanges(result); err != nil {
-		return notSupportedOrStaleInput(result.Ref)
-	}
-	stageRelationshipObservation(subject.EntityID, result, object)
-}
-
-commitSubmissionAtomically()
-```
-
-This is illustrative target logic, not a claim that these function names exist
-in the current code.
-
-## Duplicate Prevention
-
-Duplicate prevention is layered because natural-language identity has no
-globally safe name key.
-
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart TD
-  Idempotency["Ingest idempotency"] --> Candidates["Server-owned occurrence grounding<br/>and exact candidate prefetch"]
-  Candidates --> Assess["One integrated assessment"]
-  Assess --> Validate["Validate reuse / create and repair<br/>against frozen allowlists"]
-  Validate --> Lock["Ordered team-scoped<br/>name and identifier locks"]
-  Lock --> Recheck["Requery inside transaction"]
-  Recheck --> Write["Reuse or create once"]
-  Write --> Detect["Post-write duplicate-candidate review"]
-```
-
-Before `create`, the PostgreSQL transaction:
-
-1. acquires deterministic team-scoped locks for supported normalized names and
-   stable identifiers
-2. reruns candidate lookup against committed records
-3. invalidates `create` if a new plausible candidate appeared
-4. reuses a now-unique exact candidate or creates a new grounded Entity;
-   an ungroundable hint becomes `not_stored` without another client round trip
-5. inserts the Entity and names once
-
-A uniqueness constraint can protect a stable external identifier within its
-namespace. It cannot make a human name unique. Concurrent aliases with no
-shared token or identifier can still evade the same lock, so likely duplicates
-are review candidates and are never auto-merged from similarity alone.
-
-## Alias And Rename Example
-
-Earlier state:
-
-```text
-Entity ent_dense_mem
-canonical name: Dense-Mem
-```
-
-Later evidence:
-
-```text
-DM uses Redis.
-```
-
-When evidence and context resolve `DM` to `ent_dense_mem`:
-
-- reuse `ent_dense_mem`
-- attach `DM` as a supported alias if new
-- build or update the `uses` Relationship
-- create no `DM` Entity and no alias edge
-
-A supported rename changes the preferred name but preserves `entity_id` and
-former-name history.
+A repeated accepted Relationship attaches to the applicable owner/space
+identity. Another owner's equivalent Relationship remains separately authored.
+See [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle).
 
 ## Merge And Split Corrections
 
-Entity records are shared team handles, but mention resolutions, observations,
-and Relationships are profile-owned. Identity corrections are explicit,
-evidence-backed operations with dry-run impact reports. Any profile with
-`write` scope may correct only its own observations and Relationships.
+There is no standalone public MCP Entity merge/split operation.
+`correct_relationship` can correct the subject or Entity object of a
+caller-owned active Relationship while preserving its support lineage.
+It changes that authored Relationship, not every row that references an Entity.
 
-Creating a distinct Entity makes that handle visible to the team. It does not
-move or invalidate another profile's observations. Another profile may later
-reuse the new Entity after its own evidence and assessor decision.
+A supplied exact Entity ID must be active and visible. A name-based correction
+can return `awaiting_confirmation` with bounded candidates. The owner selects
+only returned candidates using the supplied token; the original Relationship
+stays active until the accepted correction commits.
 
-### Profile-local merge
+When several observations wrongly combine two people, inspect and correct the
+owned Relationships individually. Do not infer that one correction globally
+splits an Entity or changes another profile's authored state. Fresh evidence
+belongs in Remember.
 
-A profile-local merge:
+Typed-Value correction limits are described in
+[Conflicts And Corrections](Conflicts-And-Corrections).
 
-1. selects the surviving Entity ID
-2. previews and selects only observations owned by the authenticated profile
-3. maps those selected observations to the surviving Entity
-4. recomputes only that owner's affected Relationship identities
-5. combines that owner's exact duplicate Relationships without losing support
-   or history
-6. leaves other profiles' resolutions and Relationships unchanged
-7. records actor, reason, mappings, counts, and before/after versions
+## Security And Failure
 
-The duplicate Entity is not globally redirected while another profile still
-uses it. Team-wide retirement is allowed only after no active profile-owned
-knowledge depends on it; it is never an ordinary cross-profile mutation.
+Identity queries use authenticated team and space context. Inaccessible IDs do
+not reveal whether another team's Entity exists. Provider output cannot
+replace authenticated ownership or select out-of-allowlist durable IDs.
 
-### Profile-local late split
+Required provider, lookup, validation, or persistence failure stays typed.
+An empty candidate set is not a substitute for a failed lookup. No partial
+Entity/Relationship commit may survive an invalid complete response.
 
-A confirmed false merge:
+## Risks And Verification
 
-1. previews every caller-owned observation and Relationship that might move
-2. creates the distinct Entity only after client confirmation
-3. maps explicitly selected caller-owned observations to the new Entity
-4. leaves uncertain observations on review rather than guessing
-5. appends correction and resolution events; original evidence remains intact
-6. supersedes or retracts only the caller-owned affected Relationship records
-   and creates recomputed records where necessary
-7. verifies that active SemanticEdges now point to the intended Entity
-8. leaves every other profile's knowledge unchanged
+| Failure mode | Mitigation |
+| --- | --- |
+| Two different people with the same name become one Entity | Preserve homonyms and require evidence-supported resolution. |
+| A nickname becomes a new edge | Keep aliases as Entity metadata. |
+| An exact hint crosses a private or team boundary | Revalidate ID scope at lookup and commit. |
+| A correction changes another author's knowledge | Restrict replacement to the authenticated owner's Relationship. |
+| A pronoun is resolved without an anchor | Accept only server-issued grounding and complete-response validation. |
 
-Selection occurs by immutable observation/evidence IDs and optional time or
-source scope—never by changing every row whose display name is `Mark`.
-
-Forget is not a split. Relationship retraction and ledger retention are
-defined in
-[Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle#forget-and-retraction).
-
-## Security Boundary
-
-Candidates, locks, records, vector results, and returned IDs are scoped to the
-authenticated team. The assessor receives immutable candidate sets but no
-credentials and cannot select an arbitrary database ID.
-
-Write authorization additionally scopes merge/split selection to observations
-owned by the authenticated profile. Team visibility is not cross-profile write
-authority.
-
-Evidence and candidate text are untrusted model input. Embedded instructions
-cannot alter the schema, candidate allowlist, tenant, or decision rules.
-
-## Risks And Mitigations
-
-| Risk | Concrete failure mode | Mitigation |
-| --- | --- | --- |
-| False merge | the first known Mark absorbs statements about a different Mark | reuse only without contrary context; create a grounded Entity when reuse is unsafe; use correction for later split |
-| False split | `Dense-Mem` and an evidence-present `DM` alias become parallel Entities | exact canonical/alias prefetch, prefer the one plausible candidate, and recheck before create |
-| Bad bulk correction | resolving one finance-team Mark moves all historical Mark observations | preview immutable observation IDs and move only caller-owned, client-selected evidence |
-| Concurrent duplicate | two workers create the same new Entity | ingest idempotency, ordered locks, in-transaction recheck, and stable-ID constraints |
-| Retrieval outage | a backend error looks like no candidates and authorizes create | treat errors distinctly and fail placement visibly |
-| Cross-team reuse | provider returns an ID from another team | per-ref candidate allowlists, RLS, and team validation before commit |
-| Similarity merge | a high vector score collapses valid homonyms | vector similarity is excluded from the placement allowlist; exact candidates and client decisions authorize identity changes |
-| Truncated homonym set | the correct Mark is the 21st exact candidate and the assessor selects from an incomplete list | stop before provider call with `input_budget_exceeded`; never silently truncate |
-| Merge evidence loss | duplicate Relationships are combined but one source disappears | dry-run mapping, one transaction, append-only support/history, and post-change count checks |
-| Cross-profile identity rewrite | profile B's split moves profile A's observations | owner predicate on selected observations and integration tests with three writable profiles |
-| Duplicate/scalar collapse | `42`, `42.0`, or case-varied codes become wrong duplicate/equal Value nodes | exact type-specific versioned canonicalization; conservative string rules and normalized-unit registry |
-
-## Acceptance Invariants
-
-The identity refactor is incomplete until tests prove:
-
-1. repeating evidence creates no duplicate Entity or same-owner Relationship
-2. one plausible candidate with no contradiction is reused
-3. an evidence-supported alias reuses its Entity
-4. coarse Entity-kind drift does not split one identity
-5. different same-name identities with distinguishing context remain separate
-6. several plausible homonyms do not force client repair; unsafe reuse creates a
-   grounded Entity or marks only the unsupported hint `not_stored`
-7. a later caller-owned correction moves only selected observations
-8. a non-candidate or cross-team ID invalidates the entire assessor response
-9. missing, extra, or duplicate results never cause a partial write
-10. simultaneous equivalent creates converge after the transactional recheck
-11. Entity resolution finishes before Relationship identity is computed
-12. merge and split preserve every evidence span, decision, support, and
-    transition
-13. aliases never become nodes or edges
-14. equivalent typed scalars reuse one Value while distinct types/units remain
-    distinct
-15. long prose and unresolved concepts never become string Value nodes
-16. a write-scoped profile may merge or split its own resolutions without
-    changing another profile's observations or Relationships
-17. a newly created split Entity is team-readable and may be adopted by another
-    profile through that profile's normal assessment flow
-18. vector-only candidates and truncated exact-match groups cannot be
-    auto-selected during placement
+Verify named/alias reuse, homonyms, known IDs, pronouns, within-batch identity,
+and concurrent writers through actual assessor validation and PostgreSQL tests.

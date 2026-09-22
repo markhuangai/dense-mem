@@ -1,72 +1,23 @@
 # Conflicts And Corrections
 
-Dense-Mem preserves raw evidence and resolves stale authored state with audited
-Relationship lifecycle transitions. Remember uses one bounded assessor session
-before the server applies deterministic policy; unsupported hints may be
-`not_stored` when stored support covers every evidence item, while
-`no_supported_memory` and `stale_input` are the only semantic rejections. A
-profile cannot mutate another profile's Relationship, but
-the bounded system Conflict reviewer may close a losing team Relationship episode
-after an evidence-backed case resolution. Evidence bytes, observations, support
-links, and author attribution remain immutable.
+Dense-Mem distinguishes changes in the world, extraction mistakes, Relationship
+disagreements, and evidence conflicts. They have different owners and
+transactions. Same-team read access does not grant cross-owner mutation.
 
-Remember and correction writes are synchronous in v2.6.1. Required vectors are
-obtained before the atomic semantic transaction, so a provider or embedding
-failure is visible in the originating MCP call and cannot leave canonical state
-without its current search vector. Ambiguous correction candidates return a
-normal `awaiting_confirmation` structured result; confirmation returns its
-terminal result. `get_submission_status` is removed.
+## Choose The Supported Workflow
 
-This page is the single source of truth for conflict and correction
-interaction. Relationship lifecycle is in
-[Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle), identity
-merge/split is in
-[Entity Identity And Resolution](Entity-Identity-And-Resolution#merge-and-split-corrections),
-and orchestration is in [Memory Write Pipeline](Write-Pipeline).
+| Situation | Workflow |
+| --- | --- |
+| A fact changed and you have new evidence | Submit a new complete `remember` request. |
+| An owned source item is wrong or withdrawn | Use evidence supersession or `retract_evidence`. |
+| An owned active Relationship has a misresolved Entity or predicate | Use `correct_relationship` with current version and complete support. |
+| Different authors support incompatible shared positions | Preserve authorship and use the governed Relationship conflict workflow. |
+| Submitted/current evidence quotes conflict | Inspect the separate evidence-conflict case and exact occurrence citations. |
 
-## Same-Owner Conflict Flow
-
-```mermaid
-%%{init: {"sequence": {"rightAngles": true}}}%%
-sequenceDiagram
-  actor User
-  participant Host as AI client
-  participant DM as Dense-Mem
-  participant PG as PostgreSQL
-
-  User->>Host: Production now deploys from release
-  Host->>DM: remember(new evidence)
-  DM->>PG: Preserve evidence, observation, VerificationEvent, and conflict
-  DM-->>Host: completed/rejected status with bounded disposition guidance
-  Host->>DM: trace_memory(related relationship_id)
-  DM->>PG: Load current state and append-only history
-  PG-->>DM: Existing/new evidence, decisions, and transitions
-  DM-->>Host: Trace and explicit decision choices
-  Host->>User: Ask the exact conflict question
-  User-->>Host: Decision plus evidence
-  Host->>DM: correct_relationship(confirm)
-  DM-->>Host: Direct terminal correction result, with no client review decision
-```
-
-An unresolved same-owner conflicting observation is not an active edge. The
-owner's prior eligible Relationship stays current unless accepted evidence and
-deterministic predicate behavior permit supersession. A schema-valid, entailed
-cross-owner correction at or above the team support threshold can become the
-caller's active edge and append a
-cross-reference to the other profile's record.
-
-## Why Review Is Required
-
-| Cause | Example | Safe result |
-| --- | --- | --- |
-| Entity ambiguity | context now suggests a different person named Mark | fail the complete Remember run; no guessed split or dependent edge |
-| Predicate ambiguity | “Dense-Mem dogfoods PostgreSQL” cannot be resolved or registered safely | fail the run with zero semantic commit and resubmission guidance |
-| Scope ambiguity | “uses PostgreSQL” may mean production or tests | fail the run and request a corrected complete batch |
-| Current-state conflict | production has competing `deploys_from` values | preserve current history; fail the new Remember run if policy cannot decide |
-| Temporal ambiguity | new evidence may describe past rather than current state | fail the run with zero semantic commit and bounded guidance |
-| Insufficient change evidence | weak evidence should not replace a supported current Relationship | fail the run and preserve the current Relationship |
-| Correction ambiguity | “that is wrong” identifies no Relationship | request `relationship_id` or a disambiguating query |
-| Cross-profile disagreement | profile B supplies stronger evidence against profile A's Relationship | preserve A, create B's eligible Relationship, append a challenge/correction cross-reference, and create/update the team Conflict case |
+Remember returns a terminal completed or failed result. Safe evidence can be
+stored even when a proposed Relationship is unsupported. A correction may
+return one explicit `awaiting_confirmation` result when it needs an owner
+choice among returned Entity candidates.
 
 ## Cross-Profile Corrections
 
@@ -93,7 +44,7 @@ B: ent_mark_billing -> works_on -> Billing
 In the same transaction, Dense-Mem appends `corrects` or `challenges`
 cross-references from B's new Relationships to A's related Relationships and
 opens or updates the durable team Conflict case. A's status, supports,
-validity, and Entity resolutions do not change during B's placement.
+validity, and Entity resolutions do not change during B's write.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -115,13 +66,11 @@ Profile C sees both material positions while the case is open. C may submit new
 evidence through normal `remember`; any confirmation C remembers belongs to C and
 may `confirm` B or `challenge` A. It does not directly edit either record.
 
-If A later accepts the correction directly, A submits or adopts exact evidence
-through the normal integrated assessor. A may then supersede A's old
-Relationships and create A's corrected Relationships. Separately, the system
-Conflict reviewer may
-supersede A's stale episode after the team case resolves. Adoption preserves B's
-evidence author, provenance, and source-group identity; it does not count the
-same evidence twice.
+If A later obtains independent evidence for the correction, A submits it
+through Remember. Explicit known-evidence context can assist assessment but
+cannot substitute for submitted support. A's resulting Relationship remains
+A-owned. Separately, the system Conflict reviewer may close A's losing episode
+after governed case resolution.
 
 The canonical ownership and cross-reference fields are defined in
 [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle#profile-ownership-and-team-visibility).
@@ -141,9 +90,9 @@ t2  B owns Relationship B1: production deploys_from release
     B1 corrects A1, with valid_from=t1 supported by B's evidence
 ```
 
-At `t2`, B's placement creates B1, the `corrects` cross-reference, and an open
+At `t2`, B's write creates B1, the `corrects` cross-reference, and an open
 team Conflict case. A1, A's evidence, support, status, and validity remain
-unchanged during placement. The AI assessor does not decide that a conflict
+unchanged during the write. The AI assessor does not decide that a conflict
 exists; server policy detects the incompatible single-current state after B's
 submitted evidence verifies.
 
@@ -247,11 +196,11 @@ across positions abstain that profile. Raw source-group keys, Evidence content,
 provider output, and cross-team identities are never included.
 
 A conflict case is created or changed only from committed, schema-valid state.
-Vector similarity alone cannot open one. The initial durable-case scope is a
+Vector similarity alone cannot open one. The durable Relationship-case scope is a
 cross-profile Relationship disagreement established by a verified
 `challenges`/`corrects` reference or by incompatible, comparable
-`current_cardinality=one` positions. Identity ambiguity and same-owner placement
-review continue to use their existing review workflows.
+`current_cardinality=one` positions. Identity ambiguity and same-owner writes follow the separate Remember and
+owned-correction rules; this case policy does not add a client review tool.
 
 ### Deterministic resolution policy
 
@@ -275,7 +224,7 @@ receives source-group keys or group counts.
 
 The cutoff is the evidence-supported effective time when the assessor confirms
 the extracted temporal bound. If no reliable bound exists and no authority
-override is needed, the reviewer may use the first contradictory placement time
+override is needed, the reviewer may use the first accepted contradictory observation time
 as `recorded_fallback`. Missing or conflicting time keeps the case open when the
 chosen threshold requires evidence time.
 
@@ -296,7 +245,7 @@ state. A stale version fails without changing state so the host can recall the
 current alternatives and retry. The exact MCP field shape belongs in
 [Technical Reference](Technical-Reference#remember).
 
-The same transaction that places the caller-owned Relationship and validated
+The same transaction that commits the caller-owned Relationship and validated
 cross-reference opens or updates the case, membership, deadline/version, and
 search refresh intent. It does not resolve the case. There is no separate
 cross-profile `resolve` command; automatic resolution belongs to nightly review.
@@ -404,195 +353,106 @@ An opaque “accept or reject?” prompt is insufficient.
 
 ## Server-side ambiguity handling
 
-Entity, predicate, scope, and temporal ambiguity remain isolated in the
-terminal attempt history. The client receives only the bounded structured
-result; it cannot select a candidate, release a quarantine, or append a
-decision to an existing submission.
-
-When new source material resolves the ambiguity, submit one complete,
-authenticated `remember` request with exact evidence, logical Relationships,
-and supporting `evidence_indices`. The
-server re-runs the integrated assessor and applies owner, team, conflict, and
-support policy atomically. Historical assessment and conflict records remain
-append-only and are available through authorized trace/audit paths.
-
-The server never allocates a destination ID from client text, moves another
-profile's rows, or treats a same-team candidate as canonical without its own
-assessment. A Hypothesis is not an unknown predicate; it remains an isolated
-dream output using an already registered predicate. See [Dreaming](Dreaming).
+Remember resolves submitted proposals within a bounded assessor conversation.
+Unsupported identity/predicate proposals receive explicit dispositions. The
+client cannot select arbitrary IDs or override policy. Correction confirmation
+is a separate caller-input step using only returned candidates and a current
+token.
 
 ## Correct With New Evidence
 
-A correction appends evidence; it is not an in-place text edit. Submit a fresh
-complete request and use its direct terminal result:
+For a changed fact, submit fresh exact evidence through `remember`. Direct
+`supersedes_evidence_ids` replacement and source-revision advancement are
+distinct; do not combine them. They apply only in the accepted transaction.
 
-```json
-{
-  "evidence": [{
-    "content": "The user confirmed that production now deploys from release.",
-    "source_type": "manual",
-    "authority": "authoritative",
-    "source_group": "user-resolution:deployment"
-  }],
-  "relationships": [{
-    "ref": "production_deploys_from_release",
-    "subject": {"name": "production", "entity_kind": "other"},
-    "predicate": {"proposed_key": "deploys_from"},
-    "object": {"entity": {"name": "release", "entity_kind": "other"}},
-    "polarity": "+",
-    "modality": "statement",
-    "evidence_indices": [0]
-  }],
-  "idempotency_key": "deployment-correction-1"
-}
-```
+For an extraction mistake, `correct_relationship` accepts `action: submit`,
+an owned active Relationship ID, current `expected_version`, supported
+Entity/predicate patch, complete effective `supports`, reason, and a retained
+idempotency key. The accepted result names the original and successor.
 
-The replacement enters the same integrated assessor, deterministic
-lifecycle, and PostgreSQL transaction as every `remember`. Prior evidence and
-transitions remain traceable.
+Trace is lineage, not a ready-made support set. For each support, select its
+latest grant/reinstate decision and exclude revoke. Map `span_start` and
+`span_end` to request `start` and `end`. If trace is truncated or a latest
+decision is missing, do not guess.
 
-This submission corrects the caller's Relationship; it does not declare a
-shared source globally obsolete. A source owner that can prove stable lineage instead
-uses `source_key`, `source_revision`, and `previous_source_revision`. Source
-activation occurs at intake, makes the prior revision ineffective for every
-profile that adopted it, and recomputes affected statuses from remaining
-effective support. Direct evidence supersession instead uses
-`supersedes_evidence_ids` on new caller-owned evidence and cannot be combined
-with `previous_source_revision`. The caller cannot mix a profile-local
-correction with unowned evidence retirement.
+The correction input permits 1–200 unique support tuples, but public
+trace/export readers stop at 100 support rows without pagination. A client
+without a previously retained complete set may therefore be unable to form a
+valid correction. More than 200 effective supports cannot be represented by
+this tool.
 
-## Same-Owner Before And After
+If the result requests confirmation, retain its submission/token and choose
+exactly one returned Entity for every represented endpoint. Use a distinct
+confirmation operation key. Stale versions or support changes require refreshed
+state before a deliberate resubmission.
 
-| Before decision | After an accepted correction |
-| --- | --- |
-| supported prior Relationship stays current | prior record is superseded or retracted only when registry behavior and evidence permit |
-| new conflict is held and has no active edge | eligible replacement is exposed as one SemanticEdge |
-| prior evidence and decisions are append-only | both old and new provenance remain traceable |
-| vector search may still represent the prior version | source/full-text/adjacency reads and the required vector change together at commit |
+### Typed Values and inactive identities
 
-For a cross-profile correction, the target record does not enter the right-hand
-column during placement. The caller creates a separately owned Relationship and
-cross-reference; the team Conflict case preserves both positions until the
-nightly reviewer resolves or escalates the case.
+The correction patch cannot change a typed Value, unit/type, or validity
+window. There is no complete public atomic typed-Value replacement workflow.
+`remember.correction_target` is lineage context, not a general replacement
+operation; cardinality transitions can also make its version stale.
+
+An inactive caller-owned identity collision can reject correction with
+`inactive_relationship_collision`. A new Remember proposal may reactivate an
+eligible owned identity, but it is a different operation and does not preserve
+the correction workflow's complete lineage. Do not present two independent
+retract/write calls as one atomic correction.
+
+## Evidence Conflicts
+
+Evidence conflicts are separate from authored Relationship conflicts. Cases
+have `open`, `resolved`, or `dismissed` state and versioned events.
+Positions cite canonical evidence and exact submitted occurrences, with a
+server-derived quote, authority, and whether the evidence was submitted or
+context.
+
+Recall exposes authorized `kind: evidence_conflict` positions and a preferred
+position for a resolved case. This does not manufacture a new Relationship or
+change the truth of the quoted evidence.
+
+The first-party control portal provides version-fenced resolve/dismiss
+operations with an explicit reason. They are administrative interfaces, not an
+extra public MCP resolution tool. Source/lifecycle changes reconcile stale
+positions through server policy.
 
 ## Forget And Retraction
 
-`forget` removes a caller-owned Relationship from current graph-shaped reads
-without deleting its semantic nodes or historical ledger. Same-team visibility
-does not authorize forgetting another profile's record.
+The public withdrawal operation is `retract_evidence`. It takes caller-owned
+evidence IDs, a reason, and a retained idempotency key. Retraction appends
+evidence and support/lifecycle decisions and reports affected, pending, and
+retained-active Relationship counts.
 
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart LR
-  Before["Relationship status=active<br/>SemanticEdge visible"] --> Decision["Authorized forget decision"]
-  Decision --> Append["Append retraction event<br/>and audit"]
-  Append --> Current["Set current status=retracted"]
-  Current --> After["SemanticEdge no longer returned"]
-  After --> Nodes["Entity / Value nodes remain"]
-  After --> Trace["Evidence, verification,<br/>support and transitions remain"]
-```
+A Relationship with another eligible support path can remain active. Do not
+promise that withdrawing one evidence item removes every edge it supported.
+There is no generic public `forget` or Entity merge/split tool.
 
-Because SemanticEdge is a PostgreSQL read rule, the edge disappears from normal
-reads in the same transaction that records the retraction. There is no second
-graph copy to delete.
-
-This is logical forgetting. A privacy-erasure request is a separate authorized
-workflow that may redact payload content while retaining minimal tombstones,
-audit proof, and referential integrity required by policy. Clients must not
-emulate either operation with direct SQL deletion.
+Logical withdrawal preserves evidence and decision lineage for authorized
+trace and temporal views. Physical private-memory erasure is a separate
+acknowledged portal operation. Clients must not emulate either operation with
+direct SQL deletion.
 
 ## Deterministic Current-State Decisions
 
-Predicate registry fields `relationship_kind` and `current_cardinality` guide
-whether accepted knowledge coexists or may supersede a prior current value owned
-by the same profile. They are not model decisions and never authorize
-cross-profile ordinary writes. Cross-profile stale-state closure is limited to
-the nightly Conflict reviewer and the deterministic case policy above.
-
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart TD
-  Accepted["Accepted new Relationship"] --> Kind{"state or event?"}
-  Kind -- event --> Coexist["Keep both occurrences"]
-  Kind -- state --> Cardinality{"current cardinality"}
-  Cardinality -- many --> Coexist
-  Cardinality -- one --> Scope{"Same subject, predicate,<br/>scope and comparable time?"}
-  Scope -- No --> Coexist
-  Scope -- Yes --> Evidence{"Evidence safely establishes<br/>replacement?"}
-  Evidence -- No --> Review["Hold conflict for review"]
-  Evidence -- Yes --> Supersede["Append supersession;<br/>change current state atomically"]
-```
-
-Canonical behavior belongs in
-[Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle#predicate-registry);
-this page owns how the client sees and resolves uncertainty.
+Predicate kind/cardinality, evidence eligibility, validity, ownership, and
+conflict disposition jointly determine current state. A later timestamp or a
+higher model confidence alone cannot bypass those checks. The owning lifecycle
+and conflict services revalidate current versions before committing.
 
 ## Risks And Mitigations
 
-| Risk | Concrete failure mode | Mitigation |
-| --- | --- | --- |
-| Wrong review target | a decision for one conflict applies to another | require ingest/Relationship IDs, idempotency key, and echo an impact summary |
-| Accept bypasses policy | a client click writes an active Relationship outside the write contract | require exact new evidence and route the correction through one assessment plus deterministic lifecycle |
-| Correction erases history | old evidence is edited to match new truth | immutable evidence plus append-only observations, decisions, support, and transitions |
-| Homonym split corrupts history | finance-team Mark causes all Mark edges to move | client-confirmed impact preview and caller-owned observation-ID-level reassignment |
-| Unknown predicate expands vocabulary | assessor invents `dogfoods` as a durable key | structured registry allowlist and separate authorized vocabulary workflow |
-| Wrong supersession | a many-valued predicate is treated as single-current | explicit `current_cardinality`, scope/time comparison, and before/after preview |
-| Forget becomes data loss | deleting an edge also removes source and audit history | transactional retraction status; nodes and append-only ledger remain |
-| Stale vector confuses review | vector search surfaces meaning from before correction | source-version checks, exact trace by ID, and explicit search freshness |
-| Cross-profile correction becomes immediate mutation | B's request marks A's Relationship superseded before review | the request can write only B's Relationship, cross-reference, and open/update case; non-owner supersession is allowed only in the nightly reviewer transaction |
-| Majority becomes truth | several profiles copy one weak source and outvote stronger evidence | preserve source groups, deduplicate common origins, and rank evidence rather than author count alone |
-| Correction impersonates source revision | a profile-local `correct` request invalidates evidence adopted by other owners | reserve team-wide invalidation for the immutable source owner and exact prior-revision contract |
-| Deadline becomes truth | an unresolved case automatically chooses B after seven days | TTL only switches thresholds; require one unique temporally applicable position above the applicable evidence floor, otherwise mark `overdue` and escalate |
-| Reviewer closes the wrong episode | B's branch change supersedes an unrelated A Relationship sharing text | lock case membership by Relationship ID/version, revalidate scope/predicate/cardinality/time, and update case plus losing Relationships in one transaction |
-| Historical recall uses today's winner | a query for six months ago returns only B | evaluate both `valid_at` and `known_at` against conflict events and effective time |
-| Evidence-wide suppression hides valid Relationships | A's evidence supports another still-current Relationship | filter only query-relevant support paths and retain the immutable evidence/search document |
-| Stale C response attaches to the wrong case version | C confirms an alternative after the case was reopened or regrouped | require `conflict_id` plus expected version and reject stale context before commit |
+| Failure mode | Protection |
+| --- | --- |
+| A reader changes another author's Relationship | Owner-scoped writes; separate bounded authority for system conflict resolution. |
+| One profile gains votes from copied sources | Count only its uniquely newest supported position; ties abstain. |
+| A deadline is mistaken for proof of a winner | Apply post-TTL majority policy, then the bounded overdue assessment/fallback workflow. |
+| A losing fragment also supports unrelated knowledge | Preserve independent support paths and restrict evidence cleanup to the resolved case. |
+| A correction uses stale or incomplete support | Current version checks and the complete effective support set; never guess from a truncated trace. |
 
-## Acceptance Invariants
+## Verification
 
-1. conflict preserves old and new evidence
-2. unresolved identity or predicate creates no active dependent edge
-3. every decision records actor, provenance, time, target IDs, and idempotency
-4. correction never mutates verbatim evidence
-5. accept, reject, correct, split, and forget write through normal PostgreSQL
-   policy—not a graph side channel
-6. a late split moves only explicitly selected caller-owned observations
-7. prior current state changes only in the same transaction as its transition
-8. forget removes the SemanticEdge but retains Entity/Value nodes and all
-   ledger history
-9. trace reconstructs conflict, decision, and supersession/retraction lineage
-10. a profile cannot accept, forget, supersede, merge, split, or change support
-    for another profile's knowledge
-11. cross-profile corrections remain independently authored and link both
-    Relationships without hiding either from authorized trace
-12. adopting cross-profile evidence preserves its original provenance and does
-    not create a second independent source group
-13. normal correction changes only caller-owned Relationship state, while an
-    owned source revision may invalidate its evidence team-wide through system
-    recomputation
-14. a material cross-profile disagreement has one durable team case with
-    append-only events and versioned position membership
-15. a resolved case removes only non-preferred current support paths from
-    primary recall and keeps every authored Relationship available to trace
-16. `valid_at` before the change and `known_at` before the correction reconstruct
-    the corresponding historical view
-17. another writer's response creates that writer's evidence-backed
-    Relationship and cannot act as a bare vote
-18. a semantic write creates or updates Conflict cases but does not resolve them
-19. nightly review is the only automatic Conflict resolver; it uses a bounded
-    verifier proposal only for unchanged overdue cases and server policy remains
-    the durable authority
-20. deadline expiry without one qualifying position produces `overdue`; an
-    explicit AI abstention or five failed local-day assessments uses the audited
-    authority-then-accepted-time last-write-wins fallback
-21. the nightly job may close losing Relationship episodes with audited
-    `status=superseded` and `valid_to` updates, retract only case-exclusive
-    losing evidence through the lifecycle ledger, and atomically persist one
-    leased, retryable deletion-only derivation task for each retracted fragment;
-    the task stages the inferred replacement through the normal semantic write. It cannot
-    rewrite raw evidence, ownership, author attribution, Entity resolution, or
-    source history
-22. selecting a server-supplied Entity or predicate option reuses the persisted
-    assessment and makes zero assessor calls
-23. accept, correct, and confirm-new-Entity actions require exact new evidence;
-    each creates one new semantic request with one bounded assessor conversation
+Use real PostgreSQL and A/B/C actors to verify owner boundaries, supporter
+voting, temporal views, stale confirmations, evidence-occurrence citations,
+shared-support retention, and atomic correction. Inspect the owning capability
+tests and registered conflict/queue scenarios in
+[Development And Testing](Development-And-Testing).

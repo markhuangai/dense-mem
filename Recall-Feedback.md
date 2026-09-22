@@ -1,6 +1,4 @@
-# Recall Feedback
-
-Recall feedback records bounded host judgments about a completed recall. It is
+| Ranking comparison | Compare recorded outcomes alongside evaluated code/configuration versions. |nded host judgments about a completed recall. It is
 observational: it does not mutate Relationships, evidence, Entity identity,
 Hypotheses, embeddings, indexes, or ranking weights.
 
@@ -50,7 +48,7 @@ Submitting feedback does not:
 - merge or split an Entity
 - reinforce/reject a Hypothesis
 - update a search document or embedding
-- modify a ranking contract
+- change ranking policy
 - train a model
 
 A quality problem changes behavior only after it becomes an evaluated case, an
@@ -90,11 +88,9 @@ explicit code/config change is made, and release gates pass.
 }
 ```
 
-New recall snapshots record `evidence` and `relationship` refs. Each submitted
-ID is revalidated against the original same-team recall event. Retained events
-created before the evidence contract may still contain legacy result types;
-that narrow compatibility path exists only so feedback can be attached to an
-immutable historical event, not as a new recall output contract.
+Recall snapshots retain returned evidence, Relationship, community, and
+Hypothesis references as applicable. Submitted references are checked against
+the original authorized recall event.
 
 A comment is required for low-quality, missing-context, irrelevant, or
 contradicted judgments. Comments are bounded and should describe the retrieval
@@ -102,6 +98,13 @@ failure without copying private user content.
 
 Hypothesis quality feedback remains observational. Use `resolve_dream_feedback`
 with new evidence for a status-changing dream decision.
+
+### Partial failure
+
+For a batch error, read `failed_index`, `recorded_count`, `next_action`, and
+`remediation`. Earlier items were already recorded: omit them. Retry or correct
+the failed item and the later unprocessed items according to the returned
+action. Do not replay the whole batch blindly.
 
 ## Stored Event
 
@@ -112,9 +115,7 @@ feedback_event_id
 recall_event_id
 team_id and profile_id
 query fingerprint or approved bounded query text
-ranking_profile_version and fusion_mode
-embedding_contract_version
-search_index_profile_version
+server-recorded contract/version metadata
 search freshness and degraded branches
 returned result refs and ranks
 semantic groups, authored alternatives, and clarification outcome
@@ -131,8 +132,7 @@ team, space, and generation exactly; the service additionally requires the
 actor's current allowed-space set to contain that same generation. Listing and
 getting events expose only rows whose private space is still active at its
 current generation, so a sealed or retired snapshot cannot be updated or
-resolved through a stale reference. Legacy unscoped events remain readable only
-through their existing compatibility path.
+resolved through a stale reference.
 
 Retention and text-storage policy must be explicit because queries/comments may
 contain sensitive information.
@@ -177,8 +177,7 @@ queries, stale source data, host misuse, and privacy before adding a case.
 
 The tool is visible and callable only when database-backed configuration
 enables recall feedback. Submission needs `write` scope. Detailed event
-inspection is a control/first-party surface; the retired evaluation feedback
-event tools are not part of either image's MCP catalog.
+inspection is a control/first-party surface.
 
 Disabling collection stops new events; it does not silently delete retained
 events.
@@ -189,7 +188,7 @@ events.
 | --- | --- | --- |
 | Feedback changes truth | low score demotes a valid Relationship | record-only service boundary and no knowledge repository dependency |
 | Label cardinality explosion | result IDs/comments become Prometheus labels | fixed enums and bounded buckets only |
-| Privacy leak | raw user query is retained indefinitely | configurable redaction/retention and restricted detail access |
+| Privacy leak | raw user query is retained indefinitely | bounded retention and restricted detail access |
 | Host self-bias | one model judges its own retrieval as ground truth | human review and paired offline cases before ranking changes |
 | Cross-team reference | feedback names a result from another recall/team | bind refs to the stored recall event and authenticated team |
 | Stale vector misdiagnosed | ranking is blamed for pending/failed embedding work | store search freshness, branch path, and source/vector versions with the event |

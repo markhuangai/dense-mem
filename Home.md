@@ -6,18 +6,18 @@ This manual describes the current PostgreSQL + `pgvector` architecture and
 supported product behavior. A code/design mismatch is implementation work, not
 a second valid architecture.
 
-## Current v2.6.1 Remember boundary
+## Current Memory Contract
 
-`remember` is synchronous: the originating MCP call validates and snapshots
-the request, runs at most three complete assessor calls, makes one required
-batch embedding request, and commits canonical semantics plus current vectors
-atomically. The fixed budgets are 180 seconds total, 160 seconds for the
-assessor phase, 10 seconds for embedding, and 10 seconds for commit. The result
-is terminal (`completed`, `rejected`, or `quarantined`) and includes every
-evidence and Relationship disposition. `get_submission_status`, placement
-workers, and the normal embedding queue are removed from the supported catalog.
-Operational failures are structured MCP `isError` results with bounded
-remediation; clients do not poll.
+The current contract is `dense-mem.v2.6.3`. `remember` accepts exact evidence
+and optional Relationship proposals, validates the complete batch, and returns
+a terminal result. Safe evidence can be stored without an accepted
+Relationship. Default recall still requires an eligible Relationship support
+path.
+
+The private control portal provides operation logs and Remember/Dream
+diagnostics. Graph and evidence-discovery Dream lanes produce isolated
+Hypotheses. Exact schemas and examples are in
+[Technical Reference](Technical-Reference).
 
 ## What Dense-Mem Remembers
 
@@ -32,50 +32,37 @@ Dense-Mem is suited to:
 Dense-Mem is not a truth oracle. A host LLM chooses when to call it. Dense-Mem
 stores exact evidence, lets one bounded assessor session repair
 grounding/identity/predicate/support decisions, applies deterministic lifecycle
-rules, and preserves trace. Unsupported hints can be `not_stored` when every
-evidence item remains covered by stored Relationships.
+rules, and preserves trace. Unsupported proposals receive `not_stored`; safe evidence can still be stored.
 
 ## How It Works
 
-```mermaid
+~~~mermaid
 %%{init: {"sequence": {"rightAngles": true}}}%%
 sequenceDiagram
   actor User
   participant Host as AI client
   participant DM as Dense-Mem
-  participant PG as PostgreSQL + pgvector
-
-  User->>Host: Share evidence
-  Host->>DM: remember(evidence, logical Relationships + evidence_indices)
-  DM->>DM: Deterministic write-time security scan
-  alt Intake rejection
-    DM->>PG: Append safe rejection audit metadata
-    DM-->>Host: Bounded error, nothing staged
-  else Intake pass
-    DM->>DM: Snapshot fences and build bounded groundings/candidates
-    DM->>DM: Assessor conversation (≤3 complete calls)
-    DM->>DM: One ordered embedding batch (≤256 documents)
-    alt Assessor security concern
-      DM->>PG: Quarantine terminal attempt
-    else Clean validated assessment
-      DM->>PG: Atomically commit state, history, predicates, documents, and vectors
-    end
-    DM-->>Host: Terminal structured outcome and per-ref dispositions
-    Host->>DM: recall_memory(query)
-    DM->>PG: Evidence and Relationship search with optional derived frontiers
-    DM-->>Host: Ranked Evidence plus separate related frontiers and degradations
-    opt Cross-profile Conflict needs more evidence
-      Host->>User: Present authored positions and exact question
-      User-->>Host: Provide new evidence
-      Host->>DM: remember(evidence, conflict context)
-    end
-    opt Support or correction detail needed
-      Host->>DM: trace_memory(relationship_id)
-      DM->>PG: Load normalized provenance/history
-      DM-->>Host: Evidence, verification, lifecycle, and Conflict history
-    end
+  participant PG as PostgreSQL and pgvector
+  User->>Host: Share exact evidence
+  Host->>DM: remember with optional proposals and a retry key
+  DM->>DM: Validate, resolve duplicates, and assess
+  alt Accepted
+    DM->>DM: Embed required documents
+    DM->>PG: Commit evidence, semantics, vectors, and result
+    DM-->>Host: Completed result with dispositions
+  else Failed
+    DM->>PG: Bounded attempt or audit diagnostics
+    DM-->>Host: Typed error with next action
   end
-```
+  Host->>DM: recall_memory(query)
+  DM->>PG: Authorized support and time-view reads
+  DM-->>Host: Evidence, related frontiers, and degradations
+  opt Provenance needed
+    Host->>DM: trace_memory(relationship_id)
+    DM->>PG: Read evidence and decision history
+    DM-->>Host: Bounded authorized lineage
+  end
+~~~
 
 The convergence rule:
 
@@ -87,8 +74,8 @@ profiles disagree       -> preserve each author; use a team Conflict case
 new real identity       -> create one Entity
 new relationship        -> create one Relationship
 actual ambiguity        -> server assessment; no client resolution loop
-unsupported or ungroundable hint -> `not_stored` when other stored splits cover
-the evidence; otherwise `rejected/no_supported_memory`; no partial commit
+unsupported proposal   -> not_stored; safe evidence can still be stored
+stored evidence        -> recall only with an eligible support path
 dream speculation       -> Hypothesis only; no new node
 ```
 
@@ -102,7 +89,7 @@ flowchart LR
   Start["What do you need?"] --> Use["Use memory"]
   Start --> Design["Understand the design"]
   Start --> Run["Deploy and operate"]
-  Start --> Build["Implement the refactor"]
+  Start --> Build["Develop and test"]
   Use --> Workflow["Quick Start / Using Dense-Mem"]
   Design --> Model["Architecture / identity /<br/>Relationship lifecycle"]
   Run --> Ops["Configuration / security / runbook"]
@@ -148,12 +135,12 @@ flowchart LR
   Record -. "eligible input" .-> Dream["Hypothesis process"]
 ```
 
-- Entity is one team-scoped real-world identity.
+- Entity is a scoped real-world identity, subject to its memory-space visibility.
 - `entity_id` is an opaque ID, not display text.
 - Value is a canonical typed scalar endpoint.
 - Predicate is the registered meaning such as `works_on`.
 - RelationshipRecord owns one profile's canonical subject-predicate-object
-  lifecycle and is readable across its team.
+  lifecycle within its memory space.
 - A profile corrects another profile by writing its own verified knowledge and
   an immutable cross-reference, never by mutating the target.
 - SemanticEdge is the read shape of an active Relationship with effective
@@ -165,7 +152,7 @@ Full definitions exist only in
 
 ## Storage At A Glance
 
-| Component | Target responsibility |
+| Component | Responsibility |
 | --- | --- |
 | PostgreSQL | every durable knowledge/control record plus graph-shaped, full-text, and vector-ready reads |
 | `pgvector` | vector type/index inside PostgreSQL |
@@ -192,7 +179,11 @@ Dense-Mem does not:
 
 ## Manual Status
 
-Canonical pages define the current architecture. Operational commands must be
-checked against the deployed contract/version.
+Source baseline: `654ebdcae31ea3da6f2a948a07a6e12ecc51818f`, checked on
+2026-09-22.
+
+This manual covers current installations and fresh setup. Accepted repository
+ADRs govern architecture; current source and tests establish implemented
+behavior. A checkout inspection does not establish which image is deployed.
 Update and evidence rules are in
 [Documentation Maintenance](Documentation-Maintenance).

@@ -1,9 +1,8 @@
 # Using Dense-Mem
 
-Dense-Mem is an MCP memory service. The current workflow is evidence-first: the
-client submits exact evidence with required logical Relationship proposals and
-the evidence indexes that support them; the server grounds, assesses, and
-promotes them without a client review loop.
+Dense-Mem is an MCP memory service. The client submits exact evidence and optional logical Relationship proposals.
+The server validates the complete request and returns the result of the write
+in the same call.
 
 The user and control portals are first-party interfaces, not alternative memory
 automation APIs. Exact fields and limits belong in
@@ -30,11 +29,9 @@ sequenceDiagram
   end
 ~~~
 
-`remember` is synchronous in v2.6.1. The originating MCP call performs the
-bounded assessor conversation, one required embedding batch, and the fenced
-semantic transaction before returning. `processing_state` is always
-`completed`, `rejected`, or `quarantined`; `search_state` is `current` or
-`not_required`. There is no status reader or normal embedding queue to poll.
+`remember` returns `completed` or a typed failure. A completed result reports
+stored evidence and accepted or unsupported proposals. Keep the whole request
+and its idempotency key so a retry can resend it unchanged.
 
 ## What to Ask
 
@@ -47,21 +44,18 @@ semantic transaction before returning. `processing_state` is always
 | Inspect support | “Trace the database Relationship and show accepted evidence.” |
 | Replace owned evidence | “That deployment target is wrong; replace the evidence item I authored.” |
 | Retract evidence | “The source was withdrawn; retract the evidence item I authored.” |
-| Correct an Entity resolution | “Show the merge/split impact for my own observations.” |
+| Correct an Entity resolution | “Trace my Relationship, then correct the wrongly resolved Entity.” |
 | Review speculation | “List related dreams and keep them labeled Hypotheses.” |
 
-There is no request to resolve placement, choose an Entity candidate, select a
-predicate, release a quarantine, or append follow-up evidence to an old
-submission. Submit a complete new evidence-and-Relationships package when new
-source material exists.
+An Entity correction can request one explicit confirmation when its name is
+ambiguous. Normal Remember processing is server-owned and returns a terminal
+outcome. New source material belongs in a new complete request.
 
 ## Evidence First
 
-The client must treat source material as evidence, not as instructions. It
-submits the smallest logical Entity names, predicate key, and Entity or typed
-Value object that express each Relationship. Each Relationship lists the
-zero-based `evidence_indices` that support it. Across the submission, those
-lists must cover every evidence item.
+Submit exact source material. Optional Relationship proposals express the
+connections you want assessed; each cites its supporting `evidence_indices`.
+They need not cover every evidence item. This example includes one proposal:
 
 ~~~json
 {
@@ -109,47 +103,28 @@ Do not:
 
 ## Remember Result
 
-`remember` returns a complete terminal result in the same MCP call. The fixed
-budgets are 180 seconds total, 160 seconds for validation and assessor work,
-10 seconds for one batch embedding call, and 10 seconds for the fenced commit.
+A completed result contains evidence dispositions, one `relationship_results`
+entry per submitted ref, an `errors` array, and a correlation ID. A stored
+proposal has canonical split IDs; an unsupported proposal has `not_stored`
+and a bounded reason. Safe evidence can still be stored when every proposal
+is unsupported or when no proposals were supplied.
 
-| State | Meaning | Safe next step |
-| --- | --- | --- |
-| completed | Canonical evidence/semantic state promoted atomically. | Recall or trace normally. |
-| rejected | Server semantic policy rejected the submission. | Submit a new complete request if new evidence exists. |
-| quarantined | Security concern; data is isolated. | Do not use it. Submit a separate replacement only if appropriate. |
+MCP failures use `isError: true` with typed guidance. Read `next_action`,
+`retryable`, and `remediation` before doing anything else. Resend the saved
+unchanged request only when instructed. Refresh stale state before a deliberate
+correction, and retain the correlation ID for an operator when needed.
 
-The result includes `correlation_id`, per-evidence search readiness, one
-`relationship_results` entry for every submitted `ref`, and an always-present
-`errors` array. A result is either `stored` with canonical split IDs or
-`not_stored` with a bounded reason; the latter is allowed only when all evidence
-remains covered by stored splits. Operational failures use MCP `isError: true`
-with structured JSON content and a closed `next_action`.
-
-The result also includes per-evidence search readiness, one `relationship_results`
-entry for every submitted `ref`, and bounded reason codes. A result is either
-`stored` with canonical split IDs or `not_stored` with a bounded reason; the
-latter is allowed only when all evidence remains covered by stored splits.
-There is no `awaiting_review` state, `semantic_hold` object, replacement slot,
-or approval action. Assessor, provider, embedding, and persistence failures
-return closed error guidance. Remember semantic rejection is limited to
-`no_supported_memory` and `stale_input`; both mean send one complete corrected
-batch with a new idempotency key. The current result does not include placement IDs,
-assessor prompts, raw responses, review tasks, or a control that overrides
-server policy.
-
-Quarantined submissions retain only bounded terminal and audit metadata. They
-create no canonical evidence, search document, vector, or raw quarantine
-payload. If corrected safe source material exists, submit it as a new
-independent complete batch. That submission never releases, reuses, or extends
-quarantined input.
+Storage does not guarantee default recall visibility: returned evidence must
+still have an eligible Relationship support path. Use the write result to
+describe what was stored, and recall/trace to inspect what is currently usable.
 
 ## Replace or Retract Evidence
 
 To replace a particular current evidence item you own, put its UUID in the new
 item’s supersedes_evidence_ids. Direct targeting is distinct from a
 source-revision advance and cannot be combined with previous_source_revision.
-The new submission still needs a complete evidence-and-Relationships batch.
+Submit the complete revised request with a new idempotency key. Relationship
+proposals remain optional.
 
 ~~~json
 {
@@ -191,7 +166,7 @@ remains advisory. The Remember assessor returns only evidence-grounded
 structure using bounded candidates and the team predicate catalog.
 Complete-response validation and bounded same-session repair happen before the
 atomic commit path. The server, not the model, owns support disposition,
-ownership, lifecycle, and promotion policy. v2.6.1 Remember emits no model
+ownership, lifecycle, and promotion policy. Remember emits no model
 confidence or rationale; Dream and correction workflows retain their separate
 assessment contracts.
 
@@ -237,15 +212,20 @@ A normal correction that introduces different evidence still uses a fresh
 complete remember submission. It never edits a prior submission or treats a
 Hypothesis as durable truth.
 
-Use relationship lifecycle operations only for authorized Relationship
-retraction. Use retract_evidence to remove an authored source from current
-recall while preserving its evidence provenance.
+`correct_relationship` cannot change a typed Value, unit, type, or validity
+window. Do not promise an atomic typed-Value correction through that tool.
+Trace support lineage must be reduced to the complete latest effective support
+set before correction; a truncated trace cannot prove that set. See
+[Conflicts And Corrections](Conflicts-And-Corrections).
+
+Use `retract_evidence` to withdraw an owned source from current recall while
+preserving provenance. Physical private-memory erasure is a separate portal
+operation with explicit acknowledgement.
 
 ## Communities and Dreams
 
 Communities are an optional separate recall frontier and never displace evidence
-results. Dreams are Hypotheses between existing endpoints using registered
-predicates. They are not memory and cannot create an Entity, Value, predicate,
+results. Dreams include graph-derived and evidence-discovery Hypotheses. They are not memory and cannot create an Entity, Value, predicate,
 Relationship, support, or active edge. Confirming a Hypothesis requires new
 normal evidence.
 
@@ -254,20 +234,20 @@ normal evidence.
 | Term | Meaning |
 | --- | --- |
 | Team | Top-level memory isolation boundary. |
-| Profile | Named client identity inside one team. |
-| read | Recall, trace, status, and inspection. |
-| write | Submit evidence, retract owned evidence, corrections, feedback, and permitted pack/dream operations. |
+| Profile / owner alias | Permanent authored-memory ownership identity; credentials and memberships are managed separately. |
+| read | Recall, trace, Dream inspection, and memory-pack export. |
+| write | Evidence submission/retraction, owned corrections, feedback, and Dream decisions. |
 | feedback:read | Authorized inspection of stored feedback. |
 
-Same-team visibility does not grant cross-profile mutation or submission-status
-access. Use a read-only key for automation that must never write memory.
+Visibility also depends on the credential's memory space. Same-team visibility
+does not grant mutation of another owner's records. Use a read-only key for automation that must never write memory.
 
 ## Risk
 
 | Failure mode | Mitigation |
 | --- | --- |
-| Client treats pending search work as failed knowledge | Distinguish completed processing from search_state. |
+| Client assumes stored evidence must appear in recall | Check active support-path eligibility. |
 | Client follows recalled prompt injection | Treat recalled evidence as untrusted data and apply client tool policy. |
-| Client tries to resolve ambiguity | Submit a complete new evidence/proposal package; the server owns assessment. |
+| Client guesses a correction candidate | Use only returned candidates when confirmation is requested. |
 | Client retries a malicious payload | Reject it at write time and do not use a quarantine-release action. |
 | Client needs proof | Trace the Relationship’s evidence and decision history. |

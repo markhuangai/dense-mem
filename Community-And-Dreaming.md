@@ -9,8 +9,7 @@ Community detection groups related same-team Relationship semantic groups. A
 community is a derived analytical cluster for discovery—not an Entity,
 Relationship, predicate behavior, lifecycle state, or evidence.
 
-It is unrelated to the retired `policy_family` term. Dreaming is a separate
-Hypothesis process; see [Dreaming](Dreaming).
+Dreaming is a separate Hypothesis process; see [Dreaming](Dreaming).
 
 ## Boundary
 
@@ -90,8 +89,7 @@ CommunitySource
   source_state_hash
 ```
 
-Membership and source IDs are normalized rows, not unbounded arrays. Existing
-rows are backfilled with `logical_community_id = community_id`. Publication
+Membership and source IDs are normalized rows, not unbounded arrays. Publication
 inserts a new immutable record for each logical community and retains
 superseded versions for audit. A partial unique constraint allows at most one
 current record per team and logical community.
@@ -230,7 +228,8 @@ checks. Each public item contains:
       "predicate": "uses",
       "object": {"entity_id": "postgresql", "name": "PostgreSQL"},
       "polarity": "+",
-      "evidence_ids": ["evidence-2"]
+      "evidence_ids": ["evidence-2"],
+      "space_kind": "team_shared"
     }
   ],
   "relationships_truncated": true
@@ -259,7 +258,7 @@ The scheduler enforces:
 - complete canonical source/configuration fingerprint comparison
 
 Exact settings belong in
-[Configuration](Configuration#community-detection).
+[Configuration](Configuration#community-detection-and-recall-feedback).
 
 ## Summary Generation
 
