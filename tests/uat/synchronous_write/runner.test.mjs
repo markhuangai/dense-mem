@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { fixtureChatResponse } from "./provider-fixture.mjs";
+import { fixtureChatResponse, fixtureFault } from "./provider-fixture.mjs";
 import { discoverCases } from "./runner.mjs";
 
 test("synchronous-write cases are sorted and filterable", async () => {
@@ -56,6 +56,25 @@ test("provider fixture emits a semantic assessor rejection for diagnostics cover
   assert.equal(response.relationship_results[0].ref, "provider-forged-ref");
   assert.equal(response.relationship_results[0].disposition, "stored");
   assert.ok(Array.isArray(response.relationship_results[0].splits));
+});
+
+test("provider fixture ignores fault markers outside the active evidence and keeps direct injections", () => {
+  const staleContext = {
+    messages: [
+      { role: "user", content: JSON.stringify({ evidence: [{ content: "[fixture-fault:no-supported] prior evidence" }] }) },
+      { role: "user", content: JSON.stringify({
+        evidence: [{ content: "Current evidence without a fixture fault." }],
+        known_evidence: [{ content: "[fixture-fault:security] recalled evidence" }],
+      }) },
+    ],
+  };
+  assert.equal(fixtureFault(staleContext, "assessment"), "");
+
+  const activeEvidence = {
+    messages: [{ role: "user", content: JSON.stringify({ evidence: [{ content: "Current evidence [fixture-fault:no-supported]." }] }) }],
+  };
+  assert.equal(fixtureFault(activeEvidence, "assessment"), "no-supported");
+  assert.equal(fixtureFault({ input: ["Current embedding input [fixture-fault:embedding-count]."] }, "embedding"), "embedding-count");
 });
 
 test("provider fixture implements the community, dream, and evidence-discovery schemas", () => {

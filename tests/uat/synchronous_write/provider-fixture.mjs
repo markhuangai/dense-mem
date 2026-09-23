@@ -49,8 +49,8 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  const requestFault = fixtureFault(payload) || fault;
   const route = request.url?.endsWith("/embeddings") ? "embedding" : request.url?.endsWith("/chat/completions") ? "assessment" : "other";
+  const requestFault = fixtureFault(payload, route) || fault;
   const routeFault = faultForRoute(requestFault, route);
   if (route === "assessment" && chatRequests.length < 2048) {
     chatRequests.push({
@@ -438,28 +438,17 @@ function wholeEvidenceRange(evidence) {
   return { evidence_id: evidence?.evidence_id || "evidence:0", start_ref: refs[0] || "fixture-start", end_ref: refs.at(-1) || "fixture-end" };
 }
 
-function fixtureFault(payload) {
-  const messages = Array.isArray(payload.messages) ? payload.messages : [];
-  const structuredInputs = [];
-  for (const message of messages) {
-    if (message?.role !== "user" || typeof message.content !== "string") continue;
-    try {
-      structuredInputs.push(JSON.parse(message.content));
-    } catch {
-      // Correction feedback is not a provider request.
-    }
+export function fixtureFault(payload, route) {
+  const inputs = route === "embedding"
+    ? Array.isArray(payload.input) ? payload.input : [payload.input]
+    : route === "assessment"
+      ? (assessmentInput(payload).evidence || []).flatMap((item) => [item?.content, item?.boundary_text])
+      : [];
+  for (const input of inputs) {
+    const match = String(input || "").match(/\[fixture-fault:([a-z0-9_-]+)\]/i);
+    if (match) return match[1];
   }
-  const input = assessmentInput(payload);
-  const evidence = Array.isArray(input.evidence) ? input.evidence : [];
-  const embeddingInputs = Array.isArray(payload.input) ? payload.input : [payload.input];
-  const structuredContent = structuredInputs.flatMap((item) => [
-    ...(Array.isArray(item?.contexts) ? item.contexts.map((context) => context?.content) : []),
-    ...(Array.isArray(item?.evidence) ? item.evidence.map((item) => item?.content) : []),
-    JSON.stringify(item),
-  ]);
-  const serialized = [...evidence.map((item) => String(item?.content || "")), ...structuredContent.map((item) => String(item || "")), ...embeddingInputs.map((item) => String(item || ""))].join("\n");
-  const match = serialized.match(/\[fixture-fault:([a-z0-9_-]+)\]/i);
-  return match?.[1] || "";
+  return "";
 }
 
 function faultForRoute(value, route) {
