@@ -149,6 +149,8 @@ func (s *service) recordRunDiagnostic(ctx context.Context, result *RunCycleResul
 	defer diagnosticCancel()
 	phaseCtx, phaseCancel := context.WithTimeout(diagnosticCtx, dreamDiagnosticPhaseTimeout)
 	defer phaseCancel()
+	phaseDeadline, _ := phaseCtx.Deadline()
+	details["phase_trace_deadline_at"] = phaseDeadline.UTC().Format(time.RFC3339Nano)
 	newCaptureContext := func() (context.Context, context.CancelFunc) {
 		return context.WithTimeout(phaseCtx, dreamDiagnosticCaptureTimeout)
 	}
@@ -170,6 +172,7 @@ func (s *service) recordRunDiagnostic(ctx context.Context, result *RunCycleResul
 	if expected, ok := details["phase_trace_expected"]; ok {
 		fallback.Details["phase_trace_expected"] = expected
 	}
+	fallback.Details["phase_trace_deadline_at"] = details["phase_trace_deadline_at"]
 	if result.diagnosticPhasesTruncated {
 		fallback.Details["phase_trace_truncated"] = true
 	}

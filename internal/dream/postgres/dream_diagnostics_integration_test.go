@@ -168,14 +168,15 @@ func TestDreamDiagnosticDeadlineMarkerPersistsWithPartialPhaseTrace(t *testing.T
 		{"phase": "target", "hypothesis_id": "", "count": 1},
 		{"phase": "provider", "hypothesis_id": "", "count": 1},
 	}
+	deadlineAt := time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano)
 	primary := dreamcontract.DreamDiagnosticCaptureInput{
 		TeamID: teamID, RunID: run.RunID, Phase: "run", Outcome: "completed",
-		Details:      map[string]any{"status": "completed", "phase_trace_expected": expected},
+		Details:      map[string]any{"status": "completed", "phase_trace_expected": expected, "phase_trace_deadline_at": deadlineAt},
 		CaptureState: "not_captured", CaptureReason: "provider_payload_not_retained",
 	}
 	require.Error(t, store.RecordDreamRunDiagnostics(ctx, primary), "the scoped trigger forces the primary run capture to use its fallback")
 	fallback := primary
-	fallback.Details = map[string]any{"status": "completed", "capture_failed": true, "phase_trace_expected": expected}
+	fallback.Details = map[string]any{"status": "completed", "capture_failed": true, "phase_trace_expected": expected, "phase_trace_deadline_at": deadlineAt}
 	fallback.CaptureState = "unavailable"
 	fallback.CaptureReason = "diagnostic_capture_failed"
 	require.NoError(t, store.RecordDreamRunDiagnostics(ctx, fallback))
@@ -195,14 +196,39 @@ func TestDreamDiagnosticDeadlineMarkerPersistsWithPartialPhaseTrace(t *testing.T
 			continue
 		}
 		runCaptures++
-		require.Equal(t, true, capture.Details["phase_trace_truncated"])
+		require.Equal(t, false, capture.Details["phase_trace_truncated"])
+		require.Equal(t, true, capture.Details["phase_trace_pending"])
 		require.NotContains(t, capture.Details, "phase_trace_expected")
+		require.NotContains(t, capture.Details, "phase_trace_deadline_at")
 		require.Equal(t, "unavailable", capture.CaptureState)
 		detail, detailErr := store.GetDreamDiagnostic(ctx, teamID, run.RunID, capture.CaptureID)
 		require.NoError(t, detailErr)
-		require.Equal(t, true, detail.Details["phase_trace_truncated"])
+		require.Equal(t, false, detail.Details["phase_trace_truncated"])
+		require.Equal(t, true, detail.Details["phase_trace_pending"])
 	}
 	require.Equal(t, 1, runCaptures)
+
+	deadlineAt = time.Now().UTC().Add(-time.Second).Format(time.RFC3339Nano)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE dream_diagnostic_captures
+			SET details = jsonb_set(details, '{phase_trace_deadline_at}', to_jsonb(?::text), false)
+			WHERE team_id = ?::uuid AND run_id = ?::uuid AND phase = 'run' AND hypothesis_id IS NULL
+		`, deadlineAt, teamID, run.RunID).Error
+	}))
+	page, err = store.ListDreamDiagnostics(ctx, dreamcontract.DreamDiagnosticListInput{TeamID: teamID, RunID: run.RunID, Limit: 25})
+	require.NoError(t, err)
+	for _, capture := range page.Items {
+		if capture.Phase != "run" {
+			continue
+		}
+		require.Equal(t, true, capture.Details["phase_trace_truncated"])
+		require.Equal(t, false, capture.Details["phase_trace_pending"])
+		detail, detailErr := store.GetDreamDiagnostic(ctx, teamID, run.RunID, capture.CaptureID)
+		require.NoError(t, detailErr)
+		require.Equal(t, true, detail.Details["phase_trace_truncated"])
+		require.Equal(t, false, detail.Details["phase_trace_pending"])
+	}
 
 	require.NoError(t, store.RecordDreamDiagnostic(ctx, dreamcontract.DreamDiagnosticCaptureInput{
 		TeamID: teamID, RunID: run.RunID, Phase: "provider", Outcome: "completed",
@@ -217,6 +243,7 @@ func TestDreamDiagnosticDeadlineMarkerPersistsWithPartialPhaseTrace(t *testing.T
 		}
 		runCaptures++
 		require.Equal(t, false, capture.Details["phase_trace_truncated"])
+		require.Equal(t, false, capture.Details["phase_trace_pending"])
 	}
 	require.Equal(t, 1, runCaptures)
 	var persistedRunCaptures int

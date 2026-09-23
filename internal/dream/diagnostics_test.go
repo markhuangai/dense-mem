@@ -289,6 +289,7 @@ func TestRecordRunDiagnosticRespectsEarlierCallerDeadline(t *testing.T) {
 	require.Equal(t, "run", repo.recorded[0].Phase)
 	require.Equal(t, "target", repo.recorded[1].Phase)
 	require.Equal(t, []runDiagnosticPhaseExpectation{{Phase: "target", Count: 1}}, repo.recorded[0].Details["phase_trace_expected"])
+	require.Equal(t, deadline.UTC().Format(time.RFC3339Nano), repo.recorded[0].Details["phase_trace_deadline_at"])
 	require.True(t, repo.runDeadline.Equal(deadline), "run capture retains the caller deadline")
 	require.True(t, repo.phaseDeadline.Equal(deadline), "phase capture inherits the earlier caller deadline")
 	require.Equal(t, 1, repo.phaseSuccesses)

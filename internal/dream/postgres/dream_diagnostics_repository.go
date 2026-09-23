@@ -24,24 +24,46 @@ const (
 	dreamDiagnosticRunSummaryLockHashSeed  int64 = 324
 )
 
+const dreamDiagnosticTraceStateJoin = `
+			LEFT JOIN LATERAL (
+				SELECT
+					CASE
+						WHEN capture.phase = 'run' AND jsonb_typeof(capture.details->'phase_trace_expected') = 'array' THEN
+							EXISTS (
+								SELECT 1
+								FROM jsonb_to_recordset(capture.details->'phase_trace_expected')
+									AS expected(phase text, hypothesis_id text, count bigint)
+								WHERE (
+									SELECT count(*)
+									FROM dream_diagnostic_captures AS phase_capture
+									WHERE phase_capture.team_id = capture.team_id
+									  AND phase_capture.run_id = capture.run_id
+									  AND phase_capture.phase = expected.phase
+									  AND COALESCE(phase_capture.hypothesis_id::text, '') = expected.hypothesis_id
+								) < expected.count
+							)
+						ELSE false
+					END AS missing,
+					CASE
+						WHEN capture.phase = 'run' AND jsonb_typeof(capture.details->'phase_trace_expected') = 'array' THEN
+							COALESCE(
+								NULLIF(capture.details->>'phase_trace_deadline_at', '')::timestamptz,
+								capture.created_at + INTERVAL '20 seconds'
+							) <= CURRENT_TIMESTAMP
+						ELSE false
+					END AS deadline_elapsed
+			) AS phase_trace ON true`
+
 const dreamDiagnosticDetailsProjection = `CASE
-	WHEN capture.phase = 'run' AND jsonb_exists(capture.details, 'phase_trace_expected') THEN
-		(capture.details - 'phase_trace_expected') || jsonb_build_object(
+	WHEN capture.phase = 'run' AND jsonb_typeof(capture.details->'phase_trace_expected') = 'array' THEN
+		(capture.details - 'phase_trace_expected' - 'phase_trace_deadline_at') || jsonb_build_object(
+			'phase_trace_pending',
+				NOT COALESCE((capture.details->>'phase_trace_truncated')::boolean, false)
+				AND phase_trace.missing
+				AND NOT phase_trace.deadline_elapsed,
 			'phase_trace_truncated',
-			COALESCE((capture.details->>'phase_trace_truncated')::boolean, false)
-			OR EXISTS (
-				SELECT 1
-				FROM jsonb_to_recordset(capture.details->'phase_trace_expected')
-					AS expected(phase text, hypothesis_id text, count bigint)
-				WHERE (
-					SELECT count(*)
-					FROM dream_diagnostic_captures AS phase_capture
-					WHERE phase_capture.team_id = capture.team_id
-					  AND phase_capture.run_id = capture.run_id
-					  AND phase_capture.phase = expected.phase
-					  AND COALESCE(phase_capture.hypothesis_id::text, '') = expected.hypothesis_id
-				) < expected.count
-			)
+				COALESCE((capture.details->>'phase_trace_truncated')::boolean, false)
+				OR (phase_trace.missing AND phase_trace.deadline_elapsed)
 		)
 	ELSE capture.details
 END`
@@ -324,6 +346,7 @@ func (r *Store) ListDreamDiagnostics(ctx context.Context, input dreamcontract.Dr
 			       CASE WHEN capture.expires_at <= CURRENT_TIMESTAMP THEN 'retention_expired' ELSE capture.capture_reason END,
 			       capture.captured_at, capture.expires_at, capture.created_at
 			FROM dream_diagnostic_captures AS capture
+			` + dreamDiagnosticTraceStateJoin + `
 			WHERE capture.team_id = ?::uuid`
 		args := []any{input.TeamID}
 		if input.RunID != uuid.Nil.String() {
@@ -387,6 +410,7 @@ func (r *Store) GetDreamDiagnostic(ctx context.Context, teamID, runID, captureID
 			       CASE WHEN capture.expires_at <= CURRENT_TIMESTAMP THEN 'retention_expired' ELSE capture.capture_reason END,
 			       capture.captured_at, capture.expires_at, capture.created_at
 			FROM dream_diagnostic_captures AS capture
+			`+dreamDiagnosticTraceStateJoin+`
 			WHERE capture.team_id = ?::uuid AND capture.run_id = ?::uuid AND capture.capture_id = ?::uuid
 		`, teamID, runID, captureID).Row()
 		item, err := scanDreamDiagnosticCaptureRow(row, teamID)

@@ -293,7 +293,11 @@ async function waitForRunDiagnostic(runID, ready = completeRunDiagnosticReady) {
 
 function completeRunDiagnosticReady(items) {
   const runCapture = items.find((item) => item.phase === "run");
-  return Boolean(runCapture) && runCapture.details?.phase_trace_truncated !== true;
+  const phases = new Set(items.map((item) => item.phase));
+  return Boolean(runCapture) &&
+    runCapture.details?.phase_trace_pending !== true &&
+    runCapture.details?.phase_trace_truncated !== true &&
+    ["target", "provider", "validation", "proposal", "disposition"].every((phase) => phases.has(phase));
 }
 
 function installEvidenceDiagnosticDelay(targetTeamID) {
