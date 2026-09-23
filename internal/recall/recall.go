@@ -253,10 +253,19 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 	}
 	result.RelatedHypotheses = []RelatedHypothesisSummary{}
 	if teamSharedBranch && req.IncludeHypotheses {
-		related, relatedDegradation := s.recallRelatedHypotheses(ctx, actor.TeamID.String(), actor.OwnerID.String(), req.Query)
-		result.RelatedHypotheses = related
-		if relatedDegradation != nil {
-			result.Degradations = append(result.Degradations, *relatedDegradation)
+		if req.KnownAt != nil {
+			result.Degradations = append(result.Degradations, relatedHypothesisTemporalDegradation())
+		} else {
+			related, relatedDegradation := s.recallRelatedHypotheses(
+				ctx,
+				actor.TeamID.String(),
+				req.Query,
+				recallHypothesisContextFrom(result),
+			)
+			result.RelatedHypotheses = related
+			if relatedDegradation != nil {
+				result.Degradations = append(result.Degradations, *relatedDegradation)
+			}
 		}
 	}
 	if len(result.Degradations) > 0 {
@@ -466,16 +475,20 @@ func relationshipVectorDegradation(state string) *RecallDegradationResult {
 func (s *recallService) recallRelatedHypotheses(
 	ctx context.Context,
 	teamID string,
-	_ string,
 	query string,
+	contextHandles recallHypothesisContextHandles,
 ) ([]RelatedHypothesisSummary, *RecallDegradationResult) {
-	if s.hypotheses == nil || strings.TrimSpace(query) == "" {
+	if s.hypotheses == nil || (strings.TrimSpace(query) == "" && contextHandles.empty()) {
 		return []RelatedHypothesisSummary{}, nil
 	}
 	records, err := s.hypotheses.RecallHypotheses(ctx, dreamcontract.RecallHypothesesInput{
-		TeamID: teamID,
-		Query:  query,
-		Limit:  defaultRelatedHypothesisLimit,
+		TeamID:          teamID,
+		Query:           query,
+		Limit:           defaultRelatedHypothesisLimit,
+		EvidenceIDs:     contextHandles.evidenceIDs,
+		RelationshipIDs: contextHandles.relationshipIDs,
+		EntityIDs:       contextHandles.entityIDs,
+		ValueIDs:        contextHandles.valueIDs,
 	})
 	if err != nil {
 		return []RelatedHypothesisSummary{}, relatedHypothesisDegradation()
@@ -489,6 +502,15 @@ func relatedHypothesisDegradation() *RecallDegradationResult {
 		Optional: true,
 		Code:     "related_hypotheses_unavailable",
 		Message:  "related hypotheses were unavailable; primary evidence recall was used",
+	}
+}
+
+func relatedHypothesisTemporalDegradation() RecallDegradationResult {
+	return RecallDegradationResult{
+		Frontier: "hypotheses",
+		Optional: true,
+		Code:     "related_hypotheses_temporal_not_supported",
+		Message:  "related hypotheses are current-only; historical recall omitted them",
 	}
 }
 

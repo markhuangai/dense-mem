@@ -8,9 +8,11 @@ import { assertTerminalRememberResult } from "../surface.mjs";
 export const name = "remember";
 
 const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
+const rememberModel = "dense-mem-synchronous-write-e2e-remember";
 
 export async function run({ rpc, rawRPC = rpc, expect }) {
   const selectedFault = (process.env.DENSE_MEM_E2E_PROVIDER_FAULT || "none").trim();
+  const providerRequestOffset = await providerFixtureRequestCount(expect);
   const faults = selectedFault === "none" ? [
     "none",
     "multi",
@@ -68,8 +70,39 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     results.push(await runConcurrentWinnerCase({ rpc, expect }));
     results.push(await runChangedHashConflictCase({ rawRPC, expect }));
     results.push(await runSupersessionFenceCase({ rpc, expect }));
+    results.push(await assertRememberSessionModelRouting(expect, providerRequestOffset));
   }
   return { mode: name, results };
+}
+
+async function providerFixtureRequestCount(expect) {
+  const providerURL = (process.env.DENSE_MEM_E2E_PROVIDER_URL || "").replace(/\/$/, "");
+  if (!providerURL) return null;
+  const response = await fetch(`${providerURL}/health`);
+  const state = await response.json();
+  expect(response.ok, `provider fixture health returned HTTP ${response.status}`);
+  return (state.chat_requests || []).length;
+}
+
+async function assertRememberSessionModelRouting(expect, providerRequestOffset) {
+  if (providerRequestOffset === null) return { skipped: "provider fixture is not available" };
+  const providerURL = (process.env.DENSE_MEM_E2E_PROVIDER_URL || "").replace(/\/$/, "");
+  const response = await fetch(`${providerURL}/health`);
+  const state = await response.json();
+  expect(response.ok, `provider fixture health returned HTTP ${response.status}`);
+  const assessments = (state.chat_requests || []).slice(providerRequestOffset)
+    .filter((request) => request.schema_name === "dense_mem_semantic_assessment_response");
+  expect(assessments.length > 0, "Remember must make semantic-assessment provider calls");
+  expect(assessments.every((request) => request.model === rememberModel), `Remember used a fallback or unexpected model: ${JSON.stringify(assessments)}`);
+  expect(assessments.some((request) => request.fault === "unavailable"), "Remember provider failure must reach the configured session model");
+  const persistedModels = postgresQuery(`
+    SELECT string_agg(DISTINCT model, ',' ORDER BY model)
+    FROM semantic_assessments
+    WHERE team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
+      AND btrim(model) <> ''
+  `);
+  expect(persistedModels === rememberModel, `persisted Remember assessment model = ${persistedModels}, want ${rememberModel}`);
+  return { semantic_assessment_calls: assessments.length, model: rememberModel, persisted_model: persistedModels, no_fallback: true };
 }
 
 async function runBudgetContextCase({ expect }) {
@@ -617,7 +650,16 @@ async function runMultiItemCase({ rpc, expect }) {
   expect(result.evidence.length === 2, "multi-item batch must return every evidence disposition");
   expect(result.evidence.every((item) => item.disposition === "stored" && item.search_state === "current"), "multi-item evidence must be current");
   expect(result.relationship_results.length === 2, "multi-item batch must return every relationship disposition");
-  expect(result.relationship_results.every((item) => item.disposition === "stored" && item.splits.length > 0), "multi-item relationships must be stored with splits");
+  const relationshipSummary = result.relationship_results.map((item) => ({
+    ref: item.ref,
+    disposition: item.disposition,
+    reason: item.reason,
+    split_count: item.splits?.length ?? null,
+  }));
+  expect(
+    result.relationship_results.every((item) => item.disposition === "stored" && item.splits.length > 0),
+    `multi-item relationships must be stored with splits: ${JSON.stringify(relationshipSummary)}`,
+  );
   return { fault: "multi", processing_state: result.processing_state, evidence_count: result.evidence.length };
 }
 
@@ -722,7 +764,9 @@ async function runMixedDispositionCase({ rpc, expect }) {
 
 async function runRepairCase({ rpc, expect, fault }) {
   const args = singleItemArguments(`assessment-${fault}`, `[fixture-fault:${fault}]`);
+  const startedAt = Date.now();
   const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
+  const durationMS = Date.now() - startedAt;
   assertStrictTerminalRemember(result, expect);
   const expectedState = fault === "repair" ? "completed" : "failed";
   const expectedCode = fault === "repair" ? "" : "provider_response_invalid";
@@ -736,7 +780,15 @@ async function runRepairCase({ rpc, expect, fault }) {
   `));
   const expectedTurns = fault === "repair" ? 2 : 3;
   expect(assessorTurns === expectedTurns, `${fault} must retain ${expectedTurns} assessor turns`);
-  return { fault, processing_state: result.processing_state, assessor_turns: assessorTurns };
+  if (fault === "repair") {
+    expect(durationMS <= 60_000, `terminal Remember repair exceeded the 60-second target: ${durationMS} ms`);
+  }
+  return {
+    fault,
+    processing_state: result.processing_state,
+    assessor_turns: assessorTurns,
+    ...(fault === "repair" ? { duration_ms: durationMS, terminal_target_ms: 60_000 } : {}),
+  };
 }
 
 async function runTerminalDomainCase({ rpc, expect, fault }) {

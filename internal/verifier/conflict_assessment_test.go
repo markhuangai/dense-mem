@@ -200,7 +200,13 @@ func TestOpenAIVerifierAssessesRelationshipConflict(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	provider := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	provider := NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGateAndModel(
+		newTestVerifierConfig(srv.URL, "key", "verifier-fallback-model"),
+		srv.Client(),
+		DefaultSemanticAssessmentLimits(),
+		nil,
+		"conflict-review-override-model",
+	)
 	response, err := provider.AssessRelationshipConflict(context.Background(), conflictAssessmentTestRequest(t))
 	require.NoError(t, err)
 	assert.Equal(t, ConflictAssessmentDecisionSelect, response.Decision)
@@ -210,6 +216,8 @@ func TestOpenAIVerifierAssessesRelationshipConflict(t *testing.T) {
 	assert.Equal(t, 1, response.ProviderTurns)
 	assert.Equal(t, 41, response.InputTokens)
 	assert.Greater(t, response.OutputTokens, 0)
+	assert.Equal(t, "conflict-review-override-model", received.Model)
+	assert.Equal(t, "conflict-review-override-model", provider.ModelName())
 }
 
 func TestOpenAIVerifierCorrectsInvalidRelationshipConflictAssessment(t *testing.T) {

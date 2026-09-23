@@ -271,6 +271,33 @@ func TestRecallReturnsRelatedHypothesesOutsidePrimaryResults(t *testing.T) {
 	require.Equal(t, []string{sourceRelationshipID}, result.RelatedHypotheses[0].SourceRelationshipIDs)
 	require.Equal(t, defaultRelatedHypothesisLimit, hypotheses.recallInput.Limit)
 	require.Equal(t, "PostgreSQL memory", hypotheses.recallInput.Query)
+	require.Equal(t, []string{evidenceID}, hypotheses.recallInput.EvidenceIDs)
+}
+
+func TestRecallUsesReturnedContextForHypothesesWithoutTextQuery(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	entityID := uuid.NewString()
+	evidenceID := uuid.NewString()
+	search := &recallSearchStub{
+		contract: &searchcontract.ActiveSearchContract{EmbeddingDimensions: 3},
+		result: &recallcontract.RecallEvidenceResult{
+			SearchState: string(domain.SearchProjectionCurrent),
+			Results:     []recallcontract.RecallEvidenceHit{{EvidenceID: evidenceID, Rank: 1}},
+		},
+	}
+	hypotheses := &recallHypothesisStub{}
+	svc := NewRecallService(RecallDependencies{Search: search, Hypotheses: hypotheses})
+
+	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
+		IncludeHypotheses:   true,
+		ExpandFromEntityIDs: []string{entityID},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, []string{entityID}, search.input.ExpandFromEntityIDs)
+	require.Equal(t, []string{evidenceID}, hypotheses.recallInput.EvidenceIDs)
 }
 
 func TestRecallProviderFailureIsOptionalDegradation(t *testing.T) {

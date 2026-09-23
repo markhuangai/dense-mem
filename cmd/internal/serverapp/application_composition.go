@@ -50,7 +50,8 @@ type applicationCompositionDependencies struct {
 	CommunitySummary       communityapp.SummaryProvider
 	CommunityStore         communitycontract.CommunityRepository
 	DreamEvidenceStore     dreampostgres.EvidenceDiscoveryRepository
-	DreamModel             string
+	DreamGraphModel        string
+	DreamEvidenceModel     string
 	ProviderCycleLease     time.Duration
 	CorrectionTimeout      time.Duration
 	CorrectionExecutor     lifecycle.LifecycleCorrectionExecutor
@@ -113,7 +114,8 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 		EvidenceStore:       deps.DreamEvidenceStore,
 		Diagnostics:         deps.Dream,
 		DiagnosticProtector: deps.DiagnosticProtector,
-		Model:               deps.DreamModel,
+		GraphModel:          deps.DreamGraphModel,
+		EvidenceModel:       deps.DreamEvidenceModel,
 		Limits:              deps.AssessmentLimits,
 		Metrics:             deps.Metrics,
 		Logger:              deps.Logger,

@@ -30,6 +30,7 @@ func TestOpenAIStructuredChatUsesTokenizerForIncompleteProviderUsage(t *testing.
 			rate := 1_000_000.0
 			metrics := observability.NewPrometheusMetrics(observability.AIPricingResolverFunc(func(context.Context) (observability.AIPricing, error) {
 				return observability.AIPricing{
+					VerifierModel:                     "assessor-model",
 					VerifierInputUSDPerMillionTokens:  &rate,
 					VerifierOutputUSDPerMillionTokens: &rate,
 				}, nil
@@ -84,6 +85,7 @@ func TestOpenAICommunitySummaryTelemetryRecordsProviderTokenizerAndUnpricedUsage
 	rate := 1.0
 	metrics := observability.NewPrometheusMetrics(observability.AIPricingResolverFunc(func(context.Context) (observability.AIPricing, error) {
 		return observability.AIPricing{
+			VerifierModel:                     "community-model",
 			VerifierInputUSDPerMillionTokens:  &rate,
 			VerifierOutputUSDPerMillionTokens: &rate,
 		}, nil

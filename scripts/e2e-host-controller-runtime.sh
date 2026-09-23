@@ -116,6 +116,7 @@ run_scenario() {
         "AI_VERIFIER_API_URL=http://conflict-provider:8081/v1"
         "AI_VERIFIER_API_KEY=dense-mem-conflict-e2e-key"
         "AI_VERIFIER_MODEL=dense-mem-conflict-e2e-verifier"
+        "AI_CONFLICT_REVIEW_MODEL=dense-mem-e2e-conflict-review"
         "AI_VERIFIER_DISABLE_TEMPERATURE=true"
       )
     else
@@ -123,6 +124,8 @@ run_scenario() {
       for provider_field in \
         AI_API_URL AI_API_KEY AI_API_EMBEDDING_MODEL AI_API_EMBEDDING_DIMENSIONS \
         AI_VERIFIER_API_URL AI_VERIFIER_API_KEY AI_VERIFIER_MODEL \
+        AI_REMEMBER_MODEL AI_CONFLICT_REVIEW_MODEL AI_DREAM_GRAPH_MODEL \
+        AI_DREAM_EVIDENCE_MODEL AI_COMMUNITY_SUMMARY_MODEL \
         AI_VERIFIER_DISABLE_TEMPERATURE AI_API_EMBEDDING_TIMEOUT_SECONDS AI_VERIFIER_TIMEOUT_SECONDS; do
         if has_helper "$helpers" conflict_provider && [[ "$provider_field" == "AI_API_EMBEDDING_MODEL" ]]; then
           provider_value="$embedding_model"
@@ -258,7 +261,7 @@ run_scenario() {
   if [[ "$scenario" == "oauth_provider_compatibility" ]]; then
     docker_args+=(-e "DENSE_MEM_ENTRA_MOCK_URL=https://entra-mock:9443")
   fi
-  if has_helper "$helpers" synchronous_write; then
+  if has_helper "$helpers" verifier || has_helper "$helpers" synchronous_write; then
     docker_args+=(-e "DENSE_MEM_E2E_PROVIDER_URL=http://synchronous-write-provider:8787")
   fi
   docker_args+=(

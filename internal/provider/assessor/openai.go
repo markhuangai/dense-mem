@@ -162,6 +162,25 @@ func NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(
 	assessmentLimits assessor.SemanticAssessmentLimits,
 	gate modelprovider.ConcurrencyGate,
 ) *OpenAIAssessor {
+	return NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(
+		cfg,
+		httpClient,
+		assessmentLimits,
+		gate,
+		cfg.GetAIVerifierModel(),
+	)
+}
+
+// NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel creates an
+// assessor for one configured session using the supplied process-wide outbound
+// request gate.
+func NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(
+	cfg config.ConfigProvider,
+	httpClient *http.Client,
+	assessmentLimits assessor.SemanticAssessmentLimits,
+	gate modelprovider.ConcurrencyGate,
+	model string,
+) *OpenAIAssessor {
 	client := httpClient
 	if client == nil {
 		timeout := time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second
@@ -174,14 +193,15 @@ func NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(
 	if gate == nil {
 		gate = modelprovider.NewConcurrencyGate(config.AIVerifierMaxConcurrency(cfg))
 	}
+	model = strings.TrimSpace(model)
 	normalizedLimits := assessor.NormalizeSemanticAssessmentLimits(assessmentLimits)
-	normalizedLimits.ProviderModel = cfg.GetAIVerifierModel()
+	normalizedLimits.ProviderModel = model
 	normalizedLimits.ProviderSchemaName = assessor.SemanticAssessmentSchemaName
 	normalizedLimits.ProviderTemperatureDisabled = config.AIVerifierTemperatureDisabled(cfg)
 	return &OpenAIAssessor{
 		baseURL:            cfg.GetAIVerifierAPIURL(),
 		apiKey:             cfg.GetAIVerifierAPIKey(),
-		model:              cfg.GetAIVerifierModel(),
+		model:              model,
 		disableTemperature: config.AIVerifierTemperatureDisabled(cfg),
 		httpClient:         client,
 		sem:                gate,

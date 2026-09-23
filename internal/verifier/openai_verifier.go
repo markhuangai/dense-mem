@@ -159,6 +159,25 @@ func NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGate(
 	assessmentLimits SemanticAssessmentLimits,
 	gate modelprovider.ConcurrencyGate,
 ) *OpenAIVerifier {
+	return NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGateAndModel(
+		cfg,
+		httpClient,
+		assessmentLimits,
+		gate,
+		cfg.GetAIVerifierModel(),
+	)
+}
+
+// NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGateAndModel creates a
+// verifier for one configured session using the supplied process-wide outbound
+// request gate.
+func NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGateAndModel(
+	cfg config.ConfigProvider,
+	httpClient *http.Client,
+	assessmentLimits SemanticAssessmentLimits,
+	gate modelprovider.ConcurrencyGate,
+	model string,
+) *OpenAIVerifier {
 	client := httpClient
 	if client == nil {
 		timeout := time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second
@@ -171,14 +190,16 @@ func NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGate(
 	if gate == nil {
 		gate = modelprovider.NewConcurrencyGate(config.AIVerifierMaxConcurrency(cfg))
 	}
+	model = strings.TrimSpace(model)
 	normalizedLimits := normalizeSemanticAssessmentLimits(assessmentLimits)
 	// The legacy verifier owns separate request shapes and accounting. The
 	// synchronous Remember assessor uses the shared exact framing path.
 	normalizedLimits.LegacyProviderFraming = true
+	normalizedLimits.ProviderModel = model
 	return &OpenAIVerifier{
 		baseURL:            cfg.GetAIVerifierAPIURL(),
 		apiKey:             cfg.GetAIVerifierAPIKey(),
-		model:              cfg.GetAIVerifierModel(),
+		model:              model,
 		disableTemperature: config.AIVerifierTemperatureDisabled(cfg),
 		httpClient:         client,
 		sem:                gate,

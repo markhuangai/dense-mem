@@ -129,6 +129,11 @@ RC 标签为 `vX.Y.Z-rc.N` 和 `demo-vX.Y.Z-rc.N`。稳定版标签为 `vX.Y.Z`�
 `AI_VERIFIER_MODEL`。compose 示例为 embedding 提供
 OpenAI 默认值；chat model 需要在 `.env` 中明确选择。
 
+`AI_REMEMBER_MODEL`、`AI_CONFLICT_REVIEW_MODEL`、`AI_DREAM_GRAPH_MODEL`、
+`AI_DREAM_EVIDENCE_MODEL` 和 `AI_COMMUNITY_SUMMARY_MODEL` 是对应现有 AI
+session 的可选覆盖。未设置或仅包含空白字符时使用 `AI_VERIFIER_MODEL`；已配置
+model 的失败会直接返回，不会改用 fallback model。
+
 Verifier 和 assessor 调用默认发送 `temperature: 0`。如果 provider 或 model
 拒绝 temperature 字段，设置 `AI_VERIFIER_DISABLE_TEMPERATURE=true` 可以省略该字段。
 

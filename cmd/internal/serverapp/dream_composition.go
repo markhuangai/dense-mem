@@ -23,7 +23,8 @@ type dreamApplicationDependencies struct {
 	EvidenceStore       dreamcontract.EvidenceDiscoveryRepository
 	Diagnostics         dreamcontract.DreamDiagnosticRepository
 	DiagnosticProtector observability.DiagnosticProtector
-	Model               string
+	GraphModel          string
+	EvidenceModel       string
 	Limits              assessor.SemanticAssessmentLimits
 	Metrics             observability.DiscoverabilityMetrics
 	Logger              observability.LogProvider
@@ -45,9 +46,9 @@ func buildDreamApplication(deps dreamApplicationDependencies) dream.Service {
 		ScheduledStore:      scheduledStore,
 		AppConfig:           deps.AppConfig,
 		Teams:               deps.Teams,
-		Generator:           dream.NewProviderGenerator(dreamgeneration.NewProvider(deps.GeneratorTransport, deps.Model, deps.Limits)),
+		Generator:           dream.NewProviderGenerator(dreamgeneration.NewProvider(deps.GeneratorTransport, deps.GraphModel, deps.Limits)),
 		EvidenceStore:       evidenceStore,
-		EvidenceGenerator:   dream.NewEvidenceProviderGenerator(deps.GeneratorTransport, deps.Model, deps.Limits),
+		EvidenceGenerator:   dream.NewEvidenceProviderGenerator(deps.GeneratorTransport, deps.EvidenceModel, deps.Limits),
 		Diagnostics:         deps.Diagnostics,
 		DiagnosticProtector: deps.DiagnosticProtector,
 		Metrics:             deps.Metrics,

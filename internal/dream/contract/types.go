@@ -470,10 +470,16 @@ type GetHypothesisInput struct {
 }
 
 type RecallHypothesesInput struct {
-	TeamID string
-	Query  string
-	Limit  int
+	TeamID          string
+	Query           string
+	Limit           int
+	EvidenceIDs     []string
+	RelationshipIDs []string
+	EntityIDs       []string
+	ValueIDs        []string
 }
+
+const MaxRecallHypothesisContextIDs = 200
 
 type UpdateHypothesisStatusInput struct {
 	TeamID            string

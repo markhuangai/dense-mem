@@ -452,54 +452,6 @@ func loadHypothesisRecordInTx(ctx context.Context, tx *gorm.DB, teamID, hypothes
 	return loaded, nil
 }
 
-func (r *Store) RecallHypotheses(ctx context.Context, input RecallHypothesesInput) ([]HypothesisRecord, error) {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.Query = strings.TrimSpace(input.Query)
-	if input.Limit <= 0 {
-		input.Limit = 5
-	}
-	if input.Limit > 20 {
-		input.Limit = 20
-	}
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return nil, fmt.Errorf("team_id is required: %w", err)
-	}
-	pattern := "%" + input.Query + "%"
-	records := []HypothesisRecord{}
-	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		query := hypothesisSelectSQL(`
-			WHERE team_id = ?::uuid
-			  AND space_id = dense_mem_team_shared_space(team_id)
-			  AND space_generation = dense_mem_team_shared_generation(team_id)
-			  AND canonical_hypothesis_id IS NULL
-			  AND status IN ('proposed', 'reinforced')
-			  AND NOT (` + hypothesisSourceIneligiblePredicateSQL + `)
-			  AND (? = '' OR statement ILIKE ? OR rationale ILIKE ?)
-			ORDER BY CASE WHEN ? <> '' AND statement ILIKE ? THEN 0 ELSE 1 END,
-			         updated_at DESC,
-			         hypothesis_id
-			LIMIT ?
-		`)
-		rows, err := tx.WithContext(ctx).Raw(query, input.TeamID, input.Query, pattern, pattern, input.Query, pattern, input.Limit).Rows()
-		if err != nil {
-			return err
-		}
-		records, err = scanHypothesisRecords(rows)
-		closeErr := rows.Close()
-		if err != nil {
-			return err
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		return hydrateDreamHypothesisDerivations(ctx, tx, input.TeamID, records)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("dream: recall hypotheses: %w", err)
-	}
-	return records, nil
-}
-
 func (r *Store) UpdateHypothesisStatus(
 	ctx context.Context,
 	input UpdateHypothesisStatusInput,

@@ -19,6 +19,7 @@ export async function run() {
         AI_VERIFIER_API_URL: conflictProviderURL,
         AI_VERIFIER_API_KEY: "dense-mem-conflict-e2e-key",
         AI_VERIFIER_MODEL: "dense-mem-conflict-e2e-verifier",
+        AI_CONFLICT_REVIEW_MODEL: "dense-mem-e2e-conflict-review",
         AI_VERIFIER_TIMEOUT_SECONDS: "2",
         AI_VERIFIER_DISABLE_TEMPERATURE: "true",
       }

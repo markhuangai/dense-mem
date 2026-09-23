@@ -164,7 +164,13 @@ func TestOpenAIAssessorRememberSessionRepairsWithoutRepeatingCandidates(t *testi
 	}))
 	defer srv.Close()
 
-	v := NewOpenAIAssessor(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	v := NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(
+		newTestVerifierConfig(srv.URL, "key", "assessor-model"),
+		srv.Client(),
+		DefaultSemanticAssessmentLimits(),
+		nil,
+		"remember-override-model",
+	)
 	request, _ := semanticAssessmentSubmissionContractTestRequest(t)
 	request.EvidenceEquivalenceCandidates = []assessor.SemanticAssessmentEvidenceEquivalenceCandidateGroup{{
 		EvidenceID: "ev-1",
@@ -192,11 +198,42 @@ func TestOpenAIAssessorRememberSessionRepairsWithoutRepeatingCandidates(t *testi
 	assert.Equal(t, 2, second.Turn)
 	assert.NotEmpty(t, session.SessionID())
 	require.Len(t, requests, 2)
+	assert.Equal(t, "remember-override-model", v.ModelName())
+	assert.Equal(t, "remember-override-model", v.assessmentLimits.ProviderModel)
+	assert.Equal(t, []string{"remember-override-model", "remember-override-model"}, []string{requests[0].Model, requests[1].Model})
 	assert.Equal(t, []string{"system", "user", "assistant", "user"}, assessmentMessageRoles(requests[1].Messages))
 	assert.NotContains(t, requests[1].Messages[3].Content, "refreshed_candidate_context")
 	assert.NotContains(t, requests[1].Messages[3].Content, "refreshed-catalog")
 	assert.NotContains(t, requests[1].Messages[3].Content, "Refreshed candidate evidence.")
 	assert.Contains(t, requests[1].Messages[3].Content, "Return evidence_conflict_results")
+}
+
+func TestOpenAIAssessorExplicitSessionModelFailureDoesNotFallback(t *testing.T) {
+	var models []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		var body openAIVerifierRequest
+		require.NoError(t, json.NewDecoder(request.Body).Decode(&body))
+		models = append(models, body.Model)
+		w.WriteHeader(http.StatusInternalServerError)
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]string{"message": "configured model unavailable"},
+		}))
+	}))
+	defer srv.Close()
+
+	provider := NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(
+		newTestVerifierConfig(srv.URL, "key", "verifier-fallback-model"),
+		srv.Client(),
+		DefaultSemanticAssessmentLimits(),
+		nil,
+		"remember-override-model",
+	)
+	request, _ := semanticAssessmentTestRequest(t)
+	_, _, err := provider.Assess(context.Background(), request)
+	var providerErr *ProviderError
+	require.ErrorAs(t, err, &providerErr)
+	assert.Equal(t, ProviderFailureClassHTTPServer, providerErr.FailureClass)
+	assert.Equal(t, []string{"remember-override-model"}, models)
 }
 
 func TestOpenAIAssessorRememberSessionRepairsMultipleCandidatesAsAmbiguous(t *testing.T) {
@@ -311,6 +348,7 @@ func TestOpenAIStructuredChatRecordsProviderUsageBeforeRejectingContent(t *testi
 	rate := 1_000_000.0
 	metrics := observability.NewPrometheusMetrics(observability.AIPricingResolverFunc(func(context.Context) (observability.AIPricing, error) {
 		return observability.AIPricing{
+			VerifierModel:                     "remember-override-model",
 			VerifierInputUSDPerMillionTokens:  &rate,
 			VerifierOutputUSDPerMillionTokens: &rate,
 		}, nil
@@ -323,10 +361,16 @@ func TestOpenAIStructuredChatRecordsProviderUsageBeforeRejectingContent(t *testi
 	}))
 	defer srv.Close()
 
-	v := NewOpenAIAssessor(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	v := NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(
+		newTestVerifierConfig(srv.URL, "key", "verifier-fallback-model"),
+		srv.Client(),
+		DefaultSemanticAssessmentLimits(),
+		nil,
+		"remember-override-model",
+	)
 	v.SetMetrics(metrics)
 	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationSemanticAssessment, 1)
-	_, err := v.openAIStructuredChatJSONWithUsage(ctx, "assessor-model", "schema", map[string]any{}, "system", map[string]any{})
+	_, err := v.openAIStructuredChatJSONWithUsage(ctx, v.ModelName(), "schema", map[string]any{}, "system", map[string]any{})
 	require.ErrorIs(t, err, ErrVerifierProvider)
 
 	recorder := httptest.NewRecorder()
@@ -338,7 +382,7 @@ func TestOpenAIStructuredChatRecordsProviderUsageBeforeRejectingContent(t *testi
 		}
 		assert.Contains(t, line, `operation="semantic_assessment"`)
 		assert.Contains(t, line, `component="verifier"`)
-		assert.Contains(t, line, `model="assessor-model"`)
+		assert.Contains(t, line, `model="remember-override-model"`)
 		assert.True(t, strings.HasSuffix(line, " 15"), "cost line = %q; want 15 USD", line)
 		return
 	}

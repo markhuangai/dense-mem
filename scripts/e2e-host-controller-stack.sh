@@ -247,6 +247,9 @@ if (has("verifier")) {
     AI_VERIFIER_API_URL: "http://synchronous-write-provider:8787/v1",
     AI_VERIFIER_API_KEY: "dense-mem-e2e-verifier-key",
     AI_VERIFIER_MODEL: "dense-mem-e2e-verifier",
+    AI_CONFLICT_REVIEW_MODEL: "dense-mem-e2e-conflict-review",
+    AI_DREAM_GRAPH_MODEL: "dense-mem-e2e-dream-graph",
+    AI_DREAM_EVIDENCE_MODEL: "dense-mem-e2e-dream-evidence",
     AI_VERIFIER_DISABLE_TEMPERATURE: "true",
   })) serverEnvironment.set(key, value);
 }
@@ -254,6 +257,7 @@ if (scenario === "community") {
   for (const [key, value] of Object.entries({
     AI_API_URL: "http://synchronous-write-provider:8787/v1",
     AI_API_KEY: "dense-mem-community-e2e-key",
+    AI_COMMUNITY_SUMMARY_MODEL: "dense-mem-e2e-community-summary",
   })) serverEnvironment.set(key, value);
 }
 if (has("conflict_provider")) {
@@ -265,6 +269,7 @@ if (has("conflict_provider")) {
     AI_VERIFIER_API_URL: "http://conflict-provider:8081/v1",
     AI_VERIFIER_API_KEY: "dense-mem-conflict-e2e-key",
     AI_VERIFIER_MODEL: "dense-mem-conflict-e2e-verifier",
+    AI_CONFLICT_REVIEW_MODEL: "dense-mem-e2e-conflict-review",
     AI_VERIFIER_DISABLE_TEMPERATURE: "true",
   })) serverEnvironment.set(key, value);
   helperServices.push(["conflict-provider", ["    command: [\"sh\", \"-c\", \"sleep infinity\"]"]]);
@@ -276,6 +281,7 @@ if (has("synchronous_write")) {
     AI_VERIFIER_API_URL: "http://synchronous-write-provider:8787/v1",
     AI_VERIFIER_API_KEY: "dense-mem-synchronous-write-e2e-key",
     AI_VERIFIER_MODEL: "dense-mem-synchronous-write-e2e-verifier",
+    AI_REMEMBER_MODEL: "dense-mem-synchronous-write-e2e-remember",
     AI_API_EMBEDDING_TIMEOUT_SECONDS: "2",
     AI_VERIFIER_TIMEOUT_SECONDS: "2",
     AI_VERIFIER_DISABLE_TEMPERATURE: "true",
