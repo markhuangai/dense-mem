@@ -141,6 +141,7 @@ func TestPrometheusMetricsRecordsLifecycleAndPricedAIOperations(t *testing.T) {
 	embeddingInputPrice := 1.5
 	metrics := NewPrometheusMetrics(AIPricingResolverFunc(func(context.Context) (AIPricing, error) {
 		return AIPricing{
+			VerifierModel:                     "configured-verifier",
 			VerifierInputUSDPerMillionTokens:  &verifierInputPrice,
 			VerifierOutputUSDPerMillionTokens: &verifierOutputPrice,
 			EmbeddingInputUSDPerMillionTokens: &embeddingInputPrice,
@@ -173,6 +174,17 @@ func TestPrometheusMetricsRecordsLifecycleAndPricedAIOperations(t *testing.T) {
 			Source:      AITokenSourceTokenizer,
 		},
 	)
+	RecordAIOperationUsage(
+		WithAIOperation(ctx, AIOperationDreamGeneration, 1),
+		metrics,
+		AIOperationUsage{
+			Component:    AIComponentVerifier,
+			Model:        "dream-override",
+			InputTokens:  1_000_000,
+			OutputTokens: 500_000,
+			Source:       AITokenSourceProvider,
+		},
+	)
 
 	identity := []string{teamID.String(), profileID.String()}
 	body := scrapePrometheusMetrics(t, metrics)
@@ -187,6 +199,14 @@ func TestPrometheusMetricsRecordsLifecycleAndPricedAIOperations(t *testing.T) {
 	}
 	if got := prometheusCounterValue(t, body, "densemem_ai_operation_items_total", append(identity, "operation=\"semantic_assessment\"", "component=\"verifier\"", "model=\"configured-verifier\"", "source=\"provider\"")...); got != 2 {
 		t.Fatalf("verifier item count = %v; want 2", got)
+	}
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "densemem_ai_operation_cost_usd_total{") && strings.Contains(line, "model=\"dream-override\"") {
+			t.Fatalf("override verifier unexpectedly has a cost: %s", line)
+		}
+	}
+	if got := prometheusCounterValue(t, body, "densemem_ai_operation_unpriced_total", append(identity, "operation=\"dream_generation\"", "component=\"verifier\"", "model=\"dream-override\"", "reason=\"missing_price\"")...); got != 1 {
+		t.Fatalf("override verifier unpriced count = %v; want 1", got)
 	}
 
 	requirePrometheusMetricLabels(t, body, "densemem_remember_acknowledgement_duration_seconds_bucket", `outcome="ok"`)

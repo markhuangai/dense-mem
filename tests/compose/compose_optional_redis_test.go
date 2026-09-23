@@ -26,6 +26,7 @@ func TestDockerComposeBaseExample_LocalOnly(t *testing.T) {
 	assert.NotContains(t, server.Environment, removedGraphEnvKey())
 	assert.NotContains(t, server.Environment, "AI_REVIEWER_MODEL")
 	assert.Contains(t, server.Environment["AI_VERIFIER_MODEL"], "AI_VERIFIER_MODEL must be set")
+	assertSessionModelOverrideEnvironment(t, server.Environment)
 }
 
 func TestDockerComposeDemoAllowsImageOverride(t *testing.T) {
@@ -38,6 +39,7 @@ func TestDockerComposeDemoAllowsImageOverride(t *testing.T) {
 	assert.NotContains(t, text, "DENSE_MEM_DEMO_VERSION")
 	assert.NotContains(t, text, "DENSE_MEM_DEMO_REPOSITORY")
 	assert.NotContains(t, text, "dense-mem:demo\n")
+	assertSessionModelOverrideEnvironment(t, demo.Environment)
 }
 
 func TestDockerComposeExpertExample_HasOptionalProfiles(t *testing.T) {
@@ -59,6 +61,7 @@ func TestDockerComposeExpertExample_HasOptionalProfiles(t *testing.T) {
 	assert.NotContains(t, server.Environment, removedGraphEnvKey())
 	assert.NotContains(t, server.Environment, "AI_REVIEWER_MODEL")
 	assert.Contains(t, server.Environment["AI_VERIFIER_MODEL"], "AI_VERIFIER_MODEL must be set")
+	assertSessionModelOverrideEnvironment(t, server.Environment)
 	assert.NotContains(t, server.DependsOn, "redis")
 }
 
@@ -77,6 +80,19 @@ func removedGraphServiceName() string {
 
 func removedGraphEnvKey() string {
 	return "NEO" + "4J_URI"
+}
+
+func assertSessionModelOverrideEnvironment(t *testing.T, environment map[string]string) {
+	t.Helper()
+	for _, key := range []string{
+		"AI_REMEMBER_MODEL",
+		"AI_CONFLICT_REVIEW_MODEL",
+		"AI_DREAM_GRAPH_MODEL",
+		"AI_DREAM_EVIDENCE_MODEL",
+		"AI_COMMUNITY_SUMMARY_MODEL",
+	} {
+		assert.Equal(t, "${"+key+":-}", environment[key], "%s must be optional", key)
+	}
 }
 
 func readExample(t *testing.T, name string) string {

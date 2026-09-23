@@ -5,11 +5,12 @@ import http from "node:http";
 const port = positiveInteger(process.env.DENSE_MEM_CONFLICT_STUB_PORT ?? "8081", "DENSE_MEM_CONFLICT_STUB_PORT");
 const host = process.env.DENSE_MEM_CONFLICT_STUB_HOST ?? "0.0.0.0";
 let embeddingFault = false;
+const chatRequests = [];
 
 const server = http.createServer(async (request, response) => {
   try {
     if (request.method === "GET" && request.url === "/health") {
-      return sendJSON(response, 200, { status: "ok" });
+      return sendJSON(response, 200, { status: "ok", chat_requests: chatRequests });
     }
     if (request.method === "POST" && request.url === "/control/embedding-fault") {
       const payload = await readJSON(request);
@@ -33,6 +34,13 @@ const server = http.createServer(async (request, response) => {
     const schemaName = payload?.response_format?.json_schema?.name;
     const conversation = providerConversation(payload?.messages);
     const providerInput = conversation.input;
+    if (chatRequests.length < 2048) {
+      chatRequests.push({
+        model: typeof payload?.model === "string" ? payload.model : "",
+        schema_name: typeof schemaName === "string" ? schemaName : "",
+        fault: schemaName === "dense_mem_conflict_assessment_response" && evidenceContains(providerInput, "[conflict-ai-fail]") ? "unavailable" : "none",
+      });
+    }
     if (schemaName === "dense_mem_semantic_assessment_response") {
       if (evidenceContains(providerInput, "[remember-provider-fail]")) {
         await delay(1_000);

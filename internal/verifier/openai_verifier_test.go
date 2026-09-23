@@ -50,10 +50,12 @@ func TestOpenAIVerifierUsesSharedSemanticAssessmentLimits(t *testing.T) {
 	cfg.AIVerifierMaxPredicateOptions = 456
 	cfg.AIVerifierTokenizer = "cl100k_base"
 	limits := SemanticAssessmentLimitsForConfig(cfg)
+	wantLimits := limits
+	wantLimits.ProviderModel = "model"
 
 	provider := NewOpenAIVerifierWithAssessmentLimits(cfg, nil, limits)
-	assert.Equal(t, limits, provider.assessmentLimits)
-	assert.Equal(t, limits, NewOpenAIVerifier(cfg, nil).assessmentLimits)
+	assert.Equal(t, wantLimits, provider.assessmentLimits)
+	assert.Equal(t, wantLimits, NewOpenAIVerifier(cfg, nil).assessmentLimits)
 }
 
 func TestOpenAIVerifierUsesProvidedConcurrencyGate(t *testing.T) {

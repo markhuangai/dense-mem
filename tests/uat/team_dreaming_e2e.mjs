@@ -12,6 +12,8 @@ const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const apiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
 const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
 const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
+const graphModel = "dense-mem-e2e-dream-graph";
+const evidenceModel = "dense-mem-e2e-dream-evidence";
 
 let rpcID = 0;
 const maxPollingAttempts = 60;
@@ -156,6 +158,8 @@ const adverseHypotheses = postgresQuery(`
     AND cycle_run_id = ${sqlLiteral(evidenceFailureRun.run_id)}::uuid
 `);
 assertEqual(adverseHypotheses, "0", "adverse hourly partial hypothesis count");
+assertDreamProviderModels(scheduledRun, evidenceRun, evidenceFailureRun);
+await assertDreamProviderRequests();
 
 console.log(JSON.stringify({
   status: "ok",
@@ -171,6 +175,7 @@ console.log(JSON.stringify({
   evidence_target_content: evidenceSeeded.targetContent,
   evidence_failure_run_id: evidenceFailureRun.run_id,
   evidence_failure_team_name: adverseTeam.teamName,
+  provider_models: { graph: graphModel, evidence: evidenceModel },
 }, null, 2));
 
 function formatDate(value) {
@@ -269,6 +274,59 @@ async function assertSystemRun(runID) {
   const [present, owner] = row.split("|");
   assertEqual(present, "present", "scheduled run row");
   assertEqual(owner, "", "scheduled run initiator");
+}
+
+function assertDreamProviderModels(graphRun, successfulEvidenceRun, failedEvidenceRun) {
+  const persistedGraphModel = postgresQuery(`
+    SELECT provider_model
+    FROM dream_cycle_runs
+    WHERE team_id = ${sqlLiteral(teamID)}::uuid
+      AND run_id = ${sqlLiteral(graphRun.run_id)}::uuid
+  `);
+  assertEqual(persistedGraphModel, graphModel, "persisted graph Dream provider model");
+
+  const persistedEvidenceModel = postgresQuery(`
+    SELECT provider_model
+    FROM dream_cycle_runs
+    WHERE team_id = ${sqlLiteral(teamID)}::uuid
+      AND run_id = ${sqlLiteral(successfulEvidenceRun.run_id)}::uuid
+  `);
+  assertEqual(persistedEvidenceModel, evidenceModel, "persisted evidence Dream provider model");
+
+  const persistedEvidenceEvaluationModels = postgresQuery(`
+    SELECT string_agg(DISTINCT provider_model, ',' ORDER BY provider_model)
+    FROM dream_evidence_target_evaluations
+    WHERE team_id = ${sqlLiteral(teamID)}::uuid
+      AND run_id = ${sqlLiteral(successfulEvidenceRun.run_id)}::uuid
+  `);
+  assertEqual(persistedEvidenceEvaluationModels, evidenceModel, "persisted evidence evaluation provider model");
+
+  const persistedFailureModel = postgresQuery(`
+    SELECT provider_model
+    FROM dream_cycle_runs
+    WHERE team_id = ${sqlLiteral(adverseTeam.teamID)}::uuid
+      AND run_id = ${sqlLiteral(failedEvidenceRun.run_id)}::uuid
+  `);
+  assertEqual(persistedFailureModel, evidenceModel, "persisted failed evidence Dream provider model");
+}
+
+async function assertDreamProviderRequests() {
+  const providerURL = (process.env.DENSE_MEM_E2E_PROVIDER_URL || "").replace(/\/$/, "");
+  if (!providerURL) throw new Error("Dream model routing requires the deterministic provider fixture");
+  const response = await fetch(`${providerURL}/health`);
+  const state = await response.json();
+  if (!response.ok) throw new Error(`Dream provider fixture health returned HTTP ${response.status}`);
+  const graphRequests = (state.chat_requests || []).filter((request) => request.schema_name === "dense_mem_dream_generation_response");
+  const evidenceRequests = (state.chat_requests || []).filter((request) => request.schema_name === "dense_mem_evidence_discovery_response");
+  if (graphRequests.length === 0 || !graphRequests.every((request) => request.model === graphModel)) {
+    throw new Error(`Dream graph requests used an unexpected model: ${JSON.stringify(graphRequests)}`);
+  }
+  if (evidenceRequests.length === 0 || !evidenceRequests.every((request) => request.model === evidenceModel)) {
+    throw new Error(`Dream evidence requests used an unexpected model: ${JSON.stringify(evidenceRequests)}`);
+  }
+  if (!evidenceRequests.some((request) => request.fault === "unavailable")) {
+    throw new Error("Dream evidence provider failure did not reach the configured session model");
+  }
 }
 
 async function apiCredentialOwnerID() {

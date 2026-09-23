@@ -107,3 +107,25 @@ jq -e '
   (.import_gate_result | endswith("import_gate_result.json")) and
   (.failed_source_doc_ids | endswith("failed_source_doc_ids.txt"))
 ' "${STATUS_JSON}" >/dev/null
+
+attempt_counts() { printf '0|0|0|0\n'; }
+count_fragments() { printf '0\n'; }
+SEED_HASH="identity-seed-hash"
+SERVER_IMAGE_ID="identity-image"
+EVAL_TEAM_ID="00000000-0000-0000-0000-000000000000"
+AI_VERIFIER_MODEL=$'\u00a0verifier-fallback\u00a0'
+AI_REMEMBER_MODEL=""
+prepare_identity
+jq -e '.assessor_model == "verifier-fallback"' "${IDENTITY_JSON}" >/dev/null
+
+AI_REMEMBER_MODEL=$'\u00a0\t\u00a0'
+prepare_identity
+unset AI_REMEMBER_MODEL
+prepare_identity
+
+AI_REMEMBER_MODEL=$'\u00a0remember-override\u00a0'
+if prepare_identity 2>/dev/null; then
+  echo "changing the Remember model did not invalidate the evaluation identity" >&2
+  exit 1
+fi
+jq -e '.assessor_model == "remember-override"' "${MONITOR_DIR}/requested_dataset_identity.json" >/dev/null

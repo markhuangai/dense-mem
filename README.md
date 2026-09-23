@@ -167,6 +167,12 @@ startup: `AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`,
 The compose examples provide OpenAI defaults for embeddings; choose the chat
 models explicitly in `.env`.
 
+`AI_REMEMBER_MODEL`, `AI_CONFLICT_REVIEW_MODEL`, `AI_DREAM_GRAPH_MODEL`,
+`AI_DREAM_EVIDENCE_MODEL`, and `AI_COMMUNITY_SUMMARY_MODEL` are optional
+overrides for their existing AI sessions. An unset or whitespace-only override
+uses `AI_VERIFIER_MODEL`; a configured model failure is returned without trying
+the fallback model.
+
 Verifier and assessor calls send `temperature: 0` by default. Set
 `AI_VERIFIER_DISABLE_TEMPERATURE=true` to omit the field for providers or models
 that reject temperature.

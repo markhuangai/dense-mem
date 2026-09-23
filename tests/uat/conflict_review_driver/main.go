@@ -100,7 +100,13 @@ func main() {
 	})
 	conflictStore := conflictpostgres.NewStore(db, rls, knowledgeStore)
 	limits := conflictassessment.DefaultSemanticAssessmentLimits()
-	provider := verifier.NewOpenAIVerifierWithAssessmentLimits(&cfg, nil, verifier.SemanticAssessmentLimits(limits))
+	provider := verifier.NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGateAndModel(
+		&cfg,
+		nil,
+		verifier.SemanticAssessmentLimits(limits),
+		nil,
+		cfg.GetAIConflictReviewModel(),
+	)
 	embeddingProvider := embedding.NewRetryEmbeddingProviderWithKey(
 		embedding.NewOpenAIEmbeddingProvider(&cfg, nil),
 		nil,

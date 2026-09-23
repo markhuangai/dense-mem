@@ -489,6 +489,19 @@ validate_release_gate_seed() {
   export SEED_HASH
 }
 
+trim_model_name() {
+  jq -nr --arg model "$1" '$model | gsub("^\\s+|\\s+$"; "")'
+}
+
+effective_remember_model() {
+  local model
+  model="$(trim_model_name "${AI_REMEMBER_MODEL:-}")"
+  if [[ -z "${model}" ]]; then
+    model="$(trim_model_name "${AI_VERIFIER_MODEL:-}")"
+  fi
+  printf '%s' "${model}"
+}
+
 prepare_identity() {
   SUITE_HASH="$(sha256sum "${SUITE}" | awk '{print $1}')"
   EMBEDDING_MODEL="${AI_API_EMBEDDING_MODEL:-}"
@@ -512,7 +525,7 @@ prepare_identity() {
     --arg embedding_model "${EMBEDDING_MODEL}" \
     --arg embedding_dimensions "${EMBEDDING_DIMENSIONS}" \
     --arg embedding_endpoint_sha256 "${EMBEDDING_ENDPOINT_HASH}" \
-    --arg assessor_model "${AI_VERIFIER_MODEL:-}" \
+    --arg assessor_model "$(effective_remember_model)" \
     --arg team_id "${EVAL_TEAM_ID}" \
     --arg release_gate_policy_sha256 "${RELEASE_GATE_POLICY_HASH}" \
     --arg runner_sha256 "${RUNNER_HASH}" \
