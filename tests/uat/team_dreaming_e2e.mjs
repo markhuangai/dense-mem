@@ -92,6 +92,10 @@ const listOutput = await mcpTool(apiKey, "list_dreams", { limit: 10 }, true);
 assertContainsDream(listOutput.dreams, hypothesisID, statement, "MCP list_dreams");
 const getOutput = await mcpTool(apiKey, "get_dream", { hypothesis_id: hypothesisID }, true);
 assertEvidenceDerivedDream(getOutput.hypothesis, seeded, "MCP get_dream");
+const paraphraseContextRecall = await mcpTool(apiKey, "recall_memory", {
+  query: "Which service keeps Dense-Mem's durable data available?",
+});
+assertHypothesisFromRetrievedContext(paraphraseContextRecall, "recall from paraphrase-retrieved context");
 
 const evidenceRun = await waitForHourlyEvidenceRun();
 assertEqual(evidenceRun.team_id, teamID, "hourly evidence run team");
@@ -103,6 +107,16 @@ assertEqual(Number(evidenceRun.created_dreams), 1, "hourly created hypothesis co
 const evidenceDreams = await controlJSON(`/teams/${teamID}/dreams?limit=20`);
 const evidenceDream = findDream(evidenceDreams.data?.items, evidenceRun.run_id, "hourly evidence control API");
 assertEvidenceDiscoveryDream(evidenceDream, evidenceSeeded, "hourly evidence control API");
+const contextRecall = await mcpTool(apiKey, "recall_memory", { query: "hourly evidence target" });
+assertRelatedHypothesis(contextRecall, evidenceDream.dream_id, "recall from evidence context");
+const sameTeamContextRecall = await mcpTool(reviewer.apiKey, "recall_memory", { query: "hourly evidence target" });
+assertRelatedHypothesis(sameTeamContextRecall, evidenceDream.dream_id, "same-team recall from evidence context");
+const otherTeamContextRecall = await mcpTool(adverseTeam.apiKey, "recall_memory", { query: "hourly evidence target" });
+assertEqual(
+  (otherTeamContextRecall.related_hypotheses ?? []).some((item) => item.hypothesis_id === evidenceDream.dream_id),
+  false,
+  "cross-team recall did not expose a hypothesis from retrieved evidence",
+);
 const confirmed = await mcpTool(apiKey, "resolve_dream_feedback", {
   hypothesis_id: evidenceDream.dream_id,
   decision: "confirm_true",
@@ -123,6 +137,12 @@ const confirmed = await mcpTool(apiKey, "resolve_dream_feedback", {
 });
 assertEqual(confirmed.hypothesis_id, evidenceDream.dream_id, "hourly evidence confirmation hypothesis");
 assertEqual(confirmed.status, "submitted", "hourly evidence confirmation status");
+const submittedRecall = await mcpTool(apiKey, "recall_memory", { query: "hourly evidence target" });
+assertEqual(
+  (submittedRecall.related_hypotheses ?? []).some((item) => item.hypothesis_id === evidenceDream.dream_id),
+  false,
+  "confirmed hypothesis remains separate from recall context",
+);
 const evidenceFailureRun = await waitForHourlyEvidenceFailureRun(adverseTeam.teamID);
 assertEqual(evidenceFailureRun.status, "failed", "adverse hourly evidence run status");
 assertEqual(Number(evidenceFailureRun.evidence_targets), 1, "adverse hourly eligible target count");
@@ -556,7 +576,11 @@ async function createAdverseEvidenceTeam() {
   if (typeof ownerProfileID !== "string" || !ownerProfileID) {
     throw new Error("adverse evidence credential did not return an owner profile id");
   }
-  return { teamID: targetTeamID, teamName, ownerProfileID };
+  const apiKey = credential.data?.api_key;
+  if (typeof apiKey !== "string" || !apiKey) {
+    throw new Error("adverse evidence credential did not return an API key");
+  }
+  return { teamID: targetTeamID, teamName, ownerProfileID, apiKey };
 }
 
 async function createTeamCredential(name) {
@@ -750,6 +774,53 @@ function assertContainsDream(items, hypothesisID, expectedStatement, label) {
     throw new Error(`${label} did not return team-owned hypothesis ${hypothesisID}: ${JSON.stringify(items)}`);
   }
   return dream;
+}
+
+function assertRelatedHypothesis(recall, hypothesisID, label) {
+  if (!Array.isArray(recall?.related_hypotheses) ||
+      !recall.related_hypotheses.some((item) => item?.hypothesis_id === hypothesisID)) {
+    throw new Error(`${label} did not return hypothesis ${hypothesisID}: ${JSON.stringify(recall?.related_hypotheses)}`);
+  }
+}
+
+function assertHypothesisFromRetrievedContext(recall, label) {
+  const evidenceIDs = new Set();
+  const relationshipIDs = new Set();
+  const entityIDs = new Set();
+  const addRelationship = (relationship) => {
+    if (relationship?.relationship_id) relationshipIDs.add(relationship.relationship_id);
+    for (const id of relationship?.equivalent_relationship_ids ?? []) relationshipIDs.add(id);
+    for (const id of relationship?.evidence_ids ?? []) evidenceIDs.add(id);
+    if (relationship?.subject?.entity_id) entityIDs.add(relationship.subject.entity_id);
+    if (relationship?.object?.entity_id) entityIDs.add(relationship.object.entity_id);
+  };
+
+  for (const result of recall?.results ?? []) {
+    if (result?.evidence_id) evidenceIDs.add(result.evidence_id);
+    for (const id of result?.relationship_ids ?? []) relationshipIDs.add(id);
+  }
+  for (const relationship of recall?.related_relationships ?? []) addRelationship(relationship);
+  for (const path of recall?.related_communities ?? []) {
+    for (const id of path?.evidence_ids ?? []) evidenceIDs.add(id);
+    for (const entity of path?.top_entities ?? []) {
+      if (entity?.entity_id) entityIDs.add(entity.entity_id);
+    }
+    for (const relationship of path?.relationships ?? []) addRelationship(relationship);
+  }
+
+  const hypothesis = (recall?.related_hypotheses ?? []).find((item) => (
+    (item?.source_evidence_ids ?? []).some((id) => evidenceIDs.has(id)) ||
+    (item?.source_relationship_ids ?? []).some((id) => relationshipIDs.has(id)) ||
+    [item?.subject_entity_id, item?.object_entity_id].some((id) => entityIDs.has(id))
+  ));
+  if (!hypothesis) {
+    throw new Error(`${label} returned no hypothesis grounded in recalled context: ${JSON.stringify({
+      results: recall?.results,
+      related_relationships: recall?.related_relationships,
+      related_communities: recall?.related_communities,
+      related_hypotheses: recall?.related_hypotheses,
+    })}`);
+  }
 }
 
 function assertEvidenceDerivedDream(dream, seededInputs, label) {

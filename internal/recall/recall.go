@@ -253,7 +253,12 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 	}
 	result.RelatedHypotheses = []RelatedHypothesisSummary{}
 	if teamSharedBranch && req.IncludeHypotheses {
-		related, relatedDegradation := s.recallRelatedHypotheses(ctx, actor.TeamID.String(), actor.OwnerID.String(), req.Query)
+		related, relatedDegradation := s.recallRelatedHypotheses(
+			ctx,
+			actor.TeamID.String(),
+			req.Query,
+			recallHypothesisContextFrom(result),
+		)
 		result.RelatedHypotheses = related
 		if relatedDegradation != nil {
 			result.Degradations = append(result.Degradations, *relatedDegradation)
@@ -466,16 +471,19 @@ func relationshipVectorDegradation(state string) *RecallDegradationResult {
 func (s *recallService) recallRelatedHypotheses(
 	ctx context.Context,
 	teamID string,
-	_ string,
 	query string,
+	contextHandles recallHypothesisContextHandles,
 ) ([]RelatedHypothesisSummary, *RecallDegradationResult) {
-	if s.hypotheses == nil || strings.TrimSpace(query) == "" {
+	if s.hypotheses == nil || (strings.TrimSpace(query) == "" && contextHandles.empty()) {
 		return []RelatedHypothesisSummary{}, nil
 	}
 	records, err := s.hypotheses.RecallHypotheses(ctx, dreamcontract.RecallHypothesesInput{
-		TeamID: teamID,
-		Query:  query,
-		Limit:  defaultRelatedHypothesisLimit,
+		TeamID:          teamID,
+		Query:           query,
+		Limit:           defaultRelatedHypothesisLimit,
+		EvidenceIDs:     contextHandles.evidenceIDs,
+		RelationshipIDs: contextHandles.relationshipIDs,
+		EntityIDs:       contextHandles.entityIDs,
 	})
 	if err != nil {
 		return []RelatedHypothesisSummary{}, relatedHypothesisDegradation()

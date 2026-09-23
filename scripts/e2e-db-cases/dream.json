@@ -80,6 +80,13 @@
       "source": "internal/dream/postgres/dream_evidence_duplicate_integration_test.go"
     },
     {
+      "id": "repository/TestRecallHypothesesRanksSourceEndpointAndLiteralMatches",
+      "package": "./internal/dream/postgres",
+      "run": "^TestRecallHypothesesRanksSourceEndpointAndLiteralMatches$",
+      "phase": "precheck",
+      "source": "internal/dream/postgres/recall_hypothesis_context_integration_test.go"
+    },
+    {
       "id": "repository/TestEvidenceDiscoveryMarkerFailureDoesNotReclaimStartedDispatch",
       "package": "./internal/dream/postgres",
       "run": "^TestEvidenceDiscoveryMarkerFailureDoesNotReclaimStartedDispatch$",
