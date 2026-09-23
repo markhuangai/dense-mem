@@ -3,9 +3,15 @@ package recall
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 )
 
 func TestRecallHypothesisContextFromDeduplicatesRetrievedHandles(t *testing.T) {
@@ -67,4 +73,38 @@ func TestRecallHypothesisContextFromBoundsEachHandleKind(t *testing.T) {
 	require.Len(t, got.entityIDs, 200)
 	require.Equal(t, "entity-000", got.entityIDs[0])
 	require.Equal(t, "entity-199", got.entityIDs[199])
+}
+
+func TestRecallOmitsRelatedHypothesesForKnownAt(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	evidenceID := uuid.NewString()
+	search := &recallSearchStub{
+		contract: &searchcontract.ActiveSearchContract{EmbeddingDimensions: 3},
+		result: &recallcontract.RecallEvidenceResult{
+			SearchState: string(domain.SearchProjectionCurrent),
+			Results: []recallcontract.RecallEvidenceHit{{
+				EvidenceID: evidenceID,
+				Rank:       1,
+			}},
+		},
+	}
+	hypotheses := &recallHypothesisStub{records: []dreamcontract.HypothesisRecord{{
+		HypothesisID: uuid.NewString(),
+		Statement:    "A hypothesis created after the requested snapshot.",
+	}}}
+	svc := NewRecallService(RecallDependencies{Search: search, Hypotheses: hypotheses})
+	knownAt := time.Now().UTC().Add(-time.Hour)
+
+	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
+		IncludeHypotheses: true,
+		KnownAt:           &knownAt,
+	})
+	require.NoError(t, err)
+	require.Empty(t, result.RelatedHypotheses)
+	require.Len(t, result.Degradations, 1)
+	require.Equal(t, "related_hypotheses_temporal_not_supported", result.Degradations[0].Code)
+	require.True(t, result.Degradations[0].Optional)
+	require.Empty(t, hypotheses.recallInput.TeamID)
 }

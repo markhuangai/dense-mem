@@ -253,15 +253,19 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 	}
 	result.RelatedHypotheses = []RelatedHypothesisSummary{}
 	if teamSharedBranch && req.IncludeHypotheses {
-		related, relatedDegradation := s.recallRelatedHypotheses(
-			ctx,
-			actor.TeamID.String(),
-			req.Query,
-			recallHypothesisContextFrom(result),
-		)
-		result.RelatedHypotheses = related
-		if relatedDegradation != nil {
-			result.Degradations = append(result.Degradations, *relatedDegradation)
+		if req.KnownAt != nil {
+			result.Degradations = append(result.Degradations, relatedHypothesisTemporalDegradation())
+		} else {
+			related, relatedDegradation := s.recallRelatedHypotheses(
+				ctx,
+				actor.TeamID.String(),
+				req.Query,
+				recallHypothesisContextFrom(result),
+			)
+			result.RelatedHypotheses = related
+			if relatedDegradation != nil {
+				result.Degradations = append(result.Degradations, *relatedDegradation)
+			}
 		}
 	}
 	if len(result.Degradations) > 0 {
@@ -497,6 +501,15 @@ func relatedHypothesisDegradation() *RecallDegradationResult {
 		Optional: true,
 		Code:     "related_hypotheses_unavailable",
 		Message:  "related hypotheses were unavailable; primary evidence recall was used",
+	}
+}
+
+func relatedHypothesisTemporalDegradation() RecallDegradationResult {
+	return RecallDegradationResult{
+		Frontier: "hypotheses",
+		Optional: true,
+		Code:     "related_hypotheses_temporal_not_supported",
+		Message:  "related hypotheses are current-only; historical recall omitted them",
 	}
 }
 

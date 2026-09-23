@@ -120,6 +120,14 @@ func TestRecallHypothesesRanksSourceEndpointAndLiteralMatches(t *testing.T) {
 	}))
 
 	firstSourceEvidence := find(sourceFirst.Relationship.RelationshipID).Evidence[0]
+	fragmentOnly, err := semantic.RecallHypotheses(ctx, RecallHypothesesInput{
+		TeamID:      teamID,
+		Limit:       10,
+		EvidenceIDs: []string{firstSourceEvidence.FragmentID},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{records[0].HypothesisID}, hypothesisIDs(fragmentOnly))
+
 	input := RecallHypothesesInput{
 		TeamID:          teamID,
 		Query:           "unique fallback phrase",

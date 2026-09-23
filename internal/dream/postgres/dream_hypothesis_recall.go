@@ -54,7 +54,8 @@ func (r *Store) RecallHypotheses(ctx context.Context, input RecallHypothesesInpu
 						  AND derivation.space_id = hypotheses.space_id
 						  AND derivation.space_generation = hypotheses.space_generation
 						  AND derivation.hypothesis_id = hypotheses.hypothesis_id
-						  AND derivation.relationship_id = ANY(recall_context.relationship_ids)
+						  AND (derivation.relationship_id = ANY(recall_context.relationship_ids)
+						       OR derivation.fragment_id = ANY(recall_context.evidence_ids))
 					) OR EXISTS (
 						SELECT 1 FROM hypothesis_evidence_derivation_sources derivation
 						WHERE derivation.team_id = hypotheses.team_id

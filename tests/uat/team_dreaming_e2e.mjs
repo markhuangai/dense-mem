@@ -28,6 +28,7 @@ seedEvidenceDiscoveryInputs(
   adverseTeam.teamID,
   `Adverse evidence [fixture-fault:unavailable] for ${adverseTeam.teamID}.`,
 );
+const historicalKnownAt = new Date().toISOString();
 
 await updateControlConfig("/config/general", [{ key: "APP_TIMEZONE", value: "UTC" }]);
 await updateControlConfig("/config/dreaming", [
@@ -98,6 +99,21 @@ const paraphraseContextRecall = await mcpTool(apiKey, "recall_memory", {
   query: "Which service keeps Dense-Mem's durable data available?",
 });
 assertHypothesisFromRetrievedContext(paraphraseContextRecall, "recall from paraphrase-retrieved context");
+const historicalContextRecall = await mcpTool(apiKey, "recall_memory", {
+  query: "Which service keeps Dense-Mem's durable data available?",
+  known_at: historicalKnownAt,
+});
+assertEqual((historicalContextRecall.results ?? []).length > 0, true, "historical recall retained earlier evidence context");
+assertEqual(
+  (historicalContextRecall.related_hypotheses ?? []).some((item) => item?.hypothesis_id === hypothesisID),
+  false,
+  "historical recall omitted the later-created hypothesis",
+);
+assertEqual(
+  (historicalContextRecall.degradations ?? []).some((item) => item?.code === "related_hypotheses_temporal_not_supported"),
+  true,
+  "historical hypothesis omission reported its optional degradation",
+);
 
 const evidenceRun = await waitForHourlyEvidenceRun();
 assertEqual(evidenceRun.team_id, teamID, "hourly evidence run team");
