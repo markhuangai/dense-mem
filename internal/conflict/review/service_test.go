@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	repository "github.com/markhuangai/dense-mem/internal/conflict/contract"
 	"github.com/markhuangai/dense-mem/internal/conflict/assessment"
+	repository "github.com/markhuangai/dense-mem/internal/conflict/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
@@ -140,6 +140,7 @@ func TestServiceAttributesProviderUsageToConflictReview(t *testing.T) {
 	rate := 1_000_000.0
 	metrics := observability.NewPrometheusMetrics(observability.AIPricingResolverFunc(func(context.Context) (observability.AIPricing, error) {
 		return observability.AIPricing{
+			VerifierModel:                     "test-model",
 			VerifierInputUSDPerMillionTokens:  &rate,
 			VerifierOutputUSDPerMillionTokens: &rate,
 		}, nil

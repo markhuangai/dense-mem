@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -27,7 +28,8 @@ import (
 )
 
 type telemetryPricingStub struct {
-	err error
+	err    error
+	config domain.TelemetryPricingRuntimeConfig
 }
 
 type authorityCoverageStub struct {
@@ -39,11 +41,11 @@ func (s authorityCoverageStub) GetLatestMarker(context.Context) (*domain.Compati
 }
 
 func (s telemetryPricingStub) TelemetryPricingRuntimeConfig(context.Context) (domain.TelemetryPricingRuntimeConfig, error) {
-	return domain.TelemetryPricingRuntimeConfig{}, s.err
+	return s.config, s.err
 }
 
-func (telemetryPricingStub) CachedTelemetryPricingRuntimeConfig() (domain.TelemetryPricingRuntimeConfig, bool) {
-	return domain.TelemetryPricingRuntimeConfig{}, true
+func (s telemetryPricingStub) CachedTelemetryPricingRuntimeConfig() (domain.TelemetryPricingRuntimeConfig, bool) {
+	return s.config, true
 }
 
 type searchReconciliationCoverageStub struct {
@@ -93,9 +95,56 @@ func TestCompositionHelpersCoverTelemetryAndMaintenanceBranches(t *testing.T) {
 	if err != nil || disabled.PricingRefreshEnabled || disabled.Reader != nil || disabled.Metrics == nil {
 		t.Fatalf("disabled telemetry composition = %+v, %v", disabled, err)
 	}
-	enabled, err := buildTelemetryApplication(context.Background(), config.Config{TelemetryEnabled: true}, telemetryPricingStub{err: errors.New("pricing unavailable")}, nil, nil, logger)
+	unavailable, err := buildTelemetryApplication(context.Background(), config.Config{
+		TelemetryEnabled: true,
+		AIVerifierModel:  "configured-verifier",
+	}, telemetryPricingStub{err: errors.New("pricing unavailable")}, nil, nil, logger)
+	if err != nil || !unavailable.PricingRefreshEnabled || unavailable.Reader == nil || unavailable.ScrapeHandler == nil || unavailable.Prometheus == nil {
+		t.Fatalf("telemetry composition with unavailable pricing = %+v, %v", unavailable, err)
+	}
+	rate := 2.0
+	enabled, err := buildTelemetryApplication(context.Background(), config.Config{
+		TelemetryEnabled: true,
+		AIVerifierModel:  "configured-verifier",
+	}, telemetryPricingStub{config: domain.TelemetryPricingRuntimeConfig{VerifierInputUSDPerMillionTokens: &rate}}, nil, nil, logger)
 	if err != nil || !enabled.PricingRefreshEnabled || enabled.Reader == nil || enabled.ScrapeHandler == nil || enabled.Prometheus == nil {
 		t.Fatalf("enabled telemetry composition = %+v, %v", enabled, err)
+	}
+	for _, model := range []string{"configured-verifier", "remember-override"} {
+		observability.RecordAIOperationUsage(
+			observability.WithAIOperation(context.Background(), observability.AIOperationSemanticAssessment, 1),
+			enabled.Metrics,
+			observability.AIOperationUsage{Component: observability.AIComponentVerifier, Model: model, InputTokens: 1_000_000, Source: observability.AITokenSourceProvider},
+		)
+	}
+	recorder := httptest.NewRecorder()
+	enabled.ScrapeHandler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := recorder.Body.String()
+	var configuredModelPriced, overrideModelUnpriced bool
+	for _, line := range strings.Split(body, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		if strings.HasPrefix(fields[0], "densemem_ai_operation_cost_usd_total{") {
+			if strings.Contains(line, "model=\"remember-override\"") {
+				t.Fatalf("override model unexpectedly received the verifier rate: %s", line)
+			}
+			if strings.Contains(line, "model=\"configured-verifier\"") {
+				if fields[1] != "2" {
+					t.Fatalf("configured verifier cost = %s; want 2: %s", fields[1], line)
+				}
+				configuredModelPriced = true
+			}
+		}
+		if strings.HasPrefix(fields[0], "densemem_ai_operation_unpriced_total{") &&
+			strings.Contains(line, "model=\"remember-override\"") &&
+			strings.Contains(line, "reason=\"missing_price\"") {
+			overrideModelUnpriced = true
+		}
+	}
+	if !configuredModelPriced || !overrideModelUnpriced {
+		t.Fatalf("telemetry pricing did not separate configured and override models: %s", body)
 	}
 	if buildTraceStore(nil, nil) == nil || buildContextApplication(nil) == nil || buildRememberAttemptDiagnostics(nil) == nil {
 		t.Fatal("maintenance composition returned nil service")

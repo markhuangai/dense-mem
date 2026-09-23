@@ -348,6 +348,7 @@ func TestOpenAIStructuredChatRecordsProviderUsageBeforeRejectingContent(t *testi
 	rate := 1_000_000.0
 	metrics := observability.NewPrometheusMetrics(observability.AIPricingResolverFunc(func(context.Context) (observability.AIPricing, error) {
 		return observability.AIPricing{
+			VerifierModel:                     "remember-override-model",
 			VerifierInputUSDPerMillionTokens:  &rate,
 			VerifierOutputUSDPerMillionTokens: &rate,
 		}, nil

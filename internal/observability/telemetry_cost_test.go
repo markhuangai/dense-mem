@@ -79,25 +79,35 @@ func TestAIOperationCostUSDRequiresCompleteRateCard(t *testing.T) {
 		{
 			name:      "verifier input rate missing",
 			component: AIComponentVerifier,
-			usage:     AIOperationUsage{InputTokens: 10},
-			pricing:   AIPricing{VerifierOutputUSDPerMillionTokens: &verifierOutput},
+			usage:     AIOperationUsage{Model: "verifier-model", InputTokens: 10},
+			pricing:   AIPricing{VerifierModel: "verifier-model", VerifierOutputUSDPerMillionTokens: &verifierOutput},
 		},
 		{
 			name:      "verifier output rate missing",
 			component: AIComponentVerifier,
-			usage:     AIOperationUsage{OutputTokens: 10},
-			pricing:   AIPricing{VerifierInputUSDPerMillionTokens: &verifierInput},
+			usage:     AIOperationUsage{Model: "verifier-model", OutputTokens: 10},
+			pricing:   AIPricing{VerifierModel: "verifier-model", VerifierInputUSDPerMillionTokens: &verifierInput},
 		},
 		{
 			name:      "verifier is priced",
 			component: AIComponentVerifier,
-			usage:     AIOperationUsage{InputTokens: 1_000_000, OutputTokens: 500_000},
+			usage:     AIOperationUsage{Model: "verifier-model", InputTokens: 1_000_000, OutputTokens: 500_000},
 			pricing: AIPricing{
+				VerifierModel:                     "verifier-model",
 				VerifierInputUSDPerMillionTokens:  &verifierInput,
 				VerifierOutputUSDPerMillionTokens: &verifierOutput,
 			},
 			want:   4,
 			priced: true,
+		},
+		{
+			name:      "verifier model without a rate card is unpriced",
+			component: AIComponentVerifier,
+			usage:     AIOperationUsage{Model: "remember-override", InputTokens: 1_000_000},
+			pricing: AIPricing{
+				VerifierModel:                    "verifier-model",
+				VerifierInputUSDPerMillionTokens: &verifierInput,
+			},
 		},
 		{
 			name:      "embedding rate missing",

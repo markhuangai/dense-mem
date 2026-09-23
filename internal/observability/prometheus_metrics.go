@@ -432,6 +432,10 @@ func aiOperationCostUSD(component string, usage AIOperationUsage, pricing AIPric
 	const tokensPerMillion = 1_000_000
 	switch component {
 	case AIComponentVerifier:
+		if strings.TrimSpace(pricing.VerifierModel) == "" ||
+			strings.TrimSpace(usage.Model) != strings.TrimSpace(pricing.VerifierModel) {
+			return 0, false
+		}
 		if usage.InputTokens > 0 && pricing.VerifierInputUSDPerMillionTokens == nil {
 			return 0, false
 		}

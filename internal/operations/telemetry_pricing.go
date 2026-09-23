@@ -3,6 +3,7 @@ package operations
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -43,11 +44,12 @@ func RefreshTelemetryPricingCacheUntilCanceled(ctx context.Context, pricing oper
 // TelemetryPricingResolver converts the settings-owned rate card into the
 // observability port without exposing settings implementation details.
 type TelemetryPricingResolver struct {
-	pricing operationscontract.TelemetryPricingReader
+	pricing       operationscontract.TelemetryPricingReader
+	verifierModel string
 }
 
-func NewTelemetryPricingResolver(pricing operationscontract.TelemetryPricingReader) observability.AIPricingResolver {
-	return TelemetryPricingResolver{pricing: pricing}
+func NewTelemetryPricingResolver(pricing operationscontract.TelemetryPricingReader, verifierModel string) observability.AIPricingResolver {
+	return TelemetryPricingResolver{pricing: pricing, verifierModel: strings.TrimSpace(verifierModel)}
 }
 
 func (r TelemetryPricingResolver) ResolveAIPricing(context.Context) (observability.AIPricing, error) {
@@ -59,6 +61,7 @@ func (r TelemetryPricingResolver) ResolveAIPricing(context.Context) (observabili
 		return observability.AIPricing{}, errors.New("telemetry pricing snapshot unavailable")
 	}
 	return observability.AIPricing{
+		VerifierModel:                     r.verifierModel,
 		VerifierInputUSDPerMillionTokens:  clonePrice(pricing.VerifierInputUSDPerMillionTokens),
 		VerifierOutputUSDPerMillionTokens: clonePrice(pricing.VerifierOutputUSDPerMillionTokens),
 		EmbeddingInputUSDPerMillionTokens: clonePrice(pricing.EmbeddingInputUSDPerMillionTokens),

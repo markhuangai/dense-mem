@@ -37,9 +37,10 @@ type aiOperationContext struct {
 	itemCount int
 }
 
-// AIPricing is the rate card used only to estimate telemetry cost. Nil rates
-// intentionally leave the matching token type unpriced.
+// AIPricing identifies the verifier model covered by its rates. Other verifier
+// models and nil rates intentionally remain unpriced.
 type AIPricing struct {
+	VerifierModel                     string
 	VerifierInputUSDPerMillionTokens  *float64
 	VerifierOutputUSDPerMillionTokens *float64
 	EmbeddingInputUSDPerMillionTokens *float64

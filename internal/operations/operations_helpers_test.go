@@ -105,16 +105,17 @@ func TestTelemetryHelperNoopAndCanceledPaths(t *testing.T) {
 		VerifierOutputUSDPerMillionTokens: &output,
 		EmbeddingInputUSDPerMillionTokens: &embedding,
 	}, cachedOK: true}
-	resolver := NewTelemetryPricingResolver(pricing)
+	resolver := NewTelemetryPricingResolver(pricing, " verifier-model ")
 	resolved, err := resolver.ResolveAIPricing(context.Background())
 	require.NoError(t, err)
+	require.Equal(t, "verifier-model", resolved.VerifierModel)
 	require.Equal(t, input, *resolved.VerifierInputUSDPerMillionTokens)
 	require.Equal(t, output, *resolved.VerifierOutputUSDPerMillionTokens)
 	require.Equal(t, embedding, *resolved.EmbeddingInputUSDPerMillionTokens)
 	input = 99
 	require.Equal(t, 1.25, *resolved.VerifierInputUSDPerMillionTokens)
 	require.Implements(t, (*observability.AIPricingResolver)(nil), resolver)
-	_, err = NewTelemetryPricingResolver(telemetryPricingStub{}).ResolveAIPricing(context.Background())
+	_, err = NewTelemetryPricingResolver(telemetryPricingStub{}, "verifier-model").ResolveAIPricing(context.Background())
 	require.ErrorContains(t, err, "snapshot unavailable")
 
 	ctx, cancel := context.WithCancel(context.Background())
