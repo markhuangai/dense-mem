@@ -476,6 +476,7 @@ type RecallHypothesesInput struct {
 	EvidenceIDs     []string
 	RelationshipIDs []string
 	EntityIDs       []string
+	ValueIDs        []string
 }
 
 const MaxRecallHypothesisContextIDs = 200

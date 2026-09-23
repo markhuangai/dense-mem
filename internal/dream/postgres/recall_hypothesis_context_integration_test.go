@@ -68,9 +68,19 @@ func TestRecallHypothesesRanksSourceEndpointAndLiteralMatches(t *testing.T) {
 	inputs, err := semantic.ListDreamInputs(ctx, DreamInputListInput{TeamID: teamID, Limit: 20})
 	require.NoError(t, err)
 	find := func(relationshipID string) DreamInput { return requireDreamInput(t, inputs, relationshipID) }
+	typedValue, err := semantic.UpsertValue(ctx, knowledgepostgres.UpsertValueInput{
+		TeamID: teamID, OwnerProfileID: ownerID, ValueType: "string",
+		CanonicalValue: "recall-hypothesis-context-typed-endpoint", Display: "typed endpoint",
+		NormalizationVersion: 1,
+	})
+	require.NoError(t, err)
 	sourceProposal := evidenceGroundedDreamProposal(teamID, ownerID, run.RunID,
 		find(sourceFirst.Relationship.RelationshipID), find(sourceSecond.Relationship.RelationshipID),
 		subject.EntityID, independent.EntityID, "uses", "A context-derived hypothesis.")
+	valueProposal := evidenceGroundedDreamProposal(teamID, ownerID, run.RunID,
+		find(endpointFirst.Relationship.RelationshipID), find(endpointSecond.Relationship.RelationshipID),
+		endpointTarget.EntityID, "", "released", "A hypothesis with a typed Value endpoint.")
+	valueProposal.ObjectValueID = typedValue.ValueID
 	endpointProposalA := evidenceGroundedDreamProposal(teamID, ownerID, run.RunID,
 		find(endpointFirst.Relationship.RelationshipID), find(endpointSecond.Relationship.RelationshipID),
 		subject.EntityID, endpointTarget.EntityID, "uses", "An endpoint-derived hypothesis about the target.")
@@ -89,9 +99,7 @@ func TestRecallHypothesesRanksSourceEndpointAndLiteralMatches(t *testing.T) {
 	endpointProposalB.SourceOwnerProfileIDs = []string{ownerID}
 	endpointProposalB.CreatedByProfileID = otherOwnerID
 
-	proposals := []UpsertHypothesisInput{
-		sourceProposal, endpointProposalA, endpointProposalB, literalProposal, rationaleProposal,
-	}
+	proposals := []UpsertHypothesisInput{sourceProposal, endpointProposalA, endpointProposalB, literalProposal, rationaleProposal, valueProposal}
 	records := make([]*HypothesisRecord, 0, len(proposals))
 	for _, proposal := range proposals {
 		record, inserted, err := semantic.UpsertHypothesis(ctx, proposal)
@@ -120,6 +128,12 @@ func TestRecallHypothesesRanksSourceEndpointAndLiteralMatches(t *testing.T) {
 	}))
 
 	firstSourceEvidence := find(sourceFirst.Relationship.RelationshipID).Evidence[0]
+	typedValueOnly, err := semantic.RecallHypotheses(ctx, RecallHypothesesInput{
+		TeamID: teamID, Limit: 10, ValueIDs: []string{typedValue.ValueID},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{records[5].HypothesisID}, hypothesisIDs(typedValueOnly))
+
 	fragmentOnly, err := semantic.RecallHypotheses(ctx, RecallHypothesesInput{
 		TeamID:      teamID,
 		Limit:       10,

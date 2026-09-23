@@ -488,6 +488,7 @@ func (s *recallService) recallRelatedHypotheses(
 		EvidenceIDs:     contextHandles.evidenceIDs,
 		RelationshipIDs: contextHandles.relationshipIDs,
 		EntityIDs:       contextHandles.entityIDs,
+		ValueIDs:        contextHandles.valueIDs,
 	})
 	if err != nil {
 		return []RelatedHypothesisSummary{}, relatedHypothesisDegradation()

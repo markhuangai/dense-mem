@@ -10,9 +10,11 @@ type recallHypothesisContextHandles struct {
 	evidenceIDs      []string
 	relationshipIDs  []string
 	entityIDs        []string
+	valueIDs         []string
 	evidenceSeen     map[string]struct{}
 	relationshipSeen map[string]struct{}
 	entitySeen       map[string]struct{}
+	valueSeen        map[string]struct{}
 }
 
 func recallHypothesisContextFrom(result *RecallResult) recallHypothesisContextHandles {
@@ -20,9 +22,11 @@ func recallHypothesisContextFrom(result *RecallResult) recallHypothesisContextHa
 		evidenceIDs:      []string{},
 		relationshipIDs:  []string{},
 		entityIDs:        []string{},
+		valueIDs:         []string{},
 		evidenceSeen:     map[string]struct{}{},
 		relationshipSeen: map[string]struct{}{},
 		entitySeen:       map[string]struct{}{},
+		valueSeen:        map[string]struct{}{},
 	}
 	if result == nil {
 		return context
@@ -53,7 +57,7 @@ func recallHypothesisContextFrom(result *RecallResult) recallHypothesisContextHa
 }
 
 func (c recallHypothesisContextHandles) empty() bool {
-	return len(c.evidenceIDs) == 0 && len(c.relationshipIDs) == 0 && len(c.entityIDs) == 0
+	return len(c.evidenceIDs) == 0 && len(c.relationshipIDs) == 0 && len(c.entityIDs) == 0 && len(c.valueIDs) == 0
 }
 
 func (c *recallHypothesisContextHandles) addRelationshipSummary(relationship RelatedRelationshipSummary) {
@@ -62,12 +66,14 @@ func (c *recallHypothesisContextHandles) addRelationshipSummary(relationship Rel
 	c.addEvidence(relationship.EvidenceIDs...)
 	c.addEntity(relationship.Subject.EntityID)
 	c.addEntity(relationship.Object.EntityID)
+	c.addValues(relationship.Object.ValueID)
 }
 
 func (c *recallHypothesisContextHandles) addRelationship(relationship RecallRelationshipHandle) {
 	c.addRelationships(relationship.RelationshipID)
 	c.addEntity(relationship.Subject.EntityID)
 	c.addEntity(relationship.Object.EntityID)
+	c.addValues(relationship.Object.ValueID)
 }
 
 func (c *recallHypothesisContextHandles) addEvidence(values ...string) {
@@ -85,6 +91,12 @@ func (c *recallHypothesisContextHandles) addRelationships(values ...string) {
 func (c *recallHypothesisContextHandles) addEntity(values ...string) {
 	for _, value := range values {
 		appendRecallHypothesisHandle(&c.entityIDs, c.entitySeen, value)
+	}
+}
+
+func (c *recallHypothesisContextHandles) addValues(values ...string) {
+	for _, value := range values {
+		appendRecallHypothesisHandle(&c.valueIDs, c.valueSeen, value)
 	}
 }
 

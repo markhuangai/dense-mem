@@ -34,6 +34,9 @@ func (r *Store) RecallHypotheses(ctx context.Context, input RecallHypothesesInpu
 	if input.EntityIDs, err = normalizeRecallHypothesisContextIDs(input.EntityIDs); err != nil {
 		return nil, fmt.Errorf("recall context entity IDs: %w", err)
 	}
+	if input.ValueIDs, err = normalizeRecallHypothesisContextIDs(input.ValueIDs); err != nil {
+		return nil, fmt.Errorf("recall context Value IDs: %w", err)
+	}
 
 	pattern := "%" + input.Query + "%"
 	records := []HypothesisRecord{}
@@ -42,7 +45,8 @@ func (r *Store) RecallHypotheses(ctx context.Context, input RecallHypothesesInpu
 			WITH recall_context AS (
 				SELECT ?::uuid[] AS evidence_ids,
 				       ?::uuid[] AS relationship_ids,
-				       ?::uuid[] AS entity_ids
+				       ?::uuid[] AS entity_ids,
+				       ?::uuid[] AS value_ids
 			)
 		` + hypothesisSelectSQL(`
 			CROSS JOIN recall_context
@@ -66,7 +70,8 @@ func (r *Store) RecallHypotheses(ctx context.Context, input RecallHypothesesInpu
 					) AS source_overlap,
 					COALESCE(hypotheses.subject_entity_id = ANY(recall_context.entity_ids), false)
 						OR COALESCE(hypotheses.object_entity_id = ANY(recall_context.entity_ids), false)
-						AS entity_overlap,
+						OR COALESCE(hypotheses.object_value_id = ANY(recall_context.value_ids), false)
+						AS endpoint_overlap,
 					(? <> '' AND hypotheses.statement ILIKE ?) AS statement_match,
 					(? <> '' AND hypotheses.rationale ILIKE ?) AS rationale_match
 			) AS relevance
@@ -79,15 +84,16 @@ func (r *Store) RecallHypotheses(ctx context.Context, input RecallHypothesesInpu
 			  AND (
 			      (? = '' AND cardinality(recall_context.evidence_ids) = 0
 			                    AND cardinality(recall_context.relationship_ids) = 0
-			                    AND cardinality(recall_context.entity_ids) = 0)
+			                    AND cardinality(recall_context.entity_ids) = 0
+			                    AND cardinality(recall_context.value_ids) = 0)
 			      OR relevance.source_overlap
-			      OR relevance.entity_overlap
+			      OR relevance.endpoint_overlap
 			      OR relevance.statement_match
 			      OR relevance.rationale_match
 			  )
 			ORDER BY CASE
 			           WHEN relevance.source_overlap THEN 0
-			           WHEN relevance.entity_overlap THEN 1
+			           WHEN relevance.endpoint_overlap THEN 1
 			           WHEN relevance.statement_match THEN 2
 			           WHEN relevance.rationale_match THEN 3
 			           ELSE 4
@@ -100,6 +106,7 @@ func (r *Store) RecallHypotheses(ctx context.Context, input RecallHypothesesInpu
 			pq.Array(input.EvidenceIDs),
 			pq.Array(input.RelationshipIDs),
 			pq.Array(input.EntityIDs),
+			pq.Array(input.ValueIDs),
 			input.Query, pattern, input.Query, pattern,
 			input.TeamID, input.Query, input.Limit,
 		).Rows()
