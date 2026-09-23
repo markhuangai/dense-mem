@@ -17,8 +17,6 @@ const evidenceModel = "dense-mem-e2e-dream-evidence";
 
 let rpcID = 0;
 const maxPollingAttempts = 60;
-const scheduledAt = nextScheduledUTCMinute();
-const runDate = formatDate(scheduledAt);
 const ownerProfileID = await apiCredentialOwnerID();
 const adverseTeam = await createAdverseEvidenceTeam();
 const seeded = seedSchedulerInputs(ownerProfileID);
@@ -30,6 +28,8 @@ seedEvidenceDiscoveryInputs(
   `Adverse evidence [fixture-fault:unavailable] for ${adverseTeam.teamID}.`,
 );
 const historicalKnownAt = new Date().toISOString();
+const scheduledAt = nextScheduledUTCMinute(Date.now(), 3);
+const runDate = formatDate(scheduledAt);
 
 await updateControlConfig("/config/general", [{ key: "APP_TIMEZONE", value: "UTC" }]);
 await updateControlConfig("/config/dreaming", [

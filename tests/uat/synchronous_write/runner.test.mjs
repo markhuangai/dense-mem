@@ -58,7 +58,7 @@ test("provider fixture emits a semantic assessor rejection for diagnostics cover
   assert.ok(Array.isArray(response.relationship_results[0].splits));
 });
 
-test("provider fixture ignores fault markers outside the active evidence and keeps direct injections", () => {
+test("provider fixture scopes assessment faults to the active schema input", () => {
   const staleContext = {
     messages: [
       { role: "user", content: JSON.stringify({ evidence: [{ content: "[fixture-fault:no-supported] prior evidence" }] }) },
@@ -74,6 +74,47 @@ test("provider fixture ignores fault markers outside the active evidence and kee
     messages: [{ role: "user", content: JSON.stringify({ evidence: [{ content: "Current evidence [fixture-fault:no-supported]." }] }) }],
   };
   assert.equal(fixtureFault(activeEvidence, "assessment"), "no-supported");
+
+  const evidenceDiscovery = {
+    messages: [
+      { role: "user", content: JSON.stringify({ contexts: [{ boundary_text: "[fixture-fault:timeout] stale context" }], nodes: [] }) },
+      { role: "user", content: JSON.stringify({ contexts: [{ boundary_text: "Current evidence without a fault." }], nodes: [] }) },
+    ],
+    response_format: { json_schema: { name: "dense_mem_evidence_discovery_response" } },
+  };
+  assert.equal(fixtureFault(evidenceDiscovery, "assessment"), "");
+  evidenceDiscovery.messages[1].content = JSON.stringify({
+    contexts: [{ boundary_text: "Current evidence [fixture-fault:unavailable]." }],
+    nodes: [],
+  });
+  assert.equal(fixtureFault(evidenceDiscovery, "assessment"), "unavailable");
+
+  const communitySummary = {
+    messages: [
+      { role: "user", content: JSON.stringify({ relationships: [{ support_quotes: [{ quote: "[fixture-fault:timeout] stale quote" }] }] }) },
+      { role: "user", content: JSON.stringify({ relationships: [{ support_quotes: [{ quote: "Current quote without a fault." }] }] }) },
+    ],
+    response_format: { json_schema: { name: "community_summary" } },
+  };
+  assert.equal(fixtureFault(communitySummary, "assessment"), "");
+  communitySummary.messages[1].content = JSON.stringify({
+    relationships: [{ support_quotes: [{ quote: "Current quote [fixture-fault:unavailable]." }] }],
+  });
+  assert.equal(fixtureFault(communitySummary, "assessment"), "unavailable");
+
+  const dreamGeneration = {
+    messages: [
+      { role: "user", content: JSON.stringify({ paths: [{ premises: [{ evidence: [{ content: "[fixture-fault:timeout] stale evidence" }] }] }] }) },
+      { role: "user", content: JSON.stringify({ paths: [{ premises: [{ evidence: [{ content: "Current evidence without a fault." }] }] }] }) },
+    ],
+    response_format: { json_schema: { name: "dense_mem_dream_generation_response" } },
+  };
+  assert.equal(fixtureFault(dreamGeneration, "assessment"), "");
+  dreamGeneration.messages[1].content = JSON.stringify({
+    paths: [{ premises: [{ evidence: [{ content: "Current evidence [fixture-fault:no-supported]." }] }] }],
+  });
+  assert.equal(fixtureFault(dreamGeneration, "assessment"), "no-supported");
+
   assert.equal(fixtureFault({ input: ["Current embedding input [fixture-fault:embedding-count]."] }, "embedding"), "embedding-count");
 });
 

@@ -439,11 +439,32 @@ function wholeEvidenceRange(evidence) {
 }
 
 export function fixtureFault(payload, route) {
-  const inputs = route === "embedding"
-    ? Array.isArray(payload.input) ? payload.input : [payload.input]
-    : route === "assessment"
-      ? (assessmentInput(payload).evidence || []).flatMap((item) => [item?.content, item?.boundary_text])
-      : [];
+  if (route === "embedding") {
+    return faultMarker(Array.isArray(payload.input) ? payload.input : [payload.input]);
+  }
+  if (route !== "assessment") return "";
+
+  const schemaName = payload.response_format?.json_schema?.name;
+  let inputs = [];
+  if (schemaName === "community_summary") {
+    const input = structuredInput(payload, (value) => Array.isArray(value.relationships));
+    inputs = (input.relationships || []).flatMap((relationship) =>
+      (relationship.support_quotes || []).map((quote) => quote?.quote));
+  } else if (schemaName === "dense_mem_evidence_discovery_response") {
+    const input = structuredInput(payload, (value) => Array.isArray(value.contexts) && Array.isArray(value.nodes));
+    inputs = (input.contexts || []).flatMap((context) => [context?.content, context?.boundary_text]);
+  } else if (schemaName === "dense_mem_dream_generation_response") {
+    const input = structuredInput(payload, (value) => Array.isArray(value.paths));
+    inputs = (input.paths || []).flatMap((path) =>
+      (path.premises || []).flatMap((premise) =>
+        (premise.evidence || []).flatMap((evidence) => [evidence?.content, evidence?.boundary_text])));
+  } else {
+    inputs = (assessmentInput(payload).evidence || []).flatMap((item) => [item?.content, item?.boundary_text]);
+  }
+  return faultMarker(inputs);
+}
+
+function faultMarker(inputs) {
   for (const input of inputs) {
     const match = String(input || "").match(/\[fixture-fault:([a-z0-9_-]+)\]/i);
     if (match) return match[1];
