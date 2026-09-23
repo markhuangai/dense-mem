@@ -20,6 +20,7 @@ const runDate = formatDate(scheduledAt);
 const ownerProfileID = await apiCredentialOwnerID();
 const adverseTeam = await createAdverseEvidenceTeam();
 const seeded = seedSchedulerInputs(ownerProfileID);
+installEvidenceDiagnosticDelay(teamID);
 const evidenceSeeded = seedEvidenceDiscoveryInputs(ownerProfileID);
 seedEvidenceDiscoveryInputs(
   adverseTeam.ownerProfileID,
@@ -50,14 +51,16 @@ await assertSystemRun(scheduledRun.run_id);
 const controlDreams = await controlJSON(`/teams/${teamID}/dreams?limit=10`);
 const scheduledDream = findDream(controlDreams.data?.items, scheduledRun.run_id, "control portal API");
 assertEvidenceDerivedDream(scheduledDream, seeded, "control portal API");
-const runDiagnostics = await controlJSON(`/teams/${teamID}/dreaming/runs/${scheduledRun.run_id}/diagnostics?limit=10`);
-assertEqual(Array.isArray(runDiagnostics.data?.items), true, "Dream run diagnostics page");
-assertAtLeast(runDiagnostics.data.items.length, 1, "Dream run diagnostic capture");
-const diagnosticPhases = new Set(runDiagnostics.data.items.map((item) => item.phase));
+const runDiagnostics = await waitForRunDiagnostic(scheduledRun.run_id, completeRunDiagnosticReady);
+assertAtLeast(runDiagnostics.length, 1, "Dream run diagnostic capture");
+const completeRunCaptures = runDiagnostics.filter((item) => item.phase === "run");
+assertEqual(completeRunCaptures.length, 1, "complete Dream trace has one run capture");
+assertEqual(completeRunCaptures[0].details?.phase_trace_truncated ?? false, false, "complete Dream phase trace marker");
+const diagnosticPhases = new Set(runDiagnostics.map((item) => item.phase));
 for (const phase of ["run", "target", "provider", "validation", "proposal", "disposition"]) {
   assertEqual(diagnosticPhases.has(phase), true, `Dream diagnostic phase ${phase}`);
 }
-const retainedCapture = runDiagnostics.data.items.find((item) => item.capture_state !== "expired") ?? runDiagnostics.data.items[0];
+const retainedCapture = runDiagnostics.find((item) => item.capture_state !== "expired") ?? runDiagnostics[0];
 const retainedDetail = await controlResponse(`/teams/${teamID}/dreaming/runs/${scheduledRun.run_id}/diagnostics/${retainedCapture.capture_id}`);
 assertEqual(retainedDetail.status, 200, "Dream diagnostic detail status");
 assertEqual(retainedDetail.body?.data?.capture_id, retainedCapture.capture_id, "Dream diagnostic detail capture");
@@ -100,6 +103,23 @@ assertEqual(evidenceRun.status, "completed", "hourly evidence run status");
 assertEqual(Number(evidenceRun.evidence_targets), 1, "hourly eligible target count");
 assertEqual(Number(evidenceRun.evaluated_evidence_targets), 2, "hourly validated pass count");
 assertEqual(Number(evidenceRun.created_dreams), 1, "hourly created hypothesis count");
+let deadlineDiagnostics;
+try {
+  await delay(21_000);
+  deadlineDiagnostics = await waitForRunDiagnostic(evidenceRun.run_id, (items) => {
+    const runCapture = items.find((item) => item.phase === "run");
+    const phases = items.filter((item) => item.phase !== "run" && !item.hypothesis_id);
+    return runCapture?.details?.phase_trace_truncated === true && phases.length > 0;
+  });
+  const deadlineRunCaptures = deadlineDiagnostics.filter((item) => item.phase === "run");
+  assertEqual(deadlineRunCaptures.length, 1, "deadline-limited Dream trace has one run capture");
+  assertEqual(deadlineRunCaptures[0].details?.phase_trace_truncated, true, "deadline-limited Dream trace marker");
+  const deadlinePhases = deadlineDiagnostics.filter((item) => item.phase !== "run" && !item.hypothesis_id);
+  assertAtLeast(deadlinePhases.length, 1, "deadline-limited Dream trace retains completed phases");
+  assertEqual(deadlinePhases.length < 5, true, "deadline-limited Dream trace omits delayed phases");
+} finally {
+  removeEvidenceDiagnosticDelay();
+}
 const evidenceDreams = await controlJSON(`/teams/${teamID}/dreams?limit=20`);
 const evidenceDream = findDream(evidenceDreams.data?.items, evidenceRun.run_id, "hourly evidence control API");
 assertEvidenceDiscoveryDream(evidenceDream, evidenceSeeded, "hourly evidence control API");
@@ -217,6 +237,55 @@ async function waitForHourlyEvidenceRun() {
     await delay(5_000);
   }
   throw new Error(`timed out waiting for hourly evidence discovery: ${JSON.stringify(lastRuns)}`);
+}
+
+async function waitForRunDiagnostic(runID, ready = completeRunDiagnosticReady) {
+  let lastItems = [];
+  for (let attempt = 0; attempt < maxPollingAttempts; attempt += 1) {
+    const page = await controlJSON(`/teams/${teamID}/dreaming/runs/${runID}/diagnostics?limit=100`);
+    lastItems = Array.isArray(page.data?.items) ? page.data.items : [];
+    if (ready(lastItems)) return lastItems;
+    await delay(1_000);
+  }
+  throw new Error(`timed out waiting for the persisted Dream run diagnostic: ${JSON.stringify(lastItems)}`);
+}
+
+function completeRunDiagnosticReady(items) {
+  const runCapture = items.find((item) => item.phase === "run");
+  return Boolean(runCapture) && runCapture.details?.phase_trace_truncated !== true;
+}
+
+function installEvidenceDiagnosticDelay(targetTeamID) {
+  postgresQuery(`
+    CREATE OR REPLACE FUNCTION dense_mem_test_delay_evidence_diagnostic_phase()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.team_id = ${sqlLiteral(targetTeamID)}::uuid
+        AND NEW.phase <> 'run'
+        AND NEW.hypothesis_id IS NULL
+        AND EXISTS (
+          SELECT 1 FROM dream_cycle_runs run
+          WHERE run.team_id = NEW.team_id
+            AND run.run_id = NEW.run_id
+            AND run.lane = 'evidence_discovery'
+        ) THEN
+        PERFORM pg_sleep(4.2);
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+    DROP TRIGGER IF EXISTS dense_mem_test_delay_evidence_diagnostic_phase ON dream_diagnostic_captures;
+    CREATE TRIGGER dense_mem_test_delay_evidence_diagnostic_phase
+      BEFORE INSERT ON dream_diagnostic_captures
+      FOR EACH ROW EXECUTE FUNCTION dense_mem_test_delay_evidence_diagnostic_phase();
+  `);
+}
+
+function removeEvidenceDiagnosticDelay() {
+  postgresQuery(`
+    DROP TRIGGER IF EXISTS dense_mem_test_delay_evidence_diagnostic_phase ON dream_diagnostic_captures;
+    DROP FUNCTION IF EXISTS dense_mem_test_delay_evidence_diagnostic_phase();
+  `);
 }
 
 async function waitForHourlyEvidenceFailureRun(targetTeamID) {

@@ -436,3 +436,74 @@ test("final review status is fenced by the live pull request head", async () => 
   assert.ok(staleRunFailure < staleRunReturn);
   assert.ok(staleRunReturn < statusPublication);
 });
+
+test("incomplete AI reviews publish a blocking error without failing the PR workflow job", async () => {
+  const workflow = await readFile(reviewWorkflowURL, "utf8");
+  const reviewStepStart = workflow.indexOf("      - name: Review pull request");
+  const reviewStepEnd = workflow.indexOf("\n      - name: ", reviewStepStart + 1);
+  assert.notEqual(reviewStepEnd, -1, "review step must have a bounded next step");
+  const reviewStep = workflow.slice(reviewStepStart, reviewStepEnd);
+  assert.match(reviewStep, /continue-on-error: true/);
+  assert.match(reviewStep, /timeout-minutes: 50/);
+
+  const finalStatusStep = workflow.slice(workflow.indexOf("      - name: Publish final review status"));
+  const script = finalStatusStep.match(/          script: \|\n([\s\S]*)$/)?.[1]
+    ?.replace(/^            /gm, "");
+  assert.ok(script, "final status script must be present");
+  const runScript = new (Object.getPrototypeOf(async function () {}).constructor)(
+    "github", "context", "core", "process", script,
+  );
+  const context = {
+    repo: { owner: "markhuangai", repo: "dense-mem" },
+    serverUrl: "https://github.com",
+    runId: 123,
+  };
+  const testHead = "a".repeat(40);
+
+  for (const [outcome, expectedState] of [
+    ["success", "success"],
+    ["failure", "error"],
+    ["cancelled", "error"],
+    ["skipped", "error"],
+  ]) {
+    const publications = [];
+    const failures = [];
+    const notices = [];
+    const github = {
+      rest: {
+        pulls: { get: async () => ({ data: { head: { sha: testHead } } }) },
+        repos: { createCommitStatus: async (value) => publications.push(value) },
+      },
+    };
+    await runScript(github, context, {
+      setFailed: (message) => failures.push(message),
+      notice: (message) => notices.push(message),
+    }, {
+      env: { HEAD_SHA: testHead, PR_NUMBER: "42", REVIEW_OUTCOME: outcome, REVIEW_STATUS_CONTEXT: "AI PR review / PR #42" },
+    });
+    assert.equal(publications.length, 1);
+    assert.equal(publications[0].state, expectedState);
+    assert.equal(publications[0].sha, testHead);
+    assert.equal(publications[0].target_url, "https://github.com/markhuangai/dense-mem/actions/runs/123");
+    assert.ok(publications[0].description.length <= 140);
+    assert.deepEqual(failures, []);
+    if (expectedState === "error") assert.equal(notices.length, 1);
+  }
+
+  const staleFailures = [];
+  const stalePublications = [];
+  await runScript({
+    rest: {
+      pulls: { get: async () => ({ data: { head: { sha: "b".repeat(40) } } }) },
+      repos: { createCommitStatus: async (value) => stalePublications.push(value) },
+    },
+  }, context, {
+    setFailed: (message) => staleFailures.push(message),
+    notice: () => assert.fail("a stale review must not be reported as a completed review"),
+  }, {
+    env: { HEAD_SHA: testHead, PR_NUMBER: "42", REVIEW_OUTCOME: "success", REVIEW_STATUS_CONTEXT: "AI PR review / PR #42" },
+  });
+  assert.deepEqual(stalePublications, []);
+  assert.equal(staleFailures.length, 1);
+  assert.match(staleFailures[0], /refusing to publish a stale review status/);
+});

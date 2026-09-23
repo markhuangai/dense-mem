@@ -31,11 +31,19 @@ type diagnosticRepositoryStub struct {
 	purgeCalled     chan struct{}
 	purgeSequence   []int
 	phaseContextErr error
+	phaseDeadline   time.Time
+	phaseSuccesses  int
+	runContextErr   error
+	runDeadline     time.Time
+	runSuccesses    int
 	rejectCanceled  bool
 }
 
 func (s *diagnosticRepositoryStub) RecordDreamDiagnostic(ctx context.Context, input dreamcontract.DreamDiagnosticCaptureInput) error {
 	s.phaseContextErr = ctx.Err()
+	if deadline, ok := ctx.Deadline(); ok {
+		s.phaseDeadline = deadline
+	}
 	s.recorded = append(s.recorded, input)
 	if s.rejectCanceled && s.phaseContextErr != nil {
 		return s.phaseContextErr
@@ -47,15 +55,24 @@ func (s *diagnosticRepositoryStub) RecordDreamDiagnostic(ctx context.Context, in
 		s.failPhase--
 		return context.DeadlineExceeded
 	}
+	s.phaseSuccesses++
 	return nil
 }
 
-func (s *diagnosticRepositoryStub) RecordDreamRunDiagnostics(_ context.Context, input dreamcontract.DreamDiagnosticCaptureInput) error {
+func (s *diagnosticRepositoryStub) RecordDreamRunDiagnostics(ctx context.Context, input dreamcontract.DreamDiagnosticCaptureInput) error {
+	s.runContextErr = ctx.Err()
+	if deadline, ok := ctx.Deadline(); ok {
+		s.runDeadline = deadline
+	}
 	s.recorded = append(s.recorded, input)
+	if s.rejectCanceled && s.runContextErr != nil {
+		return s.runContextErr
+	}
 	if s.failRun > 0 {
 		s.failRun--
 		return context.DeadlineExceeded
 	}
+	s.runSuccesses++
 	return nil
 }
 
@@ -208,13 +225,19 @@ func TestRecordRunDiagnosticPersistsPhaseTraceAndCaptureFailureMarker(t *testing
 	result := &RunCycleResult{
 		TeamID: teamID, RunID: runID, Status: "completed", Lane: "graph",
 		CreatedDreams: 1, ProviderProposals: 1,
-		diagnosticPhases: []runDiagnosticPhase{{phase: "target", outcome: "selected", details: map[string]any{"path_refs": []string{"path_1"}}}},
+		diagnosticPhases:          []runDiagnosticPhase{{phase: "target", outcome: "selected", details: map[string]any{"path_refs": []string{"path_1"}}}},
+		diagnosticPhasesTruncated: true,
 	}
 	svc.recordRunDiagnostic(context.Background(), result)
-	require.Len(t, repo.recorded, 3, "failed run capture is retried as unavailable, then phase metadata is retained")
+	require.Len(t, repo.recorded, 3, "the run summary is stored before phase persistence")
+	require.Equal(t, "run", repo.recorded[0].Phase)
+	require.Equal(t, "run", repo.recorded[1].Phase)
 	require.Equal(t, "unavailable", repo.recorded[1].CaptureState)
 	require.Equal(t, "diagnostic_capture_failed", repo.recorded[1].CaptureReason)
+	require.Equal(t, true, repo.recorded[1].Details["phase_trace_truncated"])
 	require.Equal(t, "target", repo.recorded[2].Phase)
+	require.NotEmpty(t, repo.recorded[1].Details["phase_trace_expected"])
+	require.Equal(t, 1, repo.runSuccesses, "run fallback stores exactly one run capture")
 }
 
 func TestRecordRunDiagnosticPreservesProviderCaptureReason(t *testing.T) {
@@ -230,6 +253,67 @@ func TestRecordRunDiagnosticPreservesProviderCaptureReason(t *testing.T) {
 	svc.recordRunDiagnostic(context.Background(), result)
 	require.Equal(t, "truncated", repo.recorded[0].CaptureState)
 	require.Equal(t, "run_payload_budget_exceeded", repo.recorded[0].CaptureReason)
+}
+
+func TestRecordRunDiagnosticWritesEmptyTraceWithoutTruncation(t *testing.T) {
+	repo := &diagnosticRepositoryStub{}
+	svc := &service{deps: Dependencies{Diagnostics: repo}}
+	result := &RunCycleResult{
+		TeamID: "11111111-1111-4111-8111-111111111111", RunID: "22222222-2222-4222-8222-222222222222",
+		Status: "completed",
+	}
+
+	svc.recordRunDiagnostic(context.Background(), result)
+
+	require.Len(t, repo.recorded, 1)
+	require.Equal(t, "run", repo.recorded[0].Phase)
+	require.Empty(t, repo.recorded[0].Details["phase_trace_expected"])
+	require.NotContains(t, repo.recorded[0].Details, "phase_trace_truncated")
+	require.Equal(t, 1, repo.runSuccesses)
+}
+
+func TestRecordRunDiagnosticRespectsEarlierCallerDeadline(t *testing.T) {
+	deadline := time.Now().Add(time.Second)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	repo := &diagnosticRepositoryStub{}
+	svc := &service{deps: Dependencies{Diagnostics: repo}}
+	result := &RunCycleResult{
+		TeamID: "11111111-1111-4111-8111-111111111111", RunID: "22222222-2222-4222-8222-222222222222",
+		Status: "completed", diagnosticPhases: []runDiagnosticPhase{{phase: "target", outcome: "selected"}},
+	}
+
+	svc.recordRunDiagnostic(ctx, result)
+
+	require.Len(t, repo.recorded, 2)
+	require.Equal(t, "run", repo.recorded[0].Phase)
+	require.Equal(t, "target", repo.recorded[1].Phase)
+	require.Equal(t, []runDiagnosticPhaseExpectation{{Phase: "target", Count: 1}}, repo.recorded[0].Details["phase_trace_expected"])
+	require.True(t, repo.runDeadline.Equal(deadline), "run capture retains the caller deadline")
+	require.True(t, repo.phaseDeadline.Equal(deadline), "phase capture inherits the earlier caller deadline")
+	require.Equal(t, 1, repo.phaseSuccesses)
+}
+
+func TestRecordRunDiagnosticHonorsCallerCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	repo := &diagnosticRepositoryStub{rejectCanceled: true}
+	logger := &diagnosticTestLogger{}
+	svc := &service{deps: Dependencies{Diagnostics: repo, Logger: logger}}
+	result := &RunCycleResult{
+		TeamID: "11111111-1111-4111-8111-111111111111", RunID: "22222222-2222-4222-8222-222222222222",
+		Status: "completed", diagnosticPhases: []runDiagnosticPhase{{phase: "target", outcome: "selected"}},
+	}
+
+	svc.recordRunDiagnostic(ctx, result)
+
+	require.Len(t, repo.recorded, 2, "both summary attempts stay within the canceled caller context")
+	for _, capture := range repo.recorded {
+		require.Equal(t, "run", capture.Phase)
+	}
+	require.ErrorIs(t, repo.runContextErr, context.Canceled)
+	require.Zero(t, repo.runSuccesses)
+	require.Equal(t, 1, logger.errors)
 }
 
 func TestDiagnosticRelationshipResultsOmitCallerReferences(t *testing.T) {
@@ -260,15 +344,27 @@ func TestDiagnosticRelationshipResultsStayBounded(t *testing.T) {
 	require.True(t, truncated)
 }
 
-func TestRecordRunDiagnosticStopsAfterRunCaptureFailure(t *testing.T) {
+func TestRecordRunDiagnosticSkipsPhasesWhenSummaryIsUnavailable(t *testing.T) {
 	repo := &diagnosticRepositoryStub{failRun: 2}
-	svc := &service{deps: Dependencies{Diagnostics: repo}}
+	logger := &diagnosticTestLogger{}
+	svc := &service{deps: Dependencies{Diagnostics: repo, Logger: logger}}
+	phases := make([]runDiagnosticPhase, 256)
+	for index := range phases {
+		phases[index] = runDiagnosticPhase{phase: "target", outcome: "selected"}
+	}
 	result := &RunCycleResult{
 		TeamID: "11111111-1111-4111-8111-111111111111", RunID: "22222222-2222-4222-8222-222222222222",
-		Status: "completed", diagnosticPhases: make([]runDiagnosticPhase, 256),
+		Status: "completed", diagnosticPhases: phases, diagnosticPhasesTruncated: true,
 	}
 	svc.recordRunDiagnostic(context.Background(), result)
-	require.Len(t, repo.recorded, 2, "a failed run capture must not retry every phase")
+	require.Len(t, repo.recorded, 2)
+	require.Equal(t, "run", repo.recorded[0].Phase)
+	require.Equal(t, "run", repo.recorded[1].Phase)
+	require.Equal(t, true, repo.recorded[1].Details["phase_trace_truncated"])
+	require.Equal(t, 1, len(repo.recorded[1].Details["phase_trace_expected"].([]runDiagnosticPhaseExpectation)))
+	require.Zero(t, repo.phaseSuccesses)
+	require.Zero(t, repo.runSuccesses)
+	require.Equal(t, 1, logger.errors)
 }
 
 type diagnosticTestLogger struct{ errors int }
@@ -298,6 +394,15 @@ func TestDiagnosticPhaseHelpersAndRecorderBranches(t *testing.T) {
 	teamID, runID := uuid.NewString(), uuid.NewString()
 	repo := &diagnosticRepositoryStub{}
 	svc := &service{deps: Dependencies{Diagnostics: repo, Logger: &diagnosticTestLogger{}}, now: func() time.Time { return time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC) }}
+	result = &RunCycleResult{TeamID: teamID, RunID: runID, Status: "completed", diagnosticPhases: result.diagnosticPhases, diagnosticPhasesTruncated: true}
+	svc.recordRunDiagnostic(context.Background(), result)
+	require.Len(t, repo.recorded, 257)
+	require.Equal(t, "run", repo.recorded[0].Phase)
+	require.Equal(t, true, repo.recorded[0].Details["phase_trace_truncated"])
+	require.Equal(t, "phase", repo.recorded[1].Phase)
+	require.Equal(t, "full", repo.recorded[256].Phase)
+	repo.recorded = nil
+
 	result = &RunCycleResult{TeamID: teamID, RunID: runID, Status: "completed", Lane: "graph", diagnosticPhases: nil}
 	result.CreatedDreams = 0
 	result.ProviderProposals = 0
@@ -311,15 +416,19 @@ func TestDiagnosticPhaseHelpersAndRecorderBranches(t *testing.T) {
 	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{Component: "dream", Model: "fixture", ResponseBody: []byte(`{"ok":true}`)})
 	result = &RunCycleResult{TeamID: teamID, RunID: runID, Status: "completed", Lane: "graph", diagnosticPhases: []runDiagnosticPhase{{phase: "target", outcome: "selected"}}}
 	svc.recordRunDiagnostic(withDreamDiagnosticRecorder(context.Background(), recorder), result)
+	require.Equal(t, "run", repo.recorded[0].Phase)
 	require.Equal(t, "evaluated_zero", repo.recorded[0].Outcome)
 	require.Equal(t, "captured", repo.recorded[0].CaptureState)
 	require.NotEmpty(t, repo.recorded[0].Payload)
+	require.Equal(t, "target", repo.recorded[1].Phase)
 
 	repo.recorded = nil
 	repo.failPhase = 1
 	result = &RunCycleResult{TeamID: teamID, RunID: runID, RunDate: "2026-09-21", Status: "completed", diagnosticPhases: []runDiagnosticPhase{{phase: "provider", outcome: "failed"}}}
 	svc.recordRunDiagnostic(context.Background(), result)
 	require.Len(t, repo.recorded, 3)
+	require.Equal(t, "run", repo.recorded[0].Phase)
+	require.Equal(t, "provider", repo.recorded[1].Phase)
 	require.Equal(t, "unavailable", repo.recorded[2].CaptureState)
 
 	repo.recorded = nil

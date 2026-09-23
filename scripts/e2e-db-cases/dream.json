@@ -38,6 +38,20 @@
       "source": "internal/dream/postgres/dream_repository_integration_test.go"
     },
     {
+      "id": "repository/TestDreamDiagnosticDeadlineMarkerPersistsWithPartialPhaseTrace",
+      "package": "./internal/dream/postgres",
+      "run": "^TestDreamDiagnosticDeadlineMarkerPersistsWithPartialPhaseTrace$",
+      "phase": "precheck",
+      "source": "internal/dream/postgres/dream_diagnostics_integration_test.go"
+    },
+    {
+      "id": "repository/TestDreamDiagnosticRunSummaryRetriesSerializeConcurrently",
+      "package": "./internal/dream/postgres",
+      "run": "^TestDreamDiagnosticRunSummaryRetriesSerializeConcurrently$",
+      "phase": "precheck",
+      "source": "internal/dream/postgres/dream_diagnostics_integration_test.go"
+    },
+    {
       "id": "repository/TestDreamRepositoryPersistsTeamScopedPredicateHypothesis",
       "package": "./internal/dream/postgres",
       "run": "^TestDreamRepositoryPersistsTeamScopedPredicateHypothesis$",

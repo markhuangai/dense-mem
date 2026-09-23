@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,9 +24,21 @@ type runDiagnosticPhase struct {
 	captureReason string
 }
 
+type runDiagnosticPhaseExpectation struct {
+	Phase        string `json:"phase"`
+	HypothesisID string `json:"hypothesis_id"`
+	Count        int    `json:"count"`
+}
+
+type runDiagnosticPhaseKey struct {
+	phase        string
+	hypothesisID string
+}
+
 const (
 	dreamDiagnosticCaptureTimeout = 5 * time.Second
 	dreamDiagnosticRunTimeout     = 30 * time.Second
+	dreamDiagnosticPhaseTimeout   = 20 * time.Second
 )
 
 func appendRunDiagnosticPhase(result *RunCycleResult, phase, outcome, cause string, details map[string]any) {
@@ -52,6 +65,26 @@ func appendRunDiagnosticHypothesisPhase(result *RunCycleResult, phase, outcome, 
 	result.diagnosticPhases = append(result.diagnosticPhases, runDiagnosticPhase{
 		phase: phase, outcome: outcome, cause: cause, hypothesisID: hypothesisID, details: details,
 	})
+}
+
+func runDiagnosticPhaseExpectations(phases []runDiagnosticPhase) []runDiagnosticPhaseExpectation {
+	counts := make(map[runDiagnosticPhaseKey]int, len(phases))
+	for _, phase := range phases {
+		counts[runDiagnosticPhaseKey{phase: phase.phase, hypothesisID: phase.hypothesisID}]++
+	}
+	expectations := make([]runDiagnosticPhaseExpectation, 0, len(counts))
+	for key, count := range counts {
+		expectations = append(expectations, runDiagnosticPhaseExpectation{
+			Phase: key.phase, HypothesisID: key.hypothesisID, Count: count,
+		})
+	}
+	sort.Slice(expectations, func(i, j int) bool {
+		if expectations[i].Phase != expectations[j].Phase {
+			return expectations[i].Phase < expectations[j].Phase
+		}
+		return expectations[i].HypothesisID < expectations[j].HypothesisID
+	})
+	return expectations
 }
 
 func (s *service) recordRunDiagnostic(ctx context.Context, result *RunCycleResult) {
@@ -89,6 +122,7 @@ func (s *service) recordRunDiagnostic(ctx context.Context, result *RunCycleResul
 	if result.diagnosticPhasesTruncated {
 		details["phase_trace_truncated"] = true
 	}
+	details["phase_trace_expected"] = runDiagnosticPhaseExpectations(result.diagnosticPhases)
 	if result.Error != "" {
 		details["error_code"] = diagnosticErrorCode(result.Error)
 	}
@@ -113,8 +147,10 @@ func (s *service) recordRunDiagnostic(ctx context.Context, result *RunCycleResul
 	}
 	diagnosticCtx, diagnosticCancel := context.WithTimeout(ctx, dreamDiagnosticRunTimeout)
 	defer diagnosticCancel()
+	phaseCtx, phaseCancel := context.WithTimeout(diagnosticCtx, dreamDiagnosticPhaseTimeout)
+	defer phaseCancel()
 	newCaptureContext := func() (context.Context, context.CancelFunc) {
-		return context.WithTimeout(diagnosticCtx, dreamDiagnosticCaptureTimeout)
+		return context.WithTimeout(phaseCtx, dreamDiagnosticCaptureTimeout)
 	}
 	now := time.Now().UTC()
 	if s.now != nil {
@@ -126,28 +162,29 @@ func (s *service) recordRunDiagnostic(ctx context.Context, result *RunCycleResul
 		Payload:    result.providerPayload,
 		CapturedAt: &now,
 	}
-	captureCtx, cancel := newCaptureContext()
-	err := s.deps.Diagnostics.RecordDreamRunDiagnostics(captureCtx, input)
-	cancel()
-	runCaptureFailed := false
-	if err != nil {
-		fallback := input
-		fallback.Payload = nil
-		fallback.CaptureState = "unavailable"
-		fallback.CaptureReason = "diagnostic_capture_failed"
-		fallback.Details = map[string]any{"status": result.Status, "capture_failed": true}
-		fallbackCtx, fallbackCancel := newCaptureContext()
-		fallbackErr := s.deps.Diagnostics.RecordDreamRunDiagnostics(fallbackCtx, fallback)
-		fallbackCancel()
-		if fallbackErr == nil {
-			err = nil
-		} else {
-			runCaptureFailed = true
-		}
+	fallback := input
+	fallback.Payload = nil
+	fallback.CaptureState = "unavailable"
+	fallback.CaptureReason = "diagnostic_capture_failed"
+	fallback.Details = map[string]any{"status": result.Status, "capture_failed": true}
+	if expected, ok := details["phase_trace_expected"]; ok {
+		fallback.Details["phase_trace_expected"] = expected
 	}
-	if runCaptureFailed {
+	if result.diagnosticPhasesTruncated {
+		fallback.Details["phase_trace_truncated"] = true
+	}
+	persistRunCapture := func(capture dreamcontract.DreamDiagnosticCaptureInput) error {
+		captureCtx, captureCancel := newCaptureContext()
+		defer captureCancel()
+		return s.deps.Diagnostics.RecordDreamRunDiagnostics(captureCtx, capture)
+	}
+	runCaptureErr := persistRunCapture(input)
+	if runCaptureErr != nil {
+		runCaptureErr = persistRunCapture(fallback)
+	}
+	if runCaptureErr != nil {
 		if s.deps.Logger != nil {
-			s.deps.Logger.Error("dream diagnostic capture unavailable", err,
+			s.deps.Logger.Error("dream diagnostic capture unavailable", runCaptureErr,
 				observability.String("team_id", result.TeamID),
 				observability.String("run_id", result.RunID),
 				observability.String("error_code", "dream_diagnostic_capture_unavailable"),
@@ -155,8 +192,11 @@ func (s *service) recordRunDiagnostic(ctx context.Context, result *RunCycleResul
 		}
 		return
 	}
+	newPhaseCaptureContext := func() (context.Context, context.CancelFunc) {
+		return context.WithTimeout(phaseCtx, dreamDiagnosticCaptureTimeout)
+	}
 	for _, phase := range result.diagnosticPhases {
-		if diagnosticCtx.Err() != nil {
+		if phaseCtx.Err() != nil {
 			break
 		}
 		phaseInput := dreamcontract.DreamDiagnosticCaptureInput{
@@ -171,16 +211,16 @@ func (s *service) recordRunDiagnostic(ctx context.Context, result *RunCycleResul
 		if phaseInput.CaptureReason == "" && phaseInput.CaptureState == "not_captured" {
 			phaseInput.CaptureReason = "phase_metadata_only"
 		}
-		phaseCtx, phaseCancel := newCaptureContext()
-		phaseErr := s.deps.Diagnostics.RecordDreamDiagnostic(phaseCtx, phaseInput)
-		phaseCancel()
+		captureCtx, captureCancel := newPhaseCaptureContext()
+		phaseErr := s.deps.Diagnostics.RecordDreamDiagnostic(captureCtx, phaseInput)
+		captureCancel()
 		if phaseErr != nil {
-			fallback := phaseInput
-			fallback.Details = map[string]any{"capture_failed": true}
-			fallback.CaptureState = "unavailable"
-			fallback.CaptureReason = "diagnostic_capture_failed"
-			fallbackCtx, fallbackCancel := newCaptureContext()
-			fallbackErr := s.deps.Diagnostics.RecordDreamDiagnostic(fallbackCtx, fallback)
+			phaseFallback := phaseInput
+			phaseFallback.Details = map[string]any{"capture_failed": true}
+			phaseFallback.CaptureState = "unavailable"
+			phaseFallback.CaptureReason = "diagnostic_capture_failed"
+			fallbackCtx, fallbackCancel := newPhaseCaptureContext()
+			fallbackErr := s.deps.Diagnostics.RecordDreamDiagnostic(fallbackCtx, phaseFallback)
 			fallbackCancel()
 			if fallbackErr == nil {
 				continue
@@ -195,13 +235,6 @@ func (s *service) recordRunDiagnostic(ctx context.Context, result *RunCycleResul
 			}
 			break
 		}
-	}
-	if err != nil && s.deps.Logger != nil {
-		s.deps.Logger.Error("dream diagnostic capture unavailable", err,
-			observability.String("team_id", result.TeamID),
-			observability.String("run_id", result.RunID),
-			observability.String("error_code", "dream_diagnostic_capture_unavailable"),
-		)
 	}
 }
 

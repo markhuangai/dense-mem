@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -34,6 +35,7 @@ func TestDreamDiagnosticsAreTeamScopedAndExpirePayloads(t *testing.T) {
 	captured := time.Now().UTC()
 	require.NoError(t, store.RecordDreamRunDiagnostics(ctx, dreamcontract.DreamDiagnosticCaptureInput{
 		TeamID: teamID, RunID: run.RunID, Phase: "run", Outcome: "completed",
+		Details:      map[string]any{"status": "completed", "phase_trace_expected": []map[string]any{}},
 		CaptureState: "captured", Payload: []byte(`{"provider_exchanges":[{"response_body":"safe"}]}`), CapturedAt: &captured,
 	}))
 	var expiryWithinRetention bool
@@ -57,9 +59,11 @@ func TestDreamDiagnosticsAreTeamScopedAndExpirePayloads(t *testing.T) {
 		require.Empty(t, item.Payload, "list projection must not hydrate protected payloads")
 	}
 	runCapture := page.Items[0]
+	require.Equal(t, false, runCapture.Details["phase_trace_truncated"])
 	detail, err := store.GetDreamDiagnostic(ctx, teamID, run.RunID, runCapture.CaptureID)
 	require.NoError(t, err)
 	require.NotEmpty(t, detail.Payload)
+	require.Equal(t, false, detail.Details["phase_trace_truncated"])
 
 	otherPage, err := store.ListDreamDiagnostics(ctx, dreamcontract.DreamDiagnosticListInput{TeamID: otherTeamID, RunID: run.RunID, Limit: 25})
 	require.NoError(t, err)
@@ -122,6 +126,195 @@ func TestDreamDiagnosticsAreTeamScopedAndExpirePayloads(t *testing.T) {
 	require.Equal(t, 1, deleted)
 	_, err = store.GetDreamDiagnostic(ctx, teamID, run.RunID, expiredID)
 	require.ErrorIs(t, err, dreamcontract.ErrDreamDiagnosticNotFound)
+}
+
+func TestDreamDiagnosticDeadlineMarkerPersistsWithPartialPhaseTrace(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "dream-diagnostics-deadline")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "dream-diagnostics-deadline-owner")
+	store := newDreamFixtureStore(appDB, rls)
+	run, err := store.ClaimDreamCycle(ctx, dreamcontract.DreamCycleClaimInput{
+		TeamID: teamID, InitiatedByProfileID: ownerID, RunDate: "2026-09-21",
+		WindowKey: "manual:diagnostic-deadline", LeaseToken: uuid.NewString(), LeaseUntil: time.Now().UTC().Add(time.Minute),
+	})
+	require.NoError(t, err)
+	require.True(t, run.Claimed)
+
+	require.NoError(t, adminDB.Exec(fmt.Sprintf(`
+		CREATE OR REPLACE FUNCTION dense_mem_test_reject_primary_run_diagnostic()
+		RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.team_id = '%s'::uuid AND NEW.run_id = '%s'::uuid
+				AND NEW.phase = 'run' AND NEW.capture_reason <> 'diagnostic_capture_failed' THEN
+				RAISE EXCEPTION 'planned primary diagnostic failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$
+	`, teamID, run.RunID)).Error)
+	require.NoError(t, adminDB.Exec(`
+		CREATE TRIGGER dense_mem_test_reject_primary_run_diagnostic
+		BEFORE INSERT ON dream_diagnostic_captures
+		FOR EACH ROW EXECUTE FUNCTION dense_mem_test_reject_primary_run_diagnostic()
+	`).Error)
+	defer func() {
+		require.NoError(t, adminDB.Exec(`DROP TRIGGER dense_mem_test_reject_primary_run_diagnostic ON dream_diagnostic_captures`).Error)
+		require.NoError(t, adminDB.Exec(`DROP FUNCTION dense_mem_test_reject_primary_run_diagnostic()`).Error)
+	}()
+
+	expected := []map[string]any{
+		{"phase": "target", "hypothesis_id": "", "count": 1},
+		{"phase": "provider", "hypothesis_id": "", "count": 1},
+	}
+	primary := dreamcontract.DreamDiagnosticCaptureInput{
+		TeamID: teamID, RunID: run.RunID, Phase: "run", Outcome: "completed",
+		Details:      map[string]any{"status": "completed", "phase_trace_expected": expected},
+		CaptureState: "not_captured", CaptureReason: "provider_payload_not_retained",
+	}
+	require.Error(t, store.RecordDreamRunDiagnostics(ctx, primary), "the scoped trigger forces the primary run capture to use its fallback")
+	fallback := primary
+	fallback.Details = map[string]any{"status": "completed", "capture_failed": true, "phase_trace_expected": expected}
+	fallback.CaptureState = "unavailable"
+	fallback.CaptureReason = "diagnostic_capture_failed"
+	require.NoError(t, store.RecordDreamRunDiagnostics(ctx, fallback))
+	require.NoError(t, store.RecordDreamRunDiagnostics(ctx, fallback), "retrying a run summary must not add another run capture")
+
+	require.NoError(t, store.RecordDreamDiagnostic(ctx, dreamcontract.DreamDiagnosticCaptureInput{
+		TeamID: teamID, RunID: run.RunID, Phase: "target", Outcome: "completed",
+		CaptureState: "not_captured", CaptureReason: "phase_metadata_only",
+	}))
+
+	page, err := store.ListDreamDiagnostics(ctx, dreamcontract.DreamDiagnosticListInput{TeamID: teamID, RunID: run.RunID, Limit: 25})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 2)
+	runCaptures := 0
+	for _, capture := range page.Items {
+		if capture.Phase != "run" {
+			continue
+		}
+		runCaptures++
+		require.Equal(t, true, capture.Details["phase_trace_truncated"])
+		require.NotContains(t, capture.Details, "phase_trace_expected")
+		require.Equal(t, "unavailable", capture.CaptureState)
+		detail, detailErr := store.GetDreamDiagnostic(ctx, teamID, run.RunID, capture.CaptureID)
+		require.NoError(t, detailErr)
+		require.Equal(t, true, detail.Details["phase_trace_truncated"])
+	}
+	require.Equal(t, 1, runCaptures)
+
+	require.NoError(t, store.RecordDreamDiagnostic(ctx, dreamcontract.DreamDiagnosticCaptureInput{
+		TeamID: teamID, RunID: run.RunID, Phase: "provider", Outcome: "completed",
+		CaptureState: "not_captured", CaptureReason: "phase_metadata_only",
+	}))
+	page, err = store.ListDreamDiagnostics(ctx, dreamcontract.DreamDiagnosticListInput{TeamID: teamID, RunID: run.RunID, Limit: 25})
+	require.NoError(t, err)
+	runCaptures = 0
+	for _, capture := range page.Items {
+		if capture.Phase != "run" {
+			continue
+		}
+		runCaptures++
+		require.Equal(t, false, capture.Details["phase_trace_truncated"])
+	}
+	require.Equal(t, 1, runCaptures)
+	var persistedRunCaptures int
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*) FROM dream_diagnostic_captures
+			WHERE team_id = ?::uuid AND run_id = ?::uuid AND phase = 'run' AND hypothesis_id IS NULL
+		`, teamID, run.RunID).Scan(&persistedRunCaptures).Error
+	}))
+	require.Equal(t, 1, persistedRunCaptures)
+}
+
+func TestDreamDiagnosticRunSummaryRetriesSerializeConcurrently(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	teamID := createLedgerTeam(t, adminDB, rls, "dream-diagnostics-concurrent-summary")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "dream-diagnostics-concurrent-owner")
+	store := newDreamFixtureStore(appDB, rls)
+	run, err := store.ClaimDreamCycle(ctx, dreamcontract.DreamCycleClaimInput{
+		TeamID: teamID, InitiatedByProfileID: ownerID, RunDate: "2026-09-21",
+		WindowKey: "manual:concurrent-diagnostic-summary", LeaseToken: uuid.NewString(), LeaseUntil: time.Now().UTC().Add(time.Minute),
+	})
+	require.NoError(t, err)
+	require.True(t, run.Claimed)
+
+	lockKey := dreamDiagnosticRunSummaryLockNamespace + teamID + ":" + run.RunID
+	lockTx := adminDB.WithContext(ctx).Begin()
+	require.NoError(t, lockTx.Error)
+	require.NoError(t, lockTx.Exec(
+		"SELECT pg_advisory_xact_lock(hashtextextended(?, ?))",
+		lockKey, dreamDiagnosticRunSummaryLockHashSeed,
+	).Error)
+	defer func() { _ = lockTx.Rollback().Error }()
+
+	input := dreamcontract.DreamDiagnosticCaptureInput{
+		TeamID: teamID, RunID: run.RunID, Phase: "run", Outcome: "completed",
+		Details:      map[string]any{"status": "completed", "phase_trace_expected": []map[string]any{}},
+		CaptureState: "not_captured", CaptureReason: "provider_payload_not_retained",
+	}
+	start := make(chan struct{})
+	ready := make(chan struct{}, 2)
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			ready <- struct{}{}
+			<-start
+			results <- store.RecordDreamRunDiagnostics(ctx, input)
+		}()
+	}
+	<-ready
+	<-ready
+	close(start)
+
+	waitingDeadline := time.Now().Add(2 * time.Second)
+	waiting := 0
+	for {
+		err = adminDB.WithContext(ctx).Raw(`
+			SELECT count(*) FROM pg_locks
+			WHERE locktype = 'advisory' AND NOT granted
+			  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+		`).Scan(&waiting).Error
+		if err != nil || waiting == 2 || time.Now().After(waitingDeadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil || waiting != 2 {
+		_ = lockTx.Rollback().Error
+		for range 2 {
+			select {
+			case <-results:
+			case <-ctx.Done():
+				t.Fatalf("diagnostic retry did not finish after releasing the test lock: %v", ctx.Err())
+			}
+		}
+		require.NoError(t, err)
+		require.Equal(t, 2, waiting, "both PostgreSQL retries must contend on the run-summary advisory lock")
+	}
+	require.NoError(t, lockTx.Commit().Error)
+	for range 2 {
+		select {
+		case err := <-results:
+			require.NoError(t, err)
+		case <-ctx.Done():
+			t.Fatalf("concurrent diagnostic retries did not finish: %v", ctx.Err())
+		}
+	}
+
+	var persistedRunCaptures int
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*) FROM dream_diagnostic_captures
+			WHERE team_id = ?::uuid AND run_id = ?::uuid AND phase = 'run' AND hypothesis_id IS NULL
+		`, teamID, run.RunID).Scan(&persistedRunCaptures).Error
+	}))
+	require.Equal(t, 1, persistedRunCaptures)
 }
 
 func TestDreamDiagnosticsPersistBothLanesWithScopedPagination(t *testing.T) {

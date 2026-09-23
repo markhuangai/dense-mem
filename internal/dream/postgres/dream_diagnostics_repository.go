@@ -17,10 +17,34 @@ import (
 )
 
 const (
-	dreamDiagnosticRetention = 7 * 24 * time.Hour
-	maxDreamDiagnosticBytes  = 64 << 10
-	maxDreamDiagnosticPage   = 100
+	dreamDiagnosticRetention                     = 7 * 24 * time.Hour
+	maxDreamDiagnosticBytes                      = 64 << 10
+	maxDreamDiagnosticPage                       = 100
+	dreamDiagnosticRunSummaryLockNamespace       = "dense-mem:dream-run-diagnostic:v1:"
+	dreamDiagnosticRunSummaryLockHashSeed  int64 = 324
 )
+
+const dreamDiagnosticDetailsProjection = `CASE
+	WHEN capture.phase = 'run' AND jsonb_exists(capture.details, 'phase_trace_expected') THEN
+		(capture.details - 'phase_trace_expected') || jsonb_build_object(
+			'phase_trace_truncated',
+			COALESCE((capture.details->>'phase_trace_truncated')::boolean, false)
+			OR EXISTS (
+				SELECT 1
+				FROM jsonb_to_recordset(capture.details->'phase_trace_expected')
+					AS expected(phase text, hypothesis_id text, count bigint)
+				WHERE (
+					SELECT count(*)
+					FROM dream_diagnostic_captures AS phase_capture
+					WHERE phase_capture.team_id = capture.team_id
+					  AND phase_capture.run_id = capture.run_id
+					  AND phase_capture.phase = expected.phase
+					  AND COALESCE(phase_capture.hypothesis_id::text, '') = expected.hypothesis_id
+				) < expected.count
+			)
+		)
+	ELSE capture.details
+END`
 
 var _ dreamcontract.DreamDiagnosticRepository = (*Store)(nil)
 
@@ -135,16 +159,40 @@ func (r *Store) RecordDreamRunDiagnostics(ctx context.Context, input dreamcontra
 		input.CaptureState = "not_captured"
 	}
 	input.Phase = "run"
+	input.HypothesisID = ""
 	prepared, err := prepareDreamDiagnosticInput(input)
 	if err != nil {
 		return err
 	}
+	err = r.withTeamTx(ctx, prepared.input.TeamID, func(tx *gorm.DB) error {
+		lockKey := dreamDiagnosticRunSummaryLockNamespace + prepared.input.TeamID + ":" + prepared.input.RunID
+		if err := tx.WithContext(ctx).Exec(
+			"SELECT pg_advisory_xact_lock(hashtextextended(?, ?))",
+			lockKey, dreamDiagnosticRunSummaryLockHashSeed,
+		).Error; err != nil {
+			return err
+		}
+		var hasRunCapture bool
+		if err := tx.WithContext(ctx).Raw(`
+			SELECT EXISTS (
+				SELECT 1 FROM dream_diagnostic_captures
+				WHERE team_id = ?::uuid AND run_id = ?::uuid AND phase = 'run' AND hypothesis_id IS NULL
+			)
+		`, prepared.input.TeamID, prepared.input.RunID).Row().Scan(&hasRunCapture); err != nil {
+			return err
+		}
+		if !hasRunCapture {
+			return insertDreamDiagnosticTx(ctx, tx, prepared)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("dream diagnostic summary: %w", err)
+	}
+
 	// Add bounded proposal and disposition rows for every committed Hypothesis.
 	// The Hypothesis table remains the authority for identity and derivation.
 	err = r.withTeamTx(ctx, prepared.input.TeamID, func(tx *gorm.DB) error {
-		if err := insertDreamDiagnosticTx(ctx, tx, prepared); err != nil {
-			return err
-		}
 		proposalQuery := fmt.Sprintf(`
 				INSERT INTO dream_diagnostic_captures (
 					team_id, run_id, hypothesis_id, phase, outcome, details,
@@ -269,28 +317,28 @@ func (r *Store) ListDreamDiagnostics(ctx context.Context, input dreamcontract.Dr
 	page := dreamcontract.DreamDiagnosticPage{Items: []dreamcontract.DreamDiagnosticCapture{}}
 	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		query := `
-			SELECT capture_id::text, run_id::text, COALESCE(hypothesis_id::text, ''), phase, outcome, cause,
-			       CASE WHEN expires_at <= CURRENT_TIMESTAMP THEN '{}'::jsonb ELSE details END,
+			SELECT capture.capture_id::text, capture.run_id::text, COALESCE(capture.hypothesis_id::text, ''), capture.phase, capture.outcome, capture.cause,
+			       CASE WHEN capture.expires_at <= CURRENT_TIMESTAMP THEN '{}'::jsonb ELSE ` + dreamDiagnosticDetailsProjection + ` END,
 			       '{}'::jsonb,
-			       CASE WHEN expires_at <= CURRENT_TIMESTAMP THEN 'expired' ELSE capture_state END,
-			       CASE WHEN expires_at <= CURRENT_TIMESTAMP THEN 'retention_expired' ELSE capture_reason END,
-			       captured_at, expires_at, created_at
-			FROM dream_diagnostic_captures
-			WHERE team_id = ?::uuid`
+			       CASE WHEN capture.expires_at <= CURRENT_TIMESTAMP THEN 'expired' ELSE capture.capture_state END,
+			       CASE WHEN capture.expires_at <= CURRENT_TIMESTAMP THEN 'retention_expired' ELSE capture.capture_reason END,
+			       capture.captured_at, capture.expires_at, capture.created_at
+			FROM dream_diagnostic_captures AS capture
+			WHERE capture.team_id = ?::uuid`
 		args := []any{input.TeamID}
 		if input.RunID != uuid.Nil.String() {
-			query += " AND run_id = ?::uuid"
+			query += " AND capture.run_id = ?::uuid"
 			args = append(args, input.RunID)
 		}
 		if input.HypothesisID != "" {
-			query += " AND hypothesis_id = ?::uuid"
+			query += " AND capture.hypothesis_id = ?::uuid"
 			args = append(args, input.HypothesisID)
 		}
 		if cursor != nil {
-			query += " AND (created_at, capture_id) < (?, ?::uuid)"
+			query += " AND (capture.created_at, capture.capture_id) < (?, ?::uuid)"
 			args = append(args, cursor.createdAt, cursor.captureID)
 		}
-		query += " ORDER BY created_at DESC, capture_id DESC LIMIT ?"
+		query += " ORDER BY capture.created_at DESC, capture.capture_id DESC LIMIT ?"
 		args = append(args, limit+1)
 		rows, err := tx.WithContext(ctx).Raw(query, args...).Rows()
 		if err != nil {
@@ -332,14 +380,14 @@ func (r *Store) GetDreamDiagnostic(ctx context.Context, teamID, runID, captureID
 	var result *dreamcontract.DreamDiagnosticCapture
 	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
 		row := tx.WithContext(ctx).Raw(`
-			SELECT capture_id::text, run_id::text, COALESCE(hypothesis_id::text, ''), phase, outcome, cause,
-			       CASE WHEN expires_at <= CURRENT_TIMESTAMP THEN '{}'::jsonb ELSE details END,
-			       CASE WHEN expires_at <= CURRENT_TIMESTAMP THEN '{}'::jsonb ELSE payload END,
-			       CASE WHEN expires_at <= CURRENT_TIMESTAMP THEN 'expired' ELSE capture_state END,
-			       CASE WHEN expires_at <= CURRENT_TIMESTAMP THEN 'retention_expired' ELSE capture_reason END,
-			       captured_at, expires_at, created_at
-			FROM dream_diagnostic_captures
-			WHERE team_id = ?::uuid AND run_id = ?::uuid AND capture_id = ?::uuid
+			SELECT capture.capture_id::text, capture.run_id::text, COALESCE(capture.hypothesis_id::text, ''), capture.phase, capture.outcome, capture.cause,
+			       CASE WHEN capture.expires_at <= CURRENT_TIMESTAMP THEN '{}'::jsonb ELSE `+dreamDiagnosticDetailsProjection+` END,
+			       CASE WHEN capture.expires_at <= CURRENT_TIMESTAMP THEN '{}'::jsonb ELSE capture.payload END,
+			       CASE WHEN capture.expires_at <= CURRENT_TIMESTAMP THEN 'expired' ELSE capture.capture_state END,
+			       CASE WHEN capture.expires_at <= CURRENT_TIMESTAMP THEN 'retention_expired' ELSE capture.capture_reason END,
+			       capture.captured_at, capture.expires_at, capture.created_at
+			FROM dream_diagnostic_captures AS capture
+			WHERE capture.team_id = ?::uuid AND capture.run_id = ?::uuid AND capture.capture_id = ?::uuid
 		`, teamID, runID, captureID).Row()
 		item, err := scanDreamDiagnosticCaptureRow(row, teamID)
 		if errors.Is(err, sql.ErrNoRows) {
