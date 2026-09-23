@@ -184,6 +184,14 @@ test("control panel loads team Dreams without re-evaluation", async ({ page }) =
 
   await expect(page.getByRole("heading", { name: "Dream Outputs" })).toBeVisible();
   await expect(page.getByText(dreamStatement, { exact: true })).toBeVisible();
+  const runRow = page.locator(".dream-runs-table tbody tr").first();
+  await runRow.getByRole("button", { name: "Inspect" }).click();
+  await expect(page.getByRole("region", { name: "Dream diagnostics" })).toBeVisible();
+  const captureButton = page.getByRole("button", { name: "View capture" }).first();
+  if (await captureButton.count()) {
+    await captureButton.click();
+    await expect(page.getByText("Selected capture")).toBeVisible();
+  }
   await expect(page.getByText(/authenticated actor context is required/i)).toHaveCount(0);
   expect(refreshRequests).toEqual([]);
 });

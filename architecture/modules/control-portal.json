@@ -14,6 +14,11 @@
         "visibility": "private"
       },
       {
+        "id": "web/src/dream-diagnostics-api-types.ts",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
         "id": "web/src/community-api-types.ts",
         "role": "transport",
         "visibility": "private"

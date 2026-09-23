@@ -184,6 +184,11 @@ func (s *Scheduler) runDue(ctx context.Context) {
 			}
 			if cycleErr != nil {
 				s.logError("dreaming scheduler: cycle failed", slog.String("team_id", teamID), slog.String("error_kind", "cycle_failed"))
+			} else if result != nil && result.Status == "skipped" && state == scheduledWindowDue && result.RunID != "" {
+				s.markObserved(teamID, runDate)
+				s.logInfo("dreaming scheduler: cycle observed after claim loss",
+					slog.String("team_id", teamID), slog.String("run_id", result.RunID),
+					slog.String("run_date", runDate), slog.String("status", result.Status))
 			} else if result == nil || result.Status == "skipped" {
 				s.logWarn("dreaming scheduler: cycle skipped before it could claim the window", slog.String("team_id", teamID), slog.String("run_date", runDate))
 			} else {
@@ -271,6 +276,15 @@ func (s *Scheduler) runEvidenceDue(ctx context.Context, teamID string, cfg Effec
 		return
 	}
 	if result == nil || result.Status == "skipped" {
+		if result != nil && result.RunID != "" {
+			s.markHourlyObserved(teamID, windowKey)
+			s.logInfo("dreaming scheduler: evidence cycle observed after claim loss",
+				slog.String("team_id", teamID), slog.String("run_id", result.RunID),
+				slog.String("window_key", windowKey), slog.String("status", result.Status))
+		} else {
+			s.logWarn("dreaming scheduler: evidence cycle skipped before it could claim the window",
+				slog.String("team_id", teamID), slog.String("window_key", windowKey))
+		}
 		return
 	}
 	s.markHourlyObserved(teamID, windowKey)

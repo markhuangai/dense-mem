@@ -29,6 +29,7 @@ type ControlPortalTelemetry struct {
 	Logs                operations.OperationLogReader
 	RecallFeedback      recall.RecallFeedbackEventReader
 	Dreams              dream.ControlService
+	DreamDiagnostics    dream.DiagnosticService
 	Communities         communityapp.Service
 	ConflictQueue       conflictqueue.Reader
 	EvidenceConflicts   evidenceconflict.Reader
@@ -47,6 +48,7 @@ type controlPortalHandler struct {
 	operationLogs       operations.OperationLogReader
 	recallFeedback      recall.RecallFeedbackEventReader
 	dreams              dream.ControlService
+	dreamDiagnostics    dream.DiagnosticService
 	communities         communityapp.Service
 	conflictQueue       conflictqueue.Reader
 	evidenceConflicts   evidenceconflict.Reader

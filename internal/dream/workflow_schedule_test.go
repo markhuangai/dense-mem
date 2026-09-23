@@ -62,6 +62,26 @@ func TestRecordMissedScheduledCycleUsesDSTGapRunDate(t *testing.T) {
 	require.Equal(t, "2026-03-08", repo.missedInput.WindowKey)
 }
 
+func TestRecordMissedScheduledCycleDoesNotRecordDiagnosticsWhenInsertLosesRace(t *testing.T) {
+	teamID := uuid.New()
+	repo := &dreamRepositoryStub{missedRun: &dreamcontract.DreamCycleRun{
+		TeamID: teamID.String(), RunID: uuid.NewString(), RunDate: "2026-07-17",
+		WindowKey: "2026-07-17", Status: "missed", Claimed: false,
+	}}
+	diagnostics := &diagnosticRepositoryStub{}
+	svc := New(Dependencies{
+		Store: repo, ScheduledStore: repo, Diagnostics: diagnostics,
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, StartTimeLocal: "03:00", Timezone: "UTC", MaxOutputs: 5}},
+	})
+
+	result, err := svc.RecordMissedScheduledCycle(context.Background(), teamID.String(), "2026-07-17")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "missed", result.Status)
+	require.Empty(t, diagnostics.recorded)
+}
+
 func TestOptionalScheduledForLeavesUnresolvedWindowUnset(t *testing.T) {
 	require.Nil(t, optionalScheduledFor(time.Time{}, false))
 	window := time.Date(2026, 7, 17, 3, 0, 0, 0, time.UTC)
@@ -86,7 +106,20 @@ func TestScheduledCycleSkipsDisabledAndNonDueWindows(t *testing.T) {
 	result, err := disabled.RunScheduledCycle(context.Background(), teamID.String(), windowAt)
 	require.NoError(t, err)
 	require.Equal(t, "skipped", result.Status)
-	require.Empty(t, disabledRepo.claimInput.TeamID)
+	require.Equal(t, teamID.String(), disabledRepo.claimInput.TeamID)
+
+	disabledNonDueRepo := &dreamRepositoryStub{}
+	disabledNonDue := New(Dependencies{
+		Store:          disabledNonDueRepo,
+		ScheduledStore: disabledNonDueRepo,
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{
+			Enabled: false, StartTimeLocal: "03:00", Timezone: "UTC", MaxOutputs: 5,
+		}},
+	})
+	result, err = disabledNonDue.RunScheduledCycle(context.Background(), teamID.String(), windowAt.Add(time.Minute))
+	require.NoError(t, err)
+	require.Equal(t, "skipped", result.Status)
+	require.Empty(t, disabledNonDueRepo.claimInput.TeamID)
 
 	nonDueRepo := &dreamRepositoryStub{}
 	nonDue := New(Dependencies{

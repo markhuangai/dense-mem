@@ -12,7 +12,170 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
+	dreamapp "github.com/markhuangai/dense-mem/internal/dream"
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
+
+func TestResolveFeedbackRecordsDiagnosticAfterConfirmationLockRelease(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	teamID := createLedgerTeam(t, adminDB, rls, "dream-confirmation-diagnostic-lock")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "dream-confirmation-diagnostic-owner")
+	lockStore := NewStore(appDB, rls)
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
+		TeamID: uuid.MustParse(teamID), OwnerID: uuid.MustParse(ownerID),
+	})
+
+	for _, tc := range []struct {
+		name     string
+		decision string
+	}{
+		{name: "lifecycle feedback", decision: "reinforce"},
+		{name: "confirmation", decision: "confirm_true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hypothesisID := uuid.NewString()
+			fixture := &confirmationLockFixtureRepository{record: dreamcontract.HypothesisRecord{
+				TeamID: teamID, HypothesisID: hypothesisID, CycleRunID: uuid.NewString(),
+				CreatedByProfileID: ownerID, Status: string(domain.DreamStatusProposed),
+				Statement: "A fixture hypothesis requires independent evidence.",
+			}}
+			store := &confirmationLockServiceRepository{
+				DreamRepository: fixture,
+				lockStore:       lockStore,
+			}
+			diagnostics := &confirmationLockReacquireDiagnostics{
+				lockStore: lockStore, teamID: teamID, hypothesisID: hypothesisID,
+			}
+			deps := dreamapp.Dependencies{Store: store, Diagnostics: diagnostics}
+			request := dreamapp.ResolveFeedbackRequest{DreamID: hypothesisID, Decision: tc.decision}
+			if tc.decision == "confirm_true" {
+				deps.Remember = confirmationLockRememberService{result: completedConfirmationRememberResult(uuid.NewString())}
+				request.Evidence = []rememberapp.RememberEvidenceInput{{Content: "Independent fixture evidence."}}
+			}
+
+			result, err := dreamapp.New(deps).ResolveFeedback(ctx, "", request)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, 1, diagnostics.recordCalls)
+			require.NoError(t, diagnostics.reacquireErr)
+			require.True(t, diagnostics.reacquired)
+		})
+	}
+}
+
+type confirmationLockFixtureRepository struct {
+	dreamcontract.DreamRepository
+	record dreamcontract.HypothesisRecord
+}
+
+func (r *confirmationLockFixtureRepository) GetHypothesis(context.Context, dreamcontract.GetHypothesisInput) (*dreamcontract.HypothesisRecord, error) {
+	record := r.record
+	return &record, nil
+}
+
+func (r *confirmationLockFixtureRepository) UpdateHypothesisStatus(_ context.Context, input dreamcontract.UpdateHypothesisStatusInput) (*dreamcontract.HypothesisRecord, error) {
+	record := r.record
+	record.Status = input.Status
+	record.InvalidatedReason = input.InvalidatedReason
+	r.record = record
+	return &record, nil
+}
+
+func (r *confirmationLockFixtureRepository) SubmitHypothesis(_ context.Context, input dreamcontract.SubmitHypothesisInput) (*dreamcontract.HypothesisRecord, error) {
+	record := r.record
+	record.Status = string(domain.DreamStatusSubmitted)
+	record.SubmittedIngestID = input.SubmittedIngestID
+	record.SubmittedDecision = input.Decision
+	record.InvalidatedReason = input.InvalidatedReason
+	r.record = record
+	return &record, nil
+}
+
+type confirmationLockServiceRepository struct {
+	dreamcontract.DreamRepository
+	lockStore *Store
+}
+
+func (r *confirmationLockServiceRepository) WithHypothesisConfirmationLock(
+	ctx context.Context,
+	teamID string,
+	hypothesisID string,
+	fn func(dreamcontract.DreamRepository) error,
+) error {
+	return r.lockStore.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func(DreamRepository) error {
+		return fn(r)
+	})
+}
+
+type confirmationLockReacquireDiagnostics struct {
+	lockStore    *Store
+	teamID       string
+	hypothesisID string
+	recordCalls  int
+	reacquired   bool
+	reacquireErr error
+}
+
+func (r *confirmationLockReacquireDiagnostics) RecordDreamDiagnostic(ctx context.Context, _ dreamcontract.DreamDiagnosticCaptureInput) error {
+	r.recordCalls++
+	r.reacquireErr = r.lockStore.WithHypothesisConfirmationLock(ctx, r.teamID, r.hypothesisID, func(DreamRepository) error {
+		r.reacquired = true
+		return nil
+	})
+	return r.reacquireErr
+}
+
+func (*confirmationLockReacquireDiagnostics) RecordDreamRunDiagnostics(context.Context, dreamcontract.DreamDiagnosticCaptureInput) error {
+	return nil
+}
+
+func (*confirmationLockReacquireDiagnostics) ListDreamDiagnostics(context.Context, dreamcontract.DreamDiagnosticListInput) (dreamcontract.DreamDiagnosticPage, error) {
+	return dreamcontract.DreamDiagnosticPage{}, nil
+}
+
+func (*confirmationLockReacquireDiagnostics) GetDreamDiagnostic(context.Context, string, string, string) (*dreamcontract.DreamDiagnosticCapture, error) {
+	return nil, dreamcontract.ErrDreamDiagnosticNotFound
+}
+
+func (*confirmationLockReacquireDiagnostics) PurgeExpiredDreamDiagnostics(context.Context, int) (int, error) {
+	return 0, nil
+}
+
+type confirmationLockRememberService struct {
+	result *rememberapp.RememberResult
+}
+
+func (s confirmationLockRememberService) Remember(context.Context, rememberapp.RememberRequest) (*rememberapp.RememberResult, error) {
+	return s.result, nil
+}
+
+func completedConfirmationRememberResult(ingestID string) *rememberapp.RememberResult {
+	terminal := &rememberapp.TerminalRememberResult{
+		ContractVersion: domain.ContractVersion,
+		SubmissionID:    ingestID,
+		SubmissionKind:  "remember",
+		ProcessingState: string(rememberapp.TerminalProcessingCompleted),
+		Kind:            rememberapp.ResultKindTerminal,
+	}
+	return &rememberapp.RememberResult{
+		ContractVersion: terminal.ContractVersion,
+		IngestID:        terminal.SubmissionID,
+		SubmissionID:    terminal.SubmissionID,
+		SubmissionKind:  terminal.SubmissionKind,
+		ProcessingState: terminal.ProcessingState,
+		Kind:            rememberapp.ResultKindTerminal,
+		Terminal:        terminal,
+	}
+}
+
+var _ dreamcontract.DreamRepository = (*confirmationLockServiceRepository)(nil)
+var _ dreamcontract.DreamDiagnosticRepository = (*confirmationLockReacquireDiagnostics)(nil)
 
 func TestHypothesisConfirmationLockAdmitsOneCallback(t *testing.T) {
 	_, appDB, rls, cleanup := setupLedgerRepositoryDB(t)

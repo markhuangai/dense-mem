@@ -17,6 +17,13 @@
       "source": "internal/storage/postgres/hypothesis_team_predicate_migration_integration_test.go"
     },
     {
+      "id": "postgres/TestDreamDiagnosticsMigrationRetriesAndRejectsRollback",
+      "package": "./internal/storage/postgres",
+      "run": "^TestDreamDiagnosticsMigrationRetriesAndRejectsRollback$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/dream_diagnostics_migration_integration_test.go"
+    },
+    {
       "id": "repository/TestAdvisoryLockAdmissionsSharePoolBudgetAcrossEvidenceAndConfirmation",
       "package": "./internal/dream/postgres",
       "run": "^TestAdvisoryLockAdmissionsSharePoolBudgetAcrossEvidenceAndConfirmation$",
@@ -36,6 +43,20 @@
       "run": "^TestDreamRepositoryPersistsTeamScopedPredicateHypothesis$",
       "phase": "precheck",
       "source": "internal/dream/postgres/dream_repository_integration_test.go"
+    },
+    {
+      "id": "repository/TestDreamDiagnosticsAreTeamScopedAndExpirePayloads",
+      "package": "./internal/dream/postgres",
+      "run": "^TestDreamDiagnosticsAreTeamScopedAndExpirePayloads$",
+      "phase": "precheck",
+      "source": "internal/dream/postgres/dream_diagnostics_integration_test.go"
+    },
+    {
+      "id": "repository/TestDreamDiagnosticsPersistBothLanesWithScopedPagination",
+      "package": "./internal/dream/postgres",
+      "run": "^TestDreamDiagnosticsPersistBothLanesWithScopedPagination$",
+      "phase": "precheck",
+      "source": "internal/dream/postgres/dream_diagnostics_integration_test.go"
     },
     {
       "id": "repository/TestEvidenceDiscoveryContextsPrioritizeSameSourceAndExcludePrivateSpaces",
@@ -188,6 +209,13 @@
       "id": "repository/TestHypothesisConfirmationLockUsesCanonicalAlias",
       "package": "./internal/dream/postgres",
       "run": "^TestHypothesisConfirmationLockUsesCanonicalAlias$",
+      "phase": "precheck",
+      "source": "internal/dream/postgres/dream_confirmation_lock_integration_test.go"
+    },
+    {
+      "id": "repository/TestResolveFeedbackRecordsDiagnosticAfterConfirmationLockRelease",
+      "package": "./internal/dream/postgres",
+      "run": "^TestResolveFeedbackRecordsDiagnosticAfterConfirmationLockRelease$",
       "phase": "precheck",
       "source": "internal/dream/postgres/dream_confirmation_lock_integration_test.go"
     },

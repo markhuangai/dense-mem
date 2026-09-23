@@ -105,6 +105,32 @@ func TestResolveFeedbackUsesExplicitRememberResultKind(t *testing.T) {
 	}
 }
 
+func TestResolveFeedbackRecordsMalformedTerminalResultDiagnostic(t *testing.T) {
+	teamID, ownerID := uuid.New(), uuid.New()
+	hypothesisID, runID := uuid.NewString(), uuid.NewString()
+	diagnostics := &diagnosticRepositoryStub{}
+	svc := New(Dependencies{
+		Store: &dreamRepositoryStub{getRecord: dreamcontract.HypothesisRecord{
+			TeamID: teamID.String(), HypothesisID: hypothesisID, CycleRunID: runID,
+			CreatedByProfileID: ownerID.String(), Status: string(domain.DreamStatusProposed),
+			Statement: "Dense-Mem may use PostgreSQL.",
+		}},
+		Remember:    &rememberServiceStub{result: &rememberapp.RememberResult{Kind: rememberapp.ResultKind("future")}},
+		Diagnostics: diagnostics,
+	})
+
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID: hypothesisID, Decision: "confirm_true",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "An independent deployment note."}},
+	})
+
+	require.ErrorContains(t, err, "terminal Remember result is required")
+	require.Len(t, diagnostics.recorded, 1)
+	require.Equal(t, "confirmation", diagnostics.recorded[0].Phase)
+	require.Equal(t, "failed", diagnostics.recorded[0].Outcome)
+	require.Equal(t, "confirm_true", diagnostics.recorded[0].Details["decision"])
+}
+
 func TestResolveFeedbackHonorsCancellationBeforeHypothesisFinalization(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()
@@ -184,7 +210,7 @@ func TestResolveFeedbackReplaysCompletedRememberResult(t *testing.T) {
 	hypothesisID := uuid.NewString()
 	ingestID := uuid.NewString()
 	repo := &dreamRepositoryStub{getRecord: dreamcontract.HypothesisRecord{
-		TeamID: teamID.String(), HypothesisID: hypothesisID, CreatedByProfileID: ownerID.String(),
+		TeamID: teamID.String(), HypothesisID: hypothesisID, CreatedByProfileID: ownerID.String(), CycleRunID: uuid.NewString(),
 		Status: string(domain.DreamStatusProposed), Statement: "Dense-Mem may use PostgreSQL.",
 	}}
 	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), ingestID)}
@@ -213,6 +239,111 @@ func TestResolveFeedbackReplaysCompletedRememberResult(t *testing.T) {
 	require.Equal(t, request.IdempotencyKey, remember.requests[0].IdempotencyKey)
 	require.Equal(t, request.IdempotencyKey, remember.requests[1].IdempotencyKey)
 	require.Equal(t, remember.requests[0].Evidence, remember.requests[1].Evidence)
+}
+
+func TestResolveFeedbackRecordsConfirmationFailureWhenRememberReturnsOrdinaryError(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	hypothesisID := uuid.NewString()
+	repo := &dreamRepositoryStub{getRecord: dreamcontract.HypothesisRecord{
+		TeamID: teamID.String(), HypothesisID: hypothesisID, CreatedByProfileID: ownerID.String(), CycleRunID: uuid.NewString(),
+		Status: string(domain.DreamStatusProposed), Statement: "Dense-Mem may use PostgreSQL.",
+	}}
+	diagnostics := &diagnosticRepositoryStub{}
+	remember := &rememberServiceStub{err: errors.New("database unavailable")}
+	svc := New(Dependencies{Store: repo, Remember: remember, Diagnostics: diagnostics})
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID: hypothesisID, Decision: "confirm_true", IdempotencyKey: "ordinary-error",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent evidence."}},
+	})
+	require.Error(t, err)
+	require.NotEmpty(t, diagnostics.recorded)
+	last := diagnostics.recorded[len(diagnostics.recorded)-1]
+	require.Equal(t, "confirmation", last.Phase)
+	require.Equal(t, "failed", last.Outcome)
+	require.Equal(t, "error_present:sha256:0a67cc6110b121fb", last.Cause)
+}
+
+func TestResolveFeedbackMarksTruncatedRelationshipResults(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	hypothesisID := uuid.NewString()
+	repo := &dreamRepositoryStub{getRecord: dreamcontract.HypothesisRecord{
+		TeamID: teamID.String(), HypothesisID: hypothesisID, CreatedByProfileID: ownerID.String(), CycleRunID: uuid.NewString(),
+		Status: string(domain.DreamStatusProposed), Statement: "Dense-Mem may use PostgreSQL.",
+	}}
+	rememberResult := dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), uuid.NewString())
+	rememberResult.Terminal.RelationshipResults = []rememberapp.SubmissionRelationshipResult{{
+		Disposition: "stored", Splits: make([]rememberapp.SubmissionRelationshipSplit, 9),
+	}}
+	diagnostics := &diagnosticRepositoryStub{}
+	svc := New(Dependencies{Store: repo, Remember: &rememberServiceStub{result: rememberResult}, Diagnostics: diagnostics})
+
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID: hypothesisID, Decision: "confirm_true", Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent evidence."}},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, diagnostics.recorded, 1)
+	confirmation := diagnostics.recorded[0]
+	require.Equal(t, "confirmation", confirmation.Phase)
+	require.Equal(t, true, confirmation.Details["relationship_results_truncated"])
+	projected, ok := confirmation.Details["relationship_results"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, projected, 1)
+	require.Len(t, projected[0]["splits"], 8)
+}
+
+func TestResolveFeedbackLabelsHypothesisFinalizationFailureAsFailed(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	hypothesisID := uuid.NewString()
+	repo := &dreamRepositoryStub{
+		getRecord: dreamcontract.HypothesisRecord{
+			TeamID: teamID.String(), HypothesisID: hypothesisID, CreatedByProfileID: ownerID.String(), CycleRunID: uuid.NewString(),
+			Status: string(domain.DreamStatusProposed), Statement: "Dense-Mem may use PostgreSQL.",
+		},
+		submitErrs: []error{errors.New("submit failed"), errors.New("submit retry failed")},
+	}
+	diagnostics := &diagnosticRepositoryStub{}
+	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), uuid.NewString())}
+	svc := New(Dependencies{Store: repo, Remember: remember, Diagnostics: diagnostics})
+
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID: hypothesisID, Decision: "confirm_true", IdempotencyKey: "submit-failure",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent evidence."}},
+	})
+
+	require.Error(t, err)
+	require.NotEmpty(t, diagnostics.recorded)
+	last := diagnostics.recorded[len(diagnostics.recorded)-1]
+	require.Equal(t, "confirmation", last.Phase)
+	require.Equal(t, "failed", last.Outcome)
+}
+
+func TestResolveLifecycleFeedbackLabelsFinalizationFailureAsFailed(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	hypothesisID := uuid.NewString()
+	repo := &dreamRepositoryStub{
+		getRecord: dreamcontract.HypothesisRecord{
+			TeamID: teamID.String(), HypothesisID: hypothesisID, CreatedByProfileID: ownerID.String(), CycleRunID: uuid.NewString(),
+			Status: string(domain.DreamStatusProposed), Statement: "Dense-Mem may use PostgreSQL.",
+		},
+		updateErr: errors.New("update failed"),
+	}
+	diagnostics := &diagnosticRepositoryStub{}
+	svc := New(Dependencies{Store: repo, Diagnostics: diagnostics})
+
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID: hypothesisID, Decision: "reject", Feedback: "no longer useful",
+	})
+
+	require.Error(t, err)
+	require.NotEmpty(t, diagnostics.recorded)
+	last := diagnostics.recorded[len(diagnostics.recorded)-1]
+	require.Equal(t, "feedback", last.Phase)
+	require.Equal(t, "failed", last.Outcome)
 }
 
 func TestResolveFeedbackReplaysPreUpgradeSubmittedRememberWithoutCallingRemember(t *testing.T) {

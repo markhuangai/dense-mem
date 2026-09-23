@@ -5,6 +5,8 @@ import type { SearchConvergence } from "./search-convergence-types";
 import type { EvidenceConflictDetail, EvidenceConflictListPage, EvidenceConflictListQuery, EvidenceConflict } from "./evidence-conflict-api-types";
 import { getEvidenceConflict as getEvidenceConflictRequest, listEvidenceConflicts as listEvidenceConflictsRequest, resolveEvidenceConflict as resolveEvidenceConflictRequest } from "./evidence-conflict-api";
 import { requestJson } from "./http";
+import type { DreamDiagnostic, DreamDiagnosticPage } from "./dream-diagnostics-api-types";
+export type { DreamDiagnostic, DreamDiagnosticPage } from "./dream-diagnostics-api-types";
 import {
   buildRememberAttemptDiagnosticPath, buildRememberAttemptDiagnosticsPath,
   buildRememberInvocationDiagnosticPath, buildRememberInvocationDiagnosticsPath,
@@ -603,7 +605,6 @@ export type DreamStatus = {
   latest_run?: DreamRun | null;
   pending_count: number;
 };
-
 export type DreamQuery = {
   limit?: number;
   status?: Dream["status"] | "";
@@ -611,7 +612,6 @@ export type DreamQuery = {
   sort?: DreamSort;
   direction?: DreamDirection;
 };
-
 export type DreamListResponse = {
   items: Dream[];
   next_cursor?: string;
@@ -958,7 +958,6 @@ export class ControlApi {
   listTeamDreamingRuns(teamId: string, limit = 20): Promise<DreamRun[]> {
     return this.requestEnvelope<DreamRun[]>(`/teams/${teamId}/dreaming/runs?limit=${limit}`);
   }
-
   listTeamDreams(teamId: string, query: DreamQuery = {}): Promise<DreamListResponse> {
     const params = new URLSearchParams();
     if (query.limit !== undefined) {
@@ -979,12 +978,14 @@ export class ControlApi {
     const suffix = params.toString() ? `?${params.toString()}` : "";
     return this.requestEnvelope<DreamListResponse>(`/teams/${teamId}/dreams${suffix}`);
   }
-
+  listTeamDreamDiagnostics(teamId: string, runId: string, limit = 25, cursor = ""): Promise<DreamDiagnosticPage> { return this.listDreamDiagnostics(`/teams/${encodeURIComponent(teamId)}/dreaming/runs/${encodeURIComponent(runId)}/diagnostics`, limit, cursor); }
+  listTeamDreamDiagnosticsForHypothesis(teamId: string, hypothesisId: string, limit = 25, cursor = ""): Promise<DreamDiagnosticPage> { return this.listDreamDiagnostics(`/teams/${encodeURIComponent(teamId)}/dreams/${encodeURIComponent(hypothesisId)}/diagnostics`, limit, cursor); }
+  getTeamDreamDiagnostic(teamId: string, runId: string, diagnosticId: string): Promise<DreamDiagnostic> { return this.requestEnvelope<DreamDiagnostic>(`/teams/${encodeURIComponent(teamId)}/dreaming/runs/${encodeURIComponent(runId)}/diagnostics/${encodeURIComponent(diagnosticId)}`); }
+  private listDreamDiagnostics(path: string, limit: number, cursor: string): Promise<DreamDiagnosticPage> { const params = new URLSearchParams({ limit: String(limit) }); if (cursor) params.set("cursor", cursor); return this.requestEnvelope<DreamDiagnosticPage>(`${path}?${params}`); }
   private async requestEnvelope<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const payload = await this.request<{ data: T }>(path, options);
     return payload.data;
   }
-
   private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     return requestJson<T>(`${this.baseUrl}${path}`, {
       method: options.method ?? "GET",

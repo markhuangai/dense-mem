@@ -116,6 +116,54 @@ type DreamCycleRun struct {
 	EvaluatedEvidenceTargets int
 }
 
+// DreamDiagnosticCapture is a bounded operator-facing record of one Dream
+// execution phase. Its details are a protected projection; they are never
+// submitted as evidence or treated as semantic state.
+type DreamDiagnosticCapture struct {
+	TeamID        string
+	CaptureID     string
+	RunID         string
+	HypothesisID  string
+	Phase         string
+	Outcome       string
+	Cause         string
+	Details       map[string]any
+	Payload       []byte
+	CaptureState  string
+	CaptureReason string
+	CapturedAt    *time.Time
+	ExpiresAt     time.Time
+	CreatedAt     time.Time
+}
+
+type DreamDiagnosticCaptureInput struct {
+	TeamID        string
+	RunID         string
+	HypothesisID  string
+	Phase         string
+	Outcome       string
+	Cause         string
+	Details       map[string]any
+	Payload       []byte
+	CaptureState  string
+	CaptureReason string
+	CapturedAt    *time.Time
+	ExpiresAt     time.Time
+}
+
+type DreamDiagnosticListInput struct {
+	TeamID       string
+	RunID        string
+	HypothesisID string
+	Limit        int
+	Cursor       string
+}
+
+type DreamDiagnosticPage struct {
+	Items      []DreamDiagnosticCapture
+	NextCursor string
+}
+
 type DreamInputListInput struct {
 	TeamID string
 	Limit  int
@@ -186,6 +234,7 @@ type DreamPathEvaluationInput struct {
 
 type DreamPathEvaluationRecordInput struct {
 	TeamID             string
+	RunID              string
 	CreatedByProfileID string
 	ProviderModel      string
 	Paths              []DreamPathEvaluationInput

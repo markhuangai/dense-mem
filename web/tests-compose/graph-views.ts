@@ -1,11 +1,13 @@
-import { expect, test, type APIRequestContext } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
 const userUrl = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlUrl = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
 const seedTeamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
+const seedTeamName = requiredEnv("DENSE_MEM_E2E_TEAM_NAME");
 const seedApiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
 const dreamStatement = requiredEnv("DENSE_MEM_E2E_DREAM_STATEMENT");
+const evidenceFailureTeamName = requiredEnv("DENSE_MEM_E2E_EVIDENCE_FAILURE_TEAM_NAME");
 let mcpRequestID = 0;
 
 type GraphNode = {
@@ -31,6 +33,38 @@ type GraphEntity = {
 };
 
 export function registerGraphViewTests() {
+  test("control panel shows expired Dream diagnostics without shell overlap", async ({ page }) => {
+    await stubDreamDiagnostics(page, (runID) => ({ items: [{
+      capture_id: "99999999-9999-4999-8999-999999999999", team_id: seedTeamID, run_id: runID,
+      phase: "provider", outcome: "failed", cause: "provider_unavailable", details: { capture_failed: true },
+      capture_state: "expired", capture_reason: "retention_expired", expires_at: "2026-08-01T00:00:00Z", created_at: "2026-07-28T03:00:01Z",
+    }], next_cursor: "" }));
+    await openControlPanel(page);
+    await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
+    await page.getByRole("button", { name: /team dreams/i }).click();
+    await page.locator(".dream-runs-table tbody tr").first().getByRole("button", { name: "Inspect" }).click();
+    const diagnostics = page.getByRole("region", { name: "Dream diagnostics" });
+    await expect(diagnostics.getByText("Loading Dream diagnostics")).toBeVisible();
+    await expect(diagnostics).toContainText("expired · retention_expired");
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expectNoShellOverlap(page);
+  });
+
+  test("control panel shows the no-retention Dream diagnostic placeholder", async ({ page }) => {
+    await stubDreamDiagnostics(page, () => ({ items: [], next_cursor: "" }));
+    await openControlPanel(page);
+    await page.getByRole("button", { name: new RegExp(escapeRegExp(evidenceFailureTeamName)) }).click();
+    await page.getByRole("button", { name: /team dreams/i }).click();
+    const failedRun = page.locator(".dream-runs-table tbody tr").filter({ hasText: "Evidence discovery" }).filter({ hasText: "failed" });
+    await expect(failedRun).toHaveCount(1);
+    await failedRun.getByRole("button", { name: "Inspect" }).click();
+    const diagnostics = page.getByRole("region", { name: "Dream diagnostics" });
+    await expect(diagnostics.getByText("Loading Dream diagnostics")).toBeVisible();
+    await expect(diagnostics).toContainText("No diagnostic capture was retained for this selection.");
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expectNoShellOverlap(page);
+  });
+
   test("graph views preserve scoped reads and adverse boundaries", async ({ request }, testInfo) => {
     test.setTimeout(120_000);
     const headers = { Authorization: `Bearer ${seedApiKey}` };
@@ -128,6 +162,47 @@ export function registerGraphViewTests() {
 }
 
 registerGraphViewTests();
+
+async function openControlPanel(page: Page) {
+  await page.goto(`${controlUrl}/`);
+  await page.getByLabel("Control token").fill(controlToken);
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await expect(page.getByRole("heading", { name: "Teams" })).toBeVisible();
+}
+
+async function stubDreamDiagnostics(page: Page, pageData: (runID: string) => unknown) {
+  await page.route("**/control/api/teams/*/dreaming/runs/*/diagnostics*", async (route) => {
+    const url = new URL(route.request().url());
+    if (!url.pathname.endsWith("/diagnostics")) {
+      await route.continue();
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: pageData(url.pathname.split("/")[7]) }) });
+  });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function expectNoShellOverlap(page: Page) {
+  const boxes = await page.locator(".topbar, .primary-rail, .resource-rail, .detail-pane").evaluateAll((elements) => elements.map((element) => {
+    const rect = element.getBoundingClientRect();
+    return { className: element.className, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
+  }));
+  for (const box of boxes) {
+    expect(box.width).toBeGreaterThan(0);
+    expect(box.height).toBeGreaterThan(0);
+  }
+  for (let i = 0; i < boxes.length; i += 1) {
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      const first = boxes[i];
+      const second = boxes[j];
+      expect(first.left < second.right && first.right > second.left && first.top < second.bottom && first.bottom > second.top, `${first.className} overlaps ${second.className}`).toBe(false);
+    }
+  }
+}
 
 function requiredEnv(name: string): string {
   const value = process.env[name];

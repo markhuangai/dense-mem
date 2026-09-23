@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ControlApi, Dream, DreamQuery, DreamRun, DreamSort, DreamStatus, Team } from "../api";
+import { ControlApi, Dream, DreamDiagnostic, DreamQuery, DreamRun, DreamSort, DreamStatus, Team } from "../api";
 import { InfoTooltip, LoadingState, SectionHeading } from "../ui/components";
 import { DreamEvidenceSummary, MetricLabel, runOutcome, runStatusClass } from "../ui/dreams";
 import { formatDate, readError } from "./utils";
@@ -21,7 +21,16 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
   const [nextCursor, setNextCursor] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [diagnosticRun, setDiagnosticRun] = useState<DreamRun | null>(null);
+  const [diagnostics, setDiagnostics] = useState<DreamDiagnostic[]>([]);
+  const [diagnosticCursor, setDiagnosticCursor] = useState("");
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [selectedDiagnostic, setSelectedDiagnostic] = useState<DreamDiagnostic | null>(null);
+  const [diagnosticHypothesis, setDiagnosticHypothesis] = useState<string | null>(null);
   const requestSeqRef = useRef(0);
+  const diagnosticRequestSeqRef = useRef(0);
+  const diagnosticDetailSeqRef = useRef(0);
+  const diagnosticSelectionRef = useRef("");
   const activeTeamIdRef = useRef(team.id);
 
   activeTeamIdRef.current = team.id;
@@ -63,8 +72,108 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
   }
 
   useEffect(() => {
+    diagnosticRequestSeqRef.current += 1;
+    diagnosticDetailSeqRef.current += 1;
+    diagnosticSelectionRef.current = "";
+    setDiagnosticRun(null);
+    setDiagnostics([]);
+    setDiagnosticCursor("");
+    setSelectedDiagnostic(null);
+    setDiagnosticHypothesis(null);
     void loadData({ ...dreamQuery, cursor: "" }, []);
   }, [team.id]);
+
+  async function inspectRun(run: DreamRun, cursor = "") {
+    const requestSeq = diagnosticRequestSeqRef.current + 1;
+    diagnosticRequestSeqRef.current = requestSeq;
+    const requestTeamId = team.id;
+    const selectionKey = `run:${run.run_id}`;
+    if (!cursor) {
+      diagnosticSelectionRef.current = selectionKey;
+      diagnosticDetailSeqRef.current += 1;
+      setDiagnostics([]);
+      setDiagnosticCursor("");
+      setSelectedDiagnostic(null);
+    }
+    setDiagnosticRun(run);
+    setDiagnosticHypothesis(null);
+    setDiagnosticsLoading(true);
+    setError("");
+    try {
+      const page = await api.listTeamDreamDiagnostics(requestTeamId, run.run_id, 25, cursor);
+      if (requestSeq !== diagnosticRequestSeqRef.current || requestTeamId !== activeTeamIdRef.current || diagnosticSelectionRef.current !== selectionKey) {
+        return;
+      }
+      setDiagnostics((previous) => cursor ? [...previous, ...page.items] : page.items);
+      setDiagnosticCursor(page.next_cursor ?? "");
+    } catch (err) {
+      if (requestSeq === diagnosticRequestSeqRef.current && requestTeamId === activeTeamIdRef.current && diagnosticSelectionRef.current === selectionKey) {
+        setError(readError(err));
+      }
+    } finally {
+      if (requestSeq === diagnosticRequestSeqRef.current && requestTeamId === activeTeamIdRef.current && diagnosticSelectionRef.current === selectionKey) {
+        setDiagnosticsLoading(false);
+      }
+    }
+  }
+
+  async function inspectHypothesisByID(hypothesisID: string, cursor = "") {
+    const requestSeq = diagnosticRequestSeqRef.current + 1;
+    diagnosticRequestSeqRef.current = requestSeq;
+    const requestTeamId = team.id;
+    const selectionKey = `hypothesis:${hypothesisID}`;
+    if (!cursor) {
+      diagnosticSelectionRef.current = selectionKey;
+      diagnosticDetailSeqRef.current += 1;
+      setDiagnostics([]);
+      setDiagnosticCursor("");
+      setSelectedDiagnostic(null);
+    }
+    setDiagnosticRun(null);
+    setDiagnosticHypothesis(hypothesisID);
+    setDiagnosticsLoading(true);
+    setError("");
+    try {
+      const page = await api.listTeamDreamDiagnosticsForHypothesis(requestTeamId, hypothesisID, 25, cursor);
+      if (requestSeq !== diagnosticRequestSeqRef.current || requestTeamId !== activeTeamIdRef.current || diagnosticSelectionRef.current !== selectionKey) {
+        return;
+      }
+      setDiagnostics((previous) => cursor ? [...previous, ...page.items] : page.items);
+      setDiagnosticCursor(page.next_cursor ?? "");
+    } catch (err) {
+      if (requestSeq === diagnosticRequestSeqRef.current && requestTeamId === activeTeamIdRef.current && diagnosticSelectionRef.current === selectionKey) {
+        setError(readError(err));
+      }
+    } finally {
+      if (requestSeq === diagnosticRequestSeqRef.current && requestTeamId === activeTeamIdRef.current && diagnosticSelectionRef.current === selectionKey) {
+        setDiagnosticsLoading(false);
+      }
+    }
+  }
+
+  async function inspectHypothesis(dream: Dream, cursor = "") {
+    return inspectHypothesisByID(dream.dream_id, cursor);
+  }
+
+  async function loadDiagnostic(diagnostic: DreamDiagnostic) {
+    const requestSeq = diagnosticDetailSeqRef.current + 1;
+    diagnosticDetailSeqRef.current = requestSeq;
+    const requestTeamId = team.id;
+    const selectionKey = diagnosticRun ? `run:${diagnosticRun.run_id}` : diagnosticHypothesis ? `hypothesis:${diagnosticHypothesis}` : "";
+    if (!selectionKey || !diagnostic.run_id) return;
+    setSelectedDiagnostic(null);
+    try {
+      const detail = await api.getTeamDreamDiagnostic(requestTeamId, diagnostic.run_id, diagnostic.capture_id);
+      if (requestSeq !== diagnosticDetailSeqRef.current || requestTeamId !== activeTeamIdRef.current || diagnosticSelectionRef.current !== selectionKey) {
+        return;
+      }
+      setSelectedDiagnostic(detail);
+    } catch (err) {
+      if (requestSeq === diagnosticDetailSeqRef.current && requestTeamId === activeTeamIdRef.current && diagnosticSelectionRef.current === selectionKey) {
+        setError(readError(err));
+      }
+    }
+  }
 
   const pageNumber = cursorStack.length + 1;
   const dreamSort = dreamQuery.sort ?? "updated_at";
@@ -134,7 +243,7 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
         ) : dreams.length === 0 ? (
           <div className="table-placeholder">No dreams</div>
         ) : (
-          <DreamTable dreams={dreams} sort={dreamSort} />
+          <DreamTable dreams={dreams} sort={dreamSort} onInspectHypothesis={inspectHypothesis} />
         )}
         <div className="table-actions">
           <span className="form-meta">Page {pageNumber} · {dreams.length} rows</span>
@@ -183,9 +292,58 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
         ) : runs.length === 0 ? (
           <div className="table-placeholder">No runs</div>
         ) : (
-          <RunTable runs={runs} />
+          <RunTable runs={runs} onInspect={inspectRun} />
         )}
       </section>
+
+      {(diagnosticRun || diagnosticHypothesis) && (
+        <section className={panelClassName} aria-label="Dream diagnostics">
+          <SectionHeading title={diagnosticRun ? "Run investigation" : "Hypothesis investigation"} meta={(diagnosticRun?.run_id ?? diagnosticHypothesis ?? "").slice(0, 8)} />
+          {diagnosticsLoading && diagnostics.length === 0 ? (
+            <LoadingState label="Loading Dream diagnostics" />
+          ) : diagnostics.length === 0 ? (
+            <div className="table-placeholder">No diagnostic capture was retained for this selection.</div>
+          ) : (
+            <div className="table-wrap">
+              <table className="data-table dream-diagnostics-table">
+                <thead><tr><th>Phase</th><th>Hypothesis</th><th>Outcome</th><th>Cause</th><th>Capture</th><th>Details</th><th>Payload</th></tr></thead>
+                <tbody>
+                  {diagnostics.map((diagnostic) => (
+                    <tr key={diagnostic.capture_id}>
+                      <td>{diagnostic.phase}</td>
+                      <td><code>{diagnostic.hypothesis_id?.slice(0, 8) || "-"}</code></td>
+                      <td>{diagnostic.outcome}</td>
+                      <td>{diagnostic.cause || "-"}</td>
+                      <td>{diagnostic.capture_state}{diagnostic.capture_reason ? ` · ${diagnostic.capture_reason}` : ""}</td>
+                      <td><code>{diagnostic.details ? JSON.stringify(diagnostic.details) : "Unavailable"}</code></td>
+                      <td><button className="ghost-button" type="button" onClick={() => void loadDiagnostic(diagnostic)}>View capture</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {selectedDiagnostic && (
+            <div className="dream-diagnostic-detail" role="status">
+              <strong>Selected capture</strong>
+              <span>Hypothesis: {selectedDiagnostic.hypothesis_id || "-"}</span>
+              <span>{selectedDiagnostic.capture_state}{selectedDiagnostic.capture_reason ? ` · ${selectedDiagnostic.capture_reason}` : ""}</span>
+              <code>{selectedDiagnostic.payload ? JSON.stringify(selectedDiagnostic.payload) : "Payload unavailable or expired"}</code>
+            </div>
+          )}
+          {diagnosticCursor && (
+            <div className="table-actions">
+              <button className="ghost-button" type="button" disabled={diagnosticsLoading} onClick={() => {
+                if (diagnosticRun) {
+                  void inspectRun(diagnosticRun, diagnosticCursor);
+                } else if (diagnosticHypothesis) {
+                  void inspectHypothesisByID(diagnosticHypothesis, diagnosticCursor);
+                }
+              }}>Load more</button>
+            </div>
+          )}
+        </section>
+      )}
     </>
   );
 }
@@ -199,7 +357,7 @@ function StatusItem({ label, value }: { label: string; value: string | number })
   );
 }
 
-function DreamTable({ dreams, sort }: { dreams: Dream[]; sort: DreamSort }) {
+function DreamTable({ dreams, sort, onInspectHypothesis }: { dreams: Dream[]; sort: DreamSort; onInspectHypothesis: (dream: Dream) => void }) {
   return (
     <div className="table-wrap dream-table-wrap">
       <table className="data-table dreams-table">
@@ -211,6 +369,7 @@ function DreamTable({ dreams, sort }: { dreams: Dream[]; sort: DreamSort }) {
             <th>Evidence</th>
             <th>Confidence</th>
             <th>Run</th>
+            <th>Investigation</th>
           </tr>
         </thead>
         <tbody>
@@ -231,6 +390,7 @@ function DreamTable({ dreams, sort }: { dreams: Dream[]; sort: DreamSort }) {
               <td><DreamEvidenceSummary dream={dream} /></td>
               <td>{Math.round(dream.confidence * 100)}%</td>
               <td><code>{dream.cycle_run_id?.slice(0, 8) || "-"}</code></td>
+              <td><button className="ghost-button" type="button" onClick={() => onInspectHypothesis(dream)}>Inspect</button></td>
             </tr>
           ))}
         </tbody>
@@ -248,7 +408,7 @@ function formatDreamDate(dream: Dream, sort: DreamSort): string {
   return value ? formatDate(value) : "-";
 }
 
-function RunTable({ runs }: { runs: DreamRun[] }) {
+function RunTable({ runs, onInspect }: { runs: DreamRun[]; onInspect: (run: DreamRun) => void }) {
   return (
     <div className="table-wrap">
       <table className="data-table dream-runs-table">
@@ -263,6 +423,7 @@ function RunTable({ runs }: { runs: DreamRun[] }) {
             <th>Created</th>
             <th><MetricLabel label="Rejected" detail="Provider proposals rejected by current target or source policy after validation." /></th>
             <th>Outcome</th>
+            <th>Investigation</th>
           </tr>
         </thead>
         <tbody>
@@ -277,6 +438,7 @@ function RunTable({ runs }: { runs: DreamRun[] }) {
               <td>{run.created_dreams}</td>
               <td>{run.rejected_dreams}</td>
               <td>{runOutcome(run)}</td>
+              <td><button className="ghost-button" type="button" onClick={() => onInspect(run)}>Inspect</button></td>
             </tr>
           ))}
         </tbody>

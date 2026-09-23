@@ -13,7 +13,9 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/dream"
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
+	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 )
 
@@ -134,6 +136,120 @@ func (h *controlPortalHandler) listTeamDreamingRuns(c echo.Context) error {
 		runs = []*dream.RunCycleResult{}
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": runs})
+}
+
+func (h *controlPortalHandler) listTeamDreamDiagnostics(c echo.Context) error {
+	if h.dreamDiagnostics == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "dream diagnostics unavailable")
+	}
+	teamID, runID, limit, cursor, err := controlDreamDiagnosticParams(c)
+	if err != nil {
+		return err
+	}
+	page, err := h.dreamDiagnostics.List(c.Request().Context(), teamID.String(), runID.String(), limit, cursor)
+	if err != nil {
+		if errors.Is(err, dream.ErrInvalidDreamDiagnosticCursor) {
+			return httperr.New(httperr.VALIDATION_ERROR, "invalid cursor")
+		}
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": page})
+}
+
+func (h *controlPortalHandler) getTeamDreamDiagnostic(c echo.Context) error {
+	if h.dreamDiagnostics == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "dream diagnostics unavailable")
+	}
+	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
+	if err != nil {
+		return err
+	}
+	runID, err := parseControlUUID(strings.TrimSpace(c.Param("runId")), "run ID")
+	if err != nil {
+		return err
+	}
+	diagnosticID, err := parseControlUUID(strings.TrimSpace(c.Param("diagnosticId")), "diagnostic ID")
+	if err != nil {
+		return err
+	}
+	diagnostic, err := h.dreamDiagnostics.Get(c.Request().Context(), teamID.String(), runID.String(), diagnosticID.String())
+	if errors.Is(err, dream.ErrDreamDiagnosticNotFound) {
+		return httperr.New(httperr.NOT_FOUND, "dream diagnostic not found")
+	}
+	if err != nil {
+		return err
+	}
+	if h.logger != nil {
+		h.logger.Info("control_dream_diagnostic_access",
+			httpcontract.String("actor", controlPortalActorFromContext(c.Request().Context())),
+			httpcontract.String("actor_identity_id", controlPortalActorIdentityFromContext(c.Request().Context())),
+			httpcontract.String("team_id", teamID.String()),
+			httpcontract.String("run_id", runID.String()),
+			httpcontract.String("diagnostic_id", diagnosticID.String()),
+			httpcontract.String("correlation_id", httpmw.GetCorrelationID(c.Request().Context())),
+		)
+	}
+	c.Response().Header().Set("Cache-Control", "no-store")
+	c.Response().Header().Set("X-Content-Type-Options", "nosniff")
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": diagnostic})
+}
+
+func (h *controlPortalHandler) listTeamDreamDiagnosticsForHypothesis(c echo.Context) error {
+	if h.dreamDiagnostics == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "dream diagnostics unavailable")
+	}
+	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
+	if err != nil {
+		return err
+	}
+	hypothesisID, err := parseControlUUID(strings.TrimSpace(c.Param("dreamId")), "dream ID")
+	if err != nil {
+		return err
+	}
+	limit, cursor, err := controlDreamDiagnosticPage(c)
+	if err != nil {
+		return err
+	}
+	page, err := h.dreamDiagnostics.ListForHypothesis(c.Request().Context(), teamID.String(), hypothesisID.String(), limit, cursor)
+	if err != nil {
+		if errors.Is(err, dream.ErrInvalidDreamDiagnosticCursor) {
+			return httperr.New(httperr.VALIDATION_ERROR, "invalid cursor")
+		}
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": page})
+}
+
+func controlDreamDiagnosticParams(c echo.Context) (uuid.UUID, uuid.UUID, int, string, error) {
+	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
+	if err != nil {
+		return uuid.Nil, uuid.Nil, 0, "", err
+	}
+	runID, err := parseControlUUID(strings.TrimSpace(c.Param("runId")), "run ID")
+	if err != nil {
+		return uuid.Nil, uuid.Nil, 0, "", err
+	}
+	limit, cursor, err := controlDreamDiagnosticPage(c)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, 0, "", err
+	}
+	return teamID, runID, limit, cursor, nil
+}
+
+func controlDreamDiagnosticPage(c echo.Context) (int, string, error) {
+	limit := 25
+	if raw := strings.TrimSpace(c.QueryParam("limit")); raw != "" {
+		parsed, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || parsed < 1 || parsed > 100 {
+			return 0, "", httperr.New(httperr.VALIDATION_ERROR, "limit must be between 1 and 100")
+		}
+		limit = parsed
+	}
+	cursor := strings.TrimSpace(c.QueryParam("cursor"))
+	if len(cursor) > 512 {
+		return 0, "", httperr.New(httperr.VALIDATION_ERROR, "cursor is too long")
+	}
+	return limit, cursor, nil
 }
 
 func (h *controlPortalHandler) listTeamDreams(c echo.Context) error {

@@ -201,7 +201,7 @@ func TestSchedulerDoesNotObserveSkippedMissedWindow(t *testing.T) {
 	}))
 }
 
-func TestSchedulerRecordsMissedWindowAfterDueCycleSkips(t *testing.T) {
+func TestSchedulerObservesWindowAfterDueCycleLosesClaim(t *testing.T) {
 	teamID := uuid.New()
 	profiles := &schedulerProfileStub{profiles: []*domain.Team{{ID: teamID}}}
 	dreams := &schedulerDreamStub{cfg: dueSchedulerConfig(), scheduledStatus: "skipped"}
@@ -211,13 +211,27 @@ func TestSchedulerRecordsMissedWindowAfterDueCycleSkips(t *testing.T) {
 	scheduler.runDue(context.Background())
 
 	require.Equal(t, []string{teamID.String()}, dreams.scheduledTeams)
-	require.False(t, scheduler.alreadyObserved(teamID.String(), "2026-06-11"))
+	require.True(t, scheduler.alreadyObserved(teamID.String(), "2026-06-11"))
 
 	scheduler.now = func() time.Time { return time.Date(2026, 6, 11, 3, 1, 0, 0, time.UTC) }
 	scheduler.runDue(context.Background())
 
-	require.Equal(t, []string{teamID.String()}, dreams.missedTeams)
+	require.Empty(t, dreams.missedTeams)
 	require.True(t, scheduler.alreadyObserved(teamID.String(), "2026-06-11"))
+}
+
+func TestSchedulerDoesNotObserveDueSkipWithoutDurableRun(t *testing.T) {
+	teamID := uuid.New()
+	emptyRunID := ""
+	profiles := &schedulerProfileStub{profiles: []*domain.Team{{ID: teamID}}}
+	dreams := &schedulerDreamStub{cfg: dueSchedulerConfig(), scheduledStatus: "skipped", scheduledRunID: &emptyRunID}
+	scheduler := NewScheduler(dreams, profiles, discardSchedulerLogger())
+	scheduler.now = func() time.Time { return time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC) }
+
+	scheduler.runDue(context.Background())
+
+	require.Equal(t, []string{teamID.String()}, dreams.scheduledTeams)
+	require.False(t, scheduler.alreadyObserved(teamID.String(), "2026-06-11"))
 }
 
 func TestSchedulerRecordsNonexistentDSTWindowWithoutRunningEarly(t *testing.T) {
@@ -407,11 +421,18 @@ func TestSchedulerCoversRecoveryDisabledAndEvidenceSkipBranches(t *testing.T) {
 	observed.disarmMatching("team", scheduledWindowArm{runDate: "2026-06-11"})
 	require.False(t, observed.isArmed("team", scheduledWindowArm{runDate: "2026-06-11"}))
 
-	for _, result := range []*RunCycleResult{nil, {Status: "skipped"}} {
-		evidence := &schedulerEvidenceSkipStub{schedulerEvidenceStub: &schedulerEvidenceStub{schedulerDreamStub: &schedulerDreamStub{cfg: dueSchedulerConfig()}}, result: result}
+	for _, tc := range []struct {
+		result       *RunCycleResult
+		wantObserved bool
+	}{
+		{result: nil},
+		{result: &RunCycleResult{Status: "skipped"}},
+		{result: &RunCycleResult{RunID: "claimed", Status: "skipped"}, wantObserved: true},
+	} {
+		evidence := &schedulerEvidenceSkipStub{schedulerEvidenceStub: &schedulerEvidenceStub{schedulerDreamStub: &schedulerDreamStub{cfg: dueSchedulerConfig()}}, result: tc.result}
 		evidenceScheduler := NewScheduler(evidence, &schedulerProfileStub{}, discardSchedulerLogger())
 		evidenceScheduler.runEvidenceDue(context.Background(), teamID.String(), dueSchedulerConfig(), time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC))
-		require.False(t, evidenceScheduler.hourlyAlreadyObserved(teamID.String(), "hour:2026-06-11T03"))
+		require.Equal(t, tc.wantObserved, evidenceScheduler.hourlyAlreadyObserved(teamID.String(), "hour:2026-06-11T03"))
 	}
 
 	hourly := NewScheduler(&schedulerEvidenceRecoveryStub{schedulerEvidenceStub: &schedulerEvidenceStub{schedulerDreamStub: &schedulerDreamStub{cfg: dueSchedulerConfig()}}}, &schedulerProfileStub{}, discardSchedulerLogger())
@@ -506,6 +527,7 @@ type schedulerDreamStub struct {
 	recoveryErrs     map[string]error
 	missedErrs       map[string]error
 	scheduledStatus  string
+	scheduledRunID   *string
 	missedStatus     string
 	scheduledTeams   []string
 	missedTeams      []string
@@ -528,7 +550,11 @@ func (s *schedulerDreamStub) RunScheduledCycle(_ context.Context, teamID string,
 	if status == "" {
 		status = "completed"
 	}
-	return &RunCycleResult{RunID: uuid.NewString(), TeamID: teamID, Status: status}, nil
+	runID := uuid.NewString()
+	if s.scheduledRunID != nil {
+		runID = *s.scheduledRunID
+	}
+	return &RunCycleResult{RunID: runID, TeamID: teamID, Status: status}, nil
 }
 
 func (s *schedulerDreamStub) RecoverScheduledCycle(_ context.Context, teamID string) (*RunCycleResult, error) {

@@ -102,6 +102,70 @@ func TestRunCycleReturnsInputSelectionOutcome(t *testing.T) {
 	assert.Equal(t, map[string]int{"input_selection_error": 1}, result.OutcomeSummary)
 }
 
+func TestRunCycleRecordsSelectionFailurePhases(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	repo := &dreamRepositoryStub{listInputsErr: errors.New("list inputs failed")}
+	diagnostics := &diagnosticRepositoryStub{}
+	svc := New(Dependencies{
+		Store:       repo,
+		Diagnostics: diagnostics,
+		AppConfig:   cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5}},
+	})
+
+	_, err := svc.RunCycle(dreamTestContext(teamID, ownerID), "ignored-profile", RunCycleRequest{Manual: true})
+	require.Error(t, err)
+	var phases []string
+	for _, item := range diagnostics.recorded {
+		if item.Phase != "run" {
+			phases = append(phases, item.Phase)
+		}
+	}
+	assert.Contains(t, phases, "target")
+	assert.Contains(t, phases, "validation")
+}
+
+func TestDisabledScheduledCycleRecordsFinalizationFailure(t *testing.T) {
+	teamID := uuid.New()
+	repo := &dreamRepositoryStub{completeErr: errors.New("completion failed")}
+	diagnostics := &diagnosticRepositoryStub{}
+	svc := New(Dependencies{
+		Store:          repo,
+		ScheduledStore: repo,
+		Diagnostics:    diagnostics,
+		AppConfig:      cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: false, StartTimeLocal: "03:00", Timezone: "UTC"}},
+	})
+
+	result, err := svc.RunScheduledCycle(context.Background(), teamID.String(), time.Date(2026, 7, 17, 3, 0, 0, 0, time.UTC))
+	require.ErrorContains(t, err, "completion failed")
+	require.Equal(t, "error", result.Status)
+	var dispositionFailures int
+	for _, item := range diagnostics.recorded {
+		if item.Phase == "disposition" && item.Outcome == "failed" {
+			dispositionFailures++
+		}
+	}
+	assert.Equal(t, 1, dispositionFailures)
+}
+
+func TestUnclaimedScheduledCycleDoesNotRecordDiagnostics(t *testing.T) {
+	teamID := uuid.New()
+	repo := &dreamRepositoryStub{run: dreamcontract.DreamCycleRun{
+		TeamID: teamID.String(), RunID: uuid.NewString(), Status: "running", Claimed: false,
+	}}
+	diagnostics := &diagnosticRepositoryStub{}
+	svc := New(Dependencies{
+		Store: repo, ScheduledStore: repo, Diagnostics: diagnostics,
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, StartTimeLocal: "03:00", Timezone: "UTC"}},
+	})
+
+	result, err := svc.RunScheduledCycle(context.Background(), teamID.String(), time.Date(2026, 7, 17, 3, 0, 0, 0, time.UTC))
+
+	require.NoError(t, err)
+	require.Equal(t, "skipped", result.Status)
+	require.Empty(t, diagnostics.recorded)
+}
+
 func TestGenerateDreamProposalsRetainsFailedLookupDiagnostics(t *testing.T) {
 	inputs := testDreamPathInputs()
 	predicates := testDreamPathPredicates()
@@ -851,101 +915,77 @@ func TestRunCycleControlAndErrorBranches(t *testing.T) {
 	}
 }
 
-func TestResolveFeedbackErrorBranches(t *testing.T) {
+func TestRunClaimedTeamCycleDoesNotRecordDiagnosticsAfterLeaseLoss(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()
-	hypothesisID := uuid.NewString()
-	record := dreamcontract.HypothesisRecord{
-		TeamID:             teamID.String(),
-		HypothesisID:       hypothesisID,
-		CreatedByProfileID: ownerID.String(),
-		Status:             string(domain.DreamStatusProposed),
-		Statement:          "Dense-Mem may use PostgreSQL.",
-		CreatedAt:          time.Now().UTC(),
-		UpdatedAt:          time.Now().UTC(),
+	repo := &dreamRepositoryStub{
+		inputs: []dreamcontract.DreamInput{
+			{RelationshipID: "relationship_a", OwnerProfileID: ownerID.String(), Version: 1, Status: "active", SubjectEntityID: uuid.NewString(), SubjectName: "Dense-Mem", SubjectKind: "project", PredicateKey: "works_on", PredicateVersion: 1, ObjectEntityID: uuid.NewString(), ObjectName: "PostgreSQL", ObjectKind: "product", Evidence: []dreamcontract.DreamEvidence{{Content: "Dense-Mem works on PostgreSQL.", Authority: "primary"}}},
+			{RelationshipID: "relationship_b", OwnerProfileID: ownerID.String(), Version: 1, Status: "pending_evidence", SubjectEntityID: uuid.NewString(), SubjectName: "PostgreSQL", SubjectKind: "product", PredicateKey: "informs", PredicateVersion: 1, ObjectEntityID: uuid.NewString(), ObjectName: "Search freshness", ObjectKind: "concept", Evidence: []dreamcontract.DreamEvidence{{Content: "PostgreSQL informs search freshness.", Authority: "primary"}}},
+		},
+		predicates:  []dreamcontract.DreamTargetPredicate{{PredicateKey: "uses", Version: 1, AllowedSubjectKinds: []string{"project"}, AllowedObjectKinds: []string{"concept"}, RelationshipKind: "state", CurrentCardinality: "many"}},
+		completeErr: dreamcontract.ErrDreamCycleLeaseLost,
 	}
-	ctx := dreamTestContext(teamID, ownerID)
-
+	diagnostics := &diagnosticRepositoryStub{}
 	svc := New(Dependencies{
-		Store:     &dreamRepositoryStub{getErr: dreamcontract.ErrDreamHypothesisNotFound},
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
-	})
-	_, err := svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{DreamID: hypothesisID, Decision: "reject"})
-	require.ErrorIs(t, err, ErrDreamNotFound)
+		Store: repo, Diagnostics: diagnostics,
+		Generator: &dreamGeneratorStub{generated: []GeneratedDream{{PathRef: "path_1", PredicateRef: "predicate_1", EvidenceRefs: []string{"evidence_1", "evidence_2"}, Hypothesis: "Dense-Mem may use search freshness.", Rationale: "The two premises support a possibility.", WhatIf: "What if it needs independent confirmation?", PossibleOutcome: "Collect independent evidence."}}},
+	}).(*service)
+	claimed := &dreamcontract.DreamCycleRun{TeamID: teamID.String(), RunID: uuid.NewString(), LeaseToken: uuid.NewString(), Status: "running", Claimed: true, Lane: domain.DreamLaneGraph}
 
-	svc = New(Dependencies{
-		Store: &dreamRepositoryStub{
-			getRecord:           record,
-			confirmationLockErr: dreamcontract.ErrDreamConfirmationBusy,
-		},
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
-	})
-	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{DreamID: hypothesisID, Decision: "reject"})
-	var busyErr *ConfirmationBusyError
-	require.ErrorAs(t, err, &busyErr)
+	result, err := svc.runClaimedTeamCycle(context.Background(), teamID.String(), ownerID.String(), EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5}}, RunCycleRequest{}, false, &RunCycleResult{TeamID: teamID.String(), RunID: claimed.RunID, Lane: domain.DreamLaneGraph}, claimed)
 
-	svc = New(Dependencies{
-		Store:     &dreamRepositoryStub{getRecord: record},
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
-	})
-	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
-		DreamID:  hypothesisID,
-		Decision: "confirm_true",
-		Evidence: []rememberapp.RememberEvidenceInput{{
-			Content: "The deployment note says Dense-Mem uses PostgreSQL.",
-		}},
-	})
-	require.ErrorContains(t, err, "remember service is required")
-
-	svc = New(Dependencies{
-		Store: &dreamRepositoryStub{
-			getRecord: record,
-			updateErr: dreamcontract.ErrDreamHypothesisNotFound,
-		},
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
-	})
-	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{DreamID: hypothesisID, Decision: "reject"})
-	require.ErrorIs(t, err, ErrDreamNotFound)
-
-	svc = New(Dependencies{
-		Store:     &dreamRepositoryStub{getRecord: record},
-		Remember:  &rememberServiceStub{err: errors.New("remember failed")},
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
-	})
-	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
-		DreamID:  hypothesisID,
-		Decision: "confirm_false",
-		Evidence: []rememberapp.RememberEvidenceInput{{
-			Content: "The deployment note says Dense-Mem does not use PostgreSQL.",
-		}},
-	})
-	require.ErrorContains(t, err, "remember failed")
+	require.ErrorIs(t, err, dreamcontract.ErrDreamCycleLeaseLost)
+	require.Equal(t, "error", result.Status)
+	require.Empty(t, diagnostics.recorded)
 }
 
-func TestStatusAndHelperEdgeCases(t *testing.T) {
+func TestRunClaimedTeamCycleDoesNotRecordInputFailureAfterLeaseLoss(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()
-	repo := &dreamRepositoryStub{}
+	repo := &dreamRepositoryStub{
+		listInputsErr: errors.New("input lookup failed"),
+		completeErr:   dreamcontract.ErrDreamCycleLeaseLost,
+	}
+	diagnostics := &diagnosticRepositoryStub{}
 	svc := New(Dependencies{
-		Store:     repo,
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
-	})
-	ctx := dreamTestContext(teamID, ownerID)
+		Store: repo, Diagnostics: diagnostics,
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5}},
+	}).(*service)
 
-	runs, err := svc.ListRuns(ctx, "ignored-profile", 5)
-	require.NoError(t, err)
-	assert.Empty(t, runs)
+	result, err := svc.RunCycle(dreamTestContext(teamID, ownerID), "ignored-profile", RunCycleRequest{Manual: true})
 
-	status, err := svc.Status(ctx, "ignored-profile")
-	require.NoError(t, err)
-	assert.Nil(t, status.LatestRun)
-	assert.Equal(t, 0, status.PendingCount)
+	require.ErrorContains(t, err, "input lookup failed")
+	require.Equal(t, "error", result.Status)
+	require.Empty(t, diagnostics.recorded)
+}
 
-	assert.Equal(t, "relationship", dreamSourceType(dreamcontract.DreamInput{Status: "active"}))
-	assert.Equal(t, "candidate_relationship", dreamSourceType(dreamcontract.DreamInput{Status: "pending_evidence"}))
-	assert.Equal(t, "relationship", dreamSourceType(dreamcontract.DreamInput{}))
-	assert.Equal(t, "from stringer", anyString(testStringer("from stringer")))
-	require.Nil(t, optionalProbability(0))
-	require.NotNil(t, optionalProbability(2))
-	assert.Equal(t, 1.0, *optionalProbability(2))
+func TestRunClaimedTeamCycleRecordsFinalizationFailureAfterInputError(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	repo := &dreamRepositoryStub{
+		listInputsErr: errors.New("input lookup failed"),
+		completeErr:   errors.New("completion failed"),
+	}
+	diagnostics := &diagnosticRepositoryStub{}
+	svc := New(Dependencies{
+		Store: repo, Diagnostics: diagnostics,
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5}},
+	}).(*service)
+
+	result, err := svc.RunCycle(dreamTestContext(teamID, ownerID), "ignored-profile", RunCycleRequest{Manual: true})
+
+	require.ErrorContains(t, err, "input lookup failed")
+	require.ErrorContains(t, err, "completion failed")
+	require.Equal(t, "error", result.Status)
+	var dispositions []dreamcontract.DreamDiagnosticCaptureInput
+	for _, item := range diagnostics.recorded {
+		if item.Phase == "disposition" {
+			dispositions = append(dispositions, item)
+		}
+	}
+	require.Len(t, dispositions, 1)
+	require.Equal(t, "failed", dispositions[0].Outcome)
+	require.Equal(t, diagnosticErrorCode("completion failed"), dispositions[0].Cause)
+	require.Equal(t, "complete_cycle", dispositions[0].Details["finalization"])
 }

@@ -48,9 +48,6 @@ func (s *service) runScheduledEvidenceCycle(ctx context.Context, teamID string, 
 		ScheduledFor: windowAt, Lane: domain.DreamLaneEvidenceDiscovery,
 		Status: "skipped",
 	}
-	if !cfg.Enabled {
-		return result, nil
-	}
 	started := s.now().UTC()
 	claim, err := s.deps.ScheduledStore.ClaimScheduledDreamCycle(ctx, dreamcontract.DreamCycleClaimInput{
 		TeamID: teamID, RunDate: result.RunDate,
@@ -68,7 +65,26 @@ func (s *service) runScheduledEvidenceCycle(ctx context.Context, teamID string, 
 	result.AttemptCount = claim.AttemptCount
 	result.Status = claim.Status
 	if !claim.Claimed {
+		result.CompletedAt = s.now().UTC()
 		result.Status = "skipped"
+		return result, nil
+	}
+	if !cfg.Enabled {
+		result.CompletedAt = s.now().UTC()
+		result.Status = "skipped"
+		result.OutcomeSummary = map[string]int{"disabled_before_evaluation": 1}
+		appendRunDiagnosticPhase(result, "target", "skipped", "dreaming_disabled", map[string]any{"enabled": false})
+		if err := s.completeTeamCycle(ctx, true, dreamcontract.DreamCycleCompleteInput{
+			TeamID: teamID, RunID: claim.RunID, LeaseToken: claim.LeaseToken,
+			Status: "skipped", OutcomeSummary: result.OutcomeSummary,
+			Lane: domain.DreamLaneEvidenceDiscovery,
+		}); err != nil {
+			result.Status = "error"
+			result.Error = err.Error()
+			s.recordRunDiagnosticAfterCompletion(ctx, result, err)
+			return result, err
+		}
+		s.recordRunDiagnostic(ctx, result)
 		return result, nil
 	}
 	return s.runClaimedEvidenceCycle(ctx, teamID, cfg, result, claim)
@@ -118,13 +134,18 @@ func (s *service) RecoverScheduledEvidenceCycle(ctx context.Context, teamID stri
 		result.CompletedAt = s.now().UTC()
 		result.Status = "cancelled"
 		result.OutcomeSummary = map[string]int{"disabled_before_recovery": 1}
+		appendRunDiagnosticPhase(result, "target", "cancelled", "dreaming_disabled", map[string]any{"enabled": false})
 		if err := s.completeTeamCycle(ctx, true, dreamcontract.DreamCycleCompleteInput{
 			TeamID: teamID, RunID: claim.RunID, LeaseToken: claim.LeaseToken,
 			Status: "cancelled", OutcomeSummary: result.OutcomeSummary,
 			Lane: domain.DreamLaneEvidenceDiscovery,
 		}); err != nil {
+			result.Status = "error"
+			result.Error = err.Error()
+			s.recordRunDiagnosticAfterCompletion(ctx, result, err)
 			return result, err
 		}
+		s.recordRunDiagnostic(ctx, result)
 		return result, nil
 	}
 	return s.runClaimedEvidenceCycle(ctx, teamID, cfg, result, claim)
@@ -157,8 +178,13 @@ func (s *service) runClaimedEvidenceCycle(
 	claimed *dreamcontract.DreamCycleRun,
 ) (*RunCycleResult, error) {
 	if s.deps.Store == nil || s.deps.EvidenceStore == nil || s.deps.EvidenceGenerator == nil {
+		appendRunDiagnosticPhase(result, "target", "failed", "evidence discovery store and provider are required", map[string]any{"selection": "dependency_check"})
+		appendRunDiagnosticPhase(result, "provider", "failed", "evidence discovery store and provider are required", map[string]any{"selection": "dependency_check"})
 		return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, 0, 0, 0, 0, 0, errors.New("evidence discovery store and provider are required"))
 	}
+	exchangeRecorder := newDreamDiagnosticExchangeRecorder(s.deps.DiagnosticProtector)
+	ctx = withDreamDiagnosticRecorder(ctx, exchangeRecorder)
+	ctx = modelprovider.WithExchangeRecorder(ctx, exchangeRecorder)
 	created, rejected, evaluated, providerProposals := claimed.CreatedHypotheses, claimed.RejectedHypotheses, claimed.EvaluatedEvidenceTargets, claimed.ProviderProposals
 	staleTargets := 0
 	providerTurns, providerInputTokens, providerOutputTokens := claimed.ProviderTurns, claimed.ProviderInputTokens, claimed.ProviderOutputTokens
@@ -167,6 +193,7 @@ func (s *service) runClaimedEvidenceCycle(
 		var totalsErr error
 		totals, totalsErr = s.deps.EvidenceStore.LoadEvidenceDiscoveryRunTotals(ctx, teamID, claimed.RunID)
 		if totalsErr != nil {
+			appendRunDiagnosticPhase(result, "validation", "failed", totalsErr.Error(), map[string]any{"selection": "recovery_totals_lookup"})
 			return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, claimed.EvidenceTargets, totalsErr)
 		}
 		created = max(created, totals.Created)
@@ -179,6 +206,7 @@ func (s *service) runClaimedEvidenceCycle(
 	}
 	targets, err := s.deps.EvidenceStore.ListEvidenceDiscoveryTargets(ctx, teamID, evidenceDiscoveryTargetLimit, evidenceDiscoveryContextLimit)
 	if err != nil {
+		appendRunDiagnosticPhase(result, "target", "failed", err.Error(), map[string]any{"selection": "evidence_target_lookup"})
 		targetCount := max(claimed.EvidenceTargets, totals.TargetCount)
 		return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, targetCount, err)
 	}
@@ -193,6 +221,14 @@ func (s *service) runClaimedEvidenceCycle(
 	result.ProviderInputTokens = providerInputTokens
 	result.ProviderOutputTokens = providerOutputTokens
 	result.ProviderProposals = providerProposals
+	appendRunDiagnosticPhase(result, "target", func() string {
+		if len(targets) == 0 {
+			return "evaluated_zero"
+		}
+		return "selected"
+	}(), "", map[string]any{
+		"target_count": len(targets), "target_evidence_ids": evidenceDiagnosticTargetIDs(targets),
+	})
 	// Related records are context only. They are read under the same team
 	// boundary and never become evidence derivations.
 	relationships, relationshipErr := s.deps.Store.ListDreamInputs(ctx, dreamcontract.DreamInputListInput{TeamID: teamID, Limit: 500})
@@ -200,6 +236,7 @@ func (s *service) runClaimedEvidenceCycle(
 		TeamID: teamID, Status: string(domain.DreamStatusProposed), Limit: 100,
 	})
 	if relationshipErr != nil || hypothesisErr != nil {
+		appendRunDiagnosticPhase(result, "target", "failed", errors.Join(relationshipErr, hypothesisErr).Error(), map[string]any{"selection": "related_context_lookup"})
 		return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, result.EvidenceTargets, errors.Join(relationshipErr, hypothesisErr))
 	}
 	// Reinforced hypotheses are also allowed as non-supporting duplicate
@@ -209,12 +246,14 @@ func (s *service) runClaimedEvidenceCycle(
 		TeamID: teamID, Status: string(domain.DreamStatusReinforced), Limit: 100,
 	})
 	if err != nil {
+		appendRunDiagnosticPhase(result, "target", "failed", err.Error(), map[string]any{"selection": "reinforced_hypothesis_lookup"})
 		return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, result.EvidenceTargets, err)
 	}
 	hypotheses = append(hypotheses, reinforced...)
 
 	providerModel := s.deps.EvidenceGenerator.Model()
 	if strings.TrimSpace(providerModel) == "" {
+		appendRunDiagnosticPhase(result, "provider", "failed", "provider model unavailable", map[string]any{"target_count": len(targets)})
 		return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, result.EvidenceTargets, ErrDreamProviderUnavailable)
 	}
 	result.ProviderModel = providerModel
@@ -295,6 +334,13 @@ func (s *service) runClaimedEvidenceCycle(
 						result.ProviderOutputTokens = providerOutputTokens
 						result.ProviderProposals = providerProposals
 						if generateErr != nil {
+							appendRunDiagnosticPhase(result, "provider", "failed", generateErr.Error(), map[string]any{
+								"target_evidence_id": target.Target.EvidenceID, "pass_number": attempt.PassNumber,
+								"regeneration": regeneration + 1, "provider_model": providerModel,
+								"provider_turns": diagnostics.ProviderTurns, "provider_proposals": diagnostics.ProviderProposals,
+							})
+						}
+						if generateErr != nil {
 							shouldAbandon := evidenceProviderFailureCanAbandon(generateErr)
 							if admissionValidationFailed || (!dispatchMarked && (admissionAttempted || evidenceProviderWasNotAdmitted(generateErr))) {
 								shouldAbandon = true
@@ -307,7 +353,16 @@ func (s *service) runClaimedEvidenceCycle(
 							}
 							return generateErr
 						}
-						proposals, invalid := evidenceProposalsFromGenerated(generation, target.Target, providerModel, request.MaxOutputs)
+						proposals, invalid, rejectionReasons := evidenceProposalsFromGeneratedWithReasons(generation, target.Target, providerModel, request.MaxOutputs)
+						appendRunDiagnosticPhase(result, "provider", "completed", "", map[string]any{
+							"target_evidence_id": target.Target.EvidenceID, "pass_number": attempt.PassNumber,
+							"regeneration": regeneration + 1, "provider_model": providerModel,
+							"provider_turns": diagnostics.ProviderTurns, "provider_proposals": diagnostics.ProviderProposals,
+						})
+						appendRunDiagnosticPhase(result, "validation", diagnosticValidationOutcome(len(proposals), invalid), "", map[string]any{
+							"target_evidence_id": target.Target.EvidenceID, "pass_number": attempt.PassNumber,
+							"accepted": len(proposals), "rejected": invalid, "rejection_reasons": rejectionReasons,
+						})
 						if !dispatchMarked {
 							if err := markDispatched(ctx); err != nil {
 								abandonErr := s.abandonEvidenceDiscoveryAttempt(ctx, teamID, attempt.AttemptID, attempt.ReservationToken)
@@ -327,6 +382,10 @@ func (s *service) runClaimedEvidenceCycle(
 							RejectedProposals: invalid, CreatedHypotheses: len(proposals), Proposals: proposals,
 						})
 						if persistErr != nil {
+							appendRunDiagnosticPhase(result, "disposition", "failed", persistErr.Error(), map[string]any{
+								"target_evidence_id": target.Target.EvidenceID, "pass_number": attempt.PassNumber,
+								"accepted": len(proposals), "rejected": invalid,
+							})
 							if evidencePersistenceDuplicate(persistErr) {
 								if regeneration+1 < evidenceDiscoveryRegenerationLimit {
 									request = evidenceRequestWithDuplicateContext(request, proposals, evidenceDuplicateProposalIndex(persistErr))
@@ -348,6 +407,14 @@ func (s *service) runClaimedEvidenceCycle(
 							}
 							return persistErr
 						}
+						appendRunDiagnosticPhase(result, "proposal", diagnosticValidationOutcome(len(proposals), invalid), "", map[string]any{
+							"target_evidence_id": target.Target.EvidenceID, "pass_number": attempt.PassNumber,
+							"accepted": len(proposals), "rejected": invalid,
+						})
+						appendRunDiagnosticPhase(result, "disposition", diagnosticHypothesisDispositionOutcome(persisted.Created, invalid+persisted.Rejected), "", map[string]any{
+							"target_evidence_id": target.Target.EvidenceID, "pass_number": attempt.PassNumber,
+							"created": persisted.Created, "rejected": invalid + persisted.Rejected,
+						})
 						rejected += invalid
 						created += persisted.Created
 						rejected += persisted.Rejected
@@ -366,6 +433,9 @@ func (s *service) runClaimedEvidenceCycle(
 				},
 			)
 			if targetErr != nil {
+				appendRunDiagnosticPhase(result, "validation", "failed", targetErr.Error(), map[string]any{
+					"target_evidence_id": target.Target.EvidenceID,
+				})
 				if errors.Is(targetErr, dreamcontract.ErrDreamSourceStale) {
 					staleTargets++
 					continue
@@ -567,6 +637,19 @@ func evidenceDiscoveryTargetCount(claimedCount int, totals dreamcontract.Evidenc
 	return count
 }
 
+func evidenceDiagnosticTargetIDs(targets []dreamcontract.EvidenceDiscoveryTargetInput) []string {
+	ids := make([]string, 0, min(len(targets), evidenceDiscoveryTargetLimit))
+	for _, target := range targets {
+		if len(ids) >= evidenceDiscoveryTargetLimit {
+			break
+		}
+		if id := strings.TrimSpace(target.Target.EvidenceID); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 func evidenceProviderFailure(err error) bool {
 	if errors.Is(err, ErrDreamProviderUnavailable) || errors.Is(err, modelprovider.ErrVerifierProvider) ||
 		errors.Is(err, modelprovider.ErrVerifierRateLimit) || errors.Is(err, modelprovider.ErrVerifierMalformedResponse) ||
@@ -668,11 +751,13 @@ func (s *service) finishEvidenceCycle(
 		if runErr == nil {
 			result.Error = evidenceCyclePublicError(completeErr)
 		}
+		s.recordRunDiagnosticAfterCompletion(ctx, result, completeErr)
 		if runErr != nil {
 			return result, errors.Join(runErr, completeErr)
 		}
 		return result, completeErr
 	}
+	s.recordRunDiagnostic(ctx, result)
 	result.durablyFinalized = true
 	if runErr != nil {
 		return result, runErr
@@ -742,16 +827,30 @@ func dreamInputSharesSource(input dreamcontract.DreamInput, sourceGroupKey strin
 }
 
 func evidenceProposalsFromGenerated(generated []GeneratedDream, target dreamcontract.EvidenceTarget, model string, maxOutputs int) ([]dreamcontract.UpsertHypothesisInput, int) {
+	proposals, rejected, _ := evidenceProposalsFromGeneratedWithReasons(generated, target, model, maxOutputs)
+	return proposals, rejected
+}
+
+func evidenceProposalsFromGeneratedWithReasons(generated []GeneratedDream, target dreamcontract.EvidenceTarget, model string, maxOutputs int) ([]dreamcontract.UpsertHypothesisInput, int, map[string]int) {
 	if maxOutputs <= 0 {
 		maxOutputs = DefaultMaxOutputs
 	}
 	proposals := make([]dreamcontract.UpsertHypothesisInput, 0, min(maxOutputs, len(generated)))
 	rejected := 0
+	reasons := map[string]int{}
+	reject := func(reason string) {
+		rejected++
+		reasons[reason]++
+	}
 	for _, generatedDream := range generated {
-		if len(proposals) >= maxOutputs || strings.TrimSpace(generatedDream.Hypothesis) == "" ||
+		if len(proposals) >= maxOutputs {
+			reject("output_limit_exceeded")
+			continue
+		}
+		if strings.TrimSpace(generatedDream.Hypothesis) == "" ||
 			generatedDream.SubjectEntityID == "" || generatedDream.PredicateKey == "" ||
 			(generatedDream.ObjectEntityID == "") == (generatedDream.ObjectValueID == "") {
-			rejected++
+			reject("hypothesis_shape_invalid")
 			continue
 		}
 		derivations := append([]dreamcontract.EvidenceDerivationSource(nil), generatedDream.EvidenceDerivations...)
@@ -768,7 +867,7 @@ func evidenceProposalsFromGenerated(generated []GeneratedDream, target dreamcont
 			}
 		}
 		if !targetCited || len(derivations) == 0 {
-			rejected++
+			reject("target_evidence_not_cited")
 			continue
 		}
 		proposal := dreamcontract.UpsertHypothesisInput{
@@ -785,5 +884,5 @@ func evidenceProposalsFromGenerated(generated []GeneratedDream, target dreamcont
 		proposal.ContentHash = hypothesisContentHash(proposal)
 		proposals = append(proposals, proposal)
 	}
-	return proposals, rejected
+	return proposals, rejected, reasons
 }

@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 )
 
 const testDreamPathPredicateFingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -92,8 +94,89 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 	require.NoError(t, err)
 	require.Equal(t, 1, persisted.Created)
 	require.Zero(t, persisted.Rejected)
+	var linkedRunID string
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT link.run_id::text
+			FROM dream_path_evaluation_run_links AS link
+			JOIN dream_path_evaluations AS evaluation
+			  ON evaluation.team_id = link.team_id
+			 AND evaluation.path_evaluation_id = link.path_evaluation_id
+			WHERE link.team_id = ?::uuid
+			ORDER BY link.created_at DESC, link.run_id DESC
+			LIMIT 1
+		`, teamID).Scan(&linkedRunID).Error
+	}))
+	require.Equal(t, run.RunID, linkedRunID)
+	secondRun, err := semanticRepo.ClaimDreamCycle(ctx, DreamCycleClaimInput{
+		TeamID: teamID, InitiatedByProfileID: ownerID, RunDate: "2026-07-18",
+		WindowKey: "manual:dream-lifecycle-repeat", LeaseToken: uuid.NewString(), LeaseUntil: time.Now().UTC().Add(time.Minute),
+	})
+	require.NoError(t, err)
+	require.True(t, secondRun.Claimed)
+	_, err = semanticRepo.PersistDreamGeneration(ctx, DreamGenerationPersistInput{
+		TeamID: teamID, CreatedByProfileID: ownerID, RunID: secondRun.RunID, LeaseToken: secondRun.LeaseToken,
+		ProviderModel: "test-provider", Proposals: nil, EvaluatedPaths: []DreamPathEvaluationInput{path},
+	})
+	require.NoError(t, err)
+	var linkedRunIDs []string
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT link.run_id::text
+			FROM dream_path_evaluation_run_links AS link
+			JOIN dream_path_evaluations AS evaluation
+			  ON evaluation.team_id = link.team_id
+			 AND evaluation.path_evaluation_id = link.path_evaluation_id
+			WHERE link.team_id = ?::uuid
+			  AND evaluation.first_relationship_id = ?::uuid
+			ORDER BY link.created_at ASC, link.run_id ASC
+		`, teamID, firstInput.RelationshipID).Scan(&linkedRunIDs).Error
+	}))
+	require.ElementsMatch(t, []string{run.RunID, secondRun.RunID}, linkedRunIDs)
+	var pathEvaluationCount int
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)
+			FROM dream_path_evaluations
+			WHERE team_id = ?::uuid
+			  AND first_relationship_id = ?::uuid
+		`, teamID, firstInput.RelationshipID).Scan(&pathEvaluationCount).Error
+	}))
+	require.Equal(t, 1, pathEvaluationCount)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE hypotheses
+			SET invalidated_reason = ?
+			WHERE team_id = ?::uuid AND cycle_run_id = ?::uuid
+		`, "provider-token=do-not-retain", teamID, run.RunID).Error
+	}))
+	diagnosticsStore := semanticRepo
+	require.NoError(t, diagnosticsStore.RecordDreamRunDiagnostics(ctx, dreamcontract.DreamDiagnosticCaptureInput{
+		TeamID: teamID, RunID: run.RunID, Phase: "run", Outcome: "completed",
+		CaptureState: "captured", Payload: []byte(`{"provider_exchanges":[{"response_body":"captured"}]}`),
+	}))
+	diagnosticPage, err := diagnosticsStore.ListDreamDiagnostics(ctx, dreamcontract.DreamDiagnosticListInput{TeamID: teamID, RunID: run.RunID, Limit: 25})
+	require.NoError(t, err)
+	proposalSeen, dispositionSeen := false, false
+	for _, diagnostic := range diagnosticPage.Items {
+		if diagnostic.Phase == "proposal" {
+			proposalSeen = true
+			require.Equal(t, "not_captured", diagnostic.CaptureState)
+			require.Equal(t, "phase_metadata_only", diagnostic.CaptureReason)
+			require.Equal(t, "created", diagnostic.Outcome)
+		}
+		if diagnostic.Phase == "disposition" {
+			dispositionSeen = true
+			require.Equal(t, "not_captured", diagnostic.CaptureState)
+			require.Equal(t, "phase_metadata_only", diagnostic.CaptureReason)
+			require.Equal(t, "proposed", diagnostic.Outcome)
+			require.NotContains(t, diagnostic.Details, "invalidated_reason")
+		}
+	}
+	require.True(t, proposalSeen)
+	require.True(t, dispositionSeen)
 
-	var hiddenDerivations, hiddenEvaluations int
+	var hiddenDerivations, hiddenEvaluations, hiddenPathEvaluationRunLinks int
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, otherTeamID, otherOwnerID, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
 			SELECT count(*)
@@ -102,14 +185,22 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 		`, teamID).Scan(&hiddenDerivations).Error; err != nil {
 			return err
 		}
-		return tx.Raw(`
+		if err := tx.Raw(`
 			SELECT count(*)
 			FROM dream_path_evaluations
 			WHERE team_id = ?::uuid
-		`, teamID).Scan(&hiddenEvaluations).Error
+		`, teamID).Scan(&hiddenEvaluations).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT count(*)
+			FROM dream_path_evaluation_run_links
+			WHERE team_id = ?::uuid
+		`, teamID).Scan(&hiddenPathEvaluationRunLinks).Error
 	}))
 	assert.Zero(t, hiddenDerivations)
 	assert.Zero(t, hiddenEvaluations)
+	assert.Zero(t, hiddenPathEvaluationRunLinks)
 
 	available, err := semanticRepo.ListAvailableDreamTargets(ctx, teamID, []DreamTargetCandidate{
 		{
