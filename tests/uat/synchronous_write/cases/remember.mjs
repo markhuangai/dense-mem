@@ -650,7 +650,16 @@ async function runMultiItemCase({ rpc, expect }) {
   expect(result.evidence.length === 2, "multi-item batch must return every evidence disposition");
   expect(result.evidence.every((item) => item.disposition === "stored" && item.search_state === "current"), "multi-item evidence must be current");
   expect(result.relationship_results.length === 2, "multi-item batch must return every relationship disposition");
-  expect(result.relationship_results.every((item) => item.disposition === "stored" && item.splits.length > 0), "multi-item relationships must be stored with splits");
+  const relationshipSummary = result.relationship_results.map((item) => ({
+    ref: item.ref,
+    disposition: item.disposition,
+    reason: item.reason,
+    split_count: item.splits?.length ?? null,
+  }));
+  expect(
+    result.relationship_results.every((item) => item.disposition === "stored" && item.splits.length > 0),
+    `multi-item relationships must be stored with splits: ${JSON.stringify(relationshipSummary)}`,
+  );
   return { fault: "multi", processing_state: result.processing_state, evidence_count: result.evidence.length };
 }
 
