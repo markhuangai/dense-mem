@@ -490,10 +490,7 @@ validate_release_gate_seed() {
 }
 
 trim_model_name() {
-  local model="$1"
-  model="${model#"${model%%[![:space:]]*}"}"
-  model="${model%"${model##*[![:space:]]}"}"
-  printf '%s' "${model}"
+  jq -nr --arg model "$1" '$model | gsub("^\\s+|\\s+$"; "")'
 }
 
 effective_remember_model() {
