@@ -166,7 +166,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     }
   }
 
-  for (const label of diagnosticFaults.filter(([, , state]) => state === "failed").map(([name]) => name)) {
+  for (const label of [...diagnosticFaults.filter(([, , state]) => state === "failed").map(([name]) => name), "failed"]) {
     const detail = await controlJSON(controlURL, token, `/control/api/teams/${teamID}/remember-attempts/${diagnosticAttemptIDs[label]}`);
     const diagnostics = detail.data?.diagnostics || {};
     expect(diagnostics.original_request?.request_body?.includes('"name":"remember"'), `${label} detail must expose the logical original request`);
