@@ -125,7 +125,9 @@ func (s *service) resolveConfirmationWithLock(
 ) (*ResolveFeedbackResult, error) {
 	var result *ResolveFeedbackResult
 	var diagnostic deferredHypothesisDiagnostic
+	callbackInvoked := false
 	err := s.deps.Store.WithHypothesisConfirmationLock(ctx, teamID, dreamID, func(store dreamcontract.DreamRepository) error {
+		callbackInvoked = true
 		var err error
 		result, err = s.resolveConfirmation(ctx, store, teamID, actorProfileID, dreamID, decision, req, &diagnostic)
 		return err
@@ -133,6 +135,9 @@ func (s *service) resolveConfirmationWithLock(
 	if errors.Is(err, dreamcontract.ErrDreamConfirmationBusy) {
 		s.recordDreamFeedback(ctx, decision, nil, "error")
 		return nil, &ConfirmationBusyError{Decision: decision}
+	}
+	if err != nil && !callbackInvoked {
+		s.recordDreamFeedback(ctx, decision, nil, "error")
 	}
 	diagnostic.recordAfterLock(s, ctx)
 	return result, err
@@ -148,7 +153,9 @@ func (s *service) resolveLifecycleFeedbackWithLock(
 ) (*ResolveFeedbackResult, error) {
 	var result *ResolveFeedbackResult
 	var diagnostic deferredHypothesisDiagnostic
+	callbackInvoked := false
 	err := s.deps.Store.WithHypothesisConfirmationLock(ctx, teamID, dreamID, func(store dreamcontract.DreamRepository) error {
+		callbackInvoked = true
 		var err error
 		result, err = s.resolveLifecycleFeedback(ctx, store, teamID, actorProfileID, dreamID, decision, req, &diagnostic)
 		return err
@@ -156,6 +163,9 @@ func (s *service) resolveLifecycleFeedbackWithLock(
 	if errors.Is(err, dreamcontract.ErrDreamConfirmationBusy) {
 		s.recordDreamFeedback(ctx, decision, nil, "error")
 		return nil, &ConfirmationBusyError{Decision: decision}
+	}
+	if err != nil && !callbackInvoked {
+		s.recordDreamFeedback(ctx, decision, nil, "error")
 	}
 	diagnostic.recordAfterLock(s, ctx)
 	return result, err
