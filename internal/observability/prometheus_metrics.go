@@ -337,6 +337,10 @@ func (m *PrometheusMetrics) ObserveVerifierLatencyFor(ctx context.Context, model
 }
 
 func (m *PrometheusMetrics) ObserveVerifierTokens(ctx context.Context, model string, promptTokens, completionTokens, totalTokens int64) {
+	const maxMetricTokenCount = int64(1<<63 - 1)
+	if totalTokens == 0 && promptTokens > 0 && completionTokens > 0 && promptTokens <= maxMetricTokenCount-completionTokens {
+		totalTokens = promptTokens + completionTokens
+	}
 	m.addTokens(m.verifierTokens, ctx, model, promptTokens, completionTokens, totalTokens)
 }
 

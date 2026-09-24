@@ -128,6 +128,40 @@ func TestOpenAIStructuredChatAggregatesProviderTokensOnce(t *testing.T) {
 	assert.Equal(t, float64(11), legacyPrompt)
 }
 
+func TestOpenAIStructuredChatDerivesMissingProviderTotal(t *testing.T) {
+	metrics := observability.NewPrometheusMetrics()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": `{}`}}},
+			"usage":   map[string]any{"prompt_tokens": 11, "completion_tokens": 7},
+		}))
+	}))
+	defer srv.Close()
+
+	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	v.SetMetrics(metrics)
+	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationSemanticAssessment, 1)
+	_, err := v.openAIStructuredChatJSONWithUsage(ctx, "assessor-model", "schema", map[string]any{}, "system", map[string]any{})
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := recorder.Body.String()
+	providerTotal, found := verifierMetricLineValue(
+		body,
+		"densemem_operation_provider_tokens_total",
+		`operation="semantic_assessment"`,
+		`component="verifier"`,
+		`kind="total"`,
+		`source="provider"`,
+	)
+	require.True(t, found, "missing derived provider token total\n%s", body)
+	assert.Equal(t, float64(18), providerTotal)
+	legacyTotal, found := verifierMetricLineValue(body, "densemem_verifier_tokens_total", `kind="total"`, `model="assessor-model"`)
+	require.True(t, found, "missing derived legacy verifier token total\n%s", body)
+	assert.Equal(t, float64(18), legacyTotal)
+}
+
 func TestOpenAICommunitySummaryTelemetryRecordsProviderTokenizerAndUnpricedUsage(t *testing.T) {
 	rate := 1.0
 	metrics := observability.NewPrometheusMetrics(observability.AIPricingResolverFunc(func(context.Context) (observability.AIPricing, error) {
