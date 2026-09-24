@@ -343,6 +343,35 @@ func assertOperationalTelemetryWindowIndexPlans(t *testing.T, ctx context.Contex
 				  AND ` + activeSemanticSpaceGenerationSQL("feedback") + `
 				GROUP BY window_bounds.window_key, feedback.decision`,
 		},
+		{
+			index: "relationship_observations_telemetry_ingest_idx",
+			query: `EXPLAIN (COSTS OFF) WITH ` + operationalTelemetryWindowCTE + `
+				SELECT window_bounds.window_key, relationship.status,
+				       count(DISTINCT (relationship.team_id, relationship.relationship_id))::double precision
+				FROM relationship_records AS relationship
+				JOIN relationship_observations AS observation
+				  ON observation.team_id = relationship.team_id
+				 AND observation.relationship_id = relationship.relationship_id
+				 AND observation.space_id = relationship.space_id
+				 AND observation.space_generation = relationship.space_generation
+				JOIN knowledge_ingests AS ingest
+				  ON ingest.team_id = observation.team_id
+				 AND ingest.ingest_id = observation.ingest_id
+				 AND ingest.space_id = observation.space_id
+				 AND ingest.space_generation = observation.space_generation
+				 AND ingest.status = 'completed'
+				JOIN hypothesis_feedback_events AS feedback
+				  ON feedback.team_id = ingest.team_id
+				 AND feedback.submitted_ingest_id = ingest.ingest_id
+				 AND feedback.space_id = ingest.space_id
+				 AND feedback.space_generation = ingest.space_generation
+				 AND feedback.decision IN ('confirm_true', 'confirm_false', 'promote_candidate')
+				CROSS JOIN window_bounds
+				WHERE feedback.created_at >= window_bounds.starts_at
+				  AND relationship.identity_alias_of_relationship_id IS NULL
+				  AND ` + activeSemanticSpaceGenerationSQL("relationship") + `
+				GROUP BY window_bounds.window_key, relationship.status`,
+		},
 	}
 
 	plans := make([]string, len(queries))

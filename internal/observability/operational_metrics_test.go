@@ -118,7 +118,7 @@ func TestOperationalTelemetryCollectorDoesNotPublishFalseZerosOnPartialFailure(t
 	require.NotContains(t, body, "relationship correction query failed")
 }
 
-func TestOperationalTelemetryCollectorSharesOverlappingScrapes(t *testing.T) {
+func TestOperationalTelemetryCollectorCoalescesInFlightLedgerReads(t *testing.T) {
 	readerStarted := make(chan struct{})
 	releaseReader := make(chan struct{})
 	var calls atomic.Int32
@@ -135,15 +135,7 @@ func TestOperationalTelemetryCollectorSharesOverlappingScrapes(t *testing.T) {
 			RelationshipsCurrent: []operationscontract.NamedTelemetryCount{{Kind: "active", Count: 7}},
 		}, nil
 	})
-	metrics := NewPrometheusMetrics()
-	require.NoError(t, metrics.RegisterOperationalTelemetryCollector(reader))
-	handler := metrics.Handler()
-	completed := make(chan *httptest.ResponseRecorder, 2)
-	scrape := func() {
-		recorder := httptest.NewRecorder()
-		handler.ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
-		completed <- recorder
-	}
+	collector := NewOperationalTelemetryCollector(reader)
 	defer func() {
 		select {
 		case <-releaseReader:
@@ -152,36 +144,25 @@ func TestOperationalTelemetryCollectorSharesOverlappingScrapes(t *testing.T) {
 		}
 	}()
 
-	go scrape()
+	firstRead := collector.readOperationalTelemetry()
 	select {
 	case <-readerStarted:
 	case <-time.After(time.Second):
-		t.Fatal("first scrape did not start its ledger read")
+		t.Fatal("first read did not start")
 	}
-	secondStarted := make(chan struct{})
-	go func() {
-		close(secondStarted)
-		scrape()
-	}()
-	<-secondStarted
-	select {
-	case recorder := <-completed:
-		t.Fatalf("overlapping scrape returned before the active read completed: %s", recorder.Body.String())
-	case <-time.After(100 * time.Millisecond):
-	}
+	secondRead := collector.readOperationalTelemetry()
 	close(releaseReader)
 
-	for range 2 {
-		select {
-		case recorder := <-completed:
-			body := recorder.Body.String()
-			require.Contains(t, body, `densemem_operational_ledger_collection_success 1`)
-			require.Contains(t, body, `densemem_operational_relationships_current{status="active"} 7`)
-			require.NotContains(t, body, `densemem_operational_ledger_collection_success 0`)
-		case <-time.After(2 * time.Second):
-			t.Fatal("serialized scrape did not complete")
-		}
-	}
+	firstResult := <-firstRead
+	secondResult := <-secondRead
+	require.NoError(t, firstResult.Err)
+	require.NoError(t, secondResult.Err)
+	require.True(t, firstResult.Shared)
+	require.True(t, secondResult.Shared)
+	require.Equal(t, operationscontract.OperationalTelemetrySnapshot{
+		RelationshipsCurrent: []operationscontract.NamedTelemetryCount{{Kind: "active", Count: 7}},
+	}, firstResult.Val)
+	require.Equal(t, firstResult.Val, secondResult.Val)
 	require.Equal(t, int32(1), calls.Load())
 }
 

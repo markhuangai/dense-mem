@@ -11,6 +11,7 @@ SET lock_timeout = '30s';
 
 DROP INDEX CONCURRENTLY IF EXISTS dream_cycle_runs_telemetry_window_invalid_idx;
 DROP INDEX CONCURRENTLY IF EXISTS hypothesis_feedback_events_telemetry_window_invalid_idx;
+DROP INDEX CONCURRENTLY IF EXISTS relationship_observations_telemetry_ingest_invalid_idx;
 
 -- +goose StatementBegin
 DO $operational_telemetry_window_invalid_indexes$
@@ -23,6 +24,7 @@ BEGIN
                CASE index_class.relname
                    WHEN 'dream_cycle_runs_telemetry_window_idx' THEN 'dream_cycle_runs_telemetry_window_invalid_idx'
                    WHEN 'hypothesis_feedback_events_telemetry_window_idx' THEN 'hypothesis_feedback_events_telemetry_window_invalid_idx'
+                   WHEN 'relationship_observations_telemetry_ingest_idx' THEN 'relationship_observations_telemetry_ingest_invalid_idx'
                END AS replacement_name
         FROM pg_index AS index_state
         JOIN pg_class AS index_class ON index_class.oid = index_state.indexrelid
@@ -31,7 +33,8 @@ BEGIN
           AND NOT index_state.indisvalid
           AND index_class.relname IN (
               'dream_cycle_runs_telemetry_window_idx',
-              'hypothesis_feedback_events_telemetry_window_idx'
+              'hypothesis_feedback_events_telemetry_window_idx',
+              'relationship_observations_telemetry_ingest_idx'
           )
     LOOP
         EXECUTE format('ALTER INDEX %I.%I RENAME TO %I', invalid_index.schema_name, invalid_index.index_name, invalid_index.replacement_name);
@@ -42,6 +45,7 @@ $operational_telemetry_window_invalid_indexes$;
 
 DROP INDEX CONCURRENTLY IF EXISTS dream_cycle_runs_telemetry_window_invalid_idx;
 DROP INDEX CONCURRENTLY IF EXISTS hypothesis_feedback_events_telemetry_window_invalid_idx;
+DROP INDEX CONCURRENTLY IF EXISTS relationship_observations_telemetry_ingest_invalid_idx;
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS dream_cycle_runs_telemetry_window_idx
     ON dream_cycle_runs(started_at, team_id, space_id, space_generation)
@@ -51,8 +55,13 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS hypothesis_feedback_events_telemetry_win
     ON hypothesis_feedback_events(created_at, team_id, space_id, space_generation)
     INCLUDE (decision);
 
+CREATE INDEX CONCURRENTLY IF NOT EXISTS relationship_observations_telemetry_ingest_idx
+    ON relationship_observations(team_id, ingest_id, space_id, space_generation, relationship_id)
+    WHERE relationship_id IS NOT NULL;
+
 DROP INDEX CONCURRENTLY IF EXISTS dream_cycle_runs_telemetry_window_invalid_idx;
 DROP INDEX CONCURRENTLY IF EXISTS hypothesis_feedback_events_telemetry_window_invalid_idx;
+DROP INDEX CONCURRENTLY IF EXISTS relationship_observations_telemetry_ingest_invalid_idx;
 
 RESET lock_timeout;
 
@@ -61,6 +70,8 @@ RESET lock_timeout;
 SET lock_timeout = '30s';
 DROP INDEX CONCURRENTLY IF EXISTS dream_cycle_runs_telemetry_window_idx;
 DROP INDEX CONCURRENTLY IF EXISTS hypothesis_feedback_events_telemetry_window_idx;
+DROP INDEX CONCURRENTLY IF EXISTS relationship_observations_telemetry_ingest_idx;
 DROP INDEX CONCURRENTLY IF EXISTS dream_cycle_runs_telemetry_window_invalid_idx;
 DROP INDEX CONCURRENTLY IF EXISTS hypothesis_feedback_events_telemetry_window_invalid_idx;
+DROP INDEX CONCURRENTLY IF EXISTS relationship_observations_telemetry_ingest_invalid_idx;
 RESET lock_timeout;

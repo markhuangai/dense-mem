@@ -101,8 +101,8 @@ async function mcpSuccess(name, args) {
   return JSON.parse(text);
 }
 
-async function assertToolNotFound(name, args) {
-  const response = await rpc("tools/call", { name, arguments: args });
+async function assertToolNotFound(name, args, headers) {
+  const response = await rpc("tools/call", { name, arguments: args }, headers);
   if (response.error?.code !== -32601 || response.result !== undefined) {
     throw new Error(`hidden tool ${name} was callable: ${JSON.stringify(response)}`);
   }
@@ -172,11 +172,15 @@ async function assertUsageMetricDeltas() {
 async function assertTransportLogOutcomes() {
   const marker = `transport-pre-admission-${randomUUID()}`;
   const unmatchedMarker = `transport-unmatched-${randomUUID()}`;
+  const lookupCorrelationID = randomUUID();
   const markerFrom = new Date().toISOString();
   await mcpSuccess("recall_memory", { query: `transport-success-${randomUUID()}`, limit: 1 });
   await fetch(`${userURL}/unmatched/${unmatchedMarker}`, { method: "GET" });
   await rpc("tools/call", { name: "remember", arguments: { unexpected: marker } });
-  await assertToolNotFound("missing-transport-failure-tool", {});
+  await assertToolNotFound("missing-transport-failure-tool", {}, {
+    Accept: "application/json, text/event-stream",
+    "X-Correlation-ID": lookupCorrelationID,
+  });
   if (process.env.DENSE_MEM_E2E_SCENARIO === "mcp_transport_cancellation") {
     await assertCancelledTransportOutcome(markerFrom);
   }
@@ -184,17 +188,23 @@ async function assertTransportLogOutcomes() {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const page = await controlJSON(`/logs?limit=500&sort=timestamp&direction=desc&from=${encodeURIComponent(markerFrom)}`, { method: "GET" });
     rows = Array.isArray(page.data) ? page.data : [];
-    const hasRPCError = rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "rpc_error");
+    const hasLookupError = rows.some((row) => row?.message === "mcp_tool_outcome"
+      && rowCorrelationID(row) === lookupCorrelationID
+      && row?.attrs?.application_outcome === "rpc_error"
+      && row?.attrs?.lookup_reason === "tool_not_available");
     const hasSuccess = rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "success");
-    if (hasRPCError && hasSuccess) break;
+    if (hasLookupError && hasSuccess) break;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   const serialized = JSON.stringify(rows);
   if (serialized.includes(marker) || serialized.includes(unmatchedMarker) || serialized.includes("missing-transport-failure-tool")) {
     throw new Error("transport logs retained rejected request content");
   }
-  if (!rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "rpc_error")) {
-    throw new Error("persisted MCP RPC failure outcome was missing");
+  if (!rows.some((row) => row?.message === "mcp_tool_outcome"
+    && rowCorrelationID(row) === lookupCorrelationID
+    && row?.attrs?.application_outcome === "rpc_error"
+    && row?.attrs?.lookup_reason === "tool_not_available")) {
+    throw new Error("persisted missing-tool lookup outcome was missing");
   }
   if (!rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "success")) {
     throw new Error("persisted MCP tool success outcome was missing");
@@ -309,10 +319,10 @@ function assertUsageDelta(before, after, label, requestDelta, callDelta, failure
   }
 }
 
-async function rpc(method, params) {
+async function rpc(method, params, headers = {}) {
   return httpJSON(`${userURL}/mcp`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json", ...headers },
     body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method, params }),
   });
 }
@@ -358,6 +368,12 @@ async function httpJSON(url, options) {
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`HTTP ${response.status} ${url}: response body redacted`);
+  }
+  const contentType = (response.headers.get("content-type") ?? "").split(";", 1)[0].trim().toLowerCase();
+  if (contentType === "text/event-stream") {
+    const data = text.split(/\r?\n/).find((line) => line.startsWith("data:"));
+    if (!data) throw new Error("HTTP event stream omitted its JSON-RPC payload");
+    return JSON.parse(data.slice("data:".length).trimStart());
   }
   return text ? JSON.parse(text) : {};
 }

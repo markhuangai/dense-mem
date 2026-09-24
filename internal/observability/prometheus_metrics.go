@@ -404,6 +404,10 @@ func (m *PrometheusMetrics) ObserveAIOperationUsage(ctx context.Context, usage A
 			m.observeProviderTokens(operation.operation, component, "output", source, usage.OutputTokens)
 		}
 	}
+	if source == AITokenSourceTokenizer {
+		m.observeProviderTokens(operation.operation, component, "total", source, usage.InputTokens)
+		m.observeProviderTokens(operation.operation, component, "total", source, usage.OutputTokens)
+	}
 	itemCount := operation.itemCount
 	if usage.ItemCount > 0 {
 		itemCount = usage.ItemCount

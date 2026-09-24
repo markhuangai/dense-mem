@@ -453,6 +453,14 @@ func (c *OperationalTelemetryCollector) Describe(ch chan<- *prometheus.Desc) {
 	}
 }
 
+func (c *OperationalTelemetryCollector) readOperationalTelemetry() <-chan singleflight.Result {
+	return c.collection.DoChan("canonical-ledger", func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), operationalLedgerCollectionTimeout)
+		defer cancel()
+		return c.reader.ReadOperationalTelemetry(ctx)
+	})
+}
+
 func (c *OperationalTelemetryCollector) Collect(ch chan<- prometheus.Metric) {
 	if c == nil {
 		return
@@ -461,16 +469,12 @@ func (c *OperationalTelemetryCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(c.status, prometheus.GaugeValue, 0)
 		return
 	}
-	result, err, _ := c.collection.Do("canonical-ledger", func() (any, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), operationalLedgerCollectionTimeout)
-		defer cancel()
-		return c.reader.ReadOperationalTelemetry(ctx)
-	})
-	if err != nil {
+	result := <-c.readOperationalTelemetry()
+	if result.Err != nil {
 		ch <- prometheus.MustNewConstMetric(c.status, prometheus.GaugeValue, 0)
 		return
 	}
-	snapshot := result.(operationscontract.OperationalTelemetrySnapshot)
+	snapshot := result.Val.(operationscontract.OperationalTelemetrySnapshot)
 	c.collectSnapshot(ch, snapshot)
 	ch <- prometheus.MustNewConstMetric(c.status, prometheus.GaugeValue, 1)
 }

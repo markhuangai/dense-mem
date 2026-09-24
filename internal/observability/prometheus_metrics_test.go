@@ -212,6 +212,33 @@ func TestPrometheusMetricsRecordsLifecycleAndPricedAIOperations(t *testing.T) {
 	requirePrometheusMetricLabels(t, body, "densemem_remember_acknowledgement_duration_seconds_bucket", `outcome="ok"`)
 }
 
+func TestPrometheusMetricsRecordsTokenizerFallbackTotalTokens(t *testing.T) {
+	metrics := NewPrometheusMetrics()
+	ctx := WithAIOperation(context.Background(), AIOperationSemanticAssessment, 1)
+	RecordAIOperationUsage(ctx, metrics, AIOperationUsage{
+		Component:    AIComponentVerifier,
+		Model:        "configured-verifier",
+		InputTokens:  11,
+		OutputTokens: 7,
+		Source:       AITokenSourceTokenizer,
+	})
+
+	body := scrapePrometheusMetrics(t, metrics)
+	for _, tc := range []struct {
+		kind  string
+		count float64
+	}{
+		{kind: "input", count: 11},
+		{kind: "output", count: 7},
+		{kind: "total", count: 18},
+	} {
+		if got := prometheusCounterValue(t, body, "densemem_operation_provider_tokens_total",
+			`component="verifier"`, `kind="`+tc.kind+`"`, `operation="semantic_assessment"`, `source="tokenizer"`); got != tc.count {
+			t.Errorf("tokenizer %s tokens = %v; want %v", tc.kind, got, tc.count)
+		}
+	}
+}
+
 func TestPrometheusMetricsMarksUnpricedAndKeepsWorkerIdentity(t *testing.T) {
 	metrics := NewPrometheusMetrics()
 	teamID := uuid.MustParse("33333333-3333-4333-8333-333333333333")

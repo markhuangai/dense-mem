@@ -51,6 +51,7 @@ func TestOperationalTelemetryWindowIndexMigrationRecoversInvalidBuildsAndRollsBa
 	}{
 		{name: "dream_cycle_runs_telemetry_window_idx", table: "dream_cycle_runs", columns: "started_at"},
 		{name: "hypothesis_feedback_events_telemetry_window_idx", table: "hypothesis_feedback_events", columns: "created_at"},
+		{name: "relationship_observations_telemetry_ingest_idx", table: "relationship_observations", columns: "team_id, ingest_id, space_id, space_generation, relationship_id"},
 	}
 	for _, index := range indexes {
 		_, err := db.ExecContext(ctx, "DROP INDEX CONCURRENTLY IF EXISTS "+index.name)
