@@ -184,17 +184,17 @@ async function assertTransportLogOutcomes() {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const page = await controlJSON(`/logs?limit=500&sort=timestamp&direction=desc&from=${encodeURIComponent(markerFrom)}`, { method: "GET" });
     rows = Array.isArray(page.data) ? page.data : [];
-    const hasFailure = rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "tool_error");
+    const hasRPCError = rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "rpc_error");
     const hasSuccess = rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "success");
-    if (hasFailure && hasSuccess) break;
+    if (hasRPCError && hasSuccess) break;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   const serialized = JSON.stringify(rows);
   if (serialized.includes(marker) || serialized.includes(unmatchedMarker) || serialized.includes("missing-transport-failure-tool")) {
     throw new Error("transport logs retained rejected request content");
   }
-  if (!rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "tool_error")) {
-    throw new Error("persisted MCP tool failure outcome was missing");
+  if (!rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "rpc_error")) {
+    throw new Error("persisted MCP RPC failure outcome was missing");
   }
   if (!rows.some((row) => row?.message === "mcp_tool_outcome" && row?.attrs?.application_outcome === "success")) {
     throw new Error("persisted MCP tool success outcome was missing");
