@@ -300,7 +300,7 @@ func TestReadOperationalTelemetryUsesDurableLedgerAndSurvivesCollectorRecreation
 	require.Equal(t, 4.0, findWindowedTelemetryCount(snapshot.RelationshipTransitions, "15m", "active"))
 	require.NotEmpty(t, thirdIngestID)
 	require.NotEmpty(t, fourthIngestID)
-	assertOperationalTelemetryWindowIndexPlans(t, ctx, appDB, rls)
+	assertOperationalTelemetryIndexPlans(t, ctx, appDB, rls)
 
 	for _, recreatedReader := range []*TelemetryLifecycleRepository{reader, NewTelemetryLifecycleRepository(appDB, rls)} {
 		metrics := observability.NewPrometheusMetrics()
@@ -316,7 +316,7 @@ func TestReadOperationalTelemetryUsesDurableLedgerAndSurvivesCollectorRecreation
 	}
 }
 
-func assertOperationalTelemetryWindowIndexPlans(t *testing.T, ctx context.Context, db *gorm.DB, rls *storagepostgres.RLS) {
+func assertOperationalTelemetryIndexPlans(t *testing.T, ctx context.Context, db *gorm.DB, rls *storagepostgres.RLS) {
 	t.Helper()
 	queries := []struct {
 		index string
@@ -371,6 +371,28 @@ func assertOperationalTelemetryWindowIndexPlans(t *testing.T, ctx context.Contex
 				  AND relationship.identity_alias_of_relationship_id IS NULL
 				  AND ` + activeSemanticSpaceGenerationSQL("relationship") + `
 				GROUP BY window_bounds.window_key, relationship.status`,
+		},
+		{
+			index: "hypotheses_telemetry_current_idx",
+			query: `EXPLAIN (COSTS OFF)
+				SELECT hypothesis.lane, hypothesis.status, count(*)::double precision,
+				       count(*) FILTER (WHERE hypothesis.status IN ('proposed', 'reinforced'))::double precision,
+				       COALESCE(EXTRACT(EPOCH FROM (now() - MIN(hypothesis.created_at) FILTER (
+				           WHERE hypothesis.status IN ('proposed', 'reinforced')
+				       ))), 0)::double precision
+				FROM hypotheses AS hypothesis
+				WHERE hypothesis.canonical_hypothesis_id IS NULL
+				  AND ` + activeSemanticSpaceGenerationSQL("hypothesis") + `
+				GROUP BY hypothesis.lane, hypothesis.status`,
+		},
+		{
+			index: "relationship_records_telemetry_current_idx",
+			query: `EXPLAIN (COSTS OFF)
+				SELECT relationship.status, count(*)::double precision
+				FROM relationship_records AS relationship
+				WHERE relationship.identity_alias_of_relationship_id IS NULL
+				  AND ` + activeSemanticSpaceGenerationSQL("relationship") + `
+				GROUP BY relationship.status`,
 		},
 	}
 
