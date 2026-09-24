@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -299,6 +300,7 @@ func TestReadOperationalTelemetryUsesDurableLedgerAndSurvivesCollectorRecreation
 	require.Equal(t, 4.0, findWindowedTelemetryCount(snapshot.RelationshipTransitions, "15m", "active"))
 	require.NotEmpty(t, thirdIngestID)
 	require.NotEmpty(t, fourthIngestID)
+	assertOperationalTelemetryWindowIndexPlans(t, ctx, appDB, rls)
 
 	for _, recreatedReader := range []*TelemetryLifecycleRepository{reader, NewTelemetryLifecycleRepository(appDB, rls)} {
 		metrics := observability.NewPrometheusMetrics()
@@ -311,6 +313,72 @@ func TestReadOperationalTelemetryUsesDurableLedgerAndSurvivesCollectorRecreation
 		require.NotContains(t, response.Body.String(), teamID)
 		require.NotContains(t, response.Body.String(), ownerID)
 		require.NotContains(t, response.Body.String(), hypothesisID)
+	}
+}
+
+func assertOperationalTelemetryWindowIndexPlans(t *testing.T, ctx context.Context, db *gorm.DB, rls *storagepostgres.RLS) {
+	t.Helper()
+	queries := []struct {
+		index string
+		query string
+	}{
+		{
+			index: "dream_cycle_runs_telemetry_window_idx",
+			query: `EXPLAIN (COSTS OFF) WITH ` + operationalTelemetryWindowCTE + `
+				SELECT window_bounds.window_key, count(*)
+				FROM dream_cycle_runs AS cycle
+				CROSS JOIN window_bounds
+				WHERE cycle.canonical_run_id IS NULL
+				  AND cycle.started_at >= window_bounds.starts_at
+				  AND ` + activeSemanticSpaceGenerationSQL("cycle") + `
+				GROUP BY window_bounds.window_key`,
+		},
+		{
+			index: "hypothesis_feedback_events_telemetry_window_idx",
+			query: `EXPLAIN (COSTS OFF) WITH ` + operationalTelemetryWindowCTE + `
+				SELECT window_bounds.window_key, feedback.decision, count(*)
+				FROM hypothesis_feedback_events AS feedback
+				CROSS JOIN window_bounds
+				WHERE feedback.created_at >= window_bounds.starts_at
+				  AND ` + activeSemanticSpaceGenerationSQL("feedback") + `
+				GROUP BY window_bounds.window_key, feedback.decision`,
+		},
+	}
+
+	plans := make([]string, len(queries))
+	err := rls.WithSystemReadOnlyRepeatableTx(ctx, db, func(tx *gorm.DB) error {
+		if err := tx.Exec("SET LOCAL enable_seqscan = off").Error; err != nil {
+			return err
+		}
+		for i, query := range queries {
+			rows, err := tx.WithContext(ctx).Raw(query.query).Rows()
+			if err != nil {
+				return err
+			}
+			var plan strings.Builder
+			for rows.Next() {
+				var line string
+				if err := rows.Scan(&line); err != nil {
+					_ = rows.Close()
+					return err
+				}
+				plan.WriteString(line)
+				plan.WriteByte('\n')
+			}
+			if err := rows.Err(); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			if err := rows.Close(); err != nil {
+				return err
+			}
+			plans[i] = plan.String()
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	for i, query := range queries {
+		require.Contains(t, plans[i], query.index)
 	}
 }
 

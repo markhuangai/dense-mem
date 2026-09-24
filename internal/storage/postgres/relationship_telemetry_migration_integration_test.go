@@ -36,6 +36,43 @@ func TestRelationshipTelemetryMigrationRecoversInvalidIndexesAndRollsBack(t *tes
 	}
 }
 
+func TestOperationalTelemetryWindowIndexMigrationRecoversInvalidBuildsAndRollsBack(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, db, migrationControlRetirementBaseVersion)
+	seedMigrationControlRetirementFixture(t, ctx, db)
+	require.NoError(t, migrationUpTo(ctx, db, 20260921010005))
+	indexes := []struct {
+		name    string
+		table   string
+		columns string
+	}{
+		{name: "dream_cycle_runs_telemetry_window_idx", table: "dream_cycle_runs", columns: "started_at"},
+		{name: "hypothesis_feedback_events_telemetry_window_idx", table: "hypothesis_feedback_events", columns: "created_at"},
+	}
+	for _, index := range indexes {
+		_, err := db.ExecContext(ctx, "DROP INDEX CONCURRENTLY IF EXISTS "+index.name)
+		require.NoError(t, err)
+		_, err = db.ExecContext(ctx, "DROP INDEX CONCURRENTLY IF EXISTS "+relationshipTelemetryInvalidIndexName(index.name))
+		require.NoError(t, err)
+		createCanceledRelationshipTelemetryIndex(t, ctx, db, index.name, index.table, index.columns)
+	}
+
+	require.NoError(t, migrationUpTo(ctx, db, 20260924120001))
+	for _, index := range indexes {
+		assert.True(t, indexIsValid(t, ctx, db, index.name), "rebuilt index %s should be valid", index.name)
+		assert.False(t, indexExists(t, ctx, db, relationshipTelemetryInvalidIndexName(index.name)), "temporary index for %s should be removed", index.name)
+	}
+
+	require.NoError(t, migrationDownTo(ctx, db, 20260921010005))
+	for _, index := range indexes {
+		assert.False(t, indexExists(t, ctx, db, index.name), "down migration should remove %s", index.name)
+		assert.False(t, indexExists(t, ctx, db, relationshipTelemetryInvalidIndexName(index.name)), "down migration should remove the temporary index for %s", index.name)
+	}
+}
+
 var relationshipTelemetryIndexNames = []string{
 	"relationship_transition_events_telemetry_window_idx",
 	"relationship_correction_events_telemetry_window_idx",

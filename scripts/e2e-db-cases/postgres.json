@@ -695,6 +695,13 @@
       "source": "internal/storage/postgres/telemetry_pricing_migration_integration_test.go"
     },
     {
+      "id": "postgres/TestOperationalTelemetryWindowIndexMigrationRecoversInvalidBuildsAndRollsBack",
+      "package": "./internal/storage/postgres",
+      "run": "^TestOperationalTelemetryWindowIndexMigrationRecoversInvalidBuildsAndRollsBack$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/relationship_telemetry_migration_integration_test.go"
+    },
+    {
       "id": "postgres/TestTelemetryFirstDispositionMigrationPreservesValidConcurrentIndex",
       "package": "./internal/storage/postgres",
       "run": "^TestTelemetryFirstDispositionMigrationPreservesValidConcurrentIndex$",
