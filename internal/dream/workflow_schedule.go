@@ -63,6 +63,8 @@ func (s *service) recoverScheduledCycle(ctx context.Context, teamID string) (*Ru
 		MaxAttempts: scheduledRecoveryAttempts,
 	})
 	if err != nil {
+		s.recordDreamRecovery("dream_graph", "attempted")
+		s.recordDreamRecovery("dream_graph", dreamRecoveryOutcome(ctx, nil, err))
 		return nil, translateDreamRepositoryError(err)
 	}
 	if claimed == nil {

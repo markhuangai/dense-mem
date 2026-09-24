@@ -369,17 +369,25 @@ func TestRecoverScheduledEvidenceCycleHandlesMissingStoreRecoveryAndTeamErrors(t
 	require.ErrorContains(t, err, "scheduled dream repository is required")
 
 	store := &dreamRepositoryStub{recoveryErr: errors.New("recovery failed")}
-	svc = New(Dependencies{ScheduledStore: store, AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, Timezone: "UTC", StartTimeLocal: "03:00"}}}).(*service)
+	metrics := observability.NewPrometheusMetrics()
+	svc = New(Dependencies{ScheduledStore: store, Metrics: metrics, AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, Timezone: "UTC", StartTimeLocal: "03:00"}}}).(*service)
 	_, err = svc.RecoverScheduledEvidenceCycle(context.Background(), "not-a-uuid")
 	require.Error(t, err)
 	_, err = svc.RecoverScheduledEvidenceCycle(context.Background(), teamID)
 	require.ErrorContains(t, err, "recovery failed")
+	metricText := dreamMetricsText(t, metrics)
+	require.Contains(t, metricText, `densemem_logical_operation_recoveries_total{operation="dream_evidence",outcome="attempted"} 1`)
+	require.Contains(t, metricText, `densemem_logical_operation_recoveries_total{operation="dream_evidence",outcome="failed"} 1`)
 
 	store = &dreamRepositoryStub{}
-	svc = New(Dependencies{ScheduledStore: store, AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, Timezone: "UTC", StartTimeLocal: "03:00"}}}).(*service)
+	metrics = observability.NewPrometheusMetrics()
+	svc = New(Dependencies{ScheduledStore: store, Metrics: metrics, AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, Timezone: "UTC", StartTimeLocal: "03:00"}}}).(*service)
 	result, err := svc.RecoverScheduledEvidenceCycle(context.Background(), teamID)
 	require.NoError(t, err)
 	require.Nil(t, result)
+	metricText = dreamMetricsText(t, metrics)
+	require.Contains(t, metricText, `densemem_logical_operation_recoveries_total{operation="dream_evidence",outcome="attempted"} 0`)
+	require.Contains(t, metricText, `densemem_logical_operation_recoveries_total{operation="dream_evidence",outcome="failed"} 0`)
 
 	svc.deps.Teams = &errorTeamServiceStub{err: errors.New("team lookup failed")}
 	_, err = svc.evidenceTeamIsActive(context.Background(), teamID)

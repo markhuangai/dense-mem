@@ -120,6 +120,8 @@ func (s *service) RecoverScheduledEvidenceCycle(ctx context.Context, teamID stri
 		MaxAttempts: scheduledRecoveryAttempts, Lane: domain.DreamLaneEvidenceDiscovery,
 	})
 	if err != nil {
+		s.recordDreamRecovery("dream_evidence", "attempted")
+		s.recordDreamRecovery("dream_evidence", dreamRecoveryOutcome(ctx, nil, err))
 		return nil, translateDreamRepositoryError(err)
 	}
 	if claim == nil {

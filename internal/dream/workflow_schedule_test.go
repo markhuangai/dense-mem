@@ -239,6 +239,7 @@ func TestRecoverScheduledCycleCancelsDisabledRunAndSurfacesClaimFailure(t *testi
 
 	t.Run("returns the recovery claim failure", func(t *testing.T) {
 		store := &dreamRepositoryStub{}
+		metrics := observability.NewPrometheusMetrics()
 		scheduledStore := &recoveryScheduledStoreStub{
 			dreamRepositoryStub: store,
 			recoveryErr:         errors.New("recovery claim failed"),
@@ -252,6 +253,7 @@ func TestRecoverScheduledCycleCancelsDisabledRunAndSurfacesClaimFailure(t *testi
 				Timezone:       "UTC",
 				MaxOutputs:     5,
 			}},
+			Metrics: metrics,
 		})
 
 		recoverer, ok := svc.(scheduledRecoveryService)
@@ -259,6 +261,35 @@ func TestRecoverScheduledCycleCancelsDisabledRunAndSurfacesClaimFailure(t *testi
 		result, err := recoverer.RecoverScheduledCycle(context.Background(), teamID.String())
 		require.Nil(t, result)
 		require.ErrorContains(t, err, "recovery claim failed")
+		metricText := dreamMetricsText(t, metrics)
+		require.Contains(t, metricText, `densemem_logical_operation_recoveries_total{operation="dream_graph",outcome="attempted"} 1`)
+		require.Contains(t, metricText, `densemem_logical_operation_recoveries_total{operation="dream_graph",outcome="failed"} 1`)
+	})
+
+	t.Run("does not count when no recoverable run exists", func(t *testing.T) {
+		store := &dreamRepositoryStub{}
+		metrics := observability.NewPrometheusMetrics()
+		scheduledStore := &recoveryScheduledStoreStub{dreamRepositoryStub: store}
+		svc := New(Dependencies{
+			Store:          store,
+			ScheduledStore: scheduledStore,
+			AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{
+				Enabled:        true,
+				StartTimeLocal: "03:00",
+				Timezone:       "UTC",
+				MaxOutputs:     5,
+			}},
+			Metrics: metrics,
+		})
+
+		recoverer, ok := svc.(scheduledRecoveryService)
+		require.True(t, ok)
+		result, err := recoverer.RecoverScheduledCycle(context.Background(), teamID.String())
+		require.NoError(t, err)
+		require.Nil(t, result)
+		metricText := dreamMetricsText(t, metrics)
+		require.Contains(t, metricText, `densemem_logical_operation_recoveries_total{operation="dream_graph",outcome="attempted"} 0`)
+		require.Contains(t, metricText, `densemem_logical_operation_recoveries_total{operation="dream_graph",outcome="failed"} 0`)
 	})
 }
 
