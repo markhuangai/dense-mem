@@ -167,7 +167,7 @@ func TestOpenAIProviderRecordsProviderUsageBeforeRejectingInvalidResult(t *testi
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 			"data":  []any{map[string]any{"embedding": []float32{0.1, 0.2}}},
-			"usage": map[string]any{"prompt_tokens": 12, "total_tokens": 12},
+			"usage": map[string]any{"prompt_tokens": 12},
 		}))
 	}))
 	defer srv.Close()
@@ -186,7 +186,10 @@ func TestOpenAIProviderRecordsProviderUsageBeforeRejectingInvalidResult(t *testi
 
 	recorder := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	for _, line := range strings.Split(recorder.Body.String(), "\n") {
+	body := recorder.Body.String()
+	require.Contains(t, body, `densemem_operation_provider_tokens_total{component="embedding",kind="input",operation="recall_embedding",source="provider"} 12`)
+	require.Contains(t, body, `densemem_operation_provider_tokens_total{component="embedding",kind="total",operation="recall_embedding",source="provider"} 12`)
+	for _, line := range strings.Split(body, "\n") {
 		if !strings.HasPrefix(line, "densemem_ai_operation_cost_usd_total{") {
 			continue
 		}
