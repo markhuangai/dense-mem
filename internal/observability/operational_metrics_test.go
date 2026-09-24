@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -115,6 +116,73 @@ func TestOperationalTelemetryCollectorDoesNotPublishFalseZerosOnPartialFailure(t
 	require.Contains(t, body, `densemem_operational_ledger_collection_success 0`)
 	require.NotContains(t, body, "densemem_operational_relationships_current")
 	require.NotContains(t, body, "relationship correction query failed")
+}
+
+func TestOperationalTelemetryCollectorSerializesOverlappingScrapes(t *testing.T) {
+	readerStarted := make(chan struct{})
+	releaseReader := make(chan struct{})
+	var calls atomic.Int32
+	reader := operationalTelemetryReaderFunc(func(ctx context.Context) (operationscontract.OperationalTelemetrySnapshot, error) {
+		if calls.Add(1) == 1 {
+			close(readerStarted)
+			select {
+			case <-releaseReader:
+			case <-ctx.Done():
+				return operationscontract.OperationalTelemetrySnapshot{}, ctx.Err()
+			}
+		}
+		return operationscontract.OperationalTelemetrySnapshot{
+			RelationshipsCurrent: []operationscontract.NamedTelemetryCount{{Kind: "active", Count: 7}},
+		}, nil
+	})
+	metrics := NewPrometheusMetrics()
+	require.NoError(t, metrics.RegisterOperationalTelemetryCollector(reader))
+	handler := metrics.Handler()
+	completed := make(chan *httptest.ResponseRecorder, 2)
+	scrape := func() {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+		completed <- recorder
+	}
+	defer func() {
+		select {
+		case <-releaseReader:
+		default:
+			close(releaseReader)
+		}
+	}()
+
+	go scrape()
+	select {
+	case <-readerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first scrape did not start its ledger read")
+	}
+	secondStarted := make(chan struct{})
+	go func() {
+		close(secondStarted)
+		scrape()
+	}()
+	<-secondStarted
+	select {
+	case recorder := <-completed:
+		t.Fatalf("overlapping scrape returned before the active read completed: %s", recorder.Body.String())
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseReader)
+
+	for range 2 {
+		select {
+		case recorder := <-completed:
+			body := recorder.Body.String()
+			require.Contains(t, body, `densemem_operational_ledger_collection_success 1`)
+			require.Contains(t, body, `densemem_operational_relationships_current{status="active"} 7`)
+			require.NotContains(t, body, `densemem_operational_ledger_collection_success 0`)
+		case <-time.After(2 * time.Second):
+			t.Fatal("serialized scrape did not complete")
+		}
+	}
+	require.Equal(t, int32(2), calls.Load())
 }
 
 func TestOperationalTelemetryCollectorCanReadDurableStateAfterRecreation(t *testing.T) {

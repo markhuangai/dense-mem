@@ -40,7 +40,7 @@ func TestRememberRetryRecordsRecoveryAndOneLogicalCompletion(t *testing.T) {
 	status, err := processor.ProcessRemember(context.Background(), input)
 	require.NoError(t, err)
 	require.Equal(t, "retried", status.SubmissionID)
-	require.Equal(t, "recovery", ledger.invocation.Classification)
+	require.Equal(t, "execution", ledger.invocation.Classification)
 	metricText := rememberMetricsText(t, metrics)
 	require.Contains(t, metricText, `densemem_logical_operation_recoveries_total{operation="remember",outcome="attempted"} 1`)
 	require.Contains(t, metricText, `densemem_logical_operation_recoveries_total{operation="remember",outcome="succeeded"} 1`)

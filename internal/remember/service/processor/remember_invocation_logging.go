@@ -46,6 +46,10 @@ func (p *rememberSynchronousProcessor) recordRememberInvocation(
 		}
 	}
 	outcome := rememberInvocationMetricOutcome(classification, cause, status)
+	diagnosticClassification := classification
+	if diagnosticClassification == "recovery" {
+		diagnosticClassification = "execution"
+	}
 	observability.RecordLogicalOperation(p.metrics, "remember", classification, outcome, rememberInvocationDuration(input.InvocationStartedAt))
 	isRecovery := classification == "recovery" || (len(recoveredAttempt) > 0 && recoveredAttempt[0])
 	if isRecovery {
@@ -117,7 +121,7 @@ func (p *rememberSynchronousProcessor) recordRememberInvocation(
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, InvocationID: invocationID,
 		CanonicalAttemptID: canonicalAttemptID, SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
 		RequestHash: input.RequestHash, CorrelationID: rememberProcessCorrelationID(input.Metadata),
-		Classification: classification, Outcome: outcome, FailedPhase: failedPhase, ErrorCode: errorCode,
+		Classification: diagnosticClassification, Outcome: outcome, FailedPhase: failedPhase, ErrorCode: errorCode,
 		Retryable: retryable, RequestBody: requestBody, RequestCaptureState: requestCaptureState, RequestCaptureReason: requestCaptureReason,
 		ProviderExchanges: providerExchanges, CallerResponse: callerBody,
 		CallerResponseCaptureState: callerCaptureState, CallerResponseCaptureReason: callerCaptureReason,

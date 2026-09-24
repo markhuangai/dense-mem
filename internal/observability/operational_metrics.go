@@ -454,12 +454,10 @@ func (c *OperationalTelemetryCollector) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (c *OperationalTelemetryCollector) Collect(ch chan<- prometheus.Metric) {
-	if c == nil || !c.mu.TryLock() {
-		if c != nil {
-			ch <- prometheus.MustNewConstMetric(c.status, prometheus.GaugeValue, 0)
-		}
+	if c == nil {
 		return
 	}
+	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.reader == nil {
 		ch <- prometheus.MustNewConstMetric(c.status, prometheus.GaugeValue, 0)
