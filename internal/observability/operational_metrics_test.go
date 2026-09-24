@@ -48,6 +48,31 @@ func TestOperationalMetricsBoundLabelsAndCoverLongDurations(t *testing.T) {
 	require.Contains(t, body, `densemem_logical_operation_duration_seconds_bucket{operation="unknown",outcome="unknown",le="240"} 1`)
 }
 
+func TestVerifierTokenTotalIsDerivedWhenOneSideIsZero(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		promptTokens     int64
+		completionTokens int64
+		wantTotal        int64
+	}{
+		{name: "prompt only", promptTokens: 11, wantTotal: 11},
+		{name: "completion only", completionTokens: 7, wantTotal: 7},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			metrics := NewPrometheusMetrics()
+			ctx := WithAIOperation(context.Background(), AIOperationSemanticAssessment, 1)
+			metrics.ObserveVerifierTokens(ctx, "model", test.promptTokens, test.completionTokens, 0)
+
+			recorder := httptest.NewRecorder()
+			metrics.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+			require.Contains(t, recorder.Body.String(), fmt.Sprintf(
+				`densemem_operation_provider_tokens_total{component="verifier",kind="total",operation="semantic_assessment",source="provider"} %d`,
+				test.wantTotal,
+			))
+		})
+	}
+}
+
 func TestProviderUsageAggregateCardinalityDoesNotFollowModelNames(t *testing.T) {
 	metrics := NewPrometheusMetrics()
 	ctx := WithAIOperation(context.Background(), AIOperationSemanticAssessment, 1)
@@ -74,8 +99,8 @@ func TestOperationalTelemetryCollectorEmitsDurableSnapshotAndFixedLabelSets(t *t
 	reader := operationalTelemetryReaderFunc(func(context.Context) (operationscontract.OperationalTelemetrySnapshot, error) {
 		return operationscontract.OperationalTelemetrySnapshot{
 			DreamRuns: []operationscontract.DreamRunTelemetry{
-				{Window: "1h", Lane: "graph", Status: "completed", Runs: 2, Attempts: 3, InputTargets: 8, ProviderProposals: 4, CreatedHypotheses: 2},
-				{Window: "1h", Lane: "graph", Status: "completed", Runs: 1, Attempts: 2, InputTargets: 5, ProviderProposals: 2, CreatedHypotheses: 1},
+				{Window: "1h", Lane: "graph", Status: "completed", Runs: 2, InputTargets: 8, ProviderProposals: 4, CreatedHypotheses: 2},
+				{Window: "1h", Lane: "graph", Status: "completed", Runs: 1, InputTargets: 5, ProviderProposals: 2, CreatedHypotheses: 1},
 				{Window: "private-query", Lane: "raw-lane", Status: "raw-status", Runs: 99},
 			},
 			Hypotheses: []operationscontract.HypothesisTelemetry{
@@ -94,7 +119,7 @@ func TestOperationalTelemetryCollectorEmitsDurableSnapshotAndFixedLabelSets(t *t
 	body := recorder.Body.String()
 	require.Contains(t, body, `densemem_operational_ledger_collection_success 1`)
 	require.Contains(t, body, `densemem_operational_dream_runs{lane="graph",status="completed",window="1h"} 3`)
-	require.Contains(t, body, `densemem_operational_dream_run_attempts{lane="graph",status="completed",window="1h"} 5`)
+	require.NotContains(t, body, "densemem_operational_dream_run_attempts")
 	require.Contains(t, body, `densemem_operational_hypothesis_backlog{lane="graph"} 5`)
 	require.Contains(t, body, `densemem_operational_hypothesis_oldest_backlog_age_seconds{lane="graph"} 70`)
 	require.Contains(t, body, `densemem_operational_relationships_current{status="active"} 6`)

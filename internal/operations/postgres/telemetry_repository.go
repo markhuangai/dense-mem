@@ -36,6 +36,45 @@ const operationalTelemetryActiveSpacesCTE = `active_semantic_spaces AS MATERIALI
 	WHERE lifecycle_state = 'active'
 )`
 
+const operationalTelemetryWindowedCTEs = operationalTelemetryWindowCTE + `,
+window_floor AS MATERIALIZED (
+	SELECT min(starts_at) AS starts_at
+	FROM window_bounds
+), ` + operationalTelemetryActiveSpacesCTE
+
+const operationalTelemetryRecentDreamRunsCTE = `recent_dream_runs AS MATERIALIZED (
+	SELECT team_id, space_id, space_generation, lane, status, started_at,
+	       input_count, evidence_targets, evaluated_evidence_targets, provider_proposals,
+	       created_hypotheses, rejected_hypotheses
+	FROM dream_cycle_runs
+	WHERE canonical_run_id IS NULL
+	  AND started_at >= (SELECT starts_at FROM window_floor)
+)`
+
+const operationalTelemetryRecentFeedbackCTE = `recent_feedback AS MATERIALIZED (
+	SELECT team_id, space_id, space_generation, decision, created_at, submitted_ingest_id
+	FROM hypothesis_feedback_events
+	WHERE created_at >= (SELECT starts_at FROM window_floor)
+)`
+
+const operationalTelemetryRecentRememberAttemptsCTE = `recent_remember_attempts AS MATERIALIZED (
+	SELECT team_id, space_id, space_generation, outcome, created_at
+	FROM remember_attempts
+	WHERE created_at >= (SELECT starts_at FROM window_floor)
+)`
+
+const operationalTelemetryRecentRelationshipTransitionsCTE = `recent_relationship_transitions AS MATERIALIZED (
+	SELECT team_id, space_id, space_generation, to_status, created_at
+	FROM relationship_transition_events
+	WHERE created_at >= (SELECT starts_at FROM window_floor)
+)`
+
+const operationalTelemetryRecentRelationshipCorrectionsCTE = `recent_relationship_corrections AS MATERIALIZED (
+	SELECT team_id, space_id, space_generation, created_at
+	FROM relationship_correction_events
+	WHERE created_at >= (SELECT starts_at FROM window_floor)
+)`
+
 type TelemetryLifecycleRepository struct {
 	db  *gorm.DB
 	rls storagepostgres.RLSHelper
@@ -64,25 +103,26 @@ func (r *TelemetryLifecycleRepository) ReadOperationalTelemetry(ctx context.Cont
 
 	read := func(tx *gorm.DB) error {
 		if err := scanOperationalTelemetryRows(ctx, tx, `
-			WITH `+operationalTelemetryWindowCTE+`
+			WITH `+operationalTelemetryWindowedCTEs+`, `+operationalTelemetryRecentDreamRunsCTE+`
 			SELECT window_bounds.window_key, cycle.lane, cycle.status,
 			       count(*)::double precision,
-			       COALESCE(sum(cycle.attempt_count), 0)::double precision,
 			       COALESCE(sum(cycle.input_count), 0)::double precision,
 			       COALESCE(sum(cycle.evidence_targets), 0)::double precision,
 			       COALESCE(sum(cycle.evaluated_evidence_targets), 0)::double precision,
 			       COALESCE(sum(cycle.provider_proposals), 0)::double precision,
 			       COALESCE(sum(cycle.created_hypotheses), 0)::double precision,
 			       COALESCE(sum(cycle.rejected_hypotheses), 0)::double precision
-			FROM dream_cycle_runs AS cycle
+			FROM recent_dream_runs AS cycle
+			JOIN active_semantic_spaces AS active_space
+			  ON active_space.team_id = cycle.team_id
+			 AND active_space.space_id = cycle.space_id
+			 AND active_space.generation = cycle.space_generation
 			CROSS JOIN window_bounds
-			WHERE cycle.canonical_run_id IS NULL
-			  AND cycle.started_at >= window_bounds.starts_at
-			  AND `+activeSemanticSpaceGenerationSQL("cycle")+`
+			WHERE cycle.started_at >= window_bounds.starts_at
 			GROUP BY window_bounds.window_key, cycle.lane, cycle.status
 		`, func(rows *sql.Rows) error {
 			var value operationscontract.DreamRunTelemetry
-			if err := rows.Scan(&value.Window, &value.Lane, &value.Status, &value.Runs, &value.Attempts,
+			if err := rows.Scan(&value.Window, &value.Lane, &value.Status, &value.Runs,
 				&value.InputTargets, &value.EvidenceTargets, &value.EvaluatedTargets, &value.ProviderProposals,
 				&value.CreatedHypotheses, &value.RejectedHypotheses); err != nil {
 				return err
@@ -118,29 +158,35 @@ func (r *TelemetryLifecycleRepository) ReadOperationalTelemetry(ctx context.Cont
 		}
 
 		if err := scanOperationalTelemetryCounts(ctx, tx, `
-			WITH `+operationalTelemetryWindowCTE+`
+			WITH `+operationalTelemetryWindowedCTEs+`, `+operationalTelemetryRecentFeedbackCTE+`
 			SELECT window_bounds.window_key, feedback.decision, count(*)::double precision
-			FROM hypothesis_feedback_events AS feedback
+			FROM recent_feedback AS feedback
+			JOIN active_semantic_spaces AS active_space
+			  ON active_space.team_id = feedback.team_id
+			 AND active_space.space_id = feedback.space_id
+			 AND active_space.generation = feedback.space_generation
 			CROSS JOIN window_bounds
 			WHERE feedback.created_at >= window_bounds.starts_at
-			  AND `+activeSemanticSpaceGenerationSQL("feedback")+`
 			GROUP BY window_bounds.window_key, feedback.decision
 		`, &snapshot.Feedback); err != nil {
 			return err
 		}
 		if err := scanOperationalTelemetryCounts(ctx, tx, `
-			WITH `+operationalTelemetryWindowCTE+`
+			WITH `+operationalTelemetryWindowedCTEs+`, `+operationalTelemetryRecentRememberAttemptsCTE+`
 			SELECT window_bounds.window_key, attempt.outcome, count(*)::double precision
-			FROM remember_attempts AS attempt
+			FROM recent_remember_attempts AS attempt
+			JOIN active_semantic_spaces AS active_space
+			  ON active_space.team_id = attempt.team_id
+			 AND active_space.space_id = attempt.space_id
+			 AND active_space.generation = attempt.space_generation
 			CROSS JOIN window_bounds
 			WHERE attempt.created_at >= window_bounds.starts_at
-			  AND `+activeSemanticSpaceGenerationSQL("attempt")+`
 			GROUP BY window_bounds.window_key, attempt.outcome
 		`, &snapshot.RememberAttempts); err != nil {
 			return err
 		}
 		if err := scanOperationalTelemetryCounts(ctx, tx, `
-			WITH `+operationalTelemetryWindowCTE+`
+			WITH `+operationalTelemetryWindowedCTEs+`, `+operationalTelemetryRecentFeedbackCTE+`
 			SELECT window_bounds.window_key, relationship.status,
 			       count(DISTINCT (relationship.team_id, relationship.relationship_id))::double precision
 			FROM relationship_records AS relationship
@@ -155,38 +201,47 @@ func (r *TelemetryLifecycleRepository) ReadOperationalTelemetry(ctx context.Cont
 			 AND ingest.space_id = observation.space_id
 			 AND ingest.space_generation = observation.space_generation
 			 AND ingest.status = 'completed'
-			JOIN hypothesis_feedback_events AS feedback
+			JOIN recent_feedback AS feedback
 			  ON feedback.team_id = ingest.team_id
 			 AND feedback.submitted_ingest_id = ingest.ingest_id
 			 AND feedback.space_id = ingest.space_id
 			 AND feedback.space_generation = ingest.space_generation
 			 AND feedback.decision IN ('confirm_true', 'confirm_false', 'promote_candidate')
+			JOIN active_semantic_spaces AS active_space
+			  ON active_space.team_id = relationship.team_id
+			 AND active_space.space_id = relationship.space_id
+			 AND active_space.generation = relationship.space_generation
 			CROSS JOIN window_bounds
 			WHERE feedback.created_at >= window_bounds.starts_at
 			  AND relationship.identity_alias_of_relationship_id IS NULL
-			  AND `+activeSemanticSpaceGenerationSQL("relationship")+`
 			GROUP BY window_bounds.window_key, relationship.status
 		`, &snapshot.ConfirmedRelationships); err != nil {
 			return err
 		}
 		if err := scanOperationalTelemetryCounts(ctx, tx, `
-			WITH `+operationalTelemetryWindowCTE+`
+			WITH `+operationalTelemetryWindowedCTEs+`, `+operationalTelemetryRecentRelationshipTransitionsCTE+`
 			SELECT window_bounds.window_key, event.to_status, count(*)::double precision
-			FROM relationship_transition_events AS event
+			FROM recent_relationship_transitions AS event
+			JOIN active_semantic_spaces AS active_space
+			  ON active_space.team_id = event.team_id
+			 AND active_space.space_id = event.space_id
+			 AND active_space.generation = event.space_generation
 			CROSS JOIN window_bounds
 			WHERE event.created_at >= window_bounds.starts_at
-			  AND `+activeSemanticSpaceGenerationSQL("event")+`
 			GROUP BY window_bounds.window_key, event.to_status
 		`, &snapshot.RelationshipTransitions); err != nil {
 			return err
 		}
 		if err := scanOperationalTelemetryCounts(ctx, tx, `
-			WITH `+operationalTelemetryWindowCTE+`
+			WITH `+operationalTelemetryWindowedCTEs+`, `+operationalTelemetryRecentRelationshipCorrectionsCTE+`
 			SELECT window_bounds.window_key, 'corrections', count(*)::double precision
-			FROM relationship_correction_events AS event
+			FROM recent_relationship_corrections AS event
+			JOIN active_semantic_spaces AS active_space
+			  ON active_space.team_id = event.team_id
+			 AND active_space.space_id = event.space_id
+			 AND active_space.generation = event.space_generation
 			CROSS JOIN window_bounds
 			WHERE event.created_at >= window_bounds.starts_at
-			  AND `+activeSemanticSpaceGenerationSQL("event")+`
 			GROUP BY window_bounds.window_key
 		`, &snapshot.RelationshipCorrections); err != nil {
 			return err

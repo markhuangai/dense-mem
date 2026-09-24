@@ -398,7 +398,6 @@ type OperationalTelemetryCollector struct {
 	collection             singleflight.Group
 	status                 *prometheus.Desc
 	runs                   *prometheus.Desc
-	attempts               *prometheus.Desc
 	inputTargets           *prometheus.Desc
 	evidenceTargets        *prometheus.Desc
 	evaluatedTargets       *prometheus.Desc
@@ -422,7 +421,6 @@ func NewOperationalTelemetryCollector(reader operationscontract.OperationalTelem
 		reader:                 reader,
 		status:                 prometheus.NewDesc(namespace+"ledger_collection_success", "Whether the latest canonical-ledger collection succeeded.", nil, nil),
 		runs:                   prometheus.NewDesc(namespace+"dream_runs", "Canonical Dream runs by lane, status, and window.", []string{"window", "lane", "status"}, nil),
-		attempts:               prometheus.NewDesc(namespace+"dream_run_attempts", "Canonical Dream run attempts by lane, status, and window.", []string{"window", "lane", "status"}, nil),
 		inputTargets:           prometheus.NewDesc(namespace+"dream_input_targets", "Graph relationships considered as Dream inputs by lane, status, and window.", []string{"window", "lane", "status"}, nil),
 		evidenceTargets:        prometheus.NewDesc(namespace+"dream_evidence_targets", "Dream evidence-discovery targets by lane, status, and window.", []string{"window", "lane", "status"}, nil),
 		evaluatedTargets:       prometheus.NewDesc(namespace+"dream_evaluated_targets", "Evaluated Dream evidence-discovery targets by lane, status, and window.", []string{"window", "lane", "status"}, nil),
@@ -442,7 +440,7 @@ func NewOperationalTelemetryCollector(reader operationscontract.OperationalTelem
 }
 
 func (c *OperationalTelemetryCollector) descriptors() []*prometheus.Desc {
-	return []*prometheus.Desc{c.status, c.runs, c.attempts, c.inputTargets, c.evidenceTargets, c.evaluatedTargets,
+	return []*prometheus.Desc{c.status, c.runs, c.inputTargets, c.evidenceTargets, c.evaluatedTargets,
 		c.proposals, c.createdHypotheses, c.rejectedHypotheses, c.hypotheses, c.backlog, c.oldestBacklogAge,
 		c.feedback, c.rememberAttempts, c.confirmedRelationships, c.transitions, c.corrections, c.relationshipsCurrent}
 }
@@ -488,7 +486,6 @@ func (c *OperationalTelemetryCollector) collectSnapshot(ch chan<- prometheus.Met
 		value.Lane = run.Lane
 		value.Status = run.Status
 		value.Runs += run.Runs
-		value.Attempts += run.Attempts
 		value.InputTargets += run.InputTargets
 		value.EvidenceTargets += run.EvidenceTargets
 		value.EvaluatedTargets += run.EvaluatedTargets
@@ -503,7 +500,6 @@ func (c *OperationalTelemetryCollector) collectSnapshot(ch chan<- prometheus.Met
 				run := runs[window+"/"+lane+"/"+status]
 				labels := []string{window, lane, status}
 				ch <- prometheus.MustNewConstMetric(c.runs, prometheus.GaugeValue, run.Runs, labels...)
-				ch <- prometheus.MustNewConstMetric(c.attempts, prometheus.GaugeValue, run.Attempts, labels...)
 				ch <- prometheus.MustNewConstMetric(c.inputTargets, prometheus.GaugeValue, run.InputTargets, labels...)
 				ch <- prometheus.MustNewConstMetric(c.evidenceTargets, prometheus.GaugeValue, run.EvidenceTargets, labels...)
 				ch <- prometheus.MustNewConstMetric(c.evaluatedTargets, prometheus.GaugeValue, run.EvaluatedTargets, labels...)

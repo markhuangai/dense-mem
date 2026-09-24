@@ -173,6 +173,7 @@ func TestReadTelemetryLifecycleOmitsSealedGenerationRows(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1.0, findNamedTelemetryCount(operational.RelationshipsCurrent, "active"))
 	assert.Equal(t, 1.0, findWindowedTelemetryCount(operational.RelationshipTransitions, "15m", "active"))
+	assert.Zero(t, findWindowedTelemetryCount(operational.RelationshipCorrections, "15m", "corrections"))
 }
 
 func TestReadOperationalTelemetryUsesDurableLedgerAndSurvivesCollectorRecreation(t *testing.T) {
@@ -276,7 +277,6 @@ func TestReadOperationalTelemetryUsesDurableLedgerAndSurvivesCollectorRecreation
 	require.NoError(t, err)
 	dreamRun := findDreamRunTelemetry(snapshot.DreamRuns, "1h", "graph", "completed")
 	require.Equal(t, 1.0, dreamRun.Runs)
-	require.Equal(t, 1.0, dreamRun.Attempts)
 	require.Equal(t, 4.0, dreamRun.InputTargets)
 	require.Zero(t, dreamRun.ProviderProposals)
 	require.Zero(t, dreamRun.CreatedHypotheses)
@@ -320,36 +320,50 @@ func assertOperationalTelemetryIndexPlans(t *testing.T, ctx context.Context, db 
 	t.Helper()
 	queries := []struct {
 		index                    string
+		timeBound                string
 		query                    string
 		noActiveGenerationLookup bool
 	}{
 		{
-			index: "dream_cycle_runs_telemetry_window_idx",
-			query: `EXPLAIN (COSTS OFF) WITH ` + operationalTelemetryWindowCTE + `
+			timeBound:                "started_at",
+			noActiveGenerationLookup: true,
+			query: `EXPLAIN (COSTS OFF) WITH ` + operationalTelemetryWindowedCTEs + `, ` + operationalTelemetryRecentDreamRunsCTE + `
 				SELECT window_bounds.window_key, count(*)
-				FROM dream_cycle_runs AS cycle
+				FROM recent_dream_runs AS cycle
+				JOIN active_semantic_spaces AS active_space
+				  ON active_space.team_id = cycle.team_id
+				 AND active_space.space_id = cycle.space_id
+				 AND active_space.generation = cycle.space_generation
 				CROSS JOIN window_bounds
-				WHERE cycle.canonical_run_id IS NULL
-				  AND cycle.started_at >= window_bounds.starts_at
-				  AND ` + activeSemanticSpaceGenerationSQL("cycle") + `
+				WHERE cycle.started_at >= window_bounds.starts_at
 				GROUP BY window_bounds.window_key`,
 		},
 		{
-			index: "hypothesis_feedback_events_telemetry_window_idx",
-			query: `EXPLAIN (COSTS OFF) WITH ` + operationalTelemetryWindowCTE + `
+			timeBound:                "created_at",
+			noActiveGenerationLookup: true,
+			query: `EXPLAIN (COSTS OFF) WITH ` + operationalTelemetryWindowedCTEs + `, ` + operationalTelemetryRecentFeedbackCTE + `
 				SELECT window_bounds.window_key, feedback.decision, count(*)
-				FROM hypothesis_feedback_events AS feedback
+				FROM recent_feedback AS feedback
+				JOIN active_semantic_spaces AS active_space
+				  ON active_space.team_id = feedback.team_id
+				 AND active_space.space_id = feedback.space_id
+				 AND active_space.generation = feedback.space_generation
 				CROSS JOIN window_bounds
 				WHERE feedback.created_at >= window_bounds.starts_at
-				  AND ` + activeSemanticSpaceGenerationSQL("feedback") + `
 				GROUP BY window_bounds.window_key, feedback.decision`,
 		},
 		{
-			index: "relationship_observations_telemetry_ingest_idx",
-			query: `EXPLAIN (COSTS OFF) WITH ` + operationalTelemetryWindowCTE + `
+			index:                    "relationship_observations_telemetry_ingest_idx",
+			timeBound:                "created_at",
+			noActiveGenerationLookup: true,
+			query: `EXPLAIN (COSTS OFF) WITH ` + operationalTelemetryWindowedCTEs + `, ` + operationalTelemetryRecentFeedbackCTE + `
 				SELECT window_bounds.window_key, relationship.status,
 				       count(DISTINCT (relationship.team_id, relationship.relationship_id))::double precision
 				FROM relationship_records AS relationship
+				JOIN active_semantic_spaces AS active_space
+				  ON active_space.team_id = relationship.team_id
+				 AND active_space.space_id = relationship.space_id
+				 AND active_space.generation = relationship.space_generation
 				JOIN relationship_observations AS observation
 				  ON observation.team_id = relationship.team_id
 				 AND observation.relationship_id = relationship.relationship_id
@@ -361,7 +375,7 @@ func assertOperationalTelemetryIndexPlans(t *testing.T, ctx context.Context, db 
 				 AND ingest.space_id = observation.space_id
 				 AND ingest.space_generation = observation.space_generation
 				 AND ingest.status = 'completed'
-				JOIN hypothesis_feedback_events AS feedback
+				JOIN recent_feedback AS feedback
 				  ON feedback.team_id = ingest.team_id
 				 AND feedback.submitted_ingest_id = ingest.ingest_id
 				 AND feedback.space_id = ingest.space_id
@@ -370,8 +384,49 @@ func assertOperationalTelemetryIndexPlans(t *testing.T, ctx context.Context, db 
 				CROSS JOIN window_bounds
 				WHERE feedback.created_at >= window_bounds.starts_at
 				  AND relationship.identity_alias_of_relationship_id IS NULL
-				  AND ` + activeSemanticSpaceGenerationSQL("relationship") + `
 				GROUP BY window_bounds.window_key, relationship.status`,
+		},
+		{
+			timeBound:                "created_at",
+			noActiveGenerationLookup: true,
+			query: `EXPLAIN (COSTS OFF) WITH ` + operationalTelemetryWindowedCTEs + `, ` + operationalTelemetryRecentRememberAttemptsCTE + `
+				SELECT window_bounds.window_key, attempt.outcome, count(*)
+				FROM recent_remember_attempts AS attempt
+				JOIN active_semantic_spaces AS active_space
+				  ON active_space.team_id = attempt.team_id
+				 AND active_space.space_id = attempt.space_id
+				 AND active_space.generation = attempt.space_generation
+				CROSS JOIN window_bounds
+				WHERE attempt.created_at >= window_bounds.starts_at
+				GROUP BY window_bounds.window_key, attempt.outcome`,
+		},
+		{
+			timeBound:                "created_at",
+			noActiveGenerationLookup: true,
+			query: `EXPLAIN (COSTS OFF) WITH ` + operationalTelemetryWindowedCTEs + `, ` + operationalTelemetryRecentRelationshipTransitionsCTE + `
+				SELECT window_bounds.window_key, event.to_status, count(*)
+				FROM recent_relationship_transitions AS event
+				JOIN active_semantic_spaces AS active_space
+				  ON active_space.team_id = event.team_id
+				 AND active_space.space_id = event.space_id
+				 AND active_space.generation = event.space_generation
+				CROSS JOIN window_bounds
+				WHERE event.created_at >= window_bounds.starts_at
+				GROUP BY window_bounds.window_key, event.to_status`,
+		},
+		{
+			timeBound:                "created_at",
+			noActiveGenerationLookup: true,
+			query: `EXPLAIN (COSTS OFF) WITH ` + operationalTelemetryWindowedCTEs + `, ` + operationalTelemetryRecentRelationshipCorrectionsCTE + `
+				SELECT window_bounds.window_key, count(*)
+				FROM recent_relationship_corrections AS event
+				JOIN active_semantic_spaces AS active_space
+				  ON active_space.team_id = event.team_id
+				 AND active_space.space_id = event.space_id
+				 AND active_space.generation = event.space_generation
+				CROSS JOIN window_bounds
+				WHERE event.created_at >= window_bounds.starts_at
+				GROUP BY window_bounds.window_key`,
 		},
 		{
 			index:                    "hypotheses_telemetry_current_idx",
@@ -438,7 +493,12 @@ func assertOperationalTelemetryIndexPlans(t *testing.T, ctx context.Context, db 
 	})
 	require.NoError(t, err)
 	for i, query := range queries {
-		require.Contains(t, plans[i], query.index)
+		if query.index != "" {
+			require.Contains(t, plans[i], query.index)
+		}
+		if query.timeBound != "" {
+			require.Contains(t, plans[i], "Index Cond: ("+query.timeBound+" >=")
+		}
 		if query.noActiveGenerationLookup {
 			require.NotContains(t, plans[i], "dense_mem_active_space_generation")
 		}

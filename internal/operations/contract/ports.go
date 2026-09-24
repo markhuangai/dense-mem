@@ -68,7 +68,6 @@ type DreamRunTelemetry struct {
 	Lane               string
 	Status             string
 	Runs               float64
-	Attempts           float64
 	InputTargets       float64
 	EvidenceTargets    float64
 	EvaluatedTargets   float64
