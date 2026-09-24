@@ -319,8 +319,9 @@ func TestReadOperationalTelemetryUsesDurableLedgerAndSurvivesCollectorRecreation
 func assertOperationalTelemetryIndexPlans(t *testing.T, ctx context.Context, db *gorm.DB, rls *storagepostgres.RLS) {
 	t.Helper()
 	queries := []struct {
-		index string
-		query string
+		index                    string
+		query                    string
+		noActiveGenerationLookup bool
 	}{
 		{
 			index: "dream_cycle_runs_telemetry_window_idx",
@@ -373,25 +374,33 @@ func assertOperationalTelemetryIndexPlans(t *testing.T, ctx context.Context, db 
 				GROUP BY window_bounds.window_key, relationship.status`,
 		},
 		{
-			index: "hypotheses_telemetry_current_idx",
-			query: `EXPLAIN (COSTS OFF)
+			index:                    "hypotheses_telemetry_current_idx",
+			noActiveGenerationLookup: true,
+			query: `EXPLAIN (COSTS OFF) WITH ` + operationalTelemetryActiveSpacesCTE + `
 				SELECT hypothesis.lane, hypothesis.status, count(*)::double precision,
 				       count(*) FILTER (WHERE hypothesis.status IN ('proposed', 'reinforced'))::double precision,
 				       COALESCE(EXTRACT(EPOCH FROM (now() - MIN(hypothesis.created_at) FILTER (
 				           WHERE hypothesis.status IN ('proposed', 'reinforced')
 				       ))), 0)::double precision
 				FROM hypotheses AS hypothesis
+				JOIN active_semantic_spaces AS active_space
+				  ON active_space.team_id = hypothesis.team_id
+				 AND active_space.space_id = hypothesis.space_id
+				 AND active_space.generation = hypothesis.space_generation
 				WHERE hypothesis.canonical_hypothesis_id IS NULL
-				  AND ` + activeSemanticSpaceGenerationSQL("hypothesis") + `
 				GROUP BY hypothesis.lane, hypothesis.status`,
 		},
 		{
-			index: "relationship_records_telemetry_current_idx",
-			query: `EXPLAIN (COSTS OFF)
+			index:                    "relationship_records_telemetry_current_idx",
+			noActiveGenerationLookup: true,
+			query: `EXPLAIN (COSTS OFF) WITH ` + operationalTelemetryActiveSpacesCTE + `
 				SELECT relationship.status, count(*)::double precision
 				FROM relationship_records AS relationship
+				JOIN active_semantic_spaces AS active_space
+				  ON active_space.team_id = relationship.team_id
+				 AND active_space.space_id = relationship.space_id
+				 AND active_space.generation = relationship.space_generation
 				WHERE relationship.identity_alias_of_relationship_id IS NULL
-				  AND ` + activeSemanticSpaceGenerationSQL("relationship") + `
 				GROUP BY relationship.status`,
 		},
 	}
@@ -430,6 +439,9 @@ func assertOperationalTelemetryIndexPlans(t *testing.T, ctx context.Context, db 
 	require.NoError(t, err)
 	for i, query := range queries {
 		require.Contains(t, plans[i], query.index)
+		if query.noActiveGenerationLookup {
+			require.NotContains(t, plans[i], "dense_mem_active_space_generation")
+		}
 	}
 }
 

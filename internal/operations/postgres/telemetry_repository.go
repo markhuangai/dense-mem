@@ -30,6 +30,12 @@ const operationalTelemetryWindowCTE = `window_bounds(window_key, starts_at) AS (
 		('30d', now() - interval '30 days')
 )`
 
+const operationalTelemetryActiveSpacesCTE = `active_semantic_spaces AS MATERIALIZED (
+	SELECT team_id, id AS space_id, generation
+	FROM memory_spaces
+	WHERE lifecycle_state = 'active'
+)`
+
 type TelemetryLifecycleRepository struct {
 	db  *gorm.DB
 	rls storagepostgres.RLSHelper
@@ -87,15 +93,18 @@ func (r *TelemetryLifecycleRepository) ReadOperationalTelemetry(ctx context.Cont
 			return err
 		}
 
-		if err := scanOperationalTelemetryRows(ctx, tx, `
+		if err := scanOperationalTelemetryRows(ctx, tx, `WITH `+operationalTelemetryActiveSpacesCTE+`
 			SELECT hypothesis.lane, hypothesis.status, count(*)::double precision,
 			       count(*) FILTER (WHERE hypothesis.status IN ('proposed', 'reinforced'))::double precision,
 			       COALESCE(EXTRACT(EPOCH FROM (now() - MIN(hypothesis.created_at) FILTER (
 			           WHERE hypothesis.status IN ('proposed', 'reinforced')
-			       ))), 0)::double precision
+				       ))), 0)::double precision
 			FROM hypotheses AS hypothesis
+			JOIN active_semantic_spaces AS active_space
+			  ON active_space.team_id = hypothesis.team_id
+			 AND active_space.space_id = hypothesis.space_id
+			 AND active_space.generation = hypothesis.space_generation
 			WHERE hypothesis.canonical_hypothesis_id IS NULL
-			  AND `+activeSemanticSpaceGenerationSQL("hypothesis")+`
 			GROUP BY hypothesis.lane, hypothesis.status
 		`, func(rows *sql.Rows) error {
 			var value operationscontract.HypothesisTelemetry
@@ -182,11 +191,14 @@ func (r *TelemetryLifecycleRepository) ReadOperationalTelemetry(ctx context.Cont
 		`, &snapshot.RelationshipCorrections); err != nil {
 			return err
 		}
-		return scanOperationalTelemetryRows(ctx, tx, `
+		return scanOperationalTelemetryRows(ctx, tx, `WITH `+operationalTelemetryActiveSpacesCTE+`
 			SELECT relationship.status, count(*)::double precision
 			FROM relationship_records AS relationship
+			JOIN active_semantic_spaces AS active_space
+			  ON active_space.team_id = relationship.team_id
+			 AND active_space.space_id = relationship.space_id
+			 AND active_space.generation = relationship.space_generation
 			WHERE relationship.identity_alias_of_relationship_id IS NULL
-			  AND `+activeSemanticSpaceGenerationSQL("relationship")+`
 			GROUP BY relationship.status
 		`, func(rows *sql.Rows) error {
 			var value operationscontract.NamedTelemetryCount
