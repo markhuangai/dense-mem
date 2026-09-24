@@ -465,6 +465,7 @@ test("incomplete AI reviews publish a blocking error without failing the PR work
     ["failure", "error"],
     ["cancelled", "error"],
     ["skipped", "error"],
+    [undefined, "error"],
   ]) {
     const publications = [];
     const failures = [];
@@ -486,6 +487,9 @@ test("incomplete AI reviews publish a blocking error without failing the PR work
     assert.equal(publications[0].sha, testHead);
     assert.equal(publications[0].target_url, "https://github.com/markhuangai/dense-mem/actions/runs/123");
     assert.ok(publications[0].description.length <= 140);
+    assert.equal(publications[0].description, expectedState === "success"
+      ? "AI pull request review completed."
+      : `AI review incomplete (outcome: ${outcome || "missing"}); execution limit: 50 minutes. Inspect the reviewer run.`);
     assert.deepEqual(failures, []);
     if (expectedState === "error") assert.equal(notices.length, 1);
   }

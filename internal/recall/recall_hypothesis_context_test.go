@@ -63,6 +63,22 @@ func TestRecallHypothesisContextFromDeduplicatesRetrievedHandles(t *testing.T) {
 	require.Equal(t, []string{"value-1", "value-2"}, got.valueIDs)
 }
 
+func TestRecallHypothesisContextFromEvidenceHitRelationships(t *testing.T) {
+	result := &RecallResult{
+		Results: []RecallResultItem{{
+			EvidenceID:      "evidence-1",
+			RelationshipIDs: []string{"relationship-1"},
+		}},
+	}
+
+	got := recallHypothesisContextFrom(result)
+
+	require.Equal(t, []string{"evidence-1"}, got.evidenceIDs)
+	require.Equal(t, []string{"relationship-1"}, got.relationshipIDs)
+	require.Empty(t, got.entityIDs)
+	require.Empty(t, got.valueIDs)
+}
+
 func TestRecallHypothesisContextFromBoundsEachHandleKind(t *testing.T) {
 	result := &RecallResult{}
 	for index := 0; index <= 200; index++ {
@@ -115,6 +131,44 @@ func TestRecallPassesValueEndpointsToHypothesisReader(t *testing.T) {
 	_, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{IncludeHypotheses: true})
 	require.NoError(t, err)
 	require.Equal(t, []string{valueID}, hypotheses.recallInput.ValueIDs)
+}
+
+func TestRecallPassesEvidenceHitRelationshipsToHypothesisReader(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	evidenceID := uuid.NewString()
+	relationshipID := uuid.NewString()
+	hypothesisID := uuid.NewString()
+	search := &recallSearchStub{
+		contract: &searchcontract.ActiveSearchContract{EmbeddingDimensions: 3},
+		result: &recallcontract.RecallEvidenceResult{
+			SearchState: string(domain.SearchProjectionCurrent),
+			Results: []recallcontract.RecallEvidenceHit{{
+				EvidenceID:      evidenceID,
+				RelationshipIDs: []string{relationshipID},
+				Rank:            1,
+			}},
+		},
+	}
+	hypotheses := &recallHypothesisStub{records: []dreamcontract.HypothesisRecord{{
+		HypothesisID: hypothesisID,
+		SourceRefs:   []map[string]any{{"type": "relationship", "id": relationshipID}},
+	}}}
+	svc := NewRecallService(RecallDependencies{Search: search, Hypotheses: hypotheses})
+
+	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{IncludeHypotheses: true})
+	require.NoError(t, err)
+	require.Len(t, result.Results, 1)
+	require.Empty(t, result.RelatedRelationships)
+	require.Empty(t, result.RelatedCommunities)
+	require.Empty(t, hypotheses.recallInput.Query)
+	require.Equal(t, []string{evidenceID}, hypotheses.recallInput.EvidenceIDs)
+	require.Equal(t, []string{relationshipID}, hypotheses.recallInput.RelationshipIDs)
+	require.Len(t, result.RelatedHypotheses, 1)
+	require.Equal(t, hypothesisID, result.RelatedHypotheses[0].HypothesisID)
+	require.Empty(t, result.RelatedHypotheses[0].SourceEvidenceIDs)
+	require.Equal(t, []string{relationshipID}, result.RelatedHypotheses[0].SourceRelationshipIDs)
 }
 
 func TestRecallOmitsRelatedHypothesesForKnownAt(t *testing.T) {

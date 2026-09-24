@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -158,16 +159,18 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 	require.Equal(t, 1, totalCount)
 
 	for _, testCase := range []struct {
-		name  string
-		cause error
+		name               string
+		cause              error
+		recordFailureDelay time.Duration
 	}{
-		{name: "conflict_context", cause: knowledgepostgres.ErrConflictContextStale},
+		{name: "conflict_context", cause: knowledgepostgres.ErrConflictContextStale, recordFailureDelay: 2300 * time.Millisecond},
 		{name: "exact_reference", cause: knowledgepostgres.ErrRememberExactReferenceStale},
 		{name: "correction_target", cause: knowledgepostgres.ErrCorrectionTargetStale},
 	} {
 		t.Run("stale commit replay/"+testCase.name, func(t *testing.T) {
 			realLedger := knowledgepostgres.NewStore(appDB, rls, knowledgecontract.ConflictRuntimeConfig{})
 			ledger := newRememberProcessorIntegrationStaleLedger(realLedger, testCase.cause)
+			ledger.recordFailureDelay = testCase.recordFailureDelay
 			processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
 				Ledger: ledger, Catalog: rememberProcessorIntegrationCatalog{}, Assessor: rememberProcessorIntegrationAssessor{},
 				Embedder: rememberProcessorIntegrationEmbedder{}, Limits: assessor.DefaultSemanticAssessmentLimits(),
@@ -216,11 +219,12 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 
 type rememberProcessorIntegrationStaleLedger struct {
 	remembercontract.Persistence
-	stale        error
-	contractID   string
-	model        string
-	generationID string
-	commitCalls  int
+	stale              error
+	contractID         string
+	model              string
+	generationID       string
+	commitCalls        int
+	recordFailureDelay time.Duration
 }
 
 func newRememberProcessorIntegrationStaleLedger(base remembercontract.Persistence, stale error) *rememberProcessorIntegrationStaleLedger {
@@ -287,6 +291,19 @@ func (l *rememberProcessorIntegrationStaleLedger) PlanRememberEmbeddings(_ conte
 func (l *rememberProcessorIntegrationStaleLedger) CommitRememberWithEmbeddings(context.Context, knowledgecontract.SynchronousRememberCommitInput, []knowledgecontract.InlineEmbeddingResult) (*knowledgecontract.SynchronousRememberCommitResult, error) {
 	l.commitCalls++
 	return nil, l.stale
+}
+
+func (l *rememberProcessorIntegrationStaleLedger) RecordRememberFailure(ctx context.Context, input knowledgecontract.RememberFailureRecordInput) error {
+	if l.recordFailureDelay > 0 {
+		timer := time.NewTimer(l.recordFailureDelay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return l.Persistence.RecordRememberFailure(ctx, input)
 }
 
 func rememberProcessorIntegrationDocumentHash(content string) string {

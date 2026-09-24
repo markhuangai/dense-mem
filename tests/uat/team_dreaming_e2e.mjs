@@ -101,7 +101,7 @@ assertEvidenceDerivedDream(getOutput.hypothesis, seeded, "MCP get_dream");
 const paraphraseContextRecall = await mcpTool(apiKey, "recall_memory", {
   query: "Which service keeps Dense-Mem's durable data available?",
 });
-assertHypothesisFromRetrievedContext(paraphraseContextRecall, "recall from paraphrase-retrieved context");
+assertHypothesisFromPublicRecallContext(paraphraseContextRecall, "recall from paraphrase-retrieved context");
 const historicalContextRecall = await mcpTool(apiKey, "recall_memory", {
   query: "Which service keeps Dense-Mem's durable data available?",
   known_at: historicalKnownAt,
@@ -136,9 +136,9 @@ try {
   const deadlineRunCaptures = deadlineDiagnostics.filter((item) => item.phase === "run");
   assertEqual(deadlineRunCaptures.length, 1, "deadline-limited Dream trace has one run capture");
   assertEqual(deadlineRunCaptures[0].details?.phase_trace_truncated, true, "deadline-limited Dream trace marker");
+  assertEqual(deadlineRunCaptures[0].details?.phase_trace_pending, false, "deadline-limited Dream trace has finished");
   const deadlinePhases = deadlineDiagnostics.filter((item) => item.phase !== "run" && !item.hypothesis_id);
   assertAtLeast(deadlinePhases.length, 1, "deadline-limited Dream trace retains completed phases");
-  assertEqual(deadlinePhases.length < 5, true, "deadline-limited Dream trace omits delayed phases");
 } finally {
   removeEvidenceDiagnosticDelay();
 }
@@ -930,8 +930,8 @@ function assertRelatedHypothesis(recall, hypothesisID, label) {
   }
 }
 
-function assertHypothesisFromRetrievedContext(recall, label) {
-  const evidenceIDs = new Set();
+function assertHypothesisFromPublicRecallContext(recall, label) {
+  const evidenceIDs = new Set((recall?.results ?? []).map((item) => item?.evidence_id).filter(Boolean));
   const relationshipIDs = new Set();
   const entityIDs = new Set();
   const addRelationship = (relationship) => {
@@ -942,10 +942,6 @@ function assertHypothesisFromRetrievedContext(recall, label) {
     if (relationship?.object?.entity_id) entityIDs.add(relationship.object.entity_id);
   };
 
-  for (const result of recall?.results ?? []) {
-    if (result?.evidence_id) evidenceIDs.add(result.evidence_id);
-    for (const id of result?.relationship_ids ?? []) relationshipIDs.add(id);
-  }
   for (const relationship of recall?.related_relationships ?? []) addRelationship(relationship);
   for (const path of recall?.related_communities ?? []) {
     for (const id of path?.evidence_ids ?? []) evidenceIDs.add(id);
@@ -961,7 +957,7 @@ function assertHypothesisFromRetrievedContext(recall, label) {
     [item?.subject_entity_id, item?.object_entity_id].some((id) => entityIDs.has(id))
   ));
   if (!hypothesis) {
-    throw new Error(`${label} returned no hypothesis grounded in recalled context: ${JSON.stringify({
+    throw new Error(`${label} returned no hypothesis grounded in public recall context: ${JSON.stringify({
       results: recall?.results,
       related_relationships: recall?.related_relationships,
       related_communities: recall?.related_communities,

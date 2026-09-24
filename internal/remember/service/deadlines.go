@@ -19,7 +19,7 @@ const (
 	RememberAssessmentBudget         = 160 * time.Second
 	RememberEmbeddingBudget          = 10 * time.Second
 	RememberCommitBudget             = 10 * time.Second
-	RememberFailurePersistenceBudget = 2 * time.Second
+	RememberFailurePersistenceBudget = 5 * time.Second
 )
 
 type rememberDeadlineContextKey struct{}
