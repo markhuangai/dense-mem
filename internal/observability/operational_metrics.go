@@ -4,10 +4,10 @@ import (
 	"context"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
@@ -395,7 +395,7 @@ func (m *PrometheusMetrics) RegisterOperationalTelemetryCollector(reader operati
 
 type OperationalTelemetryCollector struct {
 	reader                 operationscontract.OperationalTelemetryReader
-	mu                     sync.Mutex
+	collection             singleflight.Group
 	status                 *prometheus.Desc
 	runs                   *prometheus.Desc
 	attempts               *prometheus.Desc
@@ -457,19 +457,20 @@ func (c *OperationalTelemetryCollector) Collect(ch chan<- prometheus.Metric) {
 	if c == nil {
 		return
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.reader == nil {
 		ch <- prometheus.MustNewConstMetric(c.status, prometheus.GaugeValue, 0)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), operationalLedgerCollectionTimeout)
-	snapshot, err := c.reader.ReadOperationalTelemetry(ctx)
-	cancel()
+	result, err, _ := c.collection.Do("canonical-ledger", func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), operationalLedgerCollectionTimeout)
+		defer cancel()
+		return c.reader.ReadOperationalTelemetry(ctx)
+	})
 	if err != nil {
 		ch <- prometheus.MustNewConstMetric(c.status, prometheus.GaugeValue, 0)
 		return
 	}
+	snapshot := result.(operationscontract.OperationalTelemetrySnapshot)
 	c.collectSnapshot(ch, snapshot)
 	ch <- prometheus.MustNewConstMetric(c.status, prometheus.GaugeValue, 1)
 }

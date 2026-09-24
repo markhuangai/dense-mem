@@ -118,7 +118,7 @@ func TestOperationalTelemetryCollectorDoesNotPublishFalseZerosOnPartialFailure(t
 	require.NotContains(t, body, "relationship correction query failed")
 }
 
-func TestOperationalTelemetryCollectorSerializesOverlappingScrapes(t *testing.T) {
+func TestOperationalTelemetryCollectorSharesOverlappingScrapes(t *testing.T) {
 	readerStarted := make(chan struct{})
 	releaseReader := make(chan struct{})
 	var calls atomic.Int32
@@ -182,7 +182,7 @@ func TestOperationalTelemetryCollectorSerializesOverlappingScrapes(t *testing.T)
 			t.Fatal("serialized scrape did not complete")
 		}
 	}
-	require.Equal(t, int32(2), calls.Load())
+	require.Equal(t, int32(1), calls.Load())
 }
 
 func TestOperationalTelemetryCollectorCanReadDurableStateAfterRecreation(t *testing.T) {
