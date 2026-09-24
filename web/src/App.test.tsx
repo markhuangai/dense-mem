@@ -290,10 +290,12 @@ describe("App", () => {
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
 
-    const dependencyRow = (await screen.findByText("Dependency checks")).closest(".metric-row");
+    const topSignals = screen.getByLabelText("Top signals");
+    const dependencyDetails = await within(topSignals).findByText(/search_readiness/);
+    const dependencyRow = dependencyDetails.closest(".metric-row");
     expect(dependencyRow).not.toBeNull();
     expect(within(dependencyRow as HTMLElement).getByText("Dependency checks")).toHaveClass("metric-label");
-    expect(within(dependencyRow as HTMLElement).getByText(/search_readiness/)).toHaveClass("metric-detail");
+    expect(dependencyDetails).toHaveClass("metric-detail");
     expect(dependencyRow).toHaveTextContent("1/3");
     expect(dependencyRow).toHaveTextContent("redis · single_node_mode · latency n/a");
   });

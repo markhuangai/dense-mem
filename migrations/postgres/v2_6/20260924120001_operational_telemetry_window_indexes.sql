@@ -4,6 +4,8 @@
 
 -- Lock/rewrite impact: concurrent B-tree builds keep normal ledger writes available and do not rewrite source rows.
 -- RLS impact: these derived indexes do not change row visibility or transaction policy.
+-- Backfill: none; PostgreSQL builds the concurrent indexes over existing rows.
+-- Backward compatibility: no table or runtime contract changes; previous binaries do not depend on these indexes.
 -- Recovery: interrupted concurrent builds are renamed and dropped before rebuilding.
 -- Rollback: dropping the indexes is safe; append-only ledger history remains authoritative.
 
