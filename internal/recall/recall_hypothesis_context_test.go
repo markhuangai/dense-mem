@@ -62,6 +62,22 @@ func TestRecallHypothesisContextFromDeduplicatesRetrievedHandles(t *testing.T) {
 	require.Equal(t, []string{"value-1", "value-2"}, got.valueIDs)
 }
 
+func TestRecallHypothesisContextFromEvidenceHitRelationships(t *testing.T) {
+	result := &RecallResult{
+		Results: []RecallResultItem{{
+			EvidenceID:      "evidence-1",
+			RelationshipIDs: []string{"relationship-1"},
+		}},
+	}
+
+	got := recallHypothesisContextFrom(result)
+
+	require.Equal(t, []string{"evidence-1"}, got.evidenceIDs)
+	require.Equal(t, []string{"relationship-1"}, got.relationshipIDs)
+	require.Empty(t, got.entityIDs)
+	require.Empty(t, got.valueIDs)
+}
+
 func TestRecallHypothesisContextFromBoundsEachHandleKind(t *testing.T) {
 	result := &RecallResult{}
 	for index := 0; index <= 200; index++ {

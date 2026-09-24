@@ -173,6 +173,14 @@ func TestRecallHypothesesRanksSourceEndpointAndLiteralMatches(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Empty(t, literalParaphrase)
+	relationshipOnly, err := semantic.RecallHypotheses(ctx, RecallHypothesesInput{
+		TeamID:          teamID,
+		Query:           paraphrasedQuery,
+		Limit:           10,
+		RelationshipIDs: []string{sourceFirst.Relationship.RelationshipID},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{records[0].HypothesisID}, hypothesisIDs(relationshipOnly))
 	paraphraseContext, err := semantic.RecallHypotheses(ctx, RecallHypothesesInput{
 		TeamID:          teamID,
 		Query:           paraphrasedQuery,

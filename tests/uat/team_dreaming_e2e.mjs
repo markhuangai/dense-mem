@@ -101,7 +101,7 @@ assertEvidenceDerivedDream(getOutput.hypothesis, seeded, "MCP get_dream");
 const paraphraseContextRecall = await mcpTool(apiKey, "recall_memory", {
   query: "Which service keeps Dense-Mem's durable data available?",
 });
-assertHypothesisFromRetrievedContext(paraphraseContextRecall, "recall from paraphrase-retrieved context");
+assertHypothesisFromPublicEvidence(paraphraseContextRecall, "recall from paraphrase-retrieved context");
 const historicalContextRecall = await mcpTool(apiKey, "recall_memory", {
   query: "Which service keeps Dense-Mem's durable data available?",
   known_at: historicalKnownAt,
@@ -930,41 +930,14 @@ function assertRelatedHypothesis(recall, hypothesisID, label) {
   }
 }
 
-function assertHypothesisFromRetrievedContext(recall, label) {
-  const evidenceIDs = new Set();
-  const relationshipIDs = new Set();
-  const entityIDs = new Set();
-  const addRelationship = (relationship) => {
-    if (relationship?.relationship_id) relationshipIDs.add(relationship.relationship_id);
-    for (const id of relationship?.equivalent_relationship_ids ?? []) relationshipIDs.add(id);
-    for (const id of relationship?.evidence_ids ?? []) evidenceIDs.add(id);
-    if (relationship?.subject?.entity_id) entityIDs.add(relationship.subject.entity_id);
-    if (relationship?.object?.entity_id) entityIDs.add(relationship.object.entity_id);
-  };
-
-  for (const result of recall?.results ?? []) {
-    if (result?.evidence_id) evidenceIDs.add(result.evidence_id);
-    for (const id of result?.relationship_ids ?? []) relationshipIDs.add(id);
-  }
-  for (const relationship of recall?.related_relationships ?? []) addRelationship(relationship);
-  for (const path of recall?.related_communities ?? []) {
-    for (const id of path?.evidence_ids ?? []) evidenceIDs.add(id);
-    for (const entity of path?.top_entities ?? []) {
-      if (entity?.entity_id) entityIDs.add(entity.entity_id);
-    }
-    for (const relationship of path?.relationships ?? []) addRelationship(relationship);
-  }
-
+function assertHypothesisFromPublicEvidence(recall, label) {
+  const evidenceIDs = new Set((recall?.results ?? []).map((item) => item?.evidence_id).filter(Boolean));
   const hypothesis = (recall?.related_hypotheses ?? []).find((item) => (
-    (item?.source_evidence_ids ?? []).some((id) => evidenceIDs.has(id)) ||
-    (item?.source_relationship_ids ?? []).some((id) => relationshipIDs.has(id)) ||
-    [item?.subject_entity_id, item?.object_entity_id].some((id) => entityIDs.has(id))
+    (item?.source_evidence_ids ?? []).some((id) => evidenceIDs.has(id))
   ));
   if (!hypothesis) {
-    throw new Error(`${label} returned no hypothesis grounded in recalled context: ${JSON.stringify({
+    throw new Error(`${label} returned no hypothesis grounded in public evidence: ${JSON.stringify({
       results: recall?.results,
-      related_relationships: recall?.related_relationships,
-      related_communities: recall?.related_communities,
       related_hypotheses: recall?.related_hypotheses,
     })}`);
   }

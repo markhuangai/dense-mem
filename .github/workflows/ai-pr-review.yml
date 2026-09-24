@@ -416,7 +416,7 @@ jobs:
               description: succeeded
                 ? "AI pull request review completed."
                 : `AI review incomplete (outcome: ${process.env.REVIEW_OUTCOME || "missing"}); ` +
-                  "50-minute step limit. Inspect the reviewer run.",
+                  "execution limit: 50 minutes. Inspect the reviewer run.",
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}` +
                 `/actions/runs/${context.runId}`,
             });
