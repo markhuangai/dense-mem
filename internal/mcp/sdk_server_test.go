@@ -13,12 +13,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/labstack/echo/v4"
 	sdkjsonrpc "github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	httpmiddleware "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
@@ -714,6 +716,37 @@ func TestSDKToolHandlerCountsEachToolOutcomeOnce(t *testing.T) {
 	require.Equal(t, int64(1), failures)
 	require.Equal(t, 2, strings.Count(logBuffer.String(), `"msg":"mcp_tool_outcome"`))
 	require.Contains(t, logBuffer.String(), `"application_outcome":"tool_error"`)
+}
+
+func TestSDKHTTP200ToolFailureIsRecordedAsLogicalFailure(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	require.NoError(t, reg.Register(registry.Tool{Name: "failed", Invoke: func(context.Context, string, map[string]any) (map[string]any, error) {
+		return nil, registry.NewToolResultError(map[string]any{"code": "failed"})
+	}}))
+	server := NewServer(reg, "profile-a", logger)
+	metrics := observability.NewPrometheusMetrics()
+	echoServer := echo.New()
+	toolHandler := server.NewSDKHTTPHandler(true)
+	wrapped := httpmiddleware.TelemetryHTTPMiddleware(metrics)(httpmiddleware.UsageMetricsMiddleware(nil)(func(c echo.Context) error {
+		toolHandler.ServeHTTP(c.Response(), c.Request())
+		return nil
+	}))
+	echoServer.POST("/mcp", wrapped)
+	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":19,"method":"tools/call","params":{"name":"failed","arguments":{}}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set("MCP-Protocol-Version", "2025-11-25")
+	response := httptest.NewRecorder()
+	echoServer.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Contains(t, response.Body.String(), `"isError":true`)
+
+	metricsResponse := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(metricsResponse, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	require.Contains(t, metricsResponse.Body.String(), `densemem_mcp_transport_requests_total{method="POST",status_class="2xx"} 1`)
+	require.Contains(t, metricsResponse.Body.String(), `densemem_mcp_tool_results_total{outcome="tool_error"} 1`)
+	require.NotContains(t, metricsResponse.Body.String(), `densemem_mcp_tool_results_total{outcome="success"} 1`)
 }
 
 func TestSDKToolHandlerDoesNotCountToolNotifications(t *testing.T) {

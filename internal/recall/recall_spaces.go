@@ -107,6 +107,35 @@ func (s *recallService) recallAcrossSpaces(ctx context.Context, req recallExecut
 		return nil, teamErr
 	}
 	fused = fuseRecallResults(results, req.Limit, recallOptionalLimitValue(req.RelationshipLimit))
+	hypothesisOutcome := "not_requested"
+	hypothesesReturned := 0
+	hasSharedBranch := false
+	for _, branch := range branches {
+		if branch.Kind == domain.MemorySpaceTeamShared || branch.Kind == "" {
+			hasSharedBranch = true
+			break
+		}
+	}
+	if req.IncludeHypotheses && hasSharedBranch {
+		if req.KnownAt != nil {
+			hypothesisOutcome = "temporal_unsupported"
+		} else if s.hypotheses == nil {
+			hypothesisOutcome = "unavailable"
+		} else {
+			hypothesesReturned = len(fused.RelatedHypotheses)
+			hypothesisOutcome = "empty"
+			if hypothesesReturned > 0 {
+				hypothesisOutcome = "returned"
+			}
+			for _, degradation := range fused.Degradations {
+				if degradation.Frontier == "hypotheses" {
+					hypothesisOutcome = "unavailable"
+					break
+				}
+			}
+		}
+	}
+	observability.RecordRecallHypotheses(s.metrics, hypothesisOutcome, hypothesesReturned)
 	if embeddingDegradation != nil {
 		fused.Degradations = append([]RecallDegradationResult{*embeddingDegradation}, fused.Degradations...)
 		fused.Degradation = &fused.Degradations[0]

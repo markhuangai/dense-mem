@@ -12,6 +12,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 func TestScheduledEvidenceCycleBoundsTargetsContextsAndRelatedRecords(t *testing.T) {
@@ -141,11 +142,13 @@ func TestScheduledEvidenceCycleAcceptsMidHourAndSkipsDisabledWindows(t *testing.
 func TestRecoverScheduledEvidenceCycleCompletesDisabledRun(t *testing.T) {
 	teamID := uuid.NewString()
 	leaseToken := uuid.NewString()
+	metrics := observability.NewPrometheusMetrics()
 	store := &dreamRepositoryStub{recoveryRun: &dreamcontract.DreamCycleRun{
 		TeamID: teamID, RunID: uuid.NewString(), LeaseToken: leaseToken, Status: "running", Claimed: true,
 	}}
 	service := New(Dependencies{
 		Store: store, ScheduledStore: store,
+		Metrics:   metrics,
 		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: false, MaxOutputs: 5, Timezone: "UTC", StartTimeLocal: "03:00"}},
 	}).(*service)
 	result, err := service.RecoverScheduledEvidenceCycle(context.Background(), teamID)
@@ -153,6 +156,9 @@ func TestRecoverScheduledEvidenceCycleCompletesDisabledRun(t *testing.T) {
 	require.NotNil(t, result)
 	require.Equal(t, "cancelled", result.Status)
 	require.Equal(t, "cancelled", store.completeInput.Status)
+	metricText := dreamMetricsText(t, metrics)
+	require.Contains(t, metricText, `densemem_logical_operation_recoveries_total{operation="dream_evidence",outcome="attempted"} 1`)
+	require.Contains(t, metricText, `densemem_logical_operation_recoveries_total{operation="dream_evidence",outcome="cancelled"} 1`)
 }
 
 func TestEvidenceTeamActivityDefaultsAndRejectsArchivedTeams(t *testing.T) {

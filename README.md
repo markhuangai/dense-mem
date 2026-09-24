@@ -468,6 +468,61 @@ instance, so multi-instance dashboards should use `max by (team_id, status)` (or
 the equivalent label set), while event counters retain normal `sum` and `rate`
 semantics.
 
+### Dashboard series parity
+
+`internal/operations/telemetry_catalog.go` defines the first-party dashboard
+series and their availability rules. The current names and labels remain
+available while operators migrate dashboards to the additional measures below.
+
+| Dashboard series | Prometheus source | Owner | Zero and failure meaning |
+| --- | --- | --- | --- |
+| `http_requests`, `http_errors`, `http_rps`, `http_errors_rps`, `avg_http_latency` | `densemem_http_requests_total`, `densemem_http_request_duration_seconds` | `internal/http/middleware` and `internal/observability` | A successful scrape with no requests is zero; HTTP error and latency series require request activity. |
+| `embedding_requests`, `embedding_errors`, `embedding_tokens`, `avg_embedding_latency` | `densemem_embedding_requests_total`, `densemem_embedding_errors_total`, `densemem_embedding_tokens_total`, `densemem_embedding_duration_seconds` | Embedding provider instrumentation in `internal/observability` | Missing provider usage stays unavailable when embedding calls occurred. |
+| `verifier_requests`, `verifier_tokens`, `avg_verifier_latency` | `densemem_verifier_requests_total`, `densemem_verifier_tokens_total`, `densemem_verifier_duration_seconds` | Assessor and provider instrumentation in `internal/observability` | Missing provider usage stays unavailable when verifier calls occurred. |
+| `recalls`, `avg_recall_results`, `p95_recall_latency`, `recall_results`, `recall_p95_latency` | `densemem_recall_requests_total`, `densemem_recall_results`, `densemem_recall_duration_seconds` | `internal/recall` | Results and latency are unavailable until a Recall request provides a sample. |
+| `llm_recall_used_rate`, `llm_recall_answer_supported_rate`, `llm_recall_quality_score`, `llm_recall_missing_context_rate`, `llm_recall_irrelevant_rate` | `densemem_recall_feedback_total`, `densemem_recall_feedback_quality_score` | `internal/recall/feedback.go` | No host feedback is unavailable, not a negative judgment. `llm_recall_feedback_events` is an internal parent activity series. |
+| `dream_feedbacks` | `densemem_dream_feedback_total` | `internal/dream` | An ignore count comes from an explicit ignore action; absence of feedback creates no event. |
+| `remember_requests`, `avg_remember_duration`, `p95_remember_duration` | `densemem_remember_acknowledgements_total`, `densemem_remember_acknowledgement_duration_seconds` | `internal/remember` | A successful scrape with no acknowledgements is zero. |
+| `assessor_requests`, `assessor_request_failures`, `assessor_validation_failures`, `assessor_tokens`, `avg_assessor_duration`, `assessor_duration`, `assessor_terminal_failures` | `densemem_assessor_requests_total`, `densemem_assessor_validation_failures_total`, `densemem_assessor_tokens_total`, `densemem_assessor_duration_seconds`, `densemem_assessor_terminal_failures_total` | Integrated assessor instrumentation | Token usage is unavailable when the provider does not report usage. |
+| `ai_cost_usd`, `verifier_cost_usd`, `embedding_cost_usd` | `densemem_ai_operation_cost_usd_total`, `densemem_ai_operation_unpriced_total` | `internal/observability/telemetry_cost.go` | Missing usage, pricing, or rate configuration remains unavailable, not zero cost. |
+| `avg_conflict_review_duration`, `conflict_review_duration` | `densemem_conflict_review_duration_seconds` | Conflict-review application | Requires a completed review sample. |
+| `conflict_queue_collection_success` | `densemem_conflict_queue_collection_success` | Conflict queue collector in `internal/observability` | Zero means collection failed; queue gauges are omitted on failure. |
+| `relationships_<status>`, `relationship_transitions_<status>`, `relationship_corrections` | `relationship_records`, `relationship_transition_events`, `relationship_correction_events` through the lifecycle reader | `internal/operations/postgres` | A successful ledger read with no matching rows is zero; ledger failure is unavailable. Status suffixes follow the current Relationship status registry. |
+
+Additional operational families are `densemem_mcp_transport_requests_total`,
+`densemem_mcp_transport_duration_seconds`, `densemem_mcp_tool_results_total`,
+`densemem_logical_operation_attempts_total`,
+`densemem_logical_operation_duration_seconds`,
+`densemem_logical_operation_recoveries_total`,
+`densemem_remember_phase_duration_seconds`, `densemem_dream_cycle_attempts_total`,
+`densemem_dream_cycle_duration_seconds`, `densemem_dream_provider_attempts_total`,
+`densemem_dream_provider_duration_seconds`, `densemem_dream_feedback_actions_total`,
+`densemem_recall_hypothesis_expansions_total`,
+`densemem_recall_hypotheses_returned_total`,
+`densemem_operation_provider_tokens_total`, and
+`densemem_operation_provider_usage_unpriced_total`. They distinguish MCP HTTP
+status from logical tool outcome, Remember execution/replay/conflict/recovery,
+bounded phase and provider usage, Dream run/provider outcomes, Recall hypothesis
+expansion, and canonical ledger state. New families use closed labels without
+team, profile, request, model, or content values. Their histogram buckets
+include the 180-second Remember budget and larger overruns. The canonical ledger collector reports
+`densemem_operational_ledger_collection_success`; a zero collection status
+means its other gauge families are omitted for that scrape. It uses a
+two-second read-only collection deadline.
+
+To compare baseline and candidate overhead, run
+[`compare_telemetry_load.py`](tests/eval/scripts/compare_telemetry_load.py)
+against isolated deployments with matching data and configuration. It warms
+both servers, sends paired authenticated `tools/list` requests, and scrapes
+both metrics endpoints during the measured run. It fails when candidate p95
+latency or throughput regresses by more than 10 percent. Set a shared
+`DENSE_MEM_LOAD_TOKEN` or the per-deployment
+`DENSE_MEM_BASELINE_LOAD_TOKEN` and `DENSE_MEM_CANDIDATE_LOAD_TOKEN`; set
+`DENSE_MEM_LOAD_SCRAPE_TOKEN` for both metrics endpoints. Use the optional
+`DENSE_MEM_BASELINE_SCRAPE_TOKEN` and `DENSE_MEM_CANDIDATE_SCRAPE_TOKEN` when
+the two scrape endpoints use different credentials. The JSON receipt is
+written under the ignored evaluation runtime directory.
+
 ## Responsibility Boundary
 
 | Area | Dense-Mem owns | Host LLM owns |

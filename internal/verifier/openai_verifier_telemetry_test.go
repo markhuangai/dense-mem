@@ -58,8 +58,12 @@ func TestOpenAIStructuredChatUsesTokenizerForIncompleteProviderUsage(t *testing.
 			recorder := httptest.NewRecorder()
 			metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 			body := recorder.Body.String()
-			assert.NotContains(t, body, `source="provider"`)
-			assert.NotContains(t, body, `reason="missing_usage"`)
+			_, found := verifierMetricLineValue(body, "densemem_ai_operation_tokens_total",
+				`operation="semantic_assessment"`, `component="verifier"`, `model="assessor-model"`, `source="provider"`)
+			assert.False(t, found, "incomplete provider usage must not produce a priced token observation")
+			_, found = verifierMetricLineValue(body, "densemem_ai_operation_unpriced_total",
+				`operation="semantic_assessment"`, `component="verifier"`, `model="assessor-model"`, `reason="missing_usage"`)
+			assert.False(t, found, "reported partial usage is not missing provider usage")
 			if tt.totalTokens > 0 {
 				got, found := verifierMetricLineValue(body, "densemem_verifier_tokens_total", `kind="total"`, `model="assessor-model"`)
 				require.True(t, found, "missing provider-reported verifier total tokens\n%s", body)
@@ -79,6 +83,49 @@ func TestOpenAIStructuredChatUsesTokenizerForIncompleteProviderUsage(t *testing.
 			t.Fatal("incomplete provider usage did not produce a tokenizer cost sample")
 		})
 	}
+}
+
+func TestOpenAIStructuredChatAggregatesProviderTokensOnce(t *testing.T) {
+	metrics := observability.NewPrometheusMetrics()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": `{}`}}},
+			"usage":   map[string]any{"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+		}))
+	}))
+	defer srv.Close()
+
+	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	v.SetMetrics(metrics)
+	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationSemanticAssessment, 1)
+	_, err := v.openAIStructuredChatJSONWithUsage(ctx, "assessor-model", "schema", map[string]any{}, "system", map[string]any{})
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := recorder.Body.String()
+	for _, token := range []struct {
+		kind  string
+		value float64
+	}{
+		{kind: "input", value: 11},
+		{kind: "output", value: 7},
+		{kind: "total", value: 18},
+	} {
+		got, found := verifierMetricLineValue(
+			body,
+			"densemem_operation_provider_tokens_total",
+			`operation="semantic_assessment"`,
+			`component="verifier"`,
+			`kind="`+token.kind+`"`,
+			`source="provider"`,
+		)
+		require.True(t, found, "missing provider token aggregate for %s\n%s", token.kind, body)
+		assert.Equal(t, token.value, got)
+	}
+	legacyPrompt, found := verifierMetricLineValue(body, "densemem_verifier_tokens_total", `kind="prompt"`, `model="assessor-model"`)
+	require.True(t, found)
+	assert.Equal(t, float64(11), legacyPrompt)
 }
 
 func TestOpenAICommunitySummaryTelemetryRecordsProviderTokenizerAndUnpricedUsage(t *testing.T) {

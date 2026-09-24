@@ -38,6 +38,10 @@ func buildTelemetryApplication(
 	}
 	composition.PricingRefreshEnabled = true
 	prometheusMetrics := observability.NewPrometheusMetrics(operations.NewTelemetryPricingResolver(pricing, cfg.GetAIVerifierModel()))
+	operationalReader, _ := lifecycle.(operationscontract.OperationalTelemetryReader)
+	if err := prometheusMetrics.RegisterOperationalTelemetryCollector(operationalReader); err != nil {
+		return telemetryComposition{}, err
+	}
 	if conflictQueue != nil {
 		if err := prometheusMetrics.RegisterConflictQueueCollector(observability.NewConflictQueueCollector(conflictQueue.CollectConflictQueueMetrics)); err != nil {
 			return telemetryComposition{}, err

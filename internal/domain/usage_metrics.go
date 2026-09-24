@@ -96,8 +96,19 @@ type mcpToolMetricsContextKey struct{}
 
 // MCPToolMetrics records server-owned tool outcomes for one HTTP request.
 type MCPToolMetrics struct {
-	calls    atomic.Int64
-	failures atomic.Int64
+	calls     atomic.Int64
+	failures  atomic.Int64
+	success   atomic.Int64
+	cancelled atomic.Int64
+	rpcError  atomic.Int64
+	toolError atomic.Int64
+	missing   atomic.Int64
+	other     atomic.Int64
+}
+
+type MCPToolOutcomeCount struct {
+	Outcome string
+	Count   int64
 }
 
 func WithMCPToolMetrics(ctx context.Context) (context.Context, *MCPToolMetrics) {
@@ -125,9 +136,57 @@ func RecordMCPToolFailure(ctx context.Context) {
 	}
 }
 
+func RecordMCPToolOutcome(ctx context.Context, outcome string) {
+	metrics := MCPToolMetricsFromContext(ctx)
+	if metrics == nil {
+		return
+	}
+	metrics.calls.Add(1)
+	switch outcome {
+	case "success":
+		metrics.success.Add(1)
+	case "cancelled":
+		metrics.failures.Add(1)
+		metrics.cancelled.Add(1)
+	case "rpc_error":
+		metrics.failures.Add(1)
+		metrics.rpcError.Add(1)
+	case "tool_error":
+		metrics.failures.Add(1)
+		metrics.toolError.Add(1)
+	case "missing_result":
+		metrics.failures.Add(1)
+		metrics.missing.Add(1)
+	default:
+		metrics.failures.Add(1)
+		metrics.other.Add(1)
+	}
+}
+
 func (metrics *MCPToolMetrics) Snapshot() (int64, int64) {
 	if metrics == nil {
 		return 0, 0
 	}
 	return metrics.calls.Load(), metrics.failures.Load()
+}
+
+func (metrics *MCPToolMetrics) OutcomeSnapshot() []MCPToolOutcomeCount {
+	if metrics == nil {
+		return nil
+	}
+	counts := []MCPToolOutcomeCount{
+		{Outcome: "success", Count: metrics.success.Load()},
+		{Outcome: "cancelled", Count: metrics.cancelled.Load()},
+		{Outcome: "rpc_error", Count: metrics.rpcError.Load()},
+		{Outcome: "tool_error", Count: metrics.toolError.Load()},
+		{Outcome: "missing_result", Count: metrics.missing.Load()},
+		{Outcome: "other", Count: metrics.other.Load()},
+	}
+	out := counts[:0]
+	for _, count := range counts {
+		if count.Count > 0 {
+			out = append(out, count)
+		}
+	}
+	return out
 }

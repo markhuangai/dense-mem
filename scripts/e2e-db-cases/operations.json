@@ -73,6 +73,20 @@
       "source": "internal/operations/postgres/telemetry_repository_integration_test.go"
     },
     {
+      "id": "repository/TestReadOperationalTelemetryUsesDurableLedgerAndSurvivesCollectorRecreation",
+      "package": "./internal/operations/postgres",
+      "run": "^TestReadOperationalTelemetryUsesDurableLedgerAndSurvivesCollectorRecreation$",
+      "phase": "precheck",
+      "source": "internal/operations/postgres/telemetry_repository_integration_test.go"
+    },
+    {
+      "id": "repository/TestOperationalTelemetryCollectionMarksPartialLedgerFailureUnavailable",
+      "package": "./internal/operations/postgres",
+      "run": "^TestOperationalTelemetryCollectionMarksPartialLedgerFailureUnavailable$",
+      "phase": "precheck",
+      "source": "internal/operations/postgres/telemetry_repository_integration_test.go"
+    },
+    {
       "id": "repository/TestUsageMetricsSnapshotLabelsSSOOwnershipAlias",
       "package": "./internal/operations/postgres",
       "run": "^TestUsageMetricsSnapshotLabelsSSOOwnershipAlias$",

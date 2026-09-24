@@ -125,12 +125,7 @@ func metricUUIDLabel(value string) string {
 }
 
 func normalizeAIOperation(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case AIOperationSemanticAssessment, AIOperationConflictReview, AIOperationDreamGeneration, AIOperationEvidenceDiscovery, AIOperationRecallEmbedding, AIOperationSearchDocumentEmbedding, AIOperationCommunitySummary:
-		return strings.ToLower(strings.TrimSpace(value))
-	default:
-		return unknownMetricLabel
-	}
+	return boundedMetricLabel(strings.ToLower(strings.TrimSpace(value)), aiOperationLabels)
 }
 
 func normalizeAIComponent(value string) string {

@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -75,7 +76,26 @@ func recordTelemetryHTTPMetric(c echo.Context, recorder httpcontract.HTTPMetrics
 	if route == "" {
 		route = "unknown"
 	}
-	recorder.ObserveHTTPRequest(c.Request().Context(), route, c.Request().Method, usageStatus(c, err), time.Since(start))
+	ctx := c.Request().Context()
+	duration := time.Since(start)
+	status := usageStatus(c, err)
+	recorder.ObserveHTTPRequest(ctx, route, c.Request().Method, status, duration)
+	if !isMCPRoute(route) {
+		return
+	}
+	if mcpRecorder, ok := recorder.(interface {
+		ObserveMCPTransportRequest(string, int, time.Duration)
+		ObserveMCPToolResult(string, int64)
+	}); ok {
+		mcpRecorder.ObserveMCPTransportRequest(c.Request().Method, status, duration)
+		for _, outcome := range domain.MCPToolMetricsFromContext(ctx).OutcomeSnapshot() {
+			mcpRecorder.ObserveMCPToolResult(outcome.Outcome, outcome.Count)
+		}
+	}
+}
+
+func isMCPRoute(route string) bool {
+	return route == "/mcp" || strings.HasSuffix(strings.TrimSuffix(route, "/"), "/mcp")
 }
 
 func usageStatus(c echo.Context, err error) int {

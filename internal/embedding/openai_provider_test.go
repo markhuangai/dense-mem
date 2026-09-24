@@ -296,7 +296,15 @@ func TestOpenAIProviderDoesNotMarkMalformedProviderErrorUnpriced(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	assert.NotContains(t, recorder.Body.String(), `reason="missing_usage"`)
+	for _, line := range strings.Split(recorder.Body.String(), "\n") {
+		if strings.HasPrefix(line, "densemem_ai_operation_unpriced_total{") &&
+			strings.Contains(line, `operation="recall_embedding"`) &&
+			strings.Contains(line, `component="embedding"`) &&
+			strings.Contains(line, `model="embedding-model"`) &&
+			strings.Contains(line, `reason="missing_usage"`) {
+			t.Fatalf("HTTP 429 response must not produce a missing-usage observation: %s", line)
+		}
+	}
 }
 
 func TestOpenAIProvider_Non200Response(t *testing.T) {

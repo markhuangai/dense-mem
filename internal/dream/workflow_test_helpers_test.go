@@ -3,13 +3,16 @@ package dream
 import (
 	"context"
 	"errors"
+	"net/http/httptest"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
@@ -21,6 +24,13 @@ func dreamTestContext(teamID uuid.UUID, ownerID uuid.UUID) context.Context {
 		OwnerID: ownerID, CredentialID: &credentialID,
 		AuthMethod: "api_key", Role: "member", Grants: []string{"read", "write"},
 	})
+}
+
+func dreamMetricsText(t testing.TB, metrics *observability.PrometheusMetrics) string {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	return recorder.Body.String()
 }
 
 type dreamRepositoryStub struct {

@@ -41,8 +41,9 @@ type ScopedDiscoverabilityMetrics interface {
 // PrometheusMetrics exports Dense-Mem operational metrics through a private
 // registry. It is safe for concurrent use.
 type PrometheusMetrics struct {
-	registry *prometheus.Registry
-	pricing  AIPricingResolver
+	registry    *prometheus.Registry
+	pricing     AIPricingResolver
+	operational *operationalPrometheusMetrics
 
 	httpRequests                 *prometheus.CounterVec
 	httpDuration                 *prometheus.HistogramVec
@@ -107,7 +108,7 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		httpDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "densemem_http_request_duration_seconds",
 			Help:    "Authenticated HTTP request duration.",
-			Buckets: prometheus.DefBuckets,
+			Buckets: requestDurationBuckets(),
 		}, append(identityLabels(), "route", "method", "status_class")),
 		embeddingCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_embedding_requests_total",
@@ -120,7 +121,7 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		embeddingDur: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "densemem_embedding_duration_seconds",
 			Help:    "Embedding provider request duration.",
-			Buckets: prometheus.DefBuckets,
+			Buckets: requestDurationBuckets(),
 		}, append(identityLabels(), "model", "outcome")),
 		embeddingTokens: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_embedding_tokens_total",
@@ -133,7 +134,7 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		verifierDur: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "densemem_verifier_duration_seconds",
 			Help:    "Verifier AI request duration.",
-			Buckets: prometheus.DefBuckets,
+			Buckets: requestDurationBuckets(),
 		}, append(identityLabels(), "model", "outcome")),
 		verifierTokens: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_verifier_tokens_total",
@@ -146,7 +147,7 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		recallDur: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "densemem_recall_duration_seconds",
 			Help:    "Recall request duration.",
-			Buckets: prometheus.DefBuckets,
+			Buckets: requestDurationBuckets(),
 		}, identityLabels()),
 		recallResults: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "densemem_recall_results",
@@ -182,7 +183,7 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		rememberAcknowledgementDur: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "densemem_remember_acknowledgement_duration_seconds",
 			Help:    "Elapsed time from remember request receipt to durable acknowledgement.",
-			Buckets: prometheus.DefBuckets,
+			Buckets: requestDurationBuckets(),
 		}, append(identityLabels(), "outcome")),
 		aiOperationTokens: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_ai_operation_tokens_total",
@@ -207,7 +208,7 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		assessorDur: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "densemem_assessor_duration_seconds",
 			Help:    "Integrated assessor conversation duration.",
-			Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30, 60, 120, 300, 600},
+			Buckets: durationBuckets([]float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30, 60, 120, 300, 600}),
 		}, []string{"outcome"}),
 		assessorTokens: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_assessor_tokens_total",
@@ -262,7 +263,8 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 			Help: "Durably committed conflict resolutions by bounded method and outcome.",
 		}, []string{"team_id", "method", "outcome"}),
 	}
-	m.registry.MustRegister(
+	m.operational = newOperationalPrometheusMetrics()
+	collectors := []prometheus.Collector{
 		m.httpRequests, m.httpDuration,
 		m.embeddingCalls, m.embeddingErrors, m.embeddingDur, m.embeddingTokens,
 		m.verifierCalls, m.verifierDur, m.verifierTokens,
@@ -277,7 +279,9 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		m.assessorTerminalFailures,
 		m.communityRuns, m.communitySummaries, m.communityRecalls,
 		m.conflictAssessments, m.conflictResolutions,
-	)
+	}
+	collectors = append(collectors, m.operational.collectors()...)
+	m.registry.MustRegister(collectors...)
 	return m
 }
 
@@ -389,9 +393,16 @@ func (m *PrometheusMetrics) ObserveAIOperationUsage(ctx context.Context, usage A
 	base := append(identityValues(ctx), operation.operation, component, model)
 	if usage.InputTokens > 0 {
 		m.aiOperationTokens.WithLabelValues(append(base, "input", source)...).Add(float64(usage.InputTokens))
+		// Provider-source aggregates are emitted by the scoped token recorders.
+		if source == AITokenSourceTokenizer {
+			m.observeProviderTokens(operation.operation, component, "input", source, usage.InputTokens)
+		}
 	}
 	if usage.OutputTokens > 0 {
 		m.aiOperationTokens.WithLabelValues(append(base, "output", source)...).Add(float64(usage.OutputTokens))
+		if source == AITokenSourceTokenizer {
+			m.observeProviderTokens(operation.operation, component, "output", source, usage.OutputTokens)
+		}
 	}
 	itemCount := operation.itemCount
 	if usage.ItemCount > 0 {
@@ -425,7 +436,11 @@ func (m *PrometheusMetrics) ObserveAIOperationUnpriced(ctx context.Context, comp
 }
 
 func (m *PrometheusMetrics) observeAIOperationUnpriced(ctx context.Context, operation, component, model, reason string) {
-	m.aiOperationUnpriced.WithLabelValues(append(identityValues(ctx), normalizeAIOperation(operation), component, model, normalizeAIUnpricedReason(reason))...).Inc()
+	operation = normalizeAIOperation(operation)
+	component = normalizeAIComponent(component)
+	reason = normalizeAIUnpricedReason(reason)
+	m.aiOperationUnpriced.WithLabelValues(append(identityValues(ctx), operation, component, model, reason)...).Inc()
+	m.observeProviderUnpriced(operation, component, reason)
 }
 
 func aiOperationCostUSD(component string, usage AIOperationUsage, pricing AIPricing) (float64, bool) {
@@ -482,6 +497,7 @@ func (m *PrometheusMetrics) ObserveDreamFeedback(feedback DreamFeedback) {
 }
 
 func (m *PrometheusMetrics) ObserveDreamFeedbackFor(ctx context.Context, feedback DreamFeedback) {
+	m.observeDreamFeedbackAction(feedback.Decision, feedback.Outcome)
 	labels := append(identityValues(ctx),
 		normalizeDreamFeedbackDecision(feedback.Decision),
 		normalizeDreamFeedbackOutcome(feedback.Outcome),
@@ -556,15 +572,29 @@ func (m *PrometheusMetrics) IncAssessorTerminalFailure(stage string) {
 
 func (m *PrometheusMetrics) addTokens(counter *prometheus.CounterVec, ctx context.Context, model string, promptTokens, completionTokens, totalTokens int64) {
 	base := append(identityValues(ctx), normalizeLabel(model))
+	operation := unknownMetricLabel
+	if observed, ok := aiOperationFromContext(ctx); ok {
+		operation = observed.operation
+	}
 	if promptTokens > 0 {
 		counter.WithLabelValues(append(base, "prompt")...).Add(float64(promptTokens))
+		m.observeProviderTokens(operation, providerComponent(counter, m.embeddingTokens), "input", AITokenSourceProvider, promptTokens)
 	}
 	if completionTokens > 0 {
 		counter.WithLabelValues(append(base, "completion")...).Add(float64(completionTokens))
+		m.observeProviderTokens(operation, AIComponentVerifier, "output", AITokenSourceProvider, completionTokens)
 	}
 	if totalTokens > 0 {
 		counter.WithLabelValues(append(base, "total")...).Add(float64(totalTokens))
+		m.observeProviderTokens(operation, providerComponent(counter, m.embeddingTokens), "total", AITokenSourceProvider, totalTokens)
 	}
+}
+
+func providerComponent(counter, embedding *prometheus.CounterVec) string {
+	if counter == embedding {
+		return AIComponentEmbedding
+	}
+	return AIComponentVerifier
 }
 
 func identityLabels() []string {

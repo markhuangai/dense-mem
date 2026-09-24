@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 )
 
@@ -54,6 +55,7 @@ func (s *service) recoverScheduledCycle(ctx context.Context, teamID string) (*Ru
 		return nil, err
 	}
 	started := s.now().UTC()
+	metricStarted := time.Now()
 	claimed, err := s.deps.ScheduledStore.ClaimRecoverableScheduledDreamCycle(ctx, dreamcontract.DreamCycleRecoveryClaimInput{
 		TeamID:      teamID,
 		LeaseToken:  uuid.NewString(),
@@ -66,9 +68,16 @@ func (s *service) recoverScheduledCycle(ctx context.Context, teamID string) (*Ru
 	if claimed == nil {
 		return nil, nil
 	}
+	s.recordDreamRecovery("dream_graph", "attempted")
+	recordRecovery := func(result *RunCycleResult, err error) {
+		s.recordDreamCycleMetrics(ctx, string(domain.DreamLaneGraph), metricStarted, result, err)
+		s.recordDreamRecovery("dream_graph", dreamRecoveryOutcome(ctx, result, err))
+	}
 	result := cycleRunResult(claimed)
 	if result == nil {
-		return nil, errors.New("recover scheduled dreaming cycle: missing claimed run")
+		err := errors.New("recover scheduled dreaming cycle: missing claimed run")
+		recordRecovery(nil, err)
+		return nil, err
 	}
 	result.StartedAt = started
 	result.Status = "running"
@@ -87,15 +96,20 @@ func (s *service) recoverScheduledCycle(ctx context.Context, teamID string) (*Ru
 			result.Status = "error"
 			result.Error = err.Error()
 			s.recordRunDiagnosticAfterCompletion(ctx, result, err)
+			recordRecovery(result, err)
 			return result, err
 		}
 		s.recordRunDiagnostic(ctx, result)
+		recordRecovery(result, nil)
 		return result, nil
 	}
-	return s.runClaimedTeamCycle(ctx, teamID, "", cfg, RunCycleRequest{}, true, result, claimed)
+	result, err = s.runClaimedTeamCycle(ctx, teamID, "", cfg, RunCycleRequest{}, true, result, claimed)
+	recordRecovery(result, err)
+	return result, err
 }
 
 func (s *service) recordMissedScheduledCycle(ctx context.Context, teamID, runDate string) (*RunCycleResult, error) {
+	metricStarted := time.Now()
 	teamID, err := normalizeDreamTeamID(teamID)
 	if err != nil {
 		return nil, err
@@ -125,6 +139,7 @@ func (s *service) recordMissedScheduledCycle(ctx context.Context, teamID, runDat
 	if result != nil && run != nil && run.Claimed {
 		appendRunDiagnosticPhase(result, "target", "missed", "scheduled_window_missed", map[string]any{"run_date": runDate})
 		s.recordRunDiagnostic(ctx, result)
+		s.recordDreamCycleMetrics(ctx, string(domain.DreamLaneGraph), metricStarted, result, nil)
 	}
 	return result, nil
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
@@ -190,95 +191,30 @@ func TestGenerateDreamProposalsRetainsFailedLookupDiagnostics(t *testing.T) {
 	})
 }
 
-func TestRunCyclePersistsValidatedProviderHypothesis(t *testing.T) {
-	teamID := uuid.New()
-	ownerID := uuid.New()
-	runID := uuid.NewString()
-	subjectID := uuid.NewString()
-	middleID := uuid.NewString()
-	objectID := uuid.NewString()
-	activeSourceID := "relationship_a"
-	candidateSourceID := "relationship_b"
-	repo := &dreamRepositoryStub{
-		run: dreamcontract.DreamCycleRun{
-			TeamID:               teamID.String(),
-			RunID:                runID,
-			InitiatedByProfileID: ownerID.String(),
-			RunDate:              "2026-07-17",
-			Status:               "running",
-			Claimed:              true,
-		},
-		inputs: []dreamcontract.DreamInput{
-			{
-				RelationshipID:   activeSourceID,
-				OwnerProfileID:   ownerID.String(),
-				Version:          2,
-				Status:           "active",
-				SubjectEntityID:  subjectID,
-				SubjectName:      "Dense-Mem",
-				PredicateKey:     "works_on",
-				PredicateVersion: 1,
-				ObjectEntityID:   middleID,
-				ObjectName:       "PostgreSQL",
-				SubjectKind:      "project",
-				ObjectKind:       "product",
-				Evidence:         []dreamcontract.DreamEvidence{{Content: "Dense-Mem works on PostgreSQL.", Authority: "primary"}},
-			},
-			{
-				RelationshipID:   candidateSourceID,
-				OwnerProfileID:   ownerID.String(),
-				Version:          4,
-				Status:           "pending_evidence",
-				SubjectEntityID:  middleID,
-				SubjectName:      "PostgreSQL",
-				PredicateKey:     "informs",
-				PredicateVersion: 1,
-				ObjectEntityID:   objectID,
-				ObjectName:       "Search freshness",
-				SubjectKind:      "product",
-				ObjectKind:       "concept",
-				Evidence:         []dreamcontract.DreamEvidence{{Content: "PostgreSQL informs search freshness.", Authority: "primary"}},
-			},
-		},
-		predicates: []dreamcontract.DreamTargetPredicate{{
-			PredicateKey: "uses", Version: 1, AllowedSubjectKinds: []string{"project"}, AllowedObjectKinds: []string{"concept"}, RelationshipKind: "state", CurrentCardinality: "many",
-		}},
+func TestDreamProviderMetricsRecordZeroOutputAndFailure(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		provider *dreamGeneratorStub
+		outcome  string
+	}{
+		{name: "zero output", provider: &dreamGeneratorStub{model: "fixed-model"}, outcome: "ok"},
+		{name: "failure", provider: &dreamGeneratorStub{model: "fixed-model", err: errors.New("provider unavailable")}, outcome: "error"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			metrics := observability.NewPrometheusMetrics()
+			svc := New(Dependencies{Store: &dreamRepositoryStub{predicates: testDreamPathPredicates()}, Generator: test.provider, Metrics: metrics}).(*service)
+			result, err := svc.generateDreamProposals(context.Background(), uuid.NewString(), testDreamPathInputs(), 5)
+			if test.outcome == "error" {
+				require.Error(t, err)
+				require.True(t, result.providerFailed)
+			} else {
+				require.NoError(t, err)
+				require.Empty(t, result.proposals)
+				require.Zero(t, result.providerProposals)
+			}
+			require.Contains(t, dreamMetricsText(t, metrics), `densemem_dream_provider_attempts_total{outcome="`+test.outcome+`",stage="graph_generation"} 1`)
+		})
 	}
-	generator := &dreamGeneratorStub{
-		model: "provider-canonical",
-		generated: []GeneratedDream{{
-			PathRef:         "path_1",
-			PredicateRef:    "predicate_1",
-			EvidenceRefs:    []string{"evidence_1", "evidence_2"},
-			Hypothesis:      "Dense-Mem may use search freshness.",
-			Rationale:       "Active and candidate inputs point at a possible durable dependency.",
-			WhatIf:          "What if the connection needs independent confirmation?",
-			PossibleOutcome: "Collect independent evidence before accepting it.",
-		}},
-	}
-	svc := New(Dependencies{
-		Store:     repo,
-		Generator: generator,
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, StartTimeLocal: "03:00", Timezone: "UTC"}},
-		Now:       func() time.Time { return time.Date(2026, 7, 17, 3, 0, 0, 0, time.UTC) },
-	})
-
-	result, err := svc.RunCycle(dreamTestContext(teamID, ownerID), "ignored-profile", RunCycleRequest{Manual: true})
-
-	require.NoError(t, err)
-	require.Equal(t, "completed", result.Status)
-	require.Equal(t, 1, generator.calls)
-	require.Len(t, generator.lastReq.Paths, 1)
-	require.Len(t, repo.upserts, 1)
-	assert.Equal(t, "provider", repo.upserts[0].GeneratorKind)
-	assert.Equal(t, "provider-canonical", repo.upserts[0].GeneratorVersion)
-	assert.Equal(t, subjectID, repo.upserts[0].SubjectEntityID)
-	assert.Equal(t, "uses", repo.upserts[0].PredicateKey)
-	assert.Equal(t, objectID, repo.upserts[0].ObjectEntityID)
-	assert.Len(t, repo.upserts[0].SourceRefs, 2)
-	assert.Equal(t, 2, repo.upserts[0].SourceVersions[activeSourceID])
-	assert.Equal(t, 4, repo.upserts[0].SourceVersions[candidateSourceID])
-	assert.NotEmpty(t, repo.upserts[0].ContentHash)
 }
 
 func TestRunCycleRejectsMalformedProviderOutputWithoutFallback(t *testing.T) {
@@ -584,9 +520,11 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 		},
 	}
 	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), ingestID)}
+	metrics := observability.NewPrometheusMetrics()
 	svc := New(Dependencies{
 		Store:     repo,
 		Remember:  remember,
+		Metrics:   metrics,
 		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
 	})
 	ctx := dreamTestContext(teamID, ownerID)
@@ -658,6 +596,10 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 	assert.Equal(t, teamID.String(), repo.submitInput.TeamID)
 	assert.Equal(t, ownerID.String(), repo.submitInput.ActorProfileID)
 	assert.Equal(t, ingestID, repo.submitInput.SubmittedIngestID)
+	metricText := dreamMetricsText(t, metrics)
+	require.Contains(t, metricText, `densemem_logical_operation_attempts_total{classification="confirmation",operation="dream_confirmation",outcome="failed"} 2`)
+	require.Contains(t, metricText, `densemem_logical_operation_attempts_total{classification="confirmation",operation="dream_confirmation",outcome="completed"} 1`)
+	require.Contains(t, metricText, `densemem_dream_feedback_actions_total{decision="confirm_true",outcome="ok"} 1`)
 }
 
 func TestResolveFeedbackRejectsForeignEvidenceDreamBeforeRemember(t *testing.T) {

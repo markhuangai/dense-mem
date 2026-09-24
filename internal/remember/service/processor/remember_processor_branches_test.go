@@ -299,10 +299,12 @@ func TestRememberProcessorCommitsValidatedAssessmentAndResult(t *testing.T) {
 		plan:                      &knowledgecontract.InlineEmbeddingPlan{},
 		commitResult:              &knowledgecontract.SynchronousRememberCommitResult{IngestID: "committed", Outcome: "completed", PublicResult: commitResult},
 	}
+	metrics := observability.NewPrometheusMetrics()
 	processor := &rememberSynchronousProcessor{
 		ledger:   ledger,
 		catalog:  &processorAssessmentCatalogStub{},
 		provider: &processorAssessmentProviderStub{},
+		metrics:  metrics,
 	}
 	ctx := requestctx.WithRememberInvocationIDSink(context.Background())
 	status, err := processor.ProcessRemember(ctx, input)
@@ -312,6 +314,7 @@ func TestRememberProcessorCommitsValidatedAssessmentAndResult(t *testing.T) {
 	require.Equal(t, "evaluated_zero", ledger.invocation.Outcome)
 	require.Equal(t, "execution", ledger.invocation.Classification)
 	require.NotEmpty(t, requestctx.RememberInvocationIDFromContext(ctx))
+	require.Contains(t, rememberMetricsText(t, metrics), `densemem_logical_operation_attempts_total{classification="execution",operation="remember",outcome="evaluated_zero"} 1`)
 }
 
 func TestRememberProcessorRecordsAssessmentRejectionTrails(t *testing.T) {

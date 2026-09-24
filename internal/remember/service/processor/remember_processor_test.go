@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -486,7 +487,8 @@ func TestRememberProcessorWaiterReplaysWithoutProcessing(t *testing.T) {
 		},
 	}}
 	ledger := &rememberWaitAwareLedgerStub{rememberFailureLedgerStub: base, waited: true}
-	processor := &rememberSynchronousProcessor{ledger: ledger}
+	metrics := observability.NewPrometheusMetrics()
+	processor := &rememberSynchronousProcessor{ledger: ledger, metrics: metrics}
 
 	status, err := processor.ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{
 		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
@@ -504,6 +506,7 @@ func TestRememberProcessorWaiterReplaysWithoutProcessing(t *testing.T) {
 	require.Equal(t, "replay", base.invocation.Classification)
 	require.Equal(t, "failed", base.invocation.Outcome)
 	require.Equal(t, "77777777-7777-7777-7777-777777777777", base.invocation.CanonicalAttemptID)
+	require.Contains(t, rememberMetricsText(t, metrics), `densemem_logical_operation_attempts_total{classification="replay",operation="remember",outcome="failed"} 1`)
 }
 
 func TestReplayCanonicalAttemptIDIgnoresSyntheticFailureStatus(t *testing.T) {
@@ -549,7 +552,8 @@ func TestRememberProcessorWaiterRejectsRequestHashMismatch(t *testing.T) {
 		},
 	}}
 	locker := &rememberWaitAwareLedgerStub{rememberFailureLedgerStub: ledger, waited: true}
-	processor := &rememberSynchronousProcessor{ledger: locker}
+	metrics := observability.NewPrometheusMetrics()
+	processor := &rememberSynchronousProcessor{ledger: locker, metrics: metrics}
 
 	status, err := processor.ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{
 		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "different-request-hash",
@@ -564,6 +568,7 @@ func TestRememberProcessorWaiterRejectsRequestHashMismatch(t *testing.T) {
 	require.Equal(t, "conflict", ledger.invocation.Classification)
 	require.Equal(t, "conflict", ledger.invocation.Outcome)
 	require.Empty(t, ledger.invocation.FailedPhase)
+	require.Contains(t, rememberMetricsText(t, metrics), `densemem_logical_operation_attempts_total{classification="conflict",operation="remember",outcome="conflict"} 1`)
 }
 
 func TestRememberProcessorWaiterLockCancellationReturnsBeforeReplayLoad(t *testing.T) {
@@ -908,4 +913,11 @@ func (s *rememberFailureLedgerStub) RecordRememberInvocationDiagnostic(_ context
 	s.invocation = input
 	s.invocations = append(s.invocations, input)
 	return s.invocationErr
+}
+
+func rememberMetricsText(t testing.TB, metrics *observability.PrometheusMetrics) string {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	return recorder.Body.String()
 }

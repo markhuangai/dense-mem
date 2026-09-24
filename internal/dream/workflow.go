@@ -55,6 +55,21 @@ func (s *service) runTeamCycle(
 	scheduled bool,
 	scheduledWindowAt time.Time,
 ) (*RunCycleResult, error) {
+	started := time.Now()
+	result, err := s.runTeamCycleCore(ctx, teamID, initiatedByProfileID, cfg, req, scheduled, scheduledWindowAt)
+	s.recordDreamCycleMetrics(ctx, string(domain.DreamLaneGraph), started, result, err)
+	return result, err
+}
+
+func (s *service) runTeamCycleCore(
+	ctx context.Context,
+	teamID string,
+	initiatedByProfileID string,
+	cfg EffectiveConfig,
+	req RunCycleRequest,
+	scheduled bool,
+	scheduledWindowAt time.Time,
+) (*RunCycleResult, error) {
 	started := s.now().UTC()
 	runDate := localRunDate(started, cfg)
 	if scheduled {
@@ -540,9 +555,21 @@ func (s *service) generateDreamProposals(
 	var diagnostics GenerationDiagnostics
 	var generated []GeneratedDream
 	if generatorWithDiagnostics, ok := generator.(DiagnosticsGenerator); ok {
+		providerStarted := time.Now()
 		generated, diagnostics, err = generatorWithDiagnostics.GenerateWithDiagnostics(ctx, teamID, request)
+		outcome := "ok"
+		if err != nil {
+			outcome = "error"
+		}
+		observability.RecordDreamProviderAttempt(s.deps.Metrics, "graph_generation", outcome, time.Since(providerStarted))
 	} else {
+		providerStarted := time.Now()
 		generated, err = generator.Generate(ctx, teamID, request)
+		outcome := "ok"
+		if err != nil {
+			outcome = "error"
+		}
+		observability.RecordDreamProviderAttempt(s.deps.Metrics, "graph_generation", outcome, time.Since(providerStarted))
 		diagnostics.ProviderProposals = len(generated)
 	}
 	if err != nil {

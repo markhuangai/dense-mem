@@ -252,9 +252,14 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 		recordRecallCommunityMetric(ctx, s.metrics, result)
 	}
 	result.RelatedHypotheses = []RelatedHypothesisSummary{}
+	hypothesisOutcome := "not_requested"
+	hypothesesReturned := 0
 	if teamSharedBranch && req.IncludeHypotheses {
 		if req.KnownAt != nil {
 			result.Degradations = append(result.Degradations, relatedHypothesisTemporalDegradation())
+			hypothesisOutcome = "temporal_unsupported"
+		} else if s.hypotheses == nil {
+			hypothesisOutcome = "unavailable"
 		} else {
 			related, relatedDegradation := s.recallRelatedHypotheses(
 				ctx,
@@ -265,8 +270,17 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 			result.RelatedHypotheses = related
 			if relatedDegradation != nil {
 				result.Degradations = append(result.Degradations, *relatedDegradation)
+				hypothesisOutcome = "unavailable"
+			} else if len(related) > 0 {
+				hypothesisOutcome = "returned"
+			} else {
+				hypothesisOutcome = "empty"
 			}
+			hypothesesReturned = len(related)
 		}
+	}
+	if !recallBranchMetricsSuppressed(ctx) {
+		observability.RecordRecallHypotheses(s.metrics, hypothesisOutcome, hypothesesReturned)
 	}
 	if len(result.Degradations) > 0 {
 		result.Degradation = &result.Degradations[0]

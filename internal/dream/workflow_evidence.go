@@ -114,6 +114,7 @@ func (s *service) RecoverScheduledEvidenceCycle(ctx context.Context, teamID stri
 		return nil, err
 	}
 	started := s.now().UTC()
+	metricStarted := time.Now()
 	claim, err := s.deps.ScheduledStore.ClaimRecoverableScheduledDreamCycle(ctx, dreamcontract.DreamCycleRecoveryClaimInput{
 		TeamID: teamID, LeaseToken: uuid.NewString(), LeaseUntil: started.Add(s.evidenceCycleLease()),
 		MaxAttempts: scheduledRecoveryAttempts, Lane: domain.DreamLaneEvidenceDiscovery,
@@ -124,9 +125,16 @@ func (s *service) RecoverScheduledEvidenceCycle(ctx context.Context, teamID stri
 	if claim == nil {
 		return nil, nil
 	}
+	s.recordDreamRecovery("dream_evidence", "attempted")
+	recordRecovery := func(result *RunCycleResult, err error) {
+		s.recordDreamCycleMetrics(ctx, string(domain.DreamLaneEvidenceDiscovery), metricStarted, result, err)
+		s.recordDreamRecovery("dream_evidence", dreamRecoveryOutcome(ctx, result, err))
+	}
 	result := cycleRunResult(claim)
 	if result == nil {
-		return nil, errors.New("recover scheduled evidence dreaming cycle: missing claimed run")
+		err := errors.New("recover scheduled evidence dreaming cycle: missing claimed run")
+		recordRecovery(nil, err)
+		return nil, err
 	}
 	result.StartedAt = started
 	result.Status = "running"
@@ -143,12 +151,16 @@ func (s *service) RecoverScheduledEvidenceCycle(ctx context.Context, teamID stri
 			result.Status = "error"
 			result.Error = err.Error()
 			s.recordRunDiagnosticAfterCompletion(ctx, result, err)
+			recordRecovery(result, err)
 			return result, err
 		}
 		s.recordRunDiagnostic(ctx, result)
+		recordRecovery(result, nil)
 		return result, nil
 	}
-	return s.runClaimedEvidenceCycle(ctx, teamID, cfg, result, claim)
+	result, err = s.runClaimedEvidenceCycle(ctx, teamID, cfg, result, claim)
+	recordRecovery(result, err)
+	return result, err
 }
 
 func (s *service) evidenceTeamIsActive(ctx context.Context, teamID string) (bool, error) {
@@ -317,10 +329,16 @@ func (s *service) runClaimedEvidenceCycle(
 					evaluationProviderOutputTokens := 0
 					evaluationProviderProposals := 0
 					for regeneration := 0; regeneration < evidenceDiscoveryRegenerationLimit; regeneration++ {
+						providerStarted := time.Now()
 						generation, diagnostics, generateErr := s.deps.EvidenceGenerator.GenerateEvidence(
 							providerCtx,
 							teamID, request,
 						)
+						providerOutcome := "ok"
+						if generateErr != nil {
+							providerOutcome = "error"
+						}
+						observability.RecordDreamProviderAttempt(s.deps.Metrics, "evidence_discovery", providerOutcome, time.Since(providerStarted))
 						evaluationProviderTurns += diagnostics.ProviderTurns
 						evaluationProviderInputTokens += diagnostics.ProviderInputTokens
 						evaluationProviderOutputTokens += diagnostics.ProviderOutputTokens

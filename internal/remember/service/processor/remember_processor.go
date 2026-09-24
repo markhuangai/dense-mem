@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -183,6 +182,7 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 	requestctx.SetRememberInvocationID(ctx, ingestID)
 	snapshot, scope := rememberAssessmentSnapshot(input, ingestID)
 	assessorTurns := 0
+	recoveryAttempt := false
 	fail := func(err error, phase string) (*rememberapp.SubmissionStatusResult, error) {
 		status, canonicalAttemptID, processErr := p.recordRememberFailure(ctx, input, ingestID, snapshot, started, phase, assessorTurns, err)
 		invocationStatus := status
@@ -193,13 +193,16 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 			}
 		}
 		classification := "execution"
+		if recoveryAttempt {
+			classification = "recovery"
+		}
 		if canonicalAttemptID != "" && canonicalAttemptID != ingestID {
 			classification = "replay"
 		}
 		if errors.Is(processErr, rememberapp.ErrRememberConflict) || errors.Is(processErr, repository.ErrIdempotencyConflict) {
 			classification = "conflict"
 		}
-		p.recordRememberInvocation(ctx, input, ingestID, classification, canonicalAttemptID, phase, processErrOrCause(processErr, err), invocationStatus, exchangeRecorder.Snapshot())
+		p.recordRememberInvocation(ctx, input, ingestID, classification, canonicalAttemptID, phase, processErrOrCause(processErr, err), invocationStatus, exchangeRecorder.Snapshot(), recoveryAttempt)
 		return status, processErr
 	}
 	attempt, lookupErr := p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{
@@ -239,6 +242,8 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 			p.recordRememberInvocation(ctx, input, ingestID, "conflict", attempt.AttemptID, "idempotency", processErr, processErr.Status, exchangeRecorder.Snapshot())
 			return nil, processErr
 		}
+		recoveryAttempt = true
+		observability.RecordLogicalRecovery(p.metrics, "remember", "attempted")
 	} else if lookupErr != nil && !errors.Is(lookupErr, repository.ErrRememberAttemptNotFound) {
 		return fail(lookupErr, "commit")
 	}
@@ -250,10 +255,12 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
 		Evidence: rememberEvidenceInputsForCommit(input, snapshot),
 	}
+	embeddingStarted := time.Now()
 	duplicateEmbeddingCtx, duplicateEmbeddingCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)
 	duplicatePlan, err := p.ledger.PlanRememberDuplicateEmbeddings(duplicateEmbeddingCtx, duplicateInput)
 	if err != nil {
 		duplicateEmbeddingCancel()
+		observability.RecordRememberPhase(p.metrics, "embedding", rememberMetricPhaseOutcome(err), time.Since(embeddingStarted))
 		return fail(&rememberEmbeddingPlanFailure{cause: err}, "embedding")
 	}
 	duplicateDocuments, err := p.embedSearchDocumentBatch(
@@ -262,10 +269,12 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 	)
 	duplicateEmbeddingCancel()
 	if err != nil {
+		observability.RecordRememberPhase(p.metrics, "embedding", rememberMetricPhaseOutcome(err), time.Since(embeddingStarted))
 		return fail(err, "embedding")
 	}
 	duplicateEmbeddings := inlineEmbeddingResultsFromDuplicateDocuments(duplicateDocuments, duplicatePlan)
 	duplicateResolution, err := p.ledger.ResolveRememberDuplicateCandidates(ctx, duplicateInput, duplicateEmbeddings)
+	observability.RecordRememberPhase(p.metrics, "embedding", rememberMetricPhaseOutcome(err), time.Since(embeddingStarted))
 	if err != nil {
 		return fail(&rememberEmbeddingPlanFailure{cause: err}, "embedding")
 	}
@@ -276,9 +285,11 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 			snapshot.ExactDuplicateEvidence[index] = resolution
 		}
 	}
+	assessmentStarted := time.Now()
 	prepared, err := rememberapp.AssessSynchronousRemember(ctx, rememberapp.SynchronousAssessmentDependencies{
 		Catalog: p.catalog, Provider: p.provider, Limits: p.limits, Metrics: p.metrics, Logger: p.logger,
 	}, rememberapp.SynchronousAssessmentInput{Scope: scope, Snapshot: snapshot})
+	observability.RecordRememberPhase(p.metrics, "assessment", rememberMetricPhaseOutcome(err), time.Since(assessmentStarted))
 	if err != nil {
 		assessorTurns = rememberapp.SynchronousAssessmentProviderTurns(err)
 		return fail(err, "assessment")
@@ -303,10 +314,12 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		input.AssessorSecurityRejected = true
 		return fail(rememberapp.ErrRememberPolicyRejected, "assessment")
 	}
+	embeddingStarted = time.Now()
 	embeddingCtx, embeddingCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)
 	defer embeddingCancel()
 	plan, err := p.ledger.PlanRememberEmbeddings(embeddingCtx, commitInput)
 	if err != nil {
+		observability.RecordRememberPhase(p.metrics, "embedding", rememberMetricPhaseOutcome(err), time.Since(embeddingStarted))
 		return fail(&rememberEmbeddingPlanFailure{cause: err}, "embedding")
 	}
 	plannedEmbeddings, err := p.embedSearchDocumentBatch(
@@ -316,18 +329,26 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		plan.EmbeddingModel,
 		plan.Documents,
 	)
+	observability.RecordRememberPhase(p.metrics, "embedding", rememberMetricPhaseOutcome(err), time.Since(embeddingStarted))
 	if err != nil {
 		return fail(err, "embedding")
 	}
 	inlineEmbeddings := inlineEmbeddingResultsFromDocuments(plannedEmbeddings, plan)
 	inlineEmbeddings = mergeInlineEmbeddingResults(duplicateEmbeddings, inlineEmbeddings)
+	commitStarted := time.Now()
 	commitCtx, commitCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseCommit)
 	if err := commitCtx.Err(); err != nil {
 		commitCancel()
+		observability.RecordRememberPhase(p.metrics, "commit", rememberMetricPhaseOutcome(err), time.Since(commitStarted))
 		return fail(err, "commit")
 	}
 	defer commitCancel()
 	committed, err := p.ledger.CommitRememberWithEmbeddings(commitCtx, commitInput, inlineEmbeddings)
+	commitMetricErr := err
+	if errors.Is(commitMetricErr, repository.ErrRememberReplay) {
+		commitMetricErr = nil
+	}
+	observability.RecordRememberPhase(p.metrics, "commit", rememberMetricPhaseOutcome(commitMetricErr), time.Since(commitStarted))
 	if errors.Is(err, repository.ErrRememberReplay) {
 		replay, replayErr := p.loadRememberReplay(ctx, input, ingestID)
 		canonicalAttemptID := ""
@@ -348,7 +369,7 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		if errors.Is(replayErr, rememberapp.ErrRememberConflict) || errors.Is(replayErr, repository.ErrIdempotencyConflict) {
 			classification = "conflict"
 		}
-		p.recordRememberInvocation(ctx, input, ingestID, classification, canonicalAttemptID, "commit", replayErr, invocationStatus, exchangeRecorder.Snapshot())
+		p.recordRememberInvocation(ctx, input, ingestID, classification, canonicalAttemptID, "commit", replayErr, invocationStatus, exchangeRecorder.Snapshot(), recoveryAttempt)
 		return replay, replayErr
 	}
 	if err != nil {
@@ -358,7 +379,11 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		return fail(errors.New("remember processor: nil Remember commit result"), "commit")
 	}
 	result, resultErr := rememberAttemptStatusForRequest(&repository.RememberAttempt{AttemptID: committed.IngestID, Outcome: committed.Outcome, PublicResult: committed.PublicResult}, input)
-	p.recordRememberInvocation(ctx, input, committed.IngestID, "execution", committed.IngestID, "commit", resultErr, result, exchangeRecorder.Snapshot())
+	classification := "execution"
+	if recoveryAttempt {
+		classification = "recovery"
+	}
+	p.recordRememberInvocation(ctx, input, committed.IngestID, classification, committed.IngestID, "commit", resultErr, result, exchangeRecorder.Snapshot())
 	return result, resultErr
 }
 
@@ -372,6 +397,17 @@ func rememberAssessmentSecurityRejected(prepared *rememberapp.SynchronousAssessm
 		}
 	}
 	return false
+}
+
+func rememberMetricPhaseOutcome(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, rememberapp.ErrRememberRequestCancelled) || errors.Is(err, rememberapp.ErrRememberRequestTimeout) {
+		return "cancelled"
+	}
+	return "failed"
 }
 
 func rememberAttemptMatchesRequest(attempt *repository.RememberAttempt, input rememberapp.RememberProcessRequest) bool {
@@ -925,70 +961,4 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func (p *rememberSynchronousProcessor) embedSearchDocumentBatch(
-	ctx context.Context,
-	teamID string,
-	ownerProfileID string,
-	embeddingModel string,
-	documents []repository.SearchDocumentForEmbedding,
-) ([]repository.SearchDocumentEmbedding, error) {
-	if len(documents) == 0 {
-		return []repository.SearchDocumentEmbedding{}, nil
-	}
-	if len(documents) > 256 {
-		return nil, fmt.Errorf("%w: more than 256 search documents", rememberapp.ErrRememberInputBudgetExceeded)
-	}
-	texts := make([]string, len(documents))
-	for i := range documents {
-		texts[i] = documents[i].DocumentText
-	}
-	embedCtx, cancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)
-	defer cancel()
-	embedCtx = observability.WithMetricIdentity(embedCtx, teamID, ownerProfileID)
-	embedCtx = observability.WithAIOperation(embedCtx, observability.AIOperationSearchDocumentEmbedding, len(texts))
-	if p.embedder == nil || !p.embedder.IsAvailable() {
-		return nil, &rememberEmbeddingConfigurationFailure{}
-	}
-	embeddingModel = strings.TrimSpace(embeddingModel)
-	if embeddingModel == "" || strings.TrimSpace(p.embedder.ModelName()) != embeddingModel {
-		return nil, fmt.Errorf("%w: configured model does not match the embedding plan", rememberapp.ErrRememberEmbeddingInvalid)
-	}
-	vectors, model, err := p.embedder.EmbedBatch(embedCtx, texts)
-	if err != nil {
-		if errors.Is(embedCtx.Err(), context.Canceled) || errors.Is(embedCtx.Err(), rememberapp.ErrRememberRequestCancelled) ||
-			errors.Is(err, context.Canceled) || errors.Is(err, rememberapp.ErrRememberRequestCancelled) {
-			return nil, fmt.Errorf("%w: embedding phase canceled", rememberapp.ErrRememberRequestCancelled)
-		}
-		if errors.Is(embedCtx.Err(), context.DeadlineExceeded) || errors.Is(embedCtx.Err(), rememberapp.ErrRememberRequestTimeout) ||
-			errors.Is(err, context.DeadlineExceeded) || errors.Is(err, rememberapp.ErrRememberRequestTimeout) {
-			return nil, fmt.Errorf("%w: embedding phase exceeded 10 seconds", rememberapp.ErrRememberRequestTimeout)
-		}
-		return nil, &rememberEmbeddingProviderFailure{cause: err}
-	}
-	if len(vectors) != len(documents) || strings.TrimSpace(model) != embeddingModel {
-		return nil, fmt.Errorf("%w: count or model mismatch", rememberapp.ErrRememberEmbeddingInvalid)
-	}
-	completed := make([]repository.SearchDocumentEmbedding, len(documents))
-	for i, document := range documents {
-		if len(vectors[i]) != document.EmbeddingDimensions {
-			return nil, fmt.Errorf("%w: dimensions mismatch", rememberapp.ErrRememberEmbeddingInvalid)
-		}
-		for _, value := range vectors[i] {
-			if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
-				return nil, fmt.Errorf("%w: non-finite vector", rememberapp.ErrRememberEmbeddingInvalid)
-			}
-		}
-		completed[i] = repository.SearchDocumentEmbedding{
-			SearchDocumentID: document.SearchDocumentID, SourceKind: document.SourceKind, SourceID: document.SourceID,
-			SourceVersion: document.SourceVersion, DocumentText: document.DocumentText,
-			DocumentHash: document.DocumentHash, StoredDocumentHash: document.StoredDocumentHash,
-			ProjectionFormat: document.ProjectionFormat, ProjectionGenerationID: document.ProjectionGenerationID,
-			DocumentVersion: document.DocumentVersion, EmbeddingContractID: document.EmbeddingContractID,
-			EmbeddingDimensions: document.EmbeddingDimensions, Embedding: vectors[i], SpaceID: document.SpaceID,
-			SpaceGeneration: document.SpaceGeneration,
-		}
-	}
-	return completed, nil
 }

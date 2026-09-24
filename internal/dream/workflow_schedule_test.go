@@ -11,6 +11,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 func TestScheduledCycleKeepsSchedulerWindowAfterMinuteRollsOver(t *testing.T) {
@@ -161,6 +162,7 @@ func TestRecordMissedScheduledCycleRejectsInvalidDateAndSkipsDisabledSchedule(t 
 func TestRecoverScheduledCycleFencesExpiredLeaseThroughCompletion(t *testing.T) {
 	teamID := uuid.New()
 	now := time.Date(2026, 7, 17, 3, 16, 0, 0, time.UTC)
+	metrics := observability.NewPrometheusMetrics()
 	store := &dreamRepositoryStub{}
 	scheduledStore := &recoveryScheduledStoreStub{
 		dreamRepositoryStub: store,
@@ -182,7 +184,8 @@ func TestRecoverScheduledCycleFencesExpiredLeaseThroughCompletion(t *testing.T) 
 			Timezone:       "UTC",
 			MaxOutputs:     5,
 		}},
-		Now: func() time.Time { return now },
+		Metrics: metrics,
+		Now:     func() time.Time { return now },
 	})
 
 	recoverer, ok := svc.(scheduledRecoveryService)
@@ -196,6 +199,9 @@ func TestRecoverScheduledCycleFencesExpiredLeaseThroughCompletion(t *testing.T) 
 	require.Equal(t, 2, result.AttemptCount)
 	require.Equal(t, scheduledStore.recoveryInput.LeaseToken, store.completeInput.LeaseToken)
 	require.Equal(t, "completed", store.completeInput.Status)
+	metricText := dreamMetricsText(t, metrics)
+	require.Contains(t, metricText, `densemem_logical_operation_recoveries_total{operation="dream_graph",outcome="attempted"} 1`)
+	require.Contains(t, metricText, `densemem_logical_operation_recoveries_total{operation="dream_graph",outcome="succeeded"} 1`)
 }
 
 func TestRecoverScheduledCycleCancelsDisabledRunAndSurfacesClaimFailure(t *testing.T) {

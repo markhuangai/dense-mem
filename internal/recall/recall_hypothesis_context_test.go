@@ -10,6 +10,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 )
@@ -108,7 +109,8 @@ func TestRecallPassesValueEndpointsToHypothesisReader(t *testing.T) {
 		},
 	}
 	hypotheses := &recallHypothesisStub{}
-	svc := NewRecallService(RecallDependencies{Search: search, Hypotheses: hypotheses})
+	metrics := observability.NewPrometheusMetrics()
+	svc := NewRecallService(RecallDependencies{Search: search, Hypotheses: hypotheses, Metrics: metrics})
 
 	_, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{IncludeHypotheses: true})
 	require.NoError(t, err)
@@ -134,7 +136,8 @@ func TestRecallOmitsRelatedHypothesesForKnownAt(t *testing.T) {
 		HypothesisID: uuid.NewString(),
 		Statement:    "A hypothesis created after the requested snapshot.",
 	}}}
-	svc := NewRecallService(RecallDependencies{Search: search, Hypotheses: hypotheses})
+	metrics := observability.NewPrometheusMetrics()
+	svc := NewRecallService(RecallDependencies{Search: search, Hypotheses: hypotheses, Metrics: metrics})
 	knownAt := time.Now().UTC().Add(-time.Hour)
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
@@ -147,4 +150,5 @@ func TestRecallOmitsRelatedHypothesesForKnownAt(t *testing.T) {
 	require.Equal(t, "related_hypotheses_temporal_not_supported", result.Degradations[0].Code)
 	require.True(t, result.Degradations[0].Optional)
 	require.Empty(t, hypotheses.recallInput.TeamID)
+	require.Contains(t, recallMetricsText(t, metrics), `densemem_recall_hypothesis_expansions_total{outcome="temporal_unsupported"} 1`)
 }

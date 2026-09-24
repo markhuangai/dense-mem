@@ -46,6 +46,56 @@ type TelemetryLifecycleSnapshot struct {
 	Current     map[string]float64
 }
 
+// OperationalTelemetryReader reads bounded system-wide aggregates from the
+// canonical ledgers. It never returns tenant or profile identifiers.
+type OperationalTelemetryReader interface {
+	ReadOperationalTelemetry(context.Context) (OperationalTelemetrySnapshot, error)
+}
+
+type OperationalTelemetrySnapshot struct {
+	DreamRuns               []DreamRunTelemetry
+	Hypotheses              []HypothesisTelemetry
+	Feedback                []WindowedTelemetryCount
+	RememberAttempts        []WindowedTelemetryCount
+	ConfirmedRelationships  []WindowedTelemetryCount
+	RelationshipTransitions []WindowedTelemetryCount
+	RelationshipCorrections []WindowedTelemetryCount
+	RelationshipsCurrent    []NamedTelemetryCount
+}
+
+type DreamRunTelemetry struct {
+	Window             string
+	Lane               string
+	Status             string
+	Runs               float64
+	Attempts           float64
+	InputTargets       float64
+	EvidenceTargets    float64
+	EvaluatedTargets   float64
+	ProviderProposals  float64
+	CreatedHypotheses  float64
+	RejectedHypotheses float64
+}
+
+type HypothesisTelemetry struct {
+	Lane             string
+	Status           string
+	Count            float64
+	BacklogCount     float64
+	OldestBacklogAge float64
+}
+
+type WindowedTelemetryCount struct {
+	Window string
+	Kind   string
+	Count  float64
+}
+
+type NamedTelemetryCount struct {
+	Kind  string
+	Count float64
+}
+
 // TelemetryPricingReader provides the current operator-managed rate card.
 // CachedTelemetryPricingRuntimeConfig must not perform a storage read because
 // provider paths use it while recording usage.
