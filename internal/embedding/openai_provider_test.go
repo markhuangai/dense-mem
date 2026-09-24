@@ -226,7 +226,10 @@ func TestOpenAIProviderUsesTotalTokensWhenPromptTokensAreOmitted(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	for _, line := range strings.Split(recorder.Body.String(), "\n") {
+	body := recorder.Body.String()
+	require.Contains(t, body, `densemem_operation_provider_tokens_total{component="embedding",kind="input",operation="recall_embedding",source="provider"} 12`)
+	require.Contains(t, body, `densemem_operation_provider_tokens_total{component="embedding",kind="total",operation="recall_embedding",source="provider"} 12`)
+	for _, line := range strings.Split(body, "\n") {
 		if !strings.HasPrefix(line, "densemem_ai_operation_cost_usd_total{") {
 			continue
 		}

@@ -279,7 +279,7 @@ func (p *OpenAIEmbeddingProvider) recordEmbeddingUsage(ctx context.Context, usag
 	if inputTokens == 0 && usage.TotalTokens > 0 {
 		inputTokens = usage.TotalTokens
 	}
-	observability.RecordEmbeddingTokens(ctx, p.metrics, p.model, usage.PromptTokens, usage.TotalTokens)
+	observability.RecordEmbeddingTokens(ctx, p.metrics, p.model, inputTokens, usage.TotalTokens)
 	observability.RecordAIOperationUsage(ctx, p.metrics, observability.AIOperationUsage{
 		Component:   observability.AIComponentEmbedding,
 		Model:       p.model,
