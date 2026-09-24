@@ -462,7 +462,7 @@ func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Reques
 		code, message = errCodeToolFailure, "insufficient scope for tool"
 		data = registry.ActionableAuthorizationData(req.Context(), envelope.Params.Name)
 	}
-	domain.RecordMCPToolOutcome(req.Context(), "tool_error")
+	domain.RecordMCPToolOutcome(req.Context(), "rpc_error")
 	s.logSDKToolLookupFailure(req.Context(), tool, visible, scopeDenied, code)
 	response := map[string]any{"jsonrpc": "2.0", "id": nil, "error": map[string]any{"code": code, "message": message, "data": data}}
 	if len(envelope.ID) > 0 {
@@ -488,7 +488,7 @@ func (s *Server) logSDKToolLookupFailure(ctx context.Context, tool registry.Tool
 		reason = "scope_denied"
 	}
 	attrs := []LogField{
-		{Key: "application_outcome", Value: "tool_error"},
+		{Key: "application_outcome", Value: "rpc_error"},
 		{Key: "error_code", Value: code},
 		{Key: "lookup_reason", Value: reason},
 	}

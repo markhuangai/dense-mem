@@ -438,7 +438,7 @@ func TestSDKToolLookupFailureLoggingDetachesCancelledContextForPersistence(t *te
 
 	require.Len(t, sink.records, 1)
 	require.Equal(t, "mcp_tool_outcome", sink.records[0].Message)
-	require.Equal(t, "tool_error", sink.records[0].Attrs["application_outcome"])
+	require.Equal(t, "rpc_error", sink.records[0].Attrs["application_outcome"])
 }
 
 func TestSDKHTTPHandlerRejectsUnknownProtocolHeader(t *testing.T) {
@@ -747,6 +747,42 @@ func TestSDKHTTP200ToolFailureIsRecordedAsLogicalFailure(t *testing.T) {
 	require.Contains(t, metricsResponse.Body.String(), `densemem_mcp_transport_requests_total{method="POST",status_class="2xx"} 1`)
 	require.Contains(t, metricsResponse.Body.String(), `densemem_mcp_tool_results_total{outcome="tool_error"} 1`)
 	require.NotContains(t, metricsResponse.Body.String(), `densemem_mcp_tool_results_total{outcome="success"} 1`)
+}
+
+func TestSDKHTTP200LookupRejectionsAreRecordedAsRPCFailures(t *testing.T) {
+	logger, logBuffer := testLogger(t)
+	reg := registry.New()
+	require.NoError(t, reg.Register(registry.Tool{Name: "write_tool", RequiredScopes: []string{"write"}}))
+	server := NewServerWithScopes(reg, "profile-a", []string{"read"}, logger)
+	metrics := observability.NewPrometheusMetrics()
+	echoServer := echo.New()
+	toolHandler := server.NewSDKHTTPHandler(true)
+	wrapped := httpmiddleware.TelemetryHTTPMiddleware(metrics)(httpmiddleware.UsageMetricsMiddleware(nil)(func(c echo.Context) error {
+		toolHandler.ServeHTTP(c.Response(), c.Request())
+		return nil
+	}))
+	echoServer.POST("/mcp", wrapped)
+
+	for _, toolName := range []string{"missing_tool", "write_tool"} {
+		request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"`+toolName+`","arguments":{}}}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Accept", "application/json, text/event-stream")
+		request.Header.Set("MCP-Protocol-Version", "2025-11-25")
+		response := httptest.NewRecorder()
+		echoServer.ServeHTTP(response, request)
+		require.Equal(t, http.StatusOK, response.Code)
+		require.Contains(t, response.Body.String(), `"error":`)
+		require.NotContains(t, response.Body.String(), `"isError":`)
+	}
+
+	metricsResponse := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(metricsResponse, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := metricsResponse.Body.String()
+	require.Contains(t, body, `densemem_mcp_transport_requests_total{method="POST",status_class="2xx"} 2`)
+	require.Contains(t, body, `densemem_mcp_tool_results_total{outcome="rpc_error"} 2`)
+	require.Contains(t, body, `densemem_mcp_tool_results_total{outcome="tool_error"} 0`)
+	require.Equal(t, 2, strings.Count(logBuffer.String(), `"application_outcome":"rpc_error"`))
+	require.NotContains(t, logBuffer.String(), `"application_outcome":"tool_error"`)
 }
 
 func TestSDKToolHandlerDoesNotCountToolNotifications(t *testing.T) {
