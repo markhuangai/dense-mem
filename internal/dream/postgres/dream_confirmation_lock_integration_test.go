@@ -16,6 +16,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	dreamapp "github.com/markhuangai/dense-mem/internal/dream"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
@@ -69,6 +70,70 @@ func TestResolveFeedbackRecordsDiagnosticAfterConfirmationLockRelease(t *testing
 	}
 }
 
+func TestResolveFeedbackRecordsBusyConfirmationMetricFromPostgresLock(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	teamID := createLedgerTeam(t, adminDB, rls, "dream-confirmation-busy-metric")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "dream-confirmation-busy-metric-owner")
+	lockStore := NewStore(appDB, rls)
+	hypothesisID := uuid.NewString()
+	ctx, cancel := context.WithTimeout(requestctx.WithActor(context.Background(), requestctx.Actor{
+		TeamID: uuid.MustParse(teamID), OwnerID: uuid.MustParse(ownerID),
+	}), 5*time.Second)
+	defer cancel()
+
+	lockEntered := make(chan struct{})
+	releaseLock := make(chan struct{})
+	lockDone := make(chan error, 1)
+	go func() {
+		lockDone <- lockStore.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func(DreamRepository) error {
+			close(lockEntered)
+			<-releaseLock
+			return nil
+		})
+	}()
+	released := false
+	defer func() {
+		if !released {
+			close(releaseLock)
+		}
+	}()
+	select {
+	case <-lockEntered:
+	case err := <-lockDone:
+		t.Fatalf("confirmation lock failed before callback: %v", err)
+	case <-ctx.Done():
+		t.Fatal("confirmation lock callback did not start")
+	}
+
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	serviceStore := &confirmationLockServiceRepository{
+		DreamRepository: &confirmationLockFixtureRepository{record: dreamcontract.HypothesisRecord{
+			TeamID: teamID, HypothesisID: hypothesisID, CreatedByProfileID: ownerID,
+			Status: string(domain.DreamStatusProposed), Statement: "A fixture hypothesis requires independent evidence.",
+		}},
+		lockStore: lockStore,
+	}
+	request := dreamapp.ResolveFeedbackRequest{
+		DreamID: hypothesisID, Decision: "confirm_true",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent fixture evidence."}},
+	}
+	_, err := dreamapp.New(dreamapp.Dependencies{Store: serviceStore, Metrics: metrics}).ResolveFeedback(ctx, "", request)
+	var busyErr *dreamapp.ConfirmationBusyError
+	require.ErrorAs(t, err, &busyErr)
+	require.ErrorIs(t, err, dreamcontract.ErrDreamConfirmationBusy)
+	require.Zero(t, serviceStore.lockCallbackCalls)
+	samples := metrics.DreamFeedbackSamples()
+	require.Len(t, samples, 1)
+	require.Equal(t, "confirm_true", samples[0].Decision)
+	require.Equal(t, "error", samples[0].Outcome)
+
+	close(releaseLock)
+	released = true
+	require.NoError(t, <-lockDone)
+}
+
 type confirmationLockFixtureRepository struct {
 	dreamcontract.DreamRepository
 	record dreamcontract.HypothesisRecord
@@ -99,7 +164,8 @@ func (r *confirmationLockFixtureRepository) SubmitHypothesis(_ context.Context, 
 
 type confirmationLockServiceRepository struct {
 	dreamcontract.DreamRepository
-	lockStore *Store
+	lockStore         *Store
+	lockCallbackCalls int
 }
 
 func (r *confirmationLockServiceRepository) WithHypothesisConfirmationLock(
@@ -109,6 +175,7 @@ func (r *confirmationLockServiceRepository) WithHypothesisConfirmationLock(
 	fn func(dreamcontract.DreamRepository) error,
 ) error {
 	return r.lockStore.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func(DreamRepository) error {
+		r.lockCallbackCalls++
 		return fn(r)
 	})
 }

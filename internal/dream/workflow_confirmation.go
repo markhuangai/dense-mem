@@ -131,6 +131,7 @@ func (s *service) resolveConfirmationWithLock(
 		return err
 	})
 	if errors.Is(err, dreamcontract.ErrDreamConfirmationBusy) {
+		s.recordDreamFeedback(ctx, decision, nil, "error")
 		return nil, &ConfirmationBusyError{Decision: decision}
 	}
 	diagnostic.recordAfterLock(s, ctx)
@@ -153,6 +154,7 @@ func (s *service) resolveLifecycleFeedbackWithLock(
 		return err
 	})
 	if errors.Is(err, dreamcontract.ErrDreamConfirmationBusy) {
+		s.recordDreamFeedback(ctx, decision, nil, "error")
 		return nil, &ConfirmationBusyError{Decision: decision}
 	}
 	diagnostic.recordAfterLock(s, ctx)

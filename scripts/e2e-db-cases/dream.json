@@ -234,6 +234,13 @@
       "source": "internal/dream/postgres/dream_confirmation_lock_integration_test.go"
     },
     {
+      "id": "repository/TestResolveFeedbackRecordsBusyConfirmationMetricFromPostgresLock",
+      "package": "./internal/dream/postgres",
+      "run": "^TestResolveFeedbackRecordsBusyConfirmationMetricFromPostgresLock$",
+      "phase": "precheck",
+      "source": "internal/dream/postgres/dream_confirmation_lock_integration_test.go"
+    },
+    {
       "id": "repository/TestResolveFeedbackRecordsDiagnosticAfterConfirmationLockRelease",
       "package": "./internal/dream/postgres",
       "run": "^TestResolveFeedbackRecordsDiagnosticAfterConfirmationLockRelease$",

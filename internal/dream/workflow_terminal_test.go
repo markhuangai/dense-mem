@@ -587,15 +587,39 @@ func TestResolveFeedbackReplaysAliasWithLegacyDefaultKey(t *testing.T) {
 func TestResolveFeedbackWrapsConfirmationBusyWithTypedError(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()
-	svc := New(Dependencies{Store: &dreamRepositoryStub{confirmationLockErr: dreamcontract.ErrDreamConfirmationBusy}})
+	for _, decision := range []string{"confirm_true", "reject"} {
+		t.Run(decision, func(t *testing.T) {
+			hypothesisID := uuid.NewString()
+			metrics := observability.NewInMemoryDiscoverabilityMetrics()
+			svc := New(Dependencies{
+				Store: &dreamRepositoryStub{
+					getRecord: dreamcontract.HypothesisRecord{
+						TeamID:             teamID.String(),
+						HypothesisID:       hypothesisID,
+						CreatedByProfileID: ownerID.String(),
+						Status:             string(domain.DreamStatusProposed),
+						Statement:          "Dense-Mem may use PostgreSQL.",
+					},
+					confirmationLockErr: dreamcontract.ErrDreamConfirmationBusy,
+				},
+				Metrics: metrics,
+			})
 
-	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
-		DreamID: uuid.NewString(), Decision: "confirm_true",
-		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
-	})
-	var busy *ConfirmationBusyError
-	require.ErrorAs(t, err, &busy)
-	require.ErrorIs(t, err, dreamcontract.ErrDreamConfirmationBusy)
+			_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+				DreamID:  hypothesisID,
+				Decision: decision,
+				Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
+			})
+			var busy *ConfirmationBusyError
+			require.ErrorAs(t, err, &busy)
+			require.ErrorIs(t, err, dreamcontract.ErrDreamConfirmationBusy)
+
+			samples := metrics.DreamFeedbackSamples()
+			require.Len(t, samples, 1)
+			require.Equal(t, decision, samples[0].Decision)
+			require.Equal(t, "error", samples[0].Outcome)
+		})
+	}
 }
 
 func dreamTerminalRememberResult(state, submissionID string) *rememberapp.RememberResult {
