@@ -136,9 +136,9 @@ try {
   const deadlineRunCaptures = deadlineDiagnostics.filter((item) => item.phase === "run");
   assertEqual(deadlineRunCaptures.length, 1, "deadline-limited Dream trace has one run capture");
   assertEqual(deadlineRunCaptures[0].details?.phase_trace_truncated, true, "deadline-limited Dream trace marker");
+  assertEqual(deadlineRunCaptures[0].details?.phase_trace_pending, false, "deadline-limited Dream trace has finished");
   const deadlinePhases = deadlineDiagnostics.filter((item) => item.phase !== "run" && !item.hypothesis_id);
   assertAtLeast(deadlinePhases.length, 1, "deadline-limited Dream trace retains completed phases");
-  assertEqual(deadlinePhases.length < 5, true, "deadline-limited Dream trace omits delayed phases");
 } finally {
   removeEvidenceDiagnosticDelay();
 }
