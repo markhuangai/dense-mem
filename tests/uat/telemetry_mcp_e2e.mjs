@@ -456,8 +456,8 @@ async function validateGrafanaDashboardParity() {
   for (const title of ["Logical operation attempts", "Provider token volume", "Provider usage without pricing or usage"]) {
     const groupedPanel = panels.find((panel) => panel.title === title);
     assert(groupedPanel, `Grafana omitted grouped activity panel ${title}`);
-    const expression = groupedPanel.targets[0].expr.replaceAll("$job", "dense-mem").replaceAll("$window", snapshot.window.key);
-    const result = await query(expression);
+    const expression = groupedPanel.targets[0].expr.replaceAll("$job", "dense-mem");
+    const result = await query(expression, { rateInterval: snapshot.window.key });
     const queryResult = result.results?.A;
     assert(queryResult && !queryResult.error, `Grafana grouped query failed for ${title}: ${queryResult?.error ?? "missing result"}`);
     const values = (queryResult.frames ?? []).flatMap((frame) =>

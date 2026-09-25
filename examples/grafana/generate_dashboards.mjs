@@ -95,7 +95,7 @@ function cost(component = "") {
   return `((${costValue} unless (${unpriced} > 0)) or (vector(0) unless (((${activity}) + (${unpriced})) > 0))) and on() (${up})`;
 }
 
-function counterBy(metric, grouping, extra = "", window = "$window") {
+function counterBy(metric, grouping, extra = "", window = "$__rate_interval") {
   return `(${sparseIncrease(metric, extra, window, grouping)} > 0) and on() (${up})`;
 }
 
