@@ -4,12 +4,13 @@
   "goarch": "amd64",
   "goos": "linux",
   "iterations_per_run": 200,
-  "measured_at": "2026-09-25T03:51:13.602658+00:00",
+  "measured_at": "2026-09-25T05:04:25.136345+00:00",
+  "mode_schedule": "alternating disabled and enabled runs",
   "passed": true,
   "repetitions": 5,
-  "schema_version": 1,
+  "schema_version": 2,
   "source": {
-    "commit_sha": "5109a62e2e4297b34c452f29ff8145c6a36d026b",
+    "commit_sha": "6c09837ed2c2121e1e4367668718fda76daa2ab1",
     "working_tree_paths": 0,
     "working_tree_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
@@ -27,16 +28,16 @@
       "timing": {
         "p50-ns/op": {
           "allowed_increase_ns": 1000000.0,
-          "disabled_median_ns": 14337380.0,
-          "enabled_median_ns": 7454465.0,
-          "increase_ns": -6882915.0,
+          "disabled_median_ns": 7838159.0,
+          "enabled_median_ns": 7709291.0,
+          "increase_ns": -128868.0,
           "passed": true
         },
         "p95-ns/op": {
           "allowed_increase_ns": 1000000.0,
-          "disabled_median_ns": 15611839.0,
-          "enabled_median_ns": 8734404.0,
-          "increase_ns": -6877435.0,
+          "disabled_median_ns": 9859977.0,
+          "enabled_median_ns": 9768156.0,
+          "increase_ns": -91821.0,
           "passed": true
         }
       },
@@ -50,16 +51,16 @@
       "timing": {
         "p50-ns/op": {
           "allowed_increase_ns": 1000000.0,
-          "disabled_median_ns": 1908500.0,
-          "enabled_median_ns": 1767674.0,
-          "increase_ns": -140826.0,
+          "disabled_median_ns": 1984344.0,
+          "enabled_median_ns": 2018827.0,
+          "increase_ns": 34483.0,
           "passed": true
         },
         "p95-ns/op": {
           "allowed_increase_ns": 1000000.0,
-          "disabled_median_ns": 2446642.0,
-          "enabled_median_ns": 2208357.0,
-          "increase_ns": -238285.0,
+          "disabled_median_ns": 2406959.0,
+          "enabled_median_ns": 2434767.0,
+          "increase_ns": 27808.0,
           "passed": true
         }
       },
@@ -73,39 +74,39 @@
       "timing": {
         "p50-ns/op": {
           "allowed_increase_ns": 1000000.0,
-          "disabled_median_ns": 7315823.0,
-          "enabled_median_ns": 7375164.0,
-          "increase_ns": 59341.0,
+          "disabled_median_ns": 7576713.0,
+          "enabled_median_ns": 7522060.0,
+          "increase_ns": -54653.0,
           "passed": true
         },
         "p95-ns/op": {
           "allowed_increase_ns": 1000000.0,
-          "disabled_median_ns": 8235255.0,
-          "enabled_median_ns": 8666338.0,
-          "increase_ns": 431083.0,
+          "disabled_median_ns": 8959913.0,
+          "enabled_median_ns": 8730080.0,
+          "increase_ns": -229833.0,
           "passed": true
         }
       },
       "transactions_per_op": 3.0
     },
     "historical": {
-      "disabled_median_allocs_per_op": 4213.0,
+      "disabled_median_allocs_per_op": 4214.0,
       "enabled_median_allocs_per_op": 4251.0,
       "passed": true,
       "sql_statements_per_op": 17.0,
       "timing": {
         "p50-ns/op": {
           "allowed_increase_ns": 1000000.0,
-          "disabled_median_ns": 8096667.0,
-          "enabled_median_ns": 8084359.0,
-          "increase_ns": -12308.0,
+          "disabled_median_ns": 8339423.0,
+          "enabled_median_ns": 8411381.0,
+          "increase_ns": 71958.0,
           "passed": true
         },
         "p95-ns/op": {
           "allowed_increase_ns": 1000000.0,
-          "disabled_median_ns": 9325069.0,
-          "enabled_median_ns": 9208410.0,
-          "increase_ns": -116659.0,
+          "disabled_median_ns": 9558209.0,
+          "enabled_median_ns": 9755956.0,
+          "increase_ns": 197747.0,
           "passed": true
         }
       },
@@ -119,62 +120,62 @@
       "timing": {
         "p50-ns/op": {
           "allowed_increase_ns": 1000000.0,
-          "disabled_median_ns": 16529495.0,
-          "enabled_median_ns": 13762595.0,
-          "increase_ns": -2766900.0,
+          "disabled_median_ns": 8760485.0,
+          "enabled_median_ns": 8810339.0,
+          "increase_ns": 49854.0,
           "passed": true
         },
         "p95-ns/op": {
-          "allowed_increase_ns": 1082463.05,
-          "disabled_median_ns": 21649261.0,
-          "enabled_median_ns": 16051200.0,
-          "increase_ns": -5598061.0,
+          "allowed_increase_ns": 1000000.0,
+          "disabled_median_ns": 11010324.0,
+          "enabled_median_ns": 10369717.0,
+          "increase_ns": -640607.0,
           "passed": true
         }
       },
       "transactions_per_op": 3.0
     },
     "private_space": {
-      "disabled_median_allocs_per_op": 1666.0,
+      "disabled_median_allocs_per_op": 1667.0,
       "enabled_median_allocs_per_op": 1705.0,
       "passed": true,
       "sql_statements_per_op": 17.0,
       "timing": {
         "p50-ns/op": {
           "allowed_increase_ns": 1000000.0,
-          "disabled_median_ns": 4111244.0,
-          "enabled_median_ns": 4152541.0,
-          "increase_ns": 41297.0,
+          "disabled_median_ns": 4262159.0,
+          "enabled_median_ns": 4328562.0,
+          "increase_ns": 66403.0,
           "passed": true
         },
         "p95-ns/op": {
           "allowed_increase_ns": 1000000.0,
-          "disabled_median_ns": 4945836.0,
-          "enabled_median_ns": 5029261.0,
-          "increase_ns": 83425.0,
+          "disabled_median_ns": 5157273.0,
+          "enabled_median_ns": 5284271.0,
+          "increase_ns": 126998.0,
           "passed": true
         }
       },
       "transactions_per_op": 3.0
     },
     "relationship_recall": {
-      "disabled_median_allocs_per_op": 1288.0,
+      "disabled_median_allocs_per_op": 1287.0,
       "enabled_median_allocs_per_op": 1316.0,
       "passed": true,
       "sql_statements_per_op": 14.0,
       "timing": {
         "p50-ns/op": {
           "allowed_increase_ns": 1000000.0,
-          "disabled_median_ns": 3919677.0,
-          "enabled_median_ns": 3757864.0,
-          "increase_ns": -161813.0,
+          "disabled_median_ns": 4053779.0,
+          "enabled_median_ns": 4054263.0,
+          "increase_ns": 484.0,
           "passed": true
         },
         "p95-ns/op": {
           "allowed_increase_ns": 1000000.0,
-          "disabled_median_ns": 4744979.0,
-          "enabled_median_ns": 4728831.0,
-          "increase_ns": -16148.0,
+          "disabled_median_ns": 4906622.0,
+          "enabled_median_ns": 5063230.0,
+          "increase_ns": 156608.0,
           "passed": true
         }
       },
