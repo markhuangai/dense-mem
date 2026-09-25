@@ -192,6 +192,28 @@ beforeEach(() => {
 });
 
 describe("UserPortalApp", () => {
+  it("keeps sign-in and sign-out available without a Usage tab", async () => {
+    const fetchMock = mockUserFetch(baseSession);
+    render(<UserPortalApp />);
+
+    await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("API key is required.");
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url) === "/ui/api/session" && init?.method === "POST")).toBe(false);
+
+    await userEvent.click(screen.getByRole("button", { name: "Switch to dark theme" }));
+    expect(localStorage.getItem("denseMem.userTheme")).toBe("dark");
+    await userEvent.type(screen.getByLabelText("API key"), "dm_key");
+    await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await expectCurrentWorkspace("Research Team");
+    expect(screen.queryByRole("button", { name: /^Usage$/i })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /sign out/i }));
+
+    expect(await screen.findByRole("button", { name: /sign in/i })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Current workspace")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url) === "/ui/api/session/logout" && init?.method === "POST")).toBe(true);
+  });
+
   it("logs in with an API key and does not call team credential list APIs", async () => {
     const fetchMock = mockUserFetch(baseSession);
     render(<UserPortalApp />);
@@ -405,7 +427,7 @@ describe("UserPortalApp", () => {
     expect(screen.getByRole("listbox", { name: "Recall result list" })).toHaveTextContent("Alice is working on project-x with Dense-Mem.");
   });
 
-  it("labels write-member telemetry as credential usage", async () => {
+  it("omits the retired Usage tab for write members", async () => {
     const writeSession: UserSession = {
       ...baseSession,
       membership: { ...baseSession.membership, grants: ["read", "write"] },
@@ -416,13 +438,8 @@ describe("UserPortalApp", () => {
 
     render(<UserPortalApp />);
     await screen.findByText("Research Team");
-    await userEvent.click(screen.getByRole("button", { name: /usage/i }));
-
-    expect(await screen.findByLabelText("My credential usage totals")).toHaveTextContent("HTTP requests");
-    expect(screen.queryByLabelText("Team usage totals")).not.toBeInTheDocument();
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/ui/api/telemetry?window=1h", expect.any(Object));
-    });
+    expect(screen.queryByRole("button", { name: /^usage$/i })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/ui/api/telemetry"))).toBe(false);
   });
 
   it("rotates the current write-scoped key without storing the replacement", async () => {
@@ -593,7 +610,7 @@ describe("UserPortalApp", () => {
     expect(await screen.findByText("Saved")).toBeInTheDocument();
   });
 
-  it("labels manager telemetry as team usage", async () => {
+  it("omits the retired Usage tab for managers", async () => {
     const managerSession: UserSession = {
       ...baseSession,
       membership: {
@@ -614,13 +631,9 @@ describe("UserPortalApp", () => {
 
     render(<UserPortalApp />);
     await screen.findByText("Research Team");
-    await userEvent.click(screen.getByRole("button", { name: /usage/i }));
-
-    expect(await screen.findByLabelText("Team usage totals")).toHaveTextContent("HTTP requests");
-    expect(screen.queryByLabelText("My credential usage totals")).not.toBeInTheDocument();
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/ui/api/telemetry?window=1h", expect.any(Object));
-    });
+    expect(screen.getByRole("button", { name: /^team$/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^usage$/i })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/ui/api/telemetry"))).toBe(false);
   });
 
   it("derives SSO cookie auth from the credential-free session and switches teams", async () => {
@@ -653,42 +666,6 @@ describe("UserPortalApp", () => {
       );
     });
     expect(sessionStorage.getItem("denseMem.userApiKey")).toBeNull();
-  });
-
-  it("reloads usage telemetry after switching SSO teams", async () => {
-    const { initial, switched, secondTeam } = ssoSessions();
-    const firstMembership = { ...initial.membership, grants: ["read", "write"] };
-    const writeInitial: UserSession = {
-      ...initial,
-      membership: firstMembership,
-      teams: [
-        { team: initial.team, membership: firstMembership },
-        { team: switched.team, membership: switched.membership },
-      ],
-    };
-    const writeSwitched: UserSession = {
-      ...switched,
-      teams: writeInitial.teams,
-    };
-    const fetchMock = mockSSOUserFetch(writeInitial, writeSwitched);
-
-    render(<UserPortalApp />);
-
-    await expectCurrentWorkspace("Research Team");
-    await userEvent.click(screen.getByRole("button", { name: /usage/i }));
-    expect(await screen.findByLabelText("My credential usage totals")).toHaveTextContent("4");
-
-    await userEvent.selectOptions(screen.getByLabelText("Active team"), secondTeam.id);
-
-    await expectCurrentWorkspace("Analytics Team");
-    await waitFor(() => {
-      expect(screen.getByLabelText("Team usage totals")).toHaveTextContent("9");
-    });
-    expect(screen.queryByLabelText("My credential usage totals")).not.toBeInTheDocument();
-    await waitFor(() => {
-      const telemetryCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/ui/api/telemetry?window=1h"));
-      expect(telemetryCalls.length).toBeGreaterThanOrEqual(2);
-    });
   });
 
   it("keeps the SSO portal open when logout fails", async () => {
@@ -809,6 +786,10 @@ function mockUserFetch(session: UserSession, credentials: UserCredential[] = [],
       portalSessionCreated = true;
       return jsonResponse({ data: { status: "signed_in" } });
     }
+    if (url === "/ui/api/session/logout" && method === "POST") {
+      portalSessionCreated = false;
+      return jsonResponse({ data: { status: "signed_out" } });
+    }
     if (url === "/ui/api/credential/rotate" && method === "POST") {
       return jsonResponse({
         data: {
@@ -816,9 +797,6 @@ function mockUserFetch(session: UserSession, credentials: UserCredential[] = [],
           credential: rotatedSession.credential,
         },
       });
-    }
-    if (url.startsWith("/ui/api/telemetry") && method === "GET") {
-      return jsonResponse({ data: telemetryForSession(session) });
     }
     if (url.startsWith("/ui/api/node-detail") && method === "GET") {
       const params = new URLSearchParams(url.split("?")[1] ?? "");
@@ -880,25 +858,6 @@ function mockUserFetch(session: UserSession, credentials: UserCredential[] = [],
   return fetchMock;
 }
 
-function telemetryForSession(session: UserSession) {
-  const teamScope = session.membership.role === "manager";
-  return {
-    available: true,
-    window: {
-      key: "1h",
-      from: "2026-05-02T12:00:00Z",
-      to: "2026-05-02T13:00:00Z",
-      step_seconds: 60,
-      retention_days: 30,
-    },
-    scope: teamScope
-      ? { type: "team", team_id: session.team.id }
-      : { type: "self", team_id: session.team.id, profile_id: session.credential?.id ?? "sso-owner" },
-    cards: [{ id: "http_requests", label: "HTTP requests", unit: "requests", value: teamScope ? 9 : 4 }],
-    series: [],
-  };
-}
-
 function ssoSessions() {
   const secondTeam = {
     ...baseSession.team,
@@ -946,9 +905,6 @@ function mockSSOUserFetch(initial: UserSession, switched: UserSession, options: 
     if (url === "/ui/api/sso/team" && method === "POST") {
       current = switched;
       return jsonResponse({ data: current });
-    }
-    if (url.startsWith("/ui/api/telemetry") && method === "GET") {
-      return jsonResponse({ data: telemetryForSession(current) });
     }
     if (url === "/ui/api/sso/credentials" && method === "POST") {
       const body = JSON.parse(String(init?.body));

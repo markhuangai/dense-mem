@@ -3,7 +3,6 @@ import {
   Activity,
   AlertTriangle,
   Ban,
-  BarChart3,
   KeyRound,
   ListFilter,
   LogOut,
@@ -33,7 +32,6 @@ import { TeamDreamingConfigForm } from "./teamDreamingConfig";
 import { formatDate, readError, shortId } from "./control/utils";
 import { AuthShell, LoadingState, PortalShell, SectionHeading } from "./ui/components";
 
-const MetricsPanel = lazy(() => import("./control/MetricsPanel").then((module) => ({ default: module.MetricsPanel })));
 const SecurityPanel = lazy(() => import("./control/SecurityPanel").then((module) => ({ default: module.SecurityPanel })));
 const SSOPanel = lazy(() => import("./control/SSOPanel").then((module) => ({ default: module.SSOPanel })));
 const ConfigPanel = lazy(() => import("./control/ConfigPanel").then((module) => ({ default: module.ConfigPanel })));
@@ -50,7 +48,7 @@ const THEME_STORAGE_KEY = "denseMem.controlTheme";
 type LoadState = "idle" | "loading" | "error";
 type Theme = "light" | "dark";
 type AuthMode = "none" | "token" | "sso";
-type PortalTab = "teams" | "metrics" | "recall-feedback" | "search" | "logs" | "security" | "sso" | "config";
+type PortalTab = "teams" | "recall-feedback" | "search" | "logs" | "security" | "sso" | "config";
 
 export function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "");
@@ -287,13 +285,6 @@ function Portal({
           onClick: () => openTeamWorkspace("remember-attempts"),
         },
         {
-          id: "metrics",
-          label: "Metrics",
-          icon: <BarChart3 size={17} aria-hidden="true" />,
-          active: activeTab === "metrics",
-          onClick: () => setActiveTab("metrics"),
-        },
-        {
           id: "search",
           label: "Search",
           icon: <Search size={17} aria-hidden="true" />,
@@ -411,7 +402,6 @@ function Portal({
                 team={selectedTeam}
                 activeTab={teamWorkspaceTab}
                 onSelectTab={openTeamWorkspace}
-                onOpenMetrics={() => setActiveTab("metrics")}
                 onOpenLogs={(query) => {
                   setLogsInitialQuery(query ?? {});
                   setActiveTab("logs");
@@ -426,7 +416,6 @@ function Portal({
             )}
           </>
         )}
-        {activeTab === "metrics" && <MetricsPanel api={api} teams={teams} />}
         {activeTab === "search" && <SearchConvergencePanel api={api} />}
         {activeTab === "recall-feedback" && <RecallFeedbackPanel api={api} teams={teams} />}
         {activeTab === "logs" && <LogsPanel api={api} teams={teams} initialQuery={logsInitialQuery} />}
@@ -572,7 +561,6 @@ function TeamWorkspace({
   team,
   activeTab,
   onSelectTab,
-  onOpenMetrics,
   onOpenLogs,
   onUpdated,
   onDeleted,
@@ -581,14 +569,13 @@ function TeamWorkspace({
   team: Team;
   activeTab: TeamWorkspaceTab;
   onSelectTab: (tab: TeamWorkspaceTab) => void;
-  onOpenMetrics: () => void;
   onOpenLogs: (query?: OperationLogQuery) => void;
   onUpdated: (team: Team) => void;
   onDeleted: () => void;
 }) {
   return (
     <TeamWorkspaceShell team={team} activeTab={activeTab} onSelectTab={onSelectTab}>
-      {activeTab === "overview" && <TeamOverviewPanel api={api} team={team} onOpenMetrics={onOpenMetrics} />}
+      {activeTab === "overview" && <TeamOverviewPanel api={api} team={team} />}
       {activeTab === "credentials" && <TeamCredentialsPanel api={api} team={team} embedded />}
       {activeTab === "remember-attempts" && (
         <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading Remember attempts" /></div>}>

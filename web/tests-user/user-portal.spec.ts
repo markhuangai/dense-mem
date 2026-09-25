@@ -170,63 +170,6 @@ const graphNodeDetails = {
   },
 };
 
-const telemetryCards = [
-  { id: "http_requests", label: "HTTP requests", unit: "requests", value: 9 },
-  { id: "http_errors", label: "HTTP errors", unit: "requests", value: 1 },
-  { id: "verifier_tokens", label: "Verifier tokens", unit: "tokens", value: 120 },
-  { id: "embedding_tokens", label: "Embedding tokens", unit: "tokens", value: 320 },
-  { id: "recalls", label: "Recall requests", unit: "requests", value: 3 },
-  { id: "avg_recall_results", label: "Avg recall results", unit: "results", value: 2.5 },
-  { id: "llm_recall_used_rate", label: "LLM recall used", unit: "percent", value: 80 },
-  { id: "llm_recall_answer_supported_rate", label: "LLM answer supported", unit: "percent", value: 70 },
-  { id: "llm_recall_quality_score", label: "LLM recall quality", unit: "percent", value: 75 },
-  { id: "llm_recall_missing_context_rate", label: "LLM missing context", unit: "percent", value: 10 },
-  { id: "llm_recall_irrelevant_rate", label: "LLM irrelevant recall", unit: "percent", value: 5 },
-  { id: "avg_http_latency", label: "Avg HTTP latency", unit: "ms", value: 16.4 },
-  { id: "avg_embedding_latency", label: "Avg embedding latency", unit: "ms", value: 39.1 },
-  { id: "avg_verifier_latency", label: "Avg verifier latency", unit: "ms", value: 101.5 },
-  { id: "avg_conflict_review_duration", label: "Avg conflict review", unit: "ms", value: 200 },
-];
-
-const telemetrySeries = [
-  { id: "http_rps", label: "HTTP requests", unit: "rps" },
-  { id: "http_errors_rps", label: "HTTP errors", unit: "rps" },
-  { id: "embedding_tokens", label: "Embedding tokens", unit: "tokens/s" },
-  { id: "verifier_tokens", label: "Verifier tokens", unit: "tokens/s" },
-  { id: "recalls", label: "Recall requests", unit: "requests/s" },
-  { id: "recall_results", label: "Recall results", unit: "results" },
-  { id: "llm_recall_used_rate", label: "LLM recall used", unit: "percent" },
-  { id: "llm_recall_answer_supported_rate", label: "LLM answer supported", unit: "percent" },
-  { id: "llm_recall_quality_score", label: "LLM recall quality", unit: "percent" },
-  { id: "llm_recall_missing_context_rate", label: "LLM missing context", unit: "percent" },
-  { id: "llm_recall_irrelevant_rate", label: "LLM irrelevant recall", unit: "percent" },
-  { id: "conflict_review_duration", label: "Conflict review", unit: "ms" },
-].map((series, index) => ({
-  ...series,
-  points: [
-    { timestamp: "2026-05-02T12:00:00Z", value: index / 20 },
-    { timestamp: "2026-05-02T13:00:00Z", value: index / 20 + 0.2 },
-  ],
-}));
-
-const telemetry = {
-  available: true,
-  window: {
-    key: "1h",
-    from: "2026-05-02T12:00:00Z",
-    to: "2026-05-02T13:00:00Z",
-    step_seconds: 60,
-    retention_days: 30,
-  },
-  scope: { type: "self", team_id: team.id, profile_id: readKey.id },
-  cards: telemetryCards,
-  windowed_cards: telemetryCards,
-  current_cards: [{ id: "relationships_active", label: "Relationships: active", unit: "relationships", value: 2, status: "ready", available: true }],
-  series: telemetrySeries,
-  activity_series: telemetrySeries,
-  state_series: [],
-};
-
 test("API key login, recall, and read-only navigation", async ({ page }) => {
   const calls = await mockUserApi(page, { key: readKey });
   await openUserPortal(page, "dm_read");
@@ -429,19 +372,16 @@ test("SSO member can create and operate on a selected second credential", async 
   expect(calls.revokePaths).toEqual([`/ui/api/sso/credentials/${secondCredentialID}`]);
 });
 
-test("write member key shows own usage telemetry", async ({ page }) => {
+test("write member key has no Usage dashboard", async ({ page }) => {
   const calls = await mockUserApi(page, { key: writeKey });
   await openUserPortal(page, "dm_write");
 
-  await page.getByRole("button", { name: "Usage" }).click();
-  await expectUsageDashboard(page, "My credential usage", telemetry);
-  expect(calls.telemetryRequests.length).toBeGreaterThan(0);
-  expect(calls.telemetryRequests.every((url) => url.includes("/ui/api/telemetry?window=1h"))).toBe(true);
-  expect(calls.telemetryRequests.every((url) => !url.includes("scope="))).toBe(true);
+  await expect(page.getByRole("button", { name: "Usage" })).toHaveCount(0);
+  expect(calls.telemetryRequests).toEqual([]);
   expect(calls.disallowedCredentialCalls).toEqual([]);
 });
 
-test("manager key shows team usage telemetry", async ({ page }) => {
+test("manager key retains Team navigation without a Usage dashboard", async ({ page }) => {
   const calls = await mockUserApi(page, {
     key: managerKey,
     canManageTeam: true,
@@ -449,11 +389,9 @@ test("manager key shows team usage telemetry", async ({ page }) => {
   });
   await openUserPortal(page, "dm_manager");
 
-  await page.getByRole("button", { name: "Usage" }).click();
-  await expectUsageDashboard(page, "Team usage", telemetry);
-  expect(calls.telemetryRequests.length).toBeGreaterThan(0);
-  expect(calls.telemetryRequests.every((url) => url.includes("/ui/api/telemetry?window=1h"))).toBe(true);
-  expect(calls.telemetryRequests.every((url) => !url.includes("scope="))).toBe(true);
+  await expect(page.getByRole("button", { name: "Team" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Usage" })).toHaveCount(0);
+  expect(calls.telemetryRequests).toEqual([]);
 });
 
 test("invalid API key shows login error", async ({ page }) => {
@@ -571,19 +509,6 @@ async function expectNoShellOverlap(page: Page) {
   }
 }
 
-async function expectUsageDashboard(page: Page, title: string, snapshot: typeof telemetry) {
-  const usageTotals = page.getByLabel(`${title} totals`);
-  for (const card of snapshot.windowed_cards) {
-    await expect(usageTotals).toContainText(card.label);
-  }
-  await expect(page.getByLabel(`${title} current state`)).toContainText("Relationships: active");
-  const usageCharts = page.getByLabel(`${title} charts`);
-  for (const series of snapshot.activity_series) {
-    await expect(usageCharts).toContainText(series.label);
-  }
-	await expect(page.getByLabel(`${title} state history`)).toHaveCount(0);
-}
-
 function rectanglesOverlap(
   first: { left: number; top: number; right: number; bottom: number },
   second: { left: number; top: number; right: number; bottom: number },
@@ -686,6 +611,7 @@ async function mockUserApi(
               credential: currentKey,
               teams: [],
               personal_credentials: [],
+              mcp_public_base_url: "",
             },
           }),
         });
@@ -709,6 +635,7 @@ async function mockUserApi(
           credential: currentKey,
           teams: [],
           personal_credentials: [],
+          mcp_public_base_url: "",
         },
       }),
     });
@@ -726,11 +653,7 @@ async function mockUserApi(
 
   await page.route("**/ui/api/telemetry**", async (route) => {
     calls.telemetryRequests.push(route.request().url());
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ data: telemetryForKey(currentKey) }),
-    });
+    await route.fulfill({ status: 404 });
   });
 
   await page.route("**/ui/api/node-detail**", async (route) => {
@@ -814,6 +737,7 @@ async function mockSSOUserApi(page: Page, credentials: SSOTestCredential[]) {
           credential: null,
           teams: [{ team, membership: { team_id: team.id, name: "SSO member", grants: ["read", "write"], role: "member" } }],
           personal_credentials: currentCredentials,
+          mcp_public_base_url: "",
         },
       }),
     });
@@ -893,13 +817,4 @@ async function graphCanvasLabels(page: Page): Promise<string[]> {
   return page.evaluate(() => (
     (window as Window & { __denseMemGraphLabels?: string[] }).__denseMemGraphLabels ?? []
   ));
-}
-
-function telemetryForKey(key: TestKey) {
-  return {
-    ...telemetry,
-    scope: key.role === "manager"
-      ? { type: "team", team_id: team.id }
-      : { type: "self", team_id: team.id, profile_id: key.id },
-  };
 }

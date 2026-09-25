@@ -90,25 +90,6 @@ describe("UserApi", () => {
     }));
   });
 
-  it("requests role-derived telemetry", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      data: {
-        available: true,
-        window: { key: "30m", from: "2026-05-02T12:30:00Z", to: "2026-05-02T13:00:00Z", step_seconds: 60, retention_days: 30 },
-        scope: { type: "self", team_id: "team-1", profile_id: "key-1" },
-        cards: [],
-        series: [],
-      },
-    }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await new UserApi("dm_key").telemetry({ window: "30m" });
-
-    expect(fetchMock).toHaveBeenCalledWith("/ui/api/telemetry?window=30m", expect.objectContaining({
-      headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
-    }));
-  });
-
   it("requests dreams with cursor pagination", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       data: {

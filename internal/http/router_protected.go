@@ -20,7 +20,7 @@ type ProtectedDeps struct {
 	TeamSvc handler.TeamServiceInterface
 	// RateLimitService is the service for rate limiting.
 	RateLimitService accessservice.RateLimitServiceInterface
-	// UsageMetrics records authenticated request usage for the control-panel metrics tab.
+	// UsageMetrics records authenticated request usage for retained team-overview summaries.
 	UsageMetrics operations.UsageMetricsRecorder
 	// AuditService is the service for audit logging.
 	AuditService accessservice.AuditService

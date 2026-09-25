@@ -192,9 +192,9 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   stopDisabledTelemetryPrometheus();
   const usage = await controlJSON(controlURL, token, "/control/api/metrics?window_minutes=60");
   const totals = usage.data?.system || {};
-  expect(typeof totals.requests === "number" && typeof totals.errors === "number", "usage rollup must retain HTTP request totals");
-  expect(typeof totals.mcp_tool_calls === "number" && totals.mcp_tool_calls > 0, "usage rollup must expose dispatched MCP calls");
-  expect(typeof totals.mcp_tool_failures === "number" && totals.mcp_tool_failures > 0, "usage rollup must expose MCP failures separately");
+  expect(typeof totals.requests === "number" && typeof totals.errors === "number", "usage metrics must retain HTTP request totals");
+  expect(typeof totals.mcp_tool_calls === "number" && totals.mcp_tool_calls > 0, "usage metrics must expose dispatched MCP calls");
+  expect(typeof totals.mcp_tool_failures === "number" && totals.mcp_tool_failures > 0, "usage metrics must expose MCP failures separately");
 
   const repairRows = postgresQuery(`
     SELECT assessor_turns

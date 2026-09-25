@@ -369,43 +369,16 @@ test("IP ban list and clear reset flow", async ({ page }) => {
   await expect(page.getByText("203.0.113.10")).toBeHidden();
 });
 
-test("metrics tab renders operational totals and filter queries", async ({ page }) => {
+test("team overview keeps request metrics after the Metrics tab is retired", async ({ page }) => {
   const calls = await mockApi(page, { teams: [team], keys: [key] });
   await openPortal(page);
 
-  await page.getByRole("button", { name: /^Metrics$/ }).click();
-  await expect(page.locator(".resource-rail")).toHaveCount(0);
-
-  const telemetryTotals = page.getByLabel("Telemetry totals");
-  for (const card of telemetry.windowed_cards.filter((item) => item.status === "ready")) {
-    await expect(telemetryTotals).toContainText(card.label);
-  }
-  await expect(page.getByLabel("Telemetry current state")).toContainText("Relationships: active");
-  const telemetryCharts = page.getByLabel("Telemetry charts");
-  for (const series of telemetry.activity_series) {
-    await expect(telemetryCharts).toContainText(series.label);
-  }
-  await expect(page.getByLabel("Telemetry state history")).toContainText("Relationships: active");
-  await expect(page.getByText("Inactive / unavailable (1)")).toBeVisible();
-
-  const summary = page.getByLabel("Request metrics");
-  await expect(summary).toContainText("42");
-  await expect(summary).toContainText("2");
-  await expect(summary).toContainText("4.8%");
-  await expect(summary).toContainText("19 ms");
-  await expect(summary).toContainText("90 ms");
-  await expect(page.getByText("postgres")).toBeVisible();
-  await expect(page.getByText("redis")).toBeVisible();
-  await expect(page.getByRole("row", { name: /Default\s+42\s+2\s+19 ms\s+90 ms/ })).toBeVisible();
-  await expect(page.getByRole("row", { name: /default credential\s+\*\*\*\*\*\*abc123\s+Default\s+40\s+1\s+17 ms/ })).toBeVisible();
-  await expect(page.getByRole("row", { name: /\/ui\/api\/evidence\/:id\s+GET\s+2xx\s+39\s+0/ })).toBeVisible();
-
-  await page.getByLabel("Window").selectOption("360");
-  await page.getByLabel("Team", { exact: true }).selectOption(team.id);
-
-  await expect.poll(() => calls.metricsUrls.some((url) => (
-    url.includes("window_minutes=360") && url.includes(`team_id=${team.id}`)
-  ))).toBe(true);
+  await expect(page.getByRole("button", { name: /^Metrics$/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Open Metrics" })).toHaveCount(0);
+  await expect(page.getByLabel("Team activity")).toContainText("HTTP requests");
+  await expect(page.getByLabel("Team activity")).toContainText("42");
+  await expect(page.getByLabel("Recent alerts")).toContainText("Request errors detected");
+  await expect.poll(() => calls.metricsUrls.some((url) => url.includes("window_minutes=60"))).toBe(true);
   await expectNoShellOverlap(page);
 });
 

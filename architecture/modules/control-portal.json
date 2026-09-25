@@ -74,11 +74,6 @@
         "visibility": "private"
       },
       {
-        "id": "web/src/control/MetricsPanel.tsx",
-        "role": "transport",
-        "visibility": "private"
-      },
-      {
         "id": "web/src/control/RecallFeedbackPanel.tsx",
         "role": "transport",
         "visibility": "private"
@@ -145,11 +140,6 @@
       },
       {
         "id": "web/src/teamDreamingConfig.tsx",
-        "role": "transport",
-        "visibility": "public"
-      },
-      {
-        "id": "web/src/telemetry/TelemetryDashboard.tsx",
         "role": "transport",
         "visibility": "public"
       },

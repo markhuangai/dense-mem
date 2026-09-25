@@ -680,6 +680,24 @@ test("verifier scenarios use the deterministic provider without replacing embedd
   assert.match(stack, /has_helper "\$helpers" verifier \|\| has_helper "\$helpers" synchronous_write/);
 });
 
+test("Grafana provisioning leaves organization and datasource IDs to the installation", async () => {
+  const grafana = join(root, "examples/grafana");
+  const [provider, datasource, overview, ai, workflows] = await Promise.all([
+    readFile(join(grafana, "provisioning/dashboards/provider.yml"), "utf8"),
+    readFile(join(grafana, "provisioning/datasources/datasource.yml"), "utf8"),
+    readFile(join(grafana, "dashboards/dense-mem-service.json"), "utf8"),
+    readFile(join(grafana, "dashboards/dense-mem-ai-recall.json"), "utf8"),
+    readFile(join(grafana, "dashboards/dense-mem-workflows.json"), "utf8"),
+  ]);
+  assert.doesNotMatch(provider, /^\s*orgId:/m);
+  assert.doesNotMatch(datasource, /^\s*(orgId|uid):/m);
+  for (const contents of [overview, ai, workflows]) {
+    const dashboard = JSON.parse(contents);
+    assert.ok(dashboard.templating.list.some((variable) => variable.name === "datasource"));
+    assert.ok(dashboard.panels.every((panel) => panel.targets.every((target) => target.datasource?.uid === "$datasource")));
+  }
+});
+
 test("community scenarios use the verifier fixture for embeddings without changing the embedding contract", () => {
   const communityStart = stack.indexOf('if (scenario === "community")');
   const communityEnd = stack.indexOf('if (has("conflict_provider"))', communityStart);
@@ -688,7 +706,7 @@ test("community scenarios use the verifier fixture for embeddings without changi
   assert.match(communityBlock, /AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
   assert.match(communityBlock, /AI_API_KEY: "dense-mem-community-e2e-key"/);
   assert.doesNotMatch(communityBlock, /AI_API_EMBEDDING_(MODEL|DIMENSIONS):/);
-  assert.match(stack, /const deterministicEmbeddingProvider = scenario === "community" \|\| has\("synchronous_write"\);/);
+  assert.match(stack, /const deterministicEmbeddingProvider = scenario === "community" \|\| has\("synchronous_write"\) \|\| has\("grafana"\);/);
   assert.match(stack, /DENSE_MEM_E2E_PROVIDER_DIMENSIONS: \$\{JSON\.stringify\(providerDimensions \|\| "1536"\)\}/);
 });
 

@@ -9,7 +9,7 @@
 # Prometheus is kept on the private Docker network and stores 30 days of data.
 # Set TELEMETRY_SCRAPE_TOKEN before starting this overlay; Prometheus receives it
 # through a Compose secret and uses it as a bearer token when scraping /metrics.
-# The control and /ui portals query it through TELEMETRY_PROMETHEUS_URL.
+# Use examples/docker-compose.grafana.yml to add the operator dashboards.
 
 services:
   server:

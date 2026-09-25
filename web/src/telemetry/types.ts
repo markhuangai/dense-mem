@@ -61,17 +61,3 @@ export type ControlTelemetryQuery = {
   team_id?: string;
   profile_id?: string;
 };
-
-export type UserTelemetryQuery = {
-  window?: TelemetryWindowKey;
-};
-
-export const telemetryWindowOptions: { value: TelemetryWindowKey; label: string }[] = [
-  { value: "15m", label: "15 min" },
-  { value: "30m", label: "30 min" },
-  { value: "1h", label: "1 hour" },
-  { value: "12h", label: "12 hours" },
-  { value: "1d", label: "1 day" },
-  { value: "7d", label: "7 days" },
-  { value: "30d", label: "30 days" },
-];

@@ -9,8 +9,6 @@ import { buildOperationLogsPath, buildRememberAttemptDiagnosticPath, buildRememb
 import { getEvidenceConflict, listEvidenceConflicts, resolveEvidenceConflict } from "./evidence-conflict-api";
 import { ConflictQueuePanel } from "./control/ConflictQueuePanel";
 import { SecurityPanel } from "./control/SecurityPanel";
-import { MetricsPanel } from "./control/MetricsPanel";
-import { formatTelemetryAxisTick, formatTelemetryCardValue, formatTelemetryValue, telemetryActivitySeries, telemetryChartPoints, telemetryCurrentCards, telemetryStateSeries, telemetryWindowedCards, TelemetryDashboard } from "./telemetry/TelemetryDashboard";
 import { DirectoryAutomationPanel } from "./control/DirectoryAutomationPanel";
 import { SSOPanel } from "./control/SSOPanel";
 import { RecallFeedbackPanel } from "./control/RecallFeedbackPanel";
@@ -135,7 +133,7 @@ describe("coverage contracts", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const api = new UserApi("token");
-    await api.session(); await api.ssoProviders(); expect(api.ssoStartUrl("provider/a")).toContain("provider%2Fa"); await api.switchSSOTeam("team/a"); await api.logoutSSO(); await api.createPortalSession(true); await api.logoutPortalSession(); await api.createSSOCredential({ name: "x", rate_limit: 1 }); await api.listSSOCredentials(); await api.getSSOCredential("key/a"); await api.rotateSSOCredential("key/a"); await api.revokeSSOCredential("key/a", "idem"); await api.rotateCredential(); await api.updateTeam({ name: "x", description: "" }); await api.listTeamCredentials(); await api.createTeamCredential({ name: "x", rate_limit: 1 }); await api.updateTeamCredential("key/a", { name: "x" }); await api.rotateTeamCredential("key/a", { name: "x", rate_limit: 1 }); await api.deleteTeamCredential("key/a"); await api.telemetry({ window: "1h" }); await api.recall("query", 5); await api.graph({ scope: "local", q: "q", types: ["entity"], anchorType: "entity", anchorId: "id", depth: 2, limit: 5 }); await api.nodeDetail("entity", "id"); await api.dreamingStatus(); await api.listDreamingRuns(5); await api.listDreams({ limit: 5, status: "proposed", cursor: "c", sort: "created_at", direction: "asc" });
+    await api.session(); await api.ssoProviders(); expect(api.ssoStartUrl("provider/a")).toContain("provider%2Fa"); await api.switchSSOTeam("team/a"); await api.logoutSSO(); await api.createPortalSession(true); await api.logoutPortalSession(); await api.createSSOCredential({ name: "x", rate_limit: 1 }); await api.listSSOCredentials(); await api.getSSOCredential("key/a"); await api.rotateSSOCredential("key/a"); await api.revokeSSOCredential("key/a", "idem"); await api.rotateCredential(); await api.updateTeam({ name: "x", description: "" }); await api.listTeamCredentials(); await api.createTeamCredential({ name: "x", rate_limit: 1 }); await api.updateTeamCredential("key/a", { name: "x" }); await api.rotateTeamCredential("key/a", { name: "x", rate_limit: 1 }); await api.deleteTeamCredential("key/a"); await api.recall("query", 5); await api.graph({ scope: "local", q: "q", types: ["entity"], anchorType: "entity", anchorId: "id", depth: 2, limit: 5 }); await api.nodeDetail("entity", "id"); await api.dreamingStatus(); await api.listDreamingRuns(5); await api.listDreams({ limit: 5, status: "proposed", cursor: "c", sort: "created_at", direction: "asc" });
     const anonymous = new UserApi("", "api_key_session");
     await anonymous.createPortalSession(false);
     expect(fetchMock).toHaveBeenCalled();
@@ -491,62 +489,6 @@ describe("coverage contracts", () => {
     vi.mocked(window.confirm).mockReturnValue(false);
     await user.click(screen.getByRole("button", { name: "Delete Smoke OIDC" }));
     expect(api.deleteSSOProvider).not.toHaveBeenCalled();
-  });
-
-  it("covers metrics scopes, dependency states, tables, and telemetry errors", async () => {
-    const metrics = { window: { from: "2026-09-01T00:00:00Z", to: "2026-09-01T01:00:00Z", bucket_seconds: 60, retention_days: 30 }, system: { requests: 10, errors: 2, mcp_tool_calls: 4, mcp_tool_failures: 1, avg_latency_ms: 12, max_latency_ms: 40 }, dependencies: [{ name: "postgres", status: "ok", latency_ms: 3 }, { name: "redis", status: "degraded", latency_ms: null, reason_code: "slow", message: "warming" }, { name: "provider", status: "error", latency_ms: 20, message: "down" }], dependencies_checked_at: "2026-09-01T01:00:00Z", teams: [{ team_id: team.id, team_name: team.name, requests: 10, errors: 2, mcp_tool_calls: undefined, mcp_tool_failures: undefined, avg_latency_ms: null, max_latency_ms: 40 }], keys: [{ team_id: team.id, team_name: "", key_id: "key-1", key_name: "", key_suffix: "", requests: 1, errors: 0, mcp_tool_calls: 1, mcp_tool_failures: 0, avg_latency_ms: 1, max_latency_ms: 2 }], routes: [{ route: "/", method: "GET", status_class: "2xx", requests: 1, errors: 0, avg_latency_ms: 1, max_latency_ms: 2 }] };
-    const telemetry = { available: true, window: { key: "1h", from: "2026-09-01T00:00:00Z", to: "2026-09-01T01:00:00Z", step_seconds: 60, retention_days: 30 }, scope: { type: "system" }, cards: [], series: [] };
-    const api = { getMetrics: vi.fn(async () => metrics), getTelemetry: vi.fn(async () => telemetry), listTeamCredentials: vi.fn(async () => ({ data: [{ id: "key-1", name: "Credential", team_id: team.id }], pagination: { limit: 10, offset: 0, total: 1 } })) } as unknown as ControlApi;
-    const user = userEvent.setup();
-    render(<MetricsPanel api={api} teams={[team]} />);
-    expect(await screen.findByText("postgres")).toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText("Scope"), "team");
-    await user.click(screen.getByRole("button", { name: "Refresh telemetry" }));
-    await user.selectOptions(screen.getByLabelText("Scope"), "profile");
-    await waitFor(() => expect(api.listTeamCredentials).toHaveBeenCalledWith(team.id));
-    await user.click(screen.getByRole("button", { name: "Refresh telemetry" }));
-    await user.selectOptions(screen.getByLabelText("Window"), "1440");
-    await user.selectOptions(document.getElementById("metrics-team")!, team.id);
-    await user.click(screen.getByRole("button", { name: "Refresh metrics" }));
-    expect(screen.getByText("Credential usage")).toBeInTheDocument();
-  });
-
-  it("covers metrics request failures and telemetry formatting fallbacks", async () => {
-    expect(formatTelemetryValue(Number.NaN, "ms")).toBe("No data");
-    expect(formatTelemetryValue(12.3, "percent")).toContain("%");
-    expect(formatTelemetryValue(12.3, "ms")).toContain("ms");
-    expect(formatTelemetryValue(0.001, "USD")).toContain("$");
-    expect(formatTelemetryValue(12.3, "rps")).toContain("12");
-    expect(formatTelemetryValue(1234, "count")).toContain("1");
-    expect(formatTelemetryAxisTick(Number.NaN, "count")).toBe("");
-    expect(formatTelemetryAxisTick(12.3, "percent")).toContain("%");
-    expect(formatTelemetryAxisTick(12.3, "USD")).toContain("$");
-    expect(formatTelemetryAxisTick(0.01, "rps")).toContain("0.01");
-    expect(formatTelemetryAxisTick(0, "rps")).toBe("0");
-    expect(formatTelemetryAxisTick(0.1, "rps")).toContain("0.1");
-    expect(formatTelemetryAxisTick(1, "rps")).toContain("1");
-    expect(formatTelemetryAxisTick(10, "rps")).toContain("10");
-    expect(formatTelemetryAxisTick(0.001, "rps")).toContain("0.001");
-    const snapshot = { cards: [{ id: "card", label: "Card", unit: "count", value: 1 }], series: [{ id: "series", label: "Series", unit: "count", points: [] }], windowed_cards: [{ id: "window", label: "Window", unit: "count", value: 2 }], current_cards: [{ id: "current", label: "Current", unit: "count", value: 3 }], activity_series: [{ id: "activity", label: "Activity", unit: "count", points: [] }], state_series: [{ id: "state", label: "State", unit: "count", points: [] }] } as never;
-    expect(telemetryWindowedCards(snapshot)).toHaveLength(1);
-    expect(telemetryCurrentCards(snapshot)).toHaveLength(1);
-    expect(telemetryActivitySeries(snapshot)).toHaveLength(1);
-    expect(telemetryStateSeries(snapshot)).toHaveLength(1);
-    expect(telemetryChartPoints([{ timestamp: "2026-01-01T00:00:00Z", value: 1 }], "", "")).toHaveLength(1);
-    expect(formatTelemetryCardValue({ available: false, unit: "count", value: 1 })).toBe("No data");
-    render(<TelemetryDashboard title="Formatting" snapshot={{ available: true, status: "ready", window: { key: "1h", from: "2026-09-01T00:00:00Z", to: "2026-09-01T01:00:00Z", step_seconds: 60, retention_days: 30 }, scope: { type: "system" }, cards: [], series: [], activity_series: [{ id: "constant", label: "Constant", unit: "count", points: [{ timestamp: "2026-09-01T00:00:00Z", value: 5 }, { timestamp: "2026-09-01T01:00:00Z", value: 5 }] }], state_series: [{ id: "invalid", label: "Invalid", unit: "count", points: [{ timestamp: "2026-09-01T00:00:00Z", value: Number.NaN }] }], current_cards: [] }} windowKey="1h" loading={false} error="" onWindowChange={vi.fn()} onRefresh={vi.fn()} />);
-    expect(screen.getByRole("heading", { name: "Activity charts" })).toBeInTheDocument();
-
-    const api = { getMetrics: vi.fn(async () => { throw new Error("metrics failed"); }), getTelemetry: vi.fn(async () => { throw new Error("telemetry failed"); }), listTeamCredentials: vi.fn(async () => { throw new Error("credentials failed"); }) } as unknown as ControlApi;
-    const user = userEvent.setup();
-    render(<MetricsPanel api={api} teams={[]} />);
-    await user.click(screen.getByRole("button", { name: "Refresh metrics" }));
-    expect(await screen.findByText("metrics failed")).toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText("Scope"), "team");
-    await user.click(screen.getAllByRole("button", { name: "Refresh telemetry" })[1]);
-    expect(await screen.findByText(/Select a team/)).toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText("Scope"), "profile");
-    expect(await screen.findByText(/Select a credential/)).toBeInTheDocument();
   });
 
   it("covers graph validation, node detail, controls, and request errors", async () => {

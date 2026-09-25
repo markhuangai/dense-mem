@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { CommunityDetectionConfig, ControlMetrics, Credential, Dream, DreamRun, DreamStatus, DreamingConfig, GeneralConfig, OperationLog, OperationLogConfig, SecurityBan, SecuritySettings, SSOConfig, Team } from "./api";
 
-import { communityDetectionConfigSnapshot, dreamRationale, dreamRunSnapshot, dreamSnapshot, dreamStatusSnapshot, generalConfigSnapshot, jsonResponse, keyA, metricsSnapshot, mockPortalFetch, operationLogConfigSnapshot, operationLogsSnapshot, page, profileA, securityBan, securitySettings, ssoConfigSnapshot, telemetrySnapshot } from "./App.test-helpers";
+import { communityDetectionConfigSnapshot, dreamRationale, dreamRunSnapshot, dreamSnapshot, dreamStatusSnapshot, generalConfigSnapshot, jsonResponse, keyA, metricsSnapshot, mockPortalFetch, operationLogConfigSnapshot, operationLogsSnapshot, page, profileA, securityBan, securitySettings, ssoConfigSnapshot } from "./App.test-helpers";
 
 beforeEach(() => {
   sessionStorage.clear();
@@ -242,18 +242,16 @@ describe("App", () => {
     await waitFor(() => expect(screen.queryByText("203.0.113.10")).not.toBeInTheDocument());
   });
 
-  it("shows operational metrics", async () => {
+  it("keeps team-overview request summaries without the retired Metrics tab", async () => {
     const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /^metrics$/i }));
-
-    expect(await screen.findByRole("heading", { name: "Telemetry" })).toBeInTheDocument();
-    expect((await screen.findAllByText("42")).length).toBeGreaterThan(0);
-    expect(screen.getByText("postgres")).toBeInTheDocument();
-    expect(screen.getByText("default credential")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^metrics$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Metrics" })).not.toBeInTheDocument();
+    expect(await screen.findByLabelText("Team activity")).toHaveTextContent("42");
+    expect(screen.getByLabelText("Recent alerts")).toHaveTextContent("Request errors detected");
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(

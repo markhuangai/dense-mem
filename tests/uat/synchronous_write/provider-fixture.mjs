@@ -106,11 +106,14 @@ const server = createServer(async (request, response) => {
     const vectorWidth = routeFault === "embedding-dimension" ? Math.max(1, dimensions - 1) : dimensions;
     const data = inputs.map((input, index) => ({ index, embedding: vectorFor(input, vectorWidth) }));
     if (routeFault === "embedding-non-finite" && data.length > 0) data[0].embedding[0] = "NaN";
-    sendJSON(response, 200, {
+    const result = {
       model: payload.model || "dense-mem-e2e-embedding",
       data,
-      usage: { prompt_tokens: inputs.length, total_tokens: inputs.length },
-    });
+    };
+    if (routeFault !== "embedding-no-usage") {
+      result.usage = { prompt_tokens: inputs.length, total_tokens: inputs.length };
+    }
+    sendJSON(response, 200, result);
     return;
   }
 

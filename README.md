@@ -442,37 +442,49 @@ depend on retired `/api/v1` paths.
 ## Telemetry Overlay
 
 Prometheus telemetry is optional and off by default. To collect HTTP, embedding,
-verifier, assessor, recall feedback, Remember, conflict-review, cost, and
-Relationship lifecycle telemetry for the first-party dashboards, start the
-base stack with the overlay:
+verifier, assessor, recall feedback, Remember, conflict-review, cost, Dream, and
+Relationship lifecycle telemetry, start the base stack with the telemetry
+overlay:
 
 ```bash
-curl -fsSLo prometheus.yml \
-  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/prometheus.yml
-curl -fsSLo docker-compose.telemetry.yml \
-  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.telemetry.yml
-
 export TELEMETRY_SCRAPE_TOKEN="$(openssl rand -hex 32)"
-docker compose -f docker-compose.yml -f docker-compose.telemetry.yml up -d
+export GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 32)"
+docker compose \
+  -f examples/docker-compose.base.yml \
+  -f examples/docker-compose.telemetry.yml \
+  -f examples/docker-compose.grafana.yml \
+  up -d
 ```
 
-The overlay starts Prometheus on `127.0.0.1:9090` and scopes dashboard queries
-to `TELEMETRY_PROMETHEUS_JOB=dense-mem`. Dashboard snapshots report whether each
-item is ready, inactive, unavailable, or unsupported. A valid zero is shown as
-zero; missing provider usage or pricing stays unavailable. Partial source
-failures keep successful cards and charts visible. System, team, and profile
-scopes apply the same visibility rules as the underlying data. Free-text
-recall-feedback comments stay in bounded investigation records; Prometheus
-receives only bounded labels. Conflict queue state gauges are emitted by each
-instance, so multi-instance dashboards should use `max by (team_id, status)` (or
-the equivalent label set), while event counters retain normal `sum` and `rate`
-semantics.
+The telemetry overlay starts Prometheus at `127.0.0.1:9090`, and the optional
+Grafana overlay starts Grafana at `127.0.0.1:3000`. It provisions the Prometheus
+datasource and dashboards from `examples/grafana/`; use the Grafana time picker
+for chart ranges and the `Rolling totals` selector for counters and canonical
+ledger windows. Select the Prometheus datasource and bounded scrape job in
+Grafana; dashboard JSON contains no credentials or installation-specific IDs.
 
-### Dashboard series parity
+Existing scoped telemetry metrics retain team and profile labels for the
+first-party API. Grafana aggregates them into system-wide values without
+selecting or grouping by those labels. New operational metrics add no identity
+labels, and metric labels contain no evidence or request text. Missing provider
+usage or pricing stays no-data and is called out separately from a real zero.
+Ledger collector failure suppresses its gauges and exposes collector health.
+Counter measures aggregate across instances and preserve the telemetry service's
+sparse first-sample behavior; range rates use Grafana's query step. Durable
+ledger gauges use `max` across replicas and never use `rate` or `increase`. The operator dashboards are system-wide
+because canonical lifecycle measures carry no team or credential dimensions.
 
-`internal/operations/telemetry_catalog.go` defines the first-party dashboard
-series and their availability rules. The current names and labels remain
-available while operators migrate dashboards to the additional measures below.
+The control Metrics and user Usage dashboards were removed after real Grafana
+and Prometheus parity validation. Team-overview request summaries, private
+diagnostics, settings, and the control telemetry reader used by conflict-queue
+health remain. See [`examples/grafana/README.md`](examples/grafana/README.md)
+for provisioning and the series map.
+
+### Grafana series map
+
+`internal/operations/telemetry_catalog.go` defines the retained control
+telemetry series and their availability rules. Grafana panel descriptions map
+to these identifiers. The metric names and labels remain available to operators.
 
 | Dashboard series | Prometheus source | Owner | Zero and failure meaning |
 | --- | --- | --- | --- |
