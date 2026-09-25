@@ -54,7 +54,7 @@ node examples/grafana/generate_dashboards.mjs
 
 Existing counter families retain their current names and labels. Windowed
 counts and histogram measures use the telemetry service's sparse first-sample
-fallback; range panels use Grafana's query step as the rate window. Lifecycle
+fallback; range panels use Grafana's scrape-safe rate interval. Lifecycle
 and Dream measures use windowed ledger gauges. Gauge queries group away the
 replica dimension with `max`; applying counter `rate` or `increase` to these
 gauges would count the same canonical rows multiple times. Provider usage that

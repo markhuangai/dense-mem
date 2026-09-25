@@ -328,7 +328,7 @@ test("MCP recall feedback is submitted and retained in operator telemetry", asyn
     expect(submitPayload.recorded_count).toBe(1);
 
     await expect.poll(
-      () => prometheusQueryValue(request, `sum(densemem_recall_feedback_total{used="true",answer_supported="true",quality="high",missing_context="false",irrelevant="false"})`),
+      () => prometheusQueryValue(request, `sum(densemem_recall_feedback_total{team_id="${seedTeamId}",used="true",answer_supported="true",quality="high",missing_context="false",irrelevant="false"})`),
       {
         intervals: [1_000, 5_000, 10_000],
         timeout: 120_000,
@@ -336,14 +336,14 @@ test("MCP recall feedback is submitted and retained in operator telemetry", asyn
     ).toBeGreaterThan(0);
 
     await expect.poll(
-      () => prometheusQueryValue(request, "sum(densemem_recall_feedback_quality_score_count)"),
+      () => prometheusQueryValue(request, `sum(densemem_recall_feedback_quality_score_count{team_id="${seedTeamId}"})`),
       {
         intervals: [1_000, 5_000, 10_000],
         timeout: 120_000,
       },
     ).toBeGreaterThan(0);
 
-    const telemetryBody = await controlTelemetry(request);
+    const telemetryBody = await controlTelemetry(request, seedTeamId);
     expect(telemetryLabels(telemetryBody.data?.cards)).toEqual(expect.arrayContaining([
       "LLM recall used",
       "LLM answer supported",
@@ -355,7 +355,7 @@ test("MCP recall feedback is submitted and retained in operator telemetry", asyn
     await expect.poll(
       async () => {
         try {
-          const telemetry = await controlTelemetry(request);
+          const telemetry = await controlTelemetry(request, seedTeamId);
           return [
             cardValue(telemetry, "llm_recall_used_rate"),
             cardValue(telemetry, "llm_recall_answer_supported_rate"),
@@ -371,7 +371,7 @@ test("MCP recall feedback is submitted and retained in operator telemetry", asyn
       },
     ).toEqual([100, 100, 100]);
 
-    const finalTelemetry = await controlTelemetry(request);
+    const finalTelemetry = await controlTelemetry(request, seedTeamId);
     expect(cardValue(finalTelemetry, "llm_recall_missing_context_rate")).toBe(0);
     expect(cardValue(finalTelemetry, "llm_recall_irrelevant_rate")).toBe(0);
 
@@ -783,8 +783,9 @@ function telemetryLabels(value: unknown) {
     .filter(Boolean);
 }
 
-async function controlTelemetry(request: APIRequestContext) {
-  const response = await request.get(`${controlUrl}/control/api/telemetry?window=15m&scope=system`, { headers: bearer(controlToken) });
+async function controlTelemetry(request: APIRequestContext, teamID?: string) {
+  const scope = teamID ? `scope=team&team_id=${encodeURIComponent(teamID)}` : "scope=system";
+  const response = await request.get(`${controlUrl}/control/api/telemetry?window=15m&${scope}`, { headers: bearer(controlToken) });
   if (response.status() !== 200) {
     throw new Error(`control telemetry failed: ${response.status()} ${await response.text()}`);
   }

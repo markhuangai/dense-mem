@@ -317,9 +317,9 @@ async function validateGrafanaDashboardParity() {
     const intervalMs = options.intervalMs ?? 30_000;
     const interval = options.interval ?? `${Math.max(1, Math.round(intervalMs / 1000))}s`;
     const resolvedExpression = expression
+      .replaceAll("$__rate_interval", options.rateInterval ?? interval)
       .replaceAll("$__interval_ms", String(intervalMs))
-      .replaceAll("$__interval", interval)
-      .replaceAll("$__rate_interval", interval);
+      .replaceAll("$__interval", interval);
     return request("/api/ds/query", {
       method: "POST",
       body: JSON.stringify({
@@ -462,6 +462,54 @@ async function validateGrafanaDashboardParity() {
     .replaceAll("$job", "dense-mem")
     .replaceAll("$window", snapshot.window.key));
   assert(grafanaFrameNumber(feedbackQuery.results?.A?.frames ?? []) === null, "absent host feedback appeared as a numeric Grafana value");
+
+  const feedbackConfig = await controlJSON("/config/recall-feedback", { method: "GET" });
+  let feedbackPercent;
+  try {
+    await controlJSON("/config/recall-feedback", {
+      method: "PATCH",
+      body: JSON.stringify({ items: [{ key: "RECALL_FEEDBACK_ENABLED", value: "true" }] }),
+    });
+    const team = await controlJSON("/teams", {
+      method: "POST",
+      body: JSON.stringify({ name: `${runID} Grafana feedback`, description: "Grafana feedback UAT" }),
+    });
+    const feedbackTeamID = String(team.data?.id ?? "");
+    assert(feedbackTeamID, "Grafana feedback fixture did not create a team");
+    const credential = await controlJSON(`/teams/${feedbackTeamID}/credentials`, {
+      method: "POST",
+      body: JSON.stringify({ name: `${runID} Grafana feedback key`, scopes: ["read", "write"], rate_limit: 300 }),
+    });
+    const feedbackAPIKey = String(credential.data?.api_key ?? "");
+    assert(feedbackAPIKey, "Grafana feedback fixture did not create a credential");
+    const recalls = [];
+    for (const used of [true, false]) {
+      const recall = await mcpTool("recall_memory", { query: `Grafana feedback ${runID} ${used}`, limit: 1 }, feedbackAPIKey);
+      assert(nonEmptyString(recall.recall_id), "feedback test recall omitted its event ID");
+      recalls.push({ recall_event_id: recall.recall_id, used, answer_supported: used, quality: "high" });
+    }
+    const recorded = await mcpTool("submit_recall_session_feedback", { recalls }, feedbackAPIKey);
+    assert(recorded.recorded === true && recorded.recorded_count === 2, "feedback test did not record both recall events");
+    const percentPanel = parityPanels.get("series/llm_recall_used_rate");
+    const requestRatePanel = parityPanels.get("series/recalls");
+    assert(percentPanel && requestRatePanel, "Grafana omitted feedback or request-rate panels");
+    const rangeOptions = { interval: "15s", intervalMs: 15_000, rateInterval: "1m" };
+    const percentExpression = percentPanel.targets[0].expr.replaceAll("$job", "dense-mem");
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const result = await query(percentExpression, rangeOptions);
+      assert(!result.results?.A?.error, `Grafana feedback percentage query failed: ${result.results?.A?.error}`);
+      feedbackPercent = grafanaFrameNumber(result.results?.A?.frames ?? []);
+      if (feedbackPercent !== null) break;
+      await delay(5_000);
+    }
+    assert(feedbackPercent !== null, "Grafana feedback percentage stayed empty after two recorded events");
+    assertClose(feedbackPercent, 50, "Grafana feedback percentage");
+    const rateResult = await query(requestRatePanel.targets[0].expr.replaceAll("$job", "dense-mem"), rangeOptions);
+    assert(!rateResult.results?.A?.error, `Grafana request-rate query failed: ${rateResult.results?.A?.error}`);
+    assert(grafanaFrameNumber(rateResult.results?.A?.frames ?? []) !== null, "Grafana request rate was empty at a 15-second display step");
+  } finally {
+    await restoreConfig("/config/recall-feedback", feedbackConfig);
+  }
 
   const longLegacy = await controlJSON("/telemetry?window=30d&scope=system", { method: "GET" });
   const longSnapshot = longLegacy.data;
@@ -608,6 +656,7 @@ async function validateGrafanaDashboardParity() {
     mapped_measures: parityPanels.size,
     valid_zero_embedding_errors: true,
     absent_feedback_no_data: true,
+    feedback_percent: feedbackPercent,
     long_window: "30d",
     sparse_first_sample_counter_and_histogram: true,
     missing_provider_usage_no_data: true,
