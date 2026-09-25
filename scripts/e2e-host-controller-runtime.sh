@@ -342,7 +342,7 @@ run_scenario() {
         printf '%s\n' '--- Last 200 lines per Compose service ---'
         ci_compose logs --no-color --timestamps --tail 200
       } 2>&1
-    ) | redact_diagnostics "$ENV_FILE" "$control_token" "$telemetry_token" "$postgres_password" "$api_key" "$identity_upgrade_api_key" "$oauth_token"
+    ) | redact_diagnostics "$ENV_FILE" "$control_token" "$telemetry_token" "$postgres_password" "$api_key" "$identity_upgrade_api_key" "$oauth_token" "$grafana_password"
     local -a diagnostics_pipeline_status=("${PIPESTATUS[@]}")
     set -e
     if ((diagnostics_pipeline_status[0] != 0)); then

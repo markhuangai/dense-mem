@@ -775,6 +775,36 @@ test("scenario runner executes Entra and diagnostics through the shared path", (
   assert.match(runtime, /ci_compose logs --no-color --timestamps --tail 200/);
 });
 
+test("failure stack diagnostics redact the Grafana admin password", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-grafana-redaction-"));
+  try {
+    const envFile = join(fixture, "e2e.env");
+    await writeFile(envFile, "CONTROL_PORTAL_TOKEN=ci-control-token\n");
+    const redactorStart = controller.indexOf("\nredact_diagnostics() {") + 1;
+    const redactorEnd = controller.indexOf("\n}\n", redactorStart) + 2;
+    const diagnosticsStart = runtime.indexOf("    (\n      DENSE_MEM_CI_COMPOSE_OVERLAY_FILE", runtime.indexOf("failed stack diagnostics"));
+    const diagnosticsEnd = runtime.indexOf("\n    local -a diagnostics_pipeline_status", diagnosticsStart);
+    assert(redactorStart > 0 && redactorEnd > redactorStart && diagnosticsStart >= 0 && diagnosticsEnd > diagnosticsStart);
+    const script = `set -euo pipefail
+${controller.slice(redactorStart, redactorEnd)}
+ci_compose() { printf '%s\\n' "$grafana_password"; }
+${runtime.slice(diagnosticsStart, diagnosticsEnd)}`;
+    const password = "ci-grafana-password-012345";
+    const { stdout } = await run("bash", ["-c", script], {
+      env: {
+        CONTROLLER_DIR: scripts, ENV_FILE: envFile, grafana_password: password,
+        helper_overlay: "", control_token: "", telemetry_token: "", postgres_password: "",
+        api_key: "", identity_upgrade_api_key: "", oauth_token: "",
+      },
+    });
+    assert.match(stdout, /--- Compose services ---/);
+    assert.match(stdout, /\[REDACTED\]/);
+    assert.doesNotMatch(stdout, /ci-grafana-password-012345/);
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
 test("OAuth compatibility harness keeps root logs in the Compose stream", () => {
   assert.match(stack, /while \[ ! -f \/e2e\/harness-ready \]/);
   assert.match(stack, /chown densemem:densemem \/e2e\/ca\.pem \/e2e\/server\.key \/e2e\/config\.json/);
