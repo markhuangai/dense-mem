@@ -3,9 +3,17 @@
   "baseline_source": {
     "commit_sha": "aa3c058565de8bd72f61aebfa6722f7efc6db9df",
     "working_tree_paths": 3,
-    "working_tree_sha256": "3017ac7388fada911df2f7d9f42ca43aefdef9afa7056dd24a14e6bf2ffdac77"
+    "working_tree_sha256": "8e6de5e050d0764474cbd2f7d1ee0337266392ff418f1dc1662a067f7c69e7af"
   },
   "benchmark": {
+    "baseline_telemetry_diagnostic": {
+      "allowed_increase_ms": 1.106869,
+      "failed_metric": "p95-ns/op",
+      "failed_workload": "lexical",
+      "increase_ms": 1.650909,
+      "passed": false
+    },
+    "candidate_telemetry_passed": true,
     "iterations_per_run": 200,
     "latency_gate": "median p50 and p95 increase <= max(5% of baseline, 1 ms), per workload and telemetry mode",
     "name": "BenchmarkRecallReadPipeline",
@@ -20,98 +28,98 @@
     "workloads": {
       "ann": {
         "disabled": {
-          "p50_increase_ms": -0.393956,
-          "p95_increase_ms": -0.680903,
+          "p50_increase_ms": -3.883173,
+          "p95_increase_ms": -6.445131,
           "sql_statements_per_op": 19.0,
           "transactions_per_op": 3.0
         },
         "enabled": {
-          "p50_increase_ms": -0.549346,
-          "p95_increase_ms": -1.563492,
+          "p50_increase_ms": -3.72121,
+          "p95_increase_ms": -7.446956,
           "sql_statements_per_op": 19.0,
           "transactions_per_op": 3.0
         }
       },
       "exact_vector": {
         "disabled": {
-          "p50_increase_ms": 0.198549,
-          "p95_increase_ms": 0.273681,
+          "p50_increase_ms": -1.047296,
+          "p95_increase_ms": -2.00628,
           "sql_statements_per_op": 7.0,
           "transactions_per_op": 1.0
         },
         "enabled": {
-          "p50_increase_ms": 0.1559,
-          "p95_increase_ms": 0.184687,
+          "p50_increase_ms": -1.140748,
+          "p95_increase_ms": -1.902974,
           "sql_statements_per_op": 7.0,
           "transactions_per_op": 1.0
         }
       },
       "expansion": {
         "disabled": {
-          "p50_increase_ms": 0.06995,
-          "p95_increase_ms": 0.133576,
+          "p50_increase_ms": -3.750048,
+          "p95_increase_ms": -6.604772,
           "sql_statements_per_op": 18.0,
           "transactions_per_op": 3.0
         },
         "enabled": {
-          "p50_increase_ms": 0.046627,
-          "p95_increase_ms": -0.486109,
+          "p50_increase_ms": -2.930886,
+          "p95_increase_ms": -6.812729,
           "sql_statements_per_op": 18.0,
           "transactions_per_op": 3.0
         }
       },
       "historical": {
         "disabled": {
-          "p50_increase_ms": 0.056252,
-          "p95_increase_ms": 0.182131,
+          "p50_increase_ms": -3.707108,
+          "p95_increase_ms": -6.859447,
           "sql_statements_per_op": 17.0,
           "transactions_per_op": 3.0
         },
         "enabled": {
-          "p50_increase_ms": 0.095701,
-          "p95_increase_ms": 0.002295,
+          "p50_increase_ms": -4.093555,
+          "p95_increase_ms": -8.380126,
           "sql_statements_per_op": 17.0,
           "transactions_per_op": 3.0
         }
       },
       "lexical": {
         "disabled": {
-          "p50_increase_ms": -0.077358,
-          "p95_increase_ms": -0.765751,
+          "p50_increase_ms": -6.926345,
+          "p95_increase_ms": -9.592121,
           "sql_statements_per_op": 17.0,
           "transactions_per_op": 3.0
         },
         "enabled": {
-          "p50_increase_ms": 0.108088,
-          "p95_increase_ms": -0.601853,
+          "p50_increase_ms": -7.364993,
+          "p95_increase_ms": -10.595916,
           "sql_statements_per_op": 17.0,
           "transactions_per_op": 3.0
         }
       },
       "private_space": {
         "disabled": {
-          "p50_increase_ms": -0.022555,
-          "p95_increase_ms": -0.084619,
+          "p50_increase_ms": -1.333653,
+          "p95_increase_ms": -3.829691,
           "sql_statements_per_op": 17.0,
           "transactions_per_op": 3.0
         },
         "enabled": {
-          "p50_increase_ms": 0.125649,
-          "p95_increase_ms": 0.275583,
+          "p50_increase_ms": -1.679207,
+          "p95_increase_ms": -3.659644,
           "sql_statements_per_op": 17.0,
           "transactions_per_op": 3.0
         }
       },
       "relationship_recall": {
         "disabled": {
-          "p50_increase_ms": -0.135052,
-          "p95_increase_ms": -0.196017,
+          "p50_increase_ms": -1.512256,
+          "p95_increase_ms": -3.549395,
           "sql_statements_per_op": 14.0,
           "transactions_per_op": 2.0
         },
         "enabled": {
-          "p50_increase_ms": 0.023005,
-          "p95_increase_ms": 0.091602,
+          "p50_increase_ms": -2.443205,
+          "p95_increase_ms": -3.808107,
           "sql_statements_per_op": 14.0,
           "transactions_per_op": 2.0
         }
@@ -121,9 +129,9 @@
   "evaluation_waiver": "Maintainer-approved 2026-09-22; replacement verification is real PostgreSQL, deterministic results and queries, focused E2E, and performance.",
   "issue": 457,
   "measured_candidate_source": {
-    "commit_sha": "aa3c058565de8bd72f61aebfa6722f7efc6db9df",
-    "working_tree_paths": 19,
-    "working_tree_sha256": "1ce211ec0aeaa2447a53ff99ccc21de0cbb1b944e17f9469a41fe3e0ad343856"
+    "commit_sha": "d9a39af5dca16f12affaf97a26a4c4c579f34161",
+    "working_tree_paths": 5,
+    "working_tree_sha256": "00a9977de5fbfa1c0caa003be9612ae635d50b667082dcf9f74d1a8c7366168e"
   },
   "postgres_plan": {
     "actual_rows_equal": true,
@@ -136,8 +144,12 @@
   },
   "real_postgres_integration_package_passed": true,
   "schema_version": 1,
+  "source_lock_manifest_sha256": {
+    "base": "bcfe55007be7791538ef57cdc9299f9c7bb35728962d6eb024343a8330be7275",
+    "candidate": "8a49ed0a28e1d5790a2d09b3c00867af763676077efc2e259af376f7706e7e40"
+  },
   "test_only_base_overlay_sha256": {
-    "recall_read_performance_benchmark_test.go": "91d47121326d588d0fe21b5840aded31aaded2ce2bd4668c267a46788ac7f5e4",
+    "recall_read_performance_benchmark_test.go": "45556ee10b01181eed80d5b426247cc33a0d7a8cc022bf91da3da270d1f91bda",
     "relationship_projection_query_contract_test.go": "06b894d26aa55e5516aa3d6a8905d39c322ca73b97b967cb64775c941b2ed023",
     "relationship_projection_selection_integration_test.go": "8511349c16a41186414ca3964ad61ce8adf6d5a5579628749c60c8bdf232773b"
   }

@@ -262,6 +262,15 @@ func newReadPerformanceBenchmarkFixture(b *testing.B) *readPerformanceBenchmarkF
 		}
 		return tx.Exec("ANALYZE search_documents, evidence_fragments").Error
 	}))
+	lexical, err := store.RecallEvidence(baseCtx, RecallEvidenceInput{
+		TeamID: teamID, Query: "recall benchmark lexical marker", Limit: 10,
+	})
+	require.NoError(b, err)
+	selectedSupport := false
+	for _, hit := range lexical.Results {
+		selectedSupport = selectedSupport || hit.EvidenceID == baseDocuments.fragments[0].FragmentID
+	}
+	require.False(b, selectedSupport, "benchmark relationship-support fragment must stay outside lexical results")
 
 	return &readPerformanceBenchmarkFixture{
 		store: store, teamID: teamID, ownerID: ownerID, annTeamID: annTeamID, annOwnerID: annOwnerID,
@@ -291,7 +300,7 @@ func createReadPerformanceBenchmarkDocuments(
 	for index := range evidence {
 		content := fmt.Sprintf("%s deterministic evidence record %04d", prefix, index)
 		if index == 0 && prefix == "recall benchmark lexical marker" {
-			content = "Benchmark Reader works on Dense Mem. " + content
+			content = "Benchmark Reader works on Dense Mem. Relationship support evidence record 0000"
 		}
 		evidence[index] = knowledgepostgres.EvidenceInput{Content: content, SourceType: "document"}
 	}

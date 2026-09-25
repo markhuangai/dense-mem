@@ -459,27 +459,33 @@ checkout: `relationship_projection_query_contract_test.go`,
 `recall_read_performance_benchmark_test.go` from `internal/recall/postgres/`.
 Record their digests as the test-only base overlay.
 
-In each checkout, run `TestRelationshipProjectionQueryContract` with
-`DENSE_MEM_PROJECTION_QUERY_REPORT` set to an absolute path under that checkout's
-ignored `tests/eval/runs/issue-457/`. It records the executed SQL, bound
-arguments, and decoded results for Search readiness/full-text/exact-vector and
-Recall readiness/full-text/exact-vector/ANN/expansion/hydration. Run the real
+In each checkout, run `capture_issue_457_projection_run.py` from the candidate
+checkout, using its absolute path when the current directory is the base
+checkout. Supply `--benchmark-output` and `--query-report` under that checkout's
+ignored `tests/eval/runs/issue-457/` directory. The capture runs
+`TestRelationshipProjectionQueryContract` and `BenchmarkRecallReadPipeline`,
+then writes a source lock beside the benchmark log. The query report records
+executed SQL, bound arguments, and decoded results for Search
+readiness/full-text/exact-vector and Recall
+readiness/full-text/exact-vector/ANN/expansion/hydration. Run the real
 PostgreSQL `TestRelationshipProjectionANNAndAllTeamReadinessKeepDistinctGenerationPolicies`
 with `DENSE_MEM_REPOSITORY_TESTCONTAINERS=1`, `DATABASE_URL` unset, and
 `DENSE_MEM_PROJECTION_PLAN_REPORT` set under the same ignored directory. Compare
 the emitted `EXPLAIN (ANALYZE, BUFFERS)` plan node types, scans, joins, index
 choices, and relevant row/buffer counts; record any plan drift explicitly.
 
-Run `BenchmarkRecallReadPipeline` in both checkouts with 20 warmups, 200
-measured iterations, five repetitions, `-benchmem`, and identical test-only
-overlay. Pass the raw logs, base SHA, and two query reports to
+The capture runs `BenchmarkRecallReadPipeline` in both checkouts with 20
+warmups, 200 measured iterations, five repetitions, `-benchmem`, and identical
+test-only overlay. Pass the raw logs, base SHA, and two query reports to
 `compare_recall_read_performance.py` using `--baseline-input`,
 `--baseline-source-sha`, `--baseline-query-report`, and
-`--candidate-query-report`. Keep each benchmark log in its checkout's ignored
-`tests/eval/runs/` directory. The comparator checks the base checkout's HEAD
-against `--baseline-source-sha` and records its working-tree fingerprint. Base
-comparisons require both query reports from their respective checkouts.
+`--candidate-query-report` before either checkout changes. The comparator
+checks each log and query report against the capture-time source lock and
+requires the nine planned query cases with 15 statements. Base comparisons
+require both query reports from their respective checkouts.
 Its existing telemetry-mode gate remains active.
+The base checkout's telemetry-mode result is recorded as a diagnostic; the
+candidate telemetry result and paired base-to-candidate comparison are gates.
 The additional source gate requires identical SQL, bound arguments, decoded
 results, statement counts, and transaction counts; each workload and mode must
 keep median p50 and p95 increases within the greater of 5% or 1 ms. Commit a

@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import pathlib
 import subprocess
 import tempfile
@@ -37,6 +38,8 @@ class ReadPerformanceComparisonTests(unittest.TestCase):
             root = pathlib.Path(directory) / "base"
             root.mkdir()
             subprocess.run(["git", "init", "-q", str(root)], check=True)
+            (root / ".gitignore").write_text("tests/eval/runs/\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", ".gitignore"], check=True)
             subprocess.run(
                 ["git", "-C", str(root), "-c", "user.name=Test", "-c", "user.email=ci@dense-mem.dev",
                  "commit", "--allow-empty", "-qm", "base"],
@@ -47,18 +50,17 @@ class ReadPerformanceComparisonTests(unittest.TestCase):
             log.parent.mkdir(parents=True)
             log.write_text(benchmark_output(), encoding="utf-8")
 
-            baseline_root, source = comparison.verified_baseline_source(log, root.parent / "candidate", sha)
+            baseline_root = comparison.verified_baseline_checkout(log, root.parent / "candidate", sha)
             self.assertEqual(baseline_root, root)
-            self.assertEqual(source["commit_sha"], sha)
             with self.assertRaisesRegex(ValueError, "does not match"):
-                comparison.verified_baseline_source(log, root.parent / "candidate", "0" * 40)
+                comparison.verified_baseline_checkout(log, root.parent / "candidate", "0" * 40)
             with self.assertRaisesRegex(ValueError, "separate checkout"):
-                comparison.verified_baseline_source(log, root, sha)
+                comparison.verified_baseline_checkout(log, root, sha)
 
             misplaced = root / "other.txt"
             misplaced.write_text(benchmark_output(), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "tests/eval/runs"):
-                comparison.verified_baseline_source(misplaced, root.parent / "candidate", sha)
+                comparison.verified_baseline_checkout(misplaced, root.parent / "candidate", sha)
 
             candidate_root = root.parent / "candidate"
             candidate_report = candidate_root / "tests/eval/runs/issue-457/candidate.json"
@@ -73,6 +75,43 @@ class ReadPerformanceComparisonTests(unittest.TestCase):
                 comparison.require_query_reports(candidate_report, candidate_report, root, candidate_root)
             with self.assertRaisesRegex(ValueError, "candidate query report"):
                 comparison.require_query_reports(base_report, base_report, root, candidate_root)
+
+            source = comparison.source_fingerprint(root)
+            lock = comparison.write_run_source_lock(log, base_report, source)
+            self.assertEqual(comparison.verified_run_source(log, base_report, root, sha), source)
+            log.write_text(benchmark_output(50_000), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "benchmark hash"):
+                comparison.verified_run_source(log, base_report, root, sha)
+            log.write_text(benchmark_output(), encoding="utf-8")
+            base_report.write_text("[{}]", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "query report hash"):
+                comparison.verified_run_source(log, base_report, root, sha)
+            base_report.write_text("[]", encoding="utf-8")
+            misplaced.write_text("changed after capture", encoding="utf-8")
+            self.assertEqual(comparison.verified_run_source(log, base_report, root, sha), source)
+            payload = json.loads(lock.read_text(encoding="utf-8"))
+            payload["source"]["commit_sha"] = "0" * 40
+            lock.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "source fingerprint"):
+                comparison.verified_run_source(log, base_report, root, sha)
+
+    def test_projection_query_report_requires_every_planned_case(self):
+        expected = (
+            ("search_readiness", 3), ("search_full_text", 1), ("search_exact_vector", 3),
+            ("recall_readiness", 1), ("recall_full_text", 1), ("recall_exact_vector", 2),
+            ("recall_ann_vector", 2), ("recall_expansion", 1), ("recall_hydration", 1),
+        )
+        report = [
+            {"case": name, "statements": [{"sql": "SELECT 1", "args": []} for _ in range(count)], "result": []}
+            for name, count in expected
+        ]
+        comparison.validate_projection_query_report(report)
+        for incomplete in ([], report[:-1]):
+            with self.assertRaisesRegex(ValueError, "required projection query cases"):
+                comparison.validate_projection_query_report(incomplete)
+        report[0]["statements"].pop()
+        with self.assertRaisesRegex(ValueError, "statement count"):
+            comparison.validate_projection_query_report(report)
 
     def test_query_report_comparison_checks_sql_arguments_and_results(self):
         baseline = [{"case": "recall_exact_vector", "statements": [{"sql": "SELECT ?", "args": ["str:team-a"]}], "result": [{"id": "relationship-a"}]}]

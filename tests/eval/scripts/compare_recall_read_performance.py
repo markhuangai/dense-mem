@@ -38,6 +38,17 @@ REQUIRED_METRICS = (
     "allocs/op",
     "B/op",
 )
+PROJECTION_QUERY_STATEMENT_COUNTS = {
+    "search_readiness": 3,
+    "search_full_text": 1,
+    "search_exact_vector": 3,
+    "recall_readiness": 1,
+    "recall_full_text": 1,
+    "recall_exact_vector": 2,
+    "recall_ann_vector": 2,
+    "recall_expansion": 1,
+    "recall_hydration": 1,
+}
 
 
 def parse_benchmarks(text: str) -> dict[tuple[str, str], list[dict[str, Decimal]]]:
@@ -224,6 +235,32 @@ def compare_query_reports(baseline: object, candidate: object) -> dict[str, int]
     return {"case_count": len(baseline), "statement_count": statement_count}
 
 
+def validate_projection_query_report(report: object) -> None:
+    if not isinstance(report, list) or len(report) != len(PROJECTION_QUERY_STATEMENT_COUNTS):
+        raise ValueError("query report is missing required projection query cases")
+    names = set()
+    for case in report:
+        if not isinstance(case, dict) or case.get("case") not in PROJECTION_QUERY_STATEMENT_COUNTS:
+            raise ValueError("query report is missing required projection query cases")
+        name = case["case"]
+        if name in names:
+            raise ValueError("query report has a duplicate projection query case")
+        names.add(name)
+        statements = case.get("statements")
+        if not isinstance(statements, list) or len(statements) != PROJECTION_QUERY_STATEMENT_COUNTS[name]:
+            raise ValueError(f"{name} query report has an incorrect statement count")
+        if "result" not in case or any(
+            not isinstance(statement, dict)
+            or not isinstance(statement.get("sql"), str)
+            or not statement["sql"].strip()
+            or not isinstance(statement.get("args"), list)
+            for statement in statements
+        ):
+            raise ValueError(f"{name} query report has an incomplete statement or result")
+    if names != PROJECTION_QUERY_STATEMENT_COUNTS.keys():
+        raise ValueError("query report is missing required projection query cases")
+
+
 def source_fingerprint(root: pathlib.Path) -> dict[str, object]:
     commit = subprocess.check_output(
         ["git", "--no-optional-locks", "-C", str(root), "rev-parse", "HEAD"], text=True
@@ -250,9 +287,7 @@ def require_run_input(path: pathlib.Path, root: pathlib.Path, label: str) -> Non
         raise ValueError(f"{label} must stay under its checkout's tests/eval/runs/")
 
 
-def verified_baseline_source(
-    path: pathlib.Path, candidate_root: pathlib.Path, expected_sha: str
-) -> tuple[pathlib.Path, dict[str, object]]:
+def verified_baseline_checkout(path: pathlib.Path, candidate_root: pathlib.Path, expected_sha: str) -> pathlib.Path:
     baseline_path = path.resolve(strict=True)
     try:
         baseline_root = pathlib.Path(
@@ -267,10 +302,10 @@ def verified_baseline_source(
     if baseline_root == candidate_root:
         raise ValueError("baseline input must come from a separate checkout")
     require_run_input(baseline_path, baseline_root, "baseline input")
-    source = source_fingerprint(baseline_root)
-    if source["commit_sha"] != expected_sha:
+    commit = subprocess.check_output(["git", "-C", str(baseline_root), "rev-parse", "HEAD"], text=True).strip()
+    if commit != expected_sha:
         raise ValueError("baseline source SHA does not match the input checkout HEAD")
-    return baseline_root, source
+    return baseline_root
 
 
 def require_query_reports(
@@ -283,6 +318,48 @@ def require_query_reports(
         raise ValueError("baseline and candidate query reports are required for source comparison")
     require_run_input(baseline_report, baseline_root, "baseline query report")
     require_run_input(candidate_report, candidate_root, "candidate query report")
+
+
+def run_source_lock_path(benchmark_input: pathlib.Path) -> pathlib.Path:
+    return benchmark_input.with_suffix(".source.json")
+
+
+def write_run_source_lock(
+    benchmark_input: pathlib.Path, query_report: pathlib.Path, source: dict[str, object]
+) -> pathlib.Path:
+    lock = run_source_lock_path(benchmark_input)
+    payload = {
+        "schema_version": 1,
+        "benchmark_sha256": hashlib.sha256(benchmark_input.read_bytes()).hexdigest(),
+        "query_report_sha256": hashlib.sha256(query_report.read_bytes()).hexdigest(),
+        "source": source,
+    }
+    lock.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return lock
+
+
+def verified_run_source(
+    benchmark_input: pathlib.Path, query_report: pathlib.Path, root: pathlib.Path, expected_sha: str
+) -> dict[str, object]:
+    lock = run_source_lock_path(benchmark_input)
+    require_run_input(lock, root, "source lock")
+    payload = json.loads(lock.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        raise ValueError("benchmark source lock has an invalid schema")
+    if payload.get("benchmark_sha256") != hashlib.sha256(benchmark_input.read_bytes()).hexdigest():
+        raise ValueError("benchmark hash does not match its source lock")
+    if payload.get("query_report_sha256") != hashlib.sha256(query_report.read_bytes()).hexdigest():
+        raise ValueError("query report hash does not match its source lock")
+    source = payload.get("source")
+    if (
+        not isinstance(source, dict)
+        or source.get("commit_sha") != expected_sha
+        or not isinstance(source.get("working_tree_sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", source["working_tree_sha256"]) is None
+        or type(source.get("working_tree_paths")) is not int
+    ):
+        raise ValueError("benchmark source fingerprint does not match the expected commit")
+    return source
 
 
 def _median(values: list[Decimal]) -> Decimal:
@@ -321,27 +398,35 @@ def main(argv: list[str] | None = None) -> int:
         if args.baseline_input is not None:
             if re.fullmatch(r"[0-9a-f]{40}", args.baseline_source_sha) is None:
                 raise ValueError("--baseline-source-sha must be a 40-character lowercase commit SHA")
-            baseline_root, report["baseline_source"] = verified_baseline_source(
+            baseline_root = verified_baseline_checkout(
                 args.baseline_input, root, args.baseline_source_sha
             )
             require_query_reports(args.baseline_query_report, args.candidate_query_report, baseline_root, root)
+            report["baseline_source"] = verified_run_source(
+                args.baseline_input, args.baseline_query_report, baseline_root, args.baseline_source_sha
+            )
+            candidate_sha = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+            report["source"] = verified_run_source(args.input, args.candidate_query_report, root, candidate_sha)
+            if report["source"] == report["baseline_source"]:
+                raise ValueError("baseline and candidate source locks identify the same measured source")
             baseline_text = args.baseline_input.read_text(encoding="utf-8")
             baseline_records = parse_benchmarks(baseline_text)
             baseline_report = summarize(baseline_records)
-            if not baseline_report["passed"]:
-                raise ValueError("baseline telemetry comparison failed")
+            report["baseline_telemetry_diagnostic"] = baseline_report
             report["baseline_source_sha"] = args.baseline_source_sha
             report["baseline_output_sha256"] = hashlib.sha256(baseline_text.encode("utf-8")).hexdigest()
             report["source_comparison"] = compare_sources(baseline_records, candidate_records)
             report["passed"] = report["passed"] and report["source_comparison"]["passed"]
         if args.baseline_query_report is not None:
-            report["query_contract"] = compare_query_reports(
-                json.loads(args.baseline_query_report.read_text(encoding="utf-8")),
-                json.loads(args.candidate_query_report.read_text(encoding="utf-8")),
-            )
+            baseline_queries = json.loads(args.baseline_query_report.read_text(encoding="utf-8"))
+            candidate_queries = json.loads(args.candidate_query_report.read_text(encoding="utf-8"))
+            validate_projection_query_report(baseline_queries)
+            validate_projection_query_report(candidate_queries)
+            report["query_contract"] = compare_query_reports(baseline_queries, candidate_queries)
         report["schema_version"] = 2
         report["measured_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
-        report["source"] = source_fingerprint(root)
+        if args.baseline_input is None:
+            report["source"] = source_fingerprint(root)
         report["go_version"] = subprocess.check_output(["go", "version"], text=True).strip()
         report["goos"] = subprocess.check_output(["go", "env", "GOOS"], text=True).strip()
         report["goarch"] = subprocess.check_output(["go", "env", "GOARCH"], text=True).strip()
