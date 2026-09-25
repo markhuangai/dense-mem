@@ -250,7 +250,9 @@ def require_run_input(path: pathlib.Path, root: pathlib.Path, label: str) -> Non
         raise ValueError(f"{label} must stay under its checkout's tests/eval/runs/")
 
 
-def verified_baseline_source(path: pathlib.Path, candidate_root: pathlib.Path, expected_sha: str) -> dict[str, object]:
+def verified_baseline_source(
+    path: pathlib.Path, candidate_root: pathlib.Path, expected_sha: str
+) -> tuple[pathlib.Path, dict[str, object]]:
     baseline_path = path.resolve(strict=True)
     try:
         baseline_root = pathlib.Path(
@@ -268,7 +270,19 @@ def verified_baseline_source(path: pathlib.Path, candidate_root: pathlib.Path, e
     source = source_fingerprint(baseline_root)
     if source["commit_sha"] != expected_sha:
         raise ValueError("baseline source SHA does not match the input checkout HEAD")
-    return source
+    return baseline_root, source
+
+
+def require_query_reports(
+    baseline_report: pathlib.Path | None,
+    candidate_report: pathlib.Path | None,
+    baseline_root: pathlib.Path,
+    candidate_root: pathlib.Path,
+) -> None:
+    if baseline_report is None or candidate_report is None:
+        raise ValueError("baseline and candidate query reports are required for source comparison")
+    require_run_input(baseline_report, baseline_root, "baseline query report")
+    require_run_input(candidate_report, candidate_root, "candidate query report")
 
 
 def _median(values: list[Decimal]) -> Decimal:
@@ -299,15 +313,18 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--baseline-input and --baseline-source-sha must be supplied together")
         if (args.baseline_query_report is None) != (args.candidate_query_report is None):
             raise ValueError("query reports must be supplied together")
+        if args.baseline_input is None and args.baseline_query_report is not None:
+            raise ValueError("query reports require a baseline input")
         require_run_input(args.input, root, "candidate input")
         candidate_records = parse_benchmarks(args.input.read_text(encoding="utf-8"))
         report = summarize(candidate_records)
         if args.baseline_input is not None:
             if re.fullmatch(r"[0-9a-f]{40}", args.baseline_source_sha) is None:
                 raise ValueError("--baseline-source-sha must be a 40-character lowercase commit SHA")
-            report["baseline_source"] = verified_baseline_source(
+            baseline_root, report["baseline_source"] = verified_baseline_source(
                 args.baseline_input, root, args.baseline_source_sha
             )
+            require_query_reports(args.baseline_query_report, args.candidate_query_report, baseline_root, root)
             baseline_text = args.baseline_input.read_text(encoding="utf-8")
             baseline_records = parse_benchmarks(baseline_text)
             baseline_report = summarize(baseline_records)

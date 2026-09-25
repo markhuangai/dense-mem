@@ -477,7 +477,8 @@ overlay. Pass the raw logs, base SHA, and two query reports to
 `--baseline-source-sha`, `--baseline-query-report`, and
 `--candidate-query-report`. Keep each benchmark log in its checkout's ignored
 `tests/eval/runs/` directory. The comparator checks the base checkout's HEAD
-against `--baseline-source-sha` and records its working-tree fingerprint.
+against `--baseline-source-sha` and records its working-tree fingerprint. Base
+comparisons require both query reports from their respective checkouts.
 Its existing telemetry-mode gate remains active.
 The additional source gate requires identical SQL, bound arguments, decoded
 results, statement counts, and transaction counts; each workload and mode must

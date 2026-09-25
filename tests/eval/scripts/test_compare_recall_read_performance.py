@@ -47,7 +47,8 @@ class ReadPerformanceComparisonTests(unittest.TestCase):
             log.parent.mkdir(parents=True)
             log.write_text(benchmark_output(), encoding="utf-8")
 
-            source = comparison.verified_baseline_source(log, root.parent / "candidate", sha)
+            baseline_root, source = comparison.verified_baseline_source(log, root.parent / "candidate", sha)
+            self.assertEqual(baseline_root, root)
             self.assertEqual(source["commit_sha"], sha)
             with self.assertRaisesRegex(ValueError, "does not match"):
                 comparison.verified_baseline_source(log, root.parent / "candidate", "0" * 40)
@@ -58,6 +59,20 @@ class ReadPerformanceComparisonTests(unittest.TestCase):
             misplaced.write_text(benchmark_output(), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "tests/eval/runs"):
                 comparison.verified_baseline_source(misplaced, root.parent / "candidate", sha)
+
+            candidate_root = root.parent / "candidate"
+            candidate_report = candidate_root / "tests/eval/runs/issue-457/candidate.json"
+            candidate_report.parent.mkdir(parents=True)
+            candidate_report.write_text("[]", encoding="utf-8")
+            base_report = root / "tests/eval/runs/issue-457/base.json"
+            base_report.write_text("[]", encoding="utf-8")
+            comparison.require_query_reports(base_report, candidate_report, root, candidate_root)
+            with self.assertRaisesRegex(ValueError, "required"):
+                comparison.require_query_reports(None, candidate_report, root, candidate_root)
+            with self.assertRaisesRegex(ValueError, "baseline query report"):
+                comparison.require_query_reports(candidate_report, candidate_report, root, candidate_root)
+            with self.assertRaisesRegex(ValueError, "candidate query report"):
+                comparison.require_query_reports(base_report, base_report, root, candidate_root)
 
     def test_query_report_comparison_checks_sql_arguments_and_results(self):
         baseline = [{"case": "recall_exact_vector", "statements": [{"sql": "SELECT ?", "args": ["str:team-a"]}], "result": [{"id": "relationship-a"}]}]
