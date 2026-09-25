@@ -475,7 +475,10 @@ measured iterations, five repetitions, `-benchmem`, and identical test-only
 overlay. Pass the raw logs, base SHA, and two query reports to
 `compare_recall_read_performance.py` using `--baseline-input`,
 `--baseline-source-sha`, `--baseline-query-report`, and
-`--candidate-query-report`. Its existing telemetry-mode gate remains active.
+`--candidate-query-report`. Keep each benchmark log in its checkout's ignored
+`tests/eval/runs/` directory. The comparator checks the base checkout's HEAD
+against `--baseline-source-sha` and records its working-tree fingerprint.
+Its existing telemetry-mode gate remains active.
 The additional source gate requires identical SQL, bound arguments, decoded
 results, statement counts, and transaction counts; each workload and mode must
 keep median p50 and p95 increases within the greater of 5% or 1 ms. Commit a

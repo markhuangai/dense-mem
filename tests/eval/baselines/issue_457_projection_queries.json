@@ -1,5 +1,10 @@
 {
   "base_commit": "aa3c058565de8bd72f61aebfa6722f7efc6db9df",
+  "baseline_source": {
+    "commit_sha": "aa3c058565de8bd72f61aebfa6722f7efc6db9df",
+    "working_tree_paths": 3,
+    "working_tree_sha256": "3017ac7388fada911df2f7d9f42ca43aefdef9afa7056dd24a14e6bf2ffdac77"
+  },
   "benchmark": {
     "iterations_per_run": 200,
     "latency_gate": "median p50 and p95 increase <= max(5% of baseline, 1 ms), per workload and telemetry mode",

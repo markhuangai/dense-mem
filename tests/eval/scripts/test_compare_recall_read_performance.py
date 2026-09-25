@@ -1,5 +1,7 @@
 import importlib.util
 import pathlib
+import subprocess
+import tempfile
 import unittest
 
 
@@ -30,6 +32,33 @@ def benchmark_output(enabled_adjustment=0, changed_count=None):
 
 
 class ReadPerformanceComparisonTests(unittest.TestCase):
+    def test_baseline_log_is_bound_to_its_checkout_commit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "base"
+            root.mkdir()
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(
+                ["git", "-C", str(root), "-c", "user.name=Test", "-c", "user.email=ci@dense-mem.dev",
+                 "commit", "--allow-empty", "-qm", "base"],
+                check=True,
+            )
+            sha = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+            log = root / "tests/eval/runs/issue-457/base.txt"
+            log.parent.mkdir(parents=True)
+            log.write_text(benchmark_output(), encoding="utf-8")
+
+            source = comparison.verified_baseline_source(log, root.parent / "candidate", sha)
+            self.assertEqual(source["commit_sha"], sha)
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                comparison.verified_baseline_source(log, root.parent / "candidate", "0" * 40)
+            with self.assertRaisesRegex(ValueError, "separate checkout"):
+                comparison.verified_baseline_source(log, root, sha)
+
+            misplaced = root / "other.txt"
+            misplaced.write_text(benchmark_output(), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "tests/eval/runs"):
+                comparison.verified_baseline_source(misplaced, root.parent / "candidate", sha)
+
     def test_query_report_comparison_checks_sql_arguments_and_results(self):
         baseline = [{"case": "recall_exact_vector", "statements": [{"sql": "SELECT ?", "args": ["str:team-a"]}], "result": [{"id": "relationship-a"}]}]
         self.assertEqual(comparison.compare_query_reports(baseline, baseline), {"case_count": 1, "statement_count": 1})
