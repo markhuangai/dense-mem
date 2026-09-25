@@ -3,6 +3,7 @@
 const userURL = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
+const telemetryToken = requiredEnv("DENSE_MEM_E2E_TELEMETRY_TOKEN");
 const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const apiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
 const scenario = process.env.DENSE_MEM_E2E_MEMORY_SCENARIO || "credential_memory_binding";
@@ -47,7 +48,21 @@ if (scenario === "credential_memory_binding") {
   const sharedNeedle = "memory space e2e mentions team shared evidence sentinel";
   const sharedSubmission = await mcpSuccess("remember", rememberInput(sharedNeedle, "memory space e2e", "mentions", "sentinel"), sharedWrite.apiKey);
   assert(sharedSubmission.processing_state === "completed", `shared Remember did not complete: ${JSON.stringify(sharedSubmission)}`);
+  const metricsBeforeRecall = await readPrometheusMetrics();
   const recall = await waitForRecall(sharedNeedle, sharedNeedle, sharedWrite.apiKey);
+  const metricsAfterRecall = await readPrometheusMetrics();
+  for (const [operation, stage] of [
+    ["search_contract", "contract"],
+    ["evidence_recall", "full_text"],
+    ["evidence_recall", "total"],
+  ]) {
+    const labels = { operation, stage, outcome: "success" };
+    assert(
+      readReadStageCount(metricsAfterRecall, labels) > readReadStageCount(metricsBeforeRecall, labels),
+      `${operation}/${stage} read metrics did not increase after production Recall`,
+    );
+  }
+  assert(!metricsAfterRecall.includes(sharedNeedle), "Prometheus exposition contained Recall query text");
   assert((recall.results ?? []).some((item) => item.context?.includes(sharedNeedle)), "team-shared recall positive control did not return the seeded evidence");
   for (const item of recall.results ?? []) assert(item.space_kind === "team_shared", `team-shared result lacked its space label: ${JSON.stringify(item)}`);
   const privateRecall = await waitForRecall(sharedNeedle, sharedNeedle, privateRead.apiKey);
@@ -79,6 +94,24 @@ console.log(JSON.stringify({ status: "ok", scenario, immutable_bindings: true, l
 async function assertReadOnlyCannotWrite(key) {
   const result = await mcpCall("remember", rememberInput("read-only must not write", "read-only", "mentions", "write"), key, { allowStatus: true });
   assert(result.result?.isError === true || result.error, "read-only credential wrote memory");
+}
+
+async function readPrometheusMetrics() {
+  const response = await fetch(`${controlURL}/metrics`, { headers: { Authorization: `Bearer ${telemetryToken}` } });
+  assert(response.status === 200, `authenticated Prometheus scrape returned ${response.status}`);
+  return response.text();
+}
+
+function readReadStageCount(body, expected) {
+  for (const line of body.split("\n")) {
+    if (!line.startsWith("densemem_read_stage_duration_seconds_count{")) continue;
+    const labelsText = line.slice(line.indexOf("{") + 1, line.indexOf("}"));
+    const labels = Object.fromEntries([...labelsText.matchAll(/([a-z_]+)="([^"]*)"/g)].map((match) => [match[1], match[2]]));
+    if (Object.entries(expected).every(([key, value]) => labels[key] === value)) {
+      return Number(line.slice(line.indexOf("}") + 1).trim());
+    }
+  }
+  return 0;
 }
 
 async function createTeam(name) {

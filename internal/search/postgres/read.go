@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 )
 
@@ -42,7 +43,23 @@ func loadSearchPhysicalIndexState(ctx context.Context, db *gorm.DB, indexName st
 	return state, nil
 }
 
-func (r *Store) GetActiveSearchContract(ctx context.Context) (*searchcontract.ActiveSearchContract, error) {
+func (r *Store) GetActiveSearchContract(ctx context.Context) (result *searchcontract.ActiveSearchContract, err error) {
+	ctx, total := observability.StartReadStage(ctx, observability.ReadOperationSearchContract, observability.ReadStageTotal)
+	defer func() {
+		items := 0
+		if result != nil {
+			items = 1
+		}
+		total.Finish(err, items)
+	}()
+	ctx, contractStage := observability.StartReadStage(ctx, observability.ReadOperationSearchContract, observability.ReadStageContract)
+	defer func() {
+		items := 0
+		if result != nil {
+			items = 1
+		}
+		contractStage.Finish(err, items)
+	}()
 	db, err := r.database()
 	if err != nil {
 		return nil, err
@@ -109,7 +126,23 @@ func (r *Store) GetActiveSearchContract(ctx context.Context) (*searchcontract.Ac
 	return &contract, nil
 }
 
-func (r *Store) CheckSearchReadiness(ctx context.Context) (*searchcontract.SearchReadiness, error) {
+func (r *Store) CheckSearchReadiness(ctx context.Context) (readiness *searchcontract.SearchReadiness, err error) {
+	ctx, total := observability.StartReadStage(ctx, observability.ReadOperationSearchReadiness, observability.ReadStageTotal)
+	defer func() {
+		items := 0
+		if readiness != nil {
+			items = 1
+		}
+		total.Finish(err, items)
+	}()
+	ctx, readinessStage := observability.StartReadStage(ctx, observability.ReadOperationSearchReadiness, observability.ReadStageReadiness)
+	defer func() {
+		items := 0
+		if readiness != nil {
+			items = 1
+		}
+		readinessStage.Finish(err, items)
+	}()
 	contract, err := r.GetActiveSearchContract(ctx)
 	if err != nil {
 		return nil, err
@@ -118,7 +151,7 @@ func (r *Store) CheckSearchReadiness(ctx context.Context) (*searchcontract.Searc
 	if err != nil {
 		return nil, err
 	}
-	readiness := &searchcontract.SearchReadiness{Ready: true, Contract: contract}
+	readiness = &searchcontract.SearchReadiness{Ready: true, Contract: contract}
 	var vectorPresent bool
 	if err := db.WithContext(ctx).Raw(`
 		SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')
@@ -235,13 +268,21 @@ func (r *Store) relationshipProjectionTextIncomplete(ctx context.Context, contra
 	return incomplete, nil
 }
 
-func (r *Store) SearchFullText(ctx context.Context, input searchcontract.FullTextSearchInput) ([]searchcontract.SearchHit, error) {
+func (r *Store) SearchFullText(ctx context.Context, input searchcontract.FullTextSearchInput) (hits []searchcontract.SearchHit, err error) {
+	ctx, total := observability.StartReadStage(ctx, observability.ReadOperationFullTextSearch, observability.ReadStageTotal)
+	defer func() {
+		total.Finish(err, len(hits))
+	}()
 	input = normalizeFullTextSearchInput(input)
 	if err := validateFullTextSearchInput(input); err != nil {
 		return nil, err
 	}
-	hits := []searchcontract.SearchHit{}
-	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+	hits = []searchcontract.SearchHit{}
+	queryCtx, fullTextStage := observability.StartReadStage(ctx, observability.ReadOperationFullTextSearch, observability.ReadStageFullText)
+	defer func() {
+		fullTextStage.Finish(err, len(hits))
+	}()
+	err = r.withTeamTx(queryCtx, input.TeamID, func(tx *gorm.DB) error {
 		sourceFilter := ""
 		args := []any{input.TeamID, input.Query, input.TeamID, input.Query}
 		if input.SourceKind != "" {
@@ -249,7 +290,7 @@ func (r *Store) SearchFullText(ctx context.Context, input searchcontract.FullTex
 			args = append(args, input.SourceKind)
 		}
 		args = append(args, input.Limit)
-		rows, err := tx.WithContext(ctx).Raw(`
+		rows, err := tx.WithContext(queryCtx).Raw(`
 			WITH `+recallRelationshipGenerationScopeSQL+`
 			SELECT document.team_id::text, document.search_document_id::text, document.source_kind, document.source_id::text,
 			       document.source_version, document.document_version, document.embedding_contract_id::text,
@@ -300,7 +341,11 @@ func (r *Store) SearchFullText(ctx context.Context, input searchcontract.FullTex
 	return hits, nil
 }
 
-func (r *Store) SearchExactVector(ctx context.Context, input searchcontract.ExactVectorSearchInput) ([]searchcontract.SearchHit, error) {
+func (r *Store) SearchExactVector(ctx context.Context, input searchcontract.ExactVectorSearchInput) (hits []searchcontract.SearchHit, err error) {
+	ctx, total := observability.StartReadStage(ctx, observability.ReadOperationVectorSearch, observability.ReadStageTotal)
+	defer func() {
+		total.Finish(err, len(hits))
+	}()
 	input = normalizeExactVectorSearchInput(input)
 	if err := validateExactVectorSearchInput(input); err != nil {
 		return nil, err
@@ -322,8 +367,12 @@ func (r *Store) SearchExactVector(ctx context.Context, input searchcontract.Exac
 	if err != nil {
 		return nil, err
 	}
-	hits := []searchcontract.SearchHit{}
-	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+	hits = []searchcontract.SearchHit{}
+	queryCtx, vectorStage := observability.StartReadStage(ctx, observability.ReadOperationVectorSearch, observability.ReadStageVector)
+	defer func() {
+		vectorStage.Finish(err, len(hits))
+	}()
+	err = r.withTeamTx(queryCtx, input.TeamID, func(tx *gorm.DB) error {
 		sourceFilter := ""
 		countArgs := []any{input.TeamID, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions}
 		args := []any{input.TeamID, vectorLiteral, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions}
@@ -334,7 +383,7 @@ func (r *Store) SearchExactVector(ctx context.Context, input searchcontract.Exac
 		}
 		countArgs = append(countArgs, contract.ExactMaxRows+1)
 		var candidateCount int64
-		if err := tx.WithContext(ctx).Raw(`
+		if err := tx.WithContext(queryCtx).Raw(`
 			WITH `+recallRelationshipGenerationScopeSQL+`
 			SELECT count(*)
 			FROM (
@@ -372,7 +421,7 @@ func (r *Store) SearchExactVector(ctx context.Context, input searchcontract.Exac
 			return fmt.Errorf("%w: exact vector candidates %d exceed contract max %d", ErrSearchContractMismatch, candidateCount, contract.ExactMaxRows)
 		}
 		args = append(args, vectorLiteral, input.Limit)
-		rows, err := tx.WithContext(ctx).Raw(`
+		rows, err := tx.WithContext(queryCtx).Raw(`
 				WITH `+recallRelationshipGenerationScopeSQL+`
 				SELECT document.team_id::text, document.search_document_id::text, document.source_kind, document.source_id::text,
 				       document.source_version, document.document_version, document.embedding_contract_id::text,

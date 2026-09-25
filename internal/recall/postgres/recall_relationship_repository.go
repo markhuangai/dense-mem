@@ -9,9 +9,18 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
-func (r *Store) RecallRelationships(ctx context.Context, input RecallRelationshipsInput) (*RecallRelationshipsResult, error) {
+func (r *Store) RecallRelationships(ctx context.Context, input RecallRelationshipsInput) (result *RecallRelationshipsResult, err error) {
+	ctx, total := observability.StartReadStage(ctx, observability.ReadOperationRelationshipRecall, observability.ReadStageTotal)
+	defer func() {
+		items := 0
+		if result != nil {
+			items = len(result.Results)
+		}
+		total.Finish(err, items)
+	}()
 	input = normalizeRecallRelationshipsInput(input)
 	if err := validateRecallRelationshipsInput(input); err != nil {
 		return nil, err
@@ -31,19 +40,25 @@ func (r *Store) RecallRelationships(ctx context.Context, input RecallRelationshi
 			return err
 		}
 		if input.Query != "" {
-			textHits, err = searchRecallRelationshipFullText(ctx, tx, input, contract, overfetch)
+			stageCtx, stage := observability.StartReadStage(ctx, observability.ReadOperationRelationshipRecall, observability.ReadStageFullText)
+			textHits, err = searchRecallRelationshipFullText(stageCtx, tx, input, contract, overfetch)
+			stage.Finish(err, len(textHits))
 			if err != nil {
 				return err
 			}
 		}
 		if len(input.QueryEmbedding) > 0 && vectorState == string(domain.SearchProjectionCurrent) {
-			vectorHits, err = searchRecallRelationshipVector(ctx, tx, input, contract, overfetch)
+			vectorCtx, stage := observability.StartReadStage(ctx, observability.ReadOperationRelationshipRecall, observability.ReadStageVector)
+			vectorHits, err = searchRecallRelationshipVector(vectorCtx, tx, input, contract, overfetch)
+			stage.Finish(err, len(vectorHits))
 			if err != nil {
 				return err
 			}
 		}
 		if len(input.ExpandFromEntityIDs) > 0 {
-			expansionHits, err = searchRecallRelationshipEntityExpansion(ctx, tx, input, contract, overfetch)
+			stageCtx, stage := observability.StartReadStage(ctx, observability.ReadOperationRelationshipRecall, observability.ReadStageExpansion)
+			expansionHits, err = searchRecallRelationshipEntityExpansion(stageCtx, tx, input, contract, overfetch)
+			stage.Finish(err, len(expansionHits))
 			if err != nil {
 				return err
 			}
@@ -54,10 +69,12 @@ func (r *Store) RecallRelationships(ctx context.Context, input RecallRelationshi
 		return nil, fmt.Errorf("recall: search relationships: %w", err)
 	}
 	knownRelationships := recallStringSet(input.KnownRelationshipIDs)
+	_, fusion := observability.StartReadStage(ctx, observability.ReadOperationRelationshipRecall, observability.ReadStageFusion)
 	addRecallRelationshipBranch(acc, textHits, knownRelationships, 1)
 	addRecallRelationshipBranch(acc, vectorHits, knownRelationships, 1)
 	addRecallRelationshipBranch(acc, expansionHits, knownRelationships, 0.5)
 	candidates := sortedRecallRelationshipCandidates(acc)
+	fusion.Finish(nil, len(candidates))
 	if len(candidates) == 0 {
 		return &RecallRelationshipsResult{
 			TeamID:        input.TeamID,
@@ -71,14 +88,17 @@ func (r *Store) RecallRelationships(ctx context.Context, input RecallRelationshi
 		candidateIDs = append(candidateIDs, candidate.RelationshipID)
 	}
 	hydrated := map[string]RecallRelationshipHit{}
-	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+	hydrationCtx, hydration := observability.StartReadStage(ctx, observability.ReadOperationRelationshipRecall, observability.ReadStageHydration)
+	err = r.withTeamTx(hydrationCtx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
-		hydrated, err = hydrateRecallRelationships(ctx, tx, input, contract, candidateIDs)
+		hydrated, err = hydrateRecallRelationships(hydrationCtx, tx, input, contract, candidateIDs)
 		return err
 	})
+	hydration.Finish(err, len(hydrated))
 	if err != nil {
 		return nil, fmt.Errorf("recall: hydrate relationships: %w", err)
 	}
+	_, selection := observability.StartReadStage(ctx, observability.ReadOperationRelationshipRecall, observability.ReadStageSelection)
 	results := make([]RecallRelationshipHit, 0)
 	seenGroups := map[string]struct{}{}
 	searchState := vectorState
@@ -116,6 +136,7 @@ func (r *Store) RecallRelationships(ctx context.Context, input RecallRelationshi
 	for i := range results {
 		results[i].Rank = i + 1
 	}
+	selection.Finish(nil, len(results))
 	return &RecallRelationshipsResult{
 		TeamID:        input.TeamID,
 		SearchState:   searchState,
@@ -953,47 +974,4 @@ func hydrateRecallRelationshipEquivalents(ctx context.Context, tx *gorm.DB, inpu
 		hits[relationshipID] = hit
 	}
 	return rows.Err()
-}
-
-func addRecallRelationshipBranch(acc map[string]*relationshipRecallCandidate, hits []SearchHit, knownRelationships map[string]struct{}, weight float64) {
-	for i, hit := range hits {
-		if hit.SourceKind != "relationship" || hit.SourceID == "" {
-			continue
-		}
-		if _, known := knownRelationships[hit.SourceID]; known {
-			continue
-		}
-		branchRank := i + 1
-		candidate := acc[hit.SourceID]
-		if candidate == nil {
-			candidate = &relationshipRecallCandidate{
-				RelationshipID: hit.SourceID,
-				BestBranchRank: branchRank,
-				SearchState:    hit.SearchState,
-			}
-			acc[hit.SourceID] = candidate
-		}
-		candidate.Score += weight / (recallRRFConstant + float64(branchRank))
-		if branchRank < candidate.BestBranchRank {
-			candidate.BestBranchRank = branchRank
-		}
-		candidate.SearchState = domain.CombineSearchProjectionStates(candidate.SearchState, hit.SearchState)
-	}
-}
-
-func sortedRecallRelationshipCandidates(acc map[string]*relationshipRecallCandidate) []relationshipRecallCandidate {
-	out := make([]relationshipRecallCandidate, 0, len(acc))
-	for _, candidate := range acc {
-		out = append(out, *candidate)
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Score != out[j].Score {
-			return out[i].Score > out[j].Score
-		}
-		if out[i].BestBranchRank != out[j].BestBranchRank {
-			return out[i].BestBranchRank < out[j].BestBranchRank
-		}
-		return out[i].RelationshipID < out[j].RelationshipID
-	})
-	return out
 }

@@ -213,6 +213,34 @@
       "source": "internal/recall/postgres/recall_relationship_generation_integration_test.go"
     },
     {
+      "id": "repository/TestRecallReadBenchmarkCountsTransactionStatements",
+      "package": "./internal/recall/postgres",
+      "run": "^TestRecallReadBenchmarkCountsTransactionStatements$",
+      "phase": "precheck",
+      "source": "internal/recall/postgres/read_performance_integration_test.go"
+    },
+    {
+      "id": "repository/TestRecallReadPerformanceMetricsCountMultiSpaceStagesOnce",
+      "package": "./internal/recall/postgres",
+      "run": "^TestRecallReadPerformanceMetricsCountMultiSpaceStagesOnce$",
+      "phase": "precheck",
+      "source": "internal/recall/postgres/read_performance_integration_test.go"
+    },
+    {
+      "id": "repository/TestRecallReadPerformanceMetricsMatchDisabledResults",
+      "package": "./internal/recall/postgres",
+      "run": "^TestRecallReadPerformanceMetricsMatchDisabledResults$",
+      "phase": "precheck",
+      "source": "internal/recall/postgres/read_performance_integration_test.go"
+    },
+    {
+      "id": "repository/TestRecallReadPerformanceMetricsRemainRequestScoped",
+      "package": "./internal/recall/postgres",
+      "run": "^TestRecallReadPerformanceMetricsRemainRequestScoped$",
+      "phase": "precheck",
+      "source": "internal/recall/postgres/read_performance_integration_test.go"
+    },
+    {
       "id": "repository/TestRecallRelationshipsUsesCurrentGenerationVectors",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallRelationshipsUsesCurrentGenerationVectors$",

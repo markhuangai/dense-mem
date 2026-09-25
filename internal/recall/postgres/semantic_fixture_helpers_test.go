@@ -13,7 +13,7 @@ import (
 
 type CreateIngestResult = knowledgepostgres.EvidenceIngestResult
 
-func createSemanticEntity(t *testing.T, ctx context.Context, repo *knowledgepostgres.Store, teamID, ownerID, kind, name string) *knowledgepostgres.EntityRecord {
+func createSemanticEntity(t testing.TB, ctx context.Context, repo *knowledgepostgres.Store, teamID, ownerID, kind, name string) *knowledgepostgres.EntityRecord {
 	t.Helper()
 	entity, err := repo.CreateEntity(ctx, knowledgepostgres.CreateEntityInput{TeamID: teamID, OwnerProfileID: ownerID, EntityKind: kind, CanonicalName: name})
 	require.NoError(t, err)
@@ -32,7 +32,7 @@ func createTestIngest(ctx context.Context, repo *knowledgepostgres.Store, input 
 	return repo.CreateIngestForTest(ctx, input)
 }
 
-func applySemanticDecision(t *testing.T, ctx context.Context, repo *knowledgepostgres.Store, input knowledgepostgres.ApplyRelationshipDecisionInput) *knowledgepostgres.RelationshipDecisionResult {
+func applySemanticDecision(t testing.TB, ctx context.Context, repo *knowledgepostgres.Store, input knowledgepostgres.ApplyRelationshipDecisionInput) *knowledgepostgres.RelationshipDecisionResult {
 	t.Helper()
 	result, err := repo.ApplyRelationshipDecision(ctx, input)
 	require.NoError(t, err)

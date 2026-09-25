@@ -121,6 +121,7 @@ type RecallDegradationResult = recallcontract.RecallDegradationResult
 type RecallSearchStates = recallcontract.RecallSearchStates
 
 func (s *recallService) Recall(ctx context.Context, req RecallRequest) (*RecallResult, error) {
+	ctx = observability.WithReadPerformance(ctx, s.metrics)
 	return s.recallWithExecution(ctx, recallExecutionRequest{RecallRequest: req})
 }
 
