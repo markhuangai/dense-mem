@@ -244,9 +244,9 @@ NODE
 
   if [[ -n "$helpers" ]]; then
     DENSE_MEM_CI_COMPOSE_OVERLAY_FILE="${DENSE_MEM_CI_HELPER_DIR}/compose.yml"
-    node - "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE" "$helpers" "$oauth_token" "$harness_image" "$provider_dimensions" "$CONFLICT_PROVIDER_EMBEDDING_MODEL" "$scenario" "$source_dir" "$project" <<'NODE'
+    node - "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE" "$helpers" "$oauth_token" "$harness_image" "$provider_dimensions" "$CONFLICT_PROVIDER_EMBEDDING_MODEL" "$scenario" "$project" <<'NODE'
 const fs = require("node:fs");
-const [destination, helpers, oauthToken, harnessImage, providerDimensions, conflictProviderEmbeddingModel, scenario, sourceDir, project] = process.argv.slice(2);
+const [destination, helpers, oauthToken, harnessImage, providerDimensions, conflictProviderEmbeddingModel, scenario, project] = process.argv.slice(2);
 const has = (name) => new Set(helpers.split(",").filter(Boolean)).has(name);
 const conflictProviderDimensions = has("synchronous_write") ? (providerDimensions || "1536") : "1536";
 const deterministicEmbeddingProvider = scenario === "community" || has("synchronous_write") || scenario === "full";
@@ -350,8 +350,8 @@ if (scenario === "full") {
     "      GF_AUTH_ANONYMOUS_ENABLED: \"false\"",
     "      GF_USERS_ALLOW_SIGN_UP: \"false\"",
     "    volumes:",
-    `      - ${JSON.stringify(`${sourceDir}/examples/grafana/provisioning:/etc/grafana/provisioning:ro`)}`,
-    `      - ${JSON.stringify(`${sourceDir}/examples/grafana/dashboards:/opt/dense-mem/grafana/dashboards:ro`)}`,
+    "      - grafana-provisioning:/etc/grafana/provisioning:ro",
+    "      - grafana-dashboards:/opt/dense-mem/grafana/dashboards:ro",
     "      - grafana-data:/var/lib/grafana",
     "    secrets: [grafana-admin-password]",
     "    networks: [ci]",
@@ -383,6 +383,12 @@ for (const [name, serviceLines] of helperServices) lines.push(`  ${name}:`, ...s
 if (scenario === "full") {
   lines.push(
     "volumes:",
+    "  grafana-provisioning:",
+    `    name: ${project}_grafana-provisioning`,
+    "    external: true",
+    "  grafana-dashboards:",
+    `    name: ${project}_grafana-dashboards`,
+    "    external: true",
     "  grafana-data:",
     `    name: ${project}_grafana-data`,
     "    labels:",
@@ -445,7 +451,7 @@ start_stack_helpers() {
 }
 
 seed_stack_inputs() {
-  local project="$1" run_id="$2" attempt="$3" phase="$4" scenario="$5"
+  local project="$1" run_id="$2" attempt="$3" phase="$4" scenario="$5" source_dir="$6"
   local created_at
   created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   local -a labels=(
@@ -462,14 +468,33 @@ seed_stack_inputs() {
   docker volume create "${labels[@]}" "$DENSE_MEM_CI_PROMETHEUS_CONFIG_VOLUME_NAME" >/dev/null
   docker volume create "${labels[@]}" "$DENSE_MEM_CI_TELEMETRY_TOKEN_VOLUME_NAME" >/dev/null
 
+  local -a mounts=(
+    --mount "type=volume,source=${DENSE_MEM_CI_PROMETHEUS_CONFIG_VOLUME_NAME},target=/config"
+    --mount "type=volume,source=${DENSE_MEM_CI_TELEMETRY_TOKEN_VOLUME_NAME},target=/token"
+  )
+  if [[ "$scenario" == "full" ]]; then
+    local provisioning_volume="${project}_grafana-provisioning"
+    local dashboards_volume="${project}_grafana-dashboards"
+    docker volume create "${labels[@]}" "$provisioning_volume" >/dev/null
+    docker volume create "${labels[@]}" "$dashboards_volume" >/dev/null
+    mounts+=(
+      --mount "type=volume,source=${provisioning_volume},target=/grafana-provisioning"
+      --mount "type=volume,source=${dashboards_volume},target=/grafana-dashboards"
+    )
+  fi
+
   local seed_container="${project}-inputs"
   seed_container="$(docker run -d --name "$seed_container" "${labels[@]}" \
-    --mount "type=volume,source=${DENSE_MEM_CI_PROMETHEUS_CONFIG_VOLUME_NAME},target=/config" \
-    --mount "type=volume,source=${DENSE_MEM_CI_TELEMETRY_TOKEN_VOLUME_NAME},target=/token" \
+    "${mounts[@]}" \
     alpine:3.24 sh -ec 'sleep infinity')"
   docker cp "$PROMETHEUS_FILE" "$seed_container:/config/prometheus.yml" >/dev/null
   docker cp "$TELEMETRY_TOKEN_FILE" "$seed_container:/token/telemetry-scrape-token" >/dev/null
   docker exec "$seed_container" chmod 0444 /config/prometheus.yml /token/telemetry-scrape-token >/dev/null
+  if [[ "$scenario" == "full" ]]; then
+    docker cp "${source_dir}/examples/grafana/provisioning/." "$seed_container:/grafana-provisioning/" >/dev/null
+    docker cp "${source_dir}/examples/grafana/dashboards/." "$seed_container:/grafana-dashboards/" >/dev/null
+    docker exec "$seed_container" chmod -R a+rX /grafana-provisioning /grafana-dashboards >/dev/null
+  fi
   docker rm -f "$seed_container" >/dev/null
 }
 

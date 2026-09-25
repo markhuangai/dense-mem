@@ -658,6 +658,9 @@ test("shared PostgreSQL provisioning keeps runtime identity least-privileged", (
 
 test("Compose stack has no host bindings and carries only project-scoped inputs", () => {
   assert.doesNotMatch(compose, /^\s+ports:/m);
+  assert.doesNotMatch(stack, /\$\{sourceDir\}\/examples\/grafana/);
+  assert.match(stack, /grafana-provisioning:\/etc\/grafana\/provisioning:ro/);
+  assert.match(stack, /grafana-dashboards:\/opt\/dense-mem\/grafana\/dashboards:ro/);
   assert.match(compose, /POSTGRES_USER: \$\{DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER:/);
   assert.match(compose, /POSTGRES_PASSWORD: \$\{DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD:/);
   assert.match(compose, /env_file:\n\s+- \$\{DENSE_MEM_CI_ENV_FILE/);
