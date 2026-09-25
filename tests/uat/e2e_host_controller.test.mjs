@@ -698,6 +698,36 @@ test("Grafana provisioning leaves organization and datasource IDs to the install
   }
 });
 
+test("Grafana panels fit the grid without hiding their series labels", async () => {
+  for (const name of ["dense-mem-service", "dense-mem-ai-recall", "dense-mem-workflows"]) {
+    const dashboard = JSON.parse(await readFile(join(root, `examples/grafana/dashboards/${name}.json`), "utf8"));
+    for (const [index, panel] of dashboard.panels.entries()) {
+      const box = panel.gridPos;
+      assert.ok(box.x >= 0 && box.y >= 0 && box.w > 0 && box.h > 0 && box.x + box.w <= 24, `${name}: ${panel.title} is outside the grid`);
+      assert.ok(panel.targets.every((target) => target.legendFormat === undefined), `${name}: ${panel.title} hides series labels`);
+      for (const other of dashboard.panels.slice(index + 1)) {
+        const next = other.gridPos;
+        const overlaps = box.x < next.x + next.w && next.x < box.x + box.w && box.y < next.y + next.h && next.y < box.y + box.h;
+        assert.equal(overlaps, false, `${name}: ${panel.title} overlaps ${other.title}`);
+      }
+    }
+  }
+});
+
+test("Grafana component cost panels use only their own request activity", async () => {
+  const dashboard = JSON.parse(await readFile(join(root, "examples/grafana/dashboards/dense-mem-ai-recall.json"), "utf8"));
+  const expression = (title) => dashboard.panels.find((panel) => panel.title === title)?.targets[0].expr;
+  const aggregate = expression("AI cost");
+  const verifier = expression("Verifier cost");
+  const embedding = expression("Embedding cost");
+  assert.match(aggregate, /densemem_verifier_requests_total/);
+  assert.match(aggregate, /densemem_embedding_requests_total/);
+  assert.match(verifier, /densemem_verifier_requests_total/);
+  assert.doesNotMatch(verifier, /densemem_embedding_requests_total/);
+  assert.match(embedding, /densemem_embedding_requests_total/);
+  assert.doesNotMatch(embedding, /densemem_verifier_requests_total/);
+});
+
 test("community scenarios use the verifier fixture for embeddings without changing the embedding contract", () => {
   const communityStart = stack.indexOf('if (scenario === "community")');
   const communityEnd = stack.indexOf('if (has("conflict_provider"))', communityStart);

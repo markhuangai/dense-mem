@@ -91,7 +91,8 @@ function cost(component = "") {
   const unpriced = `((${sparseIncrease("densemem_ai_operation_unpriced_total", componentLabels)}) or vector(0))`;
   const verifier = `((${sparseIncrease("densemem_verifier_requests_total")}) or vector(0))`;
   const embedding = `((${sparseIncrease("densemem_embedding_requests_total")}) or vector(0))`;
-  return `((${costValue} unless (${unpriced} > 0)) or (vector(0) unless (((${verifier}) + (${embedding}) + (${unpriced})) > 0))) and on() (${up})`;
+  const activity = component === "verifier" ? verifier : component === "embedding" ? embedding : `(${verifier} + ${embedding})`;
+  return `((${costValue} unless (${unpriced} > 0)) or (vector(0) unless (((${activity}) + (${unpriced})) > 0))) and on() (${up})`;
 }
 
 function counterBy(metric, grouping, extra = "", window = "$window") {
@@ -244,24 +245,31 @@ const dashboards = [
   },
 ];
 
-function gridPos(index, type) {
+function gridPos(type, layout) {
   const width = type === timeseries ? 12 : 8;
-  const columns = 24 / width;
-  const row = Math.floor(index / columns);
-  return { h: type === timeseries ? 8 : 5, w: width, x: (index % columns) * width, y: row * (type === timeseries ? 8 : 5) };
+  const height = type === timeseries ? 8 : 5;
+  if (layout.x + width > 24) {
+    layout.y += layout.rowHeight;
+    layout.x = 0;
+    layout.rowHeight = 0;
+  }
+  const position = { h: height, w: width, x: layout.x, y: layout.y };
+  layout.x += width;
+  layout.rowHeight = Math.max(layout.rowHeight, height);
+  return position;
 }
 
-function buildPanel(value, index) {
+function buildPanel(value, layout) {
   const panel = {
     datasource: { type: "prometheus", uid: "$datasource" },
     description: value.parity ? `Parity: ${value.parity}. ${value.description}`.trim() : value.description,
     fieldConfig: { defaults: { unit: value.unit, color: { mode: "palette-classic" }, custom: { drawStyle: "line", lineWidth: 2, fillOpacity: 8, spanNulls: false } }, overrides: [] },
-    gridPos: gridPos(index, value.type),
+    gridPos: gridPos(value.type, layout),
     id: value.id,
     options: value.type === stat
       ? { colorMode: "value", graphMode: "area", justifyMode: "auto", orientation: "auto", reduceOptions: { calcs: ["lastNotNull"], fields: "", values: false }, textMode: "auto" }
       : { legend: { calcs: ["lastNotNull", "max"], displayMode: "table", placement: "bottom" }, tooltip: { mode: "multi", sort: "desc" } },
-    targets: [{ datasource: { type: "prometheus", uid: "$datasource" }, expr: value.expr, instant: value.type === stat, range: value.type === timeseries, refId: "A", legendFormat: "{{status}} {{outcome}} {{lane}} {{operation}}" }],
+    targets: [{ datasource: { type: "prometheus", uid: "$datasource" }, expr: value.expr, instant: value.type === stat, range: value.type === timeseries, refId: "A" }],
     title: value.title,
     type: value.type,
   };
@@ -270,7 +278,8 @@ function buildPanel(value, index) {
 }
 
 function buildDashboard(dashboard) {
-  const panels = dashboard.panels.map(buildPanel);
+  const layout = { x: 0, y: 0, rowHeight: 0 };
+  const panels = dashboard.panels.map((value) => buildPanel(value, layout));
   return {
     __inputs: [],
     __requires: [
