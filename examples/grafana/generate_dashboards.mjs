@@ -71,7 +71,8 @@ function rate(metric, extra = "", zero = false, grouping = "") {
 function histogramAverage(metric, multiplier = 1, window = "$window", grouping = "") {
   const sum = sparseIncrease(`${metric}_sum`, "", window, grouping);
   const count = sparseIncrease(`${metric}_count`, "", window, grouping);
-  return `${multiplier} * (${sum} / ${count}) and on() (${up})`;
+  const activeCount = grouping ? `(${count} > 0)` : count;
+  return `${multiplier} * (${sum} / ${activeCount}) and on() (${up})`;
 }
 
 function quantile(metric, value, multiplier = 1, window = "$window") {

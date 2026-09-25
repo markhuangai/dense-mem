@@ -474,6 +474,20 @@ async function validateGrafanaDashboardParity() {
     assert(values.every((value) => Number.isFinite(value) && value > 0), `Grafana grouped panel ${title} returned a zero-only series`);
   }
 
+  for (const title of ["MCP transport duration", "Logical operation duration", "Remember phase duration", "Dream cycle duration", "Dream provider duration"]) {
+    const panel = panels.find((item) => item.title === title);
+    assert(panel, `Grafana omitted grouped duration panel ${title}`);
+    const result = await query(panel.targets[0].expr.replaceAll("$job", "dense-mem"), { rateInterval: snapshot.window.key });
+    const queryResult = result.results?.A;
+    assert(queryResult && !queryResult.error, `Grafana grouped duration query failed for ${title}: ${queryResult?.error ?? "missing result"}`);
+    const series = (queryResult.frames ?? []).flatMap((frame) =>
+      (frame.schema?.fields ?? []).flatMap((field, index) => field.type === "number" ? [frame.data?.values?.[index] ?? []] : [])
+    );
+    if (title === "MCP transport duration") assert(series.length > 0, "Grafana lost active MCP transport duration");
+    assert(series.every((values) => values.some((value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)))),
+      `Grafana grouped duration panel ${title} returned an inactive series`);
+  }
+
   const zeroErrors = (snapshot.windowed_cards ?? []).find((item) => item.id === "embedding_errors");
   assert(zeroErrors?.status === "ready" && Number(zeroErrors.value) === 0, "the empty embedding-error counter was not a valid zero with parent activity");
   const feedbackPanel = parityPanels.get("card/llm_recall_used_rate");
