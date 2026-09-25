@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 func (r *Store) PlanRelationshipConflictResolution(
@@ -463,7 +464,7 @@ func countConflictResolutionDocumentsForBound(
 			       document.embedding_dimensions,
 			       document.projection_format_version,
 			       document.projection_generation_id,
-			       COALESCE(document.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') AS document_foreground_generation_id,
+			       COALESCE(document.metadata->>'`+knowledgecontract.RelationshipForegroundRecallGenerationMetadataKey+`', '') AS document_foreground_generation_id,
 			       document.source_version,
 			       document.space_id AS document_space_id,
 			       document.space_generation AS document_space_generation
@@ -775,7 +776,7 @@ func conflictResolutionEmbeddingRequired(
 		SELECT search_state, document_hash, embedding_dimensions, projection_format_version,
 		       projection_generation_id::text, space_id::text, space_generation,
 		       source_version, embedding IS NOT NULL,
-		       COALESCE(metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '')
+		       COALESCE(metadata->>'`+knowledgecontract.RelationshipForegroundRecallGenerationMetadataKey+`', '')
 		FROM search_documents
 		WHERE team_id = ?::uuid
 		  AND source_kind = 'relationship'

@@ -448,3 +448,36 @@ begin and commit calls; those are reported separately as transaction counts.
 Preserve raw benchmark output under the ignored
 `tests/eval/runs/issue-456` directory; commit only the compact baseline summary
 with the measured source commit.
+
+## Issue #457 relationship projection query comparison
+
+After the plan audit passes, compare the exact base commit and candidate on the
+same host without concurrent test load. Keep the base production files at the
+recorded commit. Copy only these candidate test files into the detached base
+checkout: `relationship_projection_query_contract_test.go`,
+`relationship_projection_selection_integration_test.go`, and
+`recall_read_performance_benchmark_test.go` from `internal/recall/postgres/`.
+Record their digests as the test-only base overlay.
+
+In each checkout, run `TestRelationshipProjectionQueryContract` with
+`DENSE_MEM_PROJECTION_QUERY_REPORT` set to an absolute path under that checkout's
+ignored `tests/eval/runs/issue-457/`. It records the executed SQL, bound
+arguments, and decoded results for Search readiness/full-text/exact-vector and
+Recall readiness/full-text/exact-vector/ANN/expansion/hydration. Run the real
+PostgreSQL `TestRelationshipProjectionANNAndAllTeamReadinessKeepDistinctGenerationPolicies`
+with `DENSE_MEM_REPOSITORY_TESTCONTAINERS=1`, `DATABASE_URL` unset, and
+`DENSE_MEM_PROJECTION_PLAN_REPORT` set under the same ignored directory. Compare
+the emitted `EXPLAIN (ANALYZE, BUFFERS)` plan node types, scans, joins, index
+choices, and relevant row/buffer counts; record any plan drift explicitly.
+
+Run `BenchmarkRecallReadPipeline` in both checkouts with 20 warmups, 200
+measured iterations, five repetitions, `-benchmem`, and identical test-only
+overlay. Pass the raw logs, base SHA, and two query reports to
+`compare_recall_read_performance.py` using `--baseline-input`,
+`--baseline-source-sha`, `--baseline-query-report`, and
+`--candidate-query-report`. Its existing telemetry-mode gate remains active.
+The additional source gate requires identical SQL, bound arguments, decoded
+results, statement counts, and transaction counts; each workload and mode must
+keep median p50 and p95 increases within the greater of 5% or 1 ms. Commit a
+compact comparison with the measured source fingerprints and keep raw logs,
+query reports, plans, and comparison output ignored.

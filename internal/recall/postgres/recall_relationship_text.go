@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"gorm.io/gorm"
+
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 func searchRecallRelationshipFullText(
@@ -16,7 +18,7 @@ func searchRecallRelationshipFullText(
 	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
 	spaceClause := recallSpacePredicate("document.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	rows, err := tx.WithContext(ctx).Raw(`
-		WITH `+recallRelationshipGenerationScopeSQL+`
+		WITH `+storagepostgres.RecallRelationshipGenerationScopeSQL+`
 		SELECT document.team_id::text, document.search_document_id::text, document.source_kind,
 		       document.source_id::text, document.source_version, document.document_version,
 		       document.embedding_contract_id::text, document.search_state,
@@ -28,7 +30,7 @@ func searchRecallRelationshipFullText(
 		 AND document.source_kind = 'relationship'
 		 AND document.embedding_contract_id = ?::uuid
 		 AND document.projection_format_version = 2
-		 AND `+recallRelationshipGenerationDocumentSQL+`
+		 AND `+storagepostgres.RelationshipGenerationDocumentSQL("document", "generation.projection_generation_id", "generation.projection_generation_id::text")+`
 		 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 		WHERE document.search_tsv @@ plainto_tsquery('simple', ?)
 		  `+spaceClause+`

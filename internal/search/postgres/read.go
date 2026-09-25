@@ -12,6 +12,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 type searchPhysicalIndexState struct {
@@ -247,16 +248,7 @@ func (r *Store) relationshipProjectionTextIncomplete(ctx context.Context, contra
 			            AND document.embedding_dimensions = ?
 			            AND document.projection_format_version = 2
 			            AND document.search_state IN ('pending', 'current', 'failed')
-			            AND (
-			                document.projection_generation_id = generation.projection_generation_id
-			                OR (
-			                    document.projection_generation_id IS NULL
-			                    AND (
-			                        generation.projection_generation_id IS NULL
-			                        OR COALESCE(document.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = generation.projection_generation_id::text
-			                    )
-			                )
-			          )
+			            AND `+storagepostgres.RelationshipGenerationDocumentSQL("document", "generation.projection_generation_id", "generation.projection_generation_id::text")+`
 			)
 			LIMIT 1
 		)
@@ -291,7 +283,7 @@ func (r *Store) SearchFullText(ctx context.Context, input searchcontract.FullTex
 		}
 		args = append(args, input.Limit)
 		rows, err := tx.WithContext(queryCtx).Raw(`
-			WITH `+recallRelationshipGenerationScopeSQL+`
+			WITH `+storagepostgres.RecallRelationshipGenerationScopeSQL+`
 			SELECT document.team_id::text, document.search_document_id::text, document.source_kind, document.source_id::text,
 			       document.source_version, document.document_version, document.embedding_contract_id::text,
 			       document.search_state,
@@ -315,7 +307,7 @@ func (r *Store) SearchFullText(ctx context.Context, input searchcontract.FullTex
 			      document.source_kind <> 'relationship'
 			      OR (
 			          document.projection_format_version = 2
-			          AND `+recallRelationshipGenerationDocumentSQL+`
+			          AND `+storagepostgres.RelationshipGenerationDocumentSQL("document", "generation.projection_generation_id", "generation.projection_generation_id::text")+`
 			      )
 			  )
 			  `+sourceFilter+`
@@ -384,7 +376,7 @@ func (r *Store) SearchExactVector(ctx context.Context, input searchcontract.Exac
 		countArgs = append(countArgs, contract.ExactMaxRows+1)
 		var candidateCount int64
 		if err := tx.WithContext(queryCtx).Raw(`
-			WITH `+recallRelationshipGenerationScopeSQL+`
+			WITH `+storagepostgres.RecallRelationshipGenerationScopeSQL+`
 			SELECT count(*)
 			FROM (
 				SELECT document.search_document_id
@@ -408,7 +400,7 @@ func (r *Store) SearchExactVector(ctx context.Context, input searchcontract.Exac
 				      document.source_kind <> 'relationship'
 					      OR (
 					          document.projection_format_version = 2
-					          AND `+recallRelationshipGenerationDocumentSQL+`
+					          AND `+storagepostgres.RelationshipGenerationDocumentSQL("document", "generation.projection_generation_id", "generation.projection_generation_id::text")+`
 				      )
 				  )
 				  `+sourceFilter+`
@@ -422,7 +414,7 @@ func (r *Store) SearchExactVector(ctx context.Context, input searchcontract.Exac
 		}
 		args = append(args, vectorLiteral, input.Limit)
 		rows, err := tx.WithContext(queryCtx).Raw(`
-				WITH `+recallRelationshipGenerationScopeSQL+`
+				WITH `+storagepostgres.RecallRelationshipGenerationScopeSQL+`
 				SELECT document.team_id::text, document.search_document_id::text, document.source_kind, document.source_id::text,
 				       document.source_version, document.document_version, document.embedding_contract_id::text,
 				       document.search_state,
@@ -448,7 +440,7 @@ func (r *Store) SearchExactVector(ctx context.Context, input searchcontract.Exac
 				      document.source_kind <> 'relationship'
 					      OR (
 					          document.projection_format_version = 2
-					          AND `+recallRelationshipGenerationDocumentSQL+`
+					          AND `+storagepostgres.RelationshipGenerationDocumentSQL("document", "generation.projection_generation_id", "generation.projection_generation_id::text")+`
 				      )
 				  )
 				  `+sourceFilter+`

@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 const conflictResolutionDeletionOnlySourceSummary = "overdue conflict deletion-only derivation"
@@ -405,7 +406,7 @@ func relationshipForegroundSearchMetadata(ctx context.Context, tx *gorm.DB, team
 		return nil, err
 	}
 	return map[string]any{
-		relationshipForegroundRecallGenerationMetadataKey: projectionGenerationID,
+		knowledgecontract.RelationshipForegroundRecallGenerationMetadataKey: projectionGenerationID,
 	}, nil
 }
 

@@ -185,6 +185,13 @@
       "source": "internal/recall/postgres/recall_relationship_generation_integration_test.go"
     },
     {
+      "id": "repository/TestRelationshipProjectionANNAndAllTeamReadinessKeepDistinctGenerationPolicies",
+      "package": "./internal/recall/postgres",
+      "run": "^TestRelationshipProjectionANNAndAllTeamReadinessKeepDistinctGenerationPolicies$",
+      "phase": "precheck",
+      "source": "internal/recall/postgres/relationship_projection_selection_integration_test.go"
+    },
+    {
       "id": "repository/TestRecallRelationshipsOmitsVectorWhenOnlyStaleContractDocumentsAreCurrent",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallRelationshipsOmitsVectorWhenOnlyStaleContractDocumentsAreCurrent$",

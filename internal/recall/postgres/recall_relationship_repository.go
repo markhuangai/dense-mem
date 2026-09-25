@@ -10,6 +10,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 func (r *Store) RecallRelationships(ctx context.Context, input RecallRelationshipsInput) (result *RecallRelationshipsResult, err error) {
@@ -152,7 +153,7 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, input R
 	var latestState string
 	var eligibleCount, currentCount, failedCount int64
 	err := tx.WithContext(ctx).Raw(`
-	WITH `+recallRelationshipGenerationScopeSQL+`,
+	WITH `+storagepostgres.RecallRelationshipGenerationScopeSQL+`,
 	selected_generation AS (
 	    SELECT generation.state, scope.projection_generation_id
 	    FROM recall_relationship_generation AS scope
@@ -182,16 +183,7 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, input R
 			 AND document.embedding_dimensions = ?
 			 `+documentSpaceClause+`
 				 AND document.projection_format_version = 2
-			 AND (
-	             document.projection_generation_id = (SELECT projection_generation_id FROM selected_generation)
-	             OR (
-	                 document.projection_generation_id IS NULL
-	                 AND (
-	                     (SELECT projection_generation_id FROM selected_generation) IS NULL
-	                     OR COALESCE(document.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = (SELECT projection_generation_id::text FROM selected_generation)
-	                 )
-	             )
-	         )
+			 AND `+storagepostgres.RelationshipGenerationDocumentSQL("document", "(SELECT projection_generation_id FROM selected_generation)", "(SELECT projection_generation_id::text FROM selected_generation)")+`
 	`, teamID, teamID, teamID, teamID, contract.EmbeddingContractID, contract.EmbeddingDimensions).Row().Scan(
 		&latestState,
 		&eligibleCount,
@@ -259,30 +251,7 @@ func searchRecallRelationshipExactVector(
 	if contract.ExactMaxRows > 0 {
 		var candidateCount int64
 		if err := tx.WithContext(ctx).Raw(`
-			WITH generation_count AS (
-			    SELECT count(*) AS value
-			    FROM search_projection_generations
-			    WHERE team_id = ?::uuid
-			      AND source_kind = 'relationship'
-			      AND projection_format_version = 2
-			),
-			current_generation AS (
-			    SELECT choice.projection_generation_id
-			    FROM (
-			        SELECT projection_generation_id, 0 AS priority, generation
-			        FROM search_projection_generations
-			        WHERE team_id = ?::uuid
-			          AND source_kind = 'relationship'
-			          AND projection_format_version = 2
-			          AND state = 'current'
-			        UNION ALL
-			        SELECT NULL::uuid, 1 AS priority, 0 AS generation
-			        FROM generation_count
-			        WHERE value = 0
-			    ) AS choice
-			    ORDER BY choice.priority ASC, choice.generation DESC
-			    LIMIT 1
-			)
+			WITH `+storagepostgres.RecallRelationshipVectorGenerationScopeSQL+`
 			SELECT count(*)
 			FROM (
 			    SELECT document.search_document_id
@@ -293,16 +262,7 @@ func searchRecallRelationshipExactVector(
 			     AND document.embedding_contract_id = ?::uuid
 			     AND document.embedding_dimensions = ?
 				     AND document.projection_format_version = 2
-				     AND (
-				         document.projection_generation_id = current_generation.projection_generation_id
-				         OR (
-				             document.projection_generation_id IS NULL
-				             AND (
-				                 current_generation.projection_generation_id IS NULL
-				                 OR COALESCE(document.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = current_generation.projection_generation_id::text
-				             )
-				         )
-				     )
+				     AND `+storagepostgres.RelationshipGenerationDocumentSQL("document", "current_generation.projection_generation_id", "current_generation.projection_generation_id::text")+`
 			     AND document.search_state = 'current'
 			     AND document.embedding IS NOT NULL
 			     `+spaceClause+`
@@ -320,30 +280,7 @@ func searchRecallRelationshipExactVector(
 		return nil, err
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
-		WITH generation_count AS (
-		    SELECT count(*) AS value
-		    FROM search_projection_generations
-		    WHERE team_id = ?::uuid
-		      AND source_kind = 'relationship'
-		      AND projection_format_version = 2
-		),
-		current_generation AS (
-		    SELECT choice.projection_generation_id
-		    FROM (
-		        SELECT projection_generation_id, 0 AS priority, generation
-		        FROM search_projection_generations
-		        WHERE team_id = ?::uuid
-		          AND source_kind = 'relationship'
-		          AND projection_format_version = 2
-		          AND state = 'current'
-		        UNION ALL
-		        SELECT NULL::uuid, 1 AS priority, 0 AS generation
-		        FROM generation_count
-		        WHERE value = 0
-		    ) AS choice
-		    ORDER BY choice.priority ASC, choice.generation DESC
-		    LIMIT 1
-		)
+		WITH `+storagepostgres.RecallRelationshipVectorGenerationScopeSQL+`
 		SELECT document.team_id::text, document.search_document_id::text, document.source_kind,
 		       document.source_id::text, document.source_version, document.document_version,
 		       document.embedding_contract_id::text, document.search_state,
@@ -357,16 +294,7 @@ func searchRecallRelationshipExactVector(
 			 AND document.embedding_dimensions = ?
 				 `+spaceClause+`
 			 AND document.projection_format_version = 2
-			 AND (
-			     document.projection_generation_id = current_generation.projection_generation_id
-			     OR (
-			         document.projection_generation_id IS NULL
-			         AND (
-			             current_generation.projection_generation_id IS NULL
-			             OR COALESCE(document.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = current_generation.projection_generation_id::text
-			         )
-			     )
-			 )
+			 AND `+storagepostgres.RelationshipGenerationDocumentSQL("document", "current_generation.projection_generation_id", "current_generation.projection_generation_id::text")+`
 		 AND document.search_state = 'current'
 		 AND document.embedding IS NOT NULL
 		ORDER BY document.embedding <=> ?::vector ASC, document.search_document_id ASC
@@ -408,30 +336,7 @@ func searchRecallRelationshipANNVector(
 	}
 	spaceClause := recallSpacePredicate("document.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	query := fmt.Sprintf(`
-		WITH generation_count AS (
-		    SELECT count(*) AS value
-		    FROM search_projection_generations
-		    WHERE team_id = ?::uuid
-		      AND source_kind = 'relationship'
-		      AND projection_format_version = 2
-		),
-		current_generation AS (
-		    SELECT choice.projection_generation_id
-		    FROM (
-		        SELECT projection_generation_id, 0 AS priority, generation
-		        FROM search_projection_generations
-		        WHERE team_id = ?::uuid
-		          AND source_kind = 'relationship'
-		          AND projection_format_version = 2
-		          AND state = 'current'
-		        UNION ALL
-		        SELECT NULL::uuid, 1 AS priority, 0 AS generation
-		        FROM generation_count
-		        WHERE value = 0
-		    ) AS choice
-		    ORDER BY choice.priority ASC, choice.generation DESC
-		    LIMIT 1
-		),
+		WITH `+storagepostgres.RecallRelationshipVectorGenerationScopeSQL+`,
 		ann_candidates AS MATERIALIZED (
 			SELECT document.team_id, document.search_document_id
 			FROM current_generation
@@ -441,16 +346,7 @@ func searchRecallRelationshipANNVector(
 			 AND document.embedding_contract_id = %s::uuid
 				 AND document.embedding_dimensions = %d
 				 AND document.projection_format_version = 2
-				 AND (
-				     document.projection_generation_id = current_generation.projection_generation_id
-				     OR (
-				         document.projection_generation_id IS NULL
-				         AND (
-				             current_generation.projection_generation_id IS NULL
-				             OR COALESCE(document.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = current_generation.projection_generation_id::text
-				         )
-				     )
-				 )
+				 AND `+storagepostgres.RelationshipGenerationDocumentSQL("document", "current_generation.projection_generation_id", "current_generation.projection_generation_id::text")+`
 			 AND document.search_state = 'current'
 			 AND document.embedding IS NOT NULL
 			 `+spaceClause+`
@@ -503,7 +399,7 @@ func searchRecallRelationshipEntityExpansion(
 	spaceClause := recallSpacePredicate("relationship.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	documentSpaceClause := recallSpacePredicate("document.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	rows, err := tx.WithContext(ctx).Raw(`
-		WITH `+recallRelationshipGenerationScopeSQL+`
+		WITH `+storagepostgres.RecallRelationshipGenerationScopeSQL+`
 		SELECT document.team_id::text, document.search_document_id::text, document.source_kind,
 		       document.source_id::text, document.source_version, document.document_version,
 		       document.embedding_contract_id::text, document.search_state,
@@ -518,7 +414,7 @@ func searchRecallRelationshipEntityExpansion(
 		 AND document.source_id = relationship.relationship_id
 		 AND document.embedding_contract_id = ?::uuid
 		 AND document.projection_format_version = 2
-			 AND `+recallRelationshipGenerationDocumentSQL+`
+			 AND `+storagepostgres.RelationshipGenerationDocumentSQL("document", "generation.projection_generation_id", "generation.projection_generation_id::text")+`
 			 `+documentSpaceClause+`
 			 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 		LEFT JOIN LATERAL (
@@ -599,7 +495,7 @@ func hydrateRecallRelationships(
 		WITH requested AS (
 			SELECT unnest(?::uuid[]) AS relationship_id
 		),
-		`+recallRelationshipGenerationScopeSQL+`,
+		`+storagepostgres.RecallRelationshipGenerationScopeSQL+`,
 		known_groups AS (
 			SELECT DISTINCT relationship.semantic_group_key
 			FROM relationship_records AS relationship
@@ -642,7 +538,7 @@ func hydrateRecallRelationships(
 		     AND document.source_id = relationship.relationship_id
 		     AND document.embedding_contract_id = ?::uuid
 		     AND document.projection_format_version = 2
-		     AND `+recallRelationshipGenerationDocumentSQL+`
+		     AND `+storagepostgres.RelationshipGenerationDocumentSQL("document", "generation.projection_generation_id", "generation.projection_generation_id::text")+`
 		     `+documentSpaceClause+`
 			 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 		    LEFT JOIN LATERAL (

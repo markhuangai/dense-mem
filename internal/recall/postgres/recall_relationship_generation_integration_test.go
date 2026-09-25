@@ -4,12 +4,14 @@ package postgres
 
 import (
 	"context"
-	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 )
 
 func TestRecallRelationshipsKeepsLastActivatedGenerationDuringUnactivatedProjection(t *testing.T) {
@@ -252,6 +254,31 @@ func TestRecallRelationshipsFullTextFencesGenerationAndKeepsForegroundRows(t *te
 	})
 	require.NoError(t, err)
 	require.Empty(t, staleNull.Results)
+	missingFullText, err := searchRepo.SearchFullText(ctx, FullTextSearchInput{
+		TeamID: teamID, Query: "stale null marker", SourceKind: "relationship", Limit: 5,
+	})
+	require.NoError(t, err)
+	require.Empty(t, missingFullText)
+
+	_, err = searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "relationship",
+		SourceID: decision.Relationship.RelationshipID, SourceVersion: int64(decision.Relationship.Version),
+		DocumentText: "relationship\nsubject: Jules\npredicate: stale foreground marker\nobject: Dense Mem",
+		Metadata: map[string]any{
+			knowledgecontract.RelationshipForegroundRecallGenerationMetadataKey: oldGenerationID,
+		},
+	})
+	require.NoError(t, err)
+	staleForeground, err := searchRepo.RecallRelationships(ctx, RecallRelationshipsInput{
+		TeamID: teamID, Query: "stale foreground marker", Limit: 5,
+	})
+	require.NoError(t, err)
+	require.Empty(t, staleForeground.Results)
+	staleForegroundFullText, err := searchRepo.SearchFullText(ctx, FullTextSearchInput{
+		TeamID: teamID, Query: "stale foreground marker", SourceKind: "relationship", Limit: 5,
+	})
+	require.NoError(t, err)
+	require.Empty(t, staleForegroundFullText)
 
 	_, err = searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
 		TeamID:         teamID,
@@ -261,7 +288,7 @@ func TestRecallRelationshipsFullTextFencesGenerationAndKeepsForegroundRows(t *te
 		SourceVersion:  int64(decision.Relationship.Version),
 		DocumentText:   "relationship\nsubject: Jules\npredicate: fresh foreground marker\nobject: Dense Mem",
 		Metadata: map[string]any{
-			relationshipForegroundRecallGenerationMetadataKey: newGenerationID,
+			knowledgecontract.RelationshipForegroundRecallGenerationMetadataKey: newGenerationID,
 		},
 	})
 	require.NoError(t, err)
@@ -344,7 +371,7 @@ func TestSearchReadinessRejectsStaleRelationshipProjectionGeneration(t *testing.
 		SourceVersion:  int64(decision.Relationship.Version),
 		DocumentText:   "relationship\nsubject: Noel\npredicate: foreground projection\nobject: Dense Mem",
 		Metadata: map[string]any{
-			relationshipForegroundRecallGenerationMetadataKey: currentGenerationID,
+			knowledgecontract.RelationshipForegroundRecallGenerationMetadataKey: currentGenerationID,
 		},
 	})
 	require.NoError(t, err)

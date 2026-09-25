@@ -25,6 +25,10 @@ inside their owning capability.
   bounds, readiness, ranking, and error projection. `internal/search/postgres`
   owns query reads, bootstrap, and index mechanics; it does not persist the
   canonical projection or reconciliation run state.
+- `internal/storage/postgres` owns shared relationship projection-generation SQL
+  components for Search and Recall. Search retains its all-team readiness
+  selection, and Recall retains its stricter current-generation vector selection.
+  `internal/knowledge/contract` owns the foreground-generation metadata key.
 - `internal/graph`, `internal/trace`, `internal/recall`, `internal/dream`,
   `internal/community`, `internal/conflict`, and `internal/memorypack` own
   their capability APIs and contracts. Their PostgreSQL packages implement

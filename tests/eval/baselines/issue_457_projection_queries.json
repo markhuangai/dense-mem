@@ -1,0 +1,139 @@
+{
+  "base_commit": "aa3c058565de8bd72f61aebfa6722f7efc6db9df",
+  "benchmark": {
+    "iterations_per_run": 200,
+    "latency_gate": "median p50 and p95 increase <= max(5% of baseline, 1 ms), per workload and telemetry mode",
+    "name": "BenchmarkRecallReadPipeline",
+    "passed": true,
+    "query_contract": {
+      "case_count": 9,
+      "statement_count": 15
+    },
+    "repetitions": 5,
+    "sql_and_transaction_counts_exact": true,
+    "warmups_per_run": 20,
+    "workloads": {
+      "ann": {
+        "disabled": {
+          "p50_increase_ms": -0.393956,
+          "p95_increase_ms": -0.680903,
+          "sql_statements_per_op": 19.0,
+          "transactions_per_op": 3.0
+        },
+        "enabled": {
+          "p50_increase_ms": -0.549346,
+          "p95_increase_ms": -1.563492,
+          "sql_statements_per_op": 19.0,
+          "transactions_per_op": 3.0
+        }
+      },
+      "exact_vector": {
+        "disabled": {
+          "p50_increase_ms": 0.198549,
+          "p95_increase_ms": 0.273681,
+          "sql_statements_per_op": 7.0,
+          "transactions_per_op": 1.0
+        },
+        "enabled": {
+          "p50_increase_ms": 0.1559,
+          "p95_increase_ms": 0.184687,
+          "sql_statements_per_op": 7.0,
+          "transactions_per_op": 1.0
+        }
+      },
+      "expansion": {
+        "disabled": {
+          "p50_increase_ms": 0.06995,
+          "p95_increase_ms": 0.133576,
+          "sql_statements_per_op": 18.0,
+          "transactions_per_op": 3.0
+        },
+        "enabled": {
+          "p50_increase_ms": 0.046627,
+          "p95_increase_ms": -0.486109,
+          "sql_statements_per_op": 18.0,
+          "transactions_per_op": 3.0
+        }
+      },
+      "historical": {
+        "disabled": {
+          "p50_increase_ms": 0.056252,
+          "p95_increase_ms": 0.182131,
+          "sql_statements_per_op": 17.0,
+          "transactions_per_op": 3.0
+        },
+        "enabled": {
+          "p50_increase_ms": 0.095701,
+          "p95_increase_ms": 0.002295,
+          "sql_statements_per_op": 17.0,
+          "transactions_per_op": 3.0
+        }
+      },
+      "lexical": {
+        "disabled": {
+          "p50_increase_ms": -0.077358,
+          "p95_increase_ms": -0.765751,
+          "sql_statements_per_op": 17.0,
+          "transactions_per_op": 3.0
+        },
+        "enabled": {
+          "p50_increase_ms": 0.108088,
+          "p95_increase_ms": -0.601853,
+          "sql_statements_per_op": 17.0,
+          "transactions_per_op": 3.0
+        }
+      },
+      "private_space": {
+        "disabled": {
+          "p50_increase_ms": -0.022555,
+          "p95_increase_ms": -0.084619,
+          "sql_statements_per_op": 17.0,
+          "transactions_per_op": 3.0
+        },
+        "enabled": {
+          "p50_increase_ms": 0.125649,
+          "p95_increase_ms": 0.275583,
+          "sql_statements_per_op": 17.0,
+          "transactions_per_op": 3.0
+        }
+      },
+      "relationship_recall": {
+        "disabled": {
+          "p50_increase_ms": -0.135052,
+          "p95_increase_ms": -0.196017,
+          "sql_statements_per_op": 14.0,
+          "transactions_per_op": 2.0
+        },
+        "enabled": {
+          "p50_increase_ms": 0.023005,
+          "p95_increase_ms": 0.091602,
+          "sql_statements_per_op": 14.0,
+          "transactions_per_op": 2.0
+        }
+      }
+    }
+  },
+  "evaluation_waiver": "Maintainer-approved 2026-09-22; replacement verification is real PostgreSQL, deterministic results and queries, focused E2E, and performance.",
+  "issue": 457,
+  "measured_candidate_source": {
+    "commit_sha": "aa3c058565de8bd72f61aebfa6722f7efc6db9df",
+    "working_tree_paths": 19,
+    "working_tree_sha256": "1ce211ec0aeaa2447a53ff99ccc21de0cbb1b944e17f9469a41fe3e0ad343856"
+  },
+  "postgres_plan": {
+    "actual_rows_equal": true,
+    "base_top_buffers": "Buffers: shared hit=12",
+    "candidate_top_buffers": "Buffers: shared hit=12",
+    "case": "relationship ANN under team RLS, EXPLAIN (ANALYZE, BUFFERS)",
+    "document_access": "sequential scan in both small fixtures; ANN strategy path was exercised",
+    "node_count": 16,
+    "node_sequence_equal": true
+  },
+  "real_postgres_integration_package_passed": true,
+  "schema_version": 1,
+  "test_only_base_overlay_sha256": {
+    "recall_read_performance_benchmark_test.go": "91d47121326d588d0fe21b5840aded31aaded2ce2bd4668c267a46788ac7f5e4",
+    "relationship_projection_query_contract_test.go": "06b894d26aa55e5516aa3d6a8905d39c322ca73b97b967cb64775c941b2ed023",
+    "relationship_projection_selection_integration_test.go": "8511349c16a41186414ca3964ad61ce8adf6d5a5579628749c60c8bdf232773b"
+  }
+}

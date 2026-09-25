@@ -30,6 +30,47 @@ def benchmark_output(enabled_adjustment=0, changed_count=None):
 
 
 class ReadPerformanceComparisonTests(unittest.TestCase):
+    def test_query_report_comparison_checks_sql_arguments_and_results(self):
+        baseline = [{"case": "recall_exact_vector", "statements": [{"sql": "SELECT ?", "args": ["str:team-a"]}], "result": [{"id": "relationship-a"}]}]
+        self.assertEqual(comparison.compare_query_reports(baseline, baseline), {"case_count": 1, "statement_count": 1})
+        for field, value, message in (
+            ("sql", "SELECT other", "changed SQL"),
+            ("args", ["str:team-b"], "changed bound arguments"),
+        ):
+            candidate = [{"case": baseline[0]["case"], "statements": [dict(baseline[0]["statements"][0])], "result": baseline[0]["result"]}]
+            candidate[0]["statements"][0][field] = value
+            with self.assertRaisesRegex(ValueError, message):
+                comparison.compare_query_reports(baseline, candidate)
+        candidate = [{"case": baseline[0]["case"], "statements": baseline[0]["statements"], "result": []}]
+        with self.assertRaisesRegex(ValueError, "changed decoded result"):
+            comparison.compare_query_reports(baseline, candidate)
+
+    def test_base_source_comparison_accepts_matching_counts_and_small_latency_delta(self):
+        baseline = comparison.parse_benchmarks(benchmark_output())
+        candidate = comparison.parse_benchmarks(benchmark_output(50_000))
+        report = comparison.compare_sources(baseline, candidate)
+        self.assertTrue(report["passed"])
+        self.assertEqual(len(report["workloads"]), 7)
+        self.assertTrue(report["workloads"]["relationship_recall"]["enabled"]["passed"])
+
+    def test_base_source_comparison_rejects_p95_regression_in_one_mode(self):
+        baseline = comparison.parse_benchmarks(benchmark_output())
+        candidate = comparison.parse_benchmarks(benchmark_output(1_100_000))
+        report = comparison.compare_sources(baseline, candidate)
+        self.assertFalse(report["passed"])
+        self.assertTrue(report["workloads"]["relationship_recall"]["disabled"]["passed"])
+        self.assertFalse(report["workloads"]["relationship_recall"]["enabled"]["timing"]["p95-ns/op"]["passed"])
+
+    def test_base_source_comparison_rejects_statement_and_transaction_drift(self):
+        baseline = comparison.parse_benchmarks(benchmark_output())
+        for candidate_text, metric in (
+            (benchmark_output().replace("8 sql-statements/op", "9 sql-statements/op"), "sql-statements/op"),
+            (benchmark_output().replace("4 transactions/op", "5 transactions/op"), "transactions/op"),
+        ):
+            candidate = comparison.parse_benchmarks(candidate_text)
+            with self.assertRaisesRegex(ValueError, f"changed {metric}"):
+                comparison.compare_sources(baseline, candidate)
+
     def test_accepts_small_latency_change_and_preserves_workload_counts(self):
         report = comparison.summarize(comparison.parse_benchmarks(benchmark_output(50_000)))
         self.assertTrue(report["passed"])

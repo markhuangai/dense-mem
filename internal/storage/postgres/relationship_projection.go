@@ -1,10 +1,14 @@
 package postgres
 
-const RelationshipForegroundRecallGenerationMetadataKey = "relationship_foreground_recall_generation_id"
+import (
+	"fmt"
 
-const relationshipForegroundRecallGenerationMetadataKey = RelationshipForegroundRecallGenerationMetadataKey
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+)
 
-const recallRelationshipGenerationScopeSQL = `
+// RecallRelationshipGenerationScopeSQL selects an activated generation, the
+// latest generation if none is activated, or a no-generation row.
+const RecallRelationshipGenerationScopeSQL = `
 		recall_relationship_generation_team AS (
 		    SELECT ?::uuid AS team_id
 		),
@@ -48,13 +52,49 @@ const recallRelationshipGenerationScopeSQL = `
 		    LIMIT 1
 		)`
 
-const recallRelationshipGenerationDocumentSQL = `(
-		    document.projection_generation_id = generation.projection_generation_id
-		    OR (
-		        document.projection_generation_id IS NULL
-		        AND (
-		            generation.projection_generation_id IS NULL
-		            OR COALESCE(document.metadata->>'` + relationshipForegroundRecallGenerationMetadataKey + `', '') = generation.projection_generation_id::text
-		        )
-		    )
-		)`
+// RecallRelationshipVectorGenerationScopeSQL selects only a current
+// generation, or a no-generation row when none has ever existed.
+const RecallRelationshipVectorGenerationScopeSQL = `generation_count AS (
+			    SELECT count(*) AS value
+			    FROM search_projection_generations
+			    WHERE team_id = ?::uuid
+			      AND source_kind = 'relationship'
+			      AND projection_format_version = 2
+			),
+			current_generation AS (
+			    SELECT choice.projection_generation_id
+			    FROM (
+			        SELECT projection_generation_id, 0 AS priority, generation
+			        FROM search_projection_generations
+			        WHERE team_id = ?::uuid
+			          AND source_kind = 'relationship'
+			          AND projection_format_version = 2
+			          AND state = 'current'
+			        UNION ALL
+			        SELECT NULL::uuid, 1 AS priority, 0 AS generation
+			        FROM generation_count
+			        WHERE value = 0
+			    ) AS choice
+			    ORDER BY choice.priority ASC, choice.generation DESC
+			    LIMIT 1
+			)`
+
+// RelationshipGenerationDocumentSQL tests membership in a selected generation.
+// Callers supply fixed SQL references; request values remain bound parameters.
+func RelationshipGenerationDocumentSQL(documentAlias, generationIDSQL, generationTextSQL string) string {
+	return fmt.Sprintf(`(
+        %s.projection_generation_id = %s
+        OR (
+            %s.projection_generation_id IS NULL
+            AND (
+                %s IS NULL
+                OR COALESCE(%s.metadata->>'%s', '') = %s
+            )
+        )
+    )`,
+		documentAlias, generationIDSQL, documentAlias,
+		generationIDSQL, documentAlias,
+		knowledgecontract.RelationshipForegroundRecallGenerationMetadataKey,
+		generationTextSQL,
+	)
+}

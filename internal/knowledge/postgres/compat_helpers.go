@@ -6,8 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const relationshipForegroundRecallGenerationMetadataKey = "relationship_foreground_recall_generation_id"
-
 func normalizeRecallUUIDList(values []string) []string {
 	out := make([]string, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
