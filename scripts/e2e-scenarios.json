@@ -102,7 +102,7 @@
       "name": "full",
       "isolation": "exclusive",
       "runtime": "production",
-      "helper_profiles": ["grafana", "verifier", "playwright"],
+      "helper_profiles": ["verifier", "playwright"],
       "timeout_minutes": 90,
       "playwright": true
     },

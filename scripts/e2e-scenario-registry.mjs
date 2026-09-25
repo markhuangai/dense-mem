@@ -8,7 +8,6 @@ const ISOLATIONS = new Set(["exclusive", "shared_team"]);
 const HELPER_PROFILES = new Set([
   "conflict_provider",
   "conflict_review",
-  "grafana",
   "oauth",
   "oauth_compatibility",
   "playwright",

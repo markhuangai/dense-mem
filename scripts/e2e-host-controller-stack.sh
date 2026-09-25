@@ -133,7 +133,7 @@ prepare_stack_helpers() {
   local grafana_password_file=""
   local provider_dimensions
   provider_dimensions="$(env_value AI_API_EMBEDDING_DIMENSIONS 2>/dev/null || printf '%s' 1536)"
-  if has_helper "$helpers" grafana; then
+  if [[ "$scenario" == "full" ]]; then
     grafana_password_file="${DENSE_MEM_CI_PRIVATE_DIR}/grafana-admin-password"
     node - "$grafana_password_file" <<'NODE'
 const fs = require("node:fs");
@@ -249,7 +249,7 @@ const fs = require("node:fs");
 const [destination, helpers, oauthToken, harnessImage, providerDimensions, conflictProviderEmbeddingModel, scenario, sourceDir, project] = process.argv.slice(2);
 const has = (name) => new Set(helpers.split(",").filter(Boolean)).has(name);
 const conflictProviderDimensions = has("synchronous_write") ? (providerDimensions || "1536") : "1536";
-const deterministicEmbeddingProvider = scenario === "community" || has("synchronous_write") || has("grafana");
+const deterministicEmbeddingProvider = scenario === "community" || has("synchronous_write") || scenario === "full";
 const lines = ["# dense-mem-ci-e2e.v1 generated helper overlay", "services:"];
 const serverEnvironment = new Map();
 const serverVolumes = [];
@@ -272,7 +272,7 @@ if (scenario === "community") {
     AI_COMMUNITY_SUMMARY_MODEL: "dense-mem-e2e-community-summary",
   })) serverEnvironment.set(key, value);
 }
-if (has("grafana")) {
+if (scenario === "full") {
   for (const [key, value] of Object.entries({
     AI_API_URL: "http://synchronous-write-provider:8787/v1",
     AI_API_KEY: "dense-mem-grafana-e2e-key",
@@ -341,7 +341,7 @@ if (has("oauth_compatibility")) {
     "      DENSE_MEM_ENTRA_ISSUER: https://entra-mock:9443",
   ]]);
 }
-if (has("grafana")) {
+if (scenario === "full") {
   helperServices.push(["grafana", [
     "    image: grafana/grafana:13.2.2",
     "    environment:",
@@ -355,7 +355,6 @@ if (has("grafana")) {
     "      - grafana-data:/var/lib/grafana",
     "    secrets: [grafana-admin-password]",
     "    networks: [ci]",
-    "    profiles: [grafana]",
     "    restart: unless-stopped",
     "    labels:",
     `      io.dense-mem.ci.contract: ${JSON.stringify(process.env.DENSE_MEM_CI_CONTRACT)}`,
@@ -381,7 +380,7 @@ if (serverEnvironment.size > 0 || serverVolumes.length > 0) {
   }
 }
 for (const [name, serviceLines] of helperServices) lines.push(`  ${name}:`, ...serviceLines);
-if (has("grafana")) {
+if (scenario === "full") {
   lines.push(
     "volumes:",
     "  grafana-data:",

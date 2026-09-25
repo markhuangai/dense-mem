@@ -58,7 +58,7 @@ run_scenario() {
   local helpers
   helpers="$(scenario_helpers "$source_dir" "$phase" "$scenario")" || fail "scenario helper profiles are unavailable"
   local grafana_password=""
-  if has_helper "$helpers" grafana; then
+  if [[ "$scenario" == "full" ]]; then
     local private_dir="${JOB_DIR}/${run_id}-${attempt}/${phase}-${stack_scenario}-private"
     [[ -f "${private_dir}/grafana-admin-password" ]] || fail "Grafana E2E password is unavailable"
     grafana_password="$(cat "${private_dir}/grafana-admin-password")"

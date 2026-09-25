@@ -746,7 +746,7 @@ test("community scenarios use the verifier fixture for embeddings without changi
   assert.match(communityBlock, /AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
   assert.match(communityBlock, /AI_API_KEY: "dense-mem-community-e2e-key"/);
   assert.doesNotMatch(communityBlock, /AI_API_EMBEDDING_(MODEL|DIMENSIONS):/);
-  assert.match(stack, /const deterministicEmbeddingProvider = scenario === "community" \|\| has\("synchronous_write"\) \|\| has\("grafana"\);/);
+  assert.match(stack, /const deterministicEmbeddingProvider = scenario === "community" \|\| has\("synchronous_write"\) \|\| scenario === "full";/);
   assert.match(stack, /DENSE_MEM_E2E_PROVIDER_DIMENSIONS: \$\{JSON\.stringify\(providerDimensions \|\| "1536"\)\}/);
 });
 
