@@ -33,6 +33,7 @@ REQUIRED_METRICS = (
     "p95-ns/op",
     "sql-statements/op",
     "transactions/op",
+    "telemetry-enabled/op",
     "allocs/op",
     "B/op",
 )
@@ -40,6 +41,7 @@ REQUIRED_METRICS = (
 
 def parse_benchmarks(text: str) -> dict[tuple[str, str], list[dict[str, Decimal]]]:
     records: dict[tuple[str, str], list[dict[str, Decimal]]] = {}
+    slot_modes: dict[tuple[str, str], list[str]] = {}
     for line in text.splitlines():
         tokens = line.split()
         if len(tokens) < 4 or not tokens[0].startswith("BenchmarkRecallReadPipeline/"):
@@ -47,12 +49,12 @@ def parse_benchmarks(text: str) -> dict[tuple[str, str], list[dict[str, Decimal]
         parts = tokens[0].split("/")
         if len(parts) != 3:
             raise ValueError(f"unexpected benchmark name: {tokens[0]}")
-        _, workload, mode_with_procs = parts
-        mode, separator, procs = mode_with_procs.partition("-")
-        if not separator or not procs.isdigit():
+        _, workload, slot_with_procs = parts
+        slot, separator, procs = slot_with_procs.partition("-")
+        if separator and not procs.isdigit():
             raise ValueError(f"unexpected benchmark process suffix: {tokens[0]}")
-        if workload not in WORKLOADS or mode not in ("disabled", "enabled"):
-            raise ValueError(f"unexpected benchmark workload or mode: {tokens[0]}")
+        if workload not in WORKLOADS or slot not in ("pair_a", "pair_b"):
+            raise ValueError(f"unexpected benchmark workload or slot: {tokens[0]}")
         if not tokens[1].isdigit() or int(tokens[1]) != ITERATIONS:
             raise ValueError(f"{tokens[0]} ran {tokens[1]} iterations, want {ITERATIONS}")
 
@@ -71,7 +73,12 @@ def parse_benchmarks(text: str) -> dict[tuple[str, str], list[dict[str, Decimal]
         missing = [name for name in REQUIRED_METRICS if name not in metrics]
         if missing:
             raise ValueError(f"{tokens[0]} is missing metrics: {', '.join(missing)}")
+        mode_value = metrics["telemetry-enabled/op"]
+        if mode_value not in (0, 1):
+            raise ValueError(f"{tokens[0]} has invalid telemetry mode: {mode_value}")
+        mode = "enabled" if mode_value == 1 else "disabled"
         records.setdefault((workload, mode), []).append(metrics)
+        slot_modes.setdefault((workload, slot), []).append(mode)
 
     expected = {(workload, mode) for workload in WORKLOADS for mode in ("disabled", "enabled")}
     missing = expected - records.keys()
@@ -81,6 +88,11 @@ def parse_benchmarks(text: str) -> dict[tuple[str, str], list[dict[str, Decimal]
     for key in sorted(expected):
         if len(records[key]) != REPETITIONS:
             raise ValueError(f"{key[0]}/{key[1]} has {len(records[key])} runs, want {REPETITIONS}")
+    for workload in WORKLOADS:
+        for slot_index, slot in enumerate(("pair_a", "pair_b")):
+            expected_order = ["enabled" if (index + slot_index) % 2 else "disabled" for index in range(REPETITIONS)]
+            if slot_modes.get((workload, slot)) != expected_order:
+                raise ValueError(f"{workload}/{slot} did not alternate telemetry modes across repetitions")
     return records
 
 
@@ -130,6 +142,7 @@ def summarize(records: dict[tuple[str, str], list[dict[str, Decimal]]]) -> dict[
         "warmups_per_run": WARMUPS,
         "iterations_per_run": ITERATIONS,
         "repetitions": REPETITIONS,
+        "mode_schedule": "alternating disabled and enabled runs",
         "timing_gate": {"max_relative_increase": float(MAX_REGRESSION), "minimum_increase_ns": int(MIN_REGRESSION_NS)},
         "workloads": workloads,
         "passed": overall_passed,
@@ -178,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         report = summarize(parse_benchmarks(args.input.read_text(encoding="utf-8")))
-        report["schema_version"] = 1
+        report["schema_version"] = 2
         report["measured_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
         report["source"] = source_fingerprint(root)
         report["go_version"] = subprocess.check_output(["go", "version"], text=True).strip()

@@ -29,7 +29,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/search/contract"
 )
 
-const readPerformanceBenchmarkDocumentCount = 96
+const (
+	readPerformanceBenchmarkDocumentCount      = 96
+	readPerformanceBenchmarkMeasuredIterations = 200
+)
 
 type readPerformanceBenchmarkFixture struct {
 	store        *searchFixtureStore
@@ -116,13 +119,11 @@ func BenchmarkRecallReadPipeline(b *testing.B) {
 
 	for _, workload := range workloads {
 		b.Run(workload.name, func(b *testing.B) {
-			var disabledSignature string
-			for _, enabled := range []bool{false, true} {
-				mode := "disabled"
-				if enabled {
-					mode = "enabled"
-				}
-				b.Run(mode, func(b *testing.B) {
+			var resultSignature string
+			for slotIndex, slot := range []string{"pair_a", "pair_b"} {
+				measuredRuns := 0
+				b.Run(slot, func(b *testing.B) {
+					enabled := (measuredRuns+slotIndex)%2 != 0
 					var metrics observability.DiscoverabilityMetrics
 					var prometheusMetrics *observability.PrometheusMetrics
 					if enabled {
@@ -153,9 +154,9 @@ func BenchmarkRecallReadPipeline(b *testing.B) {
 					b.StopTimer()
 
 					signature := readPerformanceBenchmarkSignature(b, results)
-					if !enabled {
-						disabledSignature = signature
-					} else if signature != disabledSignature {
+					if resultSignature == "" {
+						resultSignature = signature
+					} else if signature != resultSignature {
 						b.Fatalf("instrumentation changed %s results", workload.name)
 					}
 					sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
@@ -170,6 +171,11 @@ func BenchmarkRecallReadPipeline(b *testing.B) {
 					b.ReportMetric(float64(counts.transactions)/iterations, "transactions/op")
 					b.ReportMetric(float64(counts.commits+counts.rollbacks)/iterations, "transaction-completions/op")
 					if enabled {
+						b.ReportMetric(1, "telemetry-enabled/op")
+					} else {
+						b.ReportMetric(0, "telemetry-enabled/op")
+					}
+					if enabled {
 						recorder := httptest.NewRecorder()
 						prometheusMetrics.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
 						expected := fmt.Sprintf(
@@ -179,6 +185,9 @@ func BenchmarkRecallReadPipeline(b *testing.B) {
 						if !strings.Contains(recorder.Body.String(), expected) {
 							b.Fatalf("enabled %s benchmark emitted no %s/%s duration metric", workload.name, workload.operation, workload.stage)
 						}
+					}
+					if b.N == readPerformanceBenchmarkMeasuredIterations {
+						measuredRuns++
 					}
 				})
 			}
@@ -248,7 +257,10 @@ func newReadPerformanceBenchmarkFixture(b *testing.B) *readPerformanceBenchmarkF
 	completeSearchDocumentsForTest(b, store, annTeamID, annDocuments.documentIDs)
 	completeSearchDocumentsForTest(b, store, privateTeam, privateDocuments.documentIDs)
 	require.NoError(b, rls.WithSystemTx(baseCtx, adminDB, func(tx *gorm.DB) error {
-		return tx.Exec("CREATE INDEX densemem_read_performance_hnsw ON search_documents USING hnsw ((embedding::vector(3)) vector_cosine_ops) WITH (m = 16, ef_construction = 64)").Error
+		if err := tx.Exec("CREATE INDEX densemem_read_performance_hnsw ON search_documents USING hnsw ((embedding::vector(3)) vector_cosine_ops) WITH (m = 16, ef_construction = 64)").Error; err != nil {
+			return err
+		}
+		return tx.Exec("ANALYZE search_documents, evidence_fragments").Error
 	}))
 
 	return &readPerformanceBenchmarkFixture{

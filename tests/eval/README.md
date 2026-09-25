@@ -434,8 +434,11 @@ python3 tests/eval/scripts/compare_recall_read_performance.py \
   --output tests/eval/runs/issue-456/comparison.json
 ```
 
-Each workload runs with telemetry disabled and enabled after 20 warmups, with
-200 measured reads per repetition and five repetitions. The comparison checks
+The fixture analyzes its search tables after creating the HNSW index so query
+plans are settled before timing. Each workload uses `pair_a` and `pair_b` slots
+that alternate telemetry mode across the five repetitions. Every run has 20
+warmups and 200 measured reads, and reports its mode as `telemetry-enabled/op`.
+The comparator rejects a missing or incorrect mode sequence and checks
 median p50 and p95 increases against the greater of 5% or 1 ms, requires exact
 per-operation SQL-statement and transaction counts between the two modes, and
 records allocations and the measured source fingerprint. It fails when a

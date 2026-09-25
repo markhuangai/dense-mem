@@ -13,16 +13,18 @@ SPEC.loader.exec_module(comparison)
 def benchmark_output(enabled_adjustment=0, changed_count=None):
     lines = []
     for workload in comparison.WORKLOADS:
-        for repetition in range(comparison.REPETITIONS):
-            for mode in ("disabled", "enabled"):
+        for slot_index, slot in enumerate(("pair_a", "pair_b")):
+            for repetition in range(comparison.REPETITIONS):
+                enabled = (repetition + slot_index) % 2 == 1
+                mode = "enabled" if enabled else "disabled"
                 adjustment = enabled_adjustment if mode == "enabled" else 0
                 statements = 8 if changed_count is None or mode == "disabled" else changed_count
                 lines.append(
-                    f"BenchmarkRecallReadPipeline/{workload}/{mode}-8 200 "
+                    f"BenchmarkRecallReadPipeline/{workload}/{slot}-8 200 "
                     f"{2_000_000 + adjustment} ns/op 1200 B/op 20 allocs/op "
                     f"{1_500_000 + adjustment} p50-ns/op "
                     f"{3_000_000 + adjustment} p95-ns/op {statements} sql-statements/op "
-                    "4 transactions/op 4 transaction-completions/op"
+                    f"4 transactions/op 4 transaction-completions/op {int(enabled)} telemetry-enabled/op"
                 )
     return "\n".join(lines)
 
@@ -59,6 +61,20 @@ class ReadPerformanceComparisonTests(unittest.TestCase):
         lines = benchmark_output().splitlines()
         lines[0] = lines[0].replace("1500000 p50-ns/op", "unknown p50-ns/op")
         with self.assertRaisesRegex(ValueError, "invalid p50-ns/op value"):
+            comparison.parse_benchmarks("\n".join(lines))
+
+    def test_accepts_single_cpu_benchmark_names_without_suffix(self):
+        output = benchmark_output().replace("-8 200 ", " 200 ")
+        report = comparison.summarize(comparison.parse_benchmarks(output))
+        self.assertTrue(report["passed"])
+
+    def test_rejects_non_alternating_mode_schedule(self):
+        lines = benchmark_output().splitlines()
+        lines[0] = lines[0].replace("0 telemetry-enabled/op", "1 telemetry-enabled/op")
+        lines[comparison.REPETITIONS] = lines[comparison.REPETITIONS].replace(
+            "1 telemetry-enabled/op", "0 telemetry-enabled/op"
+        )
+        with self.assertRaisesRegex(ValueError, "did not alternate telemetry modes"):
             comparison.parse_benchmarks("\n".join(lines))
 
 
