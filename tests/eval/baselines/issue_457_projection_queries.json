@@ -3,20 +3,62 @@
   "baseline_source": {
     "commit_sha": "aa3c058565de8bd72f61aebfa6722f7efc6db9df",
     "working_tree_paths": 3,
-    "working_tree_sha256": "8e6de5e050d0764474cbd2f7d1ee0337266392ff418f1dc1662a067f7c69e7af"
+    "working_tree_sha256": "e681d1725fc8feba422ad8f873f9d4b69a3c967e581d93beeb24fdea52a43dff"
   },
   "benchmark": {
     "baseline_telemetry_diagnostic": {
-      "allowed_increase_ms": 1.106869,
-      "failed_metric": "p95-ns/op",
-      "failed_workload": "lexical",
-      "increase_ms": 1.650909,
-      "passed": false
+      "allowed_increase_ms": 1.0,
+      "increase_ms": 0.273787,
+      "metric": "p50-ns/op",
+      "passed": true,
+      "workload": "historical"
     },
     "candidate_telemetry_passed": true,
     "iterations_per_run": 200,
     "latency_gate": "median p50 and p95 increase <= max(5% of baseline, 1 ms), per workload and telemetry mode",
     "name": "BenchmarkRecallReadPipeline",
+    "order_balanced_10_repetitions": {
+      "lexical_disabled_p95_increase_ms": -1.021726,
+      "maximum_positive_p95_increase_ms": 0.441539,
+      "paired_passed": true,
+      "query_reports_identical": true
+    },
+    "paired_capture_orders": [
+      {
+        "candidate_telemetry_passed": true,
+        "lexical_disabled_p95": {
+          "allowed_increase_ms": 1.0,
+          "base_median_ms": 12.783831,
+          "candidate_median_ms": 14.312681,
+          "increase_ms": 1.52885
+        },
+        "order": "base_then_candidate",
+        "paired_passed": false,
+        "query_case_count": 9,
+        "source_lock_manifest_sha256": {
+          "base": "2bd1992efbc9b3ff4d79b215f866993179eca2bb75a75199ef4140febdcf3b1e",
+          "candidate": "271121cc0e5046ecd10117fe7b7aa299559976fba466da983ce9b375f990f21a"
+        },
+        "statement_count": 15
+      },
+      {
+        "candidate_telemetry_passed": true,
+        "lexical_disabled_p95": {
+          "allowed_increase_ms": 1.0,
+          "base_median_ms": 14.920221,
+          "candidate_median_ms": 12.277435,
+          "increase_ms": -2.642786
+        },
+        "order": "candidate_then_base",
+        "paired_passed": true,
+        "query_case_count": 9,
+        "source_lock_manifest_sha256": {
+          "base": "b835ee82ca962d4962061ad76a829c794a679e8c861564d666deeda4660aa404",
+          "candidate": "053120b6c3d064bf8393ede99a3629fb9b17a2451432cbf6283d5e837622875a"
+        },
+        "statement_count": 15
+      }
+    ],
     "passed": true,
     "query_contract": {
       "case_count": 9,
@@ -24,102 +66,103 @@
     },
     "repetitions": 5,
     "sql_and_transaction_counts_exact": true,
+    "timing_note": "The first base then candidate pair exceeded the lexical p95 floor by 0.529 ms with telemetry disabled. Reversing source order passed all gates, and the balanced ten repetition comparison passed all modes.",
     "warmups_per_run": 20,
     "workloads": {
       "ann": {
         "disabled": {
-          "p50_increase_ms": -3.883173,
-          "p95_increase_ms": -6.445131,
+          "p50_increase_ms": -0.15655,
+          "p95_increase_ms": -0.437965,
           "sql_statements_per_op": 19.0,
           "transactions_per_op": 3.0
         },
         "enabled": {
-          "p50_increase_ms": -3.72121,
-          "p95_increase_ms": -7.446956,
+          "p50_increase_ms": 0.15717,
+          "p95_increase_ms": 0.093363,
           "sql_statements_per_op": 19.0,
           "transactions_per_op": 3.0
         }
       },
       "exact_vector": {
         "disabled": {
-          "p50_increase_ms": -1.047296,
-          "p95_increase_ms": -2.00628,
+          "p50_increase_ms": -0.008194,
+          "p95_increase_ms": -0.228194,
           "sql_statements_per_op": 7.0,
           "transactions_per_op": 1.0
         },
         "enabled": {
-          "p50_increase_ms": -1.140748,
-          "p95_increase_ms": -1.902974,
+          "p50_increase_ms": -0.136869,
+          "p95_increase_ms": -0.438188,
           "sql_statements_per_op": 7.0,
           "transactions_per_op": 1.0
         }
       },
       "expansion": {
         "disabled": {
-          "p50_increase_ms": -3.750048,
-          "p95_increase_ms": -6.604772,
+          "p50_increase_ms": 0.29737,
+          "p95_increase_ms": 0.399048,
           "sql_statements_per_op": 18.0,
           "transactions_per_op": 3.0
         },
         "enabled": {
-          "p50_increase_ms": -2.930886,
-          "p95_increase_ms": -6.812729,
+          "p50_increase_ms": 0.130969,
+          "p95_increase_ms": 0.029793,
           "sql_statements_per_op": 18.0,
           "transactions_per_op": 3.0
         }
       },
       "historical": {
         "disabled": {
-          "p50_increase_ms": -3.707108,
-          "p95_increase_ms": -6.859447,
+          "p50_increase_ms": 0.245444,
+          "p95_increase_ms": 0.126046,
           "sql_statements_per_op": 17.0,
           "transactions_per_op": 3.0
         },
         "enabled": {
-          "p50_increase_ms": -4.093555,
-          "p95_increase_ms": -8.380126,
+          "p50_increase_ms": -0.05911,
+          "p95_increase_ms": -0.14927,
           "sql_statements_per_op": 17.0,
           "transactions_per_op": 3.0
         }
       },
       "lexical": {
         "disabled": {
-          "p50_increase_ms": -6.926345,
-          "p95_increase_ms": -9.592121,
+          "p50_increase_ms": -0.618537,
+          "p95_increase_ms": -2.642786,
           "sql_statements_per_op": 17.0,
           "transactions_per_op": 3.0
         },
         "enabled": {
-          "p50_increase_ms": -7.364993,
-          "p95_increase_ms": -10.595916,
+          "p50_increase_ms": -0.588772,
+          "p95_increase_ms": -2.046026,
           "sql_statements_per_op": 17.0,
           "transactions_per_op": 3.0
         }
       },
       "private_space": {
         "disabled": {
-          "p50_increase_ms": -1.333653,
-          "p95_increase_ms": -3.829691,
+          "p50_increase_ms": -0.37768,
+          "p95_increase_ms": -0.658508,
           "sql_statements_per_op": 17.0,
           "transactions_per_op": 3.0
         },
         "enabled": {
-          "p50_increase_ms": -1.679207,
-          "p95_increase_ms": -3.659644,
+          "p50_increase_ms": -0.504468,
+          "p95_increase_ms": -0.287517,
           "sql_statements_per_op": 17.0,
           "transactions_per_op": 3.0
         }
       },
       "relationship_recall": {
         "disabled": {
-          "p50_increase_ms": -1.512256,
-          "p95_increase_ms": -3.549395,
+          "p50_increase_ms": -1.238532,
+          "p95_increase_ms": -1.895409,
           "sql_statements_per_op": 14.0,
           "transactions_per_op": 2.0
         },
         "enabled": {
-          "p50_increase_ms": -2.443205,
-          "p95_increase_ms": -3.808107,
+          "p50_increase_ms": -0.78312,
+          "p95_increase_ms": -1.150233,
           "sql_statements_per_op": 14.0,
           "transactions_per_op": 2.0
         }
@@ -129,9 +172,9 @@
   "evaluation_waiver": "Maintainer-approved 2026-09-22; replacement verification is real PostgreSQL, deterministic results and queries, focused E2E, and performance.",
   "issue": 457,
   "measured_candidate_source": {
-    "commit_sha": "d9a39af5dca16f12affaf97a26a4c4c579f34161",
-    "working_tree_paths": 5,
-    "working_tree_sha256": "00a9977de5fbfa1c0caa003be9612ae635d50b667082dcf9f74d1a8c7366168e"
+    "commit_sha": "a03acecdb082cf1224f8e2bcdd42b04ad332c2ea",
+    "working_tree_paths": 0,
+    "working_tree_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "postgres_plan": {
     "actual_rows_equal": true,
@@ -145,12 +188,12 @@
   "real_postgres_integration_package_passed": true,
   "schema_version": 1,
   "source_lock_manifest_sha256": {
-    "base": "bcfe55007be7791538ef57cdc9299f9c7bb35728962d6eb024343a8330be7275",
-    "candidate": "8a49ed0a28e1d5790a2d09b3c00867af763676077efc2e259af376f7706e7e40"
+    "base": "b835ee82ca962d4962061ad76a829c794a679e8c861564d666deeda4660aa404",
+    "candidate": "053120b6c3d064bf8393ede99a3629fb9b17a2451432cbf6283d5e837622875a"
   },
   "test_only_base_overlay_sha256": {
     "recall_read_performance_benchmark_test.go": "45556ee10b01181eed80d5b426247cc33a0d7a8cc022bf91da3da270d1f91bda",
     "relationship_projection_query_contract_test.go": "06b894d26aa55e5516aa3d6a8905d39c322ca73b97b967cb64775c941b2ed023",
-    "relationship_projection_selection_integration_test.go": "8511349c16a41186414ca3964ad61ce8adf6d5a5579628749c60c8bdf232773b"
+    "relationship_projection_selection_integration_test.go": "ea9d1b4931b81b8de1ca8bcbdc05ac8916742556daaafeb82691605b6784a613"
   }
 }
