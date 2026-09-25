@@ -9,10 +9,11 @@ require (
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/elimity-com/scim v0.0.0-20260728105928-2641426a1539
 	github.com/go-jose/go-jose/v4 v4.1.5
-	github.com/go-playground/validator/v10 v10.30.4
+	github.com/go-playground/validator/v10 v10.30.5
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/labstack/echo/v4 v4.15.4
+	github.com/labstack/gommon v0.5.0
 	github.com/lib/pq v1.12.3
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/pressly/goose/v3 v3.28.0
@@ -29,7 +30,7 @@ require (
 	golang.org/x/text v0.42.0
 	gonum.org/v1/gonum v0.17.0
 	gopkg.in/yaml.v3 v3.0.1
-	gorm.io/driver/postgres v1.6.2
+	gorm.io/driver/postgres v1.6.3
 	gorm.io/gorm v1.31.2
 )
 
@@ -66,7 +67,6 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/kr/text v0.2.0 // indirect
-	github.com/labstack/gommon v0.5.0 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
