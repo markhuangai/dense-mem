@@ -732,20 +732,17 @@ test("Grafana component cost panels use only their own request activity", async 
 });
 
 test("Grafana range panels use a scrape-safe lookback", async () => {
-  let groupedActivityPanels = 0;
   for (const name of ["dense-mem-service", "dense-mem-ai-recall", "dense-mem-workflows"]) {
     const dashboard = JSON.parse(await readFile(join(root, `examples/grafana/dashboards/${name}.json`), "utf8"));
     for (const panel of dashboard.panels.filter((item) => item.type === "timeseries")) {
       const expression = panel.targets[0].expr;
       assert.doesNotMatch(expression, /\[\$__interval\]|\$__interval_ms/, `${name}: ${panel.title} uses a short rate window`);
-      if (expression.includes(" > 0) and on()")) {
-        groupedActivityPanels += 1;
+      if (expression.includes("increase(")) {
         assert.match(expression, /\[\$__rate_interval\]/, `${name}: ${panel.title} lacks a bounded lookback`);
         assert.doesNotMatch(expression, /\$window/, `${name}: ${panel.title} scans the rolling-total window at every point`);
       }
     }
   }
-  assert.equal(groupedActivityPanels, 10);
 });
 
 test("community scenarios use the verifier fixture for embeddings without changing the embedding contract", () => {

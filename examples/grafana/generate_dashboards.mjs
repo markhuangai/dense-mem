@@ -106,7 +106,7 @@ function counterWithParentZero(metric, extra, parentMetric, parentExtra = "", sp
 }
 
 function rateWithParentZero(metric, extra, parentMetric, parentExtra = "", parentSparse = true) {
-  const parent = parentSparse ? sparseIncrease(parentMetric, parentExtra) : plainIncrease(parentMetric, parentExtra);
+  const parent = parentSparse ? sparseIncrease(parentMetric, parentExtra, "$__rate_interval") : plainIncrease(parentMetric, parentExtra, "$__rate_interval");
   return `(${rateValue(metric, extra)} and on() (${up})) or ((vector(0) and on() (${parent})) and on() (${up}))`;
 }
 
@@ -225,7 +225,7 @@ const dashboards = [
       panel(17, "Dream provider duration", "s", histogramAverage("densemem_dream_provider_duration_seconds", 1, "$__rate_interval", "stage,outcome"), timeseries),
       panel(18, "Dream feedback actions", "short", counterBy("densemem_dream_feedback_actions_total", "decision,outcome"), timeseries),
       panel(19, "Recall Hypothesis expansions", "short", counterBy("densemem_recall_hypothesis_expansions_total", "outcome"), timeseries),
-      panel(20, "Recall Hypotheses returned", "short", counter("densemem_recall_hypotheses_returned_total"), timeseries),
+      panel(20, "Recall Hypotheses returned", "short", counter("densemem_recall_hypotheses_returned_total", "", false, "$__rate_interval"), timeseries),
       panel(21, "Dream runs", "short", ledgerGauge("densemem_operational_dream_runs", "window,lane,status", 'window="$window"'), timeseries),
       panel(22, "Dream input targets", "short", ledgerGauge("densemem_operational_dream_input_targets", "window,lane,status", 'window="$window"'), timeseries),
       panel(23, "Dream evidence targets", "short", ledgerGauge("densemem_operational_dream_evidence_targets", "window,lane,status", 'window="$window"'), timeseries),
