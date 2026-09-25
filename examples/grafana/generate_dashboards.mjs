@@ -96,7 +96,7 @@ function cost(component = "") {
 }
 
 function counterBy(metric, grouping, extra = "", window = "$window") {
-  return `${sparseIncrease(metric, extra, window, grouping)} and on() (${up})`;
+  return `(${sparseIncrease(metric, extra, window, grouping)} > 0) and on() (${up})`;
 }
 
 function counterWithParentZero(metric, extra, parentMetric, parentExtra = "", sparse = true) {
