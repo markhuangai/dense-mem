@@ -105,43 +105,15 @@ test("control panel rejects an invalid control token", async ({ page }) => {
   await expect(page.getByRole("alert")).toContainText(/invalid/i);
 });
 
-test("control panel shows operational metrics against compose", async ({ page }) => {
+test("control overview keeps request metrics without a Metrics tab", async ({ page }) => {
   await openControlPanel(page);
+  await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
 
-  await page.getByRole("button", { name: /^Metrics$/ }).click();
-
-  await expect(page.getByRole("heading", { name: "Usage Rollup" })).toBeVisible();
-  await expect(page.getByLabel("Request metrics")).toBeVisible();
-  await expect(page.getByText("MCP tool calls")).toBeVisible();
-  await expect(page.getByText("MCP tool failures")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Dependencies" })).toBeVisible();
-  await expect(page.getByText("postgres", { exact: true })).toBeVisible();
-  await expect(page.getByText("redis", { exact: true })).toBeVisible();
-
-  await page.getByLabel("Window").selectOption("360");
-  await page.getByLabel("Team", { exact: true }).selectOption(seedTeamId);
-  await expect(page.getByRole("heading", { name: "Usage Rollup" })).toBeVisible();
-  await expectNoShellOverlap(page);
-});
-
-test("control panel marks MCP rollups unavailable for a legacy metrics response", async ({ page }) => {
-  await page.route("**/control/api/metrics*", async (route) => {
-    const response = await route.fetch();
-    const body = await response.json() as { data?: { system?: Record<string, unknown>; teams?: Array<Record<string, unknown>>; keys?: Array<Record<string, unknown>>; routes?: Array<Record<string, unknown>> } };
-    for (const total of [body.data?.system, ...(body.data?.teams ?? []), ...(body.data?.keys ?? []), ...(body.data?.routes ?? [])]) {
-      if (total) {
-        delete total.mcp_tool_calls;
-        delete total.mcp_tool_failures;
-      }
-    }
-    await route.fulfill({ response, body: JSON.stringify(body) });
-  });
-
-  await openControlPanel(page);
-  await page.getByRole("button", { name: /^Metrics$/ }).click();
-  await expect(page.getByRole("heading", { name: "Usage Rollup" })).toBeVisible();
-  await expect(page.getByText("MCP tool calls")).toBeVisible();
-  await expect(page.getByText("Unavailable").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Metrics$/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Open Metrics" })).toHaveCount(0);
+  await expect(page.getByLabel("Team activity")).toContainText("HTTP requests");
+  await expect(page.getByLabel("Top signals")).toBeVisible();
+  await expect(page.getByLabel("Recent alerts")).toBeVisible();
 });
 
 test("control overview contains every Top Signals diagnostic", async ({ page }) => {
@@ -222,76 +194,34 @@ test("control panel surfaces an adverse evidence-discovery run", async ({ page }
   await expect(failedRun).toContainText("Provider call failed");
 });
 
-test("prometheus telemetry is scraped and rendered in control panel and user portal", async ({ page, request }) => {
+test("Prometheus telemetry remains available without portal dashboards", async ({ page, request }) => {
   test.setTimeout(150_000);
   const sessionResponse = await request.get(`${userUrl}/ui/api/session`, { headers: bearer(seedApiKey) });
   expect(sessionResponse.status()).toBe(200);
-  const sessionBody = await sessionResponse.json() as UserSessionResponse;
-  expect(sessionBody.data?.membership?.grants).toEqual(expect.arrayContaining(["write"]));
-  const expectedScope = sessionBody.data?.membership?.role === "manager" ? "team" : "self";
-  const expectedUsageTitle = sessionBody.data?.membership?.role === "manager" ? "Team usage" : "My credential usage";
 
   await expect.poll(
     () => prometheusResultCount(request, `densemem_http_requests_total{route="/ui/api/session"}`),
-    {
-      intervals: [1_000, 5_000, 10_000],
-      timeout: 120_000,
-    },
+    { intervals: [1_000, 5_000, 10_000], timeout: 120_000 },
   ).toBeGreaterThan(0);
 
-  const telemetryResponse = await request.get(`${userUrl}/ui/api/telemetry?window=15m`, { headers: bearer(seedApiKey) });
-  expect(telemetryResponse.status()).toBe(200);
-  const telemetryBody = await telemetryResponse.json() as TelemetryResponse;
-  expect(telemetryBody.data?.available).toBe(true);
-  expect(telemetryBody.data?.scope?.type).toBe(expectedScope);
-  expect(telemetryBody.data?.scope?.team_id).toBe(sessionBody.data?.team?.id);
-  if (expectedScope === "self") {
-    expect(telemetryBody.data?.scope?.profile_id).toBe(sessionBody.data?.credential?.id);
-  }
-  expect(Array.isArray(telemetryBody.data?.cards)).toBe(true);
-  expect(Array.isArray(telemetryBody.data?.windowed_cards)).toBe(true);
-  expect(Array.isArray(telemetryBody.data?.current_cards)).toBe(true);
-  assertTelemetrySeries(telemetryBody);
-  const windowedCardLabels = telemetryLabels(telemetryBody.data?.windowed_cards);
-  const currentCardLabels = telemetryLabels(telemetryBody.data?.current_cards);
-  const activitySeriesLabels = telemetryLabels(telemetryBody.data?.activity_series);
-  const stateSeriesLabels = telemetryLabels(telemetryBody.data?.state_series);
-  expect(windowedCardLabels.length).toBeGreaterThan(0);
-  expect(currentCardLabels).toContain("Relationships: active");
-  expect(activitySeriesLabels.length).toBeGreaterThan(0);
-  expect(stateSeriesLabels).toEqual([]);
+  const telemetry = await controlTelemetry(request);
+  expect(telemetry.data?.available).toBe(true);
+  expect(telemetry.data?.scope?.type).toBe("system");
+  expect(telemetryLabels(telemetry.data?.windowed_cards)).toContain("HTTP requests");
+  expect(telemetryLabels(telemetry.data?.current_cards)).toContain("Relationships: active");
+  assertTelemetrySeries(telemetry);
 
   await openControlPanel(page);
-  await page.getByRole("button", { name: /^Metrics$/ }).click();
-  await expect(page.getByRole("heading", { name: "Telemetry" })).toBeVisible();
-  await expect(page.getByLabel("Telemetry totals")).toContainText("HTTP requests");
-  await expect(page.getByLabel("Telemetry charts")).toContainText("HTTP requests");
-  await expect(page.getByLabel("Telemetry current state")).toContainText("Relationships: active");
-  await expect(page.getByLabel("Telemetry state history")).toHaveCount(0);
-
+  await expect(page.getByRole("button", { name: /^Metrics$/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Logs" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Remember Attempts", exact: true })).toBeVisible();
   await openUserPortal(page, seedApiKey);
-  const userTelemetryResponsePromise = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return response.request().method() === "GET"
-      && url.origin === new URL(userUrl).origin
-      && url.pathname === "/ui/api/telemetry"
-      && url.searchParams.get("window") === "1h";
-  });
-  await page.getByRole("button", { name: "Usage" }).click();
-  const userTelemetryResponse = await userTelemetryResponsePromise;
-  expect(userTelemetryResponse.status()).toBe(200);
-  const userTelemetryBody = await userTelemetryResponse.json() as TelemetryResponse;
-  const readyWindowedCardLabels = telemetryReadyLabels(userTelemetryBody.data?.windowed_cards);
-  const readyActivitySeriesLabels = telemetryReadyLabels(userTelemetryBody.data?.activity_series);
-  for (const label of readyWindowedCardLabels) {
-    await expect(page.getByLabel(`${expectedUsageTitle} totals`)).toContainText(label);
-  }
-  for (const label of readyActivitySeriesLabels) {
-    await expect(page.getByLabel(`${expectedUsageTitle} charts`)).toContainText(label);
-  }
-  await expect(page.getByLabel(`${expectedUsageTitle} current state`)).toContainText("Relationships: active");
-  await expect(page.getByLabel(`${expectedUsageTitle} state history`)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Usage" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Dreams" })).toBeVisible();
   await expectNoShellOverlap(page);
+
+  const retired = await request.get(`${userUrl}/ui/api/telemetry?window=15m`, { headers: bearer(seedApiKey) });
+  expect(retired.status()).toBe(404);
 });
 
 test("MCP supersedes and retracts caller-owned evidence against compose", async ({ request }) => {
@@ -354,7 +284,7 @@ test("MCP supersedes and retracts caller-owned evidence against compose", async 
   expect(replay.decision_id).toBe(retraction.decision_id);
 });
 
-test("MCP recall feedback is submitted and surfaced through compose telemetry", async ({ page, request }) => {
+test("MCP recall feedback is submitted and retained in operator telemetry", async ({ request }) => {
   test.setTimeout(180_000);
   const recallFeedbackWasEnabled = await recallFeedbackEnabled(request);
   await setRecallFeedback(request, true);
@@ -398,7 +328,7 @@ test("MCP recall feedback is submitted and surfaced through compose telemetry", 
     expect(submitPayload.recorded_count).toBe(1);
 
     await expect.poll(
-      () => prometheusQueryValue(request, `sum(densemem_recall_feedback_total{used="true",answer_supported="true",quality="high",missing_context="false",irrelevant="false"})`),
+      () => prometheusQueryValue(request, `sum(densemem_recall_feedback_total{team_id="${seedTeamId}",used="true",answer_supported="true",quality="high",missing_context="false",irrelevant="false"})`),
       {
         intervals: [1_000, 5_000, 10_000],
         timeout: 120_000,
@@ -406,16 +336,14 @@ test("MCP recall feedback is submitted and surfaced through compose telemetry", 
     ).toBeGreaterThan(0);
 
     await expect.poll(
-      () => prometheusQueryValue(request, "sum(densemem_recall_feedback_quality_score_count)"),
+      () => prometheusQueryValue(request, `sum(densemem_recall_feedback_quality_score_count{team_id="${seedTeamId}"})`),
       {
         intervals: [1_000, 5_000, 10_000],
         timeout: 120_000,
       },
     ).toBeGreaterThan(0);
 
-    const telemetryResponse = await request.get(`${userUrl}/ui/api/telemetry?window=15m`, { headers: bearer(seedApiKey) });
-    expect(telemetryResponse.status()).toBe(200);
-    const telemetryBody = await telemetryResponse.json() as TelemetryResponse;
+    const telemetryBody = await controlTelemetry(request, seedTeamId);
     expect(telemetryLabels(telemetryBody.data?.cards)).toEqual(expect.arrayContaining([
       "LLM recall used",
       "LLM answer supported",
@@ -427,7 +355,7 @@ test("MCP recall feedback is submitted and surfaced through compose telemetry", 
     await expect.poll(
       async () => {
         try {
-          const telemetry = await userTelemetry(request);
+          const telemetry = await controlTelemetry(request, seedTeamId);
           return [
             cardValue(telemetry, "llm_recall_used_rate"),
             cardValue(telemetry, "llm_recall_answer_supported_rate"),
@@ -443,18 +371,10 @@ test("MCP recall feedback is submitted and surfaced through compose telemetry", 
       },
     ).toEqual([100, 100, 100]);
 
-    const finalTelemetry = await userTelemetry(request);
+    const finalTelemetry = await controlTelemetry(request, seedTeamId);
     expect(cardValue(finalTelemetry, "llm_recall_missing_context_rate")).toBe(0);
     expect(cardValue(finalTelemetry, "llm_recall_irrelevant_rate")).toBe(0);
 
-    await openUserPortal(page, seedApiKey);
-    await page.getByRole("button", { name: "Usage" }).click();
-    const usageTitle = await userUsageTitle(request, seedApiKey);
-    const usageTotals = page.getByLabel(`${usageTitle} totals`);
-    await expect(usageTotals).toContainText("LLM recall used");
-    await expect(usageTotals).toContainText("LLM answer supported");
-    await expect(usageTotals).toContainText("LLM recall quality");
-    await expect(usageTotals).toContainText("100%");
   } finally {
     await setRecallFeedback(request, recallFeedbackWasEnabled);
   }
@@ -546,7 +466,7 @@ test("read-only user key cannot regenerate itself", async ({ page, request }, te
   await expect(page.getByRole("button", { name: /Regenerate key/i })).toBeDisabled();
 
   const telemetryResponse = await request.get(`${userUrl}/ui/api/telemetry?window=15m`, { headers: bearer(readOnly.api_key) });
-  expect(telemetryResponse.status()).toBe(403);
+  expect(telemetryResponse.status()).toBe(404);
 });
 
 test("write user key regenerates itself and invalidates the old key", async ({ page, request }, testInfo) => {
@@ -863,28 +783,13 @@ function telemetryLabels(value: unknown) {
     .filter(Boolean);
 }
 
-function telemetryReadyLabels(value: unknown) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return telemetryLabels(value.filter((item) => isRecord(item) && item.status === "ready"));
-}
-
-async function userTelemetry(request: APIRequestContext) {
-  const response = await request.get(`${userUrl}/ui/api/telemetry?window=15m`, { headers: bearer(seedApiKey) });
+async function controlTelemetry(request: APIRequestContext, teamID?: string) {
+  const scope = teamID ? `scope=team&team_id=${encodeURIComponent(teamID)}` : "scope=system";
+  const response = await request.get(`${controlUrl}/control/api/telemetry?window=15m&${scope}`, { headers: bearer(controlToken) });
   if (response.status() !== 200) {
-    throw new Error(`user telemetry failed: ${response.status()} ${await response.text()}`);
+    throw new Error(`control telemetry failed: ${response.status()} ${await response.text()}`);
   }
   return await response.json() as TelemetryResponse;
-}
-
-async function userUsageTitle(request: APIRequestContext, apiKey: string) {
-  const response = await request.get(`${userUrl}/ui/api/session`, { headers: bearer(apiKey) });
-  if (response.status() !== 200) {
-    throw new Error(`user session failed: ${response.status()} ${await response.text()}`);
-  }
-  const body = await response.json() as UserSessionResponse;
-  return body.data?.membership?.role === "manager" ? "Team usage" : "My credential usage";
 }
 
 function cardValue(body: TelemetryResponse, id: string) {

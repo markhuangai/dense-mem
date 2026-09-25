@@ -17,7 +17,6 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	portal := &userPortalHandler{
 		teams:         deps.TeamSvc,
 		credentials:   deps.CredentialSvc,
-		telemetry:     deps.Telemetry,
 		graph:         deps.GraphView,
 		recall:        handler.NewRecallHandler(deps.RecallSvc, deps.DreamSvc),
 		dreams:        handler.NewDreamHandler(deps.DreamSvc),
@@ -68,7 +67,6 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	credentialSvcMW := userPortalServiceAvailable(deps.CredentialSvc != nil, "credential service unavailable")
 	dreamSvcMW := userPortalServiceAvailable(deps.DreamSvc != nil, "dream service unavailable")
 
-	api.GET("/telemetry", portal.telemetrySnapshot, httpmw.RequireScopes("write"))
 	api.GET("/graph", portal.graphSnapshot, httpmw.RequireScopes("read"))
 	api.GET("/node-detail", portal.graphNodeDetail, httpmw.RequireScopes("read"))
 	api.GET("/team/audit-log", portal.audit.Get, httpmw.RequireScopes("read"))

@@ -1,7 +1,6 @@
 import { Component, FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
-  BarChart3,
   Check,
   Copy,
   KeyRound,
@@ -15,8 +14,6 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { TelemetrySnapshot, TelemetryWindowKey } from "../telemetry/types";
-import { useVisiblePolling } from "../telemetry/useVisiblePolling";
 import {
   RotateResponse,
   SSOProvider,
@@ -27,7 +24,6 @@ import {
 import { AuthShell, LoadingState, PortalShell, SecretBox, SectionHeading, writeClipboardText } from "../ui/components";
 import { SearchPanel } from "./SearchPanel";
 
-const TelemetryDashboard = lazy(() => import("../telemetry/TelemetryDashboard").then((module) => ({ default: module.TelemetryDashboard })));
 const TeamManagementPanel = lazy(() => import("./TeamManagementPanel").then((module) => ({ default: module.TeamManagementPanel })));
 const UserDreamsPanel = lazy(() => import("./DreamsPanel").then((module) => ({ default: module.UserDreamsPanel })));
 const GraphPanel = lazy(() => import("./GraphPanel").then((module) => ({ default: module.GraphPanel })));
@@ -37,7 +33,7 @@ const THEME_STORAGE_KEY = "denseMem.userTheme";
 
 type Theme = "light" | "dark";
 type AuthMode = "none" | "api_key" | "api_key_session" | "sso";
-type UserTab = "search" | "graph" | "dreams" | "usage" | "team" | "credential";
+type UserTab = "search" | "graph" | "dreams" | "team" | "credential";
 type CredentialPermission = "read" | "read_write";
 
 function sessionAuthMode(session: UserSession, token: string): AuthMode {
@@ -59,19 +55,6 @@ function canShowMyCredential(session: UserSession | null): boolean {
     return true;
   }
   return !canManageTeam(session) && session.membership.grants.includes("read");
-}
-
-function canShowUsage(session: UserSession | null): boolean {
-  return Boolean(session?.membership.grants.includes("write"));
-}
-
-function userTelemetryTitle(session: UserSession): string {
-  return canManageTeam(session) ? "Team usage" : "My credential usage";
-}
-
-function userTelemetryIdentity(session: UserSession): string {
-  const scope = canManageTeam(session) ? "team" : "self";
-  return `${scope}:${session.team.id}:${session.credential?.id ?? "sso"}`;
 }
 
 export function UserPortalApp() {
@@ -342,19 +325,10 @@ function UserPortal({
     }
   }, [activeTab, session]);
 
-  useEffect(() => {
-    if (!canShowUsage(session) && activeTab === "usage") {
-      setActiveTab("search");
-    }
-  }, [activeTab, session]);
-
   const navItems = [
     { id: "search", label: "Recall", icon: <Search size={17} aria-hidden="true" />, active: activeTab === "search", onClick: () => setActiveTab("search") },
     { id: "graph", label: "Graph", icon: <Network size={17} aria-hidden="true" />, active: activeTab === "graph", onClick: () => setActiveTab("graph") },
     { id: "dreams", label: "Dreams", icon: <Moon size={17} aria-hidden="true" />, active: activeTab === "dreams", onClick: () => setActiveTab("dreams") },
-    ...(canShowUsage(session) ? [
-      { id: "usage", label: "Usage", icon: <BarChart3 size={17} aria-hidden="true" />, active: activeTab === "usage", onClick: () => setActiveTab("usage") },
-    ] : []),
     ...(canManageTeam(session) ? [
       { id: "team", label: "Team", icon: <Users size={17} aria-hidden="true" />, active: activeTab === "team", onClick: () => setActiveTab("team") },
     ] : []),
@@ -414,9 +388,6 @@ function UserPortal({
           {activeTab === "search" && <SearchPanel api={api} />}
           {activeTab === "graph" && <GraphPanel api={api} />}
           {activeTab === "dreams" && <UserDreamsPanel api={api} />}
-          {activeTab === "usage" && session && canShowUsage(session) && (
-            <UserTelemetryPanel key={userTelemetryIdentity(session)} api={api} session={session} />
-          )}
           {activeTab === "team" && session && canManageTeam(session) && (
             <TeamManagementPanel
               api={api}
@@ -558,54 +529,6 @@ class LazyPanelErrorBoundary extends Component<LazyPanelErrorBoundaryProps, Lazy
 
 function LazyPanelFallback() {
   return <LoadingState label="Loading panel" />;
-}
-
-function UserTelemetryPanel({ api, session }: { api: UserApi; session: UserSession }) {
-  const [snapshot, setSnapshot] = useState<TelemetrySnapshot | null>(null);
-  const [windowKey, setWindowKey] = useState<TelemetryWindowKey>("1h");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const requestRef = useRef(0);
-
-  async function loadTelemetry(nextWindow = windowKey, signal?: AbortSignal) {
-    const requestID = ++requestRef.current;
-    setLoading(true);
-    setError("");
-    try {
-      setSnapshot(await api.telemetry({ window: nextWindow }, signal));
-    } catch (err) {
-      if (!isAbortError(err)) {
-        setError(readError(err));
-      }
-    } finally {
-      if (requestRef.current === requestID) {
-        setLoading(false);
-      }
-    }
-  }
-
-  const refreshTelemetry = useVisiblePolling(
-    (signal) => loadTelemetry(windowKey, signal),
-    [api, windowKey],
-  );
-
-  return (
-    <section className="surface">
-      <TelemetryDashboard
-        title={userTelemetryTitle(session)}
-        snapshot={snapshot}
-        windowKey={windowKey}
-        loading={loading}
-        error={error}
-        onWindowChange={setWindowKey}
-        onRefresh={() => void refreshTelemetry()}
-      />
-    </section>
-  );
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
 }
 
 function CredentialPanel({

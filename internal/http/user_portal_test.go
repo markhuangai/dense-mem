@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	operations "github.com/markhuangai/dense-mem/internal/operations"
-	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,6 +22,7 @@ import (
 	graphservice "github.com/markhuangai/dense-mem/internal/graph"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"github.com/markhuangai/dense-mem/internal/storage/inmem"
 )
 
@@ -292,96 +291,22 @@ func TestUserPortalSessionShowsOnlyAuthenticatedKey(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "Other")
 }
 
-func TestUserPortalTelemetryMemberUsesSelfScope(t *testing.T) {
+func TestUserPortalTelemetryRouteRetired(t *testing.T) {
 	teamID := uuid.New()
-	keyID := uuid.New()
-	authKey, rawKey := userPortalTestKey(t, teamID, keyID, "Mine", []string{"read", "write"})
-	telemetry := &controlTelemetrySvc{snapshot: &operations.TelemetrySnapshot{
-		Available: true,
-		Window:    operations.TelemetryWindow{Key: "15m"},
-		Cards:     []operations.TelemetryCard{{ID: "http_requests", Label: "HTTP requests", Unit: "requests", Value: 4}},
-	}}
-	server := userPortalTestServerWithTelemetry(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", telemetry)
-
+	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Writer", []string{"read", "write"})
+	server := userPortalTestServer(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "")
 	req := httptest.NewRequest(http.MethodGet, "/ui/api/telemetry?window=15m", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), `"available":true`)
-	require.Equal(t, "15m", telemetry.filter.Window)
-	require.Equal(t, "self", telemetry.filter.Scope)
-	require.Equal(t, operations.TelemetryAudienceUser, telemetry.filter.Audience)
-	require.Equal(t, teamID, *telemetry.filter.TeamID)
-	require.Equal(t, keyID, *telemetry.filter.ProfileID)
-	require.Equal(t, 1, telemetry.calls)
-
-	req = httptest.NewRequest(http.MethodGet, "/ui/api/telemetry?window=30m&scope=team", nil)
-	req.Header.Set("Authorization", "Bearer "+rawKey)
-	rec = httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusForbidden, rec.Code)
-	require.Equal(t, "15m", telemetry.filter.Window)
-	require.Equal(t, "self", telemetry.filter.Scope)
-	require.Equal(t, keyID, *telemetry.filter.ProfileID)
-	require.Equal(t, 1, telemetry.calls)
-
-	req = httptest.NewRequest(http.MethodGet, "/ui/api/telemetry?scope=profile", nil)
-	req.Header.Set("Authorization", "Bearer "+rawKey)
-	rec = httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusForbidden, rec.Code)
-	require.Equal(t, 1, telemetry.calls)
-}
-
-func TestUserPortalTelemetryManagerUsesTeamScope(t *testing.T) {
-	teamID := uuid.New()
-	keyID := uuid.New()
-	authKey, rawKey := userPortalTestKey(t, teamID, keyID, "Manager", []string{"read", "write"})
-	authKey.Role = accessservice.CredentialRoleManager
-	telemetry := &controlTelemetrySvc{snapshot: &operations.TelemetrySnapshot{
-		Available: true,
-		Window:    operations.TelemetryWindow{Key: "30m"},
-		Cards:     []operations.TelemetryCard{{ID: "http_requests", Label: "HTTP requests", Unit: "requests", Value: 9}},
-	}}
-	server := userPortalTestServerWithTelemetry(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", telemetry)
-
-	req := httptest.NewRequest(http.MethodGet, "/ui/api/telemetry?window=30m", nil)
-	req.Header.Set("Authorization", "Bearer "+rawKey)
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), `"available":true`)
-	require.Equal(t, "30m", telemetry.filter.Window)
-	require.Equal(t, "team", telemetry.filter.Scope)
-	require.Equal(t, operations.TelemetryAudienceUser, telemetry.filter.Audience)
-	require.Equal(t, teamID, *telemetry.filter.TeamID)
-	require.Nil(t, telemetry.filter.ProfileID)
-	require.Equal(t, 1, telemetry.calls)
-
-	req = httptest.NewRequest(http.MethodGet, "/ui/api/telemetry?window=15m&scope=team", nil)
-	req.Header.Set("Authorization", "Bearer "+rawKey)
-	rec = httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "15m", telemetry.filter.Window)
-	require.Equal(t, "team", telemetry.filter.Scope)
-	require.Nil(t, telemetry.filter.ProfileID)
-	require.Equal(t, 2, telemetry.calls)
-
-	req = httptest.NewRequest(http.MethodGet, "/ui/api/telemetry?scope=self", nil)
-	req.Header.Set("Authorization", "Bearer "+rawKey)
-	rec = httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusForbidden, rec.Code)
-	require.Equal(t, 2, telemetry.calls)
+	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 func TestUserPortalGraphUsesAuthenticatedTeamScope(t *testing.T) {
 	teamID := uuid.New()
 	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Reader", []string{"read"})
 	graph := &userPortalGraphSvc{}
-	server := userPortalTestServerWithGraph(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", nil, graph)
+	server := userPortalTestServerWithGraph(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", graph)
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/api/graph?scope=local&anchor_type=entity&anchor_id=entity-1&depth=5&limit=181&types=entity,value&q=memory", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
@@ -423,7 +348,7 @@ func TestUserPortalGraphRequiresReadScope(t *testing.T) {
 	teamID := uuid.New()
 	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Writer", []string{"write"})
 	graph := &userPortalGraphSvc{}
-	server := userPortalTestServerWithGraph(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", nil, graph)
+	server := userPortalTestServerWithGraph(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", graph)
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/api/graph", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
@@ -438,7 +363,7 @@ func TestUserPortalGraphNodeDetailUsesAuthenticatedTeamScope(t *testing.T) {
 	teamID := uuid.New()
 	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Reader", []string{"read"})
 	graph := &userPortalGraphSvc{}
-	server := userPortalTestServerWithGraph(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", nil, graph)
+	server := userPortalTestServerWithGraph(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", graph)
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/api/node-detail?type=entity&id=entity-1", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
@@ -458,7 +383,7 @@ func TestUserPortalGraphNodeDetailMapsValidationAndNotFound(t *testing.T) {
 	teamID := uuid.New()
 	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Reader", []string{"read"})
 	graph := &userPortalGraphSvc{nodeDetailErr: graphservice.ErrMissingNode}
-	server := userPortalTestServerWithGraph(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", nil, graph)
+	server := userPortalTestServerWithGraph(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", graph)
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/api/node-detail", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
@@ -474,32 +399,6 @@ func TestUserPortalGraphNodeDetailMapsValidationAndNotFound(t *testing.T) {
 	server.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
-}
-
-func TestUserPortalTelemetryReadOnlyForbidden(t *testing.T) {
-	teamID := uuid.New()
-	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Read only", []string{"read"})
-	telemetry := &controlTelemetrySvc{snapshot: &operations.TelemetrySnapshot{Available: true}}
-	server := userPortalTestServerWithTelemetry(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", telemetry)
-
-	req := httptest.NewRequest(http.MethodGet, "/ui/api/telemetry", nil)
-	req.Header.Set("Authorization", "Bearer "+rawKey)
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusForbidden, rec.Code)
-	require.Equal(t, 0, telemetry.calls)
-}
-
-func TestUserPortalTelemetryUnavailable(t *testing.T) {
-	teamID := uuid.New()
-	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Mine", []string{"read", "write"})
-
-	noTelemetry := userPortalTestServer(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "")
-	req := httptest.NewRequest(http.MethodGet, "/ui/api/telemetry", nil)
-	req.Header.Set("Authorization", "Bearer "+rawKey)
-	rec := httptest.NewRecorder()
-	noTelemetry.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }
 
 func TestUserPortalRotateRequiresWriteScope(t *testing.T) {
@@ -946,14 +845,10 @@ func userPortalPrincipal(teamID, credentialID uuid.UUID, role string, grants []s
 }
 
 func userPortalTestServer(t *testing.T, teamID uuid.UUID, authKey *domain.Credential, keySvc *userPortalKeySvc, staticDir string) http.Handler {
-	return userPortalTestServerWithTelemetry(t, teamID, authKey, keySvc, staticDir, nil)
+	return userPortalTestServerWithGraph(t, teamID, authKey, keySvc, staticDir, nil)
 }
 
-func userPortalTestServerWithTelemetry(t *testing.T, teamID uuid.UUID, authKey *domain.Credential, keySvc *userPortalKeySvc, staticDir string, telemetry operations.TelemetryReader) http.Handler {
-	return userPortalTestServerWithGraph(t, teamID, authKey, keySvc, staticDir, telemetry, nil)
-}
-
-func userPortalTestServerWithGraph(t *testing.T, teamID uuid.UUID, authKey *domain.Credential, keySvc *userPortalKeySvc, staticDir string, telemetry operations.TelemetryReader, graph graphservice.Service) http.Handler {
+func userPortalTestServerWithGraph(t *testing.T, teamID uuid.UUID, authKey *domain.Credential, keySvc *userPortalKeySvc, staticDir string, graph graphservice.Service) http.Handler {
 	t.Helper()
 	profiles := &controlProfileSvc{profiles: []*domain.Team{{
 		ID:        teamID,
@@ -971,7 +866,6 @@ func userPortalTestServerWithGraph(t *testing.T, teamID uuid.UUID, authKey *doma
 		TeamSvc:                  profiles,
 		CredentialSvc:            keySvc,
 		RateLimitSvc:             accessservice.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
-		Telemetry:                telemetry,
 		GraphView:                graph,
 		Config:                   &config.Config{RateLimitPerMinute: 100},
 		CredentialVerifier:       crypto.NewArgon2Verifier(0),

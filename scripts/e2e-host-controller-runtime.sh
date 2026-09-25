@@ -57,6 +57,13 @@ run_scenario() {
   project="$(managed_project_name "$run_id" "$attempt" "$phase" "$stack_scenario")"
   local helpers
   helpers="$(scenario_helpers "$source_dir" "$phase" "$scenario")" || fail "scenario helper profiles are unavailable"
+  local grafana_password=""
+  if [[ "$scenario" == "full" ]]; then
+    local private_dir="${JOB_DIR}/${run_id}-${attempt}/${phase}-${stack_scenario}-private"
+    [[ -f "${private_dir}/grafana-admin-password" ]] || fail "Grafana E2E password is unavailable"
+    grafana_password="$(cat "${private_dir}/grafana-admin-password")"
+    export DENSE_MEM_E2E_GRAFANA_ADMIN_PASSWORD="$grafana_password"
+  fi
   [[ "$helpers" =~ ^[a-z0-9_,]*$ ]] || fail "invalid helper profile list"
   local created_at
   created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -258,6 +265,9 @@ run_scenario() {
       )
     fi
   fi
+  if [[ -n "$grafana_password" ]]; then
+    docker_args+=(-e "DENSE_MEM_E2E_GRAFANA_ADMIN_PASSWORD=${grafana_password}")
+  fi
   if [[ "$scenario" == "oauth_provider_compatibility" ]]; then
     docker_args+=(-e "DENSE_MEM_ENTRA_MOCK_URL=https://entra-mock:9443")
   fi
@@ -315,7 +325,7 @@ run_scenario() {
 
   set +e
   docker start --attach "$container" 2>&1 |
-    redact_diagnostics "$ENV_FILE" "$control_token" "$telemetry_token" "$postgres_password" "$api_key" "$identity_upgrade_api_key" "$oauth_token"
+    redact_diagnostics "$ENV_FILE" "$control_token" "$telemetry_token" "$postgres_password" "$api_key" "$identity_upgrade_api_key" "$oauth_token" "$grafana_password"
   local -a scenario_pipeline_status=("${PIPESTATUS[@]}")
   set -e
   ((scenario_pipeline_status[1] == 0)) || fail "diagnostic redaction failed"
@@ -332,7 +342,7 @@ run_scenario() {
         printf '%s\n' '--- Last 200 lines per Compose service ---'
         ci_compose logs --no-color --timestamps --tail 200
       } 2>&1
-    ) | redact_diagnostics "$ENV_FILE" "$control_token" "$telemetry_token" "$postgres_password" "$api_key" "$identity_upgrade_api_key" "$oauth_token"
+    ) | redact_diagnostics "$ENV_FILE" "$control_token" "$telemetry_token" "$postgres_password" "$api_key" "$identity_upgrade_api_key" "$oauth_token" "$grafana_password"
     local -a diagnostics_pipeline_status=("${PIPESTATUS[@]}")
     set -e
     if ((diagnostics_pipeline_status[0] != 0)); then

@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
@@ -52,31 +51,8 @@ func TestUserPortalQueryAndPrincipalHelpersCoverBounds(t *testing.T) {
 	}
 }
 
-func TestUserPortalTelemetryAndSessionBoundaryHelpers(t *testing.T) {
+func TestUserPortalSessionBoundaryHelpers(t *testing.T) {
 	teamID := uuid.New()
-	ownerID := uuid.New()
-	manager := userPortalPrincipal(teamID, uuid.New(), accessservice.CredentialRoleManager, []string{"read"}, "api_key")
-	if filter, err := userPortalTelemetryFilter(manager, "15m", "team"); err != nil || filter.Scope != "team" || filter.ProfileID != nil {
-		t.Fatalf("manager telemetry filter = %+v, %v", filter, err)
-	}
-	member := userPortalPrincipal(teamID, uuid.New(), accessservice.CredentialRoleMember, []string{"read"}, "api_key")
-	member.OwnerID = ownerID
-	if filter, err := userPortalTelemetryFilter(member, "30m", "self"); err != nil || filter.ProfileID == nil || *filter.ProfileID != ownerID {
-		t.Fatalf("member telemetry filter = %+v, %v", filter, err)
-	}
-	for name, p := range map[string]*httpmw.Principal{
-		"nil team":  {OwnerID: ownerID},
-		"nil owner": {TeamID: teamID, Role: accessservice.CredentialRoleMember},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, err := userPortalTelemetryFilter(p, "", ""); err == nil {
-				t.Fatal("invalid principal was accepted")
-			}
-		})
-	}
-	if _, err := userPortalTelemetryFilter(member, "", "team"); err == nil {
-		t.Fatal("member team scope override was accepted")
-	}
 	membership := toUserPortalMembership(domain.Membership{TeamID: teamID, Name: "Member"})
 	if membership.Role != accessservice.CredentialRoleMember {
 		t.Fatalf("membership default role = %q", membership.Role)

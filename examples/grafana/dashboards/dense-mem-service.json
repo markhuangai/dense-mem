@@ -1,0 +1,181 @@
+{
+  "__inputs": [],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "13.2.2"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "System-wide service health and canonical Relationship lifecycle. Lifecycle values are durable ledger gauges and are deduplicated across server replicas.",
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": [
+    "dense-mem",
+    "operations"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "includeAll": false,
+        "label": "Prometheus datasource",
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "dense-mem",
+          "value": "dense-mem"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "definition": "label_values(up, job)",
+        "includeAll": false,
+        "label": "Job",
+        "multi": false,
+        "name": "job",
+        "query": {
+          "query": "label_values(up, job)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "1h",
+          "value": "1h"
+        },
+        "label": "Rolling totals",
+        "name": "window",
+        "options": [
+          {
+            "selected": false,
+            "text": "15m",
+            "value": "15m"
+          },
+          {
+            "selected": false,
+            "text": "30m",
+            "value": "30m"
+          },
+          {
+            "selected": true,
+            "text": "1h",
+            "value": "1h"
+          },
+          {
+            "selected": false,
+            "text": "12h",
+            "value": "12h"
+          },
+          {
+            "selected": false,
+            "text": "1d",
+            "value": "1d"
+          },
+          {
+            "selected": false,
+            "text": "7d",
+            "value": "7d"
+          },
+          {
+            "selected": false,
+            "text": "30d",
+            "value": "30d"
+          }
+        ],
+        "query": "15m,30m,1h,12h,1d,7d,30d",
+        "type": "custom"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h"
+    ]
+  },
+  "timezone": "browser",
+  "title": "Dense-Mem Overview and Lifecycle",
+  "uid": "dense-mem-service",
+  "version": 1,
+  "weekStart": "",
+  "panels": [
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":0,"y":0},"id":1,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"min(up{job=~\"$job\"})","instant":true,"range":false,"refId":"A"}],"title":"Prometheus scrape health","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":8,"y":0},"id":2,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"min(densemem_operational_ledger_collection_success{job=~\"$job\"}) * min(up{job=~\"$job\"})","instant":true,"range":false,"refId":"A"}],"title":"Canonical ledger collection","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/conflict_queue_collection_success.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":16,"y":0},"id":3,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"min(densemem_conflict_queue_collection_success{job=~\"$job\"}) * min(up{job=~\"$job\"})","instant":true,"range":false,"refId":"A"}],"title":"Conflict queue collection","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/http_requests.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":0,"y":5},"id":4,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"(sum(increase(densemem_http_requests_total{job=~\"$job\"}[$window])) or vector(0)) and on() (min(up{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"HTTP requests","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/http_errors.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":8,"y":5},"id":5,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"(sum(increase(densemem_http_requests_total{job=~\"$job\",status_class=~\"4xx|5xx\"}[$window])) or (vector(0) and on() (sum(increase(densemem_http_requests_total{job=~\"$job\"}[$window]))))) and on() (min(up{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"HTTP errors","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/avg_http_latency.","fieldConfig":{"defaults":{"unit":"ms","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":16,"y":5},"id":6,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"1000 * (sum(increase(densemem_http_request_duration_seconds_sum{job=~\"$job\"}[$window]) + ((min_over_time(densemem_http_request_duration_seconds_sum{job=~\"$job\"}[$window]) unless ignoring(__name__) last_over_time(densemem_http_request_duration_seconds_sum{job=~\"$job\"}[$window] offset $window)) or (0 * increase(densemem_http_request_duration_seconds_sum{job=~\"$job\"}[$window])))) / sum(increase(densemem_http_request_duration_seconds_count{job=~\"$job\"}[$window]) + ((min_over_time(densemem_http_request_duration_seconds_count{job=~\"$job\"}[$window]) unless ignoring(__name__) last_over_time(densemem_http_request_duration_seconds_count{job=~\"$job\"}[$window] offset $window)) or (0 * increase(densemem_http_request_duration_seconds_count{job=~\"$job\"}[$window]))))) and on() (min(up{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Average HTTP request latency","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: series/http_rps.","fieldConfig":{"defaults":{"unit":"reqps","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":0,"y":10},"id":7,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"((sum(increase(densemem_http_requests_total{job=~\"$job\"}[$__rate_interval]) + ((min_over_time(densemem_http_requests_total{job=~\"$job\"}[$__rate_interval]) unless ignoring(__name__) last_over_time(densemem_http_requests_total{job=~\"$job\"}[$__rate_interval] offset $__rate_interval)) or (0 * increase(densemem_http_requests_total{job=~\"$job\"}[$__rate_interval])))) / ($__rate_interval)) or vector(0)) and on() (min(up{job=~\"$job\"}) == 1)","instant":false,"range":true,"refId":"A"}],"title":"HTTP request rate","type":"timeseries"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: series/http_errors_rps.","fieldConfig":{"defaults":{"unit":"reqps","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":12,"y":10},"id":8,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"((sum(increase(densemem_http_requests_total{job=~\"$job\",status_class=~\"4xx|5xx\"}[$__rate_interval]) + ((min_over_time(densemem_http_requests_total{job=~\"$job\",status_class=~\"4xx|5xx\"}[$__rate_interval]) unless ignoring(__name__) last_over_time(densemem_http_requests_total{job=~\"$job\",status_class=~\"4xx|5xx\"}[$__rate_interval] offset $__rate_interval)) or (0 * increase(densemem_http_requests_total{job=~\"$job\",status_class=~\"4xx|5xx\"}[$__rate_interval])))) / ($__rate_interval)) and on() (min(up{job=~\"$job\"}) == 1)) or ((vector(0) and on() (sum(increase(densemem_http_requests_total{job=~\"$job\"}[$__rate_interval])))) and on() (min(up{job=~\"$job\"}) == 1))","instant":false,"range":true,"refId":"A"}],"title":"HTTP error rate","type":"timeseries"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/relationship_corrections.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":0,"y":18},"id":9,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"max by (window) (densemem_operational_relationship_corrections{job=~\"$job\",window=\"$window\"}) and on() (min(up{job=~\"$job\"}) == 1) and on() (min(densemem_operational_ledger_collection_success{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Relationship corrections","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/relationships_pending_evidence.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":8,"y":18},"id":100,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"max by (status) (densemem_operational_relationships_current{job=~\"$job\",status=\"pending_evidence\"}) and on() (min(up{job=~\"$job\"}) == 1) and on() (min(densemem_operational_ledger_collection_success{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Current Relationships: pending_evidence","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/relationship_transitions_pending_evidence.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":16,"y":18},"id":120,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"max by (window,status) (densemem_operational_relationship_transitions{job=~\"$job\",window=\"$window\",status=\"pending_evidence\"}) and on() (min(up{job=~\"$job\"}) == 1) and on() (min(densemem_operational_ledger_collection_success{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Relationship transitions: pending_evidence","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/relationships_active.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":0,"y":23},"id":101,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"max by (status) (densemem_operational_relationships_current{job=~\"$job\",status=\"active\"}) and on() (min(up{job=~\"$job\"}) == 1) and on() (min(densemem_operational_ledger_collection_success{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Current Relationships: active","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/relationship_transitions_active.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":8,"y":23},"id":121,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"max by (window,status) (densemem_operational_relationship_transitions{job=~\"$job\",window=\"$window\",status=\"active\"}) and on() (min(up{job=~\"$job\"}) == 1) and on() (min(densemem_operational_ledger_collection_success{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Relationship transitions: active","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/relationships_needs_review.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":16,"y":23},"id":102,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"max by (status) (densemem_operational_relationships_current{job=~\"$job\",status=\"needs_review\"}) and on() (min(up{job=~\"$job\"}) == 1) and on() (min(densemem_operational_ledger_collection_success{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Current Relationships: needs_review","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/relationship_transitions_needs_review.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":0,"y":28},"id":122,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"max by (window,status) (densemem_operational_relationship_transitions{job=~\"$job\",window=\"$window\",status=\"needs_review\"}) and on() (min(up{job=~\"$job\"}) == 1) and on() (min(densemem_operational_ledger_collection_success{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Relationship transitions: needs_review","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/relationships_rejected.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":8,"y":28},"id":103,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"max by (status) (densemem_operational_relationships_current{job=~\"$job\",status=\"rejected\"}) and on() (min(up{job=~\"$job\"}) == 1) and on() (min(densemem_operational_ledger_collection_success{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Current Relationships: rejected","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/relationship_transitions_rejected.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":16,"y":28},"id":123,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"max by (window,status) (densemem_operational_relationship_transitions{job=~\"$job\",window=\"$window\",status=\"rejected\"}) and on() (min(up{job=~\"$job\"}) == 1) and on() (min(densemem_operational_ledger_collection_success{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Relationship transitions: rejected","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/relationships_retracted.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":0,"y":33},"id":104,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"max by (status) (densemem_operational_relationships_current{job=~\"$job\",status=\"retracted\"}) and on() (min(up{job=~\"$job\"}) == 1) and on() (min(densemem_operational_ledger_collection_success{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Current Relationships: retracted","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/relationship_transitions_retracted.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":8,"y":33},"id":124,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"max by (window,status) (densemem_operational_relationship_transitions{job=~\"$job\",window=\"$window\",status=\"retracted\"}) and on() (min(up{job=~\"$job\"}) == 1) and on() (min(densemem_operational_ledger_collection_success{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Relationship transitions: retracted","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/relationships_superseded.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":16,"y":33},"id":105,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"max by (status) (densemem_operational_relationships_current{job=~\"$job\",status=\"superseded\"}) and on() (min(up{job=~\"$job\"}) == 1) and on() (min(densemem_operational_ledger_collection_success{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Current Relationships: superseded","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/relationship_transitions_superseded.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":0,"y":38},"id":125,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"max by (window,status) (densemem_operational_relationship_transitions{job=~\"$job\",window=\"$window\",status=\"superseded\"}) and on() (min(up{job=~\"$job\"}) == 1) and on() (min(densemem_operational_ledger_collection_success{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Relationship transitions: superseded","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/relationships_quarantined.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":8,"y":38},"id":106,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"max by (status) (densemem_operational_relationships_current{job=~\"$job\",status=\"quarantined\"}) and on() (min(up{job=~\"$job\"}) == 1) and on() (min(densemem_operational_ledger_collection_success{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Current Relationships: quarantined","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/relationship_transitions_quarantined.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":16,"y":38},"id":126,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"max by (window,status) (densemem_operational_relationship_transitions{job=~\"$job\",window=\"$window\",status=\"quarantined\"}) and on() (min(up{job=~\"$job\"}) == 1) and on() (min(densemem_operational_ledger_collection_success{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Relationship transitions: quarantined","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/relationships_disputed.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":0,"y":43},"id":107,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"max by (status) (densemem_operational_relationships_current{job=~\"$job\",status=\"disputed\"}) and on() (min(up{job=~\"$job\"}) == 1) and on() (min(densemem_operational_ledger_collection_success{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Current Relationships: disputed","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/relationship_transitions_disputed.","fieldConfig":{"defaults":{"unit":"short","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":8,"y":43},"id":127,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"max by (window,status) (densemem_operational_relationship_transitions{job=~\"$job\",window=\"$window\",status=\"disputed\"}) and on() (min(up{job=~\"$job\"}) == 1) and on() (min(densemem_operational_ledger_collection_success{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Relationship transitions: disputed","type":"stat"}
+  ]
+}

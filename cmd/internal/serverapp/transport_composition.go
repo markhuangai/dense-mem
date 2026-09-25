@@ -328,7 +328,6 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 		CredentialSvc:            deps.credentialService,
 		RateLimitSvc:             deps.backend.rateLimitService,
 		UsageMetrics:             deps.usageMetrics,
-		Telemetry:                deps.telemetry.Reader,
 		GraphView:                deps.graph,
 		RecallSvc:                deps.recall,
 		DreamSvc:                 deps.dream,

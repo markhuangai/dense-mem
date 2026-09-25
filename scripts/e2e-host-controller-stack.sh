@@ -130,8 +130,20 @@ prepare_stack_helpers() {
 
   local oauth_token=""
   local harness_image=""
+  local grafana_password_file=""
   local provider_dimensions
   provider_dimensions="$(env_value AI_API_EMBEDDING_DIMENSIONS 2>/dev/null || printf '%s' 1536)"
+  if [[ "$scenario" == "full" ]]; then
+    grafana_password_file="${DENSE_MEM_CI_PRIVATE_DIR}/grafana-admin-password"
+    node - "$grafana_password_file" <<'NODE'
+const fs = require("node:fs");
+const crypto = require("node:crypto");
+const destination = process.argv[2];
+fs.writeFileSync(destination, `${crypto.randomBytes(32).toString("base64url")}\n`, { mode: 0o600 });
+NODE
+    chmod 600 "$grafana_password_file"
+    export DENSE_MEM_E2E_GRAFANA_ADMIN_PASSWORD="$(cat "$grafana_password_file")"
+  fi
   if has_helper "$helpers" oauth || has_helper "$helpers" oauth_compatibility; then
     require_command openssl
     [[ -f "${source_dir}/tests/uat/oauth_provider_mock.mjs" ]] || fail "missing OAuth provider fixture"
@@ -232,12 +244,12 @@ NODE
 
   if [[ -n "$helpers" ]]; then
     DENSE_MEM_CI_COMPOSE_OVERLAY_FILE="${DENSE_MEM_CI_HELPER_DIR}/compose.yml"
-    node - "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE" "$helpers" "$oauth_token" "$harness_image" "$provider_dimensions" "$CONFLICT_PROVIDER_EMBEDDING_MODEL" "$scenario" <<'NODE'
+    node - "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE" "$helpers" "$oauth_token" "$harness_image" "$provider_dimensions" "$CONFLICT_PROVIDER_EMBEDDING_MODEL" "$scenario" "$project" <<'NODE'
 const fs = require("node:fs");
-const [destination, helpers, oauthToken, harnessImage, providerDimensions, conflictProviderEmbeddingModel, scenario] = process.argv.slice(2);
+const [destination, helpers, oauthToken, harnessImage, providerDimensions, conflictProviderEmbeddingModel, scenario, project] = process.argv.slice(2);
 const has = (name) => new Set(helpers.split(",").filter(Boolean)).has(name);
 const conflictProviderDimensions = has("synchronous_write") ? (providerDimensions || "1536") : "1536";
-const deterministicEmbeddingProvider = scenario === "community" || has("synchronous_write");
+const deterministicEmbeddingProvider = scenario === "community" || has("synchronous_write") || scenario === "full";
 const lines = ["# dense-mem-ci-e2e.v1 generated helper overlay", "services:"];
 const serverEnvironment = new Map();
 const serverVolumes = [];
@@ -258,6 +270,12 @@ if (scenario === "community") {
     AI_API_URL: "http://synchronous-write-provider:8787/v1",
     AI_API_KEY: "dense-mem-community-e2e-key",
     AI_COMMUNITY_SUMMARY_MODEL: "dense-mem-e2e-community-summary",
+  })) serverEnvironment.set(key, value);
+}
+if (scenario === "full") {
+  for (const [key, value] of Object.entries({
+    AI_API_URL: "http://synchronous-write-provider:8787/v1",
+    AI_API_KEY: "dense-mem-grafana-e2e-key",
   })) serverEnvironment.set(key, value);
 }
 if (has("conflict_provider")) {
@@ -323,6 +341,33 @@ if (has("oauth_compatibility")) {
     "      DENSE_MEM_ENTRA_ISSUER: https://entra-mock:9443",
   ]]);
 }
+if (scenario === "full") {
+  helperServices.push(["grafana", [
+    "    image: grafana/grafana:13.2.2",
+    "    environment:",
+    "      GF_SECURITY_ADMIN_USER: admin",
+    "      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana-admin-password",
+    "      GF_AUTH_ANONYMOUS_ENABLED: \"false\"",
+    "      GF_USERS_ALLOW_SIGN_UP: \"false\"",
+    "    volumes:",
+    "      - grafana-provisioning:/etc/grafana/provisioning:ro",
+    "      - grafana-dashboards:/opt/dense-mem/grafana/dashboards:ro",
+    "      - grafana-data:/var/lib/grafana",
+    "    secrets: [grafana-admin-password]",
+    "    networks: [ci]",
+    "    restart: unless-stopped",
+    "    labels:",
+    `      io.dense-mem.ci.contract: ${JSON.stringify(process.env.DENSE_MEM_CI_CONTRACT)}`,
+    `      io.dense-mem.ci.repository: ${JSON.stringify(process.env.DENSE_MEM_CI_REPOSITORY)}`,
+    `      io.dense-mem.ci.run-id: ${JSON.stringify(process.env.DENSE_MEM_CI_RUN_ID)}`,
+    `      io.dense-mem.ci.run-attempt: ${JSON.stringify(process.env.DENSE_MEM_CI_RUN_ATTEMPT)}`,
+    `      io.dense-mem.ci.phase: ${JSON.stringify(process.env.DENSE_MEM_CI_PHASE)}`,
+    `      io.dense-mem.ci.scenario: ${JSON.stringify(process.env.DENSE_MEM_CI_SCENARIO)}`,
+    `      io.dense-mem.ci.image-digest: ${JSON.stringify(process.env.DENSE_MEM_CI_IMAGE_DIGEST)}`,
+    `      io.dense-mem.ci.created-at: ${JSON.stringify(process.env.DENSE_MEM_CI_CREATED_AT)}`,
+    `      io.dense-mem.ci.compose-project: ${JSON.stringify(project)}`,
+  ]]);
+}
 if (serverEnvironment.size > 0 || serverVolumes.length > 0) {
   lines.push("  server:");
   if (serverEnvironment.size > 0) {
@@ -335,6 +380,26 @@ if (serverEnvironment.size > 0 || serverVolumes.length > 0) {
   }
 }
 for (const [name, serviceLines] of helperServices) lines.push(`  ${name}:`, ...serviceLines);
+if (scenario === "full") {
+  lines.push(
+    "volumes:",
+    "  grafana-provisioning:",
+    `    name: ${project}_grafana-provisioning`,
+    "    external: true",
+    "  grafana-dashboards:",
+    `    name: ${project}_grafana-dashboards`,
+    "    external: true",
+    "  grafana-data:",
+    `    name: ${project}_grafana-data`,
+    "    labels:",
+    `      io.dense-mem.ci.contract: ${JSON.stringify(process.env.DENSE_MEM_CI_CONTRACT)}`,
+    `      io.dense-mem.ci.repository: ${JSON.stringify(process.env.DENSE_MEM_CI_REPOSITORY)}`,
+    `      io.dense-mem.ci.compose-project: ${JSON.stringify(project)}`,
+    "secrets:",
+    "  grafana-admin-password:",
+    "    environment: DENSE_MEM_E2E_GRAFANA_ADMIN_PASSWORD",
+  );
+}
 if (lines.length === 2) lines[1] = "services: {}";
 lines.push("");
 fs.writeFileSync(destination, `${lines.join("\n")}\n`, { mode: 0o600 });
@@ -386,7 +451,7 @@ start_stack_helpers() {
 }
 
 seed_stack_inputs() {
-  local project="$1" run_id="$2" attempt="$3" phase="$4" scenario="$5"
+  local project="$1" run_id="$2" attempt="$3" phase="$4" scenario="$5" source_dir="$6"
   local created_at
   created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   local -a labels=(
@@ -403,14 +468,33 @@ seed_stack_inputs() {
   docker volume create "${labels[@]}" "$DENSE_MEM_CI_PROMETHEUS_CONFIG_VOLUME_NAME" >/dev/null
   docker volume create "${labels[@]}" "$DENSE_MEM_CI_TELEMETRY_TOKEN_VOLUME_NAME" >/dev/null
 
+  local -a mounts=(
+    --mount "type=volume,source=${DENSE_MEM_CI_PROMETHEUS_CONFIG_VOLUME_NAME},target=/config"
+    --mount "type=volume,source=${DENSE_MEM_CI_TELEMETRY_TOKEN_VOLUME_NAME},target=/token"
+  )
+  if [[ "$scenario" == "full" ]]; then
+    local provisioning_volume="${project}_grafana-provisioning"
+    local dashboards_volume="${project}_grafana-dashboards"
+    docker volume create "${labels[@]}" "$provisioning_volume" >/dev/null
+    docker volume create "${labels[@]}" "$dashboards_volume" >/dev/null
+    mounts+=(
+      --mount "type=volume,source=${provisioning_volume},target=/grafana-provisioning"
+      --mount "type=volume,source=${dashboards_volume},target=/grafana-dashboards"
+    )
+  fi
+
   local seed_container="${project}-inputs"
   seed_container="$(docker run -d --name "$seed_container" "${labels[@]}" \
-    --mount "type=volume,source=${DENSE_MEM_CI_PROMETHEUS_CONFIG_VOLUME_NAME},target=/config" \
-    --mount "type=volume,source=${DENSE_MEM_CI_TELEMETRY_TOKEN_VOLUME_NAME},target=/token" \
+    "${mounts[@]}" \
     alpine:3.24 sh -ec 'sleep infinity')"
   docker cp "$PROMETHEUS_FILE" "$seed_container:/config/prometheus.yml" >/dev/null
   docker cp "$TELEMETRY_TOKEN_FILE" "$seed_container:/token/telemetry-scrape-token" >/dev/null
   docker exec "$seed_container" chmod 0444 /config/prometheus.yml /token/telemetry-scrape-token >/dev/null
+  if [[ "$scenario" == "full" ]]; then
+    docker cp "${source_dir}/examples/grafana/provisioning/." "$seed_container:/grafana-provisioning/" >/dev/null
+    docker cp "${source_dir}/examples/grafana/dashboards/." "$seed_container:/grafana-dashboards/" >/dev/null
+    docker exec "$seed_container" chmod -R a+rX /grafana-provisioning /grafana-dashboards >/dev/null
+  fi
   docker rm -f "$seed_container" >/dev/null
 }
 

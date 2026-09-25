@@ -5,9 +5,6 @@ function manualVendorChunks(id: string) {
   if (!id.includes("node_modules")) {
     return undefined;
   }
-  if (id.includes("/recharts/")) {
-    return "vendor-charts";
-  }
   if (id.includes("/lucide-react/")) {
     return "vendor-icons";
   }

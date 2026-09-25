@@ -81,11 +81,9 @@ function TeamWorkspaceHeader({
 export function TeamOverviewPanel({
   api,
   team,
-  onOpenMetrics,
 }: {
   api: ControlApi;
   team: Team;
-  onOpenMetrics: () => void;
 }) {
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [metrics, setMetrics] = useState<Awaited<ReturnType<ControlApi["getMetrics"]>> | null>(null);
@@ -195,7 +193,7 @@ export function TeamOverviewPanel({
       </div>
 
       <section className="overview-panel" aria-label="Recent alerts">
-        <SectionHeading title="Recent Alerts" actions={<button className="text-button" type="button" onClick={onOpenMetrics}>Open Metrics</button>} />
+        <SectionHeading title="Recent Alerts" />
         <div className="mini-table">
           <MiniTableRow columns={["Time", "Severity", "Alert", "Scope", "Status"]} heading />
           {metricsFailed && <MiniTableRow columns={["Now", "Medium", "Metrics unavailable", "Team", "Open"]} />}

@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: Dense-Mem
+    folder: Dense-Mem
+    type: file
+    disableDeletion: true
+    editable: false
+    updateIntervalSeconds: 30
+    options:
+      path: /opt/dense-mem/grafana/dashboards

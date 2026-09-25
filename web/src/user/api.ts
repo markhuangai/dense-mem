@@ -1,4 +1,3 @@
-import type { TelemetrySnapshot, UserTelemetryQuery } from "../telemetry/types";
 import { ApiError, requestJson } from "../http";
 export { ApiError } from "../http";
 
@@ -441,16 +440,6 @@ export class UserApi {
 
   async deleteTeamCredential(credentialId: string): Promise<{ status: string }> {
     const payload = await this.request<Envelope<{ status: string }>>(`/ui/api/team/credentials/${credentialId}`, { method: "DELETE" });
-    return payload.data;
-  }
-
-  async telemetry(query: UserTelemetryQuery = {}, signal?: AbortSignal): Promise<TelemetrySnapshot> {
-    const params = new URLSearchParams();
-    if (query.window) {
-      params.set("window", query.window);
-    }
-    const suffix = params.toString() ? `?${params.toString()}` : "";
-    const payload = await this.request<Envelope<TelemetrySnapshot>>(`/ui/api/telemetry${suffix}`, { signal });
     return payload.data;
   }
 

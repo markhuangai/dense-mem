@@ -1,0 +1,34 @@
+# Optional operator dashboards for the telemetry overlay.
+#
+# Use with docker-compose.base.yml (or docker-compose.expert.yml),
+# docker-compose.telemetry.yml, and a private Prometheus network.
+
+services:
+  grafana:
+    image: grafana/grafana:13.2.2
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana-admin-password
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/opt/dense-mem/grafana/dashboards:ro
+    secrets:
+      - grafana-admin-password
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    networks:
+      - private
+    depends_on:
+      prometheus:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  grafana-data:
+
+secrets:
+  grafana-admin-password:
+    environment: GRAFANA_ADMIN_PASSWORD

@@ -695,7 +695,7 @@ start_stack() {
     done
   fi
   stack_started=1
-  seed_stack_inputs "$project" "$run_id" "$attempt" "$phase" "$scenario"
+  seed_stack_inputs "$project" "$run_id" "$attempt" "$phase" "$scenario" "$source_dir"
   if ! ci_compose "${profiles[@]}" up -d --wait --wait-timeout 300 postgres >/dev/null; then
     ci_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
     fail "PostgreSQL failed to start"

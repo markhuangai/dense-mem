@@ -363,30 +363,41 @@ memory-pack 仅导出当前的 `dense-mem.memory-pack.v2.4` artifact。导入和
 没有受支持的公共 REST memory API。不要自动化浏览器路由，也不要依赖已退役的
 `/api/v1` 路径。
 
-## Telemetry Overlay
+## Telemetry And Grafana
 
-Prometheus telemetry 默认关闭。若要为第一方 dashboard 收集 HTTP、embedding、
-verifier、assessor、recall feedback、Remember、conflict-review、cost 和 Relationship
-生命周期指标，请和基础 stack 一起启动 overlay：
+Prometheus telemetry 默认关闭。若要收集 HTTP、embedding、verifier、assessor、
+recall feedback、Remember、Dream、cost 和 Relationship 生命周期指标，请和基础
+stack 一起启动 telemetry overlay。Grafana operator dashboard 是可选的：
 
 ```bash
-curl -fsSLo prometheus.yml \
-  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/prometheus.yml
-curl -fsSLo docker-compose.telemetry.yml \
-  https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.telemetry.yml
-
 export TELEMETRY_SCRAPE_TOKEN="$(openssl rand -hex 32)"
-docker compose -f docker-compose.yml -f docker-compose.telemetry.yml up -d
+export GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 32)"
+docker compose \
+  -f examples/docker-compose.base.yml \
+  -f examples/docker-compose.telemetry.yml \
+  -f examples/docker-compose.grafana.yml \
+  up -d
 ```
 
-overlay 会在 `127.0.0.1:9090` 启动 Prometheus，并通过
-`TELEMETRY_PROMETHEUS_JOB=dense-mem` 限定 dashboard 查询。dashboard snapshot 会标明
-每个项目是 ready、inactive、unavailable 还是 unsupported。已证明的零值会显示为零；
-缺少 provider usage 或 pricing 时保持 unavailable。部分来源失败不会隐藏仍然成功的卡片和
-图表。system、team 和 profile scope 使用与底层数据相同的可见性规则。自由文本
-recall-feedback comment 保存在有界调查记录中；Prometheus 只接收有界 labels。冲突队列
-状态 gauge 由每个实例发出，多实例 dashboard 应使用 `max by (team_id, status)`（或等价
-的 label 集合），事件 counter 仍使用普通的 `sum` 和 `rate` 语义。
+Prometheus 和 Grafana 分别在 `127.0.0.1:9090` 和 `127.0.0.1:3000` 提供服务；两个端口
+都只绑定 loopback。Grafana 使用 `GRAFANA_ADMIN_PASSWORD`，并从
+`examples/grafana/provisioning` 自动加载已检查的 dashboards。Datasource ID 由安装生成。
+
+Grafana 提供 HTTP、AI、recall、Remember、Dream 和 lifecycle measures。顶部时间选择器
+控制图表范围；`Rolling totals` 选择器控制 counter 窗口和 canonical ledger gauge 窗口。
+缺少 provider usage、pricing 或 recall feedback 会显示为无数据，而不是伪造零值。
+ledger collector 失败时会抑制对应 gauges 并显示 collection 状态。Replica 会使用
+`max` 聚合 durable gauges；counter measures 会跨实例聚合，并保留 sparse first-sample 语义；
+range rates 使用 Grafana query step。已有 scoped telemetry metrics 保留供第一方 API 使用的
+team/profile labels；Grafana 不用这些 labels 筛选或分组，而是聚合为 system-wide 数值。
+新增 operational metrics 不加入 identity labels，metric labels 也不包含 evidence 或
+request text。Lifecycle dashboard 是 system-wide，因为 canonical collector 没有 team 或
+credential 维度。
+
+控制端的 Metrics 和用户端的 Usage dashboard 已在真实 Prometheus 数据与 Grafana
+13.2.2 完成逐项 parity 验证后移除。Team overview 的请求汇总、控制端 conflict queue
+健康信息、私有诊断与设置仍保留。Provisioning 和 series 对照见
+[`examples/grafana/README.md`](examples/grafana/README.md)。
 
 ## 职责边界
 

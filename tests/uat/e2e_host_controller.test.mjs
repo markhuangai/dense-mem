@@ -658,6 +658,9 @@ test("shared PostgreSQL provisioning keeps runtime identity least-privileged", (
 
 test("Compose stack has no host bindings and carries only project-scoped inputs", () => {
   assert.doesNotMatch(compose, /^\s+ports:/m);
+  assert.doesNotMatch(stack, /\$\{sourceDir\}\/examples\/grafana/);
+  assert.match(stack, /grafana-provisioning:\/etc\/grafana\/provisioning:ro/);
+  assert.match(stack, /grafana-dashboards:\/opt\/dense-mem\/grafana\/dashboards:ro/);
   assert.match(compose, /POSTGRES_USER: \$\{DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER:/);
   assert.match(compose, /POSTGRES_PASSWORD: \$\{DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD:/);
   assert.match(compose, /env_file:\n\s+- \$\{DENSE_MEM_CI_ENV_FILE/);
@@ -680,6 +683,68 @@ test("verifier scenarios use the deterministic provider without replacing embedd
   assert.match(stack, /has_helper "\$helpers" verifier \|\| has_helper "\$helpers" synchronous_write/);
 });
 
+test("Grafana provisioning leaves organization and datasource IDs to the installation", async () => {
+  const grafana = join(root, "examples/grafana");
+  const [provider, datasource, overview, ai, workflows] = await Promise.all([
+    readFile(join(grafana, "provisioning/dashboards/provider.yml"), "utf8"),
+    readFile(join(grafana, "provisioning/datasources/datasource.yml"), "utf8"),
+    readFile(join(grafana, "dashboards/dense-mem-service.json"), "utf8"),
+    readFile(join(grafana, "dashboards/dense-mem-ai-recall.json"), "utf8"),
+    readFile(join(grafana, "dashboards/dense-mem-workflows.json"), "utf8"),
+  ]);
+  assert.doesNotMatch(provider, /^\s*orgId:/m);
+  assert.doesNotMatch(datasource, /^\s*(orgId|uid):/m);
+  for (const contents of [overview, ai, workflows]) {
+    const dashboard = JSON.parse(contents);
+    assert.ok(dashboard.templating.list.some((variable) => variable.name === "datasource"));
+    assert.ok(dashboard.panels.every((panel) => panel.targets.every((target) => target.datasource?.uid === "$datasource")));
+  }
+});
+
+test("Grafana panels fit the grid without hiding their series labels", async () => {
+  for (const name of ["dense-mem-service", "dense-mem-ai-recall", "dense-mem-workflows"]) {
+    const dashboard = JSON.parse(await readFile(join(root, `examples/grafana/dashboards/${name}.json`), "utf8"));
+    for (const [index, panel] of dashboard.panels.entries()) {
+      const box = panel.gridPos;
+      assert.ok(box.x >= 0 && box.y >= 0 && box.w > 0 && box.h > 0 && box.x + box.w <= 24, `${name}: ${panel.title} is outside the grid`);
+      assert.ok(panel.targets.every((target) => target.legendFormat === undefined), `${name}: ${panel.title} hides series labels`);
+      for (const other of dashboard.panels.slice(index + 1)) {
+        const next = other.gridPos;
+        const overlaps = box.x < next.x + next.w && next.x < box.x + box.w && box.y < next.y + next.h && next.y < box.y + box.h;
+        assert.equal(overlaps, false, `${name}: ${panel.title} overlaps ${other.title}`);
+      }
+    }
+  }
+});
+
+test("Grafana component cost panels use only their own request activity", async () => {
+  const dashboard = JSON.parse(await readFile(join(root, "examples/grafana/dashboards/dense-mem-ai-recall.json"), "utf8"));
+  const expression = (title) => dashboard.panels.find((panel) => panel.title === title)?.targets[0].expr;
+  const aggregate = expression("AI cost");
+  const verifier = expression("Verifier cost");
+  const embedding = expression("Embedding cost");
+  assert.match(aggregate, /densemem_verifier_requests_total/);
+  assert.match(aggregate, /densemem_embedding_requests_total/);
+  assert.match(verifier, /densemem_verifier_requests_total/);
+  assert.doesNotMatch(verifier, /densemem_embedding_requests_total/);
+  assert.match(embedding, /densemem_embedding_requests_total/);
+  assert.doesNotMatch(embedding, /densemem_verifier_requests_total/);
+});
+
+test("Grafana range panels use a scrape-safe lookback", async () => {
+  for (const name of ["dense-mem-service", "dense-mem-ai-recall", "dense-mem-workflows"]) {
+    const dashboard = JSON.parse(await readFile(join(root, `examples/grafana/dashboards/${name}.json`), "utf8"));
+    for (const panel of dashboard.panels.filter((item) => item.type === "timeseries")) {
+      const expression = panel.targets[0].expr;
+      assert.doesNotMatch(expression, /\[\$__interval\]|\$__interval_ms/, `${name}: ${panel.title} uses a short rate window`);
+      if (expression.includes("increase(")) {
+        assert.match(expression, /\[\$__rate_interval\]/, `${name}: ${panel.title} lacks a bounded lookback`);
+        assert.doesNotMatch(expression, /\$window/, `${name}: ${panel.title} scans the rolling-total window at every point`);
+      }
+    }
+  }
+});
+
 test("community scenarios use the verifier fixture for embeddings without changing the embedding contract", () => {
   const communityStart = stack.indexOf('if (scenario === "community")');
   const communityEnd = stack.indexOf('if (has("conflict_provider"))', communityStart);
@@ -688,7 +753,7 @@ test("community scenarios use the verifier fixture for embeddings without changi
   assert.match(communityBlock, /AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
   assert.match(communityBlock, /AI_API_KEY: "dense-mem-community-e2e-key"/);
   assert.doesNotMatch(communityBlock, /AI_API_EMBEDDING_(MODEL|DIMENSIONS):/);
-  assert.match(stack, /const deterministicEmbeddingProvider = scenario === "community" \|\| has\("synchronous_write"\);/);
+  assert.match(stack, /const deterministicEmbeddingProvider = scenario === "community" \|\| has\("synchronous_write"\) \|\| scenario === "full";/);
   assert.match(stack, /DENSE_MEM_E2E_PROVIDER_DIMENSIONS: \$\{JSON\.stringify\(providerDimensions \|\| "1536"\)\}/);
 });
 
@@ -708,6 +773,36 @@ test("scenario runner executes Entra and diagnostics through the shared path", (
   assert.doesNotMatch(scenario, /parse_json_dream_statement|DENSE_MEM_E2E_DREAM_STATEMENT.*synchronous/);
   assert.match(runtime, /failed stack diagnostics/);
   assert.match(runtime, /ci_compose logs --no-color --timestamps --tail 200/);
+});
+
+test("failure stack diagnostics redact the Grafana admin password", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-grafana-redaction-"));
+  try {
+    const envFile = join(fixture, "e2e.env");
+    await writeFile(envFile, "CONTROL_PORTAL_TOKEN=ci-control-token\n");
+    const redactorStart = controller.indexOf("\nredact_diagnostics() {") + 1;
+    const redactorEnd = controller.indexOf("\n}\n", redactorStart) + 2;
+    const diagnosticsStart = runtime.indexOf("    (\n      DENSE_MEM_CI_COMPOSE_OVERLAY_FILE", runtime.indexOf("failed stack diagnostics"));
+    const diagnosticsEnd = runtime.indexOf("\n    local -a diagnostics_pipeline_status", diagnosticsStart);
+    assert(redactorStart > 0 && redactorEnd > redactorStart && diagnosticsStart >= 0 && diagnosticsEnd > diagnosticsStart);
+    const script = `set -euo pipefail
+${controller.slice(redactorStart, redactorEnd)}
+ci_compose() { printf '%s\\n' "$grafana_password"; }
+${runtime.slice(diagnosticsStart, diagnosticsEnd)}`;
+    const password = "ci-grafana-password-012345";
+    const { stdout } = await run("bash", ["-c", script], {
+      env: {
+        CONTROLLER_DIR: scripts, ENV_FILE: envFile, grafana_password: password,
+        helper_overlay: "", control_token: "", telemetry_token: "", postgres_password: "",
+        api_key: "", identity_upgrade_api_key: "", oauth_token: "",
+      },
+    });
+    assert.match(stdout, /--- Compose services ---/);
+    assert.match(stdout, /\[REDACTED\]/);
+    assert.doesNotMatch(stdout, /ci-grafana-password-012345/);
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
 });
 
 test("OAuth compatibility harness keeps root logs in the Compose stream", () => {

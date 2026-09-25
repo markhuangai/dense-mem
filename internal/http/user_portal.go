@@ -35,7 +35,6 @@ type UserPortalDeps struct {
 	CredentialSvc            handler.CredentialServiceInterface
 	RateLimitSvc             accessservice.RateLimitServiceInterface
 	UsageMetrics             operations.UsageMetricsRecorder
-	Telemetry                operations.TelemetryReader
 	GraphView                graph.Service
 	RecallSvc                recall.RecallService
 	DreamSvc                 dream.Service
@@ -56,7 +55,6 @@ type UserPortalDeps struct {
 type userPortalHandler struct {
 	teams         handler.TeamServiceInterface
 	credentials   handler.CredentialServiceInterface
-	telemetry     operations.TelemetryReader
 	graph         graph.Service
 	recall        *handler.RecallHandler
 	dreams        *handler.DreamHandler
@@ -150,28 +148,6 @@ func (h *userPortalHandler) session(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": session})
 }
 
-func (h *userPortalHandler) telemetrySnapshot(c echo.Context) error {
-	if h.telemetry == nil {
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "telemetry unavailable")
-	}
-	ctx := c.Request().Context()
-	principal := httpmw.GetPrincipal(ctx)
-	if principal == nil {
-		return httperr.New(httperr.FORBIDDEN, "authentication required")
-	}
-
-	filter, err := userPortalTelemetryFilter(principal, c.QueryParam("window"), c.QueryParam("scope"))
-	if err != nil {
-		return err
-	}
-
-	snapshot, err := h.telemetry.Snapshot(ctx, filter)
-	if err != nil {
-		return err
-	}
-	return c.JSON(nethttp.StatusOK, map[string]any{"data": snapshot})
-}
-
 func (h *userPortalHandler) graphSnapshot(c echo.Context) error {
 	c.Response().Header().Set(echo.HeaderCacheControl, "no-store")
 	if h.graph == nil {
@@ -259,37 +235,6 @@ func userPortalGraphTypes(raw string) []string {
 	return strings.FieldsFunc(raw, func(r rune) bool {
 		return r == ',' || r == ' ' || r == '\t' || r == '\n'
 	})
-}
-
-func userPortalTelemetryFilter(principal *httpmw.Principal, window, requestedScope string) (operations.TelemetryFilter, error) {
-	teamID := principal.GetTeamID()
-	if teamID == uuid.Nil {
-		return operations.TelemetryFilter{}, httperr.New(httperr.FORBIDDEN, "authenticated key is not team bound")
-	}
-
-	scope := "self"
-	var ownerID *uuid.UUID
-	if principal.GetRole() == accessservice.CredentialRoleManager {
-		scope = "team"
-	} else {
-		resolvedOwnerID := principal.GetOwnerID()
-		if resolvedOwnerID == uuid.Nil {
-			return operations.TelemetryFilter{}, httperr.New(httperr.FORBIDDEN, "authenticated actor has no owner")
-		}
-		ownerID = &resolvedOwnerID
-	}
-
-	if requested := strings.TrimSpace(requestedScope); requested != "" && requested != scope {
-		return operations.TelemetryFilter{}, httperr.New(httperr.FORBIDDEN, "user portal telemetry scope is determined by the authenticated key")
-	}
-
-	return operations.TelemetryFilter{
-		Window:    strings.TrimSpace(window),
-		Scope:     scope,
-		TeamID:    &teamID,
-		ProfileID: ownerID,
-		Audience:  operations.TelemetryAudienceUser,
-	}, nil
 }
 
 func (h *userPortalHandler) rotateCurrentCredential(c echo.Context) error {
