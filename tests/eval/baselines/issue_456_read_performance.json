@@ -1,0 +1,184 @@
+{
+  "benchmark": "BenchmarkRecallReadPipeline",
+  "go_version": "go version go1.26.6 linux/amd64",
+  "goarch": "amd64",
+  "goos": "linux",
+  "iterations_per_run": 200,
+  "measured_at": "2026-09-25T03:51:13.602658+00:00",
+  "passed": true,
+  "repetitions": 5,
+  "schema_version": 1,
+  "source": {
+    "commit_sha": "5109a62e2e4297b34c452f29ff8145c6a36d026b",
+    "working_tree_paths": 0,
+    "working_tree_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "timing_gate": {
+    "max_relative_increase": 0.05,
+    "minimum_increase_ns": 1000000
+  },
+  "warmups_per_run": 20,
+  "workloads": {
+    "ann": {
+      "disabled_median_allocs_per_op": 4257.0,
+      "enabled_median_allocs_per_op": 4296.0,
+      "passed": true,
+      "sql_statements_per_op": 19.0,
+      "timing": {
+        "p50-ns/op": {
+          "allowed_increase_ns": 1000000.0,
+          "disabled_median_ns": 14337380.0,
+          "enabled_median_ns": 7454465.0,
+          "increase_ns": -6882915.0,
+          "passed": true
+        },
+        "p95-ns/op": {
+          "allowed_increase_ns": 1000000.0,
+          "disabled_median_ns": 15611839.0,
+          "enabled_median_ns": 8734404.0,
+          "increase_ns": -6877435.0,
+          "passed": true
+        }
+      },
+      "transactions_per_op": 3.0
+    },
+    "exact_vector": {
+      "disabled_median_allocs_per_op": 588.0,
+      "enabled_median_allocs_per_op": 604.0,
+      "passed": true,
+      "sql_statements_per_op": 7.0,
+      "timing": {
+        "p50-ns/op": {
+          "allowed_increase_ns": 1000000.0,
+          "disabled_median_ns": 1908500.0,
+          "enabled_median_ns": 1767674.0,
+          "increase_ns": -140826.0,
+          "passed": true
+        },
+        "p95-ns/op": {
+          "allowed_increase_ns": 1000000.0,
+          "disabled_median_ns": 2446642.0,
+          "enabled_median_ns": 2208357.0,
+          "increase_ns": -238285.0,
+          "passed": true
+        }
+      },
+      "transactions_per_op": 1.0
+    },
+    "expansion": {
+      "disabled_median_allocs_per_op": 1560.0,
+      "enabled_median_allocs_per_op": 1598.0,
+      "passed": true,
+      "sql_statements_per_op": 18.0,
+      "timing": {
+        "p50-ns/op": {
+          "allowed_increase_ns": 1000000.0,
+          "disabled_median_ns": 7315823.0,
+          "enabled_median_ns": 7375164.0,
+          "increase_ns": 59341.0,
+          "passed": true
+        },
+        "p95-ns/op": {
+          "allowed_increase_ns": 1000000.0,
+          "disabled_median_ns": 8235255.0,
+          "enabled_median_ns": 8666338.0,
+          "increase_ns": 431083.0,
+          "passed": true
+        }
+      },
+      "transactions_per_op": 3.0
+    },
+    "historical": {
+      "disabled_median_allocs_per_op": 4213.0,
+      "enabled_median_allocs_per_op": 4251.0,
+      "passed": true,
+      "sql_statements_per_op": 17.0,
+      "timing": {
+        "p50-ns/op": {
+          "allowed_increase_ns": 1000000.0,
+          "disabled_median_ns": 8096667.0,
+          "enabled_median_ns": 8084359.0,
+          "increase_ns": -12308.0,
+          "passed": true
+        },
+        "p95-ns/op": {
+          "allowed_increase_ns": 1000000.0,
+          "disabled_median_ns": 9325069.0,
+          "enabled_median_ns": 9208410.0,
+          "increase_ns": -116659.0,
+          "passed": true
+        }
+      },
+      "transactions_per_op": 3.0
+    },
+    "lexical": {
+      "disabled_median_allocs_per_op": 4109.0,
+      "enabled_median_allocs_per_op": 4146.0,
+      "passed": true,
+      "sql_statements_per_op": 17.0,
+      "timing": {
+        "p50-ns/op": {
+          "allowed_increase_ns": 1000000.0,
+          "disabled_median_ns": 16529495.0,
+          "enabled_median_ns": 13762595.0,
+          "increase_ns": -2766900.0,
+          "passed": true
+        },
+        "p95-ns/op": {
+          "allowed_increase_ns": 1082463.05,
+          "disabled_median_ns": 21649261.0,
+          "enabled_median_ns": 16051200.0,
+          "increase_ns": -5598061.0,
+          "passed": true
+        }
+      },
+      "transactions_per_op": 3.0
+    },
+    "private_space": {
+      "disabled_median_allocs_per_op": 1666.0,
+      "enabled_median_allocs_per_op": 1705.0,
+      "passed": true,
+      "sql_statements_per_op": 17.0,
+      "timing": {
+        "p50-ns/op": {
+          "allowed_increase_ns": 1000000.0,
+          "disabled_median_ns": 4111244.0,
+          "enabled_median_ns": 4152541.0,
+          "increase_ns": 41297.0,
+          "passed": true
+        },
+        "p95-ns/op": {
+          "allowed_increase_ns": 1000000.0,
+          "disabled_median_ns": 4945836.0,
+          "enabled_median_ns": 5029261.0,
+          "increase_ns": 83425.0,
+          "passed": true
+        }
+      },
+      "transactions_per_op": 3.0
+    },
+    "relationship_recall": {
+      "disabled_median_allocs_per_op": 1288.0,
+      "enabled_median_allocs_per_op": 1316.0,
+      "passed": true,
+      "sql_statements_per_op": 14.0,
+      "timing": {
+        "p50-ns/op": {
+          "allowed_increase_ns": 1000000.0,
+          "disabled_median_ns": 3919677.0,
+          "enabled_median_ns": 3757864.0,
+          "increase_ns": -161813.0,
+          "passed": true
+        },
+        "p95-ns/op": {
+          "allowed_increase_ns": 1000000.0,
+          "disabled_median_ns": 4744979.0,
+          "enabled_median_ns": 4728831.0,
+          "increase_ns": -16148.0,
+          "passed": true
+        }
+      },
+      "transactions_per_op": 2.0
+    }
+  }
+}
