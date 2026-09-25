@@ -20,7 +20,7 @@ import (
 
 func TestRelationshipProjectionANNAndAllTeamReadinessKeepDistinctGenerationPolicies(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
+	t.Cleanup(cleanup)
 	ctx := context.Background()
 	teamA := createLedgerTeam(t, adminDB, rls, "projection-ann-team-a")
 	ownerA := createLedgerProfile(t, adminDB, rls, teamA, "projection-ann-owner-a")
@@ -105,8 +105,15 @@ func TestRelationshipProjectionANNAndAllTeamReadinessKeepDistinctGenerationPolic
 			teamID: teamID, relationshipID: decision.Relationship.RelationshipID, marker: marker, state: state,
 		})
 	}
+	t.Cleanup(func() {
+		if err := rls.WithSystemTx(context.Background(), adminDB, func(tx *gorm.DB) error {
+			return tx.Exec("DROP INDEX IF EXISTS densemem_issue457_relationship_hnsw").Error
+		}); err != nil {
+			t.Errorf("drop test HNSW index: %v", err)
+		}
+	})
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		if err := tx.Exec("CREATE INDEX densemem_issue457_relationship_hnsw ON search_documents USING hnsw ((embedding::vector(3)) vector_cosine_ops)").Error; err != nil {
+		if err := tx.Exec("CREATE INDEX IF NOT EXISTS densemem_issue457_relationship_hnsw ON search_documents USING hnsw ((embedding::vector(3)) vector_cosine_ops)").Error; err != nil {
 			return err
 		}
 		return tx.Exec("ANALYZE search_documents").Error
