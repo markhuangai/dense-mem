@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 )
 
@@ -32,7 +33,15 @@ const (
 
 var _ recallcontract.Repository = (*Store)(nil)
 
-func (r *Store) RecallEvidence(ctx context.Context, input RecallEvidenceInput) (*RecallEvidenceResult, error) {
+func (r *Store) RecallEvidence(ctx context.Context, input RecallEvidenceInput) (result *RecallEvidenceResult, err error) {
+	ctx, total := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageTotal)
+	defer func() {
+		items := 0
+		if result != nil {
+			items = len(result.Results)
+		}
+		total.Finish(err, items)
+	}()
 	input = normalizeRecallEvidenceInput(input)
 	if err := validateRecallEvidenceInput(input); err != nil {
 		return nil, err
@@ -48,19 +57,25 @@ func (r *Store) RecallEvidence(ctx context.Context, input RecallEvidenceInput) (
 	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
 		if input.Query != "" {
-			textHits, err = searchRecallFullText(ctx, tx, input, contract, overfetch)
+			stageCtx, stage := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageFullText)
+			textHits, err = searchRecallFullText(stageCtx, tx, input, contract, overfetch)
+			stage.Finish(err, len(textHits))
 			if err != nil {
 				return err
 			}
 		}
 		if len(input.QueryEmbedding) > 0 {
-			vectorHits, err = searchRecallVector(ctx, tx, input, contract, overfetch)
+			stageCtx, stage := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageVector)
+			vectorHits, err = searchRecallVector(stageCtx, tx, input, contract, overfetch)
+			stage.Finish(err, len(vectorHits))
 			if err != nil {
 				return err
 			}
 		}
 		if len(input.ExpandFromEntityIDs) > 0 {
-			expansionHits, err = searchRecallEntityExpansion(ctx, tx, input, contract, overfetch)
+			stageCtx, stage := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageExpansion)
+			expansionHits, err = searchRecallEntityExpansion(stageCtx, tx, input, contract, overfetch)
+			stage.Finish(err, len(expansionHits))
 			if err != nil {
 				return err
 			}
@@ -72,10 +87,12 @@ func (r *Store) RecallEvidence(ctx context.Context, input RecallEvidenceInput) (
 		return nil, fmt.Errorf("recall: search evidence: %w", err)
 	}
 	knownEvidence := recallStringSet(input.KnownEvidenceIDs)
+	_, fusion := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageFusion)
 	addRecallBranch(acc, textHits, knownEvidence, 1)
 	addRecallBranch(acc, vectorHits, knownEvidence, 1)
 	addRecallBranch(acc, expansionHits, knownEvidence, 0.5)
 	candidates := sortedRecallCandidates(acc)
+	fusion.Finish(nil, len(candidates))
 	if len(candidates) == 0 {
 		return &RecallEvidenceResult{
 			TeamID:      input.TeamID,
@@ -88,17 +105,20 @@ func (r *Store) RecallEvidence(ctx context.Context, input RecallEvidenceInput) (
 		candidateIDs = append(candidateIDs, candidate.EvidenceID)
 	}
 	hydrated := map[string]RecallEvidenceHit{}
-	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+	hydrationCtx, hydration := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageHydration)
+	err = r.withTeamTx(hydrationCtx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
-		hydrated, err = hydrateRecallEvidence(ctx, tx, input, contract, candidateIDs)
+		hydrated, err = hydrateRecallEvidence(hydrationCtx, tx, input, contract, candidateIDs)
 		if err != nil {
 			return err
 		}
 		return nil
 	})
+	hydration.Finish(err, len(hydrated))
 	if err != nil {
 		return nil, fmt.Errorf("recall: hydrate evidence: %w", err)
 	}
+	_, selection := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageSelection)
 	results := make([]RecallEvidenceHit, 0)
 	for _, candidate := range candidates {
 		hit, ok := hydrated[candidate.EvidenceID]
@@ -117,20 +137,23 @@ func (r *Store) RecallEvidence(ctx context.Context, input RecallEvidenceInput) (
 			break
 		}
 	}
+	selection.Finish(nil, len(results))
 	conflicts := []RelationshipConflictCaseRecord{}
 	evidenceConflicts := []EvidenceConflictCaseRecord{}
-	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+	conflictsCtx, conflictsStage := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageConflicts)
+	err = r.withTeamTx(conflictsCtx, input.TeamID, func(tx *gorm.DB) error {
 		if r.relationshipConflicts == nil || r.evidenceConflicts == nil {
 			return errors.New("recall: conflict readers are required")
 		}
 		var err error
-		conflicts, err = r.relationshipConflicts(ctx, tx, input.TeamID, input.KnownAt, results)
+		conflicts, err = r.relationshipConflicts(conflictsCtx, tx, input.TeamID, input.KnownAt, results)
 		if err != nil {
 			return err
 		}
-		evidenceConflicts, err = r.evidenceConflicts(ctx, tx, input, results)
+		evidenceConflicts, err = r.evidenceConflicts(conflictsCtx, tx, input, results)
 		return err
 	})
+	conflictsStage.Finish(err, len(conflicts)+len(evidenceConflicts))
 	if err != nil {
 		return nil, fmt.Errorf("recall: load conflicts: %w", err)
 	}

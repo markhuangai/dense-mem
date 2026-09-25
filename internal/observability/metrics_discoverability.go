@@ -3,6 +3,7 @@ package observability
 import (
 	"strings"
 	"sync"
+	"time"
 
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 )
@@ -63,6 +64,8 @@ func (noopMetrics) IncAssessorTerminalFailure(string)            {}
 // InMemoryDiscoverabilityMetrics is a test-friendly recorder.
 type InMemoryDiscoverabilityMetrics struct {
 	mu                          sync.Mutex
+	readStageSamples            []ReadStageSample
+	readSQLStatements           map[readStatementKey]int
 	embeddingSamples            []EmbeddingSample
 	embeddingErrors             map[string]int
 	recallLatencies             []float64
@@ -79,6 +82,15 @@ type InMemoryDiscoverabilityMetrics struct {
 	assessorDuplicatePrevention map[string]int
 	assessorGateBands           map[string]int
 	assessorTerminalFailures    map[string]int
+}
+
+// ReadStageSample records one complete stage duration and its returned-item count.
+type ReadStageSample struct {
+	Operation ReadOperation
+	Stage     ReadStage
+	Outcome   ReadOutcome
+	Duration  time.Duration
+	Items     int
 }
 
 // AssessorCallSample records one bounded assessor conversation.
@@ -139,10 +151,12 @@ type ConflictReviewSample struct {
 
 var _ DiscoverabilityMetrics = (*InMemoryDiscoverabilityMetrics)(nil)
 var _ AssessorMetrics = (*InMemoryDiscoverabilityMetrics)(nil)
+var _ ReadPerformanceMetrics = (*InMemoryDiscoverabilityMetrics)(nil)
 
 // NewInMemoryDiscoverabilityMetrics constructs a fresh recorder.
 func NewInMemoryDiscoverabilityMetrics() *InMemoryDiscoverabilityMetrics {
 	return &InMemoryDiscoverabilityMetrics{
+		readSQLStatements:           make(map[readStatementKey]int),
 		embeddingErrors:             make(map[string]int),
 		verifyVerdicts:              make(map[string]int),
 		assessorValidation:          make(map[string]int),
@@ -152,6 +166,51 @@ func NewInMemoryDiscoverabilityMetrics() *InMemoryDiscoverabilityMetrics {
 		assessorGateBands:           make(map[string]int),
 		assessorTerminalFailures:    make(map[string]int),
 	}
+}
+
+func (m *InMemoryDiscoverabilityMetrics) ObserveReadStage(operation ReadOperation, stage ReadStage, outcome ReadOutcome, duration time.Duration, items int) {
+	if m == nil || !validReadOperation(operation) || !validReadStage(stage) || !validReadOutcome(outcome) || duration < 0 {
+		return
+	}
+	if items < 0 {
+		items = 0
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.readStageSamples = append(m.readStageSamples, ReadStageSample{
+		Operation: operation,
+		Stage:     stage,
+		Outcome:   outcome,
+		Duration:  duration,
+		Items:     items,
+	})
+}
+
+func (m *InMemoryDiscoverabilityMetrics) IncReadSQLStatement(operation ReadOperation, stage ReadStage) {
+	if m == nil || !validReadOperation(operation) || !validReadStage(stage) {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.readSQLStatements[readStatementKey{operation: operation, stage: stage}]++
+}
+
+func (m *InMemoryDiscoverabilityMetrics) ReadStageSamples() []ReadStageSample {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]ReadStageSample(nil), m.readStageSamples...)
+}
+
+func (m *InMemoryDiscoverabilityMetrics) ReadSQLStatementCount(operation ReadOperation, stage ReadStage) int {
+	if m == nil {
+		return 0
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.readSQLStatements[readStatementKey{operation: operation, stage: stage}]
 }
 
 func (m *InMemoryDiscoverabilityMetrics) ObserveEmbeddingLatency(durationMs float64, outcome string) {

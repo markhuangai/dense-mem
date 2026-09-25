@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 	searchmaintenance "github.com/markhuangai/dense-mem/internal/search/maintenance"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -302,13 +303,35 @@ func TestSearchAdapterFullTextReadAndErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "full-text search")
 
 	store, mock = newSearchMockStore(t)
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	measuredCtx := observability.WithReadPerformance(context.Background(), metrics)
 	mock.ExpectQuery("(?s)WITH.*FROM recall_relationship_generation").WillReturnRows(sqlmock.NewRows([]string{
 		"team_id", "search_document_id", "source_kind", "source_id", "source_version",
 		"document_version", "embedding_contract_id", "search_state", "distance", "text_rank",
-	}).AddRow(teamID, documentID, "evidence", sourceID, int64(2), int64(3), contractID, "current", .2, .3).RowError(0, errors.New("row failed")))
-	_, err = store.SearchFullText(context.Background(), searchcontract.FullTextSearchInput{TeamID: teamID, Query: "term"})
+	}).AddRow(teamID, documentID, "evidence", sourceID, int64(2), int64(3), contractID, "current", .2, .3).
+		AddRow(teamID, documentID, "evidence", sourceID, int64(2), int64(3), contractID, "current", .2, .3).
+		RowError(1, errors.New("late row failed")))
+	_, err = store.SearchFullText(measuredCtx, searchcontract.FullTextSearchInput{TeamID: teamID, Query: "term"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "full-text search")
+	requireSearchReadStageSample(t, metrics, observability.ReadOperationFullTextSearch, observability.ReadStageFullText, observability.ReadOutcomeError, 0)
+}
+
+func requireSearchReadStageSample(
+	t *testing.T,
+	metrics *observability.InMemoryDiscoverabilityMetrics,
+	operation observability.ReadOperation,
+	stage observability.ReadStage,
+	outcome observability.ReadOutcome,
+	items int,
+) {
+	t.Helper()
+	for _, sample := range metrics.ReadStageSamples() {
+		if sample.Operation == operation && sample.Stage == stage && sample.Outcome == outcome && sample.Items == items {
+			return
+		}
+	}
+	require.FailNow(t, "matching read-stage observation was not recorded", "%s/%s outcome=%s items=%d", operation, stage, outcome, items)
 }
 
 func TestSearchAdapterExactVectorReadAndFences(t *testing.T) {

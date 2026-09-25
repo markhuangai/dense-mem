@@ -254,7 +254,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 			return checkActiveAuthority(deps.authority)
 		}},
 		{Name: "search_readiness", Check: func(ctx context.Context) error {
-			return operations.CheckSearchReadiness(ctx, deps.searchRepo)
+			return operations.CheckSearchReadiness(observability.WithReadPerformance(ctx, deps.telemetry.Metrics), deps.searchRepo)
 		}},
 	}
 	if deps.backend.redisPingFn != nil {

@@ -74,6 +74,7 @@ func (l *sanitizingGORMLogger) Trace(
 ) {
 	query, rows := sql()
 	duration := time.Since(begin)
+	observability.RecordReadSQLStatement(ctx)
 	if l.operatorLogger != nil && !observability.SinkSuppressed(ctx) {
 		attrs := []observability.LogAttr{
 			observability.String("sql", query),

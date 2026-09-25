@@ -20,7 +20,11 @@ import (
 
 var searchTestContractSequence atomic.Int32
 
-func insertSearchTestContract(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS, prefix string, dimensions int, strategy string, indexName string) string {
+func insertSearchTestContract(t testing.TB, db *gorm.DB, rls *storagepostgres.RLS, prefix string, dimensions int, strategy string, indexName string) string {
+	return insertSearchTestContractWithFallback(t, db, rls, prefix, dimensions, strategy, indexName, false)
+}
+
+func insertSearchTestContractWithFallback(t testing.TB, db *gorm.DB, rls *storagepostgres.RLS, prefix string, dimensions int, strategy string, indexName string, allowExactFallback bool) string {
 	t.Helper()
 	sequence := int(searchTestContractSequence.Add(1))
 	contractKey := fmt.Sprintf("%s-%s", prefix, strings.ReplaceAll(uuid.NewString(), "-", "")[:8])
@@ -38,7 +42,7 @@ func insertSearchTestContract(t *testing.T, db *gorm.DB, rls *storagepostgres.RL
 		if err := tx.Exec(`INSERT INTO embedding_contracts (embedding_contract_id, contract_key, version, provider, model, dimensions, distance_metric, vector_normalization, document_format_version, query_format_version, lifecycle_state) VALUES (?::uuid, ?, ?, 'test', ?, ?, 'cosine', 'provider', 1, 1, 'active')`, contractID, contractKey, sequence, "test-model", dimensions).Error; err != nil {
 			return err
 		}
-		return tx.Exec(`INSERT INTO search_index_generations (search_index_generation_id, generation, embedding_contract_id, embedding_dimensions, ann_strategy, operator_class, indexed_expression, physical_index_name, exact_max_rows, allow_exact_fallback, activation_state, activated_at) VALUES (?::uuid, ?, ?::uuid, ?, ?, ?, ?, ?, ?, ?, 'active', now())`, generationID, sequence, contractID, dimensions, strategy, operatorClass, indexedExpression, indexName, 10000, false).Error
+		return tx.Exec(`INSERT INTO search_index_generations (search_index_generation_id, generation, embedding_contract_id, embedding_dimensions, ann_strategy, operator_class, indexed_expression, physical_index_name, exact_max_rows, allow_exact_fallback, activation_state, activated_at) VALUES (?::uuid, ?, ?::uuid, ?, ?, ?, ?, ?, ?, ?, 'active', now())`, generationID, sequence, contractID, dimensions, strategy, operatorClass, indexedExpression, indexName, 10000, allowExactFallback).Error
 	}))
 	return contractID
 }
@@ -52,7 +56,7 @@ func upsertSearchDocumentForTest(t *testing.T, repo *searchFixtureStore, teamID,
 	return doc
 }
 
-func completeSearchDocumentsForTest(t *testing.T, repo *searchFixtureStore, teamID string, vectorsByDocumentID map[string][]float32) {
+func completeSearchDocumentsForTest(t testing.TB, repo *searchFixtureStore, teamID string, vectorsByDocumentID map[string][]float32) {
 	t.Helper()
 	type document struct {
 		ID, Owner, Hash, Contract, Space              string

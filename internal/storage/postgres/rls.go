@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
@@ -38,17 +39,29 @@ func NewRLS() *RLS {
 // WithTeamTx executes fn inside a transaction with team session variables set.
 func (r *RLS) WithTeamTx(ctx context.Context, db *gorm.DB, teamID string, fn func(tx *gorm.DB) error) error {
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("SELECT set_config('app.current_team_id', ?, true)", teamID).Error; err != nil {
-			return fmt.Errorf("failed to set app.current_team_id: %w", err)
+		setupCtx, setup := observability.StartReadStage(ctx, "", observability.ReadStageTransactionSetup)
+		setupTx := tx
+		if setup.Active() {
+			setupTx = tx.WithContext(setupCtx)
 		}
-		if err := tx.Exec("SELECT set_config('app.current_profile_id', ?, true)", teamID).Error; err != nil {
-			return fmt.Errorf("failed to set app.current_profile_id: %w", err)
-		}
-		if err := setAllowedSpaceIDs(tx, ctx); err != nil {
-			return err
-		}
-		if err := tx.Exec("SELECT set_config('app.tx_mode', 'team', true)").Error; err != nil {
-			return fmt.Errorf("failed to set app.tx_mode: %w", err)
+		setupErr := func() error {
+			if err := setupTx.Exec("SELECT set_config('app.current_team_id', ?, true)", teamID).Error; err != nil {
+				return fmt.Errorf("failed to set app.current_team_id: %w", err)
+			}
+			if err := setupTx.Exec("SELECT set_config('app.current_profile_id', ?, true)", teamID).Error; err != nil {
+				return fmt.Errorf("failed to set app.current_profile_id: %w", err)
+			}
+			if err := setAllowedSpaceIDs(setupTx, ctx); err != nil {
+				return err
+			}
+			if err := setupTx.Exec("SELECT set_config('app.tx_mode', 'team', true)").Error; err != nil {
+				return fmt.Errorf("failed to set app.tx_mode: %w", err)
+			}
+			return nil
+		}()
+		setup.Finish(setupErr, 0)
+		if setupErr != nil {
+			return setupErr
 		}
 		return fn(tx)
 	})
@@ -81,20 +94,32 @@ func (r *RLS) WithTeamProfileTx(ctx context.Context, db *gorm.DB, teamID string,
 // pooled connection.
 func (r *RLS) WithSystemTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) error {
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("SELECT set_config('app.current_team_id', '', true)").Error; err != nil {
-			return fmt.Errorf("failed to set app.current_team_id: %w", err)
+		setupCtx, setup := observability.StartReadStage(ctx, "", observability.ReadStageTransactionSetup)
+		setupTx := tx
+		if setup.Active() {
+			setupTx = tx.WithContext(setupCtx)
 		}
-		if err := tx.Exec("SELECT set_config('app.current_profile_id', '', true)").Error; err != nil {
-			return fmt.Errorf("failed to set app.current_profile_id: %w", err)
-		}
-		if err := tx.Exec("SELECT set_config('app.allowed_space_ids', '', true)").Error; err != nil {
-			return fmt.Errorf("failed to set app.allowed_space_ids: %w", err)
-		}
-		if err := tx.Exec("SELECT set_config('app.tx_mode', 'system', true)").Error; err != nil {
-			return fmt.Errorf("failed to set app.tx_mode: %w", err)
-		}
-		if err := tx.Exec("SELECT set_config('app.role', 'admin', true)").Error; err != nil {
-			return fmt.Errorf("failed to set app.role: %w", err)
+		setupErr := func() error {
+			if err := setupTx.Exec("SELECT set_config('app.current_team_id', '', true)").Error; err != nil {
+				return fmt.Errorf("failed to set app.current_team_id: %w", err)
+			}
+			if err := setupTx.Exec("SELECT set_config('app.current_profile_id', '', true)").Error; err != nil {
+				return fmt.Errorf("failed to set app.current_profile_id: %w", err)
+			}
+			if err := setupTx.Exec("SELECT set_config('app.allowed_space_ids', '', true)").Error; err != nil {
+				return fmt.Errorf("failed to set app.allowed_space_ids: %w", err)
+			}
+			if err := setupTx.Exec("SELECT set_config('app.tx_mode', 'system', true)").Error; err != nil {
+				return fmt.Errorf("failed to set app.tx_mode: %w", err)
+			}
+			if err := setupTx.Exec("SELECT set_config('app.role', 'admin', true)").Error; err != nil {
+				return fmt.Errorf("failed to set app.role: %w", err)
+			}
+			return nil
+		}()
+		setup.Finish(setupErr, 0)
+		if setupErr != nil {
+			return setupErr
 		}
 		return fn(tx)
 	})

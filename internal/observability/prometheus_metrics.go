@@ -41,9 +41,10 @@ type ScopedDiscoverabilityMetrics interface {
 // PrometheusMetrics exports Dense-Mem operational metrics through a private
 // registry. It is safe for concurrent use.
 type PrometheusMetrics struct {
-	registry    *prometheus.Registry
-	pricing     AIPricingResolver
-	operational *operationalPrometheusMetrics
+	registry        *prometheus.Registry
+	pricing         AIPricingResolver
+	operational     *operationalPrometheusMetrics
+	readPerformance *readPerformancePrometheusMetrics
 
 	httpRequests                 *prometheus.CounterVec
 	httpDuration                 *prometheus.HistogramVec
@@ -264,6 +265,7 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		}, []string{"team_id", "method", "outcome"}),
 	}
 	m.operational = newOperationalPrometheusMetrics()
+	m.readPerformance = newReadPerformancePrometheusMetrics()
 	collectors := []prometheus.Collector{
 		m.httpRequests, m.httpDuration,
 		m.embeddingCalls, m.embeddingErrors, m.embeddingDur, m.embeddingTokens,
@@ -281,6 +283,7 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		m.conflictAssessments, m.conflictResolutions,
 	}
 	collectors = append(collectors, m.operational.collectors()...)
+	collectors = append(collectors, m.readPerformance.collectors()...)
 	m.registry.MustRegister(collectors...)
 	return m
 }

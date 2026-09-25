@@ -30,7 +30,11 @@ const (
 	ledgerTestPassword = "densemem_rls_test"
 )
 
-func setupLedgerRepositoryDB(t *testing.T) (*gorm.DB, *gorm.DB, *storagepostgres.RLS, func()) {
+type ledgerTestPostgresConfig string
+
+func (c ledgerTestPostgresConfig) GetPostgresDSN() string { return string(c) }
+
+func setupLedgerRepositoryDB(t testing.TB) (*gorm.DB, *gorm.DB, *storagepostgres.RLS, func()) {
 	t.Helper()
 	dsn, baseCleanup := setupLedgerRepositoryDSN(t)
 	db, err := gorm.Open(gormpostgres.Open(dsn), &gorm.Config{})
@@ -58,7 +62,7 @@ func setupLedgerRepositoryDB(t *testing.T) (*gorm.DB, *gorm.DB, *storagepostgres
 		`, ledgerTestRole, ledgerTestPassword)).Error
 	}))
 
-	appDB, err := gorm.Open(gormpostgres.Open(ledgerAppDSN(t, dsn)), &gorm.Config{})
+	appDB, err := storagepostgres.Open(context.Background(), ledgerTestPostgresConfig(ledgerAppDSN(t, dsn)))
 	require.NoError(t, err)
 	cleanup := func() {
 		_ = rls.WithSystemTx(context.Background(), db, truncateLedgerFixtures)
@@ -80,7 +84,7 @@ func setupLedgerRepositoryDB(t *testing.T) (*gorm.DB, *gorm.DB, *storagepostgres
 	require.NoError(t, rls.WithSystemTx(context.Background(), db, truncateLedgerFixtures))
 	return db, appDB, rls, cleanup
 }
-func setupLedgerRepositoryDSN(t *testing.T) (string, func()) {
+func setupLedgerRepositoryDSN(t testing.TB) (string, func()) {
 	t.Helper()
 	if dsn := storagepostgres.GetTestDSN(); dsn != "" {
 		if os.Getenv("DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS") != "1" {
@@ -186,7 +190,7 @@ func precheckNetworkOptions(networkAlias string) []testcontainers.ContainerCusto
 	return []testcontainers.ContainerCustomizer{tcnetwork.WithNetworkName([]string{networkAlias}, networkName)}
 }
 
-func ledgerAppDSN(t *testing.T, dsn string) string {
+func ledgerAppDSN(t testing.TB, dsn string) string {
 	t.Helper()
 	parsed, err := url.Parse(dsn)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
@@ -230,7 +234,7 @@ func truncateLedgerFixtures(tx *gorm.DB) error {
 	`).Error
 }
 
-func createLedgerTeam(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS, teamName string) string {
+func createLedgerTeam(t testing.TB, db *gorm.DB, rls *storagepostgres.RLS, teamName string) string {
 	t.Helper()
 	teamID := uuid.NewString()
 	require.NoError(t, rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
@@ -242,7 +246,7 @@ func createLedgerTeam(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS, teamN
 	return teamID
 }
 
-func createLedgerProfile(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS, teamID string, profileName string) string {
+func createLedgerProfile(t testing.TB, db *gorm.DB, rls *storagepostgres.RLS, teamID string, profileName string) string {
 	t.Helper()
 	profileID := uuid.NewString()
 	keyPrefix := strings.ReplaceAll(uuid.NewString(), "-", "")[:24]

@@ -411,3 +411,40 @@ The scripts never delete or reset database state. To replace the V1 dataset,
 stop the eval stack and explicitly inspect `tests/eval/runtime/v1` first. Remove
 or archive it only after confirming that its database, identity, credentials,
 and run artifacts are no longer needed.
+
+## Search and Recall read-pipeline benchmark
+
+Issue #456 uses a separate disposable PostgreSQL benchmark. It does not consume
+the public 1k evaluation dataset. The benchmark seeds deterministic evidence,
+one supported Relationship, a credential-private evidence item, fixed vectors,
+and an HNSW index through the real PostgreSQL adapters.
+
+Run it after the plan-conformance audit passes:
+
+```bash
+mkdir -p tests/eval/runs/issue-456
+env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 \
+  go test -tags=integration ./internal/recall/postgres \
+  -run '^$' -bench '^BenchmarkRecallReadPipeline$' \
+  -benchtime=200x -benchmem -count=5 \
+  > tests/eval/runs/issue-456/benchmark.txt 2>&1
+
+python3 tests/eval/scripts/compare_recall_read_performance.py \
+  --input tests/eval/runs/issue-456/benchmark.txt \
+  --output tests/eval/runs/issue-456/comparison.json
+```
+
+The fixture analyzes its search tables after creating the HNSW index so query
+plans are settled before timing. Each workload uses `pair_a` and `pair_b` slots
+that alternate telemetry mode across the five repetitions. Every run has 20
+warmups and 200 measured reads, and reports its mode as `telemetry-enabled/op`.
+The comparator rejects a missing or incorrect mode sequence and checks
+median p50 and p95 increases against the greater of 5% or 1 ms, requires exact
+per-operation SQL-statement and transaction counts between the two modes, and
+records allocations and the measured source fingerprint. It fails when a
+workload, repetition, metric, or stable result is missing or when either
+latency limit is exceeded. GORM statement counts exclude driver transaction
+begin and commit calls; those are reported separately as transaction counts.
+Preserve raw benchmark output under the ignored
+`tests/eval/runs/issue-456` directory; commit only the compact baseline summary
+with the measured source commit.
