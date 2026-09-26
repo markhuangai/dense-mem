@@ -431,7 +431,7 @@ async function validateGrafanaDashboardParity() {
         for (let attempt = 0; attempt < 9; attempt += 1) {
           const range = await query(expression, {
             from,
-            to: Date.now().toString(),
+            to: Date.parse(snapshot.window.to).toString(),
             instant: false,
             interval: `${stepSeconds}s`,
             intervalMs: stepMs,
