@@ -160,14 +160,14 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
   if (schemaName === "dense_mem_dream_generation_response") return fixtureDreamGeneration(payload);
   if (schemaName === "dense_mem_evidence_discovery_response") return fixtureEvidenceDiscovery(payload);
   const assessment = fixtureAssessment(assessmentInput(payload), requestFault, attempt);
-  if (requestFault === "predicate-registration-repair" || requestFault === "predicate-registration-exhausted" || requestFault === "predicate-registration-reuse") {
+  if (requestFault === "predicate-registration-repair" || requestFault === "predicate-registration-exhausted" || requestFault === "predicate-registration-reuse" || requestFault === "predicate-registration-drift") {
     const original = assessmentInput(payload);
     const split = assessment.relationship_results?.[0]?.splits?.[0];
     if (!split) throw new Error("predicate-registration fixture requires one stored relationship split");
-    if (requestFault === "predicate-registration-reuse") {
+    if (requestFault === "predicate-registration-reuse" || requestFault === "predicate-registration-drift") {
       const key = original.submitted_relationships?.[0]?.predicate_hint;
       if (!original.predicate_options?.some((option) => option.predicate_key === key)) {
-        throw new Error("predicate-registration reuse fixture requires the existing predicate option");
+        throw new Error("predicate-registration fixture requires the existing predicate option");
       }
       split.predicate_status = "registration_required";
       split.predicate_key = null;
