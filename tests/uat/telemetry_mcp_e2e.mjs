@@ -429,8 +429,8 @@ async function validateGrafanaDashboardParity() {
       if (presentation === "series" && (item.status === "ready" || item.status === "unavailable")) {
         let rangeValue = null;
         for (let attempt = 0; attempt < 9; attempt += 1) {
-          // Grafana aligns range endpoints, so a frozen snapshot end can precede the next sparse scrape.
-          const rangeEnd = Date.now();
+          // Ready series need the next sparse scrape; unavailable series stay within the snapshot window.
+          const rangeEnd = item.status === "ready" ? Date.now() : Date.parse(snapshot.window.to);
           const range = await query(expression, {
             from,
             to: rangeEnd.toString(),
