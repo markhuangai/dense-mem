@@ -429,13 +429,15 @@ async function validateGrafanaDashboardParity() {
       if (presentation === "series" && (item.status === "ready" || item.status === "unavailable")) {
         let rangeValue = null;
         for (let attempt = 0; attempt < 9; attempt += 1) {
+          // Grafana aligns range endpoints, so a frozen snapshot end can precede the next sparse scrape.
+          const rangeEnd = Date.now();
           const range = await query(expression, {
             from,
-            to: Date.now().toString(),
+            to: rangeEnd.toString(),
             instant: false,
             interval: `${stepSeconds}s`,
             intervalMs: stepMs,
-            maxDataPoints: Math.ceil((Date.parse(snapshot.window.to) - Date.parse(snapshot.window.from)) / stepMs) + 1,
+            maxDataPoints: Math.ceil((rangeEnd - Date.parse(snapshot.window.from)) / stepMs) + 1,
           });
           const rangeResult = range.results?.A;
           assert(rangeResult && !rangeResult.error, `Grafana range query failed for series ${item.id}: ${rangeResult?.error ?? "missing result"}`);

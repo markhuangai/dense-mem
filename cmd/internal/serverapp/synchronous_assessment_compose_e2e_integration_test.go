@@ -43,6 +43,13 @@ func (composeSubmissionAssessmentCatalogStub) ListSemanticAssessmentPredicateOpt
 	return []knowledgecontract.SemanticReviewPredicateCandidate{}, nil
 }
 
+func (composeSubmissionAssessmentCatalogStub) ValidateSubmissionPredicateRegistrations(
+	context.Context,
+	knowledgecontract.SubmissionPredicateRegistrationValidationInput,
+) ([]knowledgecontract.SubmissionPredicateRegistrationIssue, error) {
+	return nil, nil
+}
+
 func TestComposeSynchronousEvidenceOnlyAssessorBatch(t *testing.T) {
 	providerURL := strings.TrimSpace(os.Getenv("DENSE_MEM_E2E_PRIMITIVES_PROVIDER_URL"))
 	if providerURL == "" {

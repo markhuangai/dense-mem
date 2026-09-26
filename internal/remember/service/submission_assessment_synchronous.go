@@ -235,16 +235,57 @@ func AssessSynchronousRemember(
 	providerCtx := observability.WithMetricIdentity(ctx, input.Scope.TeamID, input.Scope.OwnerProfileID)
 	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationSemanticAssessment, 1)
 	started := time.Now()
-	response, _, finalRequest, err := concrete.assessRememberSessionWithValidator(providerCtx, request, refresh, 0, func(_ assessor.SemanticAssessmentRequest, response assessor.SemanticAssessmentResponse) []assessor.SemanticValidationError {
-		return validateSubmissionAssessmentEvidenceConflictCanonicalization(plan, response)
+	var catalogInputTokens, catalogOutputTokens int
+	response, _, finalRequest, err := concrete.assessRememberSessionWithValidator(providerCtx, request, refresh, 0, func(validateCtx context.Context, _ assessor.SemanticAssessmentRequest, response assessor.SemanticAssessmentResponse) ([]assessor.SemanticValidationError, error) {
+		validationErrors := validateSubmissionAssessmentEvidenceConflictCanonicalization(plan, response)
+		if len(validationErrors) != 0 {
+			return validationErrors, nil
+		}
+		registrations, paths := submissionAssessmentPredicateRegistrations(plan, response)
+		if len(registrations) == 0 {
+			return nil, nil
+		}
+		// Preserve completed provider usage if catalog validation fails afterward.
+		catalogInputTokens, catalogOutputTokens = response.InputTokens, response.OutputTokens
+		issues, err := deps.Catalog.ValidateSubmissionPredicateRegistrations(validateCtx, repository.SubmissionPredicateRegistrationValidationInput{
+			TeamID: input.Scope.TeamID, OwnerProfileID: input.Scope.OwnerProfileID, Registrations: registrations,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("%w: validate predicate registrations: %w", ErrRememberDatabaseFailure, err)
+		}
+		for _, issue := range issues {
+			if issue.RegistrationIndex < 0 || issue.RegistrationIndex >= len(paths) {
+				return nil, fmt.Errorf("%w: predicate catalog returned an invalid registration index", ErrRememberDatabaseFailure)
+			}
+			field := issue.Field
+			if field == "subject_kind" || field == "object_kind" {
+				field = "predicate_key"
+			}
+			switch field {
+			case "predicate_key", "relationship_kind", "current_cardinality":
+			default:
+				return nil, fmt.Errorf("%w: predicate catalog returned an invalid registration field", ErrRememberDatabaseFailure)
+			}
+			validationErrors = append(validationErrors, assessor.SemanticValidationError{
+				Field: paths[issue.RegistrationIndex] + "." + field, Message: issue.Message,
+			})
+		}
+		return validationErrors, nil
 	})
 	if err != nil {
 		providerTurns := SynchronousAssessmentProviderTurns(err)
 		outcome := "provider_error"
-		if errors.Is(err, assessor.ErrVerifierMalformedResponse) {
+		inputTokens, outputTokens := request.InputTokens, 0
+		if errors.Is(err, ErrRememberDatabaseFailure) {
+			outcome = "catalog_error"
+			if catalogInputTokens > 0 {
+				inputTokens = catalogInputTokens
+			}
+			outputTokens = catalogOutputTokens
+		} else if errors.Is(err, assessor.ErrVerifierMalformedResponse) {
 			outcome = "malformed_exhausted"
 		}
-		observability.RecordAssessorCall(deps.Metrics, request.InputTokens, 0, time.Since(started).Seconds(), outcome)
+		observability.RecordAssessorCall(deps.Metrics, inputTokens, outputTokens, time.Since(started).Seconds(), outcome)
 		var mapped error
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
 			mapped = fmt.Errorf("%w: assessor phase exceeded 160 seconds", ErrRememberRequestTimeout)
@@ -258,6 +299,8 @@ func AssessSynchronousRemember(
 				mapped = fmt.Errorf("%w: refreshed assessor input exceeded the deterministic budget: %w", ErrRememberInputBudgetExceeded, err)
 			} else if errors.Is(err, assessor.ErrVerifierMalformedResponse) {
 				mapped = fmt.Errorf("%w: %w", ErrRememberProviderResponseInvalid, err)
+			} else if errors.Is(err, ErrRememberDatabaseFailure) {
+				mapped = err
 			} else {
 				mapped = fmt.Errorf("%w: assessor provider request failed", ErrRememberProviderUnavailable)
 			}

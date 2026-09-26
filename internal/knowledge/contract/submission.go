@@ -97,6 +97,18 @@ type SubmissionPredicateRegistrationInput struct {
 	CurrentCardinality string
 }
 
+type SubmissionPredicateRegistrationValidationInput struct {
+	TeamID         string
+	OwnerProfileID string
+	Registrations  []SubmissionPredicateRegistrationInput
+}
+
+type SubmissionPredicateRegistrationIssue struct {
+	RegistrationIndex int
+	Field             string
+	Message           string
+}
+
 type CommitSubmissionAssessmentInput struct {
 	RememberCommitScope
 	AssessmentID            string

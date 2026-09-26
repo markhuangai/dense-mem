@@ -587,6 +587,10 @@ func (catalogWithoutKnownEvidence) ListSemanticAssessmentPredicateOptions(contex
 	return nil, nil
 }
 
+func (catalogWithoutKnownEvidence) ValidateSubmissionPredicateRegistrations(context.Context, repository.SubmissionPredicateRegistrationValidationInput) ([]repository.SubmissionPredicateRegistrationIssue, error) {
+	return nil, nil
+}
+
 func TestSubmissionAssessmentTreatsMissingKnownEntityAsStaleInput(t *testing.T) {
 	evidence := assessor.PrepareSemanticAssessmentEvidence(assessor.SemanticReviewEvidence{
 		EvidenceID: "evidence:0",

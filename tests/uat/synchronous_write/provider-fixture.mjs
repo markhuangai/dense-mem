@@ -10,6 +10,7 @@ const fault = (process.env.DENSE_MEM_E2E_PROVIDER_FAULT || "none").trim();
 const timeoutDelayMs = Number(process.env.DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS || 30_000);
 const correctionProviderFaultMarker = "e2e-correction-provider-fault";
 const correctionProviderTimeoutMarker = "e2e-correction-provider-timeout";
+const heldPredicateKey = "retired_memory_store_fixture";
 const assessmentAttempts = new Map();
 const embeddingCallsByFault = new Map();
 let assessmentCalls = 0;
@@ -159,6 +160,33 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
   if (schemaName === "dense_mem_dream_generation_response") return fixtureDreamGeneration(payload);
   if (schemaName === "dense_mem_evidence_discovery_response") return fixtureEvidenceDiscovery(payload);
   const assessment = fixtureAssessment(assessmentInput(payload), requestFault, attempt);
+  if (requestFault === "predicate-registration-repair" || requestFault === "predicate-registration-exhausted" || requestFault === "predicate-registration-reuse" || requestFault === "predicate-registration-drift") {
+    const original = assessmentInput(payload);
+    const split = assessment.relationship_results?.[0]?.splits?.[0];
+    if (!split) throw new Error("predicate-registration fixture requires one stored relationship split");
+    if (requestFault === "predicate-registration-reuse" || requestFault === "predicate-registration-drift") {
+      const key = original.submitted_relationships?.[0]?.predicate_hint;
+      if (!original.predicate_options?.some((option) => option.predicate_key === key)) {
+        throw new Error("predicate-registration fixture requires the existing predicate option");
+      }
+      split.predicate_status = "registration_required";
+      split.predicate_key = null;
+      split.predicate_version = null;
+      split.predicate_registration = { predicate_key: key, relationship_kind: "state", current_cardinality: "many" };
+      return assessment;
+    }
+    if (original.predicate_options?.some((option) => option.predicate_key === heldPredicateKey)) {
+      throw new Error("retired predicate must be omitted from assessor options");
+    }
+    const repair = structuredInput(payload, (input) => Array.isArray(input.validation_errors));
+    const actionable = repair.validation_errors?.some((error) => String(error.field || "").includes("predicate_registration"));
+    if (requestFault === "predicate-registration-repair" && actionable) return assessment;
+    split.predicate_status = "registration_required";
+    split.predicate_key = null;
+    split.predicate_version = null;
+    split.predicate_registration = { predicate_key: heldPredicateKey, relationship_kind: "state", current_cardinality: "many" };
+    return assessment;
+  }
   if (requestFault === "assessment-predicate-repair") {
     const repair = structuredInput(payload, (input) => Array.isArray(input.validation_errors));
     const actionable = (repair.validation_errors || []).some((error) => error.field?.endsWith(".predicate_range") && error.message?.includes("256"));
@@ -479,7 +507,8 @@ function faultForRoute(value, route) {
   const normalized = String(value || "").trim().toLowerCase();
   if (route === "embedding" && (
     normalized === "unavailable" || normalized === "malformed" || normalized === "timeout" || normalized.startsWith("assessment-") ||
-    normalized === "repair" || normalized === "repair-exhausted" || normalized === "security" || normalized === "no-supported" ||
+    normalized === "repair" || normalized === "repair-exhausted" || normalized.startsWith("predicate-registration-") ||
+    normalized === "security" || normalized === "no-supported" ||
     normalized === "status-429" || normalized === "status-500" ||
     normalized === "mixed"
   )) return "";

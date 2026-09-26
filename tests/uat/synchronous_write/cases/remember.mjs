@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { assertTerminalRememberResult } from "../surface.mjs";
 
@@ -9,6 +10,8 @@ export const name = "remember";
 
 const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
 const rememberModel = "dense-mem-synchronous-write-e2e-remember";
+const heldPredicateKey = "retired_memory_store_fixture";
+const repairedPredicateKey = "stores_durable_memory_in_fixture";
 
 export async function run({ rpc, rawRPC = rpc, expect }) {
   const selectedFault = (process.env.DENSE_MEM_E2E_PROVIDER_FAULT || "none").trim();
@@ -53,6 +56,10 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
       results.push(await runMixedDispositionCase({ rpc, expect }));
     } else if (fault === "repair" || fault === "repair-exhausted") {
       results.push(await runRepairCase({ rpc, expect, fault }));
+    } else if (fault === "predicate-registration-drift") {
+      results.push(await runPredicateRegistrationDriftCase({ expect }));
+    } else if (fault.startsWith("predicate-registration-")) {
+      results.push(...await runPredicateRegistrationCases({ expect, selectedFault: fault }));
     } else if (fault === "security" || fault === "no-supported") {
       results.push(await runTerminalDomainCase({ rpc, expect, fault }));
     } else if (fault.startsWith("embedding-")) {
@@ -63,6 +70,8 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   }
 
   if (selectedFault === "none") {
+    results.push(...await runPredicateRegistrationCases({ expect }));
+    results.push(await runPredicateRegistrationDriftCase({ expect }));
     results.push(await runKnownEvidenceCase({ expect }));
     results.push(await runSemanticDuplicateCase({ expect }));
     results.push(await runBudgetContextCase({ expect }));
@@ -791,6 +800,148 @@ async function runRepairCase({ rpc, expect, fault }) {
   };
 }
 
+async function runPredicateRegistrationCases({ expect, selectedFault = "none" }) {
+  const teamID = await createKnownEvidenceTeam(`predicate-registration-${Date.now()}`);
+  const actor = await createKnownEvidenceCredential(teamID, `predicate-registration-${Date.now()}`, "shared_only");
+  postgresExec(`
+    INSERT INTO team_predicate_definitions (
+      team_id, predicate_key, version, aliases, allowed_subject_kinds,
+      allowed_object_kinds, relationship_kind, current_cardinality,
+      lifecycle_state, origin, metadata
+    ) VALUES (
+      '${sqlLiteral(teamID)}'::uuid, '${heldPredicateKey}', 1, ARRAY[]::text[],
+      ARRAY['concept']::text[], ARRAY['product']::text[], 'event', 'one',
+      'retired', 'fixture', '{}'::jsonb
+    );
+  `, "synchronous-write-predicate-registration-seed");
+
+  const faults = selectedFault === "none"
+    ? ["predicate-registration-exhausted", "predicate-registration-repair", "predicate-registration-reuse"]
+    : selectedFault === "predicate-registration-reuse"
+      ? ["predicate-registration-repair", selectedFault]
+      : [selectedFault];
+  const results = [];
+  for (const fault of faults) {
+    const args = singleItemArguments(fault, `[fixture-fault:${fault}]`);
+    args.relationships[0].predicate.proposed_key = repairedPredicateKey;
+    const result = await rememberWithKey(actor.apiKey, args);
+    assertStrictTerminalRemember(result, expect);
+    const exhausted = fault === "predicate-registration-exhausted";
+    expect(result.processing_state === (exhausted ? "failed" : "completed"), `${fault} must reach its terminal state: ${JSON.stringify(result)}`);
+    expect(exhausted ? result.errors[0]?.code === "provider_response_invalid" : result.errors.length === 0, `${fault} must classify the provider response accurately: ${JSON.stringify(result.errors)}`);
+    expect(result.search_state === (exhausted ? "not_required" : "current"), `${fault} returned unexpected search state`);
+    const assessorTurns = Number(postgresQuery(`
+      SELECT assessor_turns FROM remember_attempts
+      WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+        AND attempt_id = '${sqlLiteral(result.submission_id)}'::uuid;
+    `));
+    expect(assessorTurns === (exhausted ? 3 : fault === "predicate-registration-reuse" ? 1 : 2), `${fault} must retain its complete assessor turn count: ${assessorTurns}`);
+
+    const canonicalCounts = rememberCanonicalCounts(teamID, result.submission_id);
+    expect(canonicalCounts.length === 5 && canonicalCounts.slice(0, 4).every((count) => count === (exhausted ? 0 : 1)) &&
+      (exhausted ? canonicalCounts[4] === 0 : canonicalCounts[4] > 0), `${fault} must commit all canonical rows and search documents or none: ${canonicalCounts.join(",")}`);
+    expect(result.evidence.length === 1 && result.evidence[0].disposition === (exhausted ? "not_stored" : "stored"), `${fault} returned unexpected evidence disposition`);
+    expect(result.relationship_results.length === 1 && result.relationship_results[0].disposition === (exhausted ? "not_stored" : "stored"), `${fault} returned unexpected relationship disposition`);
+    if (!exhausted) {
+      const committedPredicate = postgresQuery(`
+        SELECT predicate_key FROM relationship_observations
+        WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid;
+      `);
+      expect(committedPredicate === repairedPredicateKey, `${fault} must store the repaired predicate: ${committedPredicate}`);
+    }
+    const repairedVersionCount = Number(postgresQuery(`
+      SELECT count(*) FROM team_predicate_definitions
+      WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND predicate_key = '${repairedPredicateKey}';
+    `));
+    expect(repairedVersionCount === (exhausted ? 0 : 1), `${fault} must leave the repaired predicate absent or create/reuse exactly one version: ${repairedVersionCount}`);
+    if (exhausted) {
+      expect(result.errors[0]?.retryable === true && result.errors[0]?.next_action === "retry_same_request", "exhausted provider output must retain same-key retry guidance");
+      const retry = await rememberWithKey(actor.apiKey, args);
+      assertStrictTerminalRemember(retry, expect);
+      expect(retry.processing_state === "failed" && retry.errors[0]?.code === "provider_response_invalid", "same-key retry must report the repeated invalid provider response");
+      expect(retry.submission_id !== result.submission_id, "retryable failed attempt must be processed again under the same key");
+      const retryTurns = Number(postgresQuery(`
+        SELECT assessor_turns FROM remember_attempts
+        WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND attempt_id = '${sqlLiteral(retry.submission_id)}'::uuid;
+      `));
+      expect(retryTurns === 3, `same-key retry must perform three bounded assessor turns: ${retryTurns}`);
+      const retryCanonicalCount = Number(postgresQuery(`
+        SELECT count(*) FROM knowledge_ingests
+        WHERE team_id = '${sqlLiteral(teamID)}'::uuid;
+      `));
+      expect(retryCanonicalCount === 0, "repeated invalid provider responses must leave the team without an ingest");
+    } else if (fault === "predicate-registration-repair") {
+      const replay = await rememberWithKey(actor.apiKey, args);
+      assertStrictTerminalRemember(replay, expect);
+      expect(stableJSON(replay) === stableJSON(result) && replay.submission_id === result.submission_id, "completed repair must replay the exact terminal result");
+      const attemptCount = Number(postgresQuery(`
+        SELECT count(*) FROM remember_attempts
+        WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+          AND idempotency_key = '${sqlLiteral(args.idempotency_key)}';
+      `));
+      expect(attemptCount === 1, "completed repair replay must not create another assessor attempt");
+    }
+    results.push({ fault, processing_state: result.processing_state, assessor_turns: assessorTurns, canonical_counts: canonicalCounts });
+  }
+
+  const heldRows = postgresQuery(`
+    SELECT version || ':' || lifecycle_state FROM team_predicate_definitions
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND predicate_key = '${heldPredicateKey}'
+    ORDER BY version;
+  `);
+  expect(heldRows === "1:retired", `rejected registration must not mutate the retired definition: ${heldRows}`);
+  const repairedRows = postgresQuery(`
+    SELECT version || ':' || lifecycle_state FROM team_predicate_definitions
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND predicate_key = '${repairedPredicateKey}'
+    ORDER BY version;
+  `);
+  expect(repairedRows === (faults.includes("predicate-registration-repair") ? "1:active" : ""), `repaired registration must be created once and reused: ${repairedRows}`);
+  return results;
+}
+
+async function runPredicateRegistrationDriftCase({ expect }) {
+  const teamID = await createKnownEvidenceTeam(`predicate-drift-${Date.now()}`);
+  const actor = await createKnownEvidenceCredential(teamID, `predicate-drift-${Date.now()}`, "shared_only");
+  const predicateKey = `stores_durable_memory_in_drift_${Date.now()}`;
+  const insertVersion = (version, state) => postgresExec(`
+    INSERT INTO team_predicate_definitions (
+      team_id, predicate_key, version, aliases, allowed_subject_kinds,
+      allowed_object_kinds, relationship_kind, current_cardinality,
+      lifecycle_state, origin, metadata
+    ) VALUES (
+      '${sqlLiteral(teamID)}'::uuid, '${sqlLiteral(predicateKey)}', ${version}, ARRAY[]::text[],
+      ARRAY['project']::text[], ARRAY['string']::text[], 'state', 'many',
+      '${state}', 'fixture', '{}'::jsonb
+    );
+  `, "synchronous-write-predicate-drift-seed");
+  insertVersion(1, "active");
+
+  const args = singleItemArguments("predicate-registration-drift", "[fixture-fault:predicate-registration-drift]");
+  args.relationships[0].predicate.proposed_key = predicateKey;
+  const holder = await holdPredicateCommitLock(teamID, predicateKey);
+  const pending = rememberWithKey(actor.apiKey, args);
+  let settled = false;
+  pending.then(() => { settled = true; }, () => { settled = true; });
+  try {
+    await waitForPredicateCommitWaiter(holder.pid, () => settled);
+    insertVersion(2, "retired");
+  } finally {
+    await releasePredicateCommitLock(holder.child);
+  }
+
+  const result = await pending;
+  assertStrictTerminalRemember(result, expect);
+  expect(result.processing_state === "failed" && result.search_state === "not_required", "catalog drift must fail without requiring search");
+  expect(result.errors.length === 1 && result.errors[0].code === "commit_conflict" &&
+    result.errors[0].reason_code === "predicate_catalog_changed" && result.errors[0].retryable === true &&
+    result.errors[0].next_action === "retry_same_request", `catalog drift must return a retryable predicate conflict: ${JSON.stringify(result.errors)}`);
+  expect(result.evidence.length === 1 && result.evidence[0].disposition === "not_stored" &&
+    result.relationship_results.length === 1 && result.relationship_results[0].disposition === "not_stored", "catalog drift must reject the whole submission");
+  const canonicalCounts = rememberCanonicalCounts(teamID, result.submission_id);
+  expect(canonicalCounts.length === 5 && canonicalCounts.every((count) => count === 0), `catalog drift must leave zero canonical writes: ${canonicalCounts.join(",")}`);
+  return { fault: "predicate-registration-drift", processing_state: result.processing_state, error_code: result.errors[0].code, reason_code: result.errors[0].reason_code, canonical_counts: canonicalCounts };
+}
+
 async function runTerminalDomainCase({ rpc, expect, fault }) {
   const args = fault === "security"
     ? multiEvidenceSecurityArguments(`domain-${fault}`)
@@ -1072,11 +1223,105 @@ function postgresQuery(sql) {
   return postgresExec(sql, "synchronous-write-remember-query").trim();
 }
 
+function rememberCanonicalCounts(teamID, submissionID) {
+  return postgresQuery(`
+    SELECT count(*) FROM knowledge_ingests
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(submissionID)}'::uuid
+    UNION ALL SELECT count(*) FROM evidence_fragments
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(submissionID)}'::uuid
+    UNION ALL SELECT count(*) FROM semantic_assessments
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND attempt_id = '${sqlLiteral(submissionID)}'::uuid
+    UNION ALL SELECT count(*) FROM relationship_observations
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(submissionID)}'::uuid
+    UNION ALL SELECT count(*) FROM search_documents
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND source_id IN (
+      SELECT fragment_id FROM evidence_fragments WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(submissionID)}'::uuid
+      UNION ALL SELECT relationship_id FROM relationship_observations WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(submissionID)}'::uuid
+    );
+  `).split(/\r?\n/).filter(Boolean).map(Number);
+}
+
 function postgresCommand(sql) {
   if (!/^INSERT\s+INTO\s+entity_names\b/i.test(sql.trim())) {
     throw new Error("known-evidence PostgreSQL mutation helper only permits alias setup");
   }
   postgresExec(sql, "synchronous-write-remember-command");
+}
+
+async function holdPredicateCommitLock(teamID, predicateKey) {
+  const child = spawn("docker", [
+    "compose", "-p", requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT"),
+    "-f", requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE"),
+    "-f", requiredEnv("DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE"),
+    "exec", "-T", "postgres", "sh", "-ec",
+    'exec psql -X -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At',
+  ], { cwd: repositoryRoot, stdio: ["pipe", "pipe", "pipe"] });
+  child.stderr.resume();
+  child.stdin.on("error", () => {});
+  const acquired = new Promise((resolve, reject) => {
+    let output = "";
+    const timer = setTimeout(() => finish(new Error("predicate commit lock acquisition timed out")), 10_000);
+    const finish = (error, pid) => {
+      clearTimeout(timer);
+      child.stdout.off("data", onData);
+      child.off("exit", onExit);
+      child.off("error", onError);
+      if (error) reject(error);
+      else resolve(pid);
+    };
+    const onData = (chunk) => {
+      output += chunk;
+      const match = output.match(/LOCK:(\d+)/);
+      if (match) finish(null, Number(match[1]));
+      else if (output.length > 1024) finish(new Error("predicate commit lock holder returned unexpected output"));
+    };
+    const onExit = (code) => finish(new Error(`predicate commit lock holder exited before acquisition (${code})`));
+    const onError = (error) => finish(new Error(`predicate commit lock holder could not start (${error.code || "unknown"})`));
+    child.stdout.on("data", onData);
+    child.once("exit", onExit);
+    child.once("error", onError);
+  });
+  const lockKey = sqlLiteral(`${teamID}:${predicateKey}`);
+  child.stdin.write(`SET idle_session_timeout = '180s';\nSELECT pg_advisory_lock(hashtext('${lockKey}'));\nSELECT 'LOCK:' || pg_backend_pid();\n`);
+  try {
+    return { child, pid: await acquired };
+  } catch (error) {
+    child.stdin.end();
+    child.kill("SIGTERM");
+    throw error;
+  }
+}
+
+async function waitForPredicateCommitWaiter(holderPID, requestSettled) {
+  const deadline = Date.now() + 90_000;
+  while (Date.now() < deadline) {
+    const waiters = Number(postgresQuery(`
+      SELECT count(*) FROM pg_locks AS holder
+      JOIN pg_locks AS waiter USING (locktype, database, classid, objid, objsubid)
+      WHERE holder.pid = ${holderPID} AND holder.locktype = 'advisory' AND holder.granted
+        AND waiter.pid <> holder.pid AND NOT waiter.granted;
+    `));
+    if (waiters === 1) return;
+    if (requestSettled()) throw new Error("Remember finished before reaching the predicate commit lock");
+    await delay(250);
+  }
+  throw new Error("Remember did not reach the predicate commit lock within 90 seconds");
+}
+
+async function releasePredicateCommitLock(child) {
+  if (child.exitCode !== null) return;
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error("predicate commit lock holder did not exit"));
+    }, 5000);
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`predicate commit lock holder exited with code ${code}`));
+    });
+    child.stdin.end();
+  });
 }
 
 function postgresExec(sql, label) {

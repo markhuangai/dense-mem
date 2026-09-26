@@ -320,6 +320,9 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 	plan, err := p.ledger.PlanRememberEmbeddings(embeddingCtx, commitInput)
 	if err != nil {
 		observability.RecordRememberPhase(p.metrics, "embedding", rememberMetricPhaseOutcome(err), time.Since(embeddingStarted))
+		if errors.Is(err, repository.ErrSubmissionPredicateRegistrationHeld) && len(commitInput.Commit.PredicateRegistrations) > 0 {
+			err = fmt.Errorf("%w: predicate catalog changed before embedding planning: %w", rememberapp.ErrRememberCommitConflict, err)
+		}
 		return fail(&rememberEmbeddingPlanFailure{cause: err}, "embedding")
 	}
 	plannedEmbeddings, err := p.embedSearchDocumentBatch(
@@ -373,7 +376,7 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		return replay, replayErr
 	}
 	if err != nil {
-		return fail(normalizeRememberCommitFailure(err), "commit")
+		return fail(normalizeRememberCommitFailure(err, len(commitInput.Commit.PredicateRegistrations) > 0), "commit")
 	}
 	if committed == nil {
 		return fail(errors.New("remember processor: nil Remember commit result"), "commit")
@@ -433,6 +436,10 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	}
 	code := rememberFailureCode(phase, failure)
 	reasonCode, details := rememberapp.SynchronousAssessmentFailureDetails(failure)
+	if code == rememberapp.SubmissionErrorCommitConflict && errors.Is(failure, repository.ErrSubmissionPredicateRegistrationHeld) {
+		reasonCode = "predicate_catalog_changed"
+		details = map[string]any{"component": "remember.predicate_catalog", "server_owned": true}
+	}
 	if reasonCode == "" {
 		reasonCode = "remember_" + strings.TrimSpace(phase) + "_failed"
 		details = map[string]any{"component": "remember." + strings.TrimSpace(phase), "server_owned": true}
@@ -550,7 +557,10 @@ func normalizeRememberFailureWithClassifier(failure error, isStaleInput func(err
 	return failure
 }
 
-func normalizeRememberCommitFailure(failure error) error {
+func normalizeRememberCommitFailure(failure error, predicateRegistrationsValidated bool) error {
+	if predicateRegistrationsValidated && errors.Is(failure, repository.ErrSubmissionPredicateRegistrationHeld) {
+		return fmt.Errorf("%w: predicate catalog changed before commit: %w", rememberapp.ErrRememberCommitConflict, failure)
+	}
 	if errors.Is(failure, repository.ErrSearchStaleVersion) || errors.Is(failure, repository.ErrSearchContractMismatch) {
 		return fmt.Errorf("%w: search state changed before commit", rememberapp.ErrRememberCommitConflict)
 	}
@@ -629,6 +639,12 @@ func (p *rememberSynchronousProcessor) logRememberFailure(
 			observability.String("failure_class", failureClass),
 			observability.String("failure_code", failureCode),
 		)
+	case phase == "assessment" && errors.Is(failure, rememberapp.ErrRememberDatabaseFailure):
+		attrs = append(attrs,
+			observability.String("failure_source", "assessment_catalog"),
+			observability.String("failure_class", "database"),
+			observability.String("failure_code", "assessment_catalog_failed"),
+		)
 	case errors.As(failure, &configurationFailure):
 		logError = failure
 		attrs = append(attrs,
@@ -697,6 +713,8 @@ func rememberCommitOperationalLogError(err error, stageFn func(error) string) er
 
 func rememberEmbeddingPlanFailureMetadata(err error) (string, string) {
 	switch {
+	case errors.Is(err, rememberapp.ErrRememberCommitConflict) && errors.Is(err, repository.ErrSubmissionPredicateRegistrationHeld):
+		return "fence_conflict", "predicate_catalog_changed"
 	case errors.Is(err, repository.ErrSearchContractMismatch):
 		return "configuration", "search_contract_mismatch"
 	case errors.Is(err, repository.ErrInlineEmbeddingPlanMismatch):
@@ -714,6 +732,8 @@ func rememberEmbeddingPlanFailureMetadata(err error) (string, string) {
 
 func rememberCommitFailureMetadata(err error) (string, string) {
 	switch {
+	case errors.Is(err, rememberapp.ErrRememberCommitConflict) && errors.Is(err, repository.ErrSubmissionPredicateRegistrationHeld):
+		return "fence_conflict", "predicate_catalog_changed"
 	case errors.Is(err, rememberapp.ErrRememberCommitConflict):
 		return "fence_conflict", "search_state_changed"
 	case errors.Is(err, repository.ErrInlineEmbeddingPlanMismatch):
@@ -752,6 +772,8 @@ func rememberFailureCode(phase string, err error) rememberapp.SubmissionErrorCod
 	var planFailure *rememberEmbeddingPlanFailure
 	if errors.As(err, &planFailure) {
 		switch {
+		case errors.Is(planFailure.cause, rememberapp.ErrRememberCommitConflict) && errors.Is(planFailure.cause, repository.ErrSubmissionPredicateRegistrationHeld):
+			return rememberapp.SubmissionErrorCommitConflict
 		case errors.Is(planFailure.cause, repository.ErrInlineEmbeddingPlanTooLarge):
 			return rememberapp.SubmissionErrorInputBudgetExceeded
 		case errors.Is(planFailure.cause, repository.ErrSearchContractMismatch):

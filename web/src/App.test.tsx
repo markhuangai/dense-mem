@@ -250,7 +250,7 @@ describe("App", () => {
     await screen.findByRole("button", { name: /Default/ });
     expect(screen.queryByRole("button", { name: /^metrics$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open Metrics" })).not.toBeInTheDocument();
-    expect(await screen.findByLabelText("Team activity")).toHaveTextContent("42");
+    await waitFor(() => expect(screen.getByLabelText("Team activity")).toHaveTextContent("42"));
     expect(screen.getByLabelText("Recent alerts")).toHaveTextContent("Request errors detected");
 
     await waitFor(() => {

@@ -16,6 +16,10 @@ type submissionAssessmentWorkerCatalogStub struct {
 	predicateInputs        []repository.SemanticReviewPredicateResolutionInput
 	predicateOptionInputs  []repository.SemanticAssessmentPredicateOptionsInput
 	predicateOptions       []repository.SemanticReviewPredicateCandidate
+	registrationInputs     []repository.SubmissionPredicateRegistrationValidationInput
+	registrationIssues     []repository.SubmissionPredicateRegistrationIssue
+	registrationErr        error
+	registrationValidate   func(repository.SubmissionPredicateRegistrationValidationInput) ([]repository.SubmissionPredicateRegistrationIssue, error)
 	entityComplete         bool
 	predicateComplete      bool
 	entityErr              error
@@ -92,4 +96,12 @@ func (s *submissionAssessmentWorkerCatalogStub) ListSemanticAssessmentPredicateO
 		return nil, s.predicateOptionsErr
 	}
 	return append([]repository.SemanticReviewPredicateCandidate(nil), s.predicateOptions...), nil
+}
+
+func (s *submissionAssessmentWorkerCatalogStub) ValidateSubmissionPredicateRegistrations(_ context.Context, input repository.SubmissionPredicateRegistrationValidationInput) ([]repository.SubmissionPredicateRegistrationIssue, error) {
+	s.registrationInputs = append(s.registrationInputs, input)
+	if s.registrationValidate != nil {
+		return s.registrationValidate(input)
+	}
+	return append([]repository.SubmissionPredicateRegistrationIssue(nil), s.registrationIssues...), s.registrationErr
 }
