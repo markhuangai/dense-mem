@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const EvidenceConflictRecallCandidateLimit = EvidenceConflictMaxResults * recallOverfetchMultiple
+const EvidenceConflictRecallCandidateLimit = EvidenceConflictMaxResults * 6
 
 const evidenceConflictRecallCandidateLimit = EvidenceConflictRecallCandidateLimit
 

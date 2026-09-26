@@ -10,6 +10,8 @@ import (
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	recallservice "github.com/markhuangai/dense-mem/internal/recall"
 )
 
 func evidenceRows() *sqlmock.Rows {
@@ -51,7 +53,7 @@ func TestRecallEvidenceFusesBranchesSkipsUnhydratedAndKnownIDs(t *testing.T) {
 		}, func(context.Context, *gorm.DB, RecallEvidenceInput, []RecallEvidenceHit) ([]EvidenceConflictCaseRecord, error) {
 			return []EvidenceConflictCaseRecord{{ConflictID: recallID1}}, nil
 		})
-	result, err := store.RecallEvidence(t.Context(), RecallEvidenceInput{TeamID: recallTeam, Query: "query", QueryEmbedding: []float32{1, 0}, ExpandFromEntityIDs: []string{recallID3}, KnownEvidenceIDs: []string{recallID3}, KnownAt: &recallTime, Limit: 2})
+	result, err := recallservice.NewRetrieval(store).RecallEvidence(t.Context(), RecallEvidenceInput{TeamID: recallTeam, Query: "query", QueryEmbedding: []float32{1, 0}, ExpandFromEntityIDs: []string{recallID3}, KnownEvidenceIDs: []string{recallID3}, KnownAt: &recallTime, Limit: 2})
 	require.NoError(t, err)
 	require.Equal(t, "failed", result.SearchState)
 	require.Equal(t, recallTeam, result.TeamID)
@@ -113,7 +115,7 @@ func TestRecallEvidenceRequiredReadFailuresReturnNoResult(t *testing.T) {
 			if stage == "missing_readers" {
 				relReader = nil
 			}
-			result, err := NewStore(db, recallQueryRLS{}, search, relReader, evidenceReader).RecallEvidence(t.Context(), input)
+			result, err := recallservice.NewRetrieval(NewStore(db, recallQueryRLS{}, search, relReader, evidenceReader)).RecallEvidence(t.Context(), input)
 			require.Error(t, err)
 			require.Nil(t, result)
 			if stage == "missing_readers" {
@@ -128,11 +130,11 @@ func TestRecallEvidenceRequiredReadFailuresReturnNoResult(t *testing.T) {
 func TestRecallEvidenceEmptyBranchAndHydrationFailures(t *testing.T) {
 	db, mock := newRecallSQLMockDB(t)
 	store := NewStore(db, recallQueryRLS{}, recallSearchContract{contract: recallTestContract()}, nil, nil)
-	_, err := store.RecallEvidence(t.Context(), RecallEvidenceInput{})
+	_, err := recallservice.NewRetrieval(store).RecallEvidence(t.Context(), RecallEvidenceInput{})
 	require.ErrorContains(t, err, "team_id")
 	mock.ExpectQuery("FROM relationship_records AS relationship").WillReturnRows(recallHitRows())
 	mock.ExpectQuery("WITH eligible AS NOT MATERIALIZED").WillReturnRows(sqlmock.NewRows([]string{"state"}).AddRow(""))
-	result, err := store.RecallEvidence(t.Context(), RecallEvidenceInput{TeamID: recallTeam, ExpandFromEntityIDs: []string{recallID1}})
+	result, err := recallservice.NewRetrieval(store).RecallEvidence(t.Context(), RecallEvidenceInput{TeamID: recallTeam, ExpandFromEntityIDs: []string{recallID1}})
 	require.NoError(t, err)
 	require.Empty(t, result.Results)
 	require.Equal(t, "current", result.SearchState)
@@ -169,7 +171,7 @@ func TestRecallRelationshipsDeduplicatesGroupsAndSortsEqualScoresByAge(t *testin
 		AddRow(relationshipRow(recallID3, "group1", "current", recallTime)...))
 	mock.ExpectQuery(`(?s)WITH requested.*effective_support AS`).WillReturnRows(sqlmock.NewRows([]string{"id", "evidence_ids"}).AddRow(recallID1, pq.StringArray{recallID1}).AddRow(recallID2, pq.StringArray{recallID2}).AddRow(recallID3, pq.StringArray{recallID3}))
 	mock.ExpectQuery(`(?s)WITH requested.*equivalents AS`).WillReturnRows(sqlmock.NewRows([]string{"id", "equivalent_ids"}).AddRow(recallID1, pq.StringArray{recallID3}))
-	result, err := NewStore(db, recallQueryRLS{}, recallSearchContract{contract: recallTestContract()}, nil, nil).RecallRelationships(t.Context(), RecallRelationshipsInput{TeamID: recallTeam, Query: "q", QueryEmbedding: []float32{1, 0}, ExpandFromEntityIDs: []string{recallID3}})
+	result, err := recallservice.NewRetrieval(NewStore(db, recallQueryRLS{}, recallSearchContract{contract: recallTestContract()}, nil, nil)).RecallRelationships(t.Context(), RecallRelationshipsInput{TeamID: recallTeam, Query: "q", QueryEmbedding: []float32{1, 0}, ExpandFromEntityIDs: []string{recallID3}})
 	require.NoError(t, err)
 	require.Len(t, result.Results, 2)
 	require.Equal(t, recallID2, result.Results[0].RelationshipID)
@@ -235,7 +237,7 @@ func TestRecallRelationshipsReadFailuresAndVectorOmission(t *testing.T) {
 					}
 				}
 			}
-			result, err := NewStore(db, recallQueryRLS{}, search, nil, nil).RecallRelationships(t.Context(), input)
+			result, err := recallservice.NewRetrieval(NewStore(db, recallQueryRLS{}, search, nil, nil)).RecallRelationships(t.Context(), input)
 			if stage == "empty" || stage == "omitted" {
 				require.NoError(t, err)
 				require.Empty(t, result.Results)

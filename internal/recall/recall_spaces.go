@@ -346,7 +346,7 @@ func (s *recallService) recallRelatedRelationships(
 		return []RelatedRelationshipSummary{}, string(domain.SearchProjectionNotRequired), nil, map[string]struct{}{}
 	}
 	branch, _ := recallBranchFromContext(ctx)
-	recalled, err := s.search.RecallRelationships(ctx, recallcontract.RecallRelationshipsInput{
+	recalled, err := s.retrieval.RecallRelationships(ctx, recallcontract.RecallRelationshipsInput{
 		TeamID:               teamID,
 		Query:                req.Query,
 		QueryEmbedding:       queryEmbedding,

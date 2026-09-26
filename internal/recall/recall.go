@@ -74,6 +74,7 @@ type RecallCommunityConfigProvider interface {
 
 type recallService struct {
 	search          RecallSearchRepository
+	retrieval       *Retrieval
 	provider        embeddingcontract.EmbeddingProviderInterface
 	hypotheses      RecallHypothesisRepository
 	communities     RecallCommunityRepository
@@ -88,6 +89,7 @@ func NewRecallService(deps RecallDependencies) RecallService {
 	}
 	return &recallService{
 		search:          deps.Search,
+		retrieval:       NewRetrieval(deps.Search),
 		provider:        deps.Provider,
 		hypotheses:      deps.Hypotheses,
 		communities:     deps.Communities,
@@ -176,7 +178,7 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 			degradations = append(degradations, *vectorDegradation)
 		}
 	}
-	recalled, err := s.search.RecallEvidence(ctx, recallcontract.RecallEvidenceInput{
+	recalled, err := s.retrieval.RecallEvidence(ctx, recallcontract.RecallEvidenceInput{
 		TeamID:               actor.TeamID.String(),
 		Query:                req.Query,
 		QueryEmbedding:       queryEmbedding,

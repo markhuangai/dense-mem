@@ -18,10 +18,41 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	recallservice "github.com/markhuangai/dense-mem/internal/recall"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/search/contract"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
+
+type cancelAfterRecallCandidates struct {
+	recallcontract.SearchRepository
+	cancel             context.CancelFunc
+	counters           *readPerformanceBenchmarkCounters
+	candidateCount     int
+	completedAfterRead readPerformanceBenchmarkCount
+	hydrationCalls     int
+	conflictCalls      int
+}
+
+func (p *cancelAfterRecallCandidates) ReadEvidenceCandidates(ctx context.Context, input RecallEvidenceInput, search *ActiveSearchContract, limit int) (*recallcontract.RecallCandidateBatch, error) {
+	batch, err := p.SearchRepository.ReadEvidenceCandidates(ctx, input, search, limit)
+	if err == nil {
+		p.candidateCount = len(batch.TextHits) + len(batch.VectorHits) + len(batch.ExpansionHits)
+		p.completedAfterRead = p.counters.snapshot()
+		p.cancel()
+	}
+	return batch, err
+}
+
+func (p *cancelAfterRecallCandidates) HydrateEvidence(ctx context.Context, input RecallEvidenceInput, search *ActiveSearchContract, ids []string) (map[string]RecallEvidenceHit, error) {
+	p.hydrationCalls++
+	return p.SearchRepository.HydrateEvidence(ctx, input, search, ids)
+}
+
+func (p *cancelAfterRecallCandidates) LoadRecallConflicts(ctx context.Context, input RecallEvidenceInput, hits []RecallEvidenceHit) (*recallcontract.RecallConflicts, error) {
+	p.conflictCalls++
+	return p.SearchRepository.LoadRecallConflicts(ctx, input, hits)
+}
 
 func newReadPerformanceSearchFixtureStore(db *gorm.DB, rls storagepostgres.RLSHelper) *searchFixtureStore {
 	store := newSearchFixtureStore(db, rls)
@@ -39,6 +70,39 @@ func newReadPerformanceSearchFixtureStore(db *gorm.DB, rls storagepostgres.RLSHe
 		return conflictpostgres.LoadRelationshipConflictRecordsInSpace(ctx, tx, teamID, relationshipIDs, knownAt, "")
 	}
 	return store
+}
+
+func TestRecallRetrievalCancellationAfterCandidates(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	t.Cleanup(cleanup)
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "recall-cancel-after-candidates")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "recall-cancel-after-candidates")
+	insertSearchTestContract(t, adminDB, rls, "recall-cancel-after-candidates", 3, "exact", "")
+	counters := &readPerformanceBenchmarkCounters{}
+	countedDB := newReadPerformanceCountedDB(appDB, counters)
+	store := newReadPerformanceSearchFixtureStore(countedDB, rls)
+	ledger := knowledgepostgres.NewStore(countedDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	documents := createReadPerformanceBenchmarkDocuments(t, ctx, store, ledger, teamID, ownerID,
+		"cancel after candidates", 1, "", 0)
+	completeSearchDocumentsForTest(t, store, teamID, documents.documentIDs)
+
+	readCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	probe := &cancelAfterRecallCandidates{SearchRepository: store.recall, cancel: cancel, counters: counters}
+	counters.reset()
+	result, err := recallservice.NewRetrieval(probe).RecallEvidence(readCtx, RecallEvidenceInput{
+		TeamID: teamID, Query: "cancel after candidates", Limit: 1,
+	})
+	require.Nil(t, result)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, 1, probe.candidateCount)
+	require.Equal(t, 1, probe.hydrationCalls)
+	require.Zero(t, probe.conflictCalls)
+	require.Equal(t, int64(1), probe.completedAfterRead.transactions)
+	require.Equal(t, probe.completedAfterRead.transactions, probe.completedAfterRead.commits)
+	final := counters.snapshot()
+	require.Equal(t, final.transactions, final.commits+final.rollbacks)
 }
 
 func TestRecallReadPerformanceMetricsMatchDisabledResults(t *testing.T) {

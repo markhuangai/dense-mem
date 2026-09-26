@@ -136,6 +136,11 @@ class ReadPerformanceComparisonTests(unittest.TestCase):
         self.assertEqual(len(report["workloads"]), 7)
         self.assertTrue(report["workloads"]["relationship_recall"]["enabled"]["passed"])
 
+    def test_missing_transaction_completion_metric_is_reported_during_parsing(self):
+        incomplete = benchmark_output().replace("4 transaction-completions/op", "")
+        with self.assertRaisesRegex(ValueError, "is missing metrics: transaction-completions/op"):
+            comparison.parse_benchmarks(incomplete)
+
     def test_base_source_comparison_rejects_p95_regression_in_one_mode(self):
         baseline = comparison.parse_benchmarks(benchmark_output())
         candidate = comparison.parse_benchmarks(benchmark_output(1_100_000))

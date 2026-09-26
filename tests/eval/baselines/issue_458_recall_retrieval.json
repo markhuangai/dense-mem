@@ -1,0 +1,182 @@
+{
+  "base_commit": "830b58ba419e7377ba84ca24d39c5854a19c55ec",
+  "base_test_overlay_sha256": {
+    "internal/recall/postgres/integration_fixture_helpers_test.go": "a5e6b4f7e7853598a3aa414e0f11c7e5acb1469121a5d35b1a67bb82cfb54240",
+    "internal/recall/postgres/recall_read_performance_benchmark_test.go": "6403824ec1df28e3612719e5509251e6e43c140a1a0f817f97cbda879bbbdef7",
+    "internal/recall/postgres/recall_retrieval_equivalence_integration_test.go": "d8c5de4f96cc81a85564ceed23cd04520cf8ac6a9cc49c34c31481a1ecc227ec"
+  },
+  "benchmark": {
+    "baseline_telemetry_diagnostic_passed": true,
+    "candidate_telemetry_passed": true,
+    "iterations_per_run": 200,
+    "name": "BenchmarkRecallReadPipeline",
+    "repetitions": 5,
+    "source_comparison_passed": true,
+    "source_sql_and_transaction_counts_exact": true,
+    "timing_diagnostic": {
+      "earlier_candidate_log_sha256": "6545088577772dd2b5d6b98f4fa9ba7be1af576a12843119f9e8625d6875c861",
+      "observation": "An earlier post-CI capture exceeded the p95 gate for ANN without telemetry and lexical with telemetry against a fresh base capture; the final paired capture passed.",
+      "same_source_fingerprint": true
+    },
+    "warmups_per_run": 20,
+    "workloads": {
+      "ann": {
+        "disabled": {
+          "allowed_p50_increase_ms": 1.0,
+          "allowed_p95_increase_ms": 1.0,
+          "p50_increase_ms": 0.525511,
+          "p95_increase_ms": 0.122759,
+          "sql_statements_per_op": 19.0,
+          "transactions_per_op": 3.0
+        },
+        "enabled": {
+          "allowed_p50_increase_ms": 1.0,
+          "allowed_p95_increase_ms": 1.0,
+          "p50_increase_ms": 0.107426,
+          "p95_increase_ms": 0.101839,
+          "sql_statements_per_op": 19.0,
+          "transactions_per_op": 3.0
+        }
+      },
+      "exact_vector": {
+        "disabled": {
+          "allowed_p50_increase_ms": 1.0,
+          "allowed_p95_increase_ms": 1.0,
+          "p50_increase_ms": -0.001805,
+          "p95_increase_ms": 0.187358,
+          "sql_statements_per_op": 7.0,
+          "transactions_per_op": 1.0
+        },
+        "enabled": {
+          "allowed_p50_increase_ms": 1.0,
+          "allowed_p95_increase_ms": 1.0,
+          "p50_increase_ms": 0.153287,
+          "p95_increase_ms": 0.253789,
+          "sql_statements_per_op": 7.0,
+          "transactions_per_op": 1.0
+        }
+      },
+      "expansion": {
+        "disabled": {
+          "allowed_p50_increase_ms": 1.0,
+          "allowed_p95_increase_ms": 1.0,
+          "p50_increase_ms": 0.666696,
+          "p95_increase_ms": 0.353737,
+          "sql_statements_per_op": 18.0,
+          "transactions_per_op": 3.0
+        },
+        "enabled": {
+          "allowed_p50_increase_ms": 1.0,
+          "allowed_p95_increase_ms": 1.0,
+          "p50_increase_ms": 0.569328,
+          "p95_increase_ms": 0.482342,
+          "sql_statements_per_op": 18.0,
+          "transactions_per_op": 3.0
+        }
+      },
+      "historical": {
+        "disabled": {
+          "allowed_p50_increase_ms": 1.0,
+          "allowed_p95_increase_ms": 1.0,
+          "p50_increase_ms": 0.495549,
+          "p95_increase_ms": 0.007593,
+          "sql_statements_per_op": 17.0,
+          "transactions_per_op": 3.0
+        },
+        "enabled": {
+          "allowed_p50_increase_ms": 1.0,
+          "allowed_p95_increase_ms": 1.0,
+          "p50_increase_ms": 0.490224,
+          "p95_increase_ms": 0.259104,
+          "sql_statements_per_op": 17.0,
+          "transactions_per_op": 3.0
+        }
+      },
+      "lexical": {
+        "disabled": {
+          "allowed_p50_increase_ms": 1.0,
+          "allowed_p95_increase_ms": 1.0,
+          "p50_increase_ms": 0.201988,
+          "p95_increase_ms": -0.183945,
+          "sql_statements_per_op": 17.0,
+          "transactions_per_op": 3.0
+        },
+        "enabled": {
+          "allowed_p50_increase_ms": 1.0,
+          "allowed_p95_increase_ms": 1.0,
+          "p50_increase_ms": -0.18333,
+          "p95_increase_ms": -0.449594,
+          "sql_statements_per_op": 17.0,
+          "transactions_per_op": 3.0
+        }
+      },
+      "private_space": {
+        "disabled": {
+          "allowed_p50_increase_ms": 1.0,
+          "allowed_p95_increase_ms": 1.0,
+          "p50_increase_ms": 0.648279,
+          "p95_increase_ms": 0.585866,
+          "sql_statements_per_op": 17.0,
+          "transactions_per_op": 3.0
+        },
+        "enabled": {
+          "allowed_p50_increase_ms": 1.0,
+          "allowed_p95_increase_ms": 1.0,
+          "p50_increase_ms": 0.56689,
+          "p95_increase_ms": 0.399133,
+          "sql_statements_per_op": 17.0,
+          "transactions_per_op": 3.0
+        }
+      },
+      "relationship_recall": {
+        "disabled": {
+          "allowed_p50_increase_ms": 1.0,
+          "allowed_p95_increase_ms": 1.0,
+          "p50_increase_ms": 0.8854,
+          "p95_increase_ms": 0.819931,
+          "sql_statements_per_op": 14.0,
+          "transactions_per_op": 2.0
+        },
+        "enabled": {
+          "allowed_p50_increase_ms": 1.0,
+          "allowed_p95_increase_ms": 1.0,
+          "p50_increase_ms": 0.670024,
+          "p95_increase_ms": 0.607785,
+          "sql_statements_per_op": 14.0,
+          "transactions_per_op": 2.0
+        }
+      }
+    }
+  },
+  "equivalence": {
+    "byte_identical": true,
+    "cases": 6,
+    "report_sha256": "cdebcf99698f412ee1ac4751105274c5e107fd62d19cf7bd1cb9de5fe85ff61b"
+  },
+  "issue": 458,
+  "measured_at": "2026-09-26T00:07:34.990945+00:00",
+  "passed": true,
+  "query_contract": {
+    "byte_identical": true,
+    "case_count": 9,
+    "report_sha256": "11bbecdaea7b7f82e879e3f9da1c88a4bde28cad0d60625e42470778342231d3",
+    "statement_count": 15
+  },
+  "schema_version": 1,
+  "source_fingerprints": {
+    "base": {
+      "commit_sha": "830b58ba419e7377ba84ca24d39c5854a19c55ec",
+      "working_tree_paths": 3,
+      "working_tree_sha256": "dea6b900689caa7038ef5ab9b44217030a494d9c2c2b8d1d1a831134b279eb37"
+    },
+    "candidate": {
+      "commit_sha": "830b58ba419e7377ba84ca24d39c5854a19c55ec",
+      "working_tree_paths": 29,
+      "working_tree_sha256": "808f7f81ec8564b2b4b1682a725565eca2c545f06bf880289e0f66288e6cc70f"
+    }
+  },
+  "source_lock_sha256": {
+    "base": "ff159facff6a3270e253e4f3d04d795d6525a0f0c43442f5d9a5f7240edeb6b3",
+    "candidate": "4e50ee1bcc2d2bd733e051951015445c6972746570750162c4f484b8ed92df58"
+  }
+}

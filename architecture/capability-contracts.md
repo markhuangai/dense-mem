@@ -29,6 +29,9 @@ inside their owning capability.
   components for Search and Recall. Search retains its all-team readiness
   selection, and Recall retains its stricter current-generation vector selection.
   `internal/knowledge/contract` owns the foreground-generation metadata key.
+- `internal/recall` owns evidence and relationship candidate fusion, known-result
+  suppression, ranking, and final selection. Its PostgreSQL adapter supplies
+  bounded candidate batches, hydration, and conflict reads under team RLS.
 - `internal/graph`, `internal/trace`, `internal/recall`, `internal/dream`,
   `internal/community`, `internal/conflict`, and `internal/memorypack` own
   their capability APIs and contracts. Their PostgreSQL packages implement

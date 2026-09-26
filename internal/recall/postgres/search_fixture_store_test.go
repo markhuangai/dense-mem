@@ -8,6 +8,8 @@ import (
 
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+	recallservice "github.com/markhuangai/dense-mem/internal/recall"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 	searchmaintenance "github.com/markhuangai/dense-mem/internal/search/maintenance"
 	searchpostgres "github.com/markhuangai/dense-mem/internal/search/postgres"
@@ -15,6 +17,7 @@ import (
 )
 
 type searchFixtureStore struct {
+	recallcontract.Repository
 	db         *gorm.DB
 	rls        storagepostgres.RLSHelper
 	read       *searchpostgres.Store
@@ -27,12 +30,14 @@ func newSearchFixtureStore(db *gorm.DB, rls storagepostgres.RLSHelper) *searchFi
 	relationshipReader := func(context.Context, *gorm.DB, string, *time.Time, []RecallEvidenceHit) ([]RelationshipConflictCaseRecord, error) {
 		return []RelationshipConflictCaseRecord{}, nil
 	}
+	recallStore := NewStore(db, rls, read, relationshipReader, LoadRecallEvidenceConflictRecords)
 	return &searchFixtureStore{
+		Repository: recallStore,
 		db:         db,
 		rls:        rls,
 		read:       read,
 		projection: knowledgepostgres.NewStore(db, rls, knowledgecontract.ConflictRuntimeConfig{}),
-		recall:     NewStore(db, rls, read, relationshipReader, LoadRecallEvidenceConflictRecords),
+		recall:     recallStore,
 	}
 }
 
@@ -49,10 +54,10 @@ func (s *searchFixtureStore) SearchExactVector(ctx context.Context, input search
 	return s.read.SearchExactVector(ctx, input)
 }
 func (s *searchFixtureStore) RecallEvidence(ctx context.Context, input RecallEvidenceInput) (*RecallEvidenceResult, error) {
-	return s.recall.RecallEvidence(ctx, input)
+	return recallservice.NewRetrieval(s.recall).RecallEvidence(ctx, input)
 }
 func (s *searchFixtureStore) RecallRelationships(ctx context.Context, input RecallRelationshipsInput) (*RecallRelationshipsResult, error) {
-	return s.recall.RecallRelationships(ctx, input)
+	return recallservice.NewRetrieval(s.recall).RecallRelationships(ctx, input)
 }
 func (s *searchFixtureStore) UpsertSearchDocument(ctx context.Context, input knowledgecontract.UpsertSearchDocumentInput) (*knowledgecontract.SearchDocumentResult, error) {
 	return s.projection.UpsertSearchDocument(ctx, input)

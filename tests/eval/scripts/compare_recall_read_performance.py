@@ -34,6 +34,7 @@ REQUIRED_METRICS = (
     "p95-ns/op",
     "sql-statements/op",
     "transactions/op",
+    "transaction-completions/op",
     "telemetry-enabled/op",
     "allocs/op",
     "B/op",

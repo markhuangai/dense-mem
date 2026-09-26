@@ -35,18 +35,24 @@ const (
 )
 
 type readPerformanceBenchmarkFixture struct {
-	store        *searchFixtureStore
-	teamID       string
-	annTeamID    string
-	ownerID      string
-	annOwnerID   string
-	privateTeam  string
-	privateCtx   context.Context
-	privateActor requestctx.Actor
-	privateID    string
-	entityID     string
-	knownAt      time.Time
-	counters     *readPerformanceBenchmarkCounters
+	store             *searchFixtureStore
+	lexicalID         string
+	annID             string
+	annIDs            []string
+	supportID         string
+	privateEvidenceID string
+	relationshipID    string
+	teamID            string
+	annTeamID         string
+	ownerID           string
+	annOwnerID        string
+	privateTeam       string
+	privateCtx        context.Context
+	privateActor      requestctx.Actor
+	privateID         string
+	entityID          string
+	knownAt           time.Time
+	counters          *readPerformanceBenchmarkCounters
 }
 
 func BenchmarkRecallReadPipeline(b *testing.B) {
@@ -195,28 +201,100 @@ func BenchmarkRecallReadPipeline(b *testing.B) {
 	}
 }
 
-func newReadPerformanceBenchmarkFixture(b *testing.B) *readPerformanceBenchmarkFixture {
+func newReadPerformanceBenchmarkFixture(b testing.TB) *readPerformanceBenchmarkFixture {
+	return newReadPerformanceFixture(b, false)
+}
+
+func newReadPerformanceEquivalenceFixture(b testing.TB) *readPerformanceBenchmarkFixture {
+	return newReadPerformanceFixture(b, true)
+}
+
+func newReadPerformanceFixture(b testing.TB, fixed bool) *readPerformanceBenchmarkFixture {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(b)
 	b.Cleanup(cleanup)
 
+	baseCtx := context.Background()
+	if fixed {
+		defaults := []struct {
+			table, column, expression string
+		}{
+			{table: "evidence_fragments", column: "created_at"},
+			{table: "relationship_records", column: "created_at"},
+			{table: "relationship_records", column: "relationship_id"},
+			{table: "entity_records", column: "entity_id"},
+			{table: "memory_spaces", column: "id"},
+		}
+		for index := range defaults {
+			row := adminDB.Raw(`SELECT column_default FROM information_schema.columns
+				WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
+				defaults[index].table, defaults[index].column).Row()
+			require.NoError(b, row.Scan(&defaults[index].expression))
+			require.NotEmpty(b, defaults[index].expression)
+		}
+		b.Cleanup(func() {
+			require.NoError(b, rls.WithSystemTx(context.Background(), adminDB, func(tx *gorm.DB) error {
+				for _, column := range defaults {
+					statement := fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s", column.table, column.column, column.expression)
+					if err := tx.Exec(statement).Error; err != nil {
+						return err
+					}
+				}
+				return nil
+			}))
+		})
+		fixedAt := "2026-09-01T00:00:00Z"
+		require.NoError(b, rls.WithSystemTx(baseCtx, adminDB, func(tx *gorm.DB) error {
+			if err := tx.Exec(fmt.Sprintf("ALTER TABLE evidence_fragments ALTER COLUMN created_at SET DEFAULT '%s'::timestamptz", fixedAt)).Error; err != nil {
+				return err
+			}
+			if err := tx.Exec(fmt.Sprintf("ALTER TABLE relationship_records ALTER COLUMN created_at SET DEFAULT '%s'::timestamptz", fixedAt)).Error; err != nil {
+				return err
+			}
+			return tx.Exec(fmt.Sprintf("ALTER TABLE relationship_records ALTER COLUMN relationship_id SET DEFAULT '%s'::uuid", readPerformanceFixedID("relationship"))).Error
+		}))
+	}
 	counters := &readPerformanceBenchmarkCounters{}
 	countedDB := newReadPerformanceCountedDB(appDB, counters)
 	store := newReadPerformanceSearchFixtureStore(countedDB, rls)
 	ledger := knowledgepostgres.NewStore(countedDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
 	semantic := knowledgepostgres.NewStore(countedDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
-	baseCtx := context.Background()
-	teamID := createLedgerTeam(b, adminDB, rls, "recall-read-performance")
-	ownerID := createLedgerProfile(b, adminDB, rls, teamID, "recall-read-performance")
-	annTeamID := createLedgerTeam(b, adminDB, rls, "recall-read-performance-ann")
-	annOwnerID := createLedgerProfile(b, adminDB, rls, annTeamID, "recall-read-performance-ann")
-	privateTeam := createLedgerTeam(b, adminDB, rls, "recall-read-performance-private")
+	createTeam := func(label string) string {
+		if fixed {
+			return createLedgerTeamWithID(b, adminDB, rls, label, readPerformanceFixedID("team:"+label))
+		}
+		return createLedgerTeam(b, adminDB, rls, label)
+	}
+	createProfile := func(teamID, label string) string {
+		if fixed {
+			return createLedgerProfileWithID(b, adminDB, rls, teamID, label, readPerformanceFixedID("profile:"+label))
+		}
+		return createLedgerProfile(b, adminDB, rls, teamID, label)
+	}
+	teamID := createTeam("recall-read-performance")
+	ownerID := createProfile(teamID, "recall-read-performance")
+	annTeamID := createTeam("recall-read-performance-ann")
+	annOwnerID := createProfile(annTeamID, "recall-read-performance-ann")
+	privateTeam := createTeam("recall-read-performance-private")
 	insertSearchTestContractWithFallback(b, adminDB, rls, "recall-read-performance", 3, "vector_hnsw", "densemem_read_performance_hnsw", true)
 
-	baseDocuments := createReadPerformanceBenchmarkDocuments(b, baseCtx, store, ledger, teamID, ownerID, "recall benchmark lexical marker", readPerformanceBenchmarkDocumentCount, "", 0)
-	annDocuments := createReadPerformanceBenchmarkDocuments(b, baseCtx, store, ledger, annTeamID, annOwnerID, "ann benchmark marker", readPerformanceBenchmarkDocumentCount, "", 0)
+	baseDocuments := createReadPerformanceBenchmarkDocuments(b, baseCtx, store, ledger, teamID, ownerID, "recall benchmark lexical marker", readPerformanceBenchmarkDocumentCount, "", 0, fixed)
+	annDocuments := createReadPerformanceBenchmarkDocuments(b, baseCtx, store, ledger, annTeamID, annOwnerID, "ann benchmark marker", readPerformanceBenchmarkDocumentCount, "", 0, fixed)
 
-	subject := createSemanticEntity(b, baseCtx, semantic, teamID, ownerID, "person", "Benchmark Reader")
-	object := createSemanticEntity(b, baseCtx, semantic, teamID, ownerID, "project", "Dense Mem")
+	createEntity := func(kind, name, role string) *knowledgepostgres.EntityRecord {
+		if fixed {
+			id := readPerformanceFixedID("entity:" + role)
+			require.NoError(b, rls.WithSystemTx(baseCtx, adminDB, func(tx *gorm.DB) error {
+				return tx.Exec(fmt.Sprintf("ALTER TABLE entity_records ALTER COLUMN entity_id SET DEFAULT '%s'::uuid", id)).Error
+			}))
+		}
+		entity := createSemanticEntity(b, baseCtx, semantic, teamID, ownerID, kind, name)
+		if fixed {
+			require.Equal(b, readPerformanceFixedID("entity:"+role), entity.EntityID)
+		}
+		return entity
+	}
+	subject := createEntity("person", "Benchmark Reader", "subject")
+	object := createEntity("project", "Dense Mem", "object")
 	decision := applySemanticDecision(b, baseCtx, semantic, knowledgepostgres.ApplyRelationshipDecisionInput{
 		TeamID: teamID, OwnerProfileID: ownerID, IngestID: baseDocuments.ingestID,
 		SubjectEntityID: subject.EntityID, PredicateKey: "works_on", ObjectEntityID: object.EntityID,
@@ -233,8 +311,15 @@ func newReadPerformanceBenchmarkFixture(b *testing.B) *readPerformanceBenchmarkF
 	})
 	require.NoError(b, err)
 
+	privateCredentialID := uuid.New()
+	if fixed {
+		privateCredentialID = uuid.MustParse(readPerformanceFixedID("private-credential"))
+		require.NoError(b, rls.WithSystemTx(baseCtx, adminDB, func(tx *gorm.DB) error {
+			return tx.Exec(fmt.Sprintf("ALTER TABLE memory_spaces ALTER COLUMN id SET DEFAULT '%s'::uuid", readPerformanceFixedID("private-space"))).Error
+		}))
+	}
 	privateCredential := &domain.Credential{
-		ID: uuid.New(), TeamID: uuid.MustParse(privateTeam), Name: "read performance private fixture",
+		ID: privateCredentialID, TeamID: uuid.MustParse(privateTeam), Name: "read performance private fixture",
 		KeyHash: "hash-read-performance-private", KeyPrefix: "read-performance-private", KeySuffix: "suffix",
 		Scopes: []string{"read", "write"}, MemoryBinding: domain.CredentialBindingCredentialPrivate,
 	}
@@ -248,7 +333,7 @@ func newReadPerformanceBenchmarkFixture(b *testing.B) *readPerformanceBenchmarkF
 	privateCtx := requestctx.WithActor(baseCtx, privateActor)
 	privateDocuments := createReadPerformanceBenchmarkDocuments(
 		b, privateCtx, store, ledger, privateTeam, privateCredential.OwnerID.String(),
-		"private benchmark marker", 8, privateCredential.MemorySpaceID.String(), privateCredential.MemorySpaceGeneration,
+		"private benchmark marker", 8, privateCredential.MemorySpaceID.String(), privateCredential.MemorySpaceGeneration, fixed,
 	)
 
 	baseVectors := baseDocuments.documentIDs
@@ -262,6 +347,11 @@ func newReadPerformanceBenchmarkFixture(b *testing.B) *readPerformanceBenchmarkF
 		}
 		return tx.Exec("ANALYZE search_documents, evidence_fragments").Error
 	}))
+	b.Cleanup(func() {
+		require.NoError(b, rls.WithSystemTx(context.Background(), adminDB, func(tx *gorm.DB) error {
+			return tx.Exec("DROP INDEX densemem_read_performance_hnsw").Error
+		}))
+	})
 	lexical, err := store.RecallEvidence(baseCtx, RecallEvidenceInput{
 		TeamID: teamID, Query: "recall benchmark lexical marker", Limit: 10,
 	})
@@ -272,11 +362,25 @@ func newReadPerformanceBenchmarkFixture(b *testing.B) *readPerformanceBenchmarkF
 	}
 	require.False(b, selectedSupport, "benchmark relationship-support fragment must stay outside lexical results")
 
-	return &readPerformanceBenchmarkFixture{
-		store: store, teamID: teamID, ownerID: ownerID, annTeamID: annTeamID, annOwnerID: annOwnerID,
-		privateTeam: privateTeam, privateCtx: privateCtx, privateActor: privateActor, privateID: privateCredential.MemorySpaceID.String(),
-		entityID: subject.EntityID, knownAt: time.Now().Add(time.Minute), counters: counters,
+	knownAt := time.Now().Add(time.Minute)
+	if fixed {
+		knownAt = time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	}
+	return &readPerformanceBenchmarkFixture{
+		store: store, lexicalID: baseDocuments.fragments[1].FragmentID,
+		annID:             annDocuments.fragments[0].FragmentID,
+		annIDs:            []string{annDocuments.fragments[0].FragmentID, annDocuments.fragments[1].FragmentID, annDocuments.fragments[2].FragmentID},
+		supportID:         baseDocuments.fragments[0].FragmentID,
+		privateEvidenceID: privateDocuments.fragments[0].FragmentID,
+		relationshipID:    decision.Relationship.RelationshipID,
+		teamID:            teamID, ownerID: ownerID, annTeamID: annTeamID, annOwnerID: annOwnerID,
+		privateTeam: privateTeam, privateCtx: privateCtx, privateActor: privateActor, privateID: privateCredential.MemorySpaceID.String(),
+		entityID: subject.EntityID, knownAt: knownAt, counters: counters,
+	}
+}
+
+func readPerformanceFixedID(role string) string {
+	return uuid.NewSHA1(uuid.NameSpaceURL, []byte("dense-mem:issue-458:"+role)).String()
 }
 
 type readPerformanceBenchmarkDocuments struct {
@@ -294,6 +398,7 @@ func createReadPerformanceBenchmarkDocuments(
 	count int,
 	spaceID string,
 	spaceGeneration int64,
+	fixed ...bool,
 ) readPerformanceBenchmarkDocuments {
 	t.Helper()
 	evidence := make([]knowledgepostgres.EvidenceInput, count)
@@ -303,6 +408,9 @@ func createReadPerformanceBenchmarkDocuments(
 			content = "Benchmark Reader works on Dense Mem. Relationship support evidence record 0000"
 		}
 		evidence[index] = knowledgepostgres.EvidenceInput{Content: content, SourceType: "document"}
+		if len(fixed) > 0 && fixed[0] {
+			evidence[index].FragmentID = readPerformanceFixedID(fmt.Sprintf("%s:%04d", prefix, index))
+		}
 	}
 	ingest, err := ledger.CreateIngestForTest(ctx, knowledgepostgres.CreateIngestInput{
 		TeamID: teamID, OwnerProfileID: ownerID, SpaceID: spaceID, SpaceGeneration: spaceGeneration,
