@@ -285,6 +285,7 @@ func TestPrometheusMetricsMarksUnpricedAndKeepsWorkerIdentity(t *testing.T) {
 func TestPrometheusMetrics_RecordsAssessorMetricsWithoutIdentityLabels(t *testing.T) {
 	metrics := NewPrometheusMetrics()
 	metrics.ObserveAssessorCall(200, 50, 0.25, "ok")
+	metrics.ObserveAssessorCall(317, 70, 0.5, "catalog_error")
 	metrics.IncAssessorValidationFailure("response")
 	metrics.IncAssessorValidationFieldFailure("response_contract", "relationship_results.predicate")
 	metrics.IncAssessorValidationFieldFailure("not-a-stage", "provider supplied arbitrary field")
@@ -297,6 +298,7 @@ func TestPrometheusMetrics_RecordsAssessorMetricsWithoutIdentityLabels(t *testin
 	body := scrapePrometheusMetrics(t, metrics)
 	for _, want := range []string{
 		`densemem_assessor_requests_total{outcome="ok"}`,
+		`densemem_assessor_requests_total{outcome="catalog_error"}`,
 		`densemem_assessor_duration_seconds_bucket{outcome="ok",le=`,
 		`densemem_assessor_duration_seconds_bucket{outcome="ok",le="600"}`,
 		`densemem_assessor_tokens_total{kind="input"}`,

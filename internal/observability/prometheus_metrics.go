@@ -832,7 +832,7 @@ func RecordConflictReviewDuration(ctx context.Context, metrics DiscoverabilityMe
 }
 func normalizeAssessorCallOutcome(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "ok", "provider_error", "malformed_exhausted":
+	case "ok", "provider_error", "malformed_exhausted", "catalog_error":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return unknownMetricLabel

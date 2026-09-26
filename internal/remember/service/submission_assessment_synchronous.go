@@ -235,6 +235,7 @@ func AssessSynchronousRemember(
 	providerCtx := observability.WithMetricIdentity(ctx, input.Scope.TeamID, input.Scope.OwnerProfileID)
 	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationSemanticAssessment, 1)
 	started := time.Now()
+	var catalogInputTokens, catalogOutputTokens int
 	response, _, finalRequest, err := concrete.assessRememberSessionWithValidator(providerCtx, request, refresh, 0, func(validateCtx context.Context, _ assessor.SemanticAssessmentRequest, response assessor.SemanticAssessmentResponse) ([]assessor.SemanticValidationError, error) {
 		validationErrors := validateSubmissionAssessmentEvidenceConflictCanonicalization(plan, response)
 		if len(validationErrors) != 0 {
@@ -244,6 +245,8 @@ func AssessSynchronousRemember(
 		if len(registrations) == 0 {
 			return nil, nil
 		}
+		// Preserve completed provider usage if catalog validation fails afterward.
+		catalogInputTokens, catalogOutputTokens = response.InputTokens, response.OutputTokens
 		issues, err := deps.Catalog.ValidateSubmissionPredicateRegistrations(validateCtx, repository.SubmissionPredicateRegistrationValidationInput{
 			TeamID: input.Scope.TeamID, OwnerProfileID: input.Scope.OwnerProfileID, Registrations: registrations,
 		})
@@ -272,10 +275,17 @@ func AssessSynchronousRemember(
 	if err != nil {
 		providerTurns := SynchronousAssessmentProviderTurns(err)
 		outcome := "provider_error"
-		if errors.Is(err, assessor.ErrVerifierMalformedResponse) {
+		inputTokens, outputTokens := request.InputTokens, 0
+		if errors.Is(err, ErrRememberDatabaseFailure) {
+			outcome = "catalog_error"
+			if catalogInputTokens > 0 {
+				inputTokens = catalogInputTokens
+			}
+			outputTokens = catalogOutputTokens
+		} else if errors.Is(err, assessor.ErrVerifierMalformedResponse) {
 			outcome = "malformed_exhausted"
 		}
-		observability.RecordAssessorCall(deps.Metrics, request.InputTokens, 0, time.Since(started).Seconds(), outcome)
+		observability.RecordAssessorCall(deps.Metrics, inputTokens, outputTokens, time.Since(started).Seconds(), outcome)
 		var mapped error
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
 			mapped = fmt.Errorf("%w: assessor phase exceeded 160 seconds", ErrRememberRequestTimeout)

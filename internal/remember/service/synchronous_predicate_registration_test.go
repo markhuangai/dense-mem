@@ -9,6 +9,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	repository "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 func TestSynchronousAssessmentRepairsPredicateCatalogConflict(t *testing.T) {
@@ -71,9 +72,13 @@ func TestSynchronousAssessmentPredicateCatalogConflictExhaustsCompleteRepair(t *
 
 func TestSynchronousAssessmentPredicateCatalogOperationalFailure(t *testing.T) {
 	fixture := synchronousAssessmentFixture(t)
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	fixture.deps.Metrics = metrics
 	fixture.catalog.registrationErr = errors.New("catalog unavailable")
 	fixture.provider.response = func(request assessor.SemanticAssessmentRequest, _ int) assessor.SemanticAssessmentResponse {
-		return synchronousResponseWithRegistration(request, "fresh_key")
+		response := synchronousResponseWithRegistration(request, "fresh_key")
+		response.InputTokens = 317
+		return response
 	}
 
 	prepared, err := AssessSynchronousRemember(context.Background(), fixture.deps, fixture.input)
@@ -81,6 +86,11 @@ func TestSynchronousAssessmentPredicateCatalogOperationalFailure(t *testing.T) {
 	require.ErrorIs(t, err, ErrRememberDatabaseFailure)
 	require.Equal(t, 1, SynchronousAssessmentProviderTurns(err))
 	require.Zero(t, fixture.provider.repairCalls)
+	calls := metrics.AssessorCalls()
+	require.Len(t, calls, 1)
+	require.Equal(t, "catalog_error", calls[0].Outcome)
+	require.Equal(t, 317, calls[0].InputTokens)
+	require.Positive(t, calls[0].OutputTokens)
 }
 
 func TestSynchronousAssessmentPredicateCatalogCancellation(t *testing.T) {
