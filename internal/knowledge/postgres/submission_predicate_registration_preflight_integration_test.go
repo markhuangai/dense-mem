@@ -29,11 +29,12 @@ func TestSubmissionPredicateRegistrationPreflightCatalogAndIsolation(t *testing.
 			version                                             int
 			aliases                                             []string
 		}{
-			{teamA, "known_key", "active", "state", "many", 1, []string{"known alias"}},
+			{teamA, "known_key", "active", "state", "many", 1, []string{"known alias", "Bar"}},
 			{teamA, "retired_key", "active", "state", "many", 1, nil},
 			{teamA, "retired_key", "retired", "state", "many", 2, nil},
-			{teamA, "alias_left", "active", "state", "many", 1, []string{"shared alias"}},
-			{teamA, "alias_right", "active", "state", "many", 1, []string{"shared alias"}},
+			{teamA, "alias_left", "active", "state", "many", 1, []string{"shared alias", "Foo"}},
+			{teamA, "alias_right", "active", "state", "many", 1, []string{"shared alias", "Foo"}},
+			{teamA, "Baz", "active", "state", "many", 1, nil},
 			{teamA, "requested_key", "active", "state", "many", 1, nil},
 			{teamA, "other_key", "active", "event", "many", 1, []string{"requested_key"}},
 			{teamA, "canonical_key", "active", "state", "many", 1, nil},
@@ -93,6 +94,29 @@ func TestSubmissionPredicateRegistrationPreflightCatalogAndIsolation(t *testing.
 			require.Len(t, issues, 1)
 			require.Equal(t, 0, issues[0].RegistrationIndex)
 			require.Equal(t, testCase.field, issues[0].Field)
+		})
+	}
+	for _, testCase := range []struct {
+		name, firstKey, secondKey string
+		wantIssue                 bool
+	}{
+		{"ambiguous persisted aliases", "foo", "Foo", true},
+		{"virtual shadows persisted alias", "bar", "Bar", true},
+		{"persisted exact key retains precedence", "baz", "Baz", false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			issues, err := store.ValidateSubmissionPredicateRegistrations(ctx, SubmissionPredicateRegistrationValidationInput{
+				TeamID: teamA, OwnerProfileID: ownerA,
+				Registrations: []SubmissionPredicateRegistrationInput{registration(testCase.firstKey), registration(testCase.secondKey)},
+			})
+			require.NoError(t, err)
+			if !testCase.wantIssue {
+				require.Empty(t, issues)
+				return
+			}
+			require.Len(t, issues, 1)
+			require.Equal(t, 1, issues[0].RegistrationIndex)
+			require.Equal(t, "predicate_key", issues[0].Field)
 		})
 	}
 

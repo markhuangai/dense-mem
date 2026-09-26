@@ -77,16 +77,32 @@ func (r *Store) ValidateSubmissionPredicateRegistrations(
 		virtualDefinitions := make(map[string]SemanticReviewPredicateCandidate)
 		for index, registration := range registrations {
 			canonicalKey := canonicalGeneratedPredicateKey(registration.PredicateKey)
-			candidates := matches[index]
-			if virtual, exists := virtualDefinitions[canonicalKey]; exists {
-				candidates = append(append([]SemanticReviewPredicateCandidate(nil), candidates...), virtual)
-			}
-			resolved, err := selectSubmissionPredicateCandidate(candidates, registration.PredicateKey, canonicalKey)
+			persisted, err := selectSubmissionPredicateCandidate(matches[index], registration.PredicateKey, canonicalKey)
 			if errors.Is(err, ErrSubmissionPredicateRegistrationHeld) {
 				issues = append(issues, SubmissionPredicateRegistrationIssue{index, "predicate_key", "matches ambiguous predicate aliases"})
-			} else if err != nil {
+				continue
+			}
+			if err != nil {
 				return err
-			} else if resolved != nil {
+			}
+			resolved := persisted
+			if virtual, exists := virtualDefinitions[canonicalKey]; exists {
+				candidates := append(append([]SemanticReviewPredicateCandidate(nil), matches[index]...), virtual)
+				resolved, err = selectSubmissionPredicateCandidate(candidates, registration.PredicateKey, canonicalKey)
+				if errors.Is(err, ErrSubmissionPredicateRegistrationHeld) {
+					issues = append(issues, SubmissionPredicateRegistrationIssue{index, "predicate_key", "matches ambiguous predicate aliases"})
+					continue
+				}
+				if err != nil {
+					return err
+				}
+				// A virtual key must not change how preview resolves an existing alias.
+				if persisted != nil && resolved != nil && persisted.PredicateKey != resolved.PredicateKey {
+					issues = append(issues, SubmissionPredicateRegistrationIssue{index, "predicate_key", "collides with an existing predicate alias"})
+					continue
+				}
+			}
+			if resolved != nil {
 				if field, message := submissionPredicateRegistrationCompatibility(*resolved, registration); field != "" {
 					issues = append(issues, SubmissionPredicateRegistrationIssue{index, field, message})
 				}
