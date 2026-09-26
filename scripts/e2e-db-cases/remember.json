@@ -3,6 +3,27 @@
   "capability": "remember",
   "cases": [
     {
+      "id": "repository/TestSubmissionPredicateRegistrationPreflightCatalogAndIsolation",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSubmissionPredicateRegistrationPreflightCatalogAndIsolation$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/submission_predicate_registration_preflight_integration_test.go"
+    },
+    {
+      "id": "repository/TestSubmissionPredicateRegistrationPreflightBatchOverlayAndNoWrites",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSubmissionPredicateRegistrationPreflightBatchOverlayAndNoWrites$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/submission_predicate_registration_preflight_integration_test.go"
+    },
+    {
+      "id": "repository/TestSubmissionPredicateRegistrationCatalogDriftPreservesPreviewAndCommitFences",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSubmissionPredicateRegistrationCatalogDriftPreservesPreviewAndCommitFences$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/submission_predicate_registration_preflight_integration_test.go"
+    },
+    {
       "id": "repository/TestRecordRememberFailurePreservesUnavailableCaptureStateAfterAttemptBudget",
       "package": "./internal/knowledge/postgres",
       "run": "^TestRecordRememberFailurePreservesUnavailableCaptureStateAfterAttemptBudget$",
@@ -98,6 +119,14 @@
       "id": "server/TestRememberServiceRejectsMigratedAttemptThroughPostgres",
       "package": "./cmd/internal/serverapp",
       "run": "^TestRememberServiceRejectsMigratedAttemptThroughPostgres$",
+      "phase": "scenario",
+      "scenario": "synchronous_write_primitives",
+      "source": "cmd/internal/serverapp/remember_processor_integration_test.go"
+    },
+    {
+      "id": "server/TestRememberPredicateRegistrationCatalogDriftThroughPostgres",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestRememberPredicateRegistrationCatalogDriftThroughPostgres$",
       "phase": "scenario",
       "scenario": "synchronous_write_primitives",
       "source": "cmd/internal/serverapp/remember_processor_integration_test.go"

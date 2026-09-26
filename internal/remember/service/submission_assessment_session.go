@@ -111,7 +111,7 @@ func (s *assessmentEngine) assessRememberSession(
 	return s.assessRememberSessionWithValidator(ctx, request, refresh, turnOffset, nil)
 }
 
-type submissionAssessmentResponseValidator func(assessor.SemanticAssessmentRequest, assessor.SemanticAssessmentResponse) []assessor.SemanticValidationError
+type submissionAssessmentResponseValidator func(context.Context, assessor.SemanticAssessmentRequest, assessor.SemanticAssessmentResponse) ([]assessor.SemanticValidationError, error)
 
 func (s *assessmentEngine) assessRememberSessionWithValidator(
 	ctx context.Context,
@@ -168,7 +168,14 @@ func (s *assessmentEngine) completeRememberSessionTurnsWithValidator(
 			response, validationErrors = assessor.PrepareSemanticAssessmentResponse(request, response, s.limits)
 		}
 		if len(validationErrors) == 0 && validate != nil {
-			validationErrors = validate(request, response)
+			var err error
+			validationErrors, err = validate(ctx, request, response)
+			if err != nil {
+				return assessor.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{
+					cause:         wrapSubmissionAssessmentValidationHistory(err, validationHistory),
+					providerTurns: totalTurns,
+				}
+			}
 		}
 		if len(validationErrors) == 0 {
 			response.ProviderTurns = totalTurns

@@ -97,10 +97,7 @@ func previewSubmissionPredicateKey(ctx context.Context, tx *gorm.DB, input Commi
 	canonicalKey := canonicalGeneratedPredicateKey(requestedKey)
 	loaded, err := loadLatestSubmissionPredicate(ctx, tx, input.TeamID, requestedKey, canonicalKey)
 	if err == nil && loaded != nil {
-		if loaded.LifecycleState != string(domain.PredicateLifecycleActive) ||
-			!semanticPredicateKindAllowed(loaded.AllowedSubjectKinds, registration.SubjectKind) ||
-			!semanticPredicateKindAllowed(loaded.AllowedObjectKinds, registration.ObjectKind) ||
-			loaded.RelationshipKind != registration.RelationshipKind || loaded.CurrentCardinality != registration.CurrentCardinality {
+		if field, _ := submissionPredicateRegistrationCompatibility(*loaded, registration); field != "" {
 			return "", ErrSubmissionPredicateRegistrationHeld
 		}
 		return loaded.PredicateKey, nil

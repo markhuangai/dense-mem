@@ -142,6 +142,7 @@ type SubmissionAssessmentCatalog interface {
 	ListSubmissionAssessmentEntityCatalog(context.Context, knowledgecontract.SubmissionAssessmentEntityCatalogInput) (knowledgecontract.SubmissionAssessmentEntityCatalogResult, error)
 	ResolveSemanticReviewPredicateCandidates(context.Context, knowledgecontract.SemanticReviewPredicateResolutionInput) ([]knowledgecontract.SemanticReviewPredicateResolution, error)
 	ListSemanticAssessmentPredicateOptions(context.Context, knowledgecontract.SemanticAssessmentPredicateOptionsInput) ([]knowledgecontract.SemanticReviewPredicateCandidate, error)
+	ValidateSubmissionPredicateRegistrations(context.Context, knowledgecontract.SubmissionPredicateRegistrationValidationInput) ([]knowledgecontract.SubmissionPredicateRegistrationIssue, error)
 }
 
 type SubmissionAssessmentKnownEvidenceCatalog interface {

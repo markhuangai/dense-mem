@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
+	repository "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 func submissionAssessmentObservationRef(relationshipRef string, splitIndex, splitCount int) string {
@@ -57,4 +58,41 @@ func relationshipObjectKind(
 		return result.ObjectValue.ValueType
 	}
 	return fallback
+}
+
+func submissionAssessmentPredicateRegistrations(
+	plan submissionAssessmentPlan,
+	response assessor.SemanticAssessmentResponse,
+) ([]repository.SubmissionPredicateRegistrationInput, []string) {
+	entityKinds := make(map[string]string, len(response.EntityResults))
+	unsupportedEntities := repairSubmissionAssessmentResponse(&plan, &response)
+	for _, result := range response.EntityResults {
+		if _, unsupported := unsupportedEntities[result.Ref]; unsupported {
+			continue
+		}
+		entityKinds[result.Ref] = result.Kind
+	}
+	registrations := make([]repository.SubmissionPredicateRegistrationInput, 0)
+	paths := make([]string, 0)
+	for resultIndex, result := range response.RelationshipResults {
+		if result.Disposition != "stored" {
+			continue
+		}
+		target := plan.relationshipsByRef[result.Ref]
+		for splitIndex, split := range result.Splits {
+			if split.PredicateStatus != "registration_required" || split.PredicateRegistration == nil {
+				continue
+			}
+			registrations = append(registrations, repository.SubmissionPredicateRegistrationInput{
+				RelationshipRef:    submissionAssessmentObservationRef(result.Ref, split.SplitIndex, len(result.Splits)),
+				PredicateKey:       split.PredicateRegistration.PredicateKey,
+				SubjectKind:        entityKinds[split.SubjectRef],
+				ObjectKind:         relationshipObjectKind(split, entityKinds, target.ObjectKind),
+				RelationshipKind:   split.PredicateRegistration.RelationshipKind,
+				CurrentCardinality: split.PredicateRegistration.CurrentCardinality,
+			})
+			paths = append(paths, fmt.Sprintf("relationship_results[%d].splits[%d].predicate_registration", resultIndex, splitIndex))
+		}
+	}
+	return registrations, paths
 }

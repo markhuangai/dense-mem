@@ -21,20 +21,24 @@ type synchronousAssessmentSessionStub struct{ id string }
 func (s *synchronousAssessmentSessionStub) SessionID() string { return s.id }
 
 type synchronousAssessmentProviderStub struct {
-	model       string
-	response    func(assessor.SemanticAssessmentRequest, int) assessor.SemanticAssessmentResponse
-	err         error
-	repairErr   error
-	assessTurn  int
-	repairTurn  int
-	calls       int
-	repairCalls int
-	session     *synchronousAssessmentSessionStub
-	beforeCall  func(context.Context)
+	model         string
+	response      func(assessor.SemanticAssessmentRequest, int) assessor.SemanticAssessmentResponse
+	err           error
+	repairErr     error
+	assessTurn    int
+	repairTurn    int
+	calls         int
+	repairCalls   int
+	session       *synchronousAssessmentSessionStub
+	beforeCall    func(context.Context)
+	repairErrors  []assessor.SemanticValidationError
+	assessRequest assessor.SemanticAssessmentRequest
+	repairRequest assessor.SemanticAssessmentRequest
 }
 
 func (s *synchronousAssessmentProviderStub) Assess(ctx context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
 	s.calls++
+	s.assessRequest = request
 	if s.beforeCall != nil {
 		s.beforeCall(ctx)
 	}
@@ -54,6 +58,8 @@ func (s *synchronousAssessmentProviderStub) Assess(ctx context.Context, request 
 
 func (s *synchronousAssessmentProviderStub) Repair(ctx context.Context, session assessor.SemanticAssessmentSession, request assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
 	s.repairCalls++
+	s.repairErrors = append([]assessor.SemanticValidationError(nil), request.ValidationErrors...)
+	s.repairRequest = request.Request
 	if s.beforeCall != nil {
 		s.beforeCall(ctx)
 	}

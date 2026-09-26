@@ -142,7 +142,7 @@ func submissionAssessmentCommitInput(
 	}
 
 	observations := make([]repository.SubmissionAssessmentRelationshipObservationInput, 0, len(response.RelationshipResults))
-	registrations := make([]repository.SubmissionPredicateRegistrationInput, 0)
+	registrations, _ := submissionAssessmentPredicateRegistrations(plan, response)
 	relationshipResultsByRef := make(map[string]repository.SubmissionRelationshipResultInput, len(response.RelationshipResults))
 	seenRelationshipRefs := make(map[string]struct{}, len(response.RelationshipResults))
 	for _, result := range response.RelationshipResults {
@@ -293,12 +293,6 @@ func submissionAssessmentCommitInput(
 				if split.PredicateRegistration == nil {
 					return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor predicate registration is incomplete")
 				}
-				registrations = append(registrations, repository.SubmissionPredicateRegistrationInput{
-					RelationshipRef: observationRef, PredicateKey: split.PredicateRegistration.PredicateKey,
-					SubjectKind: entityKinds[split.SubjectRef], ObjectKind: relationshipObjectKind(split, entityKinds, target.ObjectKind),
-					RelationshipKind:   split.PredicateRegistration.RelationshipKind,
-					CurrentCardinality: split.PredicateRegistration.CurrentCardinality,
-				})
 			}
 			observations = append(observations, repository.SubmissionAssessmentRelationshipObservationInput{
 				RelationshipRef: result.Ref,

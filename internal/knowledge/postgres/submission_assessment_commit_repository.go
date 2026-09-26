@@ -453,10 +453,7 @@ func resolveSubmissionPredicateRegistration(ctx context.Context, tx *gorm.DB, in
 		return SemanticReviewPredicateCandidate{}, "", err
 	}
 	if loaded != nil {
-		if loaded.LifecycleState != string(domain.PredicateLifecycleActive) ||
-			!semanticPredicateKindAllowed(loaded.AllowedSubjectKinds, registration.SubjectKind) ||
-			!semanticPredicateKindAllowed(loaded.AllowedObjectKinds, registration.ObjectKind) ||
-			loaded.RelationshipKind != registration.RelationshipKind || loaded.CurrentCardinality != registration.CurrentCardinality {
+		if field, _ := submissionPredicateRegistrationCompatibility(*loaded, registration); field != "" {
 			return SemanticReviewPredicateCandidate{}, "", ErrSubmissionPredicateRegistrationHeld
 		}
 		return *loaded, "reused", nil
@@ -486,46 +483,6 @@ func resolveSubmissionPredicateRegistration(ctx context.Context, tx *gorm.DB, in
 		return SemanticReviewPredicateCandidate{}, "", err
 	}
 	return created, "created", rows.Err()
-}
-
-func loadLatestSubmissionPredicate(ctx context.Context, tx *gorm.DB, teamID, requestedKey, canonicalKey string) (*SemanticReviewPredicateCandidate, error) {
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT predicate_key, version, aliases, allowed_subject_kinds, allowed_object_kinds,
-		       relationship_kind, current_cardinality, lifecycle_state
-		FROM (
-			SELECT predicate_key, version, aliases, allowed_subject_kinds, allowed_object_kinds,
-			       relationship_kind, current_cardinality, lifecycle_state,
-			       row_number() OVER (PARTITION BY predicate_key ORDER BY version DESC) AS version_rank
-			FROM team_predicate_definitions WHERE team_id = ?::uuid
-		) AS latest
-		WHERE version_rank = 1 AND (predicate_key = ? OR predicate_key = ? OR ? = ANY(aliases) OR ? = ANY(aliases))
-		ORDER BY CASE WHEN predicate_key = ? THEN 0 WHEN predicate_key = ? THEN 1 ELSE 2 END, predicate_key ASC
-		LIMIT 2
-	`, teamID, requestedKey, canonicalKey, requestedKey, canonicalKey, requestedKey, canonicalKey).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
-		return nil, sql.ErrNoRows
-	}
-	candidate, err := scanSubmissionPredicateCandidate(rows)
-	if err != nil {
-		return nil, err
-	}
-	if candidate.PredicateKey == canonicalKey || candidate.PredicateKey == requestedKey {
-		return &candidate, rows.Err()
-	}
-	if rows.Next() {
-		return nil, ErrSubmissionPredicateRegistrationHeld
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return &candidate, nil
 }
 
 func scanSubmissionPredicateCandidate(rows *sql.Rows) (SemanticReviewPredicateCandidate, error) {

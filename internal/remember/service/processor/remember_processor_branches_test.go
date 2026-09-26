@@ -409,7 +409,7 @@ func TestNormalizeRememberCommitFailureMapsSearchFenceErrors(t *testing.T) {
 		{name: "other", err: errors.New("database down"), want: nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got := normalizeRememberCommitFailure(test.err)
+			got := normalizeRememberCommitFailure(test.err, false)
 			if test.want == nil {
 				require.ErrorIs(t, got, test.err)
 				return
@@ -647,6 +647,10 @@ func (*processorAssessmentCatalogStub) ResolveSemanticReviewPredicateCandidates(
 }
 
 func (*processorAssessmentCatalogStub) ListSemanticAssessmentPredicateOptions(context.Context, knowledgecontract.SemanticAssessmentPredicateOptionsInput) ([]knowledgecontract.SemanticReviewPredicateCandidate, error) {
+	return nil, nil
+}
+
+func (*processorAssessmentCatalogStub) ValidateSubmissionPredicateRegistrations(context.Context, knowledgecontract.SubmissionPredicateRegistrationValidationInput) ([]knowledgecontract.SubmissionPredicateRegistrationIssue, error) {
 	return nil, nil
 }
 

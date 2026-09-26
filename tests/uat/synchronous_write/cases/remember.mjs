@@ -9,6 +9,8 @@ export const name = "remember";
 
 const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
 const rememberModel = "dense-mem-synchronous-write-e2e-remember";
+const heldPredicateKey = "retired_memory_store_fixture";
+const repairedPredicateKey = "stores_durable_memory_in_fixture";
 
 export async function run({ rpc, rawRPC = rpc, expect }) {
   const selectedFault = (process.env.DENSE_MEM_E2E_PROVIDER_FAULT || "none").trim();
@@ -53,6 +55,8 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
       results.push(await runMixedDispositionCase({ rpc, expect }));
     } else if (fault === "repair" || fault === "repair-exhausted") {
       results.push(await runRepairCase({ rpc, expect, fault }));
+    } else if (fault.startsWith("predicate-registration-")) {
+      results.push(...await runPredicateRegistrationCases({ expect, selectedFault: fault }));
     } else if (fault === "security" || fault === "no-supported") {
       results.push(await runTerminalDomainCase({ rpc, expect, fault }));
     } else if (fault.startsWith("embedding-")) {
@@ -63,6 +67,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   }
 
   if (selectedFault === "none") {
+    results.push(...await runPredicateRegistrationCases({ expect }));
     results.push(await runKnownEvidenceCase({ expect }));
     results.push(await runSemanticDuplicateCase({ expect }));
     results.push(await runBudgetContextCase({ expect }));
@@ -789,6 +794,127 @@ async function runRepairCase({ rpc, expect, fault }) {
     assessor_turns: assessorTurns,
     ...(fault === "repair" ? { duration_ms: durationMS, terminal_target_ms: 60_000 } : {}),
   };
+}
+
+async function runPredicateRegistrationCases({ expect, selectedFault = "none" }) {
+  const teamID = await createKnownEvidenceTeam(`predicate-registration-${Date.now()}`);
+  const actor = await createKnownEvidenceCredential(teamID, `predicate-registration-${Date.now()}`, "shared_only");
+  postgresExec(`
+    INSERT INTO team_predicate_definitions (
+      team_id, predicate_key, version, aliases, allowed_subject_kinds,
+      allowed_object_kinds, relationship_kind, current_cardinality,
+      lifecycle_state, origin, metadata
+    ) VALUES (
+      '${sqlLiteral(teamID)}'::uuid, '${heldPredicateKey}', 1, ARRAY[]::text[],
+      ARRAY['concept']::text[], ARRAY['product']::text[], 'event', 'one',
+      'retired', 'fixture', '{}'::jsonb
+    );
+  `, "synchronous-write-predicate-registration-seed");
+
+  const faults = selectedFault === "none"
+    ? ["predicate-registration-exhausted", "predicate-registration-repair", "predicate-registration-reuse"]
+    : selectedFault === "predicate-registration-reuse"
+      ? ["predicate-registration-repair", selectedFault]
+      : [selectedFault];
+  const results = [];
+  for (const fault of faults) {
+    const args = singleItemArguments(fault, `[fixture-fault:${fault}]`);
+    args.relationships[0].predicate.proposed_key = repairedPredicateKey;
+    const result = await rememberWithKey(actor.apiKey, args);
+    assertStrictTerminalRemember(result, expect);
+    const exhausted = fault === "predicate-registration-exhausted";
+    expect(result.processing_state === (exhausted ? "failed" : "completed"), `${fault} must reach its terminal state: ${JSON.stringify(result)}`);
+    expect(exhausted ? result.errors[0]?.code === "provider_response_invalid" : result.errors.length === 0, `${fault} must classify the provider response accurately: ${JSON.stringify(result.errors)}`);
+    expect(result.search_state === (exhausted ? "not_required" : "current"), `${fault} returned unexpected search state`);
+    const assessorTurns = Number(postgresQuery(`
+      SELECT assessor_turns FROM remember_attempts
+      WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+        AND attempt_id = '${sqlLiteral(result.submission_id)}'::uuid;
+    `));
+    expect(assessorTurns === (exhausted ? 3 : fault === "predicate-registration-reuse" ? 1 : 2), `${fault} must retain its complete assessor turn count: ${assessorTurns}`);
+
+    const canonicalCounts = postgresQuery(`
+      SELECT count(*) FROM knowledge_ingests
+      WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
+      UNION ALL
+      SELECT count(*) FROM evidence_fragments
+      WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
+      UNION ALL
+      SELECT count(*) FROM semantic_assessments
+      WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND attempt_id = '${sqlLiteral(result.submission_id)}'::uuid
+      UNION ALL
+      SELECT count(*) FROM relationship_observations
+      WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
+      UNION ALL
+      SELECT count(*) FROM search_documents AS document
+      WHERE document.team_id = '${sqlLiteral(teamID)}'::uuid
+        AND document.source_id IN (
+          SELECT fragment_id FROM evidence_fragments
+          WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
+          UNION ALL
+          SELECT relationship_id FROM relationship_observations
+          WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
+        );
+    `).split(/\r?\n/).filter(Boolean).map(Number);
+    expect(canonicalCounts.length === 5 && canonicalCounts.slice(0, 4).every((count) => count === (exhausted ? 0 : 1)) &&
+      (exhausted ? canonicalCounts[4] === 0 : canonicalCounts[4] > 0), `${fault} must commit all canonical rows and search documents or none: ${canonicalCounts.join(",")}`);
+    expect(result.evidence.length === 1 && result.evidence[0].disposition === (exhausted ? "not_stored" : "stored"), `${fault} returned unexpected evidence disposition`);
+    expect(result.relationship_results.length === 1 && result.relationship_results[0].disposition === (exhausted ? "not_stored" : "stored"), `${fault} returned unexpected relationship disposition`);
+    if (!exhausted) {
+      const committedPredicate = postgresQuery(`
+        SELECT predicate_key FROM relationship_observations
+        WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid;
+      `);
+      expect(committedPredicate === repairedPredicateKey, `${fault} must store the repaired predicate: ${committedPredicate}`);
+    }
+    const repairedVersionCount = Number(postgresQuery(`
+      SELECT count(*) FROM team_predicate_definitions
+      WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND predicate_key = '${repairedPredicateKey}';
+    `));
+    expect(repairedVersionCount === (exhausted ? 0 : 1), `${fault} must leave the repaired predicate absent or create/reuse exactly one version: ${repairedVersionCount}`);
+    if (exhausted) {
+      expect(result.errors[0]?.retryable === true && result.errors[0]?.next_action === "retry_same_request", "exhausted provider output must retain same-key retry guidance");
+      const retry = await rememberWithKey(actor.apiKey, args);
+      assertStrictTerminalRemember(retry, expect);
+      expect(retry.processing_state === "failed" && retry.errors[0]?.code === "provider_response_invalid", "same-key retry must report the repeated invalid provider response");
+      expect(retry.submission_id !== result.submission_id, "retryable failed attempt must be processed again under the same key");
+      const retryTurns = Number(postgresQuery(`
+        SELECT assessor_turns FROM remember_attempts
+        WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND attempt_id = '${sqlLiteral(retry.submission_id)}'::uuid;
+      `));
+      expect(retryTurns === 3, `same-key retry must perform three bounded assessor turns: ${retryTurns}`);
+      const retryCanonicalCount = Number(postgresQuery(`
+        SELECT count(*) FROM knowledge_ingests
+        WHERE team_id = '${sqlLiteral(teamID)}'::uuid;
+      `));
+      expect(retryCanonicalCount === 0, "repeated invalid provider responses must leave the team without an ingest");
+    } else if (fault === "predicate-registration-repair") {
+      const replay = await rememberWithKey(actor.apiKey, args);
+      assertStrictTerminalRemember(replay, expect);
+      expect(stableJSON(replay) === stableJSON(result) && replay.submission_id === result.submission_id, "completed repair must replay the exact terminal result");
+      const attemptCount = Number(postgresQuery(`
+        SELECT count(*) FROM remember_attempts
+        WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+          AND idempotency_key = '${sqlLiteral(args.idempotency_key)}';
+      `));
+      expect(attemptCount === 1, "completed repair replay must not create another assessor attempt");
+    }
+    results.push({ fault, processing_state: result.processing_state, assessor_turns: assessorTurns, canonical_counts: canonicalCounts });
+  }
+
+  const heldRows = postgresQuery(`
+    SELECT version || ':' || lifecycle_state FROM team_predicate_definitions
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND predicate_key = '${heldPredicateKey}'
+    ORDER BY version;
+  `);
+  expect(heldRows === "1:retired", `rejected registration must not mutate the retired definition: ${heldRows}`);
+  const repairedRows = postgresQuery(`
+    SELECT version || ':' || lifecycle_state FROM team_predicate_definitions
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND predicate_key = '${repairedPredicateKey}'
+    ORDER BY version;
+  `);
+  expect(repairedRows === (faults.includes("predicate-registration-repair") ? "1:active" : ""), `repaired registration must be created once and reused: ${repairedRows}`);
+  return results;
 }
 
 async function runTerminalDomainCase({ rpc, expect, fault }) {

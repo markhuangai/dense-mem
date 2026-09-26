@@ -5,7 +5,10 @@ package serverapp
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -217,6 +220,411 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 	}
 }
 
+func TestRememberPredicateRegistrationCatalogDriftThroughPostgres(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupRememberProcessorIntegrationDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID, ownerID := uuid.New(), uuid.New()
+	predicateKey := "run_owned_durable_memory_in"
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO teams (id, name, description, metadata, config)
+			VALUES (?::uuid, ?, '', '{}'::jsonb, '{}'::jsonb)
+		`, teamID, "predicate drift "+uuid.NewString()).Error
+	}))
+	require.NoError(t, accesspostgres.NewCredentialRepository(adminDB, rls, nil).CreateCredential(ctx, &domain.Credential{
+		ID: ownerID, TeamID: teamID, Name: "predicate drift owner",
+		KeyHash: "predicate-drift-" + ownerID.String(), KeyPrefix: strings.ReplaceAll(ownerID.String(), "-", "")[:24],
+		KeySuffix: "owner", Scopes: []string{"read", "write"}, Role: "member",
+	}))
+	model, dimensions := ensureRememberProcessorIntegrationSearchContract(t, adminDB, rls)
+
+	store := knowledgepostgres.NewStore(appDB, rls, knowledgecontract.ConflictRuntimeConfig{})
+	catalog := &rememberProcessorIntegrationDriftCatalog{SubmissionAssessmentCatalog: store}
+	catalog.afterSuccessfulValidation = func(input knowledgecontract.SubmissionPredicateRegistrationValidationInput) error {
+		if len(input.Registrations) != 1 || input.Registrations[0].PredicateKey != predicateKey {
+			return fmt.Errorf("unexpected predicate registration at preflight: %+v", input.Registrations)
+		}
+		catalog.validations++
+		if catalog.validations != 1 {
+			return nil
+		}
+		return insertRememberProcessorIntegrationPredicate(t, adminDB, rls, teamID, predicateKey, 1, "retired")
+	}
+	provider := &rememberProcessorIntegrationRegistrationAssessor{}
+	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
+		Ledger: store, Catalog: catalog, Assessor: provider,
+		Embedder: rememberProcessorIntegrationSearchEmbedder{model: model, dimensions: dimensions},
+		Limits:   assessor.DefaultSemanticAssessmentLimits(), Metrics: observability.NoopDiscoverabilityMetrics(),
+	})
+	service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
+	actorCtx := requestctx.WithActor(ctx, requestctx.Actor{
+		TeamID: teamID, OwnerID: ownerID, Role: "member", AuthMethod: "api_key",
+		Grants: []string{"read", "write"},
+	})
+	request := rememberapp.RememberRequest{
+		Evidence: []rememberapp.RememberEvidenceInput{{
+			Content: "Dense-Mem stores durable memory in PostgreSQL.", SourceType: "manual", ForceInsert: true,
+		}},
+		RelationshipHints: []map[string]any{{
+			"ref": "durable-store", "subject": map[string]any{"name": "Dense-Mem", "entity_kind": "project"},
+			"predicate": map[string]any{"proposed_key": predicateKey},
+			"object":    map[string]any{"value": map[string]any{"type": "string", "value": "PostgreSQL"}},
+			"polarity":  "+", "evidence_indices": []any{0},
+		}},
+		IdempotencyKey: "predicate-drift-" + uuid.NewString(),
+	}
+
+	first, firstErr := service.Remember(actorCtx, request)
+	require.Nil(t, first)
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, firstErr, &processErr)
+	require.ErrorIs(t, firstErr, rememberapp.ErrRememberCommitConflict)
+	require.NotNil(t, processErr.Status)
+	require.Equal(t, 1, catalog.validations)
+	require.Equal(t, 1, provider.calls)
+	require.Equal(t, "failed", processErr.Status.ProcessingState)
+	require.Equal(t, "not_required", processErr.Status.SearchState)
+	require.Len(t, processErr.Status.Errors, 1)
+	terminalError := processErr.Status.Errors[0]
+	require.Equal(t, string(rememberapp.SubmissionErrorCommitConflict), terminalError.Code)
+	require.Equal(t, "predicate_catalog_changed", terminalError.ReasonCode)
+	require.True(t, terminalError.Retryable)
+	require.Equal(t, string(rememberapp.SubmissionNextActionRetrySameRequest), terminalError.NextAction)
+	require.Len(t, processErr.Status.Evidence, 1)
+	require.Equal(t, "not_stored", processErr.Status.Evidence[0].Disposition)
+	require.Len(t, processErr.Status.RelationshipResults, 1)
+	require.Equal(t, "not_stored", processErr.Status.RelationshipResults[0].Disposition)
+	assertRememberProcessorIntegrationCanonicalCounts(t, adminDB, rls, teamID, 0)
+
+	attempt, err := store.LoadRememberAttempt(ctx, knowledgecontract.RememberAttemptLookupInput{
+		TeamID: teamID.String(), OwnerProfileID: ownerID.String(), IdempotencyKey: request.IdempotencyKey,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "failed", attempt.Outcome)
+	require.True(t, attempt.Retryable)
+	require.Equal(t, "predicate_catalog_changed", attempt.PublicResult["errors"].([]any)[0].(map[string]any)["reason_code"])
+
+	require.NoError(t, insertRememberProcessorIntegrationPredicate(t, adminDB, rls, teamID, predicateKey, 2, "active"))
+	retried, retryErr := service.Remember(actorCtx, request)
+	require.NoError(t, retryErr)
+	require.NotNil(t, retried)
+	require.Equal(t, "completed", retried.ProcessingState)
+	require.Empty(t, retried.Errors)
+	require.Equal(t, 2, provider.calls, "a retryable failure must reassess the same saved request")
+	assertRememberProcessorIntegrationCanonicalCounts(t, adminDB, rls, teamID, 1)
+
+	replayed, replayErr := service.Remember(actorCtx, request)
+	require.NoError(t, replayErr)
+	require.Equal(t, retried, replayed)
+	require.Equal(t, 2, provider.calls, "a completed exact replay must not reassess or commit")
+	assertRememberProcessorIntegrationCanonicalCounts(t, adminDB, rls, teamID, 1)
+
+	for _, testCase := range []struct {
+		name, code string
+		cause      error
+	}{
+		{name: "database", code: string(rememberapp.SubmissionErrorDatabaseFailure), cause: errors.New("private catalog outage detail")},
+		{name: "cancelled", code: string(rememberapp.SubmissionErrorRequestCancelled), cause: context.Canceled},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			validated := false
+			catalog.afterSuccessfulValidation = func(input knowledgecontract.SubmissionPredicateRegistrationValidationInput) error {
+				if len(input.Registrations) != 1 || input.Registrations[0].PredicateKey != predicateKey {
+					return fmt.Errorf("unexpected predicate registration at preflight: %+v", input.Registrations)
+				}
+				validated = true
+				return testCase.cause
+			}
+			failureRequest := request
+			failureRequest.Evidence = []rememberapp.RememberEvidenceInput{request.Evidence[0]}
+			failureRequest.Evidence[0].Content += " [" + testCase.name + "]"
+			failureRequest.IdempotencyKey = "predicate-validation-" + testCase.name + "-" + uuid.NewString()
+			callsBefore := provider.calls
+
+			result, failure := service.Remember(actorCtx, failureRequest)
+			require.Nil(t, result)
+			var failed *rememberapp.RememberProcessError
+			require.ErrorAs(t, failure, &failed)
+			require.NotNil(t, failed.Status)
+			require.True(t, validated, "the real PostgreSQL catalog must validate before the injected error")
+			require.Equal(t, callsBefore+1, provider.calls)
+			require.Zero(t, provider.repairs)
+			require.Len(t, failed.Status.Errors, 1)
+			publicError := failed.Status.Errors[0]
+			require.Equal(t, testCase.code, publicError.Code)
+			require.Equal(t, "remember_assessment_failed", publicError.ReasonCode)
+			require.Equal(t, "remember.assessment", publicError.Details["component"])
+			require.Equal(t, true, publicError.Details["server_owned"])
+			require.True(t, publicError.Retryable)
+			require.Equal(t, "failed", failed.Status.ProcessingState)
+			require.Len(t, failed.Status.Evidence, 1)
+			require.Equal(t, "not_stored", failed.Status.Evidence[0].Disposition)
+			require.Len(t, failed.Status.RelationshipResults, 1)
+			require.Equal(t, "not_stored", failed.Status.RelationshipResults[0].Disposition)
+			publicJSON, err := json.Marshal(failed.Status)
+			require.NoError(t, err)
+			require.NotContains(t, string(publicJSON), "private catalog outage detail")
+
+			var persisted struct {
+				Phase string
+				Code  string
+				Turns int
+			}
+			var eventMetadata []byte
+			var invocation struct {
+				Phase string
+				Code  string
+			}
+			require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+				if err := tx.Raw(`
+					SELECT failed_phase, error_code, assessor_turns
+					FROM remember_attempts
+					WHERE team_id = ?::uuid AND attempt_id = ?::uuid
+				`, teamID, failed.Status.SubmissionID).Row().Scan(&persisted.Phase, &persisted.Code, &persisted.Turns); err != nil {
+					return err
+				}
+				if err := tx.Raw(`
+					SELECT metadata FROM remember_attempt_events
+					WHERE team_id = ?::uuid AND attempt_id = ?::uuid AND sequence_no = 1
+				`, teamID, failed.Status.SubmissionID).Row().Scan(&eventMetadata); err != nil {
+					return err
+				}
+				return tx.Raw(`
+					SELECT failed_phase, error_code FROM remember_invocation_diagnostics
+					WHERE team_id = ?::uuid AND canonical_attempt_id = ?::uuid
+					  AND classification = 'execution'
+				`, teamID, failed.Status.SubmissionID).Row().Scan(&invocation.Phase, &invocation.Code)
+			}))
+			require.Equal(t, "assessment", persisted.Phase)
+			require.Equal(t, testCase.code, persisted.Code)
+			require.Equal(t, 1, persisted.Turns)
+			require.Equal(t, "assessment", invocation.Phase)
+			require.Equal(t, testCase.code, invocation.Code)
+			var event map[string]any
+			require.NoError(t, json.Unmarshal(eventMetadata, &event))
+			require.Equal(t, float64(1), event["assessor_turns"])
+			require.Equal(t, testCase.code, event["error_code"])
+			require.NotContains(t, event, "assessor_validation")
+			require.NotContains(t, string(eventMetadata), "private catalog outage detail")
+			assertRememberProcessorIntegrationCanonicalCounts(t, adminDB, rls, teamID, 1)
+		})
+	}
+}
+
+type rememberProcessorIntegrationDriftCatalog struct {
+	remembercontract.SubmissionAssessmentCatalog
+	afterSuccessfulValidation func(knowledgecontract.SubmissionPredicateRegistrationValidationInput) error
+	validations               int
+}
+
+func (c *rememberProcessorIntegrationDriftCatalog) ValidateSubmissionPredicateRegistrations(
+	ctx context.Context, input knowledgecontract.SubmissionPredicateRegistrationValidationInput,
+) ([]knowledgecontract.SubmissionPredicateRegistrationIssue, error) {
+	issues, err := c.SubmissionAssessmentCatalog.ValidateSubmissionPredicateRegistrations(ctx, input)
+	if err != nil || len(issues) != 0 || c.afterSuccessfulValidation == nil {
+		return issues, err
+	}
+	return nil, c.afterSuccessfulValidation(input)
+}
+
+type rememberProcessorIntegrationRegistrationAssessor struct{ calls, repairs int }
+
+func (p *rememberProcessorIntegrationRegistrationAssessor) Assess(
+	_ context.Context, request assessor.SemanticAssessmentRequest,
+) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
+	p.calls++
+	response := rememberProcessorIntegrationAssessmentResponse(request)
+	for _, entity := range request.SubmittedEntities {
+		if len(entity.Groundings) == 0 {
+			return nil, assessor.SemanticAssessmentTurn{}, fmt.Errorf("submitted entity %q has no grounding", entity.Ref)
+		}
+		groundingRef := entity.Groundings[0].GroundingRef
+		action := string(domain.EntityResolutionCreate)
+		var candidateID *string
+		if entity.KnownEntityID != "" {
+			action = string(domain.EntityResolutionReuse)
+			candidateID = &entity.KnownEntityID
+		} else {
+			for _, group := range request.EntityCandidateGroups {
+				if group.GroundingRef != groundingRef || len(group.Candidates) != 1 || group.Candidates[0].Kind != entity.Kind {
+					continue
+				}
+				action = string(domain.EntityResolutionReuse)
+				candidateID = &group.Candidates[0].EntityID
+				break
+			}
+		}
+		response.EntityResults = append(response.EntityResults, assessor.SemanticAssessmentEntityResult{
+			Ref: entity.Ref, GroundingRef: &groundingRef, Action: action, CandidateEntityID: candidateID,
+		})
+	}
+	for _, relationship := range request.SubmittedRelationships {
+		if len(relationship.EvidenceIDs) == 0 || len(request.Evidence) == 0 {
+			return nil, assessor.SemanticAssessmentTurn{}, fmt.Errorf("submitted relationship %q has no evidence", relationship.Ref)
+		}
+		evidence := request.Evidence[0]
+		startRef, startOK := assessor.SemanticAssessmentBoundaryRef(evidence, 0)
+		endRef, endOK := assessor.SemanticAssessmentBoundaryRef(evidence, len([]rune(evidence.Content)))
+		if !startOK || !endOK {
+			return nil, assessor.SemanticAssessmentTurn{}, fmt.Errorf("evidence %q has no complete boundary range", evidence.EvidenceID)
+		}
+		rangeValue := assessor.SemanticAssessmentGroundedRange{
+			EvidenceID: evidence.EvidenceID, StartRef: startRef, EndRef: endRef,
+		}
+		response.RelationshipResults = append(response.RelationshipResults, assessor.SemanticAssessmentRelationshipResult{
+			Ref: relationship.Ref, Disposition: "stored", Splits: []assessor.SemanticAssessmentRelationshipSplit{{
+				SplitIndex: 0, SubjectRef: relationship.SubjectRef, PredicateRange: rangeValue,
+				PredicateStatus: "registration_required",
+				PredicateRegistration: &assessor.SemanticAssessmentPredicateRegistration{
+					PredicateKey: relationship.PredicateHint, RelationshipKind: "state", CurrentCardinality: "many",
+				},
+				ObjectRef: relationship.ObjectRef, ObjectValue: relationship.ObjectValue,
+				ValueRange: &rangeValue, Polarity: relationship.Polarity,
+				SupportRanges: []assessor.SemanticAssessmentGroundedRange{rangeValue},
+				Evidence: []assessor.SemanticAssessmentEvidenceSpan{{
+					EvidenceID: evidence.EvidenceID, Start: 0, End: len([]rune(evidence.Content)),
+				}},
+			}},
+		})
+	}
+	return rememberProcessorIntegrationAssessmentSession{}, assessor.SemanticAssessmentTurn{Response: response, Turn: 1}, nil
+}
+
+func (p *rememberProcessorIntegrationRegistrationAssessor) Repair(
+	context.Context, assessor.SemanticAssessmentSession, assessor.SemanticAssessmentRepairRequest,
+) (assessor.SemanticAssessmentTurn, error) {
+	p.repairs++
+	return assessor.SemanticAssessmentTurn{}, fmt.Errorf("valid registration response unexpectedly required repair")
+}
+
+func (*rememberProcessorIntegrationRegistrationAssessor) ModelName() string {
+	return "remember-integration-registration-assessor"
+}
+
+var _ assessor.Provider = (*rememberProcessorIntegrationRegistrationAssessor)(nil)
+
+type rememberProcessorIntegrationSearchEmbedder struct {
+	model      string
+	dimensions int
+}
+
+func (e rememberProcessorIntegrationSearchEmbedder) Embed(context.Context, string) ([]float32, string, error) {
+	vector := make([]float32, e.dimensions)
+	vector[0] = 1
+	return vector, e.model, nil
+}
+
+func (e rememberProcessorIntegrationSearchEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float32, string, error) {
+	vectors := make([][]float32, len(texts))
+	for index := range vectors {
+		vectors[index] = make([]float32, e.dimensions)
+		vectors[index][0] = 1
+	}
+	return vectors, e.model, nil
+}
+
+func (e rememberProcessorIntegrationSearchEmbedder) ModelName() string { return e.model }
+func (e rememberProcessorIntegrationSearchEmbedder) Dimensions() int   { return e.dimensions }
+func (rememberProcessorIntegrationSearchEmbedder) IsAvailable() bool   { return true }
+
+var _ embeddingcontract.EmbeddingProviderInterface = rememberProcessorIntegrationSearchEmbedder{}
+
+func ensureRememberProcessorIntegrationSearchContract(
+	t *testing.T, adminDB *gorm.DB, rls *storagepostgres.RLS,
+) (string, int) {
+	t.Helper()
+	var model string
+	var dimensions int
+	require.NoError(t, rls.WithSystemTx(context.Background(), adminDB, func(tx *gorm.DB) error {
+		lookup := func() error {
+			return tx.Raw(`
+				SELECT contract.model, contract.dimensions
+				FROM search_index_generations AS generation
+				JOIN embedding_contracts AS contract
+				  ON contract.embedding_contract_id = generation.embedding_contract_id
+				WHERE generation.activation_state = 'active'
+				  AND contract.lifecycle_state = 'active'
+				  AND contract.distance_metric = 'cosine'
+				ORDER BY contract.version DESC, generation.generation DESC, generation.created_at DESC
+				LIMIT 1
+			`).Row().Scan(&model, &dimensions)
+		}
+		if err := lookup(); err == nil {
+			return nil
+		} else if err != sql.ErrNoRows {
+			return err
+		}
+		contractID, generationID := uuid.New(), uuid.New()
+		if err := tx.Exec(`
+			INSERT INTO embedding_contracts (
+			    embedding_contract_id, contract_key, version, provider, model,
+			    dimensions, distance_metric, vector_normalization,
+			    document_format_version, query_format_version, lifecycle_state
+			) VALUES (?::uuid, ?, 1, 'test', 'remember-integration-embedding',
+			          1, 'cosine', 'provider', 1, 1, 'active')
+		`, contractID, "remember-predicate-drift-"+uuid.NewString()).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO search_index_generations (
+			    search_index_generation_id, generation, embedding_contract_id,
+			    embedding_dimensions, ann_strategy, operator_class,
+			    indexed_expression, physical_index_name, exact_max_rows,
+			    allow_exact_fallback, activation_state, activated_at
+			) VALUES (?::uuid, 1, ?::uuid, 1, 'exact', '', '', '', 10000, false, 'active', now())
+		`, generationID, contractID).Error; err != nil {
+			return err
+		}
+		return lookup()
+	}))
+	require.NotEmpty(t, model)
+	require.Positive(t, dimensions)
+	return model, dimensions
+}
+
+func insertRememberProcessorIntegrationPredicate(
+	t *testing.T, adminDB *gorm.DB, rls *storagepostgres.RLS,
+	teamID uuid.UUID, key string, version int, lifecycle string,
+) error {
+	t.Helper()
+	return rls.WithSystemTx(context.Background(), adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO team_predicate_definitions (
+			    team_id, predicate_key, version, aliases, allowed_subject_kinds,
+			    allowed_object_kinds, relationship_kind, current_cardinality,
+			    lifecycle_state, origin, metadata
+			) VALUES (?::uuid, ?, ?, ARRAY[]::text[], ARRAY['project']::text[],
+			          ARRAY['string']::text[], 'state', 'many', ?, 'fixture', '{}'::jsonb)
+		`, teamID, key, version, lifecycle).Error
+	})
+}
+
+func assertRememberProcessorIntegrationCanonicalCounts(
+	t *testing.T, adminDB *gorm.DB, rls *storagepostgres.RLS, teamID uuid.UUID, want int64,
+) {
+	t.Helper()
+	for _, table := range []string{
+		"knowledge_ingests", "evidence_fragments", "semantic_assessments", "relationship_observations",
+	} {
+		var count int64
+		require.NoError(t, rls.WithSystemTx(context.Background(), adminDB, func(tx *gorm.DB) error {
+			return tx.Table(table).Where("team_id = ?::uuid", teamID).Count(&count).Error
+		}))
+		require.Equal(t, want, count, table)
+	}
+	var documents int64
+	require.NoError(t, rls.WithSystemTx(context.Background(), adminDB, func(tx *gorm.DB) error {
+		return tx.Table("search_documents").Where("team_id = ?::uuid", teamID).Count(&documents).Error
+	}))
+	if want == 0 {
+		require.Zero(t, documents)
+	} else {
+		require.Positive(t, documents)
+	}
+}
+
 type rememberProcessorIntegrationStaleLedger struct {
 	remembercontract.Persistence
 	stale              error
@@ -323,6 +731,10 @@ func (rememberProcessorIntegrationCatalog) ResolveSemanticReviewPredicateCandida
 
 func (rememberProcessorIntegrationCatalog) ListSemanticAssessmentPredicateOptions(context.Context, knowledgecontract.SemanticAssessmentPredicateOptionsInput) ([]knowledgecontract.SemanticReviewPredicateCandidate, error) {
 	return []knowledgecontract.SemanticReviewPredicateCandidate{}, nil
+}
+
+func (rememberProcessorIntegrationCatalog) ValidateSubmissionPredicateRegistrations(context.Context, knowledgecontract.SubmissionPredicateRegistrationValidationInput) ([]knowledgecontract.SubmissionPredicateRegistrationIssue, error) {
+	return nil, nil
 }
 
 type rememberProcessorIntegrationAssessmentSession struct{}
