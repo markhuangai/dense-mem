@@ -235,8 +235,11 @@ func truncateLedgerFixtures(tx *gorm.DB) error {
 }
 
 func createLedgerTeam(t testing.TB, db *gorm.DB, rls *storagepostgres.RLS, teamName string) string {
+	return createLedgerTeamWithID(t, db, rls, teamName, uuid.NewString())
+}
+
+func createLedgerTeamWithID(t testing.TB, db *gorm.DB, rls *storagepostgres.RLS, teamName, teamID string) string {
 	t.Helper()
-	teamID := uuid.NewString()
 	require.NoError(t, rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO teams (id, name, description, metadata, config)
@@ -247,8 +250,11 @@ func createLedgerTeam(t testing.TB, db *gorm.DB, rls *storagepostgres.RLS, teamN
 }
 
 func createLedgerProfile(t testing.TB, db *gorm.DB, rls *storagepostgres.RLS, teamID string, profileName string) string {
+	return createLedgerProfileWithID(t, db, rls, teamID, profileName, uuid.NewString())
+}
+
+func createLedgerProfileWithID(t testing.TB, db *gorm.DB, rls *storagepostgres.RLS, teamID, profileName, profileID string) string {
 	t.Helper()
-	profileID := uuid.NewString()
 	keyPrefix := strings.ReplaceAll(uuid.NewString(), "-", "")[:24]
 	require.NoError(t, accesspostgres.NewCredentialRepository(db, rls, nil).CreateCredential(context.Background(), &domain.Credential{
 		ID: uuid.MustParse(profileID), TeamID: uuid.MustParse(teamID), Name: profileName,

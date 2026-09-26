@@ -128,7 +128,9 @@ func TestRecallPassesValueEndpointsToHypothesisReader(t *testing.T) {
 	metrics := observability.NewPrometheusMetrics()
 	svc := NewRecallService(RecallDependencies{Search: search, Hypotheses: hypotheses, Metrics: metrics})
 
-	_, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{IncludeHypotheses: true})
+	_, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
+		ExpandFromEntityIDs: []string{uuid.NewString()}, IncludeHypotheses: true,
+	})
 	require.NoError(t, err)
 	require.Equal(t, []string{valueID}, hypotheses.recallInput.ValueIDs)
 }
@@ -157,7 +159,9 @@ func TestRecallPassesEvidenceHitRelationshipsToHypothesisReader(t *testing.T) {
 	}}}
 	svc := NewRecallService(RecallDependencies{Search: search, Hypotheses: hypotheses})
 
-	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{IncludeHypotheses: true})
+	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
+		ExpandFromEntityIDs: []string{uuid.NewString()}, IncludeHypotheses: true,
+	})
 	require.NoError(t, err)
 	require.Len(t, result.Results, 1)
 	require.Empty(t, result.RelatedRelationships)
@@ -195,8 +199,9 @@ func TestRecallOmitsRelatedHypothesesForKnownAt(t *testing.T) {
 	knownAt := time.Now().UTC().Add(-time.Hour)
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-		IncludeHypotheses: true,
-		KnownAt:           &knownAt,
+		ExpandFromEntityIDs: []string{uuid.NewString()},
+		IncludeHypotheses:   true,
+		KnownAt:             &knownAt,
 	})
 	require.NoError(t, err)
 	require.Empty(t, result.RelatedHypotheses)

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,45 +19,19 @@ import (
 )
 
 const (
-	defaultRecallLimit             = 10
-	searchDefaultQueryEFSearch     = 40
-	maxRecallLimit                 = 50
-	defaultRelationshipRecallLimit = 5
-	maxRelationshipRecallLimit     = 20
-	recallOverfetchMultiple        = 6
-	recallOverfetchFloor           = 60
-	recallOverfetchCap             = 200
-	recallRRFConstant              = 60
+	searchDefaultQueryEFSearch = 40
 )
 
 var _ recallcontract.Repository = (*Store)(nil)
 
-func (r *Store) RecallEvidence(ctx context.Context, input RecallEvidenceInput) (result *RecallEvidenceResult, err error) {
-	ctx, total := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageTotal)
-	defer func() {
-		items := 0
-		if result != nil {
-			items = len(result.Results)
-		}
-		total.Finish(err, items)
-	}()
-	input = normalizeRecallEvidenceInput(input)
-	if err := validateRecallEvidenceInput(input); err != nil {
-		return nil, err
-	}
-	contract, err := r.GetActiveSearchContract(ctx)
-	if err != nil {
-		return nil, err
-	}
-	overfetch := recallOverfetchLimit(input.Limit)
-	acc := map[string]*recallCandidate{}
+func (r *Store) ReadEvidenceCandidates(ctx context.Context, input RecallEvidenceInput, contract *ActiveSearchContract, candidateLimit int) (*recallcontract.RecallCandidateBatch, error) {
 	var textHits, vectorHits, expansionHits []SearchHit
 	searchState := string(domain.SearchProjectionCurrent)
-	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
 		if input.Query != "" {
 			stageCtx, stage := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageFullText)
-			textHits, err = searchRecallFullText(stageCtx, tx, input, contract, overfetch)
+			textHits, err = searchRecallFullText(stageCtx, tx, input, contract, candidateLimit)
 			stage.Finish(err, len(textHits))
 			if err != nil {
 				return err
@@ -66,7 +39,7 @@ func (r *Store) RecallEvidence(ctx context.Context, input RecallEvidenceInput) (
 		}
 		if len(input.QueryEmbedding) > 0 {
 			stageCtx, stage := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageVector)
-			vectorHits, err = searchRecallVector(stageCtx, tx, input, contract, overfetch)
+			vectorHits, err = searchRecallVector(stageCtx, tx, input, contract, candidateLimit)
 			stage.Finish(err, len(vectorHits))
 			if err != nil {
 				return err
@@ -74,7 +47,7 @@ func (r *Store) RecallEvidence(ctx context.Context, input RecallEvidenceInput) (
 		}
 		if len(input.ExpandFromEntityIDs) > 0 {
 			stageCtx, stage := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageExpansion)
-			expansionHits, err = searchRecallEntityExpansion(stageCtx, tx, input, contract, overfetch)
+			expansionHits, err = searchRecallEntityExpansion(stageCtx, tx, input, contract, candidateLimit)
 			stage.Finish(err, len(expansionHits))
 			if err != nil {
 				return err
@@ -84,86 +57,42 @@ func (r *Store) RecallEvidence(ctx context.Context, input RecallEvidenceInput) (
 		return err
 	})
 	if err != nil {
-		return nil, fmt.Errorf("recall: search evidence: %w", err)
+		return nil, err
 	}
-	knownEvidence := recallStringSet(input.KnownEvidenceIDs)
-	_, fusion := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageFusion)
-	addRecallBranch(acc, textHits, knownEvidence, 1)
-	addRecallBranch(acc, vectorHits, knownEvidence, 1)
-	addRecallBranch(acc, expansionHits, knownEvidence, 0.5)
-	candidates := sortedRecallCandidates(acc)
-	fusion.Finish(nil, len(candidates))
-	if len(candidates) == 0 {
-		return &RecallEvidenceResult{
-			TeamID:      input.TeamID,
-			SearchState: searchState,
-			Results:     []RecallEvidenceHit{},
-		}, nil
-	}
-	candidateIDs := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		candidateIDs = append(candidateIDs, candidate.EvidenceID)
-	}
-	hydrated := map[string]RecallEvidenceHit{}
-	hydrationCtx, hydration := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageHydration)
-	err = r.withTeamTx(hydrationCtx, input.TeamID, func(tx *gorm.DB) error {
+	return &recallcontract.RecallCandidateBatch{
+		TextHits: textHits, VectorHits: vectorHits, ExpansionHits: expansionHits, SearchState: searchState,
+	}, nil
+}
+
+func (r *Store) HydrateEvidence(ctx context.Context, input RecallEvidenceInput, contract *ActiveSearchContract, candidateIDs []string) (map[string]RecallEvidenceHit, error) {
+	var hydrated map[string]RecallEvidenceHit
+	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
-		hydrated, err = hydrateRecallEvidence(hydrationCtx, tx, input, contract, candidateIDs)
-		if err != nil {
-			return err
-		}
-		return nil
+		hydrated, err = hydrateRecallEvidence(ctx, tx, input, contract, candidateIDs)
+		return err
 	})
-	hydration.Finish(err, len(hydrated))
-	if err != nil {
-		return nil, fmt.Errorf("recall: hydrate evidence: %w", err)
-	}
-	_, selection := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageSelection)
-	results := make([]RecallEvidenceHit, 0)
-	for _, candidate := range candidates {
-		hit, ok := hydrated[candidate.EvidenceID]
-		if !ok {
-			continue
-		}
-		hit.Score = candidate.Score
-		hit.SpaceKind = input.SpaceKind
-		hit.SearchState = domain.CombineSearchProjectionStates(candidate.SearchState, hit.SearchState)
-		if hit.SearchState == string(domain.SearchProjectionPending) || hit.SearchState == string(domain.SearchProjectionFailed) {
-			searchState = domain.CombineSearchProjectionStates(searchState, hit.SearchState)
-		}
-		hit.Rank = len(results) + 1
-		results = append(results, hit)
-		if len(results) == input.Limit {
-			break
-		}
-	}
-	selection.Finish(nil, len(results))
-	conflicts := []RelationshipConflictCaseRecord{}
-	evidenceConflicts := []EvidenceConflictCaseRecord{}
-	conflictsCtx, conflictsStage := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageConflicts)
-	err = r.withTeamTx(conflictsCtx, input.TeamID, func(tx *gorm.DB) error {
+	return hydrated, err
+}
+
+func (r *Store) LoadRecallConflicts(ctx context.Context, input RecallEvidenceInput, results []RecallEvidenceHit) (*recallcontract.RecallConflicts, error) {
+	var relationships []RelationshipConflictCaseRecord
+	var evidence []EvidenceConflictCaseRecord
+	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		if r.relationshipConflicts == nil || r.evidenceConflicts == nil {
 			return errors.New("recall: conflict readers are required")
 		}
 		var err error
-		conflicts, err = r.relationshipConflicts(conflictsCtx, tx, input.TeamID, input.KnownAt, results)
+		relationships, err = r.relationshipConflicts(ctx, tx, input.TeamID, input.KnownAt, results)
 		if err != nil {
 			return err
 		}
-		evidenceConflicts, err = r.evidenceConflicts(conflictsCtx, tx, input, results)
+		evidence, err = r.evidenceConflicts(ctx, tx, input, results)
 		return err
 	})
-	conflictsStage.Finish(err, len(conflicts)+len(evidenceConflicts))
 	if err != nil {
-		return nil, fmt.Errorf("recall: load conflicts: %w", err)
+		return nil, err
 	}
-	return &RecallEvidenceResult{
-		TeamID:            input.TeamID,
-		SearchState:       searchState,
-		Results:           results,
-		Conflicts:         conflicts,
-		EvidenceConflicts: evidenceConflicts,
-	}, nil
+	return &recallcontract.RecallConflicts{Relationships: relationships, Evidence: evidence}, nil
 }
 
 func recallEvidenceSearchState(
@@ -222,12 +151,6 @@ func recallEvidenceSearchState(
 		state = string(domain.SearchProjectionCurrent)
 	}
 	return state, nil
-}
-
-type recallCandidate struct {
-	EvidenceID  string
-	Score       float64
-	SearchState string
 }
 
 func searchRecallFullText(
@@ -447,15 +370,15 @@ func recallEmbeddingContractLiteral(contractID string) (string, error) {
 }
 
 func recallANNCandidateLimit(contract *ActiveSearchContract, limit int) int {
-	candidateLimit := recallOverfetchCap
+	candidateLimit := recallcontract.MaxRecallCandidateCount
 	if contract != nil && contract.CandidateLimit > 0 {
 		candidateLimit = contract.CandidateLimit
 	}
 	if candidateLimit < limit {
 		candidateLimit = limit
 	}
-	if candidateLimit > recallOverfetchCap {
-		return recallOverfetchCap
+	if candidateLimit > recallcontract.MaxRecallCandidateCount {
+		return recallcontract.MaxRecallCandidateCount
 	}
 	return candidateLimit
 }
@@ -814,29 +737,6 @@ func scanSearchHits(rows *sql.Rows) ([]SearchHit, error) {
 	return hits, rows.Err()
 }
 
-func normalizeRecallEvidenceInput(input RecallEvidenceInput) RecallEvidenceInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.Query = strings.TrimSpace(input.Query)
-	input.KnownEvidenceIDs = normalizeRecallUUIDList(input.KnownEvidenceIDs)
-	input.KnownRelationshipIDs = normalizeRecallUUIDList(input.KnownRelationshipIDs)
-	input.ExpandFromEntityIDs = normalizeRecallUUIDList(input.ExpandFromEntityIDs)
-	input.SpaceID = strings.TrimSpace(input.SpaceID)
-	input.SpaceKind = strings.TrimSpace(input.SpaceKind)
-	if input.SpaceID == "" && input.SpaceKind == "" {
-		input.SpaceKind = string(domain.MemorySpaceTeamShared)
-	}
-	if input.Limit <= 0 {
-		input.Limit = defaultRecallLimit
-	}
-	if input.Limit > maxRecallLimit {
-		input.Limit = maxRecallLimit
-	}
-	return input
-}
-
-// recallSpacePredicate is assembled only from validated server-owned UUIDs and
-// fixed enum values. It deliberately does not accept request text so branch
-// scope cannot become SQL input or an authorization override.
 func recallSpacePredicate(column, teamID, spaceID, spaceKind string) string {
 	generationColumn := column
 	if separator := strings.LastIndexByte(column, '.'); separator >= 0 {
@@ -867,100 +767,6 @@ func recallSpacePredicate(column, teamID, spaceID, spaceKind string) string {
 		return " AND FALSE"
 	}
 	return " AND FALSE"
-}
-
-func validateRecallEvidenceInput(input RecallEvidenceInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
-	}
-	if input.SpaceKind != "" && !domain.MemorySpaceKind(input.SpaceKind).Valid() {
-		return fmt.Errorf("space_kind is invalid: %s", input.SpaceKind)
-	}
-	if input.SpaceKind != "" && input.SpaceKind != string(domain.MemorySpaceTeamShared) && input.SpaceID == "" {
-		return fmt.Errorf("space_id is required for private space kind %s", input.SpaceKind)
-	}
-	if input.SpaceID != "" {
-		if _, err := uuid.Parse(input.SpaceID); err != nil {
-			return fmt.Errorf("space_id is invalid: %w", err)
-		}
-	}
-	if input.Query == "" && len(input.ExpandFromEntityIDs) == 0 {
-		return errors.New("query or expand_from_entity_ids is required")
-	}
-	for label, values := range map[string][]string{
-		"known_evidence_ids":     input.KnownEvidenceIDs,
-		"known_relationship_ids": input.KnownRelationshipIDs,
-		"expand_from_entity_ids": input.ExpandFromEntityIDs,
-	} {
-		for _, value := range values {
-			if _, err := uuid.Parse(value); err != nil {
-				return fmt.Errorf("%s contains invalid UUID %q: %w", label, value, err)
-			}
-		}
-	}
-	return nil
-}
-
-func normalizeRecallUUIDList(values []string) []string {
-	return domain.NormalizeReadIDList(values)
-}
-
-func NormalizeRecallUUIDList(values []string) []string {
-	return normalizeRecallUUIDList(values)
-}
-
-func recallOverfetchLimit(limit int) int {
-	overfetch := limit * recallOverfetchMultiple
-	if overfetch < recallOverfetchFloor {
-		overfetch = recallOverfetchFloor
-	}
-	if overfetch > recallOverfetchCap {
-		return recallOverfetchCap
-	}
-	return overfetch
-}
-
-func addRecallBranch(acc map[string]*recallCandidate, hits []SearchHit, knownEvidence map[string]struct{}, weight float64) {
-	for i, hit := range hits {
-		if hit.SourceKind != "evidence" || hit.SourceID == "" {
-			continue
-		}
-		if _, known := knownEvidence[hit.SourceID]; known {
-			continue
-		}
-		candidate := acc[hit.SourceID]
-		if candidate == nil {
-			candidate = &recallCandidate{
-				EvidenceID:  hit.SourceID,
-				SearchState: hit.SearchState,
-			}
-			acc[hit.SourceID] = candidate
-		}
-		candidate.Score += weight / (recallRRFConstant + float64(i+1))
-		candidate.SearchState = domain.CombineSearchProjectionStates(candidate.SearchState, hit.SearchState)
-	}
-}
-
-func sortedRecallCandidates(acc map[string]*recallCandidate) []recallCandidate {
-	out := make([]recallCandidate, 0, len(acc))
-	for _, candidate := range acc {
-		out = append(out, *candidate)
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Score != out[j].Score {
-			return out[i].Score > out[j].Score
-		}
-		return out[i].EvidenceID < out[j].EvidenceID
-	})
-	return out
-}
-
-func recallStringSet(values []string) map[string]struct{} {
-	out := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		out[value] = struct{}{}
-	}
-	return out
 }
 
 func truncateRecallContext(value string) string {

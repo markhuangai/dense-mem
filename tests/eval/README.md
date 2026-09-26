@@ -491,3 +491,23 @@ results, statement counts, and transaction counts; each workload and mode must
 keep median p50 and p95 increases within the greater of 5% or 1 ms. Commit a
 compact comparison with the measured source fingerprints and keep raw logs,
 query reports, plans, and comparison output ignored.
+
+## Issue #458 Recall retrieval ownership comparison
+
+Run the inherited benchmark and source comparator on the exact base and the
+candidate after the plan audit passes. Keep the two checkouts' production code
+at their measured revisions. The baseline checkout may receive only the
+candidate's benchmark, retrieval-equivalence, and integration fixture helper
+test files as a recorded test-only overlay. Use a unique subdirectory of
+`tests/eval/runs/issue-457/` in each checkout because the existing query
+capture restricts reports to that ignored prefix.
+
+Run `TestRecallRetrievalEquivalenceCorpus` with
+`DENSE_MEM_RECALL_EQUIVALENCE_REPORT` set to an absolute path under that
+checkout's ignored `tests/eval/runs/` directory. The test checks selected
+database IDs against fixed seeded IDs and emits ordered IDs, contexts,
+ordering, scores, search states, and statement/transaction counts. Require
+byte-identical base and candidate reports. The benchmark comparator then
+requires unchanged SQL and transaction counts and median p50 and p95 increases
+within the greater of 5% or 1 ms across five measured runs. Commit only a
+compact comparison with both source fingerprints; keep raw reports ignored.

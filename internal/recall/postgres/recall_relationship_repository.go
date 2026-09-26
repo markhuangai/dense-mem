@@ -10,31 +10,14 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-func (r *Store) RecallRelationships(ctx context.Context, input RecallRelationshipsInput) (result *RecallRelationshipsResult, err error) {
-	ctx, total := observability.StartReadStage(ctx, observability.ReadOperationRelationshipRecall, observability.ReadStageTotal)
-	defer func() {
-		items := 0
-		if result != nil {
-			items = len(result.Results)
-		}
-		total.Finish(err, items)
-	}()
-	input = normalizeRecallRelationshipsInput(input)
-	if err := validateRecallRelationshipsInput(input); err != nil {
-		return nil, err
-	}
-	contract, err := r.GetActiveSearchContract(ctx)
-	if err != nil {
-		return nil, err
-	}
-	overfetch := recallOverfetchLimit(input.Limit)
-	acc := map[string]*relationshipRecallCandidate{}
+func (r *Store) ReadRelationshipCandidates(ctx context.Context, input RecallRelationshipsInput, contract *ActiveSearchContract, candidateLimit int) (*recallcontract.RecallCandidateBatch, error) {
 	var textHits, vectorHits, expansionHits []SearchHit
 	vectorState := string(domain.SearchProjectionPending)
-	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
 		vectorState, err = relationshipProjectionSearchState(ctx, tx, input, contract)
 		if err != nil {
@@ -42,7 +25,7 @@ func (r *Store) RecallRelationships(ctx context.Context, input RecallRelationshi
 		}
 		if input.Query != "" {
 			stageCtx, stage := observability.StartReadStage(ctx, observability.ReadOperationRelationshipRecall, observability.ReadStageFullText)
-			textHits, err = searchRecallRelationshipFullText(stageCtx, tx, input, contract, overfetch)
+			textHits, err = searchRecallRelationshipFullText(stageCtx, tx, input, contract, candidateLimit)
 			stage.Finish(err, len(textHits))
 			if err != nil {
 				return err
@@ -50,7 +33,7 @@ func (r *Store) RecallRelationships(ctx context.Context, input RecallRelationshi
 		}
 		if len(input.QueryEmbedding) > 0 && vectorState == string(domain.SearchProjectionCurrent) {
 			vectorCtx, stage := observability.StartReadStage(ctx, observability.ReadOperationRelationshipRecall, observability.ReadStageVector)
-			vectorHits, err = searchRecallRelationshipVector(vectorCtx, tx, input, contract, overfetch)
+			vectorHits, err = searchRecallRelationshipVector(vectorCtx, tx, input, contract, candidateLimit)
 			stage.Finish(err, len(vectorHits))
 			if err != nil {
 				return err
@@ -58,7 +41,7 @@ func (r *Store) RecallRelationships(ctx context.Context, input RecallRelationshi
 		}
 		if len(input.ExpandFromEntityIDs) > 0 {
 			stageCtx, stage := observability.StartReadStage(ctx, observability.ReadOperationRelationshipRecall, observability.ReadStageExpansion)
-			expansionHits, err = searchRecallRelationshipEntityExpansion(stageCtx, tx, input, contract, overfetch)
+			expansionHits, err = searchRecallRelationshipEntityExpansion(stageCtx, tx, input, contract, candidateLimit)
 			stage.Finish(err, len(expansionHits))
 			if err != nil {
 				return err
@@ -67,83 +50,21 @@ func (r *Store) RecallRelationships(ctx context.Context, input RecallRelationshi
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("recall: search relationships: %w", err)
+		return nil, err
 	}
-	knownRelationships := recallStringSet(input.KnownRelationshipIDs)
-	_, fusion := observability.StartReadStage(ctx, observability.ReadOperationRelationshipRecall, observability.ReadStageFusion)
-	addRecallRelationshipBranch(acc, textHits, knownRelationships, 1)
-	addRecallRelationshipBranch(acc, vectorHits, knownRelationships, 1)
-	addRecallRelationshipBranch(acc, expansionHits, knownRelationships, 0.5)
-	candidates := sortedRecallRelationshipCandidates(acc)
-	fusion.Finish(nil, len(candidates))
-	if len(candidates) == 0 {
-		return &RecallRelationshipsResult{
-			TeamID:        input.TeamID,
-			SearchState:   vectorState,
-			VectorOmitted: len(input.QueryEmbedding) > 0 && vectorState != string(domain.SearchProjectionCurrent),
-			Results:       []RecallRelationshipHit{},
-		}, nil
-	}
-	candidateIDs := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		candidateIDs = append(candidateIDs, candidate.RelationshipID)
-	}
-	hydrated := map[string]RecallRelationshipHit{}
-	hydrationCtx, hydration := observability.StartReadStage(ctx, observability.ReadOperationRelationshipRecall, observability.ReadStageHydration)
-	err = r.withTeamTx(hydrationCtx, input.TeamID, func(tx *gorm.DB) error {
+	return &recallcontract.RecallCandidateBatch{
+		TextHits: textHits, VectorHits: vectorHits, ExpansionHits: expansionHits, SearchState: vectorState,
+	}, nil
+}
+
+func (r *Store) HydrateRelationships(ctx context.Context, input RecallRelationshipsInput, contract *ActiveSearchContract, candidateIDs []string) (map[string]RecallRelationshipHit, error) {
+	var hydrated map[string]RecallRelationshipHit
+	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
-		hydrated, err = hydrateRecallRelationships(hydrationCtx, tx, input, contract, candidateIDs)
+		hydrated, err = hydrateRecallRelationships(ctx, tx, input, contract, candidateIDs)
 		return err
 	})
-	hydration.Finish(err, len(hydrated))
-	if err != nil {
-		return nil, fmt.Errorf("recall: hydrate relationships: %w", err)
-	}
-	_, selection := observability.StartReadStage(ctx, observability.ReadOperationRelationshipRecall, observability.ReadStageSelection)
-	results := make([]RecallRelationshipHit, 0)
-	seenGroups := map[string]struct{}{}
-	searchState := vectorState
-	for _, candidate := range candidates {
-		hit, ok := hydrated[candidate.RelationshipID]
-		if !ok {
-			continue
-		}
-		if hit.SemanticGroupKey != "" {
-			if _, seen := seenGroups[hit.SemanticGroupKey]; seen {
-				continue
-			}
-			seenGroups[hit.SemanticGroupKey] = struct{}{}
-		}
-		hit.Score = candidate.Score
-		hit.SpaceKind = input.SpaceKind
-		hit.SearchState = domain.CombineSearchProjectionStates(candidate.SearchState, hit.SearchState)
-		if hit.SearchState == string(domain.SearchProjectionPending) || hit.SearchState == string(domain.SearchProjectionFailed) {
-			searchState = domain.CombineSearchProjectionStates(searchState, hit.SearchState)
-		}
-		results = append(results, hit)
-		if len(results) == input.Limit {
-			break
-		}
-	}
-	sort.SliceStable(results, func(i, j int) bool {
-		if results[i].Score != results[j].Score {
-			return results[i].Score > results[j].Score
-		}
-		if !results[i].CreatedAt.Equal(results[j].CreatedAt) {
-			return results[i].CreatedAt.Before(results[j].CreatedAt)
-		}
-		return results[i].RelationshipID < results[j].RelationshipID
-	})
-	for i := range results {
-		results[i].Rank = i + 1
-	}
-	selection.Finish(nil, len(results))
-	return &RecallRelationshipsResult{
-		TeamID:        input.TeamID,
-		SearchState:   searchState,
-		VectorOmitted: len(input.QueryEmbedding) > 0 && vectorState != string(domain.SearchProjectionCurrent),
-		Results:       results,
-	}, nil
+	return hydrated, err
 }
 
 func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, input RecallRelationshipsInput, contract *ActiveSearchContract) (string, error) {

@@ -262,6 +262,20 @@
       "source": "internal/recall/postgres/recall_repository_integration_test.go"
     },
     {
+      "id": "repository/TestRecallRetrievalCancellationAfterCandidates",
+      "package": "./internal/recall/postgres",
+      "run": "^TestRecallRetrievalCancellationAfterCandidates$",
+      "phase": "precheck",
+      "source": "internal/recall/postgres/read_performance_integration_test.go"
+    },
+    {
+      "id": "repository/TestRecallRetrievalEquivalenceCorpus",
+      "package": "./internal/recall/postgres",
+      "run": "^TestRecallRetrievalEquivalenceCorpus$",
+      "phase": "precheck",
+      "source": "internal/recall/postgres/recall_retrieval_equivalence_integration_test.go"
+    },
+    {
       "id": "repository/TestSearchReadinessRejectsStaleRelationshipProjectionGeneration",
       "package": "./internal/recall/postgres",
       "run": "^TestSearchReadinessRejectsStaleRelationshipProjectionGeneration$",

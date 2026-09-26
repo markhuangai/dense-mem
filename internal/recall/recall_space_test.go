@@ -313,9 +313,10 @@ func TestFuseRecallResultsDeduplicatesIdenticalDegradations(t *testing.T) {
 func intPtr(v int) *int { return &v }
 
 type spaceRecallStub struct {
-	contract    *searchcontract.ActiveSearchContract
-	inputs      []recallcontract.RecallEvidenceInput
-	failSpaceID string
+	contract       *searchcontract.ActiveSearchContract
+	inputs         []recallcontract.RecallEvidenceInput
+	failSpaceID    string
+	lastEvidenceID string
 }
 
 type recallEmbeddingProviderStub struct {
@@ -354,15 +355,32 @@ func (s *spaceRecallStub) GetActiveSearchContract(context.Context) (*searchcontr
 	return s.contract, nil
 }
 
-func (s *spaceRecallStub) RecallEvidence(_ context.Context, input recallcontract.RecallEvidenceInput) (*recallcontract.RecallEvidenceResult, error) {
+func (s *spaceRecallStub) ReadEvidenceCandidates(_ context.Context, input recallcontract.RecallEvidenceInput, _ *searchcontract.ActiveSearchContract, _ int) (*recallcontract.RecallCandidateBatch, error) {
 	s.inputs = append(s.inputs, input)
 	if s.failSpaceID != "" && input.SpaceID == s.failSpaceID {
 		return nil, errors.New("space branch unavailable")
 	}
-	id := uuid.NewString()
-	return &recallcontract.RecallEvidenceResult{TeamID: input.TeamID, SearchState: string(domain.SearchProjectionCurrent), Results: []recallcontract.RecallEvidenceHit{{EvidenceID: id, Rank: 1, Context: input.SpaceID}}}, nil
+	s.lastEvidenceID = uuid.NewString()
+	return &recallcontract.RecallCandidateBatch{
+		SearchState: string(domain.SearchProjectionCurrent),
+		TextHits:    []searchcontract.SearchHit{{SourceKind: "evidence", SourceID: s.lastEvidenceID}},
+	}, nil
 }
 
-func (s *spaceRecallStub) RecallRelationships(_ context.Context, input recallcontract.RecallRelationshipsInput) (*recallcontract.RecallRelationshipsResult, error) {
-	return &recallcontract.RecallRelationshipsResult{TeamID: input.TeamID, SearchState: string(domain.SearchProjectionCurrent), Results: []recallcontract.RecallRelationshipHit{}}, nil
+func (s *spaceRecallStub) HydrateEvidence(_ context.Context, input recallcontract.RecallEvidenceInput, _ *searchcontract.ActiveSearchContract, _ []string) (map[string]recallcontract.RecallEvidenceHit, error) {
+	return map[string]recallcontract.RecallEvidenceHit{
+		s.lastEvidenceID: {TeamID: input.TeamID, EvidenceID: s.lastEvidenceID, Context: input.SpaceID},
+	}, nil
+}
+
+func (s *spaceRecallStub) LoadRecallConflicts(context.Context, recallcontract.RecallEvidenceInput, []recallcontract.RecallEvidenceHit) (*recallcontract.RecallConflicts, error) {
+	return &recallcontract.RecallConflicts{}, nil
+}
+
+func (s *spaceRecallStub) ReadRelationshipCandidates(context.Context, recallcontract.RecallRelationshipsInput, *searchcontract.ActiveSearchContract, int) (*recallcontract.RecallCandidateBatch, error) {
+	return &recallcontract.RecallCandidateBatch{SearchState: string(domain.SearchProjectionCurrent)}, nil
+}
+
+func (s *spaceRecallStub) HydrateRelationships(context.Context, recallcontract.RecallRelationshipsInput, *searchcontract.ActiveSearchContract, []string) (map[string]recallcontract.RecallRelationshipHit, error) {
+	return map[string]recallcontract.RecallRelationshipHit{}, nil
 }

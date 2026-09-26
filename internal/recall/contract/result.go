@@ -17,8 +17,11 @@ type Service interface {
 
 // Repository is the storage read port used by recall application services.
 type Repository interface {
-	RecallEvidence(context.Context, RecallEvidenceInput) (*RecallEvidenceResult, error)
-	RecallRelationships(context.Context, RecallRelationshipsInput) (*RecallRelationshipsResult, error)
+	ReadEvidenceCandidates(context.Context, RecallEvidenceInput, *searchcontract.ActiveSearchContract, int) (*RecallCandidateBatch, error)
+	ReadRelationshipCandidates(context.Context, RecallRelationshipsInput, *searchcontract.ActiveSearchContract, int) (*RecallCandidateBatch, error)
+	HydrateEvidence(context.Context, RecallEvidenceInput, *searchcontract.ActiveSearchContract, []string) (map[string]RecallEvidenceHit, error)
+	HydrateRelationships(context.Context, RecallRelationshipsInput, *searchcontract.ActiveSearchContract, []string) (map[string]RecallRelationshipHit, error)
+	LoadRecallConflicts(context.Context, RecallEvidenceInput, []RecallEvidenceHit) (*RecallConflicts, error)
 }
 
 // SearchRepository is the narrow storage port required by the recall service.
@@ -27,6 +30,20 @@ type Repository interface {
 type SearchRepository interface {
 	GetActiveSearchContract(context.Context) (*searchcontract.ActiveSearchContract, error)
 	Repository
+}
+
+const MaxRecallCandidateCount = 200
+
+type RecallCandidateBatch struct {
+	TextHits      []searchcontract.SearchHit
+	VectorHits    []searchcontract.SearchHit
+	ExpansionHits []searchcontract.SearchHit
+	SearchState   string
+}
+
+type RecallConflicts struct {
+	Relationships []tracecontract.RelationshipConflictCaseRecord
+	Evidence      []EvidenceConflictCaseRecord
 }
 
 type RecallEvidenceInput struct {

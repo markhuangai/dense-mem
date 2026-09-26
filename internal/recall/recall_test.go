@@ -151,7 +151,7 @@ func TestRecallRejectsMismatchedConflictTeam(t *testing.T) {
 	}
 	svc := NewRecallService(RecallDependencies{Search: search})
 
-	_, err := svc.Recall(authenticatedRememberContext(teamID, uuid.New(), uuid.New()), RecallRequest{})
+	_, err := svc.Recall(authenticatedRememberContext(teamID, uuid.New(), uuid.New()), RecallRequest{Query: "conflict"})
 	require.ErrorIs(t, err, ErrRecallRepositoryTeamMismatch)
 }
 
@@ -843,50 +843,6 @@ func TestValidateRecallEmbeddingRejectsInvalidVectors(t *testing.T) {
 	require.NoError(t, validateRecallEmbedding([]float32{1, 0, 0}, 3))
 	require.Error(t, validateRecallEmbedding([]float32{1, 0}, 3))
 	require.Error(t, validateRecallEmbedding([]float32{float32(math.Inf(1)), 0, 0}, 3))
-}
-
-type recallSearchStub struct {
-	contract           *searchcontract.ActiveSearchContract
-	input              recallcontract.RecallEvidenceInput
-	relationshipInput  recallcontract.RecallRelationshipsInput
-	result             *recallcontract.RecallEvidenceResult
-	relationshipResult *recallcontract.RecallRelationshipsResult
-	relationshipCalled bool
-	relationshipCalls  int
-	err                error
-	relationshipErr    error
-}
-
-func (s *recallSearchStub) GetActiveSearchContract(context.Context) (*searchcontract.ActiveSearchContract, error) {
-	if s.contract == nil {
-		return nil, errors.New("missing contract")
-	}
-	return s.contract, nil
-}
-
-func (s *recallSearchStub) RecallEvidence(_ context.Context, input recallcontract.RecallEvidenceInput) (*recallcontract.RecallEvidenceResult, error) {
-	s.input = input
-	if s.err != nil {
-		return nil, s.err
-	}
-	return s.result, nil
-}
-
-func (s *recallSearchStub) RecallRelationships(_ context.Context, input recallcontract.RecallRelationshipsInput) (*recallcontract.RecallRelationshipsResult, error) {
-	s.relationshipCalled = true
-	s.relationshipCalls++
-	s.relationshipInput = input
-	if s.relationshipErr != nil {
-		return nil, s.relationshipErr
-	}
-	if s.relationshipResult != nil {
-		return s.relationshipResult, nil
-	}
-	return &recallcontract.RecallRelationshipsResult{
-		TeamID:      input.TeamID,
-		SearchState: string(domain.SearchProjectionCurrent),
-		Results:     []recallcontract.RecallRelationshipHit{},
-	}, nil
 }
 
 type recallHypothesisStub struct {
