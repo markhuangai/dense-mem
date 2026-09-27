@@ -36,6 +36,7 @@ const (
 	AppConfigTelemetryCostVerifierInputUSDPerMillionTokens  = "TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS"
 	AppConfigTelemetryCostVerifierOutputUSDPerMillionTokens = "TELEMETRY_COST_VERIFIER_OUTPUT_USD_PER_MILLION_TOKENS"
 	AppConfigTelemetryCostEmbeddingInputUSDPerMillionTokens = "TELEMETRY_COST_EMBEDDING_INPUT_USD_PER_MILLION_TOKENS"
+	AppConfigTelemetryCostModelPricesJSON                   = "TELEMETRY_COST_MODEL_PRICES_JSON"
 )
 
 type AppConfigEntry struct {
@@ -157,7 +158,15 @@ type TelemetryPricingConfigItem struct {
 // TelemetryPricingRuntimeConfig is the effective pricing used to estimate
 // provider operation cost. A nil value means that operation is unpriced.
 type TelemetryPricingRuntimeConfig struct {
-	VerifierInputUSDPerMillionTokens  *float64 `json:"verifier_input_usd_per_million_tokens"`
-	VerifierOutputUSDPerMillionTokens *float64 `json:"verifier_output_usd_per_million_tokens"`
-	EmbeddingInputUSDPerMillionTokens *float64 `json:"embedding_input_usd_per_million_tokens"`
+	VerifierInputUSDPerMillionTokens  *float64              `json:"verifier_input_usd_per_million_tokens"`
+	VerifierOutputUSDPerMillionTokens *float64              `json:"verifier_output_usd_per_million_tokens"`
+	EmbeddingInputUSDPerMillionTokens *float64              `json:"embedding_input_usd_per_million_tokens"`
+	ModelPrices                       []TelemetryModelPrice `json:"model_prices"`
+}
+
+type TelemetryModelPrice struct {
+	Component                 string   `json:"component"`
+	Model                     string   `json:"model"`
+	InputUSDPerMillionTokens  *float64 `json:"input_usd_per_million_tokens"`
+	OutputUSDPerMillionTokens *float64 `json:"output_usd_per_million_tokens,omitempty"`
 }

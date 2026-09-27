@@ -24,6 +24,47 @@ type controlDreamListResponse struct {
 	NextCursor string          `json:"next_cursor,omitempty"`
 }
 
+const (
+	controlMetricsDefaultWindowMinutes = 60
+	controlMetricsMaxWindowMinutes     = 43200
+)
+
+func controlMetricsFilter(c echo.Context) (domain.UsageMetricsFilter, error) {
+	windowMinutes := controlMetricsDefaultWindowMinutes
+	if raw := strings.TrimSpace(c.QueryParam("window_minutes")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > controlMetricsMaxWindowMinutes {
+			return domain.UsageMetricsFilter{}, httperr.New(httperr.VALIDATION_ERROR, "window_minutes must be between 1 and 43200")
+		}
+		windowMinutes = parsed
+	}
+
+	var teamID *uuid.UUID
+	if raw := strings.TrimSpace(c.QueryParam("team_id")); raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil {
+			return domain.UsageMetricsFilter{}, httperr.New(httperr.INVALID_UUID, "invalid team ID format")
+		}
+		teamID = &parsed
+	}
+	var credentialID *uuid.UUID
+	if raw := strings.TrimSpace(c.QueryParam("credential_id")); raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil {
+			return domain.UsageMetricsFilter{}, httperr.New(httperr.INVALID_UUID, "invalid credential ID format")
+		}
+		credentialID = &parsed
+	}
+
+	to := time.Now().UTC()
+	return domain.UsageMetricsFilter{
+		From:         to.Add(-time.Duration(windowMinutes) * time.Minute),
+		To:           to,
+		TeamID:       teamID,
+		CredentialID: credentialID,
+	}, nil
+}
+
 func (h *controlPortalHandler) listOperationLogs(c echo.Context) error {
 	if h.operationLogs == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "operation logs unavailable")

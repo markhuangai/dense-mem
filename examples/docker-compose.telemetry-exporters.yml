@@ -1,0 +1,37 @@
+# Optional private PostgreSQL and host exporters for the telemetry overlay.
+# Use a dedicated PostgreSQL monitoring role and set its password as a Compose
+# secret through POSTGRES_EXPORTER_PASSWORD. No exporter port is published.
+services:
+  prometheus:
+    volumes:
+      - ./prometheus.exporters.yml:/etc/prometheus/prometheus.yml:ro
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.17.1
+    environment:
+      DATA_SOURCE_URI: postgres:5432/${POSTGRES_DB:-densemem}?sslmode=disable
+      DATA_SOURCE_USER: ${POSTGRES_EXPORTER_USER:?set POSTGRES_EXPORTER_USER}
+      DATA_SOURCE_PASS_FILE: /run/secrets/postgres-exporter-password
+    secrets:
+      - postgres-exporter-password
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - private
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    command:
+      - --path.rootfs=/host
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    networks:
+      - private
+    restart: unless-stopped
+
+secrets:
+  postgres-exporter-password:
+    environment: POSTGRES_EXPORTER_PASSWORD

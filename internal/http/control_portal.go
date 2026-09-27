@@ -707,38 +707,6 @@ type controlDependencyResponse struct {
 	ReasonCode *string `json:"reason_code,omitempty"`
 }
 
-const (
-	controlMetricsDefaultWindowMinutes = 60
-	controlMetricsMaxWindowMinutes     = 43200
-)
-
-func controlMetricsFilter(c echo.Context) (domain.UsageMetricsFilter, error) {
-	windowMinutes := controlMetricsDefaultWindowMinutes
-	if raw := strings.TrimSpace(c.QueryParam("window_minutes")); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 || parsed > controlMetricsMaxWindowMinutes {
-			return domain.UsageMetricsFilter{}, httperr.New(httperr.VALIDATION_ERROR, "window_minutes must be between 1 and 43200")
-		}
-		windowMinutes = parsed
-	}
-
-	var teamID *uuid.UUID
-	if raw := strings.TrimSpace(c.QueryParam("team_id")); raw != "" {
-		parsed, err := uuid.Parse(raw)
-		if err != nil {
-			return domain.UsageMetricsFilter{}, httperr.New(httperr.INVALID_UUID, "invalid team ID format")
-		}
-		teamID = &parsed
-	}
-
-	to := time.Now().UTC()
-	return domain.UsageMetricsFilter{
-		From:   to.Add(-time.Duration(windowMinutes) * time.Minute),
-		To:     to,
-		TeamID: teamID,
-	}, nil
-}
-
 func controlTelemetryFilter(c echo.Context) (operations.TelemetryFilter, error) {
 	scope := strings.TrimSpace(c.QueryParam("scope"))
 	if scope == "" {

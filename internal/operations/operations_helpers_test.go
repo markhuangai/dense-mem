@@ -104,18 +104,25 @@ func TestTelemetryHelperNoopAndCanceledPaths(t *testing.T) {
 		VerifierInputUSDPerMillionTokens:  &input,
 		VerifierOutputUSDPerMillionTokens: &output,
 		EmbeddingInputUSDPerMillionTokens: &embedding,
+		ModelPrices: []domain.TelemetryModelPrice{{
+			Component: "verifier", Model: "alternate-model", InputUSDPerMillionTokens: &input, OutputUSDPerMillionTokens: &output,
+		}},
 	}, cachedOK: true}
-	resolver := NewTelemetryPricingResolver(pricing, " verifier-model ")
+	resolver := NewTelemetryPricingResolver(pricing, " verifier-model ", " embedding-model ")
 	resolved, err := resolver.ResolveAIPricing(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, "verifier-model", resolved.VerifierModel)
+	require.Equal(t, "embedding-model", resolved.EmbeddingModel)
 	require.Equal(t, input, *resolved.VerifierInputUSDPerMillionTokens)
 	require.Equal(t, output, *resolved.VerifierOutputUSDPerMillionTokens)
 	require.Equal(t, embedding, *resolved.EmbeddingInputUSDPerMillionTokens)
+	require.Len(t, resolved.ModelPrices, 1)
+	require.Equal(t, "alternate-model", resolved.ModelPrices[0].Model)
 	input = 99
 	require.Equal(t, 1.25, *resolved.VerifierInputUSDPerMillionTokens)
+	require.Equal(t, 1.25, *resolved.ModelPrices[0].InputUSDPerMillionTokens)
 	require.Implements(t, (*observability.AIPricingResolver)(nil), resolver)
-	_, err = NewTelemetryPricingResolver(telemetryPricingStub{}, "verifier-model").ResolveAIPricing(context.Background())
+	_, err = NewTelemetryPricingResolver(telemetryPricingStub{}, "verifier-model", "embedding-model").ResolveAIPricing(context.Background())
 	require.ErrorContains(t, err, "snapshot unavailable")
 
 	ctx, cancel := context.WithCancel(context.Background())

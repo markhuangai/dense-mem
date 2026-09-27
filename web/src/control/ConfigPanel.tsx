@@ -31,6 +31,7 @@ const CONFIG_LABELS: Record<string, string> = {
   TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS: "Verifier input USD / million tokens",
   TELEMETRY_COST_VERIFIER_OUTPUT_USD_PER_MILLION_TOKENS: "Verifier output USD / million tokens",
   TELEMETRY_COST_EMBEDDING_INPUT_USD_PER_MILLION_TOKENS: "Embedding input USD / million tokens",
+  TELEMETRY_COST_MODEL_PRICES_JSON: "Additional model prices (JSON)",
 };
 
 const CONFIG_PLACEHOLDERS: Record<string, string> = {
@@ -52,6 +53,7 @@ const CONFIG_PLACEHOLDERS: Record<string, string> = {
   TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS: "Leave blank to mark as unpriced",
   TELEMETRY_COST_VERIFIER_OUTPUT_USD_PER_MILLION_TOKENS: "Leave blank to mark as unpriced",
   TELEMETRY_COST_EMBEDDING_INPUT_USD_PER_MILLION_TOKENS: "Leave blank to mark as unpriced",
+  TELEMETRY_COST_MODEL_PRICES_JSON: '[{"component":"verifier","model":"model-name","input_usd_per_million_tokens":1,"output_usd_per_million_tokens":2}]',
 };
 
 const FALLBACK_TIMEZONES = [
@@ -416,6 +418,23 @@ function ConfigField({
             </button>
           )}
         </div>
+      </>
+    );
+  }
+
+  if (item.key === "TELEMETRY_COST_MODEL_PRICES_JSON") {
+    return (
+      <>
+        <label htmlFor={item.key}>{label}</label>
+        <textarea
+          id={item.key}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={CONFIG_PLACEHOLDERS[item.key]}
+          aria-invalid={item.validation_error ? true : undefined}
+          rows={5}
+        />
+        {item.validation_error && <p className="field-error span" role="alert">{item.validation_error}</p>}
       </>
     );
   }

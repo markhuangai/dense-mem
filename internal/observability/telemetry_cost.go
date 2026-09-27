@@ -41,9 +41,18 @@ type aiOperationContext struct {
 // models and nil rates intentionally remain unpriced.
 type AIPricing struct {
 	VerifierModel                     string
+	EmbeddingModel                    string
 	VerifierInputUSDPerMillionTokens  *float64
 	VerifierOutputUSDPerMillionTokens *float64
 	EmbeddingInputUSDPerMillionTokens *float64
+	ModelPrices                       []AIModelPrice
+}
+
+type AIModelPrice struct {
+	Component                 string
+	Model                     string
+	InputUSDPerMillionTokens  *float64
+	OutputUSDPerMillionTokens *float64
 }
 
 // AIPricingResolver reads the current operator-managed rate card without

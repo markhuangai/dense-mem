@@ -23,6 +23,7 @@ func TestUsageMetricsSnapshotLabelsSSOOwnershipAlias(t *testing.T) {
 	apiKeyID := uuid.MustParse(createLedgerProfile(t, adminDB, rls, teamID.String(), "API Usage Key"))
 	ssoProfileID := uuid.New()
 	identityID := uuid.New()
+	firstCredentialID, secondCredentialID := uuid.New(), uuid.New()
 	bucketStart := time.Now().UTC().Truncate(time.Hour)
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		if err := tx.Exec(`
@@ -47,17 +48,34 @@ func TestUsageMetricsSnapshotLabelsSSOOwnershipAlias(t *testing.T) {
 			return err
 		}
 		if err := tx.Exec(`
+			INSERT INTO credentials (id, actor_identity_id, owner_identity_id, team_id, kind, name, scopes, status)
+			VALUES
+				(?, ?, ?, ?, 'session', 'SSO Usage A', ARRAY['read']::text[], 'active'),
+				(?, ?, ?, ?, 'session', 'SSO Usage B', ARRAY['read']::text[], 'active')
+		`, firstCredentialID, identityID, identityID, teamID, secondCredentialID, identityID, identityID, teamID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
 			INSERT INTO usage_metric_buckets (
 				bucket_start, team_id, key_id, route, method, status_class, request_count
 			) VALUES (?, ?, ?, '/api', 'GET', 2, 3)
 		`, bucketStart, teamID, apiKeyID).Error; err != nil {
 			return err
 		}
-		return tx.Exec(`
+		if err := tx.Exec(`
 			INSERT INTO usage_metric_buckets (
 				bucket_start, team_id, key_id, route, method, status_class, request_count
-			) VALUES (?, ?, ?, '/sso', 'GET', 2, 3)
-		`, bucketStart, teamID, ssoProfileID).Error
+			) VALUES (?, ?, ?, '/sso', 'GET', 2, 6)
+		`, bucketStart, teamID, ssoProfileID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO usage_credential_buckets (
+				bucket_start, team_id, credential_id, route, method, status_class, request_count
+			) VALUES
+				(?, ?, ?, '/sso', 'GET', 2, 3),
+				(?, ?, ?, '/sso', 'GET', 2, 3)
+		`, bucketStart, teamID, firstCredentialID, bucketStart, teamID, secondCredentialID).Error
 	}))
 
 	repo := NewUsageMetricsRepository(appDB, rls)
@@ -68,27 +86,129 @@ func TestUsageMetricsSnapshotLabelsSSOOwnershipAlias(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, snapshot.Keys, 2)
-	require.Equal(t, apiKeyID, snapshot.Keys[0].KeyID)
-	require.Equal(t, ssoProfileID, snapshot.Keys[1].KeyID)
-	var apiFound, ssoFound *domain.UsageKeyMetric
+	require.EqualValues(t, 9, snapshot.System.Requests)
+	var firstFound, secondFound *domain.UsageKeyMetric
 	for index := range snapshot.Keys {
 		switch snapshot.Keys[index].KeyID {
-		case apiKeyID:
-			apiFound = &snapshot.Keys[index]
-		case ssoProfileID:
-			ssoFound = &snapshot.Keys[index]
+		case firstCredentialID:
+			firstFound = &snapshot.Keys[index]
+		case secondCredentialID:
+			secondFound = &snapshot.Keys[index]
 		}
 	}
-	require.NotNil(t, apiFound)
-	require.Equal(t, "API Usage Key", apiFound.KeyName)
-	require.NotNil(t, ssoFound)
-	require.Equal(t, "SSO Usage User", ssoFound.KeyName)
-	require.Equal(t, "", ssoFound.KeySuffix)
-	require.EqualValues(t, 3, ssoFound.Requests)
-	require.NotNil(t, ssoFound.MCPToolCalls)
-	require.Zero(t, *ssoFound.MCPToolCalls)
-	require.NotNil(t, ssoFound.MCPToolFailures)
-	require.Zero(t, *ssoFound.MCPToolFailures)
+	require.NotNil(t, firstFound)
+	require.Equal(t, "SSO Usage A", firstFound.KeyName)
+	require.NotNil(t, secondFound)
+	require.Equal(t, "SSO Usage B", secondFound.KeyName)
+	require.Equal(t, "", secondFound.KeySuffix)
+	require.EqualValues(t, 3, secondFound.Requests)
+	require.NotNil(t, secondFound.MCPToolCalls)
+	require.Zero(t, *secondFound.MCPToolCalls)
+	require.NotNil(t, secondFound.MCPToolFailures)
+	require.Zero(t, *secondFound.MCPToolFailures)
+	filtered, err := repo.Snapshot(ctx, domain.UsageMetricsFilter{
+		From: bucketStart.Add(-time.Hour), To: bucketStart.Add(time.Hour), TeamID: &teamID, CredentialID: &firstCredentialID,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 3, filtered.System.Requests)
+	require.Len(t, filtered.Keys, 1)
+	require.Equal(t, firstCredentialID, filtered.Keys[0].KeyID)
+	otherTeam := uuid.New()
+	wrongTeam, err := repo.Snapshot(ctx, domain.UsageMetricsFilter{
+		From: bucketStart.Add(-time.Hour), To: bucketStart.Add(time.Hour), TeamID: &otherTeam, CredentialID: &firstCredentialID,
+	})
+	require.NoError(t, err)
+	require.Zero(t, wrongTeam.System.Requests)
+	require.Empty(t, wrongTeam.Keys)
+}
+
+func TestUsageCredentialBucketsEnforceTeamRLS(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamA := createLedgerTeam(t, adminDB, rls, "usage-credential-rls-a")
+	teamB := createLedgerTeam(t, adminDB, rls, "usage-credential-rls-b")
+	bucketStart := time.Now().UTC().Truncate(time.Minute)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO usage_credential_buckets (
+				bucket_start, team_id, credential_id, route, method, status_class, request_count
+			) VALUES
+				(?, ?, ?, '/mcp', 'POST', 2, 2),
+				(?, ?, ?, '/mcp', 'POST', 2, 3)
+		`, bucketStart, teamA, uuid.New(), bucketStart, teamB, uuid.New()).Error
+	}))
+
+	for _, test := range []struct {
+		teamID string
+		count  int64
+	}{
+		{teamID: teamA, count: 2},
+		{teamID: teamB, count: 3},
+	} {
+		require.NoError(t, rls.WithTeamTx(ctx, appDB, test.teamID, func(tx *gorm.DB) error {
+			var count int64
+			if err := tx.Raw("SELECT COALESCE(SUM(request_count), 0) FROM usage_credential_buckets").Scan(&count).Error; err != nil {
+				return err
+			}
+			require.Equal(t, test.count, count)
+			return nil
+		}))
+	}
+
+	require.Error(t, rls.WithTeamTx(ctx, appDB, teamA, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO usage_credential_buckets (
+				bucket_start, team_id, credential_id, route, method, status_class, request_count
+			) VALUES (?, ?, ?, '/mcp', 'POST', 2, 1)
+		`, bucketStart, teamB, uuid.New()).Error
+	}))
+}
+
+func TestUsageMetricsPruneKeepsThirtyDayBoundaryInBothBucketTables(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "usage-metrics-prune")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "Usage Prune Owner")
+	credentialID := uuid.New()
+	cutoff := time.Now().UTC().AddDate(0, 0, -30).Truncate(time.Minute)
+	starts := []time.Time{cutoff.Add(-time.Minute), cutoff, cutoff.Add(time.Minute)}
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		for _, start := range starts {
+			if err := tx.Exec(`
+				INSERT INTO usage_metric_buckets (bucket_start, team_id, key_id, route, method, status_class, request_count)
+				VALUES (?, ?, ?, '/mcp', 'POST', 2, 1)
+			`, start, teamID, ownerID).Error; err != nil {
+				return err
+			}
+			if err := tx.Exec(`
+				INSERT INTO usage_credential_buckets (bucket_start, team_id, credential_id, route, method, status_class, request_count)
+				VALUES (?, ?, ?, '/mcp', 'POST', 2, 1)
+			`, start, teamID, credentialID).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+
+	require.NoError(t, NewUsageMetricsRepository(appDB, rls).PruneBefore(ctx, cutoff))
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		for _, table := range []string{"usage_metric_buckets", "usage_credential_buckets"} {
+			var retained, stale int64
+			if err := tx.Table(table).Where("team_id = ? AND bucket_start >= ?", teamID, cutoff).Count(&retained).Error; err != nil {
+				return err
+			}
+			if err := tx.Table(table).Where("team_id = ? AND bucket_start < ?", teamID, cutoff).Count(&stale).Error; err != nil {
+				return err
+			}
+			require.EqualValues(t, 2, retained, table)
+			require.Zero(t, stale, table)
+		}
+		return nil
+	}))
 }
 
 func TestUsageMetricsFlushRetryIsIdempotentAndAtomic(t *testing.T) {
@@ -100,7 +220,7 @@ func TestUsageMetricsFlushRetryIsIdempotentAndAtomic(t *testing.T) {
 	keyID := uuid.MustParse(createLedgerProfile(t, adminDB, rls, teamID.String(), "Flush Retry Key"))
 	bucketStart := time.Now().UTC().Truncate(time.Minute)
 	bucket := domain.UsageMetricBucket{
-		BucketStart: bucketStart, TeamID: teamID, KeyID: keyID,
+		BucketStart: bucketStart, TeamID: teamID, KeyID: keyID, CredentialID: uuid.New(),
 		Route: "/mcp", Method: "POST", StatusClass: 2,
 		RequestCount: 2, ErrorCount: 1, MCPToolCalls: 3, MCPToolFailures: 1, TotalLatencyMS: 30, MaxLatencyMS: 20,
 		LastSeenAt: bucketStart,
@@ -124,4 +244,7 @@ func TestUsageMetricsFlushRetryIsIdempotentAndAtomic(t *testing.T) {
 	require.EqualValues(t, 3, *snapshot.System.MCPToolCalls)
 	require.NotNil(t, snapshot.System.MCPToolFailures)
 	require.EqualValues(t, 1, *snapshot.System.MCPToolFailures)
+	require.Len(t, snapshot.Keys, 1)
+	require.Equal(t, bucket.CredentialID, snapshot.Keys[0].KeyID)
+	require.EqualValues(t, 2, snapshot.Keys[0].Requests)
 }

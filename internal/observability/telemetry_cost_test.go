@@ -112,16 +112,40 @@ func TestAIOperationCostUSDRequiresCompleteRateCard(t *testing.T) {
 		{
 			name:      "embedding rate missing",
 			component: AIComponentEmbedding,
-			usage:     AIOperationUsage{InputTokens: 10},
+			usage:     AIOperationUsage{Model: "embed-model", InputTokens: 10},
 			pricing:   AIPricing{},
 		},
 		{
 			name:      "embedding is priced",
 			component: AIComponentEmbedding,
-			usage:     AIOperationUsage{InputTokens: 2_000_000},
-			pricing:   AIPricing{EmbeddingInputUSDPerMillionTokens: &embeddingInput},
+			usage:     AIOperationUsage{Model: "embed-model", InputTokens: 2_000_000},
+			pricing:   AIPricing{EmbeddingModel: "embed-model", EmbeddingInputUSDPerMillionTokens: &embeddingInput},
 			want:      3,
 			priced:    true,
+		},
+		{
+			name:      "different embedding model is unpriced",
+			component: AIComponentEmbedding,
+			usage:     AIOperationUsage{Model: "other-embed", InputTokens: 2_000_000},
+			pricing:   AIPricing{EmbeddingModel: "embed-model", EmbeddingInputUSDPerMillionTokens: &embeddingInput},
+		},
+		{
+			name:      "additional verifier model uses exact rate",
+			component: AIComponentVerifier,
+			usage:     AIOperationUsage{Model: "remember-override", InputTokens: 1_000_000, OutputTokens: 500_000},
+			pricing: AIPricing{VerifierModel: "verifier-model", ModelPrices: []AIModelPrice{{
+				Component: AIComponentVerifier, Model: "remember-override", InputUSDPerMillionTokens: &verifierInput, OutputUSDPerMillionTokens: &verifierOutput,
+			}}},
+			want: 4, priced: true,
+		},
+		{
+			name:      "additional embedding model uses exact rate",
+			component: AIComponentEmbedding,
+			usage:     AIOperationUsage{Model: "other-embed", InputTokens: 2_000_000},
+			pricing: AIPricing{EmbeddingModel: "embed-model", ModelPrices: []AIModelPrice{{
+				Component: AIComponentEmbedding, Model: "other-embed", InputUSDPerMillionTokens: &embeddingInput,
+			}}},
+			want: 3, priced: true,
 		},
 		{
 			name:      "unknown component",

@@ -329,11 +329,12 @@ type controlTelemetryPricingConfigResponse struct {
 }
 
 type controlTelemetryPricingRuntimeConfig struct {
-	VerifierModel                     string   `json:"verifier_model"`
-	EmbeddingModel                    string   `json:"embedding_model"`
-	VerifierInputUSDPerMillionTokens  *float64 `json:"verifier_input_usd_per_million_tokens"`
-	VerifierOutputUSDPerMillionTokens *float64 `json:"verifier_output_usd_per_million_tokens"`
-	EmbeddingInputUSDPerMillionTokens *float64 `json:"embedding_input_usd_per_million_tokens"`
+	VerifierModel                     string                       `json:"verifier_model"`
+	EmbeddingModel                    string                       `json:"embedding_model"`
+	VerifierInputUSDPerMillionTokens  *float64                     `json:"verifier_input_usd_per_million_tokens"`
+	VerifierOutputUSDPerMillionTokens *float64                     `json:"verifier_output_usd_per_million_tokens"`
+	EmbeddingInputUSDPerMillionTokens *float64                     `json:"embedding_input_usd_per_million_tokens"`
+	ModelPrices                       []domain.TelemetryModelPrice `json:"model_prices"`
 }
 
 type controlSSOConfigItemResponse struct {
@@ -488,5 +489,6 @@ func toControlTelemetryPricingConfig(settings *domain.TelemetryPricingConfigSett
 	response.Effective.VerifierInputUSDPerMillionTokens = settings.Effective.VerifierInputUSDPerMillionTokens
 	response.Effective.VerifierOutputUSDPerMillionTokens = settings.Effective.VerifierOutputUSDPerMillionTokens
 	response.Effective.EmbeddingInputUSDPerMillionTokens = settings.Effective.EmbeddingInputUSDPerMillionTokens
+	response.Effective.ModelPrices = settings.Effective.ModelPrices
 	return response
 }

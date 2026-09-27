@@ -2,6 +2,7 @@ package serverapp
 
 import (
 	"context"
+	"errors"
 	nethttp "net/http"
 	"time"
 
@@ -28,16 +29,21 @@ func buildTelemetryApplication(
 	conflictQueue *conflictpostgres.Store,
 	lifecycle operationscontract.TelemetryLifecycleReader,
 	logger observability.LogProvider,
+	protector *observability.CredentialProtector,
 ) (telemetryComposition, error) {
 	composition := telemetryComposition{Metrics: observability.NoopDiscoverabilityMetrics()}
 	if !cfg.GetTelemetryEnabled() {
 		return composition, nil
 	}
+	if protector == nil {
+		return telemetryComposition{}, errors.New("telemetry credential protection is unavailable")
+	}
 	if err := operations.RefreshTelemetryPricingCache(startupCtx, pricing); err != nil {
 		logger.Warn("telemetry pricing snapshot unavailable at startup", observability.String("reason", "configuration_refresh_failed"))
 	}
 	composition.PricingRefreshEnabled = true
-	prometheusMetrics := observability.NewPrometheusMetrics(operations.NewTelemetryPricingResolver(pricing, cfg.GetAIVerifierModel()))
+	prometheusMetrics := observability.NewPrometheusMetrics(operations.NewTelemetryPricingResolver(pricing, cfg.GetAIVerifierModel(), cfg.GetAIEmbeddingModel()))
+	prometheusMetrics.SetCredentialMetadataProtector(protector)
 	operationalReader, _ := lifecycle.(operationscontract.OperationalTelemetryReader)
 	if err := prometheusMetrics.RegisterOperationalTelemetryCollector(operationalReader); err != nil {
 		return telemetryComposition{}, err

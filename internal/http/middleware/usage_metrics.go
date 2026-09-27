@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -55,10 +56,16 @@ func recordUsageMetric(c echo.Context, recorder operations.UsageMetricsRecorder,
 		route = "unknown"
 	}
 	mcpCalls, mcpFailures := mcpMetrics.Snapshot()
+	credentialID := principal.GetCredentialID()
+	actualCredentialID := uuid.Nil
+	if credentialID != nil {
+		actualCredentialID = *credentialID
+	}
 	recorder.RecordRequest(context.Background(), domain.UsageMetricEvent{
 		Timestamp:       time.Now().UTC(),
 		TeamID:          principal.GetTeamID(),
 		KeyID:           principal.GetOwnerID(),
+		CredentialID:    actualCredentialID,
 		Method:          c.Request().Method,
 		Route:           route,
 		Status:          usageStatus(c, err),
@@ -90,6 +97,11 @@ func recordTelemetryHTTPMetric(c echo.Context, recorder httpcontract.HTTPMetrics
 		mcpRecorder.ObserveMCPTransportRequest(c.Request().Method, status, duration)
 		for _, outcome := range domain.MCPToolMetricsFromContext(ctx).OutcomeSnapshot() {
 			mcpRecorder.ObserveMCPToolResult(outcome.Outcome, outcome.Count)
+			if scoped, ok := recorder.(interface {
+				ObserveCredentialMCPToolResult(context.Context, string, int64)
+			}); ok {
+				scoped.ObserveCredentialMCPToolResult(ctx, outcome.Outcome, outcome.Count)
+			}
 		}
 	}
 }

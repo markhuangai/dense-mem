@@ -8,6 +8,7 @@ import { communityDetectionConfigSnapshot, dreamRationale, dreamRunSnapshot, dre
 
 beforeEach(() => {
   sessionStorage.clear();
+  window.history.replaceState(null, "", window.location.pathname);
   vi.restoreAllMocks();
   vi.mocked(navigator.clipboard.writeText).mockClear();
 });
@@ -347,6 +348,7 @@ describe("App", () => {
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
     await userEvent.click(screen.getByRole("button", { name: /^Remember Attempts$/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /^Calls \(/ }));
     await userEvent.click(await screen.findByRole("button", { name: "Inspect Remember call invocation-app" }));
     await userEvent.click(await screen.findByRole("button", { name: "View related logs" }));
     expect(await screen.findByRole("heading", { name: "Operation Logs" })).toBeInTheDocument();
@@ -355,6 +357,45 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("button", { name: /^Logs$/i }));
     expect(await screen.findByRole("heading", { name: "Operation Logs" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Correlation ID")).toHaveValue(""));
+  });
+
+  it("opens a scoped Remember call from a control portal link", async () => {
+    const invocation = {
+      team_id: profileA.id, owner_profile_id: "owner-1", invocation_id: "linked-call", canonical_attempt_id: "",
+      request_hash: "hash", correlation_id: "linked-correlation", classification: "execution", outcome: "completed",
+      phase: "commit", delivery_stage: "write_observed", retryable: false,
+      duration_ms: 1, created_at: "2026-08-18T01:00:00Z", expires_at: "2026-08-25T01:00:00Z", retained_by_legal_hold: false,
+    };
+    const fetchMock = mockPortalFetch({
+      teams: [profileA], keys: [keyA()],
+      rememberInvocation: { summary: invocation, detail: { ...invocation, request_capture_state: "captured", provider_exchanges: [], caller_response_capture_state: "captured" } },
+    });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+    window.history.replaceState(null, "", `/?team_id=${profileA.id}&remember_view=calls&invocation_id=linked-call`);
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Remember Calls" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Remember call details" })).toHaveTextContent("linked-call");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`/teams/${profileA.id}/remember-invocations/linked-call`))).toBe(true);
+    await userEvent.click(screen.getByRole("button", { name: "Teams" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Remember Attempts$/ }));
+    expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Remember call details" })).not.toBeInTheDocument();
+    expect(window.location.search).not.toContain("invocation_id");
+  });
+
+  it("does not open another team's history when the linked team is unavailable", async () => {
+    const fetchMock = mockPortalFetch({ teams: [profileA], keys: [] });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+    window.history.replaceState(null, "", "/?team_id=22222222-2222-4222-8222-222222222222&remember_view=attempts&attempt_id=missing-attempt");
+
+    render(<App />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Linked team is unavailable or you do not have access.");
+    expect(screen.queryByRole("heading", { name: "Remember Attempts" })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("remember-attempts"))).toBe(false);
+    await userEvent.click(screen.getByRole("button", { name: /Default/ }));
+    expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
+    expect(window.location.search).not.toContain("missing-attempt");
   });
 
   it("shows dream rationale behind an info tooltip", async () => {

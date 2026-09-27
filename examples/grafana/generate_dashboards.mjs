@@ -11,6 +11,13 @@ const up = `min(up{${job}}) == 1`;
 const ledgerUp = `min(densemem_operational_ledger_collection_success{${job}}) == 1`;
 const stat = "stat";
 const timeseries = "timeseries";
+const table = "table";
+const healthyWhenOne = [{ color: "red", value: null }, { color: "green", value: 1 }];
+const percentageSeverity = [{ color: "green", value: null }, { color: "yellow", value: 1 }, { color: "red", value: 5 }];
+const latencySeverity = [{ color: "green", value: null }, { color: "yellow", value: 500 }, { color: "red", value: 1500 }];
+const countSeverity = [{ color: "green", value: null }, { color: "yellow", value: 1 }, { color: "red", value: 10 }];
+const sampleFloor = 20;
+const teamUUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 const labels = Object.freeze({
   statuses: ["pending_evidence", "active", "needs_review", "rejected", "retracted", "superseded", "quarantined", "disputed"],
   embeddingErrorCodes: [
@@ -68,9 +75,9 @@ function rate(metric, extra = "", zero = false, grouping = "") {
   return `${zero ? `(${value} or vector(0))` : value} and on() (${up})`;
 }
 
-function histogramAverage(metric, multiplier = 1, window = "$window", grouping = "") {
-  const sum = sparseIncrease(`${metric}_sum`, "", window, grouping);
-  const count = sparseIncrease(`${metric}_count`, "", window, grouping);
+function histogramAverage(metric, multiplier = 1, window = "$window", grouping = "", extra = "") {
+  const sum = sparseIncrease(`${metric}_sum`, extra, window, grouping);
+  const count = sparseIncrease(`${metric}_count`, extra, window, grouping);
   const activeCount = grouping ? `(${count} > 0)` : count;
   return `${multiplier} * (${sum} / ${activeCount}) and on() (${up})`;
 }
@@ -116,8 +123,22 @@ function ledgerGauge(metric, grouping, filter = "") {
   return `max by (${grouping}) (${metric}{${job}${extra}}) and on() (${up}) and on() (${ledgerUp})`;
 }
 
-function panel(id, title, unit, expr, type = stat, parity = "", description = "") {
-  return { id, title, unit, expr, type, parity, description };
+function credentialUsageWithName(metric, extra = "", grouping = "team_id,profile_id,credential_id,attribution") {
+  const scope = `team_id=~"$team",credential_id=~"$credential"${extra ? `,${extra}` : ""}`;
+  const usage = sparseIncrease(metric, scope, "$window", grouping);
+  const info = `(topk by (team_id,profile_id,credential_id) (1, densemem_usage_credential_last_observed_timestamp_seconds{${selector('team_id=~"$team",credential_id=~"$credential"')}}) > bool 0)`;
+  return `(${usage} * on(team_id,profile_id,credential_id) group_left(credential_name) ${info}) or label_replace((${usage} unless on(team_id,profile_id,credential_id) ${info}), "credential_name", "unavailable", "credential_id", ".*")`;
+}
+
+function panel(id, title, unit, expr, type = stat, parity = "", description = "", severity = null) {
+  return { id, title, unit, expr, type, parity, description, severity };
+}
+
+function teamDiagnosticsPanel(id) {
+  return {
+    ...panel(id, "Team diagnostic links", "short", `sum by (team_id) (densemem_usage_http_requests_total{${selector(`team_id=~"${teamUUID}"`)}}) and on() (${up})`, table, "", "Select a concrete team row to open protected Remember history or operation logs. Values count observed HTTP requests since process start, not billing usage."),
+    portalTeamLinks: true,
+  };
 }
 
 const statusPanels = labels.statuses.flatMap((status, index) => [
@@ -128,20 +149,29 @@ const statusPanels = labels.statuses.flatMap((status, index) => [
 const dashboards = [
   {
     uid: "dense-mem-service",
-    title: "Dense-Mem Overview and Lifecycle",
+    title: "Dense-Mem Overview",
     tags: ["dense-mem", "operations"],
-    description: "System-wide service health and canonical Relationship lifecycle. Lifecycle values are durable ledger gauges and are deduplicated across server replicas.",
+    description: "Start here for collection, request, memory, performance, and spend health. A blank or low-sample panel is not green; follow the linked detail dashboards.",
+    groups: [
+      { start: 1, title: "Collection health" },
+      { start: 10, title: "HTTP and MCP requests" },
+      { start: 12, title: "Memory, read stages, and spend" },
+    ],
     panels: [
-      panel(1, "Prometheus scrape health", "short", 'min(up{job=~"$job"})', stat),
-      panel(2, "Canonical ledger collection", "short", 'min(densemem_operational_ledger_collection_success{job=~"$job"}) * min(up{job=~"$job"})', stat),
-      panel(3, "Conflict queue collection", "short", 'min(densemem_conflict_queue_collection_success{job=~"$job"}) * min(up{job=~"$job"})', stat, "card/conflict_queue_collection_success"),
-      panel(4, "HTTP requests", "short", plainCounter("densemem_http_requests_total", "", true), stat, "card/http_requests"),
-      panel(5, "HTTP errors", "short", counterWithParentZero("densemem_http_requests_total", 'status_class=~"4xx|5xx"', "densemem_http_requests_total", "", false), stat, "card/http_errors"),
-      panel(6, "Average HTTP request latency", "ms", histogramAverage("densemem_http_request_duration_seconds", 1000), stat, "card/avg_http_latency"),
-      panel(7, "HTTP request rate", "reqps", rate("densemem_http_requests_total", "", true), timeseries, "series/http_rps"),
-      panel(8, "HTTP error rate", "reqps", rateWithParentZero("densemem_http_requests_total", 'status_class=~"4xx|5xx"', "densemem_http_requests_total", "", false), timeseries, "series/http_errors_rps"),
-      panel(9, "Relationship corrections", "short", ledgerGauge("densemem_operational_relationship_corrections", "window", 'window="$window"'), stat, "card/relationship_corrections"),
-      ...statusPanels,
+      panel(1, "Prometheus scrape health", "short", 'min(up{job=~"$job"})', stat, "", "0 means the Dense-Mem target is not being scraped.", healthyWhenOne),
+      panel(2, "Canonical ledger collection", "short", 'min(densemem_operational_ledger_collection_success{job=~"$job"}) * min(up{job=~"$job"})', stat, "", "0 means the canonical ledger collector failed; lifecycle values may be stale.", healthyWhenOne),
+      panel(3, "Conflict queue collection", "short", 'min(densemem_conflict_queue_collection_success{job=~"$job"}) * min(up{job=~"$job"})', stat, "card/conflict_queue_collection_success", "0 means conflict queue collection failed.", healthyWhenOne),
+      panel(10, "HTTP error percentage", "percent", `(100 * ${plainCounter("densemem_http_requests_total", 'status_class=~"4xx|5xx"', true)} / ${plainCounter("densemem_http_requests_total")}) and on() (${plainIncrease("densemem_http_requests_total")} > 0)`, stat, "", "Editable defaults: warning at 1%, critical at 5% of requests in the rolling window. No data means no observed requests.", percentageSeverity),
+      panel(11, "HTTP p95 latency", "ms", `${quantile("densemem_http_request_duration_seconds", "0.95", 1000)} and on() (${sparseIncrease("densemem_http_request_duration_seconds_count")} >= ${sampleFloor})`, stat, "", `Needs ${sampleFloor} observations; otherwise no data. Editable defaults: warning at 500 ms, critical at 1500 ms.`, latencySeverity),
+      panel(15, "MCP tool failures", "short", `${counterWithParentZero("densemem_mcp_tool_results_total", 'outcome=~"cancelled|rpc_error|tool_error|missing_result|other"', "densemem_mcp_tool_results_total")} and on() (${sparseIncrease("densemem_mcp_tool_results_total")} > 0)`, stat, "", "Logical MCP failures, including cancellation, separate from HTTP transport errors. No data means no observed tool results.", countSeverity),
+      panel(16, "HTTP latency samples", "short", counter("densemem_http_request_duration_seconds_count"), stat, "", `At least ${sampleFloor} observations are needed to interpret the p95 latency card.`),
+      panel(20, "MCP tool results", "short", counter("densemem_mcp_tool_results_total"), stat, "", "Observed logical tool results; use this count when interpreting MCP failures."),
+      panel(12, "Remember failures", "short", `${counterWithParentZero("densemem_remember_acknowledgements_total", 'outcome="error"', "densemem_remember_acknowledgements_total")} and on() (${sparseIncrease("densemem_remember_acknowledgements_total")} > 0)`, stat, "", "Failed Remember calls in the rolling window. No data means no observed calls.", countSeverity),
+      panel(13, "AI operations without complete pricing", "short", `${counterWithParentZero("densemem_ai_operation_unpriced_total", "", "densemem_ai_operation_tokens_total")} and on() (((${sparseIncrease("densemem_ai_operation_unpriced_total")} or vector(0)) + (${sparseIncrease("densemem_ai_operation_items_total")} or vector(0))) > 0)`, stat, "", "A positive value means estimated cost is incomplete. No data means no observed AI operation.", countSeverity),
+      panel(14, "Slowest read stage p95", "ms", `max((1000 * histogram_quantile(0.95, ${sparseIncrease("densemem_read_stage_duration_seconds_bucket", "", "$window", "le,operation,stage")})) and on(operation,stage) (${sparseIncrease("densemem_read_stage_duration_seconds_count", "", "$window", "operation,stage")} >= ${sampleFloor}))`, stat, "", `Shows no data for stages with fewer than ${sampleFloor} observations. Inspect the Performance dashboard to find the stage.`, latencySeverity),
+      panel(17, "Read stage observations", "short", counter("densemem_read_stage_duration_seconds_count"), stat, "", `Total stage executions; each stage needs ${sampleFloor} observations for the overview p95.`),
+      panel(18, "Hypothesis backlog", "short", ledgerGauge("densemem_operational_hypothesis_backlog", "lane"), timeseries, "", "Canonical backlog by lane; missing ledger collection stays no-data."),
+      panel(19, "Estimated AI spend", "currencyUSD", `${cost()} and on() (${sparseIncrease("densemem_ai_operation_items_total")} > 0)`, stat, "", "No data means cost is incomplete or there was no priced activity. Check unpriced usage and feature details."),
     ],
   },
   {
@@ -149,7 +179,20 @@ const dashboards = [
     title: "Dense-Mem AI and Recall",
     tags: ["dense-mem", "operations", "ai"],
     description: "System-wide provider, assessor, recall, and feedback measures. Missing usage, unpriced calls, and absent feedback remain no-data states instead of appearing as zero.",
+    groups: [
+      { start: 50, title: "Feature and model usage" },
+      { start: 1, title: "Embedding and verifier" },
+      { start: 12, title: "Recall and host feedback" },
+      { start: 28, title: "Dream and assessor" },
+      { start: 42, title: "Cost and provider completeness" },
+    ],
     panels: [
+      panel(50, "Feature provider attempts", "short", sparseIncrease("densemem_usage_ai_provider_attempts_total", 'operation=~"$feature",model=~"$model"', "$window", "operation,component,model,outcome"), table),
+      panel(51, "Feature input and output tokens", "short", sparseIncrease("densemem_ai_operation_tokens_total", 'operation=~"$feature",model=~"$model"', "$window", "operation,component,model,kind,source"), table),
+      panel(52, "Feature estimated cost", "currencyUSD", sparseIncrease("densemem_ai_operation_cost_usd_total", 'operation=~"$feature",model=~"$model"', "$window", "operation,component,model,source"), table, "", "Prometheus estimate; compare the unpriced panel before treating it as complete."),
+      panel(53, "Feature unpriced usage", "short", sparseIncrease("densemem_ai_operation_unpriced_total", 'operation=~"$feature",model=~"$model"', "$window", "operation,component,model,reason"), table),
+      panel(54, "Feature item volume", "short", sparseIncrease("densemem_ai_operation_items_total", 'operation=~"$feature",model=~"$model"', "$window", "operation,component,model,source"), table),
+      panel(55, "Feature provider p95 latency", "ms", `1000 * histogram_quantile(0.95, ${sparseIncrease("densemem_usage_ai_provider_duration_seconds_bucket", 'operation=~"$feature",model=~"$model"', "$__rate_interval", "le,operation,component,model,outcome")})`, timeseries),
       panel(1, "Embedding requests", "short", counter("densemem_embedding_requests_total"), stat, "card/embedding_requests"),
       panel(2, "Embedding errors", "short", counterWithParentZero("densemem_embedding_errors_total", `code=~"${labels.embeddingErrorCodes.join("|")}"`, "densemem_embedding_requests_total"), stat, "card/embedding_errors"),
       panel(3, "Embedding tokens", "short", counter("densemem_embedding_tokens_total", 'kind="total"'), stat, "card/embedding_tokens"),
@@ -206,6 +249,13 @@ const dashboards = [
     title: "Dense-Mem Remember and Dream",
     tags: ["dense-mem", "operations", "workflows"],
     description: "System-wide Remember and Dream activity plus canonical Hypothesis and lifecycle data. Durable collector values are gauges for rolling windows, never counters.",
+    groups: [
+      { start: 1, title: "Remember acknowledgement" },
+      { start: 7, title: "MCP and logical operations" },
+      { start: 14, title: "Dream and Recall workflows" },
+      { start: 21, title: "Canonical Dream and Hypothesis state" },
+      { start: 36, title: "Relationship lifecycle" },
+    ],
     panels: [
       panel(1, "Remember calls", "short", counter("densemem_remember_acknowledgements_total"), stat, "card/remember_requests"),
       panel(2, "Average Remember duration", "ms", histogramAverage("densemem_remember_acknowledgement_duration_seconds", 1000), stat, "card/avg_remember_duration"),
@@ -220,6 +270,7 @@ const dashboards = [
       panel(11, "Logical operation duration", "s", histogramAverage("densemem_logical_operation_duration_seconds", 1, "$__rate_interval", "operation,outcome"), timeseries),
       panel(12, "Logical operation recoveries", "short", counterBy("densemem_logical_operation_recoveries_total", "operation,outcome"), timeseries),
       panel(13, "Remember phase duration", "s", histogramAverage("densemem_remember_phase_duration_seconds", 1, "$__rate_interval", "phase,outcome"), timeseries),
+      panel(37, "Remember phase outcomes", "short", counterBy("densemem_remember_phase_duration_seconds_count", "phase,outcome"), timeseries, "", "Assessment, embedding, and commit phase counts by outcome; use with phase duration to locate failures."),
       panel(14, "Dream cycle attempts", "short", counterBy("densemem_dream_cycle_attempts_total", "lane,status"), timeseries),
       panel(15, "Dream cycle duration", "s", histogramAverage("densemem_dream_cycle_duration_seconds", 1, "$__rate_interval", "lane,status"), timeseries),
       panel(16, "Dream provider attempts", "short", counterBy("densemem_dream_provider_attempts_total", "stage,outcome"), timeseries),
@@ -242,13 +293,83 @@ const dashboards = [
       panel(33, "Dream-confirmed Relationships", "short", ledgerGauge("densemem_operational_dream_confirmed_relationships", "window,status", 'window="$window"'), timeseries),
       panel(34, "Relationship lifecycle transitions", "short", ledgerGauge("densemem_operational_relationship_transitions", "window,status", 'window="$window"'), timeseries),
       panel(35, "Relationship corrections", "short", ledgerGauge("densemem_operational_relationship_corrections", "window" , 'window="$window"'), timeseries),
+      panel(36, "Relationship corrections", "short", ledgerGauge("densemem_operational_relationship_corrections", "window", 'window="$window"'), stat, "card/relationship_corrections"),
+      ...statusPanels,
+    ],
+  },
+  {
+    uid: "dense-mem-usage",
+    title: "Dense-Mem Team and Credential Usage",
+    tags: ["dense-mem", "operations", "usage"],
+    description: "Private request and AI usage by authenticated credential ID and protected display name. New credential series start when this collector is deployed; prior owner-level totals cannot be split into credentials.",
+    portalLink: true,
+    groups: [
+      { start: 1, title: "Request and MCP usage by credential" },
+      { start: 4, title: "AI usage by credential and feature" },
+      { start: 8, title: "Team and credential diagnostics" },
+    ],
+    panels: [
+      panel(1, "Requests by credential", "short", credentialUsageWithName("densemem_usage_http_requests_total"), table, "", "The name is unavailable if it could not be safely exported; credential ID remains authoritative."),
+      panel(2, "HTTP errors by credential", "short", credentialUsageWithName("densemem_usage_http_requests_total", 'status_class=~"4xx|5xx"'), table),
+      panel(3, "MCP outcomes by credential", "short", credentialUsageWithName("densemem_usage_mcp_tool_results_total", "", "team_id,profile_id,credential_id,attribution,outcome"), table),
+      panel(4, "AI estimated cost by credential and feature", "currencyUSD", credentialUsageWithName("densemem_usage_ai_operation_cost_usd_total", 'operation=~"$feature",model=~"$model"', "team_id,profile_id,credential_id,attribution,operation,component,model,source"), table, "", "Prometheus estimates, not invoice totals; inspect unpriced usage below."),
+      panel(5, "AI tokens by credential and feature", "short", credentialUsageWithName("densemem_usage_ai_operation_tokens_total", 'operation=~"$feature",model=~"$model"', "team_id,profile_id,credential_id,attribution,operation,component,model,kind,source"), table),
+      panel(6, "Provider attempts by credential and feature", "short", credentialUsageWithName("densemem_usage_ai_provider_attempts_total", 'operation=~"$feature",model=~"$model"', "team_id,profile_id,credential_id,attribution,operation,component,model,outcome"), table),
+      panel(7, "Unpriced AI usage by credential", "short", credentialUsageWithName("densemem_usage_ai_operation_unpriced_total", 'operation=~"$feature",model=~"$model"', "team_id,profile_id,credential_id,attribution,operation,component,model,reason"), table),
+      panel(8, "Team request rate", "reqps", rate("densemem_usage_http_requests_total", 'team_id=~"$team"', false, "team_id,attribution"), timeseries),
+      panel(9, "Credential p95 HTTP latency", "ms", `1000 * histogram_quantile(0.95, ${sparseIncrease("densemem_usage_http_request_duration_seconds_bucket", 'team_id=~"$team",credential_id=~"$credential"', "$window", "le,team_id,credential_id,attribution")})`, timeseries, "", "Aggregated latency; select a credential to isolate a slow caller."),
+      panel(10, "Credential names unavailable", "short", counter("densemem_usage_credential_metadata_unavailable_total"), stat, "", "Counts observations where a name was absent, too long, or would expose protected material."),
+      teamDiagnosticsPanel(11),
+    ],
+  },
+  {
+    uid: "dense-mem-performance",
+    title: "Dense-Mem Performance and Dependencies",
+    tags: ["dense-mem", "operations", "performance"],
+    description: "Read-stage drilldowns and runtime health. PostgreSQL, Redis, and host panels require the optional private exporters; missing exporters remain no-data.",
+    portalLink: true,
+    groups: [
+      { start: 1, title: "Search and Recall read stages" },
+      { start: 7, title: "Remember and provider stages" },
+      { start: 9, title: "Dense-Mem runtime" },
+      { start: 12, title: "Optional private dependency exporters" },
+      { start: 21, title: "HTTP transport detail" },
+      { start: 26, title: "Protected team diagnostics" },
+    ],
+    panels: [
+      panel(1, "Read stage p50", "ms", `1000 * histogram_quantile(0.5, ${sparseIncrease("densemem_read_stage_duration_seconds_bucket", 'operation=~"$read_operation"', "$__rate_interval", "le,operation,stage,outcome")})`, timeseries),
+      panel(2, "Read stage p95", "ms", `1000 * histogram_quantile(0.95, ${sparseIncrease("densemem_read_stage_duration_seconds_bucket", 'operation=~"$read_operation"', "$__rate_interval", "le,operation,stage,outcome")})`, timeseries),
+      panel(3, "Read stage p99", "ms", `1000 * histogram_quantile(0.99, ${sparseIncrease("densemem_read_stage_duration_seconds_bucket", 'operation=~"$read_operation"', "$__rate_interval", "le,operation,stage,outcome")})`, timeseries),
+      panel(4, "Read stage executions", "short", counterBy("densemem_read_stage_duration_seconds_count", "operation,stage,outcome", 'operation=~"$read_operation"'), timeseries),
+      panel(5, "SQL statements by read stage", "short", counterBy("densemem_read_sql_statements_total", "operation,stage", 'operation=~"$read_operation"'), timeseries),
+      panel(6, "Average read stage items", "short", histogramAverage("densemem_read_stage_items", 1, "$__rate_interval", "operation,stage", 'operation=~"$read_operation"'), timeseries),
+      panel(7, "Remember phase p95", "ms", `1000 * histogram_quantile(0.95, ${sparseIncrease("densemem_remember_phase_duration_seconds_bucket", "", "$__rate_interval", "le,phase,outcome")})`, timeseries),
+      panel(8, "Provider p95 by feature", "ms", `1000 * histogram_quantile(0.95, ${sparseIncrease("densemem_usage_ai_provider_duration_seconds_bucket", 'operation=~"$feature",model=~"$model"', "$__rate_interval", "le,operation,component,model,outcome")})`, timeseries),
+      panel(9, "Server CPU cores", "short", `sum by (instance) (rate(process_cpu_seconds_total{${job}}[$__rate_interval]))`, timeseries),
+      panel(10, "Server resident memory", "bytes", `process_resident_memory_bytes{${job}}`, timeseries),
+      panel(11, "Go goroutines", "short", `go_goroutines{${job}}`, timeseries),
+      panel(12, "PostgreSQL exporter health", "short", '(min(pg_up{job=~"$postgres_job"}) * min(up{job=~"$postgres_job"})) or (0 * min(up{job=~"$postgres_job"}))', stat, "", "FAILED means the configured exporter or its PostgreSQL connection failed; no data means no matching target is configured.", healthyWhenOne),
+      panel(13, "Redis exporter health", "short", '(min(redis_up{job=~"$redis_job"}) * min(up{job=~"$redis_job"})) or (0 * min(up{job=~"$redis_job"}))', stat, "", "FAILED means the configured exporter or its Redis connection failed; no data means no matching target is configured.", healthyWhenOne),
+      panel(20, "Host exporter health", "short", 'min(up{job=~"$node_job"})', stat, "", "FAILED means the configured node exporter is down; no data means no matching target is configured.", healthyWhenOne),
+      panel(14, "Host available memory", "bytes", 'node_memory_MemAvailable_bytes{job=~"$node_job"}', timeseries, "", "Requires the optional node exporter."),
+      panel(15, "PostgreSQL active sessions", "short", 'sum(pg_stat_activity_count{job=~"$postgres_job",state="active"})', timeseries),
+      panel(16, "PostgreSQL deadlocks", "short", 'sum(increase(pg_stat_database_deadlocks{job=~"$postgres_job"}[$__rate_interval]))', timeseries),
+      panel(17, "Redis memory", "bytes", 'redis_memory_used_bytes{job=~"$redis_job"}', timeseries),
+      panel(18, "SQL statements per read stage execution", "short", `${sparseIncrease("densemem_read_sql_statements_total", 'operation=~"$read_operation"', "$__rate_interval", "operation,stage")} / (${sparseIncrease("densemem_read_stage_duration_seconds_count", 'operation=~"$read_operation"', "$__rate_interval", "operation,stage")} > 0)`, timeseries),
+      panel(19, "Provider attempt samples", "short", counterBy("densemem_usage_ai_provider_duration_seconds_count", "operation,component,model,outcome", 'operation=~"$feature",model=~"$model"', "$window"), table, "", "Inspect counts before interpreting provider latency percentiles."),
+      panel(21, "HTTP requests", "short", plainCounter("densemem_http_requests_total", "", true), stat, "card/http_requests"),
+      panel(22, "HTTP errors", "short", counterWithParentZero("densemem_http_requests_total", 'status_class=~"4xx|5xx"', "densemem_http_requests_total", "", false), stat, "card/http_errors"),
+      panel(23, "Average HTTP request latency", "ms", histogramAverage("densemem_http_request_duration_seconds", 1000), stat, "card/avg_http_latency"),
+      panel(24, "HTTP request rate", "reqps", rate("densemem_http_requests_total", "", true), timeseries, "series/http_rps"),
+      panel(25, "HTTP error rate", "reqps", rateWithParentZero("densemem_http_requests_total", 'status_class=~"4xx|5xx"', "densemem_http_requests_total", "", false), timeseries, "series/http_errors_rps"),
+      teamDiagnosticsPanel(26),
     ],
   },
 ];
 
 function gridPos(type, layout) {
-  const width = type === timeseries ? 12 : 8;
-  const height = type === timeseries ? 8 : 5;
+  const width = type === table ? 24 : type === timeseries ? 12 : 8;
+  const height = type === table ? 9 : type === timeseries ? 8 : 5;
   if (layout.x + width > 24) {
     layout.y += layout.rowHeight;
     layout.x = 0;
@@ -260,27 +381,64 @@ function gridPos(type, layout) {
   return position;
 }
 
+function buildRow(id, title, layout) {
+  layout.y += layout.rowHeight;
+  layout.x = 0;
+  layout.rowHeight = 0;
+  const row = { id, title, type: "row", collapsed: false, gridPos: { h: 1, w: 24, x: 0, y: layout.y }, panels: [], targets: [] };
+  layout.y += 1;
+  return row;
+}
+
 function buildPanel(value, layout) {
+  const defaults = { unit: value.unit, noValue: "No data", color: { mode: value.severity ? "thresholds" : "palette-classic" }, custom: { drawStyle: "line", lineWidth: 2, fillOpacity: 8, spanNulls: false } };
+  if (value.severity) defaults.thresholds = { mode: "absolute", steps: value.severity };
+  if (value.severity === healthyWhenOne) defaults.mappings = [{ type: "value", options: { "0": { text: "FAILED", color: "red" }, "1": { text: "HEALTHY", color: "green" } } }];
+  if (value.portalTeamLinks) defaults.links = [
+    { title: "Open team Remember history", url: '${control_portal_url}/?team_id=${__data.fields["team_id"]}&remember_view=attempts', targetBlank: true },
+    { title: "Open team operation logs", url: '${control_portal_url}/?team_id=${__data.fields["team_id"]}&section=logs', targetBlank: true },
+  ];
   const panel = {
     datasource: { type: "prometheus", uid: "$datasource" },
     description: value.parity ? `Parity: ${value.parity}. ${value.description}`.trim() : value.description,
-    fieldConfig: { defaults: { unit: value.unit, color: { mode: "palette-classic" }, custom: { drawStyle: "line", lineWidth: 2, fillOpacity: 8, spanNulls: false } }, overrides: [] },
+    fieldConfig: { defaults, overrides: [] },
     gridPos: gridPos(value.type, layout),
     id: value.id,
     options: value.type === stat
-      ? { colorMode: "value", graphMode: "area", justifyMode: "auto", orientation: "auto", reduceOptions: { calcs: ["lastNotNull"], fields: "", values: false }, textMode: "auto" }
-      : { legend: { calcs: ["lastNotNull", "max"], displayMode: "table", placement: "bottom" }, tooltip: { mode: "multi", sort: "desc" } },
-    targets: [{ datasource: { type: "prometheus", uid: "$datasource" }, expr: value.expr, instant: value.type === stat, range: value.type === timeseries, refId: "A" }],
+      ? { colorMode: value.severity ? "background" : "value", graphMode: value.severity ? "none" : "area", justifyMode: "auto", orientation: "auto", reduceOptions: { calcs: ["lastNotNull"], fields: "", values: false }, textMode: "auto" }
+      : value.type === table
+        ? { showHeader: true, cellHeight: "sm" }
+        : { legend: { calcs: ["lastNotNull", "max"], displayMode: "table", placement: "bottom" }, tooltip: { mode: "multi", sort: "desc" } },
+    targets: [{ datasource: { type: "prometheus", uid: "$datasource" }, expr: value.expr, ...(value.type === table ? { format: "table" } : {}), instant: value.type !== timeseries, range: value.type === timeseries, refId: "A" }],
     title: value.title,
     type: value.type,
   };
+  if (value.portalTeamLinks) panel.transformations = [{ id: "labelsToFields", options: { mode: "columns" } }];
   if (value.parity.startsWith("card/")) panel.targets[0].instant = true;
   return panel;
 }
 
+function queryVariable(name, label, metric, dimension) {
+  const definition = `label_values(${metric}, ${dimension})`;
+  return {
+    current: { selected: true, text: "All", value: "$__all" }, datasource: { type: "prometheus", uid: "$datasource" },
+    definition, includeAll: true, allValue: ".*", label, multi: false, name,
+    options: [], query: { query: definition, refId: `Variable-${name}` }, refresh: 1, sort: 1, type: "query",
+  };
+}
+
+function customVariable(name, label, value) {
+  return { current: { selected: true, text: value, value }, label, name,
+    options: [{ selected: true, text: value, value }], query: value, type: "custom" };
+}
+
 function buildDashboard(dashboard) {
   const layout = { x: 0, y: 0, rowHeight: 0 };
-  const panels = dashboard.panels.map((value) => buildPanel(value, layout));
+  const groupByStart = new Map((dashboard.groups ?? []).map(({ start, title }) => [start, title]));
+  const panels = dashboard.panels.flatMap((value, index) => [
+    ...(groupByStart.has(value.id) ? [buildRow(900 + index, groupByStart.get(value.id), layout)] : []),
+    buildPanel(value, layout),
+  ]);
   return {
     __inputs: [],
     __requires: [
@@ -289,11 +447,13 @@ function buildDashboard(dashboard) {
     ],
     annotations: { list: [{ builtIn: 1, datasource: { type: "grafana", uid: "-- Grafana --" }, enable: true, hide: true, iconColor: "rgba(0, 211, 255, 1)", name: "Annotations & Alerts", type: "dashboard" }] },
     description: dashboard.description,
-    editable: false,
+    editable: true,
     fiscalYearStartMonth: 0,
     graphTooltip: 1,
     id: null,
-    links: [],
+    links: [
+      ...dashboards.filter((other) => other.uid !== dashboard.uid).map((other) => ({ title: other.title, url: `/d/${other.uid}`, targetBlank: false, type: "link" })),
+    ],
     liveNow: false,
     panels,
     refresh: "30s",
@@ -304,6 +464,21 @@ function buildDashboard(dashboard) {
         { current: {}, datasource: { type: "prometheus", uid: "$datasource" }, includeAll: false, label: "Prometheus datasource", name: "datasource", options: [], query: "prometheus", refresh: 1, type: "datasource" },
         { current: { selected: true, text: "dense-mem", value: "dense-mem" }, datasource: { type: "prometheus", uid: "$datasource" }, definition: "label_values(up, job)", includeAll: false, label: "Job", multi: false, name: "job", query: { query: "label_values(up, job)", refId: "PrometheusVariableQueryEditor-VariableQuery" }, refresh: 1, sort: 1, type: "query" },
         { current: { selected: true, text: "1h", value: "1h" }, label: "Rolling totals", name: "window", options: ["15m", "30m", "1h", "12h", "1d", "7d", "30d"].map((value) => ({ selected: value === "1h", text: value, value })), query: "15m,30m,1h,12h,1d,7d,30d", type: "custom" },
+        ...(dashboard.uid === "dense-mem-usage" ? [
+          queryVariable("team", "Team", "densemem_usage_http_requests_total", "team_id"),
+          queryVariable("credential", "Credential ID", "densemem_usage_http_requests_total", "credential_id"),
+        ] : []),
+        ...(["dense-mem-ai-recall", "dense-mem-usage", "dense-mem-performance"].includes(dashboard.uid) ? [
+          queryVariable("feature", "AI feature", "densemem_usage_ai_provider_attempts_total", "operation"),
+          queryVariable("model", "AI model", "densemem_usage_ai_provider_attempts_total", "model"),
+        ] : []),
+        ...(dashboard.uid === "dense-mem-performance" ? [
+          queryVariable("read_operation", "Read operation", "densemem_read_stage_duration_seconds_count", "operation"),
+          customVariable("postgres_job", "PostgreSQL job", "postgres"),
+          customVariable("redis_job", "Redis job", "redis"),
+          customVariable("node_job", "Node job", "node"),
+        ] : []),
+        ...(dashboard.portalLink ? [{ current: { text: "", value: "" }, label: "Control portal URL", name: "control_portal_url", options: [], query: "", type: "textbox" }] : []),
       ],
     },
     time: { from: "now-1h", to: "now" },

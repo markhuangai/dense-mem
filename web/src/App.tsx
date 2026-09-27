@@ -49,6 +49,38 @@ type LoadState = "idle" | "loading" | "error";
 type Theme = "light" | "dark";
 type AuthMode = "none" | "token" | "sso";
 type PortalTab = "teams" | "recall-feedback" | "search" | "logs" | "security" | "sso" | "config";
+type RememberLink = { teamID: string; view: "calls" | "attempts"; attemptID: string; invocationID: string };
+
+function readRememberLink(): RememberLink {
+  const params = new URLSearchParams(window.location.search);
+  const rawTeamID = params.get("team_id") ?? "";
+  const teamID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawTeamID) ? rawTeamID : "";
+  const view = params.get("remember_view") === "calls" || (!params.has("remember_view") && params.has("invocation_id")) ? "calls" : "attempts";
+  return {
+    teamID,
+    view,
+    attemptID: params.get("attempt_id") ?? "",
+    invocationID: params.get("invocation_id") ?? "",
+  };
+}
+
+function updateRememberLink(teamID: string, view: "calls" | "attempts") {
+  const url = new URL(window.location.href);
+  url.searchParams.set("team_id", teamID);
+  url.searchParams.set("remember_view", view);
+  url.searchParams.delete("attempt_id");
+  url.searchParams.delete("invocation_id");
+  window.history.replaceState(null, "", url);
+}
+
+function clearRememberLink() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("remember_view") && !url.searchParams.has("attempt_id") && !url.searchParams.has("invocation_id")) return;
+  url.searchParams.delete("remember_view");
+  url.searchParams.delete("attempt_id");
+  url.searchParams.delete("invocation_id");
+  window.history.replaceState(null, "", url);
+}
 
 export function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "");
@@ -200,14 +232,19 @@ function Portal({
   onToggleTheme: () => void;
   onSignOut: () => void;
 }) {
+  const [rememberLink, setRememberLink] = useState<RememberLink | null>(readRememberLink);
   const [teams, setTeams] = useState<Team[]>([]);
-  const [selectedTeamId, setSelectedTeamId] = useState("");
-  const [activeTab, setActiveTab] = useState<PortalTab>("teams");
-  const [teamWorkspaceTab, setTeamWorkspaceTab] = useState<TeamWorkspaceTab>("overview");
+  const [selectedTeamId, setSelectedTeamId] = useState(rememberLink?.teamID ?? "");
+  const [activeTab, setActiveTab] = useState<PortalTab>(new URLSearchParams(window.location.search).get("section") === "logs" ? "logs" : "teams");
+  const [teamWorkspaceTab, setTeamWorkspaceTab] = useState<TeamWorkspaceTab>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return rememberLink?.teamID && (params.has("remember_view") || params.has("attempt_id") || params.has("invocation_id"))
+      ? "remember-attempts" : "overview";
+  });
   const [creatingTeam, setCreatingTeam] = useState(false);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState("");
-  const [logsInitialQuery, setLogsInitialQuery] = useState<OperationLogQuery>({});
+  const [logsInitialQuery, setLogsInitialQuery] = useState<OperationLogQuery>(rememberLink?.teamID ? { team_id: rememberLink.teamID } : {});
 
   async function loadTeams(nextSelectedId?: string) {
     setLoadState("loading");
@@ -215,9 +252,12 @@ function Portal({
     try {
       const page = await api.listTeams();
       setTeams(page.data);
-      const selected = nextSelectedId || selectedTeamId;
+      const selected = nextSelectedId || selectedTeamId || rememberLink?.teamID;
       if (selected && page.data.some((team) => team.id === selected)) {
         setSelectedTeamId(selected);
+      } else if (!nextSelectedId && selected === rememberLink?.teamID && teamWorkspaceTab === "remember-attempts") {
+        setSelectedTeamId("");
+        setError("Linked team is unavailable or you do not have access.");
       } else {
         setSelectedTeamId(page.data[0]?.id ?? "");
       }
@@ -231,6 +271,13 @@ function Portal({
   useEffect(() => {
     void loadTeams();
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== "teams" || teamWorkspaceTab !== "remember-attempts") {
+      setRememberLink(null);
+      clearRememberLink();
+    }
+  }, [activeTab, teamWorkspaceTab]);
 
   const selectedTeam = teams.find((team) => team.id === selectedTeamId) ?? null;
   const teamScopedTab = activeTab === "teams";
@@ -368,6 +415,11 @@ function Portal({
           }}
           onSelect={(teamId) => {
             setSelectedTeamId(teamId);
+            setError("");
+            if (teamWorkspaceTab === "remember-attempts") {
+              setRememberLink(null);
+              updateRememberLink(teamId, "attempts");
+            }
           }}
         />
       ) : undefined}
@@ -410,9 +462,10 @@ function Portal({
                   setTeams((current) => current.map((item) => (item.id === team.id ? team : item)));
                 }}
                 onDeleted={() => void loadTeams()}
+                rememberLink={rememberLink?.teamID === selectedTeam.id ? rememberLink : undefined}
               />
             ) : (
-              loadState === "loading" ? <LoadingState label="Loading teams" /> : <div className="empty-state">No teams</div>
+              loadState === "loading" ? <LoadingState label="Loading teams" /> : <div className="empty-state">{teams.length > 0 ? "Select a team to continue." : "No teams"}</div>
             )}
           </>
         )}
@@ -564,6 +617,7 @@ function TeamWorkspace({
   onOpenLogs,
   onUpdated,
   onDeleted,
+  rememberLink,
 }: {
   api: ControlApi;
   team: Team;
@@ -572,6 +626,7 @@ function TeamWorkspace({
   onOpenLogs: (query?: OperationLogQuery) => void;
   onUpdated: (team: Team) => void;
   onDeleted: () => void;
+  rememberLink?: RememberLink;
 }) {
   return (
     <TeamWorkspaceShell team={team} activeTab={activeTab} onSelectTab={onSelectTab}>
@@ -579,7 +634,13 @@ function TeamWorkspace({
       {activeTab === "credentials" && <TeamCredentialsPanel api={api} team={team} embedded />}
       {activeTab === "remember-attempts" && (
         <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading Remember attempts" /></div>}>
-          <RememberAttemptsPanel api={api} team={team} onOpenLogs={onOpenLogs} />
+          <RememberAttemptsPanel
+            api={api} team={team} onOpenLogs={onOpenLogs}
+            initialView={rememberLink?.view ?? "attempts"}
+            initialAttemptID={rememberLink?.attemptID}
+            initialInvocationID={rememberLink?.invocationID}
+            onViewChange={(view) => updateRememberLink(team.id, view)}
+          />
         </Suspense>
       )}
       {activeTab === "conflicts" && (

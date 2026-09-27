@@ -235,7 +235,6 @@ func AssessSynchronousRemember(
 	providerCtx := observability.WithMetricIdentity(ctx, input.Scope.TeamID, input.Scope.OwnerProfileID)
 	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationSemanticAssessment, 1)
 	started := time.Now()
-	var catalogInputTokens, catalogOutputTokens int
 	response, _, finalRequest, err := concrete.assessRememberSessionWithValidator(providerCtx, request, refresh, 0, func(validateCtx context.Context, _ assessor.SemanticAssessmentRequest, response assessor.SemanticAssessmentResponse) ([]assessor.SemanticValidationError, error) {
 		validationErrors := validateSubmissionAssessmentEvidenceConflictCanonicalization(plan, response)
 		if len(validationErrors) != 0 {
@@ -245,8 +244,6 @@ func AssessSynchronousRemember(
 		if len(registrations) == 0 {
 			return nil, nil
 		}
-		// Preserve completed provider usage if catalog validation fails afterward.
-		catalogInputTokens, catalogOutputTokens = response.InputTokens, response.OutputTokens
 		issues, err := deps.Catalog.ValidateSubmissionPredicateRegistrations(validateCtx, repository.SubmissionPredicateRegistrationValidationInput{
 			TeamID: input.Scope.TeamID, OwnerProfileID: input.Scope.OwnerProfileID, Registrations: registrations,
 		})
@@ -275,13 +272,9 @@ func AssessSynchronousRemember(
 	if err != nil {
 		providerTurns := SynchronousAssessmentProviderTurns(err)
 		outcome := "provider_error"
-		inputTokens, outputTokens := request.InputTokens, 0
+		inputTokens, outputTokens := concrete.completedInputTokens, concrete.completedOutputTokens
 		if errors.Is(err, ErrRememberDatabaseFailure) {
 			outcome = "catalog_error"
-			if catalogInputTokens > 0 {
-				inputTokens = catalogInputTokens
-			}
-			outputTokens = catalogOutputTokens
 		} else if errors.Is(err, assessor.ErrVerifierMalformedResponse) {
 			outcome = "malformed_exhausted"
 		}
@@ -328,7 +321,7 @@ func AssessSynchronousRemember(
 	if inputTokens <= 0 {
 		inputTokens = finalRequest.InputTokens
 	}
-	observability.RecordAssessorCall(deps.Metrics, inputTokens, response.OutputTokens, time.Since(started).Seconds(), "ok")
+	observability.RecordAssessorCall(deps.Metrics, concrete.completedInputTokens, concrete.completedOutputTokens, time.Since(started).Seconds(), "ok")
 	now := time.Now().UTC()
 	assessment := repository.SubmissionAssessment{
 		TeamID: input.Scope.TeamID, AssessmentID: assessmentID, OwnerProfileID: input.Scope.OwnerProfileID,

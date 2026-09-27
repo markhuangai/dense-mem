@@ -13,8 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
@@ -761,29 +759,6 @@ func applyTrustedContext(ctx context.Context, attrs map[string]any, protector *C
 	for key, value := range trustedContextAttrs(ctx, protector) {
 		attrs[key] = value
 	}
-}
-
-func trustedContextAttrs(ctx context.Context, protector *CredentialProtector) map[string]string {
-	attrs := make(map[string]string, 3)
-	if ctx == nil {
-		return attrs
-	}
-	secrets := AuthenticationSecretsFromContext(ctx)
-	_, hasActor := requestctx.ActorFromContext(ctx)
-	if id := correlation.FromContext(ctx); id != "" &&
-		(!correlation.IsClientProvided(ctx) || correlation.IsSafeClientID(id)) &&
-		(!correlation.IsClientProvided(ctx) || hasActor || requestctx.AuthenticationVerifiedFromContext(ctx)) {
-		attrs["correlation_id"] = protectTrustedCorrelationID(id, protector, secrets)
-	}
-	if actor, ok := requestctx.ActorFromContext(ctx); ok {
-		if actor.TeamID != uuid.Nil {
-			attrs["team_id"] = actor.TeamID.String()
-		}
-		if actor.OwnerID != uuid.Nil {
-			attrs["profile_id"] = actor.OwnerID.String()
-		}
-	}
-	return attrs
 }
 
 func normalizeTrustedRecord(ctx context.Context, record slog.Record) slog.Record {

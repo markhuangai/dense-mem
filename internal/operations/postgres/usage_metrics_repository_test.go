@@ -25,11 +25,14 @@ func TestUsageMetricsRepositoryWritesAndPrunesBuckets(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usage_metric_flushes")).WithArgs(flushID).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usage_metric_buckets")).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), bucket.Route, bucket.Method, bucket.StatusClass,
 		bucket.RequestCount, bucket.ErrorCount, bucket.MCPToolCalls, bucket.MCPToolFailures, bucket.TotalLatencyMS, bucket.MaxLatencyMS, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usage_credential_buckets")).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), bucket.CredentialID, bucket.Route, bucket.Method, bucket.StatusClass,
+		bucket.RequestCount, bucket.ErrorCount, bucket.MCPToolCalls, bucket.MCPToolFailures, bucket.TotalLatencyMS, bucket.MaxLatencyMS, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	repo := NewUsageMetricsRepository(db, passthroughRLS{})
 	require.NoError(t, repo.UpsertBuckets(context.Background(), flushID, []domain.UsageMetricBucket{bucket}))
 	require.NoError(t, repo.UpsertBuckets(context.Background(), flushID, nil))
 
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM usage_credential_buckets WHERE bucket_start < $1")).WithArgs(now).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM usage_metric_buckets WHERE bucket_start < $1")).WithArgs(now).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM usage_metric_flushes WHERE created_at < $1")).WithArgs(now).WillReturnResult(sqlmock.NewResult(0, 1))
 	require.NoError(t, repo.PruneBefore(context.Background(), now))
@@ -134,6 +137,7 @@ func TestUsageMetricsRepositoryDeduplicatesRetriedFlush(t *testing.T) {
 	bucket := domainUsageMetricBucket(time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usage_metric_flushes")).WithArgs(flushID).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usage_metric_buckets")).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usage_credential_buckets")).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usage_metric_flushes")).WithArgs(flushID).WillReturnResult(sqlmock.NewResult(0, 0))
 
 	repo := NewUsageMetricsRepository(db, passthroughRLS{})
@@ -158,6 +162,7 @@ func TestUsageMetricsRepositoryReportsWriteAndSnapshotErrors(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usage_metric_flushes")).WithArgs(flushID).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usage_metric_buckets")).WillReturnError(errors.New("insert failed"))
 	require.ErrorContains(t, repo.UpsertBuckets(context.Background(), flushID, []domain.UsageMetricBucket{bucket}), "failed to upsert usage metric buckets")
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM usage_credential_buckets WHERE bucket_start < $1")).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM usage_metric_buckets WHERE bucket_start < $1")).WillReturnError(errors.New("delete failed"))
 	require.ErrorContains(t, repo.PruneBefore(context.Background(), bucket.BucketStart), "failed to prune usage metric buckets")
 	mock.ExpectQuery("SELECT").WillReturnError(errors.New("snapshot failed"))
@@ -199,6 +204,7 @@ func domainUsageMetricBucket(now time.Time) domain.UsageMetricBucket {
 		BucketStart:     now,
 		TeamID:          uuid.New(),
 		KeyID:           uuid.New(),
+		CredentialID:    uuid.New(),
 		Route:           "/mcp",
 		Method:          "POST",
 		StatusClass:     2,

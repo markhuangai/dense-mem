@@ -21,11 +21,15 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
   await expect(page.getByRole("heading", { name: "Teams" })).toBeVisible();
   await page.getByRole("button", { name: new RegExp(escapeRegExp(teamName)) }).click();
   await page.getByRole("button", { name: /team remember attempts/i }).click();
+  await expect(page.getByRole("heading", { name: "Remember Attempts" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Calls \(\d+\)$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Attempt Detail" })).toHaveCount(0);
+  await page.getByRole("button", { name: /^Calls \(/ }).click();
   await expect(page.getByRole("heading", { name: "Remember Calls" })).toBeVisible();
   const canonicalAttemptRow = page.locator(".remember-attempts-table tbody tr").filter({ has: page.getByRole("button", { name: /Attempt / }) }).first();
   await canonicalAttemptRow.getByRole("button", { name: /Attempt / }).click();
   await expect(page.getByRole("heading", { name: "Remember Attempts" })).toBeVisible();
-  await page.getByRole("button", { name: "Calls", exact: true }).click();
+  await page.getByRole("button", { name: /^Calls \(/ }).click();
   await expect(page.getByRole("heading", { name: "Remember Calls" })).toBeVisible();
   await page.getByRole("button", { name: `Inspect Remember call ${expiredInvocationID}` }).click();
   await expect(page.getByRole("heading", { name: "Call Detail" })).toBeVisible();
@@ -35,8 +39,6 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
   await expect(page.getByLabel("Correlation ID")).toHaveValue("expired-invocation-correlation");
   await page.getByRole("button", { name: "Teams", exact: true }).click();
   await page.getByRole("button", { name: /team remember attempts/i }).click();
-  await expect(page.getByRole("heading", { name: "Remember Calls" })).toBeVisible();
-  await page.getByRole("button", { name: "Attempts", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Remember Attempts" })).toBeVisible();
   await page.getByLabel("Remember attempt outcome").selectOption("failed");
   await expect(page.locator(".remember-attempts-table")).toContainText("Provider Unavailable");
@@ -59,6 +61,10 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
   await expect(page.getByRole("heading", { name: "Assessor validation" })).toBeVisible();
   await expect(page.locator(".remember-validation")).toContainText("Failure class");
   await expect(page.locator(".remember-validation table")).toContainText("Fields");
+
+  await page.goto(`${controlURL}/?team_id=${teamID}&remember_view=calls&invocation_id=${expiredInvocationID}`);
+  await expect(page.getByRole("heading", { name: "Call Detail" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Remember call details" })).toContainText(expiredInvocationID);
 });
 
 function requiredEnv(name: string): string {

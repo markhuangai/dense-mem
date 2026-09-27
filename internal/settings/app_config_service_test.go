@@ -333,11 +333,14 @@ func TestAppConfigServiceTelemetryPricingSettingsDefaultsAndUpdate(t *testing.T)
 		domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens:  "1.25",
 		domain.AppConfigTelemetryCostVerifierOutputUSDPerMillionTokens: "2.5",
 		domain.AppConfigTelemetryCostEmbeddingInputUSDPerMillionTokens: "0.1",
+		domain.AppConfigTelemetryCostModelPricesJSON:                   `[{"component":"verifier","model":"remember-model","input_usd_per_million_tokens":3,"output_usd_per_million_tokens":4}]`,
 	}, "control", "127.0.0.1", "corr")
 	require.NoError(t, err)
 	assert.Equal(t, "1.25", telemetryPricingConfigItemForTest(updated, domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens).EffectiveValue)
 	assert.Equal(t, "2.5", telemetryPricingConfigItemForTest(updated, domain.AppConfigTelemetryCostVerifierOutputUSDPerMillionTokens).EffectiveValue)
 	assert.Equal(t, "0.1", telemetryPricingConfigItemForTest(updated, domain.AppConfigTelemetryCostEmbeddingInputUSDPerMillionTokens).EffectiveValue)
+	require.Len(t, updated.Effective.ModelPrices, 1)
+	assert.Equal(t, "remember-model", updated.Effective.ModelPrices[0].Model)
 
 	runtime, err := svc.TelemetryPricingRuntimeConfig(ctx)
 	require.NoError(t, err)
@@ -347,11 +350,32 @@ func TestAppConfigServiceTelemetryPricingSettingsDefaultsAndUpdate(t *testing.T)
 	assert.Equal(t, 1.25, *runtime.VerifierInputUSDPerMillionTokens)
 	assert.Equal(t, 2.5, *runtime.VerifierOutputUSDPerMillionTokens)
 	assert.Equal(t, 0.1, *runtime.EmbeddingInputUSDPerMillionTokens)
+	require.Len(t, runtime.ModelPrices, 1)
 
 	*runtime.VerifierInputUSDPerMillionTokens = 99
+	*runtime.ModelPrices[0].InputUSDPerMillionTokens = 99
 	runtime, err = svc.TelemetryPricingRuntimeConfig(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 1.25, *runtime.VerifierInputUSDPerMillionTokens)
+	assert.Equal(t, 3.0, *runtime.ModelPrices[0].InputUSDPerMillionTokens)
+}
+
+func TestTelemetryModelPricesRequireExactBoundedRates(t *testing.T) {
+	valid := `[{"component":"verifier","model":"remember-model","input_usd_per_million_tokens":1.25,"output_usd_per_million_tokens":2.5},{"component":"embedding","model":"embed-model","input_usd_per_million_tokens":0.1}]`
+	normalized, err := normalizeTelemetryPricingConfigValue(domain.AppConfigTelemetryCostModelPricesJSON, valid)
+	require.NoError(t, err)
+	require.Contains(t, normalized, `"model":"remember-model"`)
+	require.Contains(t, normalized, `"model":"embed-model"`)
+	for _, invalid := range []string{
+		`{"verifier":1}`,
+		`[{"component":"verifier","model":"remember-model","input_usd_per_million_tokens":1.25}]`,
+		`[{"component":"embedding","model":"embed-model","input_usd_per_million_tokens":0.1,"output_usd_per_million_tokens":0.1}]`,
+		`[{"component":"embedding","model":"embed-model","input_usd_per_million_tokens":0.1},{"component":"embedding","model":"embed-model","input_usd_per_million_tokens":0.2}]`,
+		`[{"component":"verifier","model":"remember-model","input_usd_per_million_tokens":-1,"output_usd_per_million_tokens":2}]`,
+	} {
+		_, err := normalizeTelemetryPricingConfigValue(domain.AppConfigTelemetryCostModelPricesJSON, invalid)
+		require.ErrorIs(t, err, ErrInvalidAppConfig, invalid)
+	}
 }
 
 func TestAppConfigServiceCachedTelemetryPricingRuntimeConfigDoesNotReadRepository(t *testing.T) {

@@ -157,6 +157,7 @@ func (s *lifecycleService) CorrectRelationship(
 			err = ErrLifecycleEmbeddingUnavailable
 		} else {
 			executionCtx := observability.WithMetricIdentity(ctx, input.TeamID, input.OwnerProfileID)
+			executionCtx = observability.WithAIOperation(executionCtx, observability.AIOperationSearchDocumentEmbedding, len(plan.Documents))
 			embeddingCtx, cancel := context.WithTimeout(executionCtx, s.embeddingTimeout)
 			result, executeErr := s.executor.Execute(embeddingCtx, semanticwritecontract.Plan{
 				Documents: correctionPlanDocuments(plan.Documents),

@@ -44,12 +44,13 @@ func RefreshTelemetryPricingCacheUntilCanceled(ctx context.Context, pricing oper
 // TelemetryPricingResolver converts the settings-owned rate card into the
 // observability port without exposing settings implementation details.
 type TelemetryPricingResolver struct {
-	pricing       operationscontract.TelemetryPricingReader
-	verifierModel string
+	pricing        operationscontract.TelemetryPricingReader
+	verifierModel  string
+	embeddingModel string
 }
 
-func NewTelemetryPricingResolver(pricing operationscontract.TelemetryPricingReader, verifierModel string) observability.AIPricingResolver {
-	return TelemetryPricingResolver{pricing: pricing, verifierModel: strings.TrimSpace(verifierModel)}
+func NewTelemetryPricingResolver(pricing operationscontract.TelemetryPricingReader, verifierModel, embeddingModel string) observability.AIPricingResolver {
+	return TelemetryPricingResolver{pricing: pricing, verifierModel: strings.TrimSpace(verifierModel), embeddingModel: strings.TrimSpace(embeddingModel)}
 }
 
 func (r TelemetryPricingResolver) ResolveAIPricing(context.Context) (observability.AIPricing, error) {
@@ -60,11 +61,21 @@ func (r TelemetryPricingResolver) ResolveAIPricing(context.Context) (observabili
 	if !ok {
 		return observability.AIPricing{}, errors.New("telemetry pricing snapshot unavailable")
 	}
+	modelPrices := make([]observability.AIModelPrice, len(pricing.ModelPrices))
+	for i, price := range pricing.ModelPrices {
+		modelPrices[i] = observability.AIModelPrice{
+			Component: price.Component, Model: price.Model,
+			InputUSDPerMillionTokens:  clonePrice(price.InputUSDPerMillionTokens),
+			OutputUSDPerMillionTokens: clonePrice(price.OutputUSDPerMillionTokens),
+		}
+	}
 	return observability.AIPricing{
 		VerifierModel:                     r.verifierModel,
+		EmbeddingModel:                    r.embeddingModel,
 		VerifierInputUSDPerMillionTokens:  clonePrice(pricing.VerifierInputUSDPerMillionTokens),
 		VerifierOutputUSDPerMillionTokens: clonePrice(pricing.VerifierOutputUSDPerMillionTokens),
 		EmbeddingInputUSDPerMillionTokens: clonePrice(pricing.EmbeddingInputUSDPerMillionTokens),
+		ModelPrices:                       modelPrices,
 	}, nil
 }
 

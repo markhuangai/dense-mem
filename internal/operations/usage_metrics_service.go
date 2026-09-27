@@ -57,6 +57,7 @@ type usageBucketKey struct {
 	bucketStartUnix int64
 	teamID          uuid.UUID
 	keyID           uuid.UUID
+	credentialID    uuid.UUID
 	route           string
 	method          string
 	statusClass     int
@@ -106,6 +107,7 @@ func (s *UsageMetricsServiceImpl) RecordRequest(_ context.Context, event domain.
 		bucketStartUnix: bucketStart.Unix(),
 		teamID:          event.TeamID,
 		keyID:           event.KeyID,
+		credentialID:    event.CredentialID,
 		route:           route,
 		method:          method,
 		statusClass:     statusClass,
@@ -116,12 +118,13 @@ func (s *UsageMetricsServiceImpl) RecordRequest(_ context.Context, event domain.
 	bucket := s.buckets[key]
 	if bucket.RequestCount == 0 {
 		bucket = domain.UsageMetricBucket{
-			BucketStart: bucketStart,
-			TeamID:      event.TeamID,
-			KeyID:       event.KeyID,
-			Route:       route,
-			Method:      method,
-			StatusClass: statusClass,
+			BucketStart:  bucketStart,
+			TeamID:       event.TeamID,
+			KeyID:        event.KeyID,
+			CredentialID: event.CredentialID,
+			Route:        route,
+			Method:       method,
+			StatusClass:  statusClass,
 		}
 	}
 	bucket.RequestCount++

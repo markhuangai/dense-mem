@@ -162,7 +162,7 @@ func TestOpenAIProvider_EmbedBatch_HappyPath(t *testing.T) {
 func TestOpenAIProviderRecordsProviderUsageBeforeRejectingInvalidResult(t *testing.T) {
 	rate := 1_000_000.0
 	metrics := observability.NewPrometheusMetrics(observability.AIPricingResolverFunc(func(context.Context) (observability.AIPricing, error) {
-		return observability.AIPricing{EmbeddingInputUSDPerMillionTokens: &rate}, nil
+		return observability.AIPricing{EmbeddingModel: "embedding-model", EmbeddingInputUSDPerMillionTokens: &rate}, nil
 	}))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
@@ -189,6 +189,7 @@ func TestOpenAIProviderRecordsProviderUsageBeforeRejectingInvalidResult(t *testi
 	body := recorder.Body.String()
 	require.Contains(t, body, `densemem_operation_provider_tokens_total{component="embedding",kind="input",operation="recall_embedding",source="provider"} 12`)
 	require.Contains(t, body, `densemem_operation_provider_tokens_total{component="embedding",kind="total",operation="recall_embedding",source="provider"} 12`)
+	require.Contains(t, body, `densemem_usage_ai_provider_attempts_total{attribution="unattributed",component="embedding",credential_id="",model="embedding-model",operation="recall_embedding",outcome="error",profile_id="unknown",team_id="unknown"} 1`)
 	for _, line := range strings.Split(body, "\n") {
 		if !strings.HasPrefix(line, "densemem_ai_operation_cost_usd_total{") {
 			continue
@@ -205,7 +206,7 @@ func TestOpenAIProviderRecordsProviderUsageBeforeRejectingInvalidResult(t *testi
 func TestOpenAIProviderUsesTotalTokensWhenPromptTokensAreOmitted(t *testing.T) {
 	rate := 1_000_000.0
 	metrics := observability.NewPrometheusMetrics(observability.AIPricingResolverFunc(func(context.Context) (observability.AIPricing, error) {
-		return observability.AIPricing{EmbeddingInputUSDPerMillionTokens: &rate}, nil
+		return observability.AIPricing{EmbeddingModel: "embedding-model", EmbeddingInputUSDPerMillionTokens: &rate}, nil
 	}))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
@@ -243,6 +244,51 @@ func TestOpenAIProviderUsesTotalTokensWhenPromptTokensAreOmitted(t *testing.T) {
 		return
 	}
 	t.Fatal("total embedding tokens did not produce an AI operation cost sample")
+}
+
+func TestOpenAIProviderFeatureAttemptsCountEachRetriedHTTPCallOnce(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":{"code":"server_error"}}`))
+			return
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"data":  []any{map[string]any{"embedding": []float32{0.1, 0.2}}},
+			"usage": map[string]any{"prompt_tokens": 5},
+		}))
+	}))
+	defer srv.Close()
+
+	metrics := observability.NewPrometheusMetrics()
+	provider := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL: srv.URL, AIAPIKey: "key", AIEmbeddingModel: "embedding-model", AIEmbeddingDimensions: 2, AIEmbeddingTimeoutSeconds: 5,
+	}, srv.Client())
+	provider.SetMetrics(metrics)
+	retry := NewRetryEmbeddingProviderWithKeyAndOptions(provider, newTestLogger(), "key", RetryEmbeddingOptions{
+		MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond,
+	})
+	retry.SetMetrics(metrics)
+	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationSearchDocumentEmbedding, 1)
+	_, _, err := retry.Embed(ctx, "text")
+	require.NoError(t, err)
+	require.EqualValues(t, 2, requests.Load())
+
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	var attempts []string
+	for _, line := range strings.Split(recorder.Body.String(), "\n") {
+		if strings.HasPrefix(line, "densemem_usage_ai_provider_attempts_total{") {
+			attempts = append(attempts, line)
+		}
+	}
+	require.Len(t, attempts, 2)
+	require.Contains(t, strings.Join(attempts, "\n"), `outcome="error"`)
+	require.Contains(t, strings.Join(attempts, "\n"), `outcome="ok"`)
+	for _, line := range attempts {
+		require.True(t, strings.HasSuffix(line, " 1"), "attempt counted more than once: %s", line)
+	}
 }
 
 func TestOpenAIProviderMarksMalformedSuccessfulResponseUnpriced(t *testing.T) {

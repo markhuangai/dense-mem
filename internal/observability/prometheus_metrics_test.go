@@ -142,6 +142,7 @@ func TestPrometheusMetricsRecordsLifecycleAndPricedAIOperations(t *testing.T) {
 	metrics := NewPrometheusMetrics(AIPricingResolverFunc(func(context.Context) (AIPricing, error) {
 		return AIPricing{
 			VerifierModel:                     "configured-verifier",
+			EmbeddingModel:                    "configured-embedding",
 			VerifierInputUSDPerMillionTokens:  &verifierInputPrice,
 			VerifierOutputUSDPerMillionTokens: &verifierOutputPrice,
 			EmbeddingInputUSDPerMillionTokens: &embeddingInputPrice,

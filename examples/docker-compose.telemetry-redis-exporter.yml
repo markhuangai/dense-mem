@@ -1,0 +1,20 @@
+# Optional Redis exporter for the expert stack, which enables Redis.
+services:
+  prometheus:
+    volumes:
+      - ./prometheus.exporters.redis.yml:/etc/prometheus/prometheus.yml:ro
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.67.0
+    environment:
+      REDIS_ADDR: redis://redis:6379
+      REDIS_PASSWORD_FILE: /run/secrets/redis-exporter-password
+    secrets:
+      - redis-exporter-password
+    networks:
+      - private
+    restart: unless-stopped
+
+secrets:
+  redis-exporter-password:
+    environment: REDIS_PASSWORD

@@ -61,9 +61,18 @@ jobs:
             exit 1
           fi
 
+          {
+            echo "## Shared staging database refresh"
+            echo "- Started (UTC): $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "- Source: production copy. Staging-only Remember calls, attempts, and test records will be replaced."
+            echo "- Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
           timeout --signal=TERM --kill-after=30s 10m "${sync_script}"
+          echo "- Restore completed (UTC): $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "${GITHUB_STEP_SUMMARY}"
           DENSE_MEM_STAGE_POSTGRES_DSN="${stage_postgres_dsn}" \
             go test -tags=staging_rehearsal ./cmd/internal/migrationapp \
             -run '^TestStagingMigrationRehearsal$' \
             -count=1 \
             -timeout=40m
+          echo "- Migration rehearsal completed (UTC): $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "${GITHUB_STEP_SUMMARY}"

@@ -17,17 +17,18 @@ type authenticatedContextKey struct{}
 // OwnerID is the permanent semantic ownership alias; it is distinct from the
 // team, identity, membership, and optional credential identifiers.
 type Actor struct {
-	TeamID        uuid.UUID
-	TeamName      string
-	IdentityID    uuid.UUID
-	MembershipID  uuid.UUID
-	OwnerID       uuid.UUID
-	OwnerName     string
-	CredentialID  *uuid.UUID
-	AuthMethod    string
-	Role          string
-	Grants        []string
-	AllowedSpaces []domain.MemorySpaceAccess
+	TeamID         uuid.UUID
+	TeamName       string
+	IdentityID     uuid.UUID
+	MembershipID   uuid.UUID
+	OwnerID        uuid.UUID
+	OwnerName      string
+	CredentialID   *uuid.UUID
+	CredentialName string
+	AuthMethod     string
+	Role           string
+	Grants         []string
+	AllowedSpaces  []domain.MemorySpaceAccess
 }
 
 func WithActor(ctx context.Context, actor Actor) context.Context {

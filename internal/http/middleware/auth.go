@@ -441,6 +441,7 @@ func principalAndActorContext(actor *domain.AuthenticatedActor, authMethod, keyP
 	}
 
 	var credentialID *uuid.UUID
+	credentialName := ""
 	rateLimit := 0
 	var ssoProviderID *uuid.UUID
 	ssoSubject := actor.Membership.SSOSubject
@@ -458,6 +459,7 @@ func principalAndActorContext(actor *domain.AuthenticatedActor, authMethod, keyP
 		}
 		id := actor.Credential.ID
 		credentialID = &id
+		credentialName = actor.Credential.Name
 		rateLimit = actor.Credential.RateLimit
 		if actor.Credential.SSOProviderID != nil {
 			providerID := *actor.Credential.SSOProviderID
@@ -485,17 +487,18 @@ func principalAndActorContext(actor *domain.AuthenticatedActor, authMethod, keyP
 		AllowedSpaces: append([]domain.MemorySpaceAccess(nil), actorAllowedSpaces(actor)...),
 	}
 	actorContext := requestctx.Actor{
-		TeamID:        actor.Team.ID,
-		TeamName:      actor.Team.Name,
-		IdentityID:    actor.Identity.ID,
-		MembershipID:  actor.Membership.ID,
-		OwnerID:       actor.OwnerID,
-		OwnerName:     actor.Membership.Name,
-		CredentialID:  credentialID,
-		AuthMethod:    authMethod,
-		Role:          actor.Membership.Role,
-		Grants:        append([]string(nil), actor.Membership.Grants...),
-		AllowedSpaces: append([]domain.MemorySpaceAccess(nil), actorAllowedSpaces(actor)...),
+		TeamID:         actor.Team.ID,
+		TeamName:       actor.Team.Name,
+		IdentityID:     actor.Identity.ID,
+		MembershipID:   actor.Membership.ID,
+		OwnerID:        actor.OwnerID,
+		OwnerName:      actor.Membership.Name,
+		CredentialID:   credentialID,
+		CredentialName: credentialName,
+		AuthMethod:     authMethod,
+		Role:           actor.Membership.Role,
+		Grants:         append([]string(nil), actor.Membership.Grants...),
+		AllowedSpaces:  append([]domain.MemorySpaceAccess(nil), actorAllowedSpaces(actor)...),
 	}
 	return principal, actorContext, nil
 }

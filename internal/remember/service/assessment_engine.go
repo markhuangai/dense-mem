@@ -11,14 +11,16 @@ import (
 // assessmentEngine contains request-scoped assessor mechanics only. It has no
 // ledger, placement identity, lease, retry, or background-worker state.
 type assessmentEngine struct {
-	catalog        SubmissionAssessmentCatalog
-	provider       assessor.Provider
-	limits         assessor.SemanticAssessmentLimits
-	teamID         string
-	ownerProfileID string
-	now            func() time.Time
-	metrics        observability.DiscoverabilityMetrics
-	logger         observability.LogProvider
+	catalog               SubmissionAssessmentCatalog
+	provider              assessor.Provider
+	limits                assessor.SemanticAssessmentLimits
+	teamID                string
+	ownerProfileID        string
+	now                   func() time.Time
+	metrics               observability.DiscoverabilityMetrics
+	logger                observability.LogProvider
+	completedInputTokens  int
+	completedOutputTokens int
 }
 
 func newAssessmentEngine(deps SynchronousAssessmentDependencies, teamID, ownerID string) *assessmentEngine {

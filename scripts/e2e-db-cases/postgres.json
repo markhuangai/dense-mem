@@ -723,6 +723,20 @@
       "source": "internal/storage/postgres/telemetry_pricing_migration_integration_test.go"
     },
     {
+      "id": "postgres/TestTelemetryModelPriceMigrationPreservesExistingRates",
+      "package": "./internal/storage/postgres",
+      "run": "^TestTelemetryModelPriceMigrationPreservesExistingRates$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/telemetry_pricing_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestUsageCredentialBucketMigrationUpAndDown",
+      "package": "./internal/storage/postgres",
+      "run": "^TestUsageCredentialBucketMigrationUpAndDown$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/telemetry_pricing_migration_integration_test.go"
+    },
+    {
       "id": "postgres/TestTransitionalSchemaCleanupEmbeddingMismatchRollsBackOnlyDestructiveMigration",
       "package": "./internal/storage/postgres",
       "run": "^TestTransitionalSchemaCleanupEmbeddingMismatchRollsBackOnlyDestructiveMigration$",

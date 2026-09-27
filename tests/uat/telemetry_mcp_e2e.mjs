@@ -6,6 +6,7 @@ const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
 const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const apiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
+const credentialID = requiredEnv("DENSE_MEM_E2E_CREDENTIAL_ID");
 const prometheusURL = requiredEnv("DENSE_MEM_PROMETHEUS_URL").replace(/\/$/, "");
 
 let rpcID = 0;
@@ -21,6 +22,7 @@ for (const key of [
   "TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS",
   "TELEMETRY_COST_VERIFIER_OUTPUT_USD_PER_MILLION_TOKENS",
   "TELEMETRY_COST_EMBEDDING_INPUT_USD_PER_MILLION_TOKENS",
+  "TELEMETRY_COST_MODEL_PRICES_JSON",
 ]) {
   if (!pricingKeys.has(key)) {
     throw new Error(`telemetry pricing response missing ${key}`);
@@ -37,6 +39,23 @@ await controlJSON("/config/telemetry-pricing", {
     ],
   }),
 });
+
+const modelPrices = JSON.stringify([{
+  component: "verifier", model: "telemetry-uat-alternate", input_usd_per_million_tokens: 1, output_usd_per_million_tokens: 2,
+}]);
+const pricedModels = await controlJSON("/config/telemetry-pricing", {
+  method: "PATCH",
+  body: JSON.stringify({ items: [{ key: "TELEMETRY_COST_MODEL_PRICES_JSON", value: modelPrices }] }),
+});
+assert(pricedModels.data?.effective?.model_prices?.[0]?.model === "telemetry-uat-alternate", "model-specific telemetry pricing was not stored");
+const invalidPricing = await fetch(`${controlURL}/control/api/config/telemetry-pricing`, {
+  method: "PATCH",
+  headers: { Authorization: `Bearer ${controlToken}`, "Content-Type": "application/json" },
+  body: JSON.stringify({ items: [{ key: "TELEMETRY_COST_MODEL_PRICES_JSON", value: '[{"component":"verifier","model":"incomplete","input_usd_per_million_tokens":1}]' }] }),
+});
+assert(invalidPricing.status === 422, `incomplete model pricing was accepted: HTTP ${invalidPricing.status}`);
+const pricingAfterRejection = await controlJSON("/config/telemetry-pricing", { method: "GET" });
+assert(pricingAfterRejection.data?.effective?.model_prices?.[0]?.model === "telemetry-uat-alternate", "invalid model pricing replaced the accepted rate card");
 
 const telemetryContent = `Telemetry E2E ${runID}: Dense-Mem uses exact evidence before semantic processing.`;
 const remember = await mcpTool("remember", {
@@ -82,10 +101,11 @@ await mcpTool("recall_memory", {
 
 const signals = await waitForTelemetrySignals();
 const credentials = await controlJSON(`/teams/${teamID}/credentials`, { method: "GET" });
-const profileID = String(credentials.data?.[0]?.id ?? "");
-if (!profileID) {
-  throw new Error("telemetry e2e could not resolve the seeded credential id");
-}
+const credential = credentials.data?.find((item) => item.id === credentialID);
+assert(credential, "telemetry e2e could not resolve the seeded credential ID");
+const profileID = credentialID;
+const credentialUsage = await validateCredentialUsage(credentialID, String(credential.name ?? ""));
+const credentialRollup = await validateCredentialRollup(credentialID, String(credential.name ?? ""));
 
 const telemetryMatrix = await validateTelemetryMatrix(profileID);
 const disabledFeatures = await validateDisabledFeatureReasons();
@@ -93,7 +113,7 @@ const isolation = await validateTelemetryIsolation(profileID);
 const unsupportedScope = await validateUnsupportedScope();
 const profileScopeValidation = await validateProfileScopeRequiresTeam(profileID);
 const retiredUserTelemetry = await validateRetiredUserTelemetry();
-const grafanaParity = await validateGrafanaDashboardParity();
+const grafanaParity = await validateGrafanaDashboardParity(profileID);
 const partialFailure = await validatePartialPrometheusFailure(grafanaParity);
 
 console.log(JSON.stringify({
@@ -104,6 +124,8 @@ console.log(JSON.stringify({
   remember_duration_samples: signals.rememberDurationSamples,
   recalls: signals.recalls,
   ai_cost_usd: signals.aiCostUSD,
+  credential_usage: credentialUsage,
+  credential_rollup: credentialRollup,
   telemetry_matrix: telemetryMatrix,
   disabled_features: disabledFeatures,
   isolation,
@@ -248,7 +270,7 @@ async function validateRetiredUserTelemetry() {
   return { status: response.status };
 }
 
-async function validateGrafanaDashboardParity() {
+async function validateGrafanaDashboardParity(credentialID) {
   const password = requiredEnv("DENSE_MEM_E2E_GRAFANA_ADMIN_PASSWORD");
   const url = "http://grafana:3000";
   const authorization = `Basic ${Buffer.from(`admin:${password}`).toString("base64")}`;
@@ -297,7 +319,7 @@ async function validateGrafanaDashboardParity() {
   const anonymous = await fetch(`${url}/api/search?type=dash-db&limit=1`);
   assert(anonymous.status === 401, `Grafana dashboard API was accessible without credentials: HTTP ${anonymous.status}`);
 
-  const expectedUIDs = ["dense-mem-service", "dense-mem-ai-recall", "dense-mem-workflows"];
+  const expectedUIDs = ["dense-mem-service", "dense-mem-ai-recall", "dense-mem-workflows", "dense-mem-usage", "dense-mem-performance"];
   let dashboards = [];
   for (let attempt = 0; attempt < 45; attempt += 1) {
     dashboards = await request("/api/search?type=dash-db&limit=100");
@@ -329,7 +351,7 @@ async function validateGrafanaDashboardParity() {
           refId: "A",
           datasource: { type: "prometheus", uid: datasource.uid },
           expr: resolvedExpression,
-          format: "time_series",
+          format: options.format ?? "time_series",
           instant: options.instant ?? true,
           range: !(options.instant ?? true),
           interval,
@@ -344,12 +366,74 @@ async function validateGrafanaDashboardParity() {
   const snapshot = legacy.data;
   assert(snapshot?.window?.key === "15m", "legacy telemetry parity snapshot omitted the 15-minute window");
   const panels = [];
+  const teamLinkPanels = new Map();
   for (const uid of expectedUIDs) {
     const result = await request(`/api/dashboards/uid/${uid}`);
     assert(result.dashboard?.templating?.list?.some((variable) => variable.name === "datasource"), `${uid} omitted the portable datasource variable`);
     assert(result.dashboard?.templating?.list?.some((variable) => variable.name === "job"), `${uid} omitted the bounded scrape-job selector`);
+    assert(!result.dashboard.links.some((link) => /control_portal_url|team_id=/.test(link.url ?? "")), `${uid} exposes a portal link without a concrete team row`);
+    if (uid === "dense-mem-usage") {
+      assert(result.dashboard.templating.list.some((variable) => variable.name === "credential"), "credential usage dashboard omitted its key ID filter");
+      assert(result.dashboard.panels.some((panel) => panel.title === "Requests by credential" && panel.type === "table"), "credential usage dashboard omitted its request table");
+      const teamVariable = result.dashboard.templating.list.find((variable) => variable.name === "team");
+      assert(teamVariable?.current?.value === "$__all", "credential usage dashboard did not retain its unselected All-team default");
+    }
+    if (uid === "dense-mem-performance") {
+      assert(result.dashboard.panels.some((panel) => panel.title === "Read stage p95"), "performance dashboard omitted read-stage latency");
+    }
+    if (uid === "dense-mem-usage" || uid === "dense-mem-performance") {
+      const teamLinks = result.dashboard.panels.find((panel) => panel.title === "Team diagnostic links");
+      assert(teamLinks?.type === "table" && teamLinks.targets?.[0]?.format === "table", `${uid} omitted its concrete team link table`);
+      assert(teamLinks.transformations?.some((transform) => transform.id === "labelsToFields" && transform.options?.mode === "columns"), `${uid} did not materialize team labels as table fields`);
+      const links = teamLinks.fieldConfig?.defaults?.links ?? [];
+      assert(links.length === 2, `${uid} must expose both protected team destinations`);
+      assert(links.some((link) => link.url.includes("remember_view=attempts")) && links.some((link) => link.url.includes("section=logs")), `${uid} omitted Remember history or operation logs`);
+      for (const link of links) {
+        assert(link.url.includes('${__data.fields["team_id"]}') && !link.url.includes("${team}"), `${uid} used a dashboard selection instead of a team row`);
+      }
+      teamLinkPanels.set(uid, teamLinks);
+    }
+    if (uid === "dense-mem-service") {
+      assert(result.dashboard.panels.some((panel) => panel.title === "HTTP error percentage" && panel.fieldConfig?.defaults?.thresholds?.steps?.length === 3), "overview dashboard omitted severity thresholds");
+    }
     panels.push(...(result.dashboard.panels ?? []));
   }
+  const usagePanel = panels.find((panel) => panel.title === "Requests by credential");
+  assert(usagePanel, "Grafana omitted credential request usage");
+  const usageExpression = usagePanel.targets[0].expr
+    .replaceAll("$job", "dense-mem")
+    .replaceAll("$team", teamID)
+    .replaceAll("$credential", credentialID)
+    .replaceAll("$window", "15m");
+  const usageResult = await query(usageExpression);
+  assert(grafanaFrameNumber(usageResult.results?.A?.frames ?? []) > 0, "Grafana could not query the real credential request series");
+  const otherCredentialResult = await query(usageExpression.replaceAll(credentialID, "00000000-0000-4000-8000-000000000002"));
+  assert(grafanaFrameNumber(otherCredentialResult.results?.A?.frames ?? []) === null, "Grafana showed another credential's usage in the selected key view");
+  for (const [uid, panel] of teamLinkPanels) {
+    const expression = panel.targets[0].expr.replaceAll("$job", "dense-mem");
+    const result = await query(expression, { format: "table" });
+    assert(!result.results?.A?.error, `${uid} team link query failed: ${result.results?.A?.error ?? "unknown error"}`);
+    const teams = (result.results?.A?.frames ?? []).flatMap((frame) => {
+      const fields = frame.schema?.fields ?? [];
+      const column = fields.findIndex((field) => field.name === "Value" && field.type === "number");
+      const team = fields[column]?.labels?.team_id;
+      return team && frame.data?.values?.[column]?.some((value) => Number(value) > 0) ? [team] : [];
+    });
+    assert(teams.includes(teamID), `${uid} did not expose the active concrete team row`);
+    assert(teams.every((value) => /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)), `${uid} exposed a non-concrete team row`);
+    for (const link of panel.fieldConfig.defaults.links) {
+      const resolved = new URL(link.url
+        .replaceAll("${control_portal_url}", "http://control.example")
+        .replaceAll('${__data.fields["team_id"]}', teamID));
+      assert(resolved.searchParams.get("team_id") === teamID, `${uid} row link lost its selected team ID`);
+      assert(resolved.searchParams.get("remember_view") === "attempts" || resolved.searchParams.get("section") === "logs", `${uid} row link has an unexpected destination`);
+    }
+  }
+  const stagePanel = panels.find((panel) => panel.title === "Read stage p95");
+  assert(stagePanel, "Grafana omitted the read-stage p95 drilldown");
+  const stageExpression = stagePanel.targets[0].expr.replaceAll("$job", "dense-mem").replaceAll("$read_operation", ".*");
+  const stageResult = await query(stageExpression, { rateInterval: "15m" });
+  assert(grafanaFrameNumber(stageResult.results?.A?.frames ?? []) !== null, "Grafana could not query read-stage latency");
   const parityPanels = new Map();
   for (const panel of panels) {
     const match = /^Parity: (card|series)\/([a-z0-9_]+)/.exec(panel.description ?? "");
@@ -838,6 +922,46 @@ async function mcpTool(name, args, key = apiKey) {
     throw new Error(`MCP ${name} result missing text`);
   }
   return JSON.parse(text);
+}
+
+async function validateCredentialUsage(credentialID, expectedName) {
+  assert(/^[0-9a-f-]{36}$/i.test(credentialID), "credential usage did not receive a UUID credential ID");
+  const query = async (expression) => {
+    const url = new URL("/api/v1/query", `${prometheusURL}/`);
+    url.searchParams.set("query", expression);
+    const result = await httpJSON(url.toString(), { method: "GET" });
+    return result.data?.result ?? [];
+  };
+  const selector = `team_id="${teamID}",credential_id="${credentialID}"`;
+  let requests = [];
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    requests = await query(`densemem_usage_http_requests_total{${selector}}`);
+    if (requests.some((sample) => Number(sample.value?.[1] ?? 0) > 0)) break;
+    await delay(5_000);
+  }
+  assert(requests.some((sample) => Number(sample.value?.[1] ?? 0) > 0), "authenticated requests were not attributed to their credential ID");
+  assert(requests.every((sample) => sample.metric?.attribution === "credential"), "credential requests had an incorrect attribution category");
+  const names = await query(`densemem_usage_credential_last_observed_timestamp_seconds{${selector}}`);
+  if (expectedName) {
+    assert(names.some((sample) => sample.metric?.credential_name === expectedName), "credential display name was not exported with its ID");
+  }
+  const otherTeam = await query(`densemem_usage_http_requests_total{team_id="00000000-0000-4000-8000-000000000001",credential_id="${credentialID}"}`);
+  assert(otherTeam.length === 0, "credential usage appeared in another team");
+  const runtime = await query('go_goroutines{job="dense-mem"}');
+  assert(runtime.some((sample) => Number(sample.value?.[1] ?? 0) > 0), "Go runtime collector was unavailable");
+  return { credential_id: credentialID, request_series: requests.length, name_available: names.length > 0 };
+}
+
+async function validateCredentialRollup(credentialID, expectedName) {
+  const scoped = await controlJSON(`/metrics?window_minutes=30&team_id=${teamID}&credential_id=${credentialID}`, { method: "GET" });
+  const key = scoped.data?.keys?.find((item) => item.key_id === credentialID);
+  assert(key && key.requests > 0, "control usage rollup omitted the active credential ID");
+  assert(key.key_name === expectedName, "control usage rollup omitted the credential name");
+  assert(scoped.data?.system?.requests >= key.requests, "credential request totals exceeded the scoped system total");
+
+  const otherTeam = await controlJSON(`/metrics?window_minutes=30&team_id=00000000-0000-4000-8000-000000000001&credential_id=${credentialID}`, { method: "GET" });
+  assert(otherTeam.data?.system?.requests === 0 && otherTeam.data?.keys?.length === 0, "control usage rollup crossed the team filter");
+  return { credential_id: credentialID, requests: key.requests };
 }
 
 async function waitForTelemetrySignals() {

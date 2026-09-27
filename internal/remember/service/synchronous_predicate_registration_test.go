@@ -14,6 +14,8 @@ import (
 
 func TestSynchronousAssessmentRepairsPredicateCatalogConflict(t *testing.T) {
 	fixture := synchronousAssessmentFixture(t)
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	fixture.deps.Metrics = metrics
 	fixture.catalog.registrationValidate = func(input repository.SubmissionPredicateRegistrationValidationInput) ([]repository.SubmissionPredicateRegistrationIssue, error) {
 		if input.Registrations[0].PredicateKey == "retired_key" {
 			fixture.catalog.predicateOptions = []repository.SemanticReviewPredicateCandidate{{
@@ -29,13 +31,18 @@ func TestSynchronousAssessmentRepairsPredicateCatalogConflict(t *testing.T) {
 		if turn == 1 {
 			key = "retired_key"
 		}
-		return synchronousResponseWithRegistration(request, key)
+		response := synchronousResponseWithRegistration(request, key)
+		response.InputTokens = 100 + turn
+		response.OutputTokens = 10 + turn
+		return response
 	}
 
 	prepared, err := AssessSynchronousRemember(context.Background(), fixture.deps, fixture.input)
 	require.NoError(t, err)
 	require.Equal(t, 1, fixture.provider.repairCalls)
 	require.Equal(t, 2, prepared.Response.ProviderTurns)
+	require.Equal(t, 203, metrics.AssessorCalls()[0].InputTokens)
+	require.Equal(t, 23, metrics.AssessorCalls()[0].OutputTokens)
 	require.Len(t, fixture.catalog.registrationInputs, 2)
 	require.Equal(t, fixture.input.Scope.TeamID, fixture.catalog.registrationInputs[0].TeamID)
 	require.Equal(t, fixture.input.Scope.OwnerProfileID, fixture.catalog.registrationInputs[0].OwnerProfileID)
@@ -55,9 +62,14 @@ func TestSynchronousAssessmentRepairsPredicateCatalogConflict(t *testing.T) {
 
 func TestSynchronousAssessmentPredicateCatalogConflictExhaustsCompleteRepair(t *testing.T) {
 	fixture := synchronousAssessmentFixture(t)
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	fixture.deps.Metrics = metrics
 	fixture.catalog.registrationIssues = []repository.SubmissionPredicateRegistrationIssue{{RegistrationIndex: 0, Field: "predicate_key", Message: "resolves to a predicate that is not active"}}
-	fixture.provider.response = func(request assessor.SemanticAssessmentRequest, _ int) assessor.SemanticAssessmentResponse {
-		return synchronousResponseWithRegistration(request, "retired_key")
+	fixture.provider.response = func(request assessor.SemanticAssessmentRequest, turn int) assessor.SemanticAssessmentResponse {
+		response := synchronousResponseWithRegistration(request, "retired_key")
+		response.InputTokens = 100 + turn
+		response.OutputTokens = 10 + turn
+		return response
 	}
 
 	prepared, err := AssessSynchronousRemember(context.Background(), fixture.deps, fixture.input)
@@ -66,6 +78,9 @@ func TestSynchronousAssessmentPredicateCatalogConflictExhaustsCompleteRepair(t *
 	require.Equal(t, SemanticMaxAssessorTurns, SynchronousAssessmentProviderTurns(err))
 	require.Equal(t, SemanticMaxAssessorTurns-1, fixture.provider.repairCalls)
 	require.Len(t, fixture.catalog.registrationInputs, SemanticMaxAssessorTurns)
+	require.Equal(t, "malformed_exhausted", metrics.AssessorCalls()[0].Outcome)
+	require.Equal(t, 306, metrics.AssessorCalls()[0].InputTokens)
+	require.Equal(t, 36, metrics.AssessorCalls()[0].OutputTokens)
 	diagnostics := SynchronousAssessmentValidationDiagnostics(err)
 	require.NotNil(t, diagnostics)
 }
@@ -78,6 +93,7 @@ func TestSynchronousAssessmentPredicateCatalogOperationalFailure(t *testing.T) {
 	fixture.provider.response = func(request assessor.SemanticAssessmentRequest, _ int) assessor.SemanticAssessmentResponse {
 		response := synchronousResponseWithRegistration(request, "fresh_key")
 		response.InputTokens = 317
+		response.OutputTokens = 41
 		return response
 	}
 
@@ -90,7 +106,7 @@ func TestSynchronousAssessmentPredicateCatalogOperationalFailure(t *testing.T) {
 	require.Len(t, calls, 1)
 	require.Equal(t, "catalog_error", calls[0].Outcome)
 	require.Equal(t, 317, calls[0].InputTokens)
-	require.Positive(t, calls[0].OutputTokens)
+	require.Equal(t, 41, calls[0].OutputTokens)
 }
 
 func TestSynchronousAssessmentPredicateCatalogCancellation(t *testing.T) {
@@ -105,6 +121,23 @@ func TestSynchronousAssessmentPredicateCatalogCancellation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, 1, SynchronousAssessmentProviderTurns(err))
 	require.Zero(t, fixture.provider.repairCalls)
+}
+
+func TestSynchronousAssessmentProviderFailureHasNoCompletedTurnTokens(t *testing.T) {
+	fixture := synchronousAssessmentFixture(t)
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	fixture.deps.Metrics = metrics
+	fixture.provider.err = errors.New("provider unavailable")
+
+	prepared, err := AssessSynchronousRemember(context.Background(), fixture.deps, fixture.input)
+	require.Nil(t, prepared)
+	require.ErrorIs(t, err, ErrRememberProviderUnavailable)
+	require.Zero(t, SynchronousAssessmentProviderTurns(err))
+	calls := metrics.AssessorCalls()
+	require.Len(t, calls, 1)
+	require.Equal(t, "provider_error", calls[0].Outcome)
+	require.Zero(t, calls[0].InputTokens)
+	require.Zero(t, calls[0].OutputTokens)
 }
 
 func synchronousResponseWithRegistration(request assessor.SemanticAssessmentRequest, key string) assessor.SemanticAssessmentResponse {

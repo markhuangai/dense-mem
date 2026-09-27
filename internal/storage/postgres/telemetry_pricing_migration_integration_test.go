@@ -78,6 +78,81 @@ func TestTelemetryPricingMigrationsCreateRatesAndMarkerUniqueness(t *testing.T) 
 	assert.Equal(t, 1, policyCount)
 }
 
+func TestTelemetryModelPriceMigrationPreservesExistingRates(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, sqlDB, migrationControlRetirementBaseVersion)
+	seedMigrationControlRetirementFixture(t, ctx, sqlDB)
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 20260924120001))
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE app_config SET value = '1.25' WHERE key = 'TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS'`)
+		return err
+	}))
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 20260927010001))
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 20260927010001))
+	var modelPrices, existingRate string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT value FROM app_config WHERE key = 'TELEMETRY_COST_MODEL_PRICES_JSON'`).Scan(&modelPrices))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT value FROM app_config WHERE key = 'TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS'`).Scan(&existingRate))
+	assert.Empty(t, modelPrices)
+	assert.Equal(t, "1.25", existingRate)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE app_config SET value = $1 WHERE key = 'TELEMETRY_COST_MODEL_PRICES_JSON'`,
+			`[{"component":"verifier","model":"alternate","input_usd_per_million_tokens":1,"output_usd_per_million_tokens":2}]`)
+		return err
+	}))
+	require.NoError(t, migrationDownTo(ctx, sqlDB, 20260924120001))
+	var modelPriceKeys int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM app_config WHERE key = 'TELEMETRY_COST_MODEL_PRICES_JSON'`).Scan(&modelPriceKeys))
+	require.Zero(t, modelPriceKeys)
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT value FROM app_config WHERE key = 'TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS'`).Scan(&existingRate))
+	assert.Equal(t, "1.25", existingRate)
+}
+
+func TestUsageCredentialBucketMigrationUpAndDown(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, sqlDB, migrationControlRetirementBaseVersion)
+	seedMigrationControlRetirementFixture(t, ctx, sqlDB)
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 20260927010001))
+	require.False(t, tableExists(t, ctx, sqlDB, "usage_credential_buckets"))
+
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 20260927010002))
+	require.True(t, tableExists(t, ctx, sqlDB, "usage_credential_buckets"))
+	var rlsEnabled bool
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT relrowsecurity AND relforcerowsecurity
+		FROM pg_class WHERE oid = 'usage_credential_buckets'::regclass
+	`).Scan(&rlsEnabled))
+	require.True(t, rlsEnabled)
+	var policyCount int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*) FROM pg_policies
+		WHERE schemaname = 'public' AND tablename = 'usage_credential_buckets'
+	`).Scan(&policyCount))
+	require.Equal(t, 2, policyCount)
+
+	teamID, credentialID := uuid.New(), uuid.New()
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO teams (id, name) VALUES ($1, $2)`, teamID, "usage-migration-"+teamID.String()); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO usage_credential_buckets (bucket_start, team_id, credential_id, route, method, status_class, request_count)
+			VALUES (now(), $1, $2, '/mcp', 'POST', 2, 1)
+		`, teamID, credentialID)
+		return err
+	}))
+	var rows int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM usage_credential_buckets`).Scan(&rows))
+	require.Equal(t, 1, rows)
+
+	require.NoError(t, migrationDownTo(ctx, sqlDB, 20260927010001))
+	require.False(t, tableExists(t, ctx, sqlDB, "usage_credential_buckets"))
+	require.True(t, tableExists(t, ctx, sqlDB, "usage_metric_buckets"))
+}
+
 func TestTelemetryFirstDispositionMigrationRebuildsInvalidConcurrentIndex(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)

@@ -2,16 +2,21 @@ package settings
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 const maxTelemetryCostUSDPerMillionTokens = 1_000_000
+const maxTelemetryModelPrices = 32
 
 func (s *AppConfigServiceImpl) GetTelemetryPricingSettings(ctx context.Context) (*domain.TelemetryPricingConfigSettings, error) {
 	cache, err := s.currentCache(ctx)
@@ -78,6 +83,15 @@ func telemetryPricingRuntimeConfigFromEntries(entries map[string]domain.AppConfi
 			items = append(items, telemetryPricingConfigItem(entries, key, "", strings.TrimPrefix(err.Error(), ErrInvalidAppConfig.Error()+": ")))
 			continue
 		}
+		if key == domain.AppConfigTelemetryCostModelPricesJSON {
+			if normalized != "" {
+				if err := json.Unmarshal([]byte(normalized), &runtime.ModelPrices); err != nil {
+					return domain.TelemetryPricingConfigSettings{}, err
+				}
+			}
+			items = append(items, telemetryPricingConfigItem(entries, key, normalized, ""))
+			continue
+		}
 		price := telemetryPricePointer(normalized)
 		switch key {
 		case domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens:
@@ -123,6 +137,9 @@ func normalizeTelemetryPricingConfigValue(key, value string) (string, error) {
 	if trimmed == "" {
 		return "", nil
 	}
+	if key == domain.AppConfigTelemetryCostModelPricesJSON {
+		return normalizeTelemetryModelPrices(trimmed)
+	}
 	parsed, err := strconv.ParseFloat(trimmed, 64)
 	if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) || parsed < 0 || parsed > maxTelemetryCostUSDPerMillionTokens {
 		return "", fmt.Errorf("%w: %s must be a number between 0 and %d", ErrInvalidAppConfig, key, maxTelemetryCostUSDPerMillionTokens)
@@ -135,7 +152,63 @@ func editableTelemetryPricingConfigKeys() []string {
 		domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens,
 		domain.AppConfigTelemetryCostVerifierOutputUSDPerMillionTokens,
 		domain.AppConfigTelemetryCostEmbeddingInputUSDPerMillionTokens,
+		domain.AppConfigTelemetryCostModelPricesJSON,
 	}
+}
+
+func normalizeTelemetryModelPrices(raw string) (string, error) {
+	invalid := func(reason string) (string, error) {
+		return "", fmt.Errorf("%w: %s %s", ErrInvalidAppConfig, domain.AppConfigTelemetryCostModelPricesJSON, reason)
+	}
+	if len(raw) > 16_384 {
+		return invalid("must be at most 16384 bytes")
+	}
+	var prices []domain.TelemetryModelPrice
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&prices); err != nil || prices == nil {
+		return invalid("must be a JSON array of model prices")
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return invalid("must contain one JSON value")
+	}
+	if len(prices) > maxTelemetryModelPrices {
+		return invalid("must contain at most 32 models")
+	}
+	seen := make(map[string]struct{}, len(prices))
+	for _, price := range prices {
+		if price.Component != "verifier" && price.Component != "embedding" {
+			return invalid("component must be verifier or embedding")
+		}
+		if price.Model == "" || len(price.Model) > 128 || price.Model != strings.TrimSpace(price.Model) || strings.IndexFunc(price.Model, unicode.IsControl) >= 0 {
+			return invalid("model must be a bounded nonempty name")
+		}
+		key := price.Component + "\x00" + price.Model
+		if _, ok := seen[key]; ok {
+			return invalid("contains duplicate component and model")
+		}
+		seen[key] = struct{}{}
+		if !validTelemetryPrice(price.InputUSDPerMillionTokens) ||
+			(price.Component == "verifier" && !validTelemetryPrice(price.OutputUSDPerMillionTokens)) ||
+			(price.Component == "embedding" && price.OutputUSDPerMillionTokens != nil) {
+			return invalid("must contain valid input and component-specific output prices")
+		}
+	}
+	sort.Slice(prices, func(i, j int) bool {
+		if prices[i].Component == prices[j].Component {
+			return prices[i].Model < prices[j].Model
+		}
+		return prices[i].Component < prices[j].Component
+	})
+	encoded, err := json.Marshal(prices)
+	if err != nil {
+		return invalid("could not be encoded")
+	}
+	return string(encoded), nil
+}
+
+func validTelemetryPrice(value *float64) bool {
+	return value != nil && !math.IsNaN(*value) && !math.IsInf(*value, 0) && *value >= 0 && *value <= maxTelemetryCostUSDPerMillionTokens
 }
 
 func telemetryPricePointer(value string) *float64 {
@@ -165,10 +238,19 @@ func cloneTelemetryPricingRuntimeConfig(config domain.TelemetryPricingRuntimeCon
 		copy := *value
 		return &copy
 	}
+	prices := make([]domain.TelemetryModelPrice, len(config.ModelPrices))
+	for i, price := range config.ModelPrices {
+		prices[i] = domain.TelemetryModelPrice{
+			Component: price.Component, Model: price.Model,
+			InputUSDPerMillionTokens:  copyPrice(price.InputUSDPerMillionTokens),
+			OutputUSDPerMillionTokens: copyPrice(price.OutputUSDPerMillionTokens),
+		}
+	}
 	return domain.TelemetryPricingRuntimeConfig{
 		VerifierInputUSDPerMillionTokens:  copyPrice(config.VerifierInputUSDPerMillionTokens),
 		VerifierOutputUSDPerMillionTokens: copyPrice(config.VerifierOutputUSDPerMillionTokens),
 		EmbeddingInputUSDPerMillionTokens: copyPrice(config.EmbeddingInputUSDPerMillionTokens),
+		ModelPrices:                       prices,
 	}
 }
 

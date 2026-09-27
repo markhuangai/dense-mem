@@ -88,6 +88,36 @@ func (r *UsageMetricsRepositoryImpl) UpsertBuckets(ctx context.Context, flushID 
 			).Error; err != nil {
 				return err
 			}
+			if bucket.CredentialID != uuid.Nil {
+				if err := tx.Exec(`
+					INSERT INTO usage_credential_buckets (
+						bucket_start, team_id, credential_id, route, method, status_class,
+						request_count, error_count, mcp_tool_calls, mcp_tool_failures, total_latency_ms, max_latency_ms,
+						last_seen_at, created_at, updated_at
+					) VALUES (
+						$1, $2, $3, $4, $5, $6,
+						$7, $8, $9, $10, $11, $12,
+						$13, now(), now()
+					)
+					ON CONFLICT (bucket_start, team_id, credential_id, route, method, status_class)
+					DO UPDATE SET
+						request_count = usage_credential_buckets.request_count + EXCLUDED.request_count,
+						error_count = usage_credential_buckets.error_count + EXCLUDED.error_count,
+						mcp_tool_calls = usage_credential_buckets.mcp_tool_calls + EXCLUDED.mcp_tool_calls,
+						mcp_tool_failures = usage_credential_buckets.mcp_tool_failures + EXCLUDED.mcp_tool_failures,
+						total_latency_ms = usage_credential_buckets.total_latency_ms + EXCLUDED.total_latency_ms,
+						max_latency_ms = GREATEST(usage_credential_buckets.max_latency_ms, EXCLUDED.max_latency_ms),
+						last_seen_at = GREATEST(usage_credential_buckets.last_seen_at, EXCLUDED.last_seen_at),
+						updated_at = now()
+				`,
+					bucket.BucketStart, bucket.TeamID, bucket.CredentialID,
+					bucket.Route, bucket.Method, bucket.StatusClass,
+					bucket.RequestCount, bucket.ErrorCount, bucket.MCPToolCalls, bucket.MCPToolFailures,
+					bucket.TotalLatencyMS, bucket.MaxLatencyMS, bucket.LastSeenAt,
+				).Error; err != nil {
+					return err
+				}
+			}
 		}
 		return nil
 	})
@@ -99,6 +129,9 @@ func (r *UsageMetricsRepositoryImpl) UpsertBuckets(ctx context.Context, flushID 
 
 func (r *UsageMetricsRepositoryImpl) PruneBefore(ctx context.Context, cutoff time.Time) error {
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		if err := tx.Exec("DELETE FROM usage_credential_buckets WHERE bucket_start < $1", cutoff).Error; err != nil {
+			return err
+		}
 		if err := tx.Exec("DELETE FROM usage_metric_buckets WHERE bucket_start < $1", cutoff).Error; err != nil {
 			return err
 		}
@@ -120,9 +153,10 @@ func (r *UsageMetricsRepositoryImpl) Snapshot(ctx context.Context, filter domain
 	if filter.TeamID != nil {
 		teamFilter = filter.TeamID.String()
 	}
+	source, credentialClause, usageArgs := usageSnapshotSource(filter, teamFilter)
 
 	err := r.withSystemReadOnlyRepeatableTx(ctx, func(tx *gorm.DB) error {
-		system, err := queryUsageTotal(tx, `
+		system, err := queryUsageTotal(tx, fmt.Sprintf(`
 			SELECT
 				COALESCE(SUM(request_count), 0),
 				COALESCE(SUM(error_count), 0),
@@ -130,17 +164,18 @@ func (r *UsageMetricsRepositoryImpl) Snapshot(ctx context.Context, filter domain
 				SUM(mcp_tool_failures),
 				COALESCE(SUM(total_latency_ms), 0),
 				COALESCE(MAX(max_latency_ms), 0)
-			FROM usage_metric_buckets b
+			FROM %s b
 			WHERE b.bucket_start >= $1
 				AND b.bucket_start < $2
 				AND ($3::uuid IS NULL OR b.team_id = $3::uuid)
-		`, filter.From, filter.To, teamFilter)
+				%s
+		`, source, credentialClause), usageArgs...)
 		if err != nil {
 			return err
 		}
 		snapshot.System = system
 
-		teams, err := queryTeamUsage(tx, filter, teamFilter)
+		teams, err := queryTeamUsage(tx, source, credentialClause, usageArgs)
 		if err != nil {
 			return err
 		}
@@ -152,7 +187,7 @@ func (r *UsageMetricsRepositoryImpl) Snapshot(ctx context.Context, filter domain
 		}
 		snapshot.Keys = keys
 
-		routes, err := queryRouteUsage(tx, filter, teamFilter)
+		routes, err := queryRouteUsage(tx, source, credentialClause, usageArgs)
 		if err != nil {
 			return err
 		}
@@ -165,8 +200,16 @@ func (r *UsageMetricsRepositoryImpl) Snapshot(ctx context.Context, filter domain
 	return snapshot, nil
 }
 
-func queryTeamUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter any) ([]domain.UsageTeamMetric, error) {
-	rows, err := tx.Raw(`
+func usageSnapshotSource(filter domain.UsageMetricsFilter, teamFilter any) (string, string, []any) {
+	args := []any{filter.From, filter.To, teamFilter}
+	if filter.CredentialID != nil {
+		return "usage_credential_buckets", "AND b.credential_id = $4::uuid", append(args, filter.CredentialID.String())
+	}
+	return "usage_metric_buckets", "", args
+}
+
+func queryTeamUsage(tx *gorm.DB, source, credentialClause string, args []any) ([]domain.UsageTeamMetric, error) {
+	rows, err := tx.Raw(fmt.Sprintf(`
 		SELECT
 			b.team_id::text,
 			COALESCE(t.name, ''),
@@ -176,15 +219,16 @@ func queryTeamUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter an
 			SUM(b.mcp_tool_failures),
 			COALESCE(SUM(b.total_latency_ms), 0),
 			COALESCE(MAX(b.max_latency_ms), 0)
-		FROM usage_metric_buckets b
+		FROM %s b
 		LEFT JOIN teams t ON t.id = b.team_id
 		WHERE b.bucket_start >= $1
 			AND b.bucket_start < $2
 			AND ($3::uuid IS NULL OR b.team_id = $3::uuid)
+			%s
 		GROUP BY b.team_id, t.name
 		ORDER BY COALESCE(SUM(b.request_count), 0) DESC, t.name ASC
 		LIMIT 100
-	`, filter.From, filter.To, teamFilter).Rows()
+	`, source, credentialClause), args...).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -218,12 +262,16 @@ func queryTeamUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter an
 }
 
 func queryKeyUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter any) ([]domain.UsageKeyMetric, error) {
+	var credentialFilter any
+	if filter.CredentialID != nil {
+		credentialFilter = filter.CredentialID.String()
+	}
 	rows, err := tx.Raw(`
 		SELECT
 			b.team_id::text,
 			COALESCE(t.name, ''),
-			b.key_id::text,
-			COALESCE(NULLIF(k.name, ''), NULLIF(owner_membership.sso_profile_name, ''), owner_actor.display_name, ''),
+			b.credential_id::text,
+			COALESCE(k.name, ''),
 			COALESCE(k.key_suffix, ''),
 			COALESCE(SUM(b.request_count), 0),
 			COALESCE(SUM(b.error_count), 0),
@@ -231,23 +279,18 @@ func queryKeyUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter any
 			SUM(b.mcp_tool_failures),
 			COALESCE(SUM(b.total_latency_ms), 0),
 			COALESCE(MAX(b.max_latency_ms), 0)
-		FROM usage_metric_buckets b
+		FROM usage_credential_buckets b
 		LEFT JOIN teams t ON t.id = b.team_id
 		LEFT JOIN credentials k
-			ON k.id = b.key_id AND k.team_id = b.team_id
-		LEFT JOIN ownership_aliases owner_alias
-			ON owner_alias.team_id = b.team_id AND owner_alias.legacy_owner_id = b.key_id
-		LEFT JOIN team_memberships owner_membership
-			ON owner_membership.team_id = owner_alias.team_id
-			AND owner_membership.actor_identity_id = owner_alias.canonical_identity_id
-		LEFT JOIN actor_identities owner_actor ON owner_actor.id = owner_alias.canonical_identity_id
+			ON k.id = b.credential_id AND k.team_id = b.team_id
 		WHERE b.bucket_start >= $1
 			AND b.bucket_start < $2
 			AND ($3::uuid IS NULL OR b.team_id = $3::uuid)
-		GROUP BY b.team_id, t.name, b.key_id, k.name, k.key_suffix, owner_membership.sso_profile_name, owner_actor.display_name
-		ORDER BY COALESCE(SUM(b.request_count), 0) DESC, COALESCE(NULLIF(k.name, ''), NULLIF(owner_membership.sso_profile_name, ''), owner_actor.display_name, '') ASC
+			AND ($4::uuid IS NULL OR b.credential_id = $4::uuid)
+		GROUP BY b.team_id, t.name, b.credential_id, k.name, k.key_suffix
+		ORDER BY COALESCE(SUM(b.request_count), 0) DESC, COALESCE(k.name, '') ASC
 		LIMIT 200
-	`, filter.From, filter.To, teamFilter).Rows()
+	`, filter.From, filter.To, teamFilter, credentialFilter).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -290,8 +333,8 @@ func queryKeyUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter any
 	return out, rows.Err()
 }
 
-func queryRouteUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter any) ([]domain.UsageRouteMetric, error) {
-	rows, err := tx.Raw(`
+func queryRouteUsage(tx *gorm.DB, source, credentialClause string, args []any) ([]domain.UsageRouteMetric, error) {
+	rows, err := tx.Raw(fmt.Sprintf(`
 		SELECT
 			b.route,
 			b.method,
@@ -302,14 +345,15 @@ func queryRouteUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter a
 			SUM(b.mcp_tool_failures),
 			COALESCE(SUM(b.total_latency_ms), 0),
 			COALESCE(MAX(b.max_latency_ms), 0)
-		FROM usage_metric_buckets b
+		FROM %s b
 		WHERE b.bucket_start >= $1
 			AND b.bucket_start < $2
 			AND ($3::uuid IS NULL OR b.team_id = $3::uuid)
+			%s
 		GROUP BY b.route, b.method, b.status_class
 		ORDER BY COALESCE(SUM(b.request_count), 0) DESC, b.route ASC, b.method ASC, b.status_class ASC
 		LIMIT 200
-	`, filter.From, filter.To, teamFilter).Rows()
+	`, source, credentialClause), args...).Rows()
 	if err != nil {
 		return nil, err
 	}

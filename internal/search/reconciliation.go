@@ -10,6 +10,7 @@ import (
 
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 )
 
@@ -126,7 +127,7 @@ func (s *searchReconciliationService) Run(ctx context.Context) (SearchReconcilia
 			return s.fail(ctx, result, result.SelectedCount, 0, "embedding_contract_mismatch", nil)
 		}
 
-		embedCtx, cancel := context.WithTimeout(ctx, s.providerTimeout)
+		embedCtx, cancel := context.WithTimeout(observability.WithAIOperation(ctx, observability.AIOperationSearchDocumentEmbedding, len(texts)), s.providerTimeout)
 		var model string
 		var providerErr error
 		vectors, model, providerErr = s.provider.EmbedBatch(embedCtx, texts)

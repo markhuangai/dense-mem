@@ -94,6 +94,28 @@ func TestUsageMetricsServiceSeparatesMCPToolOutcomesFromHTTPErrors(t *testing.T)
 	require.Equal(t, int64(1), *snapshot.System.MCPToolFailures)
 }
 
+func TestUsageMetricsServicePreservesDistinctCredentialsForOneOwner(t *testing.T) {
+	svc := NewUsageMetricsService(newFakeUsageMetricsRepo(), nil)
+	teamID, ownerID := uuid.New(), uuid.New()
+	firstCredential, secondCredential := uuid.New(), uuid.New()
+	for _, credentialID := range []uuid.UUID{firstCredential, secondCredential} {
+		svc.RecordRequest(context.Background(), domain.UsageMetricEvent{
+			Timestamp: time.Date(2026, 9, 10, 12, 34, 30, 0, time.UTC),
+			TeamID:    teamID, KeyID: ownerID, CredentialID: credentialID,
+			Method: "POST", Route: "/mcp", Status: 200,
+		})
+	}
+	buckets := svc.drainBuckets()
+	require.Len(t, buckets, 2)
+	seen := map[uuid.UUID]bool{}
+	for _, bucket := range buckets {
+		require.Equal(t, ownerID, bucket.KeyID)
+		seen[bucket.CredentialID] = true
+	}
+	require.True(t, seen[firstCredential])
+	require.True(t, seen[secondCredential])
+}
+
 func TestUsageMetricsService_PrunesExpiredBuckets(t *testing.T) {
 	repo := newFakeUsageMetricsRepo()
 	oldBucket := domain.UsageMetricBucket{

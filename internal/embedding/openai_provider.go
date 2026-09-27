@@ -119,7 +119,7 @@ type openAIProviderError struct {
 const nonJSONProviderErrorMessage = "provider returned a non-JSON error response"
 
 // EmbedBatch returns embeddings for multiple texts in the same order as inputs.
-func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string) ([][]float32, string, error) {
+func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string) (vectors [][]float32, model string, err error) {
 	select {
 	case p.sem <- struct{}{}:
 		defer func() { <-p.sem }()
@@ -156,7 +156,15 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	req.Header.Set("Authorization", "Bearer "+p.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
+	attemptStart := time.Now()
 	resp, err := p.httpClient.Do(req)
+	defer func() {
+		outcome := "ok"
+		if err != nil {
+			outcome = classifyEmbeddingError(err)
+		}
+		observability.RecordEmbeddingProviderAttempt(ctx, p.metrics, p.model, time.Since(attemptStart).Seconds(), outcome)
+	}()
 	if err != nil {
 		recordEmbeddingExchange(ctx, p.model, bodyBytes, nil, "", 0, "no_response", nil)
 		return nil, "", &embeddingcontract.ProviderError{

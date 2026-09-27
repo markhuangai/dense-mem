@@ -5,7 +5,7 @@ providers:
     folder: Dense-Mem
     type: file
     disableDeletion: true
-    editable: false
+    allowUiUpdates: true
     updateIntervalSeconds: 30
     options:
       path: /opt/dense-mem/grafana/dashboards

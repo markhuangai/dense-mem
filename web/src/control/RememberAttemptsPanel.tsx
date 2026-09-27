@@ -19,9 +19,19 @@ const OUTCOMES = ["", "completed", "rejected", "quarantined", "failed", "replaye
 const PAGE_SIZE = 50;
 const TRUNCATED_CAPTURE_MESSAGE = "The capture exceeded the diagnostic size limit; the displayed body is truncated.";
 
-export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlApi; team: Team; onOpenLogs?: (query: OperationLogQuery) => void }) {
+export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "attempts", initialAttemptID = "", initialInvocationID = "", onViewChange }: {
+  api: ControlApi;
+  team: Team;
+  onOpenLogs?: (query: OperationLogQuery) => void;
+  initialView?: "calls" | "attempts";
+  initialAttemptID?: string;
+  initialInvocationID?: string;
+  onViewChange?: (view: "calls" | "attempts") => void;
+}) {
   const [items, setItems] = useState<RememberAttemptDiagnosticSummary[]>([]);
   const [total, setTotal] = useState(0);
+  const [attemptCount, setAttemptCount] = useState<number | null>(null);
+  const [attemptCountUnavailable, setAttemptCountUnavailable] = useState(false);
   const [outcome, setOutcome] = useState("");
   const [offset, setOffset] = useState(0);
   const [selectedID, setSelectedID] = useState("");
@@ -29,9 +39,11 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState("");
-  const [view, setView] = useState<"calls" | "attempts">("calls");
+  const [view, setView] = useState<"calls" | "attempts">(initialView);
   const [invocations, setInvocations] = useState<RememberInvocationDiagnosticSummary[]>([]);
   const [invocationTotal, setInvocationTotal] = useState(0);
+  const [callCount, setCallCount] = useState<number | null>(null);
+  const [callCountUnavailable, setCallCountUnavailable] = useState(false);
   const [invocationOffset, setInvocationOffset] = useState(0);
   const [selectedInvocationID, setSelectedInvocationID] = useState("");
   const [invocationDetail, setInvocationDetail] = useState<RememberInvocationDiagnosticDetail | null>(null);
@@ -43,6 +55,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
   const invocationDetailRequestRef = useRef(0);
   const selectedIDRef = useRef("");
   const attemptsLoadedRef = useRef(false);
+  const countRequestRef = useRef(0);
 
   async function loadInvocationDetail(invocationID: string, listRequest = invocationListRequestRef.current) {
     if (typeof api.getRememberInvocationDiagnostic !== "function" || !invocationID) return;
@@ -66,7 +79,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
     }
   }
 
-  async function loadInvocations(nextOffset = invocationOffset, preferredID = selectedInvocationID) {
+  async function loadInvocations(nextOffset = invocationOffset, preferredID = selectedInvocationID, allowOutsidePage = false) {
     if (typeof api.listRememberInvocationDiagnostics !== "function") {
       setView("attempts");
       if (!attemptsLoadedRef.current) void loadAttempts("", 0);
@@ -84,12 +97,12 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
       if (listRequest !== invocationListRequestRef.current) return;
       setInvocations(page.data);
       setInvocationTotal(page.pagination.total);
+      setCallCount(page.pagination.total);
+      setCallCountUnavailable(false);
       setInvocationOffset(page.pagination.offset);
-      const nextID = page.data.some((item) => item.invocation_id === preferredID)
-        ? preferredID
-        : page.data[0]?.invocation_id ?? "";
+      const nextID = allowOutsidePage || page.data.some((item) => item.invocation_id === preferredID) ? preferredID : "";
       setSelectedInvocationID(nextID);
-      if (nextID) {
+      if (nextID && preferredID) {
         await loadInvocationDetail(nextID, listRequest);
       } else {
         setInvocationDetail(null);
@@ -122,6 +135,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
       setError("");
     }
     setView(nextView);
+    onViewChange?.(nextView);
     if (nextView === "calls" && view !== nextView && typeof api.listRememberInvocationDiagnostics === "function") {
       void loadInvocations(invocationOffset, selectedInvocationID);
     } else if (nextView === "attempts" && !attemptsLoadedRef.current) {
@@ -148,13 +162,17 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
       if (requestID !== listRequestRef.current) return;
       setItems(page.data);
       setTotal(page.pagination.total);
+      if (nextOutcome === "") {
+        setAttemptCount(page.pagination.total);
+        setAttemptCountUnavailable(false);
+      }
       setOffset(page.pagination.offset);
       attemptsLoadedRef.current = true;
       const currentSelected = preferredAttemptID ?? selectedIDRef.current;
       const nextSelected = preferredAttemptID
-        || (page.data.some((item) => item.attempt_id === currentSelected) ? currentSelected : page.data[0]?.attempt_id ?? "");
+        || (page.data.some((item) => item.attempt_id === currentSelected) ? currentSelected : "");
       selectAttempt(nextSelected);
-      if (nextSelected) {
+      if (nextSelected && (preferredAttemptID || currentSelected)) {
         void loadDetail(nextSelected);
       } else {
         setDetail(null);
@@ -184,31 +202,55 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
   }
 
   useEffect(() => {
+    const countRequest = ++countRequestRef.current;
     invocationListRequestRef.current += 1;
     invocationDetailRequestRef.current += 1;
     attemptsLoadedRef.current = false;
-    setView("calls");
+    setView(initialView);
     setInvocations([]);
     setInvocationTotal(0);
+    setCallCount(null);
+    setCallCountUnavailable(false);
     setInvocationOffset(0);
     setSelectedInvocationID("");
     setInvocationDetail(null);
     selectedIDRef.current = "";
     setItems([]);
     setTotal(0);
+    setAttemptCount(null);
+    setAttemptCountUnavailable(false);
     setOutcome("");
     setOffset(0);
     setSelectedID("");
     setDetail(null);
     setError("");
-    void loadInvocations(0, "");
+    if (initialView === "attempts") {
+      void loadAttempts("", 0, initialAttemptID);
+      if (typeof api.listRememberInvocationDiagnostics === "function") {
+        void api.listRememberInvocationDiagnostics({ team_id: team.id, limit: 1, offset: 0 })
+          .then((page) => { if (countRequest === countRequestRef.current) setCallCount(page.pagination.total); })
+          .catch(() => { if (countRequest === countRequestRef.current) setCallCountUnavailable(true); });
+      } else {
+        setCallCountUnavailable(true);
+      }
+    } else {
+      void loadInvocations(0, initialInvocationID, true);
+      if (typeof api.listRememberAttemptDiagnostics === "function") {
+        void api.listRememberAttemptDiagnostics({ team_id: team.id, outcome: "", limit: 1, offset: 0 })
+          .then((page) => { if (countRequest === countRequestRef.current) setAttemptCount(page.pagination.total); })
+          .catch(() => { if (countRequest === countRequestRef.current) setAttemptCountUnavailable(true); });
+      } else {
+        setAttemptCountUnavailable(true);
+      }
+    }
     return () => {
+      countRequestRef.current += 1;
       listRequestRef.current += 1;
       detailRequestRef.current += 1;
       invocationListRequestRef.current += 1;
       invocationDetailRequestRef.current += 1;
     };
-  }, [api, team.id]);
+  }, [api, team.id, initialView, initialAttemptID, initialInvocationID]);
 
   if (view === "calls") {
     return (
@@ -221,6 +263,8 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
         detail={invocationDetail}
         detailLoading={invocationDetailLoading}
         selectedID={selectedInvocationID}
+        attemptCount={attemptCount}
+        attemptCountUnavailable={attemptCountUnavailable}
         onSelectView={selectView}
         onRefresh={() => void loadInvocations(invocationOffset)}
         onSelect={(id) => {
@@ -249,14 +293,14 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs }: { api: ControlA
           meta={total}
           actions={(
             <div className="button-row">
-              <button className="ghost-button" type="button" onClick={() => selectView("calls")}>Calls</button>
+              <button className="ghost-button" type="button" onClick={() => selectView("calls")}>Calls ({callCountUnavailable ? "unavailable" : callCount ?? "…"})</button>
               <button className="icon-button" type="button" aria-label="Refresh Remember attempts" onClick={() => void loadAttempts()}>
                 <RefreshCw size={16} aria-hidden="true" />
               </button>
             </div>
           )}
         />
-        <p className="panel-intro">A durable, chronological transcript of synchronous Remember processing. Failure bytes are retained only for seven days.</p>
+        <p className="panel-intro">Durable processing history. A call can replay an existing attempt or end without creating one. Captured diagnostic bodies are retained for up to seven days.</p>
         {error && <div className="banner error" role="alert">{error}</div>}
         <div className="metrics-toolbar submission-toolbar">
           <label>
@@ -324,6 +368,8 @@ function RememberCallsView({
   detail,
   detailLoading,
   selectedID,
+  attemptCount,
+  attemptCountUnavailable,
   onSelectView,
   onRefresh,
   onSelect,
@@ -340,6 +386,8 @@ function RememberCallsView({
   detail: RememberInvocationDiagnosticDetail | null;
   detailLoading: boolean;
   selectedID: string;
+  attemptCount: number | null;
+  attemptCountUnavailable: boolean;
   onSelectView: (view: "calls" | "attempts") => void;
   onRefresh: () => void;
   onSelect: (id: string) => void;
@@ -358,14 +406,14 @@ function RememberCallsView({
           meta={total}
           actions={(
             <div className="button-row">
-              <button className="ghost-button" type="button" onClick={() => onSelectView("attempts")}>Attempts</button>
+              <button className="ghost-button" type="button" onClick={() => onSelectView("attempts")}>Attempts ({attemptCountUnavailable ? "unavailable" : attemptCount ?? "…"})</button>
               <button className="icon-button" type="button" aria-label="Refresh Remember calls" onClick={onRefresh}>
                 <RefreshCw size={16} aria-hidden="true" />
               </button>
             </div>
           )}
         />
-        <p className="panel-intro">Admitted Remember calls, including executions, replays, conflicts, and cancellations. Capture bodies remain bounded and load only for an inspected call.</p>
+        <p className="panel-intro">Admitted Remember invocations, including executions, replays, conflicts, and cancellations. Call diagnostics expire after seven days; durable attempts remain in the Attempts view.</p>
         {error && <div className="banner error" role="alert">{error}</div>}
         {loading && items.length === 0 ? <LoadingState label="Loading Remember calls" /> : items.length === 0 ? <div className="table-placeholder">No Remember calls</div> : (
           <div className="table-wrap">

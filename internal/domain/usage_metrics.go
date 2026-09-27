@@ -12,7 +12,8 @@ import (
 type UsageMetricEvent struct {
 	Timestamp       time.Time
 	TeamID          uuid.UUID
-	KeyID           uuid.UUID
+	KeyID           uuid.UUID // Historical owner-alias bucket key; use CredentialID for an actual key.
+	CredentialID    uuid.UUID
 	Method          string
 	Route           string
 	Status          int
@@ -25,7 +26,8 @@ type UsageMetricEvent struct {
 type UsageMetricBucket struct {
 	BucketStart     time.Time
 	TeamID          uuid.UUID
-	KeyID           uuid.UUID
+	KeyID           uuid.UUID // Historical owner-alias bucket key; use CredentialID for an actual key.
+	CredentialID    uuid.UUID
 	Route           string
 	Method          string
 	StatusClass     int
@@ -44,6 +46,8 @@ type UsageMetricsFilter struct {
 	// TeamID filters the admin metrics view. It does not come from request-supplied
 	// runtime identity and is only used on the control API.
 	TeamID *uuid.UUID
+	// CredentialID selects post-cutover credential-attributed rows in the private control API.
+	CredentialID *uuid.UUID
 }
 
 type UsageMetricsWindow struct {

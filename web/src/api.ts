@@ -455,8 +455,8 @@ export type TelemetryPricingRuntimeConfig = {
   verifier_input_usd_per_million_tokens: number | null;
   verifier_output_usd_per_million_tokens: number | null;
   embedding_input_usd_per_million_tokens: number | null;
+  model_prices: Array<{ component: "verifier" | "embedding"; model: string; input_usd_per_million_tokens: number; output_usd_per_million_tokens?: number }>;
 };
-
 export type TelemetryPricingConfigItem = SSOConfigItem;
 
 export type TelemetryPricingConfig = {

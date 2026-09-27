@@ -1,0 +1,354 @@
+{
+  "__inputs": [],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "13.2.2"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Read-stage drilldowns and runtime health. PostgreSQL, Redis, and host panels require the optional private exporters; missing exporters remain no-data.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "title": "Dense-Mem Overview",
+      "url": "/d/dense-mem-service",
+      "targetBlank": false,
+      "type": "link"
+    },
+    {
+      "title": "Dense-Mem AI and Recall",
+      "url": "/d/dense-mem-ai-recall",
+      "targetBlank": false,
+      "type": "link"
+    },
+    {
+      "title": "Dense-Mem Remember and Dream",
+      "url": "/d/dense-mem-workflows",
+      "targetBlank": false,
+      "type": "link"
+    },
+    {
+      "title": "Dense-Mem Team and Credential Usage",
+      "url": "/d/dense-mem-usage",
+      "targetBlank": false,
+      "type": "link"
+    }
+  ],
+  "liveNow": false,
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": [
+    "dense-mem",
+    "operations",
+    "performance"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "includeAll": false,
+        "label": "Prometheus datasource",
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "dense-mem",
+          "value": "dense-mem"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "definition": "label_values(up, job)",
+        "includeAll": false,
+        "label": "Job",
+        "multi": false,
+        "name": "job",
+        "query": {
+          "query": "label_values(up, job)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "1h",
+          "value": "1h"
+        },
+        "label": "Rolling totals",
+        "name": "window",
+        "options": [
+          {
+            "selected": false,
+            "text": "15m",
+            "value": "15m"
+          },
+          {
+            "selected": false,
+            "text": "30m",
+            "value": "30m"
+          },
+          {
+            "selected": true,
+            "text": "1h",
+            "value": "1h"
+          },
+          {
+            "selected": false,
+            "text": "12h",
+            "value": "12h"
+          },
+          {
+            "selected": false,
+            "text": "1d",
+            "value": "1d"
+          },
+          {
+            "selected": false,
+            "text": "7d",
+            "value": "7d"
+          },
+          {
+            "selected": false,
+            "text": "30d",
+            "value": "30d"
+          }
+        ],
+        "query": "15m,30m,1h,12h,1d,7d,30d",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "definition": "label_values(densemem_usage_ai_provider_attempts_total, operation)",
+        "includeAll": true,
+        "allValue": ".*",
+        "label": "AI feature",
+        "multi": false,
+        "name": "feature",
+        "options": [],
+        "query": {
+          "query": "label_values(densemem_usage_ai_provider_attempts_total, operation)",
+          "refId": "Variable-feature"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "definition": "label_values(densemem_usage_ai_provider_attempts_total, model)",
+        "includeAll": true,
+        "allValue": ".*",
+        "label": "AI model",
+        "multi": false,
+        "name": "model",
+        "options": [],
+        "query": {
+          "query": "label_values(densemem_usage_ai_provider_attempts_total, model)",
+          "refId": "Variable-model"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "definition": "label_values(densemem_read_stage_duration_seconds_count, operation)",
+        "includeAll": true,
+        "allValue": ".*",
+        "label": "Read operation",
+        "multi": false,
+        "name": "read_operation",
+        "options": [],
+        "query": {
+          "query": "label_values(densemem_read_stage_duration_seconds_count, operation)",
+          "refId": "Variable-read_operation"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "postgres",
+          "value": "postgres"
+        },
+        "label": "PostgreSQL job",
+        "name": "postgres_job",
+        "options": [
+          {
+            "selected": true,
+            "text": "postgres",
+            "value": "postgres"
+          }
+        ],
+        "query": "postgres",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "redis",
+          "value": "redis"
+        },
+        "label": "Redis job",
+        "name": "redis_job",
+        "options": [
+          {
+            "selected": true,
+            "text": "redis",
+            "value": "redis"
+          }
+        ],
+        "query": "redis",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "node",
+          "value": "node"
+        },
+        "label": "Node job",
+        "name": "node_job",
+        "options": [
+          {
+            "selected": true,
+            "text": "node",
+            "value": "node"
+          }
+        ],
+        "query": "node",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "label": "Control portal URL",
+        "name": "control_portal_url",
+        "options": [],
+        "query": "",
+        "type": "textbox"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h"
+    ]
+  },
+  "timezone": "browser",
+  "title": "Dense-Mem Performance and Dependencies",
+  "uid": "dense-mem-performance",
+  "version": 1,
+  "weekStart": "",
+  "panels": [
+    {"id":900,"title":"Search and Recall read stages","type":"row","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":0},"panels":[],"targets":[]},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"ms","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":0,"y":1},"id":1,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"1000 * histogram_quantile(0.5, sum by (le,operation,stage,outcome)(increase(densemem_read_stage_duration_seconds_bucket{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval]) + ((min_over_time(densemem_read_stage_duration_seconds_bucket{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval]) unless ignoring(__name__) last_over_time(densemem_read_stage_duration_seconds_bucket{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval] offset $__rate_interval)) or (0 * increase(densemem_read_stage_duration_seconds_bucket{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval])))))","instant":false,"range":true,"refId":"A"}],"title":"Read stage p50","type":"timeseries"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"ms","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":12,"y":1},"id":2,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"1000 * histogram_quantile(0.95, sum by (le,operation,stage,outcome)(increase(densemem_read_stage_duration_seconds_bucket{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval]) + ((min_over_time(densemem_read_stage_duration_seconds_bucket{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval]) unless ignoring(__name__) last_over_time(densemem_read_stage_duration_seconds_bucket{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval] offset $__rate_interval)) or (0 * increase(densemem_read_stage_duration_seconds_bucket{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval])))))","instant":false,"range":true,"refId":"A"}],"title":"Read stage p95","type":"timeseries"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"ms","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":0,"y":9},"id":3,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"1000 * histogram_quantile(0.99, sum by (le,operation,stage,outcome)(increase(densemem_read_stage_duration_seconds_bucket{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval]) + ((min_over_time(densemem_read_stage_duration_seconds_bucket{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval]) unless ignoring(__name__) last_over_time(densemem_read_stage_duration_seconds_bucket{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval] offset $__rate_interval)) or (0 * increase(densemem_read_stage_duration_seconds_bucket{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval])))))","instant":false,"range":true,"refId":"A"}],"title":"Read stage p99","type":"timeseries"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":12,"y":9},"id":4,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"(sum by (operation,stage,outcome)(increase(densemem_read_stage_duration_seconds_count{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval]) + ((min_over_time(densemem_read_stage_duration_seconds_count{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval]) unless ignoring(__name__) last_over_time(densemem_read_stage_duration_seconds_count{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval] offset $__rate_interval)) or (0 * increase(densemem_read_stage_duration_seconds_count{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval])))) > 0) and on() (min(up{job=~\"$job\"}) == 1)","instant":false,"range":true,"refId":"A"}],"title":"Read stage executions","type":"timeseries"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":0,"y":17},"id":5,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"(sum by (operation,stage)(increase(densemem_read_sql_statements_total{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval]) + ((min_over_time(densemem_read_sql_statements_total{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval]) unless ignoring(__name__) last_over_time(densemem_read_sql_statements_total{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval] offset $__rate_interval)) or (0 * increase(densemem_read_sql_statements_total{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval])))) > 0) and on() (min(up{job=~\"$job\"}) == 1)","instant":false,"range":true,"refId":"A"}],"title":"SQL statements by read stage","type":"timeseries"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":12,"y":17},"id":6,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"1 * (sum by (operation,stage)(increase(densemem_read_stage_items_sum{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval]) + ((min_over_time(densemem_read_stage_items_sum{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval]) unless ignoring(__name__) last_over_time(densemem_read_stage_items_sum{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval] offset $__rate_interval)) or (0 * increase(densemem_read_stage_items_sum{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval])))) / (sum by (operation,stage)(increase(densemem_read_stage_items_count{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval]) + ((min_over_time(densemem_read_stage_items_count{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval]) unless ignoring(__name__) last_over_time(densemem_read_stage_items_count{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval] offset $__rate_interval)) or (0 * increase(densemem_read_stage_items_count{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval])))) > 0)) and on() (min(up{job=~\"$job\"}) == 1)","instant":false,"range":true,"refId":"A"}],"title":"Average read stage items","type":"timeseries"},
+    {"id":906,"title":"Remember and provider stages","type":"row","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":25},"panels":[],"targets":[]},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"ms","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":0,"y":26},"id":7,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"1000 * histogram_quantile(0.95, sum by (le,phase,outcome)(increase(densemem_remember_phase_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval]) + ((min_over_time(densemem_remember_phase_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval]) unless ignoring(__name__) last_over_time(densemem_remember_phase_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval] offset $__rate_interval)) or (0 * increase(densemem_remember_phase_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])))))","instant":false,"range":true,"refId":"A"}],"title":"Remember phase p95","type":"timeseries"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"ms","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":12,"y":26},"id":8,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"1000 * histogram_quantile(0.95, sum by (le,operation,component,model,outcome)(increase(densemem_usage_ai_provider_duration_seconds_bucket{job=~\"$job\",operation=~\"$feature\",model=~\"$model\"}[$__rate_interval]) + ((min_over_time(densemem_usage_ai_provider_duration_seconds_bucket{job=~\"$job\",operation=~\"$feature\",model=~\"$model\"}[$__rate_interval]) unless ignoring(__name__) last_over_time(densemem_usage_ai_provider_duration_seconds_bucket{job=~\"$job\",operation=~\"$feature\",model=~\"$model\"}[$__rate_interval] offset $__rate_interval)) or (0 * increase(densemem_usage_ai_provider_duration_seconds_bucket{job=~\"$job\",operation=~\"$feature\",model=~\"$model\"}[$__rate_interval])))))","instant":false,"range":true,"refId":"A"}],"title":"Provider p95 by feature","type":"timeseries"},
+    {"id":908,"title":"Dense-Mem runtime","type":"row","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":34},"panels":[],"targets":[]},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":0,"y":35},"id":9,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"sum by (instance) (rate(process_cpu_seconds_total{job=~\"$job\"}[$__rate_interval]))","instant":false,"range":true,"refId":"A"}],"title":"Server CPU cores","type":"timeseries"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"bytes","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":12,"y":35},"id":10,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"process_resident_memory_bytes{job=~\"$job\"}","instant":false,"range":true,"refId":"A"}],"title":"Server resident memory","type":"timeseries"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":0,"y":43},"id":11,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"go_goroutines{job=~\"$job\"}","instant":false,"range":true,"refId":"A"}],"title":"Go goroutines","type":"timeseries"},
+    {"id":911,"title":"Optional private dependency exporters","type":"row","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":51},"panels":[],"targets":[]},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"FAILED means the configured exporter or its PostgreSQL connection failed; no data means no matching target is configured.","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"thresholds"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false},"thresholds":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"green","value":1}]},"mappings":[{"type":"value","options":{"0":{"text":"FAILED","color":"red"},"1":{"text":"HEALTHY","color":"green"}}}]},"overrides":[]},"gridPos":{"h":5,"w":8,"x":0,"y":52},"id":12,"options":{"colorMode":"background","graphMode":"none","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"(min(pg_up{job=~\"$postgres_job\"}) * min(up{job=~\"$postgres_job\"})) or (0 * min(up{job=~\"$postgres_job\"}))","instant":true,"range":false,"refId":"A"}],"title":"PostgreSQL exporter health","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"FAILED means the configured exporter or its Redis connection failed; no data means no matching target is configured.","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"thresholds"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false},"thresholds":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"green","value":1}]},"mappings":[{"type":"value","options":{"0":{"text":"FAILED","color":"red"},"1":{"text":"HEALTHY","color":"green"}}}]},"overrides":[]},"gridPos":{"h":5,"w":8,"x":8,"y":52},"id":13,"options":{"colorMode":"background","graphMode":"none","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"(min(redis_up{job=~\"$redis_job\"}) * min(up{job=~\"$redis_job\"})) or (0 * min(up{job=~\"$redis_job\"}))","instant":true,"range":false,"refId":"A"}],"title":"Redis exporter health","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"FAILED means the configured node exporter is down; no data means no matching target is configured.","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"thresholds"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false},"thresholds":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"green","value":1}]},"mappings":[{"type":"value","options":{"0":{"text":"FAILED","color":"red"},"1":{"text":"HEALTHY","color":"green"}}}]},"overrides":[]},"gridPos":{"h":5,"w":8,"x":16,"y":52},"id":20,"options":{"colorMode":"background","graphMode":"none","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"min(up{job=~\"$node_job\"})","instant":true,"range":false,"refId":"A"}],"title":"Host exporter health","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Requires the optional node exporter.","fieldConfig":{"defaults":{"unit":"bytes","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":0,"y":57},"id":14,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"node_memory_MemAvailable_bytes{job=~\"$node_job\"}","instant":false,"range":true,"refId":"A"}],"title":"Host available memory","type":"timeseries"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":12,"y":57},"id":15,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"sum(pg_stat_activity_count{job=~\"$postgres_job\",state=\"active\"})","instant":false,"range":true,"refId":"A"}],"title":"PostgreSQL active sessions","type":"timeseries"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":0,"y":65},"id":16,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"sum(increase(pg_stat_database_deadlocks{job=~\"$postgres_job\"}[$__rate_interval]))","instant":false,"range":true,"refId":"A"}],"title":"PostgreSQL deadlocks","type":"timeseries"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"bytes","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":12,"y":65},"id":17,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"redis_memory_used_bytes{job=~\"$redis_job\"}","instant":false,"range":true,"refId":"A"}],"title":"Redis memory","type":"timeseries"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":0,"y":73},"id":18,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"sum by (operation,stage)(increase(densemem_read_sql_statements_total{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval]) + ((min_over_time(densemem_read_sql_statements_total{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval]) unless ignoring(__name__) last_over_time(densemem_read_sql_statements_total{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval] offset $__rate_interval)) or (0 * increase(densemem_read_sql_statements_total{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval])))) / (sum by (operation,stage)(increase(densemem_read_stage_duration_seconds_count{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval]) + ((min_over_time(densemem_read_stage_duration_seconds_count{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval]) unless ignoring(__name__) last_over_time(densemem_read_stage_duration_seconds_count{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval] offset $__rate_interval)) or (0 * increase(densemem_read_stage_duration_seconds_count{job=~\"$job\",operation=~\"$read_operation\"}[$__rate_interval])))) > 0)","instant":false,"range":true,"refId":"A"}],"title":"SQL statements per read stage execution","type":"timeseries"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Inspect counts before interpreting provider latency percentiles.","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":9,"w":24,"x":0,"y":81},"id":19,"options":{"showHeader":true,"cellHeight":"sm"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"(sum by (operation,component,model,outcome)(increase(densemem_usage_ai_provider_duration_seconds_count{job=~\"$job\",operation=~\"$feature\",model=~\"$model\"}[$window]) + ((min_over_time(densemem_usage_ai_provider_duration_seconds_count{job=~\"$job\",operation=~\"$feature\",model=~\"$model\"}[$window]) unless ignoring(__name__) last_over_time(densemem_usage_ai_provider_duration_seconds_count{job=~\"$job\",operation=~\"$feature\",model=~\"$model\"}[$window] offset $window)) or (0 * increase(densemem_usage_ai_provider_duration_seconds_count{job=~\"$job\",operation=~\"$feature\",model=~\"$model\"}[$window])))) > 0) and on() (min(up{job=~\"$job\"}) == 1)","format":"table","instant":true,"range":false,"refId":"A"}],"title":"Provider attempt samples","type":"table"},
+    {"id":920,"title":"HTTP transport detail","type":"row","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":90},"panels":[],"targets":[]},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/http_requests.","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":0,"y":91},"id":21,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"(sum(increase(densemem_http_requests_total{job=~\"$job\"}[$window])) or vector(0)) and on() (min(up{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"HTTP requests","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/http_errors.","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":8,"y":91},"id":22,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"(sum(increase(densemem_http_requests_total{job=~\"$job\",status_class=~\"4xx|5xx\"}[$window])) or (vector(0) and on() (sum(increase(densemem_http_requests_total{job=~\"$job\"}[$window]))))) and on() (min(up{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"HTTP errors","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: card/avg_http_latency.","fieldConfig":{"defaults":{"unit":"ms","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":16,"y":91},"id":23,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"1000 * (sum(increase(densemem_http_request_duration_seconds_sum{job=~\"$job\"}[$window]) + ((min_over_time(densemem_http_request_duration_seconds_sum{job=~\"$job\"}[$window]) unless ignoring(__name__) last_over_time(densemem_http_request_duration_seconds_sum{job=~\"$job\"}[$window] offset $window)) or (0 * increase(densemem_http_request_duration_seconds_sum{job=~\"$job\"}[$window])))) / sum(increase(densemem_http_request_duration_seconds_count{job=~\"$job\"}[$window]) + ((min_over_time(densemem_http_request_duration_seconds_count{job=~\"$job\"}[$window]) unless ignoring(__name__) last_over_time(densemem_http_request_duration_seconds_count{job=~\"$job\"}[$window] offset $window)) or (0 * increase(densemem_http_request_duration_seconds_count{job=~\"$job\"}[$window]))))) and on() (min(up{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Average HTTP request latency","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: series/http_rps.","fieldConfig":{"defaults":{"unit":"reqps","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":0,"y":96},"id":24,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"((sum(increase(densemem_http_requests_total{job=~\"$job\"}[$__rate_interval]) + ((min_over_time(densemem_http_requests_total{job=~\"$job\"}[$__rate_interval]) unless ignoring(__name__) last_over_time(densemem_http_requests_total{job=~\"$job\"}[$__rate_interval] offset $__rate_interval)) or (0 * increase(densemem_http_requests_total{job=~\"$job\"}[$__rate_interval])))) / ($__rate_interval)) or vector(0)) and on() (min(up{job=~\"$job\"}) == 1)","instant":false,"range":true,"refId":"A"}],"title":"HTTP request rate","type":"timeseries"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Parity: series/http_errors_rps.","fieldConfig":{"defaults":{"unit":"reqps","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":12,"y":96},"id":25,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"((sum(increase(densemem_http_requests_total{job=~\"$job\",status_class=~\"4xx|5xx\"}[$__rate_interval]) + ((min_over_time(densemem_http_requests_total{job=~\"$job\",status_class=~\"4xx|5xx\"}[$__rate_interval]) unless ignoring(__name__) last_over_time(densemem_http_requests_total{job=~\"$job\",status_class=~\"4xx|5xx\"}[$__rate_interval] offset $__rate_interval)) or (0 * increase(densemem_http_requests_total{job=~\"$job\",status_class=~\"4xx|5xx\"}[$__rate_interval])))) / ($__rate_interval)) and on() (min(up{job=~\"$job\"}) == 1)) or ((vector(0) and on() (sum(increase(densemem_http_requests_total{job=~\"$job\"}[$__rate_interval])))) and on() (min(up{job=~\"$job\"}) == 1))","instant":false,"range":true,"refId":"A"}],"title":"HTTP error rate","type":"timeseries"},
+    {"id":925,"title":"Protected team diagnostics","type":"row","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":104},"panels":[],"targets":[]},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Select a concrete team row to open protected Remember history or operation logs. Values count observed HTTP requests since process start, not billing usage.","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false},"links":[{"title":"Open team Remember history","url":"${control_portal_url}/?team_id=${__data.fields[\"team_id\"]}&remember_view=attempts","targetBlank":true},{"title":"Open team operation logs","url":"${control_portal_url}/?team_id=${__data.fields[\"team_id\"]}&section=logs","targetBlank":true}]},"overrides":[]},"gridPos":{"h":9,"w":24,"x":0,"y":105},"id":26,"options":{"showHeader":true,"cellHeight":"sm"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"sum by (team_id) (densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\"}) and on() (min(up{job=~\"$job\"}) == 1)","format":"table","instant":true,"range":false,"refId":"A"}],"title":"Team diagnostic links","type":"table","transformations":[{"id":"labelsToFields","options":{"mode":"columns"}}]}
+  ]
+}

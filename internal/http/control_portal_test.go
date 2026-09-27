@@ -482,7 +482,8 @@ func TestControlPortalMetrics(t *testing.T) {
 	}, profiles, keys, metrics, health, nil)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/control/api/metrics?window_minutes=30", nil)
+	credentialID := uuid.New()
+	req := httptest.NewRequest(http.MethodGet, "/control/api/metrics?window_minutes=30&credential_id="+credentialID.String(), nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
@@ -492,6 +493,8 @@ func TestControlPortalMetrics(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"dependencies"`)
 	require.Contains(t, rec.Body.String(), `"postgres"`)
 	require.True(t, metrics.filter.To.After(metrics.filter.From))
+	require.NotNil(t, metrics.filter.CredentialID)
+	require.Equal(t, credentialID, *metrics.filter.CredentialID)
 }
 
 func TestControlPortalProfileAndKeyFlows(t *testing.T) {
@@ -683,6 +686,11 @@ func TestControlPortalMetricsErrors(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
 	req = httptest.NewRequest(http.MethodGet, "/control/api/metrics?team_id=bad", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	req = httptest.NewRequest(http.MethodGet, "/control/api/metrics?credential_id=bad", nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)

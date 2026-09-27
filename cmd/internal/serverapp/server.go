@@ -237,7 +237,11 @@ func RunActiveServer(
 		RLS:               rlsHelper,
 		Logger:            logger,
 	}
-	telemetry, err := buildTelemetryApplication(startupCtx, cfg, appConfigService, conflictStore, telemetryLifecycleRepo, logger)
+	diagnosticProtector, err := newRootProtector(cfg)
+	if err != nil {
+		return fmt.Errorf("configure diagnostic protection: %w", err)
+	}
+	telemetry, err := buildTelemetryApplication(startupCtx, cfg, appConfigService, conflictStore, telemetryLifecycleRepo, logger, diagnosticProtector)
 	if err != nil {
 		return fmt.Errorf("failed to build telemetry application: %w", err)
 	}
@@ -268,10 +272,6 @@ func RunActiveServer(
 	})
 	if err != nil {
 		return fmt.Errorf("failed to build conflict review runner: %w", err)
-	}
-	diagnosticProtector, err := newRootProtector(cfg)
-	if err != nil {
-		return fmt.Errorf("configure diagnostic protection: %w", err)
 	}
 	applications := buildApplicationBundle(applicationCompositionDependencies{
 		Knowledge:              knowledgeStore,

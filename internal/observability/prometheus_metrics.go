@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
+	promcollectors "github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
@@ -45,6 +46,7 @@ type PrometheusMetrics struct {
 	pricing         AIPricingResolver
 	operational     *operationalPrometheusMetrics
 	readPerformance *readPerformancePrometheusMetrics
+	credentialUsage *credentialUsagePrometheusMetrics
 
 	httpRequests                 *prometheus.CounterVec
 	httpDuration                 *prometheus.HistogramVec
@@ -213,7 +215,7 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		}, []string{"outcome"}),
 		assessorTokens: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_assessor_tokens_total",
-			Help: "Server-accounted integrated assessor tokens.",
+			Help: "Server-accounted tokens across completed assessor turns, including repairs.",
 		}, []string{"kind"}),
 		assessorValidation: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_assessor_validation_failures_total",
@@ -266,6 +268,7 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 	}
 	m.operational = newOperationalPrometheusMetrics()
 	m.readPerformance = newReadPerformancePrometheusMetrics()
+	m.credentialUsage = newCredentialUsagePrometheusMetrics()
 	collectors := []prometheus.Collector{
 		m.httpRequests, m.httpDuration,
 		m.embeddingCalls, m.embeddingErrors, m.embeddingDur, m.embeddingTokens,
@@ -284,6 +287,8 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 	}
 	collectors = append(collectors, m.operational.collectors()...)
 	collectors = append(collectors, m.readPerformance.collectors()...)
+	collectors = append(collectors, m.credentialUsage.collectors()...)
+	collectors = append(collectors, promcollectors.NewGoCollector(), promcollectors.NewProcessCollector(promcollectors.ProcessCollectorOpts{}))
 	m.registry.MustRegister(collectors...)
 	return m
 }
@@ -309,6 +314,7 @@ func (m *PrometheusMetrics) ObserveHTTPRequest(ctx context.Context, route, metho
 	labels = append(labels, normalizeLabel(route), strings.ToUpper(normalizeLabel(method)), statusClass(status))
 	m.httpRequests.WithLabelValues(labels...).Inc()
 	m.httpDuration.WithLabelValues(labels...).Observe(duration.Seconds())
+	m.credentialUsage.observeHTTPRequest(ctx, labels[2], labels[3], labels[4], duration)
 }
 
 func (m *PrometheusMetrics) ObserveEmbeddingLatency(durationMs float64, outcome string) {
@@ -337,6 +343,10 @@ func (m *PrometheusMetrics) ObserveVerifierLatencyFor(ctx context.Context, model
 	labels := append(identityValues(ctx), normalizeLabel(model), normalizeLabel(outcome))
 	m.verifierCalls.WithLabelValues(labels...).Inc()
 	m.verifierDur.WithLabelValues(labels...).Observe(durationMs / 1000)
+	if operation, ok := aiOperationFromContext(ctx); ok {
+		m.credentialUsage.observeAIAttempt(ctx, operation.operation, AIComponentVerifier, labels[2],
+			normalizeAIProviderAttemptOutcome(outcome), durationMs/1000)
+	}
 }
 
 func (m *PrometheusMetrics) ObserveVerifierTokens(ctx context.Context, model string, promptTokens, completionTokens, totalTokens int64) {
@@ -401,6 +411,7 @@ func (m *PrometheusMetrics) ObserveAIOperationUsage(ctx context.Context, usage A
 	base := append(identityValues(ctx), operation.operation, component, model)
 	if usage.InputTokens > 0 {
 		m.aiOperationTokens.WithLabelValues(append(base, "input", source)...).Add(float64(usage.InputTokens))
+		m.credentialUsage.addAITokens(ctx, operation.operation, component, model, "input", source, usage.InputTokens)
 		// Provider-source aggregates are emitted by the scoped token recorders.
 		if source == AITokenSourceTokenizer {
 			m.observeProviderTokens(operation.operation, component, "input", source, usage.InputTokens)
@@ -408,6 +419,7 @@ func (m *PrometheusMetrics) ObserveAIOperationUsage(ctx context.Context, usage A
 	}
 	if usage.OutputTokens > 0 {
 		m.aiOperationTokens.WithLabelValues(append(base, "output", source)...).Add(float64(usage.OutputTokens))
+		m.credentialUsage.addAITokens(ctx, operation.operation, component, model, "output", source, usage.OutputTokens)
 		if source == AITokenSourceTokenizer {
 			m.observeProviderTokens(operation.operation, component, "output", source, usage.OutputTokens)
 		}
@@ -437,6 +449,7 @@ func (m *PrometheusMetrics) ObserveAIOperationUsage(ctx context.Context, usage A
 		return
 	}
 	m.aiOperationCosts.WithLabelValues(append(base, source)...).Add(cost)
+	m.credentialUsage.addAICost(ctx, operation.operation, component, model, source, cost)
 }
 
 func (m *PrometheusMetrics) ObserveAIOperationUnpriced(ctx context.Context, component, model, reason string) {
@@ -452,39 +465,43 @@ func (m *PrometheusMetrics) observeAIOperationUnpriced(ctx context.Context, oper
 	component = normalizeAIComponent(component)
 	reason = normalizeAIUnpricedReason(reason)
 	m.aiOperationUnpriced.WithLabelValues(append(identityValues(ctx), operation, component, model, reason)...).Inc()
+	m.credentialUsage.addAIUnpriced(ctx, operation, component, model, reason)
 	m.observeProviderUnpriced(operation, component, reason)
 }
 
 func aiOperationCostUSD(component string, usage AIOperationUsage, pricing AIPricing) (float64, bool) {
 	const tokensPerMillion = 1_000_000
+	model := strings.TrimSpace(usage.Model)
+	var inputRate, outputRate *float64
 	switch component {
 	case AIComponentVerifier:
-		if strings.TrimSpace(pricing.VerifierModel) == "" ||
-			strings.TrimSpace(usage.Model) != strings.TrimSpace(pricing.VerifierModel) {
-			return 0, false
+		if model != "" && model == strings.TrimSpace(pricing.VerifierModel) {
+			inputRate, outputRate = pricing.VerifierInputUSDPerMillionTokens, pricing.VerifierOutputUSDPerMillionTokens
 		}
-		if usage.InputTokens > 0 && pricing.VerifierInputUSDPerMillionTokens == nil {
-			return 0, false
-		}
-		if usage.OutputTokens > 0 && pricing.VerifierOutputUSDPerMillionTokens == nil {
-			return 0, false
-		}
-		cost := 0.0
-		if usage.InputTokens > 0 {
-			cost += float64(usage.InputTokens) * *pricing.VerifierInputUSDPerMillionTokens / tokensPerMillion
-		}
-		if usage.OutputTokens > 0 {
-			cost += float64(usage.OutputTokens) * *pricing.VerifierOutputUSDPerMillionTokens / tokensPerMillion
-		}
-		return cost, true
 	case AIComponentEmbedding:
-		if pricing.EmbeddingInputUSDPerMillionTokens == nil {
-			return 0, false
+		if model != "" && model == strings.TrimSpace(pricing.EmbeddingModel) {
+			inputRate = pricing.EmbeddingInputUSDPerMillionTokens
 		}
-		return float64(usage.InputTokens) * *pricing.EmbeddingInputUSDPerMillionTokens / tokensPerMillion, true
 	default:
 		return 0, false
 	}
+	for _, price := range pricing.ModelPrices {
+		if price.Component == component && price.Model == model {
+			inputRate, outputRate = price.InputUSDPerMillionTokens, price.OutputUSDPerMillionTokens
+			break
+		}
+	}
+	if model == "" || (usage.InputTokens > 0 && inputRate == nil) || (usage.OutputTokens > 0 && outputRate == nil) {
+		return 0, false
+	}
+	cost := 0.0
+	if usage.InputTokens > 0 {
+		cost += float64(usage.InputTokens) * *inputRate / tokensPerMillion
+	}
+	if usage.OutputTokens > 0 {
+		cost += float64(usage.OutputTokens) * *outputRate / tokensPerMillion
+	}
+	return cost, true
 }
 
 func (m *PrometheusMetrics) ObserveRecallFeedback(feedback recallcontract.FeedbackObservation) {

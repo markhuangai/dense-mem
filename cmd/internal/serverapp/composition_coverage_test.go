@@ -91,14 +91,14 @@ func TestBootstrapWrappersAndEarlyServerGuards(t *testing.T) {
 
 func TestCompositionHelpersCoverTelemetryAndMaintenanceBranches(t *testing.T) {
 	logger := observability.New(0)
-	disabled, err := buildTelemetryApplication(context.Background(), config.Config{}, telemetryPricingStub{}, nil, nil, logger)
+	disabled, err := buildTelemetryApplication(context.Background(), config.Config{}, telemetryPricingStub{}, nil, nil, logger, nil)
 	if err != nil || disabled.PricingRefreshEnabled || disabled.Reader != nil || disabled.Metrics == nil {
 		t.Fatalf("disabled telemetry composition = %+v, %v", disabled, err)
 	}
 	unavailable, err := buildTelemetryApplication(context.Background(), config.Config{
 		TelemetryEnabled: true,
 		AIVerifierModel:  "configured-verifier",
-	}, telemetryPricingStub{err: errors.New("pricing unavailable")}, nil, nil, logger)
+	}, telemetryPricingStub{err: errors.New("pricing unavailable")}, nil, nil, logger, observability.NewCredentialProtector())
 	if err != nil || !unavailable.PricingRefreshEnabled || unavailable.Reader == nil || unavailable.ScrapeHandler == nil || unavailable.Prometheus == nil {
 		t.Fatalf("telemetry composition with unavailable pricing = %+v, %v", unavailable, err)
 	}
@@ -106,7 +106,7 @@ func TestCompositionHelpersCoverTelemetryAndMaintenanceBranches(t *testing.T) {
 	enabled, err := buildTelemetryApplication(context.Background(), config.Config{
 		TelemetryEnabled: true,
 		AIVerifierModel:  "configured-verifier",
-	}, telemetryPricingStub{config: domain.TelemetryPricingRuntimeConfig{VerifierInputUSDPerMillionTokens: &rate}}, nil, nil, logger)
+	}, telemetryPricingStub{config: domain.TelemetryPricingRuntimeConfig{VerifierInputUSDPerMillionTokens: &rate}}, nil, nil, logger, observability.NewCredentialProtector())
 	if err != nil || !enabled.PricingRefreshEnabled || enabled.Reader == nil || enabled.ScrapeHandler == nil || enabled.Prometheus == nil {
 		t.Fatalf("enabled telemetry composition = %+v, %v", enabled, err)
 	}

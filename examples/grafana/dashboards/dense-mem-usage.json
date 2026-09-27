@@ -1,0 +1,307 @@
+{
+  "__inputs": [],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "13.2.2"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Private request and AI usage by authenticated credential ID and protected display name. New credential series start when this collector is deployed; prior owner-level totals cannot be split into credentials.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "title": "Dense-Mem Overview",
+      "url": "/d/dense-mem-service",
+      "targetBlank": false,
+      "type": "link"
+    },
+    {
+      "title": "Dense-Mem AI and Recall",
+      "url": "/d/dense-mem-ai-recall",
+      "targetBlank": false,
+      "type": "link"
+    },
+    {
+      "title": "Dense-Mem Remember and Dream",
+      "url": "/d/dense-mem-workflows",
+      "targetBlank": false,
+      "type": "link"
+    },
+    {
+      "title": "Dense-Mem Performance and Dependencies",
+      "url": "/d/dense-mem-performance",
+      "targetBlank": false,
+      "type": "link"
+    }
+  ],
+  "liveNow": false,
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": [
+    "dense-mem",
+    "operations",
+    "usage"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "includeAll": false,
+        "label": "Prometheus datasource",
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "dense-mem",
+          "value": "dense-mem"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "definition": "label_values(up, job)",
+        "includeAll": false,
+        "label": "Job",
+        "multi": false,
+        "name": "job",
+        "query": {
+          "query": "label_values(up, job)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "1h",
+          "value": "1h"
+        },
+        "label": "Rolling totals",
+        "name": "window",
+        "options": [
+          {
+            "selected": false,
+            "text": "15m",
+            "value": "15m"
+          },
+          {
+            "selected": false,
+            "text": "30m",
+            "value": "30m"
+          },
+          {
+            "selected": true,
+            "text": "1h",
+            "value": "1h"
+          },
+          {
+            "selected": false,
+            "text": "12h",
+            "value": "12h"
+          },
+          {
+            "selected": false,
+            "text": "1d",
+            "value": "1d"
+          },
+          {
+            "selected": false,
+            "text": "7d",
+            "value": "7d"
+          },
+          {
+            "selected": false,
+            "text": "30d",
+            "value": "30d"
+          }
+        ],
+        "query": "15m,30m,1h,12h,1d,7d,30d",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "definition": "label_values(densemem_usage_http_requests_total, team_id)",
+        "includeAll": true,
+        "allValue": ".*",
+        "label": "Team",
+        "multi": false,
+        "name": "team",
+        "options": [],
+        "query": {
+          "query": "label_values(densemem_usage_http_requests_total, team_id)",
+          "refId": "Variable-team"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "definition": "label_values(densemem_usage_http_requests_total, credential_id)",
+        "includeAll": true,
+        "allValue": ".*",
+        "label": "Credential ID",
+        "multi": false,
+        "name": "credential",
+        "options": [],
+        "query": {
+          "query": "label_values(densemem_usage_http_requests_total, credential_id)",
+          "refId": "Variable-credential"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "definition": "label_values(densemem_usage_ai_provider_attempts_total, operation)",
+        "includeAll": true,
+        "allValue": ".*",
+        "label": "AI feature",
+        "multi": false,
+        "name": "feature",
+        "options": [],
+        "query": {
+          "query": "label_values(densemem_usage_ai_provider_attempts_total, operation)",
+          "refId": "Variable-feature"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "definition": "label_values(densemem_usage_ai_provider_attempts_total, model)",
+        "includeAll": true,
+        "allValue": ".*",
+        "label": "AI model",
+        "multi": false,
+        "name": "model",
+        "options": [],
+        "query": {
+          "query": "label_values(densemem_usage_ai_provider_attempts_total, model)",
+          "refId": "Variable-model"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "label": "Control portal URL",
+        "name": "control_portal_url",
+        "options": [],
+        "query": "",
+        "type": "textbox"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h"
+    ]
+  },
+  "timezone": "browser",
+  "title": "Dense-Mem Team and Credential Usage",
+  "uid": "dense-mem-usage",
+  "version": 1,
+  "weekStart": "",
+  "panels": [
+    {"id":900,"title":"Request and MCP usage by credential","type":"row","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":0},"panels":[],"targets":[]},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"The name is unavailable if it could not be safely exported; credential ID remains authoritative.","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":9,"w":24,"x":0,"y":1},"id":1,"options":{"showHeader":true,"cellHeight":"sm"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"(sum by (team_id,profile_id,credential_id,attribution)(increase(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window]) + ((min_over_time(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window]) unless ignoring(__name__) last_over_time(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window] offset $window)) or (0 * increase(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window])))) * on(team_id,profile_id,credential_id) group_left(credential_name) (topk by (team_id,profile_id,credential_id) (1, densemem_usage_credential_last_observed_timestamp_seconds{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}) > bool 0)) or label_replace((sum by (team_id,profile_id,credential_id,attribution)(increase(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window]) + ((min_over_time(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window]) unless ignoring(__name__) last_over_time(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window] offset $window)) or (0 * increase(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window])))) unless on(team_id,profile_id,credential_id) (topk by (team_id,profile_id,credential_id) (1, densemem_usage_credential_last_observed_timestamp_seconds{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}) > bool 0)), \"credential_name\", \"unavailable\", \"credential_id\", \".*\")","format":"table","instant":true,"range":false,"refId":"A"}],"title":"Requests by credential","type":"table"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":9,"w":24,"x":0,"y":10},"id":2,"options":{"showHeader":true,"cellHeight":"sm"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"(sum by (team_id,profile_id,credential_id,attribution)(increase(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",status_class=~\"4xx|5xx\"}[$window]) + ((min_over_time(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",status_class=~\"4xx|5xx\"}[$window]) unless ignoring(__name__) last_over_time(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",status_class=~\"4xx|5xx\"}[$window] offset $window)) or (0 * increase(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",status_class=~\"4xx|5xx\"}[$window])))) * on(team_id,profile_id,credential_id) group_left(credential_name) (topk by (team_id,profile_id,credential_id) (1, densemem_usage_credential_last_observed_timestamp_seconds{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}) > bool 0)) or label_replace((sum by (team_id,profile_id,credential_id,attribution)(increase(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",status_class=~\"4xx|5xx\"}[$window]) + ((min_over_time(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",status_class=~\"4xx|5xx\"}[$window]) unless ignoring(__name__) last_over_time(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",status_class=~\"4xx|5xx\"}[$window] offset $window)) or (0 * increase(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",status_class=~\"4xx|5xx\"}[$window])))) unless on(team_id,profile_id,credential_id) (topk by (team_id,profile_id,credential_id) (1, densemem_usage_credential_last_observed_timestamp_seconds{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}) > bool 0)), \"credential_name\", \"unavailable\", \"credential_id\", \".*\")","format":"table","instant":true,"range":false,"refId":"A"}],"title":"HTTP errors by credential","type":"table"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":9,"w":24,"x":0,"y":19},"id":3,"options":{"showHeader":true,"cellHeight":"sm"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"(sum by (team_id,profile_id,credential_id,attribution,outcome)(increase(densemem_usage_mcp_tool_results_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window]) + ((min_over_time(densemem_usage_mcp_tool_results_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window]) unless ignoring(__name__) last_over_time(densemem_usage_mcp_tool_results_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window] offset $window)) or (0 * increase(densemem_usage_mcp_tool_results_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window])))) * on(team_id,profile_id,credential_id) group_left(credential_name) (topk by (team_id,profile_id,credential_id) (1, densemem_usage_credential_last_observed_timestamp_seconds{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}) > bool 0)) or label_replace((sum by (team_id,profile_id,credential_id,attribution,outcome)(increase(densemem_usage_mcp_tool_results_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window]) + ((min_over_time(densemem_usage_mcp_tool_results_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window]) unless ignoring(__name__) last_over_time(densemem_usage_mcp_tool_results_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window] offset $window)) or (0 * increase(densemem_usage_mcp_tool_results_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window])))) unless on(team_id,profile_id,credential_id) (topk by (team_id,profile_id,credential_id) (1, densemem_usage_credential_last_observed_timestamp_seconds{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}) > bool 0)), \"credential_name\", \"unavailable\", \"credential_id\", \".*\")","format":"table","instant":true,"range":false,"refId":"A"}],"title":"MCP outcomes by credential","type":"table"},
+    {"id":903,"title":"AI usage by credential and feature","type":"row","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":28},"panels":[],"targets":[]},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Prometheus estimates, not invoice totals; inspect unpriced usage below.","fieldConfig":{"defaults":{"unit":"currencyUSD","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":9,"w":24,"x":0,"y":29},"id":4,"options":{"showHeader":true,"cellHeight":"sm"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"(sum by (team_id,profile_id,credential_id,attribution,operation,component,model,source)(increase(densemem_usage_ai_operation_cost_usd_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window]) + ((min_over_time(densemem_usage_ai_operation_cost_usd_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window]) unless ignoring(__name__) last_over_time(densemem_usage_ai_operation_cost_usd_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window] offset $window)) or (0 * increase(densemem_usage_ai_operation_cost_usd_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window])))) * on(team_id,profile_id,credential_id) group_left(credential_name) (topk by (team_id,profile_id,credential_id) (1, densemem_usage_credential_last_observed_timestamp_seconds{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}) > bool 0)) or label_replace((sum by (team_id,profile_id,credential_id,attribution,operation,component,model,source)(increase(densemem_usage_ai_operation_cost_usd_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window]) + ((min_over_time(densemem_usage_ai_operation_cost_usd_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window]) unless ignoring(__name__) last_over_time(densemem_usage_ai_operation_cost_usd_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window] offset $window)) or (0 * increase(densemem_usage_ai_operation_cost_usd_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window])))) unless on(team_id,profile_id,credential_id) (topk by (team_id,profile_id,credential_id) (1, densemem_usage_credential_last_observed_timestamp_seconds{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}) > bool 0)), \"credential_name\", \"unavailable\", \"credential_id\", \".*\")","format":"table","instant":true,"range":false,"refId":"A"}],"title":"AI estimated cost by credential and feature","type":"table"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":9,"w":24,"x":0,"y":38},"id":5,"options":{"showHeader":true,"cellHeight":"sm"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"(sum by (team_id,profile_id,credential_id,attribution,operation,component,model,kind,source)(increase(densemem_usage_ai_operation_tokens_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window]) + ((min_over_time(densemem_usage_ai_operation_tokens_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window]) unless ignoring(__name__) last_over_time(densemem_usage_ai_operation_tokens_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window] offset $window)) or (0 * increase(densemem_usage_ai_operation_tokens_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window])))) * on(team_id,profile_id,credential_id) group_left(credential_name) (topk by (team_id,profile_id,credential_id) (1, densemem_usage_credential_last_observed_timestamp_seconds{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}) > bool 0)) or label_replace((sum by (team_id,profile_id,credential_id,attribution,operation,component,model,kind,source)(increase(densemem_usage_ai_operation_tokens_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window]) + ((min_over_time(densemem_usage_ai_operation_tokens_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window]) unless ignoring(__name__) last_over_time(densemem_usage_ai_operation_tokens_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window] offset $window)) or (0 * increase(densemem_usage_ai_operation_tokens_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window])))) unless on(team_id,profile_id,credential_id) (topk by (team_id,profile_id,credential_id) (1, densemem_usage_credential_last_observed_timestamp_seconds{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}) > bool 0)), \"credential_name\", \"unavailable\", \"credential_id\", \".*\")","format":"table","instant":true,"range":false,"refId":"A"}],"title":"AI tokens by credential and feature","type":"table"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":9,"w":24,"x":0,"y":47},"id":6,"options":{"showHeader":true,"cellHeight":"sm"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"(sum by (team_id,profile_id,credential_id,attribution,operation,component,model,outcome)(increase(densemem_usage_ai_provider_attempts_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window]) + ((min_over_time(densemem_usage_ai_provider_attempts_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window]) unless ignoring(__name__) last_over_time(densemem_usage_ai_provider_attempts_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window] offset $window)) or (0 * increase(densemem_usage_ai_provider_attempts_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window])))) * on(team_id,profile_id,credential_id) group_left(credential_name) (topk by (team_id,profile_id,credential_id) (1, densemem_usage_credential_last_observed_timestamp_seconds{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}) > bool 0)) or label_replace((sum by (team_id,profile_id,credential_id,attribution,operation,component,model,outcome)(increase(densemem_usage_ai_provider_attempts_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window]) + ((min_over_time(densemem_usage_ai_provider_attempts_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window]) unless ignoring(__name__) last_over_time(densemem_usage_ai_provider_attempts_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window] offset $window)) or (0 * increase(densemem_usage_ai_provider_attempts_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window])))) unless on(team_id,profile_id,credential_id) (topk by (team_id,profile_id,credential_id) (1, densemem_usage_credential_last_observed_timestamp_seconds{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}) > bool 0)), \"credential_name\", \"unavailable\", \"credential_id\", \".*\")","format":"table","instant":true,"range":false,"refId":"A"}],"title":"Provider attempts by credential and feature","type":"table"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":9,"w":24,"x":0,"y":56},"id":7,"options":{"showHeader":true,"cellHeight":"sm"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"(sum by (team_id,profile_id,credential_id,attribution,operation,component,model,reason)(increase(densemem_usage_ai_operation_unpriced_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window]) + ((min_over_time(densemem_usage_ai_operation_unpriced_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window]) unless ignoring(__name__) last_over_time(densemem_usage_ai_operation_unpriced_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window] offset $window)) or (0 * increase(densemem_usage_ai_operation_unpriced_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window])))) * on(team_id,profile_id,credential_id) group_left(credential_name) (topk by (team_id,profile_id,credential_id) (1, densemem_usage_credential_last_observed_timestamp_seconds{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}) > bool 0)) or label_replace((sum by (team_id,profile_id,credential_id,attribution,operation,component,model,reason)(increase(densemem_usage_ai_operation_unpriced_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window]) + ((min_over_time(densemem_usage_ai_operation_unpriced_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window]) unless ignoring(__name__) last_over_time(densemem_usage_ai_operation_unpriced_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window] offset $window)) or (0 * increase(densemem_usage_ai_operation_unpriced_total{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\",operation=~\"$feature\",model=~\"$model\"}[$window])))) unless on(team_id,profile_id,credential_id) (topk by (team_id,profile_id,credential_id) (1, densemem_usage_credential_last_observed_timestamp_seconds{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}) > bool 0)), \"credential_name\", \"unavailable\", \"credential_id\", \".*\")","format":"table","instant":true,"range":false,"refId":"A"}],"title":"Unpriced AI usage by credential","type":"table"},
+    {"id":907,"title":"Team and credential diagnostics","type":"row","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":65},"panels":[],"targets":[]},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"","fieldConfig":{"defaults":{"unit":"reqps","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":0,"y":66},"id":8,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"(sum by (team_id,attribution)(increase(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\"}[$__rate_interval]) + ((min_over_time(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\"}[$__rate_interval]) unless ignoring(__name__) last_over_time(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\"}[$__rate_interval] offset $__rate_interval)) or (0 * increase(densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"$team\"}[$__rate_interval])))) / ($__rate_interval)) and on() (min(up{job=~\"$job\"}) == 1)","instant":false,"range":true,"refId":"A"}],"title":"Team request rate","type":"timeseries"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Aggregated latency; select a credential to isolate a slow caller.","fieldConfig":{"defaults":{"unit":"ms","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":8,"w":12,"x":12,"y":66},"id":9,"options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom"},"tooltip":{"mode":"multi","sort":"desc"}},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"1000 * histogram_quantile(0.95, sum by (le,team_id,credential_id,attribution)(increase(densemem_usage_http_request_duration_seconds_bucket{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window]) + ((min_over_time(densemem_usage_http_request_duration_seconds_bucket{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window]) unless ignoring(__name__) last_over_time(densemem_usage_http_request_duration_seconds_bucket{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window] offset $window)) or (0 * increase(densemem_usage_http_request_duration_seconds_bucket{job=~\"$job\",team_id=~\"$team\",credential_id=~\"$credential\"}[$window])))))","instant":false,"range":true,"refId":"A"}],"title":"Credential p95 HTTP latency","type":"timeseries"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Counts observations where a name was absent, too long, or would expose protected material.","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false}},"overrides":[]},"gridPos":{"h":5,"w":8,"x":0,"y":74},"id":10,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"sum(increase(densemem_usage_credential_metadata_unavailable_total{job=~\"$job\"}[$window]) + ((min_over_time(densemem_usage_credential_metadata_unavailable_total{job=~\"$job\"}[$window]) unless ignoring(__name__) last_over_time(densemem_usage_credential_metadata_unavailable_total{job=~\"$job\"}[$window] offset $window)) or (0 * increase(densemem_usage_credential_metadata_unavailable_total{job=~\"$job\"}[$window])))) and on() (min(up{job=~\"$job\"}) == 1)","instant":true,"range":false,"refId":"A"}],"title":"Credential names unavailable","type":"stat"},
+    {"datasource":{"type":"prometheus","uid":"$datasource"},"description":"Select a concrete team row to open protected Remember history or operation logs. Values count observed HTTP requests since process start, not billing usage.","fieldConfig":{"defaults":{"unit":"short","noValue":"No data","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineWidth":2,"fillOpacity":8,"spanNulls":false},"links":[{"title":"Open team Remember history","url":"${control_portal_url}/?team_id=${__data.fields[\"team_id\"]}&remember_view=attempts","targetBlank":true},{"title":"Open team operation logs","url":"${control_portal_url}/?team_id=${__data.fields[\"team_id\"]}&section=logs","targetBlank":true}]},"overrides":[]},"gridPos":{"h":9,"w":24,"x":0,"y":79},"id":11,"options":{"showHeader":true,"cellHeight":"sm"},"targets":[{"datasource":{"type":"prometheus","uid":"$datasource"},"expr":"sum by (team_id) (densemem_usage_http_requests_total{job=~\"$job\",team_id=~\"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\"}) and on() (min(up{job=~\"$job\"}) == 1)","format":"table","instant":true,"range":false,"refId":"A"}],"title":"Team diagnostic links","type":"table","transformations":[{"id":"labelsToFields","options":{"mode":"columns"}}]}
+  ]
+}

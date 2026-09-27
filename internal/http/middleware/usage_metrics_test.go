@@ -18,12 +18,13 @@ import (
 func TestUsageMetricsMiddleware_RecordsAuthenticatedRouteTemplate(t *testing.T) {
 	teamID := uuid.New()
 	keyID := uuid.New()
+	credentialID := uuid.New()
 	recorder := &captureUsageMetricsRecorder{}
 
 	e := echo.New()
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			principal := &Principal{TeamID: teamID, OwnerID: keyID, CredentialID: testUUIDPtr(keyID)}
+			principal := &Principal{TeamID: teamID, OwnerID: keyID, CredentialID: testUUIDPtr(credentialID)}
 			ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
 			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
@@ -42,6 +43,7 @@ func TestUsageMetricsMiddleware_RecordsAuthenticatedRouteTemplate(t *testing.T) 
 	require.Len(t, recorder.events, 1)
 	require.Equal(t, teamID, recorder.events[0].TeamID)
 	require.Equal(t, keyID, recorder.events[0].KeyID)
+	require.Equal(t, credentialID, recorder.events[0].CredentialID)
 	require.Equal(t, "/ui/api/evidence/:id", recorder.events[0].Route)
 	require.Equal(t, http.StatusNoContent, recorder.events[0].Status)
 }

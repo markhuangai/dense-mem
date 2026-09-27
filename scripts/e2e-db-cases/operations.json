@@ -94,6 +94,20 @@
       "source": "internal/operations/postgres/usage_metrics_repository_integration_test.go"
     },
     {
+      "id": "repository/TestUsageCredentialBucketsEnforceTeamRLS",
+      "package": "./internal/operations/postgres",
+      "run": "^TestUsageCredentialBucketsEnforceTeamRLS$",
+      "phase": "precheck",
+      "source": "internal/operations/postgres/usage_metrics_repository_integration_test.go"
+    },
+    {
+      "id": "repository/TestUsageMetricsPruneKeepsThirtyDayBoundaryInBothBucketTables",
+      "package": "./internal/operations/postgres",
+      "run": "^TestUsageMetricsPruneKeepsThirtyDayBoundaryInBothBucketTables$",
+      "phase": "precheck",
+      "source": "internal/operations/postgres/usage_metrics_repository_integration_test.go"
+    },
+    {
       "id": "repository/TestUsageMetricsFlushRetryIsIdempotentAndAtomic",
       "package": "./internal/operations/postgres",
       "run": "^TestUsageMetricsFlushRetryIsIdempotentAndAtomic$",
