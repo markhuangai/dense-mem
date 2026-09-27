@@ -54,7 +54,7 @@ type RememberLink = { teamID: string; view: "calls" | "attempts"; attemptID: str
 function readRememberLink(): RememberLink {
   const params = new URLSearchParams(window.location.search);
   const rawTeamID = params.get("team_id") ?? "";
-  const teamID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawTeamID) ? rawTeamID : "";
+  const teamID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawTeamID) ? rawTeamID.toLowerCase() : "";
   const view = params.get("remember_view") === "calls" || (!params.has("remember_view") && params.has("invocation_id")) ? "calls" : "attempts";
   return {
     teamID,
@@ -68,6 +68,7 @@ function updateRememberLink(teamID: string, view: "calls" | "attempts") {
   const url = new URL(window.location.href);
   url.searchParams.set("team_id", teamID);
   url.searchParams.set("remember_view", view);
+  url.searchParams.delete("section");
   url.searchParams.delete("attempt_id");
   url.searchParams.delete("invocation_id");
   window.history.replaceState(null, "", url);
@@ -279,10 +280,22 @@ function Portal({
     }
   }, [activeTab, teamWorkspaceTab]);
 
+  useEffect(() => {
+    if (activeTab === "logs") return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("section")) return;
+    url.searchParams.delete("section");
+    window.history.replaceState(null, "", url);
+  }, [activeTab]);
+
   const selectedTeam = teams.find((team) => team.id === selectedTeamId) ?? null;
   const teamScopedTab = activeTab === "teams";
 
   function openTeamWorkspace(nextTab: TeamWorkspaceTab) {
+    if (nextTab === "remember-attempts" && (activeTab !== "teams" || teamWorkspaceTab !== "remember-attempts") && selectedTeamId) {
+      setRememberLink(null);
+      updateRememberLink(selectedTeamId, "attempts");
+    }
     setCreatingTeam(false);
     setTeamWorkspaceTab(nextTab);
     setActiveTab("teams");

@@ -300,7 +300,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
             </div>
           )}
         />
-        <p className="panel-intro">Durable processing history. A call can replay an existing attempt or end without creating one. Captured diagnostic bodies are retained for up to seven days.</p>
+        <p className="panel-intro">Durable processing history. A call can replay an existing attempt or end without creating one. Captured diagnostic bodies are retained for up to seven days unless placed under legal hold.</p>
         {error && <div className="banner error" role="alert">{error}</div>}
         <div className="metrics-toolbar submission-toolbar">
           <label>
@@ -413,7 +413,7 @@ function RememberCallsView({
             </div>
           )}
         />
-        <p className="panel-intro">Admitted Remember invocations, including executions, replays, conflicts, and cancellations. Call diagnostics expire after seven days; durable attempts remain in the Attempts view.</p>
+        <p className="panel-intro">Admitted Remember invocations, including executions, replays, conflicts, and cancellations. Call diagnostics expire after seven days unless placed under legal hold; durable attempts remain in the Attempts view.</p>
         {error && <div className="banner error" role="alert">{error}</div>}
         {loading && items.length === 0 ? <LoadingState label="Loading Remember calls" /> : items.length === 0 ? <div className="table-placeholder">No Remember calls</div> : (
           <div className="table-wrap">

@@ -384,6 +384,34 @@ describe("App", () => {
     expect(window.location.search).not.toContain("invocation_id");
   });
 
+  it("keeps Remember open after navigating from a Logs link and reloading", async () => {
+    mockPortalFetch({ teams: [profileA], keys: [] });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+    window.history.replaceState(null, "", `/?team_id=${profileA.id}&section=logs`);
+
+    const { unmount } = render(<App />);
+    expect(await screen.findByRole("heading", { name: "Operation Logs" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^Remember Attempts$/ }));
+    expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
+    expect(new URLSearchParams(window.location.search).get("section")).toBeNull();
+    expect(new URLSearchParams(window.location.search).get("remember_view")).toBe("attempts");
+
+    unmount();
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
+  });
+
+  it("opens a Remember link with an uppercase team UUID", async () => {
+    const team = { ...profileA, id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" };
+    mockPortalFetch({ teams: [team], keys: [] });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+    window.history.replaceState(null, "", `/?team_id=${team.id.toUpperCase()}&remember_view=attempts`);
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
+    expect(screen.queryByText("Linked team is unavailable or you do not have access.")).not.toBeInTheDocument();
+  });
+
   it("does not open another team's history when the linked team is unavailable", async () => {
     const fetchMock = mockPortalFetch({ teams: [profileA], keys: [] });
     sessionStorage.setItem("denseMem.controlToken", "secret");

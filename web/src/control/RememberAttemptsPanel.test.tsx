@@ -24,6 +24,29 @@ describe("RememberAttemptsPanel", () => {
     expect(await screen.findByRole("region", { name: "Remember attempt details" })).toBeInTheDocument();
   });
 
+  it("explains legal-hold retention and shows a held call capture after normal expiry", async () => {
+    const invocation = {
+      team_id: "team-1", owner_profile_id: "owner-1", invocation_id: "held-call", canonical_attempt_id: "attempt-1",
+      request_hash: "hash-1", correlation_id: "corr-1", classification: "execution", outcome: "completed",
+      phase: "commit", protected_cause: "", delivery_stage: "write_observed", retryable: false,
+      duration_ms: 3, created_at: "2026-08-18T01:00:00Z", expires_at: "2026-08-25T01:00:00Z", retained_by_legal_hold: true,
+    } as const;
+    const api = {
+      listRememberAttemptDiagnostics: vi.fn().mockResolvedValue({ data: [summary("attempt-1")], pagination: { limit: 50, offset: 0, total: 1 } }),
+      listRememberInvocationDiagnostics: vi.fn().mockResolvedValue({ data: [invocation], pagination: { limit: 50, offset: 0, total: 1 } }),
+      getRememberInvocationDiagnostic: vi.fn().mockResolvedValue({ ...invocation, request_capture_state: "captured", request_body: "held request body", provider_exchanges: [], caller_response_capture_state: "captured" }),
+    } as unknown as ControlApi;
+
+    render(<RememberAttemptsPanel api={api} team={team()} />);
+    expect(await screen.findByText(/Captured diagnostic bodies are retained for up to seven days unless placed under legal hold\./)).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "Calls (1)" }));
+    expect(screen.getByText(/Call diagnostics expire after seven days unless placed under legal hold; durable attempts remain in the Attempts view\./)).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "Inspect Remember call held-call" }));
+    const detail = await screen.findByRole("region", { name: "Remember call details" });
+    expect(within(detail).getByText("Legal hold")).toBeInTheDocument();
+    expect(within(detail).getByText("held request body")).toBeInTheDocument();
+  });
+
   it("opens on calls and links a call to filtered logs and its canonical attempt", async () => {
     const invocation = {
       team_id: "team-1", owner_profile_id: "owner-1", invocation_id: "invocation-1", canonical_attempt_id: "attempt-1",
