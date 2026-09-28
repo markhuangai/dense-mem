@@ -427,6 +427,10 @@ describe("App", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/teams?limit=100&offset=120"))).toBe(true);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`remember-attempts?team_id=${linkedTeam.id}`))).toBe(true);
     expect(screen.queryByText("Linked team is unavailable or you do not have access.")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /team overview/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Refresh teams" }));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/teams?limit=100&offset=120"))).toHaveLength(2));
+    expect(screen.getByRole("heading", { name: "Linked Team" })).toBeInTheDocument();
   });
 
   it("does not open another team's history when the linked team is unavailable", async () => {

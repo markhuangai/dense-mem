@@ -254,7 +254,7 @@ function Portal({
       const page = await api.listTeams();
       const selected = nextSelectedId || selectedTeamId || rememberLink?.teamID;
       let visibleTeams = page.data;
-      if (selected && selected === rememberLink?.teamID && teamWorkspaceTab === "remember-attempts" && !visibleTeams.some((team) => team.id === selected)) {
+      if (selected && !visibleTeams.some((team) => team.id === selected)) {
         for (let offset = page.pagination.offset + page.data.length; offset < page.pagination.total; offset += 100) {
           const nextPage = await api.listTeams(100, offset);
           const linkedTeam = nextPage.data.find((team) => team.id === selected);

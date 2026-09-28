@@ -89,6 +89,11 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
     await page.goto(`${controlURL}/?team_id=${teamID}&remember_view=calls&invocation_id=${expiredInvocationID}`);
     await expect(page.getByRole("heading", { name: "Call Detail" })).toBeVisible();
     await expect(page.getByRole("region", { name: "Remember call details" })).toContainText(expiredInvocationID);
+    await page.getByRole("button", { name: /team overview/i }).click();
+    const laterPage = page.waitForResponse((response) => response.url().includes("/control/api/teams?limit=100&offset=") && response.status() === 200);
+    await page.getByRole("button", { name: "Refresh teams" }).click();
+    await laterPage;
+    await expect(page.getByRole("heading", { name: teamName })).toBeVisible();
     await page.goto(`${controlURL}/?team_id=22222222-2222-4222-8222-222222222222&remember_view=attempts`);
     await expect(page.getByRole("alert")).toContainText("Linked team is unavailable or you do not have access.");
     await expect(page.getByRole("heading", { name: "Remember Attempts" })).toHaveCount(0);
