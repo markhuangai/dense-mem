@@ -21,19 +21,21 @@ type synchronousAssessmentSessionStub struct{ id string }
 func (s *synchronousAssessmentSessionStub) SessionID() string { return s.id }
 
 type synchronousAssessmentProviderStub struct {
-	model         string
-	response      func(assessor.SemanticAssessmentRequest, int) assessor.SemanticAssessmentResponse
-	err           error
-	repairErr     error
-	assessTurn    int
-	repairTurn    int
-	calls         int
-	repairCalls   int
-	session       *synchronousAssessmentSessionStub
-	beforeCall    func(context.Context)
-	repairErrors  []assessor.SemanticValidationError
-	assessRequest assessor.SemanticAssessmentRequest
-	repairRequest assessor.SemanticAssessmentRequest
+	model           string
+	response        func(assessor.SemanticAssessmentRequest, int) assessor.SemanticAssessmentResponse
+	err             error
+	errorTurn       assessor.SemanticAssessmentTurn
+	repairErr       error
+	repairErrorTurn assessor.SemanticAssessmentTurn
+	assessTurn      int
+	repairTurn      int
+	calls           int
+	repairCalls     int
+	session         *synchronousAssessmentSessionStub
+	beforeCall      func(context.Context)
+	repairErrors    []assessor.SemanticValidationError
+	assessRequest   assessor.SemanticAssessmentRequest
+	repairRequest   assessor.SemanticAssessmentRequest
 }
 
 func (s *synchronousAssessmentProviderStub) Assess(ctx context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
@@ -43,7 +45,7 @@ func (s *synchronousAssessmentProviderStub) Assess(ctx context.Context, request 
 		s.beforeCall(ctx)
 	}
 	if s.err != nil {
-		return nil, assessor.SemanticAssessmentTurn{}, s.err
+		return nil, s.errorTurn, s.err
 	}
 	if s.session == nil {
 		s.session = &synchronousAssessmentSessionStub{id: "assessment-session"}
@@ -67,7 +69,7 @@ func (s *synchronousAssessmentProviderStub) Repair(ctx context.Context, session 
 		return assessor.SemanticAssessmentTurn{}, errors.New("unexpected assessment session")
 	}
 	if s.repairErr != nil {
-		return assessor.SemanticAssessmentTurn{}, s.repairErr
+		return s.repairErrorTurn, s.repairErr
 	}
 	turn := s.calls + s.repairCalls
 	if s.repairTurn > 0 {

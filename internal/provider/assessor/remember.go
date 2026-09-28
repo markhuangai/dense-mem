@@ -79,7 +79,7 @@ func (v *OpenAIAssessor) Assess(ctx context.Context, req assessor.SemanticAssess
 	}
 	turn, rawContent, err := v.runRememberAssessmentTurn(ctx, session, prepared, session.messages)
 	if err != nil {
-		return session, assessor.SemanticAssessmentTurn{}, err
+		return session, turn, err
 	}
 	session.lastAssistant = rawContent
 	session.turn = 1
@@ -157,7 +157,7 @@ func (v *OpenAIAssessor) Repair(ctx context.Context, sessionRef assessor.Semanti
 	}
 	turn, rawContent, err := v.runRememberAssessmentTurn(ctx, session, prepared, messages)
 	if err != nil {
-		return assessor.SemanticAssessmentTurn{}, err
+		return turn, err
 	}
 	session.messages = messages
 	// The selected allowlist is frozen for the whole bounded conversation. The
@@ -282,15 +282,18 @@ func (v *OpenAIAssessor) runRememberAssessmentTurn(
 	}
 	if providerResult.ReportedUsage != nil && providerResult.ReportedUsage.PromptTokens > int64(v.assessmentLimits.MaxInputTokens) {
 		observability.RecordAssessorValidationFailure(v.metrics, "input_budget")
-		return assessor.SemanticAssessmentTurn{}, "", &MalformedResponseError{
-			Provider:                openAIVerifierProvider,
-			Message:                 "provider reported input tokens beyond semantic assessment limit",
-			FailureClass:            "input_budget",
-			Attempts:                session.turn + 1,
-			ValidationStage:         "conversation_input_tokens",
-			ValidationFieldFamilies: []string{"input_tokens"},
-			Measurement:             &FailureMeasurement{Unit: "tokens", Observed: int(providerResult.ReportedUsage.PromptTokens), Limit: v.assessmentLimits.MaxInputTokens},
-		}
+		return assessor.SemanticAssessmentTurn{
+				InputTokens:  int(providerResult.ReportedUsage.PromptTokens),
+				OutputTokens: int(providerResult.ReportedUsage.CompletionTokens),
+			}, "", &MalformedResponseError{
+				Provider:                openAIVerifierProvider,
+				Message:                 "provider reported input tokens beyond semantic assessment limit",
+				FailureClass:            "input_budget",
+				Attempts:                session.turn + 1,
+				ValidationStage:         "conversation_input_tokens",
+				ValidationFieldFamilies: []string{"input_tokens"},
+				Measurement:             &FailureMeasurement{Unit: "tokens", Observed: int(providerResult.ReportedUsage.PromptTokens), Limit: v.assessmentLimits.MaxInputTokens},
+			}
 	}
 	response, responseErrors, failureStage := semanticAssessmentResponseForCorrection(prepared, providerResult, v.assessmentLimits)
 	turn := assessor.SemanticAssessmentTurn{

@@ -13,6 +13,48 @@ import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
 )
 
+func TestOpenAIAssessorRetainsUsageOnReportedInputOverage(t *testing.T) {
+	usage := &openAIVerifierUsage{
+		PromptTokens:     int64(DefaultSemanticAssessmentLimits().MaxInputTokens + 1),
+		CompletionTokens: 9,
+		TotalTokens:      int64(DefaultSemanticAssessmentLimits().MaxInputTokens + 10),
+	}
+	for _, repair := range []bool{false, true} {
+		t.Run(map[bool]string{false: "first_turn", true: "repair"}[repair], func(t *testing.T) {
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if repair && calls == 1 {
+					assessorResponseHandler(t, semanticAssessmentTestResponse(), nil)(w, r)
+					return
+				}
+				assessorResponseHandler(t, semanticAssessmentTestResponse(), usage)(w, r)
+			}))
+			defer srv.Close()
+			provider := NewOpenAIAssessor(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+			request, _ := semanticAssessmentTestRequest(t)
+			var turn assessor.SemanticAssessmentTurn
+			var err error
+			if repair {
+				var session assessor.SemanticAssessmentSession
+				session, turn, err = provider.Assess(context.Background(), request)
+				require.NoError(t, err)
+				require.NotNil(t, session)
+				turn, err = provider.Repair(context.Background(), session, assessor.SemanticAssessmentRepairRequest{
+					Request: request, ValidationErrors: []assessor.SemanticValidationError{{Field: "request_id", Message: "retry"}},
+				})
+			} else {
+				_, turn, err = provider.Assess(context.Background(), request)
+			}
+			var malformed *MalformedResponseError
+			require.ErrorAs(t, err, &malformed)
+			require.Equal(t, "input_budget", malformed.FailureClass)
+			require.Equal(t, int(usage.PromptTokens), turn.InputTokens)
+			require.Equal(t, int(usage.CompletionTokens), turn.OutputTokens)
+		})
+	}
+}
+
 func TestSemanticAssessmentAcceptsSerializedInputWithRepairHeadroom(t *testing.T) {
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

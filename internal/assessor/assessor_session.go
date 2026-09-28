@@ -10,7 +10,8 @@ type SemanticAssessmentSession interface {
 
 // SemanticAssessmentTurn is one complete assessor response. ValidationErrors
 // are repairable response-contract issues; provider and transport failures are
-// returned as errors instead.
+// returned as errors instead. A server-rejected completed response may return
+// token usage with its error without making the response eligible for commit.
 type SemanticAssessmentTurn struct {
 	Response         SemanticAssessmentResponse
 	ValidationErrors []SemanticValidationError

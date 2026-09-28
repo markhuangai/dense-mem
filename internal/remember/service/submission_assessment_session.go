@@ -129,6 +129,8 @@ func (s *assessmentEngine) assessRememberSessionWithValidator(
 	s.completedInputTokens, s.completedOutputTokens = 0, 0
 	session, turn, err := s.provider.Assess(ctx, request)
 	if err != nil {
+		s.completedInputTokens += max(0, turn.InputTokens)
+		s.completedOutputTokens += max(0, turn.OutputTokens)
 		return assessor.SemanticAssessmentResponse{}, session, request, err
 	}
 	response, finalRequest, err := s.completeRememberSessionTurnsWithValidator(ctx, session, turn, request, refresh, turnOffset, validate)
@@ -228,6 +230,8 @@ func (s *assessmentEngine) completeRememberSessionTurnsWithValidator(
 			Request: nextRequest, ValidationErrors: validationErrors,
 		})
 		if err != nil {
+			s.completedInputTokens += max(0, turn.InputTokens)
+			s.completedOutputTokens += max(0, turn.OutputTokens)
 			return assessor.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{cause: wrapSubmissionAssessmentValidationHistory(err, validationHistory), providerTurns: totalTurns}
 		}
 		request = nextRequest
