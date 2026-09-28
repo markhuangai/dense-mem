@@ -34,7 +34,7 @@ type GraphEntity = {
 
 export function registerGraphViewTests() {
   test("control panel shows expired Dream diagnostics without shell overlap", async ({ page }) => {
-    await stubDreamDiagnostics(page, (runID) => ({ items: [{
+    const releaseDiagnostics = await stubDreamDiagnostics(page, (runID) => ({ items: [{
       capture_id: "99999999-9999-4999-8999-999999999999", team_id: seedTeamID, run_id: runID,
       phase: "provider", outcome: "failed", cause: "provider_unavailable", details: { capture_failed: true },
       capture_state: "expired", capture_reason: "retention_expired", expires_at: "2026-08-01T00:00:00Z", created_at: "2026-07-28T03:00:01Z",
@@ -44,14 +44,18 @@ export function registerGraphViewTests() {
     await page.getByRole("button", { name: /team dreams/i }).click();
     await page.locator(".dream-runs-table tbody tr").first().getByRole("button", { name: "Inspect" }).click();
     const diagnostics = page.getByRole("region", { name: "Dream diagnostics" });
-    await expect(diagnostics.getByText("Loading Dream diagnostics")).toBeVisible();
+    try {
+      await expect(diagnostics.getByText("Loading Dream diagnostics")).toBeVisible();
+    } finally {
+      releaseDiagnostics();
+    }
     await expect(diagnostics).toContainText("expired · retention_expired");
     await page.evaluate(() => window.scrollTo(0, 0));
     await expectNoShellOverlap(page);
   });
 
   test("control panel shows the no-retention Dream diagnostic placeholder", async ({ page }) => {
-    await stubDreamDiagnostics(page, () => ({ items: [], next_cursor: "" }));
+    const releaseDiagnostics = await stubDreamDiagnostics(page, () => ({ items: [], next_cursor: "" }));
     await openControlPanel(page);
     await page.getByRole("button", { name: new RegExp(escapeRegExp(evidenceFailureTeamName)) }).click();
     await page.getByRole("button", { name: /team dreams/i }).click();
@@ -59,7 +63,11 @@ export function registerGraphViewTests() {
     await expect(failedRun).toHaveCount(1);
     await failedRun.getByRole("button", { name: "Inspect" }).click();
     const diagnostics = page.getByRole("region", { name: "Dream diagnostics" });
-    await expect(diagnostics.getByText("Loading Dream diagnostics")).toBeVisible();
+    try {
+      await expect(diagnostics.getByText("Loading Dream diagnostics")).toBeVisible();
+    } finally {
+      releaseDiagnostics();
+    }
     await expect(diagnostics).toContainText("No diagnostic capture was retained for this selection.");
     await page.evaluate(() => window.scrollTo(0, 0));
     await expectNoShellOverlap(page);
@@ -171,15 +179,18 @@ async function openControlPanel(page: Page) {
 }
 
 async function stubDreamDiagnostics(page: Page, pageData: (runID: string) => unknown) {
+  let releaseDiagnostics!: () => void;
+  const diagnosticsReady = new Promise<void>((resolve) => { releaseDiagnostics = resolve; });
   await page.route("**/control/api/teams/*/dreaming/runs/*/diagnostics*", async (route) => {
     const url = new URL(route.request().url());
     if (!url.pathname.endsWith("/diagnostics")) {
       await route.continue();
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await diagnosticsReady;
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: pageData(url.pathname.split("/")[7]) }) });
   });
+  return releaseDiagnostics;
 }
 
 function escapeRegExp(value: string): string {

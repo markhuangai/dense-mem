@@ -1,8 +1,13 @@
 -- +goose Up
 -- +goose StatementBegin
 
--- Lock/rewrite: creates a new table and indexes; existing owner usage rows are
--- not rewritten because they cannot be divided among SSO-owned credentials.
+-- Lock/rewrite impact: creates a new table and indexes; the foreign key may
+-- briefly lock teams, but existing owner usage rows are not rewritten.
+-- RLS impact: FORCE RLS permits system writes and team-scoped reads on the new
+-- table; existing owner usage policies are unchanged.
+-- Backfill: none; historical owner usage cannot be split among credentials.
+-- Backward compatibility: existing owner buckets remain the source for
+-- unfiltered totals; credential buckets contain only new attributed usage.
 -- A credential ID is retained for 30-day diagnostics even if its credential
 -- record is later deleted; its display name is resolved only while present.
 SELECT set_config('app.tx_mode', 'system', true);
@@ -54,7 +59,8 @@ CREATE POLICY usage_credential_buckets_team_read ON usage_credential_buckets
 -- +goose Down
 -- +goose StatementBegin
 
--- Rollback drops credential-attributed usage collected after this migration.
+-- Rollback: Down drops credential-attributed usage collected after this
+-- migration; historical owner buckets remain intact.
 DROP TABLE usage_credential_buckets;
 
 -- +goose StatementEnd
