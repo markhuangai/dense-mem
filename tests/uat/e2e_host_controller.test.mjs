@@ -753,8 +753,18 @@ test("community scenarios use the verifier fixture for embeddings without changi
   assert.match(communityBlock, /AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
   assert.match(communityBlock, /AI_API_KEY: "dense-mem-community-e2e-key"/);
   assert.doesNotMatch(communityBlock, /AI_API_EMBEDDING_(MODEL|DIMENSIONS):/);
-  assert.match(stack, /const deterministicEmbeddingProvider = scenario === "community" \|\| has\("synchronous_write"\) \|\| scenario === "full";/);
+  assert.match(stack, /const deterministicEmbeddingProvider = scenario === "community" \|\| scenario === "identity_cleanup" \|\| has\("synchronous_write"\) \|\| scenario === "full";/);
   assert.match(stack, /DENSE_MEM_E2E_PROVIDER_DIMENSIONS: \$\{JSON\.stringify\(providerDimensions \|\| "1536"\)\}/);
+});
+
+test("identity cleanup and conflict queue use local providers throughout their scenarios", async () => {
+  const registry = JSON.parse(await readFile(join(scripts, "e2e-scenarios.json"), "utf8"));
+  const helpers = (name) => registry.scenarios.find((entry) => entry.name === name)?.helper_profiles;
+  assert.deepEqual(helpers("identity_cleanup"), ["verifier"]);
+  assert.deepEqual(helpers("conflict_queue"), ["conflict_provider", "conflict_review", "playwright"]);
+  assert.match(stack, /if \(scenario === "identity_cleanup"\) \{[\s\S]*?AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
+  assert.match(controller, /if \[\[ "\$scenario" == "identity_cleanup" \]\]; then\s+run_identity_cleanup_startup_matrix "\$source_dir" "\$project"\s+if ! ci_compose "\$\{profiles\[@\]\}" up -d --wait --wait-timeout 300 synchronous-write-provider/);
+  assert.match(runtime, /if \[\[ "\$scenario" == "conflict" \|\| "\$scenario" == "conflict_queue" \]\]; then/);
 });
 
 test("Go helper containers fall back from module proxy transport errors", () => {

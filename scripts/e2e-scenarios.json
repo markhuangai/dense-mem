@@ -70,7 +70,7 @@
       "name": "identity_cleanup",
       "isolation": "exclusive",
       "runtime": "production",
-      "helper_profiles": [],
+      "helper_profiles": ["verifier"],
       "timeout_minutes": 35,
       "playwright": false
     },
@@ -94,7 +94,7 @@
       "name": "conflict_queue",
       "isolation": "exclusive",
       "runtime": "production",
-      "helper_profiles": ["conflict_review", "verifier", "playwright"],
+      "helper_profiles": ["conflict_provider", "conflict_review", "playwright"],
       "timeout_minutes": 60,
       "playwright": true
     },

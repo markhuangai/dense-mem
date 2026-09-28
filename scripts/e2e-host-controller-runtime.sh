@@ -114,7 +114,7 @@ run_scenario() {
 
   local -a conflict_driver_env=()
   if [[ -f "${helper_dir}/conflict-review-driver" ]]; then
-    if [[ "$scenario" == "conflict" ]]; then
+    if [[ "$scenario" == "conflict" || "$scenario" == "conflict_queue" ]]; then
       conflict_driver_env=(
         "AI_API_URL=http://conflict-provider:8081/v1"
         "AI_API_KEY=dense-mem-conflict-e2e-key"

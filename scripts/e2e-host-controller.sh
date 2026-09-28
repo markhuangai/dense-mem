@@ -704,6 +704,10 @@ start_stack() {
   provision_postgres_runtime_role
   if [[ "$scenario" == "identity_cleanup" ]]; then
     run_identity_cleanup_startup_matrix "$source_dir" "$project"
+    if ! ci_compose "${profiles[@]}" up -d --wait --wait-timeout 300 synchronous-write-provider >/dev/null; then
+      ci_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+      fail "identity cleanup provider helper failed to start"
+    fi
   elif ! ci_compose "${profiles[@]}" up -d --wait --wait-timeout 300 >/dev/null; then
     ci_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
     fail "Compose stack failed to start"
