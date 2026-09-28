@@ -412,14 +412,35 @@ describe("App", () => {
     expect(screen.queryByText("Linked team is unavailable or you do not have access.")).not.toBeInTheDocument();
   });
 
+  it("opens a Remember link for a team beyond the first page", async () => {
+    const linkedTeam = { ...profileA, id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", name: "Linked Team" };
+    const otherTeams = Array.from({ length: 120 }, (_, index) => ({
+      ...profileA, id: `${String(index).padStart(8, "0")}-0000-4000-8000-000000000001`, name: `Team ${index}`,
+    }));
+    const fetchMock = mockPortalFetch({ teams: [...otherTeams, linkedTeam], keys: [] });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+    window.history.replaceState(null, "", `/?team_id=${linkedTeam.id}&remember_view=attempts`);
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/teams?limit=100&offset=20"))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/teams?limit=100&offset=120"))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`remember-attempts?team_id=${linkedTeam.id}`))).toBe(true);
+    expect(screen.queryByText("Linked team is unavailable or you do not have access.")).not.toBeInTheDocument();
+  });
+
   it("does not open another team's history when the linked team is unavailable", async () => {
-    const fetchMock = mockPortalFetch({ teams: [profileA], keys: [] });
+    const otherTeams = Array.from({ length: 20 }, (_, index) => ({
+      ...profileA, id: `${String(index).padStart(8, "0")}-0000-4000-8000-000000000001`, name: `Team ${index}`,
+    }));
+    const fetchMock = mockPortalFetch({ teams: [profileA, ...otherTeams], keys: [] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
     window.history.replaceState(null, "", "/?team_id=22222222-2222-4222-8222-222222222222&remember_view=attempts&attempt_id=missing-attempt");
 
     render(<App />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Linked team is unavailable or you do not have access.");
     expect(screen.queryByRole("heading", { name: "Remember Attempts" })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/teams?limit=100&offset=20"))).toBe(true);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("remember-attempts"))).toBe(false);
     await userEvent.click(screen.getByRole("button", { name: /Default/ }));
     expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();

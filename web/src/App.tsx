@@ -252,9 +252,21 @@ function Portal({
     setError("");
     try {
       const page = await api.listTeams();
-      setTeams(page.data);
       const selected = nextSelectedId || selectedTeamId || rememberLink?.teamID;
-      if (selected && page.data.some((team) => team.id === selected)) {
+      let visibleTeams = page.data;
+      if (selected && selected === rememberLink?.teamID && teamWorkspaceTab === "remember-attempts" && !visibleTeams.some((team) => team.id === selected)) {
+        for (let offset = page.pagination.offset + page.data.length; offset < page.pagination.total; offset += 100) {
+          const nextPage = await api.listTeams(100, offset);
+          const linkedTeam = nextPage.data.find((team) => team.id === selected);
+          if (linkedTeam) {
+            visibleTeams = [...visibleTeams, linkedTeam];
+            break;
+          }
+          if (nextPage.data.length === 0) break;
+        }
+      }
+      setTeams(visibleTeams);
+      if (selected && visibleTeams.some((team) => team.id === selected)) {
         setSelectedTeamId(selected);
       } else if (!nextSelectedId && selected === rememberLink?.teamID && teamWorkspaceTab === "remember-attempts") {
         setSelectedTeamId("");

@@ -15,13 +15,11 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
   const failed = list.data?.find((item) => item.attempt_id === fixtureAttemptID);
   expect(failed).toBeDefined();
 
-  await page.goto(`${controlURL}/`);
+  await page.goto(`${controlURL}/?team_id=${teamID}&remember_view=attempts`);
   await page.getByLabel("Control token").fill(controlToken);
   await page.getByRole("button", { name: "Unlock" }).click();
-  await expect(page.getByRole("heading", { name: "Teams" })).toBeVisible();
-  await page.getByRole("button", { name: new RegExp(escapeRegExp(teamName)) }).click();
-  await page.getByRole("button", { name: /team remember attempts/i }).click();
   await expect(page.getByRole("heading", { name: "Remember Attempts" })).toBeVisible();
+  await expect(page.getByRole("button", { name: new RegExp(escapeRegExp(teamName)) })).toBeVisible();
   await expect(page.getByRole("button", { name: /^Calls \(\d+\)$/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Attempt Detail" })).toHaveCount(0);
   await page.getByRole("button", { name: /^Calls \(/ }).click();
@@ -65,6 +63,41 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
   await page.goto(`${controlURL}/?team_id=${teamID}&remember_view=calls&invocation_id=${expiredInvocationID}`);
   await expect(page.getByRole("heading", { name: "Call Detail" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Remember call details" })).toContainText(expiredInvocationID);
+
+  const teamHeaders = { Authorization: `Bearer ${controlToken}` };
+  const createdTeamIDs: string[] = [];
+  try {
+    const initialTeamsResponse = await request.get(`${controlURL}/control/api/teams?limit=20`, { headers: teamHeaders });
+    expect(initialTeamsResponse.status()).toBe(200);
+    const initialTeams = await initialTeamsResponse.json() as { data: Array<{ id: string }> };
+    if (initialTeams.data.some((team) => team.id === teamID)) {
+      for (let index = 0; index < 20; index += 1) {
+        const response = await request.post(`${controlURL}/control/api/teams`, {
+          headers: teamHeaders,
+          data: { name: `Remember pagination ${Date.now()} ${index}`, description: "Linked team pagination test" },
+        });
+        expect(response.status()).toBe(201);
+        const created = await response.json() as { data: { id: string } };
+        createdTeamIDs.push(created.data.id);
+      }
+    }
+    const firstPageResponse = await request.get(`${controlURL}/control/api/teams?limit=20`, { headers: teamHeaders });
+    expect(firstPageResponse.status()).toBe(200);
+    const firstPage = await firstPageResponse.json() as { data: Array<{ id: string }> };
+    expect(firstPage.data.some((team) => team.id === teamID)).toBe(false);
+
+    await page.goto(`${controlURL}/?team_id=${teamID}&remember_view=calls&invocation_id=${expiredInvocationID}`);
+    await expect(page.getByRole("heading", { name: "Call Detail" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Remember call details" })).toContainText(expiredInvocationID);
+    await page.goto(`${controlURL}/?team_id=22222222-2222-4222-8222-222222222222&remember_view=attempts`);
+    await expect(page.getByRole("alert")).toContainText("Linked team is unavailable or you do not have access.");
+    await expect(page.getByRole("heading", { name: "Remember Attempts" })).toHaveCount(0);
+  } finally {
+    for (const id of createdTeamIDs) {
+      const response = await request.delete(`${controlURL}/control/api/teams/${id}`, { headers: teamHeaders });
+      expect(response.status()).toBe(200);
+    }
+  }
 });
 
 function requiredEnv(name: string): string {

@@ -635,8 +635,8 @@ export class ControlApi {
     return this.requestEnvelope<ControlSession>("/session");
   }
 
-  listTeams(): Promise<Page<Team>> {
-    return this.request<Page<Team>>("/teams");
+  listTeams(limit?: number, offset = 0): Promise<Page<Team>> {
+    return this.request<Page<Team>>(`/teams${limit ? `?limit=${limit}&offset=${offset}` : ""}`);
   }
 
   createTeam(input: CreateTeamInput): Promise<Team> {

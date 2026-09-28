@@ -410,8 +410,10 @@ export function mockPortalFetch({
     if (url.includes(`/teams/${profileA.id}/dreams`) && method === "GET") {
       return jsonResponse({ data: { items: dreams, next_cursor: "" } });
     }
-    if (url.endsWith("/teams") && method === "GET") {
-      return jsonResponse(page(currentProfiles));
+    if (parsedUrl.pathname.endsWith("/teams") && method === "GET") {
+      const limit = Number(parsedUrl.searchParams.get("limit") ?? "20");
+      const offset = Number(parsedUrl.searchParams.get("offset") ?? "0");
+      return jsonResponse({ data: currentProfiles.slice(offset, offset + limit), pagination: { limit, offset, total: currentProfiles.length } });
     }
     if (url.endsWith("/teams") && method === "POST") {
       const team = createdProfile ?? {
