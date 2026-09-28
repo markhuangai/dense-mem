@@ -384,6 +384,66 @@ describe("App", () => {
     expect(window.location.search).not.toContain("invocation_id");
   });
 
+  it("keeps the selected Remember attempt in a reloadable URL and clears it with the view", async () => {
+    const attempts = ["attempt-a", "attempt-b"].map((attemptID) => ({
+      summary: {
+        team_id: profileA.id, team_name: profileA.name, owner_profile_id: "owner-1", attempt_id: attemptID,
+        contract_version: "dense-mem.v2.6", submission_kind: "remember", outcome: "completed",
+        evidence_count: 0, relationship_count: 0, document_count: 0, assessor_turns: 0,
+        duration_ms: 1, created_at: "2026-08-18T01:00:00Z",
+      },
+      detail: {
+        team_id: profileA.id, team_name: profileA.name, owner_profile_id: "owner-1", attempt_id: attemptID,
+        contract_version: "dense-mem.v2.6", submission_kind: "remember", outcome: "completed",
+        evidence_count: 0, relationship_count: 0, document_count: 0, assessor_turns: 0,
+        duration_ms: 1, created_at: "2026-08-18T01:00:00Z",
+        public_result: {
+          contract_version: "dense-mem.v2.6", submission_id: attemptID, submission_kind: "remember",
+          processing_state: "completed", search_state: "current", correlation_id: "corr",
+          evidence: [], relationship_results: [], errors: [],
+        },
+        events: [], diagnostics: { original_request: null, provider_exchanges: [], caller_response: null },
+      },
+    }));
+    const invocation = {
+      team_id: profileA.id, owner_profile_id: "owner-1", invocation_id: "call-a", canonical_attempt_id: "attempt-b",
+      request_hash: "hash", correlation_id: "corr", classification: "execution", outcome: "completed",
+      phase: "commit", delivery_stage: "write_observed", retryable: false,
+      duration_ms: 1, created_at: "2026-08-18T01:00:00Z", expires_at: "2026-08-25T01:00:00Z", retained_by_legal_hold: false,
+    };
+    const fetchMock = mockPortalFetch({
+      teams: [profileA], keys: [], rememberAttempts: attempts,
+      rememberInvocation: { summary: invocation, detail: { ...invocation, request_capture_state: "captured", provider_exchanges: [], caller_response_capture_state: "captured" } },
+    });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    const { unmount } = render(<App />);
+    await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("button", { name: /^Remember Attempts$/ }));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/remember-attempts/attempt-a"))).toBe(false);
+    await userEvent.click(await screen.findByRole("button", { name: "Inspect Remember attempt attempt-a" }));
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("attempt_id")).toBe("attempt-a"));
+    await userEvent.click(screen.getByRole("button", { name: "Inspect Remember attempt attempt-b" }));
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("attempt_id")).toBe("attempt-b"));
+    const copiedURL = window.location.href;
+
+    unmount();
+    window.history.replaceState(null, "", copiedURL);
+    render(<App />);
+    expect(await screen.findByRole("region", { name: "Remember attempt details" })).toHaveTextContent("attempt-b");
+    expect(new URLSearchParams(window.location.search).get("attempt_id")).toBe("attempt-b");
+
+    await userEvent.click(screen.getByRole("button", { name: /^Calls \(/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "Inspect Remember call call-a" }));
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("invocation_id")).toBe("call-a"));
+    expect(new URLSearchParams(window.location.search).get("attempt_id")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /^Attempts \(/ }));
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("invocation_id")).toBeNull());
+    expect(new URLSearchParams(window.location.search).get("attempt_id")).toBe("attempt-b");
+    await userEvent.selectOptions(screen.getByLabelText("Remember attempt outcome"), "failed");
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("attempt_id")).toBeNull());
+  });
+
   it("keeps Remember open after navigating from a Logs link and reloading", async () => {
     mockPortalFetch({ teams: [profileA], keys: [] });
     sessionStorage.setItem("denseMem.controlToken", "secret");

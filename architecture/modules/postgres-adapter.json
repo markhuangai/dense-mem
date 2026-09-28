@@ -1,10 +1,20 @@
 {
   "schema_version": 2,
   "capability": "postgres-adapter",
+  "source_ownership": [
+    {
+      "path": "internal/storage/postgres/conflictread/supporters.go"
+    }
+  ],
   "go": {
     "units": [
       {
         "id": "github.com/markhuangai/dense-mem/internal/storage/postgres",
+        "role": "postgres_infrastructure",
+        "visibility": "private"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/storage/postgres/conflictread",
         "role": "postgres_infrastructure",
         "visibility": "private"
       }

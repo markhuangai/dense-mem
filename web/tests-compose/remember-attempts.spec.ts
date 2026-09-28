@@ -31,6 +31,11 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
   await expect(page.getByRole("heading", { name: "Remember Calls" })).toBeVisible();
   await page.getByRole("button", { name: `Inspect Remember call ${expiredInvocationID}` }).click();
   await expect(page.getByRole("heading", { name: "Call Detail" })).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get("invocation_id")).toBe(expiredInvocationID);
+  expect(new URL(page.url()).searchParams.get("attempt_id")).toBeNull();
+  const copiedCallURL = page.url();
+  await page.goto(copiedCallURL);
+  await expect(page.getByRole("region", { name: "Remember call details" })).toContainText(expiredInvocationID);
   await expect(page.getByText("This capture expired after seven days and its body is no longer available.")).toBeVisible();
   await page.getByRole("button", { name: "View related logs" }).click();
   await expect(page.getByRole("heading", { name: "Operation Logs" })).toBeVisible();
@@ -42,6 +47,11 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
   await expect(page.locator(".remember-attempts-table")).toContainText("Provider Unavailable");
   await page.getByRole("button", { name: `Inspect Remember attempt ${failed?.attempt_id}` }).click();
   await expect(page.getByRole("heading", { name: "Attempt Detail" })).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get("attempt_id")).toBe(failed?.attempt_id);
+  expect(new URL(page.url()).searchParams.get("invocation_id")).toBeNull();
+  const copiedAttemptURL = page.url();
+  await page.goto(copiedAttemptURL);
+  await expect(page.getByRole("region", { name: "Remember attempt details" })).toContainText(failed?.attempt_id ?? "");
   await expect(page.getByRole("heading", { name: "Event spine" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Assessor validation" })).toBeVisible();
   await expect(page.getByText("Validation details unavailable for this attempt.")).toBeVisible();
@@ -55,7 +65,9 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
   await page.locator(".remember-diagnostic-body").first().getByRole("button", { name: "Copy" }).click();
   await expect(page.locator(".remember-diagnostic-body").first().getByRole("button", { name: "Copied" })).toBeVisible();
 
+  await page.getByLabel("Remember attempt outcome").selectOption("failed");
   await page.getByRole("button", { name: `Inspect Remember attempt ${validationAttemptID}` }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get("attempt_id")).toBe(validationAttemptID);
   await expect(page.getByRole("heading", { name: "Assessor validation" })).toBeVisible();
   await expect(page.locator(".remember-validation")).toContainText("Failure class");
   await expect(page.locator(".remember-validation table")).toContainText("Fields");
@@ -102,6 +114,27 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
       const response = await request.delete(`${controlURL}/control/api/teams/${id}`, { headers: teamHeaders });
       expect(response.status()).toBe(200);
     }
+  }
+});
+
+test("Remember detail URLs do not hydrate another team's attempt", async ({ page, request }) => {
+  const headers = { Authorization: `Bearer ${controlToken}` };
+  const response = await request.post(`${controlURL}/control/api/teams`, {
+    headers, data: { name: `Remember URL isolation ${Date.now()}`, description: "Detail URL isolation test" },
+  });
+  expect(response.status()).toBe(201);
+  const created = await response.json() as { data: { id: string } };
+  try {
+    await page.goto(`${controlURL}/?team_id=${created.data.id}&remember_view=attempts&attempt_id=${fixtureAttemptID}`);
+    await page.getByLabel("Control token").fill(controlToken);
+    await page.getByRole("button", { name: "Unlock" }).click();
+    await expect(page.getByRole("heading", { name: "Remember Attempts" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Attempt Detail" })).toHaveCount(0);
+    await expect(page.getByRole("alert")).toContainText("remember attempt not found");
+    expect(new URL(page.url()).searchParams.get("team_id")).toBe(created.data.id);
+  } finally {
+    const deleted = await request.delete(`${controlURL}/control/api/teams/${created.data.id}`, { headers });
+    expect(deleted.status()).toBe(200);
   }
 });
 

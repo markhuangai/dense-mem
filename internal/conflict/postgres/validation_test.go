@@ -55,12 +55,6 @@ func TestConflictAdapterRejectsInvalidInputsBeforeOpeningDatabase(t *testing.T) 
 	require.Error(t, err)
 }
 
-func TestNormalizeRecallUUIDListDropsInvalidAndDuplicateValues(t *testing.T) {
-	first := "00000000-0000-0000-0000-000000000001"
-	second := "00000000-0000-0000-0000-000000000002"
-	require.Equal(t, []string{first, second}, normalizeRecallUUIDList([]string{" ", first, first, "not-a-uuid", second}))
-}
-
 func TestConflictAdapterValidInputsStillRequireInfrastructure(t *testing.T) {
 	teamID := "00000000-0000-0000-0000-000000000001"
 	conflictID := "00000000-0000-0000-0000-000000000002"

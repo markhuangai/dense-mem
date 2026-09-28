@@ -189,7 +189,7 @@ func enqueueConflictDerivedEvidenceTasks(ctx context.Context, tx *gorm.DB, resol
 
 var conflictSearchTestContractSequence atomic.Int32
 
-func insertSearchTestContract(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS, prefix string, dimensions int, strategy string, indexName string) string {
+func insertSearchTestContract(t testing.TB, db *gorm.DB, rls *storagepostgres.RLS, prefix string, dimensions int, strategy string, indexName string) string {
 	t.Helper()
 	sequence := int(conflictSearchTestContractSequence.Add(1))
 	contractID, generationID := uuid.NewString(), uuid.NewString()
@@ -273,11 +273,11 @@ func loadRecallEvidenceConflictCase(ctx context.Context, tx *gorm.DB, teamID, co
 	return recallpostgres.LoadRecallEvidenceConflictCase(ctx, tx, teamID, conflictID, knownAt)
 }
 
-func commitConflictRememberFixture(t *testing.T, ctx context.Context, repo *knowledgepostgres.Store, teamID, ownerID, subjectID, objectID, content, key string) *SynchronousRememberCommitResult {
+func commitConflictRememberFixture(t testing.TB, ctx context.Context, repo *knowledgepostgres.Store, teamID, ownerID, subjectID, objectID, content, key string) *SynchronousRememberCommitResult {
 	return commitConflictRememberFixtureWithSupports(t, ctx, repo, teamID, ownerID, subjectID, objectID, content, key, nil)
 }
 
-func commitConflictRememberFixtureWithSupports(t *testing.T, ctx context.Context, repo *knowledgepostgres.Store, teamID, ownerID, subjectID, objectID, content, key string, supports []EvidenceSupportInput) *SynchronousRememberCommitResult {
+func commitConflictRememberFixtureWithSupports(t testing.TB, ctx context.Context, repo *knowledgepostgres.Store, teamID, ownerID, subjectID, objectID, content, key string, supports []EvidenceSupportInput) *SynchronousRememberCommitResult {
 	t.Helper()
 	input := conflictRememberFixtureInput(teamID, ownerID, subjectID, objectID, content, key, supports)
 	if len(supports) > 0 {

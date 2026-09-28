@@ -276,6 +276,7 @@ export function mockPortalFetch({
   dreams = [dreamSnapshot],
   metrics = metricsSnapshot,
   rememberInvocation,
+  rememberAttempts,
 }: {
   teams: Team[];
   keys: Credential[];
@@ -285,6 +286,7 @@ export function mockPortalFetch({
   dreams?: Dream[];
   metrics?: ControlMetrics | "error";
   rememberInvocation?: { summary: Record<string, unknown>; detail: Record<string, unknown> };
+  rememberAttempts?: Array<{ summary: Record<string, unknown>; detail: Record<string, unknown> }>;
 }) {
   let currentProfiles = teams;
   let currentKeys = keys;
@@ -397,6 +399,13 @@ export function mockPortalFetch({
     }
     if (rememberInvocation && parsedUrl.pathname.endsWith("/control/api/remember-invocations") && method === "GET") {
       return jsonResponse({ data: [rememberInvocation.summary], pagination: { limit: 50, offset: 0, total: 1 } });
+    }
+    if (rememberAttempts && parsedUrl.pathname.endsWith("/control/api/remember-attempts") && method === "GET") {
+      return jsonResponse({ data: rememberAttempts.map((attempt) => attempt.summary), pagination: { limit: 50, offset: 0, total: rememberAttempts.length } });
+    }
+    if (rememberAttempts && parsedUrl.pathname.includes("/control/api/teams/") && parsedUrl.pathname.includes("/remember-attempts/") && method === "GET") {
+      const attempt = rememberAttempts.find(({ summary }) => parsedUrl.pathname.endsWith(`/remember-attempts/${summary.attempt_id}`) && parsedUrl.pathname.includes(`/teams/${summary.team_id}/`));
+      return attempt ? jsonResponse({ data: attempt.detail }) : jsonResponse({ message: "not found" }, 404);
     }
     if (rememberInvocation && parsedUrl.pathname.includes("/control/api/teams/") && parsedUrl.pathname.includes("/remember-invocations/") && method === "GET") {
       return jsonResponse({ data: rememberInvocation.detail });

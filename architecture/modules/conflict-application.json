@@ -10,9 +10,6 @@
     },
     {
       "path": "internal/http/control_portal_conflicts_test.go"
-    },
-    {
-      "path": "internal/knowledge/postgres/conflict_supporter_repository.go"
     }
   ],
   "go": {

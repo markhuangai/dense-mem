@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/conflictread"
 )
 
 func (r *Store) ReserveRelationshipConflictReviewRun(
@@ -160,7 +161,7 @@ func (r *Store) ClaimRelationshipConflictCases(
 		if err := rows.Close(); err != nil {
 			return err
 		}
-		loaded, loadErr := loadRelationshipConflictRecordsByID(ctx, tx, input.TeamID, conflictIDs, nil)
+		loaded, loadErr := conflictread.LoadRelationshipConflictRecordsByID(ctx, tx, input.TeamID, conflictIDs, nil)
 		records = loaded
 		return loadErr
 	})
@@ -334,7 +335,7 @@ func loadRelationshipConflictCaseForReview(
 	if conflictID == "" {
 		return nil, ErrConflictReviewLeaseLost
 	}
-	records, err := loadRelationshipConflictRecordsByID(ctx, tx, input.TeamID, []string{input.ConflictID}, nil)
+	records, err := conflictread.LoadRelationshipConflictRecordsByID(ctx, tx, input.TeamID, []string{input.ConflictID}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -378,7 +379,7 @@ func refreshRelationshipConflictCaseSnapshotForReview(
 		if err := bumpRelationshipConflictCaseVersion(ctx, tx, input.TeamID, input.ConflictID); err != nil {
 			return nil, false, err
 		}
-		records, err := loadRelationshipConflictRecordsByID(ctx, tx, input.TeamID, []string{input.ConflictID}, nil)
+		records, err := conflictread.LoadRelationshipConflictRecordsByID(ctx, tx, input.TeamID, []string{input.ConflictID}, nil)
 		if err != nil {
 			return nil, false, err
 		}

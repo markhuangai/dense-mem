@@ -19,14 +19,14 @@ const OUTCOMES = ["", "completed", "rejected", "quarantined", "failed", "replaye
 const PAGE_SIZE = 50;
 const TRUNCATED_CAPTURE_MESSAGE = "The capture exceeded the diagnostic size limit; the displayed body is truncated.";
 
-export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "attempts", initialAttemptID = "", initialInvocationID = "", onViewChange }: {
+export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "attempts", initialAttemptID = "", initialInvocationID = "", onSelectionChange }: {
   api: ControlApi;
   team: Team;
   onOpenLogs?: (query: OperationLogQuery) => void;
   initialView?: "calls" | "attempts";
   initialAttemptID?: string;
   initialInvocationID?: string;
-  onViewChange?: (view: "calls" | "attempts") => void;
+  onSelectionChange?: (view: "calls" | "attempts", id: string) => void;
 }) {
   const [items, setItems] = useState<RememberAttemptDiagnosticSummary[]>([]);
   const [total, setTotal] = useState(0);
@@ -82,6 +82,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
   async function loadInvocations(nextOffset = invocationOffset, preferredID = selectedInvocationID, allowOutsidePage = false) {
     if (typeof api.listRememberInvocationDiagnostics !== "function") {
       setView("attempts");
+      onSelectionChange?.("attempts", selectedIDRef.current);
       if (!attemptsLoadedRef.current) void loadAttempts("", 0);
       return;
     }
@@ -102,6 +103,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
       setInvocationOffset(page.pagination.offset);
       const nextID = allowOutsidePage || page.data.some((item) => item.invocation_id === preferredID) ? preferredID : "";
       setSelectedInvocationID(nextID);
+      onSelectionChange?.("calls", nextID);
       if (nextID && preferredID) {
         await loadInvocationDetail(nextID, listRequest);
       } else {
@@ -114,9 +116,10 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
     }
   }
 
-  function selectAttempt(attemptID: string) {
+  function selectAttempt(attemptID: string, publish = true) {
     selectedIDRef.current = attemptID;
     setSelectedID(attemptID);
+    if (publish) onSelectionChange?.("attempts", attemptID);
   }
 
   function selectView(nextView: "calls" | "attempts", preferredAttemptID?: string) {
@@ -135,7 +138,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
       setError("");
     }
     setView(nextView);
-    onViewChange?.(nextView);
+    onSelectionChange?.(nextView, nextView === "calls" ? selectedInvocationID : preferredAttemptID ?? selectedIDRef.current);
     if (nextView === "calls" && view !== nextView && typeof api.listRememberInvocationDiagnostics === "function") {
       void loadInvocations(invocationOffset, selectedInvocationID);
     } else if (nextView === "attempts" && !attemptsLoadedRef.current) {
@@ -171,7 +174,8 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
       const currentSelected = preferredAttemptID ?? selectedIDRef.current;
       const nextSelected = preferredAttemptID
         || (page.data.some((item) => item.attempt_id === currentSelected) ? currentSelected : "");
-      selectAttempt(nextSelected);
+      selectAttempt(nextSelected, false);
+      onSelectionChange?.("attempts", nextSelected);
       if (nextSelected && (preferredAttemptID || currentSelected)) {
         void loadDetail(nextSelected);
       } else {
@@ -269,11 +273,12 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
         onRefresh={() => void loadInvocations(invocationOffset)}
         onSelect={(id) => {
           setSelectedInvocationID(id);
+          onSelectionChange?.("calls", id);
           void loadInvocationDetail(id);
         }}
         onOpenLogs={onOpenLogs}
         onOpenAttempt={(attemptID) => {
-          selectAttempt(attemptID);
+          selectAttempt(attemptID, false);
           selectView("attempts", attemptID);
         }}
         onPrevious={() => void loadInvocations(Math.max(0, invocationOffset - PAGE_SIZE))}

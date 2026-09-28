@@ -335,17 +335,20 @@ describe("RememberAttemptsPanel", () => {
       getRememberInvocationDiagnostic,
       listRememberAttemptDiagnostics: vi.fn().mockResolvedValue({ data: [], pagination: { limit: 50, offset: 0, total: 0 } }),
     } as unknown as ControlApi;
+    const onSelectionChange = vi.fn();
 
-    const { rerender } = render(<RememberAttemptsPanel initialView="calls" api={api} team={team()} />);
+    const { rerender } = render(<RememberAttemptsPanel initialView="calls" api={api} team={team()} onSelectionChange={onSelectionChange} />);
     await act(async () => resolveTeamOneList({ data: [teamOneInvocation], pagination: { limit: 50, offset: 0, total: 1 } }));
     expect(await screen.findByRole("button", { name: "Inspect Remember call team-one-invocation" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Inspect Remember call team-one-invocation" }));
-    rerender(<RememberAttemptsPanel initialView="calls" api={api} team={{ ...team(), id: "team-2" }} />);
+    expect(onSelectionChange).toHaveBeenLastCalledWith("calls", "team-one-invocation");
+    rerender(<RememberAttemptsPanel initialView="calls" api={api} team={{ ...team(), id: "team-2" }} onSelectionChange={onSelectionChange} />);
     expect(screen.queryByRole("button", { name: "Inspect Remember call team-one-invocation" })).not.toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Inspect Remember call team-two-invocation" })).toBeInTheDocument();
 
     await act(async () => resolveTeamOneDetail({ ...teamOneInvocation, request_capture_state: "captured", request_body: "team-one-secret", provider_exchanges: [], caller_response_capture_state: "unknown_receipt" }));
     expect(screen.queryByText("team-one-secret")).not.toBeInTheDocument();
+    expect(onSelectionChange).toHaveBeenLastCalledWith("calls", "");
   });
 
   it("renders safe result/event data and inline diagnostics with copy controls", async () => {

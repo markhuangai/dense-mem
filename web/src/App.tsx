@@ -64,13 +64,14 @@ function readRememberLink(): RememberLink {
   };
 }
 
-function updateRememberLink(teamID: string, view: "calls" | "attempts") {
+function updateRememberLink(teamID: string, view: "calls" | "attempts", detailID = "") {
   const url = new URL(window.location.href);
   url.searchParams.set("team_id", teamID);
   url.searchParams.set("remember_view", view);
   url.searchParams.delete("section");
   url.searchParams.delete("attempt_id");
   url.searchParams.delete("invocation_id");
+  if (detailID) url.searchParams.set(view === "calls" ? "invocation_id" : "attempt_id", detailID);
   window.history.replaceState(null, "", url);
 }
 
@@ -664,7 +665,7 @@ function TeamWorkspace({
             initialView={rememberLink?.view ?? "attempts"}
             initialAttemptID={rememberLink?.attemptID}
             initialInvocationID={rememberLink?.invocationID}
-            onViewChange={(view) => updateRememberLink(team.id, view)}
+            onSelectionChange={(view, id) => updateRememberLink(team.id, view, id)}
           />
         </Suspense>
       )}

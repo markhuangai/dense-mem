@@ -14,6 +14,7 @@ import (
 
 	conflictcontract "github.com/markhuangai/dense-mem/internal/conflict/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/conflictread"
 )
 
 var _ conflictcontract.ConflictQueueRepository = (*Store)(nil)
@@ -308,7 +309,7 @@ func loadConflictQueuePageRecords(ctx context.Context, tx *gorm.DB, query domain
 	if len(ids) == 0 {
 		return raw, nil
 	}
-	loaded, err := loadActiveRelationshipConflictRecordsByIDBounded(ctx, tx, query.TeamID, ids, nil, domain.ConflictQueueMaxPositions, domain.ConflictQueueMaxSupporters)
+	loaded, err := conflictread.LoadActiveRelationshipConflictRecordsByIDBounded(ctx, tx, query.TeamID, ids, nil, domain.ConflictQueueMaxPositions, domain.ConflictQueueMaxSupporters)
 	if err != nil {
 		return nil, err
 	}

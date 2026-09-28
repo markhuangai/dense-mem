@@ -1,4 +1,4 @@
-package postgres
+package contract
 
 import (
 	"testing"
@@ -19,7 +19,7 @@ func TestApplyConflictKnownAtClearsFutureDismissal(t *testing.T) {
 		UpdatedAt:    dismissedAt,
 	}
 
-	applyConflictKnownAt(&record, &knownAt)
+	ApplyConflictKnownAt(&record, &knownAt)
 
 	assert.Equal(t, string(domain.RelationshipConflictOpen), record.Status)
 	assert.True(t, record.NextReviewAt.IsZero())
@@ -44,7 +44,7 @@ func TestApplyConflictKnownAtPreservesResolvedStateBeforeFutureDismissal(t *test
 		UpdatedAt:           dismissedAt,
 	}
 
-	applyConflictKnownAt(&record, &knownAt)
+	ApplyConflictKnownAt(&record, &knownAt)
 
 	assert.Equal(t, string(domain.RelationshipConflictResolved), record.Status)
 	assert.Equal(t, "position-a", record.PreferredPositionID)
@@ -74,7 +74,7 @@ func TestApplyConflictKnownAtClearsDismissalWhenFutureResolutionIsRewound(t *tes
 		UpdatedAt:           dismissedAt,
 	}
 
-	applyConflictKnownAt(&record, &knownAt)
+	ApplyConflictKnownAt(&record, &knownAt)
 
 	assert.Equal(t, string(domain.RelationshipConflictOpen), record.Status)
 	assert.Empty(t, record.PreferredPositionID)
@@ -95,7 +95,7 @@ func TestApplyConflictKnownAtRewindsOverdueBeforeReviewDueAt(t *testing.T) {
 		NextReviewAt: nextReviewAt,
 	}
 
-	applyConflictKnownAt(&record, &knownAt)
+	ApplyConflictKnownAt(&record, &knownAt)
 
 	assert.Equal(t, string(domain.RelationshipConflictOpen), record.Status)
 	assert.True(t, record.NextReviewAt.IsZero())
@@ -111,7 +111,7 @@ func TestApplyConflictPositionKnownAtDispositions(t *testing.T) {
 		},
 	}
 
-	applyConflictPositionKnownAtDispositions(&record, &knownAt)
+	ApplyConflictPositionKnownAtDispositions(&record, &knownAt)
 
 	assert.Equal(t, string(domain.RelationshipConflictPositionCandidate), record.Positions[0].Disposition)
 	assert.Equal(t, string(domain.RelationshipConflictPositionCandidate), record.Positions[1].Disposition)
@@ -119,7 +119,7 @@ func TestApplyConflictPositionKnownAtDispositions(t *testing.T) {
 	record.Status = string(domain.RelationshipConflictResolved)
 	record.PreferredPositionID = "position-b"
 
-	applyConflictPositionKnownAtDispositions(&record, &knownAt)
+	ApplyConflictPositionKnownAtDispositions(&record, &knownAt)
 
 	assert.Equal(t, string(domain.RelationshipConflictPositionSuppressedCurrent), record.Positions[0].Disposition)
 	assert.Equal(t, string(domain.RelationshipConflictPositionPreferred), record.Positions[1].Disposition)

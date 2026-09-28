@@ -3,6 +3,34 @@
   "capability": "conflict",
   "cases": [
     {
+      "id": "repository/TestRelationshipConflictProjectionUsesCallerTransactionAndTeamFence",
+      "package": "./internal/conflict/postgres",
+      "run": "^TestRelationshipConflictProjectionUsesCallerTransactionAndTeamFence$",
+      "phase": "precheck",
+      "source": "internal/conflict/postgres/relationship_projection_ownership_integration_test.go"
+    },
+    {
+      "id": "repository/TestRelationshipConflictProjectionCountsBeforeSupporterDisplayLimit",
+      "package": "./internal/conflict/postgres",
+      "run": "^TestRelationshipConflictProjectionCountsBeforeSupporterDisplayLimit$",
+      "phase": "precheck",
+      "source": "internal/conflict/postgres/relationship_projection_ownership_integration_test.go"
+    },
+    {
+      "id": "repository/TestRelationshipConflictProjectionFencesRetiredPrivateGeneration",
+      "package": "./internal/conflict/postgres",
+      "run": "^TestRelationshipConflictProjectionFencesRetiredPrivateGeneration$",
+      "phase": "precheck",
+      "source": "internal/conflict/postgres/relationship_projection_ownership_integration_test.go"
+    },
+    {
+      "id": "repository/TestRelationshipConflictProjectionAbstainsOnEqualNewestPositions",
+      "package": "./internal/conflict/postgres",
+      "run": "^TestRelationshipConflictProjectionAbstainsOnEqualNewestPositions$",
+      "phase": "precheck",
+      "source": "internal/conflict/postgres/relationship_projection_ownership_integration_test.go"
+    },
+    {
       "id": "repository/TestClaimedPrivateConflictDerivedEvidenceCannotStageAfterErasureReopensSpace",
       "package": "./internal/conflict/postgres",
       "run": "^TestClaimedPrivateConflictDerivedEvidenceCannotStageAfterErasureReopensSpace$",

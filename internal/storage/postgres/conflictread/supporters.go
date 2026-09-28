@@ -1,4 +1,4 @@
-package postgres
+package conflictread
 
 import (
 	"context"
@@ -6,10 +6,12 @@ import (
 	"time"
 
 	"github.com/lib/pq"
+	conflictcontract "github.com/markhuangai/dense-mem/internal/conflict/contract"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"gorm.io/gorm"
 )
 
-const relationshipConflictSupporterLimit = 20
+const SupporterLimit = 20
 
 // The vote projection deliberately works across every position in a conflict.
 // An owner votes only when its newest effective accepted support identifies one
@@ -294,13 +296,13 @@ const relationshipConflictSupporterRowsSQL = `
 	  AND supporter_rank <= ?
 	ORDER BY conflict_id, position_id, supporter_rank`
 
-func loadRelationshipConflictSupporters(
+func LoadRelationshipConflictSupporters(
 	ctx context.Context,
 	tx *gorm.DB,
 	teamID string,
 	conflictIDs []string,
 	knownAt *time.Time,
-	positions []RelationshipConflictPositionRecord,
+	positions []conflictcontract.RelationshipConflictPositionRecord,
 	supporterLimit int,
 ) error {
 	return loadRelationshipConflictSupportersWithFence(ctx, tx, teamID, conflictIDs, knownAt, positions, supporterLimit, false)
@@ -312,7 +314,7 @@ func loadActiveRelationshipConflictSupporters(
 	teamID string,
 	conflictIDs []string,
 	knownAt *time.Time,
-	positions []RelationshipConflictPositionRecord,
+	positions []conflictcontract.RelationshipConflictPositionRecord,
 	supporterLimit int,
 ) error {
 	return loadRelationshipConflictSupportersWithFence(ctx, tx, teamID, conflictIDs, knownAt, positions, supporterLimit, true)
@@ -324,7 +326,7 @@ func loadRelationshipConflictSupportersWithFence(
 	teamID string,
 	conflictIDs []string,
 	knownAt *time.Time,
-	positions []RelationshipConflictPositionRecord,
+	positions []conflictcontract.RelationshipConflictPositionRecord,
 	supporterLimit int,
 	activeOnly bool,
 ) error {
@@ -334,8 +336,8 @@ func loadRelationshipConflictSupportersWithFence(
 	memberFence := ""
 	positionFence := ""
 	if activeOnly {
-		memberFence = "AND " + activeSemanticSpaceGenerationSQL("member")
-		positionFence = "AND " + activeSemanticSpaceGenerationSQL("position")
+		memberFence = "AND " + storagepostgres.ActiveSemanticSpaceGenerationSQL("member")
+		positionFence = "AND " + storagepostgres.ActiveSemanticSpaceGenerationSQL("position")
 	}
 	rows, err := tx.WithContext(ctx).Raw(
 		fmt.Sprintf(relationshipConflictSupporterRowsSQL, memberFence, positionFence),
@@ -346,16 +348,16 @@ func loadRelationshipConflictSupportersWithFence(
 	}
 	defer rows.Close()
 
-	positionsByID := make(map[string]*RelationshipConflictPositionRecord, len(positions))
+	positionsByID := make(map[string]*conflictcontract.RelationshipConflictPositionRecord, len(positions))
 	for i := range positions {
-		positions[i].Supporters = []RelationshipConflictSupporterRecord{}
+		positions[i].Supporters = []conflictcontract.RelationshipConflictSupporterRecord{}
 		positions[i].SupporterCount = 0
 		positionsByID[positions[i].PositionID] = &positions[i]
 	}
 	for rows.Next() {
 		var conflictID, positionID string
 		var supporterCount int
-		var supporter RelationshipConflictSupporterRecord
+		var supporter conflictcontract.RelationshipConflictSupporterRecord
 		if err := rows.Scan(
 			&conflictID,
 			&positionID,
@@ -384,13 +386,9 @@ func loadRelationshipConflictSupportersWithFence(
 	return nil
 }
 
-func relationshipConflictSupporterRowsArgs(teamID string, conflictIDs []string, knownAt *time.Time) []any {
-	return relationshipConflictSupporterRowsArgsWithLimit(teamID, conflictIDs, nil, knownAt, relationshipConflictSupporterLimit)
-}
-
 func relationshipConflictSupporterRowsArgsWithLimit(teamID string, conflictIDs, positionIDs []string, knownAt *time.Time, supporterLimit int) []any {
 	if supporterLimit <= 0 {
-		supporterLimit = relationshipConflictSupporterLimit
+		supporterLimit = SupporterLimit
 	}
 	if positionIDs == nil {
 		positionIDs = []string{}
@@ -414,7 +412,7 @@ func relationshipConflictSupporterRowsArgsWithLimit(teamID string, conflictIDs, 
 	}
 }
 
-func positionIDs(positions []RelationshipConflictPositionRecord) []string {
+func positionIDs(positions []conflictcontract.RelationshipConflictPositionRecord) []string {
 	ids := make([]string, 0, len(positions))
 	for _, position := range positions {
 		ids = append(ids, position.PositionID)

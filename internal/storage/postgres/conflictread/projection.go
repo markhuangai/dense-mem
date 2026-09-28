@@ -1,14 +1,16 @@
-package postgres
+package conflictread
 
 import (
 	"context"
 	"time"
 
 	"github.com/lib/pq"
+	conflictcontract "github.com/markhuangai/dense-mem/internal/conflict/contract"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"gorm.io/gorm"
 )
 
-func loadActiveRelationshipConflictRecordsByIDBounded(
+func LoadActiveRelationshipConflictRecordsByIDBounded(
 	ctx context.Context,
 	tx *gorm.DB,
 	teamID string,
@@ -16,7 +18,7 @@ func loadActiveRelationshipConflictRecordsByIDBounded(
 	knownAt *time.Time,
 	positionLimit int,
 	supporterLimit int,
-) ([]RelationshipConflictCaseRecord, error) {
+) ([]conflictcontract.RelationshipConflictCaseRecord, error) {
 	return loadRelationshipConflictRecordsByIDBoundedWithFence(ctx, tx, teamID, conflictIDs, knownAt, positionLimit, supporterLimit, true)
 }
 
@@ -29,10 +31,10 @@ func loadRelationshipConflictRecordsByIDBoundedWithFence(
 	positionLimit int,
 	supporterLimit int,
 	activeOnly bool,
-) ([]RelationshipConflictCaseRecord, error) {
-	conflictIDs = normalizeRecallUUIDList(conflictIDs)
+) ([]conflictcontract.RelationshipConflictCaseRecord, error) {
+	conflictIDs = normalizeConflictUUIDList(conflictIDs)
 	if len(conflictIDs) == 0 {
-		return []RelationshipConflictCaseRecord{}, nil
+		return []conflictcontract.RelationshipConflictCaseRecord{}, nil
 	}
 	cases, err := loadRelationshipConflictCaseRowsWithFence(ctx, tx, teamID, conflictIDs, knownAt, activeOnly)
 	if err != nil {
@@ -46,26 +48,16 @@ func loadRelationshipConflictRecordsByIDBoundedWithFence(
 	if activeOnly {
 		supportersErr = loadActiveRelationshipConflictSupporters(ctx, tx, teamID, conflictIDs, knownAt, positions, supporterLimit)
 	} else {
-		supportersErr = loadRelationshipConflictSupporters(ctx, tx, teamID, conflictIDs, knownAt, positions, supporterLimit)
+		supportersErr = LoadRelationshipConflictSupporters(ctx, tx, teamID, conflictIDs, knownAt, positions, supporterLimit)
 	}
 	if supportersErr != nil {
 		return nil, supportersErr
 	}
 	for i := range cases {
 		cases[i].Positions = positionsForConflict(cases[i].ConflictID, positions)
-		applyConflictPositionKnownAtDispositions(&cases[i], knownAt)
+		conflictcontract.ApplyConflictPositionKnownAtDispositions(&cases[i], knownAt)
 	}
 	return cases, nil
-}
-
-func loadRelationshipConflictCaseRows(
-	ctx context.Context,
-	tx *gorm.DB,
-	teamID string,
-	conflictIDs []string,
-	knownAt *time.Time,
-) ([]RelationshipConflictCaseRecord, error) {
-	return loadRelationshipConflictCaseRowsWithFence(ctx, tx, teamID, conflictIDs, knownAt, false)
 }
 
 func loadRelationshipConflictCaseRowsWithFence(
@@ -75,7 +67,7 @@ func loadRelationshipConflictCaseRowsWithFence(
 	conflictIDs []string,
 	knownAt *time.Time,
 	activeOnly bool,
-) ([]RelationshipConflictCaseRecord, error) {
+) ([]conflictcontract.RelationshipConflictCaseRecord, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT team_id::text, conflict_id::text, COALESCE(space_id::text, ''), semantic_scope_key, kind, status,
 		       subject_entity_id::text, predicate_key, predicate_version,
@@ -102,9 +94,9 @@ func loadRelationshipConflictCaseRowsWithFence(
 		return nil, err
 	}
 	defer rows.Close()
-	out := []RelationshipConflictCaseRecord{}
+	out := []conflictcontract.RelationshipConflictCaseRecord{}
 	for rows.Next() {
-		var record RelationshipConflictCaseRecord
+		var record conflictcontract.RelationshipConflictCaseRecord
 		if err := rows.Scan(
 			&record.TeamID,
 			&record.ConflictID,
@@ -138,7 +130,7 @@ func loadRelationshipConflictCaseRowsWithFence(
 		); err != nil {
 			return nil, err
 		}
-		applyConflictKnownAt(&record, knownAt)
+		conflictcontract.ApplyConflictKnownAt(&record, knownAt)
 		out = append(out, record)
 	}
 	return out, rows.Err()
@@ -148,5 +140,5 @@ func activeConflictCaseFence(activeOnly bool) string {
 	if !activeOnly {
 		return ""
 	}
-	return " AND " + activeSemanticSpaceGenerationSQL("relationship_conflict_cases") + "\n"
+	return " AND " + storagepostgres.ActiveSemanticSpaceGenerationSQL("relationship_conflict_cases") + "\n"
 }

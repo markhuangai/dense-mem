@@ -1,0 +1,143 @@
+{
+  "base_commit": "41e632b2c8ecdbed793fcc5cb3388484eeed0d5f",
+  "benchmark": {
+    "command": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags=integration ./internal/conflict/postgres -run '^$' -bench '^BenchmarkConflictOwnership$' -benchtime=200x -count=1 -benchmem",
+    "comparison": "Median p50 and p95 increase each <= max(5% of base, 1 ms); complete ordered SQL/argument digests, result signatures, and SQL/transaction/provider counts equal across every pair.",
+    "measured_operations_per_workload": 200,
+    "name": "BenchmarkConflictOwnership",
+    "passed": true,
+    "run_order": [
+      "base,candidate",
+      "candidate,base",
+      "base,candidate",
+      "candidate,base",
+      "base,candidate"
+    ],
+    "runs_per_source": 5,
+    "warmups_per_workload": 20,
+    "workloads": {
+      "deterministic_review": {
+        "latency_ms": {
+          "p50_ms": {
+            "allowed_increase": 1.0,
+            "base_median": 6.239594,
+            "candidate_median": 6.247754,
+            "increase": 0.00816
+          },
+          "p95_ms": {
+            "allowed_increase": 1.0,
+            "base_median": 7.066182,
+            "candidate_median": 7.215314,
+            "increase": 0.149132
+          }
+        },
+        "median_allocs_per_op": {
+          "base": 2486,
+          "candidate": 2486
+        },
+        "median_bytes_per_op": {
+          "base": 295835,
+          "candidate": 297118
+        },
+        "provider_calls_per_op": 0.0,
+        "query_contract_sha256": "78672194e24ac07440feca37cfd056e1f63d9b576f4b8345921da2defd5a17fc",
+        "result_signature": "no_op|waiting_for_review_due",
+        "sql_statements_per_op": 27.0,
+        "transaction_completions_per_op": 1.0,
+        "transactions_per_op": 1.0
+      },
+      "historical_hydration": {
+        "latency_ms": {
+          "p50_ms": {
+            "allowed_increase": 1.0,
+            "base_median": 1.739156,
+            "candidate_median": 1.767707,
+            "increase": 0.028551
+          },
+          "p95_ms": {
+            "allowed_increase": 1.0,
+            "base_median": 2.151022,
+            "candidate_median": 2.209882,
+            "increase": 0.05886
+          }
+        },
+        "median_allocs_per_op": {
+          "base": 891,
+          "candidate": 891
+        },
+        "median_bytes_per_op": {
+          "base": 121173,
+          "candidate": 121588
+        },
+        "provider_calls_per_op": 0.0,
+        "query_contract_sha256": "cb0cf6dbb0b6caa863c5449f6678078d1e4d24790176b80a98357ae525211a64",
+        "result_signature": "open|2|1|2",
+        "sql_statements_per_op": 7.0,
+        "transaction_completions_per_op": 1.0,
+        "transactions_per_op": 1.0
+      },
+      "queue_projection": {
+        "latency_ms": {
+          "p50_ms": {
+            "allowed_increase": 1.0,
+            "base_median": 3.107813,
+            "candidate_median": 3.03826,
+            "increase": -0.069553
+          },
+          "p95_ms": {
+            "allowed_increase": 1.0,
+            "base_median": 3.695437,
+            "candidate_median": 3.61807,
+            "increase": -0.077367
+          }
+        },
+        "median_allocs_per_op": {
+          "base": 1275,
+          "candidate": 1275
+        },
+        "median_bytes_per_op": {
+          "base": 170611,
+          "candidate": 170421
+        },
+        "provider_calls_per_op": 0.0,
+        "query_contract_sha256": "848a30c7d48ad8cfdb507058a8482633e0cd2bdfe2df7d01b9fc3d735f0e2e94",
+        "result_signature": "open|2|1|2",
+        "sql_statements_per_op": 14.0,
+        "transaction_completions_per_op": 1.0,
+        "transactions_per_op": 1.0
+      }
+    }
+  },
+  "candidate_source_manifest": {
+    "changed_paths_excluding_this_evidence": 34,
+    "recipe": "SHA-256 of sorted path + NUL + file SHA-256 (or <deleted>) + newline, for git diff --no-renames against base_commit plus untracked nonignored paths, excluding this evidence file",
+    "sha256": "022ab8db485b126c7eee888f4a37130c2a94888da9bdeaa7761a2aeb0ce5baf0"
+  },
+  "evaluation_waiver": "#481 records the maintainer-approved deterministic 1k waiver; these real PostgreSQL, focused E2E, exact-base SQL/result, and performance gates are its replacement verification.",
+  "fixed_result_postgres_cases": "Four projection ownership cases passed on both the exact base with test-only overlay and candidate.",
+  "issues": [
+    479,
+    481
+  ],
+  "maintenance_benefit": "Knowledge and Conflict now call one private Conflict projection/supporter reader and one Conflict temporal-policy owner; duplicate reader implementations were removed without migrations or contract changes.",
+  "schema_version": 1,
+  "test_only_base_overlay_sha256": {
+    "internal/conflict/postgres/e2e_fixture_helpers_test.go": "c544a7c755fb6371634e11f822efb9026571aeef26bfb0272e11c0a90a292320",
+    "internal/conflict/postgres/integration_fixture_helpers_test.go": "9f0885a5163de7a915404ef661beb613a8bf8d4ce3cd87556b92955251962e3e",
+    "internal/conflict/postgres/relationship_ownership_benchmark_test.go": "beac5b59252eb60c0d242a93f5ab783ae1e305968046a57305b1af89c7fe13f7",
+    "internal/conflict/postgres/relationship_projection_ownership_integration_test.go": "718e89534b47ebe75fcb3e7ebc9185259345b027239c81b02f47a1e65e2c5927",
+    "internal/conflict/postgres/semantic_fixture_helpers_test.go": "282c989291b30280f9ee18744c355c48f63ef3f274ad82b6c762e210b9c0238b"
+  },
+  "validation": {
+    "architecture": "checker and 35 conformance tests passed",
+    "ci_check": "passed; complete Go coverage 90.1%",
+    "focused_e2e": {
+      "conflict_queue": "passed; two desktop/mobile Playwright tests",
+      "space_aware_recall": "passed with temporary deterministic local provider and matching 1536-dimensional embedding setting because configured external endpoint refused connections",
+      "synchronous_write": "passed; six desktop/mobile Playwright tests"
+    },
+    "go_integration": "conflict, knowledge, recall, and trace PostgreSQL packages passed; Knowledge required -timeout=30m after default 10m package timeout",
+    "go_unit": "passed",
+    "web": "21 Vitest files and 169 tests passed; production browser build passed"
+  }
+}

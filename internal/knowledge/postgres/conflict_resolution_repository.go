@@ -13,6 +13,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/conflictread"
 )
 
 func (r *Store) PlanRelationshipConflictResolution(
@@ -120,7 +121,7 @@ func (r *Store) CommitRelationshipConflictResolution(
 			}
 		}
 
-		records, err := loadRelationshipConflictRecordsByID(ctx, tx, resolution.TeamID, []string{resolution.ConflictID}, nil)
+		records, err := conflictread.LoadRelationshipConflictRecordsByID(ctx, tx, resolution.TeamID, []string{resolution.ConflictID}, nil)
 		if err != nil {
 			return err
 		}
@@ -667,7 +668,7 @@ func loadRelationshipConflictCaseForResolution(
 	if err != nil {
 		return nil, err
 	}
-	records, err := loadRelationshipConflictRecordsByID(ctx, tx, resolution.TeamID, []string{resolution.ConflictID}, nil)
+	records, err := conflictread.LoadRelationshipConflictRecordsByID(ctx, tx, resolution.TeamID, []string{resolution.ConflictID}, nil)
 	if err != nil {
 		return nil, err
 	}

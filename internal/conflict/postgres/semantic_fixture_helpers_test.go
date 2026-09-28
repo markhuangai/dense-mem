@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createSemanticEntity(t *testing.T, ctx context.Context, repo *knowledgepostgres.Store, teamID, ownerID, kind, name string) *knowledgepostgres.EntityRecord {
+func createSemanticEntity(t testing.TB, ctx context.Context, repo *knowledgepostgres.Store, teamID, ownerID, kind, name string) *knowledgepostgres.EntityRecord {
 	t.Helper()
 	entity, err := repo.CreateEntity(ctx, knowledgepostgres.CreateEntityInput{TeamID: teamID, OwnerProfileID: ownerID, EntityKind: kind, CanonicalName: name})
 	require.NoError(t, err)

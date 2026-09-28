@@ -14,6 +14,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/conflictread"
 )
 
 const (
@@ -525,7 +526,7 @@ func loadOverdueConflictAssessmentDossier(
 			PositionID: position.PositionID,
 		})
 	}
-	if err := loadRelationshipConflictSupporters(ctx, tx, teamID, []string{conflictID}, nil, projection, relationshipConflictSupporterLimit); err != nil {
+	if err := conflictread.LoadRelationshipConflictSupporters(ctx, tx, teamID, []string{conflictID}, nil, projection, conflictread.SupporterLimit); err != nil {
 		return nil, err
 	}
 	supporterCounts := make(map[string]int, len(projection))
