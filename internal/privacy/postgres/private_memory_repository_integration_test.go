@@ -124,8 +124,8 @@ func TestPrivateMemoryRetentionSelectsExpiredSpacesAndExcludesLegalHolds(t *test
 	require.True(t, created)
 	run, created, err := repo.RunRetention(ctx, PrivateMemoryRetentionRequest{
 		ActorClass:           domain.PrivateMemoryActorControl,
-		IdempotencyScopeHash: privateMemoryHash("retention-run", now.String()),
-		RequestHash:          privateMemoryHash("retention-run", "30", now.String()),
+		IdempotencyScopeHash: Hash("retention-run", now.String()),
+		RequestHash:          Hash("retention-run", "30", now.String()),
 		RetentionDays:        30,
 		Now:                  now,
 	})
@@ -140,6 +140,10 @@ func TestPrivateMemoryRetentionSelectsExpiredSpacesAndExcludesLegalHolds(t *test
 	require.Equal(t, eligible.MemorySpaceID, *operations[0].SpaceID)
 	require.Equal(t, domain.PrivateMemoryRetentionPurge, operations[0].Action)
 	require.Equal(t, domain.PrivateMemoryActorRetention, operations[0].ActorClass)
+
+	scopeHash, requestHash := storedPrivateMemoryOperationHashes(t, adminDB, rls, operations[0].ID)
+	require.Equal(t, Hash("retention-operation", run.ID.String(), eligible.MemorySpaceID.String()), scopeHash)
+	require.Equal(t, Hash(string(domain.PrivateMemoryRetentionPurge), eligible.MemorySpaceID.String(), "1"), requestHash)
 
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		states := map[uuid.UUID]string{}
@@ -182,8 +186,8 @@ func TestPrivateMemoryExpiredLeaseIsReclaimedWithNewFence(t *testing.T) {
 	require.NoError(t, repo.Prepare(ctx))
 	operation, created, err := repo.RequestCredentialErasure(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: target.ID, CredentialID: target.ID,
-		IdempotencyScopeHash: privateMemoryHash("fence", target.ID.String()),
-		RequestHash:          privateMemoryHash("fence-request", target.ID.String()),
+		IdempotencyScopeHash: Hash("fence", target.ID.String()),
+		RequestHash:          Hash("fence-request", target.ID.String()),
 		ReasonCode:           "owner_request",
 	})
 	require.NoError(t, err)
@@ -223,15 +227,16 @@ func TestPrivateMemoryFailureRetriesAreBackedOffAndBounded(t *testing.T) {
 	repo := NewPrivateMemoryRepository(appDB, rls)
 	operation, created, err := repo.RequestCredentialErasure(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: target.ID, CredentialID: target.ID,
-		IdempotencyScopeHash: privateMemoryHash("retry", target.ID.String()),
-		RequestHash:          privateMemoryHash("retry-request", target.ID.String()),
+		IdempotencyScopeHash: Hash("retry", target.ID.String()),
+		RequestHash:          Hash("retry-request", target.ID.String()),
 		ReasonCode:           "owner_request",
 	})
 	require.NoError(t, err)
 	require.True(t, created)
 
 	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
-	for attempt := 1; attempt <= privateMemoryMaximumAttempts; attempt++ {
+	wantRetryDelay := []time.Duration{0, time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second}
+	for attempt := 1; attempt <= MaximumAttempts; attempt++ {
 		repo.now = func() time.Time { return now }
 		claim, err := repo.ClaimNext(ctx, "retry-worker", time.Minute)
 		require.NoError(t, err)
@@ -242,7 +247,7 @@ func TestPrivateMemoryFailureRetriesAreBackedOffAndBounded(t *testing.T) {
 
 		stored, err := repo.GetOperation(ctx, operation.ID)
 		require.NoError(t, err)
-		if attempt == privateMemoryMaximumAttempts {
+		if attempt == MaximumAttempts {
 			require.Equal(t, domain.PrivateMemoryErasureFailed, stored.Status)
 			require.Nil(t, stored.NextAttemptAt)
 			require.NotNil(t, stored.CompletedAt)
@@ -250,7 +255,7 @@ func TestPrivateMemoryFailureRetriesAreBackedOffAndBounded(t *testing.T) {
 		}
 		require.Equal(t, domain.PrivateMemoryErasureQueued, stored.Status)
 		require.NotNil(t, stored.NextAttemptAt)
-		require.Equal(t, now.Add(privateMemoryRetryDelay(attempt)), *stored.NextAttemptAt)
+		require.Equal(t, now.Add(wantRetryDelay[attempt]), *stored.NextAttemptAt)
 		immediate, err := repo.ClaimNext(ctx, "early-worker", time.Minute)
 		require.NoError(t, err)
 		require.Nil(t, immediate)
@@ -264,8 +269,8 @@ func TestPrivateMemoryFailureRetriesAreBackedOffAndBounded(t *testing.T) {
 
 	superseding, created, err := repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: ownerID, CredentialID: target.ID,
-		IdempotencyScopeHash: privateMemoryHash("retry-incompatible-retire", target.ID.String()),
-		RequestHash:          privateMemoryHash("retry-incompatible-retire-request", target.ID.String()),
+		IdempotencyScopeHash: Hash("retry-incompatible-retire", target.ID.String()),
+		RequestHash:          Hash("retry-incompatible-retire-request", target.ID.String()),
 		ReasonCode:           "owner_request",
 	})
 	require.NoError(t, err)
@@ -305,21 +310,21 @@ func TestPrivateMemoryFailureRetriesAreBackedOffAndBounded(t *testing.T) {
 	seedPrivateMemoryIngest(t, adminDB, rls, teamID, retireTarget.ID, retireTarget.MemorySpaceID, "retry retire private content")
 	retirement, created, err := repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: retireOwnerID, CredentialID: retireTarget.ID,
-		IdempotencyScopeHash: privateMemoryHash("retry-retire", retireTarget.ID.String()),
-		RequestHash:          privateMemoryHash("retry-retire-request", retireTarget.ID.String()),
+		IdempotencyScopeHash: Hash("retry-retire", retireTarget.ID.String()),
+		RequestHash:          Hash("retry-retire-request", retireTarget.ID.String()),
 		ReasonCode:           "owner_request",
 	})
 	require.NoError(t, err)
 	require.True(t, created)
 	require.True(t, retirement.RetireSpace)
 
-	for attempt := 1; attempt <= privateMemoryMaximumAttempts; attempt++ {
+	for attempt := 1; attempt <= MaximumAttempts; attempt++ {
 		claim, err = repo.ClaimNext(ctx, "retirement-worker", time.Minute)
 		require.NoError(t, err)
 		require.NotNil(t, claim)
 		require.Equal(t, retirement.ID, claim.ID)
 		require.NoError(t, repo.ReleaseClaim(ctx, claim.ID, claim.WorkerID, claim.Fence, "database_error"))
-		if attempt < privateMemoryMaximumAttempts {
+		if attempt < MaximumAttempts {
 			stored, getErr := repo.GetOperation(ctx, retirement.ID)
 			require.NoError(t, getErr)
 			require.NotNil(t, stored.NextAttemptAt)
@@ -330,8 +335,8 @@ func TestPrivateMemoryFailureRetriesAreBackedOffAndBounded(t *testing.T) {
 	retirementRecovery, created, err := repo.RequestControlErasure(
 		ctx,
 		retireTarget.MemorySpaceID,
-		privateMemoryHash("retry-retire-control", retireTarget.ID.String()),
-		privateMemoryHash("retry-retire-control-request", retireTarget.ID.String()),
+		Hash("retry-retire-control", retireTarget.ID.String()),
+		Hash("retry-retire-control-request", retireTarget.ID.String()),
 		"operator_retry",
 	)
 	require.NoError(t, err)
@@ -371,8 +376,8 @@ func TestPrivateMemoryMissingRetiredCredentialLosesClaim(t *testing.T) {
 	require.NoError(t, repo.Prepare(ctx))
 	operation, created, err := repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: ownerID, CredentialID: target.ID,
-		IdempotencyScopeHash: privateMemoryHash("missing-credential", target.ID.String()),
-		RequestHash:          privateMemoryHash("missing-credential-request", target.ID.String()),
+		IdempotencyScopeHash: Hash("missing-credential", target.ID.String()),
+		RequestHash:          Hash("missing-credential-request", target.ID.String()),
 		ReasonCode:           "credential_deleted",
 	})
 	require.NoError(t, err)
@@ -427,8 +432,8 @@ func TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact(t *testing.T) {
 
 	request := PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: target.ID, CredentialID: target.ID,
-		IdempotencyScopeHash: privateMemoryHash("owner", target.ID.String(), "key-1"),
-		RequestHash:          privateMemoryHash("erase", target.ID.String()),
+		IdempotencyScopeHash: Hash("owner", target.ID.String(), "key-1"),
+		RequestHash:          Hash("erase", target.ID.String()),
 		ReasonCode:           "owner_request",
 	}
 	_, _, err = repo.RequestCredentialErasure(ctx, request)
@@ -467,7 +472,7 @@ func TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact(t *testing.T) {
 	require.False(t, created)
 	require.Equal(t, operation.ID, replay.ID)
 	conflicting := request
-	conflicting.RequestHash = privateMemoryHash("different")
+	conflicting.RequestHash = Hash("different")
 	_, _, err = repo.RequestCredentialErasure(ctx, conflicting)
 	require.ErrorIs(t, err, ErrPrivateMemoryIdempotency)
 
@@ -638,8 +643,8 @@ func TestPrivateMemoryErasureRemovesInboundCrossSpaceReferences(t *testing.T) {
 	require.NoError(t, repo.Prepare(ctx))
 	operation, created, err := repo.RequestCredentialErasure(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: target.ID, CredentialID: target.ID,
-		IdempotencyScopeHash: privateMemoryHash("inbound-cross-reference", target.ID.String()),
-		RequestHash:          privateMemoryHash("erase-inbound-cross-reference", target.ID.String()),
+		IdempotencyScopeHash: Hash("inbound-cross-reference", target.ID.String()),
+		RequestHash:          Hash("erase-inbound-cross-reference", target.ID.String()),
 		ReasonCode:           "owner_request",
 	})
 	require.NoError(t, err)
@@ -693,8 +698,8 @@ func TestPrivateMemoryIdempotencyConcurrentReplay(t *testing.T) {
 	require.NoError(t, repo.Prepare(ctx))
 	request := PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: ownerID, CredentialID: target.ID,
-		IdempotencyScopeHash: privateMemoryHash("concurrent", teamID.String(), target.ID.String()),
-		RequestHash:          privateMemoryHash("erase", target.ID.String()),
+		IdempotencyScopeHash: Hash("concurrent", teamID.String(), target.ID.String()),
+		RequestHash:          Hash("erase", target.ID.String()),
 		ReasonCode:           "owner_request",
 	}
 
@@ -763,8 +768,8 @@ func TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace(t *te
 	require.True(t, createdHold)
 	request := PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: ownerID, CredentialID: target.ID,
-		IdempotencyScopeHash: privateMemoryHash("sso-delete", ownerID.String(), "isolated-key"),
-		RequestHash:          privateMemoryHash("delete", target.ID.String()),
+		IdempotencyScopeHash: Hash("sso-delete", ownerID.String(), "isolated-key"),
+		RequestHash:          Hash("delete", target.ID.String()),
 		ReasonCode:           "credential_deleted",
 	}
 	operation, created, err := repo.DisableSSOCredential(ctx, request)
@@ -845,8 +850,8 @@ func TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace(t *te
 	for _, credentialID := range []uuid.UUID{profile.ID, shared.ID} {
 		preserveRequest := PrivateMemoryErasureRequest{
 			TeamID: teamID, OwnerID: ownerID, CredentialID: credentialID,
-			IdempotencyScopeHash: privateMemoryHash("sso-delete", ownerID.String(), credentialID.String()),
-			RequestHash:          privateMemoryHash("delete", credentialID.String()),
+			IdempotencyScopeHash: Hash("sso-delete", ownerID.String(), credentialID.String()),
+			RequestHash:          Hash("delete", credentialID.String()),
 			ReasonCode:           "credential_deleted",
 		}
 		preservedOperation, wasCreated, err := repo.DisableSSOCredential(ctx, preserveRequest)
@@ -928,8 +933,8 @@ func TestPrivateMemorySSOCredentialDeletePreservesSharedActorMembership(t *testi
 	repo := NewPrivateMemoryRepository(appDB, rls)
 	_, created, err := repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: ownerID, CredentialID: target.ID,
-		IdempotencyScopeHash: privateMemoryHash("shared-actor-target", target.ID.String()),
-		RequestHash:          privateMemoryHash("shared-actor-target-request", target.ID.String()),
+		IdempotencyScopeHash: Hash("shared-actor-target", target.ID.String()),
+		RequestHash:          Hash("shared-actor-target-request", target.ID.String()),
 		ReasonCode:           "credential_deleted",
 	})
 	require.NoError(t, err)
@@ -946,8 +951,8 @@ func TestPrivateMemorySSOCredentialDeletePreservesSharedActorMembership(t *testi
 
 	_, created, err = repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: ownerID, CredentialID: siblingID,
-		IdempotencyScopeHash: privateMemoryHash("shared-actor-sibling", siblingID.String()),
-		RequestHash:          privateMemoryHash("shared-actor-sibling-request", siblingID.String()),
+		IdempotencyScopeHash: Hash("shared-actor-sibling", siblingID.String()),
+		RequestHash:          Hash("shared-actor-sibling-request", siblingID.String()),
 		ReasonCode:           "credential_deleted",
 	})
 	require.NoError(t, err)

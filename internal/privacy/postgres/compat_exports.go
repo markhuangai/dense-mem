@@ -20,16 +20,16 @@ func NewStore(db *gorm.DB, rls storagepostgres.RLSHelper) *Store {
 }
 
 const (
-	MaximumAttempts   = privateMemoryMaximumAttempts
+	MaximumAttempts   = privacycontract.MaximumAttempts
 	AuditMetadataJSON = privateMemoryAuditMetadataJSON
 )
 
 func RetryDelay(attemptCount int) time.Duration {
-	return privateMemoryRetryDelay(attemptCount)
+	return privacycontract.RetryDelay(attemptCount)
 }
 
 func Hash(parts ...string) string {
-	return privateMemoryHash(parts...)
+	return privacycontract.Hash(parts...)
 }
 
 func WrapError(operation string, err error) error {
