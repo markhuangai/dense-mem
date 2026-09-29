@@ -169,20 +169,12 @@ async function mcpRaw(name, args) {
 }
 
 function overflowFixture() {
-  const evidence = [];
+  // Keep the embedding batch small so provider latency does not mask the predicate-option budget failure.
+  const content = "A and B have submitted relationships.";
+  const evidence = [{ content, source_type: "document", source: `${runID}:evidence`, source_group: runID }];
   const relationships = [];
-  for (let evidenceIndex = 0; evidenceIndex < Math.ceil(101 / 6); evidenceIndex += 1) {
-    const clauses = [];
-    const indexes = [];
-    for (let slot = 0; slot < 6; slot += 1) {
-      const index = evidenceIndex * 6 + slot;
-      if (index >= 101) break;
-      clauses.push(`A ${predicateKey(index)} B`);
-      indexes.push(index);
-    }
-    const content = `${clauses.join(". ")}.`;
-    evidence.push({ content, source_type: "document", source: `${runID}:evidence:${evidenceIndex}`, source_group: runID });
-    for (const index of indexes) relationships.push(relationship(content, evidenceIndex, `${runID}:${index}`, "A", predicateKey(index), "B"));
+  for (let index = 0; index < 101; index += 1) {
+    relationships.push(relationship(content, 0, `${runID}:${index}`, "A", predicateKey(index), "B"));
   }
   return { evidence, relationships, idempotency_key: `${runID}:batch` };
 }
