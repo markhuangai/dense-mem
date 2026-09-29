@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 )
 
 func (r *Store) UpsertHypothesis(
@@ -30,8 +31,8 @@ func (r *Store) upsertHypothesis(
 	input UpsertHypothesisInput,
 	system bool,
 ) (*HypothesisRecord, bool, error) {
-	input = normalizeUpsertHypothesisInput(input)
-	if err := validateUpsertHypothesisInput(input, system); err != nil {
+	input = dreamcontract.NormalizeUpsertHypothesisInput(input)
+	if err := dreamcontract.ValidateUpsertHypothesisInput(input, system); err != nil {
 		return nil, false, err
 	}
 	var record *HypothesisRecord

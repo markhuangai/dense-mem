@@ -30,12 +30,6 @@ func TestDreamConfirmationHelperBranches(t *testing.T) {
 	require.True(t, dreamEvidenceHypothesisOwnedBy(record, profileID.String()))
 	require.False(t, dreamEvidenceHypothesisOwnedBy(record, uuid.NewString()))
 
-	for _, decision := range []string{"reject", "stale", "reinforce", "unknown"} {
-		_ = lifecycleStatus(decision)
-	}
-	require.Equal(t, string(domain.DreamStatusRejected), lifecycleStatus("reject"))
-	require.Equal(t, "", lifecycleStatus("unknown"))
-
 	result := &rememberapp.RememberResult{Terminal: &rememberapp.TerminalRememberResult{
 		SubmissionID: "submission",
 		Errors: []rememberapp.SubmissionStatusError{

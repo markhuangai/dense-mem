@@ -875,7 +875,7 @@ func TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited(t *testing.T) {
 }
 
 func createActiveDreamRelationship(
-	t *testing.T,
+	t testing.TB,
 	ctx context.Context,
 	ledgerRepo *knowledgepostgres.Store,
 	semanticRepo *dreamFixtureStore,
@@ -910,7 +910,7 @@ func createActiveDreamRelationship(
 	return result
 }
 
-func requireDreamInput(t *testing.T, inputs []DreamInput, relationshipID string) DreamInput {
+func requireDreamInput(t testing.TB, inputs []DreamInput, relationshipID string) DreamInput {
 	t.Helper()
 	for _, input := range inputs {
 		if input.RelationshipID == relationshipID {

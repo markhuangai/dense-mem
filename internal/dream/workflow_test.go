@@ -705,7 +705,7 @@ func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			if isDreamConfirmationDecision(tc.req.Decision) || isDreamLifecycleDecision(tc.req.Decision) {
+			if isDreamConfirmationDecision(tc.req.Decision) || dreamcontract.LifecycleStatus(tc.req.Decision) != "" {
 				assert.Equal(t, 1, repo.confirmationLockCalls)
 			} else {
 				assert.Zero(t, repo.confirmationLockCalls)

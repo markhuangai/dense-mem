@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"gorm.io/gorm"
 )
 
@@ -149,7 +150,7 @@ func marshalDreamTargetCandidates(teamID string, targets []DreamTargetCandidate)
 			PredicateKey:    target.PredicateKey,
 			ObjectEntityID:  target.ObjectEntityID,
 			ObjectValueID:   target.ObjectValueID,
-			TargetIdentity:  hypothesisTargetIdentity(teamID, target.SubjectEntityID, target.PredicateKey, target.ObjectEntityID, target.ObjectValueID),
+			TargetIdentity:  dreamcontract.HypothesisTargetIdentity(teamID, target.SubjectEntityID, target.PredicateKey, target.ObjectEntityID, target.ObjectValueID),
 			Ordinal:         index,
 		})
 	}
