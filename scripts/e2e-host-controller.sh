@@ -29,7 +29,7 @@ usage() {
     '  e2e-host-controller.sh run RUN_ID ATTEMPT PHASE STACK_SCENARIO SCENARIO IMAGE_REF SOURCE_DIR' \
     '  e2e-host-controller.sh stop PROJECT' \
     '  e2e-host-controller.sh stale-cleanup [MAX_AGE_SECONDS] [RUN_ID ATTEMPT PHASE]' \
-    '  e2e-host-controller.sh precheck RUN_ID ATTEMPT IMAGE_REF SOURCE_DIR [CAPABILITIES]' >&2
+    '  e2e-host-controller.sh precheck RUN_ID ATTEMPT IMAGE_REF SOURCE_DIR [CAPABILITIES|shard:0..2]' >&2
   exit 2
 }
 
@@ -410,7 +410,7 @@ precheck_capability() {
   test_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.6-bookworm)"
   [[ "$test_image" =~ ^[A-Za-z0-9._/:@-]+$ ]] || fail "invalid precheck Go test image"
   local test_status=0
-  local -a runner_command=(go -C cmd/e2e run . --root /workspace --phase precheck --timeout 20m --total-timeout 25m)
+  local -a runner_command=(go -C cmd/e2e run . --root /workspace --phase precheck --timeout 20m --total-timeout 26m)
   if [[ -n "$capabilities" ]]; then
     runner_command+=(--capability "$capabilities")
   fi
@@ -536,46 +536,60 @@ NODE
 
 precheck() {
   local run_id="$1" attempt="$2" image_ref="$3" source_dir="$4" capabilities="${5:-}"
+  local -a selections=()
+  if [[ -z "$capabilities" || "$capabilities" == shard:* ]]; then
+    local capability_output
+    if ! capability_output="$(partition_precheck_capabilities "$source_dir")"; then
+      fail "unable to discover precheck database capabilities"
+    fi
+    if [[ -n "$capability_output" ]]; then
+      mapfile -t selections <<<"$capability_output"
+    fi
+  fi
+  if [[ "$capabilities" == shard:* ]]; then
+    [[ "$capabilities" =~ ^shard:([0-2])$ ]] || fail "invalid precheck shard: $capabilities"
+    local shard_index="${BASH_REMATCH[1]}"
+    [[ "${#selections[@]}" -eq 3 ]] || fail "precheck requires three populated shards"
+    capabilities="${selections[shard_index]}"
+  fi
   if [[ -n "$capabilities" ]]; then
     precheck_capability "$run_id" "$attempt" "$image_ref" "$source_dir" "$capabilities"
     return
   fi
 
-  local log_dir
-  log_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/dense-mem-precheck.XXXXXX")" ||
-    fail "unable to create the precheck log directory"
-  local capability_output
-  if ! capability_output="$(partition_precheck_capabilities "$source_dir")"; then
-    fail "unable to discover precheck database capabilities"
-  fi
-  local -a selections=()
-  if [[ -n "$capability_output" ]]; then
-    mapfile -t selections <<<"$capability_output"
-  fi
+  local pipe_dir
+  pipe_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/dense-mem-precheck.XXXXXX")" ||
+    fail "unable to create the precheck pipe directory"
   local -a pids=()
-  local -a logs=()
+  local -a stream_pids=()
+  local -a pipes=()
+  local index label pipe pid selection
   cleanup_partitioned_precheck() {
     local status=$?
     trap - EXIT INT TERM
-    for pid in "${pids[@]}"; do
+    for pid in "${pids[@]}" "${stream_pids[@]}"; do
       kill "$pid" >/dev/null 2>&1 || true
     done
-    for pid in "${pids[@]}"; do
+    for pid in "${pids[@]}" "${stream_pids[@]}"; do
       wait "$pid" >/dev/null 2>&1 || true
     done
-    for log in "${logs[@]}"; do
-      rm -f -- "$log"
+    for pipe in "${pipes[@]}"; do
+      rm -f -- "$pipe"
     done
-    rmdir "$log_dir" >/dev/null 2>&1 || true
+    rmdir "$pipe_dir" >/dev/null 2>&1 || true
     exit "$status"
   }
   trap cleanup_partitioned_precheck EXIT INT TERM
 
-  for selection in "${selections[@]}"; do
+  for index in "${!selections[@]}"; do
+    selection="${selections[index]}"
     label="${selection//,/-}"
-    log="${log_dir}/${label}.log"
-    logs+=("$log")
-    precheck_capability "$run_id" "$attempt" "$image_ref" "$source_dir" "$selection" >"$log" 2>&1 &
+    pipe="${pipe_dir}/${index}.pipe"
+    mkfifo "$pipe"
+    pipes+=("$pipe")
+    sed -u "s/^/[${label}] /" <"$pipe" &
+    stream_pids+=("$!")
+    precheck_capability "$run_id" "$attempt" "$image_ref" "$source_dir" "$selection" >"$pipe" 2>&1 &
     pids+=("$!")
   done
 
@@ -585,16 +599,16 @@ precheck() {
       status=1
     fi
   done
-  for log in "${logs[@]}"; do
-    if ! cat "$log"; then
+  for pid in "${stream_pids[@]}"; do
+    if ! wait "$pid"; then
       status=1
     fi
   done
   trap - EXIT INT TERM
-  for log in "${logs[@]}"; do
-    rm -f -- "$log"
+  for pipe in "${pipes[@]}"; do
+    rm -f -- "$pipe"
   done
-  rmdir "$log_dir" >/dev/null 2>&1 || true
+  rmdir "$pipe_dir" >/dev/null 2>&1 || true
   return "$status"
 }
 

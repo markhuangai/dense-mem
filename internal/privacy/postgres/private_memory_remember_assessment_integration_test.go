@@ -50,8 +50,8 @@ func TestPrivateMemoryErasureCleansSynchronousAssessmentAfterAttemptOrder(t *tes
 	require.NoError(t, repo.Prepare(ctx))
 	operation, created, err := repo.RequestCredentialErasure(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: target.ID, CredentialID: target.ID,
-		IdempotencyScopeHash: privateMemoryHash("synchronous-assessment", target.ID.String()),
-		RequestHash:          privateMemoryHash("erase-synchronous-assessment", target.ID.String()),
+		IdempotencyScopeHash: Hash("synchronous-assessment", target.ID.String()),
+		RequestHash:          Hash("erase-synchronous-assessment", target.ID.String()),
 		ReasonCode:           "owner_request",
 	})
 	require.NoError(t, err)

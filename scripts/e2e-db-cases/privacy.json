@@ -141,6 +141,20 @@
       "run": "^TestPrivateMemorySSOCredentialRevocationAuditStoresProfileAndCredentialActors$",
       "phase": "precheck",
       "source": "internal/privacy/postgres/private_memory_audit_integration_test.go"
+    },
+    {
+      "id": "repository/TestPrivateMemoryStaleReleaseCannotRequeueReclaimedLease",
+      "package": "./internal/privacy/postgres",
+      "run": "^TestPrivateMemoryStaleReleaseCannotRequeueReclaimedLease$",
+      "phase": "precheck",
+      "source": "internal/privacy/postgres/private_memory_ownership_integration_test.go"
+    },
+    {
+      "id": "repository/TestPrivateMemoryCredentialRetirementOperationHashesStayStable",
+      "package": "./internal/privacy/postgres",
+      "run": "^TestPrivateMemoryCredentialRetirementOperationHashesStayStable$",
+      "phase": "precheck",
+      "source": "internal/privacy/postgres/private_memory_ownership_integration_test.go"
     }
   ]
 }

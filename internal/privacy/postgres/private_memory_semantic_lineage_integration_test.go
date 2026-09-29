@@ -186,8 +186,8 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 	require.NoError(t, repo.Prepare(ctx))
 	operation, created, err := repo.RequestCredentialErasure(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: target.ID, CredentialID: target.ID,
-		IdempotencyScopeHash: privateMemoryHash("private-semantic-lineage", target.ID.String()),
-		RequestHash:          privateMemoryHash("erase-private-semantic-lineage", target.ID.String()),
+		IdempotencyScopeHash: Hash("private-semantic-lineage", target.ID.String()),
+		RequestHash:          Hash("erase-private-semantic-lineage", target.ID.String()),
 		ReasonCode:           "owner_request",
 	})
 	require.NoError(t, err)

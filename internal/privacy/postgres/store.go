@@ -34,9 +34,6 @@ var (
 
 const (
 	defaultPrivateMemoryLease      = 5 * time.Minute
-	privateMemoryMaximumAttempts   = 5
-	privateMemoryRetryBaseDelay    = time.Second
-	privateMemoryRetryMaximumDelay = time.Minute
 	defaultPrivateMemoryListLimit  = 100
 	maximumPrivateMemoryListLimit  = 500
 	defaultPrivateRetentionBatch   = 100

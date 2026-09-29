@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -140,8 +138,8 @@ func (s *PrivateMemoryService) RequestSSOProfileErasure(ctx context.Context, tea
 	}
 	operation, _, err := s.repository.RequestProfileErasure(ctx, privacycontract.PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: identityID,
-		IdempotencyScopeHash: privateMemoryServiceHash("owner_sso", teamID.String(), identityID.String(), key),
-		RequestHash:          privateMemoryServiceHash(string(domain.PrivateMemoryEraseProfilePrivate), teamID.String(), identityID.String(), "acknowledged"),
+		IdempotencyScopeHash: privacycontract.Hash("owner_sso", teamID.String(), identityID.String(), key),
+		RequestHash:          privacycontract.Hash(string(domain.PrivateMemoryEraseProfilePrivate), teamID.String(), identityID.String(), "acknowledged"),
 		ReasonCode:           reason,
 	})
 	return operation, err
@@ -154,8 +152,8 @@ func (s *PrivateMemoryService) RequestCredentialErasure(ctx context.Context, tea
 	}
 	operation, _, err := s.repository.RequestCredentialErasure(ctx, privacycontract.PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: credentialID, CredentialID: credentialID,
-		IdempotencyScopeHash: privateMemoryServiceHash("owner_credential", teamID.String(), credentialID.String(), key),
-		RequestHash:          privateMemoryServiceHash(string(domain.PrivateMemoryEraseCredentialPrivate), teamID.String(), credentialID.String(), "acknowledged"),
+		IdempotencyScopeHash: privacycontract.Hash("owner_credential", teamID.String(), credentialID.String(), key),
+		RequestHash:          privacycontract.Hash(string(domain.PrivateMemoryEraseCredentialPrivate), teamID.String(), credentialID.String(), "acknowledged"),
 		ReasonCode:           reason,
 	})
 	return operation, err
@@ -171,8 +169,8 @@ func (s *PrivateMemoryService) DeleteSSOCredential(ctx context.Context, teamID, 
 	}
 	operation, _, err := s.repository.DisableSSOCredential(ctx, privacycontract.PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: identityID, CredentialID: credentialID,
-		IdempotencyScopeHash: privateMemoryServiceHash("owner_sso_credential_delete", teamID.String(), identityID.String(), credentialID.String(), key),
-		RequestHash:          privateMemoryServiceHash(string(domain.PrivateMemoryRetireCredential), teamID.String(), identityID.String(), credentialID.String(), reason, "acknowledged"),
+		IdempotencyScopeHash: privacycontract.Hash("owner_sso_credential_delete", teamID.String(), identityID.String(), credentialID.String(), key),
+		RequestHash:          privacycontract.Hash(string(domain.PrivateMemoryRetireCredential), teamID.String(), identityID.String(), credentialID.String(), reason, "acknowledged"),
 		ReasonCode:           reason,
 		CredentialRevocationAudit: &privacycontract.PrivateMemoryCredentialRevocationAudit{
 			ActorProfileID:    auditContext.ActorProfileID,
@@ -205,8 +203,8 @@ func (s *PrivateMemoryService) RequestControlErasure(ctx context.Context, spaceI
 	operation, _, err := s.repository.RequestControlErasure(
 		ctx,
 		spaceID,
-		privateMemoryServiceHash("control_erasure", spaceID.String(), key),
-		privateMemoryServiceHash("control_erasure", spaceID.String(), reason, "acknowledged"),
+		privacycontract.Hash("control_erasure", spaceID.String(), key),
+		privacycontract.Hash("control_erasure", spaceID.String(), reason, "acknowledged"),
 		reason,
 	)
 	return operation, err
@@ -254,8 +252,8 @@ func (s *PrivateMemoryService) RunRetention(ctx context.Context, command Private
 	}
 	run, _, err := s.repository.RunRetention(ctx, privacycontract.PrivateMemoryRetentionRequest{
 		ActorClass: actorClass, RetentionDays: runtime.RetentionDays,
-		IdempotencyScopeHash: privateMemoryServiceHash("retention", string(actorClass), key),
-		RequestHash:          privateMemoryServiceHash("retention", fmt.Sprint(runtime.RetentionDays), "acknowledged"),
+		IdempotencyScopeHash: privacycontract.Hash("retention", string(actorClass), key),
+		RequestHash:          privacycontract.Hash("retention", fmt.Sprint(runtime.RetentionDays), "acknowledged"),
 		Now:                  s.now().UTC(),
 	})
 	return run, err
@@ -422,8 +420,8 @@ func (s *PrivateMemoryService) runAutomaticRetention(ctx context.Context, now ti
 	window := now.UTC().Format("2006-01-02T15")
 	_, _, err = s.repository.RunRetention(ctx, privacycontract.PrivateMemoryRetentionRequest{
 		ActorClass: domain.PrivateMemoryActorRetention, RetentionDays: runtime.RetentionDays, Now: now.UTC(),
-		IdempotencyScopeHash: privateMemoryServiceHash("automatic_retention", window),
-		RequestHash:          privateMemoryServiceHash("automatic_retention", window, fmt.Sprint(runtime.RetentionDays)),
+		IdempotencyScopeHash: privacycontract.Hash("automatic_retention", window),
+		RequestHash:          privacycontract.Hash("automatic_retention", window, fmt.Sprint(runtime.RetentionDays)),
 	})
 	if err != nil && ctx.Err() == nil && s.logger != nil {
 		s.logger.Warn("private memory retention failed", observability.String("error_code", privateMemoryServiceErrorCode(err)))
@@ -446,15 +444,6 @@ func validatePrivateMemoryCommand(command PrivateMemoryCommand, defaultReason st
 		return "", "", ErrPrivateMemoryInvalidReason
 	}
 	return key, reason, nil
-}
-
-func privateMemoryServiceHash(parts ...string) string {
-	digest := sha256.New()
-	for _, part := range parts {
-		_, _ = digest.Write([]byte(fmt.Sprintf("%d:", len(part))))
-		_, _ = digest.Write([]byte(part))
-	}
-	return hex.EncodeToString(digest.Sum(nil))
 }
 
 func privateMemoryServiceErrorCode(err error) string {

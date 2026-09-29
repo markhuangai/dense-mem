@@ -94,7 +94,7 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
 
   prechecks:
-    name: Rootless controller and PostgreSQL prechecks
+    name: Rootless controller precheck
     needs: authorize
     runs-on: rootless-docker
     timeout-minutes: 30
@@ -125,6 +125,34 @@ jobs:
             DENSE_MEM_CI_TEST_REPOSITORY="${GITHUB_REPOSITORY}-controller-contract" \
             bash tests/uat/e2e_host_controller_real.sh
 
+  database-prechecks:
+    name: PostgreSQL precheck shard ${{ matrix.shard }}
+    needs: authorize
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        shard: [0, 1, 2]
+    runs-on: rootless-docker
+    timeout-minutes: 30
+    env:
+      DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Checkout exact pull request source
+        uses: actions/checkout@v7
+        with:
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
       - name: Run disposable PostgreSQL regressions
         shell: bash
         env:
@@ -132,7 +160,8 @@ jobs:
         run: |
           set -euo pipefail
           scripts/e2e-host-controller.sh precheck \
-            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${IMAGE}" "${GITHUB_WORKSPACE}"
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${IMAGE}" "${GITHUB_WORKSPACE}" \
+            "shard:${{ matrix.shard }}"
 
   stale-cleanup:
     name: Reclaim stale CI resources
@@ -167,8 +196,8 @@ jobs:
 
   exclusive:
     name: Exclusive ${{ matrix.name == 'full' && 'dreaming_telemetry_portal' || matrix.name }}
-    needs: [authorize, prechecks, stale-cleanup]
-    if: needs.prechecks.result == 'success' && needs.stale-cleanup.result == 'success'
+    needs: [authorize, prechecks, database-prechecks, stale-cleanup]
+    if: needs.prechecks.result == 'success' && needs.database-prechecks.result == 'success' && needs.stale-cleanup.result == 'success'
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -182,7 +211,7 @@ jobs:
 
   exclusive-cleanup:
     name: Reclaim exclusive production stacks
-    needs: [authorize, prechecks, stale-cleanup, exclusive]
+    needs: [authorize, prechecks, database-prechecks, stale-cleanup, exclusive]
     if: always() && needs.authorize.result == 'success'
     runs-on: rootless-docker
     timeout-minutes: 15
@@ -219,7 +248,7 @@ jobs:
 
   shared-start:
     name: Start shared production stack
-    needs: [authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup]
+    needs: [authorize, prechecks, database-prechecks, stale-cleanup, exclusive, exclusive-cleanup]
     if: needs.exclusive.result == 'success' && needs.exclusive-cleanup.result == 'success'
     runs-on: rootless-docker
     timeout-minutes: 20
@@ -311,7 +340,7 @@ jobs:
 
   report:
     name: Aggregate production E2E results
-    needs: [authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup, shared-start, shared, shared-stop]
+    needs: [authorize, prechecks, database-prechecks, stale-cleanup, exclusive, exclusive-cleanup, shared-start, shared, shared-stop]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -321,6 +350,7 @@ jobs:
         env:
           AUTH_RESULT: ${{ needs.authorize.result }}
           PRECHECK_RESULT: ${{ needs.prechecks.result }}
+          DATABASE_PRECHECK_RESULT: ${{ needs.database-prechecks.result }}
           STALE_CLEANUP_RESULT: ${{ needs.stale-cleanup.result }}
           EXCLUSIVE_RESULT: ${{ needs.exclusive.result }}
           EXCLUSIVE_CLEANUP_RESULT: ${{ needs.exclusive-cleanup.result }}
@@ -340,7 +370,8 @@ jobs:
             echo "| Phase | Result |"
             echo "| --- | --- |"
             echo "| Authorization | ${AUTH_RESULT} |"
-            echo "| Controller/PostgreSQL prechecks | ${PRECHECK_RESULT} |"
+            echo "| Rootless controller precheck | ${PRECHECK_RESULT} |"
+            echo "| PostgreSQL precheck shards | ${DATABASE_PRECHECK_RESULT} |"
             echo "| Stale CI cleanup | ${STALE_CLEANUP_RESULT} |"
             echo "| Exclusive matrix | ${EXCLUSIVE_RESULT} |"
             echo "| Exclusive cleanup | ${EXCLUSIVE_CLEANUP_RESULT} |"
@@ -351,6 +382,7 @@ jobs:
           for result in \
             "${AUTH_RESULT}" \
             "${PRECHECK_RESULT}" \
+            "${DATABASE_PRECHECK_RESULT}" \
             "${STALE_CLEANUP_RESULT}" \
             "${EXCLUSIVE_RESULT}" \
             "${EXCLUSIVE_CLEANUP_RESULT}" \

@@ -27,8 +27,8 @@ func TestPrivateMemorySSOCredentialRevocationAuditFailureRollsBackDisable(t *tes
 
 	_, created, err := repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: ownerID, CredentialID: target.ID,
-		IdempotencyScopeHash: privateMemoryHash("audit-rollback", target.ID.String()),
-		RequestHash:          privateMemoryHash("audit-rollback-request", target.ID.String()),
+		IdempotencyScopeHash: Hash("audit-rollback", target.ID.String()),
+		RequestHash:          Hash("audit-rollback-request", target.ID.String()),
 		ReasonCode:           "credential_deleted",
 		CredentialRevocationAudit: &PrivateMemoryCredentialRevocationAudit{
 			ActorRole: "member",
@@ -44,7 +44,7 @@ func TestPrivateMemorySSOCredentialRevocationAuditFailureRollsBackDisable(t *tes
 		if err := tx.Raw(`SELECT status FROM credentials WHERE id = ?`, target.ID).Row().Scan(&status); err != nil {
 			return err
 		}
-		if err := tx.Raw(`SELECT COUNT(*) FROM private_memory_erasure_operations WHERE idempotency_scope_hash = ?`, privateMemoryHash("audit-rollback", target.ID.String())).Row().Scan(&operationCount); err != nil {
+		if err := tx.Raw(`SELECT COUNT(*) FROM private_memory_erasure_operations WHERE idempotency_scope_hash = ?`, Hash("audit-rollback", target.ID.String())).Row().Scan(&operationCount); err != nil {
 			return err
 		}
 		return tx.Raw(`
@@ -73,8 +73,8 @@ func TestPrivateMemorySSOCredentialRevocationAuditStoresProfileAndCredentialActo
 
 	operation, created, err := repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: ownerID, CredentialID: target.ID,
-		IdempotencyScopeHash: privateMemoryHash("audit-actors", target.ID.String()),
-		RequestHash:          privateMemoryHash("audit-actors-request", target.ID.String()),
+		IdempotencyScopeHash: Hash("audit-actors", target.ID.String()),
+		RequestHash:          Hash("audit-actors-request", target.ID.String()),
 		ReasonCode:           "credential_deleted",
 		CredentialRevocationAudit: &PrivateMemoryCredentialRevocationAudit{
 			ActorProfileID:    stringPointer(profileID.String()),

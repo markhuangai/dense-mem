@@ -44,7 +44,7 @@ func (s *privacyTraceFixtureStore) TraceRelationship(ctx context.Context, input 
 	return s.trace.TraceRelationship(ctx, input)
 }
 
-func createLedgerSSOIdentity(t *testing.T, db *gorm.DB, rls storagepostgres.RLSHelper, teamID uuid.UUID) uuid.UUID {
+func createLedgerSSOIdentity(t testing.TB, db *gorm.DB, rls storagepostgres.RLSHelper, teamID uuid.UUID) uuid.UUID {
 	t.Helper()
 	providerID := uuid.New()
 	identityID := uuid.New()
@@ -85,7 +85,7 @@ func createLedgerSSOIdentity(t *testing.T, db *gorm.DB, rls storagepostgres.RLSH
 	return identityID
 }
 
-func createOwnedCredential(t *testing.T, repo *accesspostgres.CredentialRepositoryImpl, teamID, ownerID uuid.UUID, name string, binding domain.CredentialMemoryBinding) *domain.Credential {
+func createOwnedCredential(t testing.TB, repo *accesspostgres.CredentialRepositoryImpl, teamID, ownerID uuid.UUID, name string, binding domain.CredentialMemoryBinding) *domain.Credential {
 	t.Helper()
 	id := uuid.New()
 	prefix := "dm_" + strings.ReplaceAll(id.String(), "-", "")[:20]
