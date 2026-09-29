@@ -1,0 +1,229 @@
+{
+  "base_commit": "74386b7adf293780ea2329ee0d272f3693506b8d",
+  "benchmark": {
+    "command": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags=integration ./internal/graph/postgres -run '^$' -bench '^BenchmarkGraphOwnership$' -benchtime=200x -count=1 -benchmem",
+    "comparison": "All result signature hashes, ordered SQL/argument digests, and SQL/transaction/provider counts equal; median p50 and p95 increases each <= max(5% of base, 1 ms).",
+    "measured_operations_per_workload": 200,
+    "name": "BenchmarkGraphOwnership",
+    "passed": true,
+    "run_order": [
+      "base,candidate",
+      "candidate,base",
+      "base,candidate",
+      "candidate,base",
+      "base,candidate"
+    ],
+    "runs_per_source": 5,
+    "warmups_per_workload": 20,
+    "workloads": {
+      "local_default_depth": {
+        "latency": {
+          "p50": {
+            "allowed_increase_ms": 1.0,
+            "base_median_ms": 2.906368,
+            "base_runs_ms": [
+              2.42203,
+              3.201803,
+              3.015859,
+              2.803272,
+              2.906368
+            ],
+            "candidate_median_ms": 2.833855,
+            "candidate_runs_ms": [
+              2.71283,
+              2.657882,
+              2.833855,
+              3.077208,
+              3.084693
+            ],
+            "increase_ms": -0.072513
+          },
+          "p95": {
+            "allowed_increase_ms": 1.0,
+            "base_median_ms": 3.915178,
+            "base_runs_ms": [
+              3.055136,
+              4.237006,
+              4.045479,
+              3.915178,
+              3.579364
+            ],
+            "candidate_median_ms": 3.888705,
+            "candidate_runs_ms": [
+              3.60837,
+              3.437971,
+              4.048895,
+              3.964445,
+              3.888705
+            ],
+            "increase_ms": -0.026473
+          }
+        },
+        "median_allocs_per_op": {
+          "base": 720,
+          "candidate": 716
+        },
+        "median_bytes_per_op": {
+          "base": 86631,
+          "candidate": 86092
+        },
+        "provider_calls_per_op": 0.0,
+        "query_contract_sha256": "8df12169d2a174b49a8e9e4a707118c63219abc0238b37ebfecfeb021c6ab1db",
+        "result_signature_sha256": "15daaad0584f39a41f46f47f2c0dd8b8ec3909954bfbbad9f016422ffcc37ff7",
+        "sql_statements_per_op": 6.0,
+        "transactions_per_op": 1.0
+      },
+      "local_max_depth": {
+        "latency": {
+          "p50": {
+            "allowed_increase_ms": 1.0,
+            "base_median_ms": 5.064132,
+            "base_runs_ms": [
+              4.145871,
+              5.064132,
+              5.672722,
+              5.209575,
+              4.808886
+            ],
+            "candidate_median_ms": 5.141363,
+            "candidate_runs_ms": [
+              5.163698,
+              5.025495,
+              5.141363,
+              5.282709,
+              4.745612
+            ],
+            "increase_ms": 0.077231
+          },
+          "p95": {
+            "allowed_increase_ms": 1.0,
+            "base_median_ms": 6.005668,
+            "base_runs_ms": [
+              5.334371,
+              6.005668,
+              7.591103,
+              6.519101,
+              5.853834
+            ],
+            "candidate_median_ms": 6.619684,
+            "candidate_runs_ms": [
+              6.619684,
+              6.5549,
+              6.461196,
+              7.615059,
+              6.731635
+            ],
+            "increase_ms": 0.614016
+          }
+        },
+        "median_allocs_per_op": {
+          "base": 1703,
+          "candidate": 1696
+        },
+        "median_bytes_per_op": {
+          "base": 210054,
+          "candidate": 208936
+        },
+        "provider_calls_per_op": 0.0,
+        "query_contract_sha256": "497a21a534f4687ea165b5494ecb0333c767cad8a280d58d6790d14d1c17c2ad",
+        "result_signature_sha256": "095854bcba8f950e44cde6afbf444270e9f03f04704b4712b0bcab5428b04df8",
+        "sql_statements_per_op": 9.0,
+        "transactions_per_op": 1.0
+      },
+      "overview": {
+        "latency": {
+          "p50": {
+            "allowed_increase_ms": 1.0,
+            "base_median_ms": 2.444501,
+            "base_runs_ms": [
+              2.347173,
+              3.232316,
+              2.659613,
+              2.227294,
+              2.444501
+            ],
+            "candidate_median_ms": 2.380505,
+            "candidate_runs_ms": [
+              2.30987,
+              2.093457,
+              2.745084,
+              2.380505,
+              2.641856
+            ],
+            "increase_ms": -0.063996
+          },
+          "p95": {
+            "allowed_increase_ms": 1.0,
+            "base_median_ms": 3.277101,
+            "base_runs_ms": [
+              3.086343,
+              4.056816,
+              3.289276,
+              2.815501,
+              3.277101
+            ],
+            "candidate_median_ms": 3.196572,
+            "candidate_runs_ms": [
+              3.170398,
+              2.707853,
+              3.577346,
+              3.196572,
+              3.426284
+            ],
+            "increase_ms": -0.080529
+          }
+        },
+        "median_allocs_per_op": {
+          "base": 627,
+          "candidate": 624
+        },
+        "median_bytes_per_op": {
+          "base": 59696,
+          "candidate": 59161
+        },
+        "provider_calls_per_op": 0.0,
+        "query_contract_sha256": "d12d13902abd2dc5c83c3684aaaed689bd7631a654c51096b6aedf6530e3cb9d",
+        "result_signature_sha256": "f8290585e296b5e4da51869afc0544ce57520015b5636a8055a4c0bb43e8b31c",
+        "sql_statements_per_op": 5.0,
+        "transactions_per_op": 1.0
+      }
+    }
+  },
+  "candidate_source_manifest": {
+    "changed_paths_excluding_this_evidence": 12,
+    "recipe": "SHA-256 of sorted path + NUL + file SHA-256 + newline for changes against base, including untracked nonignored files, excluding this evidence file",
+    "sha256": "b801564a10558e16d85ee6bdf9b4122863a05579947071a4dba1f9b4a3f333ea"
+  },
+  "evaluation_waiver": "Issue #484 records the maintainer-approved scoped historical deterministic 1k waiver; fixed-result PostgreSQL, paired performance, production-entry, and final-head full E2E are replacement gates.",
+  "fixed_result_postgres_cases": "TestGraphOwnershipNormalizedServiceAndAdapter passed on exact base with test-only overlay and candidate; existing Graph/Trace isolation and detail tests passed on candidate.",
+  "issue": 484,
+  "maintenance_benefit": "One Graph contract now owns shared normalization; duplicate service and adapter rule bodies and graphread alias policy were removed.",
+  "performance_change": "Measured Graph overview and local-traversal median p50/p95 changes are recorded by workload; no speedup claim.",
+  "raw_run_sha256": {
+    "01-base": "1674e059e4fefaa189df6ffe6f60fc01c3e999213938d9b264c1013db007d282",
+    "01-candidate": "c6b86786a1fcc1f736f8b5034ad3af8b8901ce90753b873363ec48b8c1b883e4",
+    "02-base": "53907ba18640478a484599a2ff62830f5a2ab1d85f179b71448adf6ec4730371",
+    "02-candidate": "3d5712fd7bd73a2edee6099180cab684dceea1c7d6c4081dcd13bd150de574d0",
+    "03-base": "f1a1de4b944fe3bd75eadecb1736610299e4eaea0c2720ec4abae9590d89dbd3",
+    "03-candidate": "523251579eec2bf509bce658cd78dfdb77359b4a6957015c60ffac4b05e49c54",
+    "04-base": "995e72848c2be2bcd8bc1812ddb3db85c64782e7d71261ff62cd3a0a46b5f17e",
+    "04-candidate": "9ad9e8bbbf167dcda99a05d7686ee4d4fc30d000734cb7786243808b1b825c7d",
+    "05-base": "9918accb2599cc7aa2a46a70105c6aa84cac389dea196f1dab8f6f986aa233a1",
+    "05-candidate": "35679a9c747f4923e5438b133e360f5b900aaf345828989b032c7bd6296692bf"
+  },
+  "schema_version": 1,
+  "test_only_base_overlay_sha256": {
+    "internal/graph/postgres/graph_ownership_benchmark_test.go": "de7592e48df7effab2d833b888f71ef100240ada4d7a662aff9aa46799b98576",
+    "internal/graph/postgres/graph_ownership_integration_test.go": "b23a2fdc26f81889b42154c2c4bbfbc8df043520b08dec9f6050c6db07fc7883",
+    "internal/graph/postgres/ledger_fixture_helpers_test.go": "b230727e38416195f761631a57eed2404a71895b4913163e114913aba6f7852f"
+  },
+  "validation": {
+    "evaluation_coverage_diagnostic": "73 packages and 4128 tests passed after the initial full CI attempt ended during evaluation coverage without a retained failure line",
+    "exact_base_candidate_fixed_result": "passed",
+    "focused_go": "passed",
+    "graph_trace_postgres_integration": "passed",
+    "paired_benchmark": "passed",
+    "production_entry": "./scripts/e2e.sh full: passed; 46 Playwright tests passed, including desktop/mobile Graph scoped-read and adverse-boundary cases",
+    "repository_ci_check": "./scripts/ci-check.sh passed on captured rerun; complete Go coverage 32967/36606 (90.1%)"
+  }
+}

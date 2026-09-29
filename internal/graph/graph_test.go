@@ -16,35 +16,43 @@ import (
 func TestNormalizeSemanticQueryDefaultsAndBounds(t *testing.T) {
 	defaults, err := normalizeSemanticQuery(Query{})
 	require.NoError(t, err)
-	assert.Equal(t, DefaultDepth, defaults.depth)
-	assert.Equal(t, DefaultLimit, defaults.limit)
+	assert.Equal(t, DefaultDepth, defaults.Depth)
+	assert.Equal(t, DefaultLimit, defaults.Limit)
 
 	explicit, err := normalizeSemanticQuery(Query{Depth: 99, Limit: 181})
 	require.NoError(t, err)
-	assert.Equal(t, MaxDepth, explicit.depth)
-	assert.Equal(t, 181, explicit.limit)
+	assert.Equal(t, MaxDepth, explicit.Depth)
+	assert.Equal(t, 181, explicit.Limit)
 
 	large, err := normalizeSemanticQuery(Query{Limit: 1_000_000})
 	require.NoError(t, err)
-	assert.Equal(t, 1_000_000, large.limit)
+	assert.Equal(t, 1_000_000, large.Limit)
 
 	local, err := normalizeSemanticQuery(Query{
 		Scope: " LOCAL ", Query: " Project ", Types: []string{"entities", "VALUE", "entity", "unknown"},
 		AnchorType: "values", AnchorID: " value-1 ", Depth: 1, Limit: 7,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, ScopeLocal, local.scope)
-	assert.Equal(t, "project", local.search)
-	assert.Equal(t, []string{"entity", "value"}, local.types)
-	assert.Equal(t, "value", local.anchorType)
-	assert.Equal(t, "value-1", local.anchorID)
-	assert.Equal(t, 1, local.depth)
-	assert.Equal(t, 7, local.limit)
+	assert.Equal(t, ScopeLocal, local.Scope)
+	assert.Equal(t, "project", local.Query)
+	assert.Equal(t, []string{"entity", "value"}, local.Types)
+	assert.Equal(t, "value", local.AnchorType)
+	assert.Equal(t, "value-1", local.AnchorID)
+	assert.Equal(t, 1, local.Depth)
+	assert.Equal(t, 7, local.Limit)
 
 	_, err = normalizeSemanticQuery(Query{Scope: ScopeLocal})
 	assert.ErrorIs(t, err, ErrMissingAnchor)
 	_, err = normalizeSemanticQuery(Query{Scope: ScopeLocal, AnchorType: "evidence", AnchorID: "id"})
 	assert.ErrorIs(t, err, ErrInvalidAnchorType)
+	_, err = normalizeSemanticQuery(Query{Scope: ScopeLocal, AnchorType: "evidence"})
+	assert.ErrorIs(t, err, ErrInvalidAnchorType, "unknown type precedes missing ID")
+	_, err = normalizeSemanticQuery(Query{Scope: ScopeLocal, AnchorType: "entities"})
+	assert.ErrorIs(t, err, ErrMissingAnchor)
+	ignored, err := normalizeSemanticQuery(Query{Scope: "overview", AnchorType: "unknown", AnchorID: "unused"})
+	require.NoError(t, err)
+	assert.Empty(t, ignored.AnchorType)
+	assert.Empty(t, ignored.AnchorID)
 }
 
 func TestSemanticServiceGraphNormalizesAndMapsSnapshot(t *testing.T) {
@@ -139,6 +147,8 @@ func TestSemanticServiceNodeDetailValidation(t *testing.T) {
 	service := New(&semanticStoreStub{})
 	_, err = service.NodeDetail(context.Background(), "team", "evidence", "id")
 	assert.ErrorIs(t, err, ErrInvalidNodeType)
+	_, err = service.NodeDetail(context.Background(), "team", "evidence", "")
+	assert.ErrorIs(t, err, ErrInvalidNodeType, "unknown type precedes missing ID")
 	_, err = service.NodeDetail(context.Background(), "team", "entity", "")
 	assert.ErrorIs(t, err, ErrMissingNode)
 	_, err = service.NodeDetail(context.Background(), "team", "", "id")

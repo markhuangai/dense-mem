@@ -12,12 +12,12 @@ import (
 )
 
 const (
-	ScopeOverview = "overview"
-	ScopeLocal    = "local"
+	ScopeOverview = graphcontract.ScopeOverview
+	ScopeLocal    = graphcontract.ScopeLocal
 
-	DefaultLimit = 80
-	DefaultDepth = 2
-	MaxDepth     = 5
+	DefaultLimit = graphcontract.DefaultLimit
+	DefaultDepth = graphcontract.DefaultDepth
+	MaxDepth     = graphcontract.MaxDepth
 
 	maxNodeBodyRunes = 420
 )
@@ -95,16 +95,6 @@ func New(store Store) Service {
 	return &semanticService{store: store}
 }
 
-type normalizedSemanticQuery struct {
-	scope      string
-	search     string
-	types      []string
-	anchorType string
-	anchorID   string
-	depth      int
-	limit      int
-}
-
 func (s *semanticService) Graph(ctx context.Context, teamID string, query Query) (*Snapshot, error) {
 	if s == nil || s.store == nil {
 		return nil, errors.New("graph view semantic store is not configured")
@@ -113,16 +103,8 @@ func (s *semanticService) Graph(ctx context.Context, teamID string, query Query)
 	if err != nil {
 		return nil, err
 	}
-	snapshot, err := s.store.SemanticGraph(ctx, graphcontract.Query{
-		TeamID:     strings.TrimSpace(teamID),
-		Scope:      normalized.scope,
-		Query:      normalized.search,
-		Types:      normalized.types,
-		AnchorType: normalized.anchorType,
-		AnchorID:   normalized.anchorID,
-		Depth:      normalized.depth,
-		Limit:      normalized.limit,
-	})
+	normalized.TeamID = strings.TrimSpace(teamID)
+	snapshot, err := s.store.SemanticGraph(ctx, normalized)
 	if err != nil {
 		return nil, fmt.Errorf("semantic graph view: %w", err)
 	}
@@ -133,7 +115,7 @@ func (s *semanticService) NodeDetail(ctx context.Context, teamID string, nodeTyp
 	if s == nil || s.store == nil {
 		return nil, errors.New("graph view semantic store is not configured")
 	}
-	normalizedType := normalizeSemanticGraphType(nodeType)
+	normalizedType := graphcontract.NormalizeNodeType(nodeType)
 	normalizedID := strings.TrimSpace(nodeID)
 	if normalizedType == "" && strings.TrimSpace(nodeType) != "" {
 		return nil, ErrInvalidNodeType
@@ -158,77 +140,24 @@ func (s *semanticService) NodeDetail(ctx context.Context, teamID string, nodeTyp
 	return nodeFromSemantic(*node), nil
 }
 
-func normalizeSemanticQuery(query Query) (normalizedSemanticQuery, error) {
-	scope := strings.ToLower(strings.TrimSpace(query.Scope))
-	if scope == "" || scope != ScopeLocal {
-		scope = ScopeOverview
+func normalizeSemanticQuery(query Query) (graphcontract.Query, error) {
+	normalized := graphcontract.NormalizeQuery(graphcontract.Query{
+		Scope: query.Scope, Query: query.Query, Types: query.Types,
+		AnchorType: query.AnchorType, AnchorID: query.AnchorID,
+		Depth: query.Depth, Limit: query.Limit,
+	})
+	if normalized.Scope != ScopeLocal {
+		normalized.AnchorType = ""
+		normalized.AnchorID = ""
+		return normalized, nil
 	}
-	normalized := normalizedSemanticQuery{
-		scope:  scope,
-		search: strings.ToLower(strings.TrimSpace(query.Query)),
-		types:  normalizeSemanticGraphTypes(query.Types),
-		limit:  defaultPositive(query.Limit, DefaultLimit),
-		depth:  clamp(query.Depth, DefaultDepth, MaxDepth),
+	if normalized.AnchorType == "" && strings.TrimSpace(query.AnchorType) != "" {
+		return graphcontract.Query{}, ErrInvalidAnchorType
 	}
-	if normalized.scope == ScopeLocal {
-		normalized.anchorType = normalizeSemanticGraphType(query.AnchorType)
-		normalized.anchorID = strings.TrimSpace(query.AnchorID)
-		if normalized.anchorType == "" && strings.TrimSpace(query.AnchorType) != "" {
-			return normalizedSemanticQuery{}, ErrInvalidAnchorType
-		}
-		if normalized.anchorType == "" || normalized.anchorID == "" {
-			return normalizedSemanticQuery{}, ErrMissingAnchor
-		}
+	if normalized.AnchorType == "" || normalized.AnchorID == "" {
+		return graphcontract.Query{}, ErrMissingAnchor
 	}
 	return normalized, nil
-}
-
-func normalizeSemanticGraphTypes(values []string) []string {
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(values))
-	for _, raw := range values {
-		normalized := normalizeSemanticGraphType(raw)
-		if normalized == "" {
-			continue
-		}
-		if _, exists := seen[normalized]; exists {
-			continue
-		}
-		seen[normalized] = struct{}{}
-		out = append(out, normalized)
-	}
-	if len(out) == 0 {
-		return []string{"entity", "value"}
-	}
-	return out
-}
-
-func normalizeSemanticGraphType(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "entity", "entities":
-		return "entity"
-	case "value", "values":
-		return "value"
-	default:
-		return ""
-	}
-}
-
-func clamp(value, defaultValue, maxValue int) int {
-	if value <= 0 {
-		return defaultValue
-	}
-	if value > maxValue {
-		return maxValue
-	}
-	return value
-}
-
-func defaultPositive(value, defaultValue int) int {
-	if value <= 0 {
-		return defaultValue
-	}
-	return value
 }
 
 func snapshotFromSemantic(snapshot *graphcontract.Snapshot) *Snapshot {

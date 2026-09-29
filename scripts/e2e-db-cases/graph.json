@@ -3,6 +3,13 @@
   "capability": "graph",
   "cases": [
     {
+      "id": "repository/TestGraphOwnershipNormalizedServiceAndAdapter",
+      "package": "./internal/graph/postgres",
+      "run": "^TestGraphOwnershipNormalizedServiceAndAdapter$",
+      "phase": "precheck",
+      "source": "internal/graph/postgres/graph_ownership_integration_test.go"
+    },
+    {
       "id": "repository/TestSemanticGraphLocalDepthDefaultsToTwoAndCapsAtFive",
       "package": "./internal/graph/postgres",
       "run": "^TestSemanticGraphLocalDepthDefaultsToTwoAndCapsAtFive$",

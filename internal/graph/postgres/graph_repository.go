@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -39,12 +40,6 @@ func (r *Store) withTeamTx(ctx context.Context, teamID string, fn func(*gorm.DB)
 }
 
 var _ graphcontract.Store = (*Store)(nil)
-
-const (
-	defaultSemanticGraphLimit = 80
-	defaultSemanticGraphDepth = 2
-	maxSemanticGraphDepth     = 5
-)
 
 func NormalizeQuery(input graphcontract.Query) graphcontract.Query {
 	return normalizeSemanticGraphQuery(input)
@@ -142,17 +137,8 @@ type graphExecutionQuery struct {
 }
 
 func normalizeSemanticGraphQuery(input graphcontract.Query) graphcontract.Query {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.Scope = strings.ToLower(strings.TrimSpace(input.Scope))
-	if input.Scope == "" || input.Scope != "local" {
-		input.Scope = "overview"
-	}
-	input.Query = strings.ToLower(strings.TrimSpace(input.Query))
-	input.AnchorType = normalizeSemanticGraphNodeType(input.AnchorType)
-	input.AnchorID = strings.TrimSpace(input.AnchorID)
-	input.Types = normalizeSemanticGraphTypes(input.Types)
-	input.Depth = clampInt(input.Depth, defaultSemanticGraphDepth, maxSemanticGraphDepth)
-	input.Limit = defaultPositiveInt(input.Limit, defaultSemanticGraphLimit)
+	input = graphcontract.NormalizeQuery(input)
+	sort.Strings(input.Types)
 	input.MinRelevance = normalizeRelevance(input.MinRelevance)
 	return input
 }
@@ -174,7 +160,7 @@ func validateSemanticGraphQuery(input graphcontract.Query) error {
 
 func normalizeSemanticGraphNodeDetailInput(input graphcontract.NodeDetailInput) graphcontract.NodeDetailInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.NodeType = normalizeSemanticGraphNodeType(input.NodeType)
+	input.NodeType = graphcontract.NormalizeNodeType(input.NodeType)
 	input.NodeID = strings.TrimSpace(input.NodeID)
 	return input
 }
@@ -487,31 +473,6 @@ func graphSnapshot(input graphcontract.Query, rows []graphEdgeRow) *graphcontrac
 	return graphread.Snapshot(input, rows)
 }
 
-func normalizeSemanticGraphTypes(values []string) []string {
-	return graphread.NormalizeTypes(values)
-}
-
-func normalizeSemanticGraphNodeType(raw string) string {
-	return graphread.NormalizeNodeType(raw)
-}
-
-func clampInt(value, defaultValue, maxValue int) int {
-	if value <= 0 {
-		return defaultValue
-	}
-	if value > maxValue {
-		return maxValue
-	}
-	return value
-}
-
-func defaultPositiveInt(value, defaultValue int) int {
-	if value <= 0 {
-		return defaultValue
-	}
-	return value
-}
-
 func normalizeRelevance(value float64) float64 {
 	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
 		return 0
@@ -523,7 +484,7 @@ func normalizeRelevance(value float64) float64 {
 }
 
 func semanticGraphNodeKey(nodeType, id string) string {
-	nodeType = normalizeSemanticGraphNodeType(nodeType)
+	nodeType = graphcontract.NormalizeNodeType(nodeType)
 	id = strings.TrimSpace(id)
 	if nodeType == "" || id == "" {
 		return ""

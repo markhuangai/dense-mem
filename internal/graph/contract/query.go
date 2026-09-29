@@ -3,7 +3,16 @@ package contract
 
 import (
 	"context"
+	"strings"
 	"time"
+)
+
+const (
+	ScopeOverview = "overview"
+	ScopeLocal    = "local"
+	DefaultLimit  = 80
+	DefaultDepth  = 2
+	MaxDepth      = 5
 )
 
 // Query is the caller-owned graph request. Memory-space scope is derived by
@@ -18,6 +27,58 @@ type Query struct {
 	Depth        int
 	Limit        int
 	MinRelevance float64
+}
+
+func NormalizeQuery(input Query) Query {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.Scope = strings.ToLower(strings.TrimSpace(input.Scope))
+	if input.Scope != ScopeLocal {
+		input.Scope = ScopeOverview
+	}
+	input.Query = strings.ToLower(strings.TrimSpace(input.Query))
+	input.Types = NormalizeTypes(input.Types)
+	input.AnchorType = NormalizeNodeType(input.AnchorType)
+	input.AnchorID = strings.TrimSpace(input.AnchorID)
+	if input.Depth <= 0 {
+		input.Depth = DefaultDepth
+	} else if input.Depth > MaxDepth {
+		input.Depth = MaxDepth
+	}
+	if input.Limit <= 0 {
+		input.Limit = DefaultLimit
+	}
+	return input
+}
+
+func NormalizeTypes(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		normalized := NormalizeNodeType(raw)
+		if normalized == "" {
+			continue
+		}
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	if len(out) == 0 {
+		return []string{"entity", "value"}
+	}
+	return out
+}
+
+func NormalizeNodeType(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "entity", "entities":
+		return "entity"
+	case "value", "values":
+		return "value"
+	default:
+		return ""
+	}
 }
 
 type NodeDetailInput struct {

@@ -5,7 +5,6 @@ package graphread
 import (
 	"context"
 	"database/sql"
-	"strings"
 	"time"
 
 	graphcontract "github.com/markhuangai/dense-mem/internal/graph/contract"
@@ -84,40 +83,12 @@ func ScanRows(rows *sql.Rows, types []string) ([]Row, error) {
 	return out, rows.Err()
 }
 
-func NormalizeTypes(values []string) []string {
-	set := TypeSet(values)
-	out := make([]string, 0, len(set))
-	for _, value := range []string{"entity", "value"} {
-		if set[value] {
-			out = append(out, value)
-		}
-	}
-	return out
-}
-
 func TypeSet(values []string) map[string]bool {
 	out := map[string]bool{}
-	for _, raw := range values {
-		if normalized := NormalizeNodeType(raw); normalized != "" {
-			out[normalized] = true
-		}
-	}
-	if len(out) == 0 {
-		out["entity"] = true
-		out["value"] = true
+	for _, normalized := range graphcontract.NormalizeTypes(values) {
+		out[normalized] = true
 	}
 	return out
-}
-
-func NormalizeNodeType(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "entity", "entities":
-		return "entity"
-	case "value", "values":
-		return "value"
-	default:
-		return ""
-	}
 }
 
 // Traverse expands a bounded local graph while preserving the existing

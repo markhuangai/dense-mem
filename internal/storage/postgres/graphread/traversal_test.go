@@ -10,24 +10,12 @@ import (
 	graphcontract "github.com/markhuangai/dense-mem/internal/graph/contract"
 )
 
-func TestNormalizeGraphTypesAndNodeTypes(t *testing.T) {
-	if got := NormalizeTypes([]string{"values", "entity", "invalid", "entities"}); len(got) != 2 || got[0] != "entity" || got[1] != "value" {
-		t.Fatalf("unexpected normalized types: %#v", got)
-	}
+func TestTypeSetUsesGraphContractTypes(t *testing.T) {
 	if got := TypeSet(nil); !got["entity"] || !got["value"] {
 		t.Fatalf("default type set missing nodes: %#v", got)
 	}
-	for _, test := range []struct {
-		raw  string
-		want string
-	}{
-		{raw: " entity ", want: "entity"},
-		{raw: "VALUES", want: "value"},
-		{raw: "unknown", want: ""},
-	} {
-		if got := NormalizeNodeType(test.raw); got != test.want {
-			t.Errorf("NormalizeNodeType(%q) = %q, want %q", test.raw, got, test.want)
-		}
+	if got := TypeSet([]string{"values", "invalid", "VALUES"}); got["entity"] || !got["value"] || len(got) != 1 {
+		t.Fatalf("value-only type set changed: %#v", got)
 	}
 }
 
