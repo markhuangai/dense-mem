@@ -66,6 +66,7 @@ function assertPreviewBuildPolicy(workflow) {
 }
 
 function assertWorkflowOrchestration(workflow) {
+  const databasePrechecks = workflowJob(workflow, "database-prechecks");
   const exclusive = workflowJob(workflow, "exclusive");
   const exclusiveCleanup = workflowJob(workflow, "exclusive-cleanup");
   const sharedStart = workflowJob(workflow, "shared-start");
@@ -73,19 +74,24 @@ function assertWorkflowOrchestration(workflow) {
   const sharedStop = workflowJob(workflow, "shared-stop");
   const report = workflowJob(workflow, "report");
 
-  assert.match(exclusive, /^    needs: \[authorize, prechecks, stale-cleanup\]$/m);
+  assert.match(databasePrechecks, /^    strategy:\n      fail-fast: false\n      max-parallel: 3\n      matrix:\n        shard: \[0, 1, 2\]$/m);
+  assert.ok(databasePrechecks.includes('"shard:${{ matrix.shard }}"'));
+  assert.match(exclusive, /^    needs: \[authorize, prechecks, database-prechecks, stale-cleanup\]$/m);
+  assert.match(exclusive, /needs\.database-prechecks\.result == 'success'/);
   assert.match(exclusive, /^    strategy:\n      fail-fast: false\n      max-parallel: 4$/m);
-  assert.match(exclusiveCleanup, /^    needs: \[authorize, prechecks, stale-cleanup, exclusive\]$/m);
+  assert.match(exclusiveCleanup, /^    needs: \[authorize, prechecks, database-prechecks, stale-cleanup, exclusive\]$/m);
   assert.match(exclusiveCleanup, /^    if: always\(\) && needs\.authorize\.result == 'success'$/m);
   assert.match(exclusiveCleanup, /^    runs-on: rootless-docker$/m);
   assert.match(exclusiveCleanup, /scripts\/e2e-host-controller\.sh stale-cleanup 1 \\\n\s+"\$\{GITHUB_RUN_ID\}" "\$\{GITHUB_RUN_ATTEMPT\}" exclusive/);
-  assert.match(sharedStart, /^    needs: \[authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup\]$/m);
+  assert.match(sharedStart, /^    needs: \[authorize, prechecks, database-prechecks, stale-cleanup, exclusive, exclusive-cleanup\]$/m);
   assert.match(sharedStart, /^    if: needs\.exclusive\.result == 'success' && needs\.exclusive-cleanup\.result == 'success'$/m);
   assert.match(shared, /^    needs: \[authorize, shared-start\]$/m);
   assert.match(shared, /^    strategy:\n      fail-fast: false\n      max-parallel: 4$/m);
   assert.match(sharedStop, /^    needs: \[shared-start, shared\]$/m);
   assert.match(sharedStop, /^    if: always\(\) && needs\.shared-start\.result == 'success'$/m);
-  assert.match(report, /^    needs: \[authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup, shared-start, shared, shared-stop\]$/m);
+  assert.match(report, /^    needs: \[authorize, prechecks, database-prechecks, stale-cleanup, exclusive, exclusive-cleanup, shared-start, shared, shared-stop\]$/m);
+  assert.match(report, /DATABASE_PRECHECK_RESULT: .*needs\.database-prechecks\.result/);
+  assert.match(report, /"\$\{DATABASE_PRECHECK_RESULT\}" \\/);
   assert.match(report, /^    if: always\(\)$/m);
 }
 
@@ -192,7 +198,7 @@ test("production jobs use capability-matched runners and PR-owned assets", async
   const report = workflowJob(workflow, "report");
   assert.match(report, /^    runs-on: ubuntu-latest$/m);
   assert.doesNotMatch(report, /actions\/setup-node@v7|actions\/download-artifact@v8/);
-  for (const job of ["prechecks", "stale-cleanup", "exclusive-cleanup", "shared-start", "shared-stop"]) {
+  for (const job of ["prechecks", "database-prechecks", "stale-cleanup", "exclusive-cleanup", "shared-start", "shared-stop"]) {
     const definition = workflowJob(workflow, job);
     assert.match(definition, /^    runs-on: rootless-docker$/m);
     assertNode24Setup(definition);
@@ -242,7 +248,7 @@ test("production jobs use capability-matched runners and PR-owned assets", async
 test("production orchestration assertions detect a missing shared dependency", async () => {
   const workflow = await readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8");
   assert.doesNotThrow(() => assertWorkflowOrchestration(workflow));
-  const mutated = workflow.replace(/^    needs: \[authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup\]$/m, "    needs: [authorize, prechecks]");
+  const mutated = workflow.replace(/^    needs: \[authorize, prechecks, database-prechecks, stale-cleanup, exclusive, exclusive-cleanup\]$/m, "    needs: [authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup]");
   assert.notEqual(mutated, workflow);
   assert.throws(() => assertWorkflowOrchestration(mutated));
 });
