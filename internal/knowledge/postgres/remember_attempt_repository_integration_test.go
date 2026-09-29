@@ -5,10 +5,14 @@ package postgres
 import (
 	"bytes"
 	"context"
+	"log"
+	"os"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
@@ -20,6 +24,11 @@ func TestRecordRememberFailurePreservesUnavailableCaptureStateAfterAttemptBudget
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "remember-attempt-diagnostic-budget")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-attempt-diagnostic-budget-owner")
+	// Keep the synthetic 64 MiB payload out of query logs, including failed inserts.
+	appDB = appDB.Session(&gorm.Session{Logger: gormlogger.New(
+		log.New(os.Stderr, "\r\n", log.LstdFlags),
+		gormlogger.Config{LogLevel: gormlogger.Error, ParameterizedQueries: true},
+	)})
 	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
 
 	body := bytes.Repeat([]byte("x"), maxRememberDiagnosticBodyBytes)

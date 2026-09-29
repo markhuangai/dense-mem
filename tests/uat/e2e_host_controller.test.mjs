@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { test } from "node:test";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { once } from "node:events";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -105,6 +106,86 @@ precheck 123 1 ghcr.io/markhuangai/dense-mem:test@sha256:${"1".repeat(64)} /work
       },
     );
   } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("precheck shards select each complete capability group", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-shards-"));
+  try {
+    const wrapper = controller.slice(controller.lastIndexOf("\nprecheck() {") + 1, controller.indexOf("\ndoctor() {"));
+    const script = [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      wrapper,
+      "partition_precheck_capabilities() { printf 'alpha,beta\\ngamma,delta\\nepsilon\\n'; }",
+      "precheck_capability() { printf 'selected=%s\\n' \"$5\"; }",
+      "fail() { printf '%s\\n' \"$*\" >&2; exit 1; }",
+      "precheck 123 1 image /workspace \"$1\"",
+    ].join("\n");
+    const scriptPath = join(fixture, "shard-test.sh");
+    await executable(scriptPath, script);
+    for (const [index, expected] of ["alpha,beta", "gamma,delta", "epsilon"].entries()) {
+      const { stdout } = await run("bash", [scriptPath, "shard:" + index]);
+      assert.equal(stdout.trim(), "selected=" + expected);
+    }
+    await assert.rejects(run("bash", [scriptPath, "shard:3"]), /invalid precheck shard/);
+    const incompletePath = join(fixture, "incomplete-shard-test.sh");
+    await executable(incompletePath, script.replace("alpha,beta\\ngamma,delta\\nepsilon\\n", "alpha,beta\\ngamma,delta\\n"));
+    await assert.rejects(run("bash", [incompletePath, "shard:2"]), /requires three populated shards/);
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("default precheck streams partition progress before completion", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-stream-"));
+  let child;
+  try {
+    const wrapper = controller.slice(controller.lastIndexOf("\nprecheck() {") + 1, controller.indexOf("\ndoctor() {"));
+    const script = [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      wrapper,
+      "partition_precheck_capabilities() { printf 'alpha\\nbeta\\n'; }",
+      "precheck_capability() { printf 'ready %s\\n' \"$5\"; while [[ ! -f \"$RELEASE_FILE\" ]]; do sleep 0.02; done; }",
+      "fail() { printf '%s\\n' \"$*\" >&2; exit 1; }",
+      "precheck 123 1 image /workspace",
+    ].join("\n");
+    const scriptPath = join(fixture, "stream-test.sh");
+    const releasePath = join(fixture, "release");
+    await executable(scriptPath, script);
+    child = spawn("bash", [scriptPath], {
+      env: { ...process.env, TMPDIR: fixture, RELEASE_FILE: releasePath },
+    });
+    let output = "";
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("precheck progress was not streamed")), 5000);
+      child.stdout.on("data", (chunk) => {
+        output += chunk;
+        if (output.includes("[alpha] ready alpha") && output.includes("[beta] ready beta")) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+      child.on("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      child.on("close", (code) => {
+        if (code !== 0) {
+          clearTimeout(timer);
+          reject(new Error("precheck exited before release"));
+        }
+      });
+    });
+    assert.equal(child.exitCode, null);
+    const completed = once(child, "close");
+    await writeFile(releasePath, "go");
+    const [code] = await completed;
+    assert.equal(code, 0);
+  } finally {
+    child?.kill();
     await rm(fixture, { recursive: true, force: true });
   }
 });
