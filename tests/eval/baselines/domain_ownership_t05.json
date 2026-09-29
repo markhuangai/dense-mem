@@ -2,12 +2,14 @@
   "base_commit": "74386b7adf293780ea2329ee0d272f3693506b8d",
   "benchmark": {
     "allocation_investigation": "Queued release adds one median allocation per operation because RetryDecision returns a *time.Time; Go escape analysis reports retryAt moved to heap. Other workloads have equal median allocations.",
+    "candidate_source_commit": "f1c3cd4942066fc8b3876bd1244cb71042d5f5b9",
     "command": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags=integration ./internal/privacy/postgres -run '^$' -bench '^BenchmarkPrivacyOwnership$' -benchtime=200x -count=1 -benchmem",
     "comparison": "Every pair has equal result signatures, normalized ordered SQL/argument fingerprints, and SQL/transaction/provider counts. Median p50 and p95 increase each <= max(5% of base, 1 ms).",
     "host_state": "Ten sequential runs on one 16-core host after competing repository CI runs exited; no other CI, Go test, coverage, or Node test processes were observed immediately before or after the paired sequence.",
     "measured_operations_per_workload": 200,
     "name": "BenchmarkPrivacyOwnership",
     "passed": true,
+    "post_measurement_merge": "The final branch merged main at 926a7e5a5a3d8e36a5a0e4b7bd5e2e7c3a495ec8 after the paired runs. Its five changed files are CI workflow/controller/UAT files and an unrelated Knowledge integration test; Privacy source and benchmark fixtures are byte-identical to the measured candidate.",
     "query_fingerprint": "Ordered SQL, argument type and value shape; generated UUIDs, timestamps, and hash values are normalized, and pointers are dereferenced. Fixed golden hashes separately pin hash bytes and ordered parts.",
     "run_order": [
       "base,candidate",
@@ -134,9 +136,9 @@
     }
   },
   "candidate_source_manifest": {
-    "changed_paths_excluding_this_evidence": 18,
+    "changed_paths_excluding_this_evidence": 23,
     "recipe": "SHA-256 of sorted path + NUL + file SHA-256 (or <deleted>) + newline for tracked diff and nonignored untracked paths against base, excluding this evidence file",
-    "sha256": "759268bbb932ba8a3694aa8ef0612d29515f114dd6d8182641d23c5d88400aaa"
+    "sha256": "b6f733f629e5b362ccb5172d9c11c8157e8fddcccf1e8e17aea8294f36ca1c1a"
   },
   "evaluation_waiver": "Issue #485 records the maintainer-approved scoped historical deterministic 1k waiver; exact-base fixed-result, real PostgreSQL, paired performance, focused production-entry and final-head full production-image E2E are its replacement evidence.",
   "fixed_result_comparison": {
