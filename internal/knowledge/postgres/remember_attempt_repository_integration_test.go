@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
@@ -20,6 +22,8 @@ func TestRecordRememberFailurePreservesUnavailableCaptureStateAfterAttemptBudget
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "remember-attempt-diagnostic-budget")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-attempt-diagnostic-budget-owner")
+	// Keep the synthetic 64 MiB payload out of slow-query logs consumed by the CI output filter.
+	appDB = appDB.Session(&gorm.Session{Logger: appDB.Logger.LogMode(gormlogger.Error)})
 	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
 
 	body := bytes.Repeat([]byte("x"), maxRememberDiagnosticBodyBytes)
