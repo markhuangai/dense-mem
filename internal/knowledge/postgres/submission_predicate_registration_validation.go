@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 const submissionPredicateLookupBatchSize = 256
@@ -38,13 +39,8 @@ func (r *Store) ValidateSubmissionPredicateRegistrations(
 	copy(registrations, input.Registrations)
 	issues := make([]SubmissionPredicateRegistrationIssue, 0)
 	for index := range registrations {
-		registration := &registrations[index]
-		registration.PredicateKey = strings.TrimSpace(registration.PredicateKey)
-		registration.SubjectKind = strings.TrimSpace(registration.SubjectKind)
-		registration.ObjectKind = strings.TrimSpace(registration.ObjectKind)
-		registration.RelationshipKind = strings.TrimSpace(registration.RelationshipKind)
-		registration.CurrentCardinality = strings.TrimSpace(registration.CurrentCardinality)
-		issues = append(issues, validateSubmissionPredicateRegistrationFields(index, *registration)...)
+		registrations[index] = knowledgecontract.NormalizeSubmissionPredicateRegistration(registrations[index])
+		issues = append(issues, knowledgecontract.ValidateSubmissionPredicateRegistrationFields(index, registrations[index])...)
 	}
 	if len(issues) > 0 {
 		return issues, nil
@@ -76,8 +72,8 @@ func (r *Store) ValidateSubmissionPredicateRegistrations(
 		}
 		virtualDefinitions := make(map[string]SemanticReviewPredicateCandidate)
 		for index, registration := range registrations {
-			canonicalKey := canonicalGeneratedPredicateKey(registration.PredicateKey)
-			persisted, err := selectSubmissionPredicateCandidate(matches[index], registration.PredicateKey, canonicalKey)
+			canonicalKey := knowledgecontract.CanonicalGeneratedPredicateKey(registration.PredicateKey)
+			persisted, err := knowledgecontract.SelectSubmissionPredicateCandidate(matches[index], registration.PredicateKey, canonicalKey)
 			if errors.Is(err, ErrSubmissionPredicateRegistrationHeld) {
 				issues = append(issues, SubmissionPredicateRegistrationIssue{index, "predicate_key", "matches ambiguous predicate aliases"})
 				continue
@@ -88,7 +84,7 @@ func (r *Store) ValidateSubmissionPredicateRegistrations(
 			resolved := persisted
 			if virtual, exists := virtualDefinitions[canonicalKey]; exists {
 				candidates := append(append([]SemanticReviewPredicateCandidate(nil), matches[index]...), virtual)
-				resolved, err = selectSubmissionPredicateCandidate(candidates, registration.PredicateKey, canonicalKey)
+				resolved, err = knowledgecontract.SelectSubmissionPredicateCandidate(candidates, registration.PredicateKey, canonicalKey)
 				if errors.Is(err, ErrSubmissionPredicateRegistrationHeld) {
 					issues = append(issues, SubmissionPredicateRegistrationIssue{index, "predicate_key", "matches ambiguous predicate aliases"})
 					continue
@@ -103,7 +99,7 @@ func (r *Store) ValidateSubmissionPredicateRegistrations(
 				}
 			}
 			if resolved != nil {
-				if field, message := submissionPredicateRegistrationCompatibility(*resolved, registration); field != "" {
+				if field, message := knowledgecontract.SubmissionPredicateRegistrationCompatibility(*resolved, registration); field != "" {
 					issues = append(issues, SubmissionPredicateRegistrationIssue{index, field, message})
 				}
 			} else {
@@ -123,78 +119,6 @@ func (r *Store) ValidateSubmissionPredicateRegistrations(
 		return nil, fmt.Errorf("knowledge: validate submission predicate registrations: %w", err)
 	}
 	return issues, nil
-}
-
-func validateSubmissionPredicateRegistrationFields(index int, registration SubmissionPredicateRegistrationInput) []SubmissionPredicateRegistrationIssue {
-	issues := make([]SubmissionPredicateRegistrationIssue, 0, 5)
-	add := func(field, message string) {
-		issues = append(issues, SubmissionPredicateRegistrationIssue{index, field, message})
-	}
-	if registration.PredicateKey == "" || len([]rune(registration.PredicateKey)) > 128 {
-		add("predicate_key", "is required and must be bounded")
-	}
-	if !contains(domain.EntityKinds(), registration.SubjectKind) {
-		add("subject_kind", "is unsupported")
-	}
-	if !contains(append(domain.EntityKinds(), domain.ValueTypes()...), registration.ObjectKind) {
-		add("object_kind", "is unsupported")
-	}
-	if !contains(domain.RelationshipKinds(), registration.RelationshipKind) {
-		add("relationship_kind", "is unsupported")
-	}
-	if !contains(domain.CurrentCardinalities(), registration.CurrentCardinality) {
-		add("current_cardinality", "is unsupported")
-	}
-	return issues
-}
-
-func submissionPredicateRegistrationCompatibility(
-	loaded SemanticReviewPredicateCandidate,
-	registration SubmissionPredicateRegistrationInput,
-) (string, string) {
-	if loaded.LifecycleState != string(domain.PredicateLifecycleActive) {
-		return "predicate_key", "resolves to a predicate that is not active"
-	}
-	if !semanticPredicateKindAllowed(loaded.AllowedSubjectKinds, registration.SubjectKind) {
-		return "subject_kind", "is incompatible with the existing predicate"
-	}
-	if !semanticPredicateKindAllowed(loaded.AllowedObjectKinds, registration.ObjectKind) {
-		return "object_kind", "is incompatible with the existing predicate"
-	}
-	if loaded.RelationshipKind != registration.RelationshipKind {
-		return "relationship_kind", "is incompatible with the existing predicate"
-	}
-	if loaded.CurrentCardinality != registration.CurrentCardinality {
-		return "current_cardinality", "is incompatible with the existing predicate"
-	}
-	return "", ""
-}
-
-func selectSubmissionPredicateCandidate(
-	candidates []SemanticReviewPredicateCandidate,
-	requestedKey, canonicalKey string,
-) (*SemanticReviewPredicateCandidate, error) {
-	for _, candidate := range candidates {
-		if candidate.PredicateKey == requestedKey {
-			return &candidate, nil
-		}
-	}
-	for _, candidate := range candidates {
-		if candidate.PredicateKey == canonicalKey {
-			return &candidate, nil
-		}
-	}
-	var alias *SemanticReviewPredicateCandidate
-	for _, candidate := range candidates {
-		if contains(candidate.Aliases, requestedKey) || contains(candidate.Aliases, canonicalKey) {
-			if alias != nil {
-				return nil, ErrSubmissionPredicateRegistrationHeld
-			}
-			matched := candidate
-			alias = &matched
-		}
-	}
-	return alias, nil
 }
 
 func loadLatestSubmissionPredicateCandidates(
@@ -221,7 +145,7 @@ func loadLatestSubmissionPredicateCandidates(
 		requested := uniqueKeys[start:end]
 		canonical := make([]string, len(requested))
 		for index, key := range requested {
-			canonical[index] = canonicalGeneratedPredicateKey(key)
+			canonical[index] = knowledgecontract.CanonicalGeneratedPredicateKey(key)
 		}
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH requested AS (
@@ -301,7 +225,7 @@ func loadLatestSubmissionPredicate(ctx context.Context, tx *gorm.DB, teamID, req
 	if err != nil {
 		return nil, err
 	}
-	resolved, err := selectSubmissionPredicateCandidate(matches[0], requestedKey, canonicalKey)
+	resolved, err := knowledgecontract.SelectSubmissionPredicateCandidate(matches[0], requestedKey, canonicalKey)
 	if err != nil {
 		return nil, err
 	}

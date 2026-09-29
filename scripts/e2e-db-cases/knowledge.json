@@ -3,6 +3,13 @@
   "capability": "knowledge",
   "cases": [
     {
+      "id": "knowledge/TestPredicateOwnershipGeneratedIdentityAndReuse",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestPredicateOwnershipGeneratedIdentityAndReuse$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/submission_predicate_registration_preflight_integration_test.go"
+    },
+    {
       "id": "knowledge/TestKnowledgeOwnerTerminalReplay",
       "package": "./internal/knowledge/postgres",
       "run": "^TestKnowledgeOwnerTerminalReplay$",

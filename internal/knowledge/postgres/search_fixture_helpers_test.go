@@ -20,11 +20,11 @@ import (
 
 var searchTestContractSequence atomic.Int32
 
-func insertSearchTestContract(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS, prefix string, dimensions int, strategy string, indexName string) string {
+func insertSearchTestContract(t testing.TB, db *gorm.DB, rls *storagepostgres.RLS, prefix string, dimensions int, strategy string, indexName string) string {
 	return insertSearchTestContractWithOptions(t, db, rls, prefix, dimensions, strategy, indexName, 10000, false)
 }
 
-func insertSearchTestContractWithOptions(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS, prefix string, dimensions int, strategy string, indexName string, exactMaxRows int, allowExactFallback bool) string {
+func insertSearchTestContractWithOptions(t testing.TB, db *gorm.DB, rls *storagepostgres.RLS, prefix string, dimensions int, strategy string, indexName string, exactMaxRows int, allowExactFallback bool) string {
 	t.Helper()
 	sequence := int(searchTestContractSequence.Add(1))
 	contractKey := fmt.Sprintf("%s-%s", prefix, strings.ReplaceAll(uuid.NewString(), "-", "")[:8])

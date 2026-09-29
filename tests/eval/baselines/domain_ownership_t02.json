@@ -1,0 +1,203 @@
+{
+  "schema_version": 1,
+  "issue": 482,
+  "base_commit": "74386b7adf293780ea2329ee0d272f3693506b8d",
+  "benchmark": {
+    "name": "BenchmarkPredicateOwnership",
+    "command": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags=integration ./internal/knowledge/postgres -run ^$ -bench ^BenchmarkPredicateOwnership$ -benchtime=200x -count=1 -benchmem -v",
+    "base_overlay_flag": true,
+    "warmups_per_workload": 20,
+    "measured_operations_per_workload": 200,
+    "runs_per_source": 5,
+    "run_order": [
+      "base",
+      "candidate",
+      "candidate",
+      "base",
+      "base",
+      "candidate",
+      "candidate",
+      "base",
+      "base",
+      "candidate"
+    ],
+    "catalog_keys": [
+      8,
+      513
+    ],
+    "preview_relationships": 8,
+    "comparison": "Equal result signature, ordered SQL/argument digest, SQL/transaction/provider counts; each median p50/p95 increase <= max(5% of base, 1 ms).",
+    "passed": true,
+    "workloads": {
+      "catalog_8/registration_preflight": {
+        "passed": true,
+        "result_signature_sha256": "29f588007e64b66655430cd36554710c470c311c122135fac401e7da6a568865",
+        "query_contract_sha256": "e446d6061ad20b6900f99cfcb06ae91d544595e8a19d105cce6f435682956df5",
+        "count_metrics_equal": true,
+        "sql_statements_per_op": 6.0,
+        "transactions_per_op": 1.0,
+        "transaction_completions_per_op": 1.0,
+        "provider_calls_per_op": 0.0,
+        "latency": {
+          "p50_ms": {
+            "base_median": 1.889589,
+            "candidate_median": 1.914744,
+            "increase": 0.025155,
+            "allowed_increase": 1.0,
+            "passed": true
+          },
+          "p95_ms": {
+            "base_median": 2.409027,
+            "candidate_median": 2.438244,
+            "increase": 0.029217,
+            "allowed_increase": 1.0,
+            "passed": true
+          }
+        },
+        "allocs_per_op_median": {
+          "base": 701.0,
+          "candidate": 693.0
+        },
+        "bytes_per_op_median": {
+          "base": 44494.0,
+          "candidate": 42875.0
+        }
+      },
+      "catalog_8/embedding_preview": {
+        "passed": true,
+        "result_signature_sha256": "8a8dfc7aea5b09deaaa88c8af4b83199da0984ed028c4b5fb8384ccca2f862cf",
+        "query_contract_sha256": "2a076db2953a9ecf30061f7ca5e19d72a544349e1b26698ff78f96d562ae7548",
+        "count_metrics_equal": true,
+        "sql_statements_per_op": 16.0,
+        "transactions_per_op": 1.0,
+        "transaction_completions_per_op": 1.0,
+        "provider_calls_per_op": 0.0,
+        "latency": {
+          "p50_ms": {
+            "base_median": 5.355861,
+            "candidate_median": 5.440845,
+            "increase": 0.084984,
+            "allowed_increase": 1.0,
+            "passed": true
+          },
+          "p95_ms": {
+            "base_median": 6.810399,
+            "candidate_median": 6.968761,
+            "increase": 0.158362,
+            "allowed_increase": 1.0,
+            "passed": true
+          }
+        },
+        "allocs_per_op_median": {
+          "base": 2018.0,
+          "candidate": 2018.0
+        },
+        "bytes_per_op_median": {
+          "base": 174608.0,
+          "candidate": 174719.0
+        }
+      },
+      "catalog_513/registration_preflight": {
+        "passed": true,
+        "result_signature_sha256": "29f588007e64b66655430cd36554710c470c311c122135fac401e7da6a568865",
+        "query_contract_sha256": "ee356d46be821f0efc9b3e854a237077df71a9e04d9853dc6582ab395f569f4c",
+        "count_metrics_equal": true,
+        "sql_statements_per_op": 8.0,
+        "transactions_per_op": 1.0,
+        "transaction_completions_per_op": 1.0,
+        "provider_calls_per_op": 0.0,
+        "latency": {
+          "p50_ms": {
+            "base_median": 49.888526,
+            "candidate_median": 49.967705,
+            "increase": 0.079179,
+            "allowed_increase": 2.494426,
+            "passed": true
+          },
+          "p95_ms": {
+            "base_median": 58.953695,
+            "candidate_median": 61.476163,
+            "increase": 2.522468,
+            "allowed_increase": 2.947685,
+            "passed": true
+          }
+        },
+        "allocs_per_op_median": {
+          "base": 25638.0,
+          "candidate": 25124.0
+        },
+        "bytes_per_op_median": {
+          "base": 1437362.0,
+          "candidate": 1329516.0
+        }
+      },
+      "catalog_513/embedding_preview": {
+        "passed": true,
+        "result_signature_sha256": "8a8dfc7aea5b09deaaa88c8af4b83199da0984ed028c4b5fb8384ccca2f862cf",
+        "query_contract_sha256": "2a076db2953a9ecf30061f7ca5e19d72a544349e1b26698ff78f96d562ae7548",
+        "count_metrics_equal": true,
+        "sql_statements_per_op": 16.0,
+        "transactions_per_op": 1.0,
+        "transaction_completions_per_op": 1.0,
+        "provider_calls_per_op": 0.0,
+        "latency": {
+          "p50_ms": {
+            "base_median": 11.945315,
+            "candidate_median": 11.33466,
+            "increase": -0.610655,
+            "allowed_increase": 1.0,
+            "passed": true
+          },
+          "p95_ms": {
+            "base_median": 14.592863,
+            "candidate_median": 15.313263,
+            "increase": 0.7204,
+            "allowed_increase": 1.0,
+            "passed": true
+          }
+        },
+        "allocs_per_op_median": {
+          "base": 2018.0,
+          "candidate": 2018.0
+        },
+        "bytes_per_op_median": {
+          "base": 174507.0,
+          "candidate": 174460.0
+        }
+      }
+    }
+  },
+  "source_lock": {
+    "base": {
+      "internal/knowledge/postgres/predicate_catalog_helpers.go": "95c1bc5e03998675ba1f52ca291065a53578d6323be380931d3d69594edb47d2",
+      "internal/knowledge/postgres/predicate_catalog_owner.go": "f491fecfcbfc330f429ef1e74fb260a60919d6c33f7587b82c04b75cd9c11c79",
+      "internal/knowledge/postgres/submission_predicate_registration_validation.go": "fa177de56bb46343a6eb3c21feac7bc5380da1e55c712bee6d783447e71de4c6",
+      "internal/knowledge/postgres/submission_assessment_inline_embedding.go": "d1438ce63722282c140f01115e18e29fb0a005b6b9e4b99756ca8e42feb69c0f",
+      "internal/knowledge/postgres/submission_assessment_commit_repository.go": "84a9aeb3ddf93cebbfabcfbd0cd97dbc27a5deb1127304fc220ad1f61d7d1be0",
+      "internal/knowledge/postgres/placement_commit_helpers.go": "00fa9b5c7c49d1497ff1b6d657b5764a64b7ae72094c45a17d774e01fc8f958b",
+      "internal/knowledge/postgres/remember_catalog.go": "1b740a3732ea373cea05c5ad398de662e06cd5f984affd1fd0be08508d8a2bc6"
+    },
+    "candidate": {
+      "internal/knowledge/postgres/predicate_catalog_helpers.go": "6b71a8e6683b9ef9f08a6a738c889dd9942191b7fb6329a739082361f3e85b99",
+      "internal/knowledge/postgres/predicate_catalog_owner.go": "00c3393a0b08ee6566d5ccc7a3e24d1fb61600be64c2c9c624d62205d77242dc",
+      "internal/knowledge/postgres/submission_predicate_registration_validation.go": "7841aa1392b3b179d7aa984f514d1b0db62c6329a330d020542e2836cab677be",
+      "internal/knowledge/postgres/submission_assessment_inline_embedding.go": "c4ee98cb1b7ca319df00aa253aa6f79a98b1acd25fca59721f787f4b43891ac6",
+      "internal/knowledge/postgres/submission_assessment_commit_repository.go": "e08b24b3c1ec715a98b877996e2fe8e448f28a0b2dc509e4182b83a816473d40",
+      "internal/knowledge/postgres/placement_commit_helpers.go": "c55b66ec49f2f0e81c025429237907cfd874e025e055716926ec7e46e0c7a408",
+      "internal/knowledge/postgres/remember_catalog.go": "8e4e8756642e3b91d6e7a45be46e5b460aeb14961b54ba17b92a0098bcb9dcf6",
+      "internal/knowledge/contract/predicate_policy.go": "ef2c6775c41b2acff6c276800e793011db322012e5915e09e9e65a3912fa9230"
+    },
+    "test_only_base_overlay_sha256": "ae098ed9c5977d53b944d48881dcb481f239e35023f7cee37977ebfb8e11a7bc",
+    "test_only_base_overlay_content_sha256": {
+      "internal/knowledge/postgres/integration_fixture_helpers_test.go": "9f0885a5163de7a915404ef661beb613a8bf8d4ce3cd87556b92955251962e3e",
+      "internal/knowledge/postgres/search_fixture_helpers_test.go": "a19d025527feb5a8822cf4ef2e9f2fe3cda7617baa2b0a4abe30b6f3312eedc7",
+      "internal/knowledge/postgres/semantic_repository_integration_helpers_test.go": "8d2746462f93ad219d2088758d51720bba771a4141961d537b2965e7fba5da78",
+      "internal/knowledge/postgres/predicate_ownership_benchmark_test.go": "3f8261701f656cfe25db3ae25b63a3e70ea29100e92cd95e1af55f692a514129"
+    }
+  },
+  "verification": {
+    "fixed_result_golden": "Exact-base and candidate PostgreSQL generated-key, collision, reuse, and team-isolation tests passed.",
+    "evaluation_1k": "Explicit scoped historical 1k waiver in issue #482; replacement proof includes fixed-result equivalence, real PostgreSQL and provider-transport tests, paired performance, local production-entry scenario, and required final-head CI.",
+    "performance_note": "Measured comparison only; no speedup claimed."
+  }
+}

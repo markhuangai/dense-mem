@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 func appendSemanticSearchDocument(result *submissionSemanticCommitState, document *SearchDocumentResult) {
@@ -333,8 +334,8 @@ func resolveSemanticPredicateCandidate(
 	decision ApplyRelationshipDecisionInput,
 	candidate SemanticPredicateCandidateInput,
 ) (ApplyRelationshipDecisionInput, error) {
-	canonicalKey := canonicalGeneratedPredicateKey(candidate.PredicateKey)
-	canonicalOriginal := canonicalGeneratedPredicateKey(decision.OriginalPredicate)
+	canonicalKey := knowledgecontract.CanonicalGeneratedPredicateKey(candidate.PredicateKey)
+	canonicalOriginal := knowledgecontract.CanonicalGeneratedPredicateKey(decision.OriginalPredicate)
 	matches, err := loadSemanticPredicateMatches(
 		ctx,
 		tx,
@@ -428,7 +429,7 @@ func resolveSemanticPredicateCandidate(
 			candidate.RelationshipKind,
 		)
 	}
-	if !semanticPredicateKindAllowed(resolved.AllowedSubjectKinds, subjectKind) {
+	if !knowledgecontract.SemanticPredicateKindAllowed(resolved.AllowedSubjectKinds, subjectKind) {
 		return ApplyRelationshipDecisionInput{}, fmt.Errorf(
 			"%w: predicate %q does not allow subject kind %q",
 			errSemanticPredicateUnresolved,
@@ -436,7 +437,7 @@ func resolveSemanticPredicateCandidate(
 			subjectKind,
 		)
 	}
-	if !semanticPredicateKindAllowed(resolved.AllowedObjectKinds, objectKind) {
+	if !knowledgecontract.SemanticPredicateKindAllowed(resolved.AllowedObjectKinds, objectKind) {
 		return ApplyRelationshipDecisionInput{}, fmt.Errorf(
 			"%w: predicate %q does not allow object kind %q",
 			errSemanticPredicateUnresolved,
@@ -504,10 +505,6 @@ func loadSemanticPredicateEndpointKinds(
 	}
 	objectKind, err := loadValueType(ctx, tx, decision.TeamID, decision.ObjectValueID)
 	return subjectKind, objectKind, err
-}
-
-func semanticPredicateKindAllowed(allowed []string, actual string) bool {
-	return len(allowed) == 0 || contains(allowed, actual)
 }
 
 func semanticNovelPredicateSafe(candidateKey string, canonicalKey string, originalPredicate string) bool {
