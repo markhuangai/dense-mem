@@ -71,6 +71,8 @@ jobs:
         with:
           rootless: true
           set-host: true
+          daemon-config: |
+            {"exec-opts":["native.cgroupdriver=cgroupfs"]}
 
       - name: Generate temporary CI configuration
         shell: bash

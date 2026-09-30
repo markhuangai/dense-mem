@@ -190,6 +190,7 @@ test("production E2E runs the complete exact-source registry on hosted isolated 
     assert.ok(job.includes("docker/setup-docker-action@v5"));
     assert.ok(job.includes("rootless: true"));
     assert.ok(job.includes("set-host: true"));
+    assert.match(job, /daemon-config: \|\s*\{"exec-opts":\["native\.cgroupdriver=cgroupfs"\]\}/);
     assert.ok(job.includes("scripts/e2e-ci-bootstrap.sh"));
     assert.doesNotMatch(job, /DOCKER_HOST: unix:\/\/\$\{\{ steps\.docker\.outputs\.sock \}\}/);
   }
