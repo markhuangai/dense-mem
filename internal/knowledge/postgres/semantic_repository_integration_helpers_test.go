@@ -67,7 +67,7 @@ func semanticGraphEdgeIDs(edges []graphcontract.Edge) []string {
 }
 
 func createSemanticEntity(
-	t *testing.T,
+	t testing.TB,
 	ctx context.Context,
 	repo *Store,
 	teamID string,

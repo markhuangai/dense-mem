@@ -2,17 +2,15 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
-	"unicode"
 
 	"github.com/lib/pq"
 	"gorm.io/gorm"
 
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -29,7 +27,7 @@ func ensureSemanticPredicateCandidateTx(
 	tx *gorm.DB,
 	input EnsureSemanticPredicateCandidateInput,
 ) (*SemanticReviewPredicateCandidate, error) {
-	baseKey := canonicalGeneratedPredicateKey(input.Predicate)
+	baseKey := knowledgecontract.CanonicalGeneratedPredicateKey(input.Predicate)
 	if err := tx.WithContext(ctx).Exec(`SELECT pg_advisory_xact_lock(hashtext(?))`, input.TeamID+":"+baseKey).Error; err != nil {
 		return nil, err
 	}
@@ -43,7 +41,7 @@ func ensureSemanticPredicateCandidateTx(
 	key := baseKey
 	collision := candidate != nil && candidate.RelationshipKind != input.RelationshipKind
 	if collision {
-		key = collisionGeneratedPredicateKey(baseKey, input.RelationshipKind, input.Predicate)
+		key = knowledgecontract.CollisionGeneratedPredicateKey(baseKey, input.RelationshipKind, input.Predicate)
 		if err := tx.WithContext(ctx).Exec(`SELECT pg_advisory_xact_lock(hashtext(?))`, input.TeamID+":"+key).Error; err != nil {
 			return nil, err
 		}
@@ -235,65 +233,6 @@ func scanSemanticReviewPredicateCandidates(rows *sql.Rows) ([]SemanticReviewPred
 		out = append(out, candidate)
 	}
 	return out, rows.Err()
-}
-
-func canonicalGeneratedPredicateKey(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	var out []rune
-	lastUnderscore := false
-	for _, r := range value {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			out = append(out, r)
-			lastUnderscore = false
-			continue
-		}
-		if len(out) == 0 || lastUnderscore {
-			continue
-		}
-		out = append(out, '_')
-		lastUnderscore = true
-	}
-	for len(out) > 0 && out[len(out)-1] == '_' {
-		out = out[:len(out)-1]
-	}
-	if len(out) > 64 {
-		out = out[:64]
-		for len(out) > 0 && out[len(out)-1] == '_' {
-			out = out[:len(out)-1]
-		}
-	}
-	if len(out) == 0 {
-		return "predicate_" + shortPredicateHash(value, 12)
-	}
-	return string(out)
-}
-
-func collisionGeneratedPredicateKey(base string, relationshipKind string, original string) string {
-	suffix := "__" + strings.TrimSpace(relationshipKind) + "_" + shortPredicateHash(original+":"+relationshipKind, 8)
-	runes := []rune(base)
-	maxBase := 64 - len([]rune(suffix))
-	if maxBase < 1 {
-		maxBase = 1
-	}
-	if len(runes) > maxBase {
-		runes = runes[:maxBase]
-	}
-	for len(runes) > 0 && runes[len(runes)-1] == '_' {
-		runes = runes[:len(runes)-1]
-	}
-	if len(runes) == 0 {
-		runes = []rune("predicate")
-	}
-	return string(runes) + suffix
-}
-
-func shortPredicateHash(value string, n int) string {
-	sum := sha256.Sum256([]byte(value))
-	encoded := hex.EncodeToString(sum[:])
-	if n <= 0 || n > len(encoded) {
-		return encoded
-	}
-	return encoded[:n]
 }
 
 func unionStringSet(left []string, right []string) []string {
