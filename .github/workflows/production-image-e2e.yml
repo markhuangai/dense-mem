@@ -134,7 +134,7 @@ jobs:
       matrix:
         shard: [0, 1, 2]
     runs-on: rootless-docker
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
       DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
     steps:

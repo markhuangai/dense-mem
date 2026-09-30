@@ -75,6 +75,7 @@ function assertWorkflowOrchestration(workflow) {
   const report = workflowJob(workflow, "report");
 
   assert.match(databasePrechecks, /^    strategy:\n      fail-fast: false\n      max-parallel: 3\n      matrix:\n        shard: \[0, 1, 2\]$/m);
+  assert.match(databasePrechecks, /^    timeout-minutes: 40$/m);
   assert.ok(databasePrechecks.includes('"shard:${{ matrix.shard }}"'));
   assert.match(exclusive, /^    needs: \[authorize, prechecks, database-prechecks, stale-cleanup\]$/m);
   assert.match(exclusive, /needs\.database-prechecks\.result == 'success'/);
