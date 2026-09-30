@@ -23,7 +23,7 @@ func newDreamFixtureStore(db *gorm.DB, rls storagepostgres.RLSHelper) *dreamFixt
 	return &dreamFixtureStore{Store: knowledgepostgres.NewStore(db, rls, knowledgepostgres.ConflictRuntimeConfig{}), dreamStore: NewStore(db, rls)}
 }
 
-func createSemanticEntity(t *testing.T, ctx context.Context, repo interface {
+func createSemanticEntity(t testing.TB, ctx context.Context, repo interface {
 	CreateEntity(context.Context, knowledgepostgres.CreateEntityInput) (*knowledgepostgres.EntityRecord, error)
 }, teamID, ownerID, kind, name string) *knowledgepostgres.EntityRecord {
 	t.Helper()
@@ -32,7 +32,7 @@ func createSemanticEntity(t *testing.T, ctx context.Context, repo interface {
 	return entity
 }
 
-func createSemanticIngest(t *testing.T, ctx context.Context, repo interface {
+func createSemanticIngest(t testing.TB, ctx context.Context, repo interface {
 	CreateIngestForTest(context.Context, knowledgepostgres.CreateIngestInput) (*knowledgepostgres.EvidenceIngestResult, error)
 }, teamID, ownerID, key, content string) *knowledgepostgres.EvidenceIngestResult {
 	t.Helper()
@@ -42,7 +42,7 @@ func createSemanticIngest(t *testing.T, ctx context.Context, repo interface {
 	return result
 }
 
-func applySemanticDecision(t *testing.T, ctx context.Context, repo interface {
+func applySemanticDecision(t testing.TB, ctx context.Context, repo interface {
 	ApplyRelationshipDecision(context.Context, knowledgepostgres.ApplyRelationshipDecisionInput) (*knowledgepostgres.RelationshipDecisionResult, error)
 }, input knowledgepostgres.ApplyRelationshipDecisionInput) *knowledgepostgres.RelationshipDecisionResult {
 	t.Helper()
@@ -51,7 +51,7 @@ func applySemanticDecision(t *testing.T, ctx context.Context, repo interface {
 	return result
 }
 
-func requireTestEvidenceFragment(t *testing.T, result *knowledgepostgres.EvidenceIngestResult) knowledgepostgres.EvidenceFragment {
+func requireTestEvidenceFragment(t testing.TB, result *knowledgepostgres.EvidenceIngestResult) knowledgepostgres.EvidenceFragment {
 	t.Helper()
 	require.NotNil(t, result)
 	require.Len(t, result.Evidence, 1)

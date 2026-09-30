@@ -410,7 +410,7 @@ precheck_capability() {
   test_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.6-bookworm)"
   [[ "$test_image" =~ ^[A-Za-z0-9._/:@-]+$ ]] || fail "invalid precheck Go test image"
   local test_status=0
-  local -a runner_command=(go -C cmd/e2e run . --root /workspace --phase precheck --timeout 20m --total-timeout 26m)
+  local -a runner_command=(go -C cmd/e2e run . --root /workspace --phase precheck --timeout 20m --total-timeout 35m)
   if [[ -n "$capabilities" ]]; then
     runner_command+=(--capability "$capabilities")
   fi

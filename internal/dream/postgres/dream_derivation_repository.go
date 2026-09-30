@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"gorm.io/gorm"
 )
 
@@ -40,10 +40,10 @@ func insertHypothesisDerivations(ctx context.Context, tx *gorm.DB, teamID, hypot
 }
 
 func validateHypothesisSources(ctx context.Context, tx *gorm.DB, input UpsertHypothesisInput) error {
-	if input.GeneratorKind == "evaluation_seed" {
+	if !dreamcontract.GraphSourceValidationRequired(input) {
 		return nil
 	}
-	if len(input.SourceVersions) != 2 {
+	if !dreamcontract.GraphSourceCountValid(input) {
 		return errors.New("dream hypotheses require exactly two source relationships")
 	}
 	available := make(map[string][]DreamEvidence, len(input.SourceVersions))
@@ -84,17 +84,15 @@ func validateHypothesisSources(ctx context.Context, tx *gorm.DB, input UpsertHyp
 		available[relationshipID] = evidence
 	}
 
-	covered := make(map[string]struct{}, len(input.SourceVersions))
 	for index, derivation := range input.Derivations {
-		if wantVersion, ok := input.SourceVersions[derivation.RelationshipID]; !ok || wantVersion != derivation.RelationshipVersion {
+		if !dreamcontract.GraphDerivationMatchesSourceVersion(derivation, input.SourceVersions) {
 			return fmt.Errorf("derivations[%d] does not match a current source relationship", index)
 		}
-		if !dreamDerivationMatchesEvidence(derivation, available[derivation.RelationshipID]) {
+		if !dreamcontract.GraphDerivationMatchesEvidence(derivation, available[derivation.RelationshipID]) {
 			return fmt.Errorf("%w: %s", ErrDreamSourceStale, derivation.RelationshipID)
 		}
-		covered[derivation.RelationshipID] = struct{}{}
 	}
-	if len(covered) != len(input.SourceVersions) {
+	if !dreamcontract.GraphDerivationsCoverSources(input.Derivations, input.SourceVersions) {
 		return errors.New("dream derivations must cite evidence from both source relationships")
 	}
 	return nil
@@ -156,7 +154,7 @@ func dreamSourceRelationshipEligible(
 	relationshipID string,
 	status string,
 ) (bool, error) {
-	if status != "active" && status != "pending_evidence" {
+	if !dreamcontract.GraphSourceStatusEligible(status) {
 		return false, nil
 	}
 	var eligible bool
@@ -202,23 +200,4 @@ func staleDreamSourceError(err error, relationshipID string) error {
 		return fmt.Errorf("%w: %s", ErrDreamSourceStale, relationshipID)
 	}
 	return err
-}
-
-func dreamDerivationMatchesEvidence(derivation DreamDerivationSource, available []DreamEvidence) bool {
-	for _, excerpt := range available {
-		if strings.TrimSpace(derivation.SupportID) != strings.TrimSpace(excerpt.SupportID) ||
-			strings.TrimSpace(derivation.ObservationID) != strings.TrimSpace(excerpt.ObservationID) ||
-			strings.TrimSpace(derivation.FragmentID) != strings.TrimSpace(excerpt.FragmentID) ||
-			strings.TrimSpace(derivation.SourceID) != strings.TrimSpace(excerpt.SourceID) ||
-			strings.TrimSpace(derivation.SourceRevisionID) != strings.TrimSpace(excerpt.SourceRevisionID) ||
-			strings.TrimSpace(derivation.SourceGroupKey) != strings.TrimSpace(excerpt.SourceGroupKey) ||
-			derivation.SpanStart != excerpt.SpanStart ||
-			derivation.SpanEnd != excerpt.SpanEnd ||
-			derivation.Quote != excerpt.Content ||
-			strings.TrimSpace(derivation.Authority) != strings.TrimSpace(excerpt.Authority) {
-			continue
-		}
-		return true
-	}
-	return false
 }

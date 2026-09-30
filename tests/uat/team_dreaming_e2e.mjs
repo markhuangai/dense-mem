@@ -101,7 +101,10 @@ assertEvidenceDerivedDream(getOutput.hypothesis, seeded, "MCP get_dream");
 const paraphraseContextRecall = await mcpTool(apiKey, "recall_memory", {
   query: "Which service keeps Dense-Mem's durable data available?",
 });
-assertHypothesisFromPublicRecallContext(paraphraseContextRecall, "recall from paraphrase-retrieved context");
+assertHypothesisFromPublicRecallContext(
+  paraphraseContextRecall, hypothesisID, getOutput.hypothesis.derivations,
+  "recall from paraphrase-retrieved context",
+);
 const historicalContextRecall = await mcpTool(apiKey, "recall_memory", {
   query: "Which service keeps Dense-Mem's durable data available?",
   known_at: historicalKnownAt,
@@ -965,8 +968,9 @@ function assertRelatedHypothesis(recall, hypothesisID, label) {
   }
 }
 
-function assertHypothesisFromPublicRecallContext(recall, label) {
+function assertHypothesisFromPublicRecallContext(recall, hypothesisID, derivations, label) {
   const evidenceIDs = new Set((recall?.results ?? []).map((item) => item?.evidence_id).filter(Boolean));
+  const citedQuotes = new Set((derivations ?? []).map((item) => item?.quote).filter(Boolean));
   const relationshipIDs = new Set();
   const entityIDs = new Set();
   const addRelationship = (relationship) => {
@@ -987,9 +991,12 @@ function assertHypothesisFromPublicRecallContext(recall, label) {
   }
 
   const hypothesis = (recall?.related_hypotheses ?? []).find((item) => (
-    (item?.source_evidence_ids ?? []).some((id) => evidenceIDs.has(id)) ||
-    (item?.source_relationship_ids ?? []).some((id) => relationshipIDs.has(id)) ||
-    [item?.subject_entity_id, item?.object_entity_id].some((id) => entityIDs.has(id))
+    item?.hypothesis_id === hypothesisID && (
+      [...citedQuotes].some((quote) => (recall?.results ?? []).some((result) => result?.context?.includes(quote))) ||
+      (item?.source_evidence_ids ?? []).some((id) => evidenceIDs.has(id)) ||
+      (item?.source_relationship_ids ?? []).some((id) => relationshipIDs.has(id)) ||
+      [item?.subject_entity_id, item?.object_entity_id].some((id) => entityIDs.has(id))
+    )
   ));
   if (!hypothesis) {
     throw new Error(`${label} returned no hypothesis grounded in public recall context: ${JSON.stringify({

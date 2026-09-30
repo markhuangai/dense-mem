@@ -2,8 +2,6 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -13,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 )
 
 const hypothesisSourceIneligiblePredicateSQL = `EXISTS (
@@ -456,8 +455,8 @@ func (r *Store) UpdateHypothesisStatus(
 	ctx context.Context,
 	input UpdateHypothesisStatusInput,
 ) (*HypothesisRecord, error) {
-	input = normalizeUpdateHypothesisStatusInput(input)
-	if err := validateUpdateHypothesisStatusInput(input); err != nil {
+	input = dreamcontract.NormalizeUpdateHypothesisStatusInput(input)
+	if err := dreamcontract.ValidateUpdateHypothesisStatusInput(input); err != nil {
 		return nil, err
 	}
 	var record *HypothesisRecord
@@ -676,21 +675,6 @@ func marshalIntMapJSON(value map[string]int) ([]byte, error) {
 		return nil, fmt.Errorf("marshal json: %w", err)
 	}
 	return data, nil
-}
-
-func hypothesisTargetIdentity(teamID, subjectEntityID, predicateKey, objectEntityID, objectValueID string) string {
-	object := "value:" + strings.TrimSpace(objectValueID)
-	if strings.TrimSpace(objectEntityID) != "" {
-		object = "entity:" + strings.TrimSpace(objectEntityID)
-	}
-	raw := strings.Join([]string{
-		strings.TrimSpace(teamID),
-		strings.TrimSpace(subjectEntityID),
-		strings.ToLower(strings.TrimSpace(predicateKey)),
-		object,
-	}, "\x00")
-	sum := sha256.Sum256([]byte(raw))
-	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func reinforceHypothesisByHash(
