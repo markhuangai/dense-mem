@@ -186,6 +186,45 @@ func TestOpenAIProviderChunksBatchInOrder(t *testing.T) {
 	require.Equal(t, [][]float32{{1}, {2}, {3}, {4}, {5}}, vecs)
 }
 
+func TestOpenAIProviderMatchesResponseIndexes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"data":[{"index":1,"embedding":[2]},{"index":0,"embedding":[1]}]}`)
+	}))
+	defer srv.Close()
+	p := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL: srv.URL, AIAPIKey: "key", AIEmbeddingModel: "m", AIEmbeddingDimensions: 1,
+	}, srv.Client())
+
+	vectors, model, err := p.EmbedBatch(context.Background(), []string{"first", "second"})
+	require.NoError(t, err)
+	require.Equal(t, "m", model)
+	require.Equal(t, [][]float32{{1}, {2}}, vectors)
+}
+
+func TestOpenAIProviderRejectsInvalidResponseIndexes(t *testing.T) {
+	for name, response := range map[string]string{
+		"missing":      `{"data":[{"index":0,"embedding":[1]},{"embedding":[2]}]}`,
+		"duplicate":    `{"data":[{"index":0,"embedding":[1]},{"index":0,"embedding":[2]}]}`,
+		"out of range": `{"data":[{"index":0,"embedding":[1]},{"index":2,"embedding":[2]}]}`,
+		"negative":     `{"data":[{"index":-1,"embedding":[1]},{"index":1,"embedding":[2]}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, response)
+			}))
+			defer srv.Close()
+			p := NewOpenAIEmbeddingProvider(&config.Config{
+				AIAPIURL: srv.URL, AIAPIKey: "key", AIEmbeddingModel: "m", AIEmbeddingDimensions: 1,
+			}, srv.Client())
+
+			vectors, model, err := p.EmbedBatch(context.Background(), []string{"first", "second"})
+			require.Nil(t, vectors)
+			require.Empty(t, model)
+			require.Equal(t, "provider_response_invalid", embeddingcontract.ClassifyFailure(err).Code)
+		})
+	}
+}
+
 func TestOpenAIProviderRejectsLaterChunkWithoutPartialResult(t *testing.T) {
 	for _, invalid := range []string{"http", "dimensions"} {
 		t.Run(invalid, func(t *testing.T) {

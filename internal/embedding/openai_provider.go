@@ -107,6 +107,7 @@ type openAIEmbeddingUsage struct {
 // openAIEmbeddingResponse represents the response from the OpenAI embeddings API.
 type openAIEmbeddingResponse struct {
 	Data []struct {
+		Index     *int      `json:"index"`
 		Embedding []float32 `json:"embedding"`
 	} `json:"data"`
 	Usage *openAIEmbeddingUsage `json:"usage"`
@@ -256,20 +257,38 @@ func (p *OpenAIEmbeddingProvider) embedChunk(ctx context.Context, texts []string
 		}
 	}
 
-	for index, item := range respBody.Data {
+	hasIndexes := false
+	for _, item := range respBody.Data {
+		if item.Index != nil {
+			hasIndexes = true
+			break
+		}
+	}
+	result := make([][]float32, len(respBody.Data))
+	seen := make([]bool, len(respBody.Data))
+	for responseIndex, item := range respBody.Data {
 		if len(item.Embedding) != p.dimensions {
 			return nil, "", &embeddingcontract.ProviderError{
 				Provider:     "openai",
-				Message:      fmt.Sprintf("expected %d dimensions, got %d at index %d", p.dimensions, len(item.Embedding), index),
+				Message:      fmt.Sprintf("expected %d dimensions, got %d at index %d", p.dimensions, len(item.Embedding), responseIndex),
 				FailureCode:  "provider_response_invalid",
 				FailureClass: "provider_action_required",
 			}
 		}
-	}
-
-	result := make([][]float32, len(respBody.Data))
-	for i, d := range respBody.Data {
-		result[i] = d.Embedding
+		outputIndex := responseIndex
+		if hasIndexes {
+			if item.Index == nil || *item.Index < 0 || *item.Index >= len(result) || seen[*item.Index] {
+				return nil, "", &embeddingcontract.ProviderError{
+					Provider:     "openai",
+					Message:      fmt.Sprintf("invalid embedding index at response position %d", responseIndex),
+					FailureCode:  "provider_response_invalid",
+					FailureClass: "provider_action_required",
+				}
+			}
+			outputIndex = *item.Index
+			seen[outputIndex] = true
+		}
+		result[outputIndex] = item.Embedding
 	}
 
 	return result, p.model, nil

@@ -710,14 +710,22 @@ async function evidenceSearchDocumentsSQL(targetTeamID, ownerProfileID, document
   if (!response.ok) throw new Error(`evidence fixture embedding failed with HTTP ${response.status}`);
   const payload = await response.json();
   if (!Array.isArray(payload.data) || payload.data.length !== documents.length ||
-      payload.data.some((item) => !Array.isArray(item.embedding) || item.embedding.length !== dimensions ||
+      payload.data.some((item) => !item || !Array.isArray(item.embedding) || item.embedding.length !== dimensions ||
         item.embedding.some((value) => typeof value !== "number" || !Number.isFinite(value)))) {
     throw new Error("evidence fixture embedding response has invalid vectors");
+  }
+  const vectors = new Array(documents.length);
+  for (const item of payload.data) {
+    if (!Number.isInteger(item.index) || item.index < 0 || item.index >= documents.length ||
+        vectors[item.index] !== undefined) {
+      throw new Error("evidence fixture embedding response has invalid indexes");
+    }
+    vectors[item.index] = item.embedding;
   }
   const values = documents.map((document, index) => `(
     ${sqlLiteral(randomUUID())}::uuid, ${sqlLiteral(document.id)}::uuid,
     ${sqlLiteral(document.content)}, ${sqlLiteral(document.hash)},
-    ${sqlLiteral(JSON.stringify(payload.data[index].embedding))}::vector
+    ${sqlLiteral(JSON.stringify(vectors[index]))}::vector
   )`).join(",");
   return `
     INSERT INTO search_documents (
