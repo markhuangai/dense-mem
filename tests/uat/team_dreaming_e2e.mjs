@@ -101,7 +101,10 @@ assertEvidenceDerivedDream(getOutput.hypothesis, seeded, "MCP get_dream");
 const paraphraseContextRecall = await mcpTool(apiKey, "recall_memory", {
   query: "Which service keeps Dense-Mem's durable data available?",
 });
-assertHypothesisFromPublicRecallContext(paraphraseContextRecall, "recall from paraphrase-retrieved context");
+assertHypothesisFromPublicRecallContext(
+  paraphraseContextRecall, hypothesisID, getOutput.hypothesis.derivations,
+  "recall from paraphrase-retrieved context",
+);
 const historicalContextRecall = await mcpTool(apiKey, "recall_memory", {
   query: "Which service keeps Dense-Mem's durable data available?",
   known_at: historicalKnownAt,
@@ -495,6 +498,26 @@ function seedSchedulerInputs(ownerProfileID) {
         ${sqlLiteral(ingestID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid, 1,
         ${sqlLiteral(secondQuote)}, 'sha256:compose-e2e-second', 'manual', 'primary', 'compose-e2e-second'
       );
+
+    INSERT INTO search_documents (
+      team_id, search_document_id, owner_profile_id, source_kind, source_id, source_version,
+      document_version, embedding_contract_id, embedding_dimensions, search_state,
+      document_text, document_hash, projection_format_version, metadata, embedding
+    )
+    SELECT ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(randomUUID())}::uuid, ${sqlLiteral(ownerProfileID)}::uuid,
+           'evidence', ${sqlLiteral(firstFragmentID)}::uuid, 1, 1, contract.embedding_contract_id,
+           contract.dimensions, 'current', ${sqlLiteral(firstQuote)}, 'sha256:compose-e2e-first',
+           2, '{}'::jsonb, ('[1' || repeat(',0', contract.dimensions - 1) || ']')::vector
+    FROM (
+      SELECT embedding_contract.embedding_contract_id, embedding_contract.dimensions
+      FROM search_index_generations AS generation
+      JOIN embedding_contracts AS embedding_contract
+        ON embedding_contract.embedding_contract_id = generation.embedding_contract_id
+       AND embedding_contract.dimensions = generation.embedding_dimensions
+      WHERE generation.activation_state = 'active' AND embedding_contract.lifecycle_state = 'active'
+      ORDER BY embedding_contract.version DESC, generation.generation DESC, generation.created_at DESC
+      LIMIT 1
+    ) AS contract;
 
     INSERT INTO relationship_records (
       team_id, relationship_id, owner_profile_id, semantic_group_key,
@@ -930,8 +953,9 @@ function assertRelatedHypothesis(recall, hypothesisID, label) {
   }
 }
 
-function assertHypothesisFromPublicRecallContext(recall, label) {
+function assertHypothesisFromPublicRecallContext(recall, hypothesisID, derivations, label) {
   const evidenceIDs = new Set((recall?.results ?? []).map((item) => item?.evidence_id).filter(Boolean));
+  const citedQuotes = new Set((derivations ?? []).map((item) => item?.quote).filter(Boolean));
   const relationshipIDs = new Set();
   const entityIDs = new Set();
   const addRelationship = (relationship) => {
@@ -952,9 +976,12 @@ function assertHypothesisFromPublicRecallContext(recall, label) {
   }
 
   const hypothesis = (recall?.related_hypotheses ?? []).find((item) => (
-    (item?.source_evidence_ids ?? []).some((id) => evidenceIDs.has(id)) ||
-    (item?.source_relationship_ids ?? []).some((id) => relationshipIDs.has(id)) ||
-    [item?.subject_entity_id, item?.object_entity_id].some((id) => entityIDs.has(id))
+    item?.hypothesis_id === hypothesisID && (
+      [...citedQuotes].some((quote) => (recall?.results ?? []).some((result) => result?.context?.includes(quote))) ||
+      (item?.source_evidence_ids ?? []).some((id) => evidenceIDs.has(id)) ||
+      (item?.source_relationship_ids ?? []).some((id) => relationshipIDs.has(id)) ||
+      [item?.subject_entity_id, item?.object_entity_id].some((id) => entityIDs.has(id))
+    )
   ));
   if (!hypothesis) {
     throw new Error(`${label} returned no hypothesis grounded in public recall context: ${JSON.stringify({
