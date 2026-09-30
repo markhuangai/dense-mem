@@ -513,7 +513,7 @@ async function validateGrafanaDashboardParity(credentialID) {
       if (presentation === "series" && (item.status === "ready" || item.status === "unavailable")) {
         let rangeValue = null;
         for (let attempt = 0; attempt < 9; attempt += 1) {
-          // Ready series need the next sparse scrape; unavailable series stay within the snapshot window.
+          // Match Grafana's rate interval using the configured 15-second scrape interval.
           const rangeEnd = item.status === "ready" ? Date.now() : Date.parse(snapshot.window.to);
           const range = await query(expression, {
             from,
@@ -521,6 +521,7 @@ async function validateGrafanaDashboardParity(credentialID) {
             instant: false,
             interval: `${stepSeconds}s`,
             intervalMs: stepMs,
+            rateInterval: `${stepSeconds + 15}s`,
             maxDataPoints: Math.ceil((rangeEnd - Date.parse(snapshot.window.from)) / stepMs) + 1,
           });
           const rangeResult = range.results?.A;
