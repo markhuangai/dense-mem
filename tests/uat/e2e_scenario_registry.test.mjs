@@ -191,6 +191,7 @@ test("production E2E runs the complete exact-source registry on hosted isolated 
     assert.ok(job.includes("rootless: true"));
     assert.ok(job.includes("set-host: true"));
     assert.ok(job.includes("scripts/e2e-ci-bootstrap.sh"));
+    assert.doesNotMatch(job, /DOCKER_HOST: unix:\/\/\$\{\{ steps\.docker\.outputs\.sock \}\}/);
   }
   assert.ok(authorize.includes("--matrix all"));
   assert.ok(authorize.includes("--validate-compatible"));

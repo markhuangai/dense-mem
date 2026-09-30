@@ -208,7 +208,6 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare_account_id || vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          DOCKER_HOST: unix://${{ steps.docker.outputs.sock }}
         run: bash scripts/e2e-ci-bootstrap.sh
       - name: Validate PR-owned rootless controller
         shell: bash
@@ -256,7 +255,6 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare_account_id || vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          DOCKER_HOST: unix://${{ steps.docker.outputs.sock }}
         run: bash scripts/e2e-ci-bootstrap.sh
       - name: Run disposable PostgreSQL regressions
         shell: bash
