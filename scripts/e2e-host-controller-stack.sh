@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # Sourced by e2e-host-controller.sh.
 
-CONFLICT_PROVIDER_EMBEDDING_MODEL="dense-mem-conflict-e2e-embedding"
-
 run_go_source_container() (
   local source_dir="$1" image="$2" project="$3" run_id="$4" attempt="$5" phase="$6" scenario="$7" digest="$8" network="$9" docker_socket="${10}" redact_env_file="${11}"
   shift 11
@@ -131,7 +129,8 @@ prepare_stack_helpers() {
   local oauth_token=""
   local harness_image=""
   local grafana_password_file=""
-  local provider_dimensions
+  local provider_model provider_dimensions
+  provider_model="$(env_value AI_API_EMBEDDING_MODEL 2>/dev/null || true)"
   provider_dimensions="$(env_value AI_API_EMBEDDING_DIMENSIONS 2>/dev/null || printf '%s' 1536)"
   if [[ "$scenario" == "full" ]]; then
     grafana_password_file="${DENSE_MEM_CI_PRIVATE_DIR}/grafana-admin-password"
@@ -242,14 +241,15 @@ NODE
     build_conflict_review_driver "$source_dir" "$go_image" "$project" "$run_id" "$attempt" "$phase" "$scenario"
   fi
 
-  if [[ -n "$helpers" ]]; then
+  if [[ -n "$helpers" || "${DENSE_MEM_CI_HOSTED:-0}" == "1" ]]; then
     DENSE_MEM_CI_COMPOSE_OVERLAY_FILE="${DENSE_MEM_CI_HELPER_DIR}/compose.yml"
-    node - "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE" "$helpers" "$oauth_token" "$harness_image" "$provider_dimensions" "$CONFLICT_PROVIDER_EMBEDDING_MODEL" "$scenario" "$project" <<'NODE'
+    node - "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE" "$helpers" "$oauth_token" "$harness_image" "$provider_model" "$provider_dimensions" "$scenario" "$project" <<'NODE'
 const fs = require("node:fs");
-const [destination, helpers, oauthToken, harnessImage, providerDimensions, conflictProviderEmbeddingModel, scenario, project] = process.argv.slice(2);
+const [destination, helpers, oauthToken, harnessImage, providerModel, providerDimensions, scenario, project] = process.argv.slice(2);
 const has = (name) => new Set(helpers.split(",").filter(Boolean)).has(name);
-const conflictProviderDimensions = has("synchronous_write") ? (providerDimensions || "1536") : "1536";
-const deterministicEmbeddingProvider = scenario === "community" || scenario === "identity_cleanup" || has("synchronous_write") || scenario === "full";
+const hosted = process.env.DENSE_MEM_CI_HOSTED === "1";
+const fixtureEmbeddingProvider = hosted || scenario === "community" || scenario === "identity_cleanup" || has("synchronous_write") || scenario === "full";
+const fromEnv = (name, fallback) => JSON.stringify(fallback ? `\${${name}:-${fallback}}` : `\${${name}}`);
 const lines = ["# dense-mem-ci-e2e.v1 generated helper overlay", "services:"];
 const serverEnvironment = new Map();
 const serverVolumes = [];
@@ -288,8 +288,8 @@ if (has("conflict_provider")) {
   for (const [key, value] of Object.entries({
     AI_API_URL: "http://conflict-provider:8081/v1",
     AI_API_KEY: "dense-mem-conflict-e2e-key",
-    AI_API_EMBEDDING_MODEL: conflictProviderEmbeddingModel,
-    AI_API_EMBEDDING_DIMENSIONS: conflictProviderDimensions,
+    AI_API_EMBEDDING_MODEL: providerModel,
+    AI_API_EMBEDDING_DIMENSIONS: providerDimensions,
     AI_VERIFIER_API_URL: "http://conflict-provider:8081/v1",
     AI_VERIFIER_API_KEY: "dense-mem-conflict-e2e-key",
     AI_VERIFIER_MODEL: "dense-mem-conflict-e2e-verifier",
@@ -306,19 +306,32 @@ if (has("synchronous_write")) {
     AI_VERIFIER_API_KEY: "dense-mem-synchronous-write-e2e-key",
     AI_VERIFIER_MODEL: "dense-mem-synchronous-write-e2e-verifier",
     AI_REMEMBER_MODEL: "dense-mem-synchronous-write-e2e-remember",
-    AI_API_EMBEDDING_TIMEOUT_SECONDS: "2",
     AI_VERIFIER_TIMEOUT_SECONDS: "2",
     AI_VERIFIER_DISABLE_TEMPERATURE: "true",
   })) serverEnvironment.set(key, value);
 }
-if (deterministicEmbeddingProvider) {
+if (fixtureEmbeddingProvider) {
   const providerService = [
     "    command: [\"sh\", \"-c\", \"sleep infinity\"]",
     "    environment:",
-    `      DENSE_MEM_E2E_PROVIDER_DIMENSIONS: ${JSON.stringify(providerDimensions || "1536")}`,
+    `      DENSE_MEM_E2E_EMBEDDING_BASE_URL: ${fromEnv("AI_API_URL")}`,
+    `      DENSE_MEM_E2E_EMBEDDING_API_KEY: ${fromEnv("AI_API_KEY")}`,
+    `      DENSE_MEM_E2E_EMBEDDING_MODEL: ${fromEnv("AI_API_EMBEDDING_MODEL")}`,
+    `      DENSE_MEM_E2E_EMBEDDING_DIMENSIONS: ${fromEnv("AI_API_EMBEDDING_DIMENSIONS")}`,
+    `      DENSE_MEM_E2E_EMBEDDING_MAX_BATCH_ITEMS: ${fromEnv("AI_API_EMBEDDING_MAX_BATCH_ITEMS", "256")}`,
   ];
-  if (has("synchronous_write")) providerService.push("      DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS: \"5000\"");
+  if (has("synchronous_write")) providerService.push("      DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS: \"35000\"");
   helperServices.push(["synchronous-write-provider", providerService]);
+}
+if (has("conflict_provider")) {
+  helperServices.find(([name]) => name === "conflict-provider")[1].push(
+    "    environment:",
+    `      DENSE_MEM_E2E_EMBEDDING_BASE_URL: ${fromEnv("AI_API_URL")}`,
+    `      DENSE_MEM_E2E_EMBEDDING_API_KEY: ${fromEnv("AI_API_KEY")}`,
+    `      DENSE_MEM_E2E_EMBEDDING_MODEL: ${fromEnv("AI_API_EMBEDDING_MODEL")}`,
+    `      DENSE_MEM_E2E_EMBEDDING_DIMENSIONS: ${fromEnv("AI_API_EMBEDDING_DIMENSIONS")}`,
+    `      DENSE_MEM_E2E_EMBEDDING_MAX_BATCH_ITEMS: ${fromEnv("AI_API_EMBEDDING_MAX_BATCH_ITEMS", "256")}`,
+  );
 }
 if (has("oauth") || has("oauth_compatibility")) {
   serverEnvironment.set("SSL_CERT_FILE", "/e2e/oauth-files/ca.pem");
@@ -445,14 +458,17 @@ start_stack_helpers() {
     conflict="$(ci_compose ps -q conflict-provider)"
     [[ -n "$conflict" ]] || fail "conflict provider helper was not created"
     docker cp "${source_dir}/tests/uat/conflict_openai_stub.mjs" "${conflict}:/e2e/conflict_openai_stub.mjs" >/dev/null
+    docker cp "${source_dir}/tests/uat/embedding_upstream.mjs" "${conflict}:/e2e/embedding_upstream.mjs" >/dev/null
     docker exec -d "$conflict" node /e2e/conflict_openai_stub.mjs >/dev/null
   fi
-  if has_helper "$helpers" verifier || has_helper "$helpers" synchronous_write; then
+  if [[ "${DENSE_MEM_CI_HOSTED:-0}" == "1" ]] || has_helper "$helpers" verifier || has_helper "$helpers" synchronous_write; then
     local provider
     provider="$(ci_compose ps -q synchronous-write-provider)"
     [[ -n "$provider" ]] || fail "deterministic provider helper was not created"
-    docker cp "${source_dir}/tests/uat/synchronous_write/provider-fixture.mjs" "${provider}:/e2e/provider-fixture.mjs" >/dev/null
-    docker exec -d "$provider" node /e2e/provider-fixture.mjs >/dev/null
+    docker exec "$provider" mkdir -p /e2e/synchronous_write >/dev/null
+    docker cp "${source_dir}/tests/uat/embedding_upstream.mjs" "${provider}:/e2e/embedding_upstream.mjs" >/dev/null
+    docker cp "${source_dir}/tests/uat/synchronous_write/provider-fixture.mjs" "${provider}:/e2e/synchronous_write/provider-fixture.mjs" >/dev/null
+    docker exec -d "$provider" node /e2e/synchronous_write/provider-fixture.mjs >/dev/null
   fi
 }
 

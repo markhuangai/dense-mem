@@ -24,6 +24,7 @@ const (
 	MaxPostgresMigrationTimeoutSeconds         = 86400
 	DefaultPostgresSlowQueryThresholdMS        = 200
 	DefaultAIEmbeddingMaxConcurrency           = 8
+	DefaultAIEmbeddingMaxBatchItems            = domain.MaxEmbeddingBatchDocuments
 	DefaultAIVerifierMaxConcurrency            = 5
 	DefaultAIVerifierMaxInputTokens            = 200000
 	DefaultAIVerifierMaxOutputTokens           = 65536
@@ -79,6 +80,10 @@ type aiEmbeddingConcurrencyConfig interface {
 	GetAIEmbeddingMaxConcurrency() int
 }
 
+type aiEmbeddingBatchItemsConfig interface {
+	GetAIEmbeddingMaxBatchItems() int
+}
+
 // AIVerifierTemperatureDisabled returns true when a config provider exposes
 // the verifier temperature omission flag.
 func AIVerifierTemperatureDisabled(cfg ConfigProvider) bool {
@@ -99,6 +104,13 @@ func AIEmbeddingMaxConcurrency(cfg ConfigProvider) int {
 		return DefaultAIEmbeddingMaxConcurrency
 	}
 	return concurrencyConfig.GetAIEmbeddingMaxConcurrency()
+}
+
+func AIEmbeddingMaxBatchItems(cfg ConfigProvider) int {
+	if batchConfig, ok := cfg.(aiEmbeddingBatchItemsConfig); ok && batchConfig.GetAIEmbeddingMaxBatchItems() > 0 {
+		return batchConfig.GetAIEmbeddingMaxBatchItems()
+	}
+	return DefaultAIEmbeddingMaxBatchItems
 }
 
 // AIVerifierMaxConcurrency returns the process-wide verifier request limit.
@@ -137,6 +149,7 @@ type Config struct {
 	AIEmbeddingDimensions           int
 	AIEmbeddingTimeoutSeconds       int
 	AIEmbeddingMaxConcurrency       int
+	AIEmbeddingMaxBatchItems        int
 	// Knowledge-pipeline knobs (AC-X3)
 	AIVerifierAPIURL                      string
 	AIVerifierAPIKey                      string `json:"-"`
@@ -213,6 +226,12 @@ func (c *Config) GetAIEmbeddingMaxConcurrency() int {
 		return DefaultAIEmbeddingMaxConcurrency
 	}
 	return c.AIEmbeddingMaxConcurrency
+}
+func (c *Config) GetAIEmbeddingMaxBatchItems() int {
+	if c.AIEmbeddingMaxBatchItems <= 0 {
+		return DefaultAIEmbeddingMaxBatchItems
+	}
+	return c.AIEmbeddingMaxBatchItems
 }
 func (c *Config) IsEmbeddingConfigured() bool {
 	return c.AIAPIURL != "" && c.AIAPIKey != "" && c.AIEmbeddingModel != "" && c.AIEmbeddingDimensions > 0
@@ -528,6 +547,7 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		{"AI_API_EMBEDDING_DIMENSIONS", 0, func(c *Config, value int) { c.AIEmbeddingDimensions = value }},
 		{"AI_API_EMBEDDING_TIMEOUT_SECONDS", 30, func(c *Config, value int) { c.AIEmbeddingTimeoutSeconds = value }},
 		{"AI_API_EMBEDDING_MAX_CONCURRENCY", DefaultAIEmbeddingMaxConcurrency, func(c *Config, value int) { c.AIEmbeddingMaxConcurrency = value }},
+		{"AI_API_EMBEDDING_MAX_BATCH_ITEMS", DefaultAIEmbeddingMaxBatchItems, func(c *Config, value int) { c.AIEmbeddingMaxBatchItems = value }},
 	}); err != nil {
 		return cfg, err
 	}
@@ -658,6 +678,7 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		{"SSE_MAX_CONCURRENT_STREAMS", cfg.SSEMaxConcurrentStreams},
 		{"AI_API_EMBEDDING_TIMEOUT_SECONDS", cfg.AIEmbeddingTimeoutSeconds},
 		{"AI_API_EMBEDDING_MAX_CONCURRENCY", cfg.AIEmbeddingMaxConcurrency},
+		{"AI_API_EMBEDDING_MAX_BATCH_ITEMS", cfg.AIEmbeddingMaxBatchItems},
 		{"AI_VERIFIER_TIMEOUT_SECONDS", cfg.AIVerifierTimeoutSeconds},
 		{"AI_VERIFIER_MAX_CONCURRENCY", cfg.AIVerifierMaxConcurrency},
 		{"AI_VERIFIER_MAX_INPUT_TOKENS", cfg.AIVerifierMaxInputTokens},
@@ -678,6 +699,12 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 				Field:   field.name,
 				Message: fmt.Sprintf("must be greater than 0, got %d", field.value),
 			}
+		}
+	}
+	if cfg.AIEmbeddingMaxBatchItems > domain.MaxEmbeddingBatchDocuments {
+		return cfg, &ValidationError{
+			Field:   "AI_API_EMBEDDING_MAX_BATCH_ITEMS",
+			Message: fmt.Sprintf("must be at most %d", domain.MaxEmbeddingBatchDocuments),
 		}
 	}
 	if cfg.PostgresMaxOpenConns < 2 {

@@ -22,7 +22,7 @@ docker_cli_paths() {
 
 scenario_helpers() {
   local source_dir="$1" phase="$2" scenario="$3"
-  if [[ "$phase" == "shared" ]]; then
+  if [[ "$phase" == "shared" && "$scenario" == "shared" ]]; then
     DENSE_MEM_E2E_SCENARIO_REGISTRY="$source_dir/scripts/e2e-scenarios.json" \
       node "$REGISTRY_SCRIPT" --helpers shared_team |
       node -e 'const fs=require("node:fs");process.stdout.write(JSON.parse(fs.readFileSync(0,"utf8")).join(","));'
@@ -40,7 +40,7 @@ run_scenario() {
   validate_phase "$phase"
   validate_scenario "$scenario"
   validate_scenario "$stack_scenario"
-  [[ "$phase" == "shared" && "$stack_scenario" == "shared" || "$phase" == "exclusive" && "$stack_scenario" == "$scenario" ]] ||
+  [[ "$stack_scenario" == "$scenario" || "$phase" == "shared" && "$stack_scenario" == "shared" ]] ||
     fail "scenario stack identity is invalid"
   resolve_image_ref "$image_ref"
   image_ref="$DENSE_MEM_CI_RESOLVED_IMAGE"
@@ -84,19 +84,15 @@ run_scenario() {
   local runtime_compose_host="${run_root}/runtime-compose.yml"
   write_runtime_compose "$runtime_compose_host" "$project" "$compose_image"
 
-  local test_image="$SCENARIO_TEST_IMAGE" control_token telemetry_token embedding_model embedding_dimensions postgres_user postgres_password postgres_db
+  local test_image="$SCENARIO_TEST_IMAGE" control_token telemetry_token embedding_api_url upstream_api_key embedding_model embedding_dimensions embedding_batch_items remember_model postgres_user postgres_password postgres_db
   control_token="$(env_value CONTROL_PORTAL_TOKEN 2>/dev/null || true)"
   telemetry_token="$(env_value TELEMETRY_SCRAPE_TOKEN 2>/dev/null || cat "$TELEMETRY_TOKEN_FILE")"
+  embedding_api_url="$(env_value AI_API_URL 2>/dev/null || true)"
+  upstream_api_key="$(env_value AI_API_KEY 2>/dev/null || true)"
   embedding_model="$(env_value AI_API_EMBEDDING_MODEL 2>/dev/null || true)"
   embedding_dimensions="$(env_value AI_API_EMBEDDING_DIMENSIONS 2>/dev/null || true)"
-  if has_helper "$helpers" conflict_provider; then
-    embedding_model="$CONFLICT_PROVIDER_EMBEDDING_MODEL"
-    if has_helper "$helpers" synchronous_write; then
-      embedding_dimensions="${embedding_dimensions:-1536}"
-    else
-      embedding_dimensions="1536"
-    fi
-  fi
+  embedding_batch_items="$(env_value AI_API_EMBEDDING_MAX_BATCH_ITEMS 2>/dev/null || printf '%s' 256)"
+  remember_model="$(env_value AI_REMEMBER_MODEL 2>/dev/null || true)"
   postgres_user="$(env_value POSTGRES_USER 2>/dev/null || true)"
   postgres_password="$(env_value POSTGRES_PASSWORD 2>/dev/null || true)"
   postgres_db="$(env_value POSTGRES_DB 2>/dev/null || true)"
@@ -120,6 +116,7 @@ run_scenario() {
         "AI_API_KEY=dense-mem-conflict-e2e-key"
         "AI_API_EMBEDDING_MODEL=${embedding_model}"
         "AI_API_EMBEDDING_DIMENSIONS=${embedding_dimensions}"
+        "AI_API_EMBEDDING_MAX_BATCH_ITEMS=${embedding_batch_items}"
         "AI_VERIFIER_API_URL=http://conflict-provider:8081/v1"
         "AI_VERIFIER_API_KEY=dense-mem-conflict-e2e-key"
         "AI_VERIFIER_MODEL=dense-mem-conflict-e2e-verifier"
@@ -129,15 +126,13 @@ run_scenario() {
     else
       local provider_field provider_value
       for provider_field in \
-        AI_API_URL AI_API_KEY AI_API_EMBEDDING_MODEL AI_API_EMBEDDING_DIMENSIONS \
+        AI_API_URL AI_API_KEY AI_API_EMBEDDING_MODEL AI_API_EMBEDDING_DIMENSIONS AI_API_EMBEDDING_MAX_BATCH_ITEMS \
         AI_VERIFIER_API_URL AI_VERIFIER_API_KEY AI_VERIFIER_MODEL \
         AI_REMEMBER_MODEL AI_CONFLICT_REVIEW_MODEL AI_DREAM_GRAPH_MODEL \
         AI_DREAM_EVIDENCE_MODEL AI_COMMUNITY_SUMMARY_MODEL \
         AI_VERIFIER_DISABLE_TEMPERATURE AI_API_EMBEDDING_TIMEOUT_SECONDS AI_VERIFIER_TIMEOUT_SECONDS; do
-        if has_helper "$helpers" conflict_provider && [[ "$provider_field" == "AI_API_EMBEDDING_MODEL" ]]; then
-          provider_value="$embedding_model"
-        elif has_helper "$helpers" conflict_provider && [[ "$provider_field" == "AI_API_EMBEDDING_DIMENSIONS" ]]; then
-          provider_value="$embedding_dimensions"
+        if has_helper "$helpers" conflict_provider && [[ "$provider_field" == "AI_API_EMBEDDING_MAX_BATCH_ITEMS" ]]; then
+          provider_value="$embedding_batch_items"
         else
           provider_value="$(env_value "$provider_field" 2>/dev/null || true)"
         fi
@@ -232,6 +227,12 @@ run_scenario() {
     -e "DENSE_MEM_E2E_POSTGRES_DB=${postgres_db}"
     -e "DENSE_MEM_E2E_CONFLICT_PROVIDER_URL=http://conflict-provider:8081/v1"
     -e "DENSE_MEM_E2E_CONFLICT_REVIEW_DRIVER=/helpers/conflict-review-driver"
+    -e "AI_API_URL=${embedding_api_url}"
+    -e "AI_API_KEY=${upstream_api_key}"
+    -e "AI_API_EMBEDDING_MODEL=${embedding_model}"
+    -e "AI_API_EMBEDDING_DIMENSIONS=${embedding_dimensions}"
+    -e "AI_API_EMBEDDING_MAX_BATCH_ITEMS=${embedding_batch_items}"
+    -e "AI_REMEMBER_MODEL=${remember_model}"
     -e "DENSE_MEM_E2E_SERVER_EMBEDDING_MODEL=${embedding_model}"
     -e "DENSE_MEM_E2E_SERVER_EMBEDDING_DIMENSIONS=${embedding_dimensions}"
     -e "DENSE_MEM_E2E_RESULT_FILE=${result_file}"

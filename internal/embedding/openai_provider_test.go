@@ -159,6 +159,139 @@ func TestOpenAIProvider_EmbedBatch_HappyPath(t *testing.T) {
 	assert.Equal(t, []float32{0.4, 0.5, 0.6}, vecs[1])
 }
 
+func TestOpenAIProviderChunksBatchInOrder(t *testing.T) {
+	var requests [][]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Input []string `json:"input"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		requests = append(requests, body.Input)
+		data := make([]map[string]any, len(body.Input))
+		for i, input := range body.Input {
+			data[i] = map[string]any{"embedding": []float32{float32(len(input))}}
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": data}))
+	}))
+	defer srv.Close()
+	p := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL: srv.URL, AIAPIKey: "key", AIEmbeddingModel: "m", AIEmbeddingDimensions: 1,
+		AIEmbeddingMaxBatchItems: 2,
+	}, srv.Client())
+
+	vecs, model, err := p.EmbedBatch(context.Background(), []string{"a", "bb", "ccc", "dddd", "eeeee"})
+	require.NoError(t, err)
+	require.Equal(t, "m", model)
+	require.Equal(t, [][]string{{"a", "bb"}, {"ccc", "dddd"}, {"eeeee"}}, requests)
+	require.Equal(t, [][]float32{{1}, {2}, {3}, {4}, {5}}, vecs)
+}
+
+func TestOpenAIProviderRejectsLaterChunkWithoutPartialResult(t *testing.T) {
+	for _, invalid := range []string{"http", "dimensions"} {
+		t.Run(invalid, func(t *testing.T) {
+			requests := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				if requests == 2 && invalid == "http" {
+					w.WriteHeader(http.StatusTooManyRequests)
+					_, _ = io.WriteString(w, `{"error":{"code":"rate_limit"}}`)
+					return
+				}
+				width := 1
+				if requests == 2 {
+					width = 2
+				}
+				var body struct {
+					Input []string `json:"input"`
+				}
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				data := make([]map[string]any, len(body.Input))
+				for i := range data {
+					data[i] = map[string]any{"embedding": make([]float32, width)}
+				}
+				require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": data}))
+			}))
+			defer srv.Close()
+			p := NewOpenAIEmbeddingProvider(&config.Config{
+				AIAPIURL: srv.URL, AIAPIKey: "key", AIEmbeddingModel: "m", AIEmbeddingDimensions: 1,
+				AIEmbeddingMaxBatchItems: 2,
+			}, srv.Client())
+
+			vecs, model, err := p.EmbedBatch(context.Background(), []string{"a", "b", "c"})
+			require.Error(t, err)
+			require.Nil(t, vecs)
+			require.Empty(t, model)
+			require.Equal(t, 2, requests)
+		})
+	}
+}
+
+type cancelOnCloseReader struct {
+	io.Reader
+	cancel context.CancelFunc
+}
+
+func (r *cancelOnCloseReader) Close() error {
+	r.cancel()
+	return nil
+}
+
+func TestOpenAIProviderChunkingPreservesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var requests int
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		if requests > 1 {
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body: &cancelOnCloseReader{
+				Reader: strings.NewReader(`{"data":[{"embedding":[1]}]}`),
+				cancel: cancel,
+			},
+			Header: make(http.Header),
+		}, nil
+	})}
+	p := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL: "http://embedding.test", AIAPIKey: "key", AIEmbeddingModel: "m", AIEmbeddingDimensions: 1,
+		AIEmbeddingMaxBatchItems: 1,
+	}, client)
+	vecs, model, err := p.EmbedBatch(ctx, []string{"first", "second"})
+	require.Error(t, err)
+	require.Nil(t, vecs)
+	require.Empty(t, model)
+}
+
+func TestOpenAIProviderChunkingPreservesDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	var requests int
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		if requests > 1 {
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"data":[{"embedding":[1]}]}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	p := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL: "http://embedding.test", AIAPIKey: "key", AIEmbeddingModel: "m", AIEmbeddingDimensions: 1,
+		AIEmbeddingMaxBatchItems: 1,
+	}, client)
+	vecs, model, err := p.EmbedBatch(ctx, []string{"first", "second"})
+	require.Error(t, err)
+	require.Nil(t, vecs)
+	require.Empty(t, model)
+	require.Equal(t, 2, requests)
+}
+
 func TestOpenAIProviderRecordsProviderUsageBeforeRejectingInvalidResult(t *testing.T) {
 	rate := 1_000_000.0
 	metrics := observability.NewPrometheusMetrics(observability.AIPricingResolverFunc(func(context.Context) (observability.AIPricing, error) {

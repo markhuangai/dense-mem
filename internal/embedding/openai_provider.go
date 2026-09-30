@@ -20,14 +20,15 @@ import (
 
 // OpenAIEmbeddingProvider implements EmbeddingProviderInterface for OpenAI-compatible APIs.
 type OpenAIEmbeddingProvider struct {
-	baseURL    string
-	apiKey     string
-	model      string
-	dimensions int
-	timeout    time.Duration
-	httpClient *http.Client
-	sem        chan struct{}
-	metrics    observability.DiscoverabilityMetrics
+	baseURL       string
+	apiKey        string
+	model         string
+	dimensions    int
+	maxBatchItems int
+	timeout       time.Duration
+	httpClient    *http.Client
+	sem           chan struct{}
+	metrics       observability.DiscoverabilityMetrics
 }
 
 const (
@@ -54,14 +55,15 @@ func NewOpenAIEmbeddingProvider(cfg config.ConfigProvider, httpClient *http.Clie
 	}
 
 	return &OpenAIEmbeddingProvider{
-		baseURL:    cfg.GetAIAPIURL(),
-		apiKey:     cfg.GetAIAPIKey(),
-		model:      cfg.GetAIEmbeddingModel(),
-		dimensions: cfg.GetAIEmbeddingDimensions(),
-		timeout:    timeout,
-		httpClient: client,
-		sem:        make(chan struct{}, config.AIEmbeddingMaxConcurrency(cfg)),
-		metrics:    observability.NoopDiscoverabilityMetrics(),
+		baseURL:       cfg.GetAIAPIURL(),
+		apiKey:        cfg.GetAIAPIKey(),
+		model:         cfg.GetAIEmbeddingModel(),
+		dimensions:    cfg.GetAIEmbeddingDimensions(),
+		maxBatchItems: config.AIEmbeddingMaxBatchItems(cfg),
+		timeout:       timeout,
+		httpClient:    client,
+		sem:           make(chan struct{}, config.AIEmbeddingMaxConcurrency(cfg)),
+		metrics:       observability.NoopDiscoverabilityMetrics(),
 	}
 }
 
@@ -120,6 +122,23 @@ const nonJSONProviderErrorMessage = "provider returned a non-JSON error response
 
 // EmbedBatch returns embeddings for multiple texts in the same order as inputs.
 func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string) (vectors [][]float32, model string, err error) {
+	if len(texts) <= p.maxBatchItems {
+		return p.embedChunk(ctx, texts)
+	}
+
+	result := make([][]float32, 0, len(texts))
+	for start := 0; start < len(texts); start += p.maxBatchItems {
+		end := min(start+p.maxBatchItems, len(texts))
+		chunk, _, chunkErr := p.embedChunk(ctx, texts[start:end])
+		if chunkErr != nil {
+			return nil, "", chunkErr
+		}
+		result = append(result, chunk...)
+	}
+	return result, p.model, nil
+}
+
+func (p *OpenAIEmbeddingProvider) embedChunk(ctx context.Context, texts []string) (vectors [][]float32, model string, err error) {
 	select {
 	case p.sem <- struct{}{}:
 		defer func() { <-p.sem }()

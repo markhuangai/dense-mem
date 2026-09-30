@@ -573,11 +573,20 @@ jobs:
         needs.publish.result == 'success'
       }}
     permissions:
+      actions: read
       contents: read
+      issues: read
       packages: read
+      pull-requests: read
+      statuses: read
     uses: ./.github/workflows/production-image-e2e.yml
     with:
       image: ${{ needs.publish.outputs.image }}
+      source_repository: ${{ needs.resolve.outputs.head_repository }}
+      source_revision: ${{ needs.resolve.outputs.head_sha }}
+      cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
   report-e2e:
     name: Report production-image E2E

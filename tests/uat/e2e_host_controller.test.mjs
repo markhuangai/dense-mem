@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { test } from "node:test";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
@@ -826,25 +826,26 @@ test("Grafana range panels use a scrape-safe lookback", async () => {
   }
 });
 
-test("community scenarios use the verifier fixture for embeddings without changing the embedding contract", () => {
+test("community and conflict fixtures forward healthy embeddings upstream", () => {
   const communityStart = stack.indexOf('if (scenario === "community")');
   const communityEnd = stack.indexOf('if (has("conflict_provider"))', communityStart);
-  assert.ok(communityStart >= 0 && communityEnd > communityStart);
   const communityBlock = stack.slice(communityStart, communityEnd);
+  assert.ok(communityStart >= 0 && communityEnd > communityStart);
   assert.match(communityBlock, /AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
-  assert.match(communityBlock, /AI_API_KEY: "dense-mem-community-e2e-key"/);
-  assert.doesNotMatch(communityBlock, /AI_API_EMBEDDING_(MODEL|DIMENSIONS):/);
-  assert.match(stack, /const deterministicEmbeddingProvider = scenario === "community" \|\| scenario === "identity_cleanup" \|\| has\("synchronous_write"\) \|\| scenario === "full";/);
-  assert.match(stack, /DENSE_MEM_E2E_PROVIDER_DIMENSIONS: \$\{JSON\.stringify\(providerDimensions \|\| "1536"\)\}/);
+  assert.match(stack, /DENSE_MEM_E2E_EMBEDDING_BASE_URL/);
+  assert.match(stack, /DENSE_MEM_E2E_EMBEDDING_API_KEY/);
+  assert.match(stack, /embedding_upstream\.mjs/);
+  assert.match(stack, /DENSE_MEM_CI_HOSTED/);
+  assert.doesNotMatch(stack, /CONFLICT_PROVIDER_EMBEDDING_MODEL|DENSE_MEM_E2E_PROVIDER_DIMENSIONS/);
 });
 
-test("identity cleanup and conflict queue use local providers throughout their scenarios", async () => {
+test("identity cleanup and conflict queue retain their deliberate chat and fault helpers", async () => {
   const registry = JSON.parse(await readFile(join(scripts, "e2e-scenarios.json"), "utf8"));
   const helpers = (name) => registry.scenarios.find((entry) => entry.name === name)?.helper_profiles;
   assert.deepEqual(helpers("identity_cleanup"), ["verifier"]);
   assert.deepEqual(helpers("conflict_queue"), ["conflict_provider", "conflict_review", "playwright"]);
   assert.match(stack, /if \(scenario === "identity_cleanup"\) \{[\s\S]*?AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
-  assert.match(controller, /if \[\[ "\$scenario" == "identity_cleanup" \]\]; then\s+run_identity_cleanup_startup_matrix "\$source_dir" "\$project"\s+if ! ci_compose "\$\{profiles\[@\]\}" up -d --wait --wait-timeout 300 synchronous-write-provider/);
+  assert.match(controller, /run_identity_cleanup_startup_matrix/);
   assert.match(runtime, /if \[\[ "\$scenario" == "conflict" \|\| "\$scenario" == "conflict_queue" \]\]; then/);
 });
 
@@ -903,25 +904,65 @@ test("OAuth compatibility harness keeps root logs in the Compose stream", () => 
   assert.doesNotMatch(stack, /docker exec -d "\$harness" \/app\/oauth-compat-harness/);
 });
 
-test("production workflows use capability-matched runners and one OCI handoff", () => {
-  assert.match(productionWorkflow, /runs-on: ubuntu-latest/);
-  assert.match(productionWorkflow, /runs-on: rootless-docker/);
+test("production workflows give each hosted scenario its own stack", () => {
+  assert.match(productionWorkflow, /--matrix all/);
   assert.match(productionWorkflow, /max-parallel: 4/);
-  assert.match(productionWorkflow, /shared_project: \$\{\{ steps\.start\.outputs\.shared_project \}\}/);
-  assert.match(productionWorkflow, /scripts\/e2e-scenario-registry\.mjs --validate-compatible/);
+  assert.match(productionWorkflow, /docker\/setup-docker-action@v5/);
+  assert.match(productionWorkflow, /rootless: true/);
+  assert.match(productionWorkflow, /set-host: true/);
+  assert.match(productionWorkflow, /workflow_dispatch:/);
+  assert.match(productionWorkflow, /parseSuccessfulPolicyStatus/);
+  assert.match(productionWorkflow, /Publish trusted preview/);
   assert.match(productionWorkflow, /scripts\/e2e-host-controller\.sh precheck/);
-  assert.doesNotMatch(productionWorkflow, /for selection in repository postgres migration,http,service/);
-  assert.match(controller, /--total-timeout 26m/);
-  assert.doesNotMatch(productionWorkflow, /const isolations = new Set\(\["exclusive", "shared_team"\]\)/);
-  assert.doesNotMatch(productionWorkflow, /rootless-docker-shared|runs-on:\s*pc|workflow_dispatch|actions\/download-artifact|actions\/upload-artifact/);
-  assert.match(scenarioWorkflow, /runs-on: rootless-docker/);
-  assert.match(scenarioWorkflow, /actions\/setup-node@v7/);
+  assert.doesNotMatch(productionWorkflow, /runs-on: rootless-docker|shared-start:|shared-stop:|exclusive-cleanup:/);
+  assert.match(scenarioWorkflow, /runs-on: ubuntu-latest/);
+  assert.match(scenarioWorkflow, /timeout-minutes: \$\{\{ inputs\.timeout_minutes \}\}/);
+  assert.match(scenarioWorkflow, /scripts\/e2e-host-controller\.sh start/);
+  assert.match(scenarioWorkflow, /scripts\/e2e-host-controller\.sh run/);
+  assert.match(scenarioWorkflow, /scripts\/e2e-host-controller\.sh stop/);
+  assert.match(scenarioWorkflow, /if: always\(\) && steps\.stack\.outputs\.project != ''.*/);
   assert.match(scenarioWorkflow, /stop-commands/);
   assert.match(scenarioWorkflow, /dreaming_telemetry_portal/);
-  assert.doesNotMatch(scenarioWorkflow, /continue-on-error|Preserve scenario result|Print failed scenario diagnostics|tee "\$\{log\}"/);
-  assert.doesNotMatch(scenarioWorkflow, /actions\/upload-artifact/);
-  assert.doesNotMatch(controller, /conflict_provider\|conflict_review\|oauth\|oauth_compatibility\|playwright\|synchronous_write\|verifier/);
-  assert.doesNotMatch(stack, /local source_dir="\$1" project="\$2" postgres_user=/);
+  assert.doesNotMatch(scenarioWorkflow, /continue-on-error|Preserve scenario result|Print failed scenario diagnostics/);
+  assert.match(controller, /--total-timeout 26m/);
+});
+
+test("hosted bootstrap writes private Cloudflare configuration and masks generated credentials", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "dense-mem-hosted-bootstrap-"));
+  try {
+    const githubEnv = join(temp, "github-env");
+    await writeFile(githubEnv, "");
+    const { stdout } = await run("bash", [join(scripts, "e2e-ci-bootstrap.sh")], {
+      env: {
+        RUNNER_TEMP: temp,
+        GITHUB_ENV: githubEnv,
+        DOCKER_HOST: "unix:///tmp/docker.sock",
+        CLOUDFLARE_ACCOUNT_ID: "a".repeat(32),
+        CLOUDFLARE_API_TOKEN: "dedicated-ci-token",
+      },
+    });
+    const configDir = join(temp, "dense-mem-ci");
+    const envPath = join(configDir, ".env");
+    const tokenPath = join(configDir, "telemetry-scrape-token");
+    const [envText, telemetry, githubEnvText, envStat, tokenStat] = await Promise.all([
+      readFile(envPath, "utf8"), readFile(tokenPath, "utf8"), readFile(githubEnv, "utf8"),
+      stat(envPath), stat(tokenPath),
+    ]);
+    assert.equal(envStat.mode & 0o777, 0o600);
+    assert.equal(tokenStat.mode & 0o777, 0o600);
+    assert.match(envText, /^LOG_LEVEL=info$/m);
+    assert.match(envText, /AI_API_EMBEDDING_MODEL=@cf\/baai\/bge-m3/);
+    assert.match(envText, /AI_API_EMBEDDING_MAX_BATCH_ITEMS=100/);
+    assert.match(envText, /AI_API_URL=https:\/\/api\.cloudflare\.com\/client\/v4\/accounts\/a{32}\/ai\/v1/);
+    assert.match(envText, /AI_API_KEY=dedicated-ci-token/);
+    assert.match(envText, /DOCKER_HOST=unix:\/\/\/tmp\/docker\.sock/);
+    assert.ok(telemetry.trim().length >= 32);
+    assert.match(githubEnvText, /DENSE_MEM_CI_HOSTED=1/);
+    assert.equal((stdout.match(/::add-mask::/g) ?? []).length, 3);
+    assert.doesNotMatch(stdout, /dedicated-ci-token/);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
 });
 
 test("obsolete local Compose entrypoints are removed", async () => {

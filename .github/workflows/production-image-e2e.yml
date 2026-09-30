@@ -4,12 +4,35 @@ on:
   workflow_call:
     inputs:
       image:
-        description: "Immutable production image reference pinned by digest"
+        description: Immutable production image reference pinned by digest
         required: true
         type: string
+      source_repository:
+        required: true
+        type: string
+      source_revision:
+        required: true
+        type: string
+      cloudflare_account_id:
+        required: true
+        type: string
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Own same-repository PR with a successful trusted preview receipt
+        required: true
+        type: number
+
 permissions:
+  actions: read
   contents: read
+  issues: read
   packages: read
+  pull-requests: read
+  statuses: read
 
 jobs:
   authorize:
@@ -18,9 +41,9 @@ jobs:
     timeout-minutes: 15
     outputs:
       image: ${{ steps.resolve.outputs.image }}
-      digest: ${{ steps.resolve.outputs.digest }}
-      exclusive_matrix: ${{ steps.matrix.outputs.exclusive_matrix }}
-      shared_matrix: ${{ steps.matrix.outputs.shared_matrix }}
+      source_repository: ${{ steps.resolve.outputs.source_repository }}
+      source_revision: ${{ steps.resolve.outputs.source_revision }}
+      scenario_matrix: ${{ steps.matrix.outputs.scenario_matrix }}
     steps:
       - name: Checkout trusted policy and registry
         uses: actions/checkout@v7
@@ -35,26 +58,91 @@ jobs:
             scripts/e2e-scenarios.json
             scripts/e2e-scenario-registry.mjs
 
-      - name: Validate immutable image
+      - name: Resolve fenced source and image
         id: resolve
         uses: actions/github-script@v9
         env:
-          IMAGE: ${{ inputs.image }}
-          REPOSITORY: ${{ github.repository }}
+          INPUT_IMAGE: ${{ inputs.image }}
+          INPUT_REPOSITORY: ${{ inputs.source_repository }}
+          INPUT_REVISION: ${{ inputs.source_revision }}
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
         with:
           script: |
             const policy = require("./.ci-policy/.github/scripts/image-release-policy.cjs");
-            const imageDecision = policy.validatePinnedProductionImageReference(
-              process.env.IMAGE,
-              process.env.REPOSITORY,
-            );
-            if (!imageDecision.valid) {
-              core.setFailed(imageDecision.reason);
-              return;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const fullName = `${owner}/${repo}`;
+            let image = process.env.INPUT_IMAGE;
+            let sourceRepository = process.env.INPUT_REPOSITORY;
+            let sourceRevision = process.env.INPUT_REVISION;
+
+            if (context.eventName === "workflow_dispatch") {
+              const number = Number(process.env.INPUT_PR_NUMBER);
+              if (!Number.isSafeInteger(number) || number < 1) throw new Error("invalid PR number");
+              const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner, repo, username: context.actor,
+              });
+              if (permission.permission !== "admin") throw new Error("manual E2E trials require a repository admin");
+              const { data: pull } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+              if (pull.state !== "open" || pull.draft || pull.base.ref !== "main" ||
+                  pull.user.login.toLowerCase() !== context.actor.toLowerCase() ||
+                  pull.head.repo.full_name.toLowerCase() !== fullName.toLowerCase() ||
+                  context.ref !== `refs/heads/${pull.head.ref}` || context.sha !== pull.head.sha) {
+                throw new Error("manual trial must target the actor's own current same-repository PR head");
+              }
+              const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, {
+                owner, repo, ref: pull.head.sha, per_page: 100,
+              });
+              const receipt = policy.parseSuccessfulPolicyStatus({
+                statuses, pullNumber: number, serverUrl: context.serverUrl, repository: fullName,
+              });
+              if (!receipt.status) throw new Error(receipt.reason);
+              const { data: workflowRun } = await github.rest.actions.getWorkflowRun({
+                owner, repo, run_id: Number(receipt.status.runId),
+              });
+              if (workflowRun.id !== Number(receipt.status.runId) ||
+                  workflowRun.run_attempt !== Number(receipt.status.runAttempt) ||
+                  workflowRun.event !== "pull_request_target" ||
+                  workflowRun.path !== ".github/workflows/pr-test-image.yml" ||
+                  workflowRun.display_title !== `PR test image: PR #${pull.number}`) {
+                throw new Error("the trusted preview workflow receipt is invalid");
+              }
+              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                owner, repo, run_id: workflowRun.id, filter: "latest", per_page: 100,
+              });
+              if (!jobs.some((job) => job.name === "Publish trusted preview" && job.conclusion === "success")) {
+                throw new Error("the trusted preview publish job did not pass");
+              }
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: number, per_page: 100,
+              });
+              const images = comments.flatMap((comment) => {
+                if (comment.user?.login !== "github-actions[bot]") return [];
+                const match = /^Published test image `([^`]+)` for `([0-9a-f]{40})`\.\r?\n\r?\n(.+)$/.exec(
+                  String(comment.body || "").trim(),
+                );
+                return match && match[2] === pull.head.sha && match[3] === receipt.status.targetUrl
+                  ? [match[1]] : [];
+              });
+              if (images.length !== 1) throw new Error("the trusted preview image receipt is missing or ambiguous");
+              image = images[0];
+              sourceRepository = pull.head.repo.full_name;
+              sourceRevision = pull.head.sha;
+            } else {
+              const number = context.payload.pull_request?.number;
+              if (!Number.isSafeInteger(number)) throw new Error("workflow call requires a pull request");
+              const { data: pull } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+              if (pull.state !== "open" || pull.base.ref !== "main" ||
+                  pull.head.repo.full_name !== sourceRepository || pull.head.sha !== sourceRevision) {
+                throw new Error("the supplied source is not the current PR head");
+              }
             }
-            const at = process.env.IMAGE.lastIndexOf("@");
-            core.setOutput("image", process.env.IMAGE.slice(0, at));
-            core.setOutput("digest", process.env.IMAGE.slice(at + 1));
+            if (!/^[0-9a-f]{40}$/.test(sourceRevision)) throw new Error("invalid source revision");
+            const imageDecision = policy.validatePinnedProductionImageReference(image, fullName);
+            if (!imageDecision.valid) throw new Error(imageDecision.reason);
+            core.setOutput("image", image);
+            core.setOutput("source_repository", sourceRepository);
+            core.setOutput("source_revision", sourceRevision);
 
       - name: Checkout exact tested scenario registry
         uses: actions/checkout@v7
@@ -62,8 +150,8 @@ jobs:
           clean: true
           fetch-depth: 1
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ steps.resolve.outputs.source_revision }}
+          repository: ${{ steps.resolve.outputs.source_repository }}
           path: .ci-source
           sparse-checkout: |
             scripts/e2e-scenarios.json
@@ -82,22 +170,17 @@ jobs:
           set -euo pipefail
           registry="${GITHUB_WORKSPACE}/.ci-source/scripts/e2e-scenarios.json"
           baseline="${GITHUB_WORKSPACE}/.ci-policy/scripts/e2e-scenarios.json"
-          [[ -f "${registry}" ]]
-          [[ -f "${baseline}" ]]
+          [[ -f "${registry}" && -f "${baseline}" ]]
           export DENSE_MEM_E2E_SCENARIO_REGISTRY="${registry}"
           node .ci-policy/scripts/e2e-scenario-registry.mjs --validate-compatible "${baseline}"
-          exclusive_matrix="$(node .ci-policy/scripts/e2e-scenario-registry.mjs --matrix exclusive)"
-          shared_matrix="$(node .ci-policy/scripts/e2e-scenario-registry.mjs --matrix shared_team)"
-          {
-            echo "exclusive_matrix=${exclusive_matrix}"
-            echo "shared_matrix=${shared_matrix}"
-          } >> "${GITHUB_OUTPUT}"
+          matrix="$(node .ci-policy/scripts/e2e-scenario-registry.mjs --matrix all)"
+          printf 'scenario_matrix=%s\n' "${matrix}" >> "${GITHUB_OUTPUT}"
 
   prechecks:
     name: Rootless controller precheck
     needs: authorize
-    runs-on: rootless-docker
-    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
     steps:
@@ -107,15 +190,26 @@ jobs:
           clean: true
           fetch-depth: 1
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-
+          ref: ${{ needs.authorize.outputs.source_revision }}
+          repository: ${{ needs.authorize.outputs.source_repository }}
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 24
           package-manager-cache: false
-
+      - name: Set up rootless Docker
+        id: docker
+        uses: docker/setup-docker-action@v5
+        with:
+          rootless: true
+          set-host: true
+      - name: Generate temporary CI configuration
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare_account_id || vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DOCKER_HOST: unix://${{ steps.docker.outputs.sock }}
+        run: bash scripts/e2e-ci-bootstrap.sh
       - name: Validate PR-owned rootless controller
         shell: bash
         run: |
@@ -133,8 +227,8 @@ jobs:
       max-parallel: 3
       matrix:
         shard: [0, 1, 2]
-    runs-on: rootless-docker
-    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
     steps:
@@ -144,203 +238,59 @@ jobs:
           clean: true
           fetch-depth: 1
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-
+          ref: ${{ needs.authorize.outputs.source_revision }}
+          repository: ${{ needs.authorize.outputs.source_repository }}
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 24
           package-manager-cache: false
-
+      - name: Set up rootless Docker
+        id: docker
+        uses: docker/setup-docker-action@v5
+        with:
+          rootless: true
+          set-host: true
+      - name: Generate temporary CI configuration
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare_account_id || vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DOCKER_HOST: unix://${{ steps.docker.outputs.sock }}
+        run: bash scripts/e2e-ci-bootstrap.sh
       - name: Run disposable PostgreSQL regressions
         shell: bash
         env:
-          IMAGE: ${{ needs.authorize.outputs.image }}@${{ needs.authorize.outputs.digest }}
+          IMAGE: ${{ needs.authorize.outputs.image }}
         run: |
           set -euo pipefail
           scripts/e2e-host-controller.sh precheck \
             "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${IMAGE}" "${GITHUB_WORKSPACE}" \
             "shard:${{ matrix.shard }}"
 
-  stale-cleanup:
-    name: Reclaim stale CI resources
-    needs: authorize
-    runs-on: rootless-docker
-    timeout-minutes: 15
-    env:
-      DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
-    steps:
-      - name: Checkout exact pull request source
-        uses: actions/checkout@v7
-        with:
-          clean: true
-          fetch-depth: 1
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          package-manager-cache: false
-
-      - name: Validate PR-owned rootless controller
-        shell: bash
-        run: scripts/e2e-host-controller.sh doctor
-
-      - name: Reclaim stale Docker resources
-        shell: bash
-        run: scripts/e2e-host-controller.sh stale-cleanup 86400
-
-  exclusive:
-    name: Exclusive ${{ matrix.name == 'full' && 'dreaming_telemetry_portal' || matrix.name }}
-    needs: [authorize, prechecks, database-prechecks, stale-cleanup]
-    if: needs.prechecks.result == 'success' && needs.database-prechecks.result == 'success' && needs.stale-cleanup.result == 'success'
+  scenarios:
+    name: ${{ matrix.name == 'full' && 'dreaming_telemetry_portal' || matrix.name }}
+    needs: [authorize, prechecks, database-prechecks]
+    if: needs.prechecks.result == 'success' && needs.database-prechecks.result == 'success'
     strategy:
       fail-fast: false
       max-parallel: 4
-      matrix: ${{ fromJSON(needs.authorize.outputs.exclusive_matrix) }}
+      matrix: ${{ fromJSON(needs.authorize.outputs.scenario_matrix) }}
     uses: ./.github/workflows/production-e2e-scenario.yml
     with:
-      image: ${{ needs.authorize.outputs.image }}@${{ needs.authorize.outputs.digest }}
+      image: ${{ needs.authorize.outputs.image }}
+      source_repository: ${{ needs.authorize.outputs.source_repository }}
+      source_revision: ${{ needs.authorize.outputs.source_revision }}
       scenario: ${{ matrix.name }}
+      isolation: ${{ matrix.isolation }}
       timeout_minutes: ${{ matrix.timeout_minutes }}
-      shared_project: ""
-
-  exclusive-cleanup:
-    name: Reclaim exclusive production stacks
-    needs: [authorize, prechecks, database-prechecks, stale-cleanup, exclusive]
-    if: always() && needs.authorize.result == 'success'
-    runs-on: rootless-docker
-    timeout-minutes: 15
-    env:
-      DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
-    steps:
-      - name: Checkout exact pull request source
-        uses: actions/checkout@v7
-        with:
-          clean: true
-          fetch-depth: 1
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          package-manager-cache: false
-
-      - name: Validate PR-owned rootless controller
-        shell: bash
-        run: scripts/e2e-host-controller.sh doctor
-
-      - name: Reclaim this run's precheck and exclusive Docker resources
-        shell: bash
-        run: |
-          set -euo pipefail
-          scripts/e2e-host-controller.sh stale-cleanup 1 \
-            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" precheck
-          scripts/e2e-host-controller.sh stale-cleanup 1 \
-            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" exclusive
-
-  shared-start:
-    name: Start shared production stack
-    needs: [authorize, prechecks, database-prechecks, stale-cleanup, exclusive, exclusive-cleanup]
-    if: needs.exclusive.result == 'success' && needs.exclusive-cleanup.result == 'success'
-    runs-on: rootless-docker
-    timeout-minutes: 20
-    outputs:
-      shared_project: ${{ steps.start.outputs.shared_project }}
-    env:
-      DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
-    steps:
-      - name: Checkout exact pull request source
-        uses: actions/checkout@v7
-        with:
-          clean: true
-          fetch-depth: 1
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          package-manager-cache: false
-
-      - name: Validate PR-owned rootless controller
-        shell: bash
-        run: scripts/e2e-host-controller.sh doctor
-
-      - name: Start one shared stack
-        id: start
-        shell: bash
-        env:
-          IMAGE: ${{ needs.authorize.outputs.image }}
-          DIGEST: ${{ needs.authorize.outputs.digest }}
-        run: |
-          set -euo pipefail
-          project="$(scripts/e2e-host-controller.sh start "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" shared shared "${IMAGE}@${DIGEST}" "${GITHUB_WORKSPACE}")"
-          printf 'shared_project=%s\n' "${project}" >> "${GITHUB_OUTPUT}"
-
-  shared:
-    name: Shared ${{ matrix.name }}
-    needs: [authorize, shared-start]
-    if: needs.shared-start.result == 'success'
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix: ${{ fromJSON(needs.authorize.outputs.shared_matrix) }}
-    uses: ./.github/workflows/production-e2e-scenario.yml
-    with:
-      image: ${{ needs.authorize.outputs.image }}@${{ needs.authorize.outputs.digest }}
-      scenario: ${{ matrix.name }}
-      timeout_minutes: ${{ matrix.timeout_minutes }}
-      shared_project: ${{ needs.shared-start.outputs.shared_project }}
-
-  shared-stop:
-    name: Stop shared production stack
-    needs: [shared-start, shared]
-    if: always() && needs.shared-start.result == 'success'
-    runs-on: rootless-docker
-    timeout-minutes: 15
-    env:
-      DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
-      SHARED_PROJECT: ${{ needs.shared-start.outputs.shared_project }}
-    steps:
-      - name: Checkout exact pull request source
-        uses: actions/checkout@v7
-        with:
-          clean: true
-          fetch-depth: 1
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          package-manager-cache: false
-
-      - name: Validate PR-owned rootless controller
-        shell: bash
-        run: scripts/e2e-host-controller.sh doctor
-
-      - name: Stop exact shared project
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "${SHARED_PROJECT}" =~ ^densemem-ci-[a-z0-9][a-z0-9-]{0,50}$ ]]
-          scripts/e2e-host-controller.sh stop "${SHARED_PROJECT}"
+      cloudflare_account_id: ${{ inputs.cloudflare_account_id || vars.CLOUDFLARE_ACCOUNT_ID }}
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
   report:
     name: Aggregate production E2E results
-    needs: [authorize, prechecks, database-prechecks, stale-cleanup, exclusive, exclusive-cleanup, shared-start, shared, shared-stop]
+    needs: [authorize, prechecks, database-prechecks, scenarios]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -351,43 +301,24 @@ jobs:
           AUTH_RESULT: ${{ needs.authorize.result }}
           PRECHECK_RESULT: ${{ needs.prechecks.result }}
           DATABASE_PRECHECK_RESULT: ${{ needs.database-prechecks.result }}
-          STALE_CLEANUP_RESULT: ${{ needs.stale-cleanup.result }}
-          EXCLUSIVE_RESULT: ${{ needs.exclusive.result }}
-          EXCLUSIVE_CLEANUP_RESULT: ${{ needs.exclusive-cleanup.result }}
-          SHARED_START_RESULT: ${{ needs.shared-start.result }}
-          SHARED_RESULT: ${{ needs.shared.result }}
-          SHARED_STOP_RESULT: ${{ needs.shared-stop.result }}
+          SCENARIO_RESULT: ${{ needs.scenarios.result }}
           IMAGE: ${{ needs.authorize.outputs.image }}
-          DIGEST: ${{ needs.authorize.outputs.digest }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
         run: |
           set -euo pipefail
           {
             echo "## Production-image E2E"
             echo
             echo "- Image: \`${IMAGE:-unresolved}\`"
-            echo "- Digest: \`${DIGEST:-unresolved}\`"
+            echo "- Source revision: \`${SOURCE_REVISION:-unresolved}\`"
             echo
             echo "| Phase | Result |"
             echo "| --- | --- |"
             echo "| Authorization | ${AUTH_RESULT} |"
             echo "| Rootless controller precheck | ${PRECHECK_RESULT} |"
             echo "| PostgreSQL precheck shards | ${DATABASE_PRECHECK_RESULT} |"
-            echo "| Stale CI cleanup | ${STALE_CLEANUP_RESULT} |"
-            echo "| Exclusive matrix | ${EXCLUSIVE_RESULT} |"
-            echo "| Exclusive cleanup | ${EXCLUSIVE_CLEANUP_RESULT} |"
-            echo "| Shared stack start | ${SHARED_START_RESULT} |"
-            echo "| Shared matrix | ${SHARED_RESULT} |"
-            echo "| Shared cleanup | ${SHARED_STOP_RESULT} |"
+            echo "| Scenario matrix | ${SCENARIO_RESULT} |"
           } >> "${GITHUB_STEP_SUMMARY}"
-          for result in \
-            "${AUTH_RESULT}" \
-            "${PRECHECK_RESULT}" \
-            "${DATABASE_PRECHECK_RESULT}" \
-            "${STALE_CLEANUP_RESULT}" \
-            "${EXCLUSIVE_RESULT}" \
-            "${EXCLUSIVE_CLEANUP_RESULT}" \
-            "${SHARED_START_RESULT}" \
-            "${SHARED_RESULT}" \
-            "${SHARED_STOP_RESULT}"; do
+          for result in "${AUTH_RESULT}" "${PRECHECK_RESULT}" "${DATABASE_PRECHECK_RESULT}" "${SCENARIO_RESULT}"; do
             [[ "${result}" == "success" ]] || exit 1
           done

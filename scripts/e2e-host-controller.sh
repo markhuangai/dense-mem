@@ -699,6 +699,9 @@ start_stack() {
   fi
 
   local -a profiles=(--profile client_env)
+  if [[ "${DENSE_MEM_CI_HOSTED:-0}" == "1" ]]; then
+    profiles+=(--profile verifier)
+  fi
   if [[ -n "$helpers" ]]; then
     local helper
     local -a helper_values

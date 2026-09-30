@@ -5,3 +5,18 @@ self-hosted-runner:
     - home-server
     - bash
     - non-root
+
+# GitHub supports concurrency.queue: max, but actionlint does not parse it yet.
+paths:
+  .github/workflows/pr-image-cleanup.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'
+  .github/workflows/release-rc.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'
+  .github/workflows/release.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'
+  .github/workflows/start-prerelease.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'

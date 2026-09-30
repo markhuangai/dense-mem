@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import http from "node:http";
+import { forwardEmbedding } from "./embedding_upstream.mjs";
 
 const port = positiveInteger(process.env.DENSE_MEM_CONFLICT_STUB_PORT ?? "8081", "DENSE_MEM_CONFLICT_STUB_PORT");
 const host = process.env.DENSE_MEM_CONFLICT_STUB_HOST ?? "0.0.0.0";
@@ -25,7 +26,9 @@ const server = http.createServer(async (request, response) => {
     }
     const payload = await readJSON(request);
     if (request.url === "/v1/embeddings") {
-      return sendJSON(response, 200, embeddingResponse(payload));
+      if (embeddingFault) throw new ProviderFault("deterministic conflict embedding failure");
+      const upstream = await forwardEmbedding(payload, response);
+      return sendJSON(response, upstream.status, upstream.body);
     }
     if (request.url !== "/v1/chat/completions") {
       return sendJSON(response, 404, { error: { message: "not found" } });
@@ -71,34 +74,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => server.close(() => process.exit(0)));
 }
 
-function embeddingResponse(payload) {
-  if (embeddingFault) {
-    throw new ProviderFault("deterministic conflict embedding failure");
-  }
-  const input = Array.isArray(payload?.input) ? payload.input : [];
-  const dimensions = positiveInteger(payload?.dimensions, "embedding dimensions");
-  return {
-    object: "list",
-    model: String(payload?.model ?? "dense-mem-conflict-e2e-embedding"),
-    data: input.map((text, index) => ({
-      object: "embedding",
-      index,
-      embedding: deterministicVector(String(text), dimensions),
-    })),
-    usage: { prompt_tokens: Math.max(1, input.length), total_tokens: Math.max(1, input.length) },
-  };
-}
-
 class ProviderFault extends Error {}
-
-function deterministicVector(text, dimensions) {
-  let seed = 2166136261;
-  for (const rune of text) {
-    seed ^= rune.codePointAt(0);
-    seed = Math.imul(seed, 16777619) >>> 0;
-  }
-  return Array.from({ length: dimensions }, (_, index) => (((seed + index * 2654435761) >>> 0) % 2001 - 1000) / 1000);
-}
 
 function semanticAssessmentResponse(input, repairTurn) {
   const candidateGroups = Array.isArray(input.entity_candidate_groups) ? input.entity_candidate_groups : [];

@@ -1,13 +1,12 @@
 #!/usr/bin/env node
-import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
+import { forwardEmbedding } from "../embedding_upstream.mjs";
 
 const port = Number(process.env.PORT || 8787);
-const dimensions = Number(process.env.DENSE_MEM_E2E_PROVIDER_DIMENSIONS || 1536);
 const fault = (process.env.DENSE_MEM_E2E_PROVIDER_FAULT || "none").trim();
-const timeoutDelayMs = Number(process.env.DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS || 30_000);
+const timeoutDelayMs = Number(process.env.DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS || 35_000);
 const correctionProviderFaultMarker = "e2e-correction-provider-fault";
 const correctionProviderTimeoutMarker = "e2e-correction-provider-timeout";
 const heldPredicateKey = "retired_memory_store_fixture";
@@ -16,18 +15,6 @@ const embeddingCallsByFault = new Map();
 let assessmentCalls = 0;
 let embeddingCalls = 0;
 const chatRequests = [];
-
-function vectorFor(text, width) {
-  const output = [];
-  let seed = createHash("sha256").update(String(text)).digest();
-  for (let index = 0; index < width; index += 1) {
-    if (index > 0 && index % seed.length === 0) {
-      seed = createHash("sha256").update(seed).digest();
-    }
-    output.push((seed[index % seed.length] / 255) * 2 - 1);
-  }
-  return output;
-}
 
 function sendJSON(response, status, payload) {
   const body = JSON.stringify(payload);
@@ -96,24 +83,22 @@ const server = createServer(async (request, response) => {
       sendJSON(response, 200, { model: "fixture-wrong-model", data: [{ index: 0, embedding: [0] }] });
       return;
     }
-    if (routeFault === "embedding-count") {
-      sendJSON(response, 200, {
-        model: payload.model || "dense-mem-e2e-embedding",
-        data: inputs.slice(0, Math.max(0, inputs.length - 1)).map((input, index) => ({ index, embedding: vectorFor(input, dimensions) })),
-        usage: { prompt_tokens: inputs.length, total_tokens: inputs.length },
-      });
+    const upstream = await forwardEmbedding(payload, response);
+    if (upstream.status !== 200) {
+      sendJSON(response, upstream.status, upstream.body);
       return;
     }
-    const vectorWidth = routeFault === "embedding-dimension" ? Math.max(1, dimensions - 1) : dimensions;
-    const data = inputs.map((input, index) => ({ index, embedding: vectorFor(input, vectorWidth) }));
-    if (routeFault === "embedding-non-finite" && data.length > 0) data[0].embedding[0] = "NaN";
-    const result = {
-      model: payload.model || "dense-mem-e2e-embedding",
-      data,
-    };
-    if (routeFault !== "embedding-no-usage") {
-      result.usage = { prompt_tokens: inputs.length, total_tokens: inputs.length };
+    const result = upstream.body;
+    if (routeFault === "embedding-count" && Array.isArray(result.data)) {
+      result.data = result.data.slice(0, Math.max(0, inputs.length - 1));
     }
+    if (routeFault === "embedding-dimension" && Array.isArray(result.data?.[0]?.embedding)) {
+      result.data[0].embedding = result.data[0].embedding.slice(0, -1);
+    }
+    if (routeFault === "embedding-non-finite" && Array.isArray(result.data?.[0]?.embedding)) {
+      result.data[0].embedding[0] = "NaN";
+    }
+    if (routeFault === "embedding-no-usage") delete result.usage;
     sendJSON(response, 200, result);
     return;
   }
