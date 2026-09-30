@@ -568,6 +568,7 @@ jobs:
     needs: [resolve, build, publish]
     if: >-
       ${{
+        needs.resolve.outputs.head_repository == github.repository &&
         needs.resolve.outputs.should_build == 'true' &&
         needs.build.result == 'success' &&
         needs.publish.result == 'success'
@@ -605,22 +606,29 @@ jobs:
           E2E_RESULT: ${{ needs.production-e2e.result }}
           EXPECTED_HEAD: ${{ needs.resolve.outputs.head_sha }}
           PUBLISH_RESULT: ${{ needs.publish.result }}
+          SOURCE_REPOSITORY: ${{ needs.resolve.outputs.head_repository }}
         with:
           script: |
             const targetUrl = `${context.serverUrl}/${context.repo.owner}/` +
               `${context.repo.repo}/actions/runs/${context.runId}`;
             const imagePublished = process.env.BUILD_RESULT === "success" &&
               process.env.PUBLISH_RESULT === "success";
-            const succeeded = imagePublished && process.env.E2E_RESULT === "success";
+            const sameRepository = String(process.env.SOURCE_REPOSITORY || "").toLowerCase() ===
+              `${context.repo.owner}/${context.repo.repo}`.toLowerCase();
+            const succeeded = imagePublished && process.env.E2E_RESULT === "success" && sameRepository;
+            let description = "Production-image E2E, image build, or cleanup failed.";
+            if (imagePublished && !sameRepository) {
+              description = "Fork E2E unavailable; upstream Cloudflare token withheld.";
+            } else if (succeeded) {
+              description = "Full production-image E2E passed, including cleanup.";
+            }
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
               sha: process.env.EXPECTED_HEAD,
               state: succeeded ? "success" : "failure",
               context: process.env.E2E_STATUS_CONTEXT,
-              description: succeeded
-                ? "Full production-image E2E passed, including cleanup."
-                : "Production-image E2E, image build, or cleanup failed.",
+              description,
               target_url: targetUrl,
             });
 
