@@ -129,9 +129,10 @@ prepare_stack_helpers() {
   local oauth_token=""
   local harness_image=""
   local grafana_password_file=""
-  local provider_model provider_dimensions
+  local provider_model provider_dimensions embedding_timeout_seconds
   provider_model="$(env_value AI_API_EMBEDDING_MODEL 2>/dev/null || true)"
   provider_dimensions="$(env_value AI_API_EMBEDDING_DIMENSIONS 2>/dev/null || printf '%s' 1536)"
+  embedding_timeout_seconds="$(env_value AI_API_EMBEDDING_TIMEOUT_SECONDS 2>/dev/null || printf '%s' 30)"
   if [[ "$scenario" == "full" ]]; then
     grafana_password_file="${DENSE_MEM_CI_PRIVATE_DIR}/grafana-admin-password"
     node - "$grafana_password_file" <<'NODE'
@@ -243,9 +244,9 @@ NODE
 
   if [[ -n "$helpers" || "${DENSE_MEM_CI_HOSTED:-0}" == "1" ]]; then
     DENSE_MEM_CI_COMPOSE_OVERLAY_FILE="${DENSE_MEM_CI_HELPER_DIR}/compose.yml"
-    node - "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE" "$helpers" "$oauth_token" "$harness_image" "$provider_model" "$provider_dimensions" "$scenario" "$project" <<'NODE'
+    node - "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE" "$helpers" "$oauth_token" "$harness_image" "$provider_model" "$provider_dimensions" "$scenario" "$project" "$embedding_timeout_seconds" <<'NODE'
 const fs = require("node:fs");
-const [destination, helpers, oauthToken, harnessImage, providerModel, providerDimensions, scenario, project] = process.argv.slice(2);
+const [destination, helpers, oauthToken, harnessImage, providerModel, providerDimensions, scenario, project, embeddingTimeoutSeconds] = process.argv.slice(2);
 const has = (name) => new Set(helpers.split(",").filter(Boolean)).has(name);
 const hosted = process.env.DENSE_MEM_CI_HOSTED === "1";
 const fixtureEmbeddingProvider = hosted || scenario === "community" || scenario === "identity_cleanup" || has("synchronous_write") || scenario === "full";
@@ -320,7 +321,11 @@ if (fixtureEmbeddingProvider) {
     `      DENSE_MEM_E2E_EMBEDDING_DIMENSIONS: ${fromEnv("AI_API_EMBEDDING_DIMENSIONS")}`,
     `      DENSE_MEM_E2E_EMBEDDING_MAX_BATCH_ITEMS: ${fromEnv("AI_API_EMBEDDING_MAX_BATCH_ITEMS", "256")}`,
   ];
-  if (has("synchronous_write")) providerService.push("      DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS: \"35000\"");
+  if (has("synchronous_write")) {
+    const timeoutSeconds = Number(embeddingTimeoutSeconds);
+    if (!Number.isSafeInteger(timeoutSeconds) || timeoutSeconds < 0) throw new Error("invalid E2E embedding timeout");
+    providerService.push(`      DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS: "${(Math.max(timeoutSeconds, 30) + 5) * 1000}"`);
+  }
   helperServices.push(["synchronous-write-provider", providerService]);
 }
 if (has("conflict_provider")) {

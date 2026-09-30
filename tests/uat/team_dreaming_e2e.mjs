@@ -926,7 +926,7 @@ function postgresQuery(sql) {
     encoding: "utf8",
   });
   if (result.status !== 0) {
-    throw new Error(`postgres query failed (${result.status}): ${result.stderr || result.stdout}`);
+    throw new Error(`postgres query failed (${result.status}): ${result.error?.message || result.stderr || result.stdout || result.signal || "no process output"}`);
   }
   return result.stdout.trim();
 }
