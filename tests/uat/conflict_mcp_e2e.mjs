@@ -125,8 +125,8 @@ async function embeddingFailureRetryScenario() {
   }
   const afterFailure = conflictResolutionWriteSnapshot(fixture.teamID, fixture.conflictID, [fixture.relationshipA, fixture.relationshipB]);
   assert(stableJSON(afterFailure) === stableJSON(before), `embedding failure wrote lifecycle or search state: before=${JSON.stringify(before)} after=${JSON.stringify(afterFailure)}`);
-  assert(conflictState(fixture.teamID, fixture.conflictID).status === "overdue", "embedding failure resolved the conflict");
-  await delay(1_200);
+  const stateAfterFailure = conflictState(fixture.teamID, fixture.conflictID);
+  assert(stateAfterFailure.status === "overdue", `embedding failure left conflict ${stateAfterFailure.status}`);
   const retried = runReview(fixture, offsetTime(reviewAt, 24 * 60 * 60 * 1_000 + 1_000));
   assertReview(retried, "resolve", "overdue_ai", fixture.positionAID, "ai");
   return { conflict_id: fixture.conflictID, retried_stage: retried.stage };
@@ -573,11 +573,13 @@ function runReviewExpectFailure(fixture, now) {
     "--now", now,
   ], {
     cwd: fileURLToPath(new URL("../..", import.meta.url)),
-    env: { ...process.env, DENSE_MEM_E2E_CONFLICT_REVIEW_LEASE_SECONDS: "1" },
+    env: process.env,
     encoding: "utf8",
     timeout: 60_000,
   });
   assert(result.status !== 0, "embedding fault did not fail the conflict review driver");
+  const details = [result.error?.message, result.stderr || result.stdout].filter(Boolean).join(": ");
+  assert(details.includes("semantic write: embedding provider unavailable: provider call failed"), `conflict review did not reach the embedding fault: ${redactText(details)}`);
 }
 
 function assertReview(result, outcome, stage, preferredPositionID, method) {
