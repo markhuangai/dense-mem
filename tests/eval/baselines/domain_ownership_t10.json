@@ -1,0 +1,307 @@
+{
+  "base_commit": "1759b1d9e9c08e35e5680b59c48b84217d2cdcab",
+  "benchmark": {
+    "allocation_investigation": "Median allocations are equal for adapter maximum (15431), service default (4694), and service maximum (8904). Adapter default is 4691 base versus 4690 candidate; both sources independently observed 4690 and 4691, so the one-allocation median difference is within the shared run spread. Median byte differences lie within overlapping source run ranges, including adapter maximum: base 1053380\u20131055127 B/op and candidate 1053133\u20131055506 B/op. The moved adapter normalization keeps the same allocation forms; measured service inputs have empty predicates and nil relevance, so its additional normalization does not add predicate storage or a relevance pointer. SQL, arguments, returned content, and operation counts are identical. These measurements show no median allocation-count increase and do not establish a speedup.",
+    "command": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags=integration ./internal/trace/postgres -run '^$' -bench '^BenchmarkTraceOwnership$' -benchtime=200x -count=1 -benchmem",
+    "comparison": "Equal full-result signatures, ordered normalized SQL/argument fingerprints, and SQL/transaction/provider counts across all ten runs per workload. Median p50/p95 increase <= max(5% of base, 1 ms).",
+    "fixture": "101 eligible semantic edges, 501 verification events with nullable verdicts, and 8001 Unicode runes. Default and maximum workloads assert simultaneous edge/event saturation and content truncation. The public service does not expose event/content budgets, so service maximum retains their defaults.",
+    "host": {
+      "cpu_count": 32,
+      "go_version": "go version go1.26.6 linux/amd64",
+      "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+      "policy": "Each run starts after a >=85% CPU-idle sample with no competing build/test processes; passive three-second observations also require no competing build/test process during the run.",
+      "runs": {
+        "benchmark-01-base": {
+          "cpu_idle_fraction_before": 0.8578,
+          "external_build_samples": 0,
+          "samples_during_run": 10
+        },
+        "benchmark-01-candidate": {
+          "cpu_idle_fraction_before": 0.8905,
+          "external_build_samples": 0,
+          "samples_during_run": 10
+        },
+        "benchmark-02-base": {
+          "cpu_idle_fraction_before": 0.8921,
+          "external_build_samples": 0,
+          "samples_during_run": 10
+        },
+        "benchmark-02-candidate": {
+          "cpu_idle_fraction_before": 0.8526,
+          "external_build_samples": 0,
+          "samples_during_run": 10
+        },
+        "benchmark-03-base": {
+          "cpu_idle_fraction_before": 0.8534,
+          "external_build_samples": 0,
+          "samples_during_run": 10
+        },
+        "benchmark-03-candidate": {
+          "cpu_idle_fraction_before": 0.8915,
+          "external_build_samples": 0,
+          "samples_during_run": 9
+        },
+        "benchmark-04-base": {
+          "cpu_idle_fraction_before": 0.8918,
+          "external_build_samples": 0,
+          "samples_during_run": 9
+        },
+        "benchmark-04-candidate": {
+          "cpu_idle_fraction_before": 0.857,
+          "external_build_samples": 0,
+          "samples_during_run": 10
+        },
+        "benchmark-05-base": {
+          "cpu_idle_fraction_before": 0.8548,
+          "external_build_samples": 0,
+          "samples_during_run": 9
+        },
+        "benchmark-05-candidate": {
+          "cpu_idle_fraction_before": 0.8953,
+          "external_build_samples": 0,
+          "samples_during_run": 10
+        }
+      }
+    },
+    "measured_operations_per_workload": 200,
+    "name": "BenchmarkTraceOwnership",
+    "passed": true,
+    "query_fingerprint": "Ordered SQL and typed argument values; only independently generated team, owner, and shared-space IDs are normalized.",
+    "raw_run_sha256": {
+      "benchmark-01-base": "e50c14a002b7bc847d9e10748670f3acba8adede23ef76ed6ad6883985fc52c5",
+      "benchmark-01-candidate": "fc79690f647e997e7d02dee0e86ff7ec06da0733adbdccf55b48bfe0bfb8df4b",
+      "benchmark-02-base": "a79114ffadb7df323fbfcf469d2d9252d17eee389c5e37e51c4d1be4397c7d37",
+      "benchmark-02-candidate": "6bd608e21c5e32f068f246ab1f50652588b730519e3f9d2299708dbb49a0ce2f",
+      "benchmark-03-base": "9a24fc9897e48948e878553461b5afedaa5bd772b8301d6dad80ba4cc4f37b96",
+      "benchmark-03-candidate": "7118eea31c89b660c2a502cb9657a73646e9a260d2c28d232cccdbf5ad71023f",
+      "benchmark-04-base": "09fa7636aedce08306beaab0a401200b6d09d1a4aeb8dd8d49df58ac5f704829",
+      "benchmark-04-candidate": "3c330cf3a4fda98c2ba51ed4eb813ee2aefcbd7ed3573ebea9992987695378b2",
+      "benchmark-05-base": "9f915f246bfdd3d3fbc9de931859c685d0a072411544f569cd9e39f978dda973",
+      "benchmark-05-candidate": "46d3efb0e2b2c489d0351283ef0cb0c89fb082eede7b45df8d93247a7f2fe270"
+    },
+    "run_order": [
+      "base,candidate",
+      "candidate,base",
+      "base,candidate",
+      "candidate,base",
+      "base,candidate"
+    ],
+    "runs_per_source": 5,
+    "warmups_per_workload": 20,
+    "workloads": {
+      "adapter_default": {
+        "median_allocs_per_op": {
+          "base": 4691.0,
+          "candidate": 4690.0
+        },
+        "median_bytes_per_op": {
+          "base": 370936.0,
+          "candidate": 370876.0
+        },
+        "p50": {
+          "allowed_increase_ms": 1.0553843,
+          "base_median_ms": 21.107686,
+          "candidate_median_ms": 20.745379,
+          "increase_ms": -0.36230700000000127
+        },
+        "p95": {
+          "allowed_increase_ms": 1.34711485,
+          "base_median_ms": 26.942297,
+          "candidate_median_ms": 25.674318,
+          "increase_ms": -1.2679790000000004
+        },
+        "provider_calls_per_op": 0.0,
+        "query_contract_sha256": "f7abec517c7e8297956d2bbcddac5496c44b2b8c7d0412574aaa775b7720431e",
+        "result_signature_sha256": "677720b83c911eda707063de02b38aca0211fa69c6b8fb3eea1a0b14a3d48183",
+        "sql_statements_per_op": 17.0,
+        "transactions_per_op": 1.0
+      },
+      "adapter_maximum": {
+        "median_allocs_per_op": {
+          "base": 15431.0,
+          "candidate": 15431.0
+        },
+        "median_bytes_per_op": {
+          "base": 1054704.0,
+          "candidate": 1055374.0
+        },
+        "p50": {
+          "allowed_increase_ms": 1.0857723000000001,
+          "base_median_ms": 21.715446,
+          "candidate_median_ms": 21.40921,
+          "increase_ms": -0.3062359999999984
+        },
+        "p95": {
+          "allowed_increase_ms": 1.3454808,
+          "base_median_ms": 26.909616,
+          "candidate_median_ms": 26.690435,
+          "increase_ms": -0.21918099999999896
+        },
+        "provider_calls_per_op": 0.0,
+        "query_contract_sha256": "fd4638dd98dd4df02fecce2c28c663b42d14e06bc591e20e8e02ca2307498bf9",
+        "result_signature_sha256": "cd37408e0a741270ec49dccb2a9f0a167f7a68bdbed57fe5f8433c199214c1a1",
+        "sql_statements_per_op": 17.0,
+        "transactions_per_op": 1.0
+      },
+      "service_default": {
+        "median_allocs_per_op": {
+          "base": 4694.0,
+          "candidate": 4694.0
+        },
+        "median_bytes_per_op": {
+          "base": 371218.0,
+          "candidate": 371137.0
+        },
+        "p50": {
+          "allowed_increase_ms": 1.01212065,
+          "base_median_ms": 20.242413,
+          "candidate_median_ms": 20.440978,
+          "increase_ms": 0.1985650000000021
+        },
+        "p95": {
+          "allowed_increase_ms": 1.2728932000000002,
+          "base_median_ms": 25.457864,
+          "candidate_median_ms": 25.102009,
+          "increase_ms": -0.3558550000000018
+        },
+        "provider_calls_per_op": 0.0,
+        "query_contract_sha256": "f7abec517c7e8297956d2bbcddac5496c44b2b8c7d0412574aaa775b7720431e",
+        "result_signature_sha256": "5917741acf1f8766be5d2e092c852ef4a80d01ddc4f09db2d63aec3ba8557aef",
+        "sql_statements_per_op": 17.0,
+        "transactions_per_op": 1.0
+      },
+      "service_maximum": {
+        "median_allocs_per_op": {
+          "base": 8904.0,
+          "candidate": 8904.0
+        },
+        "median_bytes_per_op": {
+          "base": 671462.0,
+          "candidate": 671509.0
+        },
+        "p50": {
+          "allowed_increase_ms": 1.03753,
+          "base_median_ms": 20.7506,
+          "candidate_median_ms": 20.635925,
+          "increase_ms": -0.1146749999999983
+        },
+        "p95": {
+          "allowed_increase_ms": 1.26575715,
+          "base_median_ms": 25.315143,
+          "candidate_median_ms": 24.546145,
+          "increase_ms": -0.7689979999999998
+        },
+        "provider_calls_per_op": 0.0,
+        "query_contract_sha256": "fa39f843e677fb3ee8062d82106c2e5ac1731ea945dcdbfb7e30d7a4eb658903",
+        "result_signature_sha256": "00b4e8cf1b0c1fe0b111c8cff906c08e2d17396674fd8b430a14ddf0dbaa09e7",
+        "sql_statements_per_op": 17.0,
+        "transactions_per_op": 1.0
+      }
+    }
+  },
+  "candidate_source_sha256": {
+    "internal/trace/contract/input.go": "7dd0ff13aaa413fb55552e3b982d8e0634dcfbe831f489cb157a970b373b480a",
+    "internal/trace/contract/input_test.go": "872049ed85cbf50534258e2eb744a1357ef4f8eb7953f6aead7f0ac126432430",
+    "internal/trace/contract/result_policy.go": "c51d2ce051d97e8f2bf43e3f1a79dbca743ecbde3d04347319cda09fe8947188",
+    "internal/trace/contract/result_policy_test.go": "5443d973be8f125bfc54570112cf776d4925be1e9b281f75946aa3db212e56f4",
+    "internal/trace/postgres/helpers.go": "4e3f677db18c8d747266a7a2b6371cd0fdd275c72b44d062dc52553fa4ebb2cf",
+    "internal/trace/postgres/integration_fixture_helpers_test.go": "29586e247e5080c9cfb4edf4e5c52afff48a764e250e61d18c466c8fb9aa9351",
+    "internal/trace/postgres/semantic_trace_repository.go": "cc0cd8aaca7e563caf85edf8f224ead42ee9d0a2776bc7fa350e242e0c9f28b4",
+    "internal/trace/postgres/trace_ownership_benchmark_test.go": "2d94fc7944ce46c4537f7fc036dbc6e5a959f773385353e80bac714cf6fcd56f",
+    "internal/trace/postgres/trace_ownership_fixture_test.go": "24062b9581fab01f5e3d0f5851e30b2a11c278055d9c55ca36ed330df122c98d",
+    "internal/trace/postgres/trace_ownership_integration_test.go": "ff1131476abeae9f1bea5ad5151f5b9dbf2c831f08043fc6c2a1e48c25fda3c6",
+    "internal/trace/service.go": "42b9490f3dc31144ba8f3d3df229fa593a94ba9df49108ef064665b58e85d24c",
+    "scripts/e2e-db-cases/trace.json": "04893b6f22b7aff6f7efd8b98bfc3a89d20fa5aac12102683cfd15fc4712d33f"
+  },
+  "coverage": {
+    "covered_statements": 33328,
+    "passed": true,
+    "required_percent": 90,
+    "total_statements": 37019
+  },
+  "evaluation_waiver": "Issue #490 records the maintainer-approved historical deterministic 1k waiver. Replacement evidence is exact-base fixed-result equivalence, real PostgreSQL tests, paired performance preservation, focused production-entry scenarios, and actual final-head full production-image E2E.",
+  "fixed_result_comparison": {
+    "base_log_sha256": "24d2249f2fee3848cd607046e0db9f77344a1d10dfd77ac8eb05de63ea9e25b9",
+    "candidate_log_sha256": "ba78486c606124a48a0e5d86bb8ef71ffd657db5df2bf5b2e46f416e6aeae553",
+    "cases": [
+      "TestTraceOwnershipBoundsAndCompleteness",
+      "TestTraceOwnershipServiceAndAdapterEquivalent",
+      "TestTraceOwnershipLegacyFragmentRuneBounds"
+    ],
+    "full_result_signatures": [
+      "677720b83c911eda707063de02b38aca0211fa69c6b8fb3eea1a0b14a3d48183",
+      "677720b83c911eda707063de02b38aca0211fa69c6b8fb3eea1a0b14a3d48183",
+      "9e937101a1c67958fa1a3d062c0765d6f7c0cc9de5373356d572f118f23ee064",
+      "814d0e0930577be20435a28a28f5a5243caaeed6e4c2053a179f9fc9f7befd41",
+      "cd37408e0a741270ec49dccb2a9f0a167f7a68bdbed57fe5f8433c199214c1a1",
+      "cd37408e0a741270ec49dccb2a9f0a167f7a68bdbed57fe5f8433c199214c1a1",
+      "677720b83c911eda707063de02b38aca0211fa69c6b8fb3eea1a0b14a3d48183",
+      "cb844806ec7be7658f6e41ad0621240159fd1c90c81c093a5c601aa20e2889f0",
+      "4414dc98ceb1d83497c3460038170b50bc84b51aa355bdfbee95339dc995fc83",
+      "233b476e42ba242990b0f980786b24e836da841cd5b4af2c478f32892256bf57",
+      "8a601ec6bb8179dd79888b54645cf37db12a158566697ba15eb9994f1d9015da",
+      "8f5ec33c5051454489b2ee5d2b8c0f89c7776e07bb5d87355e1110afca46357a",
+      "eed36fa81a43bafbf6ae23f7b9b205b86ab8a7d341aa6c5db58f0f319614dc2f"
+    ],
+    "passed": true
+  },
+  "issue": 490,
+  "local_diagnostics": "The local idle-host detector initially counted four exited zombie linker processes; before measurements, only the workflow runner was stopped and corrected to exclude process state Z. Real /proc validation preserved live-process checks, and all ten completed runs had no observed competing builds. Fresh-worktree architecture dependency installation corrected the initial check failure. The initial conflict-helper build failure lacked retained compiler output and did not recur in host, identical-image, or registered-scenario diagnostics; the scenario passed with ignored logging of already-redacted output.",
+  "maintenance_benefit": "Modest: the native Trace contract is the single owner of input normalization, budgets, and completeness rules. Service and direct adapter entry points reuse it, without SQL, schema, authorization, or transaction changes. No speedup is assumed.",
+  "plan_audit": {
+    "before_tests": true,
+    "complete_receipt_sha256": "e530b5c3601bf1616a7f5a3eb37a62446d3d526b9045dca2b0e6c05600011135",
+    "findings": 0,
+    "rounds": 1,
+    "verdict": "conformant"
+  },
+  "schema_version": 1,
+  "test_only_base_overlay_sha256": {
+    "internal/trace/postgres/integration_fixture_helpers_test.go": "29586e247e5080c9cfb4edf4e5c52afff48a764e250e61d18c466c8fb9aa9351",
+    "internal/trace/postgres/trace_ownership_benchmark_test.go": "2d94fc7944ce46c4537f7fc036dbc6e5a959f773385353e80bac714cf6fcd56f",
+    "internal/trace/postgres/trace_ownership_fixture_test.go": "24062b9581fab01f5e3d0f5851e30b2a11c278055d9c55ca36ed330df122c98d",
+    "internal/trace/postgres/trace_ownership_integration_test.go": "ff1131476abeae9f1bea5ad5151f5b9dbf2c831f08043fc6c2a1e48c25fda3c6"
+  },
+  "validation": {
+    "architecture-retry": {
+      "command": "node scripts/check-architecture.mjs",
+      "log_sha256": "452e636f7cf601336df2c30641a257fe172541538e669036deb08f9dc04ca89b",
+      "passed": true
+    },
+    "architecture-uat": {
+      "command": "node --test tests/uat/architecture_conformance.test.mjs",
+      "log_sha256": "254560768b24d4578a1f71e86fa52676405ef9aa0faa1794724f45fb8544a3ae",
+      "passed": true
+    },
+    "e2e-conflict-queue-diagnostic": {
+      "command": "env 'NODE_OPTIONS=--require <ignored-diagnostics>/redacted-diagnostics-tee.cjs' ./scripts/e2e.sh conflict_queue",
+      "log_sha256": "b9fadd7909d81401490164092be44e29e7e35a07085bef61351edf956bd66e78",
+      "passed": true
+    },
+    "e2e-memory-space-isolation": {
+      "command": "./scripts/e2e.sh memory_space_isolation",
+      "log_sha256": "ac93bc9994f12e42b6deea9e8ec4312c9decc09fab87662262ccb0d5ee128e3f",
+      "passed": true
+    },
+    "focused-go": {
+      "command": "go test ./internal/trace/... ./internal/graph/... -count=1",
+      "log_sha256": "e2fb8a35dcee4f84a818f03d9f9e710c6cf20254658d788e83c998c48227c9e5",
+      "passed": true
+    },
+    "knowledge-lifecycle": {
+      "command": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags=integration ./internal/knowledge/postgres -run '^TestTraceRelationshipMarksLifecycleEventLimitAsTruncated$' -count=1",
+      "log_sha256": "2d8e33ca592c0686cc8270f4a080cd0edbad43d656d996b96dba1eb914819cd4",
+      "passed": true
+    },
+    "repository-ci": {
+      "command": "./scripts/ci-check.sh",
+      "log_sha256": "da6933072dbe96f4062533e74917e3ac2e357d49e2773697ae14252183346950",
+      "passed": true
+    },
+    "trace-graph-postgres": {
+      "command": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags=integration ./internal/trace/postgres ./internal/graph/postgres -count=1",
+      "log_sha256": "a42273c24aa63618a5ff8bc5c414f577e88f43d68953c7c21a11b7e39f821141",
+      "passed": true
+    }
+  }
+}

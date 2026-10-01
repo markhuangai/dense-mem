@@ -15,17 +15,6 @@ import (
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 )
 
-const (
-	defaultTraceDepth         = 1
-	maxTraceDepth             = 4
-	defaultTraceEdges         = 24
-	maxTraceEdges             = 100
-	defaultTraceEvents        = 100
-	maxTraceEvents            = 500
-	defaultTraceFragmentRunes = 2000
-	maxTraceFragmentRunes     = 8000
-)
-
 var (
 	ErrTraceRelationshipNotFound  = tracecontract.ErrRelationshipNotFound
 	ErrTraceRelationshipIDInvalid = tracecontract.ErrRelationshipIDInvalid
@@ -40,7 +29,7 @@ func (r *Store) TraceRelationship(
 	ctx context.Context,
 	input TraceRelationshipInput,
 ) (*RelationshipTraceResult, error) {
-	input = normalizeTraceRelationshipInput(input)
+	input = tracecontract.NormalizeInput(input)
 	if err := validateTraceRelationshipInput(input); err != nil {
 		return nil, err
 	}
@@ -140,37 +129,13 @@ func (r *Store) TraceRelationship(
 		result.SemanticNodes = nodes
 		result.SemanticEdges = edges
 		result.VisitedEntityIDs = traceVisitedEntityIDs(relationship, nodes)
-		if len(edges) >= input.MaxEdges {
-			result.Truncated = true
-			result.StoppedReason = "max_edges"
-		}
-		if len(observations) >= input.MaxEvents || len(supports) >= input.MaxEvents ||
-			len(decisions) >= input.MaxEvents || len(result.VerificationEvents) >= input.MaxEvents ||
-			len(result.Transitions) >= input.MaxEvents || len(lifecycleEvents) >= input.MaxEvents {
-			result.Truncated = true
-			if result.StoppedReason == "" {
-				result.StoppedReason = "max_events"
-			}
-		}
+		result.Truncated, result.StoppedReason = tracecontract.Completeness(input, result)
 		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("semantic trace: %w", err)
 	}
 	return result, nil
-}
-
-func normalizeTraceRelationshipInput(input TraceRelationshipInput) TraceRelationshipInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.RelationshipID = strings.TrimSpace(input.RelationshipID)
-	input.Topic = strings.TrimSpace(input.Topic)
-	input.MaxDepth = clampInt(input.MaxDepth, defaultTraceDepth, maxTraceDepth)
-	input.MaxEdges = clampInt(input.MaxEdges, defaultTraceEdges, maxTraceEdges)
-	input.MaxEvents = clampInt(input.MaxEvents, defaultTraceEvents, maxTraceEvents)
-	input.MaxFragmentContentRunes = clampInt(input.MaxFragmentContentRunes, defaultTraceFragmentRunes, maxTraceFragmentRunes)
-	input.PredicateKeys = normalizeTracePredicateKeys(input.PredicateKeys)
-	input.MinRelevance = normalizeOptionalRelevance(input.MinRelevance)
-	return input
 }
 
 func validateTraceRelationshipInput(input TraceRelationshipInput) error {
@@ -835,29 +800,9 @@ func traceVisitedEntityIDs(relationship *RelationshipTraceRecord, nodes []Semant
 	return out
 }
 
-func normalizeTracePredicateKeys(values []string) []string {
-	out := make([]string, 0, len(values))
-	seen := map[string]struct{}{}
-	for _, raw := range values {
-		value := strings.TrimSpace(raw)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-		if len(out) == 30 {
-			break
-		}
-	}
-	return out
-}
-
 func optionalRelevanceValue(value *float64) float64 {
 	if value == nil {
 		return 0
 	}
-	return normalizeRelevance(*value)
+	return *value
 }
