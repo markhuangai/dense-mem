@@ -123,7 +123,7 @@ func (s *OperationLogServiceImpl) WriteLog(ctx context.Context, record observabi
 	entry := domain.OperationLog{
 		ID:            uuid.New(),
 		Timestamp:     record.Timestamp,
-		Severity:      strings.ToUpper(strings.TrimSpace(record.Severity)),
+		Severity:      operationscontract.NormalizeOperationLogSeverity(record.Severity),
 		SeverityRank:  record.SeverityRank,
 		Message:       record.Message,
 		Source:        record.Source,
@@ -142,9 +142,6 @@ func (s *OperationLogServiceImpl) WriteLog(ctx context.Context, record observabi
 	entry.Attrs = observability.BoundOperationAttrs(entry.Attrs)
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now().UTC()
-	}
-	if entry.Severity == "" {
-		entry.Severity = "INFO"
 	}
 	if entry.SeverityRank == 0 {
 		entry.SeverityRank = operationLogSeverityRank(entry.Severity)
@@ -280,7 +277,7 @@ func (s *OperationLogServiceImpl) ListOperationLogs(ctx context.Context, filter 
 	if err := s.Flush(ctx); err != nil {
 		return nil, err
 	}
-	return s.repo.List(observability.WithSinkSuppressed(ctx), filter)
+	return s.repo.List(observability.WithSinkSuppressed(ctx), operationscontract.NormalizeOperationLogFilter(filter))
 }
 
 func (s *OperationLogServiceImpl) Flush(ctx context.Context) error {

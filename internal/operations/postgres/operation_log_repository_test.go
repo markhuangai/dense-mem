@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
 )
 
 func TestScanOperationLogRejectsMalformedAttrsJSON(t *testing.T) {
@@ -156,7 +157,7 @@ func TestOperationLogRepositoryAppliesRememberIdentityFilters(t *testing.T) {
 
 func TestOperationLogRepositoryUsesDirectTeamInvocationPredicates(t *testing.T) {
 	teamID := uuid.New()
-	filter := normalizeOperationLogFilter(domain.OperationLogFilter{
+	filter := operationscontract.NormalizeOperationLogFilter(domain.OperationLogFilter{
 		TeamID:       &teamID,
 		InvocationID: "invocation-1",
 		Limit:        10,
@@ -173,7 +174,7 @@ func TestOperationLogRepositoryHelpersNormalizeFiltersAndValues(t *testing.T) {
 	from := time.Date(2026, 9, 1, 12, 0, 0, 0, time.FixedZone("offset", 2*60*60))
 	to := from.Add(time.Hour)
 	teamID := uuid.New()
-	normalized := normalizeOperationLogFilter(domain.OperationLogFilter{
+	normalized := operationscontract.NormalizeOperationLogFilter(domain.OperationLogFilter{
 		Limit:         999,
 		Offset:        -1,
 		Sort:          " SEVERITY ",
@@ -198,13 +199,13 @@ func TestOperationLogRepositoryHelpersNormalizeFiltersAndValues(t *testing.T) {
 	require.Equal(t, to.UTC(), *normalized.To)
 	require.Equal(t, "ORDER BY severity_rank ASC, timestamp DESC, id DESC", operationLogOrderClause(normalized))
 
-	defaults := normalizeOperationLogFilter(domain.OperationLogFilter{Limit: 0, Sort: "other", Direction: "other"})
+	defaults := operationscontract.NormalizeOperationLogFilter(domain.OperationLogFilter{Limit: 0, Sort: "other", Direction: "other"})
 	require.Equal(t, 100, defaults.Limit)
 	require.Equal(t, "timestamp", defaults.Sort)
 	require.Equal(t, "desc", defaults.Direction)
 	require.Equal(t, "ORDER BY timestamp DESC, id DESC", operationLogOrderClause(defaults))
-	require.Equal(t, "INFO", normalizeOperationLogSeverity(" "))
-	require.Equal(t, "ERROR", normalizeOperationLogSeverity(" error "))
+	require.Equal(t, "INFO", operationscontract.NormalizeOperationLogSeverity(" "))
+	require.Equal(t, "ERROR", operationscontract.NormalizeOperationLogSeverity(" error "))
 	require.Equal(t, map[string]any{}, nonNilMap(nil))
 	require.Nil(t, timePtrValue(nil))
 	require.Equal(t, from.UTC(), timePtrValue(&from))

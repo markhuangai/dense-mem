@@ -113,6 +113,20 @@
       "run": "^TestUsageMetricsFlushRetryIsIdempotentAndAtomic$",
       "phase": "precheck",
       "source": "internal/operations/postgres/usage_metrics_repository_integration_test.go"
+    },
+    {
+      "id": "repository/TestOperationLogOwnershipEquivalentFilters",
+      "package": "./internal/operations/postgres",
+      "run": "^TestOperationLogOwnershipEquivalentFilters$",
+      "phase": "precheck",
+      "source": "internal/operations/postgres/operation_log_ownership_integration_test.go"
+    },
+    {
+      "id": "repository/TestOperationLogOwnershipWritesFlushBeforeReadsAndPreserveFailures",
+      "package": "./internal/operations/postgres",
+      "run": "^TestOperationLogOwnershipWritesFlushBeforeReadsAndPreserveFailures$",
+      "phase": "precheck",
+      "source": "internal/operations/postgres/operation_log_ownership_integration_test.go"
     }
   ]
 }

@@ -77,7 +77,7 @@ func (r *OperationLogRepositoryImpl) AppendBatch(ctx context.Context, logs []dom
 			`,
 				operationLogID(entry.ID),
 				entry.Timestamp.UTC(),
-				normalizeOperationLogSeverity(entry.Severity),
+				operationscontract.NormalizeOperationLogSeverity(entry.Severity),
 				entry.SeverityRank,
 				entry.Message,
 				entry.Source,
@@ -99,9 +99,9 @@ func (r *OperationLogRepositoryImpl) AppendBatch(ctx context.Context, logs []dom
 }
 
 func (r *OperationLogRepositoryImpl) List(ctx context.Context, filter domain.OperationLogFilter) (*domain.OperationLogPage, error) {
-	normalized := normalizeOperationLogFilter(filter)
+	normalized := operationscontract.NormalizeOperationLogFilter(filter)
 	var page domain.OperationLogPage
-	severity := strings.ToUpper(strings.TrimSpace(normalized.Severity))
+	severity := normalized.Severity
 	teamID := uuidPtrValue(normalized.TeamID)
 	from, to := timePtrValue(normalized.From), timePtrValue(normalized.To)
 	retryable := retryableFilterValue(normalized.Retryable)
@@ -174,44 +174,6 @@ func operationLogID(id uuid.UUID) uuid.UUID {
 		return uuid.New()
 	}
 	return id
-}
-
-func normalizeOperationLogFilter(filter domain.OperationLogFilter) domain.OperationLogFilter {
-	if filter.Limit <= 0 {
-		filter.Limit = 100
-	}
-	if filter.Limit > 500 {
-		filter.Limit = 500
-	}
-	if filter.Offset < 0 {
-		filter.Offset = 0
-	}
-	filter.Sort = strings.ToLower(strings.TrimSpace(filter.Sort))
-	if filter.Sort != "severity" {
-		filter.Sort = "timestamp"
-	}
-	filter.Direction = strings.ToLower(strings.TrimSpace(filter.Direction))
-	if filter.Direction != "asc" {
-		filter.Direction = "desc"
-	}
-	filter.Severity = strings.ToUpper(strings.TrimSpace(filter.Severity))
-	filter.Event = strings.TrimSpace(filter.Event)
-	filter.CorrelationID = strings.TrimSpace(filter.CorrelationID)
-	filter.InvocationID = strings.TrimSpace(filter.InvocationID)
-	filter.RequestHash = strings.TrimSpace(filter.RequestHash)
-	filter.AttemptID = strings.TrimSpace(filter.AttemptID)
-	filter.Classification = strings.TrimSpace(filter.Classification)
-	filter.ReferenceType = strings.TrimSpace(filter.ReferenceType)
-	filter.ReferenceID = strings.TrimSpace(filter.ReferenceID)
-	if filter.From != nil {
-		value := filter.From.UTC()
-		filter.From = &value
-	}
-	if filter.To != nil {
-		value := filter.To.UTC()
-		filter.To = &value
-	}
-	return filter
 }
 
 func operationLogWhereClause(filter domain.OperationLogFilter) string {
@@ -344,12 +306,4 @@ func nonNilMap(value map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	return value
-}
-
-func normalizeOperationLogSeverity(severity string) string {
-	severity = strings.ToUpper(strings.TrimSpace(severity))
-	if severity == "" {
-		return "INFO"
-	}
-	return severity
 }

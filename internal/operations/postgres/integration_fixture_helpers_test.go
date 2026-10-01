@@ -30,7 +30,7 @@ const (
 	ledgerTestPassword = "densemem_rls_test"
 )
 
-func setupLedgerRepositoryDB(t *testing.T) (*gorm.DB, *gorm.DB, *storagepostgres.RLS, func()) {
+func setupLedgerRepositoryDB(t testing.TB) (*gorm.DB, *gorm.DB, *storagepostgres.RLS, func()) {
 	t.Helper()
 	dsn, baseCleanup := setupLedgerRepositoryDSN(t)
 	db, err := gorm.Open(gormpostgres.Open(dsn), &gorm.Config{})
@@ -81,7 +81,7 @@ func setupLedgerRepositoryDB(t *testing.T) (*gorm.DB, *gorm.DB, *storagepostgres
 	return db, appDB, rls, cleanup
 }
 
-func setupLedgerRepositoryDSN(t *testing.T) (string, func()) {
+func setupLedgerRepositoryDSN(t testing.TB) (string, func()) {
 	t.Helper()
 	if dsn := storagepostgres.GetTestDSN(); dsn != "" {
 		if os.Getenv("DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS") != "1" {
@@ -187,7 +187,7 @@ func precheckNetworkOptions(networkAlias string) []testcontainers.ContainerCusto
 	return []testcontainers.ContainerCustomizer{tcnetwork.WithNetworkName([]string{networkAlias}, networkName)}
 }
 
-func ledgerAppDSN(t *testing.T, dsn string) string {
+func ledgerAppDSN(t testing.TB, dsn string) string {
 	t.Helper()
 	parsed, err := url.Parse(dsn)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {

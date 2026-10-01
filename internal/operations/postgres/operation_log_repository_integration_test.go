@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
 )
 
 func TestOperationLogRepositoryInvocationLookupUsesIdentityIndex(t *testing.T) {
@@ -105,7 +106,7 @@ func explainOperationLogInvocationLookup(t *testing.T, ctx context.Context, db *
 	require.NoError(t, err)
 	defer conn.Close()
 
-	where := operationLogWhereClause(normalizeOperationLogFilter(domain.OperationLogFilter{
+	where := operationLogWhereClause(operationscontract.NormalizeOperationLogFilter(domain.OperationLogFilter{
 		TeamID:       &teamID,
 		InvocationID: invocationID,
 		From:         &from,

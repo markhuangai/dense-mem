@@ -3,6 +3,7 @@ package contract
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,6 +16,52 @@ type OperationLogRepository interface {
 	AppendBatch(context.Context, []domain.OperationLog) error
 	List(context.Context, domain.OperationLogFilter) (*domain.OperationLogPage, error)
 	PruneBefore(context.Context, time.Time) error
+}
+
+func NormalizeOperationLogFilter(filter domain.OperationLogFilter) domain.OperationLogFilter {
+	if filter.Limit <= 0 {
+		filter.Limit = 100
+	}
+	if filter.Limit > 500 {
+		filter.Limit = 500
+	}
+	if filter.Offset < 0 {
+		filter.Offset = 0
+	}
+	filter.Sort = strings.ToLower(strings.TrimSpace(filter.Sort))
+	if filter.Sort != "severity" {
+		filter.Sort = "timestamp"
+	}
+	filter.Direction = strings.ToLower(strings.TrimSpace(filter.Direction))
+	if filter.Direction != "asc" {
+		filter.Direction = "desc"
+	}
+	filter.Severity = strings.ToUpper(strings.TrimSpace(filter.Severity))
+	filter.Event = strings.TrimSpace(filter.Event)
+	filter.CorrelationID = strings.TrimSpace(filter.CorrelationID)
+	filter.InvocationID = strings.TrimSpace(filter.InvocationID)
+	filter.RequestHash = strings.TrimSpace(filter.RequestHash)
+	filter.AttemptID = strings.TrimSpace(filter.AttemptID)
+	filter.Classification = strings.TrimSpace(filter.Classification)
+	filter.ReferenceType = strings.TrimSpace(filter.ReferenceType)
+	filter.ReferenceID = strings.TrimSpace(filter.ReferenceID)
+	if filter.From != nil {
+		value := filter.From.UTC()
+		filter.From = &value
+	}
+	if filter.To != nil {
+		value := filter.To.UTC()
+		filter.To = &value
+	}
+	return filter
+}
+
+func NormalizeOperationLogSeverity(severity string) string {
+	severity = strings.ToUpper(strings.TrimSpace(severity))
+	if severity == "" {
+		return "INFO"
+	}
+	return severity
 }
 
 // OperationLogSinkProber verifies the required operation-log write path
