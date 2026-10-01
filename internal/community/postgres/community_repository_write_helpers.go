@@ -108,7 +108,7 @@ func insertCommunityRecord(ctx context.Context, tx *gorm.DB, input CommunitySnap
 			?::uuid, ?::uuid, ?, ?::uuid, ?::uuid, ?, 'current', ?, ?, ?::uuid, ?, ?, ?::text[], ?::text[], ?, ?, ?, ?, ?, now()
 		)
 	`, input.TeamID, fence.ID, fence.Generation, community.CommunityID, input.RunID, community.Ordinal,
-		community.Summary, community.SummaryVersion, normalizeCommunityLogicalID(community), community.MemberCount,
+		community.Summary, community.SummaryVersion, community.LogicalCommunityID, community.MemberCount,
 		community.SourceCount, pq.Array(community.TopEntities),
 		pq.Array(community.TopPredicates), community.SourceFingerprint, community.SummaryInputHash,
 		community.SummaryProviderModel, community.SummaryPromptHash, community.SummaryResponseHash).Error; err != nil {

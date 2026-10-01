@@ -51,16 +51,6 @@ func newCommunitySQLMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 	return db, mock
 }
 
-func TestNormalizeCommunityRunClaimInputPreservesDefaultsAndBounds(t *testing.T) {
-	teamID := uuid.NewString()
-	got := normalizeCommunityRunClaimInput(CommunityRunClaimInput{TeamID: " " + teamID + " "})
-	assert.Equal(t, teamID, got.TeamID)
-	assert.Equal(t, CommunityAlgorithmKind, got.AlgorithmKind)
-	assert.Equal(t, CommunityAlgorithmVersion, got.AlgorithmVersion)
-	assert.Equal(t, CommunityProfileVersion, got.ProfileVersion)
-	assert.False(t, got.LeaseUntil.IsZero())
-}
-
 func TestCommunityStoreReportsMissingDatabaseAndRLS(t *testing.T) {
 	var store *Store
 	_, err := store.ListCommunityInputs(context.Background(), CommunityInputListInput{TeamID: uuid.NewString()})

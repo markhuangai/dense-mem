@@ -7,12 +7,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
+	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
 	"gorm.io/gorm"
 )
 
 func (r *Store) ListCommunities(ctx context.Context, input CommunityListInput) ([]CommunityRecord, error) {
-	input = normalizeCommunityListInput(input)
-	if err := validateCommunityListInput(input); err != nil {
+	input = communitycontract.NormalizeCommunityListInput(input)
+	if err := communitycontract.ValidateCommunityListInput(input); err != nil {
 		return nil, err
 	}
 	var records []CommunityRecord
@@ -75,8 +76,8 @@ func (r *Store) CountCurrentCommunities(ctx context.Context, teamID string) (int
 }
 
 func (r *Store) GetCommunity(ctx context.Context, input CommunityGetInput) (*CommunityRecord, error) {
-	input = normalizeCommunityGetInput(input)
-	if err := validateCommunityGetInput(input); err != nil {
+	input = communitycontract.NormalizeCommunityGetInput(input)
+	if err := communitycontract.ValidateCommunityGetInput(input); err != nil {
 		return nil, err
 	}
 	var record *CommunityRecord

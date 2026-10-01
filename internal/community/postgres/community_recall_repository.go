@@ -3,159 +3,21 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/lib/pq"
+	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
 	"gorm.io/gorm"
 )
 
 func (r *Store) RecallCommunities(ctx context.Context, input CommunityRecallInput) ([]CommunityRecallRecord, error) {
-	input = normalizeCommunityRecallInput(input)
-	if err := validateCommunityRecallInput(input); err != nil {
+	input = communitycontract.NormalizeCommunityRecallInput(input)
+	if err := communitycontract.ValidateCommunityRecallInput(input); err != nil {
 		return nil, err
 	}
 	communities := []CommunityRecallRecord{}
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		rows, err := tx.WithContext(ctx).Raw(`
-			WITH params AS (
-				SELECT ?::uuid AS team_id,
-				       ?::text AS query,
-				       ?::uuid[] AS returned_evidence_ids,
-				       ?::uuid[] AS known_evidence_ids,
-				       ?::uuid[] AS known_relationship_ids,
-				       ?::uuid[] AS seed_relationship_ids,
-				       ?::uuid[] AS expand_entity_ids,
-				       ?::text[] AS covered_groups
-			), matched_communities AS (
-				SELECT record.community_id,
-				       record.logical_community_id,
-				       record.summary,
-				       record.member_count,
-				       record.source_count,
-				       record.top_predicates,
-				       CASE
-					       WHEN EXISTS (
-						       SELECT 1
-						       FROM community_sources source
-							 JOIN relationship_evidence_supports support
-						         ON support.team_id = source.team_id
-						        AND support.relationship_id = source.relationship_id
-						        AND support.space_id = source.space_id
-						        AND support.space_generation = source.space_generation
-						       CROSS JOIN params
-						       WHERE source.team_id = record.team_id
-				         AND source.space_id = dense_mem_team_shared_space(source.team_id)
-				         AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
-						         AND source.community_id = record.community_id
-						         AND support.fragment_id = ANY(params.returned_evidence_ids)
-					       ) THEN 0
-					       WHEN EXISTS (
-						       SELECT 1
-						       FROM community_sources source
-						       CROSS JOIN params
-						       WHERE source.team_id = record.team_id
-				         AND source.space_id = dense_mem_team_shared_space(source.team_id)
-				         AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
-						         AND source.community_id = record.community_id
-						         AND source.relationship_id = ANY(params.known_relationship_ids)
-					       ) OR EXISTS (
-						       SELECT 1
-						       FROM community_sources source
-							 JOIN relationship_evidence_supports support
-						         ON support.team_id = source.team_id
-						        AND support.relationship_id = source.relationship_id
-						        AND support.space_id = source.space_id
-						        AND support.space_generation = source.space_generation
-						       CROSS JOIN params
-						       WHERE source.team_id = record.team_id
-				         AND source.space_id = dense_mem_team_shared_space(source.team_id)
-				         AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
-						         AND source.community_id = record.community_id
-						         AND support.fragment_id = ANY(params.known_evidence_ids)
-						       ) THEN 1
-					       WHEN EXISTS (
-						       SELECT 1
-						       FROM community_sources source
-						       CROSS JOIN params
-						       WHERE source.team_id = record.team_id
-				         AND source.space_id = dense_mem_team_shared_space(source.team_id)
-				         AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
-					         AND source.community_id = record.community_id
-					         AND source.relationship_id = ANY(params.seed_relationship_ids)
-					       ) OR EXISTS (
-						       SELECT 1
-						       FROM community_memberships membership
-						       CROSS JOIN params
-						       WHERE membership.team_id = record.team_id
-				         AND membership.space_id = dense_mem_team_shared_space(membership.team_id)
-				         AND membership.space_generation = dense_mem_team_shared_generation(membership.team_id)
-						         AND membership.community_id = record.community_id
-						         AND membership.entity_id = ANY(params.expand_entity_ids)
-						       ) THEN 2
-					       ELSE 3
-				       END AS seed_lane
-				FROM community_records record
-				CROSS JOIN params
-				WHERE record.team_id = params.team_id
-				  AND record.space_id = dense_mem_team_shared_space(record.team_id)
-				  AND record.space_generation = dense_mem_team_shared_generation(record.team_id)
-				  AND record.status = 'current'
-				  AND (
-					  params.query = ''
-					  OR community_record_search_vector(record.summary, record.top_entities, record.top_predicates) @@ plainto_tsquery('simple', params.query)
-					  OR EXISTS (
-						  SELECT 1 FROM community_memberships membership
-						  WHERE membership.team_id = record.team_id
-				    AND membership.space_id = dense_mem_team_shared_space(membership.team_id)
-				    AND membership.space_generation = dense_mem_team_shared_generation(membership.team_id)
-						    AND membership.community_id = record.community_id
-						    AND membership.entity_id = ANY(params.expand_entity_ids)
-					  )
-					  OR EXISTS (
-						  SELECT 1 FROM community_sources source
-						  WHERE source.team_id = record.team_id
-				    AND source.space_id = dense_mem_team_shared_space(source.team_id)
-				    AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
-						    AND source.community_id = record.community_id
-						    AND source.relationship_id = ANY(params.known_relationship_ids || params.seed_relationship_ids)
-					  )
-					  OR EXISTS (
-						  SELECT 1
-						  FROM community_sources source
-						  JOIN relationship_evidence_supports support
-						    ON support.team_id = source.team_id
-						   AND support.relationship_id = source.relationship_id
-						   AND support.space_id = source.space_id
-						   AND support.space_generation = source.space_generation
-						  WHERE source.team_id = record.team_id
-				    AND source.space_id = dense_mem_team_shared_space(source.team_id)
-				    AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
-						    AND source.community_id = record.community_id
-						    AND support.fragment_id = ANY(params.returned_evidence_ids || params.known_evidence_ids)
-					  )
-				  )
-				  AND (
-					  cardinality(params.covered_groups) = 0
-					  OR EXISTS (
-						  SELECT 1 FROM community_sources source
-						  WHERE source.team_id = record.team_id
-				    AND source.space_id = dense_mem_team_shared_space(source.team_id)
-				    AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
-						    AND source.community_id = record.community_id
-						    AND source.semantic_group_key <> ALL(params.covered_groups)
-					  )
-				  )
-			)
-			SELECT community_id::text,
-			       COALESCE(logical_community_id, community_id)::text,
-			       row_number() OVER (ORDER BY seed_lane ASC, member_count DESC, community_id ASC)::int,
-			       summary, member_count, source_count, top_predicates
-			FROM matched_communities
-			ORDER BY seed_lane ASC, member_count DESC, community_id ASC
-			LIMIT ?
-		`, input.TeamID, input.Query,
+		rows, err := tx.WithContext(ctx).Raw(communityRecallSQL, input.TeamID, input.Query,
 			pq.Array(input.ReturnedEvidenceIDs), pq.Array(input.KnownEvidenceIDs),
 			pq.Array(input.KnownRelationshipIDs), pq.Array(input.SeedRelationshipIDs),
 			pq.Array(input.ExpandFromEntityIDs), pq.Array(input.CoveredGroupKeys), input.Limit).Rows()
@@ -228,9 +90,9 @@ func loadCommunityTopEntitiesBatch(ctx context.Context, tx *gorm.DB, teamID stri
 		)
 		SELECT community_id, entity_id, entity_name
 		FROM ranked_memberships
-		WHERE membership_rank <= 5
+		WHERE membership_rank <= ?
 		ORDER BY community_id, membership_rank, entity_id
-	`, teamID, pq.Array(communityIDs)).Rows()
+	`, teamID, pq.Array(communityIDs), communitycontract.MaxRecallCommunityTopEntities).Rows()
 	if err != nil {
 		return err
 	}
@@ -375,90 +237,159 @@ func loadCommunityRecallRelationshipsBatch(ctx context.Context, tx *gorm.DB, inp
 	return nil
 }
 
-func normalizeCommunityRecallInput(input CommunityRecallInput) CommunityRecallInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.Query = strings.TrimSpace(input.Query)
-	if input.Limit <= 0 {
-		input.Limit = 3
-	}
-	if input.Limit > 10 {
-		input.Limit = 10
-	}
-	if input.RelationshipLimit <= 0 {
-		input.RelationshipLimit = 5
-	}
-	if input.RelationshipLimit > 20 {
-		input.RelationshipLimit = 20
-	}
-	input.KnownEvidenceIDs = normalizeCommunityIDs(input.KnownEvidenceIDs)
-	input.KnownRelationshipIDs = normalizeCommunityIDs(input.KnownRelationshipIDs)
-	input.ReturnedEvidenceIDs = normalizeCommunityIDs(input.ReturnedEvidenceIDs)
-	input.SeedRelationshipIDs = normalizeCommunityIDs(input.SeedRelationshipIDs)
-	input.ExpandFromEntityIDs = normalizeCommunityIDs(input.ExpandFromEntityIDs)
-	input.ExcludedGroupKeys = normalizeCommunityStrings(input.ExcludedGroupKeys)
-	input.CoveredGroupKeys = normalizeCommunityStrings(input.CoveredGroupKeys)
-	input.CoveredGroupKeys = appendUniqueCommunityStrings(input.CoveredGroupKeys, input.ExcludedGroupKeys...)
-	return input
-}
+var communityRecallSQL = `
+			WITH params AS (
+				SELECT ?::uuid AS team_id,
+				       ?::text AS query,
+				       ?::uuid[] AS returned_evidence_ids,
+				       ?::uuid[] AS known_evidence_ids,
+				       ?::uuid[] AS known_relationship_ids,
+				       ?::uuid[] AS seed_relationship_ids,
+				       ?::uuid[] AS expand_entity_ids,
+				       ?::text[] AS covered_groups
+			), matched_communities AS (
+				SELECT record.community_id,
+				       record.logical_community_id,
+				       record.summary,
+				       record.member_count,
+				       record.source_count,
+				       record.top_predicates,
+				       ` + buildCommunityRecallRankingSQL() + ` AS seed_lane
+				FROM community_records record
+				CROSS JOIN params
+				WHERE record.team_id = params.team_id
+				  AND record.space_id = dense_mem_team_shared_space(record.team_id)
+				  AND record.space_generation = dense_mem_team_shared_generation(record.team_id)
+				  AND record.status = 'current'
+				  AND (
+					  params.query = ''
+					  OR community_record_search_vector(record.summary, record.top_entities, record.top_predicates) @@ plainto_tsquery('simple', params.query)
+					  OR EXISTS (
+						  SELECT 1 FROM community_memberships membership
+						  WHERE membership.team_id = record.team_id
+				    AND membership.space_id = dense_mem_team_shared_space(membership.team_id)
+				    AND membership.space_generation = dense_mem_team_shared_generation(membership.team_id)
+						    AND membership.community_id = record.community_id
+						    AND membership.entity_id = ANY(params.expand_entity_ids)
+					  )
+					  OR EXISTS (
+						  SELECT 1 FROM community_sources source
+						  WHERE source.team_id = record.team_id
+				    AND source.space_id = dense_mem_team_shared_space(source.team_id)
+				    AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
+						    AND source.community_id = record.community_id
+						    AND source.relationship_id = ANY(params.known_relationship_ids || params.seed_relationship_ids)
+					  )
+					  OR EXISTS (
+						  SELECT 1
+						  FROM community_sources source
+						  JOIN relationship_evidence_supports support
+						    ON support.team_id = source.team_id
+						   AND support.relationship_id = source.relationship_id
+						   AND support.space_id = source.space_id
+						   AND support.space_generation = source.space_generation
+						  WHERE source.team_id = record.team_id
+				    AND source.space_id = dense_mem_team_shared_space(source.team_id)
+				    AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
+						    AND source.community_id = record.community_id
+						    AND support.fragment_id = ANY(params.returned_evidence_ids || params.known_evidence_ids)
+					  )
+				  )
+				  AND (
+					  cardinality(params.covered_groups) = 0
+					  OR EXISTS (
+						  SELECT 1 FROM community_sources source
+						  WHERE source.team_id = record.team_id
+				    AND source.space_id = dense_mem_team_shared_space(source.team_id)
+				    AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
+						    AND source.community_id = record.community_id
+						    AND source.semantic_group_key <> ALL(params.covered_groups)
+					  )
+				  )
+			)
+			SELECT community_id::text,
+			       COALESCE(logical_community_id, community_id)::text,
+			       row_number() OVER (ORDER BY seed_lane ASC, member_count DESC, community_id ASC)::int,
+			       summary, member_count, source_count, top_predicates
+			FROM matched_communities
+			ORDER BY seed_lane ASC, member_count DESC, community_id ASC
+			LIMIT ?
+		`
 
-func appendUniqueCommunityStrings(values []string, additions ...string) []string {
-	seen := make(map[string]struct{}, len(values)+len(additions))
-	for _, value := range values {
-		seen[value] = struct{}{}
+func buildCommunityRecallRankingSQL() string {
+	expressions := map[communitycontract.RecallCommunityMatchCategory]string{
+		communitycontract.RecallCommunityReturnedEvidenceOverlap: `EXISTS (
+						       SELECT 1
+						       FROM community_sources source
+							 JOIN relationship_evidence_supports support
+						         ON support.team_id = source.team_id
+						        AND support.relationship_id = source.relationship_id
+						        AND support.space_id = source.space_id
+						        AND support.space_generation = source.space_generation
+						       CROSS JOIN params
+						       WHERE source.team_id = record.team_id
+				         AND source.space_id = dense_mem_team_shared_space(source.team_id)
+				         AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
+						         AND source.community_id = record.community_id
+						         AND support.fragment_id = ANY(params.returned_evidence_ids)
+					       )`,
+		communitycontract.RecallCommunityKnownContextOverlap: `EXISTS (
+						       SELECT 1
+						       FROM community_sources source
+						       CROSS JOIN params
+						       WHERE source.team_id = record.team_id
+				         AND source.space_id = dense_mem_team_shared_space(source.team_id)
+				         AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
+						         AND source.community_id = record.community_id
+						         AND source.relationship_id = ANY(params.known_relationship_ids)
+					       ) OR EXISTS (
+						       SELECT 1
+						       FROM community_sources source
+							 JOIN relationship_evidence_supports support
+						         ON support.team_id = source.team_id
+						        AND support.relationship_id = source.relationship_id
+						        AND support.space_id = source.space_id
+						        AND support.space_generation = source.space_generation
+						       CROSS JOIN params
+						       WHERE source.team_id = record.team_id
+				         AND source.space_id = dense_mem_team_shared_space(source.team_id)
+				         AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
+						         AND source.community_id = record.community_id
+						         AND support.fragment_id = ANY(params.known_evidence_ids)
+						       )`,
+		communitycontract.RecallCommunitySeedOverlap: `EXISTS (
+						       SELECT 1
+						       FROM community_sources source
+						       CROSS JOIN params
+						       WHERE source.team_id = record.team_id
+				         AND source.space_id = dense_mem_team_shared_space(source.team_id)
+				         AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
+					         AND source.community_id = record.community_id
+					         AND source.relationship_id = ANY(params.seed_relationship_ids)
+					       ) OR EXISTS (
+						       SELECT 1
+						       FROM community_memberships membership
+						       CROSS JOIN params
+						       WHERE membership.team_id = record.team_id
+				         AND membership.space_id = dense_mem_team_shared_space(membership.team_id)
+				         AND membership.space_generation = dense_mem_team_shared_generation(membership.team_id)
+						         AND membership.community_id = record.community_id
+						         AND membership.entity_id = ANY(params.expand_entity_ids)
+						       )`,
 	}
-	for _, value := range additions {
-		if value == "" {
+	var query strings.Builder
+	query.WriteString("CASE")
+	for rank, category := range communitycontract.RecallCommunityMatchOrder() {
+		if category == communitycontract.RecallCommunityRemainingMatch {
+			fmt.Fprintf(&query, " ELSE %d", rank)
 			continue
 		}
-		if _, ok := seen[value]; ok {
-			continue
+		expression, ok := expressions[category]
+		if !ok {
+			panic("community: unsupported recall match category")
 		}
-		seen[value] = struct{}{}
-		values = append(values, value)
+		fmt.Fprintf(&query, " WHEN %s THEN %d", expression, rank)
 	}
-	sort.Strings(values)
-	return values
-}
-
-func validateCommunityRecallInput(input CommunityRecallInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
-	}
-	return nil
-}
-
-func normalizeCommunityIDs(values []string) []string {
-	out := make([]string, 0, len(values))
-	seen := map[string]struct{}{}
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		if _, err := uuid.Parse(value); err != nil {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
-}
-func normalizeCommunityStrings(values []string) []string {
-	out := make([]string, 0, len(values))
-	seen := map[string]struct{}{}
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
+	query.WriteString(" END")
+	return query.String()
 }

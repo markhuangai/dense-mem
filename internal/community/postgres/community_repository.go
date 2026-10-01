@@ -6,15 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
+	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
 	"gorm.io/gorm"
 )
 
 func (r *Store) ClaimCommunityRun(ctx context.Context, input CommunityRunClaimInput) (*CommunityRun, error) {
-	input = normalizeCommunityRunClaimInput(input)
-	if err := validateCommunityRunClaimInput(input); err != nil {
+	input = communitycontract.NormalizeCommunityRunClaimInput(input, time.Now())
+	if err := communitycontract.ValidateCommunityRunClaimInput(input); err != nil {
 		return nil, err
 	}
 	runID := uuid.NewString()
@@ -124,8 +126,8 @@ func (r *Store) ClaimCommunityRun(ctx context.Context, input CommunityRunClaimIn
 }
 
 func (r *Store) CompleteCommunityRun(ctx context.Context, input CommunityRunCompleteInput) error {
-	input = normalizeCommunityRunCompleteInput(input)
-	if err := validateCommunityRunCompleteInput(input); err != nil {
+	input = communitycontract.NormalizeCommunityRunCompleteInput(input)
+	if err := communitycontract.ValidateCommunityRunCompleteInput(input); err != nil {
 		return err
 	}
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
@@ -148,7 +150,7 @@ func (r *Store) CompleteCommunityRun(ctx context.Context, input CommunityRunComp
 			  AND run_id = ?::uuid
 			  AND status = 'running'
 		`, input.Status, input.NodeCount, input.EdgeCount, input.CommunityCount,
-			truncateCommunityError(input.Error), input.TeamID, fence.ID, fence.Generation, input.RunID)
+			communitycontract.TruncateCommunityDiagnostic(input.Error), input.TeamID, fence.ID, fence.Generation, input.RunID)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -204,8 +206,8 @@ func (r *Store) RenewCommunityRunLease(ctx context.Context, input CommunityRunLe
 }
 
 func (r *Store) ListCommunityInputs(ctx context.Context, input CommunityInputListInput) ([]CommunityInput, error) {
-	input = normalizeCommunityInputListInput(input)
-	if err := validateCommunityInputListInput(input); err != nil {
+	input = communitycontract.NormalizeCommunityInputListInput(input)
+	if err := communitycontract.ValidateCommunityInputListInput(input); err != nil {
 		return nil, err
 	}
 	var out []CommunityInput
@@ -354,8 +356,8 @@ func (r *Store) ListCommunityInputs(ctx context.Context, input CommunityInputLis
 }
 
 func (r *Store) PublishCommunitySnapshot(ctx context.Context, input CommunitySnapshotPublishInput) error {
-	input = normalizeCommunitySnapshotPublishInput(input)
-	if err := validateCommunitySnapshotPublishInput(input); err != nil {
+	input = communitycontract.NormalizeCommunitySnapshotPublishInput(input)
+	if err := communitycontract.ValidateCommunitySnapshotPublishInput(input); err != nil {
 		return err
 	}
 	sourceSnapshot, err := marshalCommunitySnapshot(input.SourceSnapshot)
@@ -425,8 +427,8 @@ func (r *Store) PublishCommunitySnapshot(ctx context.Context, input CommunitySna
 }
 
 func (r *Store) RefreshCommunityStaleness(ctx context.Context, input CommunityStalenessInput) (int, error) {
-	input = normalizeCommunityStalenessInput(input)
-	if err := validateCommunityStalenessInput(input); err != nil {
+	input = communitycontract.NormalizeCommunityStalenessInput(input)
+	if err := communitycontract.ValidateCommunityStalenessInput(input); err != nil {
 		return 0, err
 	}
 	updated := 0

@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
+	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
 	"gorm.io/gorm"
 )
 
@@ -18,8 +19,8 @@ func (r *Store) ListCommunitySemanticGroups(ctx context.Context, input Community
 	if _, err := uuid.Parse(input.TeamID); err != nil {
 		return nil, fmt.Errorf("team_id is required: %w", err)
 	}
-	input.EvidenceIDs = normalizeCommunityIDs(input.EvidenceIDs)
-	input.RelationshipIDs = normalizeCommunityIDs(input.RelationshipIDs)
+	input.EvidenceIDs = communitycontract.NormalizeCommunityIDs(input.EvidenceIDs)
+	input.RelationshipIDs = communitycontract.NormalizeCommunityIDs(input.RelationshipIDs)
 	if len(input.EvidenceIDs) == 0 && len(input.RelationshipIDs) == 0 {
 		return []string{}, nil
 	}

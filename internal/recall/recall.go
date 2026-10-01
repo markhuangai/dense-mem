@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
 	"github.com/markhuangai/dense-mem/internal/community"
 	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -27,8 +26,6 @@ const (
 	maxRecallResultLimit            = 50
 	defaultRelatedRelationshipLimit = 5
 	maxRelatedRelationshipLimit     = 20
-	defaultCommunityPathLimit       = 3
-	maxCommunityPathLimit           = 10
 )
 
 var ErrRecallAuthContext = errors.New("recall: authenticated actor context is required")
@@ -742,8 +739,8 @@ func normalizeRecallRequest(req RecallRequest) RecallRequest {
 		req.Limit = maxRecallResultLimit
 	}
 	req.RelationshipLimit = normalizeRecallOptionalLimit(req.RelationshipLimit, defaultRelatedRelationshipLimit, maxRelatedRelationshipLimit)
-	req.CommunityLimit = normalizeRecallOptionalLimit(req.CommunityLimit, defaultCommunityPathLimit, maxCommunityPathLimit)
-	req.CommunityRelationshipLimit = normalizeRecallPositiveLimit(req.CommunityRelationshipLimit, defaultRelatedRelationshipLimit, maxRelatedRelationshipLimit)
+	req.CommunityLimit = normalizeRecallOptionalLimit(req.CommunityLimit, communitycontract.DefaultRecallCommunityLimit, communitycontract.MaxRecallCommunityLimit)
+	req.CommunityRelationshipLimit = normalizeRecallPositiveLimit(req.CommunityRelationshipLimit, communitycontract.DefaultRecallCommunityRelationshipLimit, communitycontract.MaxRecallCommunityRelationshipLimit)
 	req.KnownEvidenceIDs = normalizeRecallRequestIDs(req.KnownEvidenceIDs)
 	req.KnownRelationshipIDs = normalizeRecallRequestIDs(req.KnownRelationshipIDs)
 	req.ExpandFromEntityIDs = normalizeRecallRequestIDs(req.ExpandFromEntityIDs)
