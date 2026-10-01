@@ -172,5 +172,18 @@
     "allocation_investigation": "All three median allocation counts match. Byte-per-operation ranges overlap between sources for every workload, and observed median byte differences are within the per-source repetition ranges. No persistent allocation-count increase is observed. The extracted policies only read native fields and return strings or booleans.",
     "performance_note": "All thresholds passed; measured medians are recorded above, with no speedup claim."
   },
-  "maintenance_benefit": "Support-driven status and conflict-placement eligibility each have one pure Knowledge contract owner. Five correction eligibility decision points reuse one native owner. Superseded adapter policy bodies were removed without wrappers; SQL, transactions, locks, public contracts, authorization, history and search effects are preserved."
+  "maintenance_benefit": "Support-driven status and conflict-placement eligibility each have one pure Knowledge contract owner. Five correction eligibility decision points reuse one native owner. Superseded adapter policy bodies were removed without wrappers; SQL, transactions, locks, public contracts, authorization, history and search effects are preserved.",
+  "post_measurement_main_update": {
+    "merged_main_commit": "4323a5962e4728af96a2886a7cbf0ecf7bd714bb",
+    "merge_commit": "5ea80ddf9b21ed659430158cc4c3c1f1d7f993e5",
+    "scope_files_byte_identical_to_measured_candidate": 356,
+    "scope": "Knowledge, lifecycle, PostgreSQL infrastructure, migrations and the benchmark helper are unchanged. Incoming changes are SCIM pagination, Dream recall and Trace policy; the only Domain change adds an unrelated directory-page constant.",
+    "measured_source_hashes": "Refer to the pre-update measured trees; the lifecycle source and fixtures remain byte-identical.",
+    "revalidation_commands": [
+      "go test ./internal/knowledge/... ./internal/lifecycle/... -count=1",
+      "./scripts/ci-check.sh",
+      "./scripts/e2e.sh synchronous_write",
+      "./scripts/e2e.sh space_aware_recall"
+    ]
+  }
 }
