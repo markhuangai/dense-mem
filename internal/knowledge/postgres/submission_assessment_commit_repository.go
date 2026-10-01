@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 func normalizeRememberCommitScope(scope RememberCommitScope) RememberCommitScope {
@@ -94,11 +95,7 @@ func normalizeCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentIn
 	for i := range input.PredicateRegistrations {
 		registration := &input.PredicateRegistrations[i]
 		registration.RelationshipRef = strings.TrimSpace(registration.RelationshipRef)
-		registration.PredicateKey = strings.TrimSpace(registration.PredicateKey)
-		registration.SubjectKind = strings.TrimSpace(registration.SubjectKind)
-		registration.ObjectKind = strings.TrimSpace(registration.ObjectKind)
-		registration.RelationshipKind = strings.TrimSpace(registration.RelationshipKind)
-		registration.CurrentCardinality = strings.TrimSpace(registration.CurrentCardinality)
+		*registration = knowledgecontract.NormalizeSubmissionPredicateRegistration(*registration)
 	}
 	return input
 }
@@ -290,17 +287,8 @@ func validateCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentInp
 	}
 	seenRegistrations := map[string]struct{}{}
 	for _, registration := range input.PredicateRegistrations {
-		if registration.RelationshipRef == "" || registration.PredicateKey == "" {
-			return errors.New("submission predicate registration ref and key are required")
-		}
-		if len([]rune(registration.PredicateKey)) > 128 {
-			return errors.New("submission predicate registration key must be at most 128 characters")
-		}
-		if !contains(domain.EntityKinds(), registration.SubjectKind) || !contains(append(domain.EntityKinds(), domain.ValueTypes()...), registration.ObjectKind) {
-			return errors.New("submission predicate registration endpoint kinds are unsupported")
-		}
-		if !contains(domain.RelationshipKinds(), registration.RelationshipKind) || !contains(domain.CurrentCardinalities(), registration.CurrentCardinality) {
-			return errors.New("submission predicate registration policy is unsupported")
+		if err := knowledgecontract.ValidateCommitSubmissionPredicateRegistration(registration); err != nil {
+			return err
 		}
 		if _, exists := seenRegistrations[registration.RelationshipRef]; exists {
 			return errors.New("submission predicate registration relationship_ref is duplicated")
@@ -444,7 +432,7 @@ func loadCurrentExactSubmissionPredicateVersion(ctx context.Context, tx *gorm.DB
 
 func resolveSubmissionPredicateRegistration(ctx context.Context, tx *gorm.DB, input *CommitSubmissionAssessmentInput, registration SubmissionPredicateRegistrationInput) (SemanticReviewPredicateCandidate, string, error) {
 	requestedKey := strings.TrimSpace(registration.PredicateKey)
-	canonicalKey := canonicalGeneratedPredicateKey(requestedKey)
+	canonicalKey := knowledgecontract.CanonicalGeneratedPredicateKey(requestedKey)
 	if err := tx.WithContext(ctx).Exec(`SELECT pg_advisory_xact_lock(hashtext(?))`, input.TeamID+":"+canonicalKey).Error; err != nil {
 		return SemanticReviewPredicateCandidate{}, "", err
 	}
@@ -453,7 +441,7 @@ func resolveSubmissionPredicateRegistration(ctx context.Context, tx *gorm.DB, in
 		return SemanticReviewPredicateCandidate{}, "", err
 	}
 	if loaded != nil {
-		if field, _ := submissionPredicateRegistrationCompatibility(*loaded, registration); field != "" {
+		if field, _ := knowledgecontract.SubmissionPredicateRegistrationCompatibility(*loaded, registration); field != "" {
 			return SemanticReviewPredicateCandidate{}, "", ErrSubmissionPredicateRegistrationHeld
 		}
 		return *loaded, "reused", nil

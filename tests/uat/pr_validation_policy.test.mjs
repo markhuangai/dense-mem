@@ -351,3 +351,36 @@ test("approved owner and fork CI handoffs preserve the resolved source through e
   }
   assert.match(workflowJob(shared, "postgres-migrations"), /MIGRATION_BASE: \$\{\{ inputs\.migration-base-ref \}\}/);
 });
+
+test("fork previews withhold the upstream Cloudflare token and report E2E as unavailable", async () => {
+  const e2e = workflowJob(previewWorkflow, "production-e2e");
+  const condition = e2e.split("    if: >-\n")[1]?.split("    permissions:")[0]
+    ?.trim().replace(/^\$\{\{\s*|\s*\}\}$/g, "");
+  assert.ok(condition);
+  const shouldRun = new Function("needs", "github", `return (${condition});`);
+  const needs = {
+    resolve: { outputs: { should_build: "true", head_repository: repository } },
+    build: { result: "success" }, publish: { result: "success" },
+  };
+  assert.equal(shouldRun(needs, { repository }), true);
+  assert.equal(shouldRun({ ...needs, resolve: { outputs: { ...needs.resolve.outputs,
+    head_repository: "contributor/dense-mem" } } }, { repository }), false);
+
+  const report = workflowScript(previewWorkflow, "Publish production E2E result");
+  const writes = [];
+  const github = { rest: { repos: { createCommitStatus: async (status) => { writes.push(status); } } } };
+  const context = { repo: { owner: "markhuangai", repo: "dense-mem" }, serverUrl: "https://github.com", runId: 10 };
+  for (const [source, e2eResult, expected] of [
+    [repository, "success", "success"],
+    ["contributor/dense-mem", "skipped", "failure"],
+    ["contributor/dense-mem", "success", "failure"],
+  ]) {
+    const env = { BUILD_RESULT: "success", PUBLISH_RESULT: "success", E2E_RESULT: e2eResult,
+      EXPECTED_HEAD: head, SOURCE_REPOSITORY: source, E2E_STATUS_CONTEXT: "Production image E2E" };
+    await report(github, context, {}, { env });
+    const status = writes.at(-1);
+    assert.equal(status.state, expected);
+    if (source !== repository) assert.match(status.description, /fork.*token withheld/i);
+  }
+  assert.equal(writes.length, 3);
+});

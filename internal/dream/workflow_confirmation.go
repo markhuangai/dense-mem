@@ -49,15 +49,6 @@ func isDreamConfirmationDecision(decision string) bool {
 	}
 }
 
-func isDreamLifecycleDecision(decision string) bool {
-	switch decision {
-	case "reject", "stale", "reinforce":
-		return true
-	default:
-		return false
-	}
-}
-
 func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackRequest) (*ResolveFeedbackResult, error) {
 	teamID, actorProfileID, err := dreamActor(ctx)
 	if err != nil {
@@ -71,7 +62,7 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 	if isDreamConfirmationDecision(decision) {
 		return s.resolveConfirmationWithLock(ctx, teamID, actorProfileID, dreamID, decision, req)
 	}
-	if isDreamLifecycleDecision(decision) {
+	if dreamcontract.LifecycleStatus(decision) != "" {
 		return s.resolveLifecycleFeedbackWithLock(ctx, teamID, actorProfileID, dreamID, decision, req)
 	}
 	record, err := s.deps.Store.GetHypothesis(ctx, dreamcontract.GetHypothesisInput{
@@ -196,7 +187,7 @@ func (s *service) resolveLifecycleFeedback(
 		TeamID:            teamID,
 		ActorProfileID:    actorProfileID,
 		HypothesisID:      dreamID,
-		Status:            lifecycleStatus(decision),
+		Status:            dreamcontract.LifecycleStatus(decision),
 		Decision:          decision,
 		InvalidatedReason: req.Feedback,
 	})
@@ -219,19 +210,6 @@ func (s *service) resolveLifecycleFeedback(
 		"feedback_present": strings.TrimSpace(req.Feedback) != "",
 	})
 	return result, feedbackErr
-}
-
-func lifecycleStatus(decision string) string {
-	switch decision {
-	case "reject":
-		return string(domain.DreamStatusRejected)
-	case "stale":
-		return string(domain.DreamStatusStale)
-	case "reinforce":
-		return string(domain.DreamStatusReinforced)
-	default:
-		return ""
-	}
 }
 
 func (s *service) resolveConfirmation(

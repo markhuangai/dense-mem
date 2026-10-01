@@ -41,6 +41,7 @@ func clearEnv() {
 		"AI_API_EMBEDDING_DIMENSIONS",
 		"AI_API_EMBEDDING_TIMEOUT_SECONDS",
 		"AI_API_EMBEDDING_MAX_CONCURRENCY",
+		"AI_API_EMBEDDING_MAX_BATCH_ITEMS",
 		// Knowledge-pipeline knobs
 		"AI_VERIFIER_API_URL",
 		"AI_VERIFIER_API_KEY",
@@ -152,6 +153,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.GetAIEmbeddingMaxConcurrency() != DefaultAIEmbeddingMaxConcurrency {
 		t.Errorf("AIEmbeddingMaxConcurrency default = %d, want %d", cfg.GetAIEmbeddingMaxConcurrency(), DefaultAIEmbeddingMaxConcurrency)
+	}
+	if cfg.GetAIEmbeddingMaxBatchItems() != DefaultAIEmbeddingMaxBatchItems {
+		t.Errorf("AIEmbeddingMaxBatchItems default = %d, want %d", cfg.GetAIEmbeddingMaxBatchItems(), DefaultAIEmbeddingMaxBatchItems)
 	}
 	budget := AIVerifierAssessmentBudgetFor(&cfg)
 	if budget.MaxInputTokens != DefaultAIVerifierMaxInputTokens ||

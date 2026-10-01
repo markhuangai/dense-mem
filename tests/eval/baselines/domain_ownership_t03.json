@@ -1,0 +1,148 @@
+{
+  "base_commit": "74386b7adf293780ea2329ee0d272f3693506b8d",
+  "benchmark": {
+    "allocation_note": "Graph and evidence proposals show roughly one to two more allocations per operation; contract normalization copies non-nil derivation slices before normalizing, preserving caller input. Feedback allocations match. All byte and latency changes remain small.",
+    "command": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags=integration ./internal/dream/postgres -run '^$' -bench '^BenchmarkDreamPolicyOwnership$' -benchtime=200x -count=1 -benchmem -v",
+    "comparison": "Median p50 and p95 increase each <= max(5% of base, 1 ms); result signatures and SQL/transaction/provider counts equal for every run.",
+    "measured_operations_per_workload": 200,
+    "name": "BenchmarkDreamPolicyOwnership",
+    "passed": true,
+    "run_order": [
+      "base,candidate",
+      "candidate,base",
+      "base,candidate",
+      "candidate,base",
+      "base,candidate"
+    ],
+    "runs_per_source": 5,
+    "warmups_per_workload": 20,
+    "workloads": {
+      "evidence_proposal": {
+        "counts_per_operation": {
+          "provider-calls/op": 0.0,
+          "sql-statements/op": 14.0,
+          "transaction-completions/op": 1.0,
+          "transactions/op": 1.0
+        },
+        "latency": {
+          "p50_ms": {
+            "allowed_increase": 1.0,
+            "base_median": 5.061615,
+            "candidate_median": 5.133201,
+            "increase": 0.071586
+          },
+          "p95_ms": {
+            "allowed_increase": 1.0,
+            "base_median": 6.587404,
+            "candidate_median": 6.265658,
+            "increase": -0.321746
+          }
+        },
+        "median_allocs_per_operation": {
+          "base": 870.0,
+          "candidate": 871.0
+        },
+        "median_bytes_per_operation": {
+          "base": 78887.0,
+          "candidate": 79394.0
+        },
+        "result_signature": "evidence_discovery|proposed|true"
+      },
+      "feedback": {
+        "counts_per_operation": {
+          "provider-calls/op": 0.0,
+          "sql-statements/op": 8.0,
+          "transaction-completions/op": 1.0,
+          "transactions/op": 1.0
+        },
+        "latency": {
+          "p50_ms": {
+            "allowed_increase": 1.0,
+            "base_median": 3.748959,
+            "candidate_median": 3.495131,
+            "increase": -0.253828
+          },
+          "p95_ms": {
+            "allowed_increase": 1.0,
+            "base_median": 5.323167,
+            "candidate_median": 4.603554,
+            "increase": -0.719613
+          }
+        },
+        "median_allocs_per_operation": {
+          "base": 404.0,
+          "candidate": 404.0
+        },
+        "median_bytes_per_operation": {
+          "base": 40775.0,
+          "candidate": 40804.0
+        },
+        "result_signature": "feedback|reinforced"
+      },
+      "graph_proposal": {
+        "counts_per_operation": {
+          "provider-calls/op": 0.0,
+          "sql-statements/op": 20.0,
+          "transaction-completions/op": 1.0,
+          "transactions/op": 1.0
+        },
+        "latency": {
+          "p50_ms": {
+            "allowed_increase": 1.0,
+            "base_median": 8.014431,
+            "candidate_median": 7.987617,
+            "increase": -0.026814
+          },
+          "p95_ms": {
+            "allowed_increase": 1.0,
+            "base_median": 9.989596,
+            "candidate_median": 10.516332,
+            "increase": 0.526736
+          }
+        },
+        "median_allocs_per_operation": {
+          "base": 1437.0,
+          "candidate": 1439.0
+        },
+        "median_bytes_per_operation": {
+          "base": 174028.0,
+          "candidate": 174069.0
+        },
+        "result_signature": "graph|proposed|true"
+      }
+    }
+  },
+  "candidate_source_manifest": {
+    "changed_paths_excluding_this_evidence": 23,
+    "recipe": "SHA-256 of sorted path + NUL + file SHA-256 (or <deleted>) + newline, for git diff against base_commit plus untracked nonignored paths, excluding this evidence file",
+    "sha256": "b4b5502976f4d2c2078de4c9b78e645a40586e985868f57a8c42b443bfec5b92"
+  },
+  "evaluation_waiver": "Issue #483 records the maintainer-approved scoped historical deterministic 1k waiver; this exact-base equivalence, real PostgreSQL, focused E2E, and paired performance comparison are replacement local evidence. Final-head production-image E2E remains required.",
+  "fixed_result_postgres_cases": {
+    "base": "passed with identical test-only overlay",
+    "candidate": "passed",
+    "legacy_target_identity": "sha256:99636d4216c34b97f10efea4cf6019930ec578e7047fe720970d08fece15e23c",
+    "signature": "graph:one|feedback:3|source_stale"
+  },
+  "issue": 483,
+  "maintenance_benefit": "Dream application and PostgreSQL now share contract-owned proposal, derivation, target-identity, source-eligibility, and lifecycle feedback policy. Superseded adapter and application copies were removed without schema or public-contract changes.",
+  "schema_version": 1,
+  "test_only_base_overlay_sha256": {
+    "internal/dream/postgres/dream_policy_identity_base_test.go": "0a7232e14004a7dee4defe143d8342d5f1483a5795ad6361fc017e4a14556589",
+    "internal/dream/postgres/dream_policy_ownership_benchmark_test.go": "feade452fefbf5ac8309354bd1a4c39975d45164cc25393492bfa53288ff3e8b",
+    "internal/dream/postgres/dream_policy_ownership_integration_test.go": "496b4bc3d6ca99166184e4f73427e6f825b93ee8a0beb676b089d9e9095cd0e2",
+    "internal/dream/postgres/dream_repository_integration_test.go": "2ab483af2767d956849dee0c572f112fb1973329aa8b5b26c2311a0b62db1b9e",
+    "internal/dream/postgres/fixture_composition_test.go": "f2fb4264fff1ea9b254c4c7cfe2d765a7f822a9b231fb811dddf53abf2183185",
+    "internal/dream/postgres/integration_fixture_helpers_test.go": "9f0885a5163de7a915404ef661beb613a8bf8d4ce3cd87556b92955251962e3e"
+  },
+  "validation": {
+    "./scripts/ci-check.sh": "passed; 33135/36814 complete Go coverage; 169 browser tests; 19 MCP proxy tests",
+    "./scripts/e2e.sh synchronous_write": "passed; UAT runner and six desktop/mobile Playwright tests; controller exit 0",
+    "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags=integration ./internal/dream/postgres -count=1": "passed; 286.222s",
+    "git diff --check": "passed",
+    "go test -tags=evaluation ./internal/evaluation/... ./internal/tools/registry/... ./cmd/internal/serverapp/... -count=1": "passed",
+    "go test ./internal/dream/... ./internal/dreamgeneration/... ./internal/evaluation/... -count=1": "passed",
+    "node --test tests/uat/architecture_conformance.test.mjs": "passed; 35 tests",
+    "node scripts/check-architecture.mjs": "passed; 101 Go packages and 39 browser modules"
+  }
+}

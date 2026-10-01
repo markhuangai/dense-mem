@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 func loadInlineEmbeddingEntityNames(ctx context.Context, tx *gorm.DB, teamID string, resolutions []SubmissionAssessmentEntityResolutionInput) (map[string]string, error) {
@@ -94,10 +95,10 @@ func applyInlineSubmissionEmbeddings(ctx context.Context, tx *gorm.DB, input Com
 
 func previewSubmissionPredicateKey(ctx context.Context, tx *gorm.DB, input CommitSubmissionAssessmentInput, registration SubmissionPredicateRegistrationInput) (string, error) {
 	requestedKey := strings.TrimSpace(registration.PredicateKey)
-	canonicalKey := canonicalGeneratedPredicateKey(requestedKey)
+	canonicalKey := knowledgecontract.CanonicalGeneratedPredicateKey(requestedKey)
 	loaded, err := loadLatestSubmissionPredicate(ctx, tx, input.TeamID, requestedKey, canonicalKey)
 	if err == nil && loaded != nil {
-		if field, _ := submissionPredicateRegistrationCompatibility(*loaded, registration); field != "" {
+		if field, _ := knowledgecontract.SubmissionPredicateRegistrationCompatibility(*loaded, registration); field != "" {
 			return "", ErrSubmissionPredicateRegistrationHeld
 		}
 		return loaded.PredicateKey, nil

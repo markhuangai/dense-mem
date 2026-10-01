@@ -17,6 +17,7 @@ const effective = pricing.data?.effective ?? {};
 if (!nonEmptyString(effective.verifier_model) || !nonEmptyString(effective.embedding_model)) {
   throw new Error("telemetry pricing must report the existing verifier and embedding models");
 }
+const rememberModel = process.env.AI_REMEMBER_MODEL?.trim() || effective.verifier_model;
 const pricingKeys = new Set((pricing.data?.items ?? []).map((item) => item.key));
 for (const key of [
   "TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS",
@@ -40,14 +41,17 @@ await controlJSON("/config/telemetry-pricing", {
   }),
 });
 
-const modelPrices = JSON.stringify([{
-  component: "verifier", model: "telemetry-uat-alternate", input_usd_per_million_tokens: 1, output_usd_per_million_tokens: 2,
-}]);
+const modelPrices = JSON.stringify([
+  { component: "verifier", model: "telemetry-uat-alternate", input_usd_per_million_tokens: 1, output_usd_per_million_tokens: 2 },
+  { component: "verifier", model: rememberModel, input_usd_per_million_tokens: 1, output_usd_per_million_tokens: 1 },
+]);
 const pricedModels = await controlJSON("/config/telemetry-pricing", {
   method: "PATCH",
   body: JSON.stringify({ items: [{ key: "TELEMETRY_COST_MODEL_PRICES_JSON", value: modelPrices }] }),
 });
-assert(pricedModels.data?.effective?.model_prices?.[0]?.model === "telemetry-uat-alternate", "model-specific telemetry pricing was not stored");
+assert(pricedModels.data?.effective?.model_prices?.some((price) => price.model === "telemetry-uat-alternate") &&
+  pricedModels.data.effective.model_prices.some((price) => price.model === rememberModel),
+"model-specific telemetry pricing was not stored");
 const invalidPricing = await fetch(`${controlURL}/control/api/config/telemetry-pricing`, {
   method: "PATCH",
   headers: { Authorization: `Bearer ${controlToken}`, "Content-Type": "application/json" },
@@ -55,7 +59,9 @@ const invalidPricing = await fetch(`${controlURL}/control/api/config/telemetry-p
 });
 assert(invalidPricing.status === 422, `incomplete model pricing was accepted: HTTP ${invalidPricing.status}`);
 const pricingAfterRejection = await controlJSON("/config/telemetry-pricing", { method: "GET" });
-assert(pricingAfterRejection.data?.effective?.model_prices?.[0]?.model === "telemetry-uat-alternate", "invalid model pricing replaced the accepted rate card");
+assert(pricingAfterRejection.data?.effective?.model_prices?.some((price) => price.model === "telemetry-uat-alternate") &&
+  pricingAfterRejection.data.effective.model_prices.some((price) => price.model === rememberModel),
+"invalid model pricing replaced the accepted rate card");
 
 const telemetryContent = `Telemetry E2E ${runID}: Dense-Mem uses exact evidence before semantic processing.`;
 const remember = await mcpTool("remember", {
@@ -498,6 +504,20 @@ async function validateGrafanaDashboardParity(credentialID) {
               actual = grafanaFrameNumber(refreshedResult.frames ?? []);
             }
           }
+          if (item.id === "http_requests") {
+            // The parity requests themselves can cross a Prometheus scrape boundary.
+            for (let attempt = 0; attempt < 9 && !withinTolerance(actual, expected); attempt += 1) {
+              await delay(5_000);
+              const latest = (await controlJSON(`/telemetry?window=${snapshot.window.key}&scope=system`, { method: "GET" })).data;
+              const latestCard = (latest.windowed_cards ?? []).find((card) => card.id === item.id);
+              assert(latestCard?.status === "ready", "HTTP request card became unavailable during parity verification");
+              expected = Number(latestCard.value);
+              const refreshed = await query(expression, { ...queryOptions, to: Date.now().toString() });
+              const refreshedResult = refreshed.results?.A;
+              assert(refreshedResult && !refreshedResult.error, `Grafana query failed for HTTP request parity: ${refreshedResult?.error ?? "missing result"}`);
+              actual = grafanaFrameNumber(refreshedResult.frames ?? []);
+            }
+          }
           assert(actual !== null, `Grafana returned no numeric value for ready card ${item.id}`);
           assertClose(actual, expected, `Grafana card ${item.id}`);
         } else if (item.status === "unavailable") {
@@ -513,15 +533,18 @@ async function validateGrafanaDashboardParity(credentialID) {
       if (presentation === "series" && (item.status === "ready" || item.status === "unavailable")) {
         let rangeValue = null;
         for (let attempt = 0; attempt < 9; attempt += 1) {
-          // Ready series need the next sparse scrape; unavailable series stay within the snapshot window.
+          // Match Grafana's rate interval using the configured 15-second scrape interval.
           const rangeEnd = item.status === "ready" ? Date.now() : Date.parse(snapshot.window.to);
+          // A finer grid can catch a sparse sample without changing the rate calculation window.
+          const rangeStepMs = attempt === 0 ? stepMs : Math.min(stepMs, 10_000);
           const range = await query(expression, {
             from,
             to: rangeEnd.toString(),
             instant: false,
-            interval: `${stepSeconds}s`,
-            intervalMs: stepMs,
-            maxDataPoints: Math.ceil((rangeEnd - Date.parse(snapshot.window.from)) / stepMs) + 1,
+            interval: `${rangeStepMs / 1000}s`,
+            intervalMs: rangeStepMs,
+            rateInterval: `${stepSeconds + 15}s`,
+            maxDataPoints: Math.ceil((rangeEnd - Date.parse(snapshot.window.from)) / rangeStepMs) + 1,
           });
           const rangeResult = range.results?.A;
           assert(rangeResult && !rangeResult.error, `Grafana range query failed for series ${item.id}: ${rangeResult?.error ?? "missing result"}`);
@@ -837,9 +860,14 @@ async function createSparseTelemetryTeam() {
   return { teamID: sparseTeamID };
 }
 
-function assertClose(actual, expected, label) {
+function withinTolerance(actual, expected) {
+  if (actual === null || !Number.isFinite(actual)) return false;
   const tolerance = expected === 0 ? 0.05 : Math.max(0.1, Math.abs(expected) * 0.1);
-  assert(Math.abs(actual - expected) <= tolerance, `${label}=${actual} differed from the API value ${expected}`);
+  return Math.abs(actual - expected) <= tolerance;
+}
+
+function assertClose(actual, expected, label) {
+  assert(withinTolerance(actual, expected), `${label}=${actual} differed from the API value ${expected}`);
 }
 
 async function validatePartialPrometheusFailure(grafana) {

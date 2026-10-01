@@ -1,0 +1,171 @@
+{
+  "base_commit": "74386b7adf293780ea2329ee0d272f3693506b8d",
+  "benchmark": {
+    "allocation_investigation": "Queued release adds one median allocation per operation because RetryDecision returns a *time.Time; Go escape analysis reports retryAt moved to heap. Other workloads have equal median allocations.",
+    "candidate_source_commit": "f1c3cd4942066fc8b3876bd1244cb71042d5f5b9",
+    "command": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags=integration ./internal/privacy/postgres -run '^$' -bench '^BenchmarkPrivacyOwnership$' -benchtime=200x -count=1 -benchmem",
+    "comparison": "Every pair has equal result signatures, normalized ordered SQL/argument fingerprints, and SQL/transaction/provider counts. Median p50 and p95 increase each <= max(5% of base, 1 ms).",
+    "host_state": "Ten sequential runs on one 16-core host after competing repository CI runs exited; no other CI, Go test, coverage, or Node test processes were observed immediately before or after the paired sequence.",
+    "measured_operations_per_workload": 200,
+    "name": "BenchmarkPrivacyOwnership",
+    "passed": true,
+    "post_measurement_merge": "The final branch merged main at 926a7e5a5a3d8e36a5a0e4b7bd5e2e7c3a495ec8 after the paired runs. Its five changed files are CI workflow/controller/UAT files and an unrelated Knowledge integration test; Privacy source and benchmark fixtures are byte-identical to the measured candidate.",
+    "query_fingerprint": "Ordered SQL, argument type and value shape; generated UUIDs, timestamps, and hash values are normalized, and pointers are dereferenced. Fixed golden hashes separately pin hash bytes and ordered parts.",
+    "run_order": [
+      "base,candidate",
+      "candidate,base",
+      "base,candidate",
+      "candidate,base",
+      "base,candidate"
+    ],
+    "runs_per_source": 5,
+    "warmups_per_workload": 20,
+    "workloads": {
+      "failed_claim_release_exhausted": {
+        "median_allocations_per_operation": {
+          "base": 229.0,
+          "candidate": 229.0
+        },
+        "median_bytes_per_operation": {
+          "base": 16151.0,
+          "candidate": 16124.0
+        },
+        "normalized_sql_and_arguments_sha256": "92949ec2be5934a7d333b47c739adf193c27c69a27e6c963220b9f755f760d27",
+        "p50": {
+          "allowed_increase_ms": 1.0,
+          "base_median_ms": 2.214231,
+          "candidate_median_ms": 2.265958,
+          "increase_ms": 0.051727
+        },
+        "p95": {
+          "allowed_increase_ms": 1.0,
+          "base_median_ms": 2.630194,
+          "candidate_median_ms": 2.775047,
+          "increase_ms": 0.144853
+        },
+        "provider_calls_per_operation": 0.0,
+        "result_signature": "failed|manifest_mismatch",
+        "sql_statements_per_operation": 7.0,
+        "transaction_completions_per_operation": 1.0,
+        "transactions_per_operation": 1.0
+      },
+      "failed_claim_release_queued": {
+        "median_allocations_per_operation": {
+          "base": 233.0,
+          "candidate": 234.0
+        },
+        "median_bytes_per_operation": {
+          "base": 16291.0,
+          "candidate": 16304.0
+        },
+        "normalized_sql_and_arguments_sha256": "1c62d8eeeb83ba8be578c9b31ce1be3dffe4e394832106ad428af0bc2681697f",
+        "p50": {
+          "allowed_increase_ms": 1.0,
+          "base_median_ms": 2.170333,
+          "candidate_median_ms": 2.151191,
+          "increase_ms": -0.019142
+        },
+        "p95": {
+          "allowed_increase_ms": 1.0,
+          "base_median_ms": 2.805876,
+          "candidate_median_ms": 2.691218,
+          "increase_ms": -0.114658
+        },
+        "provider_calls_per_operation": 0.0,
+        "result_signature": "queued|manifest_mismatch",
+        "sql_statements_per_operation": 7.0,
+        "transaction_completions_per_operation": 1.0,
+        "transactions_per_operation": 1.0
+      },
+      "new_request": {
+        "median_allocations_per_operation": {
+          "base": 906.0,
+          "candidate": 906.0
+        },
+        "median_bytes_per_operation": {
+          "base": 61322.0,
+          "candidate": 61223.0
+        },
+        "normalized_sql_and_arguments_sha256": "b2e10cffa4259c74c7007528a4e1c1bcaf9e32052b0a6a1caa9f0b6d2a0bc6d9",
+        "p50": {
+          "allowed_increase_ms": 1.0,
+          "base_median_ms": 4.060609,
+          "candidate_median_ms": 4.156962,
+          "increase_ms": 0.096353
+        },
+        "p95": {
+          "allowed_increase_ms": 1.0,
+          "base_median_ms": 5.134401,
+          "candidate_median_ms": 4.999763,
+          "increase_ms": -0.134638
+        },
+        "provider_calls_per_operation": 0.0,
+        "result_signature": "queued|erase_credential_private|0",
+        "sql_statements_per_operation": 13.0,
+        "transaction_completions_per_operation": 1.0,
+        "transactions_per_operation": 1.0
+      },
+      "replay": {
+        "median_allocations_per_operation": {
+          "base": 357.0,
+          "candidate": 357.0
+        },
+        "median_bytes_per_operation": {
+          "base": 24523.0,
+          "candidate": 24558.0
+        },
+        "normalized_sql_and_arguments_sha256": "296f7c42401c68d618bf9768b44b9c521052dc279202a055e9fd183660be4636",
+        "p50": {
+          "allowed_increase_ms": 1.0,
+          "base_median_ms": 2.203569,
+          "candidate_median_ms": 2.124522,
+          "increase_ms": -0.079047
+        },
+        "p95": {
+          "allowed_increase_ms": 1.0,
+          "base_median_ms": 2.82427,
+          "candidate_median_ms": 2.786372,
+          "increase_ms": -0.037898
+        },
+        "provider_calls_per_operation": 0.0,
+        "result_signature": "queued|erase_credential_private|0",
+        "sql_statements_per_operation": 8.0,
+        "transaction_completions_per_operation": 1.0,
+        "transactions_per_operation": 1.0
+      }
+    }
+  },
+  "candidate_source_manifest": {
+    "changed_paths_excluding_this_evidence": 23,
+    "recipe": "SHA-256 of sorted path + NUL + file SHA-256 (or <deleted>) + newline for tracked diff and nonignored untracked paths against base, excluding this evidence file",
+    "sha256": "b6f733f629e5b362ccb5172d9c11c8157e8fddcccf1e8e17aea8294f36ca1c1a"
+  },
+  "evaluation_waiver": "Issue #485 records the maintainer-approved scoped historical deterministic 1k waiver; exact-base fixed-result, real PostgreSQL, paired performance, focused production-entry and final-head full production-image E2E are its replacement evidence.",
+  "fixed_result_comparison": {
+    "base_postgres_cases": "Five fixed-result/replay/retry/fence/retention cases passed on the exact base with test-only overlay",
+    "base_service_golden_hashes": "TestPrivateMemoryServiceOperationHashesStayStable passed on the exact base with test-only overlay",
+    "candidate_privacy_unit_and_postgres": "passed, including contract golden hashes and both direct adapter stored-hash cases"
+  },
+  "issue": 485,
+  "maintenance_benefit": "One Privacy contract owns the byte-length-prefixed operation hash and retry/exhaustion decisions. Service and PostgreSQL duplicate implementations were removed without a migration or public contract change.",
+  "schema_version": 1,
+  "test_only_base_overlay_sha256": {
+    "internal/privacy/postgres/fixture_shared_test.go": "9bc3dd5663c5f933ad63e699704fb0666803253dd0093b28ad7d26a0af5e2fac",
+    "internal/privacy/postgres/integration_fixture_helpers_test.go": "7686ff1dd2c244a75cc4f4b94dbf4997b383c5656d8c2f65d0e1fd757b011cab",
+    "internal/privacy/postgres/private_memory_ownership_benchmark_test.go": "e72c670474c7e286db936210540fd5d7d8b95f008e13bbbd5313d08449f4315e",
+    "internal/privacy/postgres/private_memory_ownership_integration_test.go": "5d9db12625fc91c440b8bcf3cb269d85d8483a323d0c603e7ce3868fce4e2313",
+    "internal/privacy/postgres/private_memory_repository_integration_test.go": "c9e1829de90624d1ec023993e592e3f3dd37acc38b7157cefd92c52e692090ec",
+    "internal/privacy/service/service_test.go": "989af85743ca4ff7edd83bbfc623acc25a2713dd1568925c2b61050dcc20d37d"
+  },
+  "validation": {
+    "access_credential_deletion_integration": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags=integration ./internal/access/postgres -run '^TestDeleteForTeam' -count=1 passed",
+    "architecture": "node scripts/check-architecture.mjs passed; 35 architecture conformance UAT tests passed",
+    "ci_check": "./scripts/ci-check.sh passed; complete Go coverage 32971/36610 = 90.1%",
+    "focused_e2e": {
+      "credential_memory_binding": "passed",
+      "private_memory_erasure": "passed"
+    },
+    "go_unit": "go test ./internal/privacy/... ./internal/service/access/... -count=1 passed",
+    "privacy_postgres_integration": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags=integration ./internal/privacy/postgres -count=1 passed"
+  }
+}

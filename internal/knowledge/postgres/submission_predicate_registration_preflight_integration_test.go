@@ -249,3 +249,56 @@ func TestSubmissionPredicateRegistrationCatalogDriftPreservesPreviewAndCommitFen
 	require.ErrorIs(t, err, ErrSubmissionPredicateRegistrationHeld)
 	assertNoCanonicalWrites(commitInput)
 }
+
+func TestPredicateOwnershipGeneratedIdentityAndReuse(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamA := createLedgerTeam(t, adminDB, rls, "predicate-ownership-a")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamA, "predicate-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamA, "predicate-owner-b")
+	teamC := createLedgerTeam(t, adminDB, rls, "predicate-ownership-c")
+	ownerC := createLedgerProfile(t, adminDB, rls, teamC, "predicate-owner-c")
+	store := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	input := EnsureSemanticPredicateCandidateInput{
+		TeamID: teamA, OwnerProfileID: ownerA, Predicate: "  Café Holds  ",
+		RelationshipKind: "state", SubjectKind: "person", ObjectKind: "project",
+	}
+	first, err := store.EnsureSemanticReviewPredicateCandidate(ctx, input)
+	require.NoError(t, err)
+	require.Equal(t, "café_holds", first.PredicateKey)
+	require.Equal(t, 1, first.Version)
+
+	input.OwnerProfileID = ownerB
+	reused, err := store.EnsureSemanticReviewPredicateCandidate(ctx, input)
+	require.NoError(t, err)
+	require.Equal(t, first.PredicateKey, reused.PredicateKey)
+	require.Equal(t, first.Version, reused.Version)
+
+	input.RelationshipKind = "event"
+	collision, err := store.EnsureSemanticReviewPredicateCandidate(ctx, input)
+	require.NoError(t, err)
+	require.Equal(t, "café_holds__event_5bb743fb", collision.PredicateKey)
+	require.Equal(t, 1, collision.Version)
+	reusedCollision, err := store.EnsureSemanticReviewPredicateCandidate(ctx, input)
+	require.NoError(t, err)
+	require.Equal(t, collision.PredicateKey, reusedCollision.PredicateKey)
+	require.Equal(t, collision.Version, reusedCollision.Version)
+
+	input.TeamID, input.OwnerProfileID, input.RelationshipKind = teamC, ownerC, "state"
+	otherTeam, err := store.EnsureSemanticReviewPredicateCandidate(ctx, input)
+	require.NoError(t, err)
+	require.Equal(t, first.PredicateKey, otherTeam.PredicateKey)
+	require.Equal(t, 1, otherTeam.Version)
+	for _, check := range []struct {
+		team string
+		want int64
+	}{{teamA, 2}, {teamC, 1}} {
+		var count int64
+		require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+			return tx.Raw(`SELECT count(*) FROM team_predicate_definitions WHERE team_id = ?::uuid
+				AND predicate_key IN ('café_holds', 'café_holds__event_5bb743fb')`, check.team).Row().Scan(&count)
+		}))
+		require.Equal(t, check.want, count)
+	}
+}

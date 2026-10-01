@@ -369,7 +369,7 @@ func TestPrivateMemoryServiceCredentialDeletionReasonBindsRequestHash(t *testing
 	command.ReasonCode = "privacy_request"
 	_, err = svc.DeleteSSOCredential(ctx, teamID, identityID, credentialID, command, PrivateMemoryAuditContext{})
 	require.ErrorIs(t, err, privacycontract.ErrPrivateMemoryIdempotency)
-	require.Equal(t, repo.disableRequest.IdempotencyScopeHash, privateMemoryServiceHash("owner_sso_credential_delete", teamID.String(), identityID.String(), credentialID.String(), command.IdempotencyKey))
+	require.Equal(t, repo.disableRequest.IdempotencyScopeHash, privacycontract.Hash("owner_sso_credential_delete", teamID.String(), identityID.String(), credentialID.String(), command.IdempotencyKey))
 	require.NotEqual(t, firstHash, repo.disableRequest.RequestHash)
 }
 
@@ -554,7 +554,7 @@ func TestPrivateMemoryServiceWorkerAndAutomaticRetentionPolicy(t *testing.T) {
 	}
 	require.Empty(t, stringValue(nil))
 	require.Equal(t, string(kind), stringValue(&kind))
-	require.NotEqual(t, privateMemoryServiceHash("ab", "c"), privateMemoryServiceHash("a", "bc"))
+	require.NotEqual(t, privacycontract.Hash("ab", "c"), privacycontract.Hash("a", "bc"))
 }
 
 const sha256HexLength = 64
@@ -656,4 +656,58 @@ func TestPrivateMemoryRetentionWorkerJoinsDelayedConfig(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("private-memory retention worker was not joined")
 	}
+}
+
+func TestPrivateMemoryServiceOperationHashesStayStable(t *testing.T) {
+	ctx := context.Background()
+	teamID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	identityID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
+	credentialID := uuid.MustParse("33333333-3333-4333-8333-333333333333")
+	spaceID := uuid.MustParse("44444444-4444-4444-8444-444444444444")
+	repo := &privateMemoryRepositoryStub{operation: &domain.PrivateMemoryErasureOperation{ID: uuid.New()}}
+	svc := NewPrivateMemoryService(PrivateMemoryServiceConfig{
+		Repository: repo, AuditService: &privateMemoryAuditStub{},
+		RuntimeConfig: &privateMemoryRuntimeConfigStub{config: domain.PrivateMemoryRuntimeConfig{RetentionDays: 30}},
+	})
+	command := PrivateMemoryCommand{IdempotencyKey: " key-π ", AcknowledgeIrreversible: true, ReasonCode: "privacy_request"}
+	check := func(scope, request string, wantScope, wantRequest string) {
+		t.Helper()
+		require.Equal(t, wantScope, scope)
+		require.Equal(t, wantRequest, request)
+	}
+
+	_, err := svc.RequestSSOProfileErasure(ctx, teamID, identityID, command)
+	require.NoError(t, err)
+	check(repo.profileRequest.IdempotencyScopeHash, repo.profileRequest.RequestHash,
+		"c0593c78b2032e5ec5c4ee95f16c46d66e71bebe1e6acd25fa5779cd9f4b36ee",
+		"2e2e2939b54326e74ade6b2908352457e0195ec81ce74cb494bc489c376e216c")
+
+	_, err = svc.RequestCredentialErasure(ctx, teamID, credentialID, command)
+	require.NoError(t, err)
+	check(repo.credentialRequest.IdempotencyScopeHash, repo.credentialRequest.RequestHash,
+		"1838810a5b34246b58e077adbcd8ec0f8be6bac8700def36314fa5bbc44a6ba3",
+		"b193dd174284e48a3c33eff2921c001541e79338f2c59dca3319927a946abf91")
+
+	_, err = svc.DeleteSSOCredential(ctx, teamID, identityID, credentialID, command, PrivateMemoryAuditContext{})
+	require.NoError(t, err)
+	check(repo.disableRequest.IdempotencyScopeHash, repo.disableRequest.RequestHash,
+		"6d38fc347fe84dbd215ae446d83cc47e3b8bb8b47fdb622ac12c363621668c0b",
+		"8b6524b638d859f57626c954f6cdb63cd6d52bfb4d92f4281cdb7765927acb8e")
+
+	_, err = svc.RequestControlErasure(ctx, spaceID, command)
+	require.NoError(t, err)
+	check(repo.controlScopeHash, repo.controlRequestHash,
+		"f744c34c19d763bcda2d8c9b6a257bb87c1a1bbad718f1a9323e6907924b3b72",
+		"0afd5c44936734e784f7f28c59a9a7b6cca0de0d30b412ad6e448819440dc8a6")
+
+	_, err = svc.RunRetention(ctx, command, domain.PrivateMemoryActorControl)
+	require.NoError(t, err)
+	check(repo.retentionInput.IdempotencyScopeHash, repo.retentionInput.RequestHash,
+		"0119aec053889c8e7024c4709ecf9e55d0ce1200380ef040bd3ecace1bd0fcca",
+		"c271dc390e90ecff6010970ef75e60080fd2202f44f9db96f5276557220913cc")
+
+	svc.runAutomaticRetention(ctx, time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC))
+	check(repo.retentionInput.IdempotencyScopeHash, repo.retentionInput.RequestHash,
+		"06bc9159154b247ce3d2cee9041b847dbea4343bd3023b09140a456bcb83bde9",
+		"502ac992ea7dee6afd5cddbd1760779ca5e7c58a1d633465126e144c6fec24c3")
 }

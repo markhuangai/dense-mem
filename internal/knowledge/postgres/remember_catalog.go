@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 const (
@@ -232,7 +233,7 @@ func (r *Store) ResolveSemanticReviewPredicateCandidates(
 	}
 	normalizedPredicates := make([]string, 0, len(input.Predicates))
 	for _, predicate := range input.Predicates {
-		normalizedPredicates = append(normalizedPredicates, canonicalGeneratedPredicateKey(predicate))
+		normalizedPredicates = append(normalizedPredicates, knowledgecontract.CanonicalGeneratedPredicateKey(predicate))
 	}
 	out := []SemanticReviewPredicateResolution{}
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {

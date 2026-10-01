@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"gorm.io/gorm"
 )
 
@@ -748,7 +749,7 @@ func (r *Store) PersistEvidenceDiscoveryEvaluation(
 			input.Proposals[index].CreatedByProfileID = ""
 			input.Proposals[index].SourceOwnerProfileIDs = []string{input.Target.OwnerProfileID}
 			input.Proposals[index].Lane = domain.DreamLaneEvidenceDiscovery
-			input.Proposals[index] = normalizeUpsertHypothesisInput(input.Proposals[index])
+			input.Proposals[index] = dreamcontract.NormalizeUpsertHypothesisInput(input.Proposals[index])
 			if err := validateEvidenceDiscoveryProposalInTx(ctx, tx, input.TeamID, input.Target.EvidenceID, input.Proposals[index]); err != nil {
 				return fmt.Errorf("proposals[%d]: %w", index, err)
 			}
@@ -906,17 +907,10 @@ func validateEvidenceDiscoveryProposalInTx(ctx context.Context, tx *gorm.DB, tea
 	if len(input.EvidenceDerivations) == 0 {
 		return errors.New("evidence derivations are required")
 	}
-	targetCited := false
-	seenEvidenceSpans := map[string]struct{}{}
 	for index, derivation := range input.EvidenceDerivations {
-		if derivation.EvidenceID == targetEvidenceID {
-			targetCited = true
-		}
-		spanKey := fmt.Sprintf("%s:%d:%d", derivation.EvidenceID, derivation.SpanStart, derivation.SpanEnd)
-		if _, exists := seenEvidenceSpans[spanKey]; exists {
+		if dreamcontract.DuplicateEvidenceDerivationSpan(input.EvidenceDerivations[:index], derivation) {
 			return fmt.Errorf("evidence_derivations[%d] duplicates a cited span", index)
 		}
-		seenEvidenceSpans[spanKey] = struct{}{}
 		var content string
 		var sourceID, sourceRevisionID, sourceGroupKey, authority string
 		err := tx.WithContext(ctx).Raw(`
@@ -965,15 +959,16 @@ func validateEvidenceDiscoveryProposalInTx(ctx context.Context, tx *gorm.DB, tea
 		if err != nil {
 			return err
 		}
-		if sourceID != derivation.SourceID || sourceRevisionID != derivation.SourceRevisionID || sourceGroupKey != derivation.SourceGroupKey || authority != derivation.Authority {
+		if !dreamcontract.EvidenceDerivationMetadataMatches(derivation, dreamcontract.EvidenceContext{
+			SourceID: sourceID, SourceRevisionID: sourceRevisionID, SourceGroupKey: sourceGroupKey, Authority: authority,
+		}) {
 			return fmt.Errorf("evidence_derivations[%d] metadata does not match current evidence", index)
 		}
-		runes := []rune(content)
-		if derivation.SpanStart < 0 || derivation.SpanEnd > len(runes) || derivation.SpanEnd <= derivation.SpanStart || string(runes[derivation.SpanStart:derivation.SpanEnd]) != derivation.Quote {
+		if !dreamcontract.EvidenceDerivationSpanMatches(derivation, content) {
 			return fmt.Errorf("evidence_derivations[%d] span does not match evidence", index)
 		}
 	}
-	if !targetCited {
+	if !dreamcontract.EvidenceDerivationsCiteTarget(input.EvidenceDerivations, targetEvidenceID) {
 		return errors.New("evidence derivations must cite the target evidence")
 	}
 	return nil

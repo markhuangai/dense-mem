@@ -2,9 +2,7 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	privacycontract "github.com/markhuangai/dense-mem/internal/privacy/contract"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -393,8 +392,8 @@ func (r *PrivateMemoryRepositoryImpl) RunRetention(ctx context.Context, input Pr
 
 		for index := range spaces {
 			space := spaces[index]
-			scopeHash := privateMemoryHash("retention-operation", run.ID.String(), space.ID.String())
-			requestHash := privateMemoryHash(string(domain.PrivateMemoryRetentionPurge), space.ID.String(), fmt.Sprint(space.Generation))
+			scopeHash := privacycontract.Hash("retention-operation", run.ID.String(), space.ID.String())
+			requestHash := privacycontract.Hash(string(domain.PrivateMemoryRetentionPurge), space.ID.String(), fmt.Sprint(space.Generation))
 			if _, err := queuePrivateMemorySpaceTx(ctx, tx, &space, queuePrivateMemoryInput{
 				Action: domain.PrivateMemoryRetentionPurge, ActorClass: domain.PrivateMemoryActorRetention,
 				ReasonCode: "retention_expired", IdempotencyScopeHash: scopeHash, RequestHash: requestHash,
@@ -519,7 +518,7 @@ func (r *PrivateMemoryRepositoryImpl) ClaimNext(ctx context.Context, workerID st
 			       worker_id, lease_until, next_attempt_at, last_error_code, requested_at, started_at,
 			       completed_at, updated_at
 			FROM claimed
-		`, now, workerID, leaseUntil, privateMemoryMaximumAttempts).Row()
+		`, now, workerID, leaseUntil, privacycontract.MaximumAttempts).Row()
 		var err error
 		operation, err = scanPrivateMemoryOperation(row)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -810,8 +809,9 @@ func (r *PrivateMemoryRepositoryImpl) ReleaseClaim(ctx context.Context, operatio
 			return err
 		}
 
+		decision := privacycontract.DecideRetry(attemptCount, now)
 		var result *gorm.DB
-		if attemptCount >= privateMemoryMaximumAttempts {
+		if decision.Status == domain.PrivateMemoryErasureFailed {
 			result = tx.WithContext(ctx).Exec(`
 				UPDATE private_memory_erasure_operations
 				SET status = 'failed', worker_id = '', lease_until = NULL,
@@ -820,7 +820,7 @@ func (r *PrivateMemoryRepositoryImpl) ReleaseClaim(ctx context.Context, operatio
 				WHERE id = $3 AND status = 'processing' AND worker_id = $4 AND fence = $5
 			`, errorCode, now, operationID, workerID, fence)
 		} else {
-			retryAt := now.Add(privateMemoryRetryDelay(attemptCount))
+			retryAt := *decision.NextAttemptAt
 			result = tx.WithContext(ctx).Exec(`
 				UPDATE private_memory_erasure_operations
 				SET status = 'queued', worker_id = '', lease_until = NULL,
@@ -837,17 +837,6 @@ func (r *PrivateMemoryRepositoryImpl) ReleaseClaim(ctx context.Context, operatio
 		return nil
 	})
 	return wrapPrivateMemoryError("release erasure claim", err)
-}
-
-func privateMemoryRetryDelay(attemptCount int) time.Duration {
-	delay := privateMemoryRetryBaseDelay
-	for attempt := 1; attempt < attemptCount; attempt++ {
-		if delay >= privateMemoryRetryMaximumDelay/2 {
-			return privateMemoryRetryMaximumDelay
-		}
-		delay *= 2
-	}
-	return delay
 }
 
 func (r *PrivateMemoryRepositoryImpl) preparedManifest(ctx context.Context) ([]string, error) {
@@ -890,15 +879,6 @@ func privateMemoryPage(limit, offset int) (int, int) {
 		offset = 0
 	}
 	return limit, offset
-}
-
-func privateMemoryHash(parts ...string) string {
-	digest := sha256.New()
-	for _, part := range parts {
-		_, _ = digest.Write([]byte(fmt.Sprintf("%d:", len(part))))
-		_, _ = digest.Write([]byte(part))
-	}
-	return hex.EncodeToString(digest.Sum(nil))
 }
 
 func boundedPrivateMemoryErrorCode(value string) string {

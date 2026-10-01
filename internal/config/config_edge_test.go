@@ -33,6 +33,9 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 		{"zero embedding timeout", func() { os.Setenv("AI_API_EMBEDDING_TIMEOUT_SECONDS", "0") }, "AI_API_EMBEDDING_TIMEOUT_SECONDS"},
 		{"invalid embedding concurrency", func() { os.Setenv("AI_API_EMBEDDING_MAX_CONCURRENCY", "bad") }, "AI_API_EMBEDDING_MAX_CONCURRENCY"},
 		{"zero embedding concurrency", func() { os.Setenv("AI_API_EMBEDDING_MAX_CONCURRENCY", "0") }, "AI_API_EMBEDDING_MAX_CONCURRENCY"},
+		{"invalid embedding batch limit", func() { os.Setenv("AI_API_EMBEDDING_MAX_BATCH_ITEMS", "bad") }, "AI_API_EMBEDDING_MAX_BATCH_ITEMS"},
+		{"zero embedding batch limit", func() { os.Setenv("AI_API_EMBEDDING_MAX_BATCH_ITEMS", "0") }, "AI_API_EMBEDDING_MAX_BATCH_ITEMS"},
+		{"embedding batch limit exceeds application maximum", func() { os.Setenv("AI_API_EMBEDDING_MAX_BATCH_ITEMS", "257") }, "AI_API_EMBEDDING_MAX_BATCH_ITEMS"},
 		{"invalid verifier disable temperature", func() { os.Setenv("AI_VERIFIER_DISABLE_TEMPERATURE", "bad") }, "AI_VERIFIER_DISABLE_TEMPERATURE"},
 		{"invalid verifier timeout", func() { os.Setenv("AI_VERIFIER_TIMEOUT_SECONDS", "bad") }, "AI_VERIFIER_TIMEOUT_SECONDS"},
 		{"invalid verifier concurrency", func() { os.Setenv("AI_VERIFIER_MAX_CONCURRENCY", "bad") }, "AI_VERIFIER_MAX_CONCURRENCY"},
@@ -98,6 +101,19 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 				t.Fatalf("ValidationError.Field = %q, want %q; err=%v", validationErr.Field, tc.field, err)
 			}
 		})
+	}
+}
+
+func TestLoadEmbeddingBatchLimit(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	os.Setenv("AI_API_EMBEDDING_MAX_BATCH_ITEMS", "100")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.GetAIEmbeddingMaxBatchItems(); got != 100 {
+		t.Fatalf("GetAIEmbeddingMaxBatchItems() = %d, want 100", got)
 	}
 }
 

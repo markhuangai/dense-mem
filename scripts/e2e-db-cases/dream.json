@@ -260,6 +260,13 @@
       "run": "^TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited$",
       "phase": "precheck",
       "source": "internal/dream/postgres/dream_repository_integration_test.go"
+    },
+    {
+      "id": "repository/TestDreamPolicyOwnershipPreservesGraphAndFeedback",
+      "package": "./internal/dream/postgres",
+      "run": "^TestDreamPolicyOwnershipPreservesGraphAndFeedback$",
+      "phase": "precheck",
+      "source": "internal/dream/postgres/dream_policy_ownership_integration_test.go"
     }
   ]
 }

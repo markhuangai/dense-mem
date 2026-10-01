@@ -4,7 +4,10 @@ package contract
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,6 +26,46 @@ var (
 	ErrPrivateMemoryHoldConflict      = errors.New("private memory legal hold conflict")
 	ErrPrivateMemoryInternal          = errors.New("private memory storage operation failed")
 )
+
+const MaximumAttempts = 5
+
+const (
+	retryBaseDelay    = time.Second
+	retryMaximumDelay = time.Minute
+)
+
+type RetryDecision struct {
+	Status        domain.PrivateMemoryErasureStatus
+	NextAttemptAt *time.Time
+}
+
+func Hash(parts ...string) string {
+	digest := sha256.New()
+	for _, part := range parts {
+		_, _ = digest.Write([]byte(fmt.Sprintf("%d:", len(part))))
+		_, _ = digest.Write([]byte(part))
+	}
+	return hex.EncodeToString(digest.Sum(nil))
+}
+
+func RetryDelay(attemptCount int) time.Duration {
+	delay := retryBaseDelay
+	for attempt := 1; attempt < attemptCount; attempt++ {
+		if delay >= retryMaximumDelay/2 {
+			return retryMaximumDelay
+		}
+		delay *= 2
+	}
+	return delay
+}
+
+func DecideRetry(attemptCount int, now time.Time) RetryDecision {
+	if attemptCount >= MaximumAttempts {
+		return RetryDecision{Status: domain.PrivateMemoryErasureFailed}
+	}
+	retryAt := now.Add(RetryDelay(attemptCount))
+	return RetryDecision{Status: domain.PrivateMemoryErasureQueued, NextAttemptAt: &retryAt}
+}
 
 type PrivateMemoryErasureRequest struct {
 	TeamID                    uuid.UUID

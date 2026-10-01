@@ -29,8 +29,8 @@ func TestPrivateMemoryCredentialRetirementUpgradesActiveErasure(t *testing.T) {
 	seedPrivateMemoryIngest(t, adminDB, rls, teamID, queuedTarget.ID, queuedTarget.MemorySpaceID, "active queued private content")
 	queuedErase, created, err := repo.RequestCredentialErasure(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: queuedTarget.ID, CredentialID: queuedTarget.ID,
-		IdempotencyScopeHash: privateMemoryHash("active-queued-erase", queuedTarget.ID.String()),
-		RequestHash:          privateMemoryHash("active-queued-erase-request", queuedTarget.ID.String()),
+		IdempotencyScopeHash: Hash("active-queued-erase", queuedTarget.ID.String()),
+		RequestHash:          Hash("active-queued-erase-request", queuedTarget.ID.String()),
 		ReasonCode:           "owner_request",
 	})
 	require.NoError(t, err)
@@ -39,8 +39,8 @@ func TestPrivateMemoryCredentialRetirementUpgradesActiveErasure(t *testing.T) {
 
 	queuedRetirement, created, err := repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: ownerID, CredentialID: queuedTarget.ID,
-		IdempotencyScopeHash: privateMemoryHash("active-queued-retirement", queuedTarget.ID.String()),
-		RequestHash:          privateMemoryHash("active-queued-retirement-request", queuedTarget.ID.String()),
+		IdempotencyScopeHash: Hash("active-queued-retirement", queuedTarget.ID.String()),
+		RequestHash:          Hash("active-queued-retirement-request", queuedTarget.ID.String()),
 		ReasonCode:           "credential_deleted",
 	})
 	require.NoError(t, err)
@@ -55,8 +55,8 @@ func TestPrivateMemoryCredentialRetirementUpgradesActiveErasure(t *testing.T) {
 	require.True(t, queuedRetirement.RetireSpace)
 	queuedRetirementReplay, replayCreated, err := repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: ownerID, CredentialID: queuedTarget.ID,
-		IdempotencyScopeHash: privateMemoryHash("active-queued-retirement", queuedTarget.ID.String()),
-		RequestHash:          privateMemoryHash("active-queued-retirement-request", queuedTarget.ID.String()),
+		IdempotencyScopeHash: Hash("active-queued-retirement", queuedTarget.ID.String()),
+		RequestHash:          Hash("active-queued-retirement-request", queuedTarget.ID.String()),
 		ReasonCode:           "credential_deleted",
 	})
 	require.NoError(t, err)
@@ -64,8 +64,8 @@ func TestPrivateMemoryCredentialRetirementUpgradesActiveErasure(t *testing.T) {
 	require.Equal(t, queuedRetirement.ID, queuedRetirementReplay.ID)
 	originalEraseReplay, replayCreated, err := repo.RequestCredentialErasure(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: queuedTarget.ID, CredentialID: queuedTarget.ID,
-		IdempotencyScopeHash: privateMemoryHash("active-queued-erase", queuedTarget.ID.String()),
-		RequestHash:          privateMemoryHash("active-queued-erase-request", queuedTarget.ID.String()),
+		IdempotencyScopeHash: Hash("active-queued-erase", queuedTarget.ID.String()),
+		RequestHash:          Hash("active-queued-erase-request", queuedTarget.ID.String()),
 		ReasonCode:           "owner_request",
 	})
 	require.NoError(t, err)
@@ -89,8 +89,8 @@ func TestPrivateMemoryCredentialRetirementUpgradesActiveErasure(t *testing.T) {
 	seedPrivateMemoryIngest(t, adminDB, rls, teamID, processingTarget.ID, processingTarget.MemorySpaceID, "active processing private content")
 	processingErase, created, err := repo.RequestCredentialErasure(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: processingTarget.ID, CredentialID: processingTarget.ID,
-		IdempotencyScopeHash: privateMemoryHash("active-processing-erase", processingTarget.ID.String()),
-		RequestHash:          privateMemoryHash("active-processing-erase-request", processingTarget.ID.String()),
+		IdempotencyScopeHash: Hash("active-processing-erase", processingTarget.ID.String()),
+		RequestHash:          Hash("active-processing-erase-request", processingTarget.ID.String()),
 		ReasonCode:           "owner_request",
 	})
 	require.NoError(t, err)
@@ -102,8 +102,8 @@ func TestPrivateMemoryCredentialRetirementUpgradesActiveErasure(t *testing.T) {
 
 	processingRetirement, created, err := repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: ownerID, CredentialID: processingTarget.ID,
-		IdempotencyScopeHash: privateMemoryHash("active-processing-retirement", processingTarget.ID.String()),
-		RequestHash:          privateMemoryHash("active-processing-retirement-request", processingTarget.ID.String()),
+		IdempotencyScopeHash: Hash("active-processing-retirement", processingTarget.ID.String()),
+		RequestHash:          Hash("active-processing-retirement-request", processingTarget.ID.String()),
 		ReasonCode:           "credential_deleted",
 	})
 	require.NoError(t, err)
@@ -119,8 +119,8 @@ func TestPrivateMemoryCredentialRetirementUpgradesActiveErasure(t *testing.T) {
 	require.True(t, processingRetirement.RetireSpace)
 	processingRetirementReplay, replayCreated, err := repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: ownerID, CredentialID: processingTarget.ID,
-		IdempotencyScopeHash: privateMemoryHash("active-processing-retirement", processingTarget.ID.String()),
-		RequestHash:          privateMemoryHash("active-processing-retirement-request", processingTarget.ID.String()),
+		IdempotencyScopeHash: Hash("active-processing-retirement", processingTarget.ID.String()),
+		RequestHash:          Hash("active-processing-retirement-request", processingTarget.ID.String()),
 		ReasonCode:           "credential_deleted",
 	})
 	require.NoError(t, err)

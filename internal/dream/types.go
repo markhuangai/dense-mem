@@ -45,7 +45,7 @@ func (e *ConfirmationBusyError) Unwrap() error {
 }
 
 func (e *ConfirmationBusyError) IsLifecycle() bool {
-	return e != nil && isDreamLifecycleDecision(e.Decision)
+	return e != nil && dreamcontract.LifecycleStatus(e.Decision) != ""
 }
 
 type AppConfig interface {

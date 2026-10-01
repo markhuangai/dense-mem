@@ -32,8 +32,8 @@ func QueueCredentialPrivateErasureTx(ctx context.Context, tx *gorm.DB, teamID, c
 			TargetCredentialID:   &credentialID,
 			RetireSpace:          true,
 			QueueWhileHeld:       true,
-			IdempotencyScopeHash: privateMemoryHash("team-credential-delete", teamID.String(), credentialID.String()),
-			RequestHash:          privateMemoryHash("retire-credential", teamID.String(), credentialID.String()),
+			IdempotencyScopeHash: privacycontract.Hash("team-credential-delete", teamID.String(), credentialID.String()),
+			RequestHash:          privacycontract.Hash("retire-credential", teamID.String(), credentialID.String()),
 		})
 		return err
 	})

@@ -66,29 +66,22 @@ function assertPreviewBuildPolicy(workflow) {
 }
 
 function assertWorkflowOrchestration(workflow) {
-  const exclusive = workflowJob(workflow, "exclusive");
-  const exclusiveCleanup = workflowJob(workflow, "exclusive-cleanup");
-  const sharedStart = workflowJob(workflow, "shared-start");
-  const shared = workflowJob(workflow, "shared");
-  const sharedStop = workflowJob(workflow, "shared-stop");
+  const databasePrechecks = workflowJob(workflow, "database-prechecks");
+  const scenarios = workflowJob(workflow, "scenarios");
   const report = workflowJob(workflow, "report");
-
-  assert.match(exclusive, /^    needs: \[authorize, prechecks, stale-cleanup\]$/m);
-  assert.match(exclusive, /^    strategy:\n      fail-fast: false\n      max-parallel: 4$/m);
-  assert.match(exclusiveCleanup, /^    needs: \[authorize, prechecks, stale-cleanup, exclusive\]$/m);
-  assert.match(exclusiveCleanup, /^    if: always\(\) && needs\.authorize\.result == 'success'$/m);
-  assert.match(exclusiveCleanup, /^    runs-on: rootless-docker$/m);
-  assert.match(exclusiveCleanup, /scripts\/e2e-host-controller\.sh stale-cleanup 1 \\\n\s+"\$\{GITHUB_RUN_ID\}" "\$\{GITHUB_RUN_ATTEMPT\}" exclusive/);
-  assert.match(sharedStart, /^    needs: \[authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup\]$/m);
-  assert.match(sharedStart, /^    if: needs\.exclusive\.result == 'success' && needs\.exclusive-cleanup\.result == 'success'$/m);
-  assert.match(shared, /^    needs: \[authorize, shared-start\]$/m);
-  assert.match(shared, /^    strategy:\n      fail-fast: false\n      max-parallel: 4$/m);
-  assert.match(sharedStop, /^    needs: \[shared-start, shared\]$/m);
-  assert.match(sharedStop, /^    if: always\(\) && needs\.shared-start\.result == 'success'$/m);
-  assert.match(report, /^    needs: \[authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup, shared-start, shared, shared-stop\]$/m);
-  assert.match(report, /^    if: always\(\)$/m);
+  assert.ok(databasePrechecks.includes("shard: [0, 1, 2]"));
+  assert.ok(databasePrechecks.includes("max-parallel: 3"));
+  assert.ok(databasePrechecks.includes("timeout-minutes: 45"));
+  assert.ok(databasePrechecks.includes("runs-on: ubuntu-latest"));
+  assert.ok(scenarios.includes("needs: [authorize, prechecks, database-prechecks]"));
+  assert.ok(scenarios.includes("needs.database-prechecks.result == 'success'"));
+  assert.ok(scenarios.includes("max-parallel: 4"));
+  assert.ok(scenarios.includes("matrix: ${{ fromJSON(needs.authorize.outputs.scenario_matrix) }}"));
+  assert.ok(scenarios.includes("source_revision: ${{ needs.authorize.outputs.source_revision }}"));
+  assert.ok(report.includes("needs: [authorize, prechecks, database-prechecks, scenarios]"));
+  assert.ok(report.includes("SCENARIO_RESULT: ${{ needs.scenarios.result }}"));
+  assert.ok(report.includes("if: always()"));
 }
-
 test("production E2E registry is complete and valid", () => {
   assert.deepEqual(validateRegistry(registry), []);
   assert.equal(new Set(registry.scenarios.map(({ name }) => name)).size, registry.scenarios.length);
@@ -177,72 +170,63 @@ test("preview Buildx policy rejects weakened output settings", async () => {
   assert.throws(() => assertPreviewBuildPolicy(mutated), /preview build is missing --provenance=false/);
 });
 
-test("production jobs use capability-matched runners and PR-owned assets", async () => {
-  const [workflow, reusable, caller, controller, compose, envExample] = await Promise.all([
+test("production E2E runs the complete exact-source registry on hosted isolated jobs", async () => {
+  const [workflow, reusable, caller, bootstrap] = await Promise.all([
     readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8"),
     readFile(new URL("../../.github/workflows/production-e2e-scenario.yml", import.meta.url), "utf8"),
     readFile(new URL("../../.github/workflows/pr-test-image.yml", import.meta.url), "utf8"),
-    readFile(new URL("../../scripts/e2e-host-controller.sh", import.meta.url), "utf8"),
-    readFile(new URL("../../scripts/e2e-stack.yml", import.meta.url), "utf8"),
-    readFile(new URL("../../scripts/e2e-ci.env.example", import.meta.url), "utf8"),
+    readFile(new URL("../../scripts/e2e-ci-bootstrap.sh", import.meta.url), "utf8"),
   ]);
-  const authorize = workflowJob(workflow, "authorize");
-  assert.match(authorize, /^    runs-on: ubuntu-latest$/m);
-  assertNode24Setup(authorize);
-  const report = workflowJob(workflow, "report");
-  assert.match(report, /^    runs-on: ubuntu-latest$/m);
-  assert.doesNotMatch(report, /actions\/setup-node@v7|actions\/download-artifact@v8/);
-  for (const job of ["prechecks", "stale-cleanup", "exclusive-cleanup", "shared-start", "shared-stop"]) {
-    const definition = workflowJob(workflow, job);
-    assert.match(definition, /^    runs-on: rootless-docker$/m);
-    assertNode24Setup(definition);
-    assert.match(definition, /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/);
-    assert.match(definition, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
-  }
-  const scenario = workflowJob(reusable, "scenario");
-  assert.match(scenario, /^    runs-on: rootless-docker$/m);
-  assertNode24Setup(scenario);
-  assert.match(scenario, /scripts\/e2e-host-controller\.sh run[\s\S]*?status=\$\?/);
-  assert.match(scenario, /::stop-commands::/);
-  assert.doesNotMatch(scenario, /continue-on-error|Preserve scenario result|tail -c 262144|tee "\$\{log\}"|Print failed scenario diagnostics/);
-  assert.doesNotMatch(workflow, /rootless-docker-shared|runs-on:\s*pc|workflow_dispatch/);
-  assert.doesNotMatch(workflow, /secrets:\s*inherit/);
-  assert.doesNotMatch(caller, /secrets:\s*inherit/);
-  assert.doesNotThrow(() => assertPreviewBuildPolicy(caller));
-  const workflowCall = workflow.slice(workflow.indexOf("on:\n  workflow_call:"), workflow.indexOf("\npermissions:"));
-  const scenarioCall = reusable.slice(reusable.indexOf("on:\n  workflow_call:"), reusable.indexOf("\npermissions:"));
-  assert.match(workflowCall, /^      image:$/m);
-  assert.doesNotMatch(workflowCall, /test_repository|test_revision|main_revision|source_revision/);
-  for (const input of ["image", "scenario", "timeout_minutes", "shared_project"]) assert.match(scenarioCall, new RegExp(`^      ${input}:$`, "m"));
-  assert.doesNotMatch(scenarioCall, /^      (manifest|digest|test_repository|test_revision|phase|helper_profiles|playwright):$/m);
-  assert.match(workflow, /shared_project: \$\{\{ steps\.start\.outputs\.shared_project \}\}/);
-  assert.match(workflow, /max-parallel: 4/);
-  assert.match(workflow, /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/);
-  assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
-  assert.match(workflow, /path: \.ci-policy[\s\S]*?sparse-checkout:\s*\|\n\s+\.github\/scripts\n\s+scripts\/e2e-scenarios\.json\n\s+scripts\/e2e-scenario-registry\.mjs/);
-  assert.match(workflow, /node \.ci-policy\/scripts\/e2e-scenario-registry\.mjs --validate-compatible "\$\{baseline\}"/);
-  assert.match(workflow, /node \.ci-policy\/scripts\/e2e-scenario-registry\.mjs --matrix exclusive/);
-  assert.doesNotMatch(workflow, /node \.ci-source\/scripts\/e2e-scenario-registry\.mjs --matrix/);
-  assert.match(reusable, /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/);
-  assert.match(reusable, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
-  assert.doesNotMatch(envExample, /^DENSE_MEM_CI_TEST_IMAGE=/m);
-  assert.match(controller, /DENSE_MEM_CI_PROMETHEUS_FILE/);
-  assert.match(controller, /DENSE_MEM_CI_TELEMETRY_TOKEN_FILE/);
-  assert.match(controller, /git -C "\$source_dir" archive --format=tar --prefix=workspace\//);
-  assert.doesNotMatch(controller, /DENSE_MEM_CI_DAEMON_ID|DENSE_MEM_CI_DOCKER_SOCKET|LEASE_DIR|RUN_DIR|DENSE_MEM_E2E_SOURCE_REVISION|e2e-docker-proxy|e2e-runtime-adapter/);
-  assert.doesNotMatch(controller, /\$\{source_dir\}:\/workspace|\$\{runtime_compose_host\}:|\$\{helper_overlay\}:|\$\{run_root\}\/results/);
-  assert.doesNotMatch(compose, /^\s+ports:/m);
-  assert.doesNotMatch(compose, /DENSE_MEM_CI_PROMETHEUS_FILE|DENSE_MEM_CI_TELEMETRY_TOKEN_FILE/);
-  assert.match(compose, /external: true/);
+  assert.equal(matrixFor(registry, "all").include.length, 24);
   assertWorkflowOrchestration(workflow);
-  assert.match(authorize, /path: \.ci-policy[\s\S]*?sparse-checkout:\s*\|\n\s+\.github\/scripts\n\s+scripts\/e2e-scenarios\.json\n\s+scripts\/e2e-scenario-registry\.mjs/);
-  assert.match(authorize, /node \.ci-policy\/scripts\/e2e-scenario-registry\.mjs --matrix exclusive/);
+  const authorize = workflowJob(workflow, "authorize");
+  const prechecks = workflowJob(workflow, "prechecks");
+  const database = workflowJob(workflow, "database-prechecks");
+  const scenario = workflowJob(reusable, "scenario");
+  assertNode24Setup(authorize);
+  for (const job of [prechecks, database, scenario]) {
+    assert.ok(job.includes("runs-on: ubuntu-latest"));
+    assertNode24Setup(job);
+    assert.ok(job.includes("docker/setup-docker-action@v5"));
+    assert.ok(job.includes("rootless: true"));
+    assert.ok(job.includes("set-host: true"));
+    assert.match(job, /daemon-config: \|\s*\{"exec-opts":\["native\.cgroupdriver=cgroupfs"\]\}/);
+    assert.ok(job.includes("scripts/e2e-ci-bootstrap.sh"));
+    assert.doesNotMatch(job, /DOCKER_HOST: unix:\/\/\$\{\{ steps\.docker\.outputs\.sock \}\}/);
+  }
+  assert.ok(authorize.includes("--matrix all"));
+  assert.ok(authorize.includes("--validate-compatible"));
+  assert.ok(authorize.includes("source_revision"));
+  assert.ok(authorize.includes("parseSuccessfulPolicyStatus"));
+  assert.ok(authorize.includes("listJobsForWorkflowRun"));
+  assert.ok(authorize.includes("Publish trusted preview"));
+  assert.ok(authorize.includes("manual E2E trials require a repository admin"));
+  assert.ok(workflow.includes("workflow_dispatch:"));
+  assert.ok(workflow.includes("CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}"));
+  assert.ok(caller.includes("source_revision: ${{ needs.resolve.outputs.head_sha }}"));
+  assert.ok(caller.includes("cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}"));
+  assert.ok(caller.includes("CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}"));
+  assert.ok(bootstrap.includes("RUNNER_TEMP"));
+  assert.ok(bootstrap.includes("::add-mask::"));
+  assert.ok(bootstrap.includes("AI_API_EMBEDDING_MAX_BATCH_ITEMS: \"100\""));
+  assert.ok(scenario.includes("timeout-minutes: ${{ inputs.timeout_minutes }}"));
+  assert.ok(scenario.includes("scripts/e2e-host-controller.sh start"));
+  assert.ok(scenario.includes("scripts/e2e-host-controller.sh run"));
+  assert.ok(scenario.includes("scripts/e2e-host-controller.sh stop"));
+  assert.ok(scenario.includes("if: always() && steps.stack.outputs.project != ''"));
+  assert.ok(scenario.includes("::stop-commands::"));
+  assert.doesNotMatch(workflow, /runs-on: rootless-docker|shared-start:|shared-stop:|exclusive-cleanup:/);
+  assert.doesNotMatch(workflow, /secrets:\s*inherit/);
+  assert.doesNotThrow(() => assertPreviewBuildPolicy(caller));
 });
 
-test("production orchestration assertions detect a missing shared dependency", async () => {
+test("production orchestration assertions detect a missing precheck dependency", async () => {
   const workflow = await readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8");
   assert.doesNotThrow(() => assertWorkflowOrchestration(workflow));
-  const mutated = workflow.replace(/^    needs: \[authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup\]$/m, "    needs: [authorize, prechecks]");
+  const mutated = workflow.replace(
+    "needs: [authorize, prechecks, database-prechecks]",
+    "needs: [authorize, prechecks]",
+  );
   assert.notEqual(mutated, workflow);
   assert.throws(() => assertWorkflowOrchestration(mutated));
 });

@@ -166,6 +166,10 @@ startup: `AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`,
 `AI_API_EMBEDDING_DIMENSIONS`, and `AI_VERIFIER_MODEL`.
 The compose examples provide OpenAI defaults for embeddings; choose the chat
 models explicitly in `.env`.
+`AI_API_EMBEDDING_MAX_BATCH_ITEMS` limits texts per provider HTTP request. It
+defaults to 256, matching the application batch limit; set it to 100 for
+Cloudflare Workers AI BGE-M3. One application batch still returns one ordered
+result, and a failed request fails the whole batch.
 
 `AI_REMEMBER_MODEL`, `AI_CONFLICT_REVIEW_MODEL`, `AI_DREAM_GRAPH_MODEL`,
 `AI_DREAM_EVIDENCE_MODEL`, and `AI_COMMUNITY_SUMMARY_MODEL` are optional
