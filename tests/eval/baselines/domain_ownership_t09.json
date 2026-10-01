@@ -1,0 +1,550 @@
+{
+  "schema_version": 1,
+  "issue": 489,
+  "base_commit": "1759b1d9e9c08e35e5680b59c48b84217d2cdcab",
+  "maintenance_benefit": "Dream contracts now own fixed hypothesis match precedence and native 5/20/200 request bounds. PostgreSQL retains SQL expressions, filtering, top-k selection and transactional hydration; Recall reuses the Dream default. This modest maintenance change claims no speedup.",
+  "evaluation_waiver": "Issue #489 records the maintainer-approved scoped historical deterministic 1k waiver dated 2026-09-28. Replacement gates are exact-base fixed-result equivalence, real PostgreSQL tests, paired performance preservation, scoped production-entry checks and actual final-head full production-image E2E.",
+  "candidate_source_manifest": {
+    "recipe": "SHA-256 of sorted path + NUL + file SHA-256 + newline for the ten implementation/test paths, excluding this evidence file",
+    "changed_paths_excluding_this_evidence": 10,
+    "sha256": "22e64c841c886ac43562e0f19576637244d277f81e5acedeae60105b12f7b726",
+    "source_hashes": {
+      "internal/dream/contract/recall_policy.go": "88b454b6e2bd0cf35ef8ba41ba72af061f6b4e34d6e216e421afacc570be1fd7",
+      "internal/dream/contract/recall_policy_test.go": "0f7cb2c440fcc0c93cf33f0f79210e0c9aa8f21c39445909afd1663e996db9fd",
+      "internal/dream/contract/types.go": "7f36ae8e51f34f24de2262d36322b72aec3263f8f73ea0261be2d0beee66fbd8",
+      "internal/dream/postgres/dream_hypothesis_recall.go": "52888daa66235b6cea77bb775e021db674a217e2a8c45d0dc9a29913960a9c71",
+      "internal/dream/postgres/recall_policy_fixture_test.go": "2b5bc8b74cba9644196f9f4ad28cfec57f419180c4e30bbe6d621e8ae2a20896",
+      "internal/dream/postgres/recall_policy_ownership_benchmark_test.go": "73de741dd9c7dfa4b93a1c30822f04c77db76d2e331417e3d0fdaf57e52fd5e8",
+      "internal/dream/postgres/recall_policy_ownership_integration_test.go": "7d153db17d1aaff846e31e12d9fbcf21fce5111ad1066a0f795d5312d5a03b4d",
+      "internal/recall/recall.go": "b19bbd7b5107b0dd851e42fcf93542852470521d92a2a6b0846b1c090002d5a1",
+      "internal/recall/recall_test.go": "7bcf1f3204f2bded4652898924b94b1ba8105e48d01d60c1438cf18ef6fe7864",
+      "scripts/e2e-db-cases/dream.json": "4cfb9fd4337298e0cdecc47c527976790fd25e900f7c92d84e791f4a77892516"
+    }
+  },
+  "test_only_base_overlay_sha256": {
+    "internal/dream/postgres/recall_policy_fixture_test.go": "2b5bc8b74cba9644196f9f4ad28cfec57f419180c4e30bbe6d621e8ae2a20896",
+    "internal/dream/postgres/recall_policy_ownership_integration_test.go": "7d153db17d1aaff846e31e12d9fbcf21fce5111ad1066a0f795d5312d5a03b4d",
+    "internal/dream/postgres/recall_policy_ownership_benchmark_test.go": "73de741dd9c7dfa4b93a1c30822f04c77db76d2e331417e3d0fdaf57e52fd5e8"
+  },
+  "plan_audit": {
+    "verdict": "conformant",
+    "unresolved_findings": 0,
+    "auditor": {
+      "model": "gpt-6.1-sol",
+      "reasoning_effort": "max"
+    },
+    "receipt_sha256": "1e7b0c7ad460d2f5466ef443a3192b8a8a751eb2ada7ee40a43bc5db326f9d89",
+    "post_audit_changed_paths": [
+      "tests/eval/baselines/domain_ownership_t09.json"
+    ]
+  },
+  "fixed_result_comparison": {
+    "passed": true,
+    "cases": 34,
+    "signature_sha256": "064d8ed3813e30c36c8e39f4853ed064d61ea2595fb016b756002383c3ba3c19",
+    "coverage": "Ordered IDs, derivation hydration, validation errors, database counts, category combinations, recency/ID ties, limits, all capped ID kinds, eligibility and isolation"
+  },
+  "benchmark": {
+    "name": "BenchmarkHypothesisRecallOwnership",
+    "command": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags=integration ./internal/dream/postgres -run ^$ -bench ^BenchmarkHypothesisRecallOwnership$ -benchtime=200x -count=1 -benchmem -v",
+    "passed": true,
+    "warmups_per_workload": 20,
+    "measured_operations_per_workload": 200,
+    "runs_per_source": 5,
+    "run_order": [
+      "base,candidate",
+      "candidate,base",
+      "base,candidate",
+      "candidate,base",
+      "base,candidate"
+    ],
+    "host": "AMD Ryzen 9 5950X, linux/amd64, 32 logical CPUs; serial base/candidate runs on the same host, each admitted after a >=90% CPU-idle sample",
+    "host_observations": [
+      {
+        "round": 1,
+        "source": "base",
+        "cpu_idle_percent_before_run": 93.899
+      },
+      {
+        "round": 1,
+        "source": "candidate",
+        "cpu_idle_percent_before_run": 93.476
+      },
+      {
+        "round": 2,
+        "source": "candidate",
+        "cpu_idle_percent_before_run": 90.508
+      },
+      {
+        "round": 2,
+        "source": "base",
+        "cpu_idle_percent_before_run": 90.214
+      },
+      {
+        "round": 3,
+        "source": "base",
+        "cpu_idle_percent_before_run": 90.995
+      },
+      {
+        "round": 3,
+        "source": "candidate",
+        "cpu_idle_percent_before_run": 91.012
+      },
+      {
+        "round": 4,
+        "source": "candidate",
+        "cpu_idle_percent_before_run": 93.036
+      },
+      {
+        "round": 4,
+        "source": "base",
+        "cpu_idle_percent_before_run": 91.108
+      },
+      {
+        "round": 5,
+        "source": "base",
+        "cpu_idle_percent_before_run": 91.768
+      },
+      {
+        "round": 5,
+        "source": "candidate",
+        "cpu_idle_percent_before_run": 90.635
+      }
+    ],
+    "comparison": "Identical ordered-result signatures and SQL/transaction/completion/provider counts in all ten runs; median p50 and p95 increases each <= max(5% of base, 1 ms)",
+    "allocation_investigation": "Inserting the precomputed ranking CASE into the formerly constant hypothesisSelectSQL argument creates one 15,628-byte runtime SQL-fragment string per call, rounded to Go's 16,384-byte heap class. The CASE builder itself runs only at package initialization. Median allocations rise by 1\u20132 per call and median bytes by 16,273\u201316,570. After the confirmed 16,384-byte string allocation, residual median differences are -111 to +186 bytes, within observed repetition variability; all per-run allocation measurements are retained. No speedup is claimed.",
+    "workloads": {
+      "capped_context": {
+        "result_signature_sha256": "bdc1cd32e4d5f86d490d1fd4b524eba71e2a04121913b0b2ddbcb15ff9e81680",
+        "counts_per_operation": {
+          "sql-statements/op": 7.0,
+          "transactions/op": 1.0,
+          "transaction-completions/op": 1.0,
+          "provider-calls/op": 0.0
+        },
+        "latency_ms": {
+          "p50_ms": {
+            "base_median": 4.767741,
+            "candidate_median": 4.476394,
+            "increase": -0.291347,
+            "allowed_increase": 1
+          },
+          "p95_ms": {
+            "base_median": 6.551047,
+            "candidate_median": 6.212611,
+            "increase": -0.33843599999999974,
+            "allowed_increase": 1
+          }
+        },
+        "median_allocations": {
+          "allocs/op": {
+            "base": 3849.0,
+            "candidate": 3850.0
+          },
+          "B/op": {
+            "base": 451550.0,
+            "candidate": 467823.0
+          }
+        }
+      },
+      "endpoint": {
+        "result_signature_sha256": "aad6b35825a6bf32f2911033bd7bbd800d69e4616dc4d7594548f2710aa77259",
+        "counts_per_operation": {
+          "sql-statements/op": 7.0,
+          "transactions/op": 1.0,
+          "transaction-completions/op": 1.0,
+          "provider-calls/op": 0.0
+        },
+        "latency_ms": {
+          "p50_ms": {
+            "base_median": 3.208637,
+            "candidate_median": 3.111542,
+            "increase": -0.09709499999999993,
+            "allowed_increase": 1
+          },
+          "p95_ms": {
+            "base_median": 4.247256,
+            "candidate_median": 4.043871,
+            "increase": -0.20338499999999993,
+            "allowed_increase": 1
+          }
+        },
+        "median_allocations": {
+          "allocs/op": {
+            "base": 1410.0,
+            "candidate": 1412.0
+          },
+          "B/op": {
+            "base": 202444.0,
+            "candidate": 218973.0
+          }
+        }
+      },
+      "evidence_source": {
+        "result_signature_sha256": "bdc1cd32e4d5f86d490d1fd4b524eba71e2a04121913b0b2ddbcb15ff9e81680",
+        "counts_per_operation": {
+          "sql-statements/op": 7.0,
+          "transactions/op": 1.0,
+          "transaction-completions/op": 1.0,
+          "provider-calls/op": 0.0
+        },
+        "latency_ms": {
+          "p50_ms": {
+            "base_median": 3.327297,
+            "candidate_median": 3.34443,
+            "increase": 0.017132999999999843,
+            "allowed_increase": 1
+          },
+          "p95_ms": {
+            "base_median": 4.23255,
+            "candidate_median": 4.299504,
+            "increase": 0.06695399999999996,
+            "allowed_increase": 1
+          }
+        },
+        "median_allocations": {
+          "allocs/op": {
+            "base": 1622.0,
+            "candidate": 1624.0
+          },
+          "B/op": {
+            "base": 223174.0,
+            "candidate": 239575.0
+          }
+        }
+      },
+      "fallback": {
+        "result_signature_sha256": "65daff337c9d0ff43df5af8221692a470d019a93ff0686c9304c5ef196e343f6",
+        "counts_per_operation": {
+          "sql-statements/op": 7.0,
+          "transactions/op": 1.0,
+          "transaction-completions/op": 1.0,
+          "provider-calls/op": 0.0
+        },
+        "latency_ms": {
+          "p50_ms": {
+            "base_median": 3.628526,
+            "candidate_median": 3.454356,
+            "increase": -0.17416999999999971,
+            "allowed_increase": 1
+          },
+          "p95_ms": {
+            "base_median": 5.485268,
+            "candidate_median": 4.700438,
+            "increase": -0.7848299999999995,
+            "allowed_increase": 1
+          }
+        },
+        "median_allocations": {
+          "allocs/op": {
+            "base": 1086.0,
+            "candidate": 1087.0
+          },
+          "B/op": {
+            "base": 188062.0,
+            "candidate": 204518.0
+          }
+        }
+      },
+      "graph_source": {
+        "result_signature_sha256": "e54f9fa25eaeb9d040727da378355344371ff61a3cee1f2e692d0d63fb69dd1d",
+        "counts_per_operation": {
+          "sql-statements/op": 7.0,
+          "transactions/op": 1.0,
+          "transaction-completions/op": 1.0,
+          "provider-calls/op": 0.0
+        },
+        "latency_ms": {
+          "p50_ms": {
+            "base_median": 2.860173,
+            "candidate_median": 2.776513,
+            "increase": -0.08366000000000007,
+            "allowed_increase": 1
+          },
+          "p95_ms": {
+            "base_median": 3.72449,
+            "candidate_median": 3.528553,
+            "increase": -0.1959369999999998,
+            "allowed_increase": 1
+          }
+        },
+        "median_allocations": {
+          "allocs/op": {
+            "base": 698.0,
+            "candidate": 699.0
+          },
+          "B/op": {
+            "base": 160407.0,
+            "candidate": 176844.0
+          }
+        }
+      },
+      "mixed_ties": {
+        "result_signature_sha256": "c19141d25ee1b97bca7163a1a2a11bc39526c2c9f14b21d03bae93ab2fe82243",
+        "counts_per_operation": {
+          "sql-statements/op": 7.0,
+          "transactions/op": 1.0,
+          "transaction-completions/op": 1.0,
+          "provider-calls/op": 0.0
+        },
+        "latency_ms": {
+          "p50_ms": {
+            "base_median": 3.941468,
+            "candidate_median": 3.672026,
+            "increase": -0.2694420000000002,
+            "allowed_increase": 1
+          },
+          "p95_ms": {
+            "base_median": 5.566593,
+            "candidate_median": 4.734073,
+            "increase": -0.8325199999999997,
+            "allowed_increase": 1
+          }
+        },
+        "median_allocations": {
+          "allocs/op": {
+            "base": 2364.0,
+            "candidate": 2366.0
+          },
+          "B/op": {
+            "base": 260809.0,
+            "candidate": 277379.0
+          }
+        }
+      },
+      "rationale": {
+        "result_signature_sha256": "c3e168a6d8170852ce412ef2a636e8fe4ba46938ffed1da46b90b97605f79670",
+        "counts_per_operation": {
+          "sql-statements/op": 7.0,
+          "transactions/op": 1.0,
+          "transaction-completions/op": 1.0,
+          "provider-calls/op": 0.0
+        },
+        "latency_ms": {
+          "p50_ms": {
+            "base_median": 3.263132,
+            "candidate_median": 3.212574,
+            "increase": -0.0505580000000001,
+            "allowed_increase": 1
+          },
+          "p95_ms": {
+            "base_median": 4.358505,
+            "candidate_median": 4.090706,
+            "increase": -0.2677990000000001,
+            "allowed_increase": 1
+          }
+        },
+        "median_allocations": {
+          "allocs/op": {
+            "base": 1392.0,
+            "candidate": 1393.0
+          },
+          "B/op": {
+            "base": 201688.0,
+            "candidate": 218118.0
+          }
+        }
+      },
+      "statement": {
+        "result_signature_sha256": "e4f0a768253a2aa3666e52f032add73ad5b4ed2833326692bd62708be1ec8b16",
+        "counts_per_operation": {
+          "sql-statements/op": 7.0,
+          "transactions/op": 1.0,
+          "transaction-completions/op": 1.0,
+          "provider-calls/op": 0.0
+        },
+        "latency_ms": {
+          "p50_ms": {
+            "base_median": 3.363558,
+            "candidate_median": 3.259772,
+            "increase": -0.10378599999999993,
+            "allowed_increase": 1
+          },
+          "p95_ms": {
+            "base_median": 4.532511,
+            "candidate_median": 4.209574,
+            "increase": -0.3229370000000005,
+            "allowed_increase": 1
+          }
+        },
+        "median_allocations": {
+          "allocs/op": {
+            "base": 1392.0,
+            "candidate": 1393.0
+          },
+          "B/op": {
+            "base": 201706.0,
+            "candidate": 218078.0
+          }
+        }
+      },
+      "typed_value": {
+        "result_signature_sha256": "e5b0470449d2f7c9f07cd2e98ea52c643af427dc4e9767d1d5c092453d236d15",
+        "counts_per_operation": {
+          "sql-statements/op": 7.0,
+          "transactions/op": 1.0,
+          "transaction-completions/op": 1.0,
+          "provider-calls/op": 0.0
+        },
+        "latency_ms": {
+          "p50_ms": {
+            "base_median": 2.844296,
+            "candidate_median": 2.803163,
+            "increase": -0.041132999999999864,
+            "allowed_increase": 1
+          },
+          "p95_ms": {
+            "base_median": 4.064081,
+            "candidate_median": 3.716862,
+            "increase": -0.34721899999999994,
+            "allowed_increase": 1
+          }
+        },
+        "median_allocations": {
+          "allocs/op": {
+            "base": 680.0,
+            "candidate": 681.0
+          },
+          "B/op": {
+            "base": 159382.0,
+            "candidate": 175800.0
+          }
+        }
+      }
+    },
+    "raw_log_sha256": {
+      "bench-base-1": "d020ee27888cb20d7bf7cf6efb8ea551ffa67e9c74dc1e9961f33cb2ace10a8e",
+      "bench-base-2": "e3ce824b8c2a11f3a2ca6d51e27760b4130cd6c2acadd184317b2d9e50fd94bc",
+      "bench-base-3": "31d8def46f05290d8cfab809eca185faf7b6bd1612c874d6ca718e5ee1534096",
+      "bench-base-4": "bce53b7f75a34a1f6f29cc022976ca78f605424a5dd2fa5265bf91feda0f86d7",
+      "bench-base-5": "514b6ac079b4a738edceaf92c0b12434e79ccef947b79846a7c9e1a116f82dc4",
+      "bench-candidate-1": "8416ea56bd8e35323664f260b5623a95a69ee2a85ca5a4aa2cabbd9bd65cc88d",
+      "bench-candidate-2": "00c4df10f6ae9d39e9baddb030eed0f25e088ef7d2fc1972772b11f721c8a59b",
+      "bench-candidate-3": "1f7e0abb21fde38dfd46eb9f4c75394751f2578f4b20f2ad54debf355da674ae",
+      "bench-candidate-4": "6d318de7cdb2174fc4fd9ac7aea69efd9134284a95e0d1dccb4a8295230c28e9",
+      "bench-candidate-5": "308f6659404844b370c68378cb9aa90f93aa728842ee9f0e9a4e6cd29fe8c68d"
+    }
+  },
+  "validation": [
+    {
+      "name": "focused-unit",
+      "command": [
+        "go",
+        "test",
+        "./internal/dream/...",
+        "./internal/recall/...",
+        "-count=1"
+      ],
+      "exit_code": 0,
+      "log_sha256": "79b285613c14557f7e3a3ceb7b2f014b8e64ab494a41a963c4af3eaa94375042"
+    },
+    {
+      "name": "evaluation-unit",
+      "command": [
+        "go",
+        "test",
+        "-tags=evaluation",
+        "./internal/evaluation/...",
+        "./internal/tools/registry/...",
+        "-count=1"
+      ],
+      "exit_code": 0,
+      "log_sha256": "1d34e7db5b57d350119b85a7aa0c248a68bc85093774cadc4fa071ad3cfb45f4"
+    },
+    {
+      "name": "postgres-candidate",
+      "command": [
+        "env",
+        "-u",
+        "DATABASE_URL",
+        "DENSE_MEM_REPOSITORY_TESTCONTAINERS=1",
+        "go",
+        "test",
+        "-tags=integration",
+        "./internal/dream/postgres",
+        "-run",
+        "TestRecallHypotheses",
+        "-count=1",
+        "-v"
+      ],
+      "exit_code": 0,
+      "log_sha256": "93e1ce2ff011dc955347171c3452b0bc6a6c9f095d2e6740c55244e0a87c76d0"
+    },
+    {
+      "name": "postgres-base",
+      "command": [
+        "env",
+        "-u",
+        "DATABASE_URL",
+        "DENSE_MEM_REPOSITORY_TESTCONTAINERS=1",
+        "go",
+        "test",
+        "-overlay",
+        "<test-only-overlay>",
+        "-tags=integration",
+        "./internal/dream/postgres",
+        "-run",
+        "TestRecallHypotheses",
+        "-count=1",
+        "-v"
+      ],
+      "exit_code": 0,
+      "log_sha256": "0f29db0304cb6b102413c59f43434b194a69d7c12e1114e7d9cf2a95561af0b8"
+    },
+    {
+      "name": "architecture-retry",
+      "command": [
+        "node",
+        "scripts/check-architecture.mjs"
+      ],
+      "exit_code": 0,
+      "log_sha256": "452e636f7cf601336df2c30641a257fe172541538e669036deb08f9dc04ca89b"
+    },
+    {
+      "name": "architecture-uat",
+      "command": [
+        "node",
+        "--test",
+        "tests/uat/architecture_conformance.test.mjs"
+      ],
+      "exit_code": 0,
+      "log_sha256": "80aa0148eb156199e80ce455330998da0b7ee0bf64374caf2587520337f2e94b"
+    },
+    {
+      "name": "repository-ci",
+      "command": [
+        "./scripts/ci-check.sh"
+      ],
+      "exit_code": 0,
+      "log_sha256": "7af7f20b8b8ca7b5905807d614295c83a7a9cf2639eb68eef4e76baa19f7acf4"
+    },
+    {
+      "name": "synchronous-write",
+      "command": [
+        "./scripts/e2e.sh",
+        "synchronous_write"
+      ],
+      "exit_code": 0,
+      "log_sha256": "727c6ba80fd78581f99fb21b3a5bf320ca9e3fbcb9820e592b109b621671eba1"
+    },
+    {
+      "name": "diff-check",
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "validation_notes": {
+    "architecture_dependency_setup": "The initial architecture invocation failed because TypeScript dependencies were absent in the fresh worktree. After npm ci --prefix .lint, the architecture checker and all 35 conformance UAT cases passed.",
+    "coverage": {
+      "covered_statements": 33324,
+      "total_statements": 37015
+    },
+    "synchronous_write_browser_tests": 6,
+    "remote_delivery_gate": "Required after publication: current-head reviews and successful Repository CI, CodeQL analysis, CodeQL and full Production image E2E. This file records local validation only."
+  }
+}

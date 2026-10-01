@@ -25,7 +25,6 @@ import (
 const (
 	defaultRecallResultLimit        = 10
 	maxRecallResultLimit            = 50
-	defaultRelatedHypothesisLimit   = 5
 	defaultRelatedRelationshipLimit = 5
 	maxRelatedRelationshipLimit     = 20
 	defaultCommunityPathLimit       = 3
@@ -501,7 +500,7 @@ func (s *recallService) recallRelatedHypotheses(
 	records, err := s.hypotheses.RecallHypotheses(ctx, dreamcontract.RecallHypothesesInput{
 		TeamID:          teamID,
 		Query:           query,
-		Limit:           defaultRelatedHypothesisLimit,
+		Limit:           dreamcontract.DefaultRecallHypothesisLimit,
 		EvidenceIDs:     contextHandles.evidenceIDs,
 		RelationshipIDs: contextHandles.relationshipIDs,
 		EntityIDs:       contextHandles.entityIDs,

@@ -269,7 +269,7 @@ func TestRecallReturnsRelatedHypothesesOutsidePrimaryResults(t *testing.T) {
 	require.Equal(t, hypothesisID, result.RelatedHypotheses[0].HypothesisID)
 	require.Equal(t, "deterministic", result.RelatedHypotheses[0].GeneratorKind)
 	require.Equal(t, []string{sourceRelationshipID}, result.RelatedHypotheses[0].SourceRelationshipIDs)
-	require.Equal(t, defaultRelatedHypothesisLimit, hypotheses.recallInput.Limit)
+	require.Equal(t, dreamcontract.DefaultRecallHypothesisLimit, hypotheses.recallInput.Limit)
 	require.Equal(t, "PostgreSQL memory", hypotheses.recallInput.Query)
 	require.Equal(t, []string{evidenceID}, hypotheses.recallInput.EvidenceIDs)
 }
