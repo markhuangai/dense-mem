@@ -10,7 +10,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 // PlanRelationshipCorrectionEmbeddings renders only the provider work that a
@@ -67,8 +67,7 @@ func (r *Store) PlanRelationshipCorrectionEmbeddings(
 		if err != nil {
 			return err
 		}
-		if source.OwnerProfileID != input.OwnerProfileID || source.Status != string(domain.RelationshipStatusActive) ||
-			source.SupportCount == 0 || source.IdentityAliasOfID != "" || source.Version != effective.ExpectedVersion {
+		if source.OwnerProfileID != input.OwnerProfileID || !knowledgecontract.RelationshipEligibleForCorrection(source) || source.Version != effective.ExpectedVersion {
 			return nil
 		}
 		supports, err := loadEffectiveRelationshipCorrectionSupports(ctx, tx, input.TeamID, source.RelationshipID)

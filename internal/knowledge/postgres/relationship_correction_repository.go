@@ -17,6 +17,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 var errRelationshipCorrectionSelectionUnavailable = errors.New("relationship correction selected entity is unavailable")
@@ -237,7 +238,7 @@ func (r *Store) submitRelationshipCorrection(
 	if source.Version != input.ExpectedVersion {
 		return rejection("relationship_version_stale", "relationship version is stale")
 	}
-	if source.IdentityAliasOfID != "" || source.Status != string(domain.RelationshipStatusActive) || source.SupportCount == 0 {
+	if !knowledgecontract.RelationshipEligibleForCorrection(source) {
 		return rejection("relationship_not_active", "relationship must be active, supported, and canonical")
 	}
 	if input.Patch.ObjectEntity != nil && source.ObjectEntityID == "" {
@@ -346,7 +347,7 @@ func (r *Store) confirmRelationshipCorrection(
 		}
 		return nil, err
 	}
-	if source.Version != row.ExpectedVersion || source.Status != string(domain.RelationshipStatusActive) || source.SupportCount == 0 || source.IdentityAliasOfID != "" {
+	if source.Version != row.ExpectedVersion || !knowledgecontract.RelationshipEligibleForCorrection(source) {
 		if err := rejectRelationshipCorrectionSubmission(ctx, tx, row, "relationship_changed", "relationship changed while confirmation was pending", input.IdempotencyKey, confirmationHash); err != nil {
 			return nil, err
 		}

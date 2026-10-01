@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "issue": 488,
+  "base_commit": "33a687da85251a3a0204c74fabb28d465835c967",
+  "benchmark": {
+    "name": "BenchmarkLifecycleOwnership",
+    "command": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags=integration ./internal/knowledge/postgres -run '^$' -bench '^BenchmarkLifecycleOwnership$' -benchtime=200x -count=1 -benchmem -v",
+    "warmups_per_workload": 20,
+    "measured_operations_per_workload": 200,
+    "runs_per_source": 5,
+    "run_order": [
+      "base",
+      "candidate",
+      "candidate",
+      "base",
+      "base",
+      "candidate",
+      "candidate",
+      "base",
+      "base",
+      "candidate"
+    ],
+    "idle_host_check": {
+      "cpu_count": 32,
+      "maximum_pre_run_cpu_busy_percent": 10,
+      "observed_maximum_pre_run_cpu_busy_percent": 8.614
+    },
+    "comparison": "Equal result signatures, ordered SQL/argument digests, and SQL/transaction/provider counts; median p50 and p95 increase each <= max(5% of base, 1 ms).",
+    "passed": true,
+    "workloads": {
+      "support_recomputation": {
+        "passed": true,
+        "result_signature": "active:pending_evidence:support=0:groups=0|{Status:pending_evidence SupportCount:0 Version:3 SupportDecisions:2 Transitions:2 LifecycleEvents:0}",
+        "query_contract_sha256": "3b38c775d9688ea9fa783a63201910de688368b1f8c3a51bbf64b0133a88648e",
+        "count_metrics_equal": true,
+        "sql_statements_per_op": 13,
+        "transactions_per_op": 1,
+        "transaction_completions_per_op": 1,
+        "provider_calls_per_op": 0,
+        "latency": {
+          "p50": {
+            "base_median_ms": 3.92148,
+            "candidate_median_ms": 3.908711,
+            "increase_ms": -0.012769,
+            "allowed_increase_ms": 1,
+            "passed": true
+          },
+          "p95": {
+            "base_median_ms": 5.55764,
+            "candidate_median_ms": 5.142688,
+            "increase_ms": -0.414952,
+            "allowed_increase_ms": 1,
+            "passed": true
+          }
+        },
+        "median_allocations_per_op": {
+          "base": 743.0,
+          "candidate": 743.0
+        },
+        "median_bytes_per_op": {
+          "base": 64962.0,
+          "candidate": 65005.0
+        }
+      },
+      "evidence_retraction": {
+        "passed": true,
+        "result_signature": "completed:evidence=1:affected=1:pending=1:active=0:replay=false|{Status:pending_evidence SupportCount:0 Version:3 SupportDecisions:2 Transitions:2 LifecycleEvents:1}",
+        "query_contract_sha256": "96bac0074bba7f79d2f6236ac74f27d6b43ca6e87b837ace19c173d7d2ef04fb",
+        "count_metrics_equal": true,
+        "sql_statements_per_op": 35,
+        "transactions_per_op": 1,
+        "transaction_completions_per_op": 1,
+        "provider_calls_per_op": 0,
+        "latency": {
+          "p50": {
+            "base_median_ms": 11.069296,
+            "candidate_median_ms": 10.915,
+            "increase_ms": -0.154296,
+            "allowed_increase_ms": 1,
+            "passed": true
+          },
+          "p95": {
+            "base_median_ms": 13.189813,
+            "candidate_median_ms": 13.720161,
+            "increase_ms": 0.530348,
+            "allowed_increase_ms": 1,
+            "passed": true
+          }
+        },
+        "median_allocations_per_op": {
+          "base": 1790.0,
+          "candidate": 1790.0
+        },
+        "median_bytes_per_op": {
+          "base": 148552.0,
+          "candidate": 148535.0
+        }
+      },
+      "correction_preview": {
+        "passed": true,
+        "result_signature": "e960af40be3d89465bfdcc725f3c280445ecbe01c3dfac84ce94c4978bd289a8,0cd414c4f331c269e56d0fa01b62dc13cf721e5c912a8c9a797378edb16870b0|{Status:active SupportCount:1 Version:2 SupportDecisions:1 Transitions:1 LifecycleEvents:0}",
+        "query_contract_sha256": "f962b1c5baba76562c633e4fc2309eebfdf7012b3a1d962b66b783f3a84d9dce",
+        "count_metrics_equal": true,
+        "sql_statements_per_op": 14,
+        "transactions_per_op": 1,
+        "transaction_completions_per_op": 1,
+        "provider_calls_per_op": 0,
+        "latency": {
+          "p50": {
+            "base_median_ms": 6.73152,
+            "candidate_median_ms": 7.019002,
+            "increase_ms": 0.287482,
+            "allowed_increase_ms": 1,
+            "passed": true
+          },
+          "p95": {
+            "base_median_ms": 8.485968,
+            "candidate_median_ms": 9.192881,
+            "increase_ms": 0.706913,
+            "allowed_increase_ms": 1,
+            "passed": true
+          }
+        },
+        "median_allocations_per_op": {
+          "base": 936.0,
+          "candidate": 936.0
+        },
+        "median_bytes_per_op": {
+          "base": 83689.0,
+          "candidate": 83482.0
+        }
+      }
+    }
+  },
+  "measured_source_sha256": {
+    "base": "56d71d08cc62012cac9111f38bbd004e0a89233ff113d78874ec08f02018eda3",
+    "candidate": "f4ea60e71df9747b067da52cdad6c7922981cf1aba55714f4f0ad2a87581fe38"
+  },
+  "measured_source_hash_recipe": "SHA-256 of sorted tracked and nonignored untracked path bytes + NUL + raw SHA-256 content digest; generated and ignored files excluded. This evidence artifact was created after measurements.",
+  "candidate_source_manifest": {
+    "changed_paths_excluding_this_evidence": 12,
+    "recipe": "SHA-256 of compact sorted-key JSON mapping each changed path to its content sha256 and byte length under the keys sha256 and bytes",
+    "sha256": "69860801394398b4c34ffd36ecb634ff8023850bfd5527a869dd2bc2550062f3"
+  },
+  "test_only_base_overlay_sha256": {
+    "internal/knowledge/postgres/lifecycle_ownership_fixture_test.go": "b179652be91c092750c750a6e68777e97881d196790303d117088756c97ba828",
+    "internal/knowledge/postgres/lifecycle_ownership_integration_test.go": "606b63add577a72715e4b472651a6556ab210f7915d5ed4facad0fb93de44151",
+    "internal/knowledge/postgres/lifecycle_ownership_benchmark_test.go": "2dc4aa05a40e2c8bbcea7dd570a0077bd201f73387709d3402209a2ff9db52fe"
+  },
+  "raw_log_byte_sha256": {
+    "performance-1-base": "d618bbbe4ab188e8ee184573e096eb15a5e5d1372691336684925d4984a65c9a",
+    "performance-1-candidate": "7eebf7541c6fa30057cb9da318325858800252b3aa11c758ab026de30be201ad",
+    "performance-2-candidate": "187679c877fb2a2edb0da47c08a64bccf939588e9cca299b4d67b46104079000",
+    "performance-2-base": "ae9cf567eb9ef258e7609a029d8aae1c85f2f98d43845ec3adce8118a0a6e8da",
+    "performance-3-base": "a0a1b8c61470533d5ac00dcd9a5668046272dac7699f4144e8be8aeaab2fe1d0",
+    "performance-3-candidate": "fecf7e3fc8ebc049058bf500a417698765cb8eccca7d6b384623097a2e5b0d28",
+    "performance-4-candidate": "aac95c078bcedb4e8b5896273ee49418ff3ca3c910c85909f5ebc71cbac005bb",
+    "performance-4-base": "415d87483cc5a0fb146ac49245bacee61a438b26035fe6daf625fe6a12affb26",
+    "performance-5-base": "0c593f63aabd6fe530471b8aa7e9aef0ebc10c0fc25dc5432f945a73a6f1c0f4",
+    "performance-5-candidate": "5b69ed52d58d3ade05022ffc5645a8a5829a0350ab99de33953018d5661b53d8"
+  },
+  "verification": {
+    "common_postgres_cases_passed_on_both_sources": [
+      "TestLifecycleOwnershipSupportRecomputePreservesTerminalAndAliasState",
+      "TestLifecycleOwnershipCorrectionPreviewEligibility",
+      "TestLifecycleOwnershipConcurrentRetractionRetiresDocumentsOnce",
+      "TestPredicateOwnershipCountedSessionPreservesApplicationPool"
+    ],
+    "additional_exact_base_regressions": "Support revoke/reinstate, source revision, correction support preservation and late version/support fences passed.",
+    "focused_knowledge_lifecycle_unit": "passed",
+    "evaluation_waiver": "Issue #488 records the maintainer-approved scoped historical deterministic 1k waiver; fixed-result PostgreSQL, paired performance, focused production-entry and actual final-head full CI/E2E are required replacement evidence.",
+    "allocation_investigation": "All three median allocation counts match. Byte-per-operation ranges overlap between sources for every workload, and observed median byte differences are within the per-source repetition ranges. No persistent allocation-count increase is observed. The extracted policies only read native fields and return strings or booleans.",
+    "performance_note": "All thresholds passed; measured medians are recorded above, with no speedup claim."
+  },
+  "maintenance_benefit": "Support-driven status and conflict-placement eligibility each have one pure Knowledge contract owner. Five correction eligibility decision points reuse one native owner. Superseded adapter policy bodies were removed without wrappers; SQL, transactions, locks, public contracts, authorization, history and search effects are preserved."
+}

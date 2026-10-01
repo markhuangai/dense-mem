@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 var errRelationshipVersionMismatch = errors.New("relationship version does not match current relationship")
@@ -740,7 +741,7 @@ func recomputeRelationshipFromEffectiveSupport(
 	if err != nil {
 		return nil, err
 	}
-	nextStatus := statusForEffectiveSupport(before.Status, counts.SupportCount)
+	nextStatus := knowledgecontract.StatusForEffectiveSupport(before.Status, counts.SupportCount)
 	versionBump := `
 		CASE
 			WHEN support_count <> ?
@@ -847,23 +848,4 @@ func effectiveRelationshipSupportCounts(ctx context.Context, tx *gorm.DB, teamID
 		return effectiveSupportCounts{}, err
 	}
 	return counts, nil
-}
-
-func statusForEffectiveSupport(currentStatus string, supportCount int) string {
-	if !relationshipStatusAllowsSupportRecompute(currentStatus) {
-		return currentStatus
-	}
-	if supportCount == 0 {
-		return string(domain.RelationshipStatusPendingEvidence)
-	}
-	return string(domain.RelationshipStatusActive)
-}
-
-func relationshipStatusAllowsSupportRecompute(status string) bool {
-	switch status {
-	case string(domain.RelationshipStatusActive), string(domain.RelationshipStatusPendingEvidence):
-		return true
-	default:
-		return false
-	}
 }

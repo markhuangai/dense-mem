@@ -337,7 +337,7 @@ func planEvidenceLifecycleInSystem(
 		if err != nil {
 			return nil, err
 		}
-		nextStatus := statusForEffectiveSupport(relationship.Status, counts.SupportCount-len(supportsByRelationship[relationshipID]))
+		nextStatus := knowledgecontract.StatusForEffectiveSupport(relationship.Status, counts.SupportCount-len(supportsByRelationship[relationshipID]))
 		plan.AffectedRelationshipCount++
 		switch nextStatus {
 		case string(domain.RelationshipStatusPendingEvidence):

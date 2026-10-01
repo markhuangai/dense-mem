@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 const (
@@ -66,16 +67,6 @@ func normalizeConflictRuntimeConfig(input ConflictRuntimeConfig) ConflictRuntime
 	return input
 }
 
-func relationshipEligibleForConflictPlacement(record *RelationshipRecord) bool {
-	if record == nil {
-		return false
-	}
-	return record.Status == string(domain.RelationshipStatusActive) &&
-		record.SupportCount > 0 &&
-		record.RelationshipKind == string(domain.RelationshipKindState) &&
-		record.CurrentCardinality == string(domain.CurrentCardinalityOne)
-}
-
 func applyRelationshipConflictPlacement(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -83,7 +74,7 @@ func applyRelationshipConflictPlacement(
 	applied *RelationshipDecisionResult,
 	config ConflictRuntimeConfig,
 ) error {
-	if applied == nil || !relationshipEligibleForConflictPlacement(applied.Relationship) {
+	if applied == nil || !knowledgecontract.RelationshipEligibleForConflictPlacement(applied.Relationship) {
 		return nil
 	}
 	config = normalizeConflictRuntimeConfig(config)

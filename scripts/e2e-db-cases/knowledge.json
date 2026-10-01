@@ -351,6 +351,27 @@
       "run": "^TestPredicateOwnershipCountedSessionPreservesApplicationPool$",
       "phase": "precheck",
       "source": "internal/knowledge/postgres/predicate_ownership_pool_integration_test.go"
+    },
+    {
+      "id": "knowledge/TestLifecycleOwnershipSupportRecomputePreservesTerminalAndAliasState",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestLifecycleOwnershipSupportRecomputePreservesTerminalAndAliasState$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/lifecycle_ownership_integration_test.go"
+    },
+    {
+      "id": "knowledge/TestLifecycleOwnershipCorrectionPreviewEligibility",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestLifecycleOwnershipCorrectionPreviewEligibility$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/lifecycle_ownership_integration_test.go"
+    },
+    {
+      "id": "knowledge/TestLifecycleOwnershipConcurrentRetractionRetiresDocumentsOnce",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestLifecycleOwnershipConcurrentRetractionRetiresDocumentsOnce$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/lifecycle_ownership_integration_test.go"
     }
   ]
 }

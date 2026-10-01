@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 type relationshipCorrectionInsert struct {
@@ -668,7 +669,7 @@ func (r *Store) applyRelationshipCorrection(
 		}
 		return r.rejectAppliedRelationshipCorrection(ctx, tx, row, "relationship_version_stale", "relationship version is stale")
 	}
-	if source.IdentityAliasOfID != "" || source.Status != string(domain.RelationshipStatusActive) || source.SupportCount == 0 {
+	if !knowledgecontract.RelationshipEligibleForCorrection(source) {
 		if row.ConfirmationIdempotency != "" {
 			return r.rejectAppliedRelationshipCorrection(ctx, tx, row, "relationship_changed", "relationship changed while confirmation was pending")
 		}
@@ -749,8 +750,7 @@ func (r *Store) applyRelationshipCorrection(
 		if existing.RelationshipID == source.RelationshipID {
 			return r.rejectAppliedRelationshipCorrection(ctx, tx, row, "no_change", "correction resolves to the existing Relationship")
 		}
-		if existing.OwnerProfileID != row.OwnerProfileID || existing.IdentityAliasOfID != "" ||
-			existing.Status != string(domain.RelationshipStatusActive) || existing.SupportCount == 0 {
+		if existing.OwnerProfileID != row.OwnerProfileID || !knowledgecontract.RelationshipEligibleForCorrection(existing) {
 			return r.rejectAppliedRelationshipCorrection(ctx, tx, row, "inactive_relationship_collision", "corrected Relationship collides with inactive or unsupported history")
 		}
 		reused = true
