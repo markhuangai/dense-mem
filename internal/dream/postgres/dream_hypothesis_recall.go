@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"gorm.io/gorm"
 
@@ -13,29 +12,9 @@ import (
 )
 
 func (r *Store) RecallHypotheses(ctx context.Context, input RecallHypothesesInput) ([]HypothesisRecord, error) {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.Query = strings.TrimSpace(input.Query)
-	if input.Limit <= 0 {
-		input.Limit = 5
-	}
-	if input.Limit > 20 {
-		input.Limit = 20
-	}
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return nil, fmt.Errorf("team_id is required: %w", err)
-	}
-	var err error
-	if input.EvidenceIDs, err = normalizeRecallHypothesisContextIDs(input.EvidenceIDs); err != nil {
-		return nil, fmt.Errorf("recall context evidence IDs: %w", err)
-	}
-	if input.RelationshipIDs, err = normalizeRecallHypothesisContextIDs(input.RelationshipIDs); err != nil {
-		return nil, fmt.Errorf("recall context Relationship IDs: %w", err)
-	}
-	if input.EntityIDs, err = normalizeRecallHypothesisContextIDs(input.EntityIDs); err != nil {
-		return nil, fmt.Errorf("recall context entity IDs: %w", err)
-	}
-	if input.ValueIDs, err = normalizeRecallHypothesisContextIDs(input.ValueIDs); err != nil {
-		return nil, fmt.Errorf("recall context Value IDs: %w", err)
+	input, err := dreamcontract.NormalizeRecallHypothesesInput(input)
+	if err != nil {
+		return nil, err
 	}
 
 	pattern := "%" + input.Query + "%"
@@ -91,13 +70,7 @@ func (r *Store) RecallHypotheses(ctx context.Context, input RecallHypothesesInpu
 			      OR relevance.statement_match
 			      OR relevance.rationale_match
 			  )
-			ORDER BY CASE
-			           WHEN relevance.source_overlap THEN 0
-			           WHEN relevance.endpoint_overlap THEN 1
-			           WHEN relevance.statement_match THEN 2
-			           WHEN relevance.rationale_match THEN 3
-			           ELSE 4
-			         END,
+			ORDER BY `+recallHypothesisRankingSQL+`,
 			         updated_at DESC,
 			         hypothesis_id
 			LIMIT ?
@@ -129,27 +102,28 @@ func (r *Store) RecallHypotheses(ctx context.Context, input RecallHypothesesInpu
 	return records, nil
 }
 
-func normalizeRecallHypothesisContextIDs(values []string) ([]string, error) {
-	out := make([]string, 0, min(len(values), dreamcontract.MaxRecallHypothesisContextIDs))
-	seen := make(map[string]struct{}, cap(out))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		parsed, err := uuid.Parse(value)
-		if err != nil {
-			return nil, err
-		}
-		value = parsed.String()
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		if len(out) == dreamcontract.MaxRecallHypothesisContextIDs {
-			break
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
+var recallHypothesisRankingSQL = buildRecallHypothesisRankingSQL()
+
+func buildRecallHypothesisRankingSQL() string {
+	expressions := map[dreamcontract.RecallHypothesisMatchCategory]string{
+		dreamcontract.RecallHypothesisSourceOverlap:   "relevance.source_overlap",
+		dreamcontract.RecallHypothesisEndpointOverlap: "relevance.endpoint_overlap",
+		dreamcontract.RecallHypothesisStatementMatch:  "relevance.statement_match",
+		dreamcontract.RecallHypothesisRationaleMatch:  "relevance.rationale_match",
 	}
-	return out, nil
+	var query strings.Builder
+	query.WriteString("CASE")
+	for rank, category := range dreamcontract.RecallHypothesisMatchOrder() {
+		if category == dreamcontract.RecallHypothesisFallback {
+			fmt.Fprintf(&query, " ELSE %d", rank)
+			continue
+		}
+		expression, ok := expressions[category]
+		if !ok {
+			panic("dream: unsupported hypothesis recall match category")
+		}
+		fmt.Fprintf(&query, " WHEN %s THEN %d", expression, rank)
+	}
+	query.WriteString(" END")
+	return query.String()
 }

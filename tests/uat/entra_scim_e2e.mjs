@@ -11,8 +11,9 @@ const { connector, credential } = await createDirectoryConnector(provider.id);
 await enterObserveMode(connector.id);
 const scimToken = await issueSCIMToken(credential);
 const user = await provisionUser(connector.id, scimToken);
-await provisionManagerGroup(connector.id, scimToken, user.id);
-await provisionUnassignedManagerGroup(connector.id, scimToken);
+const managerGroup = await provisionManagerGroup(connector.id, scimToken, user.id);
+const unassignedGroup = await provisionUnassignedManagerGroup(connector.id, scimToken);
+await verifyDirectoryPagination(connector.id, scimToken, user, [unassignedGroup, managerGroup]);
 await activateDirectoryConnector(connector.id);
 await createControlAdminGroup(provider.id);
 await verifyConfiguredProviders(provider.id);
@@ -131,6 +132,45 @@ async function provisionUnassignedManagerGroup(connectorID, token) {
       members: [],
     },
   }, 201);
+}
+
+async function verifyDirectoryPagination(connectorID, token, user, groups) {
+  const config = await scimRequest(connectorID, token, "/ServiceProviderConfig");
+  assert(config.filter?.maxResults === 100, "SCIM did not advertise the supported page maximum");
+  for (const [kind, resources, nameField] of [["Users", [user], "userName"], ["Groups", groups, "displayName"]]) {
+    for (const count of [undefined, 0, 1, 100, 101]) {
+      const query = count === undefined ? "" : `?count=${count}`;
+      const page = await scimRequest(connectorID, token, `/${kind}${query}`);
+      const expectedLength = Math.min(count ?? 100, 100, resources.length);
+      assert(page.totalResults === resources.length, `${kind} page changed its total`);
+      assert(page.Resources?.length === expectedLength, `${kind} count=${count} returned the wrong number of resources`);
+      assert(page.Resources.every((item, index) => item.id === resources[index].id), `${kind} page order changed`);
+      assert(page.itemsPerPage === Math.min(count ?? 100, 100), `${kind} page did not preserve the protocol count`);
+    }
+    for (const startIndex of [2, resources.length + 1]) {
+      const page = await scimRequest(connectorID, token, `/${kind}?startIndex=${startIndex}&count=1`);
+      const expected = resources.slice(startIndex - 1, startIndex);
+      assert(page.totalResults === resources.length, `${kind} offset changed its total`);
+      assert(page.Resources?.length === expected.length, `${kind} offset returned the wrong page length`);
+      assert(page.Resources.every((item, index) => item.id === expected[index].id), `${kind} offset selected the wrong resource`);
+    }
+    const resource = resources[0];
+    for (const [field, value] of [[nameField, resource[nameField].toUpperCase()], ["externalId", resource.externalId], ["id", resource.id]]) {
+      const page = await scimRequest(connectorID, token, `/${kind}?filter=${encodeURIComponent(`${field} eq ${JSON.stringify(value)}`)}&count=1`);
+      assert(page.totalResults === 1 && page.Resources?.[0]?.id === resource.id, `${kind} supported filter changed its result`);
+    }
+    const injection = await scimRequest(connectorID, token, `/${kind}?filter=${encodeURIComponent(`${nameField} eq "' OR 1=1 --"`)}&count=100`);
+    assert(injection.totalResults === 0 && injection.Resources?.length === 0, `${kind} filter value was treated as SQL`);
+    for (const filter of ['email eq "anything"', 'id eq "not-a-uuid"', `${nameField} ne "anything"`]) {
+      const rejected = await scimRequest(connectorID, token, `/${kind}?filter=${encodeURIComponent(filter)}`, {}, 400);
+      assert(rejected.scimType === "invalidFilter", `${kind} invalid filter changed its error classification`);
+    }
+    for (const authorization of ["", "Bearer wrong-pagination-token"]) {
+      const rejected = await scimRequest(connectorID, token, `/${kind}?count=0`, { headers: { Authorization: authorization } }, 401);
+      assert(!("totalResults" in rejected) && !("Resources" in rejected), `${kind} unauthorized metadata exposed directory results`);
+    }
+  }
+  console.log("Entra SCIM pagination positive and adverse cases passed.");
 }
 
 async function activateDirectoryConnector(connectorID) {

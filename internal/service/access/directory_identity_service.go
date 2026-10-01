@@ -333,6 +333,10 @@ func (s *DirectoryIdentityService) ListUsersPage(ctx context.Context, connectorI
 	if s == nil || s.repo == nil {
 		return nil, 0, fmt.Errorf("directory identity service is unavailable")
 	}
+	request, err := accesscontract.NormalizeDirectoryUserPageRequest(request)
+	if err != nil {
+		return nil, 0, directoryIdentityServiceError(err)
+	}
 	users, total, err := s.repo.ListDirectoryUsersPage(ctx, connectorID, request)
 	if err != nil {
 		return nil, 0, directoryIdentityServiceError(err)
@@ -425,6 +429,10 @@ func (s *DirectoryIdentityService) ListGroups(ctx context.Context, connectorID u
 func (s *DirectoryIdentityService) ListGroupsPage(ctx context.Context, connectorID uuid.UUID, request domain.DirectoryPageRequest) ([]*domain.DirectoryGroup, int, error) {
 	if s == nil || s.repo == nil {
 		return nil, 0, fmt.Errorf("directory identity service is unavailable")
+	}
+	request, err := accesscontract.NormalizeDirectoryGroupPageRequest(request)
+	if err != nil {
+		return nil, 0, directoryIdentityServiceError(err)
 	}
 	groups, total, err := s.repo.ListDirectoryGroupsPage(ctx, connectorID, request)
 	if err != nil {

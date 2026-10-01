@@ -267,6 +267,27 @@
       "run": "^TestDreamPolicyOwnershipPreservesGraphAndFeedback$",
       "phase": "precheck",
       "source": "internal/dream/postgres/dream_policy_ownership_integration_test.go"
+    },
+    {
+      "id": "repository/TestRecallHypothesesPolicyPreservesOrderedResultsAndBounds",
+      "package": "./internal/dream/postgres",
+      "run": "^TestRecallHypothesesPolicyPreservesOrderedResultsAndBounds$",
+      "phase": "precheck",
+      "source": "internal/dream/postgres/recall_policy_ownership_integration_test.go"
+    },
+    {
+      "id": "repository/TestRecallHypothesesPolicyPreservesValidationBeforeTransactions",
+      "package": "./internal/dream/postgres",
+      "run": "^TestRecallHypothesesPolicyPreservesValidationBeforeTransactions$",
+      "phase": "precheck",
+      "source": "internal/dream/postgres/recall_policy_ownership_integration_test.go"
+    },
+    {
+      "id": "repository/TestRecallHypothesesPolicyExcludesAliasedAndStaleGraphSources",
+      "package": "./internal/dream/postgres",
+      "run": "^TestRecallHypothesesPolicyExcludesAliasedAndStaleGraphSources$",
+      "phase": "precheck",
+      "source": "internal/dream/postgres/recall_policy_ownership_integration_test.go"
     }
   ]
 }

@@ -1,0 +1,409 @@
+{
+  "base_commit": "1759b1d9e9c08e35e5680b59c48b84217d2cdcab",
+  "benchmark": {
+    "allocation_investigation": "All six workloads have equal median allocation counts and overlapping per-run byte ranges. Median byte differences range from -309 to +169 bytes per operation. The added unfiltered validation compares bounds/fields and trims existing strings; its error and UUID allocation branches are outside these workloads. No persistent allocation-count increase was observed.",
+    "command": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags=integration ./internal/access/postgres -run '^$' -bench '^BenchmarkDirectoryPageOwnership$' -benchtime=200x -count=1 -benchmem",
+    "comparison": "All ten runs have equal result signatures, normalized ordered SQL/argument fingerprints, and SQL/transaction/provider counts per workload. Median p50 and p95 increases each stay within max(5% of base, 1 ms).",
+    "host_state": {
+      "after_load_average": [
+        20.06494140625,
+        10.86572265625,
+        12.23876953125
+      ],
+      "before_load_average": [
+        3.0,
+        4.9716796875,
+        10.9384765625
+      ],
+      "competing_test_processes_observed": 0,
+      "continuous_observation_count": 137,
+      "cpu_count": 32,
+      "idle_window_seconds": 60,
+      "method": "One host; sequential alternating runs; one-second process monitoring throughout; own descendants and zombies excluded. An earlier contended attempt was rejected and excluded."
+    },
+    "measured_operations_per_workload": 200,
+    "name": "BenchmarkDirectoryPageOwnership",
+    "passed": true,
+    "query_fingerprint": "Ordered SQL and argument type/value shape; UUIDs are normalized. Measurement captures the first operation after warmup; exact fixed-result signatures separately pin returned IDs and values.",
+    "raw_run_sha256": {
+      "benchmark-pair-1-base": "d793d8ac71fc4bc02422743a75f8aa27ece252dffb8b38ff224f89e4c83f98d2",
+      "benchmark-pair-1-candidate": "d7bc5bf15c061651ddc2fe4630f590fa50c569fdc0f42461c407891c32524973",
+      "benchmark-pair-2-base": "9bbeed2e4f0a5320aac9601bc3bde862404250da374940d0a9ad1dc1f4763eb6",
+      "benchmark-pair-2-candidate": "5f4ad3a4aa2cbdb76e68db9e8dd75320a943a733cdfec19170b19cfd8ccdd7f3",
+      "benchmark-pair-3-base": "e751017d37cd01276b6a38b1262c9f3b7ab7c63947dd4bbba46644f90548c177",
+      "benchmark-pair-3-candidate": "4fc71aba33d23d92cbe8c9e825122af4b835b8a095b0bb9233ade9115ced9fb5",
+      "benchmark-pair-4-base": "10afde223a6efe28434c87a48e11d39d1f694b1c096a802ee5b3b9ad36b58c51",
+      "benchmark-pair-4-candidate": "e0e397e5c8a7564ec0ee5b1ba7ff073de644c160f8c2996337bc21fdc1f7d2d9",
+      "benchmark-pair-5-base": "d837e683c67cd67051c3a36d6910fb924cb4ec6055c580b74ed78c8d48b240a6",
+      "benchmark-pair-5-candidate": "d5ed7d22b74a6e14f4f52d3e4ae9c38b51b03122c6d4cd3bcccdf7504e9cb9e7"
+    },
+    "run_order": [
+      "base,candidate",
+      "candidate,base",
+      "base,candidate",
+      "candidate,base",
+      "base,candidate"
+    ],
+    "runs_per_source": 5,
+    "warmups_per_workload": 20,
+    "workloads": {
+      "groups/count_0": {
+        "bytes_per_operation_range": {
+          "base": [
+            10364.0,
+            10567.0
+          ],
+          "candidate": [
+            10415.0,
+            10615.0
+          ]
+        },
+        "median_allocations_per_operation": {
+          "base": 154.0,
+          "candidate": 154.0
+        },
+        "median_bytes_per_operation": {
+          "base": 10400.0,
+          "candidate": 10569.0
+        },
+        "normalized_sql_and_arguments_sha256": "201610faabc79c8210f1f4c964bc40f5e828fa97461fe42e5cc406f164d18551",
+        "p50": {
+          "allowed_increase_ms": 1,
+          "base_median_ms": 1.542522,
+          "candidate_median_ms": 1.552615,
+          "increase_ms": 0.01009300000000013,
+          "passed": true
+        },
+        "p95": {
+          "allowed_increase_ms": 1,
+          "base_median_ms": 1.999327,
+          "candidate_median_ms": 1.852653,
+          "increase_ms": -0.14667399999999997,
+          "passed": true
+        },
+        "provider_calls_per_operation": 0.0,
+        "result_signature_sha256": "2532367a152af061a9acd5886966f25e92731b46a6d03232249345756a230573",
+        "sql_statements_per_operation": 6.0,
+        "transactions_per_operation": 1.0
+      },
+      "groups/count_1": {
+        "bytes_per_operation_range": {
+          "base": [
+            23024.0,
+            23264.0
+          ],
+          "candidate": [
+            22992.0,
+            23212.0
+          ]
+        },
+        "median_allocations_per_operation": {
+          "base": 414.0,
+          "candidate": 414.0
+        },
+        "median_bytes_per_operation": {
+          "base": 23194.0,
+          "candidate": 23186.0
+        },
+        "normalized_sql_and_arguments_sha256": "8a18d48845a4c26a1f3ee5277f65aa2e07a876be6921e4091f424e42dfd73851",
+        "p50": {
+          "allowed_increase_ms": 1,
+          "base_median_ms": 2.170874,
+          "candidate_median_ms": 2.180771,
+          "increase_ms": 0.009897000000000045,
+          "passed": true
+        },
+        "p95": {
+          "allowed_increase_ms": 1,
+          "base_median_ms": 2.784059,
+          "candidate_median_ms": 2.946953,
+          "increase_ms": 0.1628940000000001,
+          "passed": true
+        },
+        "provider_calls_per_operation": 0.0,
+        "result_signature_sha256": "9f65eaa289877f65a39f6d54aaab05adb60ba73a53744b3fde6a715735d44058",
+        "sql_statements_per_operation": 8.0,
+        "transactions_per_operation": 1.0
+      },
+      "groups/count_100": {
+        "bytes_per_operation_range": {
+          "base": [
+            474342.0,
+            474940.0
+          ],
+          "candidate": [
+            474204.0,
+            474525.0
+          ]
+        },
+        "median_allocations_per_operation": {
+          "base": 6403.0,
+          "candidate": 6403.0
+        },
+        "median_bytes_per_operation": {
+          "base": 474735.0,
+          "candidate": 474426.0
+        },
+        "normalized_sql_and_arguments_sha256": "c4d7b4e78872ab0b660fd3c4e174528778a8344143d8fcd9c5ff1f0c50c75167",
+        "p50": {
+          "allowed_increase_ms": 1,
+          "base_median_ms": 3.53378,
+          "candidate_median_ms": 3.66456,
+          "increase_ms": 0.13077999999999967,
+          "passed": true
+        },
+        "p95": {
+          "allowed_increase_ms": 1,
+          "base_median_ms": 5.658707,
+          "candidate_median_ms": 5.968116,
+          "increase_ms": 0.3094090000000005,
+          "passed": true
+        },
+        "provider_calls_per_operation": 0.0,
+        "result_signature_sha256": "2a65311989e07af37af68d870e2bfd24b2d8ca00e12d69cf63c0ac2f0df0bd18",
+        "sql_statements_per_operation": 8.0,
+        "transactions_per_operation": 1.0
+      },
+      "users/count_0": {
+        "bytes_per_operation_range": {
+          "base": [
+            10455.0,
+            10704.0
+          ],
+          "candidate": [
+            10409.0,
+            10612.0
+          ]
+        },
+        "median_allocations_per_operation": {
+          "base": 154.0,
+          "candidate": 154.0
+        },
+        "median_bytes_per_operation": {
+          "base": 10625.0,
+          "candidate": 10596.0
+        },
+        "normalized_sql_and_arguments_sha256": "0988b9b2119fae3ef48ed6ee246995a4916d59b61218354117ef660eb789aa66",
+        "p50": {
+          "allowed_increase_ms": 1,
+          "base_median_ms": 1.606758,
+          "candidate_median_ms": 1.612354,
+          "increase_ms": 0.005596000000000156,
+          "passed": true
+        },
+        "p95": {
+          "allowed_increase_ms": 1,
+          "base_median_ms": 2.071423,
+          "candidate_median_ms": 1.994503,
+          "increase_ms": -0.07691999999999988,
+          "passed": true
+        },
+        "provider_calls_per_operation": 0.0,
+        "result_signature_sha256": "2532367a152af061a9acd5886966f25e92731b46a6d03232249345756a230573",
+        "sql_statements_per_operation": 6.0,
+        "transactions_per_operation": 1.0
+      },
+      "users/count_1": {
+        "bytes_per_operation_range": {
+          "base": [
+            15757.0,
+            15977.0
+          ],
+          "candidate": [
+            15692.0,
+            15934.0
+          ]
+        },
+        "median_allocations_per_operation": {
+          "base": 264.0,
+          "candidate": 264.0
+        },
+        "median_bytes_per_operation": {
+          "base": 15914.0,
+          "candidate": 15848.0
+        },
+        "normalized_sql_and_arguments_sha256": "a929823c557a3704872f88c091b07c9d37061e9b3db3f910da4ffb1e0eb3e082",
+        "p50": {
+          "allowed_increase_ms": 1,
+          "base_median_ms": 1.905565,
+          "candidate_median_ms": 1.981918,
+          "increase_ms": 0.07635300000000012,
+          "passed": true
+        },
+        "p95": {
+          "allowed_increase_ms": 1,
+          "base_median_ms": 2.501594,
+          "candidate_median_ms": 2.642515,
+          "increase_ms": 0.14092100000000007,
+          "passed": true
+        },
+        "provider_calls_per_operation": 0.0,
+        "result_signature_sha256": "cb247ff5618e0c0a3f481073bdd8b687604502bb13a7d6aaefc4edac8d335442",
+        "sql_statements_per_operation": 7.0,
+        "transactions_per_operation": 1.0
+      },
+      "users/count_100": {
+        "bytes_per_operation_range": {
+          "base": [
+            176298.0,
+            176417.0
+          ],
+          "candidate": [
+            176269.0,
+            176419.0
+          ]
+        },
+        "median_allocations_per_operation": {
+          "base": 2754.0,
+          "candidate": 2754.0
+        },
+        "median_bytes_per_operation": {
+          "base": 176359.0,
+          "candidate": 176333.0
+        },
+        "normalized_sql_and_arguments_sha256": "8364a86cef6687712cd51a7217a0e8350616c993ba919bc1eb3303596e799d0b",
+        "p50": {
+          "allowed_increase_ms": 1,
+          "base_median_ms": 2.34352,
+          "candidate_median_ms": 2.247034,
+          "increase_ms": -0.09648599999999963,
+          "passed": true
+        },
+        "p95": {
+          "allowed_increase_ms": 1,
+          "base_median_ms": 3.520893,
+          "candidate_median_ms": 3.487444,
+          "increase_ms": -0.03344900000000006,
+          "passed": true
+        },
+        "provider_calls_per_operation": 0.0,
+        "result_signature_sha256": "99e705b8563be319e8949b05ec239fe4eb8d9fe2a3f06ea5e52553d6820c525a",
+        "sql_statements_per_operation": 7.0,
+        "transactions_per_operation": 1.0
+      }
+    }
+  },
+  "candidate_source_manifest": {
+    "changed_paths_excluding_this_evidence": 15,
+    "recipe": "SHA-256 of sorted path + NUL + file SHA-256 + newline for changed source/test paths, excluding this evidence file",
+    "sha256": "c32e79b3b29ce700ffed783d5eb7975b953c59319a501bc1698dd5cbb0af4541",
+    "source_sha256": {
+      "internal/access/contract/directory_page_test.go": "7f9a3bd2e943dca11f13970c4e7e00a53322c13671550aa2763d8479e3c7d2d0",
+      "internal/access/contract/ports.go": "fcc40031a66802706ea369737e04f0ca7bcd66819922411f8ad0a88bee6d66d1",
+      "internal/access/postgres/directory_identity_helpers.go": "3c1851592e689919e21403490adc2e1c4dfd7f109fa5b6b93e6fb7e27d50869b",
+      "internal/access/postgres/directory_identity_repository.go": "12d78c77efc59ca71b3572d210f20000ac9e102dbe4c871889bca5e422e12048",
+      "internal/access/postgres/directory_page_ownership_benchmark_test.go": "1a175327e5d2e6f24d17b8e272f4f3f6282ccf9fcf2e3a92c77f79cbd3db56d4",
+      "internal/access/postgres/directory_page_ownership_integration_test.go": "a98e54a71cc494bf81ba51026ce4ca8f77695b233b015cfb5f47ee76a5dd5deb",
+      "internal/access/postgres/integration_fixture_helpers_test.go": "664908b5e617578993e3df84954ebbad5cb7e64a1d419f8f1ffb33de028afe44",
+      "internal/domain/directory_identity.go": "eb7a1a4b48bb7f9b31adb80e1df574aada30cf80b585ea9967cc1b60fbbb4087",
+      "internal/http/scim_directory.go": "2ee401bc7f343c20539e09cdbfa9869c18bc4b4af5226373ec0c194bd4843117",
+      "internal/http/scim_directory_helpers.go": "0aa79df43ad46e03d883a351431d7675458b76590a38b8a1af5fd75258def5d5",
+      "internal/http/scim_directory_pagination_test.go": "0058b3a96c3098ab38197b144d03858bf9c54a84efabafb187df67c3a7816ac4",
+      "internal/service/access/directory_identity_service.go": "8f977b0fedb6679e4b00935ddc1e9edf15b6a00fbee9dd79f1a65169a678f888",
+      "internal/service/access/directory_page_test.go": "4447c94a013626027c572e2d84e80210af97dafff3ce64a6d75e39fb84a9c72d",
+      "scripts/e2e-db-cases/access.json": "5c698149e5a3ff1bf77ca604fc060d1988199df936a074f92fefb490483697cb",
+      "tests/uat/entra_scim_e2e.mjs": "5ff1f274451ed333ce25e2dad6424a41e9930eae09bc103c413345536c59b8a2"
+    }
+  },
+  "evaluation_waiver": "Issue #486 records the maintainer-approved historical deterministic 1k waiver for this behavior-preserving ownership program. Replacement evidence requires exact-base fixed results, real PostgreSQL tests, paired performance preservation, focused production-entry validation, and actual successful final-head full production-image E2E before completion.",
+  "fixed_result_comparison": {
+    "base_and_candidate_passed": true,
+    "coverage": "Users/groups counts 0, 1, 100; stable/exhausted offsets; allowlisted filters, UUID variants, invalid bounds/filters, case matching, external-ID matching, members, and connector isolation.",
+    "signature_sha256": "7d11464a5f881d1ea82a26e762edb26d0ae3f8fca60425f998314671fed99aee",
+    "test": "TestDirectoryPageOwnership"
+  },
+  "issue": 486,
+  "maintenance_benefit": "Modest maintenance benefit: one domain maximum replaces two constants; Access contract owns native page bounds and resource-specific filter validation for both service and PostgreSQL. HTTP retains SCIM conversion and PostgreSQL retains fixed SQL columns. No measured speedup claim.",
+  "production_entry": "oauth_provider_compatibility passed and its log confirms entra_scim_e2e.mjs executed with positive/adverse pagination assertions.",
+  "schema_version": 1,
+  "test_only_base_overlay_sha256": {
+    "internal/access/postgres/directory_page_ownership_benchmark_test.go": "1a175327e5d2e6f24d17b8e272f4f3f6282ccf9fcf2e3a92c77f79cbd3db56d4",
+    "internal/access/postgres/directory_page_ownership_integration_test.go": "a98e54a71cc494bf81ba51026ce4ca8f77695b233b015cfb5f47ee76a5dd5deb",
+    "internal/access/postgres/integration_fixture_helpers_test.go": "664908b5e617578993e3df84954ebbad5cb7e64a1d419f8f1ffb33de028afe44",
+    "tests/uat/entra_scim_e2e.mjs": "5ff1f274451ed333ce25e2dad6424a41e9930eae09bc103c413345536c59b8a2"
+  },
+  "validation": {
+    "architecture-final": {
+      "command": [
+        "node",
+        "scripts/check-architecture.mjs"
+      ],
+      "passed": true
+    },
+    "architecture-uat-final": {
+      "command": [
+        "node",
+        "--test",
+        "tests/uat/architecture_conformance.test.mjs"
+      ],
+      "passed": true
+    },
+    "base-fixed-results": {
+      "command": [
+        "env",
+        "-u",
+        "DATABASE_URL",
+        "DENSE_MEM_REPOSITORY_TESTCONTAINERS=1",
+        "go",
+        "test",
+        "-tags=integration",
+        "./internal/access/postgres",
+        "-run",
+        "^TestDirectoryPageOwnership$",
+        "-count=1",
+        "-v"
+      ],
+      "passed": true
+    },
+    "diff-check": {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "passed": true
+    },
+    "entra-e2e": {
+      "command": [
+        "./scripts/e2e.sh",
+        "oauth_provider_compatibility"
+      ],
+      "passed": true
+    },
+    "focused-postgres": {
+      "command": [
+        "env",
+        "-u",
+        "DATABASE_URL",
+        "DENSE_MEM_REPOSITORY_TESTCONTAINERS=1",
+        "go",
+        "test",
+        "-tags=integration",
+        "./internal/access/postgres",
+        "-run",
+        "TestDirectory",
+        "-count=1",
+        "-v"
+      ],
+      "passed": true
+    },
+    "focused-unit": {
+      "command": [
+        "go",
+        "test",
+        "./internal/domain",
+        "./internal/access/...",
+        "./internal/service/access",
+        "./internal/http",
+        "-count=1"
+      ],
+      "passed": true
+    },
+    "repository-ci": {
+      "command": [
+        "./scripts/ci-check.sh"
+      ],
+      "passed": true
+    }
+  }
+}

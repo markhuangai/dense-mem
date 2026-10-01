@@ -3,7 +3,6 @@ package postgres
 import (
 	"database/sql"
 	"encoding/json"
-	"math"
 	"strings"
 	"time"
 
@@ -51,32 +50,4 @@ func timePtr(value sql.NullTime) *time.Time {
 	}
 	t := value.Time.UTC()
 	return &t
-}
-
-func clampInt(value, defaultValue, maxValue int) int {
-	if value <= 0 {
-		return defaultValue
-	}
-	if value > maxValue {
-		return maxValue
-	}
-	return value
-}
-
-func normalizeOptionalRelevance(value *float64) *float64 {
-	if value == nil {
-		return nil
-	}
-	normalized := normalizeRelevance(*value)
-	return &normalized
-}
-
-func normalizeRelevance(value float64) float64 {
-	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
-		return 0
-	}
-	if value > 1 {
-		return 1
-	}
-	return value
 }

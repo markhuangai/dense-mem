@@ -23,8 +23,6 @@ import (
 	settings "github.com/markhuangai/dense-mem/internal/settings"
 )
 
-const directorySCIMMaxResults = 100
-
 type DirectorySCIMConfig struct {
 	PublicBaseURL string
 	RuntimeConfig accessservice.SSORuntimeConfigProvider
@@ -77,7 +75,7 @@ func newDirectorySCIMProtocolServer(directory *accessservice.DirectoryIdentitySe
 	userHandler := directorySCIMUserResourceHandler{directory: directory}
 	groupHandler := directorySCIMGroupResourceHandler{directory: directory}
 	config := &scim.ServiceProviderConfig{
-		MaxResults:       directorySCIMMaxResults,
+		MaxResults:       domain.DirectoryPageMaxResults,
 		SupportFiltering: true,
 		SupportPatch:     true,
 		AuthenticationSchemes: []scim.AuthenticationScheme{

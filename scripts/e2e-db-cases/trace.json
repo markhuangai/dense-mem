@@ -29,6 +29,27 @@
       "run": "^TestTraceVerificationPreservesNullableLegacyVerdicts$",
       "phase": "precheck",
       "source": "internal/trace/postgres/semantic_trace_repository_integration_test.go"
+    },
+    {
+      "id": "repository/TestTraceOwnershipBoundsAndCompleteness",
+      "package": "./internal/trace/postgres",
+      "run": "^TestTraceOwnershipBoundsAndCompleteness$",
+      "phase": "precheck",
+      "source": "internal/trace/postgres/trace_ownership_integration_test.go"
+    },
+    {
+      "id": "repository/TestTraceOwnershipServiceAndAdapterEquivalent",
+      "package": "./internal/trace/postgres",
+      "run": "^TestTraceOwnershipServiceAndAdapterEquivalent$",
+      "phase": "precheck",
+      "source": "internal/trace/postgres/trace_ownership_integration_test.go"
+    },
+    {
+      "id": "repository/TestTraceOwnershipLegacyFragmentRuneBounds",
+      "package": "./internal/trace/postgres",
+      "run": "^TestTraceOwnershipLegacyFragmentRuneBounds$",
+      "phase": "precheck",
+      "source": "internal/trace/postgres/trace_ownership_integration_test.go"
     }
   ]
 }

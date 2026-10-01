@@ -13,6 +13,7 @@ import (
 	"github.com/lib/pq"
 	"gorm.io/gorm"
 
+	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
@@ -500,7 +501,7 @@ func (r *DirectoryIdentityRepositoryImpl) ListDirectoryUsers(ctx context.Context
 }
 
 func (r *DirectoryIdentityRepositoryImpl) ListDirectoryUsersPage(ctx context.Context, connectorID uuid.UUID, request domain.DirectoryPageRequest) ([]*domain.DirectoryUser, int, error) {
-	request, err := normalizeDirectoryPageRequest(request)
+	request, err := accesscontract.NormalizeDirectoryUserPageRequest(request)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -702,7 +703,7 @@ func (r *DirectoryIdentityRepositoryImpl) ListDirectoryGroups(ctx context.Contex
 }
 
 func (r *DirectoryIdentityRepositoryImpl) ListDirectoryGroupsPage(ctx context.Context, connectorID uuid.UUID, request domain.DirectoryPageRequest) ([]*domain.DirectoryGroup, int, error) {
-	request, err := normalizeDirectoryPageRequest(request)
+	request, err := accesscontract.NormalizeDirectoryGroupPageRequest(request)
 	if err != nil {
 		return nil, 0, err
 	}

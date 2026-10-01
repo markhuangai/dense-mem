@@ -67,7 +67,7 @@ func (s *semanticTraceService) Trace(ctx context.Context, _ string, req TraceReq
 		return nil, errors.New("trace: relationship_id is required")
 	}
 
-	trace, err := s.store.TraceRelationship(ctx, tracecontract.Input{
+	trace, err := s.store.TraceRelationship(ctx, tracecontract.NormalizeInput(tracecontract.Input{
 		TeamID:                 actor.TeamID.String(),
 		RelationshipID:         relationshipID,
 		IncludeEvidenceContent: req.IncludeEvidenceContent,
@@ -78,7 +78,7 @@ func (s *semanticTraceService) Trace(ctx context.Context, _ string, req TraceReq
 		PredicateKeys:          req.PredicateKeys,
 		Topic:                  req.Topic,
 		MinRelevance:           req.MinRelevance,
-	})
+	}))
 	if err != nil {
 		if errors.Is(err, tracecontract.ErrRelationshipNotFound) {
 			return nil, ErrTraceRelationshipNotFound

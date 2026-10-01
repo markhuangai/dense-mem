@@ -479,8 +479,6 @@ type RecallHypothesesInput struct {
 	ValueIDs        []string
 }
 
-const MaxRecallHypothesisContextIDs = 200
-
 type UpdateHypothesisStatusInput struct {
 	TeamID            string
 	ActorProfileID    string
