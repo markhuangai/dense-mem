@@ -31,6 +31,11 @@
         "id": "github.com/markhuangai/dense-mem/internal/operations/postgres",
         "role": "postgres_adapter",
         "visibility": "private"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/operations/prometheus",
+        "role": "adapter",
+        "visibility": "private"
       }
     ]
   },

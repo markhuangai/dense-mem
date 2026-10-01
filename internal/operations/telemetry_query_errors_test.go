@@ -11,53 +11,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
+	operationsprometheus "github.com/markhuangai/dense-mem/internal/operations/prometheus"
 	"github.com/stretchr/testify/require"
 )
 
-func TestPrometheusTelemetryService_QueryFailureBranches(t *testing.T) {
+func TestPrometheusTelemetryService_UnavailableWhenAllQueriesFail(t *testing.T) {
 	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query().Get("query")
-		switch query {
-		case "status-error":
-			w.WriteHeader(http.StatusServiceUnavailable)
-		case "bad-json":
-			_, _ = w.Write([]byte(`{`))
-		case "instant-error":
-			_, _ = w.Write([]byte(`{"status":"error","error":"bad instant"}`))
-		case "instant-empty":
-			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[]}}`))
-		case "range-error":
-			_, _ = w.Write([]byte(`{"status":"error","error":"bad range"}`))
-		case "range-empty":
-			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[]}}`))
-		default:
-			w.WriteHeader(http.StatusServiceUnavailable)
-		}
+		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer prom.Close()
 
-	svc := NewPrometheusTelemetryService(prom.URL, time.Second)
-	now := time.Unix(1770000000, 0).UTC()
-
-	value, err := svc.queryInstant(context.Background(), "instant-empty")
-	require.NoError(t, err)
-	require.False(t, value.Available)
-	require.Equal(t, 0.0, value.Value)
-	_, err = svc.queryInstant(context.Background(), "instant-error")
-	require.EqualError(t, err, "telemetry backend query failed")
-	require.NotContains(t, err.Error(), "bad instant")
-	_, err = svc.queryInstant(context.Background(), "bad-json")
-	require.Error(t, err)
-	_, err = svc.queryInstant(context.Background(), "status-error")
-	require.EqualError(t, err, "telemetry backend query failed")
-	require.NotContains(t, err.Error(), "status 503")
-
-	points, err := svc.queryRange(context.Background(), "range-empty", now.Add(-time.Minute), now, time.Minute)
-	require.NoError(t, err)
-	require.Empty(t, points)
-	_, err = svc.queryRange(context.Background(), "range-error", now.Add(-time.Minute), now, time.Minute)
-	require.EqualError(t, err, "telemetry backend query failed")
-	require.NotContains(t, err.Error(), "bad range")
+	svc := NewPrometheusTelemetryService(operationsprometheus.NewClient(prom.URL, time.Second), time.Second, "", nil)
 
 	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m"})
 	require.NoError(t, err)
@@ -73,7 +38,7 @@ func TestPrometheusTelemetryService_LogsQueryFailure(t *testing.T) {
 	defer prom.Close()
 
 	logger := &captureTelemetryLogger{}
-	svc := NewPrometheusTelemetryServiceWithLogger(prom.URL, time.Second, logger)
+	svc := NewPrometheusTelemetryService(operationsprometheus.NewClient(prom.URL, time.Second), time.Second, "", logger)
 
 	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "system", Audience: TelemetryAudienceOperator})
 
@@ -98,7 +63,7 @@ func TestPrometheusTelemetryService_LogsQueryFailure(t *testing.T) {
 
 func TestPrometheusTelemetryServiceAggregatesCanceledQueriesWithoutRawErrors(t *testing.T) {
 	logger := &captureTelemetryLogger{}
-	svc := NewPrometheusTelemetryServiceWithLogger("http://prometheus.invalid", time.Second, logger)
+	svc := NewPrometheusTelemetryService(operationsprometheus.NewClient("http://prometheus.invalid", time.Second), time.Second, "", logger)
 	svc.logQueryFailures("1h", TelemetryScope{Type: "system"}, []telemetryQueryFailure{
 		{kind: "instant", id: "http_requests", err: context.Canceled},
 		{kind: "range", id: "http_rps", err: context.DeadlineExceeded},
@@ -112,22 +77,13 @@ func TestPrometheusTelemetryServiceAggregatesCanceledQueriesWithoutRawErrors(t *
 	require.Contains(t, logger.warnAttrs, "query_failure_reasons=context_canceled=1,context_deadline_exceeded=1")
 }
 
-func TestTelemetryQueryErrorClassificationAndLogBounds(t *testing.T) {
-	var nilQueryError *telemetryQueryError
-	require.Nil(t, nilQueryError.Unwrap())
-	require.Equal(t, "", errorString(nil))
-	require.Equal(t, "http_status", telemetryQueryFailureReason(errors.New("prometheus returned status 503")))
-	require.Equal(t, "prometheus_api_error", telemetryQueryFailureReason(errors.New("query failed")))
-	require.Equal(t, "response_decode_failed", telemetryQueryFailureReason(errors.New("cannot unmarshal response")))
-	require.Equal(t, "transport_failed", telemetryQueryFailureReason(errors.New("network unavailable")))
-	require.Equal(t, "explicit", telemetryQueryFailureReason(&telemetryQueryError{reason: "explicit"}))
-
+func TestTelemetryQueryFailureLogBounds(t *testing.T) {
 	logger := &captureTelemetryLogger{}
 	teamID, profileID := uuid.New(), uuid.New()
-	svc := NewPrometheusTelemetryServiceWithJobAndLogger("http://prometheus.invalid", time.Second, "dense-mem", logger)
+	svc := NewPrometheusTelemetryService(operationsprometheus.NewClient("http://prometheus.invalid", time.Second), time.Second, "dense-mem", logger)
 	failures := make([]telemetryQueryFailure, 0, 65)
 	for index := 0; index < 65; index++ {
-		failures = append(failures, telemetryQueryFailure{kind: "range", id: fmt.Sprintf("query-%02d", index), err: errors.New("network unavailable")})
+		failures = append(failures, telemetryQueryFailure{kind: "range", id: fmt.Sprintf("query-%02d", index), err: &operationscontract.TelemetryQueryError{Reason: "transport_failed", Cause: errors.New("network unavailable")}})
 	}
 	svc.logQueryFailures("1h", TelemetryScope{Type: "team", TeamID: &teamID, ProfileID: &profileID}, failures)
 	require.Equal(t, "telemetry backend query failed", logger.message)

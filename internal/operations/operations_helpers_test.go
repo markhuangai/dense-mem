@@ -129,13 +129,13 @@ func TestTelemetryHelperNoopAndCanceledPaths(t *testing.T) {
 	cancel()
 	RefreshTelemetryPricingCacheUntilCanceled(ctx, nil, nil)
 	ConfigureTelemetryFeatures(nil, nil, nil)
-	ConfigureTelemetryFeatures(NewPrometheusTelemetryService("", 0), nil, nil)
+	ConfigureTelemetryFeatures(NewPrometheusTelemetryService(nil, 0, "", nil), nil, nil)
 }
 
 func TestConfigureTelemetryFeaturesEvaluatesApplicationAndTeamSettings(t *testing.T) {
 	appConfig := telemetryAppConfigStub{}
 	dreams := telemetryDreamServiceStub{}
-	prometheus := NewPrometheusTelemetryService("", 0)
+	prometheus := NewPrometheusTelemetryService(nil, 0, "", nil)
 	ConfigureTelemetryFeatures(prometheus, appConfig, dreams)
 
 	snapshot, err := prometheus.Snapshot(context.Background(), TelemetryFilter{Window: "1h", Scope: "system"})
@@ -168,7 +168,7 @@ func TestTelemetryEmptyBuildersAndWindowBounds(t *testing.T) {
 
 func TestTelemetryFeatureErrorsAndRangeBuilders(t *testing.T) {
 	teamID := uuid.New()
-	service := NewPrometheusTelemetryService("", 0)
+	service := NewPrometheusTelemetryService(nil, 0, "", nil)
 	service.SetFeatureResolver(TelemetryFeatureResolver{
 		RecallFeedbackEnabled: func(context.Context) (bool, error) { return false, errors.New("recall unavailable") },
 		DreamingEnabled:       func(context.Context, *uuid.UUID) (bool, error) { return false, errors.New("dream unavailable") },

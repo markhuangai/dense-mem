@@ -24,7 +24,7 @@ func TestPrometheusTelemetryService_UnconfiguredPreservesProfileAndTeamSeriesSta
 		{name: "profile", scope: "profile", profileID: &profileID, wantEmbed: TelemetryItemUnsupported, wantConflict: TelemetryItemUnsupported},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := NewPrometheusTelemetryService("", time.Second)
+			svc := NewPrometheusTelemetryService(nil, time.Second, "", nil)
 			svc.SetFeatureResolver(TelemetryFeatureResolver{
 				RecallFeedbackEnabled: func(context.Context) (bool, error) { return false, nil },
 				DreamingEnabled:       func(context.Context, *uuid.UUID) (bool, error) { return false, nil },

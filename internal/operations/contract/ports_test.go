@@ -1,6 +1,8 @@
 package contract
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -64,4 +66,29 @@ func TestNormalizeOperationLogSeverity(t *testing.T) {
 	for input, want := range map[string]string{"": "INFO", " \t ": "INFO", " warn ": "WARN", "trace": "TRACE", " native ": "NATIVE"} {
 		t.Run(input, func(t *testing.T) { require.Equal(t, want, NormalizeOperationLogSeverity(input)) })
 	}
+}
+
+func TestTelemetryQueryTimeoutAndErrorContract(t *testing.T) {
+	for _, timeout := range []time.Duration{0, -time.Second} {
+		require.Equal(t, 5*time.Second, NormalizeTelemetryQueryTimeout(timeout))
+	}
+	require.Equal(t, 3*time.Second, NormalizeTelemetryQueryTimeout(3*time.Second))
+	var nilError *TelemetryQueryError
+	require.Nil(t, nilError.Unwrap())
+	for _, tc := range []struct {
+		err    error
+		reason string
+	}{
+		{nil, "transport_failed"},
+		{errors.New("private network failure"), "transport_failed"},
+		{&TelemetryQueryError{Reason: "http_status"}, "http_status"},
+		{&TelemetryQueryError{Reason: "transport_failed", Cause: context.Canceled}, "context_canceled"},
+		{&TelemetryQueryError{Reason: "transport_failed", Cause: context.DeadlineExceeded}, "context_deadline_exceeded"},
+	} {
+		require.Equal(t, tc.reason, TelemetryQueryFailureReason(tc.err))
+	}
+	cause := errors.New("private URL and provider body")
+	wrapped := &TelemetryQueryError{Reason: "transport_failed", Cause: cause}
+	require.ErrorIs(t, wrapped, cause)
+	require.EqualError(t, wrapped, "telemetry backend query failed")
 }

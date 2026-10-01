@@ -1,0 +1,476 @@
+{
+  "base_commit": "057df3e3a2a2a1e440c04f2743ca300963113c88",
+  "benchmark": {
+    "allocation_investigation": {
+      "assessment": "Success median allocation count rose from 12908 to 12919; partial-failure median fell from 12901 to 12892. Base and candidate allocation-count and byte ranges overlap for both workloads. The moved decoding retains the same result containers and HTTP client behavior. These measurements do not isolate a systematic allocation change or establish a speedup.",
+      "ranges": {
+        "base": {
+          "partial_failure": {
+            "allocs": {
+              "max": 12925.0,
+              "min": 12890.0,
+              "values": [
+                12901.0,
+                12896.0,
+                12890.0,
+                12922.0,
+                12925.0
+              ]
+            },
+            "bytes": {
+              "max": 1938217.0,
+              "min": 1923793.0,
+              "values": [
+                1930674.0,
+                1936394.0,
+                1923793.0,
+                1936643.0,
+                1938217.0
+              ]
+            }
+          },
+          "success": {
+            "allocs": {
+              "max": 12926.0,
+              "min": 12898.0,
+              "values": [
+                12926.0,
+                12923.0,
+                12905.0,
+                12898.0,
+                12908.0
+              ]
+            },
+            "bytes": {
+              "max": 1943403.0,
+              "min": 1930572.0,
+              "values": [
+                1937354.0,
+                1943403.0,
+                1933735.0,
+                1931804.0,
+                1930572.0
+              ]
+            }
+          }
+        },
+        "candidate": {
+          "partial_failure": {
+            "allocs": {
+              "max": 12922.0,
+              "min": 12891.0,
+              "values": [
+                12891.0,
+                12922.0,
+                12891.0,
+                12892.0,
+                12906.0
+              ]
+            },
+            "bytes": {
+              "max": 1938154.0,
+              "min": 1929954.0,
+              "values": [
+                1929954.0,
+                1938154.0,
+                1930952.0,
+                1929959.0,
+                1935968.0
+              ]
+            }
+          },
+          "success": {
+            "allocs": {
+              "max": 12941.0,
+              "min": 12898.0,
+              "values": [
+                12919.0,
+                12941.0,
+                12898.0,
+                12931.0,
+                12916.0
+              ]
+            },
+            "bytes": {
+              "max": 1945485.0,
+              "min": 1926265.0,
+              "values": [
+                1933340.0,
+                1941686.0,
+                1926265.0,
+                1945485.0,
+                1936614.0
+              ]
+            }
+          }
+        }
+      }
+    },
+    "base_overlay_flag": true,
+    "command": "go test ./internal/operations -run '^$' -bench '^BenchmarkTelemetryTransportOwnership$' -benchtime=200x -count=1 -benchmem -v",
+    "comparison": "Equal result/request-contract signatures and SQL/transaction/provider counts; median p50/p95 increase <= max(5% of base, 1 ms).",
+    "fixture": "Real Operations snapshot policy and deterministic local HTTP server. Lifecycle reader is absent; SQL and transaction counts are zero. Production E2E separately verifies real lifecycle availability.",
+    "host": {
+      "benchmark-01-base": {
+        "competing_build_test_processes": [],
+        "cpu_idle_fraction_before": 0.984
+      },
+      "benchmark-01-candidate": {
+        "competing_build_test_processes": [],
+        "cpu_idle_fraction_before": 0.9925
+      },
+      "benchmark-02-base": {
+        "competing_build_test_processes": [],
+        "cpu_idle_fraction_before": 0.9775
+      },
+      "benchmark-02-candidate": {
+        "competing_build_test_processes": [],
+        "cpu_idle_fraction_before": 0.9828
+      },
+      "benchmark-03-base": {
+        "competing_build_test_processes": [],
+        "cpu_idle_fraction_before": 0.9692
+      },
+      "benchmark-03-candidate": {
+        "competing_build_test_processes": [],
+        "cpu_idle_fraction_before": 0.9806
+      },
+      "benchmark-04-base": {
+        "competing_build_test_processes": [],
+        "cpu_idle_fraction_before": 0.9626
+      },
+      "benchmark-04-candidate": {
+        "competing_build_test_processes": [],
+        "cpu_idle_fraction_before": 0.9535
+      },
+      "benchmark-05-base": {
+        "competing_build_test_processes": [],
+        "cpu_idle_fraction_before": 0.9674
+      },
+      "benchmark-05-candidate": {
+        "competing_build_test_processes": [],
+        "cpu_idle_fraction_before": 0.9665
+      }
+    },
+    "host_policy": "One-second CPU-idle sample of at least 85% before each run; no competing build/test process observed before or after the run.",
+    "measured_operations_per_workload": 200,
+    "name": "BenchmarkTelemetryTransportOwnership",
+    "passed": true,
+    "raw_run_sha256": {
+      "benchmark-01-base": "854d0130445a44876c38cf0c6ed445261f00a27bafc0a40e148485c62add01db",
+      "benchmark-01-candidate": "20e568c5bcab7d9a748f1ae050e7783b13d56714a2bda17c87bdec22b99b43e6",
+      "benchmark-02-base": "fa2e4a193b337aa1dae6a37067ffb96366394a66ce91b5d1d1b133618a4be654",
+      "benchmark-02-candidate": "abc4a92d87b1abde65938f76c1929fe2ab07ffc3c8bbe3cb8ab9d717b02f5a96",
+      "benchmark-03-base": "13637e7df7afaf4951639d5a31db994489550cc081534c3033dba79e039472db",
+      "benchmark-03-candidate": "0e26519d1cddcfe1ca876a986d08f9d880a88bfc14d64b86c1e532750d50b2b9",
+      "benchmark-04-base": "6961209c9904ce192156617cb2f11ef12174a7b392bf38e8b697655b59af9375",
+      "benchmark-04-candidate": "0ef18a8ac6c9720c9ff60921ffa834bcfa81dc82fed3b158bd545240f1e1d928",
+      "benchmark-05-base": "8e60c2854d5df1029d3e173afb497dc32f4a43511a6e78c3399cbee3de349be2",
+      "benchmark-05-candidate": "63c6d6c8f35a1aeb48575f3ac9d2fa0943f312840fa70962ed92e0b3afe05f81"
+    },
+    "run_order": [
+      "base",
+      "candidate",
+      "candidate",
+      "base",
+      "base",
+      "candidate",
+      "candidate",
+      "base",
+      "base",
+      "candidate"
+    ],
+    "runs_per_source": 5,
+    "warmups_per_workload": 20,
+    "workloads": {
+      "partial_failure": {
+        "allocs_per_op_median": {
+          "base": 12901.0,
+          "candidate": 12892.0
+        },
+        "bytes_per_op_median": {
+          "base": 1936394.0,
+          "candidate": 1930952.0
+        },
+        "latency": {
+          "p50_ms": {
+            "allowed_increase": 1,
+            "base_median": 7.571808,
+            "candidate_median": 7.702868,
+            "increase": 0.13105999999999973,
+            "passed": true
+          },
+          "p95_ms": {
+            "allowed_increase": 1,
+            "base_median": 8.861142,
+            "candidate_median": 9.134741,
+            "increase": 0.2735990000000008,
+            "passed": true
+          }
+        },
+        "passed": true,
+        "provider_calls_per_op": 57.0,
+        "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+        "result_signature_sha256": "f558ffd6f2123b8de2efde3b96622da852e261a2ff2c75f7ef1acf504ac3277c",
+        "sql_statements_per_op": 0.0,
+        "transactions_per_op": 0.0
+      },
+      "success": {
+        "allocs_per_op_median": {
+          "base": 12908.0,
+          "candidate": 12919.0
+        },
+        "bytes_per_op_median": {
+          "base": 1933735.0,
+          "candidate": 1936614.0
+        },
+        "latency": {
+          "p50_ms": {
+            "allowed_increase": 1,
+            "base_median": 7.37724,
+            "candidate_median": 7.487757,
+            "increase": 0.11051700000000064,
+            "passed": true
+          },
+          "p95_ms": {
+            "allowed_increase": 1,
+            "base_median": 8.534127,
+            "candidate_median": 9.304007,
+            "increase": 0.7698800000000006,
+            "passed": true
+          }
+        },
+        "passed": true,
+        "provider_calls_per_op": 57.0,
+        "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+        "result_signature_sha256": "cf70ef2ff9f396588dabd08ba9805b66dde0f8d5c9ca1c23370a5b4110756780",
+        "sql_statements_per_op": 0.0,
+        "transactions_per_op": 0.0
+      }
+    }
+  },
+  "issue": 491,
+  "maintenance_benefit": {
+    "affected_production_lines_after": 2012,
+    "affected_production_lines_before": 1989,
+    "application_owner": "Operations telemetry policy",
+    "assessment": "Medium maintenance benefit: transport mechanics and snapshot policy can change and be tested at separate owners. No speedup is claimed.",
+    "operations_http_json_imports_after": [],
+    "operations_http_json_imports_before": [
+      "encoding/json",
+      "net/http",
+      "net/url"
+    ],
+    "production_line_count_delta": 23,
+    "service_constructors_after": 1,
+    "service_constructors_before": 3,
+    "transport_owner": "Private Operations Prometheus adapter"
+  },
+  "schema_version": 1,
+  "source_sha256": {
+    "base": {
+      "cmd/internal/serverapp/telemetry_composition.go": "4074fc4551d2f87381d4a0a804b5deb0ca1ce8debad150363572f91c8c761241",
+      "internal/operations/contract/ports.go": "dd62c84a368ea355e1b4fa96217d34b892ea9fe1a4faea5bba426a9f13957f5f",
+      "internal/operations/telemetry_catalog.go": "a1dcee888ec67d103f8c60b7cd438b8ccfe708b7b00b7264041f094f0e9e8309",
+      "internal/operations/telemetry_query_errors.go": "1fcd0a055c82693aa3ab08637f44223714194264b3f7d859f1088bad41b5a266",
+      "internal/operations/telemetry_service.go": "11c566505c6eb1129615c12eab6de19050799e8d59db7eee2ffe144b317d616d"
+    },
+    "candidate": {
+      "cmd/internal/serverapp/telemetry_composition.go": "2d4654339d9673d7e5df28e2a7a7d12b865d3e1d531af5341788044aee7a2d05",
+      "internal/operations/contract/ports.go": "4a13894b0c73ed0ba0a241fa680290114f2b33611539955fbceced85b8fabf3b",
+      "internal/operations/prometheus/client.go": "ed8746628da9131a877d827ad2785b083cade36f416fa9473ec7c7c4182fde5b",
+      "internal/operations/telemetry_catalog.go": "d2d98fa9577edbb0543eea62a58b3e726da6cd62bd44c93f5a805d2785da5694",
+      "internal/operations/telemetry_query_errors.go": "2217043b0e91e47f5fd1cd5c4cdd9a24477e2b4afeccd2c2b10faeafa15dff83",
+      "internal/operations/telemetry_service.go": "79e6a7da2fd698a258314a5a4d8a0404b33889675f477faf68d34840943b2fb8"
+    },
+    "test_only_base_overlay_content_sha256": {
+      "telemetry_transport_ownership_benchmark_test.go": "dce745da79766c54b0d06809a4f661fcb9a450d184d0f2c177641efdb7412eac",
+      "telemetry_transport_ownership_fixture_test.go": "2a5bc1aa5efce8c8266a92053e73cd1187a45ae664496f04a44c8a60bfe0f56f",
+      "telemetry_transport_ownership_test.go": "b4e69a4ec8cae2032b8b1387c860ee6a84e66c4c4f7d3b49970d7dfccacab2a6"
+    },
+    "test_only_base_overlay_manifest_sha256": "2b001750d9ba6847e99185f46867e85042b43bd3a41353edb65a1af6eea2f89b"
+  },
+  "verification": {
+    "complete_go_coverage": {
+      "covered_statements": 33655,
+      "gate_passed": true,
+      "percent": 90.1,
+      "total_statements": 37366
+    },
+    "evaluation_1k": "Explicit scoped historical waiver in issue #491; replacement proof includes fixed-result equivalence, real HTTP provider transport tests, paired performance, local full telemetry E2E, and required final-head full CI/E2E.",
+    "fixed_result_equivalence": {
+      "case_count": 29,
+      "cases": {
+        "api_failure": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+          "result_signature_sha256": "04db3768d2176083c59c2443f595abc1a6d1f7d47370f873c8eec55d5a3a06ca"
+        },
+        "canceled": {
+          "provider_calls_per_op": 0,
+          "request_contract_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "result_signature_sha256": "a62c79a63736805867bef7d39b2fff74856e66111da9ac14577119150874974a"
+        },
+        "deadline": {
+          "provider_calls_per_op": 0,
+          "request_contract_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "result_signature_sha256": "db152fa112ab8f448e5160389b19aa374c1358537e7ba8a608e1900316bb9444"
+        },
+        "empty": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+          "result_signature_sha256": "f9eb575e47b5eeaae1601be99149ca13c6f8123e5daf4175ffd9198b219cc287"
+        },
+        "http_failure": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+          "result_signature_sha256": "7e283b654a5a1dccfc880b5a0e7fdd2dbe61741ed6eabdb9f0736fcc13465344"
+        },
+        "invalid_json": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+          "result_signature_sha256": "24501887ec49706b3f287b0047b6bebebfe5601217ee5f81d70ee888dd77dbde"
+        },
+        "invalid_numeric": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+          "result_signature_sha256": "f9eb575e47b5eeaae1601be99149ca13c6f8123e5daf4175ffd9198b219cc287"
+        },
+        "nan": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+          "result_signature_sha256": "f9eb575e47b5eeaae1601be99149ca13c6f8123e5daf4175ffd9198b219cc287"
+        },
+        "negative": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+          "result_signature_sha256": "af8d545723be52b8a14a1eb0da57bc0e7a36467b33ddd57b17218332a3fead24"
+        },
+        "negative_inf": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+          "result_signature_sha256": "f9eb575e47b5eeaae1601be99149ca13c6f8123e5daf4175ffd9198b219cc287"
+        },
+        "partial_failure": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+          "result_signature_sha256": "f558ffd6f2123b8de2efde3b96622da852e261a2ff2c75f7ef1acf504ac3277c"
+        },
+        "positive_inf": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+          "result_signature_sha256": "f9eb575e47b5eeaae1601be99149ca13c6f8123e5daf4175ffd9198b219cc287"
+        },
+        "pricing_missing": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+          "result_signature_sha256": "1683193b6866d4d81a0859db311352c168c9f6c53572a9016689d3a52f110867"
+        },
+        "profile": {
+          "provider_calls_per_op": 33,
+          "request_contract_sha256": "61c409f72edb6337f25d049edac155fc26cd06f912db5118dadcb32145a2bf84",
+          "result_signature_sha256": "dab9fa21849bf9252f08c2b02c392b0dc38c291dd41c3b48514b6e8d2161e177"
+        },
+        "self": {
+          "provider_calls_per_op": 33,
+          "request_contract_sha256": "61c409f72edb6337f25d049edac155fc26cd06f912db5118dadcb32145a2bf84",
+          "result_signature_sha256": "d957b5aab2466e7f906628b49fe484592ae850efead72d9ce61a34513fde7c5c"
+        },
+        "short": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+          "result_signature_sha256": "cd56ce15d625a32bb27df5c1275205798e4da441df2d77b0a5af240b5e42fe8b"
+        },
+        "sparse": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+          "result_signature_sha256": "ee8729b1a771a3ef849bbaaf9a25fc6ef7e3b49424368b8b5c11b2706a3bf558"
+        },
+        "success": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+          "result_signature_sha256": "cf70ef2ff9f396588dabd08ba9805b66dde0f8d5c9ca1c23370a5b4110756780"
+        },
+        "team": {
+          "provider_calls_per_op": 44,
+          "request_contract_sha256": "9e5a5e79a420ed4ba2d58862d79dae749025b5447e62e3a3439ff8c2d12b7a38",
+          "result_signature_sha256": "45c9979cc165ef2d52bae7864749eeb801332509e053e70b80a3090ecb76c166"
+        },
+        "truncated_json": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+          "result_signature_sha256": "94366644f7b8c1fa9cbbd031e5890bb5bf6d9bb2371a6c6ade1555b55d1a1bce"
+        },
+        "user": {
+          "provider_calls_per_op": 41,
+          "request_contract_sha256": "2030b78db6687563afb03d2c3ddcda50b486f1a18f026d758eaffc6a00399667",
+          "result_signature_sha256": "3023427c83b53bdda99c06250c4a216fcf0b435f19f86c6c3ab06288f74f6e98"
+        },
+        "window_12h": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "0ff48f3974dc6176fdc0b9c22de50aca0088816044736c6809984dde71617cd0",
+          "result_signature_sha256": "ec5c9b0b8f1ce59a9ae00545f4ab0b797a3cf010ee1da41e1a0af417dc9fc9a1"
+        },
+        "window_1d": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "5dc23a23e6a5a4f96050c127ff8f62232d776507cf5bc583e54d391a80f7cb14",
+          "result_signature_sha256": "7fe7aed4402c6b101505bc0d72a06a8e08a784f5a059cc122375aba3dbee38ca"
+        },
+        "window_1h": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "d91b723d3ee33b2eade4f2169f18bb468bf0eae7700c3f9b7d90e650c0af9509",
+          "result_signature_sha256": "dbc769a5f5d2d36e8e672dbf2ca0444967b8ad19eacd251c8d0d7a20e2fdf591"
+        },
+        "window_30d": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "0ff796b6dd0f5128ebbb21779cf1bb5ab7d0490139f275994b0870bed576d7cb",
+          "result_signature_sha256": "977981dcee2160303928053eff42657db7a678078edb598ee8390d06d95591fa"
+        },
+        "window_30m": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "259c41c1b8cdddac905acda8261ece8ed617791d411ac4ddfe599c88dbd3774e",
+          "result_signature_sha256": "b8027f35869032e4bb93a6d7d8ca4cf97737378e3c06646aaa14c2be7f1ac5bf"
+        },
+        "window_7d": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "a28393e9780d65d79f99c4534ea136a7066b5b466bcfe52a70acfe3be0844f8f",
+          "result_signature_sha256": "f61defa3a5a1251bdece828f15f3b0e6263ed8d101d6fdbf8b4b5d31f773cbe1"
+        },
+        "wrong_timestamp": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+          "result_signature_sha256": "24501887ec49706b3f287b0047b6bebebfe5601217ee5f81d70ee888dd77dbde"
+        },
+        "wrong_value_type": {
+          "provider_calls_per_op": 57,
+          "request_contract_sha256": "8b5c1806d7f25451dbbcaff20bc38b417b37b6822178303d21b069b9e9ada193",
+          "result_signature_sha256": "24501887ec49706b3f287b0047b6bebebfe5601217ee5f81d70ee888dd77dbde"
+        }
+      },
+      "passed": true
+    },
+    "local_checks": [
+      "go test ./internal/operations/... ./cmd/internal/serverapp/... ./internal/http -count=1",
+      "go test -tags=evaluation ./cmd/internal/serverapp/... -count=1",
+      "./scripts/e2e.sh full",
+      "go test ./internal/operations -run '^$' -bench '^BenchmarkTelemetryTransportOwnership$' -benchtime=200x -count=5 -benchmem",
+      "node scripts/check-architecture.mjs",
+      "node --test tests/uat/architecture_conformance.test.mjs",
+      "git diff --check",
+      "./scripts/ci-check.sh"
+    ],
+    "local_full_e2e": {
+      "browser_cases_passed": 46,
+      "passed": true,
+      "telemetry_scenario": "telemetry_mcp_e2e.mjs"
+    },
+    "plan_audit": {
+      "model": "gpt-6.1-sol",
+      "reasoning_effort": "max",
+      "rounds": 2,
+      "timing": "Passed before test execution.",
+      "unresolved_findings": 0,
+      "verdict": "conformant"
+    }
+  }
+}

@@ -1,42 +1,19 @@
 package operations
 
 import (
-	"context"
 	"errors"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
+	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
 )
 
 type telemetryQueryFailure struct {
 	kind string
 	id   string
 	err  error
-}
-
-type telemetryQueryError struct {
-	reason string
-	cause  error
-}
-
-func (err *telemetryQueryError) Error() string {
-	return "telemetry backend query failed"
-}
-
-func (err *telemetryQueryError) Unwrap() error {
-	if err == nil {
-		return nil
-	}
-	return err.cause
-}
-
-func wrapTelemetryQueryError(reason string, cause error) error {
-	if cause == nil {
-		return &telemetryQueryError{reason: reason}
-	}
-	return &telemetryQueryError{reason: reason, cause: cause}
 }
 
 func (s *PrometheusTelemetryService) logQueryFailures(window string, scope TelemetryScope, groups ...[]telemetryQueryFailure) {
@@ -66,7 +43,7 @@ func (s *PrometheusTelemetryService) logQueryFailures(window string, scope Telem
 			queryIDs = append(queryIDs, failure.id)
 		}
 		kindCounts[failure.kind]++
-		reason := telemetryQueryFailureReason(failure.err)
+		reason := operationscontract.TelemetryQueryFailureReason(failure.err)
 		reasonCounts[reason]++
 		if reason != "context_canceled" && reason != "context_deadline_exceeded" {
 			allCancellation = false
@@ -97,37 +74,6 @@ func (s *PrometheusTelemetryService) logQueryFailures(window string, scope Telem
 		return
 	}
 	s.logger.Error("telemetry backend query failed", errors.New("telemetry backend query failed"), attrs...)
-}
-
-func telemetryQueryFailureReason(err error) string {
-	switch {
-	case errors.Is(err, context.Canceled):
-		return "context_canceled"
-	case errors.Is(err, context.DeadlineExceeded):
-		return "context_deadline_exceeded"
-	}
-	var queryErr *telemetryQueryError
-	if errors.As(err, &queryErr) && queryErr.reason != "" {
-		return queryErr.reason
-	}
-	message := strings.ToLower(strings.TrimSpace(errorString(err)))
-	switch {
-	case strings.Contains(message, "returned status"):
-		return "http_status"
-	case strings.Contains(message, "query_range failed"), strings.Contains(message, "query failed"):
-		return "prometheus_api_error"
-	case strings.Contains(message, "invalid character"), strings.Contains(message, "cannot unmarshal"), strings.Contains(message, "decode"):
-		return "response_decode_failed"
-	default:
-		return "transport_failed"
-	}
-}
-
-func errorString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }
 
 func formatTelemetryCounts(counts map[string]int) string {

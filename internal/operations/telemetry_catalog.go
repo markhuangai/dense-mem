@@ -150,12 +150,12 @@ type telemetryFeatureState struct {
 }
 
 type telemetryInstantResult struct {
-	Scalar telemetryScalar
+	Scalar operationscontract.TelemetryScalar
 	Err    error
 }
 
 type telemetryRangeResult struct {
-	Points []TelemetryPoint
+	Points []operationscontract.TelemetryPoint
 	Err    error
 }
 
@@ -192,7 +192,7 @@ func runTelemetryInstantQueries(ctx context.Context, service *PrometheusTelemetr
 				return
 			}
 			defer func() { <-semaphore }()
-			scalar, err := service.queryInstant(ctx, spec.Query)
+			scalar, err := service.queries.Instant(ctx, spec.Query)
 			mu.Lock()
 			results[spec.ID] = telemetryInstantResult{Scalar: scalar, Err: err}
 			mu.Unlock()
@@ -221,7 +221,7 @@ func runTelemetryRangeQueries(ctx context.Context, service *PrometheusTelemetryS
 				return
 			}
 			defer func() { <-semaphore }()
-			points, err := service.queryRange(ctx, spec.Query, from, to, step)
+			points, err := service.queries.Range(ctx, spec.Query, from, to, step)
 			mu.Lock()
 			results[spec.ID] = telemetryRangeResult{Points: points, Err: err}
 			mu.Unlock()
@@ -345,7 +345,7 @@ func buildTelemetrySeries(specs []telemetryQuerySpec, results map[string]telemet
 	series := make([]TelemetrySeries, 0, len(specs))
 	for _, spec := range specs {
 		disposition := telemetryDisposition{}
-		points := []TelemetryPoint{}
+		points := []operationscontract.TelemetryPoint{}
 		if telemetryScopeUnsupported(spec.ID, scope) {
 			disposition = telemetryUnsupported()
 		} else if feature, ok := telemetryFeatureForSpec(spec.ID, features); ok && feature.Set {
@@ -359,7 +359,7 @@ func buildTelemetrySeries(specs []telemetryQuerySpec, results map[string]telemet
 			disposition = telemetryReady()
 		}
 		if len(points) == 0 && disposition.Status == TelemetryItemInactive && telemetrySeriesCanProveZero(spec.ID, cards) {
-			points = []TelemetryPoint{{Timestamp: from.Format(time.RFC3339), Value: 0}, {Timestamp: to.Format(time.RFC3339), Value: 0}}
+			points = []operationscontract.TelemetryPoint{{Timestamp: from.Format(time.RFC3339), Value: 0}, {Timestamp: to.Format(time.RFC3339), Value: 0}}
 			disposition = telemetryReady()
 		}
 		if len(points) == 0 && disposition.Status == TelemetryItemInactive && telemetrySeriesParentActivityMissing(spec.ID, cards) {

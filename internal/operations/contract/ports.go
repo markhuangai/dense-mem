@@ -3,6 +3,7 @@ package contract
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -75,6 +76,59 @@ type UsageMetricsRepository interface {
 	UpsertBuckets(context.Context, uuid.UUID, []domain.UsageMetricBucket) error
 	PruneBefore(context.Context, time.Time) error
 	Snapshot(context.Context, domain.UsageMetricsFilter) (*domain.UsageMetricsSnapshot, error)
+}
+
+type TelemetryQuerier interface {
+	Instant(context.Context, string) (TelemetryScalar, error)
+	Range(context.Context, string, time.Time, time.Time, time.Duration) ([]TelemetryPoint, error)
+}
+
+type TelemetryScalar struct {
+	Value     float64
+	Available bool
+	Labels    map[string]string
+}
+
+type TelemetryPoint struct {
+	Timestamp string  `json:"timestamp"`
+	Value     float64 `json:"value"`
+}
+
+type TelemetryQueryError struct {
+	Reason string
+	Cause  error
+}
+
+func (err *TelemetryQueryError) Error() string {
+	return "telemetry backend query failed"
+}
+
+func (err *TelemetryQueryError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.Cause
+}
+
+func TelemetryQueryFailureReason(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "context_canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "context_deadline_exceeded"
+	}
+	var queryErr *TelemetryQueryError
+	if errors.As(err, &queryErr) && queryErr.Reason != "" {
+		return queryErr.Reason
+	}
+	return "transport_failed"
+}
+
+func NormalizeTelemetryQueryTimeout(timeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		return 5 * time.Second
+	}
+	return timeout
 }
 
 // TelemetryLifecycleReader reads authoritative lifecycle aggregates.

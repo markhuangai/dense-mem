@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unsafe"
@@ -23,6 +25,7 @@ import (
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/operations"
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
@@ -390,4 +393,48 @@ func coveragePostgresDB(t *testing.T) (*postgres.DB, sqlmock.Sqlmock, func()) {
 	setUnexported("db", gdb)
 	setUnexported("sqlDB", sqlDB)
 	return wrapped, mock, func() { _ = sqlDB.Close() }
+}
+
+func TestTelemetryCompositionUsesConfiguredQueryAdapter(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		t.Run(fmt.Sprint(partial), func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				query := r.URL.Query().Get("query")
+				if !strings.Contains(query, `job="composition-job"`) {
+					t.Errorf("configured job missing from %q", query)
+				}
+				if partial && strings.Contains(query, "status_class") {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[1770000000,"7"],"values":[[1770000000,"7"]]}]}}`))
+			}))
+			defer server.Close()
+			composed, err := buildTelemetryApplication(context.Background(), config.Config{TelemetryEnabled: true, TelemetryPrometheusURL: " " + server.URL + "/ ", TelemetryPrometheusJob: "composition-job", TelemetryQueryTimeoutSeconds: 1}, telemetryPricingStub{}, nil, nil, observability.New(0), observability.NewCredentialProtector())
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := composed.Reader.Snapshot(context.Background(), operations.TelemetryFilter{Window: "15m", Scope: "system"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if requests.Load() == 0 {
+				t.Fatal("composed reader did not use HTTP adapter")
+			}
+			var found bool
+			for _, card := range snapshot.WindowedCards {
+				if card.ID == "http_requests" {
+					found = card.Status == operations.TelemetryItemReady && card.Value == 7
+				}
+				if partial && card.ID == "http_errors" && card.ReasonCode != "query_failed" {
+					t.Fatalf("partial failure lost: %+v", card)
+				}
+			}
+			if !found {
+				t.Fatalf("HTTP adapter result missing: %+v", snapshot)
+			}
+		})
+	}
 }

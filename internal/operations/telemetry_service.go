@@ -2,11 +2,7 @@ package operations
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"math"
-	"net/http"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -105,24 +101,18 @@ type TelemetryCard struct {
 }
 
 type TelemetrySeries struct {
-	ID         string           `json:"id"`
-	Label      string           `json:"label"`
-	Unit       string           `json:"unit"`
-	Points     []TelemetryPoint `json:"points"`
-	Status     string           `json:"status"`
-	ReasonCode string           `json:"reason_code,omitempty"`
-	Reason     string           `json:"reason,omitempty"`
-}
-
-type TelemetryPoint struct {
-	Timestamp string  `json:"timestamp"`
-	Value     float64 `json:"value"`
+	ID         string                              `json:"id"`
+	Label      string                              `json:"label"`
+	Unit       string                              `json:"unit"`
+	Points     []operationscontract.TelemetryPoint `json:"points"`
+	Status     string                              `json:"status"`
+	ReasonCode string                              `json:"reason_code,omitempty"`
+	Reason     string                              `json:"reason,omitempty"`
 }
 
 type PrometheusTelemetryService struct {
-	baseURL       string
+	queries       operationscontract.TelemetryQuerier
 	prometheusJob string
-	client        *http.Client
 	timeout       time.Duration
 	now           func() time.Time
 	logger        observability.LogProvider
@@ -147,23 +137,11 @@ func (s *PrometheusTelemetryService) SetFeatureResolver(resolver TelemetryFeatur
 	}
 }
 
-func NewPrometheusTelemetryService(baseURL string, timeout time.Duration) *PrometheusTelemetryService {
-	return NewPrometheusTelemetryServiceWithLogger(baseURL, timeout, nil)
-}
-
-func NewPrometheusTelemetryServiceWithLogger(baseURL string, timeout time.Duration, logger observability.LogProvider) *PrometheusTelemetryService {
-	return NewPrometheusTelemetryServiceWithJobAndLogger(baseURL, timeout, "", logger)
-}
-
-func NewPrometheusTelemetryServiceWithJobAndLogger(baseURL string, timeout time.Duration, prometheusJob string, logger observability.LogProvider) *PrometheusTelemetryService {
-	if timeout <= 0 {
-		timeout = 5 * time.Second
-	}
+func NewPrometheusTelemetryService(queries operationscontract.TelemetryQuerier, timeout time.Duration, prometheusJob string, logger observability.LogProvider) *PrometheusTelemetryService {
 	return &PrometheusTelemetryService{
-		baseURL:       strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		queries:       queries,
 		prometheusJob: strings.TrimSpace(prometheusJob),
-		client:        &http.Client{Timeout: timeout},
-		timeout:       timeout,
+		timeout:       operationscontract.NormalizeTelemetryQueryTimeout(timeout),
 		now:           time.Now,
 		logger:        logger,
 	}
@@ -223,7 +201,7 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 		ActivitySeries: initialActivitySeries,
 		StateSeries:    initialStateSeries,
 	}
-	if s == nil || s.baseURL == "" {
+	if s == nil || s.queries == nil {
 		var lifecycle operationscontract.TelemetryLifecycleSnapshot
 		var lifecycleErr error
 		if s != nil && s.lifecycle != nil {
@@ -717,156 +695,6 @@ func normalizeTelemetryScope(filter TelemetryFilter) (TelemetryScope, error) {
 	}
 }
 
-func (s *PrometheusTelemetryService) queryRange(ctx context.Context, query string, from, to time.Time, step time.Duration) ([]TelemetryPoint, error) {
-	endpoint, err := url.Parse(s.baseURL + "/api/v1/query_range")
-	if err != nil {
-		return nil, wrapTelemetryQueryError("request_url_invalid", err)
-	}
-	params := endpoint.Query()
-	params.Set("query", query)
-	params.Set("start", strconv.FormatInt(from.Unix(), 10))
-	params.Set("end", strconv.FormatInt(to.Unix(), 10))
-	params.Set("step", strconv.FormatInt(int64(step.Seconds()), 10))
-	endpoint.RawQuery = params.Encode()
-
-	var resp prometheusRangeResponse
-	if err := s.get(ctx, endpoint.String(), &resp); err != nil {
-		return nil, wrapTelemetryQueryError(telemetryQueryFailureReason(err), err)
-	}
-	if resp.Status != "success" {
-		return nil, wrapTelemetryQueryError("prometheus_api_error", nil)
-	}
-	if len(resp.Data.Result) == 0 {
-		return []TelemetryPoint{}, nil
-	}
-	points, err := decodePrometheusPoints(resp.Data.Result[0].Values)
-	if err != nil {
-		return nil, wrapTelemetryQueryError("response_decode_failed", err)
-	}
-	return points, nil
-}
-
-type telemetryScalar struct {
-	Value     float64
-	Available bool
-	Labels    map[string]string
-}
-
-func (s *PrometheusTelemetryService) queryInstant(ctx context.Context, query string) (telemetryScalar, error) {
-	endpoint, err := url.Parse(s.baseURL + "/api/v1/query")
-	if err != nil {
-		return telemetryScalar{}, wrapTelemetryQueryError("request_url_invalid", err)
-	}
-	params := endpoint.Query()
-	params.Set("query", query)
-	endpoint.RawQuery = params.Encode()
-
-	var resp prometheusInstantResponse
-	if err := s.get(ctx, endpoint.String(), &resp); err != nil {
-		return telemetryScalar{}, wrapTelemetryQueryError(telemetryQueryFailureReason(err), err)
-	}
-	if resp.Status != "success" {
-		return telemetryScalar{}, wrapTelemetryQueryError("prometheus_api_error", nil)
-	}
-	if len(resp.Data.Result) == 0 {
-		return telemetryScalar{}, nil
-	}
-	scalar, err := decodePrometheusValue(resp.Data.Result[0].Value)
-	if err != nil {
-		return telemetryScalar{}, wrapTelemetryQueryError("response_decode_failed", err)
-	}
-	scalar.Labels = resp.Data.Result[0].Metric
-	return scalar, nil
-}
-
-func (s *PrometheusTelemetryService) get(ctx context.Context, rawURL string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("prometheus returned status %d", resp.StatusCode)
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
-}
-
-type prometheusRangeResponse struct {
-	Status string `json:"status"`
-	Error  string `json:"error"`
-	Data   struct {
-		Result []struct {
-			Values [][]json.RawMessage `json:"values"`
-		} `json:"result"`
-	} `json:"data"`
-}
-
-type prometheusInstantResponse struct {
-	Status string `json:"status"`
-	Error  string `json:"error"`
-	Data   struct {
-		Result []struct {
-			Metric map[string]string `json:"metric"`
-			Value  []json.RawMessage `json:"value"`
-		} `json:"result"`
-	} `json:"data"`
-}
-
-func decodePrometheusPoints(values [][]json.RawMessage) ([]TelemetryPoint, error) {
-	points := make([]TelemetryPoint, 0, len(values))
-	for _, value := range values {
-		if len(value) < 2 {
-			continue
-		}
-		ts, scalar, err := decodePrometheusPair(value)
-		if err != nil {
-			return nil, err
-		}
-		if !scalar.Available {
-			continue
-		}
-		points = append(points, TelemetryPoint{Timestamp: ts.Format(time.RFC3339), Value: scalar.Value})
-	}
-	return points, nil
-}
-
-func decodePrometheusValue(value []json.RawMessage) (telemetryScalar, error) {
-	if len(value) < 2 {
-		return telemetryScalar{}, nil
-	}
-	_, scalar, err := decodePrometheusPair(value)
-	return scalar, err
-}
-
-func decodePrometheusPair(value []json.RawMessage) (time.Time, telemetryScalar, error) {
-	var unixSeconds float64
-	if err := json.Unmarshal(value[0], &unixSeconds); err != nil {
-		return time.Time{}, telemetryScalar{}, err
-	}
-	var raw string
-	if err := json.Unmarshal(value[1], &raw); err != nil {
-		return time.Time{}, telemetryScalar{}, err
-	}
-	metricValue, err := strconv.ParseFloat(raw, 64)
-	if err != nil || math.IsNaN(metricValue) || math.IsInf(metricValue, 0) {
-		secs, frac := math.Modf(unixSeconds)
-		return time.Unix(int64(secs), int64(frac*1e9)).UTC(), telemetryScalar{}, nil
-	}
-	secs, frac := math.Modf(unixSeconds)
-	return time.Unix(int64(secs), int64(frac*1e9)).UTC(), telemetryScalar{Value: nilIfNegative(metricValue), Available: true}, nil
-}
-
-func nilIfNegative(value float64) float64 {
-	if value < 0 {
-		return 0
-	}
-	return value
-}
-
 func telemetryEmptyCards() []TelemetryCard {
 	return appendTelemetryCards(telemetryEmptyWindowedCards(), telemetryEmptyCurrentCards())
 }
@@ -909,7 +737,7 @@ func telemetryEmptyCardsFromSpecs(specs []telemetryQuerySpec) []TelemetryCard {
 func telemetryEmptySeriesFromSpecs(specs []telemetryQuerySpec) []TelemetrySeries {
 	series := make([]TelemetrySeries, 0, len(specs))
 	for _, spec := range specs {
-		series = append(series, TelemetrySeries{ID: spec.ID, Label: spec.Label, Unit: spec.Unit, Points: []TelemetryPoint{}})
+		series = append(series, TelemetrySeries{ID: spec.ID, Label: spec.Label, Unit: spec.Unit, Points: []operationscontract.TelemetryPoint{}})
 	}
 	return series
 }

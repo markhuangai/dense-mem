@@ -18,10 +18,11 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/observability"
 	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
+	operationsprometheus "github.com/markhuangai/dense-mem/internal/operations/prometheus"
 )
 
 func TestPrometheusTelemetryService_UnconfiguredReturnsUnavailableSnapshot(t *testing.T) {
-	svc := NewPrometheusTelemetryService("", time.Second)
+	svc := NewPrometheusTelemetryService(nil, time.Second, "", nil)
 	svc.now = func() time.Time { return time.Date(2026, 5, 2, 13, 0, 0, 0, time.UTC) }
 
 	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "30m", Scope: "system"})
@@ -57,7 +58,7 @@ func TestPrometheusTelemetryService_UnconfiguredPrometheusKeepsLifecycleCards(t 
 		Corrections: 1,
 		Current:     map[string]float64{active: 3},
 	}}
-	svc := NewPrometheusTelemetryService("", time.Second)
+	svc := NewPrometheusTelemetryService(nil, time.Second, "", nil)
 	svc.now = func() time.Time { return time.Date(2026, 5, 2, 13, 0, 0, 0, time.UTC) }
 	svc.SetLifecycleReader(lifecycle)
 
@@ -185,7 +186,7 @@ func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
 	}))
 	defer prom.Close()
 
-	svc := NewPrometheusTelemetryServiceWithJobAndLogger(prom.URL, time.Second, "dense-mem-demo", nil)
+	svc := NewPrometheusTelemetryService(operationsprometheus.NewClient(prom.URL, time.Second), time.Second, "dense-mem-demo", nil)
 	svc.now = func() time.Time { return time.Unix(1770000060, 0).UTC() }
 
 	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{
@@ -263,7 +264,7 @@ func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
 }
 
 func TestPrometheusTelemetryService_RejectsInvalidWindow(t *testing.T) {
-	svc := NewPrometheusTelemetryService("", time.Second)
+	svc := NewPrometheusTelemetryService(nil, time.Second, "", nil)
 
 	_, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "2h", Scope: "system"})
 
@@ -287,7 +288,7 @@ func TestPrometheusTelemetryService_SnapshotTimeoutBoundsSequentialQueries(t *te
 	}))
 	defer prom.Close()
 
-	svc := NewPrometheusTelemetryService(prom.URL, 60*time.Millisecond)
+	svc := NewPrometheusTelemetryService(operationsprometheus.NewClient(prom.URL, 60*time.Millisecond), 60*time.Millisecond, "", nil)
 	svc.now = func() time.Time { return time.Unix(1770000060, 0).UTC() }
 
 	start := time.Now()
@@ -302,10 +303,8 @@ func TestPrometheusTelemetryService_SnapshotTimeoutBoundsSequentialQueries(t *te
 	require.LessOrEqual(t, requests.Load(), int32(len(telemetryCardSpecs(TelemetryScope{Type: "system"}, nil, "15m"))))
 }
 
-func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
-	svc := NewPrometheusTelemetryService(" https://prom.example.test/ ", 0)
-	require.Equal(t, "https://prom.example.test", svc.baseURL)
-	require.Equal(t, 5*time.Second, svc.client.Timeout)
+func TestPrometheusTelemetryService_ValidationBranches(t *testing.T) {
+	svc := NewPrometheusTelemetryService(operationsprometheus.NewClient(" https://prom.example.test/ ", 0), 0, "", nil)
 	require.Equal(t, 5*time.Second, svc.timeout)
 
 	snapshot, err := (*PrometheusTelemetryService)(nil).Snapshot(context.Background(), TelemetryFilter{})
@@ -403,30 +402,6 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 	_, err = normalizeTelemetryScope(TelemetryFilter{Scope: "other"})
 	require.ErrorContains(t, err, "scope must be one of")
 
-	points, err := decodePrometheusPoints([][]json.RawMessage{
-		{json.RawMessage(`1770000000.5`), json.RawMessage(`"2.5"`)},
-		{json.RawMessage(`1770000001`)},
-		{json.RawMessage(`1770000002`), json.RawMessage(`"-1"`)},
-		{json.RawMessage(`1770000003`), json.RawMessage(`"NaN"`)},
-	})
-	require.NoError(t, err)
-	require.Len(t, points, 2)
-	require.Equal(t, 2.5, points[0].Value)
-	require.Equal(t, 0.0, points[1].Value)
-
-	value, err := decodePrometheusValue(nil)
-	require.NoError(t, err)
-	require.False(t, value.Available)
-	require.Equal(t, 0.0, value.Value)
-
-	_, _, err = decodePrometheusPair([]json.RawMessage{json.RawMessage(`"bad"`), json.RawMessage(`"1"`)})
-	require.Error(t, err)
-	_, _, err = decodePrometheusPair([]json.RawMessage{json.RawMessage(`1`), json.RawMessage(`1`)})
-	require.Error(t, err)
-	_, value, err = decodePrometheusPair([]json.RawMessage{json.RawMessage(`1`), json.RawMessage(`"NaN"`)})
-	require.NoError(t, err)
-	require.False(t, value.Available)
-	require.Equal(t, 0.0, value.Value)
 }
 
 func TestPrometheusTelemetryServiceKeepsSuccessfulItemsWhenOneQueryFails(t *testing.T) {
@@ -443,7 +418,7 @@ func TestPrometheusTelemetryServiceKeepsSuccessfulItemsWhenOneQueryFails(t *test
 	}))
 	defer prom.Close()
 
-	svc := NewPrometheusTelemetryService(prom.URL, time.Second)
+	svc := NewPrometheusTelemetryService(operationsprometheus.NewClient(prom.URL, time.Second), time.Second, "", nil)
 	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "system", Audience: TelemetryAudienceOperator})
 	require.NoError(t, err)
 	require.Equal(t, TelemetrySnapshotDegraded, snapshot.Status)
@@ -473,7 +448,7 @@ func TestPrometheusTelemetryServiceKeepsLifecycleItemsWhenPrometheusTimesOut(t *
 		Transitions: map[string]float64{"active": 1},
 		Current:     map[string]float64{"active": 1},
 	}}
-	svc := NewPrometheusTelemetryService(prom.URL, 20*time.Millisecond)
+	svc := NewPrometheusTelemetryService(operationsprometheus.NewClient(prom.URL, 20*time.Millisecond), 20*time.Millisecond, "", nil)
 	svc.SetLifecycleReader(lifecycle)
 
 	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "system", Audience: TelemetryAudienceOperator})
@@ -485,6 +460,10 @@ func TestPrometheusTelemetryServiceKeepsLifecycleItemsWhenPrometheusTimesOut(t *
 	require.Equal(t, TelemetryItemReady, active.Status)
 	require.Equal(t, 1.0, active.Value)
 	require.Equal(t, 1, lifecycle.calls)
+	require.NoError(t, lifecycle.contextErr)
+	require.True(t, lifecycle.hasDeadline)
+	require.Positive(t, lifecycle.remainingBudget)
+	require.LessOrEqual(t, lifecycle.remainingBudget, 20*time.Millisecond)
 }
 
 func TestPrometheusTelemetryServicePreservesSparseFirstObservations(t *testing.T) {
@@ -506,7 +485,7 @@ func TestPrometheusTelemetryServicePreservesSparseFirstObservations(t *testing.T
 	}))
 	defer prom.Close()
 
-	svc := NewPrometheusTelemetryService(prom.URL, time.Second)
+	svc := NewPrometheusTelemetryService(operationsprometheus.NewClient(prom.URL, time.Second), time.Second, "", nil)
 	svc.now = func() time.Time { return time.Unix(1770000060, 0).UTC() }
 
 	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "system"})
@@ -544,7 +523,7 @@ func TestPrometheusTelemetryServiceLimitsQueryConcurrency(t *testing.T) {
 	}))
 	defer prom.Close()
 
-	svc := NewPrometheusTelemetryService(prom.URL, time.Second)
+	svc := NewPrometheusTelemetryService(operationsprometheus.NewClient(prom.URL, time.Second), time.Second, "", nil)
 	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "system"})
 
 	require.NoError(t, err)
@@ -567,7 +546,7 @@ func TestPrometheusTelemetryServiceReportsFeatureAndScopeStates(t *testing.T) {
 
 	teamID := uuid.New()
 	profileID := uuid.New()
-	svc := NewPrometheusTelemetryService(prom.URL, time.Second)
+	svc := NewPrometheusTelemetryService(operationsprometheus.NewClient(prom.URL, time.Second), time.Second, "", nil)
 	svc.SetFeatureResolver(TelemetryFeatureResolver{
 		RecallFeedbackEnabled: func(context.Context) (bool, error) { return false, nil },
 		DreamingEnabled:       func(context.Context, *uuid.UUID) (bool, error) { return false, nil },
@@ -586,10 +565,10 @@ func TestTelemetryCostCardsFailClosedWhenActivityIsUnpriced(t *testing.T) {
 	scope := TelemetryScope{Type: "system"}
 	specs := telemetryWindowedCardSpecsForAudience(scope, nil, "1h", true)
 	results := map[string]telemetryInstantResult{
-		"verifier_requests":  {Scalar: telemetryScalar{Value: 1, Available: true}},
-		"embedding_requests": {Scalar: telemetryScalar{Value: 0, Available: true}},
-		"verifier_cost_usd":  {Scalar: telemetryScalar{}},
-		"embedding_cost_usd": {Scalar: telemetryScalar{}},
+		"verifier_requests":  {Scalar: operationscontract.TelemetryScalar{Value: 1, Available: true}},
+		"embedding_requests": {Scalar: operationscontract.TelemetryScalar{Value: 0, Available: true}},
+		"verifier_cost_usd":  {Scalar: operationscontract.TelemetryScalar{}},
+		"embedding_cost_usd": {Scalar: operationscontract.TelemetryScalar{}},
 	}
 	cards := buildTelemetryCards(specs, results, operationscontract.TelemetryLifecycleSnapshot{
 		Transitions: map[string]float64{},
@@ -610,10 +589,10 @@ func TestTelemetryAggregateCostIncludesUnpricedEmbeddingActivity(t *testing.T) {
 	scope := TelemetryScope{Type: "system"}
 	specs := telemetryWindowedCardSpecsForAudience(scope, nil, "1h", true)
 	results := map[string]telemetryInstantResult{
-		"verifier_requests":  {Scalar: telemetryScalar{Value: 0, Available: true}},
-		"embedding_requests": {Scalar: telemetryScalar{Value: 2, Available: true}},
-		"ai_cost_usd":        {Scalar: telemetryScalar{}},
-		"embedding_cost_usd": {Scalar: telemetryScalar{}},
+		"verifier_requests":  {Scalar: operationscontract.TelemetryScalar{Value: 0, Available: true}},
+		"embedding_requests": {Scalar: operationscontract.TelemetryScalar{Value: 2, Available: true}},
+		"ai_cost_usd":        {Scalar: operationscontract.TelemetryScalar{}},
+		"embedding_cost_usd": {Scalar: operationscontract.TelemetryScalar{}},
 	}
 	cards := buildTelemetryCards(specs, results, operationscontract.TelemetryLifecycleSnapshot{
 		Transitions: map[string]float64{},
@@ -630,8 +609,8 @@ func TestTelemetryCostCardsPreserveUnpricedUsageReasons(t *testing.T) {
 	scope := TelemetryScope{Type: "system"}
 	specs := telemetryWindowedCardSpecsForAudience(scope, nil, "1h", true)
 	baseResults := map[string]telemetryInstantResult{
-		"verifier_requests":  {Scalar: telemetryScalar{Value: 1, Available: true}},
-		"embedding_requests": {Scalar: telemetryScalar{Value: 0, Available: true}},
+		"verifier_requests":  {Scalar: operationscontract.TelemetryScalar{Value: 1, Available: true}},
+		"embedding_requests": {Scalar: operationscontract.TelemetryScalar{Value: 0, Available: true}},
 	}
 	for _, tc := range []struct {
 		name   string
@@ -647,7 +626,7 @@ func TestTelemetryCostCardsPreserveUnpricedUsageReasons(t *testing.T) {
 			for id, result := range baseResults {
 				results[id] = result
 			}
-			results["verifier_cost_usd"] = telemetryInstantResult{Scalar: telemetryScalar{
+			results["verifier_cost_usd"] = telemetryInstantResult{Scalar: operationscontract.TelemetryScalar{
 				Labels: map[string]string{"reason": tc.reason},
 			}}
 			cards := buildTelemetryCards(specs, results, operationscontract.TelemetryLifecycleSnapshot{
@@ -666,7 +645,7 @@ func TestTelemetryConflictQueueFailureSentinelIsUnavailable(t *testing.T) {
 	scope := TelemetryScope{Type: "system"}
 	specs := telemetryCurrentCardSpecsForAudience(scope, nil, true)
 	cards := buildTelemetryCards(specs, map[string]telemetryInstantResult{
-		"conflict_queue_collection_success": {Scalar: telemetryScalar{Value: 0, Available: true}},
+		"conflict_queue_collection_success": {Scalar: operationscontract.TelemetryScalar{Value: 0, Available: true}},
 	}, operationscontract.TelemetryLifecycleSnapshot{
 		Transitions: map[string]float64{},
 		Current:     map[string]float64{},
@@ -681,8 +660,8 @@ func TestTelemetryRecallFeedbackParentUsesEventCount(t *testing.T) {
 	scope := TelemetryScope{Type: "system"}
 	specs := telemetryWindowedCardSpecsForAudience(scope, nil, "1h", false)
 	cards := buildTelemetryCards(specs, map[string]telemetryInstantResult{
-		telemetryRecallFeedbackActivityID: {Scalar: telemetryScalar{Value: 3, Available: true}},
-		"llm_recall_used_rate":            {Scalar: telemetryScalar{Value: 0, Available: true}},
+		telemetryRecallFeedbackActivityID: {Scalar: operationscontract.TelemetryScalar{Value: 3, Available: true}},
+		"llm_recall_used_rate":            {Scalar: operationscontract.TelemetryScalar{Value: 0, Available: true}},
 	}, operationscontract.TelemetryLifecycleSnapshot{
 		Transitions: map[string]float64{},
 		Current:     map[string]float64{},
@@ -701,8 +680,8 @@ func TestTelemetryParentActivityMakesMissingDerivedItemsUnavailable(t *testing.T
 	scope := TelemetryScope{Type: "system"}
 	cardSpecs := telemetryWindowedCardSpecsForAudience(scope, nil, "1h", false)
 	cards := buildTelemetryCards(cardSpecs, map[string]telemetryInstantResult{
-		"recalls":            {Scalar: telemetryScalar{Value: 2, Available: true}},
-		"avg_recall_results": {Scalar: telemetryScalar{}},
+		"recalls":            {Scalar: operationscontract.TelemetryScalar{Value: 2, Available: true}},
+		"avg_recall_results": {Scalar: operationscontract.TelemetryScalar{}},
 	}, operationscontract.TelemetryLifecycleSnapshot{Transitions: map[string]float64{}, Current: map[string]float64{}}, nil, nil, scope)
 	card := telemetrySpecByID(cards, "avg_recall_results")
 	require.NotNil(t, card)
@@ -712,7 +691,7 @@ func TestTelemetryParentActivityMakesMissingDerivedItemsUnavailable(t *testing.T
 	seriesSpec := telemetryQuerySpecByID(telemetryActivitySeriesSpecsForAudience("", "1m", false), "recall_results")
 	require.NotNil(t, seriesSpec)
 	series := buildTelemetrySeries([]telemetryQuerySpec{*seriesSpec}, map[string]telemetryRangeResult{
-		"recall_results": {Points: []TelemetryPoint{}},
+		"recall_results": {Points: []operationscontract.TelemetryPoint{}},
 	}, nil, time.Unix(1770000000, 0).UTC(), time.Unix(1770000060, 0).UTC(), cards, scope)
 	require.Len(t, series, 1)
 	require.Equal(t, TelemetryItemUnavailable, series[0].Status)
@@ -727,8 +706,8 @@ func TestTelemetryParentActivityMakesMissingDerivedItemsUnavailable(t *testing.T
 	require.Equal(t, "http_requests", parent.ID)
 
 	zeroUsageCards := buildTelemetryCards(cardSpecs, map[string]telemetryInstantResult{
-		"verifier_requests": {Scalar: telemetryScalar{Value: 0, Available: true}},
-		"verifier_tokens":   {Scalar: telemetryScalar{}},
+		"verifier_requests": {Scalar: operationscontract.TelemetryScalar{Value: 0, Available: true}},
+		"verifier_tokens":   {Scalar: operationscontract.TelemetryScalar{}},
 	}, operationscontract.TelemetryLifecycleSnapshot{Transitions: map[string]float64{}, Current: map[string]float64{}}, nil, nil, scope)
 	zeroUsage := telemetrySpecByID(zeroUsageCards, "verifier_tokens")
 	require.NotNil(t, zeroUsage)
@@ -740,10 +719,10 @@ func TestAssessorFailureTelemetryUsesReadyZeroWhenRequestsAreHealthy(t *testing.
 	scope := TelemetryScope{Type: "system"}
 	windowedSpecs := telemetryWindowedCardSpecsForAudience(scope, nil, "1h", true)
 	windowedResults := map[string]telemetryInstantResult{
-		"assessor_requests":            {Scalar: telemetryScalar{Value: 2, Available: true}},
-		"assessor_request_failures":    {Scalar: telemetryScalar{Value: 0, Available: false}},
-		"assessor_validation_failures": {Scalar: telemetryScalar{Value: 0, Available: false}},
-		"assessor_terminal_failures":   {Scalar: telemetryScalar{Value: 0, Available: false}},
+		"assessor_requests":            {Scalar: operationscontract.TelemetryScalar{Value: 2, Available: true}},
+		"assessor_request_failures":    {Scalar: operationscontract.TelemetryScalar{Value: 0, Available: false}},
+		"assessor_validation_failures": {Scalar: operationscontract.TelemetryScalar{Value: 0, Available: false}},
+		"assessor_terminal_failures":   {Scalar: operationscontract.TelemetryScalar{Value: 0, Available: false}},
 	}
 	cards := buildTelemetryCards(windowedSpecs, windowedResults, operationscontract.TelemetryLifecycleSnapshot{}, nil, nil, scope)
 	for _, id := range []string{"assessor_request_failures", "assessor_validation_failures", "assessor_terminal_failures"} {
@@ -761,9 +740,9 @@ func TestAssessorFailureTelemetryUsesReadyZeroWhenRequestsAreHealthy(t *testing.
 			*telemetryQuerySpecByID(seriesSpecs, "assessor_terminal_failures"),
 		},
 		map[string]telemetryRangeResult{
-			"assessor_request_failures":    {Points: []TelemetryPoint{}},
-			"assessor_validation_failures": {Points: []TelemetryPoint{}},
-			"assessor_terminal_failures":   {Points: []TelemetryPoint{}},
+			"assessor_request_failures":    {Points: []operationscontract.TelemetryPoint{}},
+			"assessor_validation_failures": {Points: []operationscontract.TelemetryPoint{}},
+			"assessor_terminal_failures":   {Points: []operationscontract.TelemetryPoint{}},
 		},
 		nil,
 		time.Unix(1770000000, 0).UTC(),
@@ -813,13 +792,25 @@ type captureTelemetryLogger struct {
 }
 
 type telemetryLifecycleReaderStub struct {
-	snapshot operationscontract.TelemetryLifecycleSnapshot
-	err      error
-	calls    int
+	contextErr      error
+	hasDeadline     bool
+	remainingBudget time.Duration
+	snapshot        operationscontract.TelemetryLifecycleSnapshot
+	err             error
+	calls           int
 }
 
-func (s *telemetryLifecycleReaderStub) ReadTelemetryLifecycle(context.Context, operationscontract.TelemetryLifecycleFilter, time.Time, time.Time) (operationscontract.TelemetryLifecycleSnapshot, error) {
+func (s *telemetryLifecycleReaderStub) ReadTelemetryLifecycle(ctx context.Context, _ operationscontract.TelemetryLifecycleFilter, _, _ time.Time) (operationscontract.TelemetryLifecycleSnapshot, error) {
 	s.calls++
+	s.contextErr = ctx.Err()
+	deadline, bounded := ctx.Deadline()
+	s.hasDeadline = bounded
+	if bounded {
+		s.remainingBudget = time.Until(deadline)
+	}
+	if s.contextErr != nil {
+		return operationscontract.TelemetryLifecycleSnapshot{}, s.contextErr
+	}
 	return s.snapshot, s.err
 }
 

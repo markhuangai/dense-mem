@@ -11,6 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	operations "github.com/markhuangai/dense-mem/internal/operations"
 	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
+	operationsprometheus "github.com/markhuangai/dense-mem/internal/operations/prometheus"
 )
 
 type telemetryComposition struct {
@@ -56,9 +57,10 @@ func buildTelemetryApplication(
 	composition.Metrics = prometheusMetrics
 	composition.HTTPMetrics = prometheusMetrics
 	composition.ScrapeHandler = prometheusMetrics.Handler()
-	composition.Prometheus = operations.NewPrometheusTelemetryServiceWithJobAndLogger(
-		cfg.GetTelemetryPrometheusURL(),
-		time.Duration(cfg.GetTelemetryQueryTimeoutSeconds())*time.Second,
+	timeout := time.Duration(cfg.GetTelemetryQueryTimeoutSeconds()) * time.Second
+	composition.Prometheus = operations.NewPrometheusTelemetryService(
+		operationsprometheus.NewClient(cfg.GetTelemetryPrometheusURL(), timeout),
+		timeout,
 		cfg.GetTelemetryPrometheusJob(),
 		logger,
 	)
