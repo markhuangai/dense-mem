@@ -3,7 +3,6 @@ package postgres
 import (
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -117,52 +116,26 @@ func findDirectoryIdentityIDTx(tx *gorm.DB, providerID uuid.UUID, column, value 
 	return id, true, rows.Err()
 }
 
-const directoryIdentityPageMaxResults = 100
-
-func normalizeDirectoryPageRequest(request domain.DirectoryPageRequest) (domain.DirectoryPageRequest, error) {
-	if request.Offset < 0 || request.Limit < 0 || request.Limit > directoryIdentityPageMaxResults {
-		return domain.DirectoryPageRequest{}, fmt.Errorf("%w: directory page bounds are invalid", ErrDirectoryInvalidValue)
-	}
-	request.FilterField = strings.TrimSpace(request.FilterField)
-	request.FilterValue = strings.TrimSpace(request.FilterValue)
-	return request, nil
-}
-
 func directoryUserPageFilter(request domain.DirectoryPageRequest) (string, []any, error) {
-	switch request.FilterField {
-	case "":
-		return "", nil, nil
-	case "userName":
-		return " AND lower(user_name) = lower($2)", []any{request.FilterValue}, nil
-	case "externalId":
-		return " AND external_id = $2", []any{request.FilterValue}, nil
-	case "id":
-		id, err := uuid.Parse(request.FilterValue)
-		if err != nil {
-			return "", nil, fmt.Errorf("%w: directory user id filter is invalid", ErrDirectoryInvalidValue)
-		}
-		return " AND id = $2", []any{id}, nil
-	default:
-		return "", nil, fmt.Errorf("%w: directory user filter is invalid", ErrDirectoryInvalidValue)
-	}
+	return directoryPageFilter(request, "userName", "user_name")
 }
 
 func directoryGroupPageFilter(request domain.DirectoryPageRequest) (string, []any, error) {
+	return directoryPageFilter(request, "displayName", "display_name")
+}
+
+func directoryPageFilter(request domain.DirectoryPageRequest, nameField, nameColumn string) (string, []any, error) {
 	switch request.FilterField {
 	case "":
 		return "", nil, nil
-	case "displayName":
-		return " AND lower(display_name) = lower($2)", []any{request.FilterValue}, nil
+	case nameField:
+		return " AND lower(" + nameColumn + ") = lower($2)", []any{request.FilterValue}, nil
 	case "externalId":
 		return " AND external_id = $2", []any{request.FilterValue}, nil
 	case "id":
-		id, err := uuid.Parse(request.FilterValue)
-		if err != nil {
-			return "", nil, fmt.Errorf("%w: directory group id filter is invalid", ErrDirectoryInvalidValue)
-		}
-		return " AND id = $2", []any{id}, nil
+		return " AND id = $2", []any{request.FilterValue}, nil
 	default:
-		return "", nil, fmt.Errorf("%w: directory group filter is invalid", ErrDirectoryInvalidValue)
+		return "", nil, fmt.Errorf("directory filter has no SQL mapping: %q", request.FilterField)
 	}
 }
 

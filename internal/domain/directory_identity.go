@@ -117,6 +117,8 @@ type DirectoryPreview struct {
 	Issues     []DirectoryIssue            `json:"issues"`
 }
 
+const DirectoryPageMaxResults = 100
+
 type DirectoryPageRequest struct {
 	FilterField string
 	FilterValue string

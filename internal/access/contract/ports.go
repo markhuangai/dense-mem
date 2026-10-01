@@ -4,10 +4,13 @@ package contract
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	privacycontract "github.com/markhuangai/dense-mem/internal/privacy/contract"
 )
@@ -37,3 +40,31 @@ type CredentialDeletionAuditInput = privacycontract.CredentialDeletionAuditInput
 // CredentialDeletionStore is retained as an Access-facing alias while the
 // Privacy contract owns the retirement transaction boundary.
 type CredentialDeletionStore = privacycontract.CredentialDeletionStore
+
+func NormalizeDirectoryUserPageRequest(request domain.DirectoryPageRequest) (domain.DirectoryPageRequest, error) {
+	return normalizeDirectoryPageRequest(request, "user", "userName")
+}
+
+func NormalizeDirectoryGroupPageRequest(request domain.DirectoryPageRequest) (domain.DirectoryPageRequest, error) {
+	return normalizeDirectoryPageRequest(request, "group", "displayName")
+}
+
+func normalizeDirectoryPageRequest(request domain.DirectoryPageRequest, resource, nameField string) (domain.DirectoryPageRequest, error) {
+	if request.Offset < 0 || request.Limit < 0 || request.Limit > domain.DirectoryPageMaxResults {
+		return domain.DirectoryPageRequest{}, fmt.Errorf("%w: directory page bounds are invalid", ErrDirectoryInvalidValue)
+	}
+	request.FilterField = strings.TrimSpace(request.FilterField)
+	request.FilterValue = strings.TrimSpace(request.FilterValue)
+	switch request.FilterField {
+	case "", nameField, "externalId":
+	case "id":
+		id, err := uuid.Parse(request.FilterValue)
+		if err != nil {
+			return domain.DirectoryPageRequest{}, fmt.Errorf("%w: directory %s id filter is invalid", ErrDirectoryInvalidValue, resource)
+		}
+		request.FilterValue = id.String()
+	default:
+		return domain.DirectoryPageRequest{}, fmt.Errorf("%w: directory %s filter is invalid", ErrDirectoryInvalidValue, resource)
+	}
+	return request, nil
+}

@@ -73,6 +73,13 @@
       "source": "internal/access/postgres/directory_identity_repository_integration_test.go"
     },
     {
+      "id": "repository/TestDirectoryPageOwnership",
+      "package": "./internal/access/postgres",
+      "run": "^TestDirectoryPageOwnership$",
+      "phase": "precheck",
+      "source": "internal/access/postgres/directory_page_ownership_integration_test.go"
+    },
+    {
       "id": "repository/TestDirectoryPageQueriesAreScopedAndRejectDuplicateCreates",
       "package": "./internal/access/postgres",
       "run": "^TestDirectoryPageQueriesAreScopedAndRejectDuplicateCreates$",

@@ -104,8 +104,8 @@ func directorySCIMPageRequest(filter directorySCIMFilter, params scim.ListReques
 	if limit < 0 {
 		limit = 0
 	}
-	if limit > directorySCIMMaxResults {
-		limit = directorySCIMMaxResults
+	if limit > domain.DirectoryPageMaxResults {
+		limit = domain.DirectoryPageMaxResults
 	}
 	return domain.DirectoryPageRequest{FilterField: filter.field, FilterValue: filter.value, Offset: offset, Limit: limit}
 }
