@@ -123,14 +123,18 @@ const nonJSONProviderErrorMessage = "provider returned a non-JSON error response
 
 // EmbedBatch returns embeddings for multiple texts in the same order as inputs.
 func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string) (vectors [][]float32, model string, err error) {
+	return p.embedBatch(ctx, texts, p.embedChunk)
+}
+
+func (p *OpenAIEmbeddingProvider) embedBatch(ctx context.Context, texts []string, embed func(context.Context, []string) ([][]float32, string, error)) ([][]float32, string, error) {
 	if len(texts) <= p.maxBatchItems {
-		return p.embedChunk(ctx, texts)
+		return embed(ctx, texts)
 	}
 
 	result := make([][]float32, 0, len(texts))
 	for start := 0; start < len(texts); start += p.maxBatchItems {
 		end := min(start+p.maxBatchItems, len(texts))
-		chunk, _, chunkErr := p.embedChunk(ctx, texts[start:end])
+		chunk, _, chunkErr := embed(ctx, texts[start:end])
 		if chunkErr != nil {
 			return nil, "", chunkErr
 		}

@@ -685,12 +685,12 @@ func TestRememberProcessorInputBudgetUsesCanonicalTerminalGuidance(t *testing.T)
 	)
 	var processErr *rememberapp.RememberProcessError
 	require.ErrorAs(t, err, &processErr)
-	want := rememberapp.TerminalStatusError(rememberapp.TerminalErrorInputBudgetExceeded)
-	want.ReasonCode = "remember_assessment_failed"
-	want.Details = map[string]any{"component": "remember.assessment", "server_owned": true}
-	want.NextAction = string(rememberapp.TerminalNextActionContactOperator)
-	want.Remediation = "Ask an operator to review the configured assessor budget and server-owned context before retrying."
+	want := rememberapp.TerminalStatusErrorWithDetails(rememberapp.TerminalErrorInputBudgetExceeded,
+		"remember_assessment_failed", map[string]any{"component": "remember.assessment", "server_owned": true})
 	require.Equal(t, want, processErr.Status.Errors[0])
+	require.Contains(t, want.Message, "server-owned context")
+	require.Contains(t, want.Message, "does not retain observed or allowed counts")
+	require.Equal(t, string(rememberapp.TerminalNextActionContactOperator), want.NextAction)
 	require.NoError(t, rememberapp.ValidateTerminalStatusError(processErr.Status.Errors[0]))
 }
 

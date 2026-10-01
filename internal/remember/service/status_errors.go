@@ -129,36 +129,36 @@ func SubmissionNextActions() []string {
 }
 
 var submissionErrorMessages = map[SubmissionErrorCode]string{
-	SubmissionErrorStaleInput:               "an exact client-owned input changed before commit",
-	SubmissionErrorProviderUnavailable:      "the semantic assessor was unavailable",
-	SubmissionErrorProviderResponseInvalid:  "the semantic assessor returned an invalid response",
-	SubmissionErrorInputBudgetExceeded:      "the semantic assessor input exceeded the configured budget",
-	SubmissionErrorConfigurationInvalid:     "Dense-Mem is missing valid semantic-assessor configuration",
-	SubmissionErrorIdempotencyConflict:      "the idempotency key is already bound to a different request",
-	SubmissionErrorEmbeddingUnavailable:     "the embedding provider was unavailable",
-	SubmissionErrorEmbeddingResponseInvalid: "the embedding provider returned an invalid response",
-	SubmissionErrorCommitConflict:           "server-owned state changed before commit",
-	SubmissionErrorDatabaseFailure:          "Dense-Mem could not persist the submission",
-	SubmissionErrorRequestTimeout:           "the bounded Remember request deadline was reached",
-	SubmissionErrorRequestCancelled:         "the Remember request was cancelled before commit",
-	SubmissionErrorInternalFailure:          "Dense-Mem could not complete the submission",
-	SubmissionErrorPolicyRejected:           "submission was rejected by semantic policy",
+	SubmissionErrorStaleInput:               "A source revision or exact reference changed while Remember was processing this request.",
+	SubmissionErrorProviderUnavailable:      "Remember could not reach the required assessment service or obtain a usable response. This does not mean the submitted evidence is false.",
+	SubmissionErrorProviderResponseInvalid:  "The assessment service did not return a complete response that satisfied the required schema and validation checks.",
+	SubmissionErrorInputBudgetExceeded:      "The evidence, proposals, or assessment context exceeded a configured processing limit.",
+	SubmissionErrorConfigurationInvalid:     "A required assessment or search provider is not configured correctly, so Dense-Mem cannot complete this operation.",
+	SubmissionErrorIdempotencyConflict:      "This idempotency_key was already used for a different request. The new request was not applied.",
+	SubmissionErrorEmbeddingUnavailable:     "The required embedding service could not produce the vectors needed to complete this operation.",
+	SubmissionErrorEmbeddingResponseInvalid: "The embedding service returned missing, incorrectly ordered, or invalid vectors that could not be accepted.",
+	SubmissionErrorCommitConflict:           "Server state changed between assessment and the attempted write, so this operation could not finish against the assessed state.",
+	SubmissionErrorDatabaseFailure:          "Dense-Mem could not confirm that the operation was saved. The stored outcome must be checked by retrying the original request.",
+	SubmissionErrorRequestTimeout:           "The operation did not finish within its allowed time. Its final stored outcome may require an idempotent retry to confirm.",
+	SubmissionErrorRequestCancelled:         "The caller cancelled this operation before a terminal response could be confirmed.",
+	SubmissionErrorInternalFailure:          "Dense-Mem could not complete this operation, and the public result does not establish a more specific cause.",
+	SubmissionErrorPolicyRejected:           "A security check rejected text in the submitted batch. The batch was not accepted as memory.",
 
-	SubmissionErrorRelationshipVersionStale:      "relationship version is stale",
-	SubmissionErrorRelationshipNotActive:         "relationship must be active, supported, and canonical",
-	SubmissionErrorObjectKindChangeForbidden:     "a Value object cannot be replaced with an Entity",
-	SubmissionErrorSupportSetMismatch:            "supports must exactly match the relationship's effective evidence spans",
-	SubmissionErrorEntityNotFound:                "corrected Entity is not active and available to the team",
-	SubmissionErrorTooManyEntityCandidates:       "corrected Entity name has too many exact candidates",
-	SubmissionErrorPredicateNotFound:             "predicate is not registered and active for the team",
-	SubmissionErrorPredicateSubjectKindMismatch:  "predicate does not allow the corrected subject kind",
-	SubmissionErrorPredicateObjectKindMismatch:   "predicate does not allow the corrected object kind",
-	SubmissionErrorNoChange:                      "correction does not change the Relationship",
-	SubmissionErrorConfirmationExpired:           "relationship correction confirmation expired",
-	SubmissionErrorRelationshipChanged:           "relationship changed while confirmation was pending",
-	SubmissionErrorSupportSetChanged:             "relationship supports changed while confirmation was pending",
-	SubmissionErrorPersistentAmbiguity:           "selected Entity candidate is no longer available",
-	SubmissionErrorInactiveRelationshipCollision: "corrected Relationship collides with inactive or unsupported history",
+	SubmissionErrorRelationshipVersionStale:      "The relationship's current version does not match expected_version in your request, so the correction was not applied.",
+	SubmissionErrorRelationshipNotActive:         "The selected relationship is not currently active, supported, and canonical, so it cannot be corrected.",
+	SubmissionErrorObjectKindChangeForbidden:     "The correction would replace a typed Value with an Entity, which this correction operation does not permit.",
+	SubmissionErrorSupportSetMismatch:            "The supplied supports do not exactly match the relationship's current effective evidence spans, so the correction was not applied.",
+	SubmissionErrorEntityNotFound:                "A referenced corrected Entity is not available in your authorized context. Its existence elsewhere is not disclosed.",
+	SubmissionErrorTooManyEntityCandidates:       "The corrected Entity name matches more candidates than can be offered for selection.",
+	SubmissionErrorPredicateNotFound:             "The requested predicate is not available as an active registered predicate in your team.",
+	SubmissionErrorPredicateSubjectKindMismatch:  "The registered predicate does not permit the corrected subject Entity kind.",
+	SubmissionErrorPredicateObjectKindMismatch:   "The registered predicate does not permit the corrected object Entity or Value kind.",
+	SubmissionErrorNoChange:                      "The proposed correction has the same effective relationship content as the current relationship, so no correction is needed.",
+	SubmissionErrorConfirmationExpired:           "The correction confirmation expired before it was submitted, so that confirmation cannot apply the correction.",
+	SubmissionErrorRelationshipChanged:           "The relationship changed after correction confirmation was requested, so that confirmation no longer describes current state.",
+	SubmissionErrorSupportSetChanged:             "The effective evidence supports changed after correction confirmation was requested, so those supports must be refreshed.",
+	SubmissionErrorPersistentAmbiguity:           "The selected Entity candidate is no longer available for this correction; a new candidate selection is required.",
+	SubmissionErrorInactiveRelationshipCollision: "The proposed correction matches an inactive or unsupported historical relationship and cannot create an active duplicate.",
 }
 
 func submissionStatusError(code SubmissionErrorCode) SubmissionStatusError {
@@ -173,7 +173,7 @@ func submissionStatusError(code SubmissionErrorCode) SubmissionStatusError {
 		Message:     message,
 		Retryable:   retryable,
 		NextAction:  string(nextAction),
-		Remediation: submissionErrorRemediation(nextAction),
+		Remediation: submissionErrorRemediationForCode(code, nextAction),
 	}
 }
 
@@ -202,6 +202,7 @@ func StatusErrorWithDetails(code SubmissionErrorCode, reasonCode string, details
 	result.ReasonCode = boundedStatusErrorText(reasonCode, 128)
 	result.Details = boundedStatusErrorDetails(details)
 	applyServerOwnedInputBudgetGuidance(result.Code, &result)
+	applySubmissionDiagnosticGuidance(&result)
 	return result
 }
 
@@ -249,6 +250,22 @@ func boundedStatusErrorDetails(details map[string]any) map[string]any {
 			break
 		}
 		selected++
+		if key == "issues" {
+			issues, truncated := boundedSubmissionDiagnosticIssues(details[originalKey])
+			if len(issues) > 0 {
+				result[key] = issues
+			}
+			if truncated {
+				result["issues_truncated"] = true
+			}
+			continue
+		}
+		if key == "issues_truncated" {
+			value, _ := details[originalKey].(bool)
+			previous, _ := result[key].(bool)
+			result[key] = value || previous
+			continue
+		}
 		switch value := details[originalKey].(type) {
 		case string:
 			result[key] = boundedStatusErrorText(value, 512)

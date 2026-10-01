@@ -90,6 +90,7 @@ type SubmissionSecurityScan struct {
 type SubmissionSecurityBatchSignal struct {
 	EvidenceIndex int
 	Source        string
+	Path          string
 	SubmissionSecuritySignal
 }
 
@@ -106,6 +107,7 @@ type submissionSecurityInput struct {
 	content       string
 	source        string
 	evidenceIndex int
+	path          string
 }
 
 const (
@@ -208,26 +210,22 @@ func submissionSecurityProposalInputs(proposal map[string]any) ([]submissionSecu
 	if err := json.Unmarshal(encoded, &normalized); err != nil {
 		return nil, err
 	}
-	values := make([]string, 0)
-	appendSubmissionSecurityProposalValues(normalized, &values)
-	inputs := make([]submissionSecurityInput, 0, len(values))
-	for _, value := range values {
-		inputs = append(inputs, submissionSecurityInput{
-			content:       value,
-			source:        submissionSecuritySourceProposal,
-			evidenceIndex: -1,
-		})
-	}
+	inputs := make([]submissionSecurityInput, 0)
+	appendSubmissionSecurityProposalValues(normalized, "", &inputs)
 	return inputs, nil
 }
 
-func appendSubmissionSecurityProposalValues(value any, values *[]string) {
+func appendSubmissionSecurityProposalValues(value any, path string, inputs *[]submissionSecurityInput) {
+	appendValue := func(content, location string) {
+		*inputs = append(*inputs, submissionSecurityInput{content: content, source: submissionSecuritySourceProposal,
+			evidenceIndex: -1, path: diagnosticProposalPath(location)})
+	}
 	switch typed := value.(type) {
 	case string:
-		*values = append(*values, typed)
+		appendValue(typed, path)
 	case []any:
-		for _, item := range typed {
-			appendSubmissionSecurityProposalValues(item, values)
+		for index, item := range typed {
+			appendSubmissionSecurityProposalValues(item, diagnosticArrayPath(path, index), inputs)
 		}
 	case map[string]any:
 		keys := make([]string, 0, len(typed))
@@ -236,8 +234,9 @@ func appendSubmissionSecurityProposalValues(value any, values *[]string) {
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			*values = append(*values, key)
-			appendSubmissionSecurityProposalValues(typed[key], values)
+			location := path + "/" + strings.ReplaceAll(strings.ReplaceAll(key, "~", "~0"), "/", "~1")
+			appendValue(key, location)
+			appendSubmissionSecurityProposalValues(typed[key], location, inputs)
 		}
 	}
 }
@@ -262,6 +261,7 @@ func scanSubmissionInputs(inputs []submissionSecurityInput) (SubmissionSecurityB
 			result.Signals = append(result.Signals, SubmissionSecurityBatchSignal{
 				EvidenceIndex:            input.evidenceIndex,
 				Source:                   input.source,
+				Path:                     input.path,
 				SubmissionSecuritySignal: signal,
 			})
 		}

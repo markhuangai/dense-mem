@@ -72,7 +72,7 @@ type predicateOwnershipBenchmarkCount struct {
 }
 
 func newPredicateOwnershipCountedDB(db *gorm.DB, counters *predicateOwnershipBenchmarkCounters) *gorm.DB {
-	countedDB := db.Session(&gorm.Session{})
+	countedDB := db.Session(&gorm.Session{Context: db.Statement.Context})
 	pool := &predicateOwnershipBenchmarkConnPool{ConnPool: db.ConnPool, counters: counters}
 	countedDB.ConnPool = pool
 	countedDB.Statement.ConnPool = pool

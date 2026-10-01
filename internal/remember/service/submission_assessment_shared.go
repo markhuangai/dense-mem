@@ -89,6 +89,10 @@ func SynchronousAssessmentFailureDetails(err error) (string, map[string]any) {
 	if err == nil {
 		return "", nil
 	}
+	var diagnostic *submissionDiagnosticFailure
+	if errors.As(err, &diagnostic) {
+		return diagnostic.reason, boundedStatusErrorDetails(diagnostic.details)
+	}
 	var preflight *semanticAssessmentPreflightError
 	if errors.As(err, &preflight) && preflight != nil {
 		reasonCode := strings.TrimSpace(preflight.reasonCode)

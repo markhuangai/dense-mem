@@ -248,7 +248,7 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		return fail(lookupErr, "commit")
 	}
 	if input.SecurityRejected {
-		return fail(rememberapp.ErrRememberPolicyRejected, "assessment")
+		return fail(rememberapp.SecurityRejectionFailure(input.SecuritySignals, input.SecuritySignalsTruncated, "initial_scan"), "assessment")
 	}
 	duplicateInput := repository.RememberDuplicateCandidateInput{
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID,
@@ -312,7 +312,7 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 	}
 	if input.SecurityRejected || rememberAssessmentSecurityRejected(prepared) {
 		input.AssessorSecurityRejected = true
-		return fail(rememberapp.ErrRememberPolicyRejected, "assessment")
+		return fail(rememberapp.AssessmentSecurityRejectionFailure(prepared), "assessment")
 	}
 	embeddingStarted = time.Now()
 	embeddingCtx, embeddingCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)
@@ -435,7 +435,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		return nil, "", rememberConflictProcessError(input, attemptID, failure)
 	}
 	code := rememberFailureCode(phase, failure)
-	reasonCode, details := rememberapp.SynchronousAssessmentFailureDetails(failure)
+	reasonCode, details := rememberapp.RememberFailureDetails(failure, phase)
 	if code == rememberapp.SubmissionErrorCommitConflict && errors.Is(failure, repository.ErrSubmissionPredicateRegistrationHeld) {
 		reasonCode = "predicate_catalog_changed"
 		details = map[string]any{"component": "remember.predicate_catalog", "server_owned": true}
@@ -856,6 +856,7 @@ func rememberAttemptStatus(attempt *repository.RememberAttempt) (*rememberapp.Su
 	if replay.Errors == nil {
 		replay.Errors = []rememberapp.SubmissionStatusError{}
 	}
+	rememberapp.UpgradeRememberResultDiagnostics(&replay)
 	return &replay, nil
 }
 

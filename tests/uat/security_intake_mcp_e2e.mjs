@@ -209,6 +209,20 @@ function assertRejectedResponse(response, expectedCode) {
     try { payload = JSON.parse(text); } catch { payload = null; }
   }
   const actual = payload?.errors?.[0]?.code;
+  const explanation = payload?.errors?.[0];
+  if (!explanation?.message?.includes("security check") || !explanation.message.includes("Input location:") ||
+      !explanation.remediation?.includes("factual meaning") || !Array.isArray(explanation.details?.issues) ||
+      explanation.details.issues.length === 0) {
+    throw new Error("security rejection did not explain the verified category, input location, and legitimate recovery");
+  }
+  if (JSON.stringify(payload) !== JSON.stringify(JSON.parse(text))) {
+    throw new Error("security rejection text and structured content differed");
+  }
+  for (const item of [...(payload.evidence ?? []), ...(payload.relationship_results ?? [])]) {
+    if (item.disposition === "not_stored" && (!item.message || !item.remediation)) {
+      throw new Error("rejected batch item omitted its explanation or recovery guidance");
+    }
+  }
   if (actual !== "submission_policy_rejected" || payload?.processing_state !== "failed") {
     throw new Error(`rejected remember returned ${actual || "missing code"} instead of terminal policy rejection for scanner code ${expectedCode}`);
   }

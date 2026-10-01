@@ -138,6 +138,20 @@
       "phase": "scenario",
       "scenario": "synchronous_write_primitives",
       "source": "cmd/internal/serverapp/synchronous_assessment_compose_e2e_integration_test.go"
+    },
+    {
+      "id": "repository/TestRememberPublicDiagnosticsPersistReplayAndIsolateOwners",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestRememberPublicDiagnosticsPersistReplayAndIsolateOwners$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/remember_public_diagnostics_integration_test.go"
+    },
+    {
+      "id": "repository/TestRememberPublicDiagnosticsLocateMultiItemSourceConflictAndRollback",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestRememberPublicDiagnosticsLocateMultiItemSourceConflictAndRollback$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/remember_public_diagnostics_integration_test.go"
     }
   ]
 }

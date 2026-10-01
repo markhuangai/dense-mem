@@ -49,6 +49,12 @@ func rememberPublicResult(input SynchronousRememberCommitInput, evidence []Evide
 		if item.Reason != "" {
 			entry["reason"] = item.Reason
 		}
+		if item.Message != "" {
+			entry["message"] = item.Message
+		}
+		if item.Remediation != "" {
+			entry["remediation"] = item.Remediation
+		}
 		if splits := byRef[item.RelationshipRef]; len(splits) > 0 {
 			entry["disposition"] = "stored"
 			entry["splits"] = splits

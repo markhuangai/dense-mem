@@ -295,7 +295,7 @@ func AssessSynchronousRemember(
 			} else if errors.Is(err, ErrRememberDatabaseFailure) {
 				mapped = err
 			} else {
-				mapped = fmt.Errorf("%w: assessor provider request failed", ErrRememberProviderUnavailable)
+				mapped = fmt.Errorf("%w: assessor provider request failed: %w", ErrRememberProviderUnavailable, err)
 			}
 		}
 		mapped = preserveSubmissionAssessmentValidationHistory(mapped, err)

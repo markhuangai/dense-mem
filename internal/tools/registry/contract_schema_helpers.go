@@ -111,6 +111,15 @@ func actionableErrorDetailsSchema() map[string]any {
 		"server_owned":        map[string]any{"type": "boolean"},
 		"client_controlled":   map[string]any{"type": "boolean"},
 		"retry_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 86400},
+		"attempts":            map[string]any{"type": "integer", "minimum": 0, "maximum": 20},
+		"issues_truncated":    map[string]any{"type": "boolean"},
+		"issues": array(closedObject([]string{"path", "code", "message"}, map[string]any{
+			"path":       schemaString("JSON Pointer to caller-submitted input.", 256),
+			"code":       schemaString("Server-owned verified issue category.", 128),
+			"message":    schemaString("Server-owned issue explanation.", 512),
+			"span_start": map[string]any{"type": "integer", "minimum": 0, "maximum": 100000},
+			"span_end":   map[string]any{"type": "integer", "minimum": 0, "maximum": 100000},
+		}), 0, 20),
 	})
 }
 
@@ -207,6 +216,8 @@ func submissionRelationshipResultsSchema() map[string]any {
 			"ref":         schemaString("Client-local relationship reference.", 128),
 			"disposition": schemaEnum([]string{"stored", "not_stored"}),
 			"reason":      schemaString("Bounded server disposition reason.", 256),
+			"message":     schemaString("Verified explanation when a relationship is not stored.", 512),
+			"remediation": schemaString("Recovery guidance when a relationship is not stored.", 512),
 			"splits": array(closedObject(
 				[]string{"split_index", "relationship_id", "relationship_version", "status"},
 				map[string]any{

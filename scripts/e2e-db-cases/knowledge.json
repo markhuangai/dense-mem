@@ -344,6 +344,13 @@
       "run": "^TestSubmissionAssessmentKnownEvidenceCatalogEnforcesVisibilityAndEligibility$",
       "phase": "precheck",
       "source": "internal/knowledge/postgres/submission_assessment_known_evidence_repository_integration_test.go"
+    },
+    {
+      "id": "knowledge/TestPredicateOwnershipCountedSessionPreservesApplicationPool",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestPredicateOwnershipCountedSessionPreservesApplicationPool$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/predicate_ownership_pool_integration_test.go"
     }
   ]
 }

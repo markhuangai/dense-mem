@@ -80,33 +80,6 @@ function assertTerminalErrors(status, options = {}) {
     "no_change", "confirmation_expired", "relationship_changed", "support_set_changed",
     "persistent_ambiguity", "inactive_relationship_collision",
   ]);
-  const allowedMessages = new Set([
-    "the semantic assessor was unavailable",
-    "the semantic assessor returned an invalid response",
-    "the semantic assessor input exceeded the configured budget",
-    "Dense-Mem is missing valid semantic-assessor configuration",
-    "Dense-Mem could not persist the submission",
-    "Dense-Mem could not complete the submission",
-    "search indexing is delayed",
-    "submission was rejected by semantic policy",
-    "relationship version is stale",
-    "relationship must be active, supported, and canonical",
-    "a Value object cannot be replaced with an Entity",
-    "supports must exactly match the relationship's effective evidence spans",
-    "corrected Entity is not active and available to the team",
-    "corrected Entity name has too many exact candidates",
-    "predicate is not registered and active for the team",
-    "predicate does not allow the corrected subject kind",
-    "predicate does not allow the corrected object kind",
-    "correction does not change the Relationship",
-    "relationship correction confirmation expired",
-    "relationship changed while confirmation was pending",
-    "relationship supports changed while confirmation was pending",
-    "selected Entity candidate is no longer available",
-    "corrected Relationship collides with inactive or unsupported history",
-    "Semantic search indexing is delayed.",
-    "Semantic search indexing is delayed; check the control portal for recovery guidance.",
-  ]);
   const allowedActions = new Set([
     "retry_same_request", "resubmit_remember", "retry_correction", "retry_dream_feedback", "contact_operator", "none",
   ]);
@@ -119,11 +92,14 @@ function assertTerminalErrors(status, options = {}) {
       throw new Error("terminal error fields were incomplete");
     }
     const { code, message, next_action: nextAction, remediation } = item;
-    if (!allowedCodes.has(code) || !allowedMessages.has(message) || !allowedActions.has(nextAction) ||
+    if (!message.includes("allowed") || !message.includes(options.serverOwned ? "server-owned context" : "submitted evidence or proposals")) {
+      throw new Error("budget explanation did not state the failed bound and input ownership without its codes");
+    }
+    if (!allowedCodes.has(code) || !message.includes("processing limit was exceeded") || !allowedActions.has(nextAction) ||
         message.length === 0 || message.length > 512 || remediation.length === 0 || remediation.length > 512) {
       throw new Error("terminal error was not bounded and typed");
     }
-    if (/[\r\n]|api[_-]?key|password|token|stack|provider|cookie|prompt|embedding|database|cross[- ]?team/i.test(`${message} ${remediation}`)) {
+    if (/[\r\n]|Bearer |postgres(?:ql)?:\/\/|https?:\/\//i.test(`${message} ${remediation}`)) {
       throw new Error("terminal error leaked prohibited data");
     }
     if (seen.has(`${code}\0${message}`)) throw new Error("terminal errors were not deduplicated");

@@ -216,7 +216,12 @@ func TestRememberServicePreservesTerminalResultOnProcessError(t *testing.T) {
 	require.NotNil(t, got.Result)
 	require.Equal(t, status.SubmissionID, got.Result.SubmissionID)
 	require.Equal(t, status.ProcessingState, got.Result.ProcessingState)
-	require.Equal(t, status.Errors, got.Result.Errors)
+	require.Equal(t, status.Errors[0].Code, got.Result.Errors[0].Code)
+	require.Equal(t, status.Errors[0].Retryable, got.Result.Errors[0].Retryable)
+	require.Equal(t, status.Errors[0].NextAction, got.Result.Errors[0].NextAction)
+	require.Contains(t, got.Result.Errors[0].Message, "were not retained")
+	require.NoError(t, ValidateTerminalStatusError(got.Result.Errors[0]))
+	require.Empty(t, status.Errors[0].ReasonCode)
 }
 
 func TestRememberServiceAuditsSecurityRejectionAndPassesSignalsToProcessor(t *testing.T) {

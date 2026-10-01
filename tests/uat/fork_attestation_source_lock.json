@@ -1,0 +1,16 @@
+{
+  "repository": "cli/cli",
+  "commit": "fc4b137cdef0a6bd28fd461b7cf9c84a5812a8cd",
+  "files": [
+    {
+      "name": "reusable-workflow-artifact",
+      "url": "https://raw.githubusercontent.com/cli/cli/fc4b137cdef0a6bd28fd461b7cf9c84a5812a8cd/pkg/cmd/attestation/test/data/reusable-workflow-artifact",
+      "sha256": "49a3aa6075e0f49f82843e74b5baa614ad2a588e6675612bf108a0a008c5ac25"
+    },
+    {
+      "name": "reusable-workflow-attestation.sigstore.json",
+      "url": "https://raw.githubusercontent.com/cli/cli/fc4b137cdef0a6bd28fd461b7cf9c84a5812a8cd/pkg/cmd/attestation/test/data/reusable-workflow-attestation.sigstore.json",
+      "sha256": "88e35c3496fc9b9bd29629b69271bd32738e170f0d85a12d67da0c72c743f3bd"
+    }
+  ]
+}

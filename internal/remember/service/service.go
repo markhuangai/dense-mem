@@ -167,6 +167,8 @@ type SubmissionEvidenceStatus struct {
 	SupersededEvidenceIDs []string               `json:"superseded_evidence_ids"`
 	SearchState           string                 `json:"search_state"`
 	Reason                string                 `json:"reason,omitempty"`
+	Message               string                 `json:"message,omitempty"`
+	Remediation           string                 `json:"remediation,omitempty"`
 	Error                 *SubmissionStatusError `json:"error,omitempty"`
 }
 
@@ -414,6 +416,7 @@ func rememberResultFromStatus(status *SubmissionStatusResult, ingestID string) *
 	copyStatus.Evidence = append([]SubmissionEvidenceStatus(nil), status.Evidence...)
 	copyStatus.RelationshipResults = append([]SubmissionRelationshipResult(nil), status.RelationshipResults...)
 	copyStatus.Errors = append([]SubmissionStatusError(nil), status.Errors...)
+	UpgradeRememberResultDiagnostics(&copyStatus)
 	copyStatus.Warnings = append([]string(nil), status.Warnings...)
 	if copyStatus.Evidence == nil {
 		copyStatus.Evidence = []SubmissionEvidenceStatus{}
@@ -493,6 +496,8 @@ func rememberResultFromStatus(status *SubmissionStatusResult, ingestID string) *
 			SupersededEvidenceIDs: append([]string(nil), evidence.SupersededEvidenceIDs...),
 			SearchState:           evidence.SearchState,
 			Reason:                evidence.Reason,
+			Message:               evidence.Message,
+			Remediation:           evidence.Remediation,
 		})
 	}
 	if terminal.Evidence == nil {

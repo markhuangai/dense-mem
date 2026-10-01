@@ -177,6 +177,8 @@ type TerminalEvidenceResult struct {
 	SupersededEvidenceIDs []string `json:"superseded_evidence_ids"`
 	SearchState           string   `json:"search_state"`
 	Reason                string   `json:"reason,omitempty"`
+	Message               string   `json:"message,omitempty"`
+	Remediation           string   `json:"remediation,omitempty"`
 }
 
 type TerminalProcessingState string
@@ -291,7 +293,7 @@ func TerminalStatusError(code TerminalErrorCode) SubmissionStatusError {
 		Message:     terminalErrorMessage(code),
 		Retryable:   retryable,
 		NextAction:  string(action),
-		Remediation: terminalErrorRemediation(action),
+		Remediation: submissionErrorRemediationForCode(SubmissionErrorCode(code), SubmissionNextAction(action)),
 	}
 }
 
@@ -303,6 +305,7 @@ func TerminalStatusErrorWithDetails(code TerminalErrorCode, reasonCode string, d
 	base.ReasonCode = boundedStatusErrorText(reasonCode, 128)
 	base.Details = boundedStatusErrorDetails(details)
 	applyServerOwnedInputBudgetGuidance(base.Code, &base)
+	applySubmissionDiagnosticGuidance(&base)
 	return base
 }
 
@@ -355,7 +358,7 @@ func ValidateTerminalStatusError(value SubmissionStatusError) error {
 	} else if value.Retryable != retryable || value.NextAction != string(action) {
 		return fmt.Errorf("remember: terminal error guidance for %q is inconsistent", code)
 	}
-	canonical := TerminalStatusError(code)
+	canonical := TerminalStatusErrorWithDetails(code, value.ReasonCode, value.Details)
 	if value.Message != canonical.Message {
 		return fmt.Errorf("remember: terminal error message for %q is not canonical", code)
 	}
@@ -420,36 +423,7 @@ func terminalErrorGuidance(code TerminalErrorCode) (bool, TerminalNextAction) {
 }
 
 func terminalErrorMessage(code TerminalErrorCode) string {
-	switch code {
-	case TerminalErrorPolicyRejected:
-		return "submission was rejected by semantic policy"
-	case TerminalErrorStaleInput:
-		return "an exact client-owned input changed before commit"
-	case TerminalErrorProviderUnavailable:
-		return "the semantic assessor was unavailable"
-	case TerminalErrorProviderResponseInvalid:
-		return "the semantic assessor returned an invalid response"
-	case TerminalErrorInputBudgetExceeded:
-		return "the semantic assessor input exceeded the configured budget"
-	case TerminalErrorConfigurationInvalid:
-		return "Dense-Mem provider or search configuration is invalid"
-	case TerminalErrorIdempotencyConflict:
-		return "the idempotency key is already bound to a different request"
-	case TerminalErrorEmbeddingUnavailable:
-		return "the embedding provider was unavailable"
-	case TerminalErrorEmbeddingResponseInvalid:
-		return "the embedding provider returned an invalid response"
-	case TerminalErrorCommitConflict:
-		return "server-owned state changed before commit"
-	case TerminalErrorDatabaseFailure:
-		return "Dense-Mem could not persist the submission"
-	case TerminalErrorRequestTimeout:
-		return "the bounded Remember request deadline was reached"
-	case TerminalErrorRequestCancelled:
-		return "the Remember request was cancelled before commit"
-	default:
-		return "Dense-Mem could not complete the submission"
-	}
+	return submissionErrorMessages[SubmissionErrorCode(normalizeTerminalErrorCode(code))]
 }
 
 func terminalErrorRemediation(action TerminalNextAction) string {
@@ -517,6 +491,9 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 	seenStoredEvidenceIDs := make(map[uuid.UUID]struct{}, len(result.Evidence))
 	seenSupersededEvidenceIDs := make(map[uuid.UUID]struct{})
 	for index, item := range result.Evidence {
+		if err := validateNotStoredExplanation(item.Disposition, item.Reason, item.Message, item.Remediation); err != nil {
+			return fmt.Errorf("remember: evidence %d: %w", index, err)
+		}
 		if item.EvidenceIndex != index {
 			return fmt.Errorf("remember: terminal evidence index %d is out of order", item.EvidenceIndex)
 		}
@@ -603,6 +580,9 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 	}
 	seenRefs := make(map[string]struct{}, len(relationshipRefs))
 	for index, item := range result.RelationshipResults {
+		if err := validateNotStoredExplanation(item.Disposition, item.Reason, item.Message, item.Remediation); err != nil {
+			return fmt.Errorf("remember: relationship %d: %w", index, err)
+		}
 		if item.RelationshipRef != relationshipRefs[index] {
 			return fmt.Errorf("remember: terminal relationship ref %q is out of order", item.RelationshipRef)
 		}
@@ -716,10 +696,12 @@ func TerminalResultWithError(result *TerminalRememberResult, code TerminalErrorC
 		result.Evidence[index].SupersededEvidenceIDs = []string{}
 		result.Evidence[index].SearchState = string(TerminalSearchNotRequired)
 		result.Evidence[index].Reason = notStoredReason
+		result.Evidence[index].Message, result.Evidence[index].Remediation = NotStoredGuidance(notStoredReason)
 	}
 	for index := range result.RelationshipResults {
 		result.RelationshipResults[index].Disposition = "not_stored"
 		result.RelationshipResults[index].Reason = notStoredReason
+		result.RelationshipResults[index].Message, result.RelationshipResults[index].Remediation = NotStoredGuidance(notStoredReason)
 		result.RelationshipResults[index].Splits = []SubmissionRelationshipSplit{}
 	}
 	if result.Evidence == nil {

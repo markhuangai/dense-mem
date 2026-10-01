@@ -41,6 +41,8 @@ func terminalEvidenceSchema() map[string]any {
 			"superseded_evidence_ids": stringArraySchema("Evidence ID superseded by this evidence.", 50, 128),
 			"search_state":            schemaEnum([]string{"current", "not_required"}),
 			"reason":                  schemaString("Bounded reason when not stored.", 256),
+			"message":                 schemaString("Verified explanation when evidence is not stored.", 512),
+			"remediation":             schemaString("Recovery guidance when evidence is not stored.", 512),
 		},
 	)
 }

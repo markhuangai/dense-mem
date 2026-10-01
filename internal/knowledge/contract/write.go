@@ -8,6 +8,16 @@ import (
 	"errors"
 )
 
+type RememberSourceRevisionConflictError struct {
+	EvidenceIndex int
+	Cause         error
+}
+
+func (e *RememberSourceRevisionConflictError) Error() string {
+	return ErrSourceRevisionConflict.Error()
+}
+func (e *RememberSourceRevisionConflictError) Unwrap() error { return e.Cause }
+
 var (
 	ErrIdempotencyConflict                       = errors.New("idempotency conflict")
 	ErrSourceRevisionConflict                    = errors.New("source revision conflict")

@@ -113,6 +113,7 @@ func buildSearchProviders(
 			Projection:      projection,
 			Provider:        openaiProvider,
 			ProviderTimeout: time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
+			BatchLimit:      config.AIEmbeddingMaxBatchItems(&cfg),
 		}),
 	}
 }

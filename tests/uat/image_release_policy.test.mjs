@@ -351,7 +351,7 @@ test("preview reporting comments only on successful publication and reports E2E 
   assert.match(report, /state: succeeded \? "success" : "failure"/);
   assert.match(report, /context: process\.env\.POLICY_STATUS_CONTEXT/);
   assert.equal((reportE2E.match(/github\.rest\.repos\.createCommitStatus/g) || []).length, 1);
-  assert.match(reportE2E, /const succeeded = imagePublished && process\.env\.E2E_RESULT === "success"/);
+  assert.match(reportE2E, /const succeeded = imagePublished && \(sameRepository/);
   assert.match(reportE2E, /state: succeeded \? "success" : "failure"/);
   assert.match(reportE2E, /context: process\.env\.E2E_STATUS_CONTEXT/);
   assert.equal((resolveFailure.match(/github\.rest\.repos\.createCommitStatus/g) || []).length, 1);

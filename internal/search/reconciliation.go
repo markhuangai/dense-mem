@@ -46,6 +46,7 @@ type SearchReconciliationDependencies struct {
 	Provider        embeddingcontract.EmbeddingProviderInterface
 	Now             func() time.Time
 	ProviderTimeout time.Duration
+	BatchLimit      int
 }
 
 type searchReconciliationService struct {
@@ -54,6 +55,7 @@ type searchReconciliationService struct {
 	provider        embeddingcontract.EmbeddingProviderInterface
 	now             func() time.Time
 	providerTimeout time.Duration
+	batchLimit      int
 }
 
 func NewSearchReconciliationService(deps SearchReconciliationDependencies) SearchReconciliationService {
@@ -65,9 +67,13 @@ func NewSearchReconciliationService(deps SearchReconciliationDependencies) Searc
 	if timeout <= 0 || timeout > searchReconciliationProviderCap {
 		timeout = searchReconciliationProviderCap
 	}
+	limit := deps.BatchLimit
+	if limit <= 0 || limit > searchReconciliationDocumentLimit {
+		limit = searchReconciliationDocumentLimit
+	}
 	return &searchReconciliationService{
 		repository: deps.Repository, projection: deps.Projection, provider: deps.Provider,
-		now: now, providerTimeout: timeout,
+		now: now, providerTimeout: timeout, batchLimit: limit,
 	}
 }
 
@@ -101,7 +107,7 @@ func (s *searchReconciliationService) Run(ctx context.Context) (SearchReconcilia
 		RunID:               run.RunID,
 		EmbeddingContractID: contract.EmbeddingContractID,
 		EmbeddingDimensions: contract.EmbeddingDimensions,
-		Limit:               searchReconciliationDocumentLimit,
+		Limit:               s.batchLimit,
 	})
 	if err != nil {
 		return s.fail(ctx, result, 0, 0, "reconciliation_selection_failed", err)

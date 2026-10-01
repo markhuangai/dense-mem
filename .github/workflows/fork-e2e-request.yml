@@ -1,0 +1,48 @@
+name: Contributor fork E2E request
+run-name: 'Fork E2E for upstream PR #${{ inputs.pr_number }}'
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Upstream PR number with an administrator-approved preview
+        required: true
+        type: number
+      source_sha:
+        description: Exact approved upstream PR head SHA
+        required: true
+        type: string
+      preview_run_id:
+        description: Approved upstream preview run ID
+        required: true
+        type: string
+      preview_run_attempt:
+        description: Approved upstream preview run attempt
+        required: true
+        type: string
+      trusted_revision:
+        description: Trusted upstream revision from the preview receipt
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  e2e:
+    if: github.repository != 'markhuangai/dense-mem'
+    uses: markhuangai/dense-mem/.github/workflows/fork-e2e.yml@main
+    with:
+      pr_number: ${{ inputs.pr_number }}
+      source_sha: ${{ inputs.source_sha }}
+      preview_run_id: ${{ inputs.preview_run_id }}
+      preview_run_attempt: ${{ inputs.preview_run_attempt }}
+      trusted_revision: ${{ inputs.trusted_revision }}
+      cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

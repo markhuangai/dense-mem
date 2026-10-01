@@ -99,6 +99,13 @@
       "run": "^TestSearchReconciliationSuppressesHistoricalEvidenceAliases$",
       "phase": "precheck",
       "source": "internal/knowledge/postgres/search_reconciliation_integration_test.go"
+    },
+    {
+      "id": "repository/TestSearchReconciliationConfiguredBatchUsesRealAdapterAndDurableCursor",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSearchReconciliationConfiguredBatchUsesRealAdapterAndDurableCursor$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/search_reconciliation_batch_integration_test.go"
     }
   ]
 }

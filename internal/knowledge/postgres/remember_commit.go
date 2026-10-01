@@ -116,6 +116,9 @@ func (r *Store) CommitRememberWithEmbeddings(
 					ContentHash: item.SourceRevisionContentHash, Envelope: item.SourceRevisionEnvelope,
 				}, sources)
 				if err != nil {
+					if errors.Is(err, ErrSourceRevisionConflict) {
+						return &knowledgecontract.RememberSourceRevisionConflictError{EvidenceIndex: index, Cause: err}
+					}
 					return err
 				}
 				source = advanced

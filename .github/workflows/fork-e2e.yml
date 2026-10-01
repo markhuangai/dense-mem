@@ -1,0 +1,286 @@
+name: Trusted fork production E2E
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        required: true
+        type: number
+      source_sha:
+        required: true
+        type: string
+      preview_run_id:
+        required: true
+        type: string
+      preview_run_attempt:
+        required: true
+        type: string
+      trusted_revision:
+        required: true
+        type: string
+      cloudflare_account_id:
+        required: true
+        type: string
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+
+jobs:
+  authorize:
+    name: Authorize contributor E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      approved: ${{ steps.approval.outputs.approved }}
+      image: ${{ steps.approval.outputs.image }}
+      source_repository: ${{ steps.approval.outputs.source_repository }}
+      scenario_matrix: ${{ steps.matrix.outputs.scenario_matrix }}
+    steps:
+      - name: Validate upstream workflow identity before checkout
+        uses: actions/github-script@v9
+        env:
+          TRUSTED_REVISION: ${{ inputs.trusted_revision }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        with:
+          script: |
+            const revision = process.env.TRUSTED_REVISION;
+            if (!/^[0-9a-f]{40}$/.test(revision || "") || process.env.SOURCE_SHA !== context.sha ||
+                context.repo.owner + "/" + context.repo.repo === "markhuangai/dense-mem") {
+              throw new Error("fork E2E must run at the exact PR head with an immutable upstream revision");
+            }
+            const { data: branch } = await github.rest.repos.getBranch({ owner: "markhuangai", repo: "dense-mem", branch: "main" });
+            const { data: comparison } = await github.request("GET /repos/{owner}/{repo}/compare/{basehead}", {
+              owner: "markhuangai", repo: "dense-mem", basehead: `${revision}...${branch.commit.sha}`,
+            });
+            if (!["ahead", "identical"].includes(comparison.status)) throw new Error("the harness revision is not trusted upstream history");
+            const { data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: context.runId });
+            const referenced = (run.referenced_workflows || []).filter((value) =>
+              value.path.startsWith("markhuangai/dense-mem/.github/workflows/fork-e2e.yml@"));
+            if (referenced.length !== 1 || referenced[0].sha !== revision) {
+              throw new Error("the reusable workflow revision changed; request a fresh approved preview");
+            }
+
+      - name: Checkout approved upstream harness
+        uses: actions/checkout@v7
+        with:
+          repository: markhuangai/dense-mem
+          ref: ${{ inputs.trusted_revision }}
+          persist-credentials: false
+
+      - name: Verify current administrator approval
+        id: approval
+        uses: actions/github-script@v9
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PREVIEW_RUN_ID: ${{ inputs.preview_run_id }}
+          PREVIEW_RUN_ATTEMPT: ${{ inputs.preview_run_attempt }}
+          TRUSTED_REVISION: ${{ inputs.trusted_revision }}
+        with:
+          script: |
+            const policy = require("./.github/scripts/fork-e2e-policy.cjs");
+            const approved = await policy.approvedForkPreview({ github, pullNumber: Number(process.env.PR_NUMBER),
+              sourceSha: process.env.SOURCE_SHA, runId: process.env.PREVIEW_RUN_ID, runAttempt: process.env.PREVIEW_RUN_ATTEMPT });
+            if (approved.trusted_revision !== process.env.TRUSTED_REVISION ||
+                approved.source_repository !== `${context.repo.owner}/${context.repo.repo}`) {
+              throw new Error("the fork or trusted revision differs from the administrator-approved preview");
+            }
+            core.setOutput("approved", JSON.stringify(approved));
+            core.setOutput("image", approved.image);
+            core.setOutput("source_repository", approved.source_repository);
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Resolve complete trusted scenario matrix
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          matrix="$(node scripts/e2e-scenario-registry.mjs --matrix all)"
+          printf 'scenario_matrix=%s\n' "${matrix}" >> "${GITHUB_OUTPUT}"
+
+  rootless:
+    name: Fork rootless controller precheck
+    needs: authorize
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
+      DENSE_MEM_CI_LOCAL: "1"
+    steps:
+      - name: Checkout exact fork source
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ needs.authorize.outputs.source_repository }}
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Checkout approved acceptance harness
+        uses: actions/checkout@v7
+        with:
+          repository: markhuangai/dense-mem
+          ref: ${{ inputs.trusted_revision }}
+          persist-credentials: false
+          path: .ci-harness
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Prepare trusted acceptance workspace
+        shell: bash
+        run: node .ci-harness/.github/scripts/fork-e2e-workspace.cjs "${GITHUB_WORKSPACE}/.ci-harness" "${GITHUB_WORKSPACE}"
+      - name: Set up rootless Docker
+        uses: docker/setup-docker-action@v5
+        with:
+          rootless: true
+          set-host: true
+          daemon-config: |
+            {"exec-opts":["native.cgroupdriver=cgroupfs"]}
+      - name: Generate temporary contributor configuration
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare_account_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: bash scripts/e2e-ci-bootstrap.sh
+      - name: Run real rootless controller and cleanup contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/e2e-host-controller.sh doctor
+          DENSE_MEM_E2E_REAL_DOCKER_TESTS=1 \
+            DENSE_MEM_CI_TEST_REPOSITORY="${GITHUB_REPOSITORY}-controller-contract" \
+            bash tests/uat/e2e_host_controller_real.sh
+
+  database:
+    name: Fork PostgreSQL precheck shard ${{ matrix.shard }}
+    needs: authorize
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        shard: [0, 1, 2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
+      DENSE_MEM_CI_LOCAL: "1"
+    steps:
+      - name: Checkout exact fork source
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ needs.authorize.outputs.source_repository }}
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Checkout approved acceptance harness
+        uses: actions/checkout@v7
+        with:
+          repository: markhuangai/dense-mem
+          ref: ${{ inputs.trusted_revision }}
+          persist-credentials: false
+          path: .ci-harness
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Prepare trusted acceptance workspace
+        shell: bash
+        run: node .ci-harness/.github/scripts/fork-e2e-workspace.cjs "${GITHUB_WORKSPACE}/.ci-harness" "${GITHUB_WORKSPACE}"
+      - name: Set up rootless Docker
+        uses: docker/setup-docker-action@v5
+        with:
+          rootless: true
+          set-host: true
+          daemon-config: |
+            {"exec-opts":["native.cgroupdriver=cgroupfs"]}
+      - name: Generate temporary contributor configuration
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare_account_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: bash scripts/e2e-ci-bootstrap.sh
+      - name: Run real PostgreSQL precheck shard and cleanup
+        shell: bash
+        env:
+          IMAGE: ${{ needs.authorize.outputs.image }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          scripts/e2e-host-controller.sh precheck \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${IMAGE}" "${GITHUB_WORKSPACE}" "shard:${SHARD}"
+
+  scenarios:
+    name: Fork scenario matrix
+    needs: [authorize, rootless, database]
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.authorize.outputs.scenario_matrix) }}
+    uses: ./.github/workflows/production-e2e-scenario.yml
+    with:
+      image: ${{ needs.authorize.outputs.image }}
+      source_repository: ${{ needs.authorize.outputs.source_repository }}
+      source_revision: ${{ inputs.source_sha }}
+      scenario: ${{ matrix.name }}
+      isolation: ${{ matrix.isolation }}
+      timeout_minutes: ${{ matrix.timeout_minutes }}
+      cloudflare_account_id: ${{ inputs.cloudflare_account_id }}
+      trusted_harness_revision: ${{ inputs.trusted_revision }}
+      receipt_job_prefix: "Fork scenario "
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+  sign:
+    name: Sign fork E2E receipt
+    needs: [authorize, rootless, database, scenarios]
+    if: needs.rootless.result == 'success' && needs.database.result == 'success' && needs.scenarios.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Checkout approved receipt signer
+        uses: actions/checkout@v7
+        with:
+          repository: markhuangai/dense-mem
+          ref: ${{ inputs.trusted_revision }}
+          persist-credentials: false
+      - name: Recheck approval and prepare exact success receipt
+        uses: actions/github-script@v9
+        env:
+          APPROVED: ${{ needs.authorize.outputs.approved }}
+        with:
+          script: |
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const policy = require("./.github/scripts/fork-e2e-policy.cjs");
+            const approved = JSON.parse(process.env.APPROVED);
+            const current = await policy.approvedForkPreview({ github, pullNumber: approved.pr_number,
+              sourceSha: approved.source_sha, runId: approved.run_id, runAttempt: approved.run_attempt });
+            if (policy.receiptBytes(current) !== policy.receiptBytes(approved)) throw new Error("administrator approval changed during fork E2E");
+            const { data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: context.runId });
+            const registry = JSON.parse(fs.readFileSync("scripts/e2e-scenarios.json", "utf8"));
+            const scenarios = registry.scenarios.map((value) => value.name);
+            const jobs = await github.paginate("GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs", {
+              ...context.repo, run_id: context.runId, attempt_number: Number(process.env.GITHUB_RUN_ATTEMPT), per_page: 100,
+            });
+            policy.requireCompleteForkJobs(jobs, scenarios, { includeSigner: false });
+            const receipt = policy.successReceipt(approved, run, scenarios);
+            fs.writeFileSync(path.join(process.env.RUNNER_TEMP, "fork-e2e-receipt.json"), policy.receiptBytes(receipt), { mode: 0o600 });
+      - name: Attest complete fork E2E result
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ runner.temp }}/fork-e2e-receipt.json

@@ -116,16 +116,8 @@ jobs:
               const comments = await github.paginate(github.rest.issues.listComments, {
                 owner, repo, issue_number: number, per_page: 100,
               });
-              const images = comments.flatMap((comment) => {
-                if (comment.user?.login !== "github-actions[bot]") return [];
-                const match = /^Published test image `([^`]+)` for `([0-9a-f]{40})`\.\r?\n\r?\n(.+)$/.exec(
-                  String(comment.body || "").trim(),
-                );
-                return match && match[2] === pull.head.sha && match[3] === receipt.status.targetUrl
-                  ? [match[1]] : [];
-              });
-              if (images.length !== 1) throw new Error("the trusted preview image receipt is missing or ambiguous");
-              image = images[0];
+              const imageReceipt = policy.selectPreviewReceipt({ comments, pull, status: receipt.status, repository: fullName });
+              image = imageReceipt.image;
               sourceRepository = pull.head.repo.full_name;
               sourceRevision = pull.head.sha;
             } else {

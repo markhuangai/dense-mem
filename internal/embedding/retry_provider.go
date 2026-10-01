@@ -136,48 +136,43 @@ func (p *RetryEmbeddingProvider) Embed(ctx context.Context, text string) ([]floa
 
 // EmbedBatch returns embeddings for multiple texts with retry logic.
 func (p *RetryEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string) ([][]float32, string, error) {
-	var lastErr error
 	configuredModel := p.inner.ModelName()
-
-	for attempt := 0; attempt <= p.maxRetries; attempt++ {
-		attemptStart := time.Now()
-		vecs, model, err := p.inner.EmbedBatch(ctx, texts)
-		dur := float64(time.Since(attemptStart).Milliseconds())
-
-		if err == nil {
-			observability.RecordEmbeddingLatency(ctx, p.metrics, model, dur, "ok")
-			return vecs, model, nil
-		}
-
-		code := classifyEmbeddingError(err)
-		observability.RecordEmbeddingLatency(ctx, p.metrics, configuredModel, dur, code)
-
-		lastErr = err
-		if ctx.Err() != nil {
-			return nil, "", p.retryContextError(ctx, lastErr)
-		}
-
-		// Check if we should retry
-		if !p.shouldRetry(err) {
-			break
-		}
-
-		// Don't sleep after the last attempt
-		if attempt < p.maxRetries {
-			delay := p.retryDelay(attempt, err)
+	retries := 0
+	embed := func(ctx context.Context, chunk []string) ([][]float32, string, error) {
+		for {
+			if err := ctx.Err(); err != nil {
+				return nil, "", err
+			}
+			started := time.Now()
+			vectors, model, err := p.inner.EmbedBatch(ctx, chunk)
+			duration := float64(time.Since(started).Milliseconds())
+			observability.RecordEmbeddingLatency(ctx, p.metrics, configuredModel, duration, classifyEmbeddingError(err))
+			if err == nil {
+				if ctx.Err() != nil {
+					return nil, "", ctx.Err()
+				}
+				return vectors, model, nil
+			}
+			if ctx.Err() != nil {
+				return nil, "", p.retryContextError(ctx, err)
+			}
+			if !p.shouldRetry(err) || retries >= p.maxRetries {
+				observability.RecordEmbeddingError(ctx, p.metrics, configuredModel, classifyEmbeddingError(err))
+				return nil, "", embeddingcontract.SanitizeError(err, p.apiKey)
+			}
+			delay := p.retryDelay(retries, err)
+			retries++
 			select {
 			case <-ctx.Done():
-				return nil, "", p.retryContextError(ctx, lastErr)
+				return nil, "", p.retryContextError(ctx, err)
 			case <-time.After(delay):
-				continue
 			}
 		}
 	}
-
-	observability.RecordEmbeddingError(ctx, p.metrics, configuredModel, classifyEmbeddingError(lastErr))
-
-	// Sanitize the error before returning
-	return nil, "", embeddingcontract.SanitizeError(lastErr, p.apiKey)
+	if provider, ok := p.inner.(*OpenAIEmbeddingProvider); ok {
+		return provider.embedBatch(ctx, texts, embed)
+	}
+	return embed(ctx, texts)
 }
 
 func (p *RetryEmbeddingProvider) retryContextError(ctx context.Context, lastErr error) error {

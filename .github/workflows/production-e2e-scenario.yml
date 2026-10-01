@@ -24,6 +24,14 @@ on:
       cloudflare_account_id:
         required: true
         type: string
+      trusted_harness_revision:
+        required: false
+        default: ""
+        type: string
+      receipt_job_prefix:
+        required: false
+        default: "Run "
+        type: string
     secrets:
       CLOUDFLARE_API_TOKEN:
         required: true
@@ -34,7 +42,7 @@ permissions:
 
 jobs:
   scenario:
-    name: Run ${{ inputs.scenario == 'full' && 'dreaming_telemetry_portal' || inputs.scenario }}
+    name: ${{ inputs.receipt_job_prefix }}${{ inputs.scenario == 'full' && 'dreaming_telemetry_portal' || inputs.scenario }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout_minutes }}
     env:
@@ -42,6 +50,7 @@ jobs:
       PHASE: ${{ inputs.isolation == 'shared_team' && 'shared' || 'exclusive' }}
       SCENARIO: ${{ inputs.scenario }}
       ISOLATION: ${{ inputs.isolation }}
+      DENSE_MEM_CI_LOCAL: ${{ inputs.trusted_harness_revision != '' && '1' || '0' }}
     steps:
       - name: Validate scenario input
         shell: bash
@@ -59,11 +68,25 @@ jobs:
           ref: ${{ inputs.source_revision }}
           repository: ${{ inputs.source_repository }}
 
+      - name: Checkout approved fork acceptance harness
+        if: inputs.trusted_harness_revision != ''
+        uses: actions/checkout@v7
+        with:
+          repository: markhuangai/dense-mem
+          ref: ${{ inputs.trusted_harness_revision }}
+          persist-credentials: false
+          path: .ci-harness
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 24
           package-manager-cache: false
+
+      - name: Prepare trusted fork acceptance workspace
+        if: inputs.trusted_harness_revision != ''
+        shell: bash
+        run: node .ci-harness/.github/scripts/fork-e2e-workspace.cjs "${GITHUB_WORKSPACE}/.ci-harness" "${GITHUB_WORKSPACE}"
 
       - name: Set up rootless Docker
         id: docker

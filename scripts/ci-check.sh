@@ -14,7 +14,8 @@ node --test tests/uat/synchronous_write/*.test.mjs
 node --test tests/uat/embedding_upstream.test.mjs
 scripts/static-analysis.sh
 node --test tests/uat/team_dreaming_schedule.test.mjs
-node --test tests/uat/image_release_policy.test.mjs
+node --test tests/uat/image_release_policy.test.mjs tests/uat/preview_receipt.test.mjs tests/uat/fork_e2e_policy.test.mjs tests/uat/fork_e2e_workspace.test.mjs
+node --test tests/uat/fork_attestation_crypto.test.mjs
 node --test tests/uat/pr_image_cleanup.test.mjs
 node --test tests/uat/pr_image_cleanup_registry.test.mjs
 node --test tests/uat/e2e_scenario_registry.test.mjs

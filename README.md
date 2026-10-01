@@ -170,6 +170,29 @@ models explicitly in `.env`.
 defaults to 256, matching the application batch limit; set it to 100 for
 Cloudflare Workers AI BGE-M3. One application batch still returns one ordered
 result, and a failed request fails the whole batch.
+Successful chunks stay private within the call; transient failures retry only
+the failed chunk, sharing three retries across the complete batch. Search
+reconciliation selects at most `min(256, AI_API_EMBEDDING_MAX_BATCH_ITEMS)`
+documents per hourly pass and retains its 10-second provider deadline.
+
+For bounded live BGE-M3 measurements, set `CLOUDFLARE_ACCOUNT_ID` and
+`CLOUDFLARE_API_TOKEN` in the environment and run:
+
+```bash
+mkdir -p tmp/embedding-measurements
+DENSE_MEM_CLOUDFLARE_BATCH_MEASUREMENT=1 \
+  DENSE_MEM_CLOUDFLARE_MEASUREMENT_OUTPUT=tmp/embedding-measurements/batches.jsonl \
+  go test ./internal/embedding -run '^TestCloudflareBatchMeasurement$' -count=1 -v
+```
+
+Use a new output filename for each run. The harness measures five repetitions
+each of 100, 200, and 256 documents, then compares failed-chunk and prior
+whole-batch retries with injected later-chunk 429/503 responses. Each batch has
+a 60-second measurement bound; the output records whether it exceeds the
+reconciliation deadline, HTTP attempts, resent documents, and reported input
+tokens. Neurons are calculated from reported tokens using the published BGE-M3
+rate of 1075 per million input tokens; they are not measured billing usage.
+Missing provider usage remains unavailable.
 
 `AI_REMEMBER_MODEL`, `AI_CONFLICT_REVIEW_MODEL`, `AI_DREAM_GRAPH_MODEL`,
 `AI_DREAM_EVIDENCE_MODEL`, and `AI_COMMUNITY_SUMMARY_MODEL` are optional
@@ -556,6 +579,39 @@ configured embedding and verifier providers. Self-hosted providers keep that
 traffic within your boundary; hosted providers do not. Embeddings are derived,
 versioned state and cannot overwrite newer sources. Startup checks prevent
 mixing incompatible embedding models or dimensions.
+
+## Fork pull-request validation
+
+Public fork PRs use contributor-owned Cloudflare credentials for production
+E2E. The upstream repository never forwards its Cloudflare token to a fork.
+
+1. In your public fork, enable Actions and configure the repository variable
+   `CLOUDFLARE_ACCOUNT_ID` and secret `CLOUDFLARE_API_TOKEN`. The token needs
+   Workers AI access. Keep the token out of workflow inputs and PR comments.
+2. Ask a repository administrator to apply `deploy-test-image` to the upstream
+   PR. After the preview finishes, its comment contains the approved source
+   SHA, image digest, preview run ID/attempt, and trusted upstream revision.
+3. In your fork's Actions page, manually run **Contributor fork E2E request**
+   on the branch at that exact PR head. Enter the upstream PR number,
+   `source_sha`, `preview_run_id`, `preview_run_attempt`, and `trusted_revision`
+   from the current preview receipt. The workflow must already be present on
+   your fork's default branch for GitHub to offer manual dispatch.
+4. Keep the PR head unchanged while all 24 scenarios, three PostgreSQL
+   prechecks, rootless-controller checks, and cleanup finish. The upstream
+   verifier waits up to 120 minutes and automatically verifies the signed
+   receipt before reporting `Production image E2E` success.
+
+The trusted upstream workflow signs in a separate job that runs no candidate
+code and receives no Cloudflare secret. Verification binds the signer revision,
+PR head, image digest, both run attempts, and complete results. Missing
+credentials, failed/skipped jobs, forged signatures, stale approvals, and
+timeouts fail validation. If the head or approved upstream workflow changes,
+request a fresh administrator-approved preview and start its matching run.
+Same-repository PRs retain the ordinary production E2E route.
+
+Issue #508's live public-fork acceptance run is deferred by maintainer direction.
+Signed-fixture, receipt-policy, and workflow tests cover the bridge locally and
+in CI; they do not establish that live fork acceptance has completed.
 
 ## Documentation
 

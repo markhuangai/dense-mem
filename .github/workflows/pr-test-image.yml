@@ -480,6 +480,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout trusted receipt policy
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.workflow_sha }}
+          sparse-checkout: .github/scripts
+
       - name: Publish attempt result
         uses: actions/github-script@v9
         env:
@@ -488,8 +495,10 @@ jobs:
           PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
           PUBLISH_RESULT: ${{ needs.publish.result }}
           PUBLISHED_IMAGE: ${{ needs.publish.outputs.image }}
+          TRUSTED_REVISION: ${{ github.workflow_sha }}
         with:
           script: |
+            const policy = require("./.github/scripts/image-release-policy.cjs");
             const pullNumber = Number(process.env.PR_NUMBER);
             const targetUrl = `${context.serverUrl}/${context.repo.owner}/` +
               `${context.repo.repo}/actions/runs/${context.runId}`;
@@ -509,13 +518,16 @@ jobs:
             });
 
             if (succeeded) {
-              const image = `ghcr.io/${context.repo.owner.toLowerCase()}/` +
-                `${context.repo.repo.toLowerCase()}:test-${pullNumber}`;
+              const imageReceipt = {
+                version: 1, pr_number: pullNumber, source_sha: process.env.EXPECTED_HEAD,
+                image: process.env.PUBLISHED_IMAGE, run_id: String(context.runId),
+                run_attempt: String(process.env.GITHUB_RUN_ATTEMPT), trusted_revision: process.env.TRUSTED_REVISION,
+              };
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: pullNumber,
-                body: `Published test image \`${process.env.PUBLISHED_IMAGE || image}\` for \`${process.env.EXPECTED_HEAD}\`.\n\n${targetUrl}`,
+                body: policy.formatPreviewReceipt(imageReceipt, targetUrl),
               });
             }
 
@@ -589,9 +601,62 @@ jobs:
     secrets:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
+  fork-production-e2e:
+    name: Verify contributor production E2E
+    needs: [resolve, build, publish, report]
+    if: >-
+      ${{
+        needs.resolve.outputs.head_repository != github.repository &&
+        needs.resolve.outputs.should_build == 'true' &&
+        needs.build.result == 'success' && needs.publish.result == 'success' &&
+        needs.report.result == 'success'
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 125
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - name: Checkout trusted fork verifier
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.workflow_sha }}
+          sparse-checkout: |
+            .github/scripts
+            scripts/e2e-scenarios.json
+      - name: Await and verify the signed contributor run
+        uses: actions/github-script@v9
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.head_sha }}
+          PREVIEW_RUN_ID: ${{ github.run_id }}
+          PREVIEW_RUN_ATTEMPT: ${{ github.run_attempt }}
+        with:
+          script: |
+            const fs = require("node:fs");
+            const policy = require("./.github/scripts/fork-e2e-policy.cjs");
+            const approved = await policy.approvedForkPreview({ github, pullNumber: Number(process.env.PR_NUMBER),
+              sourceSha: process.env.SOURCE_SHA, runId: process.env.PREVIEW_RUN_ID, runAttempt: process.env.PREVIEW_RUN_ATTEMPT });
+            const { owner, repo } = context.repo;
+            await github.rest.repos.createCommitStatus({ owner, repo, sha: approved.source_sha,
+              state: "pending", context: process.env.E2E_STATUS_CONTEXT,
+              description: "Awaiting a verified contributor-owned fork E2E run.",
+              target_url: `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}` });
+            const registry = JSON.parse(fs.readFileSync("scripts/e2e-scenarios.json", "utf8"));
+            const result = await policy.waitForForkE2E({ github, approved, scenarios: registry.scenarios.map((value) => value.name),
+              directory: process.env.RUNNER_TEMP, report: core.info });
+            await github.rest.repos.createCommitStatus({ owner, repo, sha: approved.source_sha,
+              state: "success", context: process.env.E2E_STATUS_CONTEXT,
+              description: "Verified full fork production E2E, including cleanup.", target_url: result.url });
+
   report-e2e:
     name: Report production-image E2E
-    needs: [resolve, build, publish, production-e2e]
+    needs: [resolve, build, publish, production-e2e, fork-production-e2e]
     if: always() && needs.resolve.outputs.should_build == 'true'
     permissions:
       contents: read
@@ -604,6 +669,7 @@ jobs:
         env:
           BUILD_RESULT: ${{ needs.build.result }}
           E2E_RESULT: ${{ needs.production-e2e.result }}
+          FORK_E2E_RESULT: ${{ needs.fork-production-e2e.result }}
           EXPECTED_HEAD: ${{ needs.resolve.outputs.head_sha }}
           PUBLISH_RESULT: ${{ needs.publish.result }}
           SOURCE_REPOSITORY: ${{ needs.resolve.outputs.head_repository }}
@@ -615,10 +681,13 @@ jobs:
               process.env.PUBLISH_RESULT === "success";
             const sameRepository = String(process.env.SOURCE_REPOSITORY || "").toLowerCase() ===
               `${context.repo.owner}/${context.repo.repo}`.toLowerCase();
-            const succeeded = imagePublished && process.env.E2E_RESULT === "success" && sameRepository;
+            const succeeded = imagePublished && (sameRepository
+              ? process.env.E2E_RESULT === "success" : process.env.FORK_E2E_RESULT === "success");
             let description = "Production-image E2E, image build, or cleanup failed.";
             if (imagePublished && !sameRepository) {
-              description = "Fork E2E unavailable; upstream Cloudflare token withheld.";
+              description = succeeded
+                ? "Verified full fork production E2E, including cleanup."
+                : "Fork E2E failed or no verified receipt arrived; inspect the contributor run.";
             } else if (succeeded) {
               description = "Full production-image E2E passed, including cleanup.";
             }

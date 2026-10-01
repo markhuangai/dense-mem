@@ -60,6 +60,7 @@ func rememberFailureResults(
 	input rememberapp.RememberProcessRequest,
 	notStoredReason string,
 ) ([]rememberapp.SubmissionEvidenceStatus, []rememberapp.SubmissionRelationshipResult) {
+	message, remediation := rememberapp.NotStoredGuidance(notStoredReason)
 	evidence := make([]rememberapp.SubmissionEvidenceStatus, len(input.Evidence))
 	for index := range evidence {
 		evidence[index] = rememberapp.SubmissionEvidenceStatus{
@@ -69,6 +70,8 @@ func rememberFailureResults(
 			SupersededEvidenceIDs: []string{},
 			SearchState:           "not_required",
 			Reason:                notStoredReason,
+			Message:               message,
+			Remediation:           remediation,
 		}
 	}
 	refs := rememberFailureRelationshipRefs(input.Proposal)
@@ -78,6 +81,8 @@ func rememberFailureResults(
 			RelationshipRef: ref,
 			Disposition:     "not_stored",
 			Reason:          notStoredReason,
+			Message:         message,
+			Remediation:     remediation,
 			Splits:          []rememberapp.SubmissionRelationshipSplit{},
 		}
 	}

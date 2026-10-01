@@ -79,6 +79,10 @@ func (s *assessmentEngine) buildRequest(
 	}
 	contractEntities, entityGroups, err := submissionAssessmentGroundedEntities(plan, entityCatalog, evidence, knownEvidenceByID)
 	if err != nil {
+		var diagnostic *submissionDiagnosticFailure
+		if errors.As(err, &diagnostic) {
+			return assessor.SemanticAssessmentRequest{}, err
+		}
 		var preflightErr *semanticAssessmentPreflightError
 		if errors.As(err, &preflightErr) {
 			return assessor.SemanticAssessmentRequest{}, err
@@ -412,7 +416,7 @@ func submissionAssessmentGroundedEntities(
 				}
 			}
 			if !knownCandidate {
-				return nil, nil, fmt.Errorf("%w: exact entity catalog target is no longer active", errSubmissionAssessmentStaleInput)
+				return nil, nil, staleEntityReferenceFailure(entity)
 			}
 		}
 		if len(catalogGroup.Candidates) > assessor.SemanticAssessmentMaxEntityCandidatesPerSurface {

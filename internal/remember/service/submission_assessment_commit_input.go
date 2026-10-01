@@ -160,10 +160,13 @@ func submissionAssessmentCommitInput(
 			if result.Reason != nil && strings.TrimSpace(*result.Reason) != "" {
 				reason = strings.TrimSpace(*result.Reason)
 			}
+			message, remediation := NotStoredGuidance(reason)
 			relationshipResultsByRef[result.Ref] = repository.SubmissionRelationshipResultInput{
 				RelationshipRef: result.Ref,
 				Disposition:     "not_stored",
 				Reason:          reason,
+				Message:         message,
+				Remediation:     remediation,
 			}
 			continue
 		case "stored":

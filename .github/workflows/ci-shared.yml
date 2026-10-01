@@ -192,6 +192,8 @@ jobs:
       - name: Run image release policy tests
         run: |
           node --test tests/uat/image_release_policy.test.mjs
+          node --test tests/uat/preview_receipt.test.mjs tests/uat/fork_e2e_policy.test.mjs tests/uat/fork_e2e_workspace.test.mjs
+          node --test tests/uat/fork_attestation_crypto.test.mjs
           node --test tests/uat/pr_image_cleanup.test.mjs
           node --test tests/uat/pr_image_cleanup_registry.test.mjs
 

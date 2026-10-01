@@ -5,6 +5,37 @@ const POLICY_STATUS_CONTEXT = "PR test image policy";
 const TRUSTED_LABEL_PERMISSIONS = new Set(["admin"]);
 const PRODUCTION_E2E_ACTOR = "Z-M-Huang";
 
+function formatPreviewReceipt(receipt, targetUrl) {
+  if (receipt.version !== 1 || !Number.isSafeInteger(receipt.pr_number) || receipt.pr_number < 1 ||
+      !/^[0-9a-f]{40}$/.test(receipt.source_sha || "") ||
+      !/^[0-9a-f]{40}$/.test(receipt.trusted_revision || "") ||
+      !/^[1-9][0-9]*$/.test(String(receipt.run_id)) || !/^[1-9][0-9]*$/.test(String(receipt.run_attempt)) ||
+      !/^ghcr\.io\/[a-z0-9._/-]+(?:\:[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$/.test(receipt.image || "")) {
+    throw new Error("invalid versioned preview receipt");
+  }
+  return `Published test image \`${receipt.image}\` for \`${receipt.source_sha}\`.\n\n${targetUrl}/attempts/${receipt.run_attempt}\n\n<!-- dense-mem-preview-v1\n${JSON.stringify(receipt)}\n-->`;
+}
+
+function selectPreviewReceipt({ comments, pull, status, repository }) {
+  const matches = [];
+  for (const comment of comments) {
+    if (comment.user?.login !== "github-actions[bot]") continue;
+    const marker = /<!-- dense-mem-preview-v1\r?\n([^\r\n]{1,4096})\r?\n-->/.exec(String(comment.body || ""));
+    if (!marker) continue;
+    let receipt;
+    try { receipt = JSON.parse(marker[1]); } catch { continue; }
+    if (receipt === null || typeof receipt !== "object" || Array.isArray(receipt)) continue;
+    if (receipt.version !== 1 || receipt.pr_number !== pull.number || receipt.source_sha !== pull.head.sha ||
+        String(receipt.run_id) !== status.runId || String(receipt.run_attempt) !== status.runAttempt ||
+        !/^[0-9a-f]{40}$/.test(receipt.trusted_revision || "") ||
+        !validatePinnedProductionImageReference(receipt.image, repository).valid) continue;
+    if (String(comment.body).trim() !== formatPreviewReceipt(receipt, status.targetUrl)) continue;
+    matches.push(receipt);
+  }
+  if (matches.length !== 1) throw new Error("the current-attempt preview receipt is missing or ambiguous; request a fresh preview");
+  return matches[0];
+}
+
 function normalizeLabelName(label) {
   return typeof label === "string" ? label : label?.name;
 }
@@ -489,6 +520,8 @@ async function resolveRcPreview({ github, context, mainCommit }) {
 }
 
 module.exports = {
+	formatPreviewReceipt,
+	selectPreviewReceipt,
   POLICY_STATUS_CONTEXT,
   PREVIEW_LABEL,
   compareContainsMain,

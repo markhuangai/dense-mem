@@ -78,6 +78,8 @@ type SubmissionRelationshipResult struct {
 	RelationshipRef string                             `json:"ref"`
 	Disposition     string                             `json:"disposition"`
 	Reason          string                             `json:"reason,omitempty"`
+	Message         string                             `json:"message,omitempty"`
+	Remediation     string                             `json:"remediation,omitempty"`
 	Splits          []SubmissionRelationshipSplitInput `json:"splits"`
 }
 
@@ -85,6 +87,8 @@ type SubmissionRelationshipResultInput struct {
 	RelationshipRef string
 	Disposition     string
 	Reason          string
+	Message         string
+	Remediation     string
 	Splits          []SubmissionRelationshipSplitInput
 }
 

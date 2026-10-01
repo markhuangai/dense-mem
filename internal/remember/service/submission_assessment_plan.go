@@ -25,6 +25,7 @@ type submissionAssessmentItem struct {
 type submissionAssessmentEntityTarget struct {
 	Target        assessor.SemanticAssessmentRequiredEntityRef
 	KnownEntityID string
+	InputPath     string
 }
 
 type submissionAssessmentRelationshipTarget struct {
@@ -218,6 +219,7 @@ func submissionAssessmentRelationshipTargetFromProposal(
 	if err != nil {
 		return submissionAssessmentRelationshipTarget{}, nil, err
 	}
+	subject.InputPath = fmt.Sprintf("/relationships/%d/subject/known_entity_id", index)
 
 	predicateRaw, ok := proposalMap(raw["predicate"])
 	if !ok {
@@ -250,6 +252,7 @@ func submissionAssessmentRelationshipTargetFromProposal(
 		if err != nil {
 			return submissionAssessmentRelationshipTarget{}, nil, err
 		}
+		objectEntity.InputPath = fmt.Sprintf("/relationships/%d/object/entity/known_entity_id", index)
 		entities = append(entities, objectEntity)
 		objectKind = objectEntity.Target.Kind
 		refCopy := objectEntity.Target.Ref
