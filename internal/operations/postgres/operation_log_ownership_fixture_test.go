@@ -72,7 +72,7 @@ func newOperationLogOwnershipFixture(t testing.TB) *operationLogOwnershipFixture
 		FROM generate_series(1, 2000) AS series`,
 			f.now, f.teamA, f.teamB, f.profileC, f.profileA, f.profileB).Error
 	}))
-	countedDB := appDB.Session(&gorm.Session{})
+	countedDB := appDB.Session(&gorm.Session{Context: context.Background()})
 	pool := &operationLogOwnershipPool{ConnPool: appDB.ConnPool, counters: f.counters}
 	countedDB.ConnPool = pool
 	countedDB.Statement.ConnPool = pool

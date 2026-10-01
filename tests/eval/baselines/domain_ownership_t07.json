@@ -29,7 +29,7 @@
     ],
     "idle_host_check": {
       "maximum_pre_run_cpu_busy_percent": 10,
-      "observed_maximum_pre_run_cpu_busy_percent": 9.79
+      "observed_maximum_pre_run_cpu_busy_percent": 9.66
     },
     "comparison": "Equal result signature, exact SQL/argument digest and SQL/transaction/provider counts; median p50/p95 increase <= max(5% of base, 1 ms).",
     "passed": true,
@@ -45,27 +45,27 @@
         "provider_calls_per_op": 0.0,
         "latency": {
           "p50_ms": {
-            "base_median": 3.475042,
-            "candidate_median": 3.581694,
-            "increase": 0.10665199999999997,
+            "base_median": 3.489278,
+            "candidate_median": 3.508318,
+            "increase": 0.019039999999999946,
             "allowed_increase": 1,
             "passed": true
           },
           "p95_ms": {
-            "base_median": 4.265726,
-            "candidate_median": 4.774808,
-            "increase": 0.5090820000000003,
+            "base_median": 4.711114,
+            "candidate_median": 4.340419,
+            "increase": -0.37069500000000044,
             "allowed_increase": 1,
             "passed": true
           }
         },
         "allocs_per_op_median": {
           "base": 5936.0,
-          "candidate": 5937.0
+          "candidate": 5936.0
         },
         "bytes_per_op_median": {
-          "base": 300194.0,
-          "candidate": 299523.0
+          "base": 299209.0,
+          "candidate": 298688.0
         }
       },
       "list_maximum": {
@@ -79,27 +79,27 @@
         "provider_calls_per_op": 0.0,
         "latency": {
           "p50_ms": {
-            "base_median": 5.870096,
-            "candidate_median": 6.268806,
-            "increase": 0.39870999999999945,
+            "base_median": 5.994608,
+            "candidate_median": 5.946436,
+            "increase": -0.048172000000000104,
             "allowed_increase": 1,
             "passed": true
           },
           "p95_ms": {
-            "base_median": 7.075187,
-            "candidate_median": 7.849694,
-            "increase": 0.7745070000000007,
+            "base_median": 7.471265,
+            "candidate_median": 7.323728,
+            "increase": -0.1475369999999998,
             "allowed_increase": 1,
             "passed": true
           }
         },
         "allocs_per_op_median": {
-          "base": 28346.0,
+          "base": 28345.0,
           "candidate": 28346.0
         },
         "bytes_per_op_median": {
-          "base": 1261424.0,
-          "candidate": 1260209.0
+          "base": 1259411.0,
+          "candidate": 1258633.0
         }
       },
       "team_invocation_default": {
@@ -113,16 +113,16 @@
         "provider_calls_per_op": 0.0,
         "latency": {
           "p50_ms": {
-            "base_median": 3.376384,
-            "candidate_median": 3.421429,
-            "increase": 0.045045,
+            "base_median": 3.258558,
+            "candidate_median": 3.376193,
+            "increase": 0.11763500000000038,
             "allowed_increase": 1,
             "passed": true
           },
           "p95_ms": {
-            "base_median": 4.276313,
-            "candidate_median": 4.683092,
-            "increase": 0.4067790000000002,
+            "base_median": 4.262604,
+            "candidate_median": 4.553095,
+            "increase": 0.2904910000000003,
             "allowed_increase": 1,
             "passed": true
           }
@@ -132,8 +132,8 @@
           "candidate": 5938.0
         },
         "bytes_per_op_median": {
-          "base": 298651.0,
-          "candidate": 297686.0
+          "base": 298695.0,
+          "candidate": 298080.0
         }
       },
       "team_invocation_maximum": {
@@ -147,27 +147,27 @@
         "provider_calls_per_op": 0.0,
         "latency": {
           "p50_ms": {
-            "base_median": 5.475518,
-            "candidate_median": 5.499889,
-            "increase": 0.024370999999999476,
+            "base_median": 5.546054,
+            "candidate_median": 5.460044,
+            "increase": -0.08600999999999992,
             "allowed_increase": 1,
             "passed": true
           },
           "p95_ms": {
-            "base_median": 6.912819,
-            "candidate_median": 6.888143,
-            "increase": -0.024675999999999476,
+            "base_median": 7.187798,
+            "candidate_median": 6.845464,
+            "increase": -0.34233400000000014,
             "allowed_increase": 1,
             "passed": true
           }
         },
         "allocs_per_op_median": {
-          "base": 28347.0,
-          "candidate": 28347.0
+          "base": 28348.0,
+          "candidate": 28348.0
         },
         "bytes_per_op_median": {
-          "base": 1259343.0,
-          "candidate": 1259479.0
+          "base": 1260505.0,
+          "candidate": 1259417.0
         }
       }
     }
@@ -183,11 +183,11 @@
       "internal/operations/operation_log_service.go": "8544866918398fdd4a39683751bee499cbfd13f25d9b60485bcdd1b1f1593234",
       "internal/operations/postgres/operation_log_repository.go": "0fc73a42e2b90b2e9ef90220923717640d22b138c0e19016519318e673373c3b"
     },
-    "test_only_base_overlay_manifest_sha256": "fabb25981f773d9cbcb9fb03925cdd4efe1d19958ba4372d2021272ef7c1abda",
+    "test_only_base_overlay_manifest_sha256": "ae0328e8cc724dd134d0c186416a0b495786e7622bfdbf83fa3cdf8005cdd313",
     "test_only_base_overlay_content_sha256": {
-      "internal/operations/postgres/integration_fixture_helpers_test.go": "e16428a7ddefd3526d4aa27b2ff88ee1a0648c188d6cd009830b03a1c60ee57d",
-      "internal/operations/postgres/operation_log_ownership_fixture_test.go": "78f3c703dd833db591a68dd6f5aaffa2f21d40267d5f2336ec0cc8708eba9df9",
-      "internal/operations/postgres/operation_log_ownership_integration_test.go": "515e81d01a9d98c145e86b11360902921fd93d60472d0d83709d988e0f2d7457",
+      "internal/operations/postgres/integration_fixture_helpers_test.go": "7f15f4c1719c0c878df55386b8ed026acf40f1213f832f83a2fcd5d52b5fd07a",
+      "internal/operations/postgres/operation_log_ownership_fixture_test.go": "b5033f04830bdff837482301b62ec521d4de45eaf2dd3f39707e573ddc6e99f6",
+      "internal/operations/postgres/operation_log_ownership_integration_test.go": "579b9694a0d130847d829f7ea52194ccdab24356b372d8a5a3e0f31c1770804f",
       "internal/operations/postgres/operation_log_ownership_benchmark_test.go": "eed9cfc7ee92843eb513733130a2ef9be189f39ae5b88188e164b12c98fdf20b"
     }
   },
@@ -237,7 +237,12 @@
       "./scripts/ci-check.sh"
     ],
     "performance_note": "All thresholds passed; no speedup claimed.",
-    "allocation_review": "Default-list allocation medians differ by one, with both sources spanning 5936\u20135937 allocations/op. Other allocation medians match; all byte-allocation ranges overlap. The additional normalization has nil time bounds in these workloads and introduces no additional executed allocation path."
+    "allocation_review": "Final per-workload allocation and byte medians are recorded above. Compiler escape analysis still applies to the unchanged production sources: time copies escape only for non-nil bounds, which these workloads do not supply.",
+    "fixture_lifecycle_regression": {
+      "shared_database_two_runs": "passed",
+      "operation_log_cleanup": "passed",
+      "original_application_pool_access": "passed"
+    }
   },
   "maintenance_benefit": {
     "filter_policy_owner": "Operations contract reused by service and adapter",

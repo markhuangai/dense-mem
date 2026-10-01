@@ -220,7 +220,7 @@ func truncateLedgerFixtures(tx *gorm.DB) error {
 				'evidence_occurrences', 'evidence_quarantines',
 				'evidence_security_signals', 'evidence_security_events', 'evidence_fragments',
 				'evidence_source_revisions', 'evidence_sources', 'knowledge_ingests',
-				'ownership_aliases', 'membership_grants', 'credentials', 'team_memberships',
+				'ownership_aliases', 'membership_grants', 'credentials', 'team_memberships', 'operation_logs',
 				'identity_external_links', 'actor_identities', 'teams'
 			] LOOP
 				IF to_regclass(table_name) IS NOT NULL THEN

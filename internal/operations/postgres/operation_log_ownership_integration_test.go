@@ -104,6 +104,14 @@ func TestOperationLogOwnershipEquivalentFilters(t *testing.T) {
 		})
 	}
 	require.Same(t, from.Location(), to.Location())
+	appPool, err := f.appDB.DB()
+	require.NoError(t, err)
+	require.NoError(t, appPool.PingContext(ctx))
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.adminDB, truncateLedgerFixtures))
+	page, err := f.repo.List(ctx, domain.OperationLogFilter{})
+	require.NoError(t, err)
+	require.Zero(t, page.Total)
+	require.Empty(t, page.Items)
 }
 
 func TestOperationLogOwnershipWritesFlushBeforeReadsAndPreserveFailures(t *testing.T) {
