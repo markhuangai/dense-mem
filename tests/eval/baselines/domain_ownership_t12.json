@@ -1,0 +1,990 @@
+{
+  "schema_version": 1,
+  "issue": 492,
+  "base_commit": "057df3e3a2a2a1e440c04f2743ca300963113c88",
+  "maintenance_benefit": "Community contracts now own publication/input policy, native read bounds and fixed recall-category precedence. PostgreSQL retains scoped relational mechanics and batched transactional hydration; Recall consumes Community bounds with its distinct zero semantics. This modest maintenance improvement claims no speedup.",
+  "evaluation_waiver": "Issue #492 records the maintainer-approved scoped historical deterministic 1k waiver dated 2026-09-28. Replacement gates are exact-base fixed-result equivalence, real PostgreSQL tests, paired performance preservation, focused production-entry checks and actual final-head full production-image E2E.",
+  "candidate_source_manifest": {
+    "recipe": "SHA-256 of sorted relative path + NUL + file SHA-256 + newline, excluding this evidence file",
+    "sha256": "695058b3ef7c0cccef3ac8affc9369680016c41aace3f45f6952c43ab0747578",
+    "changed_paths_excluding_evidence": 25,
+    "source_hashes": {
+      "internal/community/contract/input_policy.go": "eea0add1d735e0b4f5ccd872a90a004649fe7b4cb765d46c7e336ec92aea835b",
+      "internal/community/contract/input_policy_test.go": "621465f6adfe34688e4f4c53ced24ea103e1d41a0b73045d901ca9b62a2aceb1",
+      "internal/community/contract/recall_policy.go": "dcd660d5075aad8f467197cfcde5bbce12f4407c3edd1c982a201325235c9832",
+      "internal/community/contract/recall_policy_test.go": "06e1297bb4e6ce67890f4c38cf333adb085074f350225b03554f0358b2a7f197",
+      "internal/community/postgres/adapter_coverage_test.go": "f0daa26410c375ec8bf1a603bd648833d98b90776e0de2f07fb2300a601c4f44",
+      "internal/community/postgres/adapter_test.go": "bb4ea4f3627d7ce42b05d27d6b71a1d5d15d959786de564274396b356ee8c285",
+      "internal/community/postgres/community_discovery_repository.go": "04fa3353b8f4efbd29680ff38e2b41379c4159b23e602de3a2bdc34a92b2bee9",
+      "internal/community/postgres/community_ownership_benchmark_test.go": "ed0029122568a8e71acca1f7ecf9258d316f3fe2522d419954973f6f45b8fabf",
+      "internal/community/postgres/community_ownership_counters_test.go": "c9852daff75f0a3209bc59d1adeee44897e2663d525de36ba06513d4c4aa5794",
+      "internal/community/postgres/community_ownership_fixture_test.go": "4a56b6ea09ad5641408c4db92d3c90208830202d3ec093f1e0d5417213ab0712",
+      "internal/community/postgres/community_ownership_integration_test.go": "ed58035d889829a8c57c2cdad9cbf1776c3a1449e2bc3aeca01c4086fe566827",
+      "internal/community/postgres/community_ownership_publication_integration_test.go": "e245f0666ea4a69b50a40482fd1cc69275e3a45a5dbcc613f92693abed55073e",
+      "internal/community/postgres/community_ownership_temporal_integration_test.go": "5ab2a7db4494145fb7bc6b7048dc202746bd75818d67785348d0a4877abe7605",
+      "internal/community/postgres/community_recall_coverage_repository.go": "53efde7283fe725f1a5bea04b8b56e44a0cb930445964e515498015fabed4ad6",
+      "internal/community/postgres/community_recall_repository.go": "dc6ac25a4ab82b50f686e0e4fcbfe2ae29f613efa03b609780381d62dd2676c6",
+      "internal/community/postgres/community_repository.go": "8503c04734c8105d511e7cf079c031e8d85507ba9d6e2fc35d530dd8613b1897",
+      "internal/community/postgres/community_repository_helpers.go": "26daeba2f90cdbc5037de8433ced08dd5815b5f42ad4a70a9a36139eb2ceab0e",
+      "internal/community/postgres/community_repository_read_helpers.go": "e09ff6bdffbe69696615f3a7feffdd42f2e7f16a58e9c2f240d25b76df07bae8",
+      "internal/community/postgres/community_repository_write_helpers.go": "3f2eb01621796b746b9582ddcbb0f9b67a3dea74b08f976b6ce4c1b25019f8bb",
+      "internal/community/postgres/community_summary_repository.go": "46fdd5dfc15b48eb912aecc2da9d82b54ba660fee7bb9c67b6bdb63acb191381",
+      "internal/community/postgres/fixture_semantic_helpers_test.go": "0da7140c6f33bc9ad9a272b393060a7902c10f6b06f144b2ba40124d38dbce26",
+      "internal/community/postgres/integration_fixture_helpers_test.go": "27421988cfb55520decf434b6a9fb991bdfce6bca95b0ba4588bcfc380df3e3e",
+      "internal/recall/recall.go": "76ac963bd1047bd53c7c2c7bbdcd82e432cee0c0cfc865711ec17080382e2b5e",
+      "internal/recall/recall_community_limits_test.go": "42ea9761997d6a7039445b096a55ccd4b09d61ff1b2c91e0839541572bbe2d8f",
+      "scripts/e2e-db-cases/community.json": "5a44e3ac9f2e73544b03fede398b60095c4f13f241924d8163e7707a43116187"
+    }
+  },
+  "test_only_base_overlay_sha256": {
+    "internal/community/postgres/integration_fixture_helpers_test.go": "27421988cfb55520decf434b6a9fb991bdfce6bca95b0ba4588bcfc380df3e3e",
+    "internal/community/postgres/fixture_semantic_helpers_test.go": "0da7140c6f33bc9ad9a272b393060a7902c10f6b06f144b2ba40124d38dbce26",
+    "internal/community/postgres/community_ownership_benchmark_test.go": "ed0029122568a8e71acca1f7ecf9258d316f3fe2522d419954973f6f45b8fabf",
+    "internal/community/postgres/community_ownership_counters_test.go": "c9852daff75f0a3209bc59d1adeee44897e2663d525de36ba06513d4c4aa5794",
+    "internal/community/postgres/community_ownership_fixture_test.go": "4a56b6ea09ad5641408c4db92d3c90208830202d3ec093f1e0d5417213ab0712",
+    "internal/community/postgres/community_ownership_integration_test.go": "ed58035d889829a8c57c2cdad9cbf1776c3a1449e2bc3aeca01c4086fe566827",
+    "internal/community/postgres/community_ownership_publication_integration_test.go": "e245f0666ea4a69b50a40482fd1cc69275e3a45a5dbcc613f92693abed55073e",
+    "internal/community/postgres/community_ownership_temporal_integration_test.go": "5ab2a7db4494145fb7bc6b7048dc202746bd75818d67785348d0a4877abe7605"
+  },
+  "plan_audit": {
+    "verdict": "conformant",
+    "unresolved_findings": 0,
+    "auditor": {
+      "model": "gpt-6.1-sol",
+      "reasoning_effort": "max"
+    },
+    "rounds": 2,
+    "receipt_sha256": "f1aa9fec13e4d4b5c13651ff769cfe3a7f0becad3f3c54a0cd90aa50237ff1c9",
+    "audited_worktree_sha256": "fcbfb1bc40a599cb229ff8feb26c6fd13ecbc0a5853dac132a501249d77fd7b3",
+    "post_audit_changed_paths": [
+      "internal/community/postgres/community_ownership_fixture_test.go",
+      "internal/community/postgres/community_ownership_integration_test.go",
+      "internal/community/postgres/community_ownership_publication_integration_test.go",
+      "internal/community/postgres/community_ownership_publication_test.go",
+      "internal/community/postgres/community_ownership_temporal_integration_test.go",
+      "internal/community/postgres/community_ownership_temporal_test.go",
+      "tests/eval/baselines/domain_ownership_t12.json"
+    ],
+    "post_audit_corrections": [
+      {
+        "path": "internal/community/postgres/community_ownership_temporal_test.go",
+        "reason": "Integration test compile correction: native projection SourceVersion requires int64"
+      },
+      {
+        "path": "internal/community/postgres/community_ownership_fixture_test.go",
+        "reason": "Initialize TopEntities as an empty array to satisfy the existing PostgreSQL NOT NULL constraint"
+      },
+      {
+        "path": "internal/community/postgres/community_ownership_integration_test.go",
+        "reason": "Correct expected member_count DESC ordering within the shared seed/entity lane"
+      },
+      {
+        "path": "internal/community/postgres/community_ownership_fixture_test.go",
+        "reason": "Analyze seeded tables outside timing using existing benchmark pattern; diagnostic preserved results and counts and reduced fresh-fixture recall from 1853.906 ms to 30.398\u201336.008 ms"
+      },
+      {
+        "paths": {
+          "internal/community/postgres/community_ownership_publication_test.go": "internal/community/postgres/community_ownership_publication_integration_test.go",
+          "internal/community/postgres/community_ownership_temporal_test.go": "internal/community/postgres/community_ownership_temporal_integration_test.go"
+        },
+        "reason": "Use the existing database runner required _integration_test.go discovery suffix; update registrations and base overlay"
+      }
+    ]
+  },
+  "fixed_result_comparison": {
+    "passed": true,
+    "cases": 42,
+    "case_names": [
+      "all_covered",
+      "community_limit_-1",
+      "community_limit_0",
+      "community_limit_1",
+      "community_limit_10",
+      "community_limit_100",
+      "community_limit_3",
+      "covered_excluded",
+      "exact_truncation_boundary",
+      "expand_entity",
+      "fresh_generation_change",
+      "known_evidence",
+      "known_relationship",
+      "mixed_all_lanes",
+      "no_match",
+      "other_team",
+      "overlapping_lanes",
+      "private_snapshot",
+      "publication_community_id",
+      "publication_counts",
+      "publication_fingerprint",
+      "publication_member_score",
+      "publication_rollback",
+      "publication_run",
+      "publication_source_version",
+      "publication_summary",
+      "publication_team",
+      "relationship_limit_-1",
+      "relationship_limit_0",
+      "relationship_limit_1",
+      "relationship_limit_100",
+      "relationship_limit_20",
+      "relationship_limit_5",
+      "relationship_source_rank_uuid_tie",
+      "remaining_default",
+      "remaining_maximum",
+      "returned_evidence",
+      "seed_relationship",
+      "source_version_stale",
+      "successful_publication",
+      "temporal_known_at",
+      "temporal_valid_at"
+    ],
+    "signature_sha256": "235f6d5a8e5bb75e8542b2120a09720726085f7e8c25a0852feaeea5ca28fcbd",
+    "signature_recipe": "Full Community recall records with generated team/entity/relationship/evidence/group identifiers mapped to stable fixture labels; fixed relationship timestamps; actual IDs and ordering asserted against each fixture. Publication/error, temporal and generation outcomes are asserted and logged.",
+    "base_log_sha256": "6e0d2d7a0926cee696098670b1599610397b73d7ad6f0ffc6c6ac4ece91b0a03",
+    "candidate_log_sha256": "76971e3a799e692fbfdad03af2f7a6ac913712de9eaf5e8e7ad7e435d9c31099"
+  },
+  "benchmark": {
+    "name": "BenchmarkCommunityOwnership",
+    "warmups": 20,
+    "measured_operations": 200,
+    "repetitions_per_source": 5,
+    "run_order": [
+      {
+        "round": 1,
+        "source": "base",
+        "cpu_idle_percent": 98.74490116096642
+      },
+      {
+        "round": 1,
+        "source": "candidate",
+        "cpu_idle_percent": 95.08299404948325
+      },
+      {
+        "round": 2,
+        "source": "candidate",
+        "cpu_idle_percent": 90.88354667499219
+      },
+      {
+        "round": 2,
+        "source": "base",
+        "cpu_idle_percent": 90.14040561622465
+      },
+      {
+        "round": 3,
+        "source": "base",
+        "cpu_idle_percent": 90.26908635794743
+      },
+      {
+        "round": 3,
+        "source": "candidate",
+        "cpu_idle_percent": 90.99155458242102
+      },
+      {
+        "round": 4,
+        "source": "candidate",
+        "cpu_idle_percent": 91.05511811023622
+      },
+      {
+        "round": 4,
+        "source": "base",
+        "cpu_idle_percent": 90.18617860523824
+      },
+      {
+        "round": 5,
+        "source": "base",
+        "cpu_idle_percent": 95.30075187969925
+      },
+      {
+        "round": 5,
+        "source": "candidate",
+        "cpu_idle_percent": 90.50156739811912
+      }
+    ],
+    "workloads": {
+      "returned_evidence": {
+        "result_signature_sha256": "a436a694ad1bdcfb4bbf9d0a342c24c7e8e7f9c1f5d4f9bc5669e881a882c8ef",
+        "counts_per_operation": {
+          "sql-statements/op": 7.0,
+          "transactions/op": 1.0,
+          "transaction-completions/op": 1.0,
+          "provider-calls/op": 0.0
+        },
+        "timing": {
+          "p50-ns/op": {
+            "base_median": 17081724.0,
+            "candidate_median": 16738483.0,
+            "increase": -343241.0,
+            "allowed_increase": 1000000,
+            "passed": true
+          },
+          "p95-ns/op": {
+            "base_median": 21657073.0,
+            "candidate_median": 22323437.0,
+            "increase": 666364.0,
+            "allowed_increase": 1082853.6500000001,
+            "passed": true
+          }
+        },
+        "allocations": {
+          "B/op": {
+            "base": 277349.0,
+            "candidate": 276920.0,
+            "base_runs": [
+              275952.0,
+              273959.0,
+              277624.0,
+              278119.0,
+              277349.0
+            ],
+            "candidate_runs": [
+              276543.0,
+              275611.0,
+              276920.0,
+              277730.0,
+              277009.0
+            ]
+          },
+          "allocs/op": {
+            "base": 3675.0,
+            "candidate": 3676.0,
+            "base_runs": [
+              3674.0,
+              3673.0,
+              3675.0,
+              3675.0,
+              3675.0
+            ],
+            "candidate_runs": [
+              3677.0,
+              3676.0,
+              3676.0,
+              3677.0,
+              3676.0
+            ]
+          }
+        }
+      },
+      "known_evidence": {
+        "result_signature_sha256": "f69b3f35a9d720b565366c83c9c06f6876b9a50f8f6f40a8c2d5c64f565570bc",
+        "counts_per_operation": {
+          "sql-statements/op": 7.0,
+          "transactions/op": 1.0,
+          "transaction-completions/op": 1.0,
+          "provider-calls/op": 0.0
+        },
+        "timing": {
+          "p50-ns/op": {
+            "base_median": 17213461.0,
+            "candidate_median": 17728324.0,
+            "increase": 514863.0,
+            "allowed_increase": 1000000,
+            "passed": true
+          },
+          "p95-ns/op": {
+            "base_median": 23156923.0,
+            "candidate_median": 23573664.0,
+            "increase": 416741.0,
+            "allowed_increase": 1157846.1500000001,
+            "passed": true
+          }
+        },
+        "allocations": {
+          "B/op": {
+            "base": 275920.0,
+            "candidate": 277412.0,
+            "base_runs": [
+              275985.0,
+              275920.0,
+              275588.0,
+              275038.0,
+              277156.0
+            ],
+            "candidate_runs": [
+              277855.0,
+              276727.0,
+              277412.0,
+              276379.0,
+              278126.0
+            ]
+          },
+          "allocs/op": {
+            "base": 3674.0,
+            "candidate": 3676.0,
+            "base_runs": [
+              3674.0,
+              3674.0,
+              3674.0,
+              3674.0,
+              3675.0
+            ],
+            "candidate_runs": [
+              3677.0,
+              3676.0,
+              3676.0,
+              3676.0,
+              3677.0
+            ]
+          }
+        }
+      },
+      "known_relationship": {
+        "result_signature_sha256": "97b0657b5efbc3055615e2083f5913210402a76b8ded1eaa9c2fe3dd2ad1b073",
+        "counts_per_operation": {
+          "sql-statements/op": 7.0,
+          "transactions/op": 1.0,
+          "transaction-completions/op": 1.0,
+          "provider-calls/op": 0.0
+        },
+        "timing": {
+          "p50-ns/op": {
+            "base_median": 17367749.0,
+            "candidate_median": 17421407.0,
+            "increase": 53658.0,
+            "allowed_increase": 1000000,
+            "passed": true
+          },
+          "p95-ns/op": {
+            "base_median": 22843693.0,
+            "candidate_median": 23187888.0,
+            "increase": 344195.0,
+            "allowed_increase": 1142184.6500000001,
+            "passed": true
+          }
+        },
+        "allocations": {
+          "B/op": {
+            "base": 278731.0,
+            "candidate": 279477.0,
+            "base_runs": [
+              279569.0,
+              278731.0,
+              278942.0,
+              277489.0,
+              278699.0
+            ],
+            "candidate_runs": [
+              279520.0,
+              278338.0,
+              279512.0,
+              279477.0,
+              277737.0
+            ]
+          },
+          "allocs/op": {
+            "base": 3713.0,
+            "candidate": 3715.0,
+            "base_runs": [
+              3713.0,
+              3712.0,
+              3713.0,
+              3712.0,
+              3713.0
+            ],
+            "candidate_runs": [
+              3715.0,
+              3714.0,
+              3715.0,
+              3715.0,
+              3714.0
+            ]
+          }
+        }
+      },
+      "seed_relationship": {
+        "result_signature_sha256": "da1660dc4264e1ba2503b4203965726404840693f11e4c65db61d4b7cce9f85f",
+        "counts_per_operation": {
+          "sql-statements/op": 7.0,
+          "transactions/op": 1.0,
+          "transaction-completions/op": 1.0,
+          "provider-calls/op": 0.0
+        },
+        "timing": {
+          "p50-ns/op": {
+            "base_median": 17663899.0,
+            "candidate_median": 18387730.0,
+            "increase": 723831.0,
+            "allowed_increase": 1000000,
+            "passed": true
+          },
+          "p95-ns/op": {
+            "base_median": 23938608.0,
+            "candidate_median": 24149295.0,
+            "increase": 210687.0,
+            "allowed_increase": 1196930.4000000001,
+            "passed": true
+          }
+        },
+        "allocations": {
+          "B/op": {
+            "base": 276635.0,
+            "candidate": 275727.0,
+            "base_runs": [
+              276635.0,
+              276200.0,
+              276935.0,
+              277195.0,
+              276003.0
+            ],
+            "candidate_runs": [
+              277091.0,
+              275673.0,
+              276785.0,
+              275727.0,
+              275329.0
+            ]
+          },
+          "allocs/op": {
+            "base": 3674.0,
+            "candidate": 3676.0,
+            "base_runs": [
+              3674.0,
+              3674.0,
+              3675.0,
+              3674.0,
+              3674.0
+            ],
+            "candidate_runs": [
+              3676.0,
+              3676.0,
+              3676.0,
+              3676.0,
+              3675.0
+            ]
+          }
+        }
+      },
+      "entity_overlap": {
+        "result_signature_sha256": "273dc7cbcd83fa93a87e1763da88cf3758fba284d110e0550cc1a218f21442b7",
+        "counts_per_operation": {
+          "sql-statements/op": 7.0,
+          "transactions/op": 1.0,
+          "transaction-completions/op": 1.0,
+          "provider-calls/op": 0.0
+        },
+        "timing": {
+          "p50-ns/op": {
+            "base_median": 18060385.0,
+            "candidate_median": 17948762.0,
+            "increase": -111623.0,
+            "allowed_increase": 1000000,
+            "passed": true
+          },
+          "p95-ns/op": {
+            "base_median": 23957792.0,
+            "candidate_median": 24091840.0,
+            "increase": 134048.0,
+            "allowed_increase": 1197889.6,
+            "passed": true
+          }
+        },
+        "allocations": {
+          "B/op": {
+            "base": 276229.0,
+            "candidate": 276283.0,
+            "base_runs": [
+              276229.0,
+              275467.0,
+              278036.0,
+              275799.0,
+              276601.0
+            ],
+            "candidate_runs": [
+              275466.0,
+              276642.0,
+              277358.0,
+              276283.0,
+              274529.0
+            ]
+          },
+          "allocs/op": {
+            "base": 3674.0,
+            "candidate": 3676.0,
+            "base_runs": [
+              3674.0,
+              3673.0,
+              3675.0,
+              3674.0,
+              3674.0
+            ],
+            "candidate_runs": [
+              3676.0,
+              3676.0,
+              3676.0,
+              3676.0,
+              3675.0
+            ]
+          }
+        }
+      },
+      "remaining": {
+        "result_signature_sha256": "2d43dcc8d61b21f22be9bf14ab03413406ca32ba3ae102e76e9c545a34139ae3",
+        "counts_per_operation": {
+          "sql-statements/op": 7.0,
+          "transactions/op": 1.0,
+          "transaction-completions/op": 1.0,
+          "provider-calls/op": 0.0
+        },
+        "timing": {
+          "p50-ns/op": {
+            "base_median": 17877130.0,
+            "candidate_median": 17584199.0,
+            "increase": -292931.0,
+            "allowed_increase": 1000000,
+            "passed": true
+          },
+          "p95-ns/op": {
+            "base_median": 24984374.0,
+            "candidate_median": 23113939.0,
+            "increase": -1870435.0,
+            "allowed_increase": 1249218.7,
+            "passed": true
+          }
+        },
+        "allocations": {
+          "B/op": {
+            "base": 275436.0,
+            "candidate": 275887.0,
+            "base_runs": [
+              274101.0,
+              274916.0,
+              275436.0,
+              277364.0,
+              275661.0
+            ],
+            "candidate_runs": [
+              276543.0,
+              274038.0,
+              275887.0,
+              276602.0,
+              273617.0
+            ]
+          },
+          "allocs/op": {
+            "base": 3655.0,
+            "candidate": 3657.0,
+            "base_runs": [
+              3654.0,
+              3654.0,
+              3655.0,
+              3656.0,
+              3655.0
+            ],
+            "candidate_runs": [
+              3657.0,
+              3656.0,
+              3657.0,
+              3657.0,
+              3656.0
+            ]
+          }
+        }
+      },
+      "default_hydration": {
+        "result_signature_sha256": "fc15c659874caaa65483e20db11441e0c062600c8aa791898884c2dbf5d86e49",
+        "counts_per_operation": {
+          "sql-statements/op": 7.0,
+          "transactions/op": 1.0,
+          "transaction-completions/op": 1.0,
+          "provider-calls/op": 0.0
+        },
+        "timing": {
+          "p50-ns/op": {
+            "base_median": 30389328.0,
+            "candidate_median": 29261175.0,
+            "increase": -1128153.0,
+            "allowed_increase": 1519466.4000000001,
+            "passed": true
+          },
+          "p95-ns/op": {
+            "base_median": 39266480.0,
+            "candidate_median": 37156574.0,
+            "increase": -2109906.0,
+            "allowed_increase": 1963324.0,
+            "passed": true
+          }
+        },
+        "allocations": {
+          "B/op": {
+            "base": 774732.0,
+            "candidate": 774019.0,
+            "base_runs": [
+              774732.0,
+              773607.0,
+              777074.0,
+              775938.0,
+              773343.0
+            ],
+            "candidate_runs": [
+              776102.0,
+              773476.0,
+              773642.0,
+              779517.0,
+              774019.0
+            ]
+          },
+          "allocs/op": {
+            "base": 10680.0,
+            "candidate": 10683.0,
+            "base_runs": [
+              10680.0,
+              10680.0,
+              10679.0,
+              10680.0,
+              10680.0
+            ],
+            "candidate_runs": [
+              10683.0,
+              10683.0,
+              10684.0,
+              10684.0,
+              10683.0
+            ]
+          }
+        }
+      },
+      "maximum_hydration": {
+        "result_signature_sha256": "ce3c770e8e42be4b2a9b598fb077f228fd71d424784ca4c7d8ac8dc8f635de35",
+        "counts_per_operation": {
+          "sql-statements/op": 7.0,
+          "transactions/op": 1.0,
+          "transaction-completions/op": 1.0,
+          "provider-calls/op": 0.0
+        },
+        "timing": {
+          "p50-ns/op": {
+            "base_median": 33309665.0,
+            "candidate_median": 32768621.0,
+            "increase": -541044.0,
+            "allowed_increase": 1665483.25,
+            "passed": true
+          },
+          "p95-ns/op": {
+            "base_median": 42206486.0,
+            "candidate_median": 40711020.0,
+            "increase": -1495466.0,
+            "allowed_increase": 2110324.3000000003,
+            "passed": true
+          }
+        },
+        "allocations": {
+          "B/op": {
+            "base": 2533668.0,
+            "candidate": 2546250.0,
+            "base_runs": [
+              2529669.0,
+              2545715.0,
+              2533668.0,
+              2519313.0,
+              2535081.0
+            ],
+            "candidate_runs": [
+              2546528.0,
+              2546250.0,
+              2561209.0,
+              2509570.0,
+              2509703.0
+            ]
+          },
+          "allocs/op": {
+            "base": 32482.0,
+            "candidate": 32487.0,
+            "base_runs": [
+              32482.0,
+              32483.0,
+              32482.0,
+              32482.0,
+              32482.0
+            ],
+            "candidate_runs": [
+              32487.0,
+              32487.0,
+              32488.0,
+              32485.0,
+              32486.0
+            ]
+          }
+        }
+      },
+      "covered_groups": {
+        "result_signature_sha256": "1e4438e7c63b8155b94da36dccc82882e3438ca4e4bc60265b3db634ae9bce10",
+        "counts_per_operation": {
+          "sql-statements/op": 7.0,
+          "transactions/op": 1.0,
+          "transaction-completions/op": 1.0,
+          "provider-calls/op": 0.0
+        },
+        "timing": {
+          "p50-ns/op": {
+            "base_median": 28077084.0,
+            "candidate_median": 27204621.0,
+            "increase": -872463.0,
+            "allowed_increase": 1403854.2000000002,
+            "passed": true
+          },
+          "p95-ns/op": {
+            "base_median": 36812336.0,
+            "candidate_median": 34096538.0,
+            "increase": -2715798.0,
+            "allowed_increase": 1840616.8,
+            "passed": true
+          }
+        },
+        "allocations": {
+          "B/op": {
+            "base": 785603.0,
+            "candidate": 788703.0,
+            "base_runs": [
+              777122.0,
+              785603.0,
+              779113.0,
+              787077.0,
+              786356.0
+            ],
+            "candidate_runs": [
+              785205.0,
+              788703.0,
+              787623.0,
+              789096.0,
+              799400.0
+            ]
+          },
+          "allocs/op": {
+            "base": 10763.0,
+            "candidate": 10768.0,
+            "base_runs": [
+              10762.0,
+              10763.0,
+              10762.0,
+              10763.0,
+              10763.0
+            ],
+            "candidate_runs": [
+              10766.0,
+              10767.0,
+              10768.0,
+              10768.0,
+              10769.0
+            ]
+          }
+        }
+      }
+    },
+    "raw_log_hashes": {
+      "base-1": "16566ca80a370c6cdfb660061fcf8e24b0f4417cf72030bf5d2e18a2e9fd39c0",
+      "candidate-1": "0ebd4c21b31cd3a16471412c60c934f18b6ba7ed8763f3dfff81d93b959d246e",
+      "candidate-2": "ebeffe8eada78d57c6253c54c85af5a63da60a1f748db39dc4124e6a5bc7b77b",
+      "base-2": "d397ef1b5c4730b6cf6f7d78577c2309413371707e9f5054bc8c4eddfd590cf4",
+      "base-3": "60dd544ef1b648f99e56800a7ea9c2695bc6eb175574c40f865a734fb6e8a496",
+      "candidate-3": "0bf466f9b275eafe3f58263ff43a8e98c485d68bd4f93810be8798c9b5734e8d",
+      "candidate-4": "3abf42bc209b5ca8ad1328f45e70599994f09adbc6dbef4353da0bd5de2192a1",
+      "base-4": "ebd823cc538dfeff5cd97dc5fa96e1df89fb791fff29ce7b21947048a84a8ab0",
+      "base-5": "48ec94734e8fe7884f861112725f2865046a090d95c8189bacd165a21c6d1288",
+      "candidate-5": "18d8857b7050fdd62cc85df295bd3785fd790efcec09b73b54a064105e299b3c"
+    },
+    "passed": true,
+    "allocation_investigation": {
+      "sample_rate_bytes": 4096,
+      "includes_setup_and_warmups": true,
+      "sources": {
+        "base": {
+          "whole_process_allocated_kib": 632565.85,
+          "profile_sha256": "d9893d0b2c161accc2e78b08f156a04d96b39f9c460468f5f871a59abac83997",
+          "hydration_cumulative_kib": 111957.89,
+          "signature_cumulative_kib": 413947.81
+        },
+        "candidate": {
+          "whole_process_allocated_kib": 610958.8,
+          "profile_sha256": "a7cabb03d2af034efc429b01e1844cd308b383f08a7566d9ce953982d20a71c0",
+          "hydration_cumulative_kib": 112150.58,
+          "signature_cumulative_kib": 416063.88
+        }
+      },
+      "conclusion": "Maximum-hydration paired medians increased 12,582 B/op (0.50%) and 5 allocations/op with overlapping run ranges. Sampled profiles show result-signature JSON serialization remains the largest cumulative allocation owner (about 404\u2013406 MiB across the run); relationship hydration remains about 109 MiB. Candidate signature serialization grew about 2.1 MiB in the profiled run while relationship hydration changed about 0.19 MiB. An additional bound top-entity limit parameter is present in candidate SQL; profiles do not isolate an exact causal per-operation contribution. No new dominant allocation owner or per-operation SQL construction appeared. Retained paired allocations include serialization and pooling variability; no speedup is claimed.",
+      "median_bytes_change_by_workload": {
+        "returned_evidence": -429.0,
+        "known_evidence": 1492.0,
+        "known_relationship": 746.0,
+        "seed_relationship": -908.0,
+        "entity_overlap": 54.0,
+        "remaining": 451.0,
+        "default_hydration": -713.0,
+        "maximum_hydration": 12582.0,
+        "covered_groups": 3100.0
+      },
+      "median_allocations_change_by_workload": {
+        "returned_evidence": 1.0,
+        "known_evidence": 2.0,
+        "known_relationship": 2.0,
+        "seed_relationship": 2.0,
+        "entity_overlap": 2.0,
+        "remaining": 2.0,
+        "default_hydration": 3.0,
+        "maximum_hydration": 5.0,
+        "covered_groups": 5.0
+      }
+    }
+  },
+  "planner_fixture_diagnostic": {
+    "command": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -overlay <diagnostic-test-only-overlay> -tags=integration ./internal/community/postgres -run '^TestCommunityPlannerDiagnostic$' -count=1 -v",
+    "exit_code": 0,
+    "before_ms": 1853.906,
+    "after_ms": [
+      36.008,
+      30.398,
+      32.165
+    ],
+    "result_signatures_equal": true,
+    "sql_statements": 7,
+    "transactions": 1,
+    "log_sha256": "429a4726adf3ba287aceae2db1dff9666205b52a8f19ea75082ffe2dc2bba7fe"
+  },
+  "validation": [
+    {
+      "name": "focused-unit",
+      "command": [
+        "go",
+        "test",
+        "./internal/community/...",
+        "./internal/recall/...",
+        "-count=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 3.586,
+      "log_sha256": "30956d05730c176fab5d61c8e0023f9f270e65d97098b31020113d93c8ec36dd"
+    },
+    {
+      "name": "evaluation-unit",
+      "command": [
+        "go",
+        "test",
+        "-tags=evaluation",
+        "./internal/evaluation/...",
+        "./internal/tools/registry/...",
+        "-count=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 3.543,
+      "log_sha256": "6ecb9c3987dbd8f2dff7111ca38ed66ccce8eaea2b3ef7d51adbd25ce6f973d0"
+    },
+    {
+      "name": "postgres-candidate",
+      "command": [
+        "go",
+        "test",
+        "-tags=integration",
+        "./internal/community/postgres",
+        "./internal/recall/postgres",
+        "-count=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 467.795,
+      "log_sha256": "accfab3f710b2e2e5576bae0c2a38573f5a9a914cc3d1a5858f79ca5b59755eb"
+    },
+    {
+      "name": "equivalence-candidate",
+      "command": [
+        "go",
+        "test",
+        "-tags=integration",
+        "./internal/community/postgres",
+        "-run",
+        "^TestCommunityOwnership",
+        "-count=1",
+        "-v"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 60.559,
+      "log_sha256": "76971e3a799e692fbfdad03af2f7a6ac913712de9eaf5e8e7ad7e435d9c31099"
+    },
+    {
+      "name": "equivalence-base",
+      "command": [
+        "go",
+        "test",
+        "-overlay",
+        "<test-only-overlay>",
+        "-tags=integration",
+        "./internal/community/postgres",
+        "-run",
+        "^TestCommunityOwnership",
+        "-count=1",
+        "-v"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 69.29,
+      "log_sha256": "6e0d2d7a0926cee696098670b1599610397b73d7ad6f0ffc6c6ac4ece91b0a03"
+    },
+    {
+      "name": "architecture",
+      "command": [
+        "node",
+        "scripts/check-architecture.mjs"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 57.542,
+      "log_sha256": "452e636f7cf601336df2c30641a257fe172541538e669036deb08f9dc04ca89b"
+    },
+    {
+      "name": "architecture-uat",
+      "command": [
+        "node",
+        "--test",
+        "tests/uat/architecture_conformance.test.mjs"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 83.358,
+      "log_sha256": "f0f8eb579c4c7a4e4c7b3ec6c9160e625ad4e1af195cbcab67d3a8bb3c31721d"
+    },
+    {
+      "name": "community-e2e",
+      "command": [
+        "./scripts/e2e.sh",
+        "community"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 373.127,
+      "log_sha256": "886a172c10fded85075370335af97e48c8732c863a008a47d2f56ccb386006aa"
+    },
+    {
+      "name": "space-aware-e2e",
+      "command": [
+        "./scripts/e2e.sh",
+        "space_aware_recall"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 71.8,
+      "log_sha256": "78c06ea214281c82b13c92273db32cc2ac6e9aa8ad3c4575c8616f8d26e4b055"
+    },
+    {
+      "name": "repository-ci",
+      "command": [
+        "./scripts/ci-check.sh"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 606.414,
+      "log_sha256": "008eaa84a86aff94d21de5f6990725f710dd887a93b0e8d423e221028e69160b"
+    },
+    {
+      "name": "e2e-runner-regression",
+      "command": [
+        "go",
+        "-C",
+        "cmd/e2e",
+        "test",
+        "./...",
+        "-count=1"
+      ],
+      "exit_code": 0,
+      "log_sha256": "eb9e7d9bf8f5afe4f4b89bfec6fa769599f9d0b4e2197d52b9b9dc65e2482514"
+    }
+  ],
+  "validation_notes": {
+    "coverage": {
+      "covered_statements": 33890,
+      "total_statements": 37611,
+      "complete_gate_passed": true
+    },
+    "community_browser_tests": 4,
+    "remote_delivery_gate": "This evidence records local validation. Publication requires current-head review and successful Repository CI, CodeQL analysis, CodeQL and full Production image E2E."
+  }
+}

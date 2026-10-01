@@ -8,9 +8,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
-	"gorm.io/gorm"
-
+	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"gorm.io/gorm"
 )
 
 func (r *Store) RecordCommunitySummaryAttempt(ctx context.Context, input CommunitySummaryAttemptInput) error {
@@ -34,8 +34,8 @@ func (r *Store) RecordCommunitySummaryAttempt(ctx context.Context, input Communi
 	if input.AdmittedSupportQuotes == nil {
 		input.AdmittedSupportQuotes = []domain.CommunitySummarySupportQuote{}
 	}
-	input.AdmittedRelationshipIDs = normalizeCommunitySummaryUUIDs(input.AdmittedRelationshipIDs)
-	input.AdmittedEvidenceIDs = normalizeCommunitySummaryUUIDs(input.AdmittedEvidenceIDs)
+	input.AdmittedRelationshipIDs = communitycontract.NormalizeCommunitySummaryUUIDs(input.AdmittedRelationshipIDs)
+	input.AdmittedEvidenceIDs = communitycontract.NormalizeCommunitySummaryUUIDs(input.AdmittedEvidenceIDs)
 	quotes, err := json.Marshal(input.AdmittedSupportQuotes)
 	if err != nil {
 		return fmt.Errorf("community: marshal summary support quotes: %w", err)
@@ -55,8 +55,8 @@ func (r *Store) RecordCommunitySummaryAttempt(ctx context.Context, input Communi
 			)
 		`, input.TeamID, fence.ID, fence.Generation, input.RunID, input.CommunityID, input.Attempt, input.ProviderModel,
 			input.PromptHash, input.ResponseHash, input.InputHash, pq.Array(input.AdmittedRelationshipIDs),
-			pq.Array(input.AdmittedEvidenceIDs), string(quotes), truncateCommunityError(input.ResponseSummary), input.Valid,
-			truncateCommunityError(input.ErrorCode)).Error
+			pq.Array(input.AdmittedEvidenceIDs), string(quotes), communitycontract.TruncateCommunityDiagnostic(input.ResponseSummary), input.Valid,
+			communitycontract.TruncateCommunityDiagnostic(input.ErrorCode)).Error
 	})
 	if err != nil {
 		return fmt.Errorf("community: record summary attempt: %w", err)

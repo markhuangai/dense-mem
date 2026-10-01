@@ -8,6 +8,48 @@
       "run": "^TestCommunityRepositorySnapshotLifecycleAndRecallExpansion$",
       "phase": "precheck",
       "source": "internal/community/postgres/community_repository_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityOwnershipPreservesRecallOrderBoundsAndCoverage",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityOwnershipPreservesRecallOrderBoundsAndCoverage$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/community_ownership_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityOwnershipRejectsPublicationAndRollsBack",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityOwnershipRejectsPublicationAndRollsBack$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/community_ownership_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityOwnershipExcludesPrivateAndStaleSnapshots",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityOwnershipExcludesPrivateAndStaleSnapshots$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/community_ownership_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityOwnershipPreservesPublishedIdentityAndMetadata",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityOwnershipPreservesPublishedIdentityAndMetadata$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/community_ownership_publication_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityOwnershipExcludesOldGenerationRecall",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityOwnershipExcludesOldGenerationRecall$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/community_ownership_publication_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityOwnershipTemporalRecallPreservesDirectRelationship",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityOwnershipTemporalRecallPreservesDirectRelationship$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/community_ownership_temporal_integration_test.go"
     }
   ]
 }

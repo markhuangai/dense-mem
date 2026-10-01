@@ -5,12 +5,13 @@ import (
 	"fmt"
 
 	"github.com/lib/pq"
+	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
 	"gorm.io/gorm"
 )
 
 func (r *Store) RecallCommunityDiscovery(ctx context.Context, input CommunityDiscoveryInput) ([]CommunityDiscoveryPath, error) {
-	input = normalizeCommunityDiscoveryInput(input)
-	if err := validateCommunityDiscoveryInput(input); err != nil {
+	input = communitycontract.NormalizeCommunityDiscoveryInput(input)
+	if err := communitycontract.ValidateCommunityDiscoveryInput(input); err != nil {
 		return nil, err
 	}
 	if input.Query == "" && len(input.ExpandFromEntityIDs) == 0 {
