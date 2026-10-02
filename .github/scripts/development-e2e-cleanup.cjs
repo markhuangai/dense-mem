@@ -25,17 +25,22 @@ function ownedVersion(version, registry, repository) {
 }
 
 async function completedOwner(api, repository, owner) {
-  const current = await api.request(`/repos/${repository}/actions/runs/${owner.runId}`);
-  assertTrustedDevelopmentRun(current, repository);
-  if (current.status !== "completed") return { reason: "development run is still active" };
-  if (current.run_attempt < owner.runAttempt) return { reason: "image names an unknown run attempt" };
-  const attempt = current.run_attempt === owner.runAttempt ? current
-    : await api.request(`/repos/${repository}/actions/runs/${owner.runId}/attempts/${owner.runAttempt}`);
-  assertTrustedDevelopmentRun(attempt, repository);
-  if (attempt.id !== owner.runId || attempt.run_attempt !== owner.runAttempt || attempt.status !== "completed") {
-    return { reason: "development run attempt is not complete" };
+  try {
+    const current = await api.request(`/repos/${repository}/actions/runs/${owner.runId}`);
+    assertTrustedDevelopmentRun(current, repository);
+    if (current.status !== "completed") return { reason: "development run is still active" };
+    if (current.run_attempt < owner.runAttempt) return { reason: "image names an unknown run attempt" };
+    const attempt = current.run_attempt === owner.runAttempt ? current
+      : await api.request(`/repos/${repository}/actions/runs/${owner.runId}/attempts/${owner.runAttempt}`);
+    assertTrustedDevelopmentRun(attempt, repository);
+    if (attempt.id !== owner.runId || attempt.run_attempt !== owner.runAttempt || attempt.status !== "completed") {
+      return { reason: "development run attempt is not complete" };
+    }
+    return {};
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    return { reason: "development run or attempt was not found" };
   }
-  return {};
 }
 
 async function cleanupDevelopmentImages({ api, registry, repository, run = null, dryRun = false }) {

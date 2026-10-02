@@ -141,6 +141,9 @@ test("development cleanup verifies real image ownership and preserves active or 
   let runReads = 0;
   let restartRun = false;
   let nextVersion = 1;
+  const missingAttempts = new Set();
+  const runFailures = new Map();
+  const runRequests = [];
   const workflowRun = (id, attempt = 1, status = "completed") => ({
     id, run_attempt: attempt, status, event: "workflow_dispatch", head_branch: "main",
     head_sha: "b".repeat(40), repository: { full_name: repository }, path: ".github/workflows/development-e2e.yml",
@@ -154,8 +157,13 @@ test("development cleanup verifies real image ownership and preserves active or 
         const match = /\/runs\/(\d+)(?:\/attempts\/(\d+))?$/.exec(url.pathname);
         const run = runs.get(Number(match[1]));
         runReads += 1;
-        body = { ...run, ...(match[2] ? { run_attempt: Number(match[2]) } : {}) };
-        if (restartRun && runReads >= 2) body.status = "in_progress";
+        runRequests.push(url.pathname);
+        status = runFailures.get(Number(match[1])) || (!run || missingAttempts.has(`${match[1]}/${match[2]}`) ? 404 : 200);
+        if (status !== 200) body = { message: "fixture failure" };
+        else {
+          body = { ...run, ...(match[2] ? { run_attempt: Number(match[2]) } : {}) };
+          if (restartRun && runReads >= 2) body.status = "in_progress";
+        }
       } else {
         assert.match(url.pathname, /^\/orgs\/markhuangai\/packages\/container\/dense-mem-e2e\/versions/);
         const id = Number(url.pathname.split("/").at(-1));
@@ -277,6 +285,88 @@ test("development cleanup verifies real image ownership and preserves active or 
       assert.deepEqual(result.deleted.map(({ version_id }) => version_id), [older.version.id, newer.version.id]);
     });
 
+    for (const lookup of ["run", "attempt"]) {
+      for (const stage of ["initial verification", "pre-delete revalidation"]) {
+        await t.test(`missing ${lookup} during ${stage} retains its image and permits later cleanup`, async () => {
+          versions = []; deletions = []; runRequests.length = 0;
+          missingAttempts.clear();
+          const stale = await addImage(60);
+          const completed = await addImage(61);
+          if (lookup === "attempt") runs.set(60, workflowRun(60, 2));
+          const removeRecord = () => {
+            if (lookup === "run") runs.delete(60);
+            else missingAttempts.add("60/1");
+          };
+          if (stage === "initial verification") removeRecord();
+          else beforeRefresh = removeRecord;
+          const result = await cleanup();
+          assert.deepEqual(result.retained, [{ version_id: stale.version.id, reason: "development run or attempt was not found" }]);
+          assert.deepEqual(result.deleted.map(({ version_id }) => version_id), [completed.version.id]);
+          assert.deepEqual(result.already_deleted, []);
+          assert.deepEqual(deletions, [completed.version.id]);
+          await readManifest(base, imageRepository, stale.version.name);
+          await assert.rejects(readManifest(base, imageRepository, completed.version.name), /404/);
+          assert.equal(runRequests.filter((path) => path.endsWith("/runs/60")).length,
+            stage === "initial verification" ? 1 : 2);
+          if (lookup === "attempt") assert.equal(runRequests.filter((path) => path.endsWith("/runs/60/attempts/1")).length,
+            stage === "initial verification" ? 1 : 2);
+        });
+      }
+    }
+
+    for (const status of [401, 403, 503]) {
+      await t.test(`run lookup HTTP ${status} remains a required failure`, async () => {
+        versions = []; deletions = []; runRequests.length = 0;
+        missingAttempts.clear();
+        const blocked = await addImage(62);
+        const completed = await addImage(63);
+        runFailures.set(62, status);
+        try {
+          await assert.rejects(cleanup(), (error) => error.status === status && error.attempts === (status === 503 ? 3 : 1));
+          assert.deepEqual(deletions, []);
+          assert.equal(runRequests.length, status === 503 ? 3 : 1);
+          for (const value of [blocked, completed]) await readManifest(base, imageRepository, value.version.name);
+        } finally {
+          runFailures.clear();
+        }
+      });
+    }
+
+    await t.test("untrusted run validation remains a required failure", async () => {
+      versions = []; deletions = [];
+      const untrusted = await addImage(64);
+      const completed = await addImage(65);
+      runs.set(64, { ...workflowRun(64), head_branch: "topic" });
+      await assert.rejects(cleanup(), /trusted main/);
+      assert.deepEqual(deletions, []);
+      for (const value of [untrusted, completed]) await readManifest(base, imageRepository, value.version.name);
+    });
+
+    await t.test("registry inspection failure remains a required failure", async () => {
+      versions = []; deletions = [];
+      const missing = await addImage(66);
+      const completed = await addImage(67);
+      await request(`${base}/v2/${imageRepository}/manifests/${missing.version.name}`, { method: "DELETE" });
+      await assert.rejects(cleanup());
+      assert.deepEqual(deletions, []);
+      await readManifest(base, imageRepository, completed.version.name);
+    });
+
+    await t.test("completion filtering skips unrelated missing runs and retains a missing event owner", async () => {
+      versions = []; deletions = []; runRequests.length = 0;
+      const stale = await addImage(68);
+      const completed = await addImage(69);
+      runs.delete(68);
+      const result = await cleanup(workflowRun(69));
+      assert.deepEqual(result.deleted.map(({ version_id }) => version_id), [completed.version.id]);
+      assert.deepEqual(result.retained, []);
+      assert.equal(runRequests.some((path) => path.includes("/runs/68")), false);
+      assert.deepEqual((await cleanup(workflowRun(68))).retained,
+        [{ version_id: stale.version.id, reason: "development run or attempt was not found" }]);
+      assert.deepEqual(deletions, [completed.version.id]);
+      await readManifest(base, imageRepository, stale.version.name);
+    });
+
     await t.test("cancelled completions clean only their own event image", async () => {
       versions = []; deletions = [];
       const cancelled = await addImage(50);
@@ -295,6 +385,21 @@ test("development cleanup verifies real image ownership and preserves active or 
       assert.match((await cleanup(null, true)).retained[0].reason, /dry run/);
       assert.deepEqual(deletions, []);
       await readManifest(base, imageRepository, owned.version.name);
+    });
+
+    await t.test("dry run retains missing-run and completed images without deletion", async () => {
+      versions = []; deletions = [];
+      const stale = await addImage(70);
+      const completed = await addImage(71);
+      runs.delete(70);
+      const result = await cleanup(null, true);
+      assert.deepEqual(result.deleted, []);
+      assert.deepEqual(result.retained.map(({ version_id, reason }) => ({ version_id, reason })), [
+        { version_id: stale.version.id, reason: "development run or attempt was not found" },
+        { version_id: completed.version.id, reason: "dry run" },
+      ]);
+      assert.deepEqual(deletions, []);
+      for (const value of [stale, completed]) await readManifest(base, imageRepository, value.version.name);
     });
   } finally {
     apiServer.closeAllConnections();
