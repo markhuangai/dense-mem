@@ -664,18 +664,33 @@ async function validateGrafanaDashboardParity(credentialID) {
   assert(longCard?.status === "ready" && longCardPanel, "30-day HTTP request measure was unavailable");
   const longStepSeconds = Number(longSnapshot.window.step_seconds);
   const longStepMs = longStepSeconds * 1000;
-  const longCardResult = await query(longCardPanel.targets[0].expr
+  const longCardExpression = longCardPanel.targets[0].expr
     .replaceAll("$job", "dense-mem")
-    .replaceAll("$window", longSnapshot.window.key), {
+    .replaceAll("$window", longSnapshot.window.key);
+  const longCardOptions = {
     from: Date.parse(longSnapshot.window.from).toString(),
     to: Date.parse(longSnapshot.window.to).toString(),
     instant: true,
     interval: `${longStepSeconds}s`,
     intervalMs: longStepMs,
-  });
-  const longCardValue = grafanaFrameNumber(longCardResult.results?.A?.frames ?? []);
+  };
+  const longCardResult = await query(longCardExpression, longCardOptions);
+  let longCardValue = grafanaFrameNumber(longCardResult.results?.A?.frames ?? []);
+  let longExpected = Number(longCard.value);
   assert(longCardValue !== null, "Grafana returned no value for the 30-day HTTP request measure");
-  assertClose(longCardValue, Number(longCard.value), "Grafana 30-day HTTP requests");
+  for (let attempt = 0; attempt < 9 && !withinTolerance(longCardValue, longExpected); attempt += 1) {
+    await delay(5_000);
+    const latest = (await controlJSON("/telemetry?window=30d&scope=system", { method: "GET" })).data;
+    const latestCard = (latest.windowed_cards ?? []).find((card) => card.id === "http_requests");
+    assert(latestCard?.status === "ready", "30-day HTTP request card became unavailable during parity verification");
+    longExpected = Number(latestCard.value);
+    const refreshed = await query(longCardExpression, { ...longCardOptions, to: Date.now().toString() });
+    const refreshedResult = refreshed.results?.A;
+    assert(refreshedResult && !refreshedResult.error, `Grafana query failed for 30-day HTTP request parity: ${refreshedResult?.error ?? "missing result"}`);
+    longCardValue = grafanaFrameNumber(refreshedResult.frames ?? []);
+    assert(longCardValue !== null, "Grafana returned no value for the 30-day HTTP request measure");
+  }
+  assertClose(longCardValue, longExpected, "Grafana 30-day HTTP requests");
   const longSeries = (longSnapshot.activity_series ?? []).find((item) => item.id === "http_rps");
   const longSeriesPanel = parityPanels.get("series/http_rps");
   assert(longSeries?.status === "ready" && longSeriesPanel, "30-day HTTP rate series was unavailable");
