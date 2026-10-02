@@ -37,7 +37,10 @@ assert((foreignQueue.data?.items ?? []).length === 0, "foreign team unexpectedly
 assert(Number(foreignQueue.data?.summary?.open_count ?? 0) === 0, "foreign team inferred another team's queue count");
 
 const reviewResult = runReview(reviewFixture, new Date(Date.now() + 2 * 24 * 60 * 60 * 1_000).toISOString());
-assert(reviewResult.assessment_attempt_id, "live conflict review did not persist an assessment attempt");
+assert(reviewResult.assessment_attempt_id, `live conflict review did not persist an assessment attempt: ${redact(JSON.stringify({
+  outcome: reviewResult.outcome,
+  stage: reviewResult.stage,
+}))}`);
 const assessmentEvents = Number(postgresQuery(`
   SELECT count(*)::text
   FROM relationship_conflict_ai_assessment_events
