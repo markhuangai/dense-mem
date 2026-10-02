@@ -32,6 +32,10 @@ on:
         required: false
         default: "Run "
         type: string
+      development:
+        required: false
+        default: false
+        type: boolean
     secrets:
       CLOUDFLARE_API_TOKEN:
         required: true
@@ -52,6 +56,30 @@ jobs:
       ISOLATION: ${{ inputs.isolation }}
       DENSE_MEM_CI_LOCAL: ${{ inputs.trusted_harness_revision != '' && '1' || '0' }}
     steps:
+      - name: Checkout trusted development execution policy
+        if: inputs.development
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          path: .ci-policy
+          sparse-checkout: .github/scripts
+      - name: Authorize current development scenario execution
+        if: inputs.development
+        uses: actions/github-script@v9
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        with:
+          script: |
+            const { GitHubApi } = require('./.ci-policy/.github/scripts/pr-image-cleanup.cjs');
+            const policy = require('./.ci-policy/.github/scripts/development-e2e-policy.cjs');
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            await policy.authorizeDevelopmentExecution({
+              api: new GitHubApi({ apiUrl: process.env.GITHUB_API_URL, token: process.env.GITHUB_TOKEN, repository }),
+              repository, ref: context.ref, actor: context.actor, triggeringActor: process.env.TRIGGERING_ACTOR,
+              runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+            });
       - name: Validate scenario input
         shell: bash
         run: |

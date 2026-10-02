@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import policy from "../../.github/scripts/pr-image-cleanup.cjs";
+import "./github_cleanup_api.test.mjs";
 
 const digest = (character) => {
   const seed = character.charCodeAt(0).toString(16);

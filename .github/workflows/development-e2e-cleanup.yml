@@ -1,0 +1,60 @@
+name: Clean development E2E images
+
+on:
+  workflow_run:
+    workflows: [Development E2E]
+    types: [completed]
+  schedule:
+    - cron: "17 * * * *"
+
+permissions:
+  contents: read
+  actions: read
+  packages: write
+
+concurrency:
+  group: development-e2e-cleanup
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  cleanup:
+    name: Clean owned development image versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout trusted cleanup policy
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Install pinned regctl
+        shell: bash
+        env:
+          REGCTL_SHA256: c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "${RUNNER_TEMP}/regctl" \
+            https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64
+          printf '%s  %s\n' "${REGCTL_SHA256}" "${RUNNER_TEMP}/regctl" | sha256sum -c -
+          chmod +x "${RUNNER_TEMP}/regctl"
+          export REGCTL_CONFIG="${RUNNER_TEMP}/development-regctl.json"
+          printf 'REGCTL_CONFIG=%s\n' "${REGCTL_CONFIG}" >> "${GITHUB_ENV}"
+          "${RUNNER_TEMP}/regctl" config set --docker-cred=false --docker-cert=false
+      - name: Log in to GHCR
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: echo "${GITHUB_TOKEN}" | "${RUNNER_TEMP}/regctl" registry login ghcr.io -u "${GITHUB_ACTOR}" --pass-stdin
+      - name: Clean completed development runs
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REGCTL_BIN: ${{ runner.temp }}/regctl
+        run: node .github/scripts/development-e2e-cleanup.cjs

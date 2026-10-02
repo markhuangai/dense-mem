@@ -580,6 +580,49 @@ traffic within your boundary; hosted providers do not. Embeddings are derived,
 versioned state and cannot overwrite newer sources. Startup checks prevent
 mixing incompatible embedding models or dimensions.
 
+## Remote development tests
+
+Commit and push a worktree branch, then open **Actions → Development E2E → Run
+workflow**. Select `main` for the workflow and enter the branch or full commit
+SHA in `source_ref`. This route requires repository-admin permission and works
+before a pull request exists.
+
+Enter registered scenario names in `scenarios`, separated by commas, or `all`
+for the entire scenario registry. Leave it blank for PostgreSQL-only testing.
+For `postgres_shards`, enter `0`, `1`, `2`, a comma-separated subset, or `all`;
+leave it blank for E2E-only testing. Select at least one group. The scenario
+named `full` runs its existing dreaming/telemetry/portal coverage; `all` runs
+every registered scenario. Available names live in
+[`scripts/e2e-scenarios.json`](scripts/e2e-scenarios.json).
+
+```bash
+gh workflow run development-e2e.yml --ref main \
+  -f source_ref=issue/my-change \
+  -f scenarios=conflict,mcp_oauth \
+  -f postgres_shards=all
+```
+
+The workflow resolves one commit, builds one native production image in the
+dedicated `dense-mem-e2e` GHCR package, and gives every selected job the same
+image digest and source SHA. E2E and PostgreSQL groups run independently, with
+four concurrent scenarios and three PostgreSQL shards per run. The Actions
+summary records the exact SHA, digest, selections, and results. Inspect the
+matching **Clean development E2E images** run as well: it removes the owned
+image after completion, including failures and cancellations. An hourly sweep
+recovers missed cleanup and preserves active runs or unexpected image ownership.
+
+Start a fresh dispatch for retries. Each privileged job rechecks the acting
+accounts and rejects job reruns, which can reuse cached authorization or an
+image that has already been deleted.
+Successful remote results can satisfy the corresponding focused E2E and real
+PostgreSQL checks for their exact commit. Keep lightweight local checks and
+attach the run URL and summary to the PR. Every PR still requires its current-head
+full production-image E2E gate through the ordinary validation route.
+
+New manual workflows become dispatchable after their workflow files reach the
+default branch. Live rollout must verify E2E-only, PostgreSQL-only, combined,
+failed, and cancelled runs together with GHCR cleanup.
+
 ## Fork pull-request validation
 
 Public fork PRs use contributor-owned Cloudflare credentials for production

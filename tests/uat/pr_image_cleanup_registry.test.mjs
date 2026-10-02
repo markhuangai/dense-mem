@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:net";
+import { createServer as createHTTPServer } from "node:http";
+import { mkdtemp, writeFile, chmod, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { test } from "node:test";
+import { GitHubApi, RegistryClient } from "../../.github/scripts/pr-image-cleanup.cjs";
+import { cleanupDevelopmentImages } from "../../.github/scripts/development-e2e-cleanup.cjs";
 
 function runDocker(args) {
   return execFileSync("docker", args, { encoding: "utf8" }).trim();
@@ -113,5 +119,189 @@ test("real OCI registry keeps a prerelease tag when its shared test alias is rep
     assert.equal(testAfter.layers[0].digest, original.layers[0].digest);
   } finally {
     runDocker(["rm", "-f", container]);
+  }
+});
+
+test("development cleanup verifies real image ownership and preserves active or changed versions", { timeout: 180000 }, async (t) => {
+  const temporary = await mkdtemp(join(tmpdir(), "dense-mem-development-cleanup-"));
+  const port = await freePort();
+  const container = runDocker(["run", "--rm", "-d", "-e", "REGISTRY_STORAGE_DELETE_ENABLED=true", "-p", `127.0.0.1:${port}:5000`, "registry:2"]);
+  const base = `http://127.0.0.1:${port}`;
+  const repository = "markhuangai/dense-mem";
+  const imageRepository = `${repository}-e2e`;
+  const image = `127.0.0.1:${port}/${imageRepository}`;
+  const binary = join(temporary, "regctl");
+  const previousConfig = process.env.REGCTL_CONFIG;
+  const revision = "a".repeat(40);
+  let versions = [];
+  let runs = new Map();
+  let deletions = [];
+  let loseDeleteResponse = false;
+  let beforeRefresh = null;
+  let runReads = 0;
+  let restartRun = false;
+  let nextVersion = 1;
+  const workflowRun = (id, attempt = 1, status = "completed") => ({
+    id, run_attempt: attempt, status, event: "workflow_dispatch", head_branch: "main",
+    head_sha: "b".repeat(40), repository: { full_name: repository }, path: ".github/workflows/development-e2e.yml",
+  });
+  const apiServer = createHTTPServer(async (incoming, response) => {
+    try {
+      const url = new URL(incoming.url, "http://fixture");
+      let status = 200;
+      let body;
+      if (url.pathname.includes("/actions/runs/")) {
+        const match = /\/runs\/(\d+)(?:\/attempts\/(\d+))?$/.exec(url.pathname);
+        const run = runs.get(Number(match[1]));
+        runReads += 1;
+        body = { ...run, ...(match[2] ? { run_attempt: Number(match[2]) } : {}) };
+        if (restartRun && runReads >= 2) body.status = "in_progress";
+      } else {
+        assert.match(url.pathname, /^\/orgs\/markhuangai\/packages\/container\/dense-mem-e2e\/versions/);
+        const id = Number(url.pathname.split("/").at(-1));
+        const found = versions.find((version) => version.id === id);
+        if (incoming.method === "DELETE") {
+          deletions.push(id);
+          if (!found) { status = 404; body = {}; }
+          else {
+            await request(`${base}/v2/${imageRepository}/manifests/${found.name}`, { method: "DELETE" });
+            versions = versions.filter((version) => version.id !== id);
+            if (loseDeleteResponse) { loseDeleteResponse = false; return incoming.socket.destroy(); }
+            status = 204;
+          }
+        } else if (Number.isNaN(id)) body = versions;
+        else if (!found) { status = 404; body = {}; }
+        else {
+          if (beforeRefresh) { const change = beforeRefresh; beforeRefresh = null; await change(found); }
+          body = found;
+        }
+      }
+      response.writeHead(status, { "Content-Type": "application/json" });
+      response.end(status === 204 ? undefined : JSON.stringify(body));
+    } catch (error) {
+      response.writeHead(500, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ message: error.message }));
+    }
+  });
+  const addImage = async (id, attempt = 1, extraTags = [], extraLabels = {}) => {
+    const tag = `run-${id}-${attempt}`;
+    const labels = {
+      "org.opencontainers.image.variant": "production", "org.opencontainers.image.source": `https://github.com/${repository}`,
+      "org.opencontainers.image.revision": revision, "org.opencontainers.image.version": tag,
+      "io.dense-mem.e2e.repository": repository, "io.dense-mem.e2e.run-id": String(id), "io.dense-mem.e2e.run-attempt": String(attempt),
+      ...extraLabels,
+    };
+    const config = await pushBlob(base, imageRepository, JSON.stringify({ architecture: "amd64", os: "linux", config: { Labels: labels }, rootfs: { type: "layers", diff_ids: [] } }));
+    const layer = await pushBlob(base, imageRepository, "");
+    const manifest = { schemaVersion: 2, mediaType: "application/vnd.oci.image.manifest.v1+json",
+      config: { mediaType: "application/vnd.oci.image.config.v1+json", digest: config.digest, size: config.size },
+      layers: [{ mediaType: "application/vnd.oci.image.layer.v1.tar", digest: layer.digest, size: layer.size }] };
+    const manifestDigest = digest(JSON.stringify(manifest));
+    for (const value of [tag, ...extraTags]) await pushManifest(base, imageRepository, value, manifest);
+    const version = { id: nextVersion++, name: manifestDigest, metadata: { container: { tags: [tag, ...extraTags] } } };
+    versions.push(version);
+    runs.set(id, workflowRun(id, attempt));
+    return { version, manifest };
+  };
+  try {
+    const response = await request("https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64", { signal: AbortSignal.timeout(30000) });
+    const bytes = Buffer.from(await response.arrayBuffer());
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), "c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467");
+    await writeFile(binary, bytes);
+    await chmod(binary, 0o700);
+    process.env.REGCTL_CONFIG = join(temporary, "regctl.json");
+    execFileSync(binary, ["registry", "set", `127.0.0.1:${port}`, "--tls", "disabled"], { stdio: "pipe" });
+    let ready = false;
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      try { await request(`${base}/v2/`); ready = true; break; }
+      catch { await new Promise((resolve) => setTimeout(resolve, 250)); }
+    }
+    assert.equal(ready, true);
+    await new Promise((resolve) => apiServer.listen(0, "127.0.0.1", resolve));
+    const api = new GitHubApi({ apiUrl: `http://127.0.0.1:${apiServer.address().port}`, token: "fixture", repository });
+    const cleanup = (run = null, dryRun = false) => cleanupDevelopmentImages({ api, repository, run, dryRun, registry: new RegistryClient({ image, binary }) });
+
+    await t.test("completed image is removed while active and foreign-labelled images remain", async () => {
+      const completed = await addImage(42);
+      const active = await addImage(43);
+      const retained = await addImage(44, 1, ["keep"]);
+      const foreign = await addImage(45, 1, [], { "io.dense-mem.e2e.repository": "other/repository" });
+      runs.set(43, workflowRun(43, 1, "in_progress"));
+      const result = await cleanup();
+      assert.deepEqual(result.deleted.map(({ version_id }) => version_id), [completed.version.id]);
+      assert.equal(result.retained.length, 3);
+      await assert.rejects(readManifest(base, imageRepository, completed.version.name), /404/);
+      for (const value of [active, retained, foreign]) await readManifest(base, imageRepository, value.version.name);
+      assert.deepEqual(deletions, [completed.version.id]);
+    });
+
+    await t.test("lost DELETE response retries the same version and accepts its disappearance", async () => {
+      versions = []; deletions = [];
+      const owned = await addImage(46);
+      loseDeleteResponse = true;
+      const result = await cleanup(workflowRun(46));
+      assert.deepEqual(result.already_deleted, [owned.version.id]);
+      assert.deepEqual(deletions, [owned.version.id, owned.version.id]);
+      await assert.rejects(readManifest(base, imageRepository, owned.version.name), /404/);
+      assert.deepEqual((await cleanup(workflowRun(46))).deleted, []);
+    });
+
+    await t.test("a retained tag added during revalidation prevents deletion", async () => {
+      versions = []; deletions = [];
+      const owned = await addImage(47);
+      beforeRefresh = async (version) => {
+        await pushManifest(base, imageRepository, "retained", owned.manifest);
+        version.metadata.container.tags.push("retained");
+      };
+      assert.match((await cleanup()).retained[0].reason, /changed before deletion/);
+      assert.deepEqual(deletions, []);
+      await readManifest(base, imageRepository, "retained");
+    });
+
+    await t.test("a newly active run prevents deletion immediately before mutation", async () => {
+      versions = []; deletions = []; runReads = 0;
+      const owned = await addImage(48);
+      restartRun = true;
+      const result = await cleanup();
+      assert.match(result.retained[0].reason, /still active/);
+      assert.deepEqual(deletions, []);
+      await readManifest(base, imageRepository, owned.version.name);
+      restartRun = false;
+    });
+
+    await t.test("completed reruns clean older owned attempts through the recovery sweep", async () => {
+      versions = []; deletions = [];
+      const older = await addImage(49, 1);
+      const newer = await addImage(49, 2);
+      const result = await cleanup();
+      assert.deepEqual(result.deleted.map(({ version_id }) => version_id), [older.version.id, newer.version.id]);
+    });
+
+    await t.test("cancelled completions clean only their own event image", async () => {
+      versions = []; deletions = [];
+      const cancelled = await addImage(50);
+      const other = await addImage(51);
+      const event = { ...workflowRun(50), conclusion: "cancelled" };
+      const result = await cleanup(event);
+      assert.deepEqual(result.deleted.map(({ version_id }) => version_id), [cancelled.version.id]);
+      await readManifest(base, imageRepository, other.version.name);
+      await assert.rejects(cleanup({ ...event, head_branch: "topic" }), /trusted main/);
+      await assert.rejects(cleanup({ ...event, path: ".github/workflows/untrusted.yml" }), /trusted main/);
+    });
+
+    await t.test("dry run retains a completed owned image", async () => {
+      versions = []; deletions = [];
+      const owned = await addImage(52);
+      assert.match((await cleanup(null, true)).retained[0].reason, /dry run/);
+      assert.deepEqual(deletions, []);
+      await readManifest(base, imageRepository, owned.version.name);
+    });
+  } finally {
+    apiServer.closeAllConnections();
+    await new Promise((resolve) => apiServer.close(resolve));
+    if (previousConfig === undefined) delete process.env.REGCTL_CONFIG;
+    else process.env.REGCTL_CONFIG = previousConfig;
+    runDocker(["rm", "-f", container]);
+    await rm(temporary, { recursive: true });
   }
 });

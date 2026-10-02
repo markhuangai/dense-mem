@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
 const { performance } = require("node:perf_hooks");
+const { setTimeout: delay } = require("node:timers/promises");
 
 const TEST_TAG_PATTERN = /^test-([1-9][0-9]*)$/;
 const PRERELEASE_TAG_PATTERN = /^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$/;
@@ -400,31 +401,82 @@ async function mapWithConcurrency(values, concurrency, mapper) {
 }
 
 class GitHubApi {
-  constructor({ apiUrl, token, repository }) {
+  constructor({ apiUrl, token, repository, requestTimeoutMilliseconds = 30_000 }) {
     this.apiUrl = apiUrl.replace(/\/$/, "");
     this.token = token;
     this.repository = repository;
     this.releaseRunsPromise = null;
+    this.requestTimeoutMilliseconds = requestTimeoutMilliseconds;
   }
 
   async request(path, options = {}) {
-    const response = await fetch(`${this.apiUrl}${path}`, {
-      ...options,
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${this.token}`,
-        "X-GitHub-Api-Version": "2022-11-28",
-        ...(options.headers || {}),
-      },
-    });
-    if (!response.ok) {
-      const body = await response.text();
-      const error = new Error(`GitHub API ${response.status} for ${path}: ${body.slice(0, 300)}`);
-      error.status = response.status;
-      throw error;
+    const method = (options.method || "GET").toUpperCase();
+    const attempts = ["GET", "DELETE"].includes(method) ? 3 : 1;
+    const transientCodes = new Set([
+      "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EAI_AGAIN", "ENETUNREACH", "EPIPE",
+      "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT", "TIMEOUT",
+    ]);
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const timeout = AbortSignal.timeout(this.requestTimeoutMilliseconds);
+      const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+      let retryAfter = null;
+      let responseStatus;
+      try {
+        const response = await fetch(`${this.apiUrl}${path}`, {
+          ...options,
+          signal,
+          headers: {
+            Accept: "application/vnd.github+json",
+            Authorization: `Bearer ${this.token}`,
+            "X-GitHub-Api-Version": "2022-11-28",
+            ...(options.headers || {}),
+          },
+        });
+        if (!response.ok) {
+          responseStatus = response.status;
+          const header = response.headers.get("retry-after");
+          if (header !== null) {
+            retryAfter = /^\d+(\.\d+)?$/.test(header)
+              ? Number(header) * 1_000
+              : Math.max(0, Date.parse(header) - Date.now());
+            if (Number.isNaN(retryAfter)) retryAfter = null;
+          }
+          await response.body?.cancel();
+          const error = new Error("GitHub API returned a failure status");
+          error.status = response.status;
+          throw error;
+        }
+        if (response.status === 204) return null;
+        return await response.json();
+      } catch (cause) {
+        const code = options.signal?.aborted ? "ABORTED"
+          : timeout.aborted ? "TIMEOUT" : cause.cause?.code || cause.code;
+        const transport = typeof code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(code)
+          ? code : "INVALID_RESPONSE";
+        const status = responseStatus || cause.status;
+        const prefix = status ? `GitHub API ${status}` : "GitHub API transport failure";
+        const error = new Error(`${prefix} for ${method} ${path} failed after ${attempt} attempt(s); transport=${transport}`);
+        error.status = status;
+        error.transport_code = transport;
+        error.attempts = attempt;
+        const transient = status ? [429, 500, 502, 503, 504].includes(status) : transientCodes.has(transport);
+        if (retryAfter > 30_000) {
+          error.message += "; Retry-After exceeds the 30-second retry limit";
+          throw error;
+        }
+        if (!transient || options.signal?.aborted || attempt === attempts) throw error;
+        const milliseconds = Math.max(1_000 * attempt, retryAfter || 0);
+        console.error(`${error.message}; retrying in ${milliseconds}ms`);
+        try {
+          await delay(milliseconds, undefined, { signal: options.signal });
+        } catch {
+          const cancelled = new Error(`GitHub API request for ${method} ${path} cancelled during retry delay after ${attempt} attempt(s); transport=ABORTED`);
+          cancelled.transport_code = "ABORTED";
+          cancelled.attempts = attempt;
+          throw cancelled;
+        }
+      }
     }
-    if (response.status === 204) return null;
-    return response.json();
   }
 
   async paged(path) {

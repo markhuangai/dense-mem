@@ -1,0 +1,319 @@
+name: Development E2E
+run-name: "Development tests: ${{ inputs.source_ref }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Pushed same-repository branch or full commit SHA"
+        required: true
+        type: string
+      scenarios:
+        description: "Registered E2E names separated by commas, all, or blank"
+        required: false
+        default: ""
+        type: string
+      postgres_shards:
+        description: "PostgreSQL shards 0,1,2, all, or blank"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  authorize:
+    name: Authorize development request
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      source_revision: ${{ steps.resolve.outputs.source_revision }}
+      source_repository: ${{ steps.resolve.outputs.source_repository }}
+      image: ${{ steps.resolve.outputs.image }}
+      scenario_matrix: ${{ steps.selection.outputs.scenario_matrix }}
+      postgres_matrix: ${{ steps.selection.outputs.postgres_matrix }}
+      has_scenarios: ${{ steps.selection.outputs.has_scenarios }}
+      has_postgres: ${{ steps.selection.outputs.has_postgres }}
+    steps:
+      - name: Checkout trusted development policy
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          path: .ci-policy
+          sparse-checkout: |
+            .github/scripts
+            scripts/e2e-scenario-registry.mjs
+      - name: Resolve authorized immutable source
+        id: resolve
+        uses: actions/github-script@v9
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        with:
+          script: |
+            const { GitHubApi } = require('./.ci-policy/.github/scripts/pr-image-cleanup.cjs');
+            const policy = require('./.ci-policy/.github/scripts/development-e2e-policy.cjs');
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            const api = new GitHubApi({ apiUrl: process.env.GITHUB_API_URL, token: process.env.GITHUB_TOKEN, repository });
+            const resolved = await policy.resolveDevelopmentRequest({
+              api, repository, ref: context.ref, actor: context.actor,
+              triggeringActor: process.env.TRIGGERING_ACTOR, sourceRef: process.env.SOURCE_REF,
+              runId: context.runId, runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+            });
+            for (const [key, value] of Object.entries(resolved)) core.setOutput(key, value);
+      - name: Checkout tested scenario registry
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.resolve.outputs.source_repository }}
+          ref: ${{ steps.resolve.outputs.source_revision }}
+          persist-credentials: false
+          path: .ci-source
+          sparse-checkout: scripts/e2e-scenarios.json
+      - name: Resolve selected tests
+        id: selection
+        uses: actions/github-script@v9
+        env:
+          SCENARIOS: ${{ inputs.scenarios }}
+          POSTGRES_SHARDS: ${{ inputs.postgres_shards }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const policy = require('./.ci-policy/.github/scripts/development-e2e-policy.cjs');
+            const registry = JSON.parse(fs.readFileSync('.ci-source/scripts/e2e-scenarios.json', 'utf8'));
+            const selected = await policy.selectDevelopmentTests(registry, process.env.SCENARIOS, process.env.POSTGRES_SHARDS);
+            for (const [key, value] of Object.entries(selected)) {
+              core.setOutput(key, typeof value === 'boolean' ? String(value) : JSON.stringify(value));
+            }
+
+  build:
+    name: Build development production image
+    needs: authorize
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
+    env:
+      IMAGE: ${{ needs.authorize.outputs.image }}
+      SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+    steps:
+      - name: Checkout trusted image verification
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          path: .ci-policy
+          sparse-checkout: .github/scripts
+      - name: Authorize current build execution
+        uses: actions/github-script@v9
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        with:
+          script: |
+            const { GitHubApi } = require('./.ci-policy/.github/scripts/pr-image-cleanup.cjs');
+            const policy = require('./.ci-policy/.github/scripts/development-e2e-policy.cjs');
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            await policy.authorizeDevelopmentExecution({
+              api: new GitHubApi({ apiUrl: process.env.GITHUB_API_URL, token: process.env.GITHUB_TOKEN, repository }),
+              repository, ref: context.ref, actor: context.actor, triggeringActor: process.env.TRIGGERING_ACTOR,
+              runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+            });
+      - name: Checkout exact tested source
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ needs.authorize.outputs.source_repository }}
+          ref: ${{ needs.authorize.outputs.source_revision }}
+          persist-credentials: false
+          path: .ci-source
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Build and verify one native production image
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C .ci-source rev-parse HEAD)" = "${SOURCE_REVISION}"
+          created="$(git -C .ci-source show -s --format=%cI HEAD)"
+          docker buildx build --platform linux/amd64 --target production --load \
+            --provenance=false --file .ci-source/Dockerfile --tag "${IMAGE}" \
+            --build-arg "IMAGE_VERSION=run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --build-arg "IMAGE_REVISION=${SOURCE_REVISION}" --build-arg "IMAGE_CREATED=${created}" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "io.dense-mem.e2e.repository=${GITHUB_REPOSITORY}" \
+            --label "io.dense-mem.e2e.run-id=${GITHUB_RUN_ID}" \
+            --label "io.dense-mem.e2e.run-attempt=${GITHUB_RUN_ATTEMPT}" .ci-source
+          docker image inspect "${IMAGE}" > "${RUNNER_TEMP}/development-image.json"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const policy = require('./.ci-policy/.github/scripts/development-e2e-policy.cjs');
+          const image = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/development-image.json`, 'utf8'))[0];
+          if (image.Os !== 'linux' || image.Architecture !== 'amd64') throw new Error('development image must be native linux/amd64');
+          policy.assertDevelopmentImage({ labels: image.Config.Labels, repository: process.env.GITHUB_REPOSITORY,
+            sourceRevision: process.env.SOURCE_REVISION, runId: process.env.GITHUB_RUN_ID, runAttempt: process.env.GITHUB_RUN_ATTEMPT });
+          NODE
+      - name: Configure isolated registry credentials
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/development-docker"
+          printf 'DOCKER_CONFIG=%s\n' "${RUNNER_TEMP}/development-docker" >> "${GITHUB_ENV}"
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Publish immutable development image
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker push "${IMAGE}"
+          docker image inspect "${IMAGE}" > "${RUNNER_TEMP}/development-image.json"
+          node <<'NODE' >> "${GITHUB_OUTPUT}"
+          const fs = require('node:fs');
+          const policy = require('./.ci-policy/.github/scripts/development-e2e-policy.cjs');
+          const image = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/development-image.json`, 'utf8'))[0];
+          const name = policy.imageName(process.env.GITHUB_REPOSITORY);
+          const pinned = image.RepoDigests.find(value => value.startsWith(`${name}@`));
+          if (!pinned || !/^sha256:[0-9a-f]{64}$/.test(pinned.split('@')[1])) throw new Error('published image is missing its immutable digest');
+          process.stdout.write(`image=${pinned}\n`);
+          NODE
+
+  scenarios:
+    name: Development scenario ${{ matrix.name }}
+    needs: [authorize, build]
+    if: needs.authorize.outputs.has_scenarios == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.authorize.outputs.scenario_matrix) }}
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/production-e2e-scenario.yml
+    with:
+      image: ${{ needs.build.outputs.image }}
+      source_repository: ${{ needs.authorize.outputs.source_repository }}
+      source_revision: ${{ needs.authorize.outputs.source_revision }}
+      scenario: ${{ matrix.name }}
+      isolation: ${{ matrix.isolation }}
+      timeout_minutes: ${{ matrix.timeout_minutes }}
+      cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      receipt_job_prefix: "Development scenario "
+      development: true
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+  postgres:
+    name: Development PostgreSQL shard ${{ matrix.shard }}
+    needs: [authorize, build]
+    if: needs.authorize.outputs.has_postgres == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.authorize.outputs.postgres_matrix) }}
+    env:
+      DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Checkout trusted execution policy
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          path: .ci-policy
+          sparse-checkout: .github/scripts
+      - name: Authorize current PostgreSQL execution
+        uses: actions/github-script@v9
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        with:
+          script: |
+            const { GitHubApi } = require('./.ci-policy/.github/scripts/pr-image-cleanup.cjs');
+            const policy = require('./.ci-policy/.github/scripts/development-e2e-policy.cjs');
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            await policy.authorizeDevelopmentExecution({
+              api: new GitHubApi({ apiUrl: process.env.GITHUB_API_URL, token: process.env.GITHUB_TOKEN, repository }),
+              repository, ref: context.ref, actor: context.actor, triggeringActor: process.env.TRIGGERING_ACTOR,
+              runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+            });
+      - name: Checkout exact tested source
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ needs.authorize.outputs.source_repository }}
+          ref: ${{ needs.authorize.outputs.source_revision }}
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Set up rootless Docker
+        uses: docker/setup-docker-action@v5
+        with:
+          rootless: true
+          set-host: true
+          daemon-config: |
+            {"exec-opts":["native.cgroupdriver=cgroupfs"]}
+      - name: Generate temporary CI configuration
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: bash scripts/e2e-ci-bootstrap.sh
+      - name: Run selected PostgreSQL shard
+        shell: bash
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          scripts/e2e-host-controller.sh precheck \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${IMAGE}" "${GITHUB_WORKSPACE}" "shard:${SHARD}"
+
+  report:
+    name: Aggregate development test results
+    needs: [authorize, build, scenarios, postgres]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout trusted result policy
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Report selected test outcomes
+        uses: actions/github-script@v9
+        env:
+          AUTHORIZE: ${{ needs.authorize.result }}
+          BUILD: ${{ needs.build.result }}
+          SCENARIOS: ${{ needs.scenarios.result }}
+          POSTGRES: ${{ needs.postgres.result }}
+          HAS_SCENARIOS: ${{ needs.authorize.outputs.has_scenarios }}
+          HAS_POSTGRES: ${{ needs.authorize.outputs.has_postgres }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          IMAGE: ${{ needs.build.outputs.image }}
+          SCENARIO_MATRIX: ${{ needs.authorize.outputs.scenario_matrix }}
+          POSTGRES_MATRIX: ${{ needs.authorize.outputs.postgres_matrix }}
+        with:
+          script: |
+            const policy = require('./.github/scripts/development-e2e-policy.cjs');
+            await core.summary.addHeading('Development validation').addRaw(
+              `Source: ${process.env.SOURCE_REVISION || 'unresolved'}\n\nImage: ${process.env.IMAGE || 'unpublished'}\n\n` +
+              `Scenarios: ${process.env.SCENARIO_MATRIX || 'unresolved'}\n\nPostgreSQL: ${process.env.POSTGRES_MATRIX || 'unresolved'}\n\n`
+            ).addTable([
+              ['Group', 'Result'], ['Authorization', process.env.AUTHORIZE], ['Build', process.env.BUILD],
+              ['E2E', process.env.SCENARIOS], ['PostgreSQL', process.env.POSTGRES],
+            ]).write();
+            policy.assertDevelopmentResults({ authorize: process.env.AUTHORIZE, build: process.env.BUILD,
+              scenarios: process.env.SCENARIOS, postgres: process.env.POSTGRES,
+              hasScenarios: process.env.HAS_SCENARIOS === 'true', hasPostgres: process.env.HAS_POSTGRES === 'true' });
