@@ -1,0 +1,811 @@
+{
+  "schema_version": 1,
+  "issue": 493,
+  "audit_base_sha": "15aaf5d753522b775b7009238ef9c730e6964ae6",
+  "measurement_state": "verified",
+  "production_behavior_changed": false,
+  "protocol": {
+    "benchmark": "BenchmarkUsageFlushScaling",
+    "buckets": [
+      1,
+      100,
+      1000
+    ],
+    "attribution_shapes": [
+      "no_credentials",
+      "one_per_owner",
+      "ten_per_owner"
+    ],
+    "workloads": [
+      "insert",
+      "update",
+      "replay",
+      "concurrent_update",
+      "record_only"
+    ],
+    "warmups": 20,
+    "measured_operations": 200,
+    "repetitions": 5,
+    "database": "disposable PostgreSQL with real RLS and migrations",
+    "decision_gate": "GO for a separate batching implementation ticket if owner/credential statements consume more than half of measured flush time at B=100 or B=1000. Otherwise NO-GO.",
+    "count_columns": [
+      "ledger",
+      "owner",
+      "credential",
+      "rls",
+      "other",
+      "transactions",
+      "commits",
+      "rollbacks",
+      "data",
+      "model_difference",
+      "all_sql"
+    ],
+    "latency_pair_columns": [
+      "p50_ns",
+      "p95_ns"
+    ],
+    "allocation_columns": [
+      "go_ns_per_operation",
+      "bytes_per_operation",
+      "allocations_per_operation"
+    ],
+    "array_order": "Five repetitions in raw-log order; no pooling of percentiles. Producer-control ratios compare the corresponding repetition index in separately timed workloads.",
+    "signature_recipe": "SHA-256 of JSON of complete sorted owner and credential UsageMetricBucket rows, with timestamps normalized to UTC; fixture verifies every row on every sample.",
+    "timing_boundary": "Flush or recording call only. Reset, seed, verification, subsequent flush and concurrent first-event coordination excluded. Clock/counter instrumentation included.",
+    "allocation_boundary": "Process allocations while Go benchmark timer is active, including concurrent producer work after the first event; not isolated goroutine allocations.",
+    "statement_boundary": "Forwarded connection-pool calls; five RLS setup statements counted separately from data SQL and begin/commit/rollback."
+  },
+  "recommendation": {
+    "decision": "GO",
+    "scope": "Separate batching implementation ticket for the measured B=100 and B=1000 cardinalities; no production-frequency, savings, or batching-speedup claim.",
+    "large_write_workloads": 18,
+    "owner_credential_sql_share_percent_range": [
+      87.9001,
+      94.4431
+    ],
+    "workloads_over_half_in_all_five_repetitions": 18,
+    "candidate": "Group complete owner primary keys, sum additive counters, retain maxima and latest timestamps, then upsert owner and credential rows in chunks of at most 1000 within the existing flush-ledger transaction and RLS context.",
+    "obligations": "Preserve attribution, replay idempotency, ledger and both-table atomic rollback, complete row values, and recording retained by the next flush."
+  },
+  "verification": {
+    "plan_audit": {
+      "model": "gpt-6.1-sol",
+      "reasoning_effort": "max",
+      "rounds": 1,
+      "verdict": "conformant",
+      "unresolved_findings": 0,
+      "receipt_sha256": "be793be855ce516fbecdac61ae2b3525599d284719a49973ad6a3eb84c0a7ba2",
+      "approved_plan_sha256": "55857c8f1655bc5665f9e169049197dafe2b54c563ef0bcb00b993ffecf51e33"
+    },
+    "local_checks": [
+      {
+        "command": "go test ./internal/operations/... -count=1",
+        "exit_code": 0,
+        "log": "operations-unit.log"
+      },
+      {
+        "command": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags=integration ./internal/operations/postgres -run 'TestUsageMetrics|TestUsageCredential' -count=1 -v",
+        "exit_code": 0,
+        "log": "usage-integration-verified.log",
+        "package_seconds": 60.388
+      },
+      {
+        "command": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -race -tags=integration ./internal/operations/postgres -run '^TestUsageMetricsFlushScaling' -count=1",
+        "exit_code": 0,
+        "log": "usage-race.log",
+        "package_seconds": 38.503
+      },
+      {
+        "command": "node scripts/check-architecture.mjs",
+        "exit_code": 0,
+        "log": "architecture-check.log",
+        "go_packages": 102,
+        "browser_modules": 39
+      },
+      {
+        "command": "node --test tests/uat/architecture_conformance.test.mjs",
+        "exit_code": 0,
+        "log": "architecture-uat.log",
+        "tests_passed": 35
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0
+      },
+      {
+        "command": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go -C cmd/e2e run . --root ../.. --phase precheck --capability operations --case repository/TestUsageMetricsFlushScalingCardinalities,repository/TestUsageMetricsFlushScalingCommittedRetryPreservesNewEvents,repository/TestUsageMetricsFlushScalingFailureRollsBackLedgerAndBothTables,repository/TestUsageMetricsFlushScalingConcurrentRecording",
+        "exit_code": 0,
+        "log": "registered-cases.log",
+        "tests": [
+          {
+            "Test": "TestUsageMetricsFlushScalingCardinalities",
+            "Action": "pass",
+            "Elapsed": 11.07
+          },
+          {
+            "Test": "TestUsageMetricsFlushScalingCommittedRetryPreservesNewEvents",
+            "Action": "pass",
+            "Elapsed": 7.53
+          },
+          {
+            "Test": "TestUsageMetricsFlushScalingFailureRollsBackLedgerAndBothTables",
+            "Action": "pass",
+            "Elapsed": 7.38
+          },
+          {
+            "Test": "TestUsageMetricsFlushScalingConcurrentRecording",
+            "Action": "pass",
+            "Elapsed": 7.64
+          }
+        ]
+      },
+      {
+        "command": "./scripts/ci-check.sh",
+        "exit_code": 0,
+        "log": "repository-ci-final.log",
+        "complete_go_coverage": "33901/37613 = 90.1%",
+        "browser_coverage": "3282/3641 > 90%",
+        "mcp_proxy_coverage": "320/351 > 90%"
+      }
+    ],
+    "evaluation_1k": "Explicit historical waiver recorded in issue #493; replacement evidence is real PostgreSQL correctness and source-identified scaling measurements.",
+    "post_revised_audit_changed_paths": [
+      "tests/eval/baselines/usage_flush_scaling.json"
+    ],
+    "sample_correctness": "All 45000 measured operations and all warmups/calibrations verify complete rows, sums, maxima and timestamps; concurrent samples also verify the subsequent flush.",
+    "statement_model_discrepancies": []
+  },
+  "maintenance_benefit": "Measured per-bucket SQL cost and exact correctness obligations provide a reproducible decision for a separately approved batching ticket.",
+  "provenance": {
+    "source_sha256": {
+      "internal/operations/usage_metrics_service.go": "9b1b847c5b59cfe98f403ad5e1ba3a81e636163535ecc59cb1dc68844b805350",
+      "internal/operations/postgres/usage_metrics_repository.go": "e3426e2d0bc588bb1e6096e03f3df4b943dbc94c263f274fd75812b3d3b27971",
+      "internal/operations/contract/ports.go": "4a13894b0c73ed0ba0a241fa680290114f2b33611539955fbceced85b8fabf3b",
+      "internal/domain/usage_metrics.go": "894b443d6882da1a6073417cfb6bd93fe9c201c5aec58fac4bc3c6d05f189754",
+      "internal/storage/postgres/rls.go": "cf84ec356f12fa1fdd5aaa4262b7530d62f651395803557820aeedddcaeaef57",
+      "internal/operations/postgres/usage_flush_scaling_benchmark_test.go": "f2f19459e1637606d6867a294af9fb1d372ea8f29e4461b7085eb497f6ef3945",
+      "internal/operations/postgres/usage_flush_scaling_fixture_test.go": "aafc66aa3481169ee6d7dce1729e45e288c3ba2973d495adefa2de77b4071dfa",
+      "internal/operations/postgres/usage_metrics_repository_integration_test.go": "c266bce2abff50974d50f2767fdb17cf5049ef714205179cf9daa4646bcbf4ad",
+      "go.mod": "220c1807a30a29f45a39ed30a0626613cb49c6f27cfcd9e2f155bd2c1870e594",
+      "go.sum": "8c4ff7015e88748ff7ec20ca32703939f5dd2f716433c8acfc138e19f8248f7a",
+      "scripts/e2e-db-cases/operations.json": "10526e4d8107b53cdfc2a6d503fbc82f66f1bbfb5b7f5a4fa5acb21d8cfe44f7"
+    },
+    "source_sha256_unchanged_after": true,
+    "host": {
+      "cpu_model": "AMD Ryzen 9 5950X 16-Core Processor",
+      "logical_cpus": 32,
+      "platform": "Linux 6.6.87.2-microsoft-standard-WSL2",
+      "machine": "x86_64"
+    },
+    "go_version": "go version go1.26.6 linux/amd64",
+    "docker_version": "29.1.3",
+    "postgresql": [
+      "18.4 (Debian 18.4-1.pgdg13+1)"
+    ],
+    "command": [
+      "go",
+      "test",
+      "-tags=integration",
+      "./internal/operations/postgres",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkUsageFlushScaling$",
+      "-benchtime=200x",
+      "-count=5",
+      "-benchmem",
+      "-timeout=60m",
+      "-v"
+    ],
+    "started_at": "2026-10-01T23:41:06.836614+00:00",
+    "completed_at": "2026-10-02T03:39:49.073221+00:00",
+    "host_before": {
+      "cpu_idle_fraction": 0.9830932999373826,
+      "competing_build_test_processes": []
+    },
+    "host_after": {
+      "cpu_idle_fraction": 0.9476489028213166,
+      "competing_build_test_processes": []
+    },
+    "raw_log_sha256": "e3f423a342a79f686e7a2b92cdcdda6e64034f6b9823b950918a3f1eb309a651",
+    "environment": {"DATABASE_URL": "unset", "DENSE_MEM_REPOSITORY_TESTCONTAINERS": "1"},
+    "measured_records": 225
+  },
+  "measurements": [
+    {
+      "workload": "B1/no_credentials/insert",
+      "operation_ns": [[2404349, 2918998], [2420321, 2863400], [2529723, 3146807], [2463651, 2868897], [2382209, 2872602]],
+      "repository_ns": [[2396930, 2905226], [2413876, 2854648], [2524552, 3137857], [2456080, 2861749], [2376365, 2864735]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [27.2639, 27.4742, 27.1295, 27.2059, 27.3496],
+      "allocations": [[2464004, 17059, 235], [2474624, 16960, 235], [2666717, 16963, 235], [2493344, 16954, 235], [2479241, 16983, 235]],
+      "counts": [1, 1, 0, 5, 0, 1, 1, 0, 2, 0, 7],
+      "owners": {"errors": 1, "max_latency_ms": 1, "mcp_tool_calls": 2, "mcp_tool_failures": 1, "requests": 1, "rows": 1, "total_latency_ms": 1},
+      "credentials": {"rows": 0},
+      "result_signature_sha256": "8f4433bdef75c186ca56b137bc92400b073efcfe973093fc69a55bfde97c967d"
+    },
+    {
+      "workload": "B1/no_credentials/update",
+      "operation_ns": [[1580057, 1868834], [1594816, 1889754], [1593351, 1926111], [1605799, 1859246], [1638332, 2037799]],
+      "repository_ns": [[1574897, 1854532], [1589442, 1882548], [1586263, 1919324], [1600721, 1851768], [1630958, 2027504]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [15.2875, 15.3944, 15.4408, 15.1836, 15.2613],
+      "allocations": [[1618755, 16849, 235], [1632684, 16897, 235], [1637957, 16881, 235], [1641342, 16858, 235], [1705977, 16892, 235]],
+      "counts": [1, 1, 0, 5, 0, 1, 1, 0, 2, 0, 7],
+      "owners": {"errors": 2, "max_latency_ms": 20, "mcp_tool_calls": 5, "mcp_tool_failures": 3, "requests": 2, "rows": 1, "total_latency_ms": 21},
+      "credentials": {"rows": 0},
+      "result_signature_sha256": "2dc42da90dfc91755234f7dcb98fc4a2517825e836881a5cbbedd5ff3ef62970"
+    },
+    {
+      "workload": "B1/no_credentials/replay",
+      "operation_ns": [[1304200, 1532522], [1311812, 1580643], [1304927, 1578039], [1316957, 1541207], [1243117, 1439867]],
+      "repository_ns": [[1302717, 1530629], [1310599, 1579515], [1303501, 1576118], [1315892, 1540042], [1241614, 1439304]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [0, 0, 0, 0, 0],
+      "allocations": [[1341322, 9242, 134], [1355858, 9243, 134], [1361853, 9232, 134], [1357683, 9261, 134], [1235049, 9273, 134]],
+      "counts": [1, 0, 0, 5, 0, 1, 1, 0, 1, 0, 6],
+      "owners": {"errors": 1, "max_latency_ms": 1, "mcp_tool_calls": 2, "mcp_tool_failures": 1, "requests": 1, "rows": 1, "total_latency_ms": 1},
+      "credentials": {"rows": 0},
+      "result_signature_sha256": "8f4433bdef75c186ca56b137bc92400b073efcfe973093fc69a55bfde97c967d"
+    },
+    {
+      "workload": "B1/no_credentials/concurrent_update",
+      "operation_ns": [[1523622, 1747660], [1528258, 1796253], [1540625, 1786958], [1563716, 1800328], [1517146, 1802315]],
+      "repository_ns": [[1515016, 1738453], [1521504, 1787083], [1533233, 1779462], [1556928, 1794922], [1509357, 1795442]],
+      "producer_ns": [[10541, 17555], [11023, 20004], [11268, 17319], [11494, 18471], [12506, 20437]],
+      "coordination_p50_ns": [104478, 103821, 108132, 115494, 104822],
+      "owner_credential_sql_share_percent": [15.0974, 15.0493, 14.9859, 15.0123, 14.8503],
+      "allocations": [[1524918, 16861, 235], [1533952, 16852, 235], [1549395, 16858, 235], [1563545, 16909, 235], [1544508, 16880, 235]],
+      "counts": [1, 1, 0, 5, 0, 1, 1, 0, 2, 0, 7],
+      "owners": {"errors": 3, "max_latency_ms": 50, "mcp_tool_calls": 8, "mcp_tool_failures": 5, "requests": 3, "rows": 1, "total_latency_ms": 71},
+      "credentials": {"rows": 0},
+      "result_signature_sha256": "28e70759ff49a578acc55a71cef4c07cfb6db89e7c6a2d75371099d7956ab247",
+      "producer_p50_p95_ratio_to_record_only_control": [[10.2043, 10.6265], [9.9486, 11.6438], [10.4333, 10.4206], [11.0307, 11.7127], [11.9904, 13.4366]]
+    },
+    {
+      "workload": "B1/no_credentials/record_only",
+      "operation_ns": [[1456, 2282], [1540, 2273], [1522, 2357], [1484, 2085], [1464, 1991]],
+      "repository_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "producer_ns": [[1033, 1652], [1108, 1718], [1080, 1662], [1042, 1577], [1043, 1521]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [0, 0, 0, 0, 0],
+      "allocations": [[1824, 0, 0], [1868, 0, 0], [1790, 0, 0], [1673, 0, 0], [1643, 0, 0]],
+      "counts": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "owners": {"errors": 2, "max_latency_ms": 20, "mcp_tool_calls": 5, "mcp_tool_failures": 3, "requests": 2, "rows": 1, "total_latency_ms": 21},
+      "credentials": {"rows": 0},
+      "result_signature_sha256": "2dc42da90dfc91755234f7dcb98fc4a2517825e836881a5cbbedd5ff3ef62970"
+    },
+    {
+      "workload": "B1/one_per_owner/insert",
+      "operation_ns": [[2892644, 3520958], [2912906, 3429957], [3001441, 3537913], [3000117, 3677005], [2994720, 3696287]],
+      "repository_ns": [[2886719, 3514470], [2905629, 3423977], [2993992, 3530267], [2993982, 3668224], [2987262, 3681930]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [41.05, 41.4524, 41.772, 41.2308, 41.0465],
+      "allocations": [[2914068, 24273, 332], [2941772, 24267, 332], [3027468, 24285, 332], [3071075, 24284, 332], [3124343, 24264, 332]],
+      "counts": [1, 1, 1, 5, 0, 1, 1, 0, 3, 0, 8],
+      "owners": {"errors": 1, "max_latency_ms": 1, "mcp_tool_calls": 2, "mcp_tool_failures": 1, "requests": 1, "rows": 1, "total_latency_ms": 1},
+      "credentials": {"errors": 1, "max_latency_ms": 1, "mcp_tool_calls": 2, "mcp_tool_failures": 1, "requests": 1, "rows": 1, "total_latency_ms": 1},
+      "result_signature_sha256": "05cae2c2dfbbcd22d2a6907aa8e7b7fefacd430b92880ee9dca03bdd06d02b9e"
+    },
+    {
+      "workload": "B1/one_per_owner/update",
+      "operation_ns": [[1715542, 1949551], [1718401, 1994966], [1741498, 2106378], [1815879, 2064180], [1834149, 2194935]],
+      "repository_ns": [[1710756, 1944502], [1712907, 1989349], [1735590, 2101534], [1810480, 2055471], [1828581, 2188538]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [25.3421, 25.3363, 25.44, 25.7126, 25.5428],
+      "allocations": [[1717947, 24119, 332], [1731153, 24129, 332], [1773743, 24130, 332], [1820283, 24121, 332], [1879161, 24114, 332]],
+      "counts": [1, 1, 1, 5, 0, 1, 1, 0, 3, 0, 8],
+      "owners": {"errors": 2, "max_latency_ms": 20, "mcp_tool_calls": 5, "mcp_tool_failures": 3, "requests": 2, "rows": 1, "total_latency_ms": 21},
+      "credentials": {"errors": 2, "max_latency_ms": 20, "mcp_tool_calls": 5, "mcp_tool_failures": 3, "requests": 2, "rows": 1, "total_latency_ms": 21},
+      "result_signature_sha256": "440cb172e6ca4486069427dd0edcac6ad9de834a1cac16280660305fa414f838"
+    },
+    {
+      "workload": "B1/one_per_owner/replay",
+      "operation_ns": [[1262630, 1473570], [1256783, 1445167], [1213950, 1379156], [1243027, 1440545], [1227214, 1418789]],
+      "repository_ns": [[1261764, 1473015], [1255836, 1443058], [1212829, 1378478], [1241431, 1439318], [1224996, 1415751]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [0, 0, 0, 0, 0],
+      "allocations": [[1272369, 9239, 134], [1255699, 9246, 134], [1223489, 9244, 134], [1253513, 9245, 134], [1231890, 9233, 134]],
+      "counts": [1, 0, 0, 5, 0, 1, 1, 0, 1, 0, 6],
+      "owners": {"errors": 1, "max_latency_ms": 1, "mcp_tool_calls": 2, "mcp_tool_failures": 1, "requests": 1, "rows": 1, "total_latency_ms": 1},
+      "credentials": {"errors": 1, "max_latency_ms": 1, "mcp_tool_calls": 2, "mcp_tool_failures": 1, "requests": 1, "rows": 1, "total_latency_ms": 1},
+      "result_signature_sha256": "05cae2c2dfbbcd22d2a6907aa8e7b7fefacd430b92880ee9dca03bdd06d02b9e"
+    },
+    {
+      "workload": "B1/one_per_owner/concurrent_update",
+      "operation_ns": [[1711154, 1948261], [1760556, 2063370], [1737845, 2041264], [1693675, 2016856], [1700445, 2026703]],
+      "repository_ns": [[1705866, 1938515], [1754380, 2056076], [1732000, 2027530], [1687427, 2011669], [1693092, 2021938]],
+      "producer_ns": [[11676, 19654], [11054, 17943], [13384, 19579], [13563, 23814], [10636, 17138]],
+      "coordination_p50_ns": [100630, 96702, 116808, 114249, 96447],
+      "owner_credential_sql_share_percent": [25.3271, 25.2149, 25.0271, 25.1355, 25.3603],
+      "allocations": [[1726421, 24109, 332], [1786272, 24121, 332], [1747087, 24205, 332], [1705390, 24124, 332], [1712531, 24143, 332]],
+      "counts": [1, 1, 1, 5, 0, 1, 1, 0, 3, 0, 8],
+      "owners": {"errors": 3, "max_latency_ms": 50, "mcp_tool_calls": 8, "mcp_tool_failures": 5, "requests": 3, "rows": 1, "total_latency_ms": 71},
+      "credentials": {"errors": 3, "max_latency_ms": 50, "mcp_tool_calls": 8, "mcp_tool_failures": 5, "requests": 3, "rows": 1, "total_latency_ms": 71},
+      "result_signature_sha256": "f4a1cca3981b579c8b78d78e3d63dfa3e017dad540687f8e54c4fc16f0c4d29a",
+      "producer_p50_p95_ratio_to_record_only_control": [[10.9634, 11.7058], [10.2732, 11.0555], [12.0252, 11.724], [13.0413, 14.9117], [9.9588, 10.54]]
+    },
+    {
+      "workload": "B1/one_per_owner/record_only",
+      "operation_ns": [[1500, 2481], [1546, 2104], [1594, 2216], [1484, 2108], [1541, 2221]],
+      "repository_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "producer_ns": [[1065, 1679], [1076, 1623], [1113, 1670], [1040, 1597], [1068, 1626]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [0, 0, 0, 0, 0],
+      "allocations": [[1844, 0, 0], [1716, 0, 0], [1810, 0, 0], [1802, 0, 0], [1723, 0, 0]],
+      "counts": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "owners": {"errors": 2, "max_latency_ms": 20, "mcp_tool_calls": 5, "mcp_tool_failures": 3, "requests": 2, "rows": 1, "total_latency_ms": 21},
+      "credentials": {"errors": 2, "max_latency_ms": 20, "mcp_tool_calls": 5, "mcp_tool_failures": 3, "requests": 2, "rows": 1, "total_latency_ms": 21},
+      "result_signature_sha256": "440cb172e6ca4486069427dd0edcac6ad9de834a1cac16280660305fa414f838"
+    },
+    {
+      "workload": "B1/ten_per_owner/insert",
+      "operation_ns": [[2856818, 3375874], [2992127, 3716905], [2919811, 3441886], [2911698, 3293215], [3001745, 3546660]],
+      "repository_ns": [[2851476, 3368661], [2985839, 3709379], [2913543, 3435852], [2895256, 3285595], [2991956, 3537136]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [40.8364, 41.1723, 41.337, 41.755, 41.1759],
+      "allocations": [[2891876, 24265, 332], [3037360, 24274, 332], [2950690, 24227, 332], [2937870, 24259, 332], [3029237, 24260, 332]],
+      "counts": [1, 1, 1, 5, 0, 1, 1, 0, 3, 0, 8],
+      "owners": {"errors": 1, "max_latency_ms": 1, "mcp_tool_calls": 2, "mcp_tool_failures": 1, "requests": 1, "rows": 1, "total_latency_ms": 1},
+      "credentials": {"errors": 1, "max_latency_ms": 1, "mcp_tool_calls": 2, "mcp_tool_failures": 1, "requests": 1, "rows": 1, "total_latency_ms": 1},
+      "result_signature_sha256": "05cae2c2dfbbcd22d2a6907aa8e7b7fefacd430b92880ee9dca03bdd06d02b9e"
+    },
+    {
+      "workload": "B1/ten_per_owner/update",
+      "operation_ns": [[1689667, 1970369], [1773328, 1998685], [1845083, 2093593], [1811096, 2078949], [1791274, 2057615]],
+      "repository_ns": [[1685547, 1964036], [1766526, 1991122], [1839099, 2087826], [1805679, 2071547], [1784675, 2047945]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [25.528, 25.6254, 25.634, 25.564, 25.484],
+      "allocations": [[1712310, 24131, 332], [1782230, 24118, 332], [1851868, 24118, 332], [1822928, 24150, 332], [1807940, 24186, 332]],
+      "counts": [1, 1, 1, 5, 0, 1, 1, 0, 3, 0, 8],
+      "owners": {"errors": 2, "max_latency_ms": 20, "mcp_tool_calls": 5, "mcp_tool_failures": 3, "requests": 2, "rows": 1, "total_latency_ms": 21},
+      "credentials": {"errors": 2, "max_latency_ms": 20, "mcp_tool_calls": 5, "mcp_tool_failures": 3, "requests": 2, "rows": 1, "total_latency_ms": 21},
+      "result_signature_sha256": "440cb172e6ca4486069427dd0edcac6ad9de834a1cac16280660305fa414f838"
+    },
+    {
+      "workload": "B1/ten_per_owner/replay",
+      "operation_ns": [[1208953, 1377742], [1220298, 1407142], [1250056, 1461048], [1259769, 1527009], [1232709, 1436567]],
+      "repository_ns": [[1208113, 1376655], [1219002, 1405280], [1248976, 1459810], [1258849, 1525601], [1231873, 1434923]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [0, 0, 0, 0, 0],
+      "allocations": [[1216800, 9236, 134], [1232086, 9259, 134], [1253139, 9239, 134], [1282038, 9238, 134], [1232855, 9235, 134]],
+      "counts": [1, 0, 0, 5, 0, 1, 1, 0, 1, 0, 6],
+      "owners": {"errors": 1, "max_latency_ms": 1, "mcp_tool_calls": 2, "mcp_tool_failures": 1, "requests": 1, "rows": 1, "total_latency_ms": 1},
+      "credentials": {"errors": 1, "max_latency_ms": 1, "mcp_tool_calls": 2, "mcp_tool_failures": 1, "requests": 1, "rows": 1, "total_latency_ms": 1},
+      "result_signature_sha256": "05cae2c2dfbbcd22d2a6907aa8e7b7fefacd430b92880ee9dca03bdd06d02b9e"
+    },
+    {
+      "workload": "B1/ten_per_owner/concurrent_update",
+      "operation_ns": [[1735366, 2016508], [1719201, 2016297], [1753554, 2081343], [1692240, 1959915], [1773502, 2075201]],
+      "repository_ns": [[1729609, 2007315], [1712848, 2008807], [1746756, 2070483], [1687014, 1951540], [1765695, 2067132]],
+      "producer_ns": [[11043, 17062], [10790, 18425], [11853, 19613], [10983, 18281], [11015, 18406]],
+      "coordination_p50_ns": [102029, 101999, 103673, 102529, 96260],
+      "owner_credential_sql_share_percent": [25.3043, 25.1245, 25.5215, 25.1626, 25.6987],
+      "allocations": [[1748213, 24149, 332], [1737986, 24125, 332], [1846766, 24142, 332], [1700098, 24120, 332], [1784389, 24171, 332]],
+      "counts": [1, 1, 1, 5, 0, 1, 1, 0, 3, 0, 8],
+      "owners": {"errors": 3, "max_latency_ms": 50, "mcp_tool_calls": 8, "mcp_tool_failures": 5, "requests": 3, "rows": 1, "total_latency_ms": 71},
+      "credentials": {"errors": 3, "max_latency_ms": 50, "mcp_tool_calls": 8, "mcp_tool_failures": 5, "requests": 3, "rows": 1, "total_latency_ms": 71},
+      "result_signature_sha256": "f4a1cca3981b579c8b78d78e3d63dfa3e017dad540687f8e54c4fc16f0c4d29a",
+      "producer_p50_p95_ratio_to_record_only_control": [[10.263, 10.5062], [10.0279, 11.3454], [10.6784, 11.7162], [10.0669, 10.1224], [10.4606, 11.642]]
+    },
+    {
+      "workload": "B1/ten_per_owner/record_only",
+      "operation_ns": [[1557, 2209], [1548, 2152], [1599, 2210], [1561, 2351], [1468, 2201]],
+      "repository_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "producer_ns": [[1076, 1624], [1076, 1624], [1110, 1674], [1091, 1806], [1053, 1581]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [0, 0, 0, 0, 0],
+      "allocations": [[1777, 0, 0], [1750, 0, 0], [1812, 0, 0], [1808, 0, 0], [1680, 0, 0]],
+      "counts": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "owners": {"errors": 2, "max_latency_ms": 20, "mcp_tool_calls": 5, "mcp_tool_failures": 3, "requests": 2, "rows": 1, "total_latency_ms": 21},
+      "credentials": {"errors": 2, "max_latency_ms": 20, "mcp_tool_calls": 5, "mcp_tool_failures": 3, "requests": 2, "rows": 1, "total_latency_ms": 21},
+      "result_signature_sha256": "440cb172e6ca4486069427dd0edcac6ad9de834a1cac16280660305fa414f838"
+    },
+    {
+      "workload": "B100/no_credentials/insert",
+      "operation_ns": [[25721058, 28284345], [26653494, 29391180], [26249813, 28723664], [26198646, 28854556], [25887577, 29010141]],
+      "repository_ns": [[25691444, 28273045], [26642101, 29376672], [26237524, 28711704], [26184843, 28841242], [25877597, 28993453]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [88.0667, 87.9259, 87.9001, 88.082, 88.0631],
+      "allocations": [[25993824, 758729, 9842], [27025022, 758685, 9842], [26567186, 758731, 9842], [26388894, 758704, 9842], [26312511, 758763, 9842]],
+      "counts": [1, 100, 0, 5, 0, 1, 1, 0, 101, 0, 106],
+      "owners": {"errors": 100, "max_latency_ms": 7, "mcp_tool_calls": 200, "mcp_tool_failures": 100, "requests": 100, "rows": 100, "total_latency_ms": 395},
+      "credentials": {"rows": 0},
+      "result_signature_sha256": "825d5634332f569d96569c91384a235ebad7259c4e521b679957562e1bf9f89e"
+    },
+    {
+      "workload": "B100/no_credentials/update",
+      "operation_ns": [[23816591, 25997329], [23834101, 26164556], [24395778, 26904294], [24218918, 26908210], [23800650, 26155134]],
+      "repository_ns": [[23792571, 25984264], [23817769, 26153723], [24377756, 26892062], [24189094, 26896772], [23790789, 26143885]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [88.9982, 88.9495, 88.9115, 89.0543, 89.0134],
+      "allocations": [[24155066, 758204, 9842], [24187628, 758237, 9842], [24672367, 757859, 9841], [24512771, 757932, 9842], [24091670, 758129, 9842]],
+      "counts": [1, 100, 0, 5, 0, 1, 1, 0, 101, 0, 106],
+      "owners": {"errors": 200, "max_latency_ms": 30, "mcp_tool_calls": 500, "mcp_tool_failures": 300, "requests": 200, "rows": 100, "total_latency_ms": 2890},
+      "credentials": {"rows": 0},
+      "result_signature_sha256": "cec6ae81001873cae0088e4b44d5b591aa4f70d56f254a8e54ff4f8c01385cef"
+    },
+    {
+      "workload": "B100/no_credentials/replay",
+      "operation_ns": [[1253521, 1444544], [1289810, 1491841], [1259417, 1498866], [1270294, 1435126], [1300327, 1447566]],
+      "repository_ns": [[1252277, 1443104], [1288908, 1490702], [1258237, 1496901], [1269393, 1433316], [1298610, 1446215]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [0, 0, 0, 0, 0],
+      "allocations": [[1265448, 9328, 135], [1291309, 9320, 134], [1269280, 9304, 134], [1263655, 9386, 135], [1300077, 9313, 135]],
+      "counts": [1, 0, 0, 5, 0, 1, 1, 0, 1, 0, 6],
+      "owners": {"errors": 100, "max_latency_ms": 7, "mcp_tool_calls": 200, "mcp_tool_failures": 100, "requests": 100, "rows": 100, "total_latency_ms": 395},
+      "credentials": {"rows": 0},
+      "result_signature_sha256": "825d5634332f569d96569c91384a235ebad7259c4e521b679957562e1bf9f89e"
+    },
+    {
+      "workload": "B100/no_credentials/concurrent_update",
+      "operation_ns": [[23899627, 25887966], [23842482, 26038963], [23809346, 25821165], [24285554, 26972741], [24362236, 26384438]],
+      "repository_ns": [[23888141, 25870553], [23830762, 26025964], [23791823, 25809840], [24275896, 26955070], [24351015, 26343085]],
+      "producer_ns": [[123, 1739], [132, 1768], [132, 1736], [131, 1787], [132, 1859]],
+      "coordination_p50_ns": [101944, 98410, 99639, 111934, 109901],
+      "owner_credential_sql_share_percent": [89.2183, 89.2894, 89.2258, 89.123, 89.1678],
+      "allocations": [[24141872, 801485, 9947], [24114824, 801476, 9947], [24147839, 801528, 9948], [24597093, 801744, 9948], [24548839, 801525, 9947]],
+      "counts": [1, 100, 0, 5, 0, 1, 1, 0, 101, 0, 106],
+      "owners": {"errors": 300, "max_latency_ms": 60, "mcp_tool_calls": 800, "mcp_tool_failures": 500, "requests": 300, "rows": 100, "total_latency_ms": 8385},
+      "credentials": {"rows": 0},
+      "result_signature_sha256": "bd427ebd37e5cf70fa4c50dd572c1bbc8fae341e3c1204a2b9866c132303ba0b",
+      "producer_p50_p95_ratio_to_record_only_control": [[1.0082, 7.127], [1.0732, 6.697], [1.0732, 7.3559], [1.0738, 5.9766], [1.082, 7.6189]]
+    },
+    {
+      "workload": "B100/no_credentials/record_only",
+      "operation_ns": [[17275, 46329], [17585, 44156], [17514, 40283], [19066, 42126], [17520, 39871]],
+      "repository_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "producer_ns": [[122, 244], [123, 264], [123, 236], [122, 299], [122, 244]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [0, 0, 0, 0, 0],
+      "allocations": [[26400, 0, 0], [22177, 0, 0], [22667, 0, 0], [25449, 0, 0], [24116, 1, 0]],
+      "counts": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "owners": {"errors": 200, "max_latency_ms": 30, "mcp_tool_calls": 500, "mcp_tool_failures": 300, "requests": 200, "rows": 100, "total_latency_ms": 2890},
+      "credentials": {"rows": 0},
+      "result_signature_sha256": "cec6ae81001873cae0088e4b44d5b591aa4f70d56f254a8e54ff4f8c01385cef"
+    },
+    {
+      "workload": "B100/one_per_owner/insert",
+      "operation_ns": [[48814343, 53478630], [48002804, 52630329], [49051478, 54156535], [49873865, 53867480], [48718069, 52796152]],
+      "repository_ns": [[48803192, 53466516], [47987922, 52606818], [49035445, 54143536], [49861885, 53854311], [48704616, 52781252]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [90.9152, 90.9036, 90.8437, 90.8457, 90.8417],
+      "allocations": [[49448434, 1489358, 19546], [48562418, 1489328, 19546], [49684172, 1489323, 19546], [50142083, 1489308, 19546], [49111622, 1489268, 19546]],
+      "counts": [1, 100, 100, 5, 0, 1, 1, 0, 201, 0, 206],
+      "owners": {"errors": 100, "max_latency_ms": 7, "mcp_tool_calls": 200, "mcp_tool_failures": 100, "requests": 100, "rows": 100, "total_latency_ms": 395},
+      "credentials": {"errors": 100, "max_latency_ms": 7, "mcp_tool_calls": 200, "mcp_tool_failures": 100, "requests": 100, "rows": 100, "total_latency_ms": 395},
+      "result_signature_sha256": "8fe78765111b4b65bdcecfafb298f47410d3da5d636f19e39e79d1c670c4b596"
+    },
+    {
+      "workload": "B100/one_per_owner/update",
+      "operation_ns": [[46818161, 51611836], [46883947, 51677384], [47709237, 52565258], [46525871, 51081882], [47537653, 51794360]],
+      "repository_ns": [[46806148, 51434246], [46865052, 51666074], [47698570, 52532806], [46514138, 51071892], [47521684, 51783017]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [91.4614, 91.4238, 91.4796, 91.5323, 91.4625],
+      "allocations": [[47379266, 1488196, 19546], [47609181, 1488213, 19546], [48097447, 1488191, 19546], [47068311, 1488042, 19546], [47838709, 1488132, 19546]],
+      "counts": [1, 100, 100, 5, 0, 1, 1, 0, 201, 0, 206],
+      "owners": {"errors": 200, "max_latency_ms": 30, "mcp_tool_calls": 500, "mcp_tool_failures": 300, "requests": 200, "rows": 100, "total_latency_ms": 2890},
+      "credentials": {"errors": 200, "max_latency_ms": 30, "mcp_tool_calls": 500, "mcp_tool_failures": 300, "requests": 200, "rows": 100, "total_latency_ms": 2890},
+      "result_signature_sha256": "7c6bf6547f7c3e695abdd7512cc836d35f189078fbb76315b4ca6737c6fbc852"
+    },
+    {
+      "workload": "B100/one_per_owner/replay",
+      "operation_ns": [[1273254, 1459878], [1299444, 1507801], [1272694, 1488585], [1294766, 1479942], [1350428, 1596687]],
+      "repository_ns": [[1272048, 1458240], [1298516, 1506162], [1271783, 1487044], [1293131, 1478326], [1349208, 1594790]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [0, 0, 0, 0, 0],
+      "allocations": [[1273931, 9404, 135], [1311311, 9360, 135], [1279173, 9428, 135], [1294844, 9352, 135], [1357697, 9347, 135]],
+      "counts": [1, 0, 0, 5, 0, 1, 1, 0, 1, 0, 6],
+      "owners": {"errors": 100, "max_latency_ms": 7, "mcp_tool_calls": 200, "mcp_tool_failures": 100, "requests": 100, "rows": 100, "total_latency_ms": 395},
+      "credentials": {"errors": 100, "max_latency_ms": 7, "mcp_tool_calls": 200, "mcp_tool_failures": 100, "requests": 100, "rows": 100, "total_latency_ms": 395},
+      "result_signature_sha256": "8fe78765111b4b65bdcecfafb298f47410d3da5d636f19e39e79d1c670c4b596"
+    },
+    {
+      "workload": "B100/one_per_owner/concurrent_update",
+      "operation_ns": [[47438104, 51936725], [46966981, 51009273], [47252241, 52513708], [47604896, 51364583], [47188609, 51494372]],
+      "repository_ns": [[47403578, 51914306], [46955897, 50989270], [47238744, 52498084], [47592017, 51344311], [47176730, 51480768]],
+      "producer_ns": [[132, 1882], [131, 1795], [131, 1849], [132, 1891], [130, 1795]],
+      "coordination_p50_ns": [129906, 119922, 112584, 138897, 113615],
+      "owner_credential_sql_share_percent": [91.6804, 91.6224, 91.6545, 91.6332, 91.7349],
+      "allocations": [[47847573, 1530827, 19649], [47338153, 1530982, 19649], [47912118, 1530394, 19648], [47940492, 1530390, 19647], [47595937, 1530474, 19648]],
+      "counts": [1, 100, 100, 5, 0, 1, 1, 0, 201, 0, 206],
+      "owners": {"errors": 300, "max_latency_ms": 60, "mcp_tool_calls": 800, "mcp_tool_failures": 500, "requests": 300, "rows": 100, "total_latency_ms": 8385},
+      "credentials": {"errors": 300, "max_latency_ms": 60, "mcp_tool_calls": 800, "mcp_tool_failures": 500, "requests": 300, "rows": 100, "total_latency_ms": 8385},
+      "result_signature_sha256": "773cd0a35449b4f316ad3b8ee23c1dc6de2e41a0171de057d2c296adcd975a61",
+      "producer_p50_p95_ratio_to_record_only_control": [[1.0732, 8.6728], [1.0738, 8.6715], [1.0738, 9.0195], [1.0732, 9.5025], [1.0656, 9.0201]]
+    },
+    {
+      "workload": "B100/one_per_owner/record_only",
+      "operation_ns": [[17513, 31572], [17505, 25690], [17397, 25429], [17434, 25226], [17428, 26466]],
+      "repository_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "producer_ns": [[123, 217], [122, 207], [122, 205], [123, 199], [122, 199]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [0, 0, 0, 0, 0],
+      "allocations": [[21946, 0, 0], [20778, 0, 0], [20265, 0, 0], [19783, 0, 0], [20411, 0, 0]],
+      "counts": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "owners": {"errors": 200, "max_latency_ms": 30, "mcp_tool_calls": 500, "mcp_tool_failures": 300, "requests": 200, "rows": 100, "total_latency_ms": 2890},
+      "credentials": {"errors": 200, "max_latency_ms": 30, "mcp_tool_calls": 500, "mcp_tool_failures": 300, "requests": 200, "rows": 100, "total_latency_ms": 2890},
+      "result_signature_sha256": "7c6bf6547f7c3e695abdd7512cc836d35f189078fbb76315b4ca6737c6fbc852"
+    },
+    {
+      "workload": "B100/ten_per_owner/insert",
+      "operation_ns": [[50661200, 59014560], [49032208, 52465686], [50005375, 54645008], [49841613, 53610058], [50941923, 55187441]],
+      "repository_ns": [[50639891, 59001967], [49019596, 52453865], [49992906, 54631971], [49828095, 53597502], [50930428, 55172167]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [90.8239, 90.9277, 90.9987, 90.9132, 90.9098],
+      "allocations": [[51518548, 1488952, 19546], [49502270, 1488925, 19546], [50608670, 1488895, 19546], [50141992, 1488879, 19546], [51279731, 1488917, 19546]],
+      "counts": [1, 100, 100, 5, 0, 1, 1, 0, 201, 0, 206],
+      "owners": {"errors": 100, "max_latency_ms": 7, "mcp_tool_calls": 200, "mcp_tool_failures": 100, "requests": 100, "rows": 10, "total_latency_ms": 395},
+      "credentials": {"errors": 100, "max_latency_ms": 7, "mcp_tool_calls": 200, "mcp_tool_failures": 100, "requests": 100, "rows": 100, "total_latency_ms": 395},
+      "result_signature_sha256": "e2da77e121e90536ce9abe39756daa7831bd84bc8bf388b092e8e71d47c9fa41"
+    },
+    {
+      "workload": "B100/ten_per_owner/update",
+      "operation_ns": [[47854666, 51474052], [47866445, 52432237], [48817241, 52546102], [48235515, 52660190], [48237758, 52617045]],
+      "repository_ns": [[47844032, 51455252], [47857993, 52420238], [48807396, 52535166], [48224072, 52634385], [48226697, 52607260]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [91.7416, 91.7871, 91.7269, 91.7155, 91.7321],
+      "allocations": [[48170331, 1487834, 19545], [48265418, 1488187, 19546], [49242467, 1487925, 19546], [48712404, 1487852, 19545], [48516803, 1488071, 19546]],
+      "counts": [1, 100, 100, 5, 0, 1, 1, 0, 201, 0, 206],
+      "owners": {"errors": 200, "max_latency_ms": 30, "mcp_tool_calls": 500, "mcp_tool_failures": 300, "requests": 200, "rows": 10, "total_latency_ms": 2890},
+      "credentials": {"errors": 200, "max_latency_ms": 30, "mcp_tool_calls": 500, "mcp_tool_failures": 300, "requests": 200, "rows": 100, "total_latency_ms": 2890},
+      "result_signature_sha256": "85bc75f102b20c14c106f08a52784844a777a436959673b67d708f4cf461f143"
+    },
+    {
+      "workload": "B100/ten_per_owner/replay",
+      "operation_ns": [[1310524, 1501110], [1290844, 1468045], [1278465, 1482623], [1274267, 1485692], [1282460, 1485733]],
+      "repository_ns": [[1309592, 1499439], [1289757, 1466923], [1277230, 1480862], [1271971, 1484270], [1281297, 1484299]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [0, 0, 0, 0, 0],
+      "allocations": [[1315244, 9371, 135], [1298683, 9313, 135], [1287675, 9361, 135], [1279249, 9313, 135], [1286125, 9366, 135]],
+      "counts": [1, 0, 0, 5, 0, 1, 1, 0, 1, 0, 6],
+      "owners": {"errors": 100, "max_latency_ms": 7, "mcp_tool_calls": 200, "mcp_tool_failures": 100, "requests": 100, "rows": 10, "total_latency_ms": 395},
+      "credentials": {"errors": 100, "max_latency_ms": 7, "mcp_tool_calls": 200, "mcp_tool_failures": 100, "requests": 100, "rows": 100, "total_latency_ms": 395},
+      "result_signature_sha256": "e2da77e121e90536ce9abe39756daa7831bd84bc8bf388b092e8e71d47c9fa41"
+    },
+    {
+      "workload": "B100/ten_per_owner/concurrent_update",
+      "operation_ns": [[48729527, 52988851], [49201643, 54060403], [48233890, 52630108], [48895241, 53218479], [48572130, 52294475]],
+      "repository_ns": [[48717483, 52975536], [49173561, 54038313], [48222903, 52617660], [48877813, 53205020], [48562097, 52270258]],
+      "producer_ns": [[133, 1927], [140, 2027], [140, 1905], [132, 1794], [141, 1992]],
+      "coordination_p50_ns": [126705, 139002, 124424, 123375, 130478],
+      "owner_credential_sql_share_percent": [91.8441, 91.7503, 91.83, 91.775, 91.798],
+      "allocations": [[49101395, 1532428, 19652], [49622975, 1532631, 19652], [48622473, 1532443, 19652], [49153901, 1532398, 19652], [48954515, 1532678, 19652]],
+      "counts": [1, 100, 100, 5, 0, 1, 1, 0, 201, 0, 206],
+      "owners": {"errors": 300, "max_latency_ms": 60, "mcp_tool_calls": 800, "mcp_tool_failures": 500, "requests": 300, "rows": 10, "total_latency_ms": 8385},
+      "credentials": {"errors": 300, "max_latency_ms": 60, "mcp_tool_calls": 800, "mcp_tool_failures": 500, "requests": 300, "rows": 100, "total_latency_ms": 8385},
+      "result_signature_sha256": "6a5e1fb9208feb4faf6e47163a7cff4cd76379ea5fdd32053269f04cfc63e64e",
+      "producer_p50_p95_ratio_to_record_only_control": [[1.0902, 9.3544], [1.129, 9.2982], [1.1382, 9.5729], [1.0732, 8.625], [1.1557, 9.6699]]
+    },
+    {
+      "workload": "B100/ten_per_owner/record_only",
+      "operation_ns": [[17293, 24476], [17699, 26329], [17387, 23454], [17572, 26745], [17383, 27252]],
+      "repository_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "producer_ns": [[122, 206], [124, 218], [123, 199], [123, 208], [122, 206]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [0, 0, 0, 0, 0],
+      "allocations": [[18953, 0, 0], [21753, 0, 0], [19691, 0, 0], [19280, 0, 0], [21831, 0, 0]],
+      "counts": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "owners": {"errors": 200, "max_latency_ms": 30, "mcp_tool_calls": 500, "mcp_tool_failures": 300, "requests": 200, "rows": 10, "total_latency_ms": 2890},
+      "credentials": {"errors": 200, "max_latency_ms": 30, "mcp_tool_calls": 500, "mcp_tool_failures": 300, "requests": 200, "rows": 100, "total_latency_ms": 2890},
+      "result_signature_sha256": "85bc75f102b20c14c106f08a52784844a777a436959673b67d708f4cf461f143"
+    },
+    {
+      "workload": "B1000/no_credentials/insert",
+      "operation_ns": [[242875058, 258346142], [244208480, 259530282], [244817371, 259709157], [244763827, 260337818], [244021209, 257721615]],
+      "repository_ns": [[242821940, 258266074], [244161206, 259339017], [244764912, 259621215], [244575759, 260241972], [243967526, 257671169]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [93.7992, 93.794, 93.7864, 93.7863, 93.817],
+      "allocations": [[243873478, 7499087, 97165], [244872749, 7499143, 97165], [245801907, 7499102, 97164], [245837609, 7499145, 97165], [245160203, 7499111, 97165]],
+      "counts": [1, 1000, 0, 5, 0, 1, 1, 0, 1001, 0, 1006],
+      "owners": {"errors": 1000, "max_latency_ms": 7, "mcp_tool_calls": 2000, "mcp_tool_failures": 1000, "requests": 1000, "rows": 1000, "total_latency_ms": 3997},
+      "credentials": {"rows": 0},
+      "result_signature_sha256": "61027a12017017c52dc30a3b01b3b619d47bb7afa5f5a4d1f081ec7a1082f4ee"
+    },
+    {
+      "workload": "B1000/no_credentials/update",
+      "operation_ns": [[236440114, 252638390], [233804555, 248483695], [235212049, 248964789], [234461776, 249237027], [235902910, 249394465]],
+      "repository_ns": [[236377786, 252558650], [233747386, 248429656], [235157029, 248915767], [234404161, 248970970], [235854062, 249268544]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [93.838, 93.8306, 93.8616, 93.8593, 93.8481],
+      "allocations": [[237339362, 7494512, 97158], [234716580, 7494613, 97159], [235887522, 7494492, 97158], [235377350, 7494481, 97159], [236249008, 7494733, 97159]],
+      "counts": [1, 1000, 0, 5, 0, 1, 1, 0, 1001, 0, 1006],
+      "owners": {"errors": 2000, "max_latency_ms": 30, "mcp_tool_calls": 5000, "mcp_tool_failures": 3000, "requests": 2000, "rows": 1000, "total_latency_ms": 28992},
+      "credentials": {"rows": 0},
+      "result_signature_sha256": "148605a4a6e7ebe96e9b4087e872ffd9ca8b76514f03f1da4d4473ba38e53d07"
+    },
+    {
+      "workload": "B1000/no_credentials/replay",
+      "operation_ns": [[1300959, 1489116], [1295434, 1546476], [1267192, 1487720], [1295361, 1527721], [1324011, 1494185]],
+      "repository_ns": [[1299025, 1487726], [1294216, 1543785], [1266179, 1486122], [1294419, 1526397], [1322518, 1491843]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [0, 0, 0, 0, 0],
+      "allocations": [[1298378, 9303, 134], [1304424, 9338, 134], [1277356, 9303, 134], [1312425, 9368, 135], [1311628, 9354, 135]],
+      "counts": [1, 0, 0, 5, 0, 1, 1, 0, 1, 0, 6],
+      "owners": {"errors": 1000, "max_latency_ms": 7, "mcp_tool_calls": 2000, "mcp_tool_failures": 1000, "requests": 1000, "rows": 1000, "total_latency_ms": 3997},
+      "credentials": {"rows": 0},
+      "result_signature_sha256": "61027a12017017c52dc30a3b01b3b619d47bb7afa5f5a4d1f081ec7a1082f4ee"
+    },
+    {
+      "workload": "B1000/no_credentials/concurrent_update",
+      "operation_ns": [[235894179, 250096700], [235992827, 248570928], [233765806, 245189607], [234166275, 250978482], [236059848, 249220918]],
+      "repository_ns": [[235837566, 250005526], [235943809, 248525535], [233630001, 245142094], [234119135, 250871568], [235955184, 249172170]],
+      "producer_ns": [[130, 438], [131, 494], [130, 443], [123, 473], [131, 518]],
+      "coordination_p50_ns": [141093, 140105, 133376, 137106, 140841],
+      "owner_credential_sql_share_percent": [93.7112, 93.6204, 93.6474, 93.7256, 93.7205],
+      "allocations": [[237768724, 8143861, 98183], [236878813, 8143788, 98182], [235062303, 8143773, 98183], [235624588, 8143762, 98182], [236740209, 8143604, 98181]],
+      "counts": [1, 1000, 0, 5, 0, 1, 1, 0, 1001, 0, 1006],
+      "owners": {"errors": 3000, "max_latency_ms": 60, "mcp_tool_calls": 8000, "mcp_tool_failures": 5000, "requests": 3000, "rows": 1000, "total_latency_ms": 83987},
+      "credentials": {"rows": 0},
+      "result_signature_sha256": "d4753d81df6754af5ce4e04077b31ac944a07969f166d0e2f098752a3514cb96",
+      "producer_p50_p95_ratio_to_record_only_control": [[0.9848, 1.8879], [0.9924, 2.1021], [0.9924, 2.0045], [0.9318, 2.0128], [1.0, 2.1143]]
+    },
+    {
+      "workload": "B1000/no_credentials/record_only",
+      "operation_ns": [[176345, 301601], [173511, 317520], [175874, 287126], [175853, 315723], [176125, 328869]],
+      "repository_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "producer_ns": [[132, 232], [132, 235], [131, 221], [132, 235], [131, 245]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [0, 0, 0, 0, 0],
+      "allocations": [[196752, 0, 0], [198122, 0, 0], [198343, 0, 0], [201613, 0, 0], [201239, 0, 0]],
+      "counts": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "owners": {"errors": 2000, "max_latency_ms": 30, "mcp_tool_calls": 5000, "mcp_tool_failures": 3000, "requests": 2000, "rows": 1000, "total_latency_ms": 28992},
+      "credentials": {"rows": 0},
+      "result_signature_sha256": "148605a4a6e7ebe96e9b4087e872ffd9ca8b76514f03f1da4d4473ba38e53d07"
+    },
+    {
+      "workload": "B1000/one_per_owner/insert",
+      "operation_ns": [[481050450, 506967105], [478612662, 505917859], [478878002, 506963959], [484596485, 506687203], [477659365, 500500514]],
+      "repository_ns": [[480989301, 506717190], [478504068, 505737416], [478715386, 506818577], [484490826, 506624119], [477507115, 500346166]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [94.0306, 94.0644, 94.0537, 94.0045, 94.0258],
+      "allocations": [[483815278, 14796371, 194191], [480434420, 14795923, 194190], [481675288, 14795909, 194190], [485277484, 14795945, 194191], [479353941, 14796014, 194190]],
+      "counts": [1, 1000, 1000, 5, 0, 1, 1, 0, 2001, 0, 2006],
+      "owners": {"errors": 1000, "max_latency_ms": 7, "mcp_tool_calls": 2000, "mcp_tool_failures": 1000, "requests": 1000, "rows": 1000, "total_latency_ms": 3997},
+      "credentials": {"errors": 1000, "max_latency_ms": 7, "mcp_tool_calls": 2000, "mcp_tool_failures": 1000, "requests": 1000, "rows": 1000, "total_latency_ms": 3997},
+      "result_signature_sha256": "a92d9af2e01f7bd38ea9c83ed5ff243290de86ff2a2f29ff258c2f077fcb832e"
+    },
+    {
+      "workload": "B1000/one_per_owner/update",
+      "operation_ns": [[476615115, 525162168], [475696479, 541213689], [463614284, 487718200], [463428104, 482805964], [451804812, 489597869]],
+      "repository_ns": [[476563070, 525099972], [475626965, 541142899], [463271429, 487649237], [463271320, 482762309], [451760832, 489547586]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [94.1232, 94.1112, 94.1265, 94.1555, 94.237],
+      "allocations": [[481063967, 14790912, 194179], [482840384, 14791180, 194181], [465413990, 14791224, 194180], [462911820, 14790874, 194180], [454503448, 14790978, 194180]],
+      "counts": [1, 1000, 1000, 5, 0, 1, 1, 0, 2001, 0, 2006],
+      "owners": {"errors": 2000, "max_latency_ms": 30, "mcp_tool_calls": 5000, "mcp_tool_failures": 3000, "requests": 2000, "rows": 1000, "total_latency_ms": 28992},
+      "credentials": {"errors": 2000, "max_latency_ms": 30, "mcp_tool_calls": 5000, "mcp_tool_failures": 3000, "requests": 2000, "rows": 1000, "total_latency_ms": 28992},
+      "result_signature_sha256": "3044af900a222b0b7cdcf300a53e295f0871be2020770604e37b38881ba043d4"
+    },
+    {
+      "workload": "B1000/one_per_owner/replay",
+      "operation_ns": [[1208587, 1480968], [1201522, 1435823], [1197730, 1457280], [1203201, 1476685], [1198293, 1489364]],
+      "repository_ns": [[1206921, 1479041], [1200510, 1434053], [1196770, 1455949], [1202207, 1475456], [1197304, 1487927]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [0, 0, 0, 0, 0],
+      "allocations": [[1228424, 9320, 135], [1212375, 9350, 135], [1227435, 9384, 135], [1224490, 9350, 135], [1234471, 9371, 135]],
+      "counts": [1, 0, 0, 5, 0, 1, 1, 0, 1, 0, 6],
+      "owners": {"errors": 1000, "max_latency_ms": 7, "mcp_tool_calls": 2000, "mcp_tool_failures": 1000, "requests": 1000, "rows": 1000, "total_latency_ms": 3997},
+      "credentials": {"errors": 1000, "max_latency_ms": 7, "mcp_tool_calls": 2000, "mcp_tool_failures": 1000, "requests": 1000, "rows": 1000, "total_latency_ms": 3997},
+      "result_signature_sha256": "a92d9af2e01f7bd38ea9c83ed5ff243290de86ff2a2f29ff258c2f077fcb832e"
+    },
+    {
+      "workload": "B1000/one_per_owner/concurrent_update",
+      "operation_ns": [[447419730, 494398396], [454471139, 523465858], [447115477, 497810101], [456446536, 529954919], [437498618, 461803273]],
+      "repository_ns": [[447372068, 494337624], [454424266, 523350668], [447059259, 497686406], [456396578, 529787460], [437395393, 461645632]],
+      "producer_ns": [[122, 312], [122, 297], [122, 339], [123, 329], [122, 306]],
+      "coordination_p50_ns": [124536, 122339, 121402, 121505, 116525],
+      "owner_credential_sql_share_percent": [94.1262, 94.1667, 94.1517, 94.1029, 94.1556],
+      "allocations": [[450511677, 15437238, 195197], [461129655, 15437161, 195198], [454645319, 15436962, 195197], [464279633, 15437321, 195198], [439255572, 15437324, 195198]],
+      "counts": [1, 1000, 1000, 5, 0, 1, 1, 0, 2001, 0, 2006],
+      "owners": {"errors": 3000, "max_latency_ms": 60, "mcp_tool_calls": 8000, "mcp_tool_failures": 5000, "requests": 3000, "rows": 1000, "total_latency_ms": 83987},
+      "credentials": {"errors": 3000, "max_latency_ms": 60, "mcp_tool_calls": 8000, "mcp_tool_failures": 5000, "requests": 3000, "rows": 1000, "total_latency_ms": 83987},
+      "result_signature_sha256": "7ba9386a15ba9e8d67ec6d167a6aceac73ecdaafdb6f4695c60c5bd29cd54b15",
+      "producer_p50_p95_ratio_to_record_only_control": [[0.9313, 1.5072], [0.9385, 1.4348], [0.9531, 1.6537], [0.9535, 1.5231], [0.9457, 1.4783]]
+    },
+    {
+      "workload": "B1000/one_per_owner/record_only",
+      "operation_ns": [[175584, 252275], [174354, 257375], [173417, 250347], [174749, 269852], [176993, 260201]],
+      "repository_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "producer_ns": [[131, 207], [130, 207], [128, 205], [129, 216], [129, 207]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [0, 0, 0, 0, 0],
+      "allocations": [[190839, 0, 0], [193661, 0, 0], [185626, 0, 0], [193990, 1, 0], [188311, 0, 0]],
+      "counts": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "owners": {"errors": 2000, "max_latency_ms": 30, "mcp_tool_calls": 5000, "mcp_tool_failures": 3000, "requests": 2000, "rows": 1000, "total_latency_ms": 28992},
+      "credentials": {"errors": 2000, "max_latency_ms": 30, "mcp_tool_calls": 5000, "mcp_tool_failures": 3000, "requests": 2000, "rows": 1000, "total_latency_ms": 28992},
+      "result_signature_sha256": "3044af900a222b0b7cdcf300a53e295f0871be2020770604e37b38881ba043d4"
+    },
+    {
+      "workload": "B1000/ten_per_owner/insert",
+      "operation_ns": [[462734558, 514124110], [460226451, 485591589], [479600880, 526524328], [456437257, 476773461], [450935809, 474695276]],
+      "repository_ns": [[462685192, 514041996], [460081015, 485539788], [479540549, 526470707], [456392994, 476436398], [450819421, 474561454]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [94.2889, 94.2897, 94.218, 94.2837, 94.3053],
+      "allocations": [[466616409, 14796120, 194190], [460810052, 14796226, 194191], [484746376, 14796148, 194191], [457834807, 14795927, 194190], [452879014, 14796120, 194190]],
+      "counts": [1, 1000, 1000, 5, 0, 1, 1, 0, 2001, 0, 2006],
+      "owners": {"errors": 1000, "max_latency_ms": 7, "mcp_tool_calls": 2000, "mcp_tool_failures": 1000, "requests": 1000, "rows": 100, "total_latency_ms": 3997},
+      "credentials": {"errors": 1000, "max_latency_ms": 7, "mcp_tool_calls": 2000, "mcp_tool_failures": 1000, "requests": 1000, "rows": 1000, "total_latency_ms": 3997},
+      "result_signature_sha256": "eb6e3443d9b95fba41d58d2b0bd21267b87ae90061118747ea0df6ad3af97f66"
+    },
+    {
+      "workload": "B1000/ten_per_owner/update",
+      "operation_ns": [[451694134, 482558374], [470091787, 502837977], [480878947, 534483251], [464119251, 505950221], [473481668, 538858278]],
+      "repository_ns": [[451573323, 482495835], [470041650, 502789548], [480779530, 534367434], [464073313, 505905389], [473437818, 538508805]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [94.4431, 94.4374, 94.373, 94.3756, 94.3811],
+      "allocations": [[454499253, 14791709, 194182], [471778866, 14791718, 194183], [486712065, 14791831, 194183], [467112507, 14791732, 194182], [479839183, 14791641, 194183]],
+      "counts": [1, 1000, 1000, 5, 0, 1, 1, 0, 2001, 0, 2006],
+      "owners": {"errors": 2000, "max_latency_ms": 30, "mcp_tool_calls": 5000, "mcp_tool_failures": 3000, "requests": 2000, "rows": 100, "total_latency_ms": 28992},
+      "credentials": {"errors": 2000, "max_latency_ms": 30, "mcp_tool_calls": 5000, "mcp_tool_failures": 3000, "requests": 2000, "rows": 1000, "total_latency_ms": 28992},
+      "result_signature_sha256": "c15a3657df17da50c8a727428bcffcab43df2339e731909e14fa74269af6bcfa"
+    },
+    {
+      "workload": "B1000/ten_per_owner/replay",
+      "operation_ns": [[1271184, 1534491], [1316833, 1640461], [1279803, 1522439], [1238644, 1599031], [1280260, 1658600]],
+      "repository_ns": [[1270192, 1532901], [1315021, 1639290], [1278949, 1520716], [1237711, 1597588], [1278953, 1654008]],
+      "producer_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [0, 0, 0, 0, 0],
+      "allocations": [[1278440, 9390, 135], [1325900, 9359, 135], [1280068, 9360, 135], [1257572, 9375, 135], [1304027, 9396, 135]],
+      "counts": [1, 0, 0, 5, 0, 1, 1, 0, 1, 0, 6],
+      "owners": {"errors": 1000, "max_latency_ms": 7, "mcp_tool_calls": 2000, "mcp_tool_failures": 1000, "requests": 1000, "rows": 100, "total_latency_ms": 3997},
+      "credentials": {"errors": 1000, "max_latency_ms": 7, "mcp_tool_calls": 2000, "mcp_tool_failures": 1000, "requests": 1000, "rows": 1000, "total_latency_ms": 3997},
+      "result_signature_sha256": "eb6e3443d9b95fba41d58d2b0bd21267b87ae90061118747ea0df6ad3af97f66"
+    },
+    {
+      "workload": "B1000/ten_per_owner/concurrent_update",
+      "operation_ns": [[497548946, 563844706], [486842173, 553187809], [460663225, 502577196], [451542111, 509196917], [442553412, 467616319]],
+      "repository_ns": [[497484059, 563784145], [486752193, 552983141], [460618891, 502435452], [451391141, 509123610], [442505413, 467540679]],
+      "producer_ns": [[130, 428], [126, 406], [126, 464], [121, 295], [121, 312]],
+      "coordination_p50_ns": [131563, 129581, 119658, 116628, 117394],
+      "owner_credential_sql_share_percent": [94.257, 94.2902, 94.3478, 94.3804, 94.3964],
+      "allocations": [[504127312, 15438151, 195201], [491179573, 15438051, 195201], [464083442, 15437923, 195199], [458506052, 15438121, 195200], [443403581, 15437956, 195199]],
+      "counts": [1, 1000, 1000, 5, 0, 1, 1, 0, 2001, 0, 2006],
+      "owners": {"errors": 3000, "max_latency_ms": 60, "mcp_tool_calls": 8000, "mcp_tool_failures": 5000, "requests": 3000, "rows": 100, "total_latency_ms": 83987},
+      "credentials": {"errors": 3000, "max_latency_ms": 60, "mcp_tool_calls": 8000, "mcp_tool_failures": 5000, "requests": 3000, "rows": 1000, "total_latency_ms": 83987},
+      "result_signature_sha256": "868e3de951f5c477e455a72b3caef0cddf95bc75ba514e094f382565c8a761a2",
+      "producer_p50_p95_ratio_to_record_only_control": [[1.0078, 1.8448], [0.9767, 1.8044], [0.9767, 2.0174], [0.938, 1.2826], [0.938, 1.2381]]
+    },
+    {
+      "workload": "B1000/ten_per_owner/record_only",
+      "operation_ns": [[175809, 306257], [173015, 306725], [170333, 281527], [171314, 290835], [171414, 306240]],
+      "repository_ns": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      "producer_ns": [[129, 232], [129, 225], [129, 230], [129, 230], [129, 252]],
+      "coordination_p50_ns": [0, 0, 0, 0, 0],
+      "owner_credential_sql_share_percent": [0, 0, 0, 0, 0],
+      "allocations": [[193083, 0, 0], [198570, 1, 0], [194511, 0, 0], [192032, 0, 0], [194563, 0, 0]],
+      "counts": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "owners": {"errors": 2000, "max_latency_ms": 30, "mcp_tool_calls": 5000, "mcp_tool_failures": 3000, "requests": 2000, "rows": 100, "total_latency_ms": 28992},
+      "credentials": {"errors": 2000, "max_latency_ms": 30, "mcp_tool_calls": 5000, "mcp_tool_failures": 3000, "requests": 2000, "rows": 1000, "total_latency_ms": 28992},
+      "result_signature_sha256": "c15a3657df17da50c8a727428bcffcab43df2339e731909e14fa74269af6bcfa"
+    }
+  ]
+}

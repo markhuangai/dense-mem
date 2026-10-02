@@ -511,3 +511,63 @@ byte-identical base and candidate reports. The benchmark comparator then
 requires unchanged SQL and transaction counts and median p50 and p95 increases
 within the greater of 5% or 1 ms across five measured runs. Commit only a
 compact comparison with both source fingerprints; keep raw reports ignored.
+
+## Issue #493 usage flush scaling
+
+After the independent plan audit passes, run the current Operations service and
+PostgreSQL repository benchmark against disposable PostgreSQL:
+
+```bash
+env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 \
+  go test -tags=integration ./internal/operations/postgres \
+  -run '^$' -bench '^BenchmarkUsageFlushScaling$' \
+  -benchtime=200x -count=5 -benchmem -timeout=60m -v
+```
+
+Capture the output under an unused `tests/eval/runs/issue-493/` directory and
+record source hashes and Go, PostgreSQL, CPU and host-idleness provenance before
+and after the run. Each of the 45 workloads runs 20 warmups and 200 measured
+operations across five repetitions. Go also performs a one-operation calibration;
+only `usage_flush_scaling_result` records with `iterations: 200` belong to the
+measurement. Join each record to its Go benchmark allocation result. Commit the
+compact summary to `tests/eval/baselines/usage_flush_scaling.json`; raw runs stay
+ignored. Pending evidence is replaced only after verified measurement.
+
+The matrix covers 1, 100 and 1,000 service buckets without credentials, with one
+credential per owner, and with ten credentials per owner. The one-bucket grouped
+case has one credential; credential fan-out does not apply without credentials.
+The grouped case still performs one owner write per service bucket, although
+multiple writes target the same durable owner row. Inserts and updates use fresh
+flush IDs. Replay primes a real committed flush with a test-only lost-reply
+signal, then times the service retry with the same ID.
+
+Each operation resets the fixture outside timing. SQL, transaction and repository
+timing instrumentation forwards calls to the real database. Data SQL is split
+into ledger, owner and credential statements; RLS setup and unknown statements
+are counted separately. Counts describe connection-pool SQL calls, not driver
+protocol messages. Transaction begin, commit and rollback are separate counts.
+Clock and counter instrumentation remains inside the measured call.
+
+The concurrent-update case coordinates the first producer event after the map
+drains, then allows remaining events during the repository call. Coordination
+waits, including that first producer event, are excluded from flush timing and
+Go's allocation window. All producer latencies are reported. Allocations cover
+the process while the benchmark timer runs, including remaining producer work;
+they are not isolated per-goroutine allocations. The recording-only control times
+recording into the same prefilled map without a flush. Every sample verifies all
+owner and credential rows, additive counts, maxima and timestamps outside timing;
+the subsequent flush proves concurrent events were retained.
+
+The baseline compares actual data-statement counts with `1+B+C` for writes,
+one ledger statement for replay, and zero SQL for recording-only operations.
+It records discrepancies rather than substituting the predicted count. The
+batching recommendation is conditional on owner/credential SQL consuming over
+half of flush time at 100 or 1,000 buckets. No production workload frequency or
+batching latency improvement is inferred.
+
+A future bounded candidate groups the complete owner primary key, sums additive
+counters, takes the maximum latency and latest timestamp, and writes owner and
+credential rows in chunks of at most 1,000 rows. Grouping prevents duplicate
+`ON CONFLICT` targets within one statement. The existing flush-ledger transaction,
+RLS context, credential attribution and all-or-nothing rollback must remain.
+This ticket contains no batching prototype or production algorithm change.

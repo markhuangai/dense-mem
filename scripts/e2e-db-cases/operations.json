@@ -115,6 +115,34 @@
       "source": "internal/operations/postgres/usage_metrics_repository_integration_test.go"
     },
     {
+      "id": "repository/TestUsageMetricsFlushScalingCardinalities",
+      "package": "./internal/operations/postgres",
+      "run": "^TestUsageMetricsFlushScalingCardinalities$",
+      "phase": "precheck",
+      "source": "internal/operations/postgres/usage_metrics_repository_integration_test.go"
+    },
+    {
+      "id": "repository/TestUsageMetricsFlushScalingCommittedRetryPreservesNewEvents",
+      "package": "./internal/operations/postgres",
+      "run": "^TestUsageMetricsFlushScalingCommittedRetryPreservesNewEvents$",
+      "phase": "precheck",
+      "source": "internal/operations/postgres/usage_metrics_repository_integration_test.go"
+    },
+    {
+      "id": "repository/TestUsageMetricsFlushScalingFailureRollsBackLedgerAndBothTables",
+      "package": "./internal/operations/postgres",
+      "run": "^TestUsageMetricsFlushScalingFailureRollsBackLedgerAndBothTables$",
+      "phase": "precheck",
+      "source": "internal/operations/postgres/usage_metrics_repository_integration_test.go"
+    },
+    {
+      "id": "repository/TestUsageMetricsFlushScalingConcurrentRecording",
+      "package": "./internal/operations/postgres",
+      "run": "^TestUsageMetricsFlushScalingConcurrentRecording$",
+      "phase": "precheck",
+      "source": "internal/operations/postgres/usage_metrics_repository_integration_test.go"
+    },
+    {
       "id": "repository/TestOperationLogOwnershipEquivalentFilters",
       "package": "./internal/operations/postgres",
       "run": "^TestOperationLogOwnershipEquivalentFilters$",

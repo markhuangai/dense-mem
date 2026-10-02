@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -247,4 +248,116 @@ func TestUsageMetricsFlushRetryIsIdempotentAndAtomic(t *testing.T) {
 	require.Len(t, snapshot.Keys, 1)
 	require.Equal(t, bucket.CredentialID, snapshot.Keys[0].KeyID)
 	require.EqualValues(t, 2, snapshot.Keys[0].Requests)
+}
+
+func TestUsageMetricsFlushScalingCardinalities(t *testing.T) {
+	f := newUsageFlushFixture(t)
+	for _, buckets := range []int{1, 100, 1000} {
+		for _, shape := range []string{"no_credentials", "one_per_owner", "ten_per_owner"} {
+			t.Run(fmt.Sprintf("B%d/%s", buckets, shape), func(t *testing.T) {
+				events := f.reset(t, buckets, shape)
+				f.record(events)
+				require.NoError(t, f.service.Flush(context.Background()))
+				state := f.verify(t, events)
+				expectedOwners, expectedCredentials := buckets, buckets
+				if shape == "ten_per_owner" {
+					expectedOwners = (buckets + 9) / 10
+				} else if shape == "no_credentials" {
+					expectedCredentials = 0
+				}
+				require.Len(t, state.Owners, expectedOwners)
+				require.Len(t, state.Credentials, expectedCredentials)
+				require.Equal(t, [8]int64{1, int64(buckets), int64(expectedCredentials), 5, 0, 1, 1, 0}, usageFlushCounts(*f.counters))
+			})
+		}
+	}
+}
+
+func TestUsageMetricsFlushScalingCommittedRetryPreservesNewEvents(t *testing.T) {
+	f := newUsageFlushFixture(t)
+	events := f.reset(t, 2, "ten_per_owner")
+	f.record(events)
+	f.probe.loseReply = true
+	require.ErrorIs(t, f.service.Flush(context.Background()), errUsageFlushReplyLost)
+	committedID := f.probe.lastID
+	state := f.verify(t, events)
+	require.Len(t, state.Owners, 1)
+	require.Len(t, state.Credentials, 2)
+	newer := usageFlushLater(events, 30, 20)
+	f.record(newer)
+	*f.counters = usageFlushCounters{}
+	require.NoError(t, f.service.Flush(context.Background()))
+	require.NotEqual(t, committedID, f.probe.lastID)
+	require.Equal(t, [8]int64{2, 2, 2, 10, 0, 2, 2, 0}, usageFlushCounts(*f.counters))
+	f.verify(t, append(events, newer...))
+	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
+		var count int64
+		if err := tx.Table("usage_metric_flushes").Count(&count).Error; err != nil {
+			return err
+		}
+		require.EqualValues(t, 2, count)
+		return nil
+	}))
+}
+
+func TestUsageMetricsFlushScalingFailureRollsBackLedgerAndBothTables(t *testing.T) {
+	f := newUsageFlushFixture(t)
+	events := f.reset(t, 2, "ten_per_owner")
+	f.record(events)
+	require.NoError(t, f.service.Flush(context.Background()))
+	bucket := usageFlushExpected(events[:1]).Credentials[0]
+	bucket.KeyID = events[0].KeyID
+	invalid := bucket
+	invalid.StatusClass = 0
+	failedID := uuid.New()
+	require.Error(t, f.repo.UpsertBuckets(context.Background(), failedID, []domain.UsageMetricBucket{bucket, invalid}))
+	f.verify(t, events)
+	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
+		var count int64
+		if err := tx.Table("usage_metric_flushes").Where("flush_id = ?", failedID).Count(&count).Error; err != nil {
+			return err
+		}
+		require.Zero(t, count)
+		return nil
+	}))
+	require.NoError(t, f.repo.UpsertBuckets(context.Background(), failedID, []domain.UsageMetricBucket{bucket}))
+	f.verify(t, append(events, events[0]))
+}
+
+func TestUsageMetricsFlushScalingConcurrentRecording(t *testing.T) {
+	f := newUsageFlushFixture(t)
+	events := f.reset(t, 2, "ten_per_owner")
+	f.record(events)
+	require.NoError(t, f.service.Flush(context.Background()))
+	newer, concurrent := usageFlushLater(events, 30, 20), usageFlushLater(events, 35, 50)
+	f.record(newer)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	drained, proceed := make(chan struct{}), make(chan struct{})
+	f.probe.before = func() {
+		close(drained)
+		select {
+		case <-proceed:
+		case <-ctx.Done():
+		}
+	}
+	done := make(chan error, 1)
+	go func() { done <- f.service.Flush(ctx) }()
+	select {
+	case <-drained:
+	case <-ctx.Done():
+		t.Fatal("flush did not reach the repository after draining")
+	}
+	f.record(concurrent)
+	close(proceed)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-ctx.Done():
+		t.Fatal("concurrent flush did not finish")
+	}
+	expected := append(events, newer...)
+	f.verify(t, expected)
+	require.NoError(t, f.service.Flush(ctx))
+	f.verify(t, append(expected, concurrent...))
 }
