@@ -536,9 +536,9 @@ func TestRememberFailureHelpersCoverReplayAndInputConversions(t *testing.T) {
 	require.Equal(t, "submission", converted[0].InitialEvent.EventKind)
 	require.Equal(t, "markup", converted[0].InitialEvent.Signals[0].Kind)
 	require.Nil(t, rememberEvidenceInputs(nil))
-	require.Equal(t, "submission_policy_rejected", rememberFailureNotStoredReason(rememberapp.SubmissionErrorPolicyRejected))
-	require.Equal(t, "stale_input", rememberFailureNotStoredReason(rememberapp.SubmissionErrorStaleInput))
-	require.Equal(t, "internal_failure", rememberFailureNotStoredReason(rememberapp.SubmissionErrorDatabaseFailure))
+	require.Equal(t, "submission_policy_rejected", rememberapp.TerminalNotStoredReasonForError(rememberapp.TerminalErrorPolicyRejected))
+	require.Equal(t, "stale_input", rememberapp.TerminalNotStoredReasonForError(rememberapp.TerminalErrorStaleInput))
+	require.Equal(t, "internal_failure", rememberapp.TerminalNotStoredReasonForError(rememberapp.TerminalErrorDatabaseFailure))
 	require.Empty(t, rememberFailureRelationshipRefs(nil))
 	require.Equal(t, []string{"a", ""}, rememberFailureRelationshipRefs(map[string]any{
 		"relationship_hints": []any{map[string]any{"ref": " a "}, "not-an-object"},

@@ -10,6 +10,8 @@ const (
 	ToolVisibility               = "active"
 )
 
+const MaxOriginalPredicateRunes = 256
+
 // ContractVersionCompatible reports versions whose terminal Remember shape
 // and replay semantics are intentionally preserved by the current server.
 func ContractVersionCompatible(version string) bool {

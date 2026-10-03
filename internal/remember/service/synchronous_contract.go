@@ -658,7 +658,7 @@ func terminalNotStoredReasonAllowed(reason string) bool {
 		return false
 	}
 	switch trimmed {
-	case "not_supported_by_evidence", "stale_input", "submission_policy_rejected", "security_quarantine", "internal_failure":
+	case "not_supported_by_evidence", "stale_input", "submission_policy_rejected", "security_quarantine", "internal_failure", "idempotency_conflict":
 		return true
 	default:
 		return false
@@ -673,7 +673,7 @@ func terminalNotStoredReasonAllowedForResult(result *TerminalRememberResult, rea
 		return reason == "not_supported_by_evidence"
 	}
 	for _, item := range result.Errors {
-		if reason == terminalNotStoredReasonForError(TerminalErrorCode(item.Code)) {
+		if reason == TerminalNotStoredReasonForError(TerminalErrorCode(item.Code)) {
 			return true
 		}
 	}
@@ -689,7 +689,7 @@ func TerminalResultWithError(result *TerminalRememberResult, code TerminalErrorC
 	result.Kind = ResultKindTerminal
 	result.ProcessingState = string(terminalProcessingStateForError(code))
 	result.SearchState = string(TerminalSearchNotRequired)
-	notStoredReason := terminalNotStoredReasonForError(code)
+	notStoredReason := TerminalNotStoredReasonForError(code)
 	for index := range result.Evidence {
 		result.Evidence[index].Disposition = "not_stored"
 		result.Evidence[index].EvidenceID = ""
@@ -715,12 +715,14 @@ func TerminalResultWithError(result *TerminalRememberResult, code TerminalErrorC
 	return &RememberProcessError{Result: result, Err: errors.New(status.Message)}
 }
 
-func terminalNotStoredReasonForError(code TerminalErrorCode) string {
+func TerminalNotStoredReasonForError(code TerminalErrorCode) string {
 	switch normalizeTerminalErrorCode(code) {
 	case TerminalErrorPolicyRejected:
 		return "submission_policy_rejected"
 	case TerminalErrorStaleInput:
 		return "stale_input"
+	case TerminalErrorIdempotencyConflict:
+		return "idempotency_conflict"
 	default:
 		return "internal_failure"
 	}

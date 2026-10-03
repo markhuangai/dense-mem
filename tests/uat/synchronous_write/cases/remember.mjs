@@ -78,6 +78,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     results.push(await runEvidenceConflictCase({ rpc, expect }));
     results.push(await runConcurrentWinnerCase({ rpc, expect }));
     results.push(await runChangedHashConflictCase({ rawRPC, expect }));
+    results.push(await runPredicateWordingBoundsCase({ rpc, expect }));
     results.push(await runSupersessionFenceCase({ rpc, expect }));
     results.push(await assertRememberSessionModelRouting(expect, providerRequestOffset));
   }
@@ -1052,12 +1053,66 @@ async function runChangedHashConflictCase({ rawRPC, expect }) {
   const firstResponse = await rawRPC("tools/call", { name: "remember", arguments: firstArgs });
   const first = terminalPayload(firstResponse.result);
   assertStrictTerminalRemember(first, expect);
+  expect(first.processing_state === "completed", "conflict setup must complete");
+  const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
+  const originalCounts = rememberCanonicalCounts(teamID, first.submission_id);
   const secondArgs = singleItemArguments("conflict", "[fixture:conflict-b]");
   secondArgs.idempotency_key = key;
   const response = await rawRPC("tools/call", { name: "remember", arguments: secondArgs });
   const conflict = response.result?.structuredContent;
   expect(response.result?.isError === true && conflict?.errors?.[0]?.code === "idempotency_conflict", "changed request hash must return a structured public conflict");
+  assertStrictTerminalRemember(conflict, expect);
+  expect(stableJSON(terminalPayload(response.result)) === stableJSON(conflict), "conflict text and structured result must match");
+  const error = conflict.errors[0];
+  expect(error.retryable === false && error.next_action === "resubmit_remember" && error.remediation.includes("new idempotency_key"), "conflict must require an unchanged replay or a deliberately new key");
+  expect(conflict.evidence.length === secondArgs.evidence.length && conflict.relationship_results.length === secondArgs.relationships.length, "conflict must cover every submitted item");
+  for (const item of [...conflict.evidence, ...conflict.relationship_results]) {
+    expect(item.disposition === "not_stored" && item.reason === "idempotency_conflict", "conflict items must retain their actual cause");
+    expect(item.message === error.message && item.remediation === error.remediation, "conflict item guidance must match the terminal error");
+    expect(!item.evidence_id && (!item.splits || item.splits.length === 0), "conflict must not return stored evidence or relationship splits");
+  }
+  expect(rememberCanonicalCounts(teamID, conflict.submission_id).every((count) => count === 0), "conflict must apply zero canonical writes");
+  const replay = terminalPayload((await rawRPC("tools/call", { name: "remember", arguments: firstArgs })).result);
+  expect(stableJSON(replay) === stableJSON(first), "original request replay must retain its authoritative result after a conflict");
+  expect(stableJSON(rememberCanonicalCounts(teamID, first.submission_id)) === stableJSON(originalCounts), "conflict and original replay must preserve canonical state");
   return { fault: "changed-hash", conflict: true };
+}
+
+async function runPredicateWordingBoundsCase({ rpc, expect }) {
+  const tools = (await rpc("tools/list", {})).tools || [];
+  const schema = tools.find((tool) => tool.name === "trace_memory")?.outputSchema;
+  const successSchema = schema?.oneOf?.find((branch) => branch.properties?.observations);
+  const maxLength = successSchema?.properties.observations.items.properties.original_predicate.maxLength;
+  expect(maxLength === 256, "Trace must advertise the accepted original predicate bound");
+  const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
+  const prefix = "Dense-Mem stores durable memory in PostgreSQL. ";
+  const results = [];
+  for (const [length, filler] of [[229, "x"], [256, "界"], [257, "界"]]) {
+    const args = singleItemArguments(`predicate-bound-${length}`, "");
+    const content = prefix + filler.repeat(length - [...prefix].length);
+    args.evidence[0].content = content;
+    const providerOffset = await providerFixtureRequestCount(expect);
+    const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
+    assertStrictTerminalRemember(result, expect);
+    if (length > maxLength) {
+      expect(result.processing_state === "failed" && result.errors[0]?.code === "provider_response_invalid", "over-limit predicate wording must fail complete provider validation");
+      expect(rememberCanonicalCounts(teamID, result.submission_id).every((count) => count === 0), "over-limit predicate must apply zero canonical writes");
+      const providerEnd = await providerFixtureRequestCount(expect);
+      expect(providerOffset !== null && providerEnd - providerOffset === 3, "over-limit predicate must exhaust three bounded complete-response attempts");
+    } else {
+      expect(result.processing_state === "completed", "in-bound predicate wording must be accepted");
+      const relationshipID = result.relationship_results[0]?.splits[0]?.relationship_id;
+      expect(relationshipID, "accepted predicate must return a relationship");
+      const raw = await rpc("tools/call", { name: "trace_memory", arguments: { relationship_id: relationshipID, include_evidence_content: false } });
+      const trace = terminalPayload(raw);
+      expect(stableJSON(trace) === stableJSON(raw.structuredContent), "Trace text and structured result must match");
+      const observation = trace.observations?.find((item) => item.submission_id === result.submission_id);
+      expect(observation?.original_predicate === content, "Trace must preserve accepted original predicate wording exactly");
+      expect([...observation.original_predicate].length === length && length <= maxLength, "Trace must satisfy its advertised Unicode-character bound");
+    }
+    results.push({ length, processing_state: result.processing_state });
+  }
+  return { fault: "predicate-wording-bounds", results };
 }
 
 async function runSupersessionFenceCase({ rpc, expect }) {

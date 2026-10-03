@@ -767,7 +767,10 @@ func TestRememberProcessorConflictProjectsEverySubmittedItem(t *testing.T) {
 		var processErr *rememberapp.RememberProcessError
 		require.ErrorAs(t, err, &processErr)
 		require.ErrorIs(t, err, rememberapp.ErrRememberConflict)
-		require.Equal(t, string(rememberapp.SubmissionErrorIdempotencyConflict), processErr.Status.Errors[0].Code)
+		publicError := processErr.Status.Errors[0]
+		require.Equal(t, string(rememberapp.SubmissionErrorIdempotencyConflict), publicError.Code)
+		require.False(t, publicError.Retryable)
+		require.Equal(t, string(rememberapp.SubmissionNextActionResubmitRemember), publicError.NextAction)
 		require.Equal(t, "failed", processErr.Status.ProcessingState)
 		require.Equal(t, "not_required", processErr.Status.SearchState)
 		require.Equal(t, "conflict-correlation", processErr.Status.CorrelationID)
@@ -779,16 +782,23 @@ func TestRememberProcessorConflictProjectsEverySubmittedItem(t *testing.T) {
 		for index, evidence := range processErr.Status.Evidence {
 			require.Equal(t, "not_stored", evidence.Disposition)
 			require.Equal(t, index, evidence.EvidenceIndex)
-			require.Equal(t, "internal_failure", evidence.Reason)
+			require.Equal(t, "idempotency_conflict", evidence.Reason)
+			require.Equal(t, publicError.Message, evidence.Message)
+			require.Equal(t, publicError.Remediation, evidence.Remediation)
+			require.Empty(t, evidence.EvidenceID)
 			require.Equal(t, "not_required", evidence.SearchState)
 			require.Empty(t, evidence.SupersededEvidenceIDs)
 		}
 		for index, relationship := range processErr.Status.RelationshipResults {
 			require.Equal(t, []string{"rel-a", "rel-b"}[index], relationship.RelationshipRef)
 			require.Equal(t, "not_stored", relationship.Disposition)
-			require.Equal(t, "internal_failure", relationship.Reason)
+			require.Equal(t, "idempotency_conflict", relationship.Reason)
+			require.Equal(t, publicError.Message, relationship.Message)
+			require.Equal(t, publicError.Remediation, relationship.Remediation)
 			require.Empty(t, relationship.Splits)
 		}
+		_, terminal := terminalRememberFailureResult(processErr.Status)
+		require.NoError(t, rememberapp.ValidateTerminalRememberResult(terminal, 2, []string{"rel-a", "rel-b"}))
 	}
 
 	t.Run("existing request mismatch", func(t *testing.T) {

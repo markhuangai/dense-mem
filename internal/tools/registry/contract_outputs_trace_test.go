@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -50,6 +51,45 @@ func TestTraceContractOutputPreservesNullableLegacyVerdicts(t *testing.T) {
 	}
 	if err := ValidateInput(Tool{InputSchema: traceMemoryOutputSchema()}, trace); err != nil {
 		t.Fatalf("nullable verdict output schema validation: %v", err)
+	}
+}
+
+func TestTraceContractOutputPreservesBoundedOriginalPredicate(t *testing.T) {
+	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	tool := toolMap(t)[ToolTraceMemory]
+	for _, test := range []struct {
+		name  string
+		text  string
+		valid bool
+	}{
+		{"128 characters", strings.Repeat("x", 128), true},
+		{"129 characters", strings.Repeat("x", 129), true},
+		{"229 characters", strings.Repeat("x", 229), true},
+		{"256 characters", strings.Repeat("x", 256), true},
+		{"Unicode limit", strings.Repeat("界", 256), true},
+		{"over limit", strings.Repeat("x", 257), false},
+		{"Unicode over limit", strings.Repeat("界", 257), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			output, err := traceContractOutput(&traceapp.SemanticTrace{
+				Relationship: traceContractTestRelationship(now),
+				Observations: []tracecontract.RelationshipObservationRecord{{
+					ObservationID: "observation-long", IngestID: "submission-long",
+					RelationshipID: "relationship-test", OriginalPredicate: test.text,
+				}},
+			})
+			if err != nil {
+				t.Fatalf("traceContractOutput: %v", err)
+			}
+			observations := output["observations"].([]map[string]any)
+			if observations[0]["original_predicate"] != test.text {
+				t.Fatal("Trace changed original predicate wording")
+			}
+			err = ValidateInput(Tool{InputSchema: tool.OutputSchema}, output)
+			if (err == nil) != test.valid {
+				t.Fatalf("Trace output schema validation: valid=%t, error=%v", test.valid, err)
+			}
+		})
 	}
 }
 

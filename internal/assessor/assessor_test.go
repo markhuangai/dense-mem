@@ -67,7 +67,12 @@ func TestSemanticAssessmentPredicateLengthErrorsNameTheProviderRange(t *testing.
 		text  string
 		valid bool
 	}{
+		{name: "128 characters", text: strings.Repeat("x", 128), valid: true},
+		{name: "129 characters", text: strings.Repeat("x", 129), valid: true},
+		{name: "229 characters", text: strings.Repeat("x", 229), valid: true},
+		{name: "256 characters", text: strings.Repeat("x", 256), valid: true},
 		{name: "over limit", text: strings.Repeat("x", 257)},
+		{name: "Unicode over limit", text: strings.Repeat("界", 257)},
 		{name: "blank", text: "   "},
 		{name: "Unicode limit", text: strings.Repeat("界", 256), valid: true},
 	} {

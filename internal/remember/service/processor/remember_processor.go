@@ -447,7 +447,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	publicError := rememberapp.TerminalStatusErrorWithDetails(rememberapp.TerminalErrorCode(code), reasonCode, details)
 	correlationID := rememberProcessCorrelationID(input.Metadata)
 	processingState := "failed"
-	notStoredReason := rememberFailureNotStoredReason(code)
+	notStoredReason := rememberapp.TerminalNotStoredReasonForError(rememberapp.TerminalErrorCode(code))
 	evidence, relationshipResults := rememberFailureResults(input, notStoredReason)
 	status := &rememberapp.SubmissionStatusResult{
 		ContractVersion: domain.ContractVersion, SubmissionID: attemptID, SubmissionKind: "remember",

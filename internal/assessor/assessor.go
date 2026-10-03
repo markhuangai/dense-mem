@@ -956,8 +956,8 @@ func validateSemanticAssessmentRelationshipResults(
 			} else if !semanticAssessmentEntityResultGrounded(subject) {
 				errs = append(errs, semanticErr(path+".subject_ref", "references an ungrounded Entity and must be repaired or marked not_supported"))
 			}
-			if !assessmentBoundedRequiredString(split.OriginalPredicate, 256) {
-				errs = append(errs, semanticErr(path+".predicate_range", "must select a non-blank predicate phrase of at most 256 Unicode characters"))
+			if !assessmentBoundedRequiredString(split.OriginalPredicate, domain.MaxOriginalPredicateRunes) {
+				errs = append(errs, semanticErr(path+".predicate_range", fmt.Sprintf("must select a non-blank predicate phrase of at most %d Unicode characters", domain.MaxOriginalPredicateRunes)))
 			}
 			objectKind, objectErr := assessmentRelationshipObjectKind(split, entityByRef)
 			if objectErr != "" {

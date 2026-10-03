@@ -408,6 +408,7 @@ func TestValidateTerminalRememberResultAcceptsContextualNotStoredReasons(t *test
 		{"stale input", string(TerminalProcessingFailed), TerminalErrorStaleInput, "stale_input"},
 		{"policy rejection", string(TerminalProcessingFailed), TerminalErrorPolicyRejected, "submission_policy_rejected"},
 		{"failure", string(TerminalProcessingFailed), TerminalErrorProviderUnavailable, "internal_failure"},
+		{"idempotency conflict", string(TerminalProcessingFailed), TerminalErrorIdempotencyConflict, "idempotency_conflict"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			result := terminalFailureResultForTest(test.state, test.code, test.reason)
@@ -426,6 +427,15 @@ func TestValidateTerminalRememberResultRejectsMismatchedNotStoredReasons(t *test
 		}},
 		{"completed relationship reason", func(result *TerminalRememberResult) {
 			result.RelationshipResults[1].Reason = "internal_failure"
+		}},
+		{"completed idempotency reason", func(result *TerminalRememberResult) {
+			result.RelationshipResults[1].Reason = "idempotency_conflict"
+		}},
+		{"operational failure idempotency reason", func(result *TerminalRememberResult) {
+			*result = *terminalFailureResultForTest(string(TerminalProcessingFailed), TerminalErrorProviderUnavailable, "idempotency_conflict")
+		}},
+		{"conflict internal failure reason", func(result *TerminalRememberResult) {
+			*result = *terminalFailureResultForTest(string(TerminalProcessingFailed), TerminalErrorIdempotencyConflict, "internal_failure")
 		}},
 		{"policy-rejected evidence reason", func(result *TerminalRememberResult) {
 			failure := terminalFailureResultForTest(string(TerminalProcessingFailed), TerminalErrorPolicyRejected, "stale_input")

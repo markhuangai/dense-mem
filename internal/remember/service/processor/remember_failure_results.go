@@ -35,7 +35,7 @@ func rememberConflictProcessError(
 	if cause == nil {
 		cause = rememberapp.ErrRememberConflict
 	}
-	evidence, relationshipResults := rememberFailureResults(input, "internal_failure")
+	evidence, relationshipResults := rememberFailureResults(input, rememberapp.TerminalNotStoredReasonForError(rememberapp.TerminalErrorIdempotencyConflict))
 	status := &rememberapp.SubmissionStatusResult{
 		ContractVersion: domain.ContractVersion, SubmissionID: submissionID, SubmissionKind: "remember",
 		ProcessingState: "failed", SearchState: "not_required", CorrelationID: rememberProcessCorrelationID(input.Metadata),
@@ -43,17 +43,6 @@ func rememberConflictProcessError(
 		Errors: []rememberapp.SubmissionStatusError{rememberapp.StatusErrorWithDetails(rememberapp.SubmissionErrorIdempotencyConflict, "idempotency_conflict", map[string]any{"component": "remember.idempotency", "server_owned": true})},
 	}
 	return &rememberapp.RememberProcessError{Status: status, Err: cause}
-}
-
-func rememberFailureNotStoredReason(code rememberapp.SubmissionErrorCode) string {
-	switch code {
-	case rememberapp.SubmissionErrorPolicyRejected:
-		return "submission_policy_rejected"
-	case rememberapp.SubmissionErrorStaleInput:
-		return "stale_input"
-	default:
-		return "internal_failure"
-	}
 }
 
 func rememberFailureResults(

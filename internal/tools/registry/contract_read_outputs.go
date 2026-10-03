@@ -312,7 +312,7 @@ func traceObservationSchema() map[string]any {
 			"relationship_id":    nullableString("Relationship ID when resolved.", 128),
 			"submission_id":      schemaString("Submission ID.", 128),
 			"subject_ref":        schemaString("Submitted subject ref.", 128),
-			"original_predicate": schemaString("Original predicate wording.", 128),
+			"original_predicate": schemaString("Original predicate wording.", domain.MaxOriginalPredicateRunes),
 			"object_ref":         schemaString("Submitted object ref.", 128),
 			"polarity":           schemaEnum([]string{"+", "-"}),
 			"created_at":         map[string]any{"type": "string", "format": "date-time"},

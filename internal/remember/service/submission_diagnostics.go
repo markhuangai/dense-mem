@@ -347,6 +347,9 @@ func NotStoredGuidance(reason string) (string, string) {
 	if reason == "stale_input" {
 		code = SubmissionErrorStaleInput
 	}
+	if reason == "idempotency_conflict" {
+		code = SubmissionErrorIdempotencyConflict
+	}
 	value := StatusError(code)
 	return value.Message, value.Remediation
 }
