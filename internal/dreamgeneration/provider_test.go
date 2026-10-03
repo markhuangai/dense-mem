@@ -30,26 +30,11 @@ func TestProviderHandlesUnavailableTransportAndModelName(t *testing.T) {
 	require.Empty(t, nilProvider.ModelName())
 	_, err := nilProvider.GenerateDreams(context.Background(), dreamGenerationTestRequest(t))
 	require.Error(t, err)
-	_, err = nilProvider.GenerateEvidenceDiscoveries(context.Background(), evidenceDiscoveryTestRequest(t))
-	require.Error(t, err)
 
 	provider := NewProvider(&errorStructuredTransport{}, "model", DefaultSemanticAssessmentLimits())
 	require.Equal(t, "model", provider.ModelName())
 	_, err = provider.GenerateDreams(context.Background(), dreamGenerationTestRequest(t))
 	require.ErrorContains(t, err, "transport failed")
-	_, err = provider.GenerateEvidenceDiscoveries(context.Background(), evidenceDiscoveryTestRequest(t))
-	require.ErrorContains(t, err, "transport failed")
-}
-
-func TestEvidenceProviderCountsTransportFailureAsProviderTurn(t *testing.T) {
-	transport := &countingErrorStructuredTransport{}
-	provider := NewProvider(transport, "model", DefaultSemanticAssessmentLimits())
-
-	response, err := provider.GenerateEvidenceDiscoveries(context.Background(), evidenceDiscoveryTestRequest(t))
-
-	require.ErrorContains(t, err, "transport failed")
-	require.Equal(t, 1, transport.calls)
-	require.Equal(t, 1, response.ProviderTurns)
 }
 
 func TestGraphProviderRepairsMalformedResponseWithBoundedCorrection(t *testing.T) {
@@ -69,8 +54,6 @@ func TestProviderRejectsInvalidRequestsAndTokenBudgets(t *testing.T) {
 	var providerErr *modelprovider.ProviderError
 	require.ErrorAs(t, err, &providerErr)
 	require.Equal(t, modelprovider.ProviderFailureClassRequestInvalid, providerErr.FailureClass)
-	_, err = provider.GenerateEvidenceDiscoveries(context.Background(), EvidenceDiscoveryRequest{})
-	require.ErrorAs(t, err, &providerErr)
 	require.Equal(t, modelprovider.ProviderFailureClassRequestInvalid, providerErr.FailureClass)
 
 	limits := DefaultSemanticAssessmentLimits()
@@ -83,18 +66,8 @@ func TestProviderRejectsInvalidRequestsAndTokenBudgets(t *testing.T) {
 	limits = DefaultSemanticAssessmentLimits()
 	limits.MaxOutputTokens = 1
 	outputBudgeted := NewProvider(&graphProviderTransportStub{}, "graph-model", limits)
-	_, err = outputBudgeted.GenerateEvidenceDiscoveries(context.Background(), evidenceDiscoveryTestRequest(t))
+	_, err = outputBudgeted.GenerateDreams(context.Background(), dreamGenerationTestRequest(t))
 	require.Error(t, err)
-}
-
-func TestProviderCorrectionErrorFormattingIsBounded(t *testing.T) {
-	input := []assessor.SemanticValidationError{{Field: strings.Repeat("f", 200), Message: strings.Repeat("m", 400)}}
-	correction := boundedCorrectionErrors(input)
-	require.Len(t, correction, 1)
-	require.Len(t, correction[0]["field"], 128)
-	require.Len(t, correction[0]["message"], 256)
-	graphCorrection := boundedGraphCorrectionErrors(input)
-	require.Len(t, graphCorrection, 1)
 }
 
 func TestProviderRejectsReportedUsageAndTokenizerFailures(t *testing.T) {
@@ -110,35 +83,18 @@ func TestProviderRejectsReportedUsageAndTokenizerFailures(t *testing.T) {
 	require.Equal(t, 1, graphUsage.calls)
 
 	limits = DefaultSemanticAssessmentLimits()
-	limits.MaxOutputTokens = 100
-	provider = NewProvider(&usageStructuredTransport{completionTokens: limits.MaxOutputTokens + 1}, "model", limits)
-	_, err = provider.GenerateEvidenceDiscoveries(context.Background(), evidenceDiscoveryTestRequest(t))
-	require.Error(t, err)
-
-	limits = DefaultSemanticAssessmentLimits()
 	limits.Tokenizer = "invalid-tokenizer"
 	provider = NewProvider(&graphProviderTransportStub{}, "model", limits)
 	_, err = provider.GenerateDreams(context.Background(), dreamGenerationTestRequest(t))
 	require.Error(t, err)
 }
 
-func TestProviderRejectsTheOppositeReportedUsageOverages(t *testing.T) {
-	var malformed *modelprovider.MalformedResponseError
+func TestProviderRejectsReportedOutputUsageOverage(t *testing.T) {
 	limits := DefaultSemanticAssessmentLimits()
 	limits.MaxOutputTokens = 100
 	provider := NewProvider(&usageStructuredTransport{completionTokens: limits.MaxOutputTokens + 1}, "model", limits)
 	_, err := provider.GenerateDreams(context.Background(), dreamGenerationTestRequest(t))
 	require.Error(t, err)
-
-	limits = DefaultSemanticAssessmentLimits()
-	limits.MaxInputTokens = 10_000
-	evidenceUsage := &usageStructuredTransport{promptTokens: limits.MaxInputTokens + 1}
-	provider = NewProvider(evidenceUsage, "model", limits)
-	_, err = provider.GenerateEvidenceDiscoveries(context.Background(), evidenceDiscoveryTestRequest(t))
-	require.ErrorAs(t, err, &malformed)
-	require.Equal(t, "input_budget", malformed.FailureClass)
-	require.Equal(t, 1, malformed.Attempts)
-	require.Equal(t, 1, evidenceUsage.calls)
 }
 
 func TestProviderRepairsMalformedJSONBeforeAcceptingACompleteResponse(t *testing.T) {
@@ -149,12 +105,6 @@ func TestProviderRepairsMalformedJSONBeforeAcceptingACompleteResponse(t *testing
 	require.Empty(t, response.Proposals)
 	require.Equal(t, 2, response.ProviderTurns)
 
-	transport = &invalidJSONThenValidTransport{}
-	provider = NewProvider(transport, "model", DefaultSemanticAssessmentLimits())
-	evidenceResponse, err := provider.GenerateEvidenceDiscoveries(context.Background(), evidenceDiscoveryTestRequest(t))
-	require.NoError(t, err)
-	require.Empty(t, evidenceResponse.Proposals)
-	require.Equal(t, 2, evidenceResponse.ProviderTurns)
 }
 
 func TestProviderStopsBeforeARepairedRequestExceedsTheInputBudget(t *testing.T) {
@@ -182,36 +132,11 @@ func TestProviderStopsBeforeARepairedRequestExceedsTheInputBudget(t *testing.T) 
 		require.Equal(t, 1, malformed.Attempts)
 	})
 
-	t.Run("evidence", func(t *testing.T) {
-		req := evidenceDiscoveryTestRequest(t)
-		limits := DefaultSemanticAssessmentLimits()
-		prepared, errs := PrepareEvidenceDiscoveryRequest(req, limits)
-		require.Empty(t, errs)
-		payload, err := json.Marshal(prepared)
-		require.NoError(t, err)
-		messages := []modelprovider.Message{{Role: "system", Content: evidenceDiscoverySystemPrompt}, {Role: "user", Content: string(payload)}}
-		budget, err := messageTokens(messages, limits.Tokenizer)
-		require.NoError(t, err)
-		requestBudget, err := assessor.CountTokens(evidenceDiscoverySystemPrompt+string(payload), limits.Tokenizer)
-		require.NoError(t, err)
-		if budget < requestBudget {
-			budget = requestBudget
-		}
-		limits.MaxInputTokens = budget
-		provider := NewProvider(&invalidJSONThenValidTransport{}, "model", limits)
-		_, err = provider.GenerateEvidenceDiscoveries(context.Background(), req)
-		var malformed *modelprovider.MalformedResponseError
-		require.ErrorAs(t, err, &malformed)
-		require.Equal(t, "input_budget", malformed.FailureClass)
-		require.Equal(t, 1, malformed.Attempts)
-	})
 }
 
 func TestProviderReportsInvalidProviderOutputEncoding(t *testing.T) {
 	provider := NewProvider(invalidUTF8Transport{}, "model", DefaultSemanticAssessmentLimits())
 	_, err := provider.GenerateDreams(context.Background(), dreamGenerationTestRequest(t))
-	require.Error(t, err)
-	_, err = provider.GenerateEvidenceDiscoveries(context.Background(), evidenceDiscoveryTestRequest(t))
 	require.Error(t, err)
 }
 
@@ -225,8 +150,6 @@ func TestProviderCorrectionErrorsAreSortedAndBounded(t *testing.T) {
 	require.Equal(t, "response", bounded[len(bounded)-1].Field)
 	require.Contains(t, bounded[len(bounded)-1].Message, "additional validation errors")
 
-	correction := boundedCorrectionErrors(make([]assessor.SemanticValidationError, 34))
-	require.Len(t, correction, 32)
 }
 
 func TestDreamGenerationLimitsNormalizeUnsetValues(t *testing.T) {
@@ -244,15 +167,6 @@ type graphProviderTransportStub struct {
 type errorStructuredTransport struct{}
 
 func (errorStructuredTransport) Complete(context.Context, modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
-	return modelprovider.StructuredResult{}, errors.New("transport failed")
-}
-
-type countingErrorStructuredTransport struct {
-	calls int
-}
-
-func (s *countingErrorStructuredTransport) Complete(context.Context, modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
-	s.calls++
 	return modelprovider.StructuredResult{}, errors.New("transport failed")
 }
 
@@ -277,7 +191,7 @@ func (s *invalidJSONThenValidTransport) Complete(_ context.Context, request mode
 	if len(s.requests) == 1 {
 		return modelprovider.StructuredResult{Content: "{"}, nil
 	}
-	return modelprovider.StructuredResult{Content: validEvidenceDiscoveryResponseJSON(payload.RequestID)}, nil
+	return modelprovider.StructuredResult{Content: `{"request_id":"` + payload.RequestID + `","proposals":[]}`}, nil
 }
 
 type invalidUTF8Transport struct{}

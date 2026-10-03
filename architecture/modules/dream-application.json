@@ -24,12 +24,6 @@
       "path": "internal/dreamgeneration/contract_test.go"
     },
     {
-      "path": "internal/dreamgeneration/evidence_contract.go"
-    },
-    {
-      "path": "internal/dreamgeneration/evidence_contract_test.go"
-    },
-    {
       "path": "internal/dreamgeneration/provider.go"
     },
     {

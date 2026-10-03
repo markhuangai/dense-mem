@@ -168,7 +168,7 @@ test("control panel loads team Dreams without re-evaluation", async ({ page }) =
   expect(refreshRequests).toEqual([]);
 });
 
-test("control panel renders evidence-discovery citations and lane output", async ({ page }) => {
+test("control panel renders historical discovery citations and lane output", async ({ page }) => {
   await openControlPanel(page);
   await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
   await page.getByRole("button", { name: /team dreams/i }).click();
@@ -184,7 +184,7 @@ test("control panel renders evidence-discovery citations and lane output", async
   await expect(evidenceRun).toContainText("Evidence discovery stored");
 });
 
-test("control panel surfaces an adverse evidence-discovery run", async ({ page }) => {
+test("control panel surfaces a historical failed discovery run", async ({ page }) => {
   await openControlPanel(page);
   await page.getByRole("button", { name: new RegExp(escapeRegExp(evidenceFailureTeamName)) }).click();
   await page.getByRole("button", { name: /team dreams/i }).click();

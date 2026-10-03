@@ -16,9 +16,11 @@ func contractInput(required []string, properties map[string]any) map[string]any 
 }
 
 func rememberInputSchema() map[string]any {
-	return contractInput([]string{"evidence", "idempotency_key"}, map[string]any{
+	relationships := relationshipSubmissionArraySchema()
+	relationships["minItems"] = 1
+	return contractInput([]string{"evidence", "relationships", "idempotency_key"}, map[string]any{
 		"evidence":        evidenceArraySchema(),
-		"relationships":   relationshipSubmissionArraySchema(),
+		"relationships":   relationships,
 		"idempotency_key": nonEmptyStringSchema("One batch retry key scoped to team and profile.", 128),
 	})
 }
@@ -66,7 +68,7 @@ func relationshipSubmissionArraySchema() map[string]any {
 		"type":        "array",
 		"minItems":    0,
 		"maxItems":    200,
-		"description": "Optional Relationship proposals. Each proposal must cite submitted evidence_indices; the server and assessor own exact grounding.",
+		"description": "Relationship proposals citing submitted evidence_indices. Every Remember evidence item must be cited; the server and assessor own exact grounding.",
 		"items":       relationshipSubmissionSchema(),
 	}
 }

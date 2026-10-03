@@ -130,7 +130,7 @@ RC 标签为 `vX.Y.Z-rc.N` 和 `demo-vX.Y.Z-rc.N`。稳定版标签为 `vX.Y.Z`�
 OpenAI 默认值；chat model 需要在 `.env` 中明确选择。
 
 `AI_REMEMBER_MODEL`、`AI_CONFLICT_REVIEW_MODEL`、`AI_DREAM_GRAPH_MODEL`、
-`AI_DREAM_EVIDENCE_MODEL` 和 `AI_COMMUNITY_SUMMARY_MODEL` 是对应现有 AI
+`AI_COMMUNITY_SUMMARY_MODEL` 是对应现有 AI
 session 的可选覆盖。未设置或仅包含空白字符时使用 `AI_VERIFIER_MODEL`；已配置
 model 的失败会直接返回，不会改用 fallback model。
 
@@ -172,8 +172,9 @@ AI_VERIFIER_TIMEOUT_SECONDS=300
 
 调用方提交逻辑层的 Entity、predicate 和 Value 提议，不提交文本 offset。
 `remember` 不接受 `span`、`surface` 或 Relationship 的 `supports` 字段。Relationship
-提议是可选的；若提交，则列出支持它的从零开始的 `evidence_indices`，但不要求覆盖全部证据。
-单个 assessor 会话会审查每条 evidence 的安全性（包括 evidence-only 提交），并且只针对调用方
+提议必须通过非空 `relationships` 数组提交，并列出支持它的从零开始的 `evidence_indices`。
+每条证据必须被至少一个提议引用；缺少提议或引用覆盖不完整时，在 intake 或 provider 调用前返回详细校验错误。
+单个 assessor 会话会审查每条 evidence 的安全性，并且只针对调用方
 提交的 Relationship、依据其引用的 evidence 做 grounding 或规范化，不搜索 memory，也不发现新
 Relationship。闭合 Schema 校验和确定性服务端策略决定哪些内容可以安全提交。
 
@@ -183,8 +184,12 @@ Relationship 仍必须至少包含一个提交证据的 `evidence_indices` 支�
 canonical 名称或 alias；代词只有在 assessor 收到服务端为更早精确名称范围签发的 anchor 时才可用。
 不可访问或在评估后变为陈旧的 known evidence 只会让该 Relationship 变为不支持，不泄露 ID 是否存在。
 单个请求中的 known evidence 文本总量在 assessor 边界展开前限制为 20,000 个 Unicode 码点；
-超过限制的请求会返回 `input_budget_exceeded`。当前公共契约为 `dense-mem.v2.6.3`；
-`dense-mem.v2.6.2` 仍接受用于兼容重放。
+超过限制的请求会返回 `input_budget_exceeded`。当前公共契约为 `dense-mem.v2.6.6`；
+`dense-mem.v2.6.3` 和 `dense-mem.v2.6.2` 仍接受用于兼容终态重放。旧请求若缺少提议或完整引用，
+即使使用原有 key 重试也会被拒绝，已存储历史仍保留。
+
+Dream 仅保留图推理生成，不再运行每小时 evidence discovery。历史 discovery Dream 仍可读取，
+并由其所有者确认。运行退役 migration 前必须停止旧服务实例；未完成的 discovery run 会不可逆取消，历史不会删除。
 
 若要替换自己拥有的一条当前证据，把其 UUID 放入新证据的
 `supersedes_evidence_ids`。直接指定目标与通过 `previous_source_revision` 推进
@@ -226,12 +231,12 @@ canonical 名称或 alias；代词只有在 assessor 收到服务端为更早精
 直接 supersession 会随完整 batch 暂存。只有在语义提交被接受的同一事务中，目标才会
 退役；失败的提交会让目标继续有效。这样，未成为受支持记忆的替换不会使当前证据失效。
 
-Remember 使用一个覆盖完整 batch 的 assessor 会话。每条 evidence（包括 evidence-only 提交）
+Remember 使用一个覆盖完整 batch 的 assessor 会话。每条 evidence
 都会得到安全结果；任何不安全 evidence 都以 `submission_policy_rejected` 使整个 batch 失败，
-且不写入语义、搜索或 embedding。安全 evidence 即使没有 Relationship 提议或没有提议被接受，
+且不写入语义、搜索或 embedding。安全 evidence 即使全部 Relationship 提议不被支持，
 仍会存储并建立索引。assessor 只对调用方提交的 Relationship、依据其引用的 evidence 做
 grounding 和规范化，不搜索 memory、寻找 evidence 支持或发现新 Relationship。每个 Relationship
-ref 都会得到 `stored` 或 `not_stored` disposition；不支持的提议是完成结果中的警告。暂存后发生的
+ref 都会得到 `stored` 或 `not_stored` disposition；不支持的提议返回带有原因、消息和修复建议的 `not_stored` 结果；客户端必须检查结果，并使用新 key 提交修正请求。暂存后发生的
 客户端自有约束变化会以 `stale_input` 报告。provider、配置、数据库和内部故障使用有界的运维
 错误码。所有接受的语义效果原子提交，不提供部分替换或交互式 placement review。
 

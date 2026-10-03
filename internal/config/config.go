@@ -157,7 +157,6 @@ type Config struct {
 	AIRememberModel                       string
 	AIConflictReviewModel                 string
 	AIDreamGraphModel                     string
-	AIDreamEvidenceModel                  string
 	AICommunitySummaryModel               string
 	AIVerifierDisableTemperature          bool
 	AIVerifierTimeoutSeconds              int
@@ -259,9 +258,6 @@ func (c *Config) GetAIConflictReviewModel() string {
 }
 func (c *Config) GetAIDreamGraphModel() string {
 	return effectiveAISessionModel(c.AIDreamGraphModel, c.AIVerifierModel)
-}
-func (c *Config) GetAIDreamEvidenceModel() string {
-	return effectiveAISessionModel(c.AIDreamEvidenceModel, c.AIVerifierModel)
 }
 func (c *Config) GetAICommunitySummaryModel() string {
 	return effectiveAISessionModel(c.AICommunitySummaryModel, c.AIVerifierModel)
@@ -586,7 +582,6 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 	cfg.AIRememberModel = os.Getenv("AI_REMEMBER_MODEL")
 	cfg.AIConflictReviewModel = os.Getenv("AI_CONFLICT_REVIEW_MODEL")
 	cfg.AIDreamGraphModel = os.Getenv("AI_DREAM_GRAPH_MODEL")
-	cfg.AIDreamEvidenceModel = os.Getenv("AI_DREAM_EVIDENCE_MODEL")
 	cfg.AICommunitySummaryModel = os.Getenv("AI_COMMUNITY_SUMMARY_MODEL")
 	cfg.AIVerifierDisableTemperature, err = parseBoolOrDefault("AI_VERIFIER_DISABLE_TEMPERATURE", false)
 	if err != nil {

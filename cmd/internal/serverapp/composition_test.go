@@ -36,7 +36,6 @@ func TestAISessionModelsUseIndependentOverrides(t *testing.T) {
 		remember:         "verifier-model",
 		conflictReview:   "verifier-model",
 		dreamGraph:       "verifier-model",
-		dreamEvidence:    "verifier-model",
 		communitySummary: "verifier-model",
 	}
 	for name, configure := range map[string]func(*config.Config){
@@ -45,9 +44,6 @@ func TestAISessionModelsUseIndependentOverrides(t *testing.T) {
 			cfg.AIConflictReviewModel = "conflict-model"
 		},
 		"dream graph": func(cfg *config.Config) { cfg.AIDreamGraphModel = "dream-graph-model" },
-		"dream evidence": func(cfg *config.Config) {
-			cfg.AIDreamEvidenceModel = "dream-evidence-model"
-		},
 		"community summary": func(cfg *config.Config) {
 			cfg.AICommunitySummaryModel = "community-model"
 		},
@@ -64,8 +60,6 @@ func TestAISessionModelsUseIndependentOverrides(t *testing.T) {
 				want.conflictReview = "conflict-model"
 			case "dream graph":
 				want.dreamGraph = "dream-graph-model"
-			case "dream evidence":
-				want.dreamEvidence = "dream-evidence-model"
 			case "community summary":
 				want.communitySummary = "community-model"
 			}
@@ -80,14 +74,12 @@ func TestAISessionModelsUseIndependentOverrides(t *testing.T) {
 		AIRememberModel:         "remember-model",
 		AIConflictReviewModel:   "conflict-model",
 		AIDreamGraphModel:       "dream-graph-model",
-		AIDreamEvidenceModel:    "dream-evidence-model",
 		AICommunitySummaryModel: "community-model",
 	})
 	wantAll := aiSessionModels{
 		remember:         "remember-model",
 		conflictReview:   "conflict-model",
 		dreamGraph:       "dream-graph-model",
-		dreamEvidence:    "dream-evidence-model",
 		communitySummary: "community-model",
 	}
 	if all != wantAll {
@@ -229,7 +221,6 @@ func TestConfiguredSessionModelsDoNotFallbackAfterProviderFailure(t *testing.T) 
 		AIRememberModel:         "remember-model",
 		AIConflictReviewModel:   "conflict-model",
 		AIDreamGraphModel:       "dream-graph-model",
-		AIDreamEvidenceModel:    "dream-evidence-model",
 		AICommunitySummaryModel: "community-model",
 	}
 	models := aiSessionModelsForConfig(cfg)
@@ -256,13 +247,6 @@ func TestConfiguredSessionModelsDoNotFallbackAfterProviderFailure(t *testing.T) 
 			return err
 		},
 		func() error {
-			_, err := assessorProvider.Complete(context.Background(), modelprovider.StructuredRequest{
-				Model: models.dreamEvidence, Messages: []modelprovider.Message{{Role: "user", Content: "{}"}},
-				SchemaName: "dream_evidence", Schema: map[string]any{"type": "object"},
-			})
-			return err
-		},
-		func() error {
 			_, err := verifierProvider.Verify(context.Background(), verifier.Request{ProfileID: "profile", Predicate: "claim"})
 			return err
 		},
@@ -279,7 +263,6 @@ func TestConfiguredSessionModelsDoNotFallbackAfterProviderFailure(t *testing.T) 
 	wantModels := []string{
 		"remember-model",
 		"dream-graph-model",
-		"dream-evidence-model",
 		"conflict-model",
 		"community-model",
 	}

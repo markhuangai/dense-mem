@@ -81,7 +81,7 @@ func TestResolveFeedbackUsesExplicitRememberResultKind(t *testing.T) {
 			}
 			remember := &rememberServiceStub{result: tc.result, err: rememberErr}
 			svc := New(Dependencies{Store: repo, Remember: remember})
-			result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+			result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 				DreamID: hypothesisID, Decision: "confirm_true",
 				Evidence: []rememberapp.RememberEvidenceInput{{Content: "An independent deployment note."}},
 			})
@@ -120,7 +120,7 @@ func TestResolveFeedbackRecordsMalformedTerminalResultDiagnostic(t *testing.T) {
 		Diagnostics: diagnostics,
 	})
 
-	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID: hypothesisID, Decision: "confirm_true",
 		Evidence: []rememberapp.RememberEvidenceInput{{Content: "An independent deployment note."}},
 	})
@@ -152,7 +152,7 @@ func TestResolveFeedbackHonorsCancellationBeforeHypothesisFinalization(t *testin
 	}
 	svc := New(Dependencies{Store: repo, Remember: remember})
 
-	result, err := svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
+	result, err := svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID:  hypothesisID,
 		Decision: "confirm_true",
 		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
@@ -163,7 +163,7 @@ func TestResolveFeedbackHonorsCancellationBeforeHypothesisFinalization(t *testin
 	require.Equal(t, 1, repo.submitCalls)
 
 	remember.after = nil
-	retried, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+	retried, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID:  hypothesisID,
 		Decision: "confirm_true",
 		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
@@ -192,7 +192,7 @@ func TestResolveFeedbackRetriesHypothesisFinalizationAfterTransientFailure(t *te
 	}
 	svc := New(Dependencies{Store: repo, Remember: remember})
 
-	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID:  hypothesisID,
 		Decision: "confirm_true",
 		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
@@ -216,7 +216,7 @@ func TestResolveFeedbackReplaysCompletedRememberResult(t *testing.T) {
 	}}
 	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), ingestID)}
 	svc := New(Dependencies{Store: repo, Remember: remember})
-	request := ResolveFeedbackRequest{
+	request := ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID: hypothesisID, Decision: "confirm_true", IdempotencyKey: "dream-replay",
 		Evidence: []rememberapp.RememberEvidenceInput{{Content: "An independent deployment note."}},
 	}
@@ -253,7 +253,7 @@ func TestResolveFeedbackRecordsConfirmationFailureWhenRememberReturnsOrdinaryErr
 	diagnostics := &diagnosticRepositoryStub{}
 	remember := &rememberServiceStub{err: errors.New("database unavailable")}
 	svc := New(Dependencies{Store: repo, Remember: remember, Diagnostics: diagnostics})
-	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID: hypothesisID, Decision: "confirm_true", IdempotencyKey: "ordinary-error",
 		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent evidence."}},
 	})
@@ -280,7 +280,7 @@ func TestResolveFeedbackMarksTruncatedRelationshipResults(t *testing.T) {
 	diagnostics := &diagnosticRepositoryStub{}
 	svc := New(Dependencies{Store: repo, Remember: &rememberServiceStub{result: rememberResult}, Diagnostics: diagnostics})
 
-	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID: hypothesisID, Decision: "confirm_true", Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent evidence."}},
 	})
 
@@ -310,7 +310,7 @@ func TestResolveFeedbackLabelsHypothesisFinalizationFailureAsFailed(t *testing.T
 	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), uuid.NewString())}
 	svc := New(Dependencies{Store: repo, Remember: remember, Diagnostics: diagnostics})
 
-	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID: hypothesisID, Decision: "confirm_true", IdempotencyKey: "submit-failure",
 		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent evidence."}},
 	})
@@ -363,7 +363,7 @@ func TestResolveFeedbackReplaysPreUpgradeSubmittedRememberWithoutCallingRemember
 		SubmittedIngestIdempotencyKey: "legacy-dream-replay",
 		SubmittedDecision:             "confirm_true",
 	}
-	request := ResolveFeedbackRequest{
+	request := ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID: hypothesisID, Decision: "confirm_true", Feedback: record.InvalidatedReason,
 		IdempotencyKey: record.SubmittedIngestIdempotencyKey,
 		Evidence: []rememberapp.RememberEvidenceInput{{
@@ -385,6 +385,14 @@ func TestResolveFeedbackReplaysPreUpgradeSubmittedRememberWithoutCallingRemember
 	require.Equal(t, ingestID, result.Memory.IngestID)
 	require.Empty(t, remember.requests)
 	require.Empty(t, repo.submitInput)
+
+	request.RelationshipHints = nil
+	_, err = svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", request)
+	var validation *rememberapp.RememberValidationError
+	require.ErrorAs(t, err, &validation)
+	require.Equal(t, "/relationships", validation.Issues[0].Path)
+	require.Empty(t, remember.requests, "legacy replay without citations must reject before Remember")
+	require.Empty(t, repo.submitInput)
 }
 
 func TestResolveFeedbackReplaysV261SubmittedRememberWithoutCallingRemember(t *testing.T) {
@@ -403,7 +411,7 @@ func TestResolveFeedbackReplaysV261SubmittedRememberWithoutCallingRemember(t *te
 		SubmittedIngestIdempotencyKey: "v261-dream-replay",
 		SubmittedDecision:             "confirm_true",
 	}
-	request := ResolveFeedbackRequest{
+	request := ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID: hypothesisID, Decision: "confirm_true", Feedback: record.InvalidatedReason,
 		IdempotencyKey: record.SubmittedIngestIdempotencyKey,
 		Evidence:       []rememberapp.RememberEvidenceInput{{Content: "Independent v2.6.1 deployment evidence."}},
@@ -442,7 +450,7 @@ func TestResolveFeedbackRejectsConflictingSubmittedConfirmationBeforeRemember(t 
 	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), uuid.NewString())}
 	svc := New(Dependencies{Store: repo, Remember: remember})
 
-	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID:  hypothesisID,
 		Decision: "confirm_false",
 		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent refuting evidence."}},
@@ -469,7 +477,7 @@ func TestResolveFeedbackPreservesNonRetryablePolicyGuidance(t *testing.T) {
 	metrics := observability.NewPrometheusMetrics()
 	svc := New(Dependencies{Store: repo, Remember: remember, Metrics: metrics})
 
-	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID: hypothesisID, Decision: "confirm_true",
 		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent refuting evidence."}},
 	})
@@ -496,7 +504,7 @@ func TestResolveFeedbackUsesCanonicalDreamIDForDefaultRetryKey(t *testing.T) {
 	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), ingestID)}
 	svc := New(Dependencies{Store: repo, Remember: remember})
 
-	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID: aliasID, Decision: "confirm_true",
 		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
 	})
@@ -508,7 +516,7 @@ func TestResolveFeedbackUsesCanonicalDreamIDForDefaultRetryKey(t *testing.T) {
 	remember.result.Terminal.Errors = []rememberapp.SubmissionStatusError{
 		rememberapp.TerminalStatusError(rememberapp.TerminalErrorPolicyRejected),
 	}
-	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID: aliasID, Decision: "confirm_true",
 		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
 	})
@@ -532,7 +540,7 @@ func TestResolveFeedbackReplaysAliasWithCanonicalDefaultKey(t *testing.T) {
 		SubmittedIngestID: ingestID, SubmittedIngestIdempotencyKey: "dream-feedback:" + canonicalID + ":confirm_true",
 		SubmittedDecision: "confirm_true",
 	}
-	request := ResolveFeedbackRequest{
+	request := ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID: aliasID, Decision: "confirm_true",
 		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
 	}
@@ -564,7 +572,7 @@ func TestResolveFeedbackReplaysAliasWithLegacyDefaultKey(t *testing.T) {
 		SubmittedIngestID: ingestID, SubmittedIngestIdempotencyKey: "dream-feedback:" + aliasID + ":confirm_true",
 		SubmittedDecision: "confirm_true",
 	}
-	request := ResolveFeedbackRequest{
+	request := ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID: aliasID, Decision: "confirm_true",
 		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
 	}
@@ -605,7 +613,7 @@ func TestResolveFeedbackWrapsConfirmationBusyWithTypedError(t *testing.T) {
 				Metrics: metrics,
 			})
 
-			_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+			_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 				DreamID:  hypothesisID,
 				Decision: decision,
 				Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
@@ -644,7 +652,7 @@ func TestResolveFeedbackRecordsNonBusyLockAcquisitionErrors(t *testing.T) {
 				Metrics: metrics,
 			})
 
-			_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+			_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 				DreamID:  hypothesisID,
 				Decision: decision,
 				Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},

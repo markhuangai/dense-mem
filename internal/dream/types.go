@@ -66,11 +66,6 @@ type Generator interface {
 	Model() string
 }
 
-type EvidenceGenerator interface {
-	GenerateEvidence(ctx context.Context, teamID string, req EvidenceGenerationRequest) ([]GeneratedDream, GenerationDiagnostics, error)
-	Model() string
-}
-
 type RememberService interface {
 	Remember(context.Context, rememberapp.RememberRequest) (*rememberapp.RememberResult, error)
 }
@@ -82,8 +77,6 @@ type Dependencies struct {
 	AppConfig           AppConfig
 	Teams               TeamService
 	Generator           Generator
-	EvidenceStore       dreamcontract.EvidenceDiscoveryRepository
-	EvidenceGenerator   EvidenceGenerator
 	Diagnostics         dreamcontract.DreamDiagnosticRepository
 	DiagnosticProtector observability.DiagnosticProtector
 	Metrics             observability.DiscoverabilityMetrics
@@ -197,32 +190,21 @@ type DreamInput struct {
 }
 
 type GeneratedDream struct {
-	PathRef             string
-	PredicateRef        string
-	EvidenceRefs        []string
-	Hypothesis          string
-	WhatIf              string
-	PossibleOutcome     string
-	Rationale           string
-	Likelihood          float64
-	Confidence          float64
-	SubjectEntityID     string
-	PredicateKey        string
-	PredicateVersion    int
-	ObjectEntityID      string
-	ObjectValueID       string
-	SourceRefs          []domain.DreamSourceRef
-	EvidenceDerivations []dreamcontract.EvidenceDerivationSource
-}
-
-type EvidenceGenerationRequest struct {
-	Target               dreamcontract.EvidenceTarget
-	Contexts             []dreamcontract.EvidenceContext
-	Nodes                []dreamcontract.EvidenceNode
-	AllowedPredicates    []dreamcontract.DreamTargetPredicate
-	RelatedRelationships []dreamcontract.DreamInput
-	RelatedHypotheses    []dreamcontract.HypothesisRecord
-	MaxOutputs           int
+	PathRef          string
+	PredicateRef     string
+	EvidenceRefs     []string
+	Hypothesis       string
+	WhatIf           string
+	PossibleOutcome  string
+	Rationale        string
+	Likelihood       float64
+	Confidence       float64
+	SubjectEntityID  string
+	PredicateKey     string
+	PredicateVersion int
+	ObjectEntityID   string
+	ObjectValueID    string
+	SourceRefs       []domain.DreamSourceRef
 }
 
 type GenerationDiagnostics struct {

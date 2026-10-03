@@ -8,7 +8,6 @@ import (
 	"github.com/lib/pq"
 	"gorm.io/gorm"
 
-	"github.com/markhuangai/dense-mem/internal/domain"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 )
 
@@ -110,10 +109,8 @@ func insertHypothesisTx(
 	if err := validateHypothesisTargetAbsent(ctx, tx, input); err != nil {
 		return nil, false, err
 	}
-	if input.Lane != domain.DreamLaneEvidenceDiscovery {
-		if err := validateHypothesisSources(ctx, tx, input); err != nil {
-			return nil, false, err
-		}
+	if err := validateHypothesisSources(ctx, tx, input); err != nil {
+		return nil, false, err
 	}
 	sourceRefs, err := marshalJSONArray(input.SourceRefs)
 	if err != nil {
@@ -210,9 +207,6 @@ func insertHypothesisTx(
 		return nil, false, err
 	}
 	if err := insertHypothesisDerivations(ctx, tx, input.TeamID, loaded.HypothesisID, input.Derivations); err != nil {
-		return nil, false, err
-	}
-	if err := insertHypothesisEvidenceDerivations(ctx, tx, input.TeamID, loaded.HypothesisID, input.EvidenceDerivations); err != nil {
 		return nil, false, err
 	}
 	return loaded, true, nil

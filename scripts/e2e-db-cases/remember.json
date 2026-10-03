@@ -132,9 +132,9 @@
       "source": "cmd/internal/serverapp/remember_processor_integration_test.go"
     },
     {
-      "id": "service/TestComposeSynchronousEvidenceOnlyAssessorBatch",
+      "id": "service/TestComposeSynchronousUnsupportedProposalPreservesSafeEvidence",
       "package": "./cmd/internal/serverapp",
-      "run": "^TestComposeSynchronousEvidenceOnlyAssessorBatch$",
+      "run": "^TestComposeSynchronousUnsupportedProposalPreservesSafeEvidence$",
       "phase": "scenario",
       "scenario": "synchronous_write_primitives",
       "source": "cmd/internal/serverapp/synchronous_assessment_compose_e2e_integration_test.go"

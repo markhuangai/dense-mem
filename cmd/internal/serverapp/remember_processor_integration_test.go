@@ -72,12 +72,50 @@ func TestRememberServiceRejectsHistoricalOutcomesThroughPostgres(t *testing.T) {
 		Grants: []string{"read", "write"},
 	})
 
+	for _, version := range []string{"dense-mem.v2.6.2", "dense-mem.v2.6.3"} {
+		for _, covered := range []bool{false, true} {
+			t.Run(fmt.Sprintf("terminal %s covered=%t", version, covered), func(t *testing.T) {
+				key, attemptID := "legacy-coverage-"+uuid.NewString(), uuid.NewString()
+				evidence := []rememberapp.RememberEvidenceInput{{Content: "Historical Dense-Mem uses PostgreSQL."}}
+				var proposals []map[string]any
+				relationshipResults := []any{}
+				if covered {
+					message, remediation := rememberapp.NotStoredGuidance("not_supported_by_evidence")
+					proposals = []map[string]any{{"ref": "legacy", "subject": map[string]any{"name": "Historical Dense-Mem", "entity_kind": "project"}, "predicate": map[string]any{"proposed_key": "uses"}, "object": map[string]any{"entity": map[string]any{"name": "PostgreSQL", "entity_kind": "product"}}, "polarity": "+", "evidence_indices": []any{0}}}
+					relationshipResults = []any{map[string]any{"ref": "legacy", "disposition": "not_stored", "reason": "not_supported_by_evidence", "message": message, "remediation": remediation, "splits": []any{}}}
+				}
+				hash, err := rememberapp.CanonicalRequestBodyHash(evidence, nil, proposals)
+				require.NoError(t, err)
+				public := map[string]any{"contract_version": version, "submission_id": attemptID, "submission_kind": "remember", "processing_state": "completed", "search_state": "current", "correlation_id": attemptID,
+					"evidence": []any{map[string]any{"disposition": "stored", "evidence_id": uuid.NewString(), "evidence_index": 0, "superseded_evidence_ids": []any{}, "search_state": "current"}}, "relationship_results": relationshipResults, "errors": []any{}}
+				require.NoError(t, ledger.RecordRememberAttempt(ctx, knowledgecontract.RememberAttemptRecordInput{TeamID: teamID.String(), OwnerProfileID: ownerID.String(), AttemptID: attemptID, IdempotencyKey: key, RequestHash: hash, ContractVersion: version, SubmissionKind: "remember", Outcome: "completed", PublicResult: public}))
+				before, err := ledger.LoadRememberAttempt(ctx, knowledgecontract.RememberAttemptLookupInput{TeamID: teamID.String(), OwnerProfileID: ownerID.String(), IdempotencyKey: key})
+				require.NoError(t, err)
+				result, err := service.Remember(actorCtx, rememberapp.RememberRequest{Evidence: evidence, IdempotencyKey: key, RelationshipHints: proposals})
+				if covered {
+					require.NoError(t, err)
+					require.Equal(t, version, result.ContractVersion)
+					require.Equal(t, attemptID, result.SubmissionID)
+					require.NoError(t, rememberapp.ValidateTerminalRememberResult(result.Terminal, 1, []string{"legacy"}))
+				} else {
+					require.Nil(t, result)
+					var validation *rememberapp.RememberValidationError
+					require.ErrorAs(t, err, &validation)
+					require.Equal(t, "/relationships", validation.Issues[0].Path)
+				}
+				after, err := ledger.LoadRememberAttempt(ctx, knowledgecontract.RememberAttemptLookupInput{TeamID: teamID.String(), OwnerProfileID: ownerID.String(), IdempotencyKey: key})
+				require.NoError(t, err)
+				require.Equal(t, before, after, "strict rejection and replay must preserve stored history")
+			})
+		}
+	}
+
 	for _, outcome := range []string{"rejected", "quarantined", "replayed"} {
 		t.Run(outcome, func(t *testing.T) {
 			key := "historical-" + outcome + "-" + uuid.NewString()
 			evidence := []rememberapp.RememberEvidenceInput{{Content: "A retained historical Remember result."}}
-			req := rememberapp.RememberRequest{Evidence: evidence, IdempotencyKey: key}
-			hash, err := rememberapp.CanonicalRequestBodyHash(evidence, nil, nil)
+			req := rememberapp.RememberRequest{Evidence: evidence, IdempotencyKey: key, RelationshipHints: []map[string]any{{"ref": "legacy", "evidence_indices": []any{0}}}}
+			hash, err := rememberapp.CanonicalRequestBodyHash(evidence, nil, req.RelationshipHints)
 			require.NoError(t, err)
 			attemptID := uuid.New()
 			insertHistoricalRememberOutcome(t, ctx, adminDB, appDB, rls, teamID, ownerID, attemptID, key, hash, outcome)
@@ -118,7 +156,8 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 	ledger := knowledgepostgres.NewStore(appDB, rls, knowledgecontract.ConflictRuntimeConfig{})
 	evidence := []rememberapp.RememberEvidenceInput{{Content: "A migrated Remember attempt."}}
 	key := "migrated-conflict-" + uuid.NewString()
-	requestHash, err := rememberapp.CanonicalRequestBodyHash(evidence, nil, nil)
+	proposals := []map[string]any{{"ref": "migrated", "evidence_indices": []any{0}}}
+	requestHash, err := rememberapp.CanonicalRequestBodyHash(evidence, nil, proposals)
 	require.NoError(t, err)
 	attemptID := uuid.New()
 	require.NoError(t, ledger.RecordRememberAttempt(ctx, knowledgecontract.RememberAttemptRecordInput{
@@ -144,7 +183,7 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 		Grants: []string{"read", "write"},
 	})
 
-	result, err := service.Remember(actorCtx, rememberapp.RememberRequest{Evidence: evidence, IdempotencyKey: key})
+	result, err := service.Remember(actorCtx, rememberapp.RememberRequest{Evidence: evidence, IdempotencyKey: key, RelationshipHints: proposals})
 	require.Nil(t, result)
 	var processErr *rememberapp.RememberProcessError
 	require.ErrorAs(t, err, &processErr)
@@ -175,14 +214,15 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 			ledger := newRememberProcessorIntegrationStaleLedger(realLedger, testCase.cause)
 			ledger.recordFailureDelay = testCase.recordFailureDelay
 			processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
-				Ledger: ledger, Catalog: rememberProcessorIntegrationCatalog{}, Assessor: rememberProcessorIntegrationAssessor{},
+				Ledger: ledger, Catalog: realLedger, Assessor: &rememberProcessorIntegrationRegistrationAssessor{},
 				Embedder: rememberProcessorIntegrationEmbedder{}, Limits: assessor.DefaultSemanticAssessmentLimits(),
 				Metrics: observability.NoopDiscoverabilityMetrics(), IsStaleInput: rememberapp.IsRememberStaleInputError,
 			})
 			service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
 			evidence := []rememberapp.RememberEvidenceInput{{Content: "A stale Remember commit must be replayable."}}
 			request := rememberapp.RememberRequest{
-				Evidence: evidence, IdempotencyKey: "stale-commit-" + testCase.name + "-" + uuid.NewString(),
+				RelationshipHints: []map[string]any{{"ref": "stale", "subject": map[string]any{"name": "A stale Remember commit", "entity_kind": "document"}, "predicate": map[string]any{"proposed_key": "has_state"}, "object": map[string]any{"value": map[string]any{"type": "string", "value": "replayable"}}, "polarity": "+", "evidence_indices": []any{0}}},
+				Evidence:          evidence, IdempotencyKey: "stale-commit-" + testCase.name + "-" + uuid.NewString(),
 			}
 
 			firstResult, firstErr := service.Remember(actorCtx, request)

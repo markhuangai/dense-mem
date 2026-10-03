@@ -9,8 +9,8 @@ import {
 
 export const name = "contract";
 
-const CURRENT_CONTRACT_VERSION = "dense-mem.v2.6.3";
-const ACCEPTED_CONTRACT_VERSIONS = [CURRENT_CONTRACT_VERSION, "dense-mem.v2.6.2"];
+const CURRENT_CONTRACT_VERSION = "dense-mem.v2.6.6";
+const ACCEPTED_CONTRACT_VERSIONS = [CURRENT_CONTRACT_VERSION, "dense-mem.v2.6.3", "dense-mem.v2.6.2"];
 
 export async function run({ rpc, expect }) {
   await enableTargetFeatureGates();
@@ -77,11 +77,7 @@ export async function run({ rpc, expect }) {
   const evidenceOnlyArguments = rememberArguments(`${runID}-evidence-only`, "none");
   delete evidenceOnlyArguments.relationships;
   const evidenceOnlyRaw = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "remember", arguments: evidenceOnlyArguments });
-  const evidenceOnly = successfulToolResult(evidenceOnlyRaw, expect);
-  assertTerminalRememberResult(evidenceOnly);
-  expect(evidenceOnly.contract_version === CURRENT_CONTRACT_VERSION && evidenceOnly.processing_state === "completed", "evidence-only Remember must complete");
-  expect(evidenceOnly.evidence?.[0]?.disposition === "stored" && evidenceOnly.relationship_results?.length === 0, "evidence-only Remember must store evidence without relationship results");
-  assertTextStructuredParity(evidenceOnlyRaw, expect);
+  expect(evidenceOnlyRaw.error?.code === -32602 && evidenceOnlyRaw.error?.data?.issues?.some((issue) => issue.path === "/relationships" && issue.code === "required"), "evidence-only Remember must return a detailed required-proposal error");
 
   const split = source.relationship_results[0].splits[0];
   const traceRaw = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "trace_memory", arguments: { relationship_id: split.relationship_id } });
@@ -161,7 +157,7 @@ export async function run({ rpc, expect }) {
     tools: names.length,
     removed_status: true,
     remember_state: source.processing_state,
-    evidence_only_state: evidenceOnly.processing_state,
+    evidence_only_rejected: evidenceOnlyRaw.error.code === -32602,
     correction_state: correction.processing_state,
     ownership_isolation: ownership,
     text_structured_parity: true,

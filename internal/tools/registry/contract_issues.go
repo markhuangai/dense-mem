@@ -111,7 +111,14 @@ func ValidateContractInputIssues(tool Tool, args map[string]any, scopes []string
 				}
 			case ToolResolveDreamFeedback:
 				if err := validateDreamFeedback(args); err != nil {
-					collector.add("", classifyContractIssue(err.Error()), err.Error())
+					if validation, ok := ContractValidationResultFromError(wrapRememberValidationError(err)); ok {
+						for _, issue := range validation.Issues {
+							collector.add(issue.Path, issue.Code, issue.Message)
+						}
+						collector.truncated = collector.truncated || validation.IssuesTruncated
+					} else {
+						collector.add("", classifyContractIssue(err.Error()), err.Error())
+					}
 				}
 			}
 		}
@@ -260,6 +267,15 @@ func collectRememberContractIssues(tool Tool, args map[string]any, collector *co
 	if len(relationships) > maxRememberRelationshipItems {
 		collector.add("/relationships", "too_many_items", fmt.Sprintf("relationships exceeds maximum item count of %d", maxRememberRelationshipItems))
 		relationships = relationships[:maxRememberRelationshipItems]
+	}
+	if err := rememberapp.ValidateRelationshipCoverage(len(evidence), objectArray(relationships)); err != nil {
+		var validation *rememberapp.RememberValidationError
+		if errors.As(err, &validation) {
+			for _, issue := range validation.Issues {
+				collector.add(issue.Path, issue.Code, issue.Message)
+			}
+			collector.truncated = collector.truncated || validation.IssuesTruncated
+		}
 	}
 	seenRefs := map[string]struct{}{}
 	for index, item := range relationships {

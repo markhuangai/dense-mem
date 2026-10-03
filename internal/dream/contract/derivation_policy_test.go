@@ -37,17 +37,3 @@ func TestGraphSourceAndDerivationPolicy(t *testing.T) {
 	excerpt.Content = "B"
 	require.False(t, GraphDerivationMatchesEvidence(derivation, []DreamEvidence{excerpt}))
 }
-
-func TestEvidenceDerivationPolicyUsesExactSpansAndMetadata(t *testing.T) {
-	derivation := EvidenceDerivationSource{EvidenceID: policyEvidenceID, SpanStart: 1, SpanEnd: 2,
-		Quote: "🦊", SourceGroupKey: "ingest:test", Authority: "primary"}
-	require.False(t, DuplicateEvidenceDerivationSpan(nil, derivation))
-	require.True(t, DuplicateEvidenceDerivationSpan([]EvidenceDerivationSource{derivation}, derivation))
-	require.True(t, EvidenceDerivationsCiteTarget([]EvidenceDerivationSource{derivation}, policyEvidenceID))
-	require.False(t, EvidenceDerivationsCiteTarget([]EvidenceDerivationSource{derivation}, policySourceA))
-	require.True(t, EvidenceDerivationMetadataMatches(derivation, EvidenceContext{SourceGroupKey: "ingest:test", Authority: "primary"}))
-	require.False(t, EvidenceDerivationMetadataMatches(derivation, EvidenceContext{SourceGroupKey: "ingest:other", Authority: "primary"}))
-	require.True(t, EvidenceDerivationSpanMatches(derivation, "A🦊B"))
-	derivation.SpanEnd = 3
-	require.False(t, EvidenceDerivationSpanMatches(derivation, "A🦊B"))
-}

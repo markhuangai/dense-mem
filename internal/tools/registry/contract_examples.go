@@ -71,7 +71,7 @@ func contractExampleJSON(request map[string]any) string {
 func contractToolExamples() map[string]contractToolExample {
 	return map[string]contractToolExample{
 		ToolRemember: {
-			WhenToUse:     "Store exact evidence and optional grounded Relationship proposals in one synchronous terminal operation. Each proposal cites submitted evidence; the server owns grounding and acceptance. Use exactly one object shape: {\"object\":{\"entity\":{\"name\":\"PostgreSQL\",\"entity_kind\":\"product\"}}} or {\"object\":{\"value\":{\"type\":\"string\",\"value\":\"PostgreSQL\"}}}.",
+			WhenToUse:     "Store exact evidence with required client Relationship proposals in one synchronous terminal operation. Every evidence item must be cited by a proposal through evidence_indices; the server owns grounding and acceptance. Use exactly one object shape: {\"object\":{\"entity\":{\"name\":\"PostgreSQL\",\"entity_kind\":\"product\"}}} or {\"object\":{\"value\":{\"type\":\"string\",\"value\":\"PostgreSQL\"}}}.",
 			Prerequisites: "Create a fresh operation key and retain this complete request before sending it.",
 			Request: map[string]any{
 				"idempotency_key": newOperationKey,

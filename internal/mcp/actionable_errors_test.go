@@ -22,7 +22,12 @@ func TestSDKContractToolFailureIsStructuredActionableError(t *testing.T) {
 	server := NewServer(reg, "profile-a", nil)
 
 	result, err := server.sdkToolHandler(tool.Name)(context.Background(), &sdkmcp.CallToolRequest{
-		Params: &sdkmcp.CallToolParamsRaw{Arguments: json.RawMessage(`{"idempotency_key":"key","evidence":[{"content":"hello"}]}`)},
+		Params: &sdkmcp.CallToolParamsRaw{Arguments: json.RawMessage(`{
+			"idempotency_key":"key","evidence":[{"content":"Dense-Mem stores knowledge in PostgreSQL."}],
+			"relationships":[{"ref":"stores","subject":{"name":"Dense-Mem","entity_kind":"project"},
+			"predicate":{"proposed_key":"stores_in"},"object":{"entity":{"name":"PostgreSQL","entity_kind":"product"}},
+			"polarity":"+","evidence_indices":[0]}]
+		}`)},
 	})
 	require.NoError(t, err)
 	require.True(t, result.IsError)
@@ -54,9 +59,14 @@ func TestSDKActionableErrorsPreserveCapabilityRecoveryAndOutputSchema(t *testing
 			wantRemediat: "Retry the read request with the same arguments after the timeout clears.",
 		},
 		{
-			name:         "mutation timeout",
-			toolName:     registry.ToolRemember,
-			arguments:    `{"idempotency_key":"key","evidence":[{"content":"hello"}]}`,
+			name:     "mutation timeout",
+			toolName: registry.ToolRemember,
+			arguments: `{
+				"idempotency_key":"key","evidence":[{"content":"Dense-Mem stores knowledge in PostgreSQL."}],
+				"relationships":[{"ref":"stores","subject":{"name":"Dense-Mem","entity_kind":"project"},
+				"predicate":{"proposed_key":"stores_in"},"object":{"entity":{"name":"PostgreSQL","entity_kind":"product"}},
+				"polarity":"+","evidence_indices":[0]}]
+			}`,
 			wantRemediat: "Retry the same request with the same idempotency key after the timeout clears.",
 		},
 	} {

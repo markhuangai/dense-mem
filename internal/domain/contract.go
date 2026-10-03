@@ -1,7 +1,7 @@
 package domain
 
 const (
-	ContractVersion              = "dense-mem.v2.6.3"
+	ContractVersion              = "dense-mem.v2.6.6"
 	PreviousContractVersion      = "dense-mem.v2.6.2"
 	PredicatePolicyVersion       = "open_vocabulary_v1"
 	ConflictPolicyVersion        = "cross_profile_supporter_majority_after_ttl"
@@ -15,13 +15,13 @@ const MaxOriginalPredicateRunes = 256
 // ContractVersionCompatible reports versions whose terminal Remember shape
 // and replay semantics are intentionally preserved by the current server.
 func ContractVersionCompatible(version string) bool {
-	return version == ContractVersion || version == PreviousContractVersion
+	return version == ContractVersion || version == "dense-mem.v2.6.3" || version == PreviousContractVersion
 }
 
 // AcceptedContractVersions returns the current version first, followed by the
 // one explicitly retained for replay compatibility.
 func AcceptedContractVersions() []string {
-	return []string{ContractVersion, PreviousContractVersion}
+	return []string{ContractVersion, "dense-mem.v2.6.3", PreviousContractVersion}
 }
 
 const (

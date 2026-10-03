@@ -138,7 +138,9 @@ func TestRememberServiceRejectsInvalidInputBeforeProcessor(t *testing.T) {
 		{name: "missing actor", ctx: context.Background(), req: validRememberServiceRequest(), want: ErrRememberAuthContext.Error()},
 		{name: "missing evidence", ctx: ctx, req: RememberRequest{IdempotencyKey: "missing-evidence"}, want: "evidence is required"},
 		{name: "missing idempotency key", ctx: ctx, req: RememberRequest{Evidence: []RememberEvidenceInput{{Content: "fact"}}}, want: "idempotency_key is required"},
-		{name: "empty relationship proposals are allowed", ctx: ctx, req: RememberRequest{IdempotencyKey: "empty-relationships", Evidence: []RememberEvidenceInput{{Content: "fact"}}}, want: ErrRememberProcessor.Error()},
+		{name: "missing relationship proposals", ctx: ctx, req: RememberRequest{IdempotencyKey: "empty-relationships", Evidence: []RememberEvidenceInput{{Content: "fact"}}}, want: "relationships must contain at least one proposal"},
+		{name: "empty relationship proposals", ctx: ctx, req: RememberRequest{IdempotencyKey: "empty-proposals", Evidence: []RememberEvidenceInput{{Content: "fact"}}, RelationshipHints: []map[string]any{}}, want: "relationships must contain at least one proposal"},
+		{name: "uncited evidence", ctx: ctx, req: RememberRequest{IdempotencyKey: "uncited-evidence", Evidence: []RememberEvidenceInput{{Content: "first fact"}, {Content: "second fact"}}, RelationshipHints: []map[string]any{{"ref": "first", "evidence_indices": []any{0}}}}, want: "every evidence item must be cited"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -148,12 +150,14 @@ func TestRememberServiceRejectsInvalidInputBeforeProcessor(t *testing.T) {
 		})
 	}
 
+	require.Zero(t, processor.calls, "invalid citation requirements must fail before intake")
+
 	actor, ok := requestctx.ActorFromContext(ctx)
 	require.True(t, ok)
 	actor.AllowedSpaces = []domain.MemorySpaceAccess{{Kind: domain.MemorySpaceProfilePrivate}}
 	_, err := service.Remember(requestctx.WithActor(ctx, actor), validRememberServiceRequest())
 	require.ErrorIs(t, err, ErrRememberAuthContext)
-	require.Equal(t, 1, processor.calls)
+	require.Zero(t, processor.calls)
 }
 
 func TestRememberServiceMapsProcessorFailuresWithoutLeakingCause(t *testing.T) {

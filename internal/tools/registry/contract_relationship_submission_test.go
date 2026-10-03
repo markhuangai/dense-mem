@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestRememberAllowsOmittedOrEmptyRelationships(t *testing.T) {
+func TestRememberRequiresRelationships(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	if err != nil {
 		t.Fatal(err)
@@ -20,12 +20,11 @@ func TestRememberAllowsOmittedOrEmptyRelationships(t *testing.T) {
 
 	missing := cloneMap(input)
 	delete(missing, "relationships")
-	if err := ValidateContractInput(remember, missing, []string{"write"}); err != nil {
-		t.Fatalf("omitted relationships rejected: %v", err)
+	if err := ValidateContractInput(remember, missing, []string{"write"}); err == nil {
+		t.Fatal("omitted relationships accepted")
 	}
 
 	legacy := cloneMap(input)
-	delete(legacy, "relationships")
 	legacy["proposal"] = map[string]any{}
 	err = ValidateContractInput(remember, legacy, []string{"write"})
 	if err == nil || !strings.Contains(err.Error(), "proposal") {
@@ -34,20 +33,26 @@ func TestRememberAllowsOmittedOrEmptyRelationships(t *testing.T) {
 
 	empty := cloneMap(input)
 	empty["relationships"] = []any{}
-	if err := ValidateContractInput(remember, empty, []string{"write"}); err != nil {
-		t.Fatalf("empty relationships rejected: %v", err)
+	if err := ValidateContractInput(remember, empty, []string{"write"}); err == nil {
+		t.Fatal("empty relationships accepted")
 	}
 }
 
-func TestRememberDoesNotRequireRelationshipCoverageForEveryEvidenceItem(t *testing.T) {
+func TestRememberRequiresRelationshipCoverageForEveryEvidenceItem(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	if err != nil {
 		t.Fatal(err)
 	}
 	input := validFlatRelationshipSubmission()
 	input["evidence"] = append(input["evidence"].([]any), map[string]any{"content": "A second source."})
+	err = ValidateContractInput(remember, input, []string{"write"})
+	validation, ok := ContractValidationResultFromError(err)
+	if !ok || len(validation.Issues) != 1 || validation.Issues[0].Path != "/evidence/1" || validation.Issues[0].Code != "coverage" {
+		t.Fatalf("incomplete coverage result = %#v, error = %v", validation, err)
+	}
+	relationship(input)["evidence_indices"] = []any{0, 1}
 	if err := ValidateContractInput(remember, input, []string{"write"}); err != nil {
-		t.Fatalf("incomplete relationship coverage rejected: %v", err)
+		t.Fatalf("complete coverage rejected: %v", err)
 	}
 }
 
@@ -197,7 +202,11 @@ func withRequiredFlatRelationship(input map[string]any) map[string]any {
 	relationshipInput := validFlatRelationshipSubmission()
 	relationshipValue := relationship(relationshipInput)
 	evidenceIndex := len(evidence)
-	setRelationshipEvidenceIndex(relationshipValue, evidenceIndex)
+	indices := make([]any, evidenceIndex+1)
+	for index := range indices {
+		indices[index] = index
+	}
+	relationshipValue["evidence_indices"] = indices
 	output["evidence"] = append(evidence, relationshipInput["evidence"].([]any)...)
 	output["relationships"] = []any{relationshipValue}
 	return output

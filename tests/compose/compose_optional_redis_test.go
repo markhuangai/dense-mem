@@ -88,7 +88,6 @@ func assertSessionModelOverrideEnvironment(t *testing.T, environment map[string]
 		"AI_REMEMBER_MODEL",
 		"AI_CONFLICT_REVIEW_MODEL",
 		"AI_DREAM_GRAPH_MODEL",
-		"AI_DREAM_EVIDENCE_MODEL",
 		"AI_COMMUNITY_SUMMARY_MODEL",
 	} {
 		assert.Equal(t, "${"+key+":-}", environment[key], "%s must be optional", key)

@@ -40,7 +40,7 @@ func TestValidateContractInputIssuesAggregatesRememberProblems(t *testing.T) {
 
 	result := ValidateContractInputIssues(remember, args, []string{"write"})
 	require.NotEmpty(t, result.Issues)
-	require.False(t, result.IssuesTruncated)
+	require.True(t, result.IssuesTruncated)
 	for index := 1; index < len(result.Issues); index++ {
 		previous := result.Issues[index-1]
 		current := result.Issues[index]
@@ -266,7 +266,7 @@ func TestValidateContractInputIssuesCoversRememberShapeBranches(t *testing.T) {
 	missingRelationships := ValidateContractInputIssues(remember, map[string]any{
 		"evidence": []any{map[string]any{}},
 	}, []string{"write"})
-	require.NotContains(t, issueMessages(missingRelationships), "relationships is required")
+	require.Contains(t, issueMessages(missingRelationships), "relationships must contain at least one proposal citing submitted evidence")
 	require.Contains(t, issueMessages(missingRelationships), "evidence.content is required")
 
 	nonStringContent := ValidateContractInputIssues(remember, map[string]any{

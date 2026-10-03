@@ -3,7 +3,6 @@ package dream
 import (
 	"context"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -51,30 +50,23 @@ type Scheduler struct {
 	now     func() time.Time
 	logger  *slog.Logger
 
-	mu             sync.Mutex
-	observed       map[string]string
-	armed          map[string]scheduledWindowArm
-	hourlyObserved map[string]string
+	mu       sync.Mutex
+	observed map[string]string
+	armed    map[string]scheduledWindowArm
 }
 
 type scheduledRecoveryService interface {
 	RecoverScheduledCycle(ctx context.Context, teamID string) (*RunCycleResult, error)
 }
 
-type evidenceScheduledService interface {
-	RunScheduledEvidenceCycle(ctx context.Context, teamID string, windowAt time.Time) (*RunCycleResult, error)
-	RecoverScheduledEvidenceCycle(ctx context.Context, teamID string) (*RunCycleResult, error)
-}
-
 func NewScheduler(service Service, teams TeamService, logger *slog.Logger) *Scheduler {
 	return &Scheduler{
-		service:        service,
-		teams:          teams,
-		now:            func() time.Time { return time.Now().UTC() },
-		logger:         logger,
-		observed:       map[string]string{},
-		armed:          map[string]scheduledWindowArm{},
-		hourlyObserved: map[string]string{},
+		service:  service,
+		teams:    teams,
+		now:      func() time.Time { return time.Now().UTC() },
+		logger:   logger,
+		observed: map[string]string{},
+		armed:    map[string]scheduledWindowArm{},
 	}
 }
 
@@ -136,7 +128,6 @@ func schedulerNextMinuteDelay(now time.Time) time.Duration {
 func (s *Scheduler) runDue(ctx context.Context) {
 	now := s.now()
 	s.pruneObserved(now)
-	teamStates := make([]schedulerTeamState, 0, schedulerTeamPageSize)
 	runDaily := func(teamState schedulerTeamState) {
 		teamID, cfg := teamState.teamID, teamState.cfg
 		if recovery, ok := s.service.(scheduledRecoveryService); ok {
@@ -217,7 +208,6 @@ func (s *Scheduler) runDue(ctx context.Context) {
 				continue
 			}
 			state := schedulerTeamState{team: team, teamID: teamID, cfg: cfg}
-			teamStates = append(teamStates, state)
 			pageStates = append(pageStates, state)
 		}
 		for _, state := range pageStates {
@@ -227,70 +217,6 @@ func (s *Scheduler) runDue(ctx context.Context) {
 			break
 		}
 	}
-
-	for _, teamState := range teamStates {
-		if !isActiveScheduledTeam(teamState.team) {
-			continue
-		}
-		teamID, cfg := teamState.teamID, teamState.cfg
-		if recovery, ok := s.service.(evidenceScheduledService); ok {
-			recovered, recoverErr := recovery.RecoverScheduledEvidenceCycle(ctx, teamID)
-			if recoverErr != nil {
-				s.logError("dreaming scheduler: evidence recovery failed", slog.String("team_id", teamID), slog.String("error_kind", "evidence_recovery_failed"))
-			} else if recovered != nil {
-				s.logInfo("dreaming scheduler: expired evidence cycle recovered",
-					slog.String("team_id", teamID), slog.String("run_id", recovered.RunID), slog.String("status", recovered.Status))
-			}
-		}
-		s.runEvidenceDue(ctx, teamID, cfg, now)
-	}
-}
-
-func isActiveScheduledTeam(team *domain.Team) bool {
-	if team == nil {
-		return false
-	}
-	status := strings.ToLower(strings.TrimSpace(team.Status))
-	return status == "" || status == "active"
-}
-
-func (s *Scheduler) runEvidenceDue(ctx context.Context, teamID string, cfg EffectiveConfig, now time.Time) {
-	service, ok := s.service.(evidenceScheduledService)
-	if !ok || !cfg.Enabled {
-		return
-	}
-	windowAt := now.UTC().Truncate(time.Hour)
-	windowKey := evidenceDiscoveryWindowKey(windowAt)
-	if s.hourlyAlreadyObserved(teamID, windowKey) {
-		return
-	}
-	result, err := service.RunScheduledEvidenceCycle(ctx, teamID, windowAt)
-	if err != nil {
-		if result != nil && result.durablyFinalized {
-			s.markHourlyObserved(teamID, windowKey)
-			s.logInfo("dreaming scheduler: evidence cycle observed",
-				slog.String("team_id", teamID), slog.String("run_id", result.RunID),
-				slog.String("window_key", windowKey), slog.String("status", result.Status))
-		}
-		s.logError("dreaming scheduler: evidence cycle failed", slog.String("team_id", teamID), slog.String("error_kind", "evidence_cycle_failed"))
-		return
-	}
-	if result == nil || result.Status == "skipped" {
-		if result != nil && result.RunID != "" {
-			s.markHourlyObserved(teamID, windowKey)
-			s.logInfo("dreaming scheduler: evidence cycle observed after claim loss",
-				slog.String("team_id", teamID), slog.String("run_id", result.RunID),
-				slog.String("window_key", windowKey), slog.String("status", result.Status))
-		} else {
-			s.logWarn("dreaming scheduler: evidence cycle skipped before it could claim the window",
-				slog.String("team_id", teamID), slog.String("window_key", windowKey))
-		}
-		return
-	}
-	s.markHourlyObserved(teamID, windowKey)
-	s.logInfo("dreaming scheduler: evidence cycle observed",
-		slog.String("team_id", teamID), slog.String("run_id", result.RunID),
-		slog.String("window_key", windowKey), slog.String("status", result.Status))
 }
 
 func isDueAt(now time.Time, cfg EffectiveConfig) bool {
@@ -362,18 +288,6 @@ func (s *Scheduler) markObserved(teamID, runDate string) {
 	delete(s.armed, teamID)
 }
 
-func (s *Scheduler) hourlyAlreadyObserved(teamID, windowKey string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.hourlyObserved[teamID] == windowKey
-}
-
-func (s *Scheduler) markHourlyObserved(teamID, windowKey string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.hourlyObserved[teamID] = windowKey
-}
-
 func (s *Scheduler) markArmed(teamID string, arm scheduledWindowArm) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -412,11 +326,6 @@ func (s *Scheduler) pruneObserved(now time.Time) {
 	for teamID, arm := range s.armed {
 		if _, err := time.Parse(schedulerRunDateLayout, arm.runDate); err != nil || arm.runDate < cutoffDate {
 			delete(s.armed, teamID)
-		}
-	}
-	for teamID, windowKey := range s.hourlyObserved {
-		if len(windowKey) < len("hour:2006-01-02T15") || windowKey < "hour:"+cutoffDate+"T00" {
-			delete(s.hourlyObserved, teamID)
 		}
 	}
 }

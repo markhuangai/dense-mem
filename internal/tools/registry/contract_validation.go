@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 type contractSourceRevision struct {
@@ -272,7 +273,10 @@ func validateDreamFeedback(args map[string]any) error {
 		if err := validateRequiredFields(args, "relationships"); err != nil {
 			return err
 		}
-		return validateSubmittedRelationships(args["relationships"], evidence, "relationships", false)
+		if err := validateSubmittedRelationships(args["relationships"], evidence, "relationships", false); err != nil {
+			return err
+		}
+		return rememberapp.ValidateRelationshipCoverage(len(evidence), objectArray(args["relationships"]))
 	case "reject", "stale", "reinforce":
 		if value, ok := args["idempotency_key"]; ok && strings.TrimSpace(stringInput(value)) != "" {
 			return errors.New("idempotency_key is only supported for confirmation decisions")

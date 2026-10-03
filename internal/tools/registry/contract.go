@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 const (
@@ -246,7 +247,7 @@ func validateRemember(args map[string]any) error {
 	if err := validateSubmittedRelationships(args["relationships"], evidence, "relationships", true); err != nil {
 		return err
 	}
-	return nil
+	return wrapRememberValidationError(rememberapp.ValidateRelationshipCoverage(len(evidence), objectArray(args["relationships"])))
 }
 
 func validateRecall(args map[string]any) error {

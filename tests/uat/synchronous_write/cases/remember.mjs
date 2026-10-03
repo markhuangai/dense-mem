@@ -45,6 +45,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   expect(!tools.some((tool) => tool.name === "get_submission_status"), "selected catalog must remove the status tool");
 
   const results = [];
+  if (selectedFault === "none") results.push(await runRequiredRelationshipCase({ rawRPC, expect }));
   for (const fault of faults) {
     if (fault === "embedding-cancel") {
       results.push(await runCancellationCase({ rpc, rawRPC, expect }));
@@ -85,6 +86,30 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   return { mode: name, results };
 }
 
+async function runRequiredRelationshipCase({ rawRPC, expect }) {
+  const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
+  const providerBefore = await providerFixtureRequestCount(expect);
+  for (const [label, mutate, path, code] of [
+    ["missing", (args) => { delete args.relationships; }, "/relationships", "required"],
+    ["empty", (args) => { args.relationships = []; }, "/relationships", "required"],
+    ["uncited", (args) => { args.evidence.push({ content: "A second evidence item is uncited.", source_type: "manual" }); }, "/evidence/1", "coverage"],
+    ["malformed", (args) => { args.relationships[0].evidence_indices = [true]; }, "/relationships/0/evidence_indices/0", "type"],
+  ]) {
+    const args = singleItemArguments(`required-${label}`, "");
+    mutate(args);
+    const response = await rawRPC("tools/call", { name: "remember", arguments: args });
+    const error = response.error?.data;
+    expect(response.error?.code === -32602 && error?.code === "invalid_input" && error.reason_code === "validation_failed", `${label} must return structured validation: ${JSON.stringify(response)}`);
+    expect(error.issues?.some((issue) => issue.path === path && issue.code === code), `${label} must identify ${path}: ${JSON.stringify(error)}`);
+    expect(error.retryable === false && error.next_action === "correct_and_resubmit" && Boolean(error.remediation) && Boolean(error.correlation_id), `${label} must return actionable correction guidance`);
+    const intakes = Number(postgresQuery(`SELECT count(*) FROM knowledge_ingests WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND idempotency_key = '${sqlLiteral(args.idempotency_key)}'`));
+    expect(intakes === 0, `${label} must reject before durable intake`);
+  }
+  const providerAfter = await providerFixtureRequestCount(expect);
+  expect(providerBefore === providerAfter, "invalid relationship requirements must not call the provider");
+  return { fault: "required-relationships", detailed_errors: true, zero_intake: true, zero_provider_calls: true };
+}
+
 async function providerFixtureRequestCount(expect) {
   const providerURL = (process.env.DENSE_MEM_E2E_PROVIDER_URL || "").replace(/\/$/, "");
   if (!providerURL) return null;
@@ -120,11 +145,11 @@ async function runBudgetContextCase({ expect }) {
   const actor = await createKnownEvidenceCredential(teamID, `assessor-budget-${Date.now()}`, "shared_only");
   const candidateContents = [];
   for (let index = 0; index < 10; index += 1) {
-    const content = `Large stored candidate ${index} ${"candidate context material ".repeat(36)}`;
+    const content = `Large stored candidate ${index} ${"candidate context material ".repeat(35)} [fixture-fault:no-supported]`;
     candidateContents.push(content);
     const seeded = await rememberWithKey(actor.apiKey, {
       evidence: [{ content, source_type: "manual", force_insert: true }],
-      relationships: [],
+      relationships: [relationship("budget-seed", `Large stored candidate ${index}`, "document", { value: { type: "string", value: "candidate context material" } }, [0], "contains_text")],
       idempotency_key: `assessor-budget-seed-${index}-${Date.now()}-${Math.random()}`,
     });
     assertStrictTerminalRemember(seeded, expect);
@@ -133,7 +158,7 @@ async function runBudgetContextCase({ expect }) {
 
   const shortRequest = {
     evidence: [{ content: "Short note for bounded server-selected context.", source_type: "manual" }],
-    relationships: [],
+    relationships: [relationship("budget-note", "Short note", "document", { value: { type: "string", value: "bounded server-selected context" } }, [0], "has_purpose")],
     idempotency_key: `assessor-budget-short-${Date.now()}-${Math.random()}`,
   };
   const first = await rememberWithKey(actor.apiKey, shortRequest);
@@ -168,6 +193,7 @@ async function runEvidenceConflictCase({ rpc, expect }) {
   const actor = await createKnownEvidenceCredential(teamID, `evidence-conflict-${Date.now()}`, "shared_only");
   const firstArgs = singleItemArguments("cited-evidence-conflict", "[fixture:cited-evidence-conflict]");
   firstArgs.evidence.push({ content: "The same change was rejected by the reviewer. [fixture:cited-evidence-conflict]", source_type: "manual" });
+  firstArgs.relationships[0].evidence_indices = [0, 1];
   const first = await rememberWithKey(actor.apiKey, firstArgs);
   assertStrictTerminalRemember(first, expect);
   expect(first.processing_state === "completed", `cited evidence conflict must complete: ${JSON.stringify(first)}`);
@@ -220,6 +246,7 @@ async function runEvidenceConflictCase({ rpc, expect }) {
 
   const dismissArgs = singleItemArguments("cited-evidence-conflict-dismiss", "[fixture:cited-evidence-conflict]");
   dismissArgs.evidence.push({ content: "This cited conflict is intentionally dismissed. [fixture:cited-evidence-conflict-dismiss]", source_type: "manual" });
+  dismissArgs.relationships[0].evidence_indices = [0, 1];
   const dismissSubmission = await rememberWithKey(actor.apiKey, dismissArgs);
   assertStrictTerminalRemember(dismissSubmission, expect);
   expect(dismissSubmission.processing_state === "completed", `dismiss fixture must complete: ${JSON.stringify(dismissSubmission)}`);
@@ -248,7 +275,8 @@ async function runEvidenceConflictCase({ rpc, expect }) {
 
   const beforeSimilarity = Number(postgresQuery(`SELECT count(*) FROM evidence_conflict_cases WHERE team_id = '${sqlLiteral(teamID)}'::uuid;`));
   const similarityArgs = singleItemArguments("cited-evidence-similarity-only", "");
-  similarityArgs.evidence.push({ content: "A similar but uncited statement about the same change.", source_type: "manual" });
+  similarityArgs.evidence.push({ content: "A similar statement about the same change.", source_type: "manual" });
+  similarityArgs.relationships[0].evidence_indices = [0, 1];
   const similarity = await rememberWithKey(actor.apiKey, similarityArgs);
   assertStrictTerminalRemember(similarity, expect);
   expect(similarity.processing_state === "completed", `similarity-only evidence must still complete: ${JSON.stringify(similarity)}`);
@@ -262,6 +290,7 @@ async function runEvidenceConflictCase({ rpc, expect }) {
   for (let index = 0; index < 4; index += 1) {
     const browserArgs = singleItemArguments(`evidence-conflict-browser-${index}`, "[fixture:cited-evidence-conflict]");
     browserArgs.evidence.push({ content: `The browser review fixture rejects this change ${index}. [fixture:cited-evidence-conflict]`, source_type: "manual" });
+  browserArgs.relationships[0].evidence_indices = [0, 1];
     const browser = await rememberWithKey(actor.apiKey, browserArgs);
     assertStrictTerminalRemember(browser, expect);
     expect(browser.processing_state === "completed", `browser evidence conflict fixture ${index} must complete: ${JSON.stringify(browser)}`);

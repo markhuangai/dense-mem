@@ -56,8 +56,8 @@ func validateDreamCycleClaimInput(input DreamCycleClaimInput, system bool) error
 	if input.LeaseUntil.IsZero() {
 		return errors.New("lease_until is required")
 	}
-	if !input.Lane.IsValid() {
-		return fmt.Errorf("unsupported dream lane %q", input.Lane)
+	if err := dreamcontract.ValidateGenerationLane(input.Lane); err != nil {
+		return err
 	}
 	return nil
 }
@@ -93,8 +93,8 @@ func validateDreamCycleRecoveryClaimInput(input DreamCycleRecoveryClaimInput) er
 	if input.MaxAttempts < 1 {
 		return errors.New("max_attempts must be greater than zero")
 	}
-	if !input.Lane.IsValid() {
-		return fmt.Errorf("unsupported dream lane %q", input.Lane)
+	if err := dreamcontract.ValidateGenerationLane(input.Lane); err != nil {
+		return err
 	}
 	return nil
 }

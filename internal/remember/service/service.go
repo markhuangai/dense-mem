@@ -208,6 +208,9 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if strings.TrimSpace(req.IdempotencyKey) == "" {
 		return nil, errors.New("remember: idempotency_key is required")
 	}
+	if err := ValidateRelationshipCoverage(len(req.Evidence), req.RelationshipHints); err != nil {
+		return nil, err
+	}
 	contents := make([]string, 0, len(req.Evidence))
 	for _, evidence := range req.Evidence {
 		contents = append(contents, evidence.Content)
