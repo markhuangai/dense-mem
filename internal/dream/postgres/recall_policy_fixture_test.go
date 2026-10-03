@@ -121,7 +121,7 @@ func newHypothesisRecallFixture(t testing.TB) *hypothesisRecallFixture {
 			if mask&1 != 0 {
 				fragment = matchedEvidence
 			}
-			return insertHypothesisEvidenceDerivations(ctx, tx, teamID, id, []EvidenceDerivationSource{{
+			return seedHistoricalHypothesisEvidenceDerivations(ctx, tx, teamID, id, []EvidenceDerivationSource{{
 				EvidenceID: fragment.FragmentID, FragmentID: fragment.FragmentID,
 				SourceID: fragment.SourceID, SourceRevisionID: fragment.SourceRevisionID,
 				SourceGroupKey: "recall-policy", SpanStart: 0, SpanEnd: len([]rune(fragment.Content)),
@@ -173,7 +173,7 @@ func newHypothesisRecallFixture(t testing.TB) *hypothesisRecallFixture {
 			other.EntityID, "", value.ValueID, baseTime); err != nil {
 			return err
 		}
-		return insertHypothesisEvidenceDerivations(ctx, tx, teamID, valueID, []EvidenceDerivationSource{{
+		return seedHistoricalHypothesisEvidenceDerivations(ctx, tx, teamID, valueID, []EvidenceDerivationSource{{
 			EvidenceID: otherEvidence.FragmentID, FragmentID: otherEvidence.FragmentID,
 			SourceID: otherEvidence.SourceID, SourceRevisionID: otherEvidence.SourceRevisionID,
 			SourceGroupKey: "recall-policy", SpanEnd: len([]rune(otherEvidence.Content)),
@@ -219,4 +219,33 @@ func cappedHypothesisRecallIDs(id string, matchingLast bool) []string {
 	}
 	ids[index] = id
 	return ids
+}
+
+func seedHistoricalHypothesisEvidenceDerivations(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID, hypothesisID string,
+	derivations []EvidenceDerivationSource,
+) error {
+	for _, derivation := range derivations {
+		if err := tx.WithContext(ctx).Exec(`
+			INSERT INTO hypothesis_evidence_derivation_sources (
+			    team_id, hypothesis_id, space_id, space_generation, evidence_id, fragment_id,
+			    source_id, source_revision_id, source_group_key, span_start, span_end, quote, authority
+			)
+			SELECT ?::uuid, hypothesis.hypothesis_id, hypothesis.space_id, hypothesis.space_generation,
+			       ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, ?
+			FROM hypotheses AS hypothesis
+			WHERE hypothesis.team_id = ?::uuid
+			  AND hypothesis.space_id = dense_mem_team_shared_space(hypothesis.team_id)
+			  AND hypothesis.space_generation = dense_mem_team_shared_generation(hypothesis.team_id)
+			  AND hypothesis.hypothesis_id = ?::uuid
+		`, teamID, derivation.EvidenceID, derivation.FragmentID,
+			derivation.SourceID, derivation.SourceRevisionID, derivation.SourceGroupKey,
+			derivation.SpanStart, derivation.SpanEnd, derivation.Quote, derivation.Authority,
+			teamID, hypothesisID).Error; err != nil {
+			return fmt.Errorf("insert evidence derivation: %w", err)
+		}
+	}
+	return nil
 }

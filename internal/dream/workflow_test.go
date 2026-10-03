@@ -536,7 +536,7 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 	require.ErrorIs(t, err, ErrDreamFeedbackInvalidInput)
 	require.ErrorContains(t, err, "independent evidence is required")
 
-	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
+	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID:  hypothesisID,
 		Decision: "confirm_true",
 		Evidence: []rememberapp.RememberEvidenceInput{{
@@ -547,31 +547,7 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 	require.ErrorContains(t, err, "hypothesis text cannot be submitted")
 
 	evidenceContent := " The deployment note says Dense-Mem uses PostgreSQL. "
-	relationshipHint := map[string]any{
-		"ref": "uses-postgresql",
-		"subject": map[string]any{
-			"name":        "Dense-Mem",
-			"entity_kind": "project",
-			"span":        map[string]any{"evidence_index": 0, "start": 26, "end": 35},
-		},
-		"predicate": map[string]any{
-			"proposed_key": "uses",
-			"surface":      "uses",
-			"span":         map[string]any{"evidence_index": 0, "start": 36, "end": 40},
-		},
-		"object": map[string]any{"entity": map[string]any{
-			"name":        "PostgreSQL",
-			"entity_kind": "product",
-			"span":        map[string]any{"evidence_index": 0, "start": 41, "end": 51},
-		}},
-		"polarity": "+",
-		"modality": "statement",
-		"supports": []any{map[string]any{
-			"evidence_index": 0,
-			"start":          1,
-			"end":            52,
-		}},
-	}
+	relationshipHint := dreamConfirmationRelationshipHints()[0]
 	res, err := svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
 		DreamID:  hypothesisID,
 		Decision: "confirm_true",
@@ -618,7 +594,7 @@ func TestResolveFeedbackRejectsForeignEvidenceDreamBeforeRemember(t *testing.T) 
 	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), uuid.NewString())}
 	svc := New(Dependencies{Store: repo, Remember: remember})
 
-	_, err := svc.ResolveFeedback(dreamTestContext(teamID, actorID), "ignored-profile", ResolveFeedbackRequest{
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, actorID), "ignored-profile", ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID:  hypothesisID,
 		Decision: "confirm_true",
 		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent evidence."}},
@@ -672,7 +648,7 @@ func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
 		},
 		{
 			name: "confirm_false",
-			req: ResolveFeedbackRequest{
+			req: ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 				DreamID:  hypothesisID,
 				Decision: "confirm_false",
 				Evidence: []rememberapp.RememberEvidenceInput{{

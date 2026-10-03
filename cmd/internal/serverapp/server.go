@@ -52,7 +52,6 @@ type aiSessionModels struct {
 	remember         string
 	conflictReview   string
 	dreamGraph       string
-	dreamEvidence    string
 	communitySummary string
 }
 
@@ -64,7 +63,6 @@ func aiSessionModelsForConfig(cfg *config.Config) aiSessionModels {
 		remember:         cfg.GetAIRememberModel(),
 		conflictReview:   cfg.GetAIConflictReviewModel(),
 		dreamGraph:       cfg.GetAIDreamGraphModel(),
-		dreamEvidence:    cfg.GetAIDreamEvidenceModel(),
 		communitySummary: cfg.GetAICommunitySummaryModel(),
 	}
 }
@@ -299,9 +297,7 @@ func RunActiveServer(
 			model:    sessionModels.communitySummary,
 			complete: verifierProvider.StructuredChatJSON,
 		},
-		DreamEvidenceStore:  dreamStore,
 		DreamGraphModel:     sessionModels.dreamGraph,
-		DreamEvidenceModel:  sessionModels.dreamEvidence,
 		ProviderCycleLease:  dreamProviderCycleLease(cfg),
 		CorrectionTimeout:   time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
 		CorrectionExecutor:  buildSemanticWriteCorrectionExecutor(openaiProvider),

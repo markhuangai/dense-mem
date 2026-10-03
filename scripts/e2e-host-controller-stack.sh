@@ -262,7 +262,6 @@ if (has("verifier")) {
     AI_VERIFIER_MODEL: "dense-mem-e2e-verifier",
     AI_CONFLICT_REVIEW_MODEL: "dense-mem-e2e-conflict-review",
     AI_DREAM_GRAPH_MODEL: "dense-mem-e2e-dream-graph",
-    AI_DREAM_EVIDENCE_MODEL: "dense-mem-e2e-dream-evidence",
     AI_VERIFIER_DISABLE_TEMPERATURE: "true",
   })) serverEnvironment.set(key, value);
 }

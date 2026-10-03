@@ -20,11 +20,9 @@ type dreamApplicationDependencies struct {
 	AppConfig           dream.AppConfig
 	Teams               dream.TeamService
 	GeneratorTransport  modelprovider.StructuredTransport
-	EvidenceStore       dreamcontract.EvidenceDiscoveryRepository
 	Diagnostics         dreamcontract.DreamDiagnosticRepository
 	DiagnosticProtector observability.DiagnosticProtector
 	GraphModel          string
-	EvidenceModel       string
 	Limits              assessor.SemanticAssessmentLimits
 	Metrics             observability.DiscoverabilityMetrics
 	Logger              observability.LogProvider
@@ -39,7 +37,6 @@ func dreamProviderCycleLease(cfg config.Config) time.Duration {
 func buildDreamApplication(deps dreamApplicationDependencies) dream.Service {
 	store := deps.Store
 	scheduledStore := deps.ScheduledStore
-	evidenceStore := deps.EvidenceStore
 	return dream.New(dream.Dependencies{
 		Remember:            deps.Remember,
 		Store:               store,
@@ -47,8 +44,6 @@ func buildDreamApplication(deps dreamApplicationDependencies) dream.Service {
 		AppConfig:           deps.AppConfig,
 		Teams:               deps.Teams,
 		Generator:           dream.NewProviderGenerator(dreamgeneration.NewProvider(deps.GeneratorTransport, deps.GraphModel, deps.Limits)),
-		EvidenceStore:       evidenceStore,
-		EvidenceGenerator:   dream.NewEvidenceProviderGenerator(deps.GeneratorTransport, deps.EvidenceModel, deps.Limits),
 		Diagnostics:         deps.Diagnostics,
 		DiagnosticProtector: deps.DiagnosticProtector,
 		Metrics:             deps.Metrics,

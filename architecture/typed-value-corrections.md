@@ -119,7 +119,7 @@ select a different tenant.
 ### Remember with `correction_target`
 
 The `remember` input requires evidence and an idempotency key. Relationship
-proposals are optional, must cite submitted evidence indices, and accept exactly
+proposals are required, must collectively cite every submitted evidence index, and accept exactly
 one Entity or typed Value object. The Value schema permits the five server-defined
 types:
 `string`, `number`, `boolean`, `date`, and `date_time`. The transport validator then requires

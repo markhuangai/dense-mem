@@ -227,11 +227,6 @@
       "phase": "precheck"
     },
     {
-      "id": "repository/TestAdvisoryLockAdmissionsSharePoolBudgetAcrossEvidenceAndConfirmation",
-      "run": "^TestAdvisoryLockAdmissionsSharePoolBudgetAcrossEvidenceAndConfirmation$",
-      "phase": "precheck"
-    },
-    {
       "id": "repository/TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment",
       "run": "^TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment$",
       "phase": "precheck"
@@ -239,81 +234,6 @@
     {
       "id": "repository/TestDreamRepositoryPersistsTeamScopedPredicateHypothesis",
       "run": "^TestDreamRepositoryPersistsTeamScopedPredicateHypothesis$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestEvidenceDiscoveryContextsPrioritizeSameSourceAndExcludePrivateSpaces",
-      "run": "^TestEvidenceDiscoveryContextsPrioritizeSameSourceAndExcludePrivateSpaces$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestEvidenceDiscoveryEvaluationPersistsDerivationsAndReadsThemBack",
-      "run": "^TestEvidenceDiscoveryEvaluationPersistsDerivationsAndReadsThemBack$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestEvidenceDiscoveryEvaluationRejectsMixedDuplicateResponseAtomically",
-      "run": "^TestEvidenceDiscoveryEvaluationRejectsMixedDuplicateResponseAtomically$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestEvidenceDiscoveryMarkerFailureDoesNotReclaimStartedDispatch",
-      "run": "^TestEvidenceDiscoveryMarkerFailureDoesNotReclaimStartedDispatch$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestEvidenceDiscoveryNodesRankEvidenceMentionsBeforeTheGlobalBound",
-      "run": "^TestEvidenceDiscoveryNodesRankEvidenceMentionsBeforeTheGlobalBound$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestEvidenceDiscoveryPredicatesRankTargetRelevantDefinitionsBeforeTheGlobalBound",
-      "run": "^TestEvidenceDiscoveryPredicatesRankTargetRelevantDefinitionsBeforeTheGlobalBound$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestEvidenceDiscoveryRecoveryClaimsOnlyItsLane",
-      "run": "^TestEvidenceDiscoveryRecoveryClaimsOnlyItsLane$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestEvidenceDiscoveryRecoveryExhaustionReportsPersistedTotals",
-      "run": "^TestEvidenceDiscoveryRecoveryExhaustionReportsPersistedTotals$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestEvidenceDiscoveryRecoveryReportsDistinctTargetCount",
-      "run": "^TestEvidenceDiscoveryRecoveryReportsDistinctTargetCount$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestEvidenceDiscoveryTargetEligibilityFiltersAliasesQuarantineLifecycleStaleAndDeletionOnly",
-      "run": "^TestEvidenceDiscoveryTargetEligibilityFiltersAliasesQuarantineLifecycleStaleAndDeletionOnly$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestEvidenceDiscoveryTargetLockCapsConcurrentProviderPasses",
-      "run": "^TestEvidenceDiscoveryTargetLockCapsConcurrentProviderPasses$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestEvidenceDiscoveryTargetOrderingUsesAttemptFallback",
-      "run": "^TestEvidenceDiscoveryTargetOrderingUsesAttemptFallback$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestEvidenceDiscoveryTargetPassCapStopsAfterTwoRecordedEvaluations",
-      "run": "^TestEvidenceDiscoveryTargetPassCapStopsAfterTwoRecordedEvaluations$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestEvidenceDiscoveryTargetsAreBoundAndTeamScoped",
-      "run": "^TestEvidenceDiscoveryTargetsAreBoundAndTeamScoped$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestEvidenceDiscoveryValidatedAttemptConsumesPassAfterPersistenceFailure",
-      "run": "^TestEvidenceDiscoveryValidatedAttemptConsumesPassAfterPersistenceFailure$",
       "phase": "precheck"
     },
     {
@@ -1320,8 +1240,8 @@
       "scenario": "synchronous_write_primitives"
     },
     {
-      "id": "service/TestComposeSynchronousEvidenceOnlyAssessorBatch",
-      "run": "^TestComposeSynchronousEvidenceOnlyAssessorBatch$",
+      "id": "service/TestComposeSynchronousUnsupportedProposalPreservesSafeEvidence",
+      "run": "^TestComposeSynchronousUnsupportedProposalPreservesSafeEvidence$",
       "phase": "scenario",
       "scenario": "synchronous_write_primitives"
     },
@@ -1859,6 +1779,16 @@
     {
       "id": "repository/TestTraceRelationshipMarksLifecycleEventLimitAsTruncated",
       "run": "^TestTraceRelationshipMarksLifecycleEventLimitAsTruncated$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRetireEvidenceDiscoveryMigrationPreservesHistoryAndGraph",
+      "run": "^TestRetireEvidenceDiscoveryMigrationPreservesHistoryAndGraph$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestHistoricalEvidenceDreamPreservesReadsAndOwnerConfirmation",
+      "run": "^TestHistoricalEvidenceDreamPreservesReadsAndOwnerConfirmation$",
       "phase": "precheck"
     }
   ]

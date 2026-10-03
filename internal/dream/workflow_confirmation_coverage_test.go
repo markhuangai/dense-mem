@@ -86,7 +86,7 @@ func TestDreamConfirmationHelperBranches(t *testing.T) {
 }
 
 func TestDreamConfirmationReplayMatchingBranches(t *testing.T) {
-	req := ResolveFeedbackRequest{DreamID: "dream", Decision: "confirm_true", Feedback: "reason", Evidence: []rememberapp.RememberEvidenceInput{{Content: "independent evidence"}}}
+	req := ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(), DreamID: "dream", Decision: "confirm_true", Feedback: "reason", Evidence: []rememberapp.RememberEvidenceInput{{Content: "independent evidence"}}}
 	record := &dreamcontract.HypothesisRecord{HypothesisID: "dream", Status: string(domain.DreamStatusProposed)}
 	require.True(t, dreamConfirmationReplayMatches(record, req, req.Decision))
 	record.Status = string(domain.DreamStatusSubmitted)
@@ -152,7 +152,7 @@ func TestResolveFeedbackErrorBranches(t *testing.T) {
 		Store:     &dreamRepositoryStub{getRecord: record},
 		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
 	})
-	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
+	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID:  hypothesisID,
 		Decision: "confirm_true",
 		Evidence: []rememberapp.RememberEvidenceInput{{
@@ -176,7 +176,7 @@ func TestResolveFeedbackErrorBranches(t *testing.T) {
 		Remember:  &rememberServiceStub{err: errors.New("remember failed")},
 		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
 	})
-	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
+	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{RelationshipHints: dreamConfirmationRelationshipHints(),
 		DreamID:  hypothesisID,
 		Decision: "confirm_false",
 		Evidence: []rememberapp.RememberEvidenceInput{{

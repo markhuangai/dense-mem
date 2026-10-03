@@ -11,11 +11,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-const (
-	maxEvidenceDiscoveryDerivations = 10
-	maxEvidenceDiscoveryEvidenceIDs = 10
-)
-
 func NormalizeUpsertHypothesisInput(input UpsertHypothesisInput) UpsertHypothesisInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.CreatedByProfileID = strings.TrimSpace(input.CreatedByProfileID)
@@ -85,6 +80,9 @@ func normalizeEvidenceDerivationSource(input EvidenceDerivationSource) EvidenceD
 }
 
 func ValidateUpsertHypothesisInput(input UpsertHypothesisInput, system bool) error {
+	if err := ValidateGenerationLane(input.Lane); err != nil {
+		return err
+	}
 	for label, value := range map[string]string{
 		"team_id":           input.TeamID,
 		"run_id":            input.RunID,
@@ -121,7 +119,7 @@ func ValidateUpsertHypothesisInput(input UpsertHypothesisInput, system bool) err
 			return fmt.Errorf("object_value_id is invalid: %w", err)
 		}
 	}
-	if input.Lane != domain.DreamLaneEvidenceDiscovery && len(input.SourceVersions) == 0 {
+	if len(input.SourceVersions) == 0 {
 		return errors.New("source_versions is required")
 	}
 	if input.ContentHash == "" {
@@ -133,63 +131,6 @@ func ValidateUpsertHypothesisInput(input UpsertHypothesisInput, system bool) err
 	expectedTargetIdentity := HypothesisTargetIdentity(input.TeamID, input.SubjectEntityID, input.PredicateKey, input.ObjectEntityID, input.ObjectValueID)
 	if input.TargetIdentity == "" || input.TargetIdentity != expectedTargetIdentity {
 		return errors.New("target_identity must match the canonical hypothesis target")
-	}
-	if input.Lane == domain.DreamLaneEvidenceDiscovery {
-		if len(input.EvidenceDerivations) == 0 || len(input.EvidenceDerivations) > maxEvidenceDiscoveryDerivations ||
-			len(input.SourceEvidenceIDs) == 0 || len(input.SourceEvidenceIDs) > maxEvidenceDiscoveryEvidenceIDs {
-			return errors.New("evidence discovery hypotheses require evidence derivations")
-		}
-		seenEvidenceIDs := make(map[string]struct{}, len(input.SourceEvidenceIDs))
-		for index, evidenceID := range input.SourceEvidenceIDs {
-			if _, err := uuid.Parse(evidenceID); err != nil {
-				return fmt.Errorf("source_evidence_ids[%d] is invalid: %w", index, err)
-			}
-			if _, exists := seenEvidenceIDs[evidenceID]; exists {
-				return fmt.Errorf("source_evidence_ids[%d] is duplicated", index)
-			}
-			seenEvidenceIDs[evidenceID] = struct{}{}
-		}
-		derivationEvidenceIDs := make(map[string]struct{}, len(input.EvidenceDerivations))
-		for index, derivation := range input.EvidenceDerivations {
-			derivationEvidenceIDs[derivation.EvidenceID] = struct{}{}
-			if _, err := uuid.Parse(derivation.EvidenceID); err != nil {
-				return fmt.Errorf("evidence_derivations[%d].evidence_id is invalid: %w", index, err)
-			}
-			if _, err := uuid.Parse(derivation.FragmentID); err != nil {
-				return fmt.Errorf("evidence_derivations[%d].fragment_id is invalid: %w", index, err)
-			}
-			if derivation.EvidenceID != derivation.FragmentID {
-				return fmt.Errorf("evidence_derivations[%d] evidence_id and fragment_id must match", index)
-			}
-			if (derivation.SourceID == "") != (derivation.SourceRevisionID == "") {
-				return fmt.Errorf("evidence_derivations[%d] must pair source_id and source_revision_id", index)
-			}
-			if derivation.SourceID != "" {
-				if _, err := uuid.Parse(derivation.SourceID); err != nil {
-					return fmt.Errorf("evidence_derivations[%d].source_id is invalid: %w", index, err)
-				}
-				if _, err := uuid.Parse(derivation.SourceRevisionID); err != nil {
-					return fmt.Errorf("evidence_derivations[%d].source_revision_id is invalid: %w", index, err)
-				}
-			}
-			if !domain.Authority(derivation.Authority).IsValid() {
-				return fmt.Errorf("evidence_derivations[%d].authority is unsupported", index)
-			}
-			if derivation.SourceGroupKey == "" || derivation.Quote == "" || derivation.SpanStart < 0 || derivation.SpanEnd <= derivation.SpanStart {
-				return fmt.Errorf("evidence_derivations[%d] is incomplete", index)
-			}
-		}
-		for evidenceID := range seenEvidenceIDs {
-			if _, exists := derivationEvidenceIDs[evidenceID]; !exists {
-				return fmt.Errorf("source_evidence_ids contains evidence without a derivation")
-			}
-		}
-		for evidenceID := range derivationEvidenceIDs {
-			if _, exists := seenEvidenceIDs[evidenceID]; !exists {
-				return fmt.Errorf("evidence derivations contain evidence missing from source_evidence_ids")
-			}
-		}
-		return nil
 	}
 	if input.GeneratorKind != "evaluation_seed" && len(input.Derivations) == 0 {
 		return errors.New("derivations are required")
@@ -257,6 +198,16 @@ func ValidateUpsertHypothesisInput(input UpsertHypothesisInput, system bool) err
 		return errors.New("dream derivations must cover both premise positions")
 	}
 	return nil
+}
+
+func ValidateGenerationLane(lane domain.DreamLane) error {
+	if lane == domain.DreamLaneGraph {
+		return nil
+	}
+	if lane == domain.DreamLaneEvidenceDiscovery {
+		return errors.New("evidence discovery Dream generation is retired")
+	}
+	return fmt.Errorf("unsupported dream lane %q", lane)
 }
 
 func HypothesisTargetIdentity(teamID, subjectEntityID, predicateKey, objectEntityID, objectValueID string) string {

@@ -195,7 +195,7 @@ rate of 1075 per million input tokens; they are not measured billing usage.
 Missing provider usage remains unavailable.
 
 `AI_REMEMBER_MODEL`, `AI_CONFLICT_REVIEW_MODEL`, `AI_DREAM_GRAPH_MODEL`,
-`AI_DREAM_EVIDENCE_MODEL`, and `AI_COMMUNITY_SUMMARY_MODEL` are optional
+and `AI_COMMUNITY_SUMMARY_MODEL` are optional
 overrides for their existing AI sessions. An unset or whitespace-only override
 uses `AI_VERIFIER_MODEL`; a configured model failure is returned without trying
 the fallback model.
@@ -243,9 +243,10 @@ internal run IDs.
 
 Callers submit logical Entity, predicate, and Value proposals rather than text
 offsets. `remember` does not accept `span`, `surface`, or relationship `supports`
-fields. Each optional Relationship lists the zero-based `evidence_indices` that
-support it; proposals may be omitted, and their indices do not need to cover every
-evidence item. The single assessor session reviews every evidence item for security
+fields. A nonempty `relationships` array is required. Each Relationship lists the
+zero-based `evidence_indices` that support it, and every evidence item must be
+cited by at least one proposal. Missing proposals or uncited evidence return
+detailed validation errors before intake or provider work. The single assessor session reviews every evidence item for security
 and grounds or normalizes only submitted Relationship proposals against their
 cited evidence. It never searches memory or discovers Relationships. Closed-schema
 validation and deterministic server policy decide what is safe to commit.
@@ -259,8 +260,15 @@ anchor for an earlier exact name span. Inaccessible or stale known evidence leav
 Relationship unsupported without revealing whether an ID exists. The aggregate known
 evidence content in one request is bounded to 20,000 Unicode code points before
 assessor boundary expansion; larger requests return `input_budget_exceeded`. The
-current public contract is `dense-mem.v2.6.3`; `dense-mem.v2.6.2` remains accepted
-for compatible replays.
+current public contract is `dense-mem.v2.6.6`; `dense-mem.v2.6.3` and
+`dense-mem.v2.6.2` remain accepted for compatible terminal replays. Historical
+requests lacking proposals or complete citations fail current validation even
+with their original keys; stored history is preserved.
+
+Dream generation now uses graph inference only. Hourly evidence discovery is
+retired; historical discovery Dreams remain readable and confirmable by their
+owners. Apply the retirement migration with old service instances stopped;
+unfinished discovery runs are cancelled irreversibly without deleting history.
 
 To replace a specific current evidence item you own, put its UUID in the new
 item's `supersedes_evidence_ids`. Direct targeting is separate from advancing a
@@ -305,14 +313,16 @@ active. This prevents a replacement that never becomes supported memory from
 invalidating current evidence.
 
 Remember uses one assessor conversation for the complete batch. Every evidence
-item receives a security result, including evidence-only submissions. Unsafe
+item receives a security result. Unsafe
 evidence fails the complete batch with `submission_policy_rejected` and no
 semantic, search, or embedding writes. Safe evidence is stored and indexed even
-when no Relationship is proposed or accepted. The assessor may ground and
+when every proposed Relationship is unsupported. The assessor may ground and
 normalize only submitted Relationship proposals against their cited evidence; it
 does not search memory, find support for evidence, or discover Relationships.
 Every submitted Relationship ref gets a `stored` or `not_stored` disposition;
-unsupported proposals are completed-result warnings. Exact client-owned changes
+unsupported proposals include actionable `not_stored` reasons, messages, and
+remediation. Clients must inspect these outcomes and submit corrected requests
+with new keys. Exact client-owned changes
 after staging are reported as `stale_input`. Provider, configuration, database,
 and internal faults are typed operational failures. All accepted semantic effects
 commit atomically, with no partial replacement or interactive placement review.
@@ -377,7 +387,7 @@ Hypotheses are separate bounded fields; candidates and Hypotheses are not
 default memory results.
 
 ```text
-remember evidence (+ optional Entity/Relationship proposals)
+remember evidence + required Relationship proposals (+ optional Entity hints)
         |
         v
 durable staging -> validated terminal commit -> active eligible Relationships
@@ -567,7 +577,7 @@ written under the ignored evaluation runtime directory.
 | Area | Dense-Mem owns | Host LLM owns |
 |------|----------------|---------------|
 | Evidence | Exact staging, provenance, lifecycle, and owner checks | Choosing what source material to submit |
-| Semantic state | Validation, deterministic policy, support eligibility | Proposing optional Entity/Relationship hints |
+| Semantic state | Validation, deterministic policy, support eligibility | Proposing Relationships and optional Entity hints |
 | Recall | Active evidence contexts and Relationship handles | Selecting what to cite or ask in the conversation |
 | Corrections | Authorized supersession, retraction, and append-only lineage | Deciding whether a correction is warranted |
 | Operations | Teams, memberships, credentials, API keys, audit, and portals | MCP client configuration |

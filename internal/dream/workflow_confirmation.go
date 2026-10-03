@@ -251,6 +251,9 @@ func (s *service) resolveConfirmation(
 		s.recordDreamFeedback(ctx, decision, dream, "error")
 		return nil, err
 	}
+	if err := rememberapp.ValidateRelationshipCoverage(len(evidence), req.RelationshipHints); err != nil {
+		return nil, err
+	}
 	if replay, err := dreamSubmittedConfirmationReplay(record, req, evidence); err != nil {
 		s.recordDreamFeedback(ctx, decision, dream, "error")
 		return nil, err

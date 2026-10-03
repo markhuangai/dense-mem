@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 )
 
@@ -125,7 +124,6 @@ type dreamPolicyBenchmarkFixture struct {
 	store    *Store
 	counters *dreamPolicyBenchmarkCounters
 	graph    []UpsertHypothesisInput
-	evidence []UpsertHypothesisInput
 	feedback UpdateHypothesisStatusInput
 }
 
@@ -155,41 +153,17 @@ func newDreamPolicyBenchmarkFixture(b *testing.B) *dreamPolicyBenchmarkFixture {
 		LeaseUntil: time.Now().UTC().Add(time.Minute),
 	})
 	require.NoError(b, err)
-	evidenceRun, err := semantic.ClaimScheduledDreamCycle(ctx, DreamCycleClaimInput{
-		TeamID: teamID, RunDate: "2026-09-29", WindowKey: "hour:dream-policy-benchmark",
-		Lane: domain.DreamLaneEvidenceDiscovery, LeaseToken: uuid.NewString(),
-		LeaseUntil: time.Now().UTC().Add(time.Minute),
-	})
-	require.NoError(b, err)
-	const evidenceContent = "Benchmark evidence supports a possible target."
-	ingest := createSemanticIngest(b, ctx, ledger, teamID, ownerID, "dream-policy-bench-evidence", evidenceContent)
-	fragment := requireTestEvidenceFragment(b, ingest)
-	require.NotEmpty(b, fragment.Authority)
 	fixture := &dreamPolicyBenchmarkFixture{
 		graph:    make([]UpsertHypothesisInput, dreamPolicyBenchmarkWarmups+dreamPolicyBenchmarkMeasured),
-		evidence: make([]UpsertHypothesisInput, dreamPolicyBenchmarkWarmups+dreamPolicyBenchmarkMeasured),
 		counters: &dreamPolicyBenchmarkCounters{},
 	}
 	for i := range fixture.graph {
 		graphObject := createSemanticEntity(b, ctx, semantic, teamID, ownerID, "product", fmt.Sprintf("Benchmark graph target %03d", i))
-		evidenceObject := createSemanticEntity(b, ctx, semantic, teamID, ownerID, "product", fmt.Sprintf("Benchmark evidence target %03d", i))
 		statement := fmt.Sprintf("Benchmark owner may use graph target %03d.", i)
 		fixture.graph[i] = evidenceGroundedDreamProposal(teamID, ownerID, graphRun.RunID,
 			firstInput, secondInput, subject.EntityID, graphObject.EntityID, "uses", statement)
 		fixture.graph[i].ContentHash = sha256Hex(statement)
-		statement = fmt.Sprintf("Benchmark owner may use evidence target %03d.", i)
-		fixture.evidence[i] = UpsertHypothesisInput{
-			TeamID: teamID, RunID: evidenceRun.RunID, Lane: domain.DreamLaneEvidenceDiscovery,
-			Statement: statement, Rationale: "Exact test evidence is cited.",
-			SubjectEntityID: subject.EntityID, PredicateKey: "uses", PredicateVersion: 1,
-			ObjectEntityID: evidenceObject.EntityID, ContentHash: sha256Hex(statement),
-			GeneratorKind: "provider", GeneratorVersion: "benchmark", SourceOwnerProfileIDs: []string{ownerID},
-			SourceEvidenceIDs: []string{fragment.FragmentID}, EvidenceDerivations: []EvidenceDerivationSource{{
-				EvidenceID: fragment.FragmentID, FragmentID: fragment.FragmentID,
-				SourceGroupKey: "ingest:" + ingest.IngestID, SpanStart: 0,
-				SpanEnd: len([]rune(evidenceContent)), Quote: evidenceContent, Authority: fragment.Authority,
-			}},
-		}
+
 	}
 	feedbackObject := createSemanticEntity(b, ctx, semantic, teamID, ownerID, "product", "Benchmark feedback target")
 	record, inserted, err := semantic.UpsertScheduledHypothesis(ctx, UpsertHypothesisInput{
@@ -265,15 +239,6 @@ func BenchmarkDreamPolicyOwnership(b *testing.B) {
 				return "", err
 			}
 			return fmt.Sprintf("graph|%s|%t", record.Status, inserted), nil
-		})
-	})
-	b.Run("evidence_proposal", func(b *testing.B) {
-		benchmarkDreamPolicyWorkload(b, fixture.counters, func(i int) (string, error) {
-			record, inserted, err := fixture.store.UpsertScheduledHypothesis(ctx, fixture.evidence[i])
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("evidence_discovery|%s|%t", record.Status, inserted), nil
 		})
 	})
 	b.Run("feedback", func(b *testing.B) {

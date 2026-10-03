@@ -390,7 +390,7 @@ func TestSchedulerPrunesObservedEntries(t *testing.T) {
 	require.Equal(t, "2026-06-10", scheduler.armed["recent"].runDate)
 }
 
-func TestSchedulerCoversRecoveryDisabledAndEvidenceSkipBranches(t *testing.T) {
+func TestSchedulerCoversRecoveryDisabledAndObservedBranches(t *testing.T) {
 	teamID := uuid.New()
 	profiles := &schedulerProfileStub{profiles: []*domain.Team{nil, {ID: teamID}}}
 	base := &schedulerDreamStub{cfg: dueSchedulerConfig(), recoveryErrs: map[string]error{teamID.String(): errors.New("recovery failed")}}
@@ -407,13 +407,6 @@ func TestSchedulerCoversRecoveryDisabledAndEvidenceSkipBranches(t *testing.T) {
 	disabled.runDue(context.Background())
 	require.False(t, disabled.isArmed(disabledID.String(), scheduledWindowArm{runDate: "2026-06-11"}))
 
-	if isActiveScheduledTeam(nil) || isActiveScheduledTeam(&domain.Team{Status: "archived"}) {
-		t.Fatal("inactive scheduled team was accepted")
-	}
-	if !isActiveScheduledTeam(&domain.Team{}) || !isActiveScheduledTeam(&domain.Team{Status: " ACTIVE "}) {
-		t.Fatal("active scheduled team was rejected")
-	}
-
 	observed := NewScheduler(&schedulerDreamStub{}, &schedulerProfileStub{}, discardSchedulerLogger())
 	observed.markArmed("team", scheduledWindowArm{runDate: "2026-06-11"})
 	observed.disarmMatching("team", scheduledWindowArm{runDate: "different"})
@@ -421,28 +414,7 @@ func TestSchedulerCoversRecoveryDisabledAndEvidenceSkipBranches(t *testing.T) {
 	observed.disarmMatching("team", scheduledWindowArm{runDate: "2026-06-11"})
 	require.False(t, observed.isArmed("team", scheduledWindowArm{runDate: "2026-06-11"}))
 
-	for _, tc := range []struct {
-		result       *RunCycleResult
-		wantObserved bool
-	}{
-		{result: nil},
-		{result: &RunCycleResult{Status: "skipped"}},
-		{result: &RunCycleResult{RunID: "claimed", Status: "skipped"}, wantObserved: true},
-	} {
-		evidence := &schedulerEvidenceSkipStub{schedulerEvidenceStub: &schedulerEvidenceStub{schedulerDreamStub: &schedulerDreamStub{cfg: dueSchedulerConfig()}}, result: tc.result}
-		evidenceScheduler := NewScheduler(evidence, &schedulerProfileStub{}, discardSchedulerLogger())
-		evidenceScheduler.runEvidenceDue(context.Background(), teamID.String(), dueSchedulerConfig(), time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC))
-		require.Equal(t, tc.wantObserved, evidenceScheduler.hourlyAlreadyObserved(teamID.String(), "hour:2026-06-11T03"))
-	}
-
-	hourly := NewScheduler(&schedulerEvidenceRecoveryStub{schedulerEvidenceStub: &schedulerEvidenceStub{schedulerDreamStub: &schedulerDreamStub{cfg: dueSchedulerConfig()}}}, &schedulerProfileStub{}, discardSchedulerLogger())
-	hourly.runEvidenceDue(context.Background(), teamID.String(), dueSchedulerConfig(), time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC))
-
-	observed.hourlyObserved = map[string]string{"stale": "bad", "old": "hour:2026-06-01T03", "recent": "hour:2026-06-11T03"}
 	observed.pruneObserved(time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC))
-	require.NotContains(t, observed.hourlyObserved, "stale")
-	require.NotContains(t, observed.hourlyObserved, "old")
-	require.Contains(t, observed.hourlyObserved, "recent")
 }
 
 type schedulerRecoveryStub struct {
@@ -453,28 +425,6 @@ type schedulerRecoveryStub struct {
 func (s *schedulerRecoveryStub) RecoverScheduledCycle(_ context.Context, teamID string) (*RunCycleResult, error) {
 	s.recoveryTeams = append(s.recoveryTeams, teamID)
 	return s.recovered, nil
-}
-
-type schedulerEvidenceSkipStub struct {
-	*schedulerEvidenceStub
-	result *RunCycleResult
-}
-
-func (s *schedulerEvidenceSkipStub) RunScheduledEvidenceCycle(_ context.Context, teamID string, _ time.Time) (*RunCycleResult, error) {
-	if s.result == nil {
-		return nil, nil
-	}
-	result := *s.result
-	result.TeamID = teamID
-	return &result, nil
-}
-
-type schedulerEvidenceRecoveryStub struct {
-	*schedulerEvidenceStub
-}
-
-func (s *schedulerEvidenceRecoveryStub) RecoverScheduledEvidenceCycle(_ context.Context, _ string) (*RunCycleResult, error) {
-	return &RunCycleResult{RunID: "recovered", Status: "completed"}, nil
 }
 
 func dueSchedulerConfig() EffectiveConfig {

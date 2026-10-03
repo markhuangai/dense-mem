@@ -75,20 +75,6 @@ test("provider fixture scopes assessment faults to the active schema input", () 
   };
   assert.equal(fixtureFault(activeEvidence, "assessment"), "no-supported");
 
-  const evidenceDiscovery = {
-    messages: [
-      { role: "user", content: JSON.stringify({ contexts: [{ boundary_text: "[fixture-fault:timeout] stale context" }], nodes: [] }) },
-      { role: "user", content: JSON.stringify({ contexts: [{ boundary_text: "Current evidence without a fault." }], nodes: [] }) },
-    ],
-    response_format: { json_schema: { name: "dense_mem_evidence_discovery_response" } },
-  };
-  assert.equal(fixtureFault(evidenceDiscovery, "assessment"), "");
-  evidenceDiscovery.messages[1].content = JSON.stringify({
-    contexts: [{ boundary_text: "Current evidence [fixture-fault:unavailable]." }],
-    nodes: [],
-  });
-  assert.equal(fixtureFault(evidenceDiscovery, "assessment"), "unavailable");
-
   const communitySummary = {
     messages: [
       { role: "user", content: JSON.stringify({ relationships: [{ support_quotes: [{ quote: "[fixture-fault:timeout] stale quote" }] }] }) },
@@ -118,7 +104,7 @@ test("provider fixture scopes assessment faults to the active schema input", () 
   assert.equal(fixtureFault({ input: ["Current embedding input [fixture-fault:embedding-count]."] }, "embedding"), "embedding-count");
 });
 
-test("provider fixture implements the community, dream, and evidence-discovery schemas", () => {
+test("provider fixture implements the community and graph dream schemas", () => {
   const relationshipID = "11111111-1111-4111-8111-111111111111";
   const evidenceID = "22222222-2222-4222-8222-222222222222";
   const community = fixtureChatResponse(structuredRequest("community_summary", {
@@ -160,53 +146,7 @@ test("provider fixture implements the community, dream, and evidence-discovery s
   assert.equal(dream.proposals[0].predicate_ref, "predicate_1");
   assert.deepEqual(dream.proposals[0].evidence_refs, ["evidence_1", "evidence_2"]);
 
-  const evidence = fixtureChatResponse(structuredRequest("dense_mem_evidence_discovery_response", {
-    request_id: "evidence_request_1",
-    max_outputs: 1,
-    contexts: [{
-      evidence_ref: "evidence_target",
-      boundary_text: "⟦bfixture_0⟧Dense-Mem uses PostgreSQL.⟦bfixture_1⟧",
-    }],
-    nodes: [
-      { ref: "node_1", display: "Dense-Mem", kind: "project" },
-      { ref: "node_2", display: "PostgreSQL", kind: "product" },
-    ],
-    allowed_predicates: [{ ref: "predicate_1", label: "uses", version: 1 }],
-  }));
-  assert.equal(evidence.request_id, "evidence_request_1");
-  assert.equal(evidence.proposals.length, 1);
-  assert.equal(evidence.proposals[0].predicate_ref, "predicate_1");
-  assert.deepEqual(evidence.proposals[0].derivations, [{
-    evidence_ref: "evidence_target", start_ref: "bfixture_0", end_ref: "bfixture_1",
-  }]);
-  const duplicateSuppressed = fixtureChatResponse(structuredRequest("dense_mem_evidence_discovery_response", {
-    request_id: "evidence_request_2",
-    max_outputs: 1,
-    contexts: [{
-      evidence_ref: "evidence_target",
-      boundary_text: "⟦bfixture_0⟧Dense-Mem uses PostgreSQL.⟦bfixture_1⟧",
-    }],
-    nodes: [
-      { ref: "node_1", display: "Dense-Mem", kind: "project" },
-      { ref: "node_2", display: "PostgreSQL", kind: "product" },
-    ],
-    allowed_predicates: [{ ref: "predicate_1", label: "uses", version: 1 }],
-    related_hypotheses: [{ subject_ref: "node_1", predicate: "predicate_1", object_ref: "node_2" }],
-  }));
-  assert.equal(duplicateSuppressed.proposals.length, 0);
-});
 
-test("team-dreaming Compose UAT covers hourly evidence discovery and adverse eligibility", async () => {
-  const scenario = await readFile(new URL("../team_dreaming_e2e.mjs", import.meta.url), "utf8");
-  assert.match(scenario, /waitForHourlyEvidenceRun/);
-  assert.match(scenario, /lane, "evidence_discovery"/);
-  assert.match(scenario, /evidence_targets/);
-  assert.match(scenario, /quarantinedContent/);
-  assert.match(scenario, /confirm_true/);
-  assert.match(scenario, /createAdverseEvidenceTeam/);
-  assert.match(scenario, /evidence_failure_team_name/);
-  assert.match(scenario, /provider_failed/);
-  assert.match(scenario, /evidence search-document seed/);
 });
 
 function structuredRequest(schemaName, input) {

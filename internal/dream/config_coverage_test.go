@@ -82,13 +82,12 @@ func TestDreamServiceGuardsAndLeaseSelection(t *testing.T) {
 		t.Fatalf("default leases = %s/%s", svc.cycleLease(false), svc.cycleLease(true))
 	}
 	svc.deps.ProviderCycleLease = time.Hour
-	if svc.cycleLease(false) != time.Hour || svc.evidenceCycleLease() != time.Hour*evidenceDiscoveryTargetLimit*evidenceDiscoveryPassLimit*evidenceDiscoveryRegenerationLimit {
+	if svc.cycleLease(false) != time.Hour || svc.cycleLease(true) != time.Hour {
 		t.Fatal("provider lease override was not applied")
 	}
 	for name, call := range map[string]func() error{
 		"run":       func() error { _, err := svc.RunCycle(ctx, "", RunCycleRequest{}); return err },
 		"scheduled": func() error { _, err := svc.RunScheduledCycle(ctx, "", time.Time{}); return err },
-		"evidence":  func() error { _, err := svc.RunScheduledEvidenceCycle(ctx, "", time.Time{}); return err },
 		"recover":   func() error { _, err := svc.RecoverScheduledCycle(ctx, ""); return err },
 		"missed":    func() error { _, err := svc.RecordMissedScheduledCycle(ctx, "", ""); return err },
 		"list":      func() error { _, _, err := svc.List(ctx, "", ListOptions{}); return err },

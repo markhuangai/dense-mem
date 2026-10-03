@@ -17,6 +17,15 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
+func dreamConfirmationRelationshipHints() []map[string]any {
+	return []map[string]any{{
+		"ref": "confirmation", "subject": map[string]any{"name": "Dense-Mem", "entity_kind": "project"},
+		"predicate": map[string]any{"proposed_key": "uses"},
+		"object":    map[string]any{"entity": map[string]any{"name": "PostgreSQL", "entity_kind": "product"}},
+		"polarity":  "+", "evidence_indices": []any{0},
+	}}
+}
+
 func dreamTestContext(teamID uuid.UUID, ownerID uuid.UUID) context.Context {
 	credentialID := uuid.New()
 	return requestctx.WithActor(context.Background(), requestctx.Actor{

@@ -58,6 +58,7 @@ func TestResolveFeedbackRecordsDiagnosticAfterConfirmationLockRelease(t *testing
 			if tc.decision == "confirm_true" {
 				deps.Remember = confirmationLockRememberService{result: completedConfirmationRememberResult(uuid.NewString())}
 				request.Evidence = []rememberapp.RememberEvidenceInput{{Content: "Independent fixture evidence."}}
+				request.RelationshipHints = []map[string]any{{"ref": "confirmation", "evidence_indices": []any{0}}}
 			}
 
 			result, err := dreamapp.New(deps).ResolveFeedback(ctx, "", request)

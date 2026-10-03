@@ -52,7 +52,6 @@ const values = {
   AI_REMEMBER_MODEL: "dense-mem-e2e-remember",
   AI_CONFLICT_REVIEW_MODEL: "dense-mem-e2e-conflict-review",
   AI_DREAM_GRAPH_MODEL: "dense-mem-e2e-dream-graph",
-  AI_DREAM_EVIDENCE_MODEL: "dense-mem-e2e-dream-evidence",
   AI_COMMUNITY_SUMMARY_MODEL: "dense-mem-e2e-community-summary",
   AI_VERIFIER_DISABLE_TEMPERATURE: "true",
   DENSE_MEM_CI_GO_TEST_IMAGE: "golang:1.26.6-bookworm",

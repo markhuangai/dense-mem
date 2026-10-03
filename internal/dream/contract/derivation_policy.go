@@ -1,7 +1,6 @@
 package contract
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -49,38 +48,4 @@ func GraphDerivationMatchesEvidence(derivation DreamDerivationSource, available 
 		return true
 	}
 	return false
-}
-
-// DuplicateEvidenceDerivationSpan preserves the persisted span identity check.
-func DuplicateEvidenceDerivationSpan(prior []EvidenceDerivationSource, current EvidenceDerivationSource) bool {
-	key := fmt.Sprintf("%s:%d:%d", current.EvidenceID, current.SpanStart, current.SpanEnd)
-	for _, derivation := range prior {
-		if fmt.Sprintf("%s:%d:%d", derivation.EvidenceID, derivation.SpanStart, derivation.SpanEnd) == key {
-			return true
-		}
-	}
-	return false
-}
-
-func EvidenceDerivationsCiteTarget(derivations []EvidenceDerivationSource, targetEvidenceID string) bool {
-	for _, derivation := range derivations {
-		if derivation.EvidenceID == targetEvidenceID {
-			return true
-		}
-	}
-	return false
-}
-
-func EvidenceDerivationMetadataMatches(derivation EvidenceDerivationSource, evidence EvidenceContext) bool {
-	return derivation.SourceID == evidence.SourceID &&
-		derivation.SourceRevisionID == evidence.SourceRevisionID &&
-		derivation.SourceGroupKey == evidence.SourceGroupKey &&
-		derivation.Authority == evidence.Authority
-}
-
-func EvidenceDerivationSpanMatches(derivation EvidenceDerivationSource, content string) bool {
-	runes := []rune(content)
-	return derivation.SpanStart >= 0 && derivation.SpanEnd <= len(runes) &&
-		derivation.SpanEnd > derivation.SpanStart &&
-		string(runes[derivation.SpanStart:derivation.SpanEnd]) == derivation.Quote
 }

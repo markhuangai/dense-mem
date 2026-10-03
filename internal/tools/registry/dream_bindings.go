@@ -55,6 +55,10 @@ func bindDreamTool(tool Tool, deps Dependencies) Tool {
 			}
 			res, err := deps.DreamBindings.Service.ResolveFeedback(ctx, teamID, req)
 			if err != nil {
+				validation := wrapRememberValidationError(err)
+				if _, ok := ContractValidationResultFromError(validation); ok {
+					return nil, validation
+				}
 				if busy, ok := resolveDreamConfirmationBusyOutcome(err); ok {
 					return nil, NewToolResultError(busy)
 				}

@@ -14,7 +14,6 @@ func TestLoadSessionModelOverrides(t *testing.T) {
 		"AI_REMEMBER_MODEL":          " remember-model ",
 		"AI_CONFLICT_REVIEW_MODEL":   "conflict-model",
 		"AI_DREAM_GRAPH_MODEL":       "dream-graph-model",
-		"AI_DREAM_EVIDENCE_MODEL":    "dream-evidence-model",
 		"AI_COMMUNITY_SUMMARY_MODEL": "community-model",
 	} {
 		os.Setenv(key, value)
@@ -36,7 +35,7 @@ func TestSessionModelOverridesFallbackIndependently(t *testing.T) {
 		cfg := &Config{
 			AIVerifierModel: " verifier-model ", AIRememberModel: override,
 			AIConflictReviewModel: override, AIDreamGraphModel: override,
-			AIDreamEvidenceModel: override, AICommunitySummaryModel: override,
+			AICommunitySummaryModel: override,
 		}
 		assertSessionModels(t, cfg, map[string]string{
 			"remember": "verifier-model", "conflict review": "verifier-model",
@@ -50,7 +49,7 @@ func assertSessionModels(t *testing.T, cfg *Config, want map[string]string) {
 	t.Helper()
 	for name, got := range map[string]string{
 		"remember": cfg.GetAIRememberModel(), "conflict review": cfg.GetAIConflictReviewModel(),
-		"dream graph": cfg.GetAIDreamGraphModel(), "dream evidence": cfg.GetAIDreamEvidenceModel(),
+		"dream graph":       cfg.GetAIDreamGraphModel(),
 		"community summary": cfg.GetAICommunitySummaryModel(),
 	} {
 		if got != want[name] {

@@ -73,7 +73,7 @@ func TestNormalizeUpsertHypothesisInputPreservesCanonicalIdentityAndCaller(t *te
 
 func TestValidateUpsertHypothesisInputKeepsLanesDistinct(t *testing.T) {
 	evidence := validPolicyEvidenceProposal()
-	require.NoError(t, ValidateUpsertHypothesisInput(evidence, true))
+	require.ErrorContains(t, ValidateUpsertHypothesisInput(evidence, true), "evidence discovery Dream generation is retired")
 	graph := validPolicyGraphProposal()
 	require.NoError(t, ValidateUpsertHypothesisInput(graph, true))
 	seed := graph
@@ -81,23 +81,6 @@ func TestValidateUpsertHypothesisInputKeepsLanesDistinct(t *testing.T) {
 	seed.Derivations = nil
 	require.NoError(t, ValidateUpsertHypothesisInput(seed, true))
 
-	for _, tc := range []struct {
-		name   string
-		mutate func(*UpsertHypothesisInput)
-		want   string
-	}{
-		{"missing evidence", func(x *UpsertHypothesisInput) { x.SourceEvidenceIDs = nil }, "evidence discovery hypotheses require evidence derivations"},
-		{"duplicate evidence", func(x *UpsertHypothesisInput) { x.SourceEvidenceIDs = append(x.SourceEvidenceIDs, policyEvidenceID) }, "source_evidence_ids[1] is duplicated"},
-		{"invalid authority", func(x *UpsertHypothesisInput) { x.EvidenceDerivations[0].Authority = "derived" }, "evidence_derivations[0].authority is unsupported"},
-		{"invalid span", func(x *UpsertHypothesisInput) { x.EvidenceDerivations[0].SpanEnd = 0 }, "evidence_derivations[0] is incomplete"},
-		{"wrong target identity", func(x *UpsertHypothesisInput) { x.TargetIdentity = "sha256:wrong" }, "target_identity must match the canonical hypothesis target"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			input := validPolicyEvidenceProposal()
-			tc.mutate(&input)
-			require.ErrorContains(t, ValidateUpsertHypothesisInput(input, true), tc.want)
-		})
-	}
 	for _, tc := range []struct {
 		name   string
 		mutate func(*UpsertHypothesisInput)

@@ -387,62 +387,6 @@ func failExhaustedScheduledDreamRecoveries(ctx context.Context, tx *gorm.DB, tea
 		return err
 	}
 	for _, failed := range failedRuns {
-		if lane == domain.DreamLaneEvidenceDiscovery {
-			var totals EvidenceDiscoveryRunTotals
-			if err := tx.WithContext(ctx).Raw(`
-				SELECT COUNT(*)::int,
-				       COUNT(DISTINCT (target_evidence_id, target_content_hash))::int,
-				       COALESCE(SUM(created_hypotheses), 0)::int,
-				       COALESCE(SUM(rejected_proposals), 0)::int,
-				       COALESCE(SUM(provider_proposals), 0)::int,
-				       COALESCE(SUM(provider_turns), 0)::int,
-				       COALESCE(SUM(provider_input_tokens), 0)::int,
-				       COALESCE(SUM(provider_output_tokens), 0)::int
-				FROM dream_evidence_target_evaluations
-				WHERE team_id = ?::uuid AND run_id = ?::uuid
-			`, teamID, failed.runID).Row().Scan(
-				&totals.Evaluated, &totals.TargetCount, &totals.Created, &totals.Rejected,
-				&totals.ProviderProposals, &totals.ProviderTurns,
-				&totals.ProviderInputTokens, &totals.ProviderOutputTokens,
-			); err != nil {
-				return err
-			}
-			if err := tx.WithContext(ctx).Exec(`
-				UPDATE dream_cycle_runs
-				SET created_hypotheses = ?,
-				    rejected_hypotheses = ?,
-				    provider_proposals = ?,
-				    provider_turns = ?,
-				    provider_input_tokens = ?,
-				    provider_output_tokens = ?,
-				    evidence_targets = ?,
-				    evaluated_evidence_targets = ?,
-				    outcome_summary = outcome_summary || jsonb_build_object(
-				        'evidence_targets', ?::integer,
-				        'evaluated_evidence_targets', ?::integer,
-				        'provider_proposals', ?::integer,
-				        'created_hypotheses', ?::integer,
-				        'rejected_hypotheses', ?::integer,
-				        'recovery_exhausted', 1
-				    ),
-				    updated_at = now()
-				WHERE team_id = ?::uuid AND run_id = ?::uuid
-			`, totals.Created, totals.Rejected, totals.ProviderProposals,
-				totals.ProviderTurns, totals.ProviderInputTokens, totals.ProviderOutputTokens,
-				totals.TargetCount, totals.Evaluated,
-				totals.TargetCount, totals.Evaluated, totals.ProviderProposals,
-				totals.Created, totals.Rejected, teamID, failed.runID).Error; err != nil {
-				return err
-			}
-			failed.created = totals.Created
-			failed.rejected = totals.Rejected
-			failed.evidenceTargets = totals.TargetCount
-			failed.evaluatedEvidenceTargets = totals.Evaluated
-			failed.providerProposals = totals.ProviderProposals
-			failed.providerTurns = totals.ProviderTurns
-			failed.providerInputTokens = totals.ProviderInputTokens
-			failed.providerOutputTokens = totals.ProviderOutputTokens
-		}
 		if err := insertScheduledDreamAudit(ctx, tx, DreamCycleCompleteInput{
 			TeamID:                   teamID,
 			RunID:                    failed.runID,

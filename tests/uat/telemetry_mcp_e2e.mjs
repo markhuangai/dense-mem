@@ -755,30 +755,36 @@ async function validateGrafanaDashboardParity(credentialID) {
   const sparseLatencyPanel = parityPanels.get("card/avg_embedding_latency");
   assert(sparseCounterPanel && sparseLatencyPanel, "Grafana omitted sparse provider-measure panels");
   const sparseFrom = Date.parse(afterSparseSystem.window.from).toString();
-  const sparseTo = Date.parse(afterSparseSystem.window.to).toString();
   const sparseStepSeconds = Number(afterSparseSystem.window.step_seconds);
   const sparseInterval = { interval: `${sparseStepSeconds}s`, intervalMs: sparseStepSeconds * 1000 };
   const systemExpression = (panel) => panel.targets[0].expr
     .replaceAll("$job", "dense-mem")
     .replaceAll("$window", afterSparseSystem.window.key);
-  const sparseCounterResult = await query(systemExpression(sparseCounterPanel), {
-    from: sparseFrom,
-    to: sparseTo,
-    instant: true,
-    ...sparseInterval,
-  });
-  const sparseCounterValue = grafanaFrameNumber(sparseCounterResult.results?.A?.frames ?? []);
-  assert(sparseCounterValue !== null, "Grafana lost the sparse first embedding counter sample");
-  assertClose(sparseCounterValue, Number(afterRequests.value), "Grafana system embedding requests after sparse samples");
-  const sparseLatencyResult = await query(systemExpression(sparseLatencyPanel), {
-    from: sparseFrom,
-    to: sparseTo,
-    instant: true,
-    ...sparseInterval,
-  });
-  const sparseLatencyValue = grafanaFrameNumber(sparseLatencyResult.results?.A?.frames ?? []);
-  assert(sparseLatencyValue !== null, "Grafana lost the sparse first embedding histogram sample");
-  assertClose(sparseLatencyValue, Number(afterLatency.value), "Grafana system embedding latency after sparse samples");
+  for (const [panel, card, label] of [
+    [sparseCounterPanel, afterRequests, "requests"],
+    [sparseLatencyPanel, afterLatency, "latency"],
+  ]) {
+    const expression = systemExpression(panel);
+    const options = { from: sparseFrom, instant: true, ...sparseInterval };
+    let expected = Number(card.value);
+    let result = await query(expression, { ...options, to: Date.now().toString() });
+    assert(result.results?.A && !result.results.A.error, `Grafana query failed for sparse embedding ${label}`);
+    let actual = grafanaFrameNumber(result.results.A.frames ?? []);
+    assert(actual !== null, `Grafana lost the sparse first embedding ${label} sample`);
+    // API instant cards use live Prometheus time, so parity reads can cross a scrape boundary.
+    for (let attempt = 0; attempt < 9 && !withinTolerance(actual, expected); attempt += 1) {
+      await delay(5_000);
+      const latest = (await controlJSON("/telemetry?window=1h&scope=system", { method: "GET" })).data;
+      const latestCard = systemCards(latest).find((item) => item.id === card.id);
+      assert(latestCard?.status === "ready", `system embedding ${label} became unavailable during parity verification`);
+      expected = Number(latestCard.value);
+      result = await query(expression, { ...options, to: Date.now().toString() });
+      assert(result.results?.A && !result.results.A.error, `Grafana query failed for sparse embedding ${label}`);
+      actual = grafanaFrameNumber(result.results.A.frames ?? []);
+      assert(actual !== null, `Grafana lost the sparse first embedding ${label} sample`);
+    }
+    assertClose(actual, expected, `Grafana system embedding ${label} after sparse samples`);
+  }
   for (const metric of ["densemem_embedding_requests_total", "densemem_embedding_duration_seconds_count"]) {
     const selector = `${metric}{job=~"dense-mem",team_id="${sparseFixture.teamID}"}`;
     const first = await query(`min_over_time(${selector}[1h])`);

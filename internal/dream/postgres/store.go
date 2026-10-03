@@ -35,8 +35,6 @@ func NewStoreWithLogger(db *gorm.DB, rls postgres.RLSHelper, logger observabilit
 var _ dreamcontract.DreamRepository = (*Store)(nil)
 var _ dreamcontract.ScheduledDreamRepository = (*Store)(nil)
 var _ dreamcontract.DreamControlRepository = (*Store)(nil)
-var _ dreamcontract.EvidenceDiscoveryRepository = (*Store)(nil)
-var _ dreamcontract.EvidenceDiscoveryInputValidator = (*Store)(nil)
 
 func (r *Store) withTeamProfileTx(ctx context.Context, teamID, profileID string, fn func(*gorm.DB) error) error {
 	if r == nil || r.db == nil {

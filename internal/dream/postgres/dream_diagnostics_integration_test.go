@@ -356,12 +356,13 @@ func TestDreamDiagnosticsPersistBothLanesWithScopedPagination(t *testing.T) {
 		WindowKey: "manual:graph-diagnostics", LeaseToken: uuid.NewString(), LeaseUntil: time.Now().UTC().Add(time.Minute),
 	})
 	require.NoError(t, err)
-	evidenceWindow := time.Now().UTC().Truncate(time.Hour)
-	evidenceRun, err := store.ClaimScheduledDreamCycle(ctx, dreamcontract.DreamCycleClaimInput{
-		TeamID: teamID, RunDate: "2026-09-21", WindowKey: "hour:diagnostics", ScheduledFor: &evidenceWindow,
-		LeaseToken: uuid.NewString(), LeaseUntil: time.Now().UTC().Add(time.Minute), Lane: "evidence_discovery",
-	})
-	require.NoError(t, err)
+
+	evidenceRun := dreamcontract.DreamCycleRun{RunID: uuid.NewString()}
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`INSERT INTO dream_cycle_runs (team_id, run_id, space_id, space_generation, run_date, window_key, lane, status)
+			VALUES (?, ?, dense_mem_team_shared_space(?), dense_mem_team_shared_generation(?), '2026-09-21', 'hour:historical-diagnostics', 'evidence_discovery', 'completed')`,
+			teamID, evidenceRun.RunID, teamID, teamID).Error
+	}))
 
 	for _, item := range []struct {
 		runID string

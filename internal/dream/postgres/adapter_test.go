@@ -29,5 +29,4 @@ func TestDreamStoreExposesSeparateDailyAndScheduledPorts(t *testing.T) {
 	var store *Store
 	var _ DreamRepository = store
 	var _ ScheduledDreamRepository = store
-	var _ EvidenceDiscoveryRepository = store
 }

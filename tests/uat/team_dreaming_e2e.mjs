@@ -13,20 +13,13 @@ const apiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
 const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
 const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 const graphModel = "dense-mem-e2e-dream-graph";
-const evidenceModel = "dense-mem-e2e-dream-evidence";
 
 let rpcID = 0;
 const maxPollingAttempts = 60;
 const ownerProfileID = await apiCredentialOwnerID();
 const adverseTeam = await createAdverseEvidenceTeam();
 const seeded = await seedSchedulerInputs(ownerProfileID);
-installEvidenceDiagnosticDelay(teamID);
 const evidenceSeeded = await seedEvidenceDiscoveryInputs(ownerProfileID);
-await seedEvidenceDiscoveryInputs(
-  adverseTeam.ownerProfileID,
-  adverseTeam.teamID,
-  `Adverse evidence [fixture-fault:unavailable] for ${adverseTeam.teamID}.`,
-);
 const historicalKnownAt = new Date().toISOString();
 const scheduledAt = nextScheduledUTCMinute(Date.now(), 3);
 const runDate = formatDate(scheduledAt);
@@ -121,100 +114,52 @@ assertEqual(
   "historical hypothesis omission reported its optional degradation",
 );
 
-const evidenceRun = await waitForHourlyEvidenceRun();
-assertEqual(evidenceRun.team_id, teamID, "hourly evidence run team");
-assertEqual(evidenceRun.lane, "evidence_discovery", "hourly evidence run lane");
-assertEqual(evidenceRun.status, "completed", "hourly evidence run status");
-assertEqual(Number(evidenceRun.evidence_targets), 1, "hourly eligible target count");
-assertEqual(Number(evidenceRun.evaluated_evidence_targets), 2, "hourly validated pass count");
-assertEqual(Number(evidenceRun.created_dreams), 1, "hourly created hypothesis count");
-let deadlineDiagnostics;
-try {
-  await delay(21_000);
-  deadlineDiagnostics = await waitForRunDiagnostic(evidenceRun.run_id, (items) => {
-    const runCapture = items.find((item) => item.phase === "run");
-    const phases = items.filter((item) => item.phase !== "run" && !item.hypothesis_id);
-    return runCapture?.details?.phase_trace_truncated === true && phases.length > 0;
-  });
-  const deadlineRunCaptures = deadlineDiagnostics.filter((item) => item.phase === "run");
-  assertEqual(deadlineRunCaptures.length, 1, "deadline-limited Dream trace has one run capture");
-  assertEqual(deadlineRunCaptures[0].details?.phase_trace_truncated, true, "deadline-limited Dream trace marker");
-  assertEqual(deadlineRunCaptures[0].details?.phase_trace_pending, false, "deadline-limited Dream trace has finished");
-  const deadlinePhases = deadlineDiagnostics.filter((item) => item.phase !== "run" && !item.hypothesis_id);
-  assertAtLeast(deadlinePhases.length, 1, "deadline-limited Dream trace retains completed phases");
-} finally {
-  removeEvidenceDiagnosticDelay();
-}
-const evidenceDreams = await controlJSON(`/teams/${teamID}/dreams?limit=20`);
-const evidenceDream = findDream(evidenceDreams.data?.items, evidenceRun.run_id, "hourly evidence control API");
-assertEvidenceDiscoveryDream(evidenceDream, evidenceSeeded, "hourly evidence control API");
-const contextRecall = await mcpTool(apiKey, "recall_memory", { query: "hourly evidence target" });
-assertRelatedHypothesis(contextRecall, evidenceDream.dream_id, "recall from evidence context");
-const sameTeamContextRecall = await mcpTool(reviewer.apiKey, "recall_memory", { query: "hourly evidence target" });
-assertRelatedHypothesis(sameTeamContextRecall, evidenceDream.dream_id, "same-team recall from evidence context");
-const otherTeamContextRecall = await mcpTool(adverseTeam.apiKey, "recall_memory", { query: "hourly evidence target" });
-assertEqual(
-  (otherTeamContextRecall.related_hypotheses ?? []).some((item) => item.hypothesis_id === evidenceDream.dream_id),
-  false,
-  "cross-team recall did not expose a hypothesis from retrieved evidence",
-);
+assertEqual(postgresQuery(`
+  SELECT count(*) FROM dream_cycle_runs
+  WHERE team_id = ${sqlLiteral(teamID)}::uuid AND lane = 'evidence_discovery'
+`), "0", "eligible standalone evidence does not start hourly discovery");
+const historical = seedHistoricalEvidenceHypothesis(ownerProfileID, evidenceSeeded, seeded);
+const historicalOutput = await mcpTool(apiKey, "get_dream", { hypothesis_id: historical.hypothesisID }, true);
+assertEvidenceDiscoveryDream(historicalOutput.hypothesis, evidenceSeeded, "historical MCP get_dream");
+const historicalControl = await controlJSON(`/teams/${teamID}/dreams?limit=20`);
+assertEvidenceDiscoveryDream(findDream(historicalControl.data?.items, historical.runID, "historical control reader"), evidenceSeeded, "historical control reader");
+const historicalUser = await userJSON("/ui/api/dreams?limit=20");
+assertEvidenceDiscoveryDream(findDream(historicalUser.data?.items, historical.runID, "historical user reader"), evidenceSeeded, "historical user reader");
+const historicalRecall = await mcpTool(apiKey, "recall_memory", { query: "PostgreSQL durable memory" });
+assertEqual((historicalRecall.related_relationships ?? []).some((item) => (item.evidence_ids ?? []).includes(evidenceSeeded.targetID)), false, "historical discovery has not created an active Relationship");
+const historicalList = await mcpTool(reviewer.apiKey, "list_dreams", { limit: 20 }, true);
+assertContainsDream(historicalList.dreams, historical.hypothesisID, historical.statement, "same-team historical reader");
+const denied = await mcpTool(reviewer.apiKey, "resolve_dream_feedback", {
+  hypothesis_id: historical.hypothesisID, decision: "reinforce", reason: "A different owner cannot mutate this historical record.",
+}, false, true);
+assertEqual(Boolean(denied.code), true, "historical feedback returns a bounded error");
+const unchanged = await mcpTool(apiKey, "get_dream", { hypothesis_id: historical.hypothesisID }, true);
+assertEqual(unchanged.hypothesis.status, "proposed", "different owner did not mutate historical state");
+const crossTeamList = await mcpTool(adverseTeam.apiKey, "list_dreams", { limit: 20 }, true);
+assertEqual((crossTeamList.dreams ?? []).some((item) => item.hypothesis_id === historical.hypothesisID), false, "historical cross-team isolation");
 const confirmed = await mcpTool(apiKey, "resolve_dream_feedback", {
-  hypothesis_id: evidenceDream.dream_id,
-  decision: "confirm_true",
-  evidence: [{
-    content: "Independent evidence confirms Dense-Mem uses PostgreSQL.",
-    source_type: "manual",
-    source: `hourly-evidence-confirmation-${evidenceDream.dream_id}`,
-  }],
+  hypothesis_id: historical.hypothesisID, decision: "confirm_true",
+  evidence: [{ content: "Independent evidence confirms Legacy Dense-Mem uses PostgreSQL.", source_type: "manual", source: `historical-confirmation-${historical.hypothesisID}` }],
   relationships: [{
-    ref: `hourly-evidence-confirmation-${evidenceDream.dream_id}`,
-    subject: { name: "Dense-Mem", entity_kind: "project" },
-    predicate: { proposed_key: "uses" },
-    object: { entity: { name: "PostgreSQL", entity_kind: "product" } },
-    polarity: "+",
-    modality: "statement",
-    evidence_indices: [0],
+    ref: `historical-confirmation-${historical.hypothesisID}`,
+    subject: { name: "Legacy Dense-Mem", entity_kind: "project" },
+    predicate: { proposed_key: "uses" }, object: { entity: { name: "PostgreSQL", entity_kind: "product" } },
+    polarity: "+", modality: "statement", evidence_indices: [0],
   }],
 });
-assertEqual(confirmed.hypothesis_id, evidenceDream.dream_id, "hourly evidence confirmation hypothesis");
-assertEqual(confirmed.status, "submitted", "hourly evidence confirmation status");
-const submittedRecall = await mcpTool(apiKey, "recall_memory", { query: "hourly evidence target" });
-assertEqual(
-  (submittedRecall.related_hypotheses ?? []).some((item) => item.hypothesis_id === evidenceDream.dream_id),
-  false,
-  "confirmed hypothesis remains separate from recall context",
-);
-const evidenceFailureRun = await waitForHourlyEvidenceFailureRun(adverseTeam.teamID);
-assertEqual(evidenceFailureRun.status, "failed", "adverse hourly evidence run status");
-assertEqual(Number(evidenceFailureRun.evidence_targets), 1, "adverse hourly eligible target count");
-assertEqual(Number(evidenceFailureRun.evaluated_evidence_targets ?? evidenceFailureRun.outcome_summary?.evaluated_evidence_targets ?? 0), 0, "adverse hourly validated pass count");
-assertEqual(Number(evidenceFailureRun.created_dreams), 0, "adverse hourly created hypothesis count");
-assertEqual(Number(evidenceFailureRun.outcome_summary?.provider_failed ?? 0), 1, "adverse hourly provider failure");
-const adverseHypotheses = postgresQuery(`
-  SELECT count(*)
-  FROM hypotheses
-  WHERE team_id = ${sqlLiteral(adverseTeam.teamID)}::uuid
-    AND cycle_run_id = ${sqlLiteral(evidenceFailureRun.run_id)}::uuid
-`);
-assertEqual(adverseHypotheses, "0", "adverse hourly partial hypothesis count");
-assertDreamProviderModels(scheduledRun, evidenceRun, evidenceFailureRun);
+assertEqual(confirmed.hypothesis_id, historical.hypothesisID, "historical confirmation hypothesis");
+assertEqual(confirmed.status, "submitted", "historical confirmation status");
+assertDreamProviderModels(scheduledRun);
 await assertDreamProviderRequests();
-
 console.log(JSON.stringify({
-  status: "ok",
-  team_id: teamID,
-  run_id: scheduledRun.run_id,
-  hypothesis_id: hypothesisID,
-  statement,
-  scheduled_at: scheduledAt.toISOString(),
-  evidence_run_id: evidenceRun.run_id,
-  evidence_hypothesis_id: evidenceDream.dream_id,
-  evidence_dream_statement: evidenceDream.hypothesis,
-  evidence_target_id: evidenceSeeded.targetID,
-  evidence_target_content: evidenceSeeded.targetContent,
-  evidence_failure_run_id: evidenceFailureRun.run_id,
-  evidence_failure_team_name: adverseTeam.teamName,
-  provider_models: { graph: graphModel, evidence: evidenceModel },
+  status: "ok", team_id: teamID, run_id: scheduledRun.run_id, hypothesis_id: hypothesisID,
+  statement, scheduled_at: scheduledAt.toISOString(),
+  historical_run_id: historical.runID, historical_hypothesis_id: historical.hypothesisID,
+  historical_statement: historical.statement,
+  evidence_hypothesis_id: historical.hypothesisID, evidence_dream_statement: historical.statement,
+  evidence_target_id: evidenceSeeded.targetID, evidence_target_content: evidenceSeeded.targetContent,
+  evidence_failure_run_id: historical.failureRunID, evidence_failure_team_name: adverseTeam.teamName,
+  provider_models: { graph: graphModel },
 }, null, 2));
 
 function formatDate(value) {
@@ -264,25 +209,6 @@ async function waitForScheduledRun() {
   throw new Error(`timed out waiting for scheduled team run at ${scheduledAt.toISOString()}: ${JSON.stringify(lastRuns)}`);
 }
 
-async function waitForHourlyEvidenceRun() {
-  let lastRuns = [];
-  for (let attempt = 0; attempt < maxPollingAttempts; attempt += 1) {
-    const payload = await controlJSON(`/teams/${teamID}/dreaming/runs?limit=50`);
-    const runs = Array.isArray(payload.data) ? payload.data : [];
-    lastRuns = runs;
-    const run = runs.find((item) => (
-      item?.lane === "evidence_discovery" &&
-      item?.status === "completed" &&
-      Number(item?.evidence_targets) === 1 &&
-      Number(item?.evaluated_evidence_targets) === 2 &&
-      Number(item?.created_dreams) === 1
-    ));
-    if (run) return run;
-    await delay(5_000);
-  }
-  throw new Error(`timed out waiting for hourly evidence discovery: ${JSON.stringify(lastRuns)}`);
-}
-
 async function waitForRunDiagnostic(runID, ready = completeRunDiagnosticReady) {
   let lastItems = [];
   for (let attempt = 0; attempt < maxPollingAttempts; attempt += 1) {
@@ -303,59 +229,6 @@ function completeRunDiagnosticReady(items) {
     ["target", "provider", "validation", "proposal", "disposition"].every((phase) => phases.has(phase));
 }
 
-function installEvidenceDiagnosticDelay(targetTeamID) {
-  postgresQuery(`
-    CREATE OR REPLACE FUNCTION dense_mem_test_delay_evidence_diagnostic_phase()
-    RETURNS trigger LANGUAGE plpgsql AS $$
-    BEGIN
-      IF NEW.team_id = ${sqlLiteral(targetTeamID)}::uuid
-        AND NEW.phase <> 'run'
-        AND NEW.hypothesis_id IS NULL
-        AND EXISTS (
-          SELECT 1 FROM dream_cycle_runs run
-          WHERE run.team_id = NEW.team_id
-            AND run.run_id = NEW.run_id
-            AND run.lane = 'evidence_discovery'
-        ) THEN
-        PERFORM pg_sleep(4.2);
-      END IF;
-      RETURN NEW;
-    END;
-    $$;
-    DROP TRIGGER IF EXISTS dense_mem_test_delay_evidence_diagnostic_phase ON dream_diagnostic_captures;
-    CREATE TRIGGER dense_mem_test_delay_evidence_diagnostic_phase
-      BEFORE INSERT ON dream_diagnostic_captures
-      FOR EACH ROW EXECUTE FUNCTION dense_mem_test_delay_evidence_diagnostic_phase();
-  `);
-}
-
-function removeEvidenceDiagnosticDelay() {
-  postgresQuery(`
-    DROP TRIGGER IF EXISTS dense_mem_test_delay_evidence_diagnostic_phase ON dream_diagnostic_captures;
-    DROP FUNCTION IF EXISTS dense_mem_test_delay_evidence_diagnostic_phase();
-  `);
-}
-
-async function waitForHourlyEvidenceFailureRun(targetTeamID) {
-  let lastRuns = [];
-  for (let attempt = 0; attempt < maxPollingAttempts; attempt += 1) {
-    const payload = await controlJSON(`/teams/${targetTeamID}/dreaming/runs?limit=50`);
-    const runs = Array.isArray(payload.data) ? payload.data : [];
-    lastRuns = runs;
-    const run = runs.find((item) => (
-      item?.lane === "evidence_discovery" &&
-      item?.status === "failed" &&
-      Number(item?.evidence_targets) === 1 &&
-      Number(item?.evaluated_evidence_targets ?? item?.outcome_summary?.evaluated_evidence_targets ?? 0) === 0 &&
-      Number(item?.created_dreams) === 0 &&
-      Number(item?.outcome_summary?.provider_failed ?? 0) === 1
-    ));
-    if (run) return run;
-    await delay(5_000);
-  }
-  throw new Error(`timed out waiting for adverse hourly evidence discovery: ${JSON.stringify(lastRuns)}`);
-}
-
 async function assertSystemRun(runID) {
   const row = postgresQuery(`
     SELECT 'present', COALESCE(initiated_by_profile_id::text, '')
@@ -368,7 +241,7 @@ async function assertSystemRun(runID) {
   assertEqual(owner, "", "scheduled run initiator");
 }
 
-function assertDreamProviderModels(graphRun, successfulEvidenceRun, failedEvidenceRun) {
+function assertDreamProviderModels(graphRun) {
   const persistedGraphModel = postgresQuery(`
     SELECT provider_model
     FROM dream_cycle_runs
@@ -377,29 +250,6 @@ function assertDreamProviderModels(graphRun, successfulEvidenceRun, failedEviden
   `);
   assertEqual(persistedGraphModel, graphModel, "persisted graph Dream provider model");
 
-  const persistedEvidenceModel = postgresQuery(`
-    SELECT provider_model
-    FROM dream_cycle_runs
-    WHERE team_id = ${sqlLiteral(teamID)}::uuid
-      AND run_id = ${sqlLiteral(successfulEvidenceRun.run_id)}::uuid
-  `);
-  assertEqual(persistedEvidenceModel, evidenceModel, "persisted evidence Dream provider model");
-
-  const persistedEvidenceEvaluationModels = postgresQuery(`
-    SELECT string_agg(DISTINCT provider_model, ',' ORDER BY provider_model)
-    FROM dream_evidence_target_evaluations
-    WHERE team_id = ${sqlLiteral(teamID)}::uuid
-      AND run_id = ${sqlLiteral(successfulEvidenceRun.run_id)}::uuid
-  `);
-  assertEqual(persistedEvidenceEvaluationModels, evidenceModel, "persisted evidence evaluation provider model");
-
-  const persistedFailureModel = postgresQuery(`
-    SELECT provider_model
-    FROM dream_cycle_runs
-    WHERE team_id = ${sqlLiteral(adverseTeam.teamID)}::uuid
-      AND run_id = ${sqlLiteral(failedEvidenceRun.run_id)}::uuid
-  `);
-  assertEqual(persistedFailureModel, evidenceModel, "persisted failed evidence Dream provider model");
 }
 
 async function assertDreamProviderRequests() {
@@ -413,12 +263,7 @@ async function assertDreamProviderRequests() {
   if (graphRequests.length === 0 || !graphRequests.every((request) => request.model === graphModel)) {
     throw new Error(`Dream graph requests used an unexpected model: ${JSON.stringify(graphRequests)}`);
   }
-  if (evidenceRequests.length === 0 || !evidenceRequests.every((request) => request.model === evidenceModel)) {
-    throw new Error(`Dream evidence requests used an unexpected model: ${JSON.stringify(evidenceRequests)}`);
-  }
-  if (!evidenceRequests.some((request) => request.fault === "unavailable")) {
-    throw new Error("Dream evidence provider failure did not reach the configured session model");
-  }
+  assertEqual(evidenceRequests.length, 0, "retired evidence provider receives no requests");
 }
 
 async function apiCredentialOwnerID() {
@@ -692,7 +537,36 @@ async function seedEvidenceDiscoveryInputs(ownerProfileID, targetTeamID = teamID
       AND source_id = ${sqlLiteral(quarantinedID)}::uuid
   `);
   assertEqual(quarantinedIndexed, "0", "quarantined evidence has no search document");
-  return { targetID, targetContent };
+  return { targetID, targetContent, ingestID };
+}
+
+function seedHistoricalEvidenceHypothesis(ownerProfileID, evidence, graph) {
+  const runID = randomUUID(), failureRunID = randomUUID(), hypothesisID = randomUUID(), subjectID = randomUUID();
+  const statement = "Legacy Dense-Mem may use PostgreSQL.";
+  const targetIdentity = sha256Hash([teamID, subjectID, "uses", `entity:${graph.objectID}`].join("\u0000"));
+  postgresQuery(`
+    INSERT INTO entity_records(team_id, entity_id, entity_kind)
+    VALUES (${sqlLiteral(teamID)}::uuid, ${sqlLiteral(subjectID)}::uuid, 'project');
+    INSERT INTO entity_names(team_id, entity_id, owner_profile_id, display_name, normalized_name, name_kind)
+    VALUES (${sqlLiteral(teamID)}::uuid, ${sqlLiteral(subjectID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid, 'Legacy Dense-Mem', 'legacy dense-mem', 'canonical');
+    INSERT INTO dream_cycle_runs(team_id, run_id, space_id, space_generation, run_date, window_key, lane, status, provider_model, started_at, completed_at, evidence_targets, evaluated_evidence_targets, created_hypotheses, provider_turns, outcome_summary)
+    VALUES (${sqlLiteral(teamID)}::uuid, ${sqlLiteral(runID)}::uuid, dense_mem_team_shared_space(${sqlLiteral(teamID)}::uuid), dense_mem_team_shared_generation(${sqlLiteral(teamID)}::uuid),
+      '2026-09-04', 'hour:historical-fixture', 'evidence_discovery', 'completed', 'legacy-v2.6.3', '2026-09-04T00:00:00Z', '2026-09-04T00:01:00Z', 1, 1, 1, 1, '{"created_hypotheses":1}');
+    INSERT INTO dream_cycle_runs(team_id, run_id, space_id, space_generation, run_date, window_key, lane, status, provider_model, started_at, completed_at, evidence_targets, outcome_summary, error)
+    VALUES (${sqlLiteral(adverseTeam.teamID)}::uuid, ${sqlLiteral(failureRunID)}::uuid, dense_mem_team_shared_space(${sqlLiteral(adverseTeam.teamID)}::uuid), dense_mem_team_shared_generation(${sqlLiteral(adverseTeam.teamID)}::uuid),
+      '2026-09-04', 'hour:historical-failure', 'evidence_discovery', 'failed', 'legacy-v2.6.3', '2026-09-04T00:00:00Z', '2026-09-04T00:01:00Z', 1, '{"provider_failed":1}', 'Historical provider failure.');
+    INSERT INTO hypotheses(team_id, hypothesis_id, space_id, space_generation, created_by_profile_id, lane, status,
+      statement, subject_entity_id, predicate_key, predicate_version, object_entity_id, source_refs, source_versions,
+      source_owner_profile_ids, content_hash, target_identity, cycle_run_id, generator_kind, generator_version)
+    VALUES (${sqlLiteral(teamID)}::uuid, ${sqlLiteral(hypothesisID)}::uuid, dense_mem_team_shared_space(${sqlLiteral(teamID)}::uuid), dense_mem_team_shared_generation(${sqlLiteral(teamID)}::uuid), ${sqlLiteral(ownerProfileID)}::uuid,
+      'evidence_discovery', 'proposed', ${sqlLiteral(statement)}, ${sqlLiteral(subjectID)}::uuid, 'uses', 1, ${sqlLiteral(graph.objectID)}::uuid,
+      '[]'::jsonb, '{}'::jsonb, ARRAY[${sqlLiteral(ownerProfileID)}::uuid], ${sqlLiteral(sha256Hash(statement))}, ${sqlLiteral(targetIdentity)}, ${sqlLiteral(runID)}::uuid, 'provider', 'legacy-v2.6.3');
+    INSERT INTO hypothesis_evidence_derivation_sources(team_id, hypothesis_id, space_id, space_generation,
+      evidence_id, fragment_id, source_group_key, span_start, span_end, quote, authority)
+    VALUES (${sqlLiteral(teamID)}::uuid, ${sqlLiteral(hypothesisID)}::uuid, dense_mem_team_shared_space(${sqlLiteral(teamID)}::uuid), dense_mem_team_shared_generation(${sqlLiteral(teamID)}::uuid),
+      ${sqlLiteral(evidence.targetID)}::uuid, ${sqlLiteral(evidence.targetID)}::uuid, ${sqlLiteral(`ingest:${evidence.ingestID}`)}, 0, ${evidence.targetContent.length}, ${sqlLiteral(evidence.targetContent)}, 'primary');
+  `);
+  return { runID, failureRunID, hypothesisID, statement };
 }
 
 async function evidenceSearchDocumentsSQL(targetTeamID, ownerProfileID, documents) {
@@ -752,10 +626,10 @@ async function evidenceSearchDocumentsSQL(targetTeamID, ownerProfileID, document
 }
 
 async function createAdverseEvidenceTeam() {
-  const teamName = `Hourly evidence adverse ${Date.now()}`;
+  const teamName = `Historical discovery failure ${Date.now()}`;
   const team = await controlJSON("/teams", {
     method: "POST",
-    body: JSON.stringify({ name: teamName, description: "hourly evidence provider failure UAT" }),
+    body: JSON.stringify({ name: teamName, description: "historical discovery provider failure fixture" }),
   });
   const targetTeamID = team.data?.id;
   if (typeof targetTeamID !== "string" || !targetTeamID) {
@@ -763,7 +637,7 @@ async function createAdverseEvidenceTeam() {
   }
   const credential = await controlJSON(`/teams/${targetTeamID}/credentials`, {
     method: "POST",
-    body: JSON.stringify({ name: "Hourly evidence adverse owner", role: "member", scopes: ["read", "write"], rate_limit: 300 }),
+    body: JSON.stringify({ name: "Historical discovery failure owner", role: "member", scopes: ["read", "write"], rate_limit: 300 }),
   });
   const ownerProfileID = credential.data?.credential?.id;
   if (typeof ownerProfileID !== "string" || !ownerProfileID) {
@@ -857,7 +731,7 @@ async function userJSON(path) {
   }, true);
 }
 
-async function mcpTool(token, name, args, retryTransport = false) {
+async function mcpTool(token, name, args, retryTransport = false, expectError = false) {
   const response = await httpJSON(`${userURL}/mcp`, {
     method: "POST",
     headers: {
@@ -873,8 +747,10 @@ async function mcpTool(token, name, args, retryTransport = false) {
     }),
   }, retryTransport);
   if (response.error) {
+    if (expectError) return response.error.data ?? response.error;
     throw new Error(`MCP ${name} error: ${JSON.stringify(response.error)}`);
   }
+  if (expectError && response.result?.isError !== true) throw new Error(`MCP ${name} unexpectedly succeeded`);
   const text = response.result?.content?.[0]?.text;
   if (typeof text !== "string") {
     throw new Error(`MCP ${name} result missing text: ${JSON.stringify(response)}`);

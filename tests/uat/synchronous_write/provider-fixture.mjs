@@ -143,7 +143,6 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
   const schemaName = payload.response_format?.json_schema?.name;
   if (schemaName === "community_summary") return fixtureCommunitySummary(payload);
   if (schemaName === "dense_mem_dream_generation_response") return fixtureDreamGeneration(payload);
-  if (schemaName === "dense_mem_evidence_discovery_response") return fixtureEvidenceDiscovery(payload);
   const assessment = fixtureAssessment(assessmentInput(payload), requestFault, attempt);
   if (requestFault === "predicate-registration-repair" || requestFault === "predicate-registration-exhausted" || requestFault === "predicate-registration-reuse" || requestFault === "predicate-registration-drift") {
     const original = assessmentInput(payload);
@@ -254,40 +253,6 @@ function fixtureDreamGeneration(payload) {
     if (proposals.length === maxOutputs) break;
   }
   return { request_id: input.request_id || "fixture", proposals };
-}
-
-function fixtureEvidenceDiscovery(payload) {
-  const input = structuredInput(payload, (value) => Array.isArray(value.contexts) && Array.isArray(value.nodes));
-  const target = input.contexts?.[0];
-  const predicate = input.allowed_predicates?.[0];
-  const subject = input.nodes?.[0];
-  const object = [...(input.nodes || [])].reverse().find((node) => node?.ref && node.ref !== subject?.ref) || input.nodes?.[1];
-  const markers = [...String(target?.boundary_text || "").matchAll(/⟦([^⟧]+)⟧/g)].map((match) => match[1]);
-  if (!target?.evidence_ref || !predicate?.ref || !subject?.ref || !object?.ref || markers.length < 2) {
-    return { request_id: input.request_id || "fixture", proposals: [] };
-  }
-  if ((input.related_hypotheses || []).some((hypothesis) => (
-    hypothesis?.subject_ref === subject.ref &&
-    hypothesis?.predicate === predicate.ref &&
-    hypothesis?.object_ref === object.ref
-  ))) {
-    return { request_id: input.request_id || "fixture", proposals: [] };
-  }
-  return {
-    request_id: input.request_id || "fixture",
-    proposals: [{
-      subject_ref: subject.ref,
-      predicate_ref: predicate.ref,
-      object_ref: object.ref,
-      statement: `${subject.display} may be related to ${object.display} through ${predicate.label}.`,
-      rationale: "The target evidence supports evaluating this supplied relationship.",
-      what_if: "What if this relationship is useful?",
-      possible_outcome: "The hypothesis can be reviewed against the target evidence.",
-      likelihood: 0.7,
-      confidence: 0.8,
-      derivations: [{ evidence_ref: target.evidence_ref, start_ref: markers[0], end_ref: markers[markers.length - 1] }],
-    }],
-  };
 }
 
 function structuredInput(payload, matches) {
@@ -466,9 +431,6 @@ export function fixtureFault(payload, route) {
     const input = structuredInput(payload, (value) => Array.isArray(value.relationships));
     inputs = (input.relationships || []).flatMap((relationship) =>
       (relationship.support_quotes || []).map((quote) => quote?.quote));
-  } else if (schemaName === "dense_mem_evidence_discovery_response") {
-    const input = structuredInput(payload, (value) => Array.isArray(value.contexts) && Array.isArray(value.nodes));
-    inputs = (input.contexts || []).flatMap((context) => [context?.content, context?.boundary_text]);
   } else if (schemaName === "dense_mem_dream_generation_response") {
     const input = structuredInput(payload, (value) => Array.isArray(value.paths));
     inputs = (input.paths || []).flatMap((path) =>
