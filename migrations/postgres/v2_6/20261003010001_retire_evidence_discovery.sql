@@ -1,4 +1,4 @@
--- Lock/rewrite impact: row updates only; no table rewrite or new indexes. A
+-- Lock/rewrite impact: row updates and audit inserts; no rewrite or new indexes. A
 -- 30-second lock timeout bounds waits on unfinished operational rows.
 -- RLS impact: transaction-local migration authority covers every team and
 -- generation; request-selectable security context and RLS policies are unchanged.
@@ -16,14 +16,35 @@ SET LOCAL app.current_profile_id = '';
 SET LOCAL app.allowed_space_ids = '';
 SET LOCAL lock_timeout = '30s';
 
-UPDATE dream_cycle_runs
-SET status = 'cancelled',
-    error = 'evidence discovery Dream generation is retired',
-    outcome_summary = outcome_summary || '{"evidence_discovery_retired":1}'::jsonb,
-    lease_until = NULL,
-    completed_at = COALESCE(completed_at, now()),
-    updated_at = now()
-WHERE lane = 'evidence_discovery' AND status IN ('queued', 'running');
+WITH retired AS (
+    UPDATE dream_cycle_runs
+    SET status = 'cancelled',
+        error = 'evidence discovery Dream generation is retired',
+        outcome_summary = outcome_summary || '{"evidence_discovery_retired":1}'::jsonb,
+        lease_until = NULL,
+        completed_at = COALESCE(completed_at, now()),
+        updated_at = now()
+    WHERE lane = 'evidence_discovery' AND status IN ('queued', 'running')
+    RETURNING *
+)
+INSERT INTO audit_log (
+    team_id, operation, entity_type, entity_id, after_payload, actor_role, metadata
+)
+SELECT team_id, 'dream_cycle_completed', 'dream_cycle_run', run_id::text,
+    jsonb_build_object(
+        'status', status,
+        'input_relationships', input_count,
+        'created_dreams', created_hypotheses,
+        'rejected_dreams', rejected_hypotheses,
+        'attempted_paths', attempted_paths,
+        'provider_proposals', provider_proposals,
+        'lane', lane,
+        'evidence_targets', evidence_targets,
+        'evaluated_evidence_targets', evaluated_evidence_targets,
+        'outcomes', outcome_summary
+    ),
+    'system', jsonb_build_object('scheduled', true, 'migration_version', '20261003010001')
+FROM retired;
 
 UPDATE dream_evidence_target_attempts
 SET status = 'abandoned',

@@ -21,7 +21,7 @@ func TestRetireEvidenceDiscoveryMigrationPreservesHistoryAndGraph(t *testing.T) 
 	runGooseUpTo(t, ctx, db, 20260927010002)
 	teamID, ownerID := insertMigrationTeamProfile(t, ctx, db)
 	otherTeamID, otherOwnerID := insertMigrationTeamProfile(t, ctx, db)
-	var completedBefore, evaluationsBefore string
+	var completedBefore, evaluationsBefore, auditBefore string
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		for _, team := range []struct{ team, owner string }{{teamID, ownerID}, {otherTeamID, otherOwnerID}} {
 			for _, run := range []struct{ lane, status string }{{"graph", "running"}, {"evidence_discovery", "queued"}, {"evidence_discovery", "running"}, {"evidence_discovery", "completed"}} {
@@ -72,13 +72,49 @@ func TestRetireEvidenceDiscoveryMigrationPreservesHistoryAndGraph(t *testing.T) 
 			`, team.team, fragment); err != nil {
 				return err
 			}
-
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO audit_log (team_id, operation, entity_type, entity_id, after_payload, actor_role, metadata)
+				SELECT team_id, 'dream_cycle_completed', 'dream_cycle_run', run_id::text,
+					jsonb_build_object('status', status), 'system', '{"fixture":"pre_retirement"}'::jsonb
+				FROM dream_cycle_runs WHERE team_id = $1 AND status = 'completed'
+			`, team.team); err != nil {
+				return err
+			}
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT jsonb_agg(to_jsonb(audit) ORDER BY id)::text FROM audit_log audit WHERE metadata->>'fixture' = 'pre_retirement'`).Scan(&auditBefore); err != nil {
+			return err
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT jsonb_agg(to_jsonb(evaluation) ORDER BY evaluation_id)::text FROM dream_evidence_target_evaluations evaluation`).Scan(&evaluationsBefore); err != nil {
 			return err
 		}
 		return tx.QueryRowContext(ctx, `SELECT jsonb_agg(to_jsonb(run) ORDER BY run_id)::text FROM dream_cycle_runs run WHERE status = 'completed'`).Scan(&completedBefore)
 	}))
+	_, err := db.ExecContext(ctx, `CREATE FUNCTION reject_retirement_audit_fixture() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN RAISE EXCEPTION 'planned retirement audit failure'; END; $$`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `CREATE TRIGGER reject_retirement_audit_fixture BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION reject_retirement_audit_fixture()`)
+	require.NoError(t, err)
+	require.ErrorContains(t, migrationUpTo(ctx, db, 20261003010001), "planned retirement audit failure")
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		var unfinished, reserved, auditCount int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM dream_cycle_runs WHERE lane = 'evidence_discovery' AND status IN ('queued', 'running')`).Scan(&unfinished); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM dream_evidence_target_attempts WHERE status = 'reserved'`).Scan(&reserved); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM audit_log`).Scan(&auditCount); err != nil {
+			return err
+		}
+		require.Equal(t, 4, unfinished, "audit failure must roll back cancellation")
+		require.Equal(t, 2, reserved, "audit failure must preserve reservations")
+		require.Equal(t, 2, auditCount, "audit failure must not partially append events")
+		return nil
+	}))
+	_, err = db.ExecContext(ctx, `DROP TRIGGER reject_retirement_audit_fixture ON audit_log`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `DROP FUNCTION reject_retirement_audit_fixture()`)
+	require.NoError(t, err)
 	runGooseUpTo(t, ctx, db, 20261003010001)
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		var completedAfter string
@@ -91,6 +127,11 @@ func TestRetireEvidenceDiscoveryMigrationPreservesHistoryAndGraph(t *testing.T) 
 			return err
 		}
 		require.JSONEq(t, evaluationsBefore, evaluationsAfter, "append-only evaluations linked to retired runs must remain exact")
+		var auditAfter string
+		if err := tx.QueryRowContext(ctx, `SELECT jsonb_agg(to_jsonb(audit) ORDER BY id)::text FROM audit_log audit WHERE metadata->>'fixture' = 'pre_retirement'`).Scan(&auditAfter); err != nil {
+			return err
+		}
+		require.JSONEq(t, auditBefore, auditAfter, "prior audit history must remain exact")
 
 		for _, check := range []struct {
 			query string
@@ -101,6 +142,9 @@ func TestRetireEvidenceDiscoveryMigrationPreservesHistoryAndGraph(t *testing.T) 
 			{`SELECT count(*) FROM dream_evidence_target_attempts WHERE status = 'abandoned' AND abandoned_at IS NOT NULL AND reservation_expires_at <= now()`, 2},
 			{`SELECT count(*) FROM dream_evidence_target_attempts WHERE status = 'validated' AND validated_at IS NOT NULL AND reservation_expires_at > now()`, 2},
 			{`SELECT count(*) FROM evidence_fragments`, 2},
+			{`SELECT count(*) FROM audit_log WHERE operation = 'dream_cycle_completed' AND entity_type = 'dream_cycle_run' AND actor_role = 'system' AND after_payload->>'status' = 'cancelled' AND after_payload->>'lane' = 'evidence_discovery' AND after_payload->'outcomes'->>'retained' = '3' AND metadata->>'migration_version' = '20261003010001'`, 4},
+			{`SELECT count(*) FROM dream_cycle_runs run WHERE lane = 'evidence_discovery' AND status = 'cancelled' AND (SELECT count(*) FROM audit_log audit WHERE audit.team_id = run.team_id AND audit.entity_id = run.run_id::text AND audit.after_payload->>'status' = 'cancelled') = 1`, 4},
+			{`SELECT count(*) FROM audit_log`, 6},
 		} {
 			var count int
 			if err := tx.QueryRowContext(ctx, check.query).Scan(&count); err != nil {
