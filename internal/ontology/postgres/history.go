@@ -103,11 +103,22 @@ func (s *Store) Rollback(ctx context.Context, teamID, targetID, key string, expe
 			}
 			input.Changes = append(input.Changes, ontology.Change{ExpectedVersion: head.Version, Record: desired})
 		}
+		records := make([]ontology.Record, 0, len(input.Changes))
+		for _, change := range input.Changes {
+			records = append(records, change.Record)
+		}
+		catalog, err := validationCatalog(tx, fence, records, nil)
+		if err != nil {
+			return err
+		}
 		for i := range input.Changes {
 			if input.Changes[i].Record.Retired {
 				continue
 			}
 			for j := range input.Changes[i].Record.Dependencies {
+				if dependency, exists := catalog[input.Changes[i].Record.Dependencies[j].ID]; exists {
+					input.Changes[i].Record.Dependencies[j].Version = dependency.Version
+				}
 				for _, change := range input.Changes {
 					if input.Changes[i].Record.Dependencies[j].ID == change.Record.ID {
 						input.Changes[i].Record.Dependencies[j].Version = change.ExpectedVersion + 1

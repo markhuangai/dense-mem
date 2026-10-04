@@ -71,8 +71,33 @@ func loadHeads(tx *gorm.DB, fence scope, ids, names, sourceKeys []string) (map[s
 	return result, rows.Err()
 }
 
-func validationCatalog(tx *gorm.DB, fence scope, records []ontology.Record) (map[string]ontology.Record, error) {
+func validationCatalog(tx *gorm.DB, fence scope, records []ontology.Record, changedDefinitions []string) (map[string]ontology.Record, error) {
 	var ids, names, keys []string
+	if len(changedDefinitions) > 0 {
+		var children []string
+		err := tx.Raw(`SELECT head.record_id::text
+			FROM ontology_revision_dependencies AS dependency
+			JOIN ontology_record_heads AS head
+			  ON head.team_id=dependency.team_id AND head.shared_space_id=dependency.shared_space_id
+			  AND head.space_generation=dependency.space_generation AND head.record_id=dependency.record_id
+			  AND head.version=dependency.record_version
+			JOIN ontology_record_revisions AS revision
+			  ON revision.team_id=head.team_id AND revision.shared_space_id=head.shared_space_id
+			  AND revision.space_generation=head.space_generation AND revision.record_id=head.record_id
+			  AND revision.version=head.version
+			WHERE dependency.team_id=?::uuid AND dependency.shared_space_id=?::uuid AND dependency.space_generation=?
+			  AND dependency.dependency_id=ANY(?::uuid[]) AND NOT head.retired
+			  AND revision.body->'definition'->>'parent_id'=dependency.dependency_id::text
+			ORDER BY head.record_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation,
+			pq.Array(changedDefinitions), maxValidationRecords+1).Scan(&children).Error
+		if err != nil {
+			return nil, err
+		}
+		if len(children) > maxValidationRecords {
+			return nil, fmt.Errorf("%w: affected children exceed validation bound", ontology.ErrInvalid)
+		}
+		ids = append(ids, children...)
+	}
 	for _, record := range records {
 		ids = append(ids, record.ID)
 		ids = append(ids, ontology.ReferenceIDs(record)...)
@@ -165,7 +190,7 @@ func (s *Store) currentView(tx *gorm.DB, fence scope, record ontology.Record) (o
 		view.StaleReason = "retired"
 		return view, nil
 	}
-	catalog, err := validationCatalog(tx, fence, []ontology.Record{record})
+	catalog, err := validationCatalog(tx, fence, []ontology.Record{record}, nil)
 	if err != nil {
 		return view, err
 	}

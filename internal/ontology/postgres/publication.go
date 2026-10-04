@@ -63,10 +63,14 @@ func (s *Store) commit(ctx context.Context, teamID string, input ontology.Public
 			return ontology.ErrConflict
 		}
 		records := make([]ontology.Record, 0, len(input.Changes))
+		var changedDefinitions []string
 		for _, change := range input.Changes {
 			records = append(records, change.Record)
+			if change.Record.Definition != nil {
+				changedDefinitions = append(changedDefinitions, change.Record.ID)
+			}
 		}
-		catalog, err := validationCatalog(tx, fence, records)
+		catalog, err := validationCatalog(tx, fence, records, changedDefinitions)
 		if err != nil {
 			return err
 		}

@@ -3,6 +3,20 @@
   "capability": "ontology",
   "cases": [
     {
+      "id": "repository/TestOntologyDefinitionChangesValidateActiveChildren",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyDefinitionChangesValidateActiveChildren$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/dependencies_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyRollbackRefreshesDependencyVersions",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyRollbackRefreshesDependencyVersions$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/dependencies_integration_test.go"
+    },
+    {
       "id": "repository/TestOntologyTransitiveSourceFreshness",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyTransitiveSourceFreshness$",

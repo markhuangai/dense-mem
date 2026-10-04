@@ -90,3 +90,76 @@ func TestOntologyEnrichmentBoundRejectsAtomically(t *testing.T) {
 	_, err = f.store.GetRecord(context.Background(), f.team, assignment.ID, 0)
 	require.ErrorIs(t, err, ontology.ErrNotFound)
 }
+
+func TestOntologyDefinitionChangesValidateActiveChildren(t *testing.T) {
+	f := newOntologyFixture(t)
+	parent, child := testTopic("person"), testTopic("engineer")
+	parent.Kind, child.Kind = ontology.EntityClass, ontology.EntityClass
+	parent.Definition.BaseEntityKind, child.Definition.BaseEntityKind = "person", "person"
+	child.Definition.ParentID = parent.ID
+	initial, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("parent", 0, ontology.Change{Record: parent}))
+	require.NoError(t, err)
+	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("child", initial.Revision, ontology.Change{Record: child}))
+	require.NoError(t, err)
+	before := f.canonicalSnapshot(t)
+	view, err := f.store.GetRecord(context.Background(), f.team, parent.ID, 0)
+	require.NoError(t, err)
+	retired := view.Record
+	retired.Retired = true
+	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("retire-parent", 2, ontology.Change{ExpectedVersion: 1, Record: retired}))
+	require.ErrorIs(t, err, ontology.ErrInvalid)
+	_, err = f.store.Rollback(f.actor(0, "manager"), f.team, initial.ID, "rollback-parent", 2, "undo parent creation")
+	require.ErrorIs(t, err, ontology.ErrInvalid)
+	parent.Definition.BaseEntityKind = "project"
+	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("change-parent-kind", 2, ontology.Change{ExpectedVersion: 1, Record: parent}))
+	require.ErrorIs(t, err, ontology.ErrInvalid)
+	history, err := f.store.History(context.Background(), f.team, 0, 20)
+	require.NoError(t, err)
+	require.Len(t, history, 2)
+	childView, err := f.store.GetRecord(context.Background(), f.team, child.ID, 0)
+	require.NoError(t, err)
+	require.True(t, childView.Current)
+	childView.Record.Retired = true
+	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("retire-hierarchy", 2,
+		ontology.Change{ExpectedVersion: 1, Record: retired}, ontology.Change{ExpectedVersion: 1, Record: childView.Record}))
+	require.NoError(t, err)
+	require.Equal(t, before, f.canonicalSnapshot(t))
+}
+
+func TestOntologyRollbackRefreshesDependencyVersions(t *testing.T) {
+	f := newOntologyFixture(t)
+	evidence := f.evidence(t, 0, "Atlas uses PostgreSQL.")
+	handle := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: evidence.Evidence[0].FragmentID, Version: 1}
+	first, second, contextTopic := testTopic("storage"), testTopic("database"), testTopic("context")
+	assignment := ontology.Record{ID: uuid.NewString(), Kind: ontology.AssignmentKind,
+		Assignment: &ontology.Assignment{Source: handle, DefinitionID: first.ID},
+		Sources:    []ontology.SourceDependency{f.source(t, handle)}, Dependencies: []ontology.RevisionRef{{ID: contextTopic.ID, Version: 1}}}
+	_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("initial", 0,
+		ontology.Change{Record: first}, ontology.Change{Record: second}, ontology.Change{Record: contextTopic}, ontology.Change{Record: assignment}))
+	require.NoError(t, err)
+	before := f.canonicalSnapshot(t)
+	assignment.Assignment.DefinitionID = second.ID
+	changed, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("reclassify", 1, ontology.Change{ExpectedVersion: 1, Record: assignment}))
+	require.NoError(t, err)
+	first.Definition.Label, contextTopic.Definition.Label = "Storage systems", "Updated context"
+	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("revise-dependencies", changed.Revision,
+		ontology.Change{ExpectedVersion: 1, Record: first}, ontology.Change{ExpectedVersion: 1, Record: contextTopic}))
+	require.NoError(t, err)
+	rollback, err := f.store.Rollback(f.actor(0, "manager"), f.team, changed.ID, "restore-classification", 3, "restore original classification")
+	require.NoError(t, err)
+	require.Equal(t, int64(4), rollback.Revision)
+	view, err := f.store.GetRecord(context.Background(), f.team, assignment.ID, 0)
+	require.NoError(t, err)
+	require.True(t, view.Current)
+	require.Equal(t, int64(3), view.Version)
+	require.Equal(t, first.ID, view.Assignment.DefinitionID)
+	require.ElementsMatch(t, []ontology.RevisionRef{{ID: first.ID, Version: 2}, {ID: contextTopic.ID, Version: 2}}, view.Dependencies)
+	original, err := f.store.GetRecord(context.Background(), f.team, assignment.ID, 1)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []ontology.RevisionRef{{ID: first.ID, Version: 1}, {ID: contextTopic.ID, Version: 1}}, original.Dependencies)
+	replayed, err := f.store.Rollback(f.actor(0, "manager"), f.team, changed.ID, "restore-classification", 3, "restore original classification")
+	require.NoError(t, err)
+	require.True(t, replayed.Existing)
+	require.Equal(t, rollback.ID, replayed.ID)
+	require.Equal(t, before, f.canonicalSnapshot(t))
+}
