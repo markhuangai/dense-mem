@@ -274,7 +274,7 @@ test("review safety controls and CI policy coverage remain enabled", async () =>
   assert.equal(workflow.match(/^    runs-on: ubuntu-latest$/gm)?.length, 2);
   assert.match(workflow, /effort: xhigh/);
   assert.match(workflow, /parallel-count: "6"/);
-  assert.match(workflow, /max-turns: "100"/);
+  assert.match(workflow, /max-turns: "200"/);
   assert.match(workflow, /auto-approve: "false"/);
   assert.match(workflow, /permission_policy: always_allow/);
   assert.match(workflow, /org_max_permission: allow/);

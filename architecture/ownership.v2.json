@@ -51,6 +51,7 @@
     "architecture/modules/model-provider-error-port.json",
     "architecture/modules/oauth-compatibility.json",
     "architecture/modules/observability-port.json",
+    "architecture/modules/ontology.json",
     "architecture/modules/offline-evaluation.json",
     "architecture/modules/ownership-policy.json",
     "architecture/modules/postgres-adapter.json",

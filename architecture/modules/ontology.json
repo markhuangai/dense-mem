@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "capability": "ontology",
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/ontology/contract",
+        "role": "port",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/ontology/postgres",
+        "role": "postgres_adapter",
+        "visibility": "private"
+      }
+    ]
+  }
+}

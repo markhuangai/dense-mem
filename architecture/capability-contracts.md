@@ -17,6 +17,12 @@ inside their owning capability.
 
 ## Native owners
 
+- `internal/ontology/contract` owns versioned organization definitions,
+  assignments, equivalence compatibility, persistent override policy, seeding,
+  and dependency fingerprints. `internal/ontology/postgres` owns active shared
+  source reads and atomic append-only publications, revisions, and rollback.
+  It never writes canonical Knowledge. This foundation has no production
+  consumer, scheduler, provider, UI, or public transport.
 - `internal/knowledge/contract` and `internal/knowledge/postgres` own
   authoritative evidence, semantic, relationship, search-document, canonical
   projection, and reconciliation writes. The contract owns predicate identity,

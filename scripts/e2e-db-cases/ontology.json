@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "capability": "ontology",
+  "cases": [
+    {
+      "id": "repository/TestOntologyTransitiveSourceFreshness",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyTransitiveSourceFreshness$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/dependencies_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMismatchedSourceVersionDoesNotCommit",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMismatchedSourceVersionDoesNotCommit$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/dependencies_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyEnrichmentBoundRejectsAtomically",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyEnrichmentBoundRejectsAtomically$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/dependencies_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMigrationRLSAndHistory",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMigrationRLSAndHistory$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/publication_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyAtomicPublicationReplayAndRaces",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyAtomicPublicationReplayAndRaces$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/publication_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyRejectedInputsDoNotCommit",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyRejectedInputsDoNotCommit$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/publication_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologySharedSourceIsolationAndFreshness",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologySharedSourceIsolationAndFreshness$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/sources_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyManagerOverridesAndRollback",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyManagerOverridesAndRollback$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/sources_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyRollbackRejectsStaleSources",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyRollbackRejectsStaleSources$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/sources_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyExcludesOldSharedGeneration",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyExcludesOldSharedGeneration$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/sources_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyRelationshipProvenanceAndPredicateSeeds",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyRelationshipProvenanceAndPredicateSeeds$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/sources_integration_test.go"
+    }
+  ]
+}
