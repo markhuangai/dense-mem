@@ -41,6 +41,9 @@ func CompatibleMeaningContext(left, right SourceSnapshot) bool {
 }
 
 func ExactMeaning(left, right SourceSnapshot) bool {
+	if left.Kind == EvidenceSource && left.State["created_at"] != right.State["created_at"] {
+		return false
+	}
 	return left.MeaningKey != "" && left.MeaningKey == right.MeaningKey && CompatibleMeaningContext(left, right)
 }
 

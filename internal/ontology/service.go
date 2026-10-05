@@ -118,7 +118,7 @@ func (s *Service) Organize(ctx context.Context, teamID string, input contract.Or
 		if err != nil {
 			return s.finish(ctx, teamID, receipt, contract.Publication{}, err)
 		}
-		if !previous.Current && !previous.Retired && previous.Definition != nil && previous.Kind == definition.Kind && contract.NormalizeName(previous.Definition.Key) == contract.NormalizeName(definition.Key) {
+		if !previous.Retired && previous.Definition != nil && previous.Kind == definition.Kind && contract.NormalizeName(previous.Definition.Key) == contract.NormalizeName(definition.Key) {
 			sourceContext.Records = append(sourceContext.Records, previous)
 		}
 	}

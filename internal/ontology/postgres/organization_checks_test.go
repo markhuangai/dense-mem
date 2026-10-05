@@ -192,7 +192,7 @@ func testOntologyOrganizationRejectsSplitGroupIdentityConflict(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		handles = append(handles, f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil))
 	}
-	service, calls := organizationFixtureService(t, f, nil, nil)
+	service, calls := organizationFixtureService(t, f, func(assessment.Item, assessment.Item) bool { return true }, nil)
 	input := ontology.OrganizationInput{OperationKey: "original-four-member-group", Sources: handles}
 	original, err := service.Organize(context.Background(), f.team, input)
 	require.NoError(t, err)

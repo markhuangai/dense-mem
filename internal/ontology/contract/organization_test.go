@@ -36,6 +36,19 @@ func TestOrganizationInputAndFingerprints(t *testing.T) {
 	require.NotEqual(t, hash, changed)
 }
 
+func TestExactMeaningRequiresMatchingEvidenceCreationContext(t *testing.T) {
+	for _, content := range []string{"Atlas releases next week.", "Atlas uses PostgreSQL."} {
+		a, b := policySnapshot("a", EvidenceSource, "same"), policySnapshot("b", EvidenceSource, "same")
+		b.OwnerID = a.OwnerID
+		a.State = map[string]string{"content": content, "created_at": "2026-01-05T12:00:00Z"}
+		b.State = map[string]string{"content": content, "created_at": "2026-01-12T12:00:00Z"}
+		require.True(t, CompatibleMeaningContext(a, b))
+		require.False(t, ExactMeaning(a, b))
+		b.State["created_at"] = a.State["created_at"]
+		require.True(t, ExactMeaning(a, b))
+	}
+}
+
 func TestAssessedEquivalencePreservesContext(t *testing.T) {
 	a, b := policySnapshot("a", EvidenceSource, "first wording"), policySnapshot("b", EvidenceSource, "second wording")
 	a.State = map[string]string{"content": "Atlas stores data in PostgreSQL.", "metadata": "{}"}

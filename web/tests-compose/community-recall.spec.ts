@@ -48,7 +48,12 @@ test("user recall renders a community result and the exact nested contract", asy
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("heading", { name: "Dense-Mem Knowledge" })).toBeVisible();
   await page.getByLabel("Keyword").fill("Dense-Mem Runtime PostgreSQL");
+  const recallResponsePromise = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return response.request().method() === "GET" && url.pathname === "/ui/api/recall" && url.searchParams.get("query") === "Dense-Mem Runtime PostgreSQL";
+  });
   await page.getByRole("button", { name: "Search", exact: true }).click();
+  expect((await recallResponsePromise).status()).toBe(200);
 
   await expect(page.getByRole("listbox", { name: "Recall result list" })).toBeVisible();
   await expect(page.getByRole("listbox", { name: "Recall result list" }).getByText("Community", { exact: true })).toBeVisible();

@@ -25,6 +25,10 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 	}
 	for _, definition := range response.Definitions {
 		record := definitions[definition.Ref]
+		if previous, ok := current[record.ID]; ok && previous.Current && previous.Definition != nil && previous.Kind == record.Kind && contract.NormalizeName(previous.Definition.Key) == contract.NormalizeName(record.Definition.Key) {
+			definitions[definition.Ref] = previous.Record
+			continue
+		}
 		if definition.ParentRef != "" {
 			record.Definition.ParentID = definitions[definition.ParentRef].ID
 		}

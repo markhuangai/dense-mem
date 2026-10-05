@@ -16,6 +16,96 @@ import (
 )
 
 func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
+	for _, relation := range []string{"distinct", "ambiguous"} {
+		t.Run("locked relative-time comparison "+relation, func(t *testing.T) {
+			f := newOrganizationFixture(t)
+			a := f.evidenceAt(t, 0, "Atlas releases next week.", "2026-01-05T12:00:00Z")
+			b := f.evidenceAt(t, 0, "Atlas releases next week.", "2026-01-12T12:00:00Z")
+			service, calls := organizationFixtureService(t, f, nil, func(request assessment.Request, response *assessment.Response) {
+				if len(request.Items) == 2 {
+					for _, item := range request.Items {
+						require.NotEmpty(t, item.LockedDefinitionRef)
+					}
+					require.Len(t, request.Pairs, 1)
+					require.Empty(t, request.Pairs[0].RequiredRelation)
+					response.Equivalence[0].Relation = relation
+				}
+			})
+			for i, source := range []ontology.SourceHandle{a, b} {
+				_, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: fmt.Sprintf("classify-relative-%d", i), Sources: []ontology.SourceHandle{source}})
+				require.NoError(t, err)
+			}
+			before := f.canonicalSnapshot(t)
+			priorCalls := calls.Load()
+			result, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "compare-relative", Sources: []ontology.SourceHandle{a, b}})
+			require.NoError(t, err)
+			require.Equal(t, priorCalls+1, calls.Load())
+			require.Len(t, result.Attempts, 1)
+			groups, err := f.store.ListRecords(context.Background(), f.team, ontology.EvidenceGroup, "", 20)
+			require.NoError(t, err)
+			require.Empty(t, groups.Records)
+			if relation == "ambiguous" {
+				require.Len(t, result.AmbiguousComparisons, 1)
+			}
+			require.Equal(t, before, f.canonicalSnapshot(t))
+		})
+	}
+	for _, pinned := range []bool{false, true} {
+		name := "reuse omitted current definition"
+		if pinned {
+			name = "reuse omitted current pinned definition"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newOrganizationFixture(t)
+			oldSource := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
+			const newText = "Beacon relies on a relational store."
+			service, calls := organizationFixtureService(t, f, nil, func(request assessment.Request, response *assessment.Response) {
+				if request.Items[0].Text == newText {
+					require.Empty(t, request.Definitions)
+					require.Len(t, response.Definitions, 1)
+					response.Definitions[0].Label = "Provider replacement label"
+					response.Definitions[0].Description = "Provider replacement description"
+				}
+			})
+			original, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "current-definition", Sources: []ontology.SourceHandle{oldSource}})
+			require.NoError(t, err)
+			id := ontology.OrganizationRecordID(f.team, ontology.Topic, "postgresql")
+			if pinned {
+				pin := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.PinDefinition, TargetID: id}}
+				_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("pin-current-definition", original.Publication.Revision, ontology.Change{Record: pin}))
+				require.NoError(t, err)
+			}
+			definition, err := f.store.GetRecord(context.Background(), f.team, id, 0)
+			require.NoError(t, err)
+			require.True(t, definition.Current)
+			newSource := f.organizationEvidence(t, 1, newText, nil)
+			contextData, err := f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{newSource})
+			require.NoError(t, err)
+			require.Empty(t, contextData.Candidates)
+			before := f.canonicalSnapshot(t)
+			input := ontology.OrganizationInput{OperationKey: "reuse-current-definition", Sources: []ontology.SourceHandle{newSource}}
+			result, err := service.Organize(context.Background(), f.team, input)
+			require.NoError(t, err)
+			require.NotNil(t, result.Publication)
+			reused, err := f.store.GetRecord(context.Background(), f.team, id, 0)
+			require.NoError(t, err)
+			require.True(t, reused.Current)
+			require.Equal(t, definition.Record, reused.Record)
+			for _, source := range []ontology.SourceHandle{oldSource, newSource} {
+				assignment, err := f.store.GetRecord(context.Background(), f.team, ontology.OrganizationRecordID(f.team, ontology.AssignmentKind, ontology.SourceKey(source)), 0)
+				require.NoError(t, err)
+				require.True(t, assignment.Current)
+				require.Equal(t, id, assignment.Assignment.DefinitionID)
+			}
+			input.OperationKey = "reuse-current-definition-replay"
+			replay, err := service.Organize(context.Background(), f.team, input)
+			require.NoError(t, err)
+			require.True(t, replay.Existing)
+			require.Equal(t, result.AssessmentID, replay.AssessmentID)
+			require.Equal(t, int32(2), calls.Load())
+			require.Equal(t, before, f.canonicalSnapshot(t))
+		})
+	}
 	t.Run("bounded vocabulary reuse", func(t *testing.T) {
 		f := newOrganizationFixture(t)
 		source := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)

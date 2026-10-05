@@ -138,6 +138,9 @@ func TestOrganizationServiceWithPostgres(t *testing.T) {
 				relation := pair.RequiredRelation
 				if relation == "" {
 					relation = "distinct"
+					if mode.Load() == 7 {
+						relation = "equivalent"
+					}
 					if mode.Load() == 4 {
 						relation = "ambiguous"
 					}
@@ -180,7 +183,9 @@ func TestOrganizationServiceWithPostgres(t *testing.T) {
 	service := NewService(repository, provider)
 	a, b := source("Atlas uses PostgreSQL."), source("Atlas uses PostgreSQL.")
 	input := contract.OrganizationInput{OperationKey: "service-success", Sources: []contract.SourceHandle{a, b}}
+	mode.Store(7)
 	result, err := service.Organize(context.Background(), team.ID.String(), input)
+	mode.Store(0)
 	require.NoError(t, err)
 	require.NotNil(t, result.Publication)
 	require.True(t, result.Current)

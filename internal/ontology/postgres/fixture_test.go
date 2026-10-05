@@ -126,6 +126,25 @@ func (f *ontologyFixture) evidence(t *testing.T, owner int, text string) knowled
 	return *result
 }
 
+func (f *ontologyFixture) evidenceAt(t *testing.T, owner int, text, created string) ontology.SourceHandle {
+	t.Helper()
+	seed := f.evidence(t, owner, text)
+	ingestID, fragmentID := uuid.NewString(), uuid.NewString()
+	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.admin, func(tx *gorm.DB) error {
+		if err := tx.Exec(`INSERT INTO knowledge_ingests
+			(ingest_id,team_id,owner_profile_id,space_id,space_generation,request_hash,source_summary,status,proposal,metadata,created_at,updated_at,completed_at)
+			SELECT ?::uuid,team_id,owner_profile_id,space_id,space_generation,request_hash,source_summary,status,proposal,metadata,?::timestamptz,?::timestamptz,?::timestamptz
+			FROM knowledge_ingests WHERE team_id=?::uuid AND ingest_id=?::uuid`, ingestID, created, created, created, f.team, seed.IngestID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`INSERT INTO evidence_fragments
+			(fragment_id,team_id,ingest_id,owner_profile_id,space_id,space_generation,evidence_index,content,content_hash,source_type,authority,source_ref,labels,metadata,force_insert,created_at)
+			SELECT ?::uuid,team_id,?::uuid,owner_profile_id,space_id,space_generation,0,content,content_hash,source_type,authority,source_ref,labels,metadata,true,?::timestamptz
+			FROM evidence_fragments WHERE team_id=?::uuid AND fragment_id=?::uuid`, fragmentID, ingestID, created, f.team, seed.Evidence[0].FragmentID).Error
+	}))
+	return ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: fragmentID, Version: 1}
+}
+
 func (f *ontologyFixture) source(t *testing.T, handle ontology.SourceHandle) ontology.SourceDependency {
 	t.Helper()
 	sources, err := f.store.ReadSources(context.Background(), f.team, []ontology.SourceHandle{handle})
