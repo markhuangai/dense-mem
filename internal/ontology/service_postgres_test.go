@@ -253,6 +253,42 @@ func TestOrganizationServiceWithPostgres(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, replay.Existing)
 	require.Equal(t, priorCalls, calls.Load())
+	mode.Store(0)
+	failedInput.OperationKey = "service-provider-recovered"
+	recovered, err := service.Organize(context.Background(), team.ID.String(), failedInput)
+	require.NoError(t, err)
+	require.False(t, recovered.Existing)
+	require.True(t, recovered.Current)
+	require.Empty(t, recovered.FailureCode)
+	require.NotEqual(t, unavailableProvider.AssessmentID, recovered.AssessmentID)
+	require.Equal(t, priorCalls+1, calls.Load())
+	failedInput.OperationKey = "service-provider-unavailable"
+	replay, err = service.Organize(context.Background(), team.ID.String(), failedInput)
+	require.ErrorContains(t, err, "provider_unavailable")
+	require.Equal(t, unavailableProvider.AssessmentID, replay.AssessmentID)
+	require.Equal(t, priorCalls+1, calls.Load())
+	mode.Store(6)
+	mixedSource := source("Mixed batch uses PostgreSQL.")
+	mixed, err := service.Organize(context.Background(), team.ID.String(), contract.OrganizationInput{OperationKey: "service-mixed-provider-failure", Sources: []contract.SourceHandle{a, mixedSource}})
+	require.ErrorContains(t, err, "provider_unavailable")
+	require.Equal(t, "provider_unavailable", mixed.FailureCode)
+	require.Nil(t, mixed.Publication)
+	for _, outcome := range mixed.Outcomes {
+		if outcome.Source.ID == a.ID {
+			require.Equal(t, "ambiguous", outcome.Status)
+			require.Equal(t, "resubmit_complete_group", outcome.Reason)
+		} else {
+			require.Equal(t, mixedSource.ID, outcome.Source.ID)
+			require.Equal(t, "failed", outcome.Status)
+			require.Equal(t, "provider_unavailable", outcome.Reason)
+		}
+	}
+	priorCalls = calls.Load()
+	mixedReplay, err := service.Organize(context.Background(), team.ID.String(), contract.OrganizationInput{OperationKey: "service-mixed-provider-failure", Sources: []contract.SourceHandle{a, mixedSource}})
+	require.Error(t, err)
+	require.True(t, mixedReplay.Existing)
+	require.Equal(t, mixed.Outcomes, mixedReplay.Outcomes)
+	require.Equal(t, priorCalls, calls.Load())
 	mode.Store(3)
 	withdraw = source("Cedar uses PostgreSQL.")
 	stale, err := service.Organize(context.Background(), team.ID.String(), contract.OrganizationInput{OperationKey: "service-stale", Sources: []contract.SourceHandle{withdraw}})
@@ -338,5 +374,5 @@ func TestOrganizationServiceWithPostgres(t *testing.T) {
 	require.ElementsMatch(t, organization.Sources, preserved)
 	var count int
 	require.NoError(t, admin.Raw(`SELECT count(*) FROM ontology_assessments WHERE team_id=?::uuid`, team.ID).Row().Scan(&count))
-	require.Equal(t, 13, count)
+	require.Equal(t, 15, count)
 }

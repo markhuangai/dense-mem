@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/lib/pq"
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
@@ -235,32 +236,65 @@ func (s *Store) FindOrganization(ctx context.Context, teamID string, input ontol
 			found = true
 			return nil
 		}
-		var body []byte
-		err = tx.Raw(`SELECT body FROM ontology_assessments WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND input_hash=?
-            ORDER BY created_at DESC,operation_key LIMIT 1`, fence.TeamID, fence.SpaceID, fence.Generation, hash).Row().Scan(&body)
-		if errors.Is(err, sql.ErrNoRows) {
+		contextData, err := s.organizationContext(tx, fence, input.Sources)
+		if err != nil {
+			return err
+		}
+		contextHash, err := ontology.OrganizationContextHash(contextData)
+		if err != nil {
+			return err
+		}
+		sources := make([]ontology.SourceDependency, 0, len(contextData.Sources))
+		for _, source := range contextData.Sources {
+			fingerprint, err := ontology.SourceFingerprint(source)
+			if err != nil {
+				return err
+			}
+			sources = append(sources, ontology.SourceDependency{SourceHandle: source.SourceHandle, Fingerprint: fingerprint})
+		}
+		batchHash, err := ontology.OrganizationBatchHash(sources, identity)
+		if err != nil {
+			return err
+		}
+		var before *time.Time
+		var previousKey string
+		for {
+			var body []byte
+			var createdAt time.Time
+			err = tx.Raw(`SELECT body,created_at,operation_key FROM ontology_assessments
+            WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND input_hash=?
+              AND batch_hash=? AND body->>'context_hash'=? AND COALESCE(body->'result'->>'failure_code','')=''
+              AND (?::timestamptz IS NULL OR created_at<?::timestamptz OR (created_at=?::timestamptz AND operation_key>?))
+            ORDER BY created_at DESC,operation_key LIMIT 1`, fence.TeamID, fence.SpaceID, fence.Generation, hash,
+				batchHash, contextHash, before, before, before, previousKey).Row().Scan(&body, &createdAt, &previousKey)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			before = &createdAt
+			receipt, err = decodeOrganization(body)
+			if err != nil {
+				return err
+			}
+			current, err := s.organizationCurrent(tx, fence, receipt)
+			if err != nil {
+				return err
+			}
+			if !current {
+				continue
+			}
+			receipt.OperationKey = input.OperationKey
+			if err := insertOrganization(tx, fence, receipt); err != nil {
+				return err
+			}
+			result = receipt.Result
+			result.Existing = true
+			result.Current = true
+			found = true
 			return nil
 		}
-		if err != nil {
-			return err
-		}
-		receipt, err = decodeOrganization(body)
-		if err != nil {
-			return err
-		}
-		current, err := s.organizationCurrent(tx, fence, receipt)
-		if err != nil || !current {
-			return err
-		}
-		receipt.OperationKey = input.OperationKey
-		if err := insertOrganization(tx, fence, receipt); err != nil {
-			return err
-		}
-		result = receipt.Result
-		result.Existing = true
-		result.Current = true
-		found = true
-		return nil
 	})
 	return result, found, err
 }

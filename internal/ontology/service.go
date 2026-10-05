@@ -178,7 +178,8 @@ func markFailure(receipt *contract.OrganizationReceipt, cause error) {
 	receipt.Result.Current = false
 	for i := range receipt.Result.Outcomes {
 		outcome := &receipt.Result.Outcomes[i]
-		if outcome.Status != "oversized" && outcome.Status != "unavailable" {
+		preflightAmbiguity := outcome.Status == "ambiguous" && (outcome.Reason == "resubmit_complete_group" || outcome.Reason == "required_classification_unavailable")
+		if outcome.Status != "oversized" && outcome.Status != "unavailable" && !preflightAmbiguity {
 			outcome.Status = "failed"
 			outcome.Reason = code
 			outcome.RecordIDs = nil

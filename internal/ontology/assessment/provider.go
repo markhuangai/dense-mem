@@ -28,12 +28,15 @@ func (p *Provider) Identity() string {
 	encoded, _ := json.Marshal(struct {
 		Model, Prompt, Schema string
 		Limits                assessor.SemanticAssessmentLimits
-	}{p.model, SystemPrompt, SchemaName, p.limits})
+		InitialInputTokens    int
+	}{p.model, SystemPrompt, SchemaName, p.limits, p.MaxInitialInputTokens()})
 	digest := sha256.Sum256(encoded)
 	return "sha256:" + hex.EncodeToString(digest[:])
 }
 
-func (p *Provider) MaxInputTokens() int { return p.limits.MaxInputTokens }
+func (p *Provider) MaxInitialInputTokens() int {
+	return assessor.SemanticAssessmentConversationInputLimit(p.limits)
+}
 
 func (p *Provider) VocabularyFits(definitions []Definition) (bool, error) {
 	encoded, err := json.Marshal(definitions)
@@ -78,7 +81,11 @@ func (p *Provider) Assess(ctx context.Context, request Request) (Response, []ont
 		if err != nil {
 			return Response{}, attempts, err
 		}
-		if inputTokens > p.limits.MaxInputTokens {
+		inputLimit := p.limits.MaxInputTokens
+		if turn == 1 {
+			inputLimit = p.MaxInitialInputTokens()
+		}
+		if inputTokens > inputLimit {
 			return Response{}, attempts, &modelprovider.MalformedResponseError{Provider: "ontology", Message: "organization input exceeds token budget", FailureClass: "input_budget", Attempts: turn - 1}
 		}
 		attempt := ontology.AssessmentAttempt{Number: turn, EstimatedInputTokens: inputTokens}

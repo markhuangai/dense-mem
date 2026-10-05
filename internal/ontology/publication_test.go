@@ -2,6 +2,8 @@ package ontology
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -65,13 +67,96 @@ func TestOrganizationRequestUsesBoundedContextAndManagerRules(t *testing.T) {
 	ctx.Sources[0].Eligible = true
 	ctx.Sources[0].State["content"] = strings.Repeat("oversized evidence ", 20000)
 	limits := assessor.DefaultSemanticAssessmentLimits()
-	limits.MaxInputTokens = 10000
+	limits.MaxInputTokens = 20000
+	limits.MaxOutputTokens = 1024
 	service = NewService(nil, assessment.NewProvider(nil, "model", limits))
 	receipt = unitReceipt(t, ctx.Sources)
 	request, _, err = service.request(ctx, &receipt)
 	require.NoError(t, err)
 	require.Len(t, request.Items, 1)
 	require.Equal(t, "oversized", receipt.Result.Outcomes[0].Status)
+}
+
+func TestOrganizationRequestTrimsParentRefsWithoutChangingStoredHierarchy(t *testing.T) {
+	source := unitSource("child", "Atlas uses PostgreSQL.")
+	parent := contract.Record{ID: uuid.NewString(), Version: 1, Kind: contract.Topic, Definition: &contract.Definition{Key: "storage", Label: "Storage"}}
+	child := contract.Record{ID: uuid.NewString(), Version: 1, Kind: contract.Topic, Definition: &contract.Definition{Key: "postgresql", Label: "PostgreSQL", ParentID: parent.ID}}
+	assignment := contract.Record{ID: uuid.NewString(), Kind: contract.AssignmentKind, Assignment: &contract.Assignment{Source: source.SourceHandle, DefinitionID: child.ID}, Sources: unitReceipt(t, []contract.SourceSnapshot{source}).Sources}
+	ctx := contract.OrganizationContext{Sources: []contract.SourceSnapshot{source}, Records: []contract.RecordView{{Record: assignment, Current: true}}, Candidates: []contract.RecordView{{Record: child, Current: true}, {Record: parent, Current: true}}}
+	for _, trim := range []bool{false, true} {
+		t.Run(fmt.Sprintf("trim=%t", trim), func(t *testing.T) {
+			limits := assessor.DefaultSemanticAssessmentLimits()
+			if trim {
+				encoded, err := json.Marshal([]assessment.Definition{{Ref: "d0", Kind: child.Kind, Key: child.Definition.Key, Label: child.Definition.Label, Aliases: []string{}, ParentRef: "d1"}})
+				require.NoError(t, err)
+				limits.MaxCandidateContextTokens, err = assessor.CountTokens(string(encoded), limits.Tokenizer)
+				require.NoError(t, err)
+			}
+			service := NewService(nil, assessment.NewProvider(nil, "model", limits))
+			receipt := unitReceipt(t, ctx.Sources)
+			request, binding, err := service.request(ctx, &receipt)
+			require.NoError(t, err)
+			require.Len(t, request.Items, 1)
+			require.Equal(t, "d0", request.Items[0].LockedDefinitionRef)
+			if trim {
+				require.Len(t, request.Definitions, 1)
+				require.Empty(t, request.Definitions[0].ParentRef)
+			} else {
+				require.Len(t, request.Definitions, 2)
+				require.Equal(t, "d1", request.Definitions[0].ParentRef)
+			}
+			require.Equal(t, parent.ID, binding.definitions["d0"].Definition.ParentID)
+			response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{{Ref: "s0", Status: "classified", DefinitionRef: "d0"}}, Equivalence: []assessment.Equivalence{}}
+			require.NoError(t, assessment.Validate(request, response))
+			publication, err := buildPublication(source.TeamID, ctx, request, response, binding, &receipt)
+			require.NoError(t, err)
+			require.Empty(t, publication.Changes)
+		})
+	}
+	require.Equal(t, parent.ID, child.Definition.ParentID)
+}
+
+func TestOrganizationRequestReservesRepairBudgetForAdmittedSources(t *testing.T) {
+	ctx := contract.OrganizationContext{Sources: []contract.SourceSnapshot{unitSource("large", strings.Repeat("large evidence ", 6000)), unitSource("small", "Atlas uses PostgreSQL.")}}
+	limits := assessor.DefaultSemanticAssessmentLimits()
+	initialProvider := assessment.NewProvider(nil, "model", limits)
+	receipt := unitReceipt(t, ctx.Sources)
+	full, _, err := NewService(nil, initialProvider).request(ctx, &receipt)
+	require.NoError(t, err)
+	measurement, err := initialProvider.Measure(full)
+	require.NoError(t, err)
+	limits.MaxInputTokens = measurement + 50
+	limits.MaxOutputTokens = 1024
+	provider := assessment.NewProvider(nil, "model", limits)
+	receipt = unitReceipt(t, ctx.Sources)
+	request, _, err := NewService(nil, provider).request(ctx, &receipt)
+	require.NoError(t, err)
+	require.Len(t, request.Items, 1)
+	require.Equal(t, "s1", request.Items[0].Ref)
+	require.Equal(t, "oversized", receipt.Result.Outcomes[0].Status)
+	require.Equal(t, "organization_input_budget", receipt.Result.Outcomes[0].Reason)
+	require.Equal(t, "unchanged", receipt.Result.Outcomes[1].Status)
+	admitted, err := provider.Measure(request)
+	require.NoError(t, err)
+	require.LessOrEqual(t, admitted, provider.MaxInitialInputTokens())
+}
+
+func TestOrganizationFailurePreservesOnlyPreflightAmbiguity(t *testing.T) {
+	receipt := unitReceipt(t, []contract.SourceSnapshot{unitSource("excluded-group", "a"), unitSource("excluded-class", "b"), unitSource("assessed", "c")})
+	receipt.Result.Outcomes[0].Status, receipt.Result.Outcomes[0].Reason = "ambiguous", "resubmit_complete_group"
+	receipt.Result.Outcomes[1].Status, receipt.Result.Outcomes[1].Reason = "ambiguous", "required_classification_unavailable"
+	receipt.Result.Outcomes[2].Status, receipt.Result.Outcomes[2].Reason = "ambiguous", "classification_ambiguous"
+	receipt.Result.Outcomes[2].RecordIDs = []string{uuid.NewString()}
+	markFailure(&receipt, contract.ErrSourceStale)
+	require.Equal(t, "stale_input", receipt.Result.FailureCode)
+	for _, index := range []int{0, 1} {
+		require.Equal(t, "ambiguous", receipt.Result.Outcomes[index].Status)
+	}
+	require.Equal(t, "resubmit_complete_group", receipt.Result.Outcomes[0].Reason)
+	require.Equal(t, "required_classification_unavailable", receipt.Result.Outcomes[1].Reason)
+	require.Equal(t, "failed", receipt.Result.Outcomes[2].Status)
+	require.Equal(t, "stale_input", receipt.Result.Outcomes[2].Reason)
+	require.Empty(t, receipt.Result.Outcomes[2].RecordIDs)
 }
 
 func TestOrganizationPublicationPreservesOriginalSourcesAndStableIDs(t *testing.T) {

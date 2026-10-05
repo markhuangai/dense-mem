@@ -156,6 +156,54 @@ func TestOrganizationCompleteRegenerationAndTokenAccounting(t *testing.T) {
 	require.Len(t, attempts, 3)
 }
 
+func TestOrganizationInitialBudgetAllowsBothCompleteRegenerations(t *testing.T) {
+	request, response := assessmentFixture()
+	request.Items[0].Text = strings.Repeat("context detail ", 4000)
+	limits := assessor.DefaultSemanticAssessmentLimits()
+	limits.MaxOutputTokens = 2048
+	headroom := limits.MaxInputTokens - assessor.SemanticAssessmentConversationInputLimit(limits)
+	measurement, err := NewProvider(nil, "model", limits).Measure(request)
+	require.NoError(t, err)
+	limits.MaxInputTokens = measurement + headroom
+	valid, err := json.Marshal(response)
+	require.NoError(t, err)
+	invalid := `{"invalid":"` + strings.Repeat("invalid ", limits.MaxOutputTokens-100) + `"}`
+	invalidTokens, err := assessor.CountTokens(invalid, limits.Tokenizer)
+	require.NoError(t, err)
+	require.LessOrEqual(t, invalidTokens, limits.MaxOutputTokens)
+	require.Greater(t, invalidTokens, limits.MaxOutputTokens/2)
+	calls := 0
+	provider := NewProvider(fixtureTransport(func(_ context.Context, req modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+		calls++
+		require.Len(t, req.Messages, 2*calls)
+		var original Request
+		require.NoError(t, json.Unmarshal([]byte(req.Messages[1].Content), &original))
+		require.Equal(t, request.Items[0].Text, original.Items[0].Text)
+		content := invalid
+		if calls == 3 {
+			content = string(valid)
+		}
+		return modelprovider.StructuredResult{Content: content}, nil
+	}), "model", limits)
+	require.Equal(t, measurement, provider.MaxInitialInputTokens())
+	result, attempts, err := provider.Assess(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, response, result)
+	require.Equal(t, 3, calls)
+	require.Len(t, attempts, 3)
+	for _, attempt := range attempts {
+		require.LessOrEqual(t, attempt.EstimatedInputTokens, limits.MaxInputTokens)
+	}
+	require.Equal(t, "response_invalid", attempts[0].FailureCode)
+	require.Equal(t, "response_invalid", attempts[1].FailureCode)
+	require.Empty(t, attempts[2].FailureCode)
+	request.Items[0].Text += strings.Repeat("excess ", 100)
+	_, attempts, err = provider.Assess(context.Background(), request)
+	require.ErrorIs(t, err, modelprovider.ErrVerifierMalformedResponse)
+	require.Empty(t, attempts)
+	require.Equal(t, 3, calls)
+}
+
 func TestOrganizationProviderFailuresBudgetsAndCancellation(t *testing.T) {
 	request, _ := assessmentFixture()
 	limits := assessor.DefaultSemanticAssessmentLimits()

@@ -17,6 +17,7 @@ import (
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func ambiguousClassification(_ assessment.Request, response *assessment.Response) {
@@ -60,6 +61,83 @@ func testOntologyOrganizationAmbiguousComparisonReceipt(t *testing.T) {
 }
 
 func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
+	t.Run("restored context reuses older completed receipt", func(t *testing.T) {
+		f := newOrganizationFixture(t)
+		source := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
+		before := f.canonicalSnapshot(t)
+		service, calls := organizationFixtureService(t, f, nil, ambiguousClassification)
+		input := ontology.OrganizationInput{OperationKey: "original-empty-context", Sources: []ontology.SourceHandle{source}}
+		original, err := service.Organize(context.Background(), f.team, input)
+		require.NoError(t, err)
+		topic := testTopic("postgresql")
+		publication, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("add-unused-topic", 0, ontology.Change{Record: topic}))
+		require.NoError(t, err)
+		input.OperationKey = "context-with-topic"
+		newer, err := service.Organize(context.Background(), f.team, input)
+		require.NoError(t, err)
+		require.NotEqual(t, original.AssessmentID, newer.AssessmentID)
+		require.Nil(t, newer.Publication)
+		require.Equal(t, int32(2), calls.Load())
+		view, err := f.store.GetRecord(context.Background(), f.team, topic.ID, 0)
+		require.NoError(t, err)
+		view.Record.Retired = true
+		_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("retire-unused-topic", publication.Revision, ontology.Change{ExpectedVersion: view.Version, Record: view.Record}))
+		require.NoError(t, err)
+		stale, err := service.Organize(context.Background(), f.team, input)
+		require.NoError(t, err)
+		require.True(t, stale.Existing)
+		require.False(t, stale.Current)
+		require.Equal(t, newer.AssessmentID, stale.AssessmentID)
+		input.OperationKey = "restored-empty-context"
+		replay, err := service.Organize(context.Background(), f.team, input)
+		require.NoError(t, err)
+		require.True(t, replay.Existing)
+		require.True(t, replay.Current)
+		require.Equal(t, original.AssessmentID, replay.AssessmentID)
+		require.Equal(t, int32(2), calls.Load())
+		require.Equal(t, 3, receiptCount(t, f))
+		require.Equal(t, before, f.canonicalSnapshot(t))
+	})
+	t.Run("newer failure does not shadow completed receipt", func(t *testing.T) {
+		f := newOrganizationFixture(t)
+		source := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
+		before := f.canonicalSnapshot(t)
+		service, calls := organizationFixtureService(t, f, nil, ambiguousClassification)
+		input := ontology.OrganizationInput{OperationKey: "completed-before-failure", Sources: []ontology.SourceHandle{source}}
+		original, err := service.Organize(context.Background(), f.team, input)
+		require.NoError(t, err)
+		var failed ontology.OrganizationReceipt
+		require.NoError(t, f.store.withScope(context.Background(), f.team, true, func(tx *gorm.DB, fence scope) error {
+			var found bool
+			failed, found, err = organizationByKey(tx, fence, input.OperationKey)
+			require.True(t, found)
+			return err
+		}))
+		failed.ID = uuid.NewString()
+		failed.OperationKey = "newer-failure"
+		failed.Result.AssessmentID = failed.ID
+		failed.Result.Current = false
+		failed.Result.FailureCode = "provider_unavailable"
+		failed.Result.Outcomes[0].Status = "failed"
+		failed.Result.Outcomes[0].Reason = failed.Result.FailureCode
+		_, err = f.store.CommitOrganization(context.Background(), f.team, failed, ontology.Publication{})
+		require.NoError(t, err)
+		input.OperationKey = "reuse-older-success"
+		replay, err := service.Organize(context.Background(), f.team, input)
+		require.NoError(t, err)
+		require.True(t, replay.Existing)
+		require.True(t, replay.Current)
+		require.Empty(t, replay.FailureCode)
+		require.Equal(t, original.AssessmentID, replay.AssessmentID)
+		input.OperationKey = failed.OperationKey
+		replay, err = service.Organize(context.Background(), f.team, input)
+		require.ErrorContains(t, err, "provider_unavailable")
+		require.True(t, replay.Existing)
+		require.Equal(t, failed.ID, replay.AssessmentID)
+		require.Equal(t, int32(1), calls.Load())
+		require.Equal(t, 3, receiptCount(t, f))
+		require.Equal(t, before, f.canonicalSnapshot(t))
+	})
 	t.Run("withdrawn source", func(t *testing.T) {
 		f := newOrganizationFixture(t)
 		source := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)

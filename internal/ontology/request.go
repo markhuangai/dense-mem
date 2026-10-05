@@ -40,6 +40,11 @@ func (s *Service) request(context contract.OrganizationContext, receipt *contrac
 		delete(binding.definitions, last.Ref)
 		request.Definitions = request.Definitions[:len(request.Definitions)-1]
 	}
+	for i := range request.Definitions {
+		if _, retained := binding.definitions[request.Definitions[i].ParentRef]; !retained {
+			request.Definitions[i].ParentRef = ""
+		}
+	}
 	keys := map[string]bool{}
 	for _, source := range context.Sources {
 		keys[contract.SourceKey(source.SourceHandle)] = true
@@ -75,7 +80,7 @@ func (s *Service) request(context contract.OrganizationContext, receipt *contrac
 		if err != nil {
 			return request, binding, err
 		}
-		if measurement > s.provider.MaxInputTokens() {
+		if measurement > s.provider.MaxInitialInputTokens() {
 			request.Items = request.Items[:len(request.Items)-1]
 			request.Pairs = organizationPairs(request.Items, binding.sources, contract.SourceSnapshot{}, context.Records)
 			outcome.Status = "oversized"
