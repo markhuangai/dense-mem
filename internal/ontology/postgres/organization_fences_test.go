@@ -50,59 +50,158 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 			require.Equal(t, before, f.canonicalSnapshot(t))
 		})
 	}
-	for _, pinned := range []bool{false, true} {
-		name := "reuse omitted current definition"
-		if pinned {
-			name = "reuse omitted current pinned definition"
+	for _, match := range []string{"key", "label", "alias"} {
+		for _, pinned := range []bool{false, true} {
+			name := "reuse omitted current definition"
+			if pinned {
+				name = "reuse omitted current pinned definition"
+			}
+			t.Run(name+"/"+match, func(t *testing.T) {
+				f := newOrganizationFixture(t)
+				oldSource := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
+				const newText = "Beacon relies on a relational store."
+				service, calls := organizationFixtureService(t, f, nil, func(request assessment.Request, response *assessment.Response) {
+					if request.Items[0].Text == newText {
+						require.Empty(t, request.Definitions)
+						require.Len(t, response.Definitions, 1)
+						response.Definitions[0].Label = "Provider replacement label"
+						if match != "key" {
+							response.Definitions[0].Key = "relational-store"
+							if match == "label" {
+								response.Definitions[0].Label = " POSTGRESQL "
+							} else {
+								response.Definitions[0].Aliases = []string{" POSTGRESQL "}
+							}
+						}
+						response.Definitions[0].Description = "Provider replacement description"
+					}
+				})
+				original, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "current-definition", Sources: []ontology.SourceHandle{oldSource}})
+				require.NoError(t, err)
+				id := ontology.OrganizationRecordID(f.team, ontology.Topic, "postgresql")
+				if pinned {
+					pin := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.PinDefinition, TargetID: id}}
+					_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("pin-current-definition", original.Publication.Revision, ontology.Change{Record: pin}))
+					require.NoError(t, err)
+				}
+				definition, err := f.store.GetRecord(context.Background(), f.team, id, 0)
+				require.NoError(t, err)
+				require.True(t, definition.Current)
+				newSource := f.organizationEvidence(t, 1, newText, nil)
+				contextData, err := f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{newSource})
+				require.NoError(t, err)
+				require.Empty(t, contextData.Candidates)
+				before := f.canonicalSnapshot(t)
+				input := ontology.OrganizationInput{OperationKey: "reuse-current-definition", Sources: []ontology.SourceHandle{newSource}}
+				result, err := service.Organize(context.Background(), f.team, input)
+				require.NoError(t, err)
+				require.NotNil(t, result.Publication)
+				reused, err := f.store.GetRecord(context.Background(), f.team, id, 0)
+				require.NoError(t, err)
+				require.True(t, reused.Current)
+				require.Equal(t, definition.Record, reused.Record)
+				if match != "key" {
+					_, err = f.store.GetRecord(context.Background(), f.team, ontology.OrganizationRecordID(f.team, ontology.Topic, "relational-store"), 0)
+					require.ErrorIs(t, err, ontology.ErrNotFound)
+				}
+				for _, source := range []ontology.SourceHandle{oldSource, newSource} {
+					assignment, err := f.store.GetRecord(context.Background(), f.team, ontology.OrganizationRecordID(f.team, ontology.AssignmentKind, ontology.SourceKey(source)), 0)
+					require.NoError(t, err)
+					require.True(t, assignment.Current)
+					require.Equal(t, id, assignment.Assignment.DefinitionID)
+				}
+				input.OperationKey = "reuse-current-definition-replay"
+				replay, err := service.Organize(context.Background(), f.team, input)
+				require.NoError(t, err)
+				require.True(t, replay.Existing)
+				require.Equal(t, result.AssessmentID, replay.AssessmentID)
+				require.Equal(t, int32(2), calls.Load())
+				require.Equal(t, before, f.canonicalSnapshot(t))
+			})
+		}
+	}
+	t.Run("definition name lookup is kind and team scoped", func(t *testing.T) {
+		f := newOrganizationFixture(t)
+		topic := testTopic("postgresql")
+		class := ontology.Record{ID: uuid.NewString(), Kind: ontology.EntityClass, Definition: &ontology.Definition{Key: "person", Label: "PostgreSQL", BaseEntityKind: "person"}}
+		_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("same-name-different-kinds", 0, ontology.Change{Record: topic}, ontology.Change{Record: class}))
+		require.NoError(t, err)
+		query := ontology.Record{ID: ontology.OrganizationRecordID(f.team, ontology.Topic, "relational-store"), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "relational-store", Label: "Relational storage", Aliases: []string{" POSTGRESQL "}}}
+		heads, err := f.store.ReadDefinitionHeads(context.Background(), f.team, query)
+		require.NoError(t, err)
+		require.Len(t, heads, 1)
+		require.Equal(t, topic.ID, heads[0].ID)
+		_, err = f.store.ReadDefinitionHeads(f.actor(1, "member"), f.team, query)
+		require.ErrorIs(t, err, ontology.ErrUnauthorized)
+		other := &domain.Team{Name: "definition-name-c-" + uuid.NewString()}
+		require.NoError(t, access.NewTeamRepository(f.admin, f.rls).Create(context.Background(), other))
+		heads, err = f.store.ReadDefinitionHeads(context.Background(), other.ID.String(), query)
+		require.NoError(t, err)
+		require.Empty(t, heads)
+	})
+	for _, overridden := range []bool{false, true} {
+		name := "withdrawn member does not block remaining source"
+		if overridden {
+			name = "persistent grouping override still requires its members"
 		}
 		t.Run(name, func(t *testing.T) {
 			f := newOrganizationFixture(t)
-			oldSource := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
-			const newText = "Beacon relies on a relational store."
-			service, calls := organizationFixtureService(t, f, nil, func(request assessment.Request, response *assessment.Response) {
-				if request.Items[0].Text == newText {
-					require.Empty(t, request.Definitions)
-					require.Len(t, response.Definitions, 1)
-					response.Definitions[0].Label = "Provider replacement label"
-					response.Definitions[0].Description = "Provider replacement description"
-				}
-			})
-			original, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "current-definition", Sources: []ontology.SourceHandle{oldSource}})
+			a := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
+			memberOwner, memberText := 1, "PostgreSQL is Atlas's data store."
+			if overridden {
+				memberOwner, memberText = 0, "Atlas uses PostgreSQL."
+			}
+			b := f.organizationEvidence(t, memberOwner, memberText, nil)
+			require.NotEqual(t, a.ID, b.ID)
+			service, calls := organizationFixtureService(t, f, func(assessment.Item, assessment.Item) bool { return true }, nil)
+			original, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "original-group", Sources: []ontology.SourceHandle{a, b}})
 			require.NoError(t, err)
-			id := ontology.OrganizationRecordID(f.team, ontology.Topic, "postgresql")
-			if pinned {
-				pin := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.PinDefinition, TargetID: id}}
-				_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("pin-current-definition", original.Publication.Revision, ontology.Change{Record: pin}))
+			groups, err := f.store.ListRecords(context.Background(), f.team, ontology.EvidenceGroup, "", 20)
+			require.NoError(t, err)
+			require.Len(t, groups.Records, 1)
+			group := groups.Records[0].Record
+			if overridden {
+				override := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.GroupTogether, Members: []ontology.SourceHandle{a, b}}, Sources: []ontology.SourceDependency{f.source(t, a), f.source(t, b)}}
+				_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("persistent-grouping", original.Publication.Revision, ontology.Change{Record: override}))
 				require.NoError(t, err)
 			}
-			definition, err := f.store.GetRecord(context.Background(), f.team, id, 0)
+			_, err = f.knowledge.RetractEvidence(f.actor(memberOwner, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[memberOwner], EvidenceIDs: []string{b.ID}, Reason: "withdraw grouped member", IdempotencyKey: "withdraw-member", RequestHash: testHash("withdraw-member")})
 			require.NoError(t, err)
-			require.True(t, definition.Current)
-			newSource := f.organizationEvidence(t, 1, newText, nil)
-			contextData, err := f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{newSource})
-			require.NoError(t, err)
-			require.Empty(t, contextData.Candidates)
 			before := f.canonicalSnapshot(t)
-			input := ontology.OrganizationInput{OperationKey: "reuse-current-definition", Sources: []ontology.SourceHandle{newSource}}
+			contextData, err := f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{a})
+			require.NoError(t, err)
+			found := false
+			for _, view := range contextData.Records {
+				if view.ID == group.ID {
+					found = true
+					require.False(t, view.Current)
+				}
+			}
+			require.True(t, found)
+			priorCalls := calls.Load()
+			input := ontology.OrganizationInput{OperationKey: "remaining-source", Sources: []ontology.SourceHandle{a}}
 			result, err := service.Organize(context.Background(), f.team, input)
 			require.NoError(t, err)
-			require.NotNil(t, result.Publication)
-			reused, err := f.store.GetRecord(context.Background(), f.team, id, 0)
-			require.NoError(t, err)
-			require.True(t, reused.Current)
-			require.Equal(t, definition.Record, reused.Record)
-			for _, source := range []ontology.SourceHandle{oldSource, newSource} {
-				assignment, err := f.store.GetRecord(context.Background(), f.team, ontology.OrganizationRecordID(f.team, ontology.AssignmentKind, ontology.SourceKey(source)), 0)
-				require.NoError(t, err)
-				require.True(t, assignment.Current)
-				require.Equal(t, id, assignment.Assignment.DefinitionID)
+			if overridden {
+				require.Equal(t, "ambiguous", result.Outcomes[0].Status)
+				require.Equal(t, "resubmit_complete_group", result.Outcomes[0].Reason)
+				require.Equal(t, priorCalls, calls.Load())
+			} else {
+				require.Equal(t, "organized", result.Outcomes[0].Status)
+				require.NotNil(t, result.Publication)
+				require.Equal(t, priorCalls+1, calls.Load())
 			}
-			input.OperationKey = "reuse-current-definition-replay"
+			retained, err := f.store.GetRecord(context.Background(), f.team, group.ID, 0)
+			require.NoError(t, err)
+			require.Equal(t, group, retained.Record)
+			require.False(t, retained.Current)
+			priorCalls = calls.Load()
+			input.OperationKey = "remaining-source-replay"
 			replay, err := service.Organize(context.Background(), f.team, input)
 			require.NoError(t, err)
 			require.True(t, replay.Existing)
 			require.Equal(t, result.AssessmentID, replay.AssessmentID)
-			require.Equal(t, int32(2), calls.Load())
+			require.Equal(t, priorCalls, calls.Load())
 			require.Equal(t, before, f.canonicalSnapshot(t))
 		})
 	}

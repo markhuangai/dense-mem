@@ -61,64 +61,73 @@ func testOntologyOrganizationAmbiguousComparisonReceipt(t *testing.T) {
 }
 
 func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
-	for _, pinned := range []bool{false, true} {
-		name := "rebuild stale definition"
-		if pinned {
-			name = "stale definition pin still blocks rebuilding"
+	for _, match := range []string{"key", "alias"} {
+		for _, pinned := range []bool{false, true} {
+			name := "rebuild stale definition"
+			if pinned {
+				name = "stale definition pin still blocks rebuilding"
+			}
+			t.Run(name+"/"+match, func(t *testing.T) {
+				f := newOrganizationFixture(t)
+				oldSource := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
+				service, calls := organizationFixtureService(t, f, nil, func(request assessment.Request, response *assessment.Response) {
+					if request.Items[0].Text == "Beacon uses PostgreSQL." && match == "alias" {
+						response.Definitions[0].Key = "relational-store"
+						response.Definitions[0].Label = "Relational storage"
+						response.Definitions[0].Aliases = []string{" POSTGRESQL "}
+					}
+				})
+				original, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "old-definition", Sources: []ontology.SourceHandle{oldSource}})
+				require.NoError(t, err)
+				id := ontology.OrganizationRecordID(f.team, ontology.Topic, "postgresql")
+				oldDefinition, err := f.store.GetRecord(context.Background(), f.team, id, 0)
+				require.NoError(t, err)
+				require.True(t, oldDefinition.Current)
+				var pin ontology.Record
+				if pinned {
+					pin = ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.PinDefinition, TargetID: id}}
+					_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("pin-old-definition", original.Publication.Revision, ontology.Change{Record: pin}))
+					require.NoError(t, err)
+				}
+				_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{oldSource.ID}, Reason: "replace definition support", IdempotencyKey: "withdraw-definition-source", RequestHash: testHash("withdraw-definition-source")})
+				require.NoError(t, err)
+				newSource := f.organizationEvidence(t, 1, "Beacon uses PostgreSQL.", nil)
+				before := f.canonicalSnapshot(t)
+				contextData, err := f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{newSource})
+				require.NoError(t, err)
+				require.Empty(t, contextData.Candidates)
+				input := ontology.OrganizationInput{OperationKey: "replacement-definition", Sources: []ontology.SourceHandle{newSource}}
+				result, err := service.Organize(context.Background(), f.team, input)
+				if pinned {
+					require.ErrorIs(t, err, ontology.ErrOverride)
+					require.Nil(t, result.Publication)
+					retained, err := f.store.GetRecord(context.Background(), f.team, pin.ID, 0)
+					require.NoError(t, err)
+					require.False(t, retained.Retired)
+					require.Equal(t, ontology.PinDefinition, retained.Override.Action)
+				} else {
+					require.NoError(t, err)
+					require.NotNil(t, result.Publication)
+					rebuilt, err := f.store.GetRecord(context.Background(), f.team, id, 0)
+					require.NoError(t, err)
+					require.True(t, rebuilt.Current)
+					require.Equal(t, oldDefinition.Version+1, rebuilt.Version)
+					require.Equal(t, oldDefinition.Definition.Key, rebuilt.Definition.Key)
+					require.Len(t, rebuilt.Sources, 1)
+					require.Equal(t, newSource, rebuilt.Sources[0].SourceHandle)
+					input.OperationKey = "replacement-definition-replay"
+					replay, err := service.Organize(context.Background(), f.team, input)
+					require.NoError(t, err)
+					require.True(t, replay.Existing)
+					require.Equal(t, result.AssessmentID, replay.AssessmentID)
+				}
+				historical, err := f.store.GetRecord(context.Background(), f.team, id, oldDefinition.Version)
+				require.NoError(t, err)
+				require.Equal(t, oldDefinition.Record, historical.Record)
+				require.Equal(t, int32(2), calls.Load())
+				require.Equal(t, before, f.canonicalSnapshot(t))
+			})
 		}
-		t.Run(name, func(t *testing.T) {
-			f := newOrganizationFixture(t)
-			oldSource := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
-			service, calls := organizationFixtureService(t, f, nil, nil)
-			original, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "old-definition", Sources: []ontology.SourceHandle{oldSource}})
-			require.NoError(t, err)
-			id := ontology.OrganizationRecordID(f.team, ontology.Topic, "postgresql")
-			oldDefinition, err := f.store.GetRecord(context.Background(), f.team, id, 0)
-			require.NoError(t, err)
-			require.True(t, oldDefinition.Current)
-			var pin ontology.Record
-			if pinned {
-				pin = ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.PinDefinition, TargetID: id}}
-				_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("pin-old-definition", original.Publication.Revision, ontology.Change{Record: pin}))
-				require.NoError(t, err)
-			}
-			_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{oldSource.ID}, Reason: "replace definition support", IdempotencyKey: "withdraw-definition-source", RequestHash: testHash("withdraw-definition-source")})
-			require.NoError(t, err)
-			newSource := f.organizationEvidence(t, 1, "Beacon uses PostgreSQL.", nil)
-			before := f.canonicalSnapshot(t)
-			contextData, err := f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{newSource})
-			require.NoError(t, err)
-			require.Empty(t, contextData.Candidates)
-			input := ontology.OrganizationInput{OperationKey: "replacement-definition", Sources: []ontology.SourceHandle{newSource}}
-			result, err := service.Organize(context.Background(), f.team, input)
-			if pinned {
-				require.ErrorIs(t, err, ontology.ErrOverride)
-				require.Nil(t, result.Publication)
-				retained, err := f.store.GetRecord(context.Background(), f.team, pin.ID, 0)
-				require.NoError(t, err)
-				require.False(t, retained.Retired)
-				require.Equal(t, ontology.PinDefinition, retained.Override.Action)
-			} else {
-				require.NoError(t, err)
-				require.NotNil(t, result.Publication)
-				rebuilt, err := f.store.GetRecord(context.Background(), f.team, id, 0)
-				require.NoError(t, err)
-				require.True(t, rebuilt.Current)
-				require.Equal(t, oldDefinition.Version+1, rebuilt.Version)
-				require.Len(t, rebuilt.Sources, 1)
-				require.Equal(t, newSource, rebuilt.Sources[0].SourceHandle)
-				input.OperationKey = "replacement-definition-replay"
-				replay, err := service.Organize(context.Background(), f.team, input)
-				require.NoError(t, err)
-				require.True(t, replay.Existing)
-				require.Equal(t, result.AssessmentID, replay.AssessmentID)
-			}
-			historical, err := f.store.GetRecord(context.Background(), f.team, id, oldDefinition.Version)
-			require.NoError(t, err)
-			require.Equal(t, oldDefinition.Record, historical.Record)
-			require.Equal(t, int32(2), calls.Load())
-			require.Equal(t, before, f.canonicalSnapshot(t))
-		})
 	}
 	t.Run("restored context reuses older completed receipt", func(t *testing.T) {
 		f := newOrganizationFixture(t)

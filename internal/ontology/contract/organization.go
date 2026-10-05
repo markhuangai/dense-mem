@@ -78,7 +78,7 @@ type OrganizationReceipt struct {
 type OrganizationRepository interface {
 	FindOrganization(context.Context, string, OrganizationInput, string) (OrganizationResult, bool, error)
 	ReadOrganization(context.Context, string, []SourceHandle) (OrganizationContext, error)
-	GetRecord(context.Context, string, string, int64) (RecordView, error)
+	ReadDefinitionHeads(context.Context, string, Record) ([]RecordView, error)
 	CommitOrganization(context.Context, string, OrganizationReceipt, Publication) (OrganizationResult, error)
 }
 

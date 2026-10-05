@@ -110,17 +110,11 @@ func (s *Service) Organize(ctx context.Context, teamID string, input contract.Or
 		}
 	}
 	for _, definition := range response.Definitions {
-		id := contract.OrganizationRecordID(teamID, definition.Kind, contract.NormalizeName(definition.Key))
-		previous, err := s.repository.GetRecord(ctx, teamID, id, 0)
-		if errors.Is(err, contract.ErrNotFound) {
-			continue
-		}
+		heads, err := s.repository.ReadDefinitionHeads(ctx, teamID, proposedDefinition(teamID, definition))
 		if err != nil {
 			return s.finish(ctx, teamID, receipt, contract.Publication{}, err)
 		}
-		if !previous.Retired && previous.Definition != nil && previous.Kind == definition.Kind && contract.NormalizeName(previous.Definition.Key) == contract.NormalizeName(definition.Key) {
-			sourceContext.Records = append(sourceContext.Records, previous)
-		}
+		sourceContext.Records = append(sourceContext.Records, heads...)
 	}
 	publication, err := buildPublication(teamID, sourceContext, request, response, binding, &receipt)
 	return s.finish(ctx, teamID, receipt, publication, err)

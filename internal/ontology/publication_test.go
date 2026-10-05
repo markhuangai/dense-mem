@@ -52,7 +52,7 @@ func TestOrganizationRequestUsesBoundedContextAndManagerRules(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, request.Items, 1)
 	require.Equal(t, "required_classification_unavailable", receipt.Result.Outcomes[0].Reason)
-	ctx.Records = []contract.RecordView{{Record: contract.Record{ID: uuid.NewString(), Kind: contract.EvidenceGroup, Group: &contract.Group{Members: []contract.SourceHandle{a.SourceHandle, unitSource("outside", "outside").SourceHandle}}}}}
+	ctx.Records = []contract.RecordView{{Record: contract.Record{ID: uuid.NewString(), Kind: contract.EvidenceGroup, Group: &contract.Group{Members: []contract.SourceHandle{a.SourceHandle, unitSource("outside", "outside").SourceHandle}}}, Current: true}}
 	receipt = unitReceipt(t, ctx.Sources)
 	request, _, err = service.request(ctx, &receipt)
 	require.NoError(t, err)
@@ -75,6 +75,36 @@ func TestOrganizationRequestUsesBoundedContextAndManagerRules(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, request.Items, 1)
 	require.Equal(t, "oversized", receipt.Result.Outcomes[0].Status)
+}
+
+func TestIncompleteGroupPreservesPersistentOverrides(t *testing.T) {
+	a, b := unitSource("a", "Atlas uses PostgreSQL."), unitSource("b", "Atlas uses PostgreSQL.")
+	group := contract.Record{ID: uuid.NewString(), Kind: contract.EvidenceGroup, Group: &contract.Group{Members: []contract.SourceHandle{a.SourceHandle, b.SourceHandle}}}
+	keys := map[string]bool{contract.SourceKey(a.SourceHandle): true}
+	require.False(t, incompleteGroup(a, []contract.RecordView{{Record: group}}, keys))
+	require.True(t, incompleteGroup(a, []contract.RecordView{{Record: group, Current: true}}, keys))
+	override := contract.Record{ID: uuid.NewString(), Kind: contract.OverrideKind, Override: &contract.Override{Action: contract.GroupTogether, Members: group.Group.Members}}
+	require.True(t, incompleteGroup(a, []contract.RecordView{{Record: override}}, keys))
+}
+
+func TestOrganizationRejectsConflictingDefinitionIdentities(t *testing.T) {
+	source := unitSource("source", "Atlas uses PostgreSQL.")
+	a := contract.Record{ID: contract.OrganizationRecordID(source.TeamID, contract.Topic, "alpha"), Kind: contract.Topic, Definition: &contract.Definition{Key: "alpha", Label: "Alpha"}}
+	b := contract.Record{ID: uuid.NewString(), Kind: contract.Topic, Definition: &contract.Definition{Key: "beta", Label: "Beta"}}
+	for _, views := range [][]contract.RecordView{
+		{{Record: a, Current: true}, {Record: b, Current: true}},
+		{{Record: contract.Record{ID: a.ID, Kind: contract.Topic, Definition: &contract.Definition{Key: "unrelated", Label: "Unrelated"}}, Current: true}},
+	} {
+		ctx := contract.OrganizationContext{Sources: []contract.SourceSnapshot{source}, Records: views}
+		receipt := unitReceipt(t, ctx.Sources)
+		request, binding, err := NewService(nil, assessment.NewProvider(nil, "model", assessor.DefaultSemanticAssessmentLimits())).request(ctx, &receipt)
+		require.NoError(t, err)
+		response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{{Ref: "new", Kind: contract.Topic, Key: "alpha", Label: "Beta", Aliases: []string{}}}, Items: []assessment.Decision{{Ref: "s0", Status: "classified", DefinitionRef: "new"}}, Equivalence: []assessment.Equivalence{}}
+		require.NoError(t, assessment.Validate(request, response))
+		publication, err := buildPublication(source.TeamID, ctx, request, response, binding, &receipt)
+		require.ErrorIs(t, err, contract.ErrConflict)
+		require.Empty(t, publication.Changes)
+	}
 }
 
 func TestOrganizationRequestTrimsParentRefsWithoutChangingStoredHierarchy(t *testing.T) {

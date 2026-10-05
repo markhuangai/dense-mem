@@ -97,7 +97,7 @@ func incompleteGroup(source contract.SourceSnapshot, records []contract.RecordVi
 	key := contract.SourceKey(source.SourceHandle)
 	for _, view := range records {
 		var members []contract.SourceHandle
-		if view.Group != nil {
+		if view.Current && view.Group != nil {
 			members = view.Group.Members
 		}
 		if view.Override != nil && view.Override.Action == contract.GroupTogether {

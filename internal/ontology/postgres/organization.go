@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,6 +30,38 @@ func (s *Store) ReadOrganization(ctx context.Context, teamID string, handles []o
 		result, err = s.organizationContext(tx, fence, input.Sources)
 		return err
 	})
+	return result, err
+}
+
+func (s *Store) ReadDefinitionHeads(ctx context.Context, teamID string, definition ontology.Record) ([]ontology.RecordView, error) {
+	if err := requireAutomatic(ctx); err != nil {
+		return nil, err
+	}
+	if err := ontology.ValidateRecord(definition); err != nil {
+		return nil, err
+	}
+	if definition.Definition == nil || definition.Retired {
+		return nil, ontology.ErrInvalid
+	}
+	var result []ontology.RecordView
+	err := s.withScope(ctx, teamID, true, func(tx *gorm.DB, fence scope) error {
+		heads, err := loadHeads(tx, fence, []string{definition.ID}, ontology.DefinitionNames(definition), nil)
+		if err != nil {
+			return err
+		}
+		for _, record := range heads {
+			if record.Definition == nil || record.Retired || record.Kind != definition.Kind {
+				continue
+			}
+			view, err := s.currentView(tx, fence, record)
+			if err != nil {
+				return err
+			}
+			result = append(result, view)
+		}
+		return nil
+	})
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result, err
 }
 

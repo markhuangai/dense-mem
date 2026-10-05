@@ -20,13 +20,15 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 		definitions[ref] = record
 	}
 	for _, definition := range response.Definitions {
-		definitions[definition.Ref] = contract.Record{ID: contract.OrganizationRecordID(teamID, definition.Kind, contract.NormalizeName(definition.Key)), Kind: definition.Kind,
-			Definition: &contract.Definition{Key: definition.Key, Label: definition.Label, Description: definition.Description, Aliases: definition.Aliases, BaseEntityKind: definition.BaseEntityKind}}
+		record, err := resolveDefinition(proposedDefinition(teamID, definition), context.Records)
+		if err != nil {
+			return publication, err
+		}
+		definitions[definition.Ref] = record
 	}
 	for _, definition := range response.Definitions {
 		record := definitions[definition.Ref]
-		if previous, ok := current[record.ID]; ok && previous.Current && previous.Definition != nil && previous.Kind == record.Kind && contract.NormalizeName(previous.Definition.Key) == contract.NormalizeName(record.Definition.Key) {
-			definitions[definition.Ref] = previous.Record
+		if previous, ok := current[record.ID]; ok && previous.Current && reflect.DeepEqual(previous.Record, record) {
 			continue
 		}
 		if definition.ParentRef != "" {
@@ -169,6 +171,47 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 		}
 	}
 	return publication, nil
+}
+
+func proposedDefinition(teamID string, definition assessment.Definition) contract.Record {
+	return contract.Record{ID: contract.OrganizationRecordID(teamID, definition.Kind, contract.NormalizeName(definition.Key)), Kind: definition.Kind,
+		Definition: &contract.Definition{Key: definition.Key, Label: definition.Label, Description: definition.Description, Aliases: definition.Aliases, BaseEntityKind: definition.BaseEntityKind}}
+}
+
+func resolveDefinition(record contract.Record, records []contract.RecordView) (contract.Record, error) {
+	names := map[string]bool{}
+	for _, name := range contract.DefinitionNames(record) {
+		names[name] = true
+	}
+	var matched *contract.RecordView
+	for i := range records {
+		view := &records[i]
+		if view.Retired || view.Definition == nil || view.Kind != record.Kind {
+			continue
+		}
+		overlaps := false
+		for _, name := range contract.DefinitionNames(view.Record) {
+			overlaps = overlaps || names[name]
+		}
+		if !overlaps {
+			if view.ID == record.ID {
+				return record, contract.ErrConflict
+			}
+			continue
+		}
+		if matched != nil && matched.ID != view.ID {
+			return record, contract.ErrConflict
+		}
+		matched = view
+	}
+	if matched != nil {
+		if matched.Current {
+			return matched.Record, nil
+		}
+		record.ID = matched.ID
+		record.Definition.Key = matched.Definition.Key
+	}
+	return record, nil
 }
 
 func sameOrganizationRecord(left, right contract.Record) bool {
