@@ -45,10 +45,7 @@ func (s *Service) Organize(ctx context.Context, teamID string, input contract.Or
 	if cached, found, err := s.repository.FindOrganization(ctx, teamID, input, identity); err != nil {
 		return cached, err
 	} else if found {
-		if cached.FailureCode != "" {
-			return cached, &OrganizationError{Code: cached.FailureCode}
-		}
-		return cached, nil
+		return organizationResult(cached, nil)
 	}
 	sourceContext, err := s.repository.ReadOrganization(ctx, teamID, input.Sources)
 	if err != nil {
@@ -155,12 +152,9 @@ func (s *Service) finish(ctx context.Context, teamID string, receipt contract.Or
 		if recordErr != nil {
 			return receipt.Result, fmt.Errorf("record rejected organization publication: %w", recordErr)
 		}
-		return result, &OrganizationError{Code: receipt.Result.FailureCode, Cause: err}
+		return organizationResult(result, err)
 	}
-	if result.FailureCode != "" {
-		return result, &OrganizationError{Code: result.FailureCode, Cause: cause}
-	}
-	return result, nil
+	return organizationResult(result, cause)
 }
 
 func (s *Service) recordCancellation(ctx context.Context, teamID string, receipt contract.OrganizationReceipt, cause error) (contract.OrganizationResult, error) {
@@ -171,7 +165,14 @@ func (s *Service) recordCancellation(ctx context.Context, teamID string, receipt
 	if err != nil {
 		return receipt.Result, fmt.Errorf("record cancelled organization: %w", errors.Join(cause, err))
 	}
-	return result, &OrganizationError{Code: result.FailureCode, Cause: cause}
+	return organizationResult(result, cause)
+}
+
+func organizationResult(result contract.OrganizationResult, cause error) (contract.OrganizationResult, error) {
+	if result.FailureCode != "" {
+		return result, &OrganizationError{Code: result.FailureCode, Cause: cause}
+	}
+	return result, nil
 }
 
 func markFailure(receipt *contract.OrganizationReceipt, cause error) {

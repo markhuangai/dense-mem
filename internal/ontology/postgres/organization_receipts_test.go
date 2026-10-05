@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -417,6 +418,60 @@ func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
 }
 
 func testOntologyOrganizationCancellationReceipt(t *testing.T) {
+	t.Run("cancelled concurrent call returns committed success", func(t *testing.T) {
+		f := newOrganizationFixture(t)
+		source := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
+		before := f.canonicalSnapshot(t)
+		entered, release := make(chan struct{}), make(chan struct{})
+		defer close(release)
+		var requests atomic.Int32
+		service, calls := organizationFixtureService(t, f, nil, func(_ assessment.Request, _ *assessment.Response) {
+			if requests.Add(1) == 1 {
+				close(entered)
+				<-release
+			}
+		})
+		input := ontology.OrganizationInput{OperationKey: "concurrent-cancelled-success", Sources: []ontology.SourceHandle{source}}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		type completion struct {
+			result ontology.OrganizationResult
+			err    error
+		}
+		done := make(chan completion, 1)
+		go func() { result, err := service.Organize(ctx, f.team, input); done <- completion{result, err} }()
+		select {
+		case <-entered:
+		case <-time.After(10 * time.Second):
+			t.Fatal("first provider request did not start")
+		}
+		winnerCtx, winnerCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer winnerCancel()
+		winner, err := service.Organize(winnerCtx, f.team, input)
+		require.NoError(t, err)
+		require.NotNil(t, winner.Publication)
+		require.Empty(t, winner.FailureCode)
+		cancel()
+		var cancelled completion
+		select {
+		case cancelled = <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("cancelled concurrent call did not finish")
+		}
+		require.True(t, cancelled.result.Existing)
+		require.Equal(t, winner.AssessmentID, cancelled.result.AssessmentID)
+		require.Equal(t, winner.Publication, cancelled.result.Publication)
+		require.Empty(t, cancelled.result.FailureCode)
+		require.NoError(t, cancelled.err)
+		require.Equal(t, int32(2), calls.Load())
+		require.Equal(t, 1, receiptCount(t, f))
+		replay, err := service.Organize(context.Background(), f.team, input)
+		require.NoError(t, err)
+		require.Equal(t, winner.AssessmentID, replay.AssessmentID)
+		require.Equal(t, int32(2), calls.Load())
+		require.Equal(t, before, f.canonicalSnapshot(t))
+	})
+
 	for _, timeout := range []bool{false, true} {
 		name := "cancelled"
 		if timeout {
