@@ -36,6 +36,25 @@ func TestOrganizationInputAndFingerprints(t *testing.T) {
 	require.NotEqual(t, hash, changed)
 }
 
+func TestOrganizationPredicateSourceOrderDoesNotChangeItsHash(t *testing.T) {
+	a := SourceHandle{Kind: PredicateSource, ID: "a", Version: 12}
+	b := SourceHandle{Kind: PredicateSource, ID: "a1", Version: 2}
+	forward, err := PrepareOrganizationInput(OrganizationInput{OperationKey: "same", Sources: []SourceHandle{a, b}})
+	require.NoError(t, err)
+	reverse, err := PrepareOrganizationInput(OrganizationInput{OperationKey: "same", Sources: []SourceHandle{b, a}})
+	require.NoError(t, err)
+	require.Equal(t, forward.Sources, reverse.Sources)
+	one, err := OrganizationInputHash(forward, "provider")
+	require.NoError(t, err)
+	two, err := OrganizationInputHash(reverse, "provider")
+	require.NoError(t, err)
+	require.Equal(t, one, two)
+	a.Version = 2
+	changed, err := OrganizationInputHash(OrganizationInput{Sources: []SourceHandle{a, b}}, "provider")
+	require.NoError(t, err)
+	require.NotEqual(t, one, changed)
+}
+
 func TestExactMeaningRequiresMatchingEvidenceCreationContext(t *testing.T) {
 	for _, content := range []string{"Atlas releases next week.", "Atlas uses PostgreSQL."} {
 		a, b := policySnapshot("a", EvidenceSource, "same"), policySnapshot("b", EvidenceSource, "same")

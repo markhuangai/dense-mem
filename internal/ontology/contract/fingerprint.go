@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strconv"
 )
 
 func SourceKey(source SourceHandle) string { return string(source.Kind) + ":" + source.ID }
@@ -117,7 +116,11 @@ func dependenciesFor(record Record, catalog map[string]Record) []RevisionRef {
 func sortedSources(sources []SourceHandle) []SourceHandle {
 	result := append([]SourceHandle(nil), sources...)
 	sort.Slice(result, func(i, j int) bool {
-		return SourceKey(result[i])+strconv.FormatInt(result[i].Version, 10) < SourceKey(result[j])+strconv.FormatInt(result[j].Version, 10)
+		left, right := SourceKey(result[i]), SourceKey(result[j])
+		if left != right {
+			return left < right
+		}
+		return result[i].Version < result[j].Version
 	})
 	return result
 }

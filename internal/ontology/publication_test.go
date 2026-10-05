@@ -107,6 +107,70 @@ func TestOrganizationRejectsConflictingDefinitionIdentities(t *testing.T) {
 	}
 }
 
+func TestOrganizationRejectsDuplicateResolvedDefinitionWrites(t *testing.T) {
+	a, b := unitSource("a", "Atlas uses alpha."), unitSource("b", "Beacon uses gamma.")
+	b.TeamID, b.SpaceID = a.TeamID, a.SpaceID
+	old := contract.Record{ID: contract.OrganizationRecordID(a.TeamID, contract.Topic, "alpha"), Version: 1, Kind: contract.Topic, Definition: &contract.Definition{Key: "alpha", Label: "Existing vocabulary", Aliases: []string{"gamma"}}}
+	snapshots := map[string]contract.SourceSnapshot{contract.SourceKey(a.SourceHandle): a, contract.SourceKey(b.SourceHandle): b}
+	var err error
+	old.Fingerprint, err = contract.RecordFingerprint(old, snapshots, map[string]contract.Record{old.ID: old})
+	require.NoError(t, err)
+	for _, current := range []bool{false, true} {
+		for _, reversed := range []bool{false, true} {
+			ctx := contract.OrganizationContext{Sources: []contract.SourceSnapshot{a, b}, Records: []contract.RecordView{{Record: old, Current: current}}}
+			receipt := unitReceipt(t, ctx.Sources)
+			request, binding, err := NewService(nil, assessment.NewProvider(nil, "model", assessor.DefaultSemanticAssessmentLimits())).request(ctx, &receipt)
+			require.NoError(t, err)
+			require.Empty(t, request.Definitions)
+			response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{
+				{Ref: "new-alpha", Kind: contract.Topic, Key: "alpha", Label: "Alpha metadata", Aliases: []string{}},
+				{Ref: "new-gamma", Kind: contract.Topic, Key: "gamma", Label: "Gamma metadata", Aliases: []string{}},
+			}, Items: []assessment.Decision{{Ref: "s0", Status: "classified", DefinitionRef: "new-alpha"}, {Ref: "s1", Status: "classified", DefinitionRef: "new-gamma"}}, Equivalence: []assessment.Equivalence{}}
+			for _, pair := range request.Pairs {
+				response.Equivalence = append(response.Equivalence, assessment.Equivalence{Ref: pair.Ref, Relation: "distinct"})
+			}
+			if reversed {
+				response.Definitions[0], response.Definitions[1] = response.Definitions[1], response.Definitions[0]
+			}
+			require.NoError(t, assessment.Validate(request, response))
+			publication, err := buildPublication(a.TeamID, ctx, request, response, binding, &receipt)
+			if !current {
+				require.ErrorIs(t, err, contract.ErrConflict)
+				require.Empty(t, publication.Changes)
+				continue
+			}
+			require.NoError(t, err)
+			prepared, err := contract.PreparePublication(map[string]contract.Record{old.ID: old}, snapshots, publication, true)
+			require.NoError(t, err)
+			require.Len(t, prepared, 2)
+			for _, record := range prepared {
+				require.Equal(t, contract.AssignmentKind, record.Kind)
+				require.Equal(t, old.ID, record.Assignment.DefinitionID)
+			}
+			require.Equal(t, old, ctx.Records[0].Record)
+		}
+	}
+}
+
+func TestOrganizationDependenciesHonorTheirBound(t *testing.T) {
+	ctx := contract.OrganizationContext{}
+	for i := 0; i < contract.MaxDependencyRecords; i++ {
+		ctx.Records = append(ctx.Records, contract.RecordView{Record: contract.Record{ID: uuid.NewSHA1(uuid.NameSpaceURL, []byte(fmt.Sprintf("dependency-%d", i))).String(), Version: 1}, Current: true})
+	}
+	ctx.Candidates = append(ctx.Candidates, ctx.Records[:contract.MaxVocabularyCandidates]...)
+	ctx.Records = append(ctx.Records, contract.RecordView{Record: contract.Record{ID: uuid.NewString(), Version: 1}})
+	dependencies, err := organizationDependencies(ctx)
+	require.NoError(t, err)
+	require.Len(t, dependencies, contract.MaxDependencyRecords)
+	for i, dependency := range dependencies {
+		require.Equal(t, contract.RevisionRef{ID: ctx.Records[i].ID, Version: 1}, dependency)
+	}
+	ctx.Candidates = append(ctx.Candidates, contract.RecordView{Record: contract.Record{ID: uuid.NewString(), Version: 1}, Current: true})
+	dependencies, err = organizationDependencies(ctx)
+	require.ErrorIs(t, err, contract.ErrInvalid)
+	require.Empty(t, dependencies)
+}
+
 func TestOrganizationRequestTrimsParentRefsWithoutChangingStoredHierarchy(t *testing.T) {
 	source := unitSource("child", "Atlas uses PostgreSQL.")
 	parent := contract.Record{ID: uuid.NewString(), Version: 1, Kind: contract.Topic, Definition: &contract.Definition{Key: "storage", Label: "Storage"}}

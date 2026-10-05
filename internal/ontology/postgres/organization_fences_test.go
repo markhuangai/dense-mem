@@ -16,6 +16,40 @@ import (
 )
 
 func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
+	t.Run("oversized dependency context records a zero-call failure", func(t *testing.T) {
+		f := newOrganizationFixture(t)
+		source := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
+		dependency := f.source(t, source)
+		revision := int64(0)
+		for offset := 0; offset < ontology.MaxDependencyRecords; offset += ontology.MaxChanges {
+			var changes []ontology.Change
+			for i := offset; i < offset+ontology.MaxChanges && i < ontology.MaxDependencyRecords; i++ {
+				record := testTopic(fmt.Sprintf("context-%d", i))
+				record.Sources = []ontology.SourceDependency{dependency}
+				changes = append(changes, ontology.Change{Record: record})
+			}
+			result, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(fmt.Sprintf("context-batch-%d", offset), revision, changes...))
+			require.NoError(t, err)
+			revision = result.Revision
+		}
+		_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("extra-vocabulary", revision, ontology.Change{Record: testTopic("postgresql")}))
+		require.NoError(t, err)
+		before := f.canonicalSnapshot(t)
+		service, calls := organizationFixtureService(t, f, nil, nil)
+		input := ontology.OrganizationInput{OperationKey: "oversized-dependencies", Sources: []ontology.SourceHandle{source}}
+		result, err := service.Organize(context.Background(), f.team, input)
+		require.ErrorIs(t, err, ontology.ErrInvalid)
+		require.Equal(t, "invalid_publication", result.FailureCode)
+		require.Nil(t, result.Publication)
+		require.Zero(t, calls.Load())
+		require.Equal(t, 1, receiptCount(t, f))
+		replay, err := service.Organize(context.Background(), f.team, input)
+		require.Error(t, err)
+		require.True(t, replay.Existing)
+		require.Equal(t, result.AssessmentID, replay.AssessmentID)
+		require.Zero(t, calls.Load())
+		require.Equal(t, before, f.canonicalSnapshot(t))
+	})
 	for _, relation := range []string{"distinct", "ambiguous"} {
 		t.Run("locked relative-time comparison "+relation, func(t *testing.T) {
 			f := newOrganizationFixture(t)

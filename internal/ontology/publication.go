@@ -40,6 +40,9 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 			}
 		}
 		record.Sources = orderedDependencies(record.Sources)
+		if _, exists := changes[record.ID]; exists {
+			return publication, contract.ErrConflict
+		}
 		changes[record.ID] = record
 		definitions[definition.Ref] = record
 	}

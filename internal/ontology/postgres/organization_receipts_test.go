@@ -61,6 +61,50 @@ func testOntologyOrganizationAmbiguousComparisonReceipt(t *testing.T) {
 }
 
 func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
+	t.Run("conflicting stale definition proposals publish no subset", func(t *testing.T) {
+		f := newOrganizationFixture(t)
+		oldSource := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
+		service, calls := organizationFixtureService(t, f, nil, func(request assessment.Request, response *assessment.Response) {
+			if len(request.Items) == 2 {
+				require.Empty(t, request.Definitions)
+				response.Definitions = []assessment.Definition{
+					{Ref: "first", Kind: ontology.Topic, Key: "postgresql", Label: "First storage proposal", Aliases: []string{}},
+					{Ref: "second", Kind: ontology.Topic, Key: "pg", Label: "Second storage proposal", Aliases: []string{}},
+				}
+				response.Items[0].DefinitionRef, response.Items[1].DefinitionRef = "first", "second"
+			}
+		})
+		original, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "original-definition", Sources: []ontology.SourceHandle{oldSource}})
+		require.NoError(t, err)
+		id := ontology.OrganizationRecordID(f.team, ontology.Topic, "postgresql")
+		old, err := f.store.GetRecord(context.Background(), f.team, id, 0)
+		require.NoError(t, err)
+		old.Definition.Aliases = []string{"pg"}
+		_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("definition-alias", original.Publication.Revision, ontology.Change{ExpectedVersion: old.Version, Record: old.Record}))
+		require.NoError(t, err)
+		_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{oldSource.ID}, Reason: "withdraw definition support", IdempotencyKey: "withdraw-old-support", RequestHash: testHash("withdraw-old-support")})
+		require.NoError(t, err)
+		a := f.organizationEvidence(t, 0, "Atlas uses a relational store.", nil)
+		b := f.organizationEvidence(t, 1, "Beacon relies on a SQL database.", nil)
+		before := f.canonicalSnapshot(t)
+		heads, err := f.store.ListRecords(context.Background(), f.team, "", "", 20)
+		require.NoError(t, err)
+		input := ontology.OrganizationInput{OperationKey: "conflicting-proposals", Sources: []ontology.SourceHandle{a, b}}
+		result, err := service.Organize(context.Background(), f.team, input)
+		require.ErrorIs(t, err, ontology.ErrConflict)
+		require.Equal(t, "commit_conflict", result.FailureCode)
+		require.Nil(t, result.Publication)
+		require.Equal(t, int32(2), calls.Load())
+		replay, err := service.Organize(context.Background(), f.team, input)
+		require.Error(t, err)
+		require.True(t, replay.Existing)
+		require.Equal(t, result.AssessmentID, replay.AssessmentID)
+		require.Equal(t, int32(2), calls.Load())
+		after, err := f.store.ListRecords(context.Background(), f.team, "", "", 20)
+		require.NoError(t, err)
+		require.Equal(t, heads, after)
+		require.Equal(t, before, f.canonicalSnapshot(t))
+	})
 	for _, match := range []string{"key", "alias"} {
 		for _, pinned := range []bool{false, true} {
 			name := "rebuild stale definition"
