@@ -109,6 +109,19 @@ func (s *Service) Organize(ctx context.Context, teamID string, input contract.Or
 			return s.finish(ctx, teamID, receipt, contract.Publication{}, err)
 		}
 	}
+	for _, definition := range response.Definitions {
+		id := contract.OrganizationRecordID(teamID, definition.Kind, contract.NormalizeName(definition.Key))
+		previous, err := s.repository.GetRecord(ctx, teamID, id, 0)
+		if errors.Is(err, contract.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return s.finish(ctx, teamID, receipt, contract.Publication{}, err)
+		}
+		if !previous.Current && !previous.Retired && previous.Definition != nil && previous.Kind == definition.Kind && contract.NormalizeName(previous.Definition.Key) == contract.NormalizeName(definition.Key) {
+			sourceContext.Records = append(sourceContext.Records, previous)
+		}
+	}
 	publication, err := buildPublication(teamID, sourceContext, request, response, binding, &receipt)
 	return s.finish(ctx, teamID, receipt, publication, err)
 }
