@@ -4,6 +4,16 @@
   "go": {
     "units": [
       {
+        "id": "github.com/markhuangai/dense-mem/internal/ontology",
+        "role": "application_api",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/ontology/assessment",
+        "role": "port",
+        "visibility": "public"
+      },
+      {
         "id": "github.com/markhuangai/dense-mem/internal/ontology/contract",
         "role": "port",
         "visibility": "public"

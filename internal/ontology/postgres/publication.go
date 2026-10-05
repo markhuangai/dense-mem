@@ -42,119 +42,134 @@ func (s *Store) publish(ctx context.Context, teamID string, input ontology.Publi
 func (s *Store) commit(ctx context.Context, teamID string, input ontology.Publication, origin, actor, hash, nextPredicate string) (ontology.PublicationResult, error) {
 	var result ontology.PublicationResult
 	err := s.withScope(ctx, teamID, false, func(tx *gorm.DB, fence scope) error {
-		if err := tx.Exec(`INSERT INTO ontology_catalog_heads(team_id,shared_space_id,space_generation)
-			VALUES (?::uuid,?::uuid,?) ON CONFLICT DO NOTHING`, fence.TeamID, fence.SpaceID, fence.Generation).Error; err != nil {
-			return err
-		}
-		var revision int64
-		if err := tx.Raw(`SELECT revision FROM ontology_catalog_heads WHERE team_id=?::uuid
-			AND shared_space_id=?::uuid AND space_generation=? FOR UPDATE`, fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&revision); err != nil {
-			return err
-		}
-		existing, found, err := replayPublication(tx, fence, input.OperationKey, hash)
-		if err != nil {
-			return err
-		}
-		if found {
-			result = existing
-			return nil
-		}
-		if revision != input.ExpectedRevision {
-			return ontology.ErrConflict
-		}
-		records := make([]ontology.Record, 0, len(input.Changes))
-		var changedDefinitions []string
-		for _, change := range input.Changes {
-			records = append(records, change.Record)
-			if change.Record.Definition != nil {
-				changedDefinitions = append(changedDefinitions, change.Record.ID)
-			}
-		}
-		catalog, err := validationCatalog(tx, fence, records, changedDefinitions)
-		if err != nil {
-			return err
-		}
-		sourceCatalog := make(map[string]ontology.Record, len(catalog)+len(records))
-		for id, record := range catalog {
-			sourceCatalog[id] = record
-		}
-		for _, record := range records {
-			sourceCatalog[record.ID] = record
-		}
-		snapshots, err := sourceSnapshots(tx, fence, records, sourceCatalog)
-		if err != nil {
-			return err
-		}
-		prepared := []ontology.Record{}
-		if len(input.Changes) > 0 {
-			prepared, err = ontology.PreparePublication(catalog, snapshots, input, origin == "automatic" || origin == "seed")
-			if err != nil {
-				return err
-			}
-		} else if origin != "seed" {
-			return ontology.ErrInvalid
-		}
-		result = ontology.PublicationResult{ID: uuid.NewString(), Revision: revision + 1, Records: []ontology.RevisionRef{}, NextPredicate: nextPredicate}
-		for _, record := range prepared {
-			result.Records = append(result.Records, ontology.RevisionRef{ID: record.ID, Version: record.Version})
-		}
-		encoded, err := json.Marshal(result)
-		if err != nil {
-			return err
-		}
-		if err := tx.Exec(`INSERT INTO ontology_publications(team_id,shared_space_id,space_generation,
-			publication_id,revision,operation_key,request_hash,origin,actor_id,reason,rollback_of,result)
-			VALUES (?::uuid,?::uuid,?,?::uuid,?,?,?,?,NULLIF(?,'')::uuid,?,NULLIF(?,'')::uuid,?::jsonb)`,
-			fence.TeamID, fence.SpaceID, fence.Generation, result.ID, result.Revision, input.OperationKey, hash, origin, actor, input.Reason, input.RollbackOf, string(encoded)).Error; err != nil {
-			return err
-		}
-		for _, record := range prepared {
-			body, err := marshalRecord(record)
-			if err != nil {
-				return err
-			}
-			if err := tx.Exec(`INSERT INTO ontology_record_revisions(team_id,shared_space_id,space_generation,
-				record_id,version,kind,publication_id,retired,body,fingerprint)
-				VALUES (?::uuid,?::uuid,?,?::uuid,?,?,?::uuid,?,?::jsonb,?)`, fence.TeamID, fence.SpaceID, fence.Generation,
-				record.ID, record.Version, string(record.Kind), result.ID, record.Retired, string(body), record.Fingerprint).Error; err != nil {
-				return err
-			}
-		}
-		for _, record := range prepared {
-			if err := insertDependencies(tx, fence, record); err != nil {
-				return err
-			}
-		}
-		for _, record := range prepared {
-			names := ontology.DefinitionNames(record)
-			if names == nil {
-				names = []string{}
-			}
-			updated := tx.Exec(`INSERT INTO ontology_record_heads(team_id,shared_space_id,space_generation,record_id,version,kind,retired,names)
-				VALUES (?::uuid,?::uuid,?,?::uuid,?,?,?,?::text[])
-				ON CONFLICT (team_id,shared_space_id,space_generation,record_id) DO UPDATE
-				SET version=EXCLUDED.version,retired=EXCLUDED.retired,names=EXCLUDED.names
-				WHERE ontology_record_heads.version=?`, fence.TeamID, fence.SpaceID, fence.Generation, record.ID, record.Version,
-				string(record.Kind), record.Retired, pq.Array(names), record.Version-1)
-			if updated.Error != nil {
-				return updated.Error
-			}
-			if updated.RowsAffected != 1 {
-				return ontology.ErrConflict
-			}
-		}
-		updated := tx.Exec(`UPDATE ontology_catalog_heads SET revision=? WHERE team_id=?::uuid
-			AND shared_space_id=?::uuid AND space_generation=? AND revision=?`, result.Revision, fence.TeamID, fence.SpaceID, fence.Generation, revision)
-		if updated.Error != nil {
-			return updated.Error
-		}
-		if updated.RowsAffected != 1 {
-			return ontology.ErrConflict
-		}
-		return nil
+		var err error
+		result, err = s.commitPublication(tx, fence, input, origin, actor, hash, nextPredicate, "")
+		return err
 	})
 	if err != nil {
 		return ontology.PublicationResult{}, fmt.Errorf("ontology: publish: %w", err)
+	}
+	return result, nil
+}
+
+func (s *Store) commitPublication(tx *gorm.DB, fence scope, input ontology.Publication, origin, actor, hash, nextPredicate, assessmentID string) (ontology.PublicationResult, error) {
+	if err := tx.Exec(`INSERT INTO ontology_catalog_heads(team_id,shared_space_id,space_generation)
+		VALUES (?::uuid,?::uuid,?) ON CONFLICT DO NOTHING`, fence.TeamID, fence.SpaceID, fence.Generation).Error; err != nil {
+		return ontology.PublicationResult{}, err
+	}
+	var revision int64
+	if err := tx.Raw(`SELECT revision FROM ontology_catalog_heads WHERE team_id=?::uuid
+		AND shared_space_id=?::uuid AND space_generation=? FOR UPDATE`, fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&revision); err != nil {
+		return ontology.PublicationResult{}, err
+	}
+	existing, found, err := replayPublication(tx, fence, input.OperationKey, hash)
+	if err != nil {
+		return ontology.PublicationResult{}, err
+	}
+	if found {
+		return existing, nil
+	}
+	if revision != input.ExpectedRevision {
+		return ontology.PublicationResult{}, ontology.ErrConflict
+	}
+	records := make([]ontology.Record, 0, len(input.Changes))
+	var changedDefinitions []string
+	for _, change := range input.Changes {
+		if change.Record.Group != nil && change.Record.Group.AssessmentID != "" && !change.Record.Retired {
+			if change.Record.Group.AssessmentID != assessmentID && origin != "rollback" {
+				return ontology.PublicationResult{}, fmt.Errorf("%w: assessed groups require organization publication", ontology.ErrInvalid)
+			}
+			if change.Record.Group.AssessmentID != assessmentID {
+				if err := validateAssessmentProvenance(tx, fence, change.Record); err != nil {
+					return ontology.PublicationResult{}, err
+				}
+			}
+		}
+		records = append(records, change.Record)
+		if change.Record.Definition != nil {
+			changedDefinitions = append(changedDefinitions, change.Record.ID)
+		}
+	}
+	catalog, err := validationCatalog(tx, fence, records, changedDefinitions)
+	if err != nil {
+		return ontology.PublicationResult{}, err
+	}
+	sourceCatalog := make(map[string]ontology.Record, len(catalog)+len(records))
+	for id, record := range catalog {
+		sourceCatalog[id] = record
+	}
+	for _, record := range records {
+		sourceCatalog[record.ID] = record
+	}
+	snapshots, err := sourceSnapshots(tx, fence, records, sourceCatalog)
+	if err != nil {
+		return ontology.PublicationResult{}, err
+	}
+	prepared := []ontology.Record{}
+	if len(input.Changes) > 0 {
+		prepared, err = ontology.PreparePublication(catalog, snapshots, input, origin == "automatic" || origin == "seed")
+		if err != nil {
+			return ontology.PublicationResult{}, err
+		}
+	} else if origin != "seed" {
+		return ontology.PublicationResult{}, ontology.ErrInvalid
+	}
+	result := ontology.PublicationResult{ID: uuid.NewString(), Revision: revision + 1, Records: []ontology.RevisionRef{}, NextPredicate: nextPredicate}
+	for _, record := range prepared {
+		result.Records = append(result.Records, ontology.RevisionRef{ID: record.ID, Version: record.Version})
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return ontology.PublicationResult{}, err
+	}
+	if err := tx.Exec(`INSERT INTO ontology_publications(team_id,shared_space_id,space_generation,
+		publication_id,revision,operation_key,request_hash,origin,actor_id,reason,rollback_of,result)
+		VALUES (?::uuid,?::uuid,?,?::uuid,?,?,?,?,NULLIF(?,'')::uuid,?,NULLIF(?,'')::uuid,?::jsonb)`,
+		fence.TeamID, fence.SpaceID, fence.Generation, result.ID, result.Revision, input.OperationKey, hash, origin, actor, input.Reason, input.RollbackOf, string(encoded)).Error; err != nil {
+		return ontology.PublicationResult{}, err
+	}
+	for _, record := range prepared {
+		body, err := marshalRecord(record)
+		if err != nil {
+			return ontology.PublicationResult{}, err
+		}
+		if err := tx.Exec(`INSERT INTO ontology_record_revisions(team_id,shared_space_id,space_generation,
+			record_id,version,kind,publication_id,retired,body,fingerprint)
+			VALUES (?::uuid,?::uuid,?,?::uuid,?,?,?::uuid,?,?::jsonb,?)`, fence.TeamID, fence.SpaceID, fence.Generation,
+			record.ID, record.Version, string(record.Kind), result.ID, record.Retired, string(body), record.Fingerprint).Error; err != nil {
+			return ontology.PublicationResult{}, err
+		}
+	}
+	for _, record := range prepared {
+		if err := insertDependencies(tx, fence, record); err != nil {
+			return ontology.PublicationResult{}, err
+		}
+	}
+	for _, record := range prepared {
+		names := ontology.DefinitionNames(record)
+		if names == nil {
+			names = []string{}
+		}
+		updated := tx.Exec(`INSERT INTO ontology_record_heads(team_id,shared_space_id,space_generation,record_id,version,kind,retired,names)
+			VALUES (?::uuid,?::uuid,?,?::uuid,?,?,?,?::text[])
+			ON CONFLICT (team_id,shared_space_id,space_generation,record_id) DO UPDATE
+			SET version=EXCLUDED.version,retired=EXCLUDED.retired,names=EXCLUDED.names
+			WHERE ontology_record_heads.version=?`, fence.TeamID, fence.SpaceID, fence.Generation, record.ID, record.Version,
+			string(record.Kind), record.Retired, pq.Array(names), record.Version-1)
+		if updated.Error != nil {
+			return ontology.PublicationResult{}, updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return ontology.PublicationResult{}, ontology.ErrConflict
+		}
+	}
+	updated := tx.Exec(`UPDATE ontology_catalog_heads SET revision=? WHERE team_id=?::uuid
+		AND shared_space_id=?::uuid AND space_generation=? AND revision=?`, result.Revision, fence.TeamID, fence.SpaceID, fence.Generation, revision)
+	if updated.Error != nil {
+		return ontology.PublicationResult{}, updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return ontology.PublicationResult{}, ontology.ErrConflict
 	}
 	return result, nil
 }

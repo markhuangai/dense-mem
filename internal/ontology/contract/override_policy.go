@@ -52,7 +52,7 @@ func CheckOverrides(record Record, catalog map[string]Record) error {
 					matched++
 				}
 			}
-			if override.Action == KeepSeparate && matched > 1 {
+			if override.Action == KeepSeparate && !record.Retired && matched > 1 {
 				return fmt.Errorf("%w: manager separation rule", ErrOverride)
 			}
 			if override.Action == GroupTogether && matched > 0 && (record.Retired || matched != len(override.Members)) {

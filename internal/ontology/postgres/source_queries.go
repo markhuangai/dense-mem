@@ -33,7 +33,7 @@ WITH candidate AS (
            AND ingest.metadata->>'conflict_resolution_deletion_only'='true')
 )
 SELECT 1::bigint,owner_profile_id::text,''::text,
-       jsonb_build_object('content',content,'hash',content_hash,'authority',authority,
+       jsonb_build_object('content',content,'hash',content_hash,'authority',authority,'created_at',created_at::text,
            'source_id',COALESCE(source_id::text,''),'source_revision',COALESCE(source_revision_id::text,''),
            'current_revision',COALESCE(current_revision_id::text,''),'labels',labels::text,'metadata',metadata::text,
            'occurrences',COALESCE((SELECT jsonb_agg(jsonb_build_array(occurrence.occurrence_id,
@@ -85,7 +85,11 @@ SELECT version,owner_profile_id::text,''::text,
            'object_value',COALESCE(object_value_id::text,''),'kind',relationship_kind,
            'cardinality',current_cardinality,'polarity',polarity,'scope',COALESCE(scope_key,''),
            'valid_from',COALESCE(extract(epoch FROM valid_from)::text,''),'valid_to',COALESCE(extract(epoch FROM valid_to)::text,''),
-           'metadata',metadata::text,'supports',rows),
+           'metadata',metadata::text,'supports',rows,
+           'predicate_contract',COALESCE((SELECT jsonb_build_array(definition.allowed_subject_kinds,
+               definition.allowed_object_kinds,definition.relationship_kind,definition.current_cardinality)::text
+               FROM team_predicate_definitions AS definition WHERE definition.team_id=supported.team_id
+                 AND definition.predicate_key=supported.predicate_key AND definition.version=supported.predicate_version),'')),
        jsonb_build_array(subject_entity_id,predicate_key,predicate_version,object_entity_id,
            object_value_id,relationship_kind,current_cardinality,polarity,scope_key,
            extract(epoch FROM valid_from),extract(epoch FROM valid_to),metadata)::text

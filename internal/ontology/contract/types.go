@@ -78,7 +78,8 @@ type Assignment struct {
 }
 
 type Group struct {
-	Members []SourceHandle `json:"members"`
+	Members      []SourceHandle `json:"members"`
+	AssessmentID string         `json:"assessment_id,omitempty"`
 }
 
 type OverrideAction string

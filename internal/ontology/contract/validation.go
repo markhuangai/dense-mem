@@ -90,6 +90,9 @@ func ValidateRecord(record Record) error {
 			return fmt.Errorf("%w: group body required", ErrInvalid)
 		}
 		err = validateMembers(record.Group.Members, 2)
+		if record.Group.AssessmentID != "" && !validID(record.Group.AssessmentID) {
+			return fmt.Errorf("%w: group assessment ID", ErrInvalid)
+		}
 	case OverrideKind:
 		if record.Override == nil {
 			return fmt.Errorf("%w: override body required", ErrInvalid)

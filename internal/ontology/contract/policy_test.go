@@ -205,6 +205,16 @@ func TestOntologyManagerOverridesSurviveReprocessing(t *testing.T) {
 	group := Record{ID: policyID("joined"), Kind: EvidenceGroup, Group: &Group{Members: []SourceHandle{first.SourceHandle, second.SourceHandle}}, Sources: []SourceDependency{sourceDependency(t, first), sourceDependency(t, second)}}
 	_, err = PreparePublication(map[string]Record{separation.ID: separation}, map[string]SourceSnapshot{SourceKey(first.SourceHandle): first, SourceKey(second.SourceHandle): second}, publicationFor(group), true)
 	require.ErrorIs(t, err, ErrOverride)
+	group.Version = 1
+	retiredGroup := group
+	retiredGroup.Retired = true
+	retirement := Publication{OperationKey: "retire-separated-group", Reason: "honor manager separation", Changes: []Change{{ExpectedVersion: group.Version, Record: retiredGroup}}}
+	_, err = PreparePublication(map[string]Record{separation.ID: separation, group.ID: group}, nil, retirement, true)
+	require.NoError(t, err)
+	grouping := separation
+	grouping.Override = &Override{Action: GroupTogether, Members: separation.Override.Members}
+	_, err = PreparePublication(map[string]Record{grouping.ID: grouping, group.ID: group}, nil, retirement, true)
+	require.ErrorIs(t, err, ErrOverride)
 }
 
 func TestOntologyFingerprintsAreStableAndSelective(t *testing.T) {

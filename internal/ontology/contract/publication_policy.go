@@ -248,6 +248,9 @@ func validateRecordSources(record Record, snapshots map[string]SourceSnapshot, c
 		}
 	}
 	if record.Group != nil {
+		if record.Group.AssessmentID != "" {
+			return AssessedGroupCompatible(record, snapshots)
+		}
 		return GroupCompatible(record.Kind, record.Group.Members, snapshots)
 	}
 	if record.Override != nil && (record.Override.Action == GroupTogether || record.Override.Action == KeepSeparate) {

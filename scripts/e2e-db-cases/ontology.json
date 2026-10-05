@@ -92,6 +92,69 @@
       "run": "^TestOntologyRelationshipProvenanceAndPredicateSeeds$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/sources_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationAtomicReplayAndIsolation",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyOrganizationAtomicReplayAndIsolation$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/organization_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationRejectsStaleAndMalformedPublication",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyOrganizationRejectsStaleAndMalformedPublication$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/organization_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationOverridesAndIncompleteGroups",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyOrganizationOverridesAndIncompleteGroups$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/organization_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationCohort",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyOrganizationCohort$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/organization_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationVocabularyAndSourceFences",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyOrganizationVocabularyAndSourceFences$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/organization_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationAmbiguousComparisonReceipt",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyOrganizationAmbiguousComparisonReceipt$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/organization_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationCompletedReceiptInvalidation",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyOrganizationCompletedReceiptInvalidation$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/organization_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationCancellationReceipt",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyOrganizationCancellationReceipt$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/organization_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationRejectsSplitGroupIdentityConflict",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyOrganizationRejectsSplitGroupIdentityConflict$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/organization_integration_test.go"
     }
   ]
 }

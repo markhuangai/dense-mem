@@ -90,9 +90,23 @@ func validateSemanticAssessmentEvidenceEquivalenceResults(
 	req SemanticAssessmentRequest,
 	results []SemanticAssessmentEvidenceEquivalenceResult,
 ) []SemanticValidationError {
-	groups := make(map[string]SemanticAssessmentEvidenceEquivalenceCandidateGroup, len(req.EvidenceEquivalenceCandidates))
 	var errs []SemanticValidationError
 	for index, group := range req.EvidenceEquivalenceCandidates {
+		if _, exists := semanticEvidenceByID(req.Evidence)[strings.TrimSpace(group.EvidenceID)]; !exists {
+			errs = append(errs, semanticErr(fmt.Sprintf("evidence_equivalence_candidates[%d].evidence_id", index), "is unknown"))
+		}
+	}
+	return append(errs, ValidateEvidenceEquivalenceResults(req.EvidenceEquivalenceCandidates, results)...)
+}
+
+// ValidateEvidenceEquivalenceResults owns complete allowlisted equivalence choices independently of evidence intake.
+func ValidateEvidenceEquivalenceResults(
+	candidates []SemanticAssessmentEvidenceEquivalenceCandidateGroup,
+	results []SemanticAssessmentEvidenceEquivalenceResult,
+) []SemanticValidationError {
+	groups := make(map[string]SemanticAssessmentEvidenceEquivalenceCandidateGroup, len(candidates))
+	var errs []SemanticValidationError
+	for index, group := range candidates {
 		group.EvidenceID = strings.TrimSpace(group.EvidenceID)
 		if group.EvidenceID == "" {
 			errs = append(errs, semanticErr(fmt.Sprintf("evidence_equivalence_candidates[%d].evidence_id", index), "is required"))
@@ -101,9 +115,6 @@ func validateSemanticAssessmentEvidenceEquivalenceResults(
 		if _, exists := groups[group.EvidenceID]; exists {
 			errs = append(errs, semanticErr(fmt.Sprintf("evidence_equivalence_candidates[%d].evidence_id", index), "is duplicated"))
 			continue
-		}
-		if _, exists := semanticEvidenceByID(req.Evidence)[group.EvidenceID]; !exists {
-			errs = append(errs, semanticErr(fmt.Sprintf("evidence_equivalence_candidates[%d].evidence_id", index), "is unknown"))
 		}
 		seenCandidates := make(map[string]struct{}, len(group.Candidates))
 		for candidateIndex, candidate := range group.Candidates {

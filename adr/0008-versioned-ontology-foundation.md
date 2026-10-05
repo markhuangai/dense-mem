@@ -4,7 +4,7 @@
 - Date: 2026-10-04
 - Supersedes: None
 - Refines: ADR 0003, ADR 0004, ADR 0005, ADR 0006
-- Maintainer approval: issue #241 and its approved implementation plan
+- Maintainer approval: issues #241 and #242 and their approved implementation plans
 
 ## Decision
 
@@ -41,10 +41,17 @@ Down refuses populated ontology history; production recovery rolls forward.
 
 ## Transition
 
-#241 supplies dormant internal operations and fixtures. No provider, startup
-processing, scheduler, public transport, control UI, or Recall consumer is wired
-to this capability. Later program tickets own those integrations and their
-evaluation gates. Existing Recall SemanticGroupKey behavior remains effective.
+#241 supplies internal storage operations and fixtures. #242 adds an internal
+caller-supplied batch producer with closed-schema organization assessment,
+revision-bound equivalence provenance, and append-only terminal receipts.
+The producer reuses unchanged completed assessments and records ambiguity,
+oversized sources, and failures. Provider work occurs outside publication
+transactions; complete validation and source/dependency rechecks precede
+atomic publication. #243 owns discovery, related-source batch assembly,
+maintenance, scheduling, and global budget accounting.
+No startup processing, scheduler, public transport, control UI, or Recall
+consumer is wired to this capability. Later program tickets own those
+integrations and their evaluation gates. Existing Recall SemanticGroupKey behavior remains effective.
 ADR 0007's graph Dream and historical Dream preservation requirements remain
 effective until explicitly superseded by approved #530 work.
 
@@ -65,6 +72,9 @@ Use real non-superuser PostgreSQL cases for migration, forced RLS, A/B/C
 isolation, revision races, replay, stale sources, overrides, rollback, and
 canonical preservation. Keep deterministic organization judgments, source locks,
 and compact baseline scoring for repetition, fact coverage, and source retention.
-The foundation-only historical 1k waiver is recorded in #241; active retrieval
-and later tickets retain their evaluation requirements. Existing Recall
+The foundation-only historical 1k waiver is recorded in #241. #242 records its
+separate approved historical 1k waiver with three fresh-state model repetitions
+on the frozen organization cohort, full source/fact preservation, positive
+grouping, and zero false consolidations. Active retrieval and later tickets
+retain their evaluation requirements. Existing Recall
 regressions, local production E2E, full CI, and production-image E2E still apply.
