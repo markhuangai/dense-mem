@@ -9,6 +9,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestOntologySettingsNumericProjectionPreservesBounds(t *testing.T) {
+	entries := map[string]domain.AppConfigEntry{}
+	for key, value := range map[string]string{domain.AppConfigOntologyCadenceHours: "24", domain.AppConfigOntologyConcurrency: "8", domain.AppConfigOntologyInputTokens: "1000000000", domain.AppConfigOntologyOutputTokens: "1000000000"} {
+		entries[key] = domain.AppConfigEntry{Value: value}
+	}
+	settings, err := ontologyRuntimeConfigFromEntries(entries, "UTC")
+	require.NoError(t, err)
+	require.Equal(t, 24, settings.Effective.CadenceHours)
+	require.Equal(t, 8, settings.Effective.MaxConcurrency)
+	require.EqualValues(t, 1000000000, settings.Effective.InputTokens)
+	require.EqualValues(t, 1000000000, settings.Effective.OutputTokens)
+	for _, key := range []string{domain.AppConfigOntologyCadenceHours, domain.AppConfigOntologyConcurrency} {
+		before := entries[key]
+		entries[key] = domain.AppConfigEntry{Value: "4294967320"}
+		_, err := ontologyRuntimeConfigFromEntries(entries, "UTC")
+		require.ErrorIs(t, err, ErrInvalidAppConfig)
+		entries[key] = before
+	}
+}
+
 func TestOntologySettingsDefaultsValidationAndFreshReads(t *testing.T) {
 	now := time.Now().UTC()
 	repo := newAppConfigRepoStub(now, map[string]string{domain.AppConfigUpdateTimeKey: now.Format(time.RFC3339Nano)})

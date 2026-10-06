@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/lib/pq"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"gorm.io/gorm"
 )
@@ -133,16 +134,17 @@ func refreshMaintenanceSource(tx *gorm.DB, fence scope, handle ontology.SourceHa
 		status, reason = "unavailable", "source_unavailable"
 	}
 	text := []rune(ontology.SourceDisplayText(snapshot))
+	_, vocabularyWords := ontology.VocabularyQuery([]ontology.SourceSnapshot{snapshot})
 	if len(text) > 8192 {
 		text = text[:8192]
 	}
-	return tx.Exec(`INSERT INTO ontology_maintenance_sources(team_id,shared_space_id,space_generation,source_kind,source_id,source_version,fingerprint,meaning_key,search_tsv,eligible,status,reason)
-	 VALUES(?::uuid,?::uuid,?,?,?,?,?,?,to_tsvector('simple',?),?,?,?)
+	return tx.Exec(`INSERT INTO ontology_maintenance_sources(team_id,shared_space_id,space_generation,source_kind,source_id,source_version,fingerprint,meaning_key,search_tsv,vocabulary_words,eligible,status,reason)
+	 VALUES(?::uuid,?::uuid,?,?,?,?,?,?,to_tsvector('simple',?),?::text[],?,?,?)
 	 ON CONFLICT(team_id,shared_space_id,space_generation,source_kind,source_id) DO UPDATE SET
-	 source_version=EXCLUDED.source_version,fingerprint=EXCLUDED.fingerprint,meaning_key=EXCLUDED.meaning_key,search_tsv=EXCLUDED.search_tsv,eligible=EXCLUDED.eligible,
+	 source_version=EXCLUDED.source_version,fingerprint=EXCLUDED.fingerprint,meaning_key=EXCLUDED.meaning_key,search_tsv=EXCLUDED.search_tsv,vocabulary_words=EXCLUDED.vocabulary_words,eligible=EXCLUDED.eligible,
 	 revision=ontology_maintenance_sources.revision+1,status=EXCLUDED.status,reason=EXCLUDED.reason,
 	 pending_at=CASE WHEN ontology_maintenance_sources.status IN ('pending','budget_deferred') THEN ontology_maintenance_sources.pending_at ELSE clock_timestamp() END,
-	 updated_at=clock_timestamp() WHERE ontology_maintenance_sources.fingerprint<>EXCLUDED.fingerprint OR ?`, fence.TeamID, fence.SpaceID, fence.Generation, handle.Kind, handle.ID, handle.Version, fingerprint, snapshot.MeaningKey, string(text), snapshot.Eligible, status, reason, force).Error
+	 updated_at=clock_timestamp() WHERE ontology_maintenance_sources.fingerprint<>EXCLUDED.fingerprint OR ?`, fence.TeamID, fence.SpaceID, fence.Generation, handle.Kind, handle.ID, handle.Version, fingerprint, snapshot.MeaningKey, string(text), pq.Array(vocabularyWords), snapshot.Eligible, status, reason, force).Error
 }
 
 func latestMaintenanceHandle(tx *gorm.DB, fence scope, handle ontology.SourceHandle) (ontology.SourceHandle, error) {
@@ -279,7 +281,13 @@ func maintenanceMarkerSources(tx *gorm.DB, fence scope, marker maintenanceMarker
 	}
 	if marker.TargetKind == "definition" {
 		kind, id, _ := strings.Cut(marker.Cursor, ":")
-		err := appendRows(maintenanceDefinitionPageSQL, fence.TeamID, fence.SpaceID, fence.Generation, kind, id, limit)
+		recordID, sourceKind, sourceID := marker.TargetID, "", ""
+		if marker.AnchorKind == "source_dependency" {
+			recordID = ""
+			sourceKind, _, _ = strings.Cut(marker.AnchorID, ":")
+			sourceID = marker.TargetID
+		}
+		err := appendRows(maintenanceDefinitionPageSQL, fence.TeamID, fence.SpaceID, fence.Generation, recordID, sourceKind, sourceID, kind, id, limit)
 		return result, err
 	}
 	direct := ontology.SourceHandle{ID: marker.TargetID, Version: 1}

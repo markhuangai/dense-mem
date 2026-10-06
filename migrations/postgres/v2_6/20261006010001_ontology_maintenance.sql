@@ -88,6 +88,7 @@ CREATE TABLE ontology_maintenance_sources (
     fingerprint TEXT NOT NULL DEFAULT '',
 	meaning_key TEXT NOT NULL DEFAULT '',
 	search_tsv TSVECTOR NOT NULL DEFAULT ''::tsvector,
+	vocabulary_words TEXT[] NOT NULL DEFAULT '{}',
     revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0),
     eligible BOOLEAN NOT NULL DEFAULT false,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','organized','ambiguous','failed','budget_deferred','unavailable')),

@@ -204,7 +204,7 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 		 (source.status='pending' OR (source.status='budget_deferred' AND NOT EXISTS(SELECT 1 FROM ontology_maintenance_runs AS run WHERE run.run_id=source.last_run_id AND run.window_id=?::uuid)))))
 		 ORDER BY state.last_turn,state.team_id LIMIT 1 FOR UPDATE OF state SKIP LOCKED`, now, candidate.RetryRunID, candidate.RetryRunID, candidate.RetryRunID, windowID).Row().Scan(&candidate.TeamID, &candidate.SpaceID, &candidate.Generation)
 		if errors.Is(err, sql.ErrNoRows) {
-			return tx.Exec(`UPDATE ontology_maintenance_runs SET status=CASE WHEN EXISTS(SELECT 1 FROM ontology_maintenance_sources WHERE eligible AND status IN ('failed','ambiguous','budget_deferred')) THEN 'incomplete' ELSE 'completed' END,updated_at=? WHERE run_id=?::uuid AND status IN ('pending','running') AND NOT EXISTS(SELECT 1 FROM ontology_maintenance_teams WHERE lease_until>?)`, now, candidate.RunID, now).Error
+			return tx.Exec(`UPDATE ontology_maintenance_runs SET status=CASE WHEN EXISTS(SELECT 1`+maintenanceActiveSourceJoin+` WHERE source.eligible AND source.status IN ('failed','ambiguous','budget_deferred')) THEN 'incomplete' ELSE 'completed' END,updated_at=? WHERE run_id=?::uuid AND status IN ('pending','running') AND NOT EXISTS(SELECT 1 FROM ontology_maintenance_teams WHERE lease_until>?)`, now, candidate.RunID, now).Error
 		}
 		if err != nil {
 			return err

@@ -94,14 +94,27 @@ func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 	require.NoError(t, f.admin.Raw(`SELECT count(*) FILTER(WHERE source_kind='entity'),count(*) FILTER(WHERE source_kind='relationship') FROM ontology_maintenance_sources WHERE team_id=?::uuid AND eligible`, f.team).Row().Scan(&nodes, &edges))
 	require.Greater(t, nodes, 5000)
 	require.Greater(t, edges, 20000)
+	unrelated := testTopic("unrelated-large-marker")
+	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("sparse-large-marker", 0, ontology.Change{Record: unrelated}))
+	require.NoError(t, err)
+	require.NoError(t, f.store.withScope(ctx, f.team, true, func(tx *gorm.DB, fence scope) error {
+		handles, err := maintenanceMarkerSources(tx, fence, maintenanceMarker{AnchorKind: "ontology_record_heads", TargetKind: "definition", TargetID: unrelated.ID}, 100)
+		if err != nil {
+			return err
+		}
+		require.Empty(t, handles, "an unrelated definition must not visit the 25k-source backlog")
+		return nil
+	}))
 	var cursor string
 	require.NoError(t, f.admin.Raw(`SELECT entity_id::text FROM entity_records WHERE team_id=?::uuid ORDER BY entity_id OFFSET 4900 LIMIT 1`, f.team).Row().Scan(&cursor))
 	assertNativeMaintenanceSeek(t, f, cursor)
 	var relationshipCursor string
 	require.NoError(t, f.admin.Raw(`SELECT relationship_id::text FROM relationship_records WHERE team_id=?::uuid ORDER BY relationship_id OFFSET 19900 LIMIT 1`, f.team).Row().Scan(&relationshipCursor))
+	var predicate string
+	require.NoError(t, f.admin.Raw(`SELECT predicate_key FROM relationship_records WHERE team_id=?::uuid AND relationship_id=?::uuid`, f.team, relationship.ID).Row().Scan(&predicate))
 	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
 		fence := scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation}
-		marker := maintenanceMarker{TargetKind: "definition", Cursor: "relationship:" + relationshipCursor}
+		marker := maintenanceMarker{TargetKind: "predicate", TargetID: predicate, Cursor: "relationship:" + relationshipCursor}
 		for range 3 {
 			page, err := maintenanceMarkerSources(tx, fence, marker, 20)
 			if err != nil {

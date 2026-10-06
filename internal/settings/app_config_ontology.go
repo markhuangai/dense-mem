@@ -132,9 +132,9 @@ func ontologyRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry, 
 	if err != nil {
 		return domain.OntologyMaintenanceSettings{}, err
 	}
-	integer := func(key string) int64 { n, _ := strconv.ParseInt(values[key], 10, 64); return n }
+	integer := func(key string) int { n, _ := strconv.Atoi(values[key]); return n }
 	enabled, _ := strconv.ParseBool(values[domain.AppConfigOntologyEnabled])
-	policy := domain.OntologyMaintenanceConfig{Enabled: enabled, CadenceHours: int(integer(domain.AppConfigOntologyCadenceHours)), StartTimeLocal: values[domain.AppConfigOntologyStartTime], Timezone: timezone, Model: values[domain.AppConfigOntologyModel], MaxConcurrency: int(integer(domain.AppConfigOntologyConcurrency)), InputTokens: integer(domain.AppConfigOntologyInputTokens), OutputTokens: integer(domain.AppConfigOntologyOutputTokens), SettingsVersion: entries[domain.AppConfigUpdateTimeKey].Value}
+	policy := domain.OntologyMaintenanceConfig{Enabled: enabled, CadenceHours: integer(domain.AppConfigOntologyCadenceHours), StartTimeLocal: values[domain.AppConfigOntologyStartTime], Timezone: timezone, Model: values[domain.AppConfigOntologyModel], MaxConcurrency: integer(domain.AppConfigOntologyConcurrency), InputTokens: int64(integer(domain.AppConfigOntologyInputTokens)), OutputTokens: int64(integer(domain.AppConfigOntologyOutputTokens)), SettingsVersion: entries[domain.AppConfigUpdateTimeKey].Value}
 	items := []domain.OntologyMaintenanceConfigItem{}
 	for _, key := range editableOntologyConfigKeys() {
 		entry := entries[key]

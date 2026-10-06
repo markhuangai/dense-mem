@@ -19,6 +19,90 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestOntologyMaintenanceRunCompletionUsesActiveScope(t *testing.T) {
+	for _, failedStatus := range []string{"failed", "ambiguous", "budget_deferred"} {
+		t.Run(failedStatus, func(t *testing.T) {
+			f := newOrganizationFixture(t)
+			f.organizationEvidence(t, 0, "Historical generation evidence.", nil)
+			config := maintenanceSettings(t, f)
+			window := maintenanceWindow(t, f, config)
+			ctx := context.Background()
+			turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
+			require.NoError(t, err)
+			require.NotNil(t, turn)
+			for range 6 {
+				require.NoError(t, f.store.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize))
+			}
+			require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
+				if err := tx.Exec(`UPDATE ontology_maintenance_sources SET status=?,last_run_id=?::uuid WHERE team_id=?::uuid`, failedStatus, turn.RunID, f.team).Error; err != nil {
+					return err
+				}
+				return tx.Exec(`UPDATE memory_spaces SET generation=generation+1 WHERE team_id=?::uuid AND id=?::uuid`, f.team, f.space).Error
+			}))
+			require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
+			service, calls := maintenanceServiceFixture(t, f, config, nil)
+			drainMaintenance(t, service)
+			status, err := service.Status(ctx)
+			require.NoError(t, err)
+			require.True(t, status.CoverageComplete)
+			require.Zero(t, status.Counts.Eligible)
+			require.Zero(t, calls())
+			var runStatus string
+			require.NoError(t, f.admin.Raw(`SELECT status FROM ontology_maintenance_runs WHERE run_id=?::uuid`, turn.RunID).Row().Scan(&runStatus))
+			require.Equal(t, "completed", runStatus)
+			_, err = f.store.MaintenanceCommand(ctx, domain.OntologyMaintenanceCommand{Action: "retry", OperationKey: "historical-retry", RetryRunID: turn.RunID}, time.Now().UTC())
+			require.ErrorIs(t, err, ontology.ErrInvalid)
+		})
+	}
+}
+
+func TestOntologyMaintenanceDefinitionMarkersTargetReceiptsAndVocabulary(t *testing.T) {
+	f := newOrganizationFixture(t)
+	ctx := context.Background()
+	support := f.organizationEvidence(t, 0, "Evidence supporting the taxonomy.", nil)
+	dependent := f.organizationEvidence(t, 1, "Atlas uses PostgreSQL.", nil)
+	unrelated := f.organizationEvidence(t, 0, "Vega writes Swift.", nil)
+	root := testTopic("systems")
+	root.Sources = []ontology.SourceDependency{f.source(t, support)}
+	_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("marker-root", 0, ontology.Change{Record: root}))
+	require.NoError(t, err)
+	child := testTopic("postgresql")
+	child.Definition.ParentID = root.ID
+	child.Dependencies = []ontology.RevisionRef{{ID: root.ID, Version: 1}}
+	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("marker-child", 1, ontology.Change{Record: child}))
+	require.NoError(t, err)
+	config := maintenanceSettings(t, f)
+	service, _ := maintenanceServiceFixture(t, f, config, func(_ assessment.Request, response *assessment.Response) { response.Items = nil })
+	for range 30 {
+		progress, _ := service.RunTurn(ctx)
+		if !progress {
+			break
+		}
+	}
+	status, err := service.Status(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 3, status.Counts.Failed)
+	selectSources := func(marker maintenanceMarker) []ontology.SourceHandle {
+		t.Helper()
+		var handles []ontology.SourceHandle
+		require.NoError(t, f.store.withScope(ctx, f.team, true, func(tx *gorm.DB, fence scope) error {
+			var err error
+			handles, err = maintenanceMarkerSources(tx, fence, marker, ontology.MaintenancePageSize)
+			return err
+		}))
+		return handles
+	}
+	handles := selectSources(maintenanceMarker{AnchorKind: "source_dependency", AnchorID: ontology.SourceKey(support), TargetKind: "definition", TargetID: support.ID})
+	require.ElementsMatch(t, []ontology.SourceHandle{support, dependent}, handles, "a parent support change must reach failed receipts without scanning unrelated sources")
+	page, err := f.store.ListRecords(ctx, f.team, "", "", 1)
+	require.NoError(t, err)
+	topic := testTopic("swift")
+	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("new-vocabulary", page.Revision, ontology.Change{Record: topic}))
+	require.NoError(t, err)
+	handles = selectSources(maintenanceMarker{AnchorKind: "ontology_record_heads", AnchorID: topic.ID, TargetKind: "definition", TargetID: topic.ID})
+	require.Equal(t, []ontology.SourceHandle{unrelated}, handles, "new vocabulary must reach a failed source with no previous dependency on the new record")
+}
+
 func TestOntologyMaintenanceTransitiveInvalidation(t *testing.T) {
 	f := newOrganizationFixture(t)
 	a := f.organizationEvidence(t, 0, "Evidence supporting database vocabulary.", nil)
