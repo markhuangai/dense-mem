@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -113,7 +112,7 @@ func (s *Store) organizationContext(tx *gorm.DB, fence scope, handles []ontology
 		return result, closeErr
 	}
 	if len(records) > ontology.MaxDependencyRecords {
-		return result, fmt.Errorf("%w: organization context exceeds bound", ontology.ErrInvalid)
+		return result, ontology.ErrContextBound
 	}
 	forced := []string{}
 	for _, record := range records {
@@ -122,7 +121,7 @@ func (s *Store) organizationContext(tx *gorm.DB, fence scope, handles []ontology
 			return result, err
 		}
 		result.Records = append(result.Records, view)
-		if record.Assignment != nil {
+		if view.Current && record.Assignment != nil {
 			forced = append(forced, record.Assignment.DefinitionID)
 		}
 		if record.Override != nil && record.Override.DefinitionID != "" {
@@ -270,6 +269,9 @@ func (s *Store) FindOrganization(ctx context.Context, teamID string, input ontol
 			return nil
 		}
 		contextData, err := s.organizationContext(tx, fence, input.Sources)
+		if errors.Is(err, ontology.ErrContextBound) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -333,6 +335,9 @@ func (s *Store) FindOrganization(ctx context.Context, teamID string, input ontol
 }
 
 func (s *Store) organizationCurrent(tx *gorm.DB, fence scope, receipt ontology.OrganizationReceipt) (bool, error) {
+	if receipt.Result.FailureCode != "" {
+		return false, nil
+	}
 	for _, dependency := range receipt.Sources {
 		sources, err := organizationSources(tx, fence, []ontology.SourceHandle{dependency.SourceHandle})
 		if err != nil {
@@ -351,6 +356,9 @@ func (s *Store) organizationCurrent(tx *gorm.DB, fence scope, receipt ontology.O
 		ids = append(ids, dependency.ID)
 	}
 	catalog, err := loadHeads(tx, fence, ids, nil, nil)
+	if errors.Is(err, ontology.ErrContextBound) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
@@ -360,6 +368,9 @@ func (s *Store) organizationCurrent(tx *gorm.DB, fence scope, receipt ontology.O
 			return false, nil
 		}
 		view, err := s.currentView(tx, fence, record)
+		if errors.Is(err, ontology.ErrContextBound) {
+			return false, nil
+		}
 		if err != nil {
 			return false, err
 		}
@@ -372,6 +383,9 @@ func (s *Store) organizationCurrent(tx *gorm.DB, fence scope, receipt ontology.O
 		handles = append(handles, source.SourceHandle)
 	}
 	contextData, err := s.organizationContext(tx, fence, handles)
+	if errors.Is(err, ontology.ErrContextBound) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}

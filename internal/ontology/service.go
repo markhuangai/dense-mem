@@ -47,9 +47,9 @@ func (s *Service) Organize(ctx context.Context, teamID string, input contract.Or
 	} else if found {
 		return organizationResult(cached, nil)
 	}
-	sourceContext, err := s.repository.ReadOrganization(ctx, teamID, input.Sources)
-	if err != nil {
-		return contract.OrganizationResult{}, err
+	sourceContext, contextErr := s.repository.ReadOrganization(ctx, teamID, input.Sources)
+	if contextErr != nil && !errors.Is(contextErr, contract.ErrContextBound) {
+		return contract.OrganizationResult{}, contextErr
 	}
 	inputHash, err := contract.OrganizationInputHash(input, identity)
 	if err != nil {
@@ -72,6 +72,9 @@ func (s *Service) Organize(ctx context.Context, teamID string, input contract.Or
 	receipt.BatchHash, err = contract.OrganizationBatchHash(receipt.Sources, identity)
 	if err != nil {
 		return receipt.Result, err
+	}
+	if contextErr != nil {
+		return s.finish(ctx, teamID, receipt, contract.Publication{}, contextErr)
 	}
 	request, binding, err := s.request(sourceContext, &receipt)
 	if err != nil {

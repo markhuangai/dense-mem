@@ -66,7 +66,7 @@ func loadHeads(tx *gorm.DB, fence scope, ids, names, sourceKeys []string) (map[s
 		result[record.ID] = record
 	}
 	if len(result) > maxValidationRecords {
-		return nil, fmt.Errorf("%w: affected validation context exceeds its bound", ontology.ErrInvalid)
+		return nil, fmt.Errorf("%w: affected validation context exceeds its bound", ontology.ErrContextBound)
 	}
 	return result, rows.Err()
 }
@@ -94,7 +94,7 @@ func validationCatalog(tx *gorm.DB, fence scope, records []ontology.Record, chan
 			return nil, err
 		}
 		if len(children) > maxValidationRecords {
-			return nil, fmt.Errorf("%w: affected children exceed validation bound", ontology.ErrInvalid)
+			return nil, fmt.Errorf("%w: affected children exceed validation bound", ontology.ErrContextBound)
 		}
 		ids = append(ids, children...)
 	}
@@ -151,10 +151,10 @@ func validationCatalog(tx *gorm.DB, fence scope, records []ontology.Record, chan
 			catalog[id] = record
 		}
 		if len(catalog) > maxValidationRecords {
-			return nil, fmt.Errorf("%w: dependency context exceeds its bound", ontology.ErrInvalid)
+			return nil, fmt.Errorf("%w: dependency context exceeds its bound", ontology.ErrContextBound)
 		}
 	}
-	return nil, fmt.Errorf("%w: dependency depth exceeds its bound", ontology.ErrInvalid)
+	return nil, fmt.Errorf("%w: dependency depth exceeds its bound", ontology.ErrContextBound)
 }
 
 func (s *Store) GetRecord(ctx context.Context, teamID, recordID string, version int64) (ontology.RecordView, error) {

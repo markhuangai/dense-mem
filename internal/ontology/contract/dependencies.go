@@ -4,6 +4,8 @@ import "fmt"
 
 const MaxDependencyRecords = 2048
 
+var ErrContextBound = fmt.Errorf("%w: ontology context exceeds bound", ErrInvalid)
+
 func DependencyRecords(records []Record, catalog map[string]Record) ([]Record, error) {
 	state := map[string]int{}
 	var result []Record
@@ -16,7 +18,7 @@ func DependencyRecords(records []Record, catalog map[string]Record) ([]Record, e
 			return nil
 		}
 		if depth > MaxParentDepth || len(state) >= MaxDependencyRecords {
-			return fmt.Errorf("%w: dependency traversal bound", ErrInvalid)
+			return fmt.Errorf("%w: dependency traversal bound", ErrContextBound)
 		}
 		state[record.ID] = 1
 		if !record.Retired {
