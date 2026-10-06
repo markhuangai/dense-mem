@@ -230,11 +230,32 @@ func TestOntologyMaintenanceRetryDoesNotReleaseUnselectedFailures(t *testing.T) 
 	require.EqualValues(t, 1, status.Counts.Organized)
 	require.EqualValues(t, 2, status.Counts.Failed)
 	require.EqualValues(t, beforeCalls+1, calls())
+	broken = true
+	unrelated, err := f.store.MaintenanceCommand(context.Background(), domain.OntologyMaintenanceCommand{Action: "retry", OperationKey: "unrelated-failed-retry", RetryRunID: originalRun, MaxBatches: 1}, time.Now().UTC())
+	require.NoError(t, err)
+	_, err = service.RunTurn(context.Background())
+	var failure *organization.OrganizationError
+	require.ErrorAs(t, err, &failure)
+	broken = false
+	retried, err := f.store.MaintenanceCommand(context.Background(), domain.OntologyMaintenanceCommand{Action: "retry", OperationKey: "complete-selected-retry", RetryRunID: originalRun, MaxBatches: 100}, time.Now().UTC())
+	require.NoError(t, err)
+	drainMaintenance(t, service)
+	status, err = service.Status(context.Background())
+	require.NoError(t, err)
+	require.EqualValues(t, 2, status.Counts.Organized)
+	require.EqualValues(t, 1, status.Counts.Failed)
+	require.False(t, status.CoverageComplete)
+	var runStatus string
+	require.NoError(t, f.admin.Raw(`SELECT status FROM ontology_maintenance_runs WHERE run_id=?::uuid`, retried.ID).Row().Scan(&runStatus))
+	require.Equal(t, "completed", runStatus)
+	var unrelatedFailures int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_sources WHERE last_run_id=?::uuid AND status='failed'`, unrelated.ID).Row().Scan(&unrelatedFailures))
+	require.Equal(t, 1, unrelatedFailures)
 	for range 8 {
 		_, err := service.RunTurn(context.Background())
 		require.NoError(t, err)
 	}
-	require.EqualValues(t, beforeCalls+1, calls())
+	require.EqualValues(t, beforeCalls+5, calls())
 }
 
 func TestOntologyMaintenanceCompetingAdmissionAndCrashRecovery(t *testing.T) {
