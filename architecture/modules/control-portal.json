@@ -162,6 +162,21 @@
         "id": "web/src/ui/dreams.tsx",
         "role": "transport",
         "visibility": "public"
+      },
+      {
+        "id": "web/src/control/OntologyMaintenancePanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/ontology-maintenance-api-types.ts",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/configuration-api-types.ts",
+        "role": "transport",
+        "visibility": "private"
       }
     ]
   }

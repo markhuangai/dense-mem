@@ -70,8 +70,8 @@ function requireForkRun(run, approved, { terminal = true } = {}) {
 
 function successReceipt(approved, run, scenarios) {
   requireForkRun(run, approved, { terminal: false });
-  if (!Array.isArray(scenarios) || scenarios.length !== 24 || new Set(scenarios).size !== 24 ||
-      scenarios.some((name) => !/^[a-z0-9_]+$/.test(name))) throw new Error("fork E2E requires all 24 trusted scenarios");
+  if (!Array.isArray(scenarios) || scenarios.length !== 25 || new Set(scenarios).size !== 25 ||
+      scenarios.some((name) => !/^[a-z0-9_]+$/.test(name))) throw new Error("fork E2E requires all 25 trusted scenarios");
   return {
     version: 1, upstream_repository: UPSTREAM, source_repository: approved.source_repository,
     pr_number: approved.pr_number, source_sha: approved.source_sha, image: approved.image,

@@ -41,6 +41,10 @@ type ontologyFixture struct {
 }
 
 func newOntologyFixture(t *testing.T) *ontologyFixture {
+	return newOntologyFixtureWithMaintenance(t, true)
+}
+
+func newOntologyFixtureWithMaintenance(t *testing.T, maintenance bool) *ontologyFixture {
 	t.Helper()
 	if os.Getenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS") != "1" {
 		t.Skip("set DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 for disposable ontology PostgreSQL cases")
@@ -79,6 +83,10 @@ func newOntologyFixture(t *testing.T) *ontologyFixture {
 	migrator, err := storage.NewMigrator(admin)
 	require.NoError(t, err)
 	require.NoError(t, migrator.RunUp(context.Background()))
+	if !maintenance {
+		require.NoError(t, migrator.RunDown(context.Background()))
+		require.NoError(t, migrator.RunDown(context.Background()))
+	}
 	require.NoError(t, admin.Exec(`CREATE ROLE ontology_app LOGIN PASSWORD 'ontology_test' NOSUPERUSER NOBYPASSRLS;
 		GRANT USAGE ON SCHEMA public TO ontology_app;
 		GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ontology_app;

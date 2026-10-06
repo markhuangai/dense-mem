@@ -7,10 +7,15 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/markhuangai/dense-mem/internal/assessor"
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	organization "github.com/markhuangai/dense-mem/internal/ontology"
@@ -20,7 +25,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testOntologyOrganizationCohort(t *testing.T) {
+func testOntologyOrganizationCohort(t *testing.T) { testOntologyCohort(t, false) }
+
+func testOntologyCohort(t *testing.T, maintenance bool) {
 	f := newOrganizationFixture(t)
 	cohort := evalharness.OntologyOrganizationCohort()
 	encoded, err := json.Marshal(cohort)
@@ -43,12 +50,20 @@ func testOntologyOrganizationCohort(t *testing.T) {
 		require.NotEmpty(t, directory, "diagnostics require an isolated report directory")
 	}
 	if directory != "" {
+		mode := "explicit"
+		if maintenance {
+			mode = "maintenance"
+		}
+		directory = filepath.Join(directory, mode)
 		require.NoError(t, os.MkdirAll(directory, 0700))
 	}
 	model := "fixture-model"
 	identity := ""
 	for _, testCase := range cohort {
 		t.Run(testCase.ID, func(t *testing.T) {
+			if maintenance {
+				f = newOrganizationFixture(t)
+			}
 			defer func() {
 				if directory != "" {
 					writeOrganizationDiagnostic(t, filepath.Join(directory, testCase.ID+"-result.json"), map[string]any{"case_id": testCase.ID, "diagnostic_only": diagnostic, "ineligible_for_quality_gate": diagnostic, "failed": t.Failed(), "result": reports[testCase.ID], "score": scores[testCase.ID], "cohort_sha256": lock.CohortSHA256, "model": model, "provider_identity": identity})
@@ -79,6 +94,7 @@ func testOntologyOrganizationCohort(t *testing.T) {
 			}
 			before := f.canonicalSnapshot(t)
 			var service *organization.Service
+			var maintained *organization.MaintenanceService
 			var callCount func() int32
 			ctx := context.Background()
 			if live {
@@ -90,6 +106,14 @@ func testOntologyOrganizationCohort(t *testing.T) {
 				provider := assessment.NewProvider(transport, model, limits)
 				identity = provider.Identity()
 				service = organization.NewService(f.store, provider)
+				if maintenance {
+					settings := maintenanceSettings(t, f)
+					_, err := settings.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyModel: model}, "control", "", "")
+					require.NoError(t, err)
+					maintained = organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: settings, DefaultModel: model, ProviderTimeout: time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second, Organizer: func(model string, accounting assessment.AttemptAccounting) *organization.Service {
+						return organization.NewService(f.store, assessment.NewProviderWithAccounting(transport, model, limits, accounting))
+					}})
+				}
 				if directory != "" {
 					recorder := newOrganizationDiagnosticRecorder(t, directory, testCase.ID, cfg)
 					ctx = modelprovider.WithExchangeRecorder(ctx, recorder)
@@ -99,9 +123,55 @@ func testOntologyOrganizationCohort(t *testing.T) {
 				fixture, calls := organizationFixtureService(t, f, func(a, b assessment.Item) bool { return byText[a.Text] == byText[b.Text] }, nil)
 				service = fixture
 				callCount = calls.Load
+				if maintenance {
+					var counters []*atomic.Int32
+					maintained = organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: maintenanceSettings(t, f), DefaultModel: model, ProviderTimeout: time.Minute, Organizer: func(model string, accounting assessment.AttemptAccounting) *organization.Service {
+						service, count := organizationFixtureServiceWithAccounting(t, f, func(a, b assessment.Item) bool { return byText[a.Text] == byText[b.Text] }, nil, model, assessor.DefaultSemanticAssessmentLimits(), accounting)
+						counters = append(counters, count)
+						return service
+					}})
+					callCount = func() int32 {
+						var total int32
+						for _, count := range counters {
+							total += count.Load()
+						}
+						return total
+					}
+				}
 			}
 			input := ontology.OrganizationInput{OperationKey: "cohort-" + testCase.ID, Sources: handles}
-			result, err := service.Organize(ctx, f.team, input)
+			var result ontology.OrganizationResult
+			if maintenance {
+				for range 100 {
+					progress, err := maintained.RunTurn(ctx)
+					require.NoError(t, err)
+					if !progress {
+						break
+					}
+				}
+				status, err := maintained.Status(ctx)
+				if directory != "" {
+					writeOrganizationDiagnostic(t, filepath.Join(directory, testCase.ID+"-maintenance.json"), status)
+				}
+				require.NoError(t, err)
+				require.True(t, status.DiscoveryComplete)
+				require.Zero(t, status.Counts.Pending)
+				require.Zero(t, status.Counts.Failed)
+				require.Zero(t, status.Counts.BudgetDeferred)
+				rows, err := f.admin.Raw(`SELECT body FROM ontology_assessments WHERE team_id=?::uuid ORDER BY created_at`, f.team).Rows()
+				require.NoError(t, err)
+				for rows.Next() {
+					var body []byte
+					require.NoError(t, rows.Scan(&body))
+					var receipt ontology.OrganizationReceipt
+					require.NoError(t, json.Unmarshal(body, &receipt))
+					result.Attempts = append(result.Attempts, receipt.Result.Attempts...)
+				}
+				require.NoError(t, rows.Err())
+				require.NoError(t, rows.Close())
+			} else {
+				result, err = service.Organize(ctx, f.team, input)
+			}
 			reports[testCase.ID] = result
 			require.NoError(t, err)
 			require.Empty(t, result.FailureCode)
@@ -144,10 +214,17 @@ func testOntologyOrganizationCohort(t *testing.T) {
 				priorCalls = callCount()
 			}
 			input.OperationKey += "-replay"
-			replay, err := service.Organize(ctx, f.team, input)
-			require.NoError(t, err)
-			require.True(t, replay.Existing)
-			require.Equal(t, result.AssessmentID, replay.AssessmentID)
+			if maintenance {
+				for range 8 {
+					_, err := maintained.RunTurn(ctx)
+					require.NoError(t, err)
+				}
+			} else {
+				replay, err := service.Organize(ctx, f.team, input)
+				require.NoError(t, err)
+				require.True(t, replay.Existing)
+				require.Equal(t, result.AssessmentID, replay.AssessmentID)
+			}
 			if callCount != nil {
 				require.Equal(t, priorCalls, callCount())
 			}
@@ -155,7 +232,7 @@ func testOntologyOrganizationCohort(t *testing.T) {
 	}
 	if directory != "" {
 		require.NoError(t, os.MkdirAll(directory, 0700))
-		report := map[string]any{"schema_version": "dense-mem.ontology.organization_run.v1", "cohort_sha256": lock.CohortSHA256, "live": live, "model": model, "provider_identity": identity, "scores": scores, "results": reports, "failed": t.Failed(), "diagnostic_only": diagnostic, "ineligible_for_quality_gate": diagnostic}
+		report := map[string]any{"schema_version": "dense-mem.ontology.organization_run.v1", "cohort_sha256": lock.CohortSHA256, "live": live, "maintenance_discovery": maintenance, "model": model, "provider_identity": identity, "scores": scores, "results": reports, "failed": t.Failed(), "diagnostic_only": diagnostic, "ineligible_for_quality_gate": diagnostic}
 		if !t.Failed() {
 			report["false_consolidations"], report["source_preservation"], report["distinct_fact_coverage"], report["repeated_slots"] = 0, 1, 1, 0
 		}

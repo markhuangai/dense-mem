@@ -9,6 +9,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/dream"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
+	"github.com/markhuangai/dense-mem/internal/ontology"
 	operations "github.com/markhuangai/dense-mem/internal/operations"
 	"github.com/markhuangai/dense-mem/internal/recall"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
@@ -31,6 +32,7 @@ type ControlPortalTelemetry struct {
 	Dreams              dream.ControlService
 	DreamDiagnostics    dream.DiagnosticService
 	Communities         communityapp.Service
+	Ontology            *ontology.MaintenanceService
 	ConflictQueue       conflictqueue.Reader
 	EvidenceConflicts   evidenceconflict.Reader
 	Convergence         searchapp.SearchConvergenceReader
@@ -50,6 +52,7 @@ type controlPortalHandler struct {
 	dreams              dream.ControlService
 	dreamDiagnostics    dream.DiagnosticService
 	communities         communityapp.Service
+	ontology            *ontology.MaintenanceService
 	conflictQueue       conflictqueue.Reader
 	evidenceConflicts   evidenceconflict.Reader
 	convergence         searchapp.SearchConvergenceReader

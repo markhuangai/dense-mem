@@ -180,7 +180,10 @@ func organizationResult(result contract.OrganizationResult, cause error) (contra
 
 func markFailure(receipt *contract.OrganizationReceipt, cause error) {
 	code := "internal_failure"
+	maintenanceCode := contract.MaintenanceFailureCode(cause)
 	switch {
+	case maintenanceCode != "":
+		code = maintenanceCode
 	case errors.Is(cause, context.Canceled):
 		code = "request_cancelled"
 	case errors.Is(cause, context.DeadlineExceeded):

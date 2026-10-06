@@ -131,7 +131,7 @@ function assessmentInput(payload) {
     if (messages[index]?.role !== "user" || typeof messages[index]?.content !== "string") continue;
     try {
       const parsed = JSON.parse(messages[index].content);
-      if (Array.isArray(parsed.evidence)) return parsed;
+      if (Array.isArray(parsed.evidence) || (Array.isArray(parsed.items) && Array.isArray(parsed.pairs))) return parsed;
     } catch {
       // Repair feedback is not an assessment request.
     }
@@ -143,6 +143,7 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
   const schemaName = payload.response_format?.json_schema?.name;
   if (schemaName === "community_summary") return fixtureCommunitySummary(payload);
   if (schemaName === "dense_mem_dream_generation_response") return fixtureDreamGeneration(payload);
+  if (schemaName === "ontology_organization_v1") return fixtureOntologyOrganization(payload);
   const assessment = fixtureAssessment(assessmentInput(payload), requestFault, attempt);
   if (requestFault === "predicate-registration-repair" || requestFault === "predicate-registration-exhausted" || requestFault === "predicate-registration-reuse" || requestFault === "predicate-registration-drift") {
     const original = assessmentInput(payload);
@@ -197,6 +198,26 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
       ? [{ ...firstRelationship, ref: "provider-forged-ref" }, ...remainingRelationships]
       : [{ ref: "provider-forged-ref", disposition: "stored", reason: null, splits: [] }],
   };
+}
+
+function fixtureOntologyOrganization(payload) {
+  const input = structuredInput(payload, (value) => Array.isArray(value.items) && Array.isArray(value.pairs));
+  const definitions = [];
+  const created = new Map();
+  const items = input.items.map((item) => {
+    const kind = item.kind === "entity" ? "entity_class" : item.kind === "predicate" ? "predicate_concept" : "topic";
+    const base = kind === "entity_class" ? item.entity_kind : "";
+    const signature = `${kind}:${base}`;
+    let ref = item.locked_definition_ref || input.definitions.find((definition) => definition.kind === kind && (kind !== "entity_class" || definition.base_entity_kind === base))?.ref || created.get(signature);
+    if (!ref) {
+      ref = `new-definition-${definitions.length}`;
+      created.set(signature, ref);
+      const key = base || (kind === "predicate_concept" ? "registered-predicates" : "memory-storage");
+      definitions.push({ ref, kind, key, label: key.replaceAll("-", " "), description: "Synthetic organization vocabulary", aliases: [], parent_ref: "", base_entity_kind: base });
+    }
+    return { ref: item.ref, status: "classified", definition_ref: ref, reason: "" };
+  });
+  return { request_id: input.request_id, definitions, items, equivalence: input.pairs.map((pair) => ({ ref: pair.ref, relation: pair.required_relation || "distinct" })) };
 }
 
 function fixtureCommunitySummary(payload) {

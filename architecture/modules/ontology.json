@@ -24,5 +24,19 @@
         "visibility": "private"
       }
     ]
-  }
+  },
+  "source_ownership": [
+    {
+      "path": "cmd/internal/serverapp/ontology_composition.go"
+    }
+  ],
+  "workers": [
+    {
+      "path": "internal/ontology/scheduler.go",
+      "function": "run",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker"
+    }
+  ]
 }

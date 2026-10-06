@@ -7,6 +7,20 @@ import test from "node:test";
 import { fixtureChatResponse, fixtureFault } from "./provider-fixture.mjs";
 import { discoverCases } from "./runner.mjs";
 
+test("provider fixture routes organization requests and retains locked classifications and pair constraints", () => {
+  const request = structuredRequest("ontology_organization_v1", {
+    request_id: "organization-fixture",
+    definitions: [{ ref: "locked-topic", kind: "topic", base_entity_kind: "" }],
+    items: [{ ref: "evidence-a", kind: "evidence", locked_definition_ref: "locked-topic" }, { ref: "entity-a", kind: "entity", entity_kind: "project" }],
+    pairs: [{ ref: "separated", required_relation: "distinct" }, { ref: "joined", required_relation: "equivalent" }, { ref: "unconstrained", required_relation: "" }],
+  });
+  const response = fixtureChatResponse(request);
+  assert.equal(response.request_id, "organization-fixture");
+  assert.equal(response.items[0].definition_ref, "locked-topic");
+  assert.equal(response.definitions[0].base_entity_kind, "project");
+  assert.deepEqual(response.equivalence.map((pair) => pair.relation), ["distinct", "equivalent", "distinct"]);
+});
+
 test("synchronous-write cases are sorted and filterable", async () => {
   const directory = join(tmpdir(), "dense-mem-synchronous-write-" + Date.now() + "-" + process.pid);
   await mkdir(join(directory, "nested"), { recursive: true });

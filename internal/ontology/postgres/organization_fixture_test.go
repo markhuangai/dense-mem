@@ -23,11 +23,16 @@ import (
 
 func newOrganizationFixture(t *testing.T) *ontologyFixture {
 	t.Helper()
+	return newOrganizationFixtureWithMaintenance(t, true)
+}
+
+func newOrganizationFixtureWithMaintenance(t *testing.T, maintenance bool) *ontologyFixture {
+	t.Helper()
 	if os.Getenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS") != "1" {
 		testcontainers.SkipIfProviderIsNotHealthy(t)
 	}
 	t.Setenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS", "1")
-	return newOntologyFixture(t)
+	return newOntologyFixtureWithMaintenance(t, maintenance)
 }
 
 func (f *ontologyFixture) organizationEvidence(t *testing.T, owner int, text string, metadata map[string]any) ontology.SourceHandle {
@@ -91,6 +96,10 @@ func organizationFixtureService(t *testing.T, f *ontologyFixture, equivalent fun
 }
 
 func organizationFixtureServiceWithIdentity(t *testing.T, f *ontologyFixture, equivalent func(assessment.Item, assessment.Item) bool, edit func(assessment.Request, *assessment.Response), model string, limits assessor.SemanticAssessmentLimits) (*organization.Service, *atomic.Int32) {
+	return organizationFixtureServiceWithAccounting(t, f, equivalent, edit, model, limits, nil)
+}
+
+func organizationFixtureServiceWithAccounting(t *testing.T, f *ontologyFixture, equivalent func(assessment.Item, assessment.Item) bool, edit func(assessment.Request, *assessment.Response), model string, limits assessor.SemanticAssessmentLimits, accounting assessment.AttemptAccounting) (*organization.Service, *atomic.Int32) {
 	t.Helper()
 	calls := &atomic.Int32{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +149,7 @@ func organizationFixtureServiceWithIdentity(t *testing.T, f *ontologyFixture, eq
 	t.Cleanup(server.Close)
 	cfg := &config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "synthetic-provider-key", AIVerifierModel: model}
 	transport := assessorprovider.NewOpenAIAssessorWithAssessmentLimits(cfg, server.Client(), limits)
-	provider := assessment.NewProvider(transport, cfg.AIVerifierModel, limits)
+	provider := assessment.NewProviderWithAccounting(transport, cfg.AIVerifierModel, limits, accounting)
 	return organization.NewService(f.store, provider), calls
 }
 

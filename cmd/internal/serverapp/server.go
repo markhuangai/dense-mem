@@ -28,6 +28,8 @@ import (
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/ontology"
+	ontologypostgres "github.com/markhuangai/dense-mem/internal/ontology/postgres"
 	operations "github.com/markhuangai/dense-mem/internal/operations"
 	operationspostgres "github.com/markhuangai/dense-mem/internal/operations/postgres"
 	privacy "github.com/markhuangai/dense-mem/internal/privacy/postgres"
@@ -259,6 +261,7 @@ func RunActiveServer(
 	verifierProvider.SetMetrics(discoverabilityMetrics)
 	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, assessmentLimits, aiConcurrencyGate, sessionModels.remember)
 	assessorProvider.SetMetrics(discoverabilityMetrics)
+	ontologyMaintenance := buildOntologyMaintenance(ontologypostgres.NewStore(pgDB.GetDB(), rlsHelper), appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService)
 	conflictReviewRunner, err := buildConflictReviewApplication(conflictReviewApplicationDependencies{
 		Store:            conflictStore,
 		Provider:         verifierProvider,
@@ -377,6 +380,7 @@ func RunActiveServer(
 		evidenceConflicts:        evidenceConflictService,
 		recallFeedback:           recallFeedbackEventService,
 		community:                communitySvc,
+		ontologyMaintenance:      ontologyMaintenance,
 		controlDream:             controlDreamSvc,
 		controlDreamDiagnostics:  applications.ControlDreamDiagnostics,
 		graph:                    graphViewSvc,
@@ -536,6 +540,12 @@ func RunActiveServer(
 	}
 	lifecycle.start("community scheduler", func(ctx context.Context) {
 		communityapp.NewScheduler(communitySvc, teamService, appConfigService, rootSlogLogger(logger)).Start(ctx)
+	})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
+	lifecycle.start("ontology maintenance", func(ctx context.Context) {
+		ontology.NewMaintenanceScheduler(ontologyMaintenance, rootSlogLogger(logger)).Start(ctx)
 	})
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)

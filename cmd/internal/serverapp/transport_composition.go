@@ -20,6 +20,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/ontology"
 	operations "github.com/markhuangai/dense-mem/internal/operations"
 	"github.com/markhuangai/dense-mem/internal/recall"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
@@ -72,6 +73,7 @@ type transportCompositionInputs struct {
 	evidenceConflicts       conflictevidence.Reader
 	recallFeedback          recall.RecallFeedbackEventReader
 	community               communityapp.Service
+	ontologyMaintenance     *ontology.MaintenanceService
 	controlDream            dream.ControlService
 	controlDreamDiagnostics dream.DiagnosticService
 	graph                   graph.Service
@@ -369,6 +371,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 				Dreams:              deps.controlDream,
 				DreamDiagnostics:    deps.controlDreamDiagnostics,
 				Communities:         deps.community,
+				Ontology:            deps.ontologyMaintenance,
 				ConflictQueue:       deps.conflictQueue,
 				EvidenceConflicts:   deps.evidenceConflicts,
 				Convergence:         deps.convergence,

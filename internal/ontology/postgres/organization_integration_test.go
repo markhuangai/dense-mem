@@ -37,3 +37,5 @@ func TestOntologyOrganizationCancellationReceipt(t *testing.T) {
 }
 
 func TestOntologyOrganizationCohort(t *testing.T) { testOntologyOrganizationCohort(t) }
+
+func TestOntologyMaintenanceCohort(t *testing.T) { testOntologyCohort(t, true) }

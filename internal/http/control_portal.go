@@ -128,7 +128,7 @@ func newControlPortalServerWithMetricsAndTelemetry(
 		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), httpmw.TelemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
 	}
 
-	control := &controlPortalHandler{teams: teamSvc, credentials: credentialSvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, dreamDiagnostics: telemetry.DreamDiagnostics, communities: telemetry.Communities, conflictQueue: telemetry.ConflictQueue, evidenceConflicts: telemetry.EvidenceConflicts, convergence: telemetry.Convergence, rememberAttempts: telemetry.RememberAttempts, rememberInvocations: telemetry.RememberInvocations, privateMemory: telemetry.PrivateMemory, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, logger: logger, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
+	control := &controlPortalHandler{teams: teamSvc, credentials: credentialSvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, dreamDiagnostics: telemetry.DreamDiagnostics, communities: telemetry.Communities, ontology: telemetry.Ontology, conflictQueue: telemetry.ConflictQueue, evidenceConflicts: telemetry.EvidenceConflicts, convergence: telemetry.Convergence, rememberAttempts: telemetry.RememberAttempts, rememberInvocations: telemetry.RememberInvocations, privateMemory: telemetry.PrivateMemory, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, logger: logger, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
 	if telemetry.ControlIdentity != nil {
 		registerControlIdentityRoutes(e, control)
 	}
@@ -203,6 +203,7 @@ func newControlPortalServerWithMetricsAndTelemetry(
 		api.GET("/config/private-memory", control.getPrivateMemoryConfig)
 		api.PATCH("/config/private-memory", control.updatePrivateMemoryConfig, httpmw.BindAndValidateStrict[controlPrivateMemoryConfigRequest](privateMemoryConfigBodyKey))
 	}
+	registerOntologyMaintenanceRoutes(api, control)
 	if telemetry.PrivateMemory != nil {
 		api.GET("/private-memory/spaces", control.listPrivateMemorySpaces)
 		api.POST("/private-memory/spaces/:spaceId/legal-hold", control.placePrivateMemoryLegalHold, httpmw.BindAndValidateStrict[dto.PrivateMemoryLegalHoldRequest](privateMemoryLegalHoldBodyKey))

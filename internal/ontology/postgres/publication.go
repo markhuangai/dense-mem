@@ -42,6 +42,9 @@ func (s *Store) publish(ctx context.Context, teamID string, input ontology.Publi
 func (s *Store) commit(ctx context.Context, teamID string, input ontology.Publication, origin, actor, hash, nextPredicate string) (ontology.PublicationResult, error) {
 	var result ontology.PublicationResult
 	err := s.withScope(ctx, teamID, false, func(tx *gorm.DB, fence scope) error {
+		if err := maintenancePublicationFence(ctx, tx, fence); err != nil {
+			return err
+		}
 		var err error
 		result, err = s.commitPublication(tx, fence, input, origin, actor, hash, nextPredicate, "")
 		return err

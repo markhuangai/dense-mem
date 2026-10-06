@@ -338,6 +338,10 @@ func (s *Store) organizationCurrent(tx *gorm.DB, fence scope, receipt ontology.O
 	if receipt.Result.FailureCode != "" {
 		return false, nil
 	}
+	return s.organizationInputsCurrent(tx, fence, receipt)
+}
+
+func (s *Store) organizationInputsCurrent(tx *gorm.DB, fence scope, receipt ontology.OrganizationReceipt) (bool, error) {
 	for _, dependency := range receipt.Sources {
 		sources, err := organizationSources(tx, fence, []ontology.SourceHandle{dependency.SourceHandle})
 		if err != nil {
@@ -417,6 +421,11 @@ func (s *Store) CommitOrganization(ctx context.Context, teamID string, receipt o
 	}
 	var result ontology.OrganizationResult
 	err := s.withScope(ctx, teamID, false, func(tx *gorm.DB, fence scope) error {
+		if receipt.Result.FailureCode == "" {
+			if err := maintenancePublicationFence(ctx, tx, fence); err != nil {
+				return err
+			}
+		}
 		if err := lockOrganizationCatalog(tx, fence); err != nil {
 			return err
 		}

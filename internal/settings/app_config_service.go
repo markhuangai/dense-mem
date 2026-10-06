@@ -33,6 +33,9 @@ const (
 var ErrInvalidAppConfig = errors.New("invalid app config")
 
 type AppConfigService interface {
+	GetOntologyMaintenanceSettings(context.Context) (*domain.OntologyMaintenanceSettings, error)
+	UpdateOntologyMaintenanceSettings(context.Context, map[string]string, string, string, string) (*domain.OntologyMaintenanceSettings, error)
+	OntologyMaintenanceRuntimeConfig(context.Context) (domain.OntologyMaintenanceConfig, error)
 	GetGeneralSettings(ctx context.Context) (*domain.GeneralConfigSettings, error)
 	UpdateGeneralSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.GeneralConfigSettings, error)
 	GeneralRuntimeConfig(ctx context.Context) (domain.GeneralRuntimeConfig, error)

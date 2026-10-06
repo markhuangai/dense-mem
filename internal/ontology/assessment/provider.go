@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
@@ -17,9 +19,10 @@ const SystemPrompt = `Organize the supplied existing source records as derived m
 const maxCorrectionErrorRunes = 256
 
 type Provider struct {
-	transport modelprovider.StructuredTransport
-	model     string
-	limits    assessor.SemanticAssessmentLimits
+	transport  modelprovider.StructuredTransport
+	model      string
+	limits     assessor.SemanticAssessmentLimits
+	accounting AttemptAccounting
 }
 
 func NewProvider(transport modelprovider.StructuredTransport, model string, limits assessor.SemanticAssessmentLimits) *Provider {
@@ -92,7 +95,26 @@ func (p *Provider) Assess(ctx context.Context, request Request) (Response, []ont
 			return Response{}, attempts, &modelprovider.MalformedResponseError{Provider: "ontology", Message: "organization input exceeds token budget", FailureClass: "input_budget", Attempts: turn - 1}
 		}
 		attempt := ontology.AssessmentAttempt{Number: turn, EstimatedInputTokens: inputTokens}
-		result, err := p.transport.Complete(ctx, modelprovider.StructuredRequest{Model: p.model, Messages: append([]modelprovider.Message(nil), messages...), SchemaName: SchemaName, Schema: ResponseSchema(), MaxInputTokens: p.limits.MaxInputTokens, MaxOutputTokens: p.limits.MaxOutputTokens})
+		attemptCtx := ctx
+		if p.accounting != nil {
+			attemptCtx, err = p.accounting.BeforeAttempt(ctx, request.RequestID, turn, inputTokens, p.limits.MaxOutputTokens)
+			if err != nil {
+				return Response{}, attempts, err
+			}
+		}
+		result, err := p.transport.Complete(attemptCtx, modelprovider.StructuredRequest{Model: p.model, Messages: append([]modelprovider.Message(nil), messages...), SchemaName: SchemaName, Schema: ResponseSchema(), MaxInputTokens: p.limits.MaxInputTokens, MaxOutputTokens: p.limits.MaxOutputTokens})
+		attempt.ReportedInputTokens = result.PromptTokens
+		attempt.ReportedOutputTokens = result.CompletionTokens
+		attempt.ReportedTotalTokens = result.TotalTokens
+		attempt.ReportedUsageAvailable = result.PromptTokens > 0 || result.CompletionTokens > 0 || result.TotalTokens > 0
+		if p.accounting != nil {
+			recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			accountingErr := p.accounting.AfterAttempt(recordCtx, request.RequestID, attempt, err == nil)
+			cancel()
+			if accountingErr != nil {
+				err = errors.Join(err, fmt.Errorf("%w: %w", ontology.ErrAccounting, accountingErr))
+			}
+		}
 		if err != nil {
 			attempt.FailureCode = modelprovider.ProviderFailureDetails(err).Class
 			attempts = append(attempts, attempt)
@@ -100,10 +122,6 @@ func (p *Provider) Assess(ctx context.Context, request Request) (Response, []ont
 		}
 		outputTokens, countErr := assessor.CountTokens(result.Content, p.limits.Tokenizer)
 		attempt.EstimatedOutputTokens = outputTokens
-		attempt.ReportedInputTokens = result.PromptTokens
-		attempt.ReportedOutputTokens = result.CompletionTokens
-		attempt.ReportedTotalTokens = result.TotalTokens
-		attempt.ReportedUsageAvailable = result.PromptTokens > 0 || result.CompletionTokens > 0 || result.TotalTokens > 0
 		if countErr != nil {
 			attempt.FailureCode = "tokenizer_failure"
 			attempts = append(attempts, attempt)

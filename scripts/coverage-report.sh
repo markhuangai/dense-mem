@@ -9,9 +9,9 @@ usage() {
 usage: scripts/coverage-report.sh --transitional | --complete
 
 --transitional runs the legacy Go inventory. --complete accounts for every
-first-party root-module package, the evaluation profile, the nested E2E module,
-and cross-package execution, then enforces the strict above-90-percent gate on
-the deduplicated merged inventory.
+first-party root-module package, the evaluation profile, focused PostgreSQL
+application coverage, the nested E2E module, and cross-package execution, then
+enforces the strict above-90-percent gate on the deduplicated merged inventory.
 EOF
 }
 
@@ -66,6 +66,12 @@ merge_profiles() {
 	local output="$1"
 	shift
 	local mode profile
+	for profile in "$@"; do
+		if [[ ! -s "${profile}" ]] || ! awk 'NR > 1 && NF >= 3 { found = 1 } END { exit !found }' "${profile}"; then
+			echo "coverage profile is missing or empty: ${profile}" >&2
+			return 1
+		fi
+	done
 	mode="$(head -n 1 "$1")"
 	: > "${output}"
 	printf '%s\n' "${mode}" > "${output}"
@@ -121,13 +127,16 @@ run_transitional() {
 run_complete() {
 	local root_profile="${COVERAGE_DIR}/go-root-complete.raw"
 	local evaluation_profile="${COVERAGE_DIR}/go-evaluation-complete.raw"
+	local postgres_profile="${COVERAGE_DIR}/go-postgres-complete.raw"
 	local e2e_profile="${COVERAGE_DIR}/go-e2e-complete.raw"
 	local root_dedup_profile="${COVERAGE_DIR}/go-root-complete.out"
 	local evaluation_dedup_profile="${COVERAGE_DIR}/go-evaluation-complete.out"
+	local postgres_dedup_profile="${COVERAGE_DIR}/go-postgres-complete.out"
 	local e2e_dedup_profile="${COVERAGE_DIR}/go-e2e-complete.out"
 	local merged_profile="${COVERAGE_DIR}/go-complete.out"
 	local root_report="${COVERAGE_DIR}/go-root-complete.txt"
 	local evaluation_report="${COVERAGE_DIR}/go-evaluation-complete.txt"
+	local postgres_report="${COVERAGE_DIR}/go-postgres-complete.txt"
 	local e2e_report="${COVERAGE_DIR}/go-e2e-complete.txt"
 	local complete_report="${COVERAGE_DIR}/go-complete.txt"
 	local -a packages evaluation_packages cover_packages evaluation_cover_packages
@@ -142,13 +151,18 @@ run_complete() {
 	printf '%s\n' "${packages[@]}"
 	go test "${packages[@]}" -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${root_profile}" -count=1
 	go test -tags evaluation "${evaluation_packages[@]}" -covermode=atomic -coverpkg="${evaluation_coverpkg}" -coverprofile="${evaluation_profile}" -count=1
+	DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/ontology/postgres \
+		-run '^TestOntologyMaintenance(Cohort|RegenerationFailureRetry|ProviderPauseDrain|AccountingFailurePreventsPublication|BudgetDeferralAndManualReuse|ControlInterruptionResumesSameWindow|PauseCommandsAndWindows|OperatorHTTPAndScheduler)$' \
+		-count=1 -timeout=5m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${postgres_profile}"
 	go -C cmd/e2e test ./... -covermode=atomic -coverprofile="${e2e_profile}" -count=1
 	merge_profiles "${root_dedup_profile}" "${root_profile}"
 	merge_profiles "${evaluation_dedup_profile}" "${evaluation_profile}"
+	merge_profiles "${postgres_dedup_profile}" "${postgres_profile}"
 	merge_profiles "${e2e_dedup_profile}" "${e2e_profile}"
-	merge_profiles "${merged_profile}" "${root_dedup_profile}" "${evaluation_dedup_profile}" "${e2e_dedup_profile}"
+	merge_profiles "${merged_profile}" "${root_dedup_profile}" "${evaluation_dedup_profile}" "${postgres_dedup_profile}" "${e2e_dedup_profile}"
 	report_total "${root_dedup_profile}" "${root_report}" "${ROOT_DIR}"
 	report_total "${evaluation_dedup_profile}" "${evaluation_report}" "${ROOT_DIR}"
+	report_total "${postgres_dedup_profile}" "${postgres_report}" "${ROOT_DIR}"
 	report_total "${e2e_dedup_profile}" "${e2e_report}" "${ROOT_DIR}/cmd/e2e"
 
 	local -a totals
@@ -158,6 +172,8 @@ run_complete() {
 		cat "${root_report}"
 		printf '\nevaluation profile\n'
 		cat "${evaluation_report}"
+		printf '\nPostgreSQL application profile\n'
+		cat "${postgres_report}"
 		printf '\ncmd/e2e module\n'
 		cat "${e2e_report}"
 		printf '\ncomplete total: %d/%d %.1f%%\n' "${totals[0]}" "${totals[1]}" "${totals[2]}"

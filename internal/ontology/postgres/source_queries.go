@@ -1,5 +1,9 @@
 package postgres
 
+const maintenanceEntityPageSQL = `SELECT entity_id::text AS id,version FROM entity_records WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=? AND entity_id>COALESCE(NULLIF(?,'')::uuid,'00000000-0000-0000-0000-000000000000'::uuid) ORDER BY entity_id LIMIT ?`
+
+const maintenanceDefinitionPageSQL = `SELECT source_kind,source_id,source_version FROM ontology_maintenance_sources WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND eligible AND (source_kind,source_id)>(?,?) ORDER BY source_kind,source_id LIMIT ?`
+
 const entitySourceSQL = `
 WITH candidate AS (
     SELECT * FROM entity_records
@@ -112,3 +116,10 @@ SELECT version,''::text,''::text,
           'object_kinds',allowed_object_kinds::text,'kind',relationship_kind,
           'cardinality',current_cardinality,'lifecycle',lifecycle_state,'metadata',metadata::text),
        ''::text FROM candidate`
+
+const eligiblePredicateSelect = `SELECT DISTINCT ON (definition.predicate_key) definition.predicate_key AS id,definition.version
+ FROM team_predicate_definitions AS definition JOIN relationship_records AS candidate
+ ON candidate.team_id=definition.team_id AND candidate.predicate_key=definition.predicate_key AND candidate.predicate_version=definition.version
+ WHERE candidate.team_id=?::uuid AND candidate.space_id=?::uuid AND candidate.space_generation=?
+ AND candidate.status='active' AND candidate.support_count>0 AND candidate.identity_alias_of_relationship_id IS NULL
+ AND definition.lifecycle_state='active' AND EXISTS (` + eligibleSupportsSQL + `)`

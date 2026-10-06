@@ -18,7 +18,7 @@ import (
 )
 
 func testOntologyOrganizationAtomicReplayAndIsolation(t *testing.T) {
-	f := newOrganizationFixture(t)
+	f := newOrganizationFixtureWithMaintenance(t, false)
 	a := f.organizationEvidence(t, 0, "Atlas stores data in PostgreSQL.", nil)
 	b := f.organizationEvidence(t, 1, "PostgreSQL is Atlas's data store.", nil)
 	before := f.canonicalSnapshot(t)

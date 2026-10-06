@@ -39,15 +39,7 @@ func (s *Store) SeedDefinitions(ctx context.Context, teamID string, input ontolo
 		if err != nil || found {
 			return err
 		}
-		rows, err := tx.Raw(`SELECT DISTINCT ON (definition.predicate_key) definition.predicate_key,definition.version
-			FROM team_predicate_definitions AS definition JOIN relationship_records AS candidate
-			ON candidate.team_id=definition.team_id AND candidate.predicate_key=definition.predicate_key
-			AND candidate.predicate_version=definition.version
-			WHERE candidate.team_id=?::uuid AND candidate.space_id=?::uuid AND candidate.space_generation=?
-			AND candidate.status='active' AND candidate.support_count>0 AND definition.lifecycle_state='active'
-			AND candidate.identity_alias_of_relationship_id IS NULL
-			AND EXISTS (`+eligibleSupportsSQL+`)
-			AND definition.predicate_key>? ORDER BY definition.predicate_key,definition.version DESC LIMIT ?`,
+		rows, err := tx.Raw(eligiblePredicateSelect+` AND definition.predicate_key>? ORDER BY definition.predicate_key,definition.version DESC LIMIT ?`,
 			fence.TeamID, fence.SpaceID, fence.Generation, input.AfterPredicate, input.Limit+1).Rows()
 		if err != nil {
 			return err

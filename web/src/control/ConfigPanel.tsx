@@ -3,11 +3,19 @@ import { Check, Clock, ListFilter, MessageSquare, Moon, Network, RefreshCw, Sett
 import { CommunityDetectionConfig, CommunityDetectionConfigItem, ControlApi, DreamingConfig, DreamingConfigItem, GeneralConfig, GeneralConfigItem, OperationLogConfig, OperationLogConfigItem, RecallFeedbackConfig, RecallFeedbackConfigItem, SSOConfig, SSOConfigItem, TelemetryPricingConfig, TelemetryPricingConfigItem } from "../api";
 import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError } from "./utils";
+import { OntologyMaintenancePanel } from "./OntologyMaintenancePanel";
 
-type ConfigTab = "general" | "sso" | "dreaming" | "community" | "operation-logs" | "recall-feedback" | "telemetry-pricing";
+type ConfigTab = "ontology" | "general" | "sso" | "dreaming" | "community" | "operation-logs" | "recall-feedback" | "telemetry-pricing";
 
 const CONFIG_LABELS: Record<string, string> = {
   APP_TIMEZONE: "Timezone",
+  ONTOLOGY_MAINTENANCE_ENABLED: "Enable ontology maintenance",
+  ONTOLOGY_MAINTENANCE_CADENCE_HOURS: "Cadence (hours)",
+  ONTOLOGY_MAINTENANCE_START_TIME_LOCAL: "Window start time",
+  ONTOLOGY_MAINTENANCE_MODEL: "Maintenance model",
+  ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "Concurrent assessments",
+  ONTOLOGY_MAINTENANCE_INPUT_TOKENS: "Input tokens per window",
+  ONTOLOGY_MAINTENANCE_OUTPUT_TOKENS: "Output tokens per window",
 	SSO_PUBLIC_BASE_URL: "Public base URL",
 	MCP_PUBLIC_BASE_URL: "MCP public base URL",
   SCIM_PUBLIC_BASE_URL: "SCIM ingress URL",
@@ -36,6 +44,12 @@ const CONFIG_LABELS: Record<string, string> = {
 
 const CONFIG_PLACEHOLDERS: Record<string, string> = {
   APP_TIMEZONE: "Local",
+  ONTOLOGY_MAINTENANCE_CADENCE_HOURS: "12",
+  ONTOLOGY_MAINTENANCE_START_TIME_LOCAL: "03:00",
+  ONTOLOGY_MAINTENANCE_MODEL: "Use the semantic assessor model",
+  ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "1",
+  ONTOLOGY_MAINTENANCE_INPUT_TOKENS: "250000",
+  ONTOLOGY_MAINTENANCE_OUTPUT_TOKENS: "100000",
 	MCP_PUBLIC_BASE_URL: "https://memory.example.com",
   SCIM_PUBLIC_BASE_URL: "https://memory.example.com",
   CONTROL_PUBLIC_BASE_URL: "https://control.example.com",
@@ -154,7 +168,9 @@ export function ConfigPanel({ api }: { api: ControlApi }) {
           <ListFilter size={16} aria-hidden="true" />
           <span>Logs</span>
         </button>
+        <button className={activeTab === "ontology" ? "tab-button active" : "tab-button"} type="button" role="tab" aria-selected={activeTab === "ontology"} onClick={() => setActiveTab("ontology")}><Network size={16} aria-hidden="true" /><span>Ontology</span></button>
       </div>
+      {activeTab === "ontology" && <OntologyConfigPanel api={api} />}
       {activeTab === "general" && <GeneralConfigPanel api={api} />}
       {activeTab === "sso" && <SSOConfigPanel api={api} />}
       {activeTab === "dreaming" && <DreamingConfigPanel api={api} />}
@@ -177,6 +193,13 @@ type RuntimeConfigInput = {
     value: string;
   }>;
 };
+
+function OntologyConfigPanel({ api }: { api: ControlApi }) {
+  return <>
+    <RuntimeConfigPanel title="Ontology maintenance" refreshLabel="Refresh ontology config" load={() => api.getOntologyMaintenanceConfig()} save={(input) => api.updateOntologyMaintenanceConfig(input)} detail={() => <p>Policy changes apply at the next window. Disabling stops new work immediately.</p>} />
+    <OntologyMaintenancePanel api={api} />
+  </>;
+}
 
 function GeneralConfigPanel({ api }: { api: ControlApi }) {
   return (
@@ -381,7 +404,7 @@ function ConfigField({
     );
   }
 
-  if ((item.key.startsWith("DREAMING_") || item.key.startsWith("COMMUNITY_DETECTION_") || item.key.startsWith("RECALL_FEEDBACK_") || item.key.startsWith("EVALUATION_")) && item.key.endsWith("_ENABLED")) {
+  if ((item.key.startsWith("ONTOLOGY_MAINTENANCE_") || item.key.startsWith("DREAMING_") || item.key.startsWith("COMMUNITY_DETECTION_") || item.key.startsWith("RECALL_FEEDBACK_") || item.key.startsWith("EVALUATION_")) && item.key.endsWith("_ENABLED")) {
     const checked = (value || item.effective_value) === "true";
     return (
       <>

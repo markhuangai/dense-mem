@@ -20,6 +20,7 @@ import (
 )
 
 type controlAppConfigSvc struct {
+	settings.AppConfigService
 	generalSettings       *domain.GeneralConfigSettings
 	settings              *domain.SSOConfigSettings
 	dreamingSettings      *domain.DreamingConfigSettings

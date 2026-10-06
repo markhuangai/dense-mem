@@ -4,7 +4,7 @@
 - Date: 2026-10-04
 - Supersedes: None
 - Refines: ADR 0003, ADR 0004, ADR 0005, ADR 0006
-- Maintainer approval: issues #241 and #242 and their approved implementation plans
+- Maintainer approval: issues #241, #242, and #243 and their approved implementation plans
 
 ## Decision
 
@@ -47,11 +47,14 @@ revision-bound equivalence provenance, and append-only terminal receipts.
 The producer reuses unchanged completed assessments and records ambiguity,
 oversized sources, and failures. Provider work occurs outside publication
 transactions; complete validation and source/dependency rechecks precede
-atomic publication. #243 owns discovery, related-source batch assembly,
-maintenance, scheduling, and global budget accounting.
-No startup processing, scheduler, public transport, control UI, or Recall
-consumer is wired to this capability. Later program tickets own those
-integrations and their evaluation gates. Existing Recall SemanticGroupKey behavior remains effective.
+atomic publication. #243 adds bounded corpus discovery, related-source batch
+assembly, durable leases and fair rotation, per-dispatch global token accounting,
+and operator-only maintenance settings and controls. Processing remains disabled
+by default. PostgreSQL triggers enqueue small changed-row markers; workers expand
+dependencies outside canonical write transactions. Pause and disable stop new
+admissions and drain dispatched work without resetting reservations. Recall and
+community consumers remain with their later tickets and evaluation gates.
+Existing Recall SemanticGroupKey behavior remains effective.
 ADR 0007's graph Dream and historical Dream preservation requirements remain
 effective until explicitly superseded by approved #530 work.
 
@@ -78,3 +81,7 @@ on the frozen organization cohort, full source/fact preservation, positive
 grouping, and zero false consolidations. Active retrieval and later tickets
 retain their evaluation requirements. Existing Recall
 regressions, local production E2E, full CI, and production-image E2E still apply.
+
+Issue #243 records its separately approved historical 1k waiver and mandatory
+maintenance-path cohort, real PostgreSQL, write-latency, local E2E, and final-head
+full CI/E2E replacement checks. Later tickets retain their evaluation gates.

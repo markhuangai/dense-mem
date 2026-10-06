@@ -155,6 +155,153 @@
       "run": "^TestOntologyOrganizationRejectsSplitGroupIdentityConflict$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/organization_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceGlobalAccounting",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceGlobalAccounting$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenancePauseCommandsAndWindows",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenancePauseCommandsAndWindows$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceExpiredLeaseAndNewInvalidation",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceExpiredLeaseAndNewInvalidation$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceMarkerRollbackAndRLS",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceMarkerRollbackAndRLS$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceWriteLatency",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceWriteLatency$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_performance_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceCohort",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceCohort$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/organization_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceLargeBacklogAndFairTurns$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_backlog_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceOversizedGroupClosure",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceOversizedGroupClosure$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_backlog_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceOperatorHTTPAndScheduler",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceOperatorHTTPAndScheduler$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceRegenerationFailureRetry",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceRegenerationFailureRetry$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceProviderPauseDrain",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceProviderPauseDrain$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceAccountingFailurePreventsPublication",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceAccountingFailurePreventsPublication$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceBudgetDeferralAndManualReuse",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceBudgetDeferralAndManualReuse$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceTransitiveInvalidation",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceTransitiveInvalidation$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_regressions_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceControlInterruptionResumesSameWindow",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceControlInterruptionResumesSameWindow$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_regressions_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceRetryDoesNotReleaseUnselectedFailures",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceRetryDoesNotReleaseUnselectedFailures$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_regressions_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceCompetingAdmissionAndCrashRecovery",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceCompetingAdmissionAndCrashRecovery$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_regressions_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceClaimRefreshesCurrentVersion",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceClaimRefreshesCurrentVersion$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_regressions_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceInvalidationFamilies",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceInvalidationFamilies$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_invalidation_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenancePrivateGenerationAndABCIsolation",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenancePrivateGenerationAndABCIsolation$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_invalidation_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenancePopulatedMigrationCannotRollback",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenancePopulatedMigrationCannotRollback$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_integration_test.go"
     }
   ]
 }

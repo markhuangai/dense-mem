@@ -18,7 +18,7 @@ import (
 )
 
 func TestOntologyMigrationRLSAndHistory(t *testing.T) {
-	f := newOntologyFixture(t)
+	f := newOntologyFixtureWithMaintenance(t, false)
 	require.NoError(t, privacy.NewPrivateMemoryRepository(f.app, f.rls).Prepare(context.Background()))
 	before := f.canonicalSnapshot(t)
 	var forced, secured int
@@ -36,6 +36,8 @@ func TestOntologyMigrationRLSAndHistory(t *testing.T) {
 	require.NoError(t, migrator.RunDown(context.Background()))
 	require.Equal(t, before, f.canonicalSnapshot(t))
 	require.NoError(t, migrator.RunUp(context.Background()))
+	require.NoError(t, migrator.RunDown(context.Background()))
+	require.NoError(t, migrator.RunDown(context.Background()))
 	require.NoError(t, f.admin.Exec(`GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ontology_app`).Error)
 	seed, err := f.store.SeedDefinitions(context.Background(), f.team, ontology.SeedInput{OperationKey: "seed", ExpectedRevision: 0, Limit: 20})
 	require.NoError(t, err)

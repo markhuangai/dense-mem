@@ -1,3 +1,7 @@
+import type { GeneralConfig, GeneralConfigInput, GeneralConfigItem, SSOConfigInput, DreamingRuntimeConfig, DreamingEffectiveConfig } from "./configuration-api-types";
+export type { GeneralConfig, GeneralConfigInput, GeneralConfigItem, SSOConfigInput, DreamingRuntimeConfig, DreamingEffectiveConfig } from "./configuration-api-types";
+import type { OntologyMaintenanceConfig, OntologyMaintenanceRun, OntologyMaintenanceStatus, OntologyMaintenanceRunPage } from "./ontology-maintenance-api-types";
+export type { OntologyMaintenanceConfig, OntologyMaintenanceRun, OntologyMaintenanceStatus, OntologyMaintenanceRunPage } from "./ontology-maintenance-api-types";
 import type { ControlTelemetryQuery, TelemetrySnapshot } from "./telemetry/types";
 import type { CommunityStatus } from "./community-api-types";
 import type { OAuthProtectedResourceConfig } from "./oauth-protected-resource-types";
@@ -335,41 +339,6 @@ export type SSOConfig = {
 
 export type GeneralRuntimeConfig = {
   timezone: string;
-};
-
-export type GeneralConfigItem = SSOConfigItem;
-
-export type GeneralConfig = {
-  update_time: string;
-  items: GeneralConfigItem[];
-  effective: GeneralRuntimeConfig;
-};
-
-export type GeneralConfigInput = {
-  items: Array<{
-    key: string;
-    value: string;
-  }>;
-};
-
-export type SSOConfigInput = {
-  items: Array<{
-    key: string;
-    value: string;
-  }>;
-};
-
-export type DreamingRuntimeConfig = {
-  enabled: boolean;
-  force_enabled: boolean;
-  start_time_local: string;
-  timezone: string;
-  max_outputs: number;
-};
-
-export type DreamingEffectiveConfig = DreamingRuntimeConfig & {
-  team_enabled: boolean;
-  source: "global" | "team" | "global_force" | string;
 };
 
 export type DreamingConfigItem = SSOConfigItem;
@@ -834,6 +803,21 @@ export class ControlApi {
   getGeneralConfig(): Promise<GeneralConfig> {
     return this.requestEnvelope<GeneralConfig>("/config/general");
   }
+
+  getOntologyMaintenanceConfig(): Promise<OntologyMaintenanceConfig> { return this.requestEnvelope<OntologyMaintenanceConfig>("/config/ontology-maintenance"); }
+
+  updateOntologyMaintenanceConfig(input: GeneralConfigInput): Promise<OntologyMaintenanceConfig> { return this.requestEnvelope<OntologyMaintenanceConfig>("/config/ontology-maintenance", { method: "PATCH", body: input }); }
+
+  getOntologyMaintenanceStatus(): Promise<OntologyMaintenanceStatus> { return this.requestEnvelope<OntologyMaintenanceStatus>("/ontology/status"); }
+
+  listOntologyMaintenanceRuns(cursor = ""): Promise<OntologyMaintenanceRunPage> { return this.requestEnvelope<OntologyMaintenanceRunPage>(`/ontology/runs?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`); }
+
+  runOntologyMaintenance(operationKey: string, maxBatches: number, retryRunId?: string): Promise<OntologyMaintenanceRun> {
+    const path = retryRunId ? `/ontology/runs/${encodeURIComponent(retryRunId)}/retry` : "/ontology/runs";
+    return this.requestEnvelope<OntologyMaintenanceRun>(path, { method: "POST", body: { operation_key: operationKey, max_batches: maxBatches } });
+  }
+
+  pauseOntologyMaintenance(operationKey: string, paused: boolean): Promise<OntologyMaintenanceRun> { return this.requestEnvelope<OntologyMaintenanceRun>(`/ontology/${paused ? "pause" : "resume"}`, { method: "POST", body: { operation_key: operationKey } }); }
 
   updateGeneralConfig(input: GeneralConfigInput): Promise<GeneralConfig> {
     return this.requestEnvelope<GeneralConfig>("/config/general", { method: "PATCH", body: input });

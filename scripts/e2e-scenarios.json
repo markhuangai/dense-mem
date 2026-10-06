@@ -193,6 +193,17 @@
       "helper_profiles": [],
       "timeout_minutes": 40,
       "playwright": false
+    },
+    {
+      "name": "ontology_organization",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": [
+        "verifier",
+        "playwright"
+      ],
+      "timeout_minutes": 40,
+      "playwright": true
     }
   ]
 }

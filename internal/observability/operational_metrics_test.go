@@ -88,7 +88,7 @@ func TestProviderUsageAggregateCardinalityDoesNotFollowModelNames(t *testing.T) 
 			require.NotContains(t, line, "model-")
 		}
 	}
-	require.Equal(t, 216, len(aggregateLines))
+	require.Equal(t, 243, len(aggregateLines))
 	inputTokens := prometheusCounterValue(t, body.Body.String(), "densemem_operation_provider_tokens_total",
 		`component="verifier"`, `kind="input"`, `operation="semantic_assessment"`, `source="provider"`)
 	require.Equal(t, float64(100), inputTokens)
