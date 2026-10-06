@@ -109,7 +109,7 @@ export function OntologyMaintenancePanel({ api }: { api: ControlApi }) {
           <table className="data-table"><thead><tr><th>Run</th><th>Kind</th><th>Status</th><th>Batches</th><th>Reason</th><th>Action</th></tr></thead><tbody>
             {runs.runs.map((run) => <tr key={run.id}>
               <td title={run.id}>{run.id.slice(0, 8)}</td><td>{run.kind}</td><td>{run.status}</td><td>{run.completed_batches}{run.max_batches ? ` / ${run.max_batches}` : ""}</td><td>{run.failure_code ?? "—"}</td>
-              <td>{["incomplete", "failed"].includes(run.status) && <button type="button" disabled={busy || !status.enabled || status.paused} onClick={() => void command("run", run.id)}>Retry failed work</button>}</td>
+              <td>{run.retryable && <button type="button" disabled={busy || !status.enabled || status.paused} onClick={() => void command("run", run.id)}>Retry failed work</button>}</td>
             </tr>)}
           </tbody></table>
           {runs.next_cursor && <button type="button" onClick={() => void loadMore()}>Load older runs</button>}

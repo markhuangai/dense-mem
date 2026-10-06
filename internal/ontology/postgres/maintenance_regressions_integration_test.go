@@ -251,6 +251,15 @@ func TestOntologyMaintenanceRetryDoesNotReleaseUnselectedFailures(t *testing.T) 
 	var unrelatedFailures int
 	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_sources WHERE last_run_id=?::uuid AND status='failed'`, unrelated.ID).Row().Scan(&unrelatedFailures))
 	require.Equal(t, 1, unrelatedFailures)
+	runs, err := f.store.ListMaintenanceRuns(context.Background(), "", 100)
+	require.NoError(t, err)
+	var retryableIDs []string
+	for _, run := range runs.Runs {
+		if run.Retryable {
+			retryableIDs = append(retryableIDs, run.ID)
+		}
+	}
+	require.Equal(t, []string{unrelated.ID}, retryableIDs)
 	for range 8 {
 		_, err := service.RunTurn(context.Background())
 		require.NoError(t, err)

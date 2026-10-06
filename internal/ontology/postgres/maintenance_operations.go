@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"gorm.io/gorm"
@@ -35,6 +36,11 @@ func (s *Store) MaintenanceCommand(ctx context.Context, input domain.OntologyMai
 				return ontology.ErrConflict
 			}
 			result, err = scanMaintenanceRun(tx.Raw(`SELECT `+maintenanceRunColumns+` FROM ontology_maintenance_runs WHERE operation_key=?`, input.OperationKey).Row())
+			if err != nil {
+				return err
+			}
+			retryable, err := maintenanceRetryableRuns(tx, []string{result.ID})
+			result.Retryable = retryable[result.ID]
 			return err
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -73,11 +79,11 @@ func (s *Store) MaintenanceCommand(ctx context.Context, input domain.OntologyMai
 				if !exists {
 					return ontology.ErrNotFound
 				}
-				var retryable bool
-				if err := tx.Raw(`SELECT EXISTS(SELECT 1`+maintenanceActiveSourceJoin+` WHERE source.last_run_id=?::uuid AND source.eligible AND source.status='failed')`, input.RetryRunID).Row().Scan(&retryable); err != nil {
+				retryable, err := maintenanceRetryableRuns(tx, []string{input.RetryRunID})
+				if err != nil {
 					return err
 				}
-				if !retryable {
+				if !retryable[input.RetryRunID] {
 					return ontology.ErrInvalid
 				}
 			}
@@ -102,6 +108,21 @@ func (s *Store) MaintenanceCommand(ctx context.Context, input domain.OntologyMai
 const maintenanceActiveSourceJoin = ` FROM ontology_maintenance_sources AS source
  JOIN teams AS team ON team.id=source.team_id AND team.status='active' AND team.deleted_at IS NULL
  JOIN memory_spaces AS space ON space.team_id=source.team_id AND space.id=source.shared_space_id AND space.generation=source.space_generation AND space.lifecycle_state='active'`
+
+func maintenanceRetryableRuns(tx *gorm.DB, runIDs []string) (map[string]bool, error) {
+	result := make(map[string]bool)
+	if len(runIDs) == 0 {
+		return result, nil
+	}
+	var matches []string
+	if err := tx.Raw(`SELECT DISTINCT source.last_run_id::text`+maintenanceActiveSourceJoin+` WHERE source.eligible AND source.status='failed' AND source.last_run_id=ANY(?::uuid[])`, pq.Array(runIDs)).Scan(&matches).Error; err != nil {
+		return nil, err
+	}
+	for _, id := range matches {
+		result[id] = true
+	}
+	return result, nil
+}
 
 func (s *Store) RecordMaintenanceFailure(ctx context.Context, runID, code string, now time.Time) error {
 	if len(code) > 128 {
@@ -148,6 +169,11 @@ func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (ontology.
 			return err
 		}
 		if err == nil {
+			retryable, err := maintenanceRetryableRuns(tx, []string{run.ID})
+			if err != nil {
+				return err
+			}
+			run.Retryable = retryable[run.ID]
 			result.LatestRun = &run
 		}
 		return nil
@@ -194,6 +220,17 @@ func (s *Store) ListMaintenanceRuns(ctx context.Context, cursor string, limit in
 		if len(page.Runs) > limit {
 			page.Runs = page.Runs[:limit]
 			page.NextCursor = page.Runs[limit-1].ID
+		}
+		ids := make([]string, len(page.Runs))
+		for i, run := range page.Runs {
+			ids[i] = run.ID
+		}
+		retryable, err := maintenanceRetryableRuns(tx, ids)
+		if err != nil {
+			return err
+		}
+		for i := range page.Runs {
+			page.Runs[i].Retryable = retryable[page.Runs[i].ID]
 		}
 		return nil
 	})

@@ -38,6 +38,7 @@ type MaintenanceRun struct {
 	WindowID         string    `json:"window_id"`
 	Kind             string    `json:"kind"`
 	Status           string    `json:"status"`
+	Retryable        bool      `json:"retryable"`
 	OperationKey     string    `json:"operation_key,omitempty"`
 	MaxBatches       int       `json:"max_batches"`
 	CompletedBatches int       `json:"completed_batches"`

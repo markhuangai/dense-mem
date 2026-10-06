@@ -188,6 +188,7 @@ func TestOntologyMaintenanceRegenerationFailureRetry(t *testing.T) {
 	status, err := service.Status(ctx)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, status.Counts.Failed)
+	require.True(t, status.LatestRun.Retryable)
 	var count int
 	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_attempts`).Row().Scan(&count))
 	require.Equal(t, 3, count)
@@ -292,6 +293,7 @@ func TestOntologyMaintenanceBudgetDeferralAndManualReuse(t *testing.T) {
 	status, err := service.Status(context.Background())
 	require.NoError(t, err)
 	require.EqualValues(t, 1, status.Counts.BudgetDeferred)
+	require.False(t, status.LatestRun.Retryable)
 	require.Zero(t, calls())
 	require.False(t, status.CoverageComplete)
 	for range 8 {

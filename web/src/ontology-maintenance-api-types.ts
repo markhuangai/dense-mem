@@ -21,6 +21,7 @@ export type OntologyMaintenanceRun = {
   window_id: string;
   kind: string;
   status: string;
+  retryable: boolean;
   operation_key?: string;
   max_batches: number;
   completed_batches: number;

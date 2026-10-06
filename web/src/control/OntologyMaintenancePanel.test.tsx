@@ -7,7 +7,7 @@ import { OntologyMaintenancePanel } from "./OntologyMaintenancePanel";
 
 const policy = { enabled: true, cadence_hours: 12 as const, start_time_local: "03:00", timezone: "UTC", model: "configured-model", max_concurrency: 1, input_tokens: 250000, output_tokens: 100000, settings_version: "version" };
 const status: OntologyMaintenanceStatus = { observed_at: "2026-10-06T12:00:00Z", enabled: true, paused: false, discovery_complete: false, coverage_complete: false, counts: { eligible: 4, organized: 1, pending: 1, failed: 1, ambiguous: 0, budget_deferred: 1 }, pending_policy: { ...policy, model: "pending-model" }, window: { id: "window", starts_at: "2026-10-06T03:00:00Z", ends_at: "2026-10-06T15:00:00Z", policy, charged_input_tokens: 100, charged_output_tokens: 200, reported_input_tokens: 60, reported_output_tokens: 0, reserved_input_tokens: 40, reserved_output_tokens: 200, overrun: false } };
-const run = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", window_id: "window", kind: "run", status: "incomplete", max_batches: 1, completed_batches: 1, failure_code: "provider_unavailable", created_at: status.observed_at, updated_at: status.observed_at };
+const run = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", window_id: "window", kind: "run", status: "incomplete", retryable: true, max_batches: 1, completed_batches: 1, failure_code: "provider_unavailable", created_at: status.observed_at, updated_at: status.observed_at };
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -42,6 +42,20 @@ describe("Ontology maintenance controls", () => {
     await screen.findByRole("status");
     expect(command.mock.calls[1][0]).toBe(command.mock.calls[0][0]);
     expect(command.mock.calls[0][1]).toBe(1);
+  });
+
+  it("offers retry only for the run that owns retryable failures", async () => {
+    const api = fixture();
+    const unrelated = { ...run, id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", retryable: false, failure_code: "budget_deferred" };
+    vi.mocked(api.listOntologyMaintenanceRuns).mockResolvedValue({ runs: [unrelated, run] });
+    const command = vi.spyOn(api, "runOntologyMaintenance").mockResolvedValue(run);
+    render(<OntologyMaintenancePanel api={api} />);
+    await screen.findByText("budget_deferred");
+    const buttons = screen.getAllByRole("button", { name: "Retry failed work" });
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0]);
+    await screen.findByRole("status");
+    expect(command).toHaveBeenCalledWith(expect.any(String), 1, run.id);
   });
 
   it("keeps older run pages after polling and disables invalid batch limits", async () => {
