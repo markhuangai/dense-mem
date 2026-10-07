@@ -14,6 +14,7 @@ JOB_DIR="${TEST_ROOT}/job"
 COMPOSE_FILE="${TEST_ROOT}/docker-compose.yml"
 ENV_FILE="${TEST_ROOT}/.env"
 PROMETHEUS_FILE="${TEST_ROOT}/prometheus.yml"
+POSTGRES_READINESS_FILE="${TEST_ROOT}/postgres-readiness.sh"
 mkdir -p "$CONFIG_DIR" "$JOB_DIR"
 
 project_one=""
@@ -79,6 +80,15 @@ printf '%s\n' 'CI_TEST=1' 'POSTGRES_USER=densemem' 'POSTGRES_DB=densemem' 'POSTG
 chmod 600 "$ENV_FILE"
 printf '%s\n' 'dense-mem-ci-real-test-token' > "${TEST_ROOT}/telemetry-scrape-token"
 chmod 600 "${TEST_ROOT}/telemetry-scrape-token"
+cat > "$POSTGRES_READINESS_FILE" <<'SH'
+#!/bin/sh
+set -eu
+sleep 15
+psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" <<'SQL'
+SELECT 1 / CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'densemem') THEN 0 ELSE 1 END;
+SQL
+SH
+chmod 644 "$POSTGRES_READINESS_FILE"
 cp "${ROOT_DIR}/examples/prometheus.yml" "$PROMETHEUS_FILE"
 chmod 644 "${TEST_ROOT}/prometheus.yml"
 
@@ -93,9 +103,9 @@ export DENSE_MEM_CI_REPOSITORY="${DENSE_MEM_CI_TEST_REPOSITORY:-markhuangai/dens
 
 write_compose() {
   local mode="$1"
-  node - "$COMPOSE_FILE" "$mode" <<'NODE'
+  node - "$COMPOSE_FILE" "$mode" "$POSTGRES_READINESS_FILE" <<'NODE'
 const fs = require("node:fs");
-const [destination, mode] = process.argv.slice(2);
+const [destination, mode, readinessFile] = process.argv.slice(2);
 const serverCommand = mode === "fail" ? ["sh", "-c", "exit 1"] : ["sh", "-c", "while :; do sleep 3600; done"];
 const runtimeUser = mode === "bootstrap-role"
   ? "densemem_e2e_bootstrap"
@@ -138,6 +148,8 @@ const lines = [
   "      POSTGRES_USER: densemem_e2e_bootstrap",
   "      POSTGRES_PASSWORD: dense-mem-e2e-bootstrap-password",
   "      POSTGRES_DB: densemem",
+  "    volumes:",
+  "      - " + JSON.stringify(`${readinessFile}:/docker-entrypoint-initdb.d/readiness.sh:ro`),
   "    networks: [ci]",
   "    labels: &ci_labels",
   "      io.dense-mem.ci.contract: ${DENSE_MEM_CI_CONTRACT:?required}",

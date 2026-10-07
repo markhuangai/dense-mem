@@ -26,9 +26,10 @@ process.stdin.on("end", () => {
 }
 
 wait_for_postgres_service() {
+  # The image's temporary bootstrap server accepts sockets before initialization finishes.
   for _ in $(seq 1 90); do
     if ci_compose exec -T postgres sh -ec \
-      'pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_DB}"' \
+      'pg_isready -h 127.0.0.1 -U "${POSTGRES_USER}" -d "${POSTGRES_DB}"' \
       >/dev/null 2>&1; then
       return 0
     fi

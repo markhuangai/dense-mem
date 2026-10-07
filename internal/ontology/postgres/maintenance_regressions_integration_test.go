@@ -84,9 +84,14 @@ func TestOntologyMaintenanceQueuedMarkerCoalescingAndConsumption(t *testing.T) {
 	require.NoError(t, mutate(ctx, 1))
 	sequence, cursor := marker()
 	require.Empty(t, cursor)
+	var allocatedSequence int64
+	require.NoError(t, f.admin.Raw(`SELECT last_value FROM ontology_maintenance_marker_seq`).Row().Scan(&allocatedSequence))
 	require.NoError(t, mutate(ctx, 2))
 	coalesced, _ := marker()
 	require.Equal(t, sequence, coalesced, "already queued work retains its position")
+	var coalescedSequence int64
+	require.NoError(t, f.admin.Raw(`SELECT last_value FROM ontology_maintenance_marker_seq`).Row().Scan(&coalescedSequence))
+	require.Equal(t, allocatedSequence, coalescedSequence, "coalesced writes avoid allocating a global queue sequence")
 	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE ontology_maintenance_markers SET cursor=? WHERE team_id=?::uuid AND anchor_kind='entity_records' AND anchor_id=?`, ontology.SourceKey(source), f.team, source.ID).Error
 	}))

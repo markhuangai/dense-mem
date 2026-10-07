@@ -195,7 +195,13 @@ BEGIN
         WHERE space.team_id=p_team AND space.kind='team_shared' AND space.lifecycle_state='active'
         AND (p_space IS NULL OR space.id=p_space) AND (p_generation IS NULL OR space.generation=p_generation);
     IF shared_id IS NULL THEN RETURN; END IF;
-    -- Expansion locks the marker through hydration and deletion, so an unstarted same-target marker already covers current source state.
+    -- Lock coalesced work so a writer waiting behind consumption recreates its marker.
+    PERFORM 1 FROM ontology_maintenance_markers
+        WHERE team_id=p_team AND shared_space_id=shared_id AND space_generation=active_generation
+        AND anchor_kind=p_anchor AND anchor_id=p_id AND cursor=''
+        AND target_kind IS NOT DISTINCT FROM p_kind AND target_id IS NOT DISTINCT FROM p_target
+        FOR UPDATE;
+    IF FOUND THEN RETURN; END IF;
     INSERT INTO ontology_maintenance_markers(team_id,shared_space_id,space_generation,anchor_kind,anchor_id,target_kind,target_id)
         VALUES(p_team,shared_id,active_generation,p_anchor,p_id,p_kind,p_target)
         ON CONFLICT(team_id,shared_space_id,space_generation,anchor_kind,anchor_id) DO UPDATE
