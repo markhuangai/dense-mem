@@ -190,6 +190,8 @@ function seedOverflowPredicates() {
   const team = sqlLiteral(teamID);
   const prefix = sqlLiteral(`${predicatePrefix}_predicate_`);
   postgresQuery(`
+    BEGIN;
+    SELECT set_config('app.tx_mode', 'system', true);
     INSERT INTO team_predicate_definitions (
       team_id, predicate_key, version, aliases, allowed_subject_kinds,
       allowed_object_kinds, relationship_kind, current_cardinality,
@@ -200,6 +202,7 @@ function seedOverflowPredicates() {
       'active', 'built_in', '{}'::jsonb
     FROM generate_series(0, 100) AS series
     ON CONFLICT (team_id, predicate_key, version) DO NOTHING;
+    COMMIT;
   `);
 }
 
