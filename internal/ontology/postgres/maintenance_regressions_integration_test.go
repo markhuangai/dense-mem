@@ -56,6 +56,75 @@ func TestOntologyMaintenanceRunCompletionUsesActiveScope(t *testing.T) {
 	}
 }
 
+func TestOntologyMaintenanceQueuedMarkerCoalescingAndConsumption(t *testing.T) {
+	f := newOrganizationFixture(t)
+	ctx := context.Background()
+	source := maintenanceEntity(t, f, "Queued marker source")
+	config := maintenanceSettings(t, f)
+	window := maintenanceWindow(t, f, config)
+	turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, turn)
+	defer func() { require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn)) }()
+	for range 8 {
+		require.NoError(t, f.store.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize))
+	}
+	mutate := func(ctx context.Context, revision int) error {
+		return f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
+			return tx.Exec(`UPDATE entity_records SET identity_context=jsonb_build_object('queued_revision',?::integer),version=version+1 WHERE team_id=?::uuid AND entity_id=?::uuid`, revision, f.team, source.ID).Error
+		})
+	}
+	marker := func() (int64, string) {
+		t.Helper()
+		var sequence int64
+		var cursor string
+		require.NoError(t, f.admin.Raw(`SELECT marker_sequence,cursor FROM ontology_maintenance_markers WHERE team_id=?::uuid AND anchor_kind='entity_records' AND anchor_id=?`, f.team, source.ID).Row().Scan(&sequence, &cursor))
+		return sequence, cursor
+	}
+	require.NoError(t, mutate(ctx, 1))
+	sequence, cursor := marker()
+	require.Empty(t, cursor)
+	require.NoError(t, mutate(ctx, 2))
+	coalesced, _ := marker()
+	require.Equal(t, sequence, coalesced, "already queued work retains its position")
+	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE ontology_maintenance_markers SET cursor=? WHERE team_id=?::uuid AND anchor_kind='entity_records' AND anchor_id=?`, ontology.SourceKey(source), f.team, source.ID).Error
+	}))
+	require.NoError(t, mutate(ctx, 3))
+	reset, cursor := marker()
+	require.Greater(t, reset, sequence)
+	require.Empty(t, cursor, "a change restarts partially expanded work")
+	writerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	started, finished := make(chan struct{}), make(chan error, 1)
+	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
+		var current maintenanceMarker
+		if err := tx.Raw(`SELECT anchor_kind,anchor_id,target_kind,target_id,marker_sequence,cursor FROM ontology_maintenance_markers WHERE team_id=?::uuid AND anchor_kind='entity_records' AND anchor_id=? FOR UPDATE`, f.team, source.ID).Row().Scan(&current.AnchorKind, &current.AnchorID, &current.TargetKind, &current.TargetID, &current.Sequence, &current.Cursor); err != nil {
+			return err
+		}
+		go func() { close(started); finished <- mutate(writerCtx, 4) }()
+		<-started
+		require.Eventually(t, func() bool {
+			var blocked bool
+			err := f.admin.Raw(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%queued_revision%' AND pid<>pg_backend_pid())`).Row().Scan(&blocked)
+			return err == nil && blocked
+		}, 3*time.Second, 10*time.Millisecond)
+		fence := scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation}
+		if err := refreshMaintenanceSource(tx, fence, source, false); err != nil {
+			return err
+		}
+		return deleteMaintenanceMarker(tx, fence, current)
+	}))
+	require.NoError(t, <-finished)
+	requeued, cursor := marker()
+	require.Greater(t, requeued, reset)
+	require.Empty(t, cursor)
+	require.NoError(t, f.store.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize))
+	var version int64
+	require.NoError(t, f.admin.Raw(`SELECT source_version FROM ontology_maintenance_sources WHERE team_id=?::uuid AND source_kind='entity' AND source_id=?`, f.team, source.ID).Row().Scan(&version))
+	require.EqualValues(t, 5, version, "the write blocked by consumption must be rediscovered")
+}
+
 func TestOntologyMaintenanceDefinitionMarkersTargetReceiptsAndVocabulary(t *testing.T) {
 	f := newOrganizationFixture(t)
 	ctx := context.Background()

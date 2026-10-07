@@ -190,17 +190,18 @@ CREATE FUNCTION dense_mem_enqueue_ontology_marker(p_team UUID,p_space UUID,p_gen
 RETURNS VOID LANGUAGE plpgsql AS $body$
 DECLARE shared_id UUID; active_generation BIGINT;
 BEGIN
-    SELECT id INTO shared_id FROM memory_spaces WHERE team_id=p_team AND kind='team_shared';
-    IF shared_id IS NULL THEN RETURN; END IF;
-    IF p_space IS NOT NULL AND p_space<>shared_id THEN RETURN; END IF;
-    SELECT space.generation INTO active_generation FROM memory_spaces AS space
+    SELECT space.id,space.generation INTO shared_id,active_generation FROM memory_spaces AS space
         JOIN teams AS team ON team.id=space.team_id AND team.status='active' AND team.deleted_at IS NULL
-        WHERE space.team_id=p_team AND space.id=shared_id AND space.lifecycle_state='active';
-    IF active_generation IS NULL OR (p_generation IS NOT NULL AND p_generation<>active_generation) THEN RETURN; END IF;
+        WHERE space.team_id=p_team AND space.kind='team_shared' AND space.lifecycle_state='active'
+        AND (p_space IS NULL OR space.id=p_space) AND (p_generation IS NULL OR space.generation=p_generation);
+    IF shared_id IS NULL THEN RETURN; END IF;
+    -- Expansion locks the marker through hydration and deletion, so an unstarted same-target marker already covers current source state.
     INSERT INTO ontology_maintenance_markers(team_id,shared_space_id,space_generation,anchor_kind,anchor_id,target_kind,target_id)
         VALUES(p_team,shared_id,active_generation,p_anchor,p_id,p_kind,p_target)
         ON CONFLICT(team_id,shared_space_id,space_generation,anchor_kind,anchor_id) DO UPDATE
-        SET marker_sequence=nextval('ontology_maintenance_marker_seq'),cursor='',target_kind=EXCLUDED.target_kind,target_id=EXCLUDED.target_id;
+        SET marker_sequence=nextval('ontology_maintenance_marker_seq'),cursor='',target_kind=EXCLUDED.target_kind,target_id=EXCLUDED.target_id
+        WHERE ontology_maintenance_markers.cursor<>'' OR ontology_maintenance_markers.target_kind IS DISTINCT FROM EXCLUDED.target_kind
+        OR ontology_maintenance_markers.target_id IS DISTINCT FROM EXCLUDED.target_id;
 END $body$;
 
 -- Source triggers are generated with static field access so large evidence text is never converted to JSON.

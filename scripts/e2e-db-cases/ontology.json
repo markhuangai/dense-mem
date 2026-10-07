@@ -304,6 +304,13 @@
       "source": "internal/ontology/postgres/maintenance_integration_test.go"
     },
     {
+      "id": "repository/TestOntologyMaintenanceQueuedMarkerCoalescingAndConsumption",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceQueuedMarkerCoalescingAndConsumption$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_regressions_integration_test.go"
+    },
+    {
       "id": "repository/TestOntologyMaintenanceRunCompletionUsesActiveScope",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyMaintenanceRunCompletionUsesActiveScope$",

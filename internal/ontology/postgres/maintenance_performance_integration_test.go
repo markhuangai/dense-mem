@@ -87,26 +87,13 @@ func TestOntologyMaintenanceWriteLatency(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(filepath.Join(directory, "maintenance-write-latency.json"), data, 0600))
 	}
-	for _, writers := range []int{1, 8} {
-		for _, metric := range []string{"median", "p95"} {
-			var before, after []float64
-			for _, pair := range pairs {
-				if pair.Writers != writers {
-					continue
-				}
-				if metric == "median" {
-					before = append(before, pair.Before.MedianMS)
-					after = append(after, pair.After.MedianMS)
-				} else {
-					before = append(before, pair.Before.P95MS)
-					after = append(after, pair.After.P95MS)
-				}
-			}
-			sort.Float64s(before)
-			sort.Float64s(after)
-			baseline, migrated := before[2], after[2]
-			t.Logf("writers=%d %s before=%.3fms after=%.3fms", writers, metric, baseline, migrated)
-			require.False(t, migrated-baseline > 1 && migrated > baseline*1.1, "write latency exceeds both 10%% and 1ms for %d writers/%s", writers, metric)
+	for index, pair := range pairs {
+		for _, metric := range []struct {
+			name          string
+			before, after float64
+		}{{"median", pair.Before.MedianMS, pair.After.MedianMS}, {"p95", pair.Before.P95MS, pair.After.P95MS}} {
+			t.Logf("pair=%d writers=%d %s before=%.3fms after=%.3fms", index/2+1, pair.Writers, metric.name, metric.before, metric.after)
+			require.False(t, metric.after-metric.before > 1 && metric.after > metric.before*1.1, "write latency exceeds both 10%% and 1ms for pair %d/%d writers/%s", index/2+1, pair.Writers, metric.name)
 		}
 	}
 }

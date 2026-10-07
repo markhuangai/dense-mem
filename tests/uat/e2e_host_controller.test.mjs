@@ -924,7 +924,7 @@ test("production workflows give each hosted scenario its own stack", () => {
   assert.match(scenarioWorkflow, /stop-commands/);
   assert.match(scenarioWorkflow, /dreaming_telemetry_portal/);
   assert.doesNotMatch(scenarioWorkflow, /continue-on-error|Preserve scenario result|Print failed scenario diagnostics/);
-  assert.match(controller, /--total-timeout 35m/);
+  assert.match(controller, /--timeout 40m --total-timeout 42m/);
 });
 
 test("hosted bootstrap writes private Cloudflare configuration and masks generated credentials", async () => {

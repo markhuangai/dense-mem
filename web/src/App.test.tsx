@@ -485,7 +485,7 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/teams?limit=100&offset=20"))).toBe(true);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/teams?limit=100&offset=120"))).toBe(true);
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`remember-attempts?team_id=${linkedTeam.id}`))).toBe(true);
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`remember-attempts?team_id=${linkedTeam.id}`))).toBe(true));
     expect(screen.queryByText("Linked team is unavailable or you do not have access.")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /team overview/i }));
     await userEvent.click(screen.getByRole("button", { name: "Refresh teams" }));
