@@ -35,14 +35,19 @@ func TestOntologyMaintenanceWriteLatency(t *testing.T) {
 		f := newOntologyFixtureWithMaintenance(t, false)
 		source := maintenanceEntity(t, f, "Write latency entity")
 		measure := func(writers int) maintenanceLatency {
+			sources := make([]ontology.SourceHandle, writers)
+			for writer := range writers {
+				sources[writer] = maintenanceEntity(t, f, fmt.Sprintf("writer-%d-%d-%d", repeat, writer, time.Now().UnixNano()))
+			}
+			startWriters := make(chan struct{})
 			durations := make(chan float64, writers*100)
 			errs := make(chan error, writers)
 			var workers sync.WaitGroup
-			for writer := range writers {
+			for _, own := range sources {
 				workers.Add(1)
 				go func() {
 					defer workers.Done()
-					own := maintenanceEntity(t, f, fmt.Sprintf("writer-%d-%d-%d", repeat, writer, time.Now().UnixNano()))
+					<-startWriters
 					for index := range 100 {
 						start := time.Now()
 						err := f.rls.WithTeamTx(context.Background(), f.app, f.team, func(tx *gorm.DB) error {
@@ -56,6 +61,7 @@ func TestOntologyMaintenanceWriteLatency(t *testing.T) {
 					}
 				}()
 			}
+			close(startWriters)
 			workers.Wait()
 			close(errs)
 			close(durations)

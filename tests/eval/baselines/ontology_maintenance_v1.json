@@ -709,38 +709,40 @@
     }
   ],
   "write_latency": {
-    "samples_sha256": "sha256:005c315e711281250ac2c03eae31ff0876b22756b24bd83d2da7bbd7cb9beed3",
+    "samples_sha256": "sha256:cc785808f456321729758e45cb5890c9f85b86fc54419d29ccb9c362e91659c6",
     "blocking_gate": "Any paired median or p95 increase exceeding both 10% and 1 ms.",
     "comparisons": [
       {
         "writers": 1,
         "pairs": 5,
         "before": {
-          "median_ms": 1.520341,
-          "p95_ms": 1.908749
+          "median_ms": 1.490025,
+          "p95_ms": 1.857505
         },
         "after": {
-          "median_ms": 1.551905,
-          "p95_ms": 1.996587
+          "median_ms": 1.630109,
+          "p95_ms": 2.202023
         },
-        "largest_pair_increase_ms": 0.4176709999999999,
+        "largest_pair_increase_ms": 0.8655730000000001,
         "passed": true
       },
       {
         "writers": 8,
         "pairs": 5,
         "before": {
-          "median_ms": 1.790147,
-          "p95_ms": 2.394357
+          "median_ms": 1.776161,
+          "p95_ms": 2.28069
         },
         "after": {
-          "median_ms": 1.941272,
-          "p95_ms": 2.650665
+          "median_ms": 1.725916,
+          "p95_ms": 2.417399
         },
-        "largest_pair_increase_ms": 0.51851,
+        "largest_pair_increase_ms": 0.7822469999999999,
         "passed": true
       }
-    ]
+    ],
+    "fixture_setup_excluded": true,
+    "samples_per_writer": 100
   },
   "verified": true,
   "post_review_fresh_state_runs": 3,
@@ -846,6 +848,40 @@
             "p95_ms": 2.408249
           },
           "largest_pair_increase_ms": 0.53715,
+          "passed": true
+        }
+      ]
+    },
+    {
+      "samples_sha256": "sha256:005c315e711281250ac2c03eae31ff0876b22756b24bd83d2da7bbd7cb9beed3",
+      "blocking_gate": "Any paired median or p95 increase exceeding both 10% and 1 ms.",
+      "comparisons": [
+        {
+          "writers": 1,
+          "pairs": 5,
+          "before": {
+            "median_ms": 1.520341,
+            "p95_ms": 1.908749
+          },
+          "after": {
+            "median_ms": 1.551905,
+            "p95_ms": 1.996587
+          },
+          "largest_pair_increase_ms": 0.4176709999999999,
+          "passed": true
+        },
+        {
+          "writers": 8,
+          "pairs": 5,
+          "before": {
+            "median_ms": 1.790147,
+            "p95_ms": 2.394357
+          },
+          "after": {
+            "median_ms": 1.941272,
+            "p95_ms": 2.650665
+          },
+          "largest_pair_increase_ms": 0.51851,
           "passed": true
         }
       ]
