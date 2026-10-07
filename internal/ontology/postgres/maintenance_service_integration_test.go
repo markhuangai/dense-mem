@@ -23,14 +23,13 @@ import (
 	organization "github.com/markhuangai/dense-mem/internal/ontology"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	access "github.com/markhuangai/dense-mem/internal/service/access"
 	"github.com/markhuangai/dense-mem/internal/settings"
 	"github.com/stretchr/testify/require"
 )
 
-func maintenanceServiceFixture(t *testing.T, f *ontologyFixture, config *settings.AppConfigServiceImpl, edit func(assessment.Request, *assessment.Response), audits ...access.AuditService) (*organization.MaintenanceService, func() int32) {
+func maintenanceServiceFixture(t *testing.T, f *ontologyFixture, config *settings.AppConfigServiceImpl, edit func(assessment.Request, *assessment.Response), audits ...organization.MaintenanceAuditPreparer) (*organization.MaintenanceService, func() int32) {
 	t.Helper()
-	var audit access.AuditService
+	var audit organization.MaintenanceAuditPreparer
 	if len(audits) > 0 {
 		audit = audits[0]
 	}
@@ -146,6 +145,91 @@ func TestOntologyMaintenanceOperatorHTTPAndScheduler(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }
 
+func TestOntologyMaintenanceCommandAuditIsAtomic(t *testing.T) {
+	f := newOrganizationFixture(t)
+	config := maintenanceSettings(t, f)
+	service, _ := maintenanceServiceFixture(t, f, config, nil, auditapp.New(auditpostgres.NewStore(f.app, f.rls)))
+	ctx := context.Background()
+	assertRolledBack := func(t *testing.T, operationKey string, paused bool) {
+		t.Helper()
+		var storedPaused bool
+		require.NoError(t, f.admin.Raw(`SELECT paused FROM ontology_maintenance_state WHERE singleton`).Row().Scan(&storedPaused))
+		require.Equal(t, paused, storedPaused)
+		var commands int
+		require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_runs WHERE operation_key=?`, operationKey).Row().Scan(&commands))
+		require.Zero(t, commands, "failed audit must not leave a durable operator command")
+	}
+	t.Run("database_failure", func(t *testing.T) {
+		require.NoError(t, f.admin.Exec(`CREATE FUNCTION reject_maintenance_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN IF NEW.operation='ONTOLOGY_MAINTENANCE_COMMAND' THEN RAISE EXCEPTION 'maintenance audit fixture failure'; END IF; RETURN NEW; END $$;
+		CREATE TRIGGER reject_maintenance_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION reject_maintenance_audit()`).Error)
+		defer func() {
+			require.NoError(t, f.admin.Exec(`DROP TRIGGER reject_maintenance_audit ON audit_log; DROP FUNCTION reject_maintenance_audit()`).Error)
+		}()
+		for _, action := range []string{"pause", "resume", "run"} {
+			paused := action == "resume"
+			require.NoError(t, f.admin.Exec(`UPDATE ontology_maintenance_state SET paused=? WHERE singleton`, paused).Error)
+			key := "audit-failure-" + action
+			_, err := service.Command(ctx, domain.OntologyMaintenanceCommand{Action: action, OperationKey: key}, "192.0.2.20", "atomic-audit")
+			require.Error(t, err)
+			var auditFailure *organization.OrganizationError
+			require.ErrorAs(t, err, &auditFailure)
+			require.Equal(t, "audit_unavailable", auditFailure.Code)
+			assertRolledBack(t, key, paused)
+		}
+	})
+	t.Run("cancellation_during_audit", func(t *testing.T) {
+		require.NoError(t, f.admin.Exec(`UPDATE ontology_maintenance_state SET paused=false WHERE singleton`).Error)
+		require.NoError(t, f.admin.Exec(`CREATE FUNCTION block_maintenance_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN IF NEW.operation='ONTOLOGY_MAINTENANCE_COMMAND' THEN PERFORM pg_advisory_xact_lock(243541); END IF; RETURN NEW; END $$;
+		CREATE TRIGGER block_maintenance_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION block_maintenance_audit()`).Error)
+		defer func() {
+			require.NoError(t, f.admin.Exec(`DROP TRIGGER block_maintenance_audit ON audit_log; DROP FUNCTION block_maintenance_audit()`).Error)
+		}()
+		db, err := f.admin.DB()
+		require.NoError(t, err)
+		blocker, err := db.Conn(ctx)
+		require.NoError(t, err)
+		defer blocker.Close()
+		_, err = blocker.ExecContext(ctx, `SELECT pg_advisory_lock(243541)`)
+		require.NoError(t, err)
+		defer func() {
+			_, err := blocker.ExecContext(ctx, `SELECT pg_advisory_unlock(243541)`)
+			require.NoError(t, err)
+		}()
+		commandCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		finished := make(chan error, 1)
+		go func() {
+			_, err := service.Command(commandCtx, domain.OntologyMaintenanceCommand{Action: "pause", OperationKey: "cancel-audit"}, "192.0.2.20", "atomic-audit")
+			finished <- err
+		}()
+		require.Eventually(t, func() bool {
+			var blocked bool
+			err := f.admin.Raw(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event='advisory' AND query LIKE '%INSERT INTO audit_log%')`).Row().Scan(&blocked)
+			return err == nil && blocked
+		}, 5*time.Second, 10*time.Millisecond)
+		cancel()
+		select {
+		case err := <-finished:
+			require.Error(t, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("command did not cancel while its audit insert was blocked")
+		}
+		assertRolledBack(t, "cancel-audit", false)
+	})
+	require.NoError(t, f.admin.Exec(`UPDATE ontology_maintenance_state SET paused=false WHERE singleton`).Error)
+	command := domain.OntologyMaintenanceCommand{Action: "pause", OperationKey: "successful-atomic-audit"}
+	first, err := service.Command(ctx, command, "192.0.2.20", "atomic-audit")
+	require.NoError(t, err)
+	replay, err := service.Command(ctx, command, "192.0.2.20", "atomic-audit")
+	require.NoError(t, err)
+	require.Equal(t, first, replay)
+	var audits int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM audit_log WHERE operation='ONTOLOGY_MAINTENANCE_COMMAND' AND entity_id=? AND metadata->>'operation_key'=? AND actor_role='control' AND client_ip='192.0.2.20' AND correlation_id='atomic-audit'`, first.ID, command.OperationKey).Row().Scan(&audits))
+	require.Equal(t, 2, audits, "both accepted requests retain their audit entry and one idempotent command result")
+}
+
 func maintenanceFixtureLimits() assessor.SemanticAssessmentLimits {
 	limits := assessor.DefaultSemanticAssessmentLimits()
 	limits.MaxOutputTokens = 4096
@@ -202,9 +286,9 @@ func TestOntologyMaintenanceRegenerationFailureRetry(t *testing.T) {
 	var previousRun string
 	require.NoError(t, f.admin.Raw(`SELECT last_run_id::text FROM ontology_maintenance_sources WHERE team_id=?::uuid AND status='failed'`, f.team).Row().Scan(&previousRun))
 	command := domain.OntologyMaintenanceCommand{Action: "retry", OperationKey: "retry-failed", RetryRunID: previousRun, MaxBatches: 1}
-	run, err := f.store.MaintenanceCommand(ctx, command, time.Now().UTC())
+	run, err := f.store.MaintenanceCommand(ctx, command, time.Now().UTC(), nil)
 	require.NoError(t, err)
-	replayed, err := f.store.MaintenanceCommand(ctx, command, time.Now().UTC())
+	replayed, err := f.store.MaintenanceCommand(ctx, command, time.Now().UTC(), nil)
 	require.NoError(t, err)
 	require.Equal(t, run.ID, replayed.ID)
 	drainMaintenance(t, service)
@@ -221,7 +305,7 @@ func TestOntologyMaintenanceProviderPauseDrain(t *testing.T) {
 	f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
 	config := maintenanceSettings(t, f)
 	service, calls := maintenanceServiceFixture(t, f, config, func(_ assessment.Request, _ *assessment.Response) {
-		_, err := f.store.MaintenanceCommand(context.Background(), domain.OntologyMaintenanceCommand{Action: "pause", OperationKey: "pause-during-provider"}, time.Now().UTC())
+		_, err := f.store.MaintenanceCommand(context.Background(), domain.OntologyMaintenanceCommand{Action: "pause", OperationKey: "pause-during-provider"}, time.Now().UTC(), nil)
 		require.NoError(t, err)
 	})
 	for range 10 {
@@ -279,7 +363,7 @@ func TestOntologyMaintenanceBudgetDeferralAndManualReuse(t *testing.T) {
 	_, err := config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyOutputTokens: "1"}, "control", "", "")
 	require.NoError(t, err)
 	window := maintenanceWindow(t, f, config)
-	manual, err := f.store.MaintenanceCommand(context.Background(), domain.OntologyMaintenanceCommand{Action: "run", OperationKey: uuid.NewString()}, time.Now().UTC())
+	manual, err := f.store.MaintenanceCommand(context.Background(), domain.OntologyMaintenanceCommand{Action: "run", OperationKey: uuid.NewString()}, time.Now().UTC(), nil)
 	require.NoError(t, err)
 	require.Equal(t, window.ID, manual.WindowID)
 	service, calls := maintenanceServiceFixture(t, f, config, nil)

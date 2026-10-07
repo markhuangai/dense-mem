@@ -709,35 +709,35 @@
     }
   ],
   "write_latency": {
-    "samples_sha256": "sha256:05a972f2d235d136b33fdec03973d62b6d253e6f28d569576d2c62ee31fdbda7",
+    "samples_sha256": "sha256:005c315e711281250ac2c03eae31ff0876b22756b24bd83d2da7bbd7cb9beed3",
     "blocking_gate": "Any paired median or p95 increase exceeding both 10% and 1 ms.",
     "comparisons": [
       {
         "writers": 1,
         "pairs": 5,
         "before": {
-          "median_ms": 1.3369,
-          "p95_ms": 1.604772
+          "median_ms": 1.520341,
+          "p95_ms": 1.908749
         },
         "after": {
-          "median_ms": 1.437419,
-          "p95_ms": 1.922596
+          "median_ms": 1.551905,
+          "p95_ms": 1.996587
         },
-        "largest_pair_increase_ms": 0.5134189999999998,
+        "largest_pair_increase_ms": 0.4176709999999999,
         "passed": true
       },
       {
         "writers": 8,
         "pairs": 5,
         "before": {
-          "median_ms": 1.488786,
-          "p95_ms": 1.966743
+          "median_ms": 1.790147,
+          "p95_ms": 2.394357
         },
         "after": {
-          "median_ms": 1.720556,
-          "p95_ms": 2.408249
+          "median_ms": 1.941272,
+          "p95_ms": 2.650665
         },
-        "largest_pair_increase_ms": 0.53715,
+        "largest_pair_increase_ms": 0.51851,
         "passed": true
       }
     ]
@@ -815,6 +815,40 @@
           "passed": true
         }
       ]
+    },
+    {
+      "samples_sha256": "sha256:05a972f2d235d136b33fdec03973d62b6d253e6f28d569576d2c62ee31fdbda7",
+      "blocking_gate": "Any paired median or p95 increase exceeding both 10% and 1 ms.",
+      "comparisons": [
+        {
+          "writers": 1,
+          "pairs": 5,
+          "before": {
+            "median_ms": 1.3369,
+            "p95_ms": 1.604772
+          },
+          "after": {
+            "median_ms": 1.437419,
+            "p95_ms": 1.922596
+          },
+          "largest_pair_increase_ms": 0.5134189999999998,
+          "passed": true
+        },
+        {
+          "writers": 8,
+          "pairs": 5,
+          "before": {
+            "median_ms": 1.488786,
+            "p95_ms": 1.966743
+          },
+          "after": {
+            "median_ms": 1.720556,
+            "p95_ms": 2.408249
+          },
+          "largest_pair_increase_ms": 0.53715,
+          "passed": true
+        }
+      ]
     }
   ],
   "required_final_source_runs": [
@@ -834,5 +868,16 @@
       "reason": "temporal_scope exchange 1 lost request/response hashes when the aggregate credential scan exceeded its work budget.",
       "replacement": "One new fresh-state cohort after diagnostic-only hash retention correction; no failed score was retried."
     }
-  ]
+  ],
+  "audit_transaction_quality_carry_forward": {
+    "required_live_runs": [
+      10,
+      11,
+      12
+    ],
+    "comparison_head": "ad36f1b21b6491ac6c4da4fe81c72cf9e5cce278",
+    "assessment_discovery_scheduler_prompt_scoring_and_publication_unchanged": true,
+    "maintenance_RunTurn_body_sha256": "83ebf2bd8978791e9a48ee3666bc7adccf46eb6cad83b1dd339197d7c4fb71db",
+    "scope": "Command audit atomicity and migration session timeout resets; no producer/scorer change"
+  }
 }

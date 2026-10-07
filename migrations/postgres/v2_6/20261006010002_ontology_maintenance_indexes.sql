@@ -47,6 +47,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS ontology_ingest_evidence_seek_idx ON evi
 CREATE INDEX CONCURRENTLY IF NOT EXISTS ontology_support_relationship_seek_idx ON relationship_evidence_supports(team_id,space_id,space_generation,relationship_id,fragment_id);
 CREATE INDEX CONCURRENTLY IF NOT EXISTS ontology_maintenance_vocabulary_idx ON ontology_maintenance_sources USING GIN(vocabulary_words);
 CREATE INDEX CONCURRENTLY IF NOT EXISTS ontology_assessment_dependencies_idx ON ontology_assessments USING GIN((body->'dependencies') jsonb_path_ops);
+RESET lock_timeout;
 
 -- +goose Down
 SET lock_timeout = '30s';
@@ -59,3 +60,4 @@ DROP INDEX CONCURRENTLY IF EXISTS ontology_predicate_relationship_seek_idx;
 DROP INDEX CONCURRENTLY IF EXISTS ontology_relationship_seek_idx;
 DROP INDEX CONCURRENTLY IF EXISTS ontology_evidence_seek_idx;
 DROP INDEX CONCURRENTLY IF EXISTS ontology_entity_seek_idx;
+RESET lock_timeout;

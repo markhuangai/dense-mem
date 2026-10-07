@@ -30,6 +30,7 @@ type organizationDiagnosticRecorder struct {
 	caseID    string
 	sequence  int
 	protector *observability.CredentialProtector
+	maxBytes  int
 }
 
 func newOrganizationDiagnosticRecorder(t *testing.T, directory, caseID string, cfg config.Config) *organizationDiagnosticRecorder {
@@ -38,14 +39,14 @@ func newOrganizationDiagnosticRecorder(t *testing.T, directory, caseID string, c
 	if err != nil {
 		t.Fatal(&config.ValidationError{Field: "POSTGRES_DSN", Message: "invalid diagnostic connection configuration"})
 	}
-	return &organizationDiagnosticRecorder{t: t, directory: directory, caseID: caseID, protector: observability.NewCredentialProtector(cfg.PostgresDSN, postgres.Password, cfg.RedisPassword, cfg.AIAPIKey, cfg.AIVerifierAPIKey, cfg.ControlPortalToken, cfg.TelemetryScrapeToken)}
+	return &organizationDiagnosticRecorder{t: t, directory: directory, caseID: caseID, protector: observability.NewCredentialProtector(cfg.PostgresDSN, postgres.Password, cfg.RedisPassword, cfg.AIAPIKey, cfg.AIVerifierAPIKey, cfg.ControlPortalToken, cfg.TelemetryScrapeToken), maxBytes: modelprovider.MaxProviderDiagnosticBodyBytes}
 }
 
 func (r *organizationDiagnosticRecorder) RecordProviderExchange(_ context.Context, exchange modelprovider.ProviderExchange) {
 	r.sequence++
 	require.LessOrEqual(r.t, r.sequence, 3, "diagnostic exceeded complete assessment attempt bound")
-	request, requestReason := r.protector.ProtectDiagnosticBytes(exchange.RequestBody, modelprovider.MaxProviderDiagnosticBodyBytes)
-	response, responseReason := r.protector.ProtectDiagnosticBytes(exchange.ResponseBody, modelprovider.MaxProviderDiagnosticBodyBytes)
+	request, requestReason := r.protector.ProtectDiagnosticBytes(exchange.RequestBody, r.maxBytes)
+	response, responseReason := r.protector.ProtectDiagnosticBytes(exchange.ResponseBody, r.maxBytes)
 	entry := map[string]any{"case_id": r.caseID, "sequence": r.sequence, "diagnostic_only": true, "ineligible_for_quality_gate": true, "model": exchange.Model, "status_code": exchange.StatusCode, "outcome": exchange.Outcome, "capture_state": exchange.CaptureState, "started_at": exchange.StartedAt.UTC().Format(time.RFC3339Nano), "completed_at": exchange.CompletedAt.UTC().Format(time.RFC3339Nano),
 		"request_body": string(request), "response_body": string(response), "request_protection_reason": int(requestReason), "response_protection_reason": int(responseReason), "validation_error": organizationExchangeValidation(exchange)}
 	if requestReason == observability.CredentialProtectionAvailable && len(request) > 0 {
@@ -58,12 +59,12 @@ func (r *organizationDiagnosticRecorder) RecordProviderExchange(_ context.Contex
 	if responseReason == observability.CredentialProtectionAvailable && len(response) > 0 {
 		entry["response_sha256"] = fmt.Sprintf("sha256:%x", sha256.Sum256(response))
 	}
-	protected := r.protector.Snapshot(entry, modelprovider.MaxProviderDiagnosticBodyBytes)
+	protected := r.protector.Snapshot(entry, r.maxBytes)
 	if protected.UnavailableReason != observability.CredentialProtectionAvailable {
 		delete(entry, "request_body")
 		delete(entry, "response_body")
 		entry["capture_unavailable_reason"] = int(protected.UnavailableReason)
-		protected = r.protector.Snapshot(entry, modelprovider.MaxProviderDiagnosticBodyBytes)
+		protected = r.protector.Snapshot(entry, r.maxBytes)
 	}
 	if protected.UnavailableReason == observability.CredentialProtectionAvailable {
 		entry = protected.Value.(map[string]any)
@@ -191,11 +192,14 @@ func TestOrganizationDiagnosticHashesSurviveAggregateCaptureLimit(t *testing.T) 
 	cfg := config.Config{PostgresDSN: "postgres://testuser:testpass@localhost/test", AIVerifierAPIKey: "synthetic-provider-secret"}
 	directory := t.TempDir()
 	recorder := newOrganizationDiagnosticRecorder(t, directory, "bounded", cfg)
-	body, err := json.Marshal(map[string]any{"padding": strings.Repeat("x", modelprovider.MaxProviderDiagnosticBodyBytes/2+1), "messages": []any{map[string]any{"content": "system"}, map[string]any{"content": "{}"}}})
+	recorder.maxBytes = 1024
+	body, err := json.Marshal(map[string]any{"padding": strings.Repeat("x", recorder.maxBytes/2+1), "messages": []any{map[string]any{"content": "system"}, map[string]any{"content": "{}"}}})
 	require.NoError(t, err)
-	protected, reason := recorder.protector.ProtectDiagnosticBytes(body, modelprovider.MaxProviderDiagnosticBodyBytes)
+	require.LessOrEqual(t, len(body), recorder.maxBytes)
+	require.Greater(t, len(body)*2, recorder.maxBytes)
+	protected, reason := recorder.protector.ProtectDiagnosticBytes(body, recorder.maxBytes)
 	require.Equal(t, observability.CredentialProtectionAvailable, reason)
-	combined := recorder.protector.Snapshot(map[string]any{"request_body": string(protected), "response_body": string(protected)}, modelprovider.MaxProviderDiagnosticBodyBytes)
+	combined := recorder.protector.Snapshot(map[string]any{"request_body": string(protected), "response_body": string(protected)}, recorder.maxBytes)
 	require.Equal(t, observability.CredentialProtectionBudgetExceeded, combined.UnavailableReason)
 	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{RequestBody: body, ResponseBody: body, Model: "fixture-model", StatusCode: http.StatusOK, Outcome: "captured"})
 	data, err := os.ReadFile(filepath.Join(directory, "bounded-exchange-01.json"))

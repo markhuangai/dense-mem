@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	audit "github.com/markhuangai/dense-mem/internal/audit/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -20,13 +21,17 @@ type MaintenanceConfigSource interface {
 	OntologyMaintenanceRuntimeConfig(context.Context) (domain.OntologyMaintenanceConfig, error)
 }
 
+type MaintenanceAuditPreparer interface {
+	Prepare(context.Context, access.AuditLogEntry) (audit.Entry, error)
+}
+
 type MaintenanceDependencies struct {
 	Repository      contract.MaintenanceRepository
 	Config          MaintenanceConfigSource
 	Organizer       func(string, assessment.AttemptAccounting) *Service
 	DefaultModel    string
 	ProviderTimeout time.Duration
-	Audit           access.AuditService
+	Audit           MaintenanceAuditPreparer
 	Now             func() time.Time
 }
 
@@ -108,14 +113,13 @@ func (s *MaintenanceService) Command(ctx context.Context, input domain.OntologyM
 			return contract.MaintenanceRun{}, err
 		}
 	}
-	result, err := s.deps.Repository.MaintenanceCommand(ctx, input, s.deps.Now())
-	if err != nil {
-		return result, err
-	}
-	if err := s.deps.Audit.Append(ctx, access.AuditLogEntry{Operation: "ONTOLOGY_MAINTENANCE_COMMAND", EntityType: "ontology_maintenance", EntityID: result.ID, ActorRole: "control", ClientIP: clientIP, CorrelationID: correlationID, Metadata: map[string]any{"action": input.Action, "operation_key": input.OperationKey, "window_id": result.WindowID, "max_batches": result.MaxBatches}}); err != nil {
+	result, err := s.deps.Repository.MaintenanceCommand(ctx, input, s.deps.Now(), func(result contract.MaintenanceRun) (audit.Entry, error) {
+		return s.deps.Audit.Prepare(ctx, access.AuditLogEntry{Operation: "ONTOLOGY_MAINTENANCE_COMMAND", EntityType: "ontology_maintenance", EntityID: result.ID, ActorRole: "control", ClientIP: clientIP, CorrelationID: correlationID, Metadata: map[string]any{"action": input.Action, "operation_key": input.OperationKey, "window_id": result.WindowID, "max_batches": result.MaxBatches}})
+	})
+	if errors.Is(err, contract.ErrAuditUnavailable) {
 		return result, &OrganizationError{Code: "audit_unavailable", Cause: err}
 	}
-	return result, nil
+	return result, err
 }
 
 func (s *MaintenanceService) RunTurn(ctx context.Context) (progress bool, runErr error) {

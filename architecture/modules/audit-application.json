@@ -25,7 +25,7 @@
       {
         "id": "github.com/markhuangai/dense-mem/internal/audit/contract",
         "role": "port",
-        "visibility": "private"
+        "visibility": "public"
       },
       {
         "id": "github.com/markhuangai/dense-mem/internal/audit/postgres",

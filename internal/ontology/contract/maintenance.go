@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	audit "github.com/markhuangai/dense-mem/internal/audit/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
@@ -17,6 +18,7 @@ var (
 	ErrBudgetDeferred      = errors.New("ontology maintenance budget deferred")
 	ErrLeaseLost           = errors.New("ontology maintenance lease lost")
 	ErrAccounting          = errors.New("ontology maintenance accounting unavailable")
+	ErrAuditUnavailable    = errors.New("ontology maintenance audit unavailable")
 )
 
 type MaintenanceWindow struct {
@@ -46,6 +48,9 @@ type MaintenanceRun struct {
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
 }
+
+// MaintenanceAudit prepares an entry without storage or provider I/O.
+type MaintenanceAudit func(MaintenanceRun) (audit.Entry, error)
 
 type MaintenanceClaim struct {
 	ID         string
@@ -110,7 +115,7 @@ type MaintenanceRepository interface {
 	ReserveMaintenanceAttempt(context.Context, MaintenanceClaim, string, int, int, int, time.Time) error
 	ReconcileMaintenanceAttempt(context.Context, MaintenanceClaim, string, AssessmentAttempt) error
 	CompleteMaintenanceBatch(context.Context, MaintenanceClaim, OrganizationResult, string, time.Time) error
-	MaintenanceCommand(context.Context, domain.OntologyMaintenanceCommand, time.Time) (MaintenanceRun, error)
+	MaintenanceCommand(context.Context, domain.OntologyMaintenanceCommand, time.Time, MaintenanceAudit) (MaintenanceRun, error)
 	MaintenanceStatus(context.Context, time.Time) (MaintenanceStatus, error)
 	ListMaintenanceRuns(context.Context, string, int) (MaintenanceRunPage, error)
 }
@@ -138,6 +143,8 @@ func MaintenanceFailureCode(err error) string {
 		return "lease_lost"
 	case errors.Is(err, ErrAccounting):
 		return "accounting_unavailable"
+	case errors.Is(err, ErrAuditUnavailable):
+		return "audit_unavailable"
 	}
 	return ""
 }

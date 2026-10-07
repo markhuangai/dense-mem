@@ -8,7 +8,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/ontology"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	contract "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	access "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 type ontologyMaintenanceStore interface {
@@ -16,7 +15,7 @@ type ontologyMaintenanceStore interface {
 	contract.OrganizationRepository
 }
 
-func buildOntologyMaintenance(store ontologyMaintenanceStore, config ontology.MaintenanceConfigSource, transport modelprovider.StructuredTransport, limits assessor.SemanticAssessmentLimits, model string, timeout time.Duration, audit access.AuditService) *ontology.MaintenanceService {
+func buildOntologyMaintenance(store ontologyMaintenanceStore, config ontology.MaintenanceConfigSource, transport modelprovider.StructuredTransport, limits assessor.SemanticAssessmentLimits, model string, timeout time.Duration, audit ontology.MaintenanceAuditPreparer) *ontology.MaintenanceService {
 	return ontology.NewMaintenanceService(ontology.MaintenanceDependencies{Repository: store, Config: config, DefaultModel: model, ProviderTimeout: timeout, Audit: audit,
 		Organizer: func(model string, accounting assessment.AttemptAccounting) *ontology.Service {
 			configured := limits

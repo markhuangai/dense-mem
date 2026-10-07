@@ -4,9 +4,12 @@ package postgres
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,9 +18,40 @@ import (
 	organization "github.com/markhuangai/dense-mem/internal/ontology"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestOntologyMaintenanceIndexMigrationRestoresLockTimeout(t *testing.T) {
+	f := newOrganizationFixture(t)
+	ctx := context.Background()
+	db, err := f.admin.DB()
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	name := "20261006010002_ontology_maintenance_indexes.sql"
+	source, err := os.ReadFile(filepath.Join("..", "..", "..", "migrations", "postgres", "v2_6", name))
+	require.NoError(t, err)
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, fstest.MapFS{name: &fstest.MapFile{Data: source}},
+		goose.WithTableName("ontology_maintenance_timeout_probe"), goose.WithDisableGlobalRegistry(true))
+	require.NoError(t, err)
+	for _, direction := range []string{"up", "down"} {
+		t.Run(direction, func(t *testing.T) {
+			_, err := db.ExecContext(ctx, "RESET lock_timeout")
+			require.NoError(t, err)
+			if direction == "up" {
+				_, err = provider.Up(ctx)
+			} else {
+				_, err = provider.Down(ctx)
+			}
+			require.NoError(t, err)
+			var timeout string
+			require.NoError(t, db.QueryRowContext(ctx, "SHOW lock_timeout").Scan(&timeout))
+			require.Equal(t, "0", timeout, "migration must not leave its timeout on a pooled application connection")
+		})
+	}
+}
 
 func TestOntologyMaintenanceRunCompletionUsesActiveScope(t *testing.T) {
 	for _, failedStatus := range []string{"failed", "ambiguous", "budget_deferred"} {
@@ -50,7 +84,7 @@ func TestOntologyMaintenanceRunCompletionUsesActiveScope(t *testing.T) {
 			var runStatus string
 			require.NoError(t, f.admin.Raw(`SELECT status FROM ontology_maintenance_runs WHERE run_id=?::uuid`, turn.RunID).Row().Scan(&runStatus))
 			require.Equal(t, "completed", runStatus)
-			_, err = f.store.MaintenanceCommand(ctx, domain.OntologyMaintenanceCommand{Action: "retry", OperationKey: "historical-retry", RetryRunID: turn.RunID}, time.Now().UTC())
+			_, err = f.store.MaintenanceCommand(ctx, domain.OntologyMaintenanceCommand{Action: "retry", OperationKey: "historical-retry", RetryRunID: turn.RunID}, time.Now().UTC(), nil)
 			require.ErrorIs(t, err, ontology.ErrInvalid)
 		})
 	}
@@ -231,7 +265,7 @@ func TestOntologyMaintenanceControlInterruptionResumesSameWindow(t *testing.T) {
 			ctx := context.Background()
 			failure := "maintenance_paused"
 			if action == "pause" {
-				_, err := f.store.MaintenanceCommand(ctx, domain.OntologyMaintenanceCommand{Action: "pause", OperationKey: "before-admission"}, time.Now().UTC())
+				_, err := f.store.MaintenanceCommand(ctx, domain.OntologyMaintenanceCommand{Action: "pause", OperationKey: "before-admission"}, time.Now().UTC(), nil)
 				require.NoError(t, err)
 			} else {
 				_, err := config.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: "false"}, "control", "", "")
@@ -247,7 +281,7 @@ func TestOntologyMaintenanceControlInterruptionResumesSameWindow(t *testing.T) {
 			require.EqualValues(t, 1, status.Counts.Pending)
 			require.Zero(t, status.Window.ChargedInput)
 			if action == "pause" {
-				_, err = f.store.MaintenanceCommand(ctx, domain.OntologyMaintenanceCommand{Action: "resume", OperationKey: "resume-same-window"}, time.Now().UTC())
+				_, err = f.store.MaintenanceCommand(ctx, domain.OntologyMaintenanceCommand{Action: "resume", OperationKey: "resume-same-window"}, time.Now().UTC(), nil)
 			} else {
 				_, err = config.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: "true"}, "control", "", "")
 			}
@@ -296,7 +330,7 @@ func TestOntologyMaintenanceRetryDoesNotReleaseUnselectedFailures(t *testing.T) 
 	require.EqualValues(t, 3, status.Counts.Failed)
 	beforeCalls := calls()
 	broken = false
-	_, err = f.store.MaintenanceCommand(context.Background(), domain.OntologyMaintenanceCommand{Action: "retry", OperationKey: "single-retry", RetryRunID: originalRun, MaxBatches: 1}, time.Now().UTC())
+	_, err = f.store.MaintenanceCommand(context.Background(), domain.OntologyMaintenanceCommand{Action: "retry", OperationKey: "single-retry", RetryRunID: originalRun, MaxBatches: 1}, time.Now().UTC(), nil)
 	require.NoError(t, err)
 	drainMaintenance(t, service)
 	status, err = service.Status(context.Background())
@@ -305,13 +339,13 @@ func TestOntologyMaintenanceRetryDoesNotReleaseUnselectedFailures(t *testing.T) 
 	require.EqualValues(t, 2, status.Counts.Failed)
 	require.EqualValues(t, beforeCalls+1, calls())
 	broken = true
-	unrelated, err := f.store.MaintenanceCommand(context.Background(), domain.OntologyMaintenanceCommand{Action: "retry", OperationKey: "unrelated-failed-retry", RetryRunID: originalRun, MaxBatches: 1}, time.Now().UTC())
+	unrelated, err := f.store.MaintenanceCommand(context.Background(), domain.OntologyMaintenanceCommand{Action: "retry", OperationKey: "unrelated-failed-retry", RetryRunID: originalRun, MaxBatches: 1}, time.Now().UTC(), nil)
 	require.NoError(t, err)
 	_, err = service.RunTurn(context.Background())
 	var failure *organization.OrganizationError
 	require.ErrorAs(t, err, &failure)
 	broken = false
-	retried, err := f.store.MaintenanceCommand(context.Background(), domain.OntologyMaintenanceCommand{Action: "retry", OperationKey: "complete-selected-retry", RetryRunID: originalRun, MaxBatches: 100}, time.Now().UTC())
+	retried, err := f.store.MaintenanceCommand(context.Background(), domain.OntologyMaintenanceCommand{Action: "retry", OperationKey: "complete-selected-retry", RetryRunID: originalRun, MaxBatches: 100}, time.Now().UTC(), nil)
 	require.NoError(t, err)
 	drainMaintenance(t, service)
 	status, err = service.Status(context.Background())

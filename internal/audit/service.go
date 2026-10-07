@@ -135,19 +135,19 @@ func AuditClientIPValue(ctx context.Context, entry accessservice.AuditLogEntry) 
 	return clientIP
 }
 
-// Append validates and normalizes an event before handing it to persistence.
-func (s *Service) Append(ctx context.Context, entry accessservice.AuditLogEntry) error {
+// Prepare retains audit validation and redaction without writing, so insertion can share the caller's transaction.
+func (s *Service) Prepare(ctx context.Context, entry accessservice.AuditLogEntry) (contract.Entry, error) {
 	beforeJSON, err := marshalPayload("before_payload", entry.BeforePayload)
 	if err != nil {
-		return err
+		return contract.Entry{}, err
 	}
 	afterJSON, err := marshalPayload("after_payload", entry.AfterPayload)
 	if err != nil {
-		return err
+		return contract.Entry{}, err
 	}
 	metadataJSON, err := marshalMetadata(entry.Metadata)
 	if err != nil {
-		return err
+		return contract.Entry{}, err
 	}
 
 	timestamp := entry.Timestamp
@@ -160,10 +160,10 @@ func (s *Service) Append(ctx context.Context, entry accessservice.AuditLogEntry)
 	}
 	lookup := credentialMemorySpaceLookup(entry)
 	if s == nil || s.store == nil {
-		return errors.New("audit: store is required")
+		return contract.Entry{}, errors.New("audit: store is required")
 	}
 
-	err = s.store.Append(ctx, contract.Entry{
+	return contract.Entry{
 		ID:                          id,
 		ProfileID:                   entry.ProfileID,
 		MemorySpaceID:               entry.MemorySpaceID,
@@ -179,7 +179,16 @@ func (s *Service) Append(ctx context.Context, entry accessservice.AuditLogEntry)
 		CorrelationID:               entry.CorrelationID,
 		Metadata:                    metadataJSON,
 		CredentialMemorySpaceLookup: lookup,
-	})
+	}, nil
+}
+
+// Append validates and normalizes an event before handing it to persistence.
+func (s *Service) Append(ctx context.Context, entry accessservice.AuditLogEntry) error {
+	prepared, err := s.Prepare(ctx, entry)
+	if err != nil {
+		return err
+	}
+	err = s.store.Append(ctx, prepared)
 	if err != nil {
 		return fmt.Errorf("failed to append audit log entry: %w", err)
 	}

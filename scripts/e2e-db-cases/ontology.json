@@ -323,6 +323,20 @@
       "run": "^TestOntologyMaintenanceDefinitionMarkersTargetReceiptsAndVocabulary$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/maintenance_regressions_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceIndexMigrationRestoresLockTimeout",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceIndexMigrationRestoresLockTimeout$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_regressions_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceCommandAuditIsAtomic",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceCommandAuditIsAtomic$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_service_integration_test.go"
     }
   ]
 }

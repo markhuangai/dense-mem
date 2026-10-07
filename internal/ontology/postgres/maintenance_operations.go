@@ -5,16 +5,18 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"gorm.io/gorm"
 )
 
-func (s *Store) MaintenanceCommand(ctx context.Context, input domain.OntologyMaintenanceCommand, now time.Time) (ontology.MaintenanceRun, error) {
+func (s *Store) MaintenanceCommand(ctx context.Context, input domain.OntologyMaintenanceCommand, now time.Time, prepareAudit ontology.MaintenanceAudit) (ontology.MaintenanceRun, error) {
 	input, err := ontology.PrepareMaintenanceCommand(input)
 	if err != nil {
 		return ontology.MaintenanceRun{}, err
@@ -24,6 +26,19 @@ func (s *Store) MaintenanceCommand(ctx context.Context, input domain.OntologyMai
 		return ontology.MaintenanceRun{}, err
 	}
 	var result ontology.MaintenanceRun
+	appendAudit := func(tx *gorm.DB) error {
+		if prepareAudit == nil {
+			return nil
+		}
+		entry, err := prepareAudit(result)
+		if err == nil {
+			err = storagepostgres.InsertAuditEntryTx(ctx, tx, entry)
+		}
+		if err != nil {
+			return fmt.Errorf("%w: %w", ontology.ErrAuditUnavailable, err)
+		}
+		return nil
+	}
 	err = s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
 		paused, err := maintenanceState(tx)
 		if err != nil {
@@ -41,7 +56,10 @@ func (s *Store) MaintenanceCommand(ctx context.Context, input domain.OntologyMai
 			}
 			retryable, err := maintenanceRetryableRuns(tx, []string{result.ID})
 			result.Retryable = retryable[result.ID]
-			return err
+			if err != nil {
+				return err
+			}
+			return appendAudit(tx)
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -100,7 +118,10 @@ func (s *Store) MaintenanceCommand(ctx context.Context, input domain.OntologyMai
 			return err
 		}
 		result, err = scanMaintenanceRun(tx.Raw(`SELECT `+maintenanceRunColumns+` FROM ontology_maintenance_runs WHERE run_id=?::uuid`, result.ID).Row())
-		return err
+		if err != nil {
+			return err
+		}
+		return appendAudit(tx)
 	})
 	return result, err
 }
