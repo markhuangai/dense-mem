@@ -247,6 +247,26 @@ func TestOntologyFingerprintsAreStableAndSelective(t *testing.T) {
 	require.Equal(t, retired, again)
 }
 
+func TestOntologyOverrideApplicabilityFollowsActionAndRecordKind(t *testing.T) {
+	first, second := policySnapshot("a", EvidenceSource, "same"), policySnapshot("b", EvidenceSource, "same")
+	topic := topicRecord("topic")
+	assignment := Record{ID: policyID("assignment"), Kind: AssignmentKind, Assignment: &Assignment{Source: first.SourceHandle, DefinitionID: topic.ID}, Sources: []SourceDependency{sourceDependency(t, first)}}
+	group := Record{ID: policyID("group"), Kind: EvidenceGroup, Group: &Group{Members: []SourceHandle{first.SourceHandle, second.SourceHandle}}}
+	separation := Record{ID: policyID("separation"), Kind: OverrideKind, Override: &Override{Action: KeepSeparate, Members: group.Group.Members}}
+	classification := Record{ID: policyID("classification"), Kind: OverrideKind, Override: &Override{Action: SetClassification, Members: []SourceHandle{first.SourceHandle}, DefinitionID: topic.ID}}
+	pin := Record{ID: policyID("pin"), Kind: OverrideKind, Override: &Override{Action: PinDefinition, TargetID: topic.ID}}
+	catalog := map[string]Record{separation.ID: separation, classification.ID: classification, pin.ID: pin}
+	require.Equal(t, []Record{classification}, ApplicableOverrides(assignment, catalog))
+	require.Equal(t, []Record{separation}, ApplicableOverrides(group, catalog))
+	require.Equal(t, []Record{pin}, ApplicableOverrides(topic, catalog))
+	snapshots := map[string]SourceSnapshot{SourceKey(first.SourceHandle): first}
+	one, err := RecordFingerprint(assignment, snapshots, map[string]Record{topic.ID: topic})
+	require.NoError(t, err)
+	two, err := RecordFingerprint(assignment, snapshots, map[string]Record{topic.ID: topic, separation.ID: separation})
+	require.NoError(t, err)
+	require.Equal(t, one, two)
+}
+
 func TestOntologyPublicationEnforcesAggregateBounds(t *testing.T) {
 	input := publicationFor(topicRecord("escaped"))
 	input.Changes[0].Record.Definition.Description = strings.Repeat("\x01", MaxPublicationBytes)

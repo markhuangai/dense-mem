@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
+	"time"
 )
 
-var contextualPronouns = regexp.MustCompile(`(?i)\b(i|me|my|mine|we|us|our|ours|here|there|today|yesterday|tomorrow)\b`)
+var contextualPronouns = regexp.MustCompile(`(?i)\b(i|me|my|mine|we|us|our|ours|here|there)\b`)
 var relativeTimes = regexp.MustCompile(`(?i)\b(today|yesterday|tomorrow)\b`)
 
 // CompatibleMeaningContext prevents model equivalence from crossing known factual context boundaries.
@@ -36,6 +38,36 @@ func CompatibleMeaningContext(left, right SourceSnapshot) bool {
 	}
 	if left.OwnerID != right.OwnerID && (contextualPronouns.MatchString(left.State["content"]) || contextualPronouns.MatchString(right.State["content"])) {
 		return false
+	}
+	if left.OwnerID != right.OwnerID && (relativeTimes.MatchString(left.State["content"]) || relativeTimes.MatchString(right.State["content"])) {
+		return resolvedRelativeTime(left, right)
+	}
+	return true
+}
+
+func resolvedRelativeTime(left, right SourceSnapshot) bool {
+	if left.State["created_at"] == "" {
+		return false
+	}
+	var metadata struct {
+		Timezone string `json:"timezone"`
+	}
+	if json.Unmarshal([]byte(left.State["metadata"]), &metadata) != nil || metadata.Timezone == "" || metadata.Timezone == "Local" {
+		return false
+	}
+	if _, err := time.LoadLocation(metadata.Timezone); err != nil {
+		return false
+	}
+	day := strings.ToLower(relativeTimes.FindString(left.State["content"]))
+	if day == "" || !relativeTimes.MatchString(right.State["content"]) {
+		return false
+	}
+	for _, content := range []string{left.State["content"], right.State["content"]} {
+		for _, word := range relativeTimes.FindAllString(content, -1) {
+			if strings.ToLower(word) != day {
+				return false
+			}
+		}
 	}
 	return true
 }

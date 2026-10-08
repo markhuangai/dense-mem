@@ -60,3 +60,15 @@ func TestMaintenanceCommandsAndOutcomes(t *testing.T) {
 	require.Equal(t, "budget_deferred", MaintenanceOutcomeState(OrganizationOutcome{}, OrganizationResult{}, "budget_deferred"))
 	require.Equal(t, "failed", MaintenanceOutcomeState(OrganizationOutcome{}, OrganizationResult{}, "accounting_unavailable"))
 }
+
+func TestMaintenanceCompletionRetainsOnlyUnresolvedFailureReasons(t *testing.T) {
+	status, reason := MaintenanceCompletion(false, "maintenance_paused")
+	require.Equal(t, "completed", status)
+	require.Empty(t, reason)
+	status, reason = MaintenanceCompletion(true, "provider_unavailable")
+	require.Equal(t, "incomplete", status)
+	require.Equal(t, "provider_unavailable", reason)
+	status, reason = MaintenanceCompletion(true, "")
+	require.Equal(t, "incomplete", status)
+	require.Empty(t, reason)
+}

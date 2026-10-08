@@ -56,8 +56,39 @@ try {
   assert(runs.next_cursor, "run inspection must paginate");
   const all = (await control("/ontology/runs?limit=100")).data;
   assert(all.runs.find((run) => run.id === command.id).completed_batches <= 1);
-  console.log(JSON.stringify({ status: "ok", scenario: "ontology_organization", window_id: status.window.id, counts: status.counts, durable_command_replay: true, operator_isolation: true }));
+  await control("/ontology/pause", { operation_key: randomUUID() });
+  paused = true;
+  await fixtureMode("ambiguous");
+  await rememberFixture(shared.api_key, "Atlas uses PostgreSQL for ontology status acceptance.");
+  await control("/ontology/resume", { operation_key: randomUUID() });
+  paused = false;
+  const ambiguousCommand = (await control("/ontology/runs", { operation_key: randomUUID(), max_batches: 1 })).data;
+  const ambiguousRun = await terminalRun(ambiguousCommand.id);
+  assert.equal(ambiguousRun.status, "incomplete");
+  assert.equal(ambiguousRun.completed_batches, 1);
+  assert.equal(ambiguousRun.failure_code || "", "");
+  assert.equal(ambiguousRun.retryable, false);
+  await fixtureMode("normal");
+
+  await control("/ontology/pause", { operation_key: randomUUID() });
+  paused = true;
+  await fixtureMode("fail-three-then-success");
+  await rememberFixture(shared.api_key, "Atlas uses PostgreSQL for ontology retry acceptance.");
+  await control("/ontology/resume", { operation_key: randomUUID() });
+  paused = false;
+  const failedCommand = (await control("/ontology/runs", { operation_key: randomUUID(), max_batches: 1 })).data;
+  const failedRun = await terminalRun(failedCommand.id);
+  assert.equal(failedRun.status, "incomplete");
+  assert(failedRun.failure_code, "required failure remains visible");
+  assert.equal(failedRun.retryable, true);
+  await fixtureMode("normal");
+  const history = (await control("/ontology/runs?limit=200")).data;
+  for (const run of history.runs) {
+    if (run.status === "completed") assert.equal(run.failure_code || "", "", "completed runs must have no current failure reason");
+  }
+  console.log(JSON.stringify({ status: "ok", scenario: "ontology_organization", window_id: status.window.id, counts: status.counts, durable_command_replay: true, operator_isolation: true, bounded_ambiguity_run: ambiguousRun.id, retryable_failure_run: failedRun.id }));
 } finally {
+  await fixtureMode("normal");
   if (paused) await control("/ontology/resume", { operation_key: randomUUID() });
   await control("/config/ontology-maintenance", { items: original.items.map(({ key, value }) => ({ key, value })) }, "PATCH");
 }
@@ -72,3 +103,24 @@ async function control(path, body, method) {
   return response.json();
 }
 async function expectStatus(path, body, status, method) { assert.equal((await request(path, body, method)).status, status); }
+
+async function fixtureMode(mode) {
+  const response = await fetch(`${required("DENSE_MEM_E2E_PROVIDER_URL")}/ontology-fixture`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }) });
+  assert.equal(response.status, 200);
+}
+async function rememberFixture(key, content) {
+  const response = await fetch(`${userURL}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${key}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: randomUUID(), method: "tools/call", params: { name: "remember", arguments: { idempotency_key: randomUUID(), evidence: [{ content, source_type: "document", source: "ontology-followups", source_group: randomUUID() }], relationships: [{ ref: "storage", subject: { name: "Atlas", entity_kind: "project" }, predicate: { proposed_key: "uses" }, object: { entity: { name: "PostgreSQL", entity_kind: "product" } }, polarity: "+", evidence_indices: [0] }] } } }) });
+  assert.equal(response.status, 200);
+  const rpc = await response.json();
+  assert.notEqual(rpc.result?.isError, true, JSON.stringify(rpc.error ?? rpc.result));
+  assert.equal(JSON.parse(rpc.result.content[0].text).processing_state, "completed");
+}
+async function terminalRun(id) {
+  for (let index = 0; index < 150; index++) {
+    const page = (await control("/ontology/runs?limit=200")).data;
+    const run = page.runs.find((run) => run.id === id);
+    if (run && ["completed", "incomplete"].includes(run.status)) return run;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  assert.fail(`maintenance run ${id} did not finish`);
+}

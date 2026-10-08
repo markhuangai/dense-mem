@@ -150,56 +150,87 @@ func organizationSources(tx *gorm.DB, fence scope, handles []ontology.SourceHand
 	return result, nil
 }
 
+type vocabularyCandidate struct {
+	record        ontology.Record
+	forced, exact bool
+	rank          float32
+}
+
 func (s *Store) organizationVocabulary(tx *gorm.DB, fence scope, sources []ontology.SourceSnapshot, forced []string) ([]ontology.RecordView, error) {
 	_, words := ontology.VocabularyQuery(sources)
 	query := strings.Join(words, " OR ")
-	rows, err := tx.Raw(`SELECT revision.body FROM ontology_record_heads AS head
-        JOIN ontology_record_revisions AS revision USING(team_id,shared_space_id,space_generation,record_id,version)
-        WHERE head.team_id=?::uuid AND head.shared_space_id=?::uuid AND head.space_generation=?
-          AND NOT head.retired AND head.kind IN ('entity_class','predicate_concept','topic')
-          AND (head.record_id=ANY(?::uuid[]) OR head.names && ?::text[]
-            OR to_tsvector('simple',array_to_string(head.names,' ') || ' ' || COALESCE(revision.body->'definition'->>'description',''))
-              @@ websearch_to_tsquery('simple',?))
-        ORDER BY (head.record_id=ANY(?::uuid[])) DESC,(head.names && ?::text[]) DESC,
-          ts_rank_cd(to_tsvector('simple',array_to_string(head.names,' ') || ' ' || COALESCE(revision.body->'definition'->>'description','')),
-            websearch_to_tsquery('simple',?)) DESC,head.record_id LIMIT ?`,
-		fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(forced), pq.Array(words), query, pq.Array(forced), pq.Array(words), query, ontology.MaxVocabularyCandidates).Rows()
-	if err != nil {
-		return nil, err
-	}
-	var records []ontology.Record
-	for rows.Next() {
-		var body []byte
-		if err := rows.Scan(&body); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		record, err := decodeRecord(body)
-		if err != nil {
-			rows.Close()
-			return nil, err
-		}
-		records = append(records, record)
-	}
-	err = rows.Err()
-	closeErr := rows.Close()
-	if err != nil {
-		return nil, err
-	}
-	if closeErr != nil {
-		return nil, closeErr
-	}
 	result := []ontology.RecordView{}
-	for _, record := range records {
-		view, err := s.currentView(tx, fence, record)
+	after := vocabularyCandidate{}
+	examined := 0
+	for {
+		limit := min(ontology.MaxVocabularyCandidates, ontology.MaxDependencyRecords-examined+1)
+		rows, err := tx.Raw(`WITH ranked AS (
+   SELECT revision.body,head.record_id,
+    head.record_id=ANY(?::uuid[]) AS forced,head.names && ?::text[] AS exact,
+    ts_rank_cd(to_tsvector('simple',array_to_string(head.names,' ') || ' ' || COALESCE(revision.body->'definition'->>'description','')),
+     websearch_to_tsquery('simple',?)) AS rank
+   FROM ontology_record_heads AS head
+   JOIN ontology_record_revisions AS revision USING(team_id,shared_space_id,space_generation,record_id,version)
+   WHERE head.team_id=?::uuid AND head.shared_space_id=?::uuid AND head.space_generation=?
+    AND NOT head.retired AND head.kind IN ('entity_class','predicate_concept','topic')
+    AND (head.record_id=ANY(?::uuid[]) OR head.names && ?::text[]
+     OR to_tsvector('simple',array_to_string(head.names,' ') || ' ' || COALESCE(revision.body->'definition'->>'description',''))
+       @@ websearch_to_tsquery('simple',?)))
+   SELECT body,forced,exact,rank,record_id::text FROM ranked
+   WHERE ?='' OR (forced,exact,rank)<(?::boolean,?::boolean,?::real)
+    OR ((forced,exact,rank)=(?::boolean,?::boolean,?::real) AND record_id>NULLIF(?,'')::uuid)
+   ORDER BY forced DESC,exact DESC,rank DESC,record_id LIMIT ?`,
+			pq.Array(forced), pq.Array(words), query, fence.TeamID, fence.SpaceID, fence.Generation,
+			pq.Array(forced), pq.Array(words), query, after.record.ID, after.forced, after.exact, after.rank,
+			after.forced, after.exact, after.rank, after.record.ID, limit).Rows()
 		if err != nil {
 			return nil, err
 		}
-		if view.Current {
-			result = append(result, view)
+		candidates := []vocabularyCandidate{}
+		for rows.Next() {
+			var body []byte
+			var candidate vocabularyCandidate
+			var id string
+			if err := rows.Scan(&body, &candidate.forced, &candidate.exact, &candidate.rank, &id); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			candidate.record, err = decodeRecord(body)
+			if err != nil {
+				rows.Close()
+				return nil, err
+			}
+			candidates = append(candidates, candidate)
+		}
+		err = rows.Err()
+		closeErr := rows.Close()
+		if err != nil {
+			return nil, err
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		for _, candidate := range candidates {
+			if examined == ontology.MaxDependencyRecords {
+				return nil, ontology.ErrContextBound
+			}
+			examined++
+			after = candidate
+			view, err := s.currentView(tx, fence, candidate.record)
+			if err != nil {
+				return nil, err
+			}
+			if view.Current {
+				result = append(result, view)
+				if len(result) == ontology.MaxVocabularyCandidates {
+					return result, nil
+				}
+			}
+		}
+		if len(candidates) < limit {
+			return result, nil
 		}
 	}
-	return result, nil
 }
 
 func decodeOrganization(body []byte) (ontology.OrganizationReceipt, error) {

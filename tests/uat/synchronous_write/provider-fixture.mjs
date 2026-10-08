@@ -12,6 +12,8 @@ const correctionProviderTimeoutMarker = "e2e-correction-provider-timeout";
 const heldPredicateKey = "retired_memory_store_fixture";
 const assessmentAttempts = new Map();
 const embeddingCallsByFault = new Map();
+let ontologyMode = "normal";
+let ontologyFailuresRemaining = 0;
 let assessmentCalls = 0;
 let embeddingCalls = 0;
 const chatRequests = [];
@@ -34,6 +36,17 @@ const server = createServer(async (request, response) => {
     payload = body ? JSON.parse(body) : {};
   } catch {
     sendJSON(response, 400, { error: { message: "invalid fixture request" } });
+    return;
+  }
+
+  if (request.method === "POST" && request.url === "/ontology-fixture") {
+    if (!["normal", "ambiguous", "fail-three-then-success"].includes(payload.mode)) {
+      sendJSON(response, 400, { error: "invalid ontology fixture mode" });
+      return;
+    }
+    ontologyMode = payload.mode;
+    ontologyFailuresRemaining = payload.mode === "fail-three-then-success" ? 3 : 0;
+    sendJSON(response, 200, { mode: ontologyMode });
     return;
   }
 
@@ -202,6 +215,19 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
 
 function fixtureOntologyOrganization(payload) {
   const input = structuredInput(payload, (value) => Array.isArray(value.items) && Array.isArray(value.pairs));
+  if (ontologyFailuresRemaining > 0) {
+    ontologyFailuresRemaining -= 1;
+    return { request_id: input.request_id, definitions: [], items: [], equivalence: [] };
+  }
+  if (ontologyMode === "ambiguous") {
+    return {
+      request_id: input.request_id, definitions: [],
+      items: input.items.map((item) => item.locked_definition_ref
+        ? { ref: item.ref, status: "classified", definition_ref: item.locked_definition_ref, reason: "" }
+        : { ref: item.ref, status: "ambiguous", definition_ref: "", reason: "classification_uncertain" }),
+      equivalence: input.pairs.map((pair) => ({ ref: pair.ref, relation: pair.required_relation || "ambiguous" })),
+    };
+  }
   const definitions = [];
   const created = new Map();
   const items = input.items.map((item) => {

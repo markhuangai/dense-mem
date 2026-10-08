@@ -27,19 +27,38 @@ import (
 
 func testOntologyOrganizationCohort(t *testing.T) { testOntologyCohort(t, false) }
 
-func testOntologyCohort(t *testing.T, maintenance bool) {
+func testOntologyCohort(t *testing.T, maintenance bool, supplements ...[]evalharness.OrganizationFollowupCase) {
 	f := newOrganizationFixture(t)
 	cohort := evalharness.OntologyOrganizationCohort()
-	encoded, err := json.Marshal(cohort)
+	lockPath := "../../../tests/eval/baselines/ontology_organization_v1.json"
+	followups := map[string]evalharness.OrganizationFollowupCase{}
+	var judgments any = cohort
+	if len(supplements) > 0 {
+		cohort = nil
+		judgments = supplements[0]
+		lockPath = "../../../tests/eval/source_locks/ontology_followups_v1.json"
+		for _, supplement := range supplements[0] {
+			cohort = append(cohort, supplement.Case)
+			followups[supplement.Case.ID] = supplement
+		}
+	}
+	encoded, err := json.Marshal(judgments)
 	require.NoError(t, err)
 	digest := sha256.Sum256(encoded)
 	var lock struct {
-		CohortSHA256 string `json:"cohort_sha256"`
+		CohortSHA256    string `json:"cohort_sha256"`
+		GeneratorSHA256 string `json:"generator_sha256"`
 	}
-	baselineBytes, err := os.ReadFile("../../../tests/eval/baselines/ontology_organization_v1.json")
+	baselineBytes, err := os.ReadFile(lockPath)
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(baselineBytes, &lock))
 	require.Equal(t, lock.CohortSHA256, "sha256:"+hex.EncodeToString(digest[:]))
+	if len(followups) > 0 {
+		generator, err := os.ReadFile("../../evalharness/organization_followup_cohort.go")
+		require.NoError(t, err)
+		generatorDigest := sha256.Sum256(generator)
+		require.Equal(t, lock.GeneratorSHA256, "sha256:"+hex.EncodeToString(generatorDigest[:]))
+	}
 	scores := map[string]evalharness.OrganizationScore{}
 	reports := map[string]ontology.OrganizationResult{}
 	live := os.Getenv("DENSE_MEM_ONTOLOGY_LIVE_EVAL") == "1"
@@ -53,6 +72,9 @@ func testOntologyCohort(t *testing.T, maintenance bool) {
 		mode := "explicit"
 		if maintenance {
 			mode = "maintenance"
+		}
+		if len(followups) > 0 {
+			mode = "followups"
 		}
 		directory = filepath.Join(directory, mode)
 		require.NoError(t, os.MkdirAll(directory, 0700))
@@ -77,10 +99,24 @@ func testOntologyCohort(t *testing.T, maintenance bool) {
 				if testCase.Override == "group_together" {
 					owner = 0
 				}
-				handle := f.organizationEvidence(t, owner, source.Text, map[string]any{"actor": source.Actor, "polarity": source.Polarity, "time": source.Time, "qualification": source.Qualification})
+				var handle ontology.SourceHandle
+				if supplement, ok := followups[testCase.ID]; ok {
+					handle = f.organizationEvidenceAt(t, owner, source.Text, supplement.CreatedAt[i], supplement.Timezone)
+				} else {
+					handle = f.organizationEvidence(t, owner, source.Text, map[string]any{"actor": source.Actor, "polarity": source.Polarity, "time": source.Time, "qualification": source.Qualification})
+				}
 				handles = append(handles, handle)
 				originals[handle.ID] = source
 				byText[source.Text] = source.EquivalenceKey
+			}
+			var vocabularyID string
+			if followups[testCase.ID].StaleVocabulary {
+				definitions := seedStaleVocabulary(t, f, 20, 1)
+				vocabularyID = definitions[0].ID
+				contextData, err := f.store.ReadOrganization(context.Background(), f.team, handles)
+				require.NoError(t, err)
+				require.Len(t, contextData.Candidates, 1)
+				require.Equal(t, vocabularyID, contextData.Candidates[0].ID)
 			}
 			if testCase.Override != "" {
 				record := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.OverrideAction(testCase.Override), Members: handles}}
@@ -208,6 +244,16 @@ func testOntologyCohort(t *testing.T, maintenance bool) {
 			require.Equal(t, 1.0, score.DistinctFactCoverage)
 			require.Equal(t, 1.0, score.SourcePreservation)
 			require.Zero(t, score.RepeatedSlots)
+			if vocabularyID != "" {
+				assignments, err := f.store.ListRecords(context.Background(), f.team, ontology.AssignmentKind, "", ontology.MaxPageSize)
+				require.NoError(t, err)
+				for _, assignment := range assignments.Records {
+					if _, ok := originals[assignment.Assignment.Source.ID]; ok {
+						require.True(t, assignment.Current)
+						require.Equal(t, vocabularyID, assignment.Assignment.DefinitionID)
+					}
+				}
+			}
 			require.Equal(t, before, f.canonicalSnapshot(t))
 			priorCalls := int32(0)
 			if callCount != nil {

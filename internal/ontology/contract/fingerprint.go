@@ -17,6 +17,23 @@ func SourceFingerprint(snapshot SourceSnapshot) (string, error) {
 	}{FingerprintVersion, snapshot})
 }
 
+func CheckSourceDependencies(record Record, snapshots map[string]SourceSnapshot) error {
+	for _, dependency := range record.Sources {
+		snapshot, exists := snapshots[SourceKey(dependency.SourceHandle)]
+		if !exists || !snapshot.Eligible || snapshot.SourceHandle != dependency.SourceHandle {
+			return ErrSourceStale
+		}
+		fingerprint, err := SourceFingerprint(snapshot)
+		if err != nil {
+			return err
+		}
+		if fingerprint != dependency.Fingerprint {
+			return ErrSourceStale
+		}
+	}
+	return nil
+}
+
 func RequestHash(input Publication, origin, actorID string) (string, error) {
 	return hashJSON(struct {
 		Origin  string

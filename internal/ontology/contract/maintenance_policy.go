@@ -8,6 +8,13 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
+func MaintenanceCompletion(unresolved bool, failure string) (string, string) {
+	if unresolved {
+		return "incomplete", failure
+	}
+	return "completed", ""
+}
+
 func MaintenanceWindowBounds(policy domain.OntologyMaintenanceConfig, now time.Time, previous *MaintenanceWindow) (time.Time, time.Time, error) {
 	if (policy.CadenceHours != 12 && policy.CadenceHours != 24) || policy.MaxConcurrency < 1 || policy.MaxConcurrency > 8 || policy.InputTokens < 1 || policy.OutputTokens < 1 {
 		return time.Time{}, time.Time{}, fmt.Errorf("%w: invalid maintenance policy", ErrInvalid)

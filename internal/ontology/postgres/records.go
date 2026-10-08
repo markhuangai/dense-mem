@@ -199,11 +199,22 @@ func (s *Store) currentView(tx *gorm.DB, fence scope, record ontology.Record) (o
 		return view, nil
 	}
 	snapshots, err := sourceSnapshots(tx, fence, []ontology.Record{record}, catalog)
+	if errors.Is(err, ontology.ErrDependencyStale) {
+		view.StaleReason = "dependency_changed"
+		return view, nil
+	}
 	if errors.Is(err, ontology.ErrSourceStale) {
 		view.StaleReason = "source_changed"
 		return view, nil
 	}
 	if err != nil {
+		return view, err
+	}
+	if err := ontology.CheckSourceDependencies(record, snapshots); err != nil {
+		if errors.Is(err, ontology.ErrSourceStale) {
+			view.StaleReason = "source_changed"
+			return view, nil
+		}
 		return view, err
 	}
 	if err := ontology.CheckDependencies([]ontology.Record{record}, snapshots, catalog); err != nil {
