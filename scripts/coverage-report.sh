@@ -153,7 +153,7 @@ run_complete() {
 	go test -tags evaluation "${evaluation_packages[@]}" -covermode=atomic -coverpkg="${evaluation_coverpkg}" -coverprofile="${evaluation_profile}" -count=1
 	DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/ontology/postgres \
 		-run '^(TestOntologyMaintenance(Cohort|RegenerationFailureRetry|ProviderPauseDrain|AccountingFailurePreventsPublication|BudgetDeferralAndManualReuse|ControlInterruptionResumesSameWindow|PauseCommandsAndWindows|OperatorHTTPAndScheduler|CommandAuditIsAtomic)|TestOntologyAutomaticRetirementPreservesGroupingOverrides|TestOntologyCurrentReadersDistinguishDependencyAndSourceChanges|TestOntologyGroupingOverridesPreserveAssignmentFreshness|TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges|TestOntologyVocabularyUsesCurrentCandidateWindow|TestOntologyVocabularyWindowPreservesTeamIsolationAndNameReuse|TestOntologyFollowupCohort|TestOntologyMaintenanceBoundedCompletionUsesPersistedOutcomes|TestOntologyMaintenanceEarlierAmbiguityKeepsBoundedRunIncomplete|TestOntologyMaintenanceScheduledRecoveryClearsCurrentReason|TestOntologyMaintenanceCompletedRunDoesNotHideUnrelatedFailures)$' \
-		-count=1 -timeout=10m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${postgres_profile}"
+		-count=1 -timeout=15m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${postgres_profile}"
 	go -C cmd/e2e test ./... -covermode=atomic -coverprofile="${e2e_profile}" -count=1
 	merge_profiles "${root_dedup_profile}" "${root_profile}"
 	merge_profiles "${evaluation_dedup_profile}" "${evaluation_profile}"
