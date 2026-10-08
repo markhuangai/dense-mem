@@ -189,19 +189,31 @@ END $rls$;
 CREATE FUNCTION dense_mem_enqueue_ontology_marker(p_team UUID,p_space UUID,p_generation BIGINT,p_anchor TEXT,p_id TEXT,p_kind TEXT,p_target TEXT)
 RETURNS VOID LANGUAGE plpgsql AS $body$
 DECLARE shared_id UUID; active_generation BIGINT;
+    scoped_writer BOOLEAN:=COALESCE(p_space IS NOT NULL AND p_generation IS NOT NULL AND current_setting('app.tx_mode',true) IN ('team','profile'),false);
 BEGIN
+    -- Scoped RLS already fences the shared generation of queued work.
+    IF scoped_writer THEN
+        PERFORM 1 FROM ontology_maintenance_markers
+            WHERE team_id=p_team AND shared_space_id=p_space AND space_generation=p_generation
+            AND anchor_kind=p_anchor AND anchor_id=p_id AND cursor=''
+            AND target_kind IS NOT DISTINCT FROM p_kind AND target_id IS NOT DISTINCT FROM p_target
+            FOR UPDATE;
+        IF FOUND THEN RETURN; END IF;
+    END IF;
     SELECT space.id,space.generation INTO shared_id,active_generation FROM memory_spaces AS space
         JOIN teams AS team ON team.id=space.team_id AND team.status='active' AND team.deleted_at IS NULL
         WHERE space.team_id=p_team AND space.kind='team_shared' AND space.lifecycle_state='active'
         AND (p_space IS NULL OR space.id=p_space) AND (p_generation IS NULL OR space.generation=p_generation);
     IF shared_id IS NULL THEN RETURN; END IF;
     -- Lock coalesced work so a writer waiting behind consumption recreates its marker.
-    PERFORM 1 FROM ontology_maintenance_markers
-        WHERE team_id=p_team AND shared_space_id=shared_id AND space_generation=active_generation
-        AND anchor_kind=p_anchor AND anchor_id=p_id AND cursor=''
-        AND target_kind IS NOT DISTINCT FROM p_kind AND target_id IS NOT DISTINCT FROM p_target
-        FOR UPDATE;
-    IF FOUND THEN RETURN; END IF;
+    IF NOT scoped_writer THEN
+        PERFORM 1 FROM ontology_maintenance_markers
+            WHERE team_id=p_team AND shared_space_id=shared_id AND space_generation=active_generation
+            AND anchor_kind=p_anchor AND anchor_id=p_id AND cursor=''
+            AND target_kind IS NOT DISTINCT FROM p_kind AND target_id IS NOT DISTINCT FROM p_target
+            FOR UPDATE;
+        IF FOUND THEN RETURN; END IF;
+    END IF;
     INSERT INTO ontology_maintenance_markers(team_id,shared_space_id,space_generation,anchor_kind,anchor_id,target_kind,target_id)
         VALUES(p_team,shared_id,active_generation,p_anchor,p_id,p_kind,p_target)
         ON CONFLICT(team_id,shared_space_id,space_generation,anchor_kind,anchor_id) DO UPDATE
