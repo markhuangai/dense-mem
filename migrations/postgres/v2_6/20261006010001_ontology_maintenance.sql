@@ -166,7 +166,7 @@ CREATE TRIGGER ontology_maintenance_attempt_guard BEFORE UPDATE OR DELETE ON ont
     FOR EACH ROW EXECUTE FUNCTION dense_mem_guard_ontology_attempt();
 
 DO $rls$
-DECLARE table_name TEXT;
+DECLARE table_name TEXT; scope_expression TEXT;
 BEGIN
     FOREACH table_name IN ARRAY ARRAY['ontology_maintenance_state','ontology_maintenance_windows','ontology_maintenance_runs','ontology_maintenance_attempts'] LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY',table_name);
@@ -176,13 +176,19 @@ BEGIN
     FOREACH table_name IN ARRAY ARRAY['ontology_maintenance_teams','ontology_maintenance_markers','ontology_maintenance_sources','ontology_maintenance_batches'] LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY',table_name);
         EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY',table_name);
-        EXECUTE format('CREATE POLICY ontology_shared ON %I FOR ALL USING (
-            current_setting(''app.tx_mode'',true) IN (''system'',''migration'') OR
-            (current_setting(''app.tx_mode'',true) IN (''team'',''profile'') AND team_id=NULLIF(current_setting(''app.current_team_id'',true),'''')::uuid
-             AND shared_space_id=dense_mem_team_shared_space(team_id) AND space_generation=dense_mem_active_space_generation(team_id,shared_space_id)))
-            WITH CHECK (current_setting(''app.tx_mode'',true) IN (''system'',''migration'') OR
-            (current_setting(''app.tx_mode'',true) IN (''team'',''profile'') AND team_id=NULLIF(current_setting(''app.current_team_id'',true),'''')::uuid
-             AND shared_space_id=dense_mem_team_shared_space(team_id) AND space_generation=dense_mem_active_space_generation(team_id,shared_space_id)))',table_name);
+        -- Resolve the marker frame once per statement instead of repeating privileged generation lookups.
+        scope_expression:=CASE WHEN table_name='ontology_maintenance_markers' THEN $scope$
+            current_setting('app.tx_mode',true) IN ('system','migration') OR
+            (current_setting('app.tx_mode',true) IN ('team','profile') AND team_id=NULLIF(current_setting('app.current_team_id',true),'')::uuid
+             AND (shared_space_id,space_generation)=(SELECT space.id,space.generation FROM memory_spaces AS space
+                 WHERE space.team_id=NULLIF(current_setting('app.current_team_id',true),'')::uuid
+                 AND space.kind='team_shared' AND space.lifecycle_state='active'))
+        $scope$ ELSE $scope$
+            current_setting('app.tx_mode',true) IN ('system','migration') OR
+            (current_setting('app.tx_mode',true) IN ('team','profile') AND team_id=NULLIF(current_setting('app.current_team_id',true),'')::uuid
+             AND shared_space_id=dense_mem_team_shared_space(team_id) AND space_generation=dense_mem_active_space_generation(team_id,shared_space_id))
+        $scope$ END;
+        EXECUTE format('CREATE POLICY ontology_shared ON %I FOR ALL USING (%s) WITH CHECK (%s)',table_name,scope_expression,scope_expression);
     END LOOP;
 END $rls$;
 

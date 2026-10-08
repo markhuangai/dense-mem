@@ -297,6 +297,13 @@
       "source": "internal/ontology/postgres/maintenance_invalidation_integration_test.go"
     },
     {
+      "id": "repository/TestOntologyMaintenanceMarkerFrameRLS",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceMarkerFrameRLS$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_invalidation_integration_test.go"
+    },
+    {
       "id": "repository/TestOntologyMaintenancePopulatedMigrationCannotRollback",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyMaintenancePopulatedMigrationCannotRollback$",

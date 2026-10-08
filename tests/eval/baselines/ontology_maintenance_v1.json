@@ -11,7 +11,7 @@
     "sha256:9fdc7e4995f5d62d18b3189eae3f5ebe6193efd5f0a20738b199b44da8e9d80c"
   ],
   "exchange_hashes_are_diagnostic_metadata": true,
-  "fresh_state_runs": 15,
+  "fresh_state_runs": 18,
   "false_consolidations": 0,
   "source_preservation": 1,
   "distinct_fact_coverage": 1,
@@ -124,17 +124,206 @@
     {"run":10,"started_at":"2026-10-07T11:46:22.211Z","completed_at":"2026-10-07T11:54:21.756Z","source_manifest_sha256":"sha256:062bc31664b95da8fc773a6f016b2ef6bc306fdbbfb809772c1239c2ecdce3d9","run_report_sha256":"sha256:6e99045fe9cdba9992ff583d6c1018579d2a80df85bb1f11e339dcc1bf8b0a4b","case_scores_sha256":"sha256:53347f63d0494a77ee43bcf818f703b247e7d89dd28c20928bb19b486ca10e44","model":"dense-mem-testing","provider_identity":"sha256:35301efb143f357c2a2cb2a4fc4ede3b7373163339db23f236f320c2792aa923","reported_input_tokens":6993,"reported_output_tokens":19390,"cases":[{"case_id":"different_actors","attempts":[{"number":1,"estimated_input_tokens":1167,"estimated_output_tokens":277,"reported_input_tokens":761,"reported_output_tokens":1467,"reported_total_tokens":2228,"reported_usage_available":true,"request_sha256":"sha256:815dd4e9b0bc1400c13c16fd4c19c19f6d07656d44d0cead9d336cc48125f8f5","response_sha256":"sha256:9119e90293a43a8f0da035dc0de7df3d799413ad47bbf00efbef1029d1f75e88","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"exact_duplicates","attempts":[{"number":1,"estimated_input_tokens":1321,"estimated_output_tokens":281,"reported_input_tokens":897,"reported_output_tokens":2309,"reported_total_tokens":3206,"reported_usage_available":true,"request_sha256":"sha256:0229660dde2993c4f685b2bfe97f12e82193878c67337d2386681f04b2a116dd","response_sha256":"sha256:9817b3f3b63ff96b7e18cda034b354b9831a757c3e927c6754b5b220483ff1f7","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"manager_grouping","attempts":[{"number":1,"estimated_input_tokens":1170,"estimated_output_tokens":209,"reported_input_tokens":758,"reported_output_tokens":2074,"reported_total_tokens":2832,"reported_usage_available":true,"request_sha256":"sha256:177a4d39bc4c5ebfb1cfe1acf6e7e2c9ee70802f30492686a3875a71fcdca20a","response_sha256":"sha256:9e249d23d3ee1f3bdae62892bb9705af814fac1b55927982599c2a2502140518","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"manager_separation","attempts":[{"number":1,"estimated_input_tokens":1168,"estimated_output_tokens":204,"reported_input_tokens":760,"reported_output_tokens":2137,"reported_total_tokens":2897,"reported_usage_available":true,"request_sha256":"sha256:27ee790bfa4ab043ff6ae4e3db94737aabd3b11ec43573c4c4b5f2a65e84d51f","response_sha256":"sha256:fbd52e3c3ca9e0ce49e9201c7b5abc0c96977659adaf85bfc66dd8d7c0976932","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"paraphrases","attempts":[{"number":1,"estimated_input_tokens":1173,"estimated_output_tokens":225,"reported_input_tokens":762,"reported_output_tokens":1866,"reported_total_tokens":2628,"reported_usage_available":true,"request_sha256":"sha256:c8627bf29ba0c11a0a771188ef9c6b85b16cce94bff55f2358e390b7578ff903","response_sha256":"sha256:0aa8b23a0bb5839e6d3a15d83710335e3ebcef71f59bf72b1c278fb96aac450e","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"partial_overlap","attempts":[{"number":1,"estimated_input_tokens":1175,"estimated_output_tokens":288,"reported_input_tokens":763,"reported_output_tokens":2044,"reported_total_tokens":2807,"reported_usage_available":true,"request_sha256":"sha256:70d4f5107774511bc31e8d3f2e99796188f2b271d6763fa79e21adf6bbdaf103","response_sha256":"sha256:5f67f29832adcfa4b89f5bd58cc2be39d2893a112ae28c89fe52bd8aaa120842","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"polarity","attempts":[{"number":1,"estimated_input_tokens":1173,"estimated_output_tokens":223,"reported_input_tokens":760,"reported_output_tokens":2378,"reported_total_tokens":3138,"reported_usage_available":true,"request_sha256":"sha256:3565b88395c32c98de2a62d0bbadad67e935df02a956daa8ce5b89d6a387789b","response_sha256":"sha256:826797ba8b004e8a7e665c0e11e0e07f79779d1ec2178260514a528761e9a9ae","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"qualifications","attempts":[{"number":1,"estimated_input_tokens":1178,"estimated_output_tokens":292,"reported_input_tokens":766,"reported_output_tokens":2591,"reported_total_tokens":3357,"reported_usage_available":true,"request_sha256":"sha256:5969c36a1539945ad214eb3a941aa81324e2f609aaf8da2d29b5d4c630d74fbf","response_sha256":"sha256:ffefd21c19a87122279896547f408effaabcfdc37e14ece5be014588166e8e76","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"temporal_scope","attempts":[{"number":1,"estimated_input_tokens":1170,"estimated_output_tokens":277,"reported_input_tokens":766,"reported_output_tokens":2524,"reported_total_tokens":3290,"reported_usage_available":true,"request_sha256":"sha256:055b0cbf2071026f53c5dda69d0bd1f3b2654c743b569d625c59fedc8c897e92","response_sha256":"sha256:416daad46bfb4818c449c18f0d5eb9af320de2cb597766105ff0395c4449f8e2","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0}],"phase":"marker-lock-fast-path"},
     {"run":11,"started_at":"2026-10-07T12:02:43.229Z","completed_at":"2026-10-07T12:12:14.442Z","source_manifest_sha256":"sha256:062bc31664b95da8fc773a6f016b2ef6bc306fdbbfb809772c1239c2ecdce3d9","run_report_sha256":"sha256:a3381d0452dc754a4d234ba07d67b33b7e2697085038d9809d9b84feb24723f9","case_scores_sha256":"sha256:53347f63d0494a77ee43bcf818f703b247e7d89dd28c20928bb19b486ca10e44","model":"dense-mem-testing","provider_identity":"sha256:35301efb143f357c2a2cb2a4fc4ede3b7373163339db23f236f320c2792aa923","reported_input_tokens":8345,"reported_output_tokens":22411,"cases":[{"case_id":"different_actors","attempts":[{"number":1,"estimated_input_tokens":1170,"estimated_output_tokens":214,"reported_input_tokens":762,"reported_output_tokens":1885,"reported_total_tokens":2647,"reported_usage_available":true,"request_sha256":"sha256:459888438cbd3c538686059972468cd8cdcee0063638cca5d58c89a7fece37fe","response_sha256":"sha256:5bac6a8e7de9592d7b93c41b95527e9d4f111301251b31324a56931fd1fa0842","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"exact_duplicates","attempts":[{"number":1,"estimated_input_tokens":1325,"estimated_output_tokens":281,"reported_input_tokens":897,"reported_output_tokens":2531,"reported_total_tokens":3428,"reported_usage_available":true,"failure_code":"response_invalid","request_sha256":"sha256:5ba80bf359e057d3c4a7e853473bbc8b8abdaca895efe45a7da65d03fde9f2d8","response_sha256":"sha256:37f1b376fe394b933a6bde94cf992a65c49d79ffda47ddb46bd623fb99348172","response_validation":"rejected","validation_error_sha256":"sha256:d19be581b45beaf0f1acc64f9c0c1bbdfe4bd7478df37abd312fbfefaac8d065"},{"number":2,"estimated_input_tokens":1796,"estimated_output_tokens":306,"reported_input_tokens":1350,"reported_output_tokens":1852,"reported_total_tokens":3202,"reported_usage_available":true,"request_sha256":"sha256:53a59e107b8d74c709b4fc68b37e447b8640f795bfa4f6a08556943f81749610","response_sha256":"sha256:b0b4076754694fdf0b0526d867eff71e4fc8bbe4db1829617e8472dd1b58520e","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"manager_grouping","attempts":[{"number":1,"estimated_input_tokens":1170,"estimated_output_tokens":222,"reported_input_tokens":762,"reported_output_tokens":1954,"reported_total_tokens":2716,"reported_usage_available":true,"request_sha256":"sha256:0f699f4761289686a05af63fcbcd9ca44c420865f92d7a256c3f88aee6080045","response_sha256":"sha256:4da77281afa191ec72c11cd48eb227cf44970097816bb66ffcd2fca0854438c4","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"manager_separation","attempts":[{"number":1,"estimated_input_tokens":1170,"estimated_output_tokens":210,"reported_input_tokens":760,"reported_output_tokens":2131,"reported_total_tokens":2891,"reported_usage_available":true,"request_sha256":"sha256:9e96653773ce6273f64999da962295e528509672525c8f9eadb8b1e9b852c110","response_sha256":"sha256:8071f571bffd03d628ee1c861a005aa61b43833cf9d6044eb719463d33c1a549","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"paraphrases","attempts":[{"number":1,"estimated_input_tokens":1174,"estimated_output_tokens":220,"reported_input_tokens":765,"reported_output_tokens":2331,"reported_total_tokens":3096,"reported_usage_available":true,"request_sha256":"sha256:32fecd3cf17cef39ea47d2a1dc534bb527301befab7e5164ef37d8be8f0a8ada","response_sha256":"sha256:073ab68df877e711373869072f1ea6dc2128c4e4030ba076580db246eb10cd53","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"partial_overlap","attempts":[{"number":1,"estimated_input_tokens":1175,"estimated_output_tokens":304,"reported_input_tokens":760,"reported_output_tokens":2906,"reported_total_tokens":3666,"reported_usage_available":true,"request_sha256":"sha256:a79ece6d10ecac13e32fe15c58dcd26c8ff9050e79d3026f16a5f32a17b00ada","response_sha256":"sha256:d4f2e16bcd412195c666f02d76a74f9a6812bc0f567dc8ce917d826224cb9818","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"polarity","attempts":[{"number":1,"estimated_input_tokens":1168,"estimated_output_tokens":202,"reported_input_tokens":756,"reported_output_tokens":2260,"reported_total_tokens":3016,"reported_usage_available":true,"request_sha256":"sha256:50fc0fc6dd41711f80568d6977ed284e7a3d2be1131b401ed0ad322966f7ca0c","response_sha256":"sha256:af4be2e449623b5c42ba6361522bf53922c66e7f8ae586fd9f211a266aab288e","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"qualifications","attempts":[{"number":1,"estimated_input_tokens":1179,"estimated_output_tokens":295,"reported_input_tokens":767,"reported_output_tokens":2500,"reported_total_tokens":3267,"reported_usage_available":true,"request_sha256":"sha256:e449585bed6a666f854d3fa1b5b969d8c0ebe6b6663270787db25d241edc38a0","response_sha256":"sha256:b4e1fe9e28adcb162cb40789fc15a333e8753ae9c9f31a05406b9adc1af80323","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"temporal_scope","attempts":[{"number":1,"estimated_input_tokens":1171,"estimated_output_tokens":205,"reported_input_tokens":766,"reported_output_tokens":2061,"reported_total_tokens":2827,"reported_usage_available":true,"request_sha256":"sha256:83b5da10ddcf93865e04b000a2064a5a97d426265a8ee3dac417a32ade8cbe56","response_sha256":"sha256:7a30d2bf3db26676f6f28eddedabf3dc63e13564e54740c87b12445a60d74f30","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0}],"phase":"marker-lock-fast-path"},
     {"run":12,"started_at":"2026-10-07T12:21:09.999Z","completed_at":"2026-10-07T12:30:22.225Z","source_manifest_sha256":"sha256:062bc31664b95da8fc773a6f016b2ef6bc306fdbbfb809772c1239c2ecdce3d9","run_report_sha256":"sha256:57fe755db1103d24c745f06f13838765223326251628d86bf62383fdb9e0f616","case_scores_sha256":"sha256:53347f63d0494a77ee43bcf818f703b247e7d89dd28c20928bb19b486ca10e44","model":"dense-mem-testing","provider_identity":"sha256:35301efb143f357c2a2cb2a4fc4ede3b7373163339db23f236f320c2792aa923","reported_input_tokens":8335,"reported_output_tokens":21826,"cases":[{"case_id":"different_actors","attempts":[{"number":1,"estimated_input_tokens":1166,"estimated_output_tokens":201,"reported_input_tokens":761,"reported_output_tokens":2161,"reported_total_tokens":2922,"reported_usage_available":true,"request_sha256":"sha256:acef0d6776260a95ae03fbb77916509fd7cb752ad28cdd78bc95a3e1a7d630f3","response_sha256":"sha256:e72939f94f47d5f059d5c58b76cc51a3740eacb527afe0f708d47d2390f1e962","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"exact_duplicates","attempts":[{"number":1,"estimated_input_tokens":1322,"estimated_output_tokens":270,"reported_input_tokens":895,"reported_output_tokens":2717,"reported_total_tokens":3612,"reported_usage_available":true,"failure_code":"response_invalid","request_sha256":"sha256:e4d1780ad8061bf436498590f1f6697f4f717a945b277eed2314e5251370f0d2","response_sha256":"sha256:c874720d726962d1a8b88b37018a8a2585c383c5d93fc8ed25114b51572cb61f","response_validation":"rejected","validation_error_sha256":"sha256:d19be581b45beaf0f1acc64f9c0c1bbdfe4bd7478df37abd312fbfefaac8d065"},{"number":2,"estimated_input_tokens":1782,"estimated_output_tokens":290,"reported_input_tokens":1337,"reported_output_tokens":1294,"reported_total_tokens":2631,"reported_usage_available":true,"request_sha256":"sha256:8672839f0a976093e2e3b0de37bfeb3a60055d118e751f186c6503ec927ce21b","response_sha256":"sha256:7cf7d21c209496b63515edba4b79448048c2904859e86c7a3978e96f5fa68287","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"manager_grouping","attempts":[{"number":1,"estimated_input_tokens":1171,"estimated_output_tokens":207,"reported_input_tokens":760,"reported_output_tokens":2316,"reported_total_tokens":3076,"reported_usage_available":true,"request_sha256":"sha256:d3449efea4ed5d8fa36b7d8a68c8a9ec996b8f20de74445071b0b470187503fe","response_sha256":"sha256:450d4ce7301810661c711434e9755227029f86b435346af7a081f5b90d4f5085","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"manager_separation","attempts":[{"number":1,"estimated_input_tokens":1174,"estimated_output_tokens":214,"reported_input_tokens":760,"reported_output_tokens":1951,"reported_total_tokens":2711,"reported_usage_available":true,"request_sha256":"sha256:26bc3a759ddcdaf807a738a327f844def582bd915aca4b3dd945581d580eb816","response_sha256":"sha256:b68d462689f7f8de3ead03bfaf9610272e2e001c1c8a5adaa7f6d46fe260df75","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"paraphrases","attempts":[{"number":1,"estimated_input_tokens":1174,"estimated_output_tokens":210,"reported_input_tokens":766,"reported_output_tokens":1863,"reported_total_tokens":2629,"reported_usage_available":true,"request_sha256":"sha256:2361d54354111d5dfe99a77bc392ae69c2480ec576f5eacd567b3af2da1df99a","response_sha256":"sha256:82e9f7b6ce240f584ddfeb18c148b6a155603b9a87ab0f2a254fbd1e7ffc0b95","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"partial_overlap","attempts":[{"number":1,"estimated_input_tokens":1172,"estimated_output_tokens":290,"reported_input_tokens":760,"reported_output_tokens":2525,"reported_total_tokens":3285,"reported_usage_available":true,"request_sha256":"sha256:6ee9c0d8d417bbf97772726b19de449b2193a7733ed8a773455844e81ec06f56","response_sha256":"sha256:b4de24a11139048c4746d9bb4dddf983f1429c6de566816a0b3b260d9a527255","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"polarity","attempts":[{"number":1,"estimated_input_tokens":1172,"estimated_output_tokens":210,"reported_input_tokens":761,"reported_output_tokens":2241,"reported_total_tokens":3002,"reported_usage_available":true,"request_sha256":"sha256:a872e93a8de2883f42101b85246cc22a16cdc10b332cf54e6f83b2cf0bce5c64","response_sha256":"sha256:6b1cd5113299b0d04ebe8af9e4d34eb38560e51a07d3fb0fe774cd10c976f0be","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"qualifications","attempts":[{"number":1,"estimated_input_tokens":1177,"estimated_output_tokens":275,"reported_input_tokens":768,"reported_output_tokens":2453,"reported_total_tokens":3221,"reported_usage_available":true,"request_sha256":"sha256:fff6b3ed8764d974647de63b55fa56e617bad5570bcec97bf94b9a5274b08e29","response_sha256":"sha256:a8689410d5d427c5fefc78cbb2abacd0e5bfbae0e9faaecd71ae1172e8660203","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"temporal_scope","attempts":[{"number":1,"estimated_input_tokens":1172,"estimated_output_tokens":203,"reported_input_tokens":767,"reported_output_tokens":2305,"reported_total_tokens":3072,"reported_usage_available":true,"request_sha256":"sha256:7d84e972694bb7f98a6f81b8037c6f16001ae3d461589e52a66e27eb7098b70f","response_sha256":"sha256:d44703c2dc305ed3555bfb804dd9182bb3a94ebbbb98d65eaed39c7444496411","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0}],"phase":"marker-lock-fast-path"},
+    {"run":13,"started_at":"2026-10-08T00:32:27.112Z","completed_at":"2026-10-08T00:43:49.551Z","source_manifest_sha256":"sha256:80fd626a255ea4efbed3d104929a84f6e00794dcfa2269a1ad9212ace75ee248","run_report_sha256":"sha256:a864ae0d322b30f5b5ea2523d7d0504b3c96f9d5aa76436f6c724ebc84bf89fe","case_scores_sha256":"sha256:53347f63d0494a77ee43bcf818f703b247e7d89dd28c20928bb19b486ca10e44","model":"dense-mem-testing","provider_identity":"sha256:35301efb143f357c2a2cb2a4fc4ede3b7373163339db23f236f320c2792aa923","reported_input_tokens":10758,"reported_output_tokens":29283,"cases":[{"case_id":"different_actors","attempts":[{"number":1,"estimated_input_tokens":1168,"estimated_output_tokens":285,"reported_input_tokens":761,"reported_output_tokens":2489,"reported_total_tokens":3250,"reported_usage_available":true,"request_sha256":"sha256:3e0a38844776b687388abaaf18a294a19471460ce273647c176977aec0eed06f","response_sha256":"sha256:650c7befe594961404f6b11b6079a902b9e40db215c9bdeea7799abfdc94a702","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"exact_duplicates","attempts":[{"number":1,"estimated_input_tokens":1326,"estimated_output_tokens":283,"reported_input_tokens":900,"reported_output_tokens":3146,"reported_total_tokens":4046,"reported_usage_available":true,"request_sha256":"sha256:3812a3c7eea373d0c6bd0b9e1b49dd94bcc212290b6d4fa4f31b248eafb9980e","response_sha256":"sha256:e7796c1826d76898c2e926b4272744c0ea49770199ad644a01102562016d09c6","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"manager_grouping","attempts":[{"number":1,"estimated_input_tokens":1172,"estimated_output_tokens":211,"reported_input_tokens":761,"reported_output_tokens":2093,"reported_total_tokens":2854,"reported_usage_available":true,"request_sha256":"sha256:fe1752bb34cae1f4dbd1f0be63792f0a10c67e3859ed899ae3c3b0a7dc6cb200","response_sha256":"sha256:81b3e0dae433f091ad908cf452d006da21f1a4eb301d150b1b6916d6b22c0ff9","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"manager_separation","attempts":[{"number":1,"estimated_input_tokens":1172,"estimated_output_tokens":279,"reported_input_tokens":762,"reported_output_tokens":3273,"reported_total_tokens":4035,"reported_usage_available":true,"failure_code":"response_invalid","request_sha256":"sha256:071d04b890105ec112a2e0527ba895b7969d210a32c2ac5da6feba473319f88d","response_sha256":"sha256:d5a5ebc968823ee18e59c996b25222f0866aec3ac0a34d338d3e071c983b8b5c","response_validation":"rejected","validation_error_sha256":"sha256:42746a4b89bc9a0b34c485ec613c02fe674cf358496915e9ec13b6a546374997"},{"number":2,"estimated_input_tokens":1645,"estimated_output_tokens":291,"reported_input_tokens":1205,"reported_output_tokens":2478,"reported_total_tokens":3683,"reported_usage_available":true,"request_sha256":"sha256:f3d628745a654e442f36af41a9bd7a3925a8517eaefae06ee0c9eed858e218ec","response_sha256":"sha256:d2d8965e02b3ce4a48ec183272a063b5a34f395ee61f05f57cf066117791ae47","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"paraphrases","attempts":[{"number":1,"estimated_input_tokens":1175,"estimated_output_tokens":224,"reported_input_tokens":767,"reported_output_tokens":2133,"reported_total_tokens":2900,"reported_usage_available":true,"request_sha256":"sha256:5164d375766e5121f7d6883dfab2eedcf717f8c2312c1cc6b359df0edb03115d","response_sha256":"sha256:3f2823de5b65390026552cbd198c5c9301bfd468c2347c4c7e30ff2509f1bd92","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"partial_overlap","attempts":[{"number":1,"estimated_input_tokens":1173,"estimated_output_tokens":297,"reported_input_tokens":762,"reported_output_tokens":2903,"reported_total_tokens":3665,"reported_usage_available":true,"request_sha256":"sha256:b957f0e1344876565812eef8aecf5ebce8edab18c19a7098a1767368afbd1447","response_sha256":"sha256:b18b4ad3aea3c0b72eda2c4b81afe7f7cf7f5dbaacb8f3b400b6700e30ac6dea","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"polarity","attempts":[{"number":1,"estimated_input_tokens":1170,"estimated_output_tokens":281,"reported_input_tokens":760,"reported_output_tokens":2413,"reported_total_tokens":3173,"reported_usage_available":true,"request_sha256":"sha256:36f0cf4fe269e6e93dcecb6061ef6dc98b2a307e7bec4325028976667415b996","response_sha256":"sha256:e317358e63469a1631bf0815d69034b3a84a53099555d23fd88b499bf854895c","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"qualifications","attempts":[{"number":1,"estimated_input_tokens":1181,"estimated_output_tokens":192,"reported_input_tokens":768,"reported_output_tokens":2341,"reported_total_tokens":3109,"reported_usage_available":true,"failure_code":"response_invalid","request_sha256":"sha256:81120ee001b6b0d090df76ce63b1f4d9b94cb6460bd1caff8fbef986d1ab87d2","response_sha256":"sha256:717591c347161ec4f28df8c9ac8646141140d22afd59aed3cb42bdd77dee7235","response_validation":"rejected","validation_error_sha256":"sha256:9d476ec615dbe5c29ca813b4b0af2dab4d324917b8cbbceb1a5b5fc64e7a85c2"},{"number":2,"estimated_input_tokens":1537,"estimated_output_tokens":190,"reported_input_tokens":1106,"reported_output_tokens":1958,"reported_total_tokens":3064,"reported_usage_available":true,"failure_code":"response_invalid","request_sha256":"sha256:0a6fc961c6846ec0e4a8f45ede61d56bc38abff33c02193336796af222579811","response_sha256":"sha256:49322cb710fc72bd1b361a1458894293683fbb58f20ac24e3b17f9547dcb3e42","response_validation":"rejected","validation_error_sha256":"sha256:9d476ec615dbe5c29ca813b4b0af2dab4d324917b8cbbceb1a5b5fc64e7a85c2"},{"number":3,"estimated_input_tokens":1890,"estimated_output_tokens":298,"reported_input_tokens":1441,"reported_output_tokens":1772,"reported_total_tokens":3213,"reported_usage_available":true,"request_sha256":"sha256:446faa265de4f72722367b6b1335e2d9ac62551d24e6b3607d53643e791ffc02","response_sha256":"sha256:14dee907619aead6f19c6765e603607f016068db2b389665d2dfe6be28f6c404","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"temporal_scope","attempts":[{"number":1,"estimated_input_tokens":1172,"estimated_output_tokens":210,"reported_input_tokens":765,"reported_output_tokens":2284,"reported_total_tokens":3049,"reported_usage_available":true,"request_sha256":"sha256:fc1d07c1c9e9097e6bd642b686eeb7a15efc0a6d333a6a483a028442b1d4b58b","response_sha256":"sha256:ea477981a2a3db87311a8c5db8d4c8ab9e60fdce992300743ba8b40f0219ac0a","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0}],"phase":"scoped-marker-first"},
+    {"run":14,"started_at":"2026-10-08T00:48:29.635Z","completed_at":"2026-10-08T00:56:28.007Z","source_manifest_sha256":"sha256:80fd626a255ea4efbed3d104929a84f6e00794dcfa2269a1ad9212ace75ee248","run_report_sha256":"sha256:1b3cfb1eab58179500c463511a32e6e6ab89404cb34c6a7017a2010d1f7304f9","case_scores_sha256":"sha256:53347f63d0494a77ee43bcf818f703b247e7d89dd28c20928bb19b486ca10e44","model":"dense-mem-testing","provider_identity":"sha256:35301efb143f357c2a2cb2a4fc4ede3b7373163339db23f236f320c2792aa923","reported_input_tokens":8118,"reported_output_tokens":19417,"cases":[{"case_id":"different_actors","attempts":[{"number":1,"estimated_input_tokens":1174,"estimated_output_tokens":284,"reported_input_tokens":759,"reported_output_tokens":2157,"reported_total_tokens":2916,"reported_usage_available":true,"request_sha256":"sha256:06a72813f4b93f7bb01b7176ad4abe35912dbf1a9e397d0f57bdbcfbc7d03a04","response_sha256":"sha256:d91c0c57f2706e7ae50fc43232d3b8af4f3a18ad79e444333aa13cb0b2c2050a","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"exact_duplicates","attempts":[{"number":1,"estimated_input_tokens":1324,"estimated_output_tokens":283,"reported_input_tokens":898,"reported_output_tokens":1820,"reported_total_tokens":2718,"reported_usage_available":true,"request_sha256":"sha256:ef4a7e21d5911f7a0acd1a0da86a6a2ee2c251ce50c1c2b29d4cb8a1692a02a7","response_sha256":"sha256:00cbc0854bc3b35b49351b435cb60d47fddfe201a57c3e61f078a205374f45f0","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"manager_grouping","attempts":[{"number":1,"estimated_input_tokens":1171,"estimated_output_tokens":208,"reported_input_tokens":760,"reported_output_tokens":1867,"reported_total_tokens":2627,"reported_usage_available":true,"request_sha256":"sha256:43eff09fc90be34343b57ba7fe4fdbb11deb4569ffe6be6302ed49927676bae3","response_sha256":"sha256:aef8e88930fedfb3ba8e877c6f2660fec3f096b2dd7a9c66463898cd7ae154c2","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"manager_separation","attempts":[{"number":1,"estimated_input_tokens":1170,"estimated_output_tokens":212,"reported_input_tokens":756,"reported_output_tokens":1726,"reported_total_tokens":2482,"reported_usage_available":true,"request_sha256":"sha256:47259ddd57ff927bca8d5ab15f3259d34e66a3acfd14ab09c75a0b7c2c875f6d","response_sha256":"sha256:08e4cd1fbb7335db195ba69a7c50272e8b6afd431a9053e051b1de647d55a38b","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"paraphrases","attempts":[{"number":1,"estimated_input_tokens":1176,"estimated_output_tokens":203,"reported_input_tokens":765,"reported_output_tokens":2483,"reported_total_tokens":3248,"reported_usage_available":true,"failure_code":"response_invalid","request_sha256":"sha256:8851793fde0e47f8372fa46909b574a9b5e18bd9628d19d0a793b5c4020d93b7","response_sha256":"sha256:1a13b1a6bbe23dd7cb4e751b0763eb1ee3cf5353452ceda4dd7d5d2879c5ddcb","response_validation":"rejected","validation_error_sha256":"sha256:d19be581b45beaf0f1acc64f9c0c1bbdfe4bd7478df37abd312fbfefaac8d065"},{"number":2,"estimated_input_tokens":1552,"estimated_output_tokens":214,"reported_input_tokens":1126,"reported_output_tokens":1352,"reported_total_tokens":2478,"reported_usage_available":true,"request_sha256":"sha256:823df207a3082ff12740544c04abaec85ce8812c2c55f7185ea634fa29d5b92d","response_sha256":"sha256:271d31934b2362bedd14415fa8a20e78ecb9a9569d30334f336bc1b1f4c72be8","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"partial_overlap","attempts":[{"number":1,"estimated_input_tokens":1170,"estimated_output_tokens":286,"reported_input_tokens":763,"reported_output_tokens":2115,"reported_total_tokens":2878,"reported_usage_available":true,"request_sha256":"sha256:975db79751aa7bc81ea8a4d217e0ff72a5a6a9f0278dffe9f21399fa3492bd9b","response_sha256":"sha256:816a9591d2dce6a5856c3269207e4fb5f3bdebc776277ae4e07a71904edff7c1","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"polarity","attempts":[{"number":1,"estimated_input_tokens":1175,"estimated_output_tokens":218,"reported_input_tokens":761,"reported_output_tokens":1804,"reported_total_tokens":2565,"reported_usage_available":true,"request_sha256":"sha256:504fd67a92f764fa26fc17f2bb3b544f06ad620886fbb49b8bbd3bcf39123db1","response_sha256":"sha256:4df95b1ad498cbe3ebf01abb6001dac878756ea988a55c451729342c4f699e27","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"qualifications","attempts":[{"number":1,"estimated_input_tokens":1175,"estimated_output_tokens":292,"reported_input_tokens":766,"reported_output_tokens":2104,"reported_total_tokens":2870,"reported_usage_available":true,"request_sha256":"sha256:d25248cf90833162d80aa8f6cfbbe18204d3a85c2ae983bb313e8d0016898fb2","response_sha256":"sha256:02d66bff793057bc67c98603d823f0beb14ef92ccaa1612af4e74ed9f6667d0f","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"temporal_scope","attempts":[{"number":1,"estimated_input_tokens":1171,"estimated_output_tokens":206,"reported_input_tokens":764,"reported_output_tokens":1989,"reported_total_tokens":2753,"reported_usage_available":true,"request_sha256":"sha256:39ba7c6a40a93bf97b0664eb624ccf06cb892adadd10b2040d6c13168c6f3024","response_sha256":"sha256:e641a1acf27bcfd34417b90f1f36336460093e14a5f49e5413ef5a529b61086f","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0}],"phase":"scoped-marker-first"},
+    {"run":15,"started_at":"2026-10-08T00:57:56.251Z","completed_at":"2026-10-08T01:06:49.086Z","source_manifest_sha256":"sha256:80fd626a255ea4efbed3d104929a84f6e00794dcfa2269a1ad9212ace75ee248","run_report_sha256":"sha256:f11b26bb5189f5ade066a7095205ab91e8fbb8c843379dcec7058052d6ccdbad","case_scores_sha256":"sha256:53347f63d0494a77ee43bcf818f703b247e7d89dd28c20928bb19b486ca10e44","model":"dense-mem-testing","provider_identity":"sha256:35301efb143f357c2a2cb2a4fc4ede3b7373163339db23f236f320c2792aa923","reported_input_tokens":8159,"reported_output_tokens":20377,"cases":[{"case_id":"different_actors","attempts":[{"number":1,"estimated_input_tokens":1173,"estimated_output_tokens":276,"reported_input_tokens":762,"reported_output_tokens":1999,"reported_total_tokens":2761,"reported_usage_available":true,"request_sha256":"sha256:9080d569cb006f099014edbccc8304891b85339940b0178770042c502900651c","response_sha256":"sha256:e6b48be2a6d0605711494b7ac058d316a25c6aa171532d174be264bf1be18c09","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"exact_duplicates","attempts":[{"number":1,"estimated_input_tokens":1322,"estimated_output_tokens":282,"reported_input_tokens":899,"reported_output_tokens":1892,"reported_total_tokens":2791,"reported_usage_available":true,"request_sha256":"sha256:0c2e72dd8d8cfa6af2aa857cef2503924b9439cb8837b5c84fe94aec6c2a9752","response_sha256":"sha256:bbf874d64edeaa1d9c97ee246496a3d0bf2a38bc5fdf950ff5ddc9af8bb1103e","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"manager_grouping","attempts":[{"number":1,"estimated_input_tokens":1169,"estimated_output_tokens":213,"reported_input_tokens":763,"reported_output_tokens":2582,"reported_total_tokens":3345,"reported_usage_available":true,"request_sha256":"sha256:d537d6091e222e2e4b75d8546cf8ca6b95f2d3264a49226889782de14896cddc","response_sha256":"sha256:0ad5e560c25b7c9354426f68167993a812bc39602c9b49063cb38452c96a5d47","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"manager_separation","attempts":[{"number":1,"estimated_input_tokens":1166,"estimated_output_tokens":198,"reported_input_tokens":760,"reported_output_tokens":2680,"reported_total_tokens":3440,"reported_usage_available":true,"request_sha256":"sha256:1dd66860d4b3318004874ae29788a095b97278b27ccbfe931de1e922da47022e","response_sha256":"sha256:ba1c76d621da19847e5c06252f4da9b70536cb7764c13375173d8a56093d3420","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"paraphrases","attempts":[{"number":1,"estimated_input_tokens":1175,"estimated_output_tokens":237,"reported_input_tokens":763,"reported_output_tokens":671,"reported_total_tokens":1434,"reported_usage_available":true,"failure_code":"response_invalid","request_sha256":"sha256:87cf3f9423854b06c6725a8d79c4bd1734dbc43850c7337339282e1a15f2e011","response_sha256":"sha256:6dd7ffde276020578321f195d4040c3c9407d69a109eee7dcdd4d343e72e0b7f","response_validation":"rejected","validation_error_sha256":"sha256:0215fa8bafed23f241c160ab0f4e53b55df78d7e8fd216b6d4a61af45040f9be"},{"number":2,"estimated_input_tokens":1589,"estimated_output_tokens":231,"reported_input_tokens":1159,"reported_output_tokens":1790,"reported_total_tokens":2949,"reported_usage_available":true,"request_sha256":"sha256:5e36d6fa1e5cf50bc9fd13f868cf9504b92e4664ca32b834d319e0ef16a4a5f7","response_sha256":"sha256:112c03c3cd139c91ccf69b00ca9ef1f10cef79419ec9836a49bbb2e9489b504c","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"partial_overlap","attempts":[{"number":1,"estimated_input_tokens":1171,"estimated_output_tokens":294,"reported_input_tokens":758,"reported_output_tokens":2177,"reported_total_tokens":2935,"reported_usage_available":true,"request_sha256":"sha256:daccafeabdf15ddb2cf46b826e692db28af6467d8532706900c00999ca0ba579","response_sha256":"sha256:1261b05866de0e6571d65d92153de8e9d1c6ccea64c0a20eecf86db73273b1d1","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"polarity","attempts":[{"number":1,"estimated_input_tokens":1170,"estimated_output_tokens":275,"reported_input_tokens":759,"reported_output_tokens":2091,"reported_total_tokens":2850,"reported_usage_available":true,"request_sha256":"sha256:7c79d5783ea479117a16869cbac471858e8a1d24c4b7a566b456d7f4aabd40b3","response_sha256":"sha256:82161c5bc6d646567703d15f0cae36d41ade79294960b0e5136113221b4d7e22","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"qualifications","attempts":[{"number":1,"estimated_input_tokens":1172,"estimated_output_tokens":289,"reported_input_tokens":768,"reported_output_tokens":2333,"reported_total_tokens":3101,"reported_usage_available":true,"request_sha256":"sha256:f30ab551ed2791d3dc8d2850bb772d37b3b5ae3e1647557dd611ab561af9ce74","response_sha256":"sha256:76676093fa50e7a9723f09814e32d089f7e6de896fef2354609d599545281e86","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0},{"case_id":"temporal_scope","attempts":[{"number":1,"estimated_input_tokens":1175,"estimated_output_tokens":221,"reported_input_tokens":768,"reported_output_tokens":2162,"reported_total_tokens":2930,"reported_usage_available":true,"request_sha256":"sha256:42cf48be13eee3590ef1dd38d0e955ddfe01aea32072dc6a0212221aec3efc71","response_sha256":"sha256:150bb85770cb65ddbd980d64f9b50f65bfa9b8c870e5ab840bbd94c01f21b1b8","response_validation":"accepted","validation_error_sha256":null}],"replay_provider_calls":0}],"phase":"scoped-marker-first"},
     {
-      "run": 13,
-      "started_at": "2026-10-08T00:32:27.112Z",
-      "completed_at": "2026-10-08T00:43:49.551Z",
-      "source_manifest_sha256": "sha256:80fd626a255ea4efbed3d104929a84f6e00794dcfa2269a1ad9212ace75ee248",
-      "run_report_sha256": "sha256:a864ae0d322b30f5b5ea2523d7d0504b3c96f9d5aa76436f6c724ebc84bf89fe",
+      "run": 16,
+      "started_at": "2026-10-08T05:20:27.597Z",
+      "completed_at": "2026-10-08T05:28:21.320Z",
+      "source_manifest_sha256": "sha256:b582b3b0a8cd5767e51744a4aba8be3c9fe9780ba2d18090c5e7b623d6c5c840",
+      "run_report_sha256": "sha256:4261a0a7d97804dd414c130b6f189cd7e1683037aaffd6f27c08976ce1432377",
       "case_scores_sha256": "sha256:53347f63d0494a77ee43bcf818f703b247e7d89dd28c20928bb19b486ca10e44",
       "model": "dense-mem-testing",
       "provider_identity": "sha256:35301efb143f357c2a2cb2a4fc4ede3b7373163339db23f236f320c2792aa923",
-      "reported_input_tokens": 10758,
-      "reported_output_tokens": 29283,
+      "reported_input_tokens": 7000,
+      "reported_output_tokens": 19804,
+      "cases": [
+        {
+          "case_id": "different_actors",
+          "attempts": [
+            {
+              "number": 1,
+              "estimated_input_tokens": 1172,
+              "estimated_output_tokens": 279,
+              "reported_input_tokens": 758,
+              "reported_output_tokens": 2364,
+              "reported_total_tokens": 3122,
+              "reported_usage_available": true,
+              "request_sha256": "sha256:c018f8b33bd7698b463ae165b0d0abccbbbb8073e47066965d2de63a6db96554",
+              "response_sha256": "sha256:29202f2380ba816f65d26a7a116ddec072e29f252e904d3c1384c37f3f14c1cd",
+              "response_validation": "accepted",
+              "validation_error_sha256": null
+            }
+          ],
+          "replay_provider_calls": 0
+        },
+        {
+          "case_id": "exact_duplicates",
+          "attempts": [
+            {
+              "number": 1,
+              "estimated_input_tokens": 1328,
+              "estimated_output_tokens": 281,
+              "reported_input_tokens": 899,
+              "reported_output_tokens": 1707,
+              "reported_total_tokens": 2606,
+              "reported_usage_available": true,
+              "request_sha256": "sha256:86da688ad046855ddc8d94f80d129683676cabd0ed20105c9ba9ff106881991d",
+              "response_sha256": "sha256:7334c3c5e993ade43f98fd5e8e5287a1d2a8ad56146bbdbd96dbe17e61f2c505",
+              "response_validation": "accepted",
+              "validation_error_sha256": null
+            }
+          ],
+          "replay_provider_calls": 0
+        },
+        {
+          "case_id": "manager_grouping",
+          "attempts": [
+            {
+              "number": 1,
+              "estimated_input_tokens": 1171,
+              "estimated_output_tokens": 207,
+              "reported_input_tokens": 762,
+              "reported_output_tokens": 1942,
+              "reported_total_tokens": 2704,
+              "reported_usage_available": true,
+              "request_sha256": "sha256:f5e893231a6cd2c330d6049d7854b3ef76cc5ea357ff87556458e06db2636ab0",
+              "response_sha256": "sha256:d7d1513c56bd1676a8857fd09bc09515dccc8d0edeab33ac561314386e93fd78",
+              "response_validation": "accepted",
+              "validation_error_sha256": null
+            }
+          ],
+          "replay_provider_calls": 0
+        },
+        {
+          "case_id": "manager_separation",
+          "attempts": [
+            {
+              "number": 1,
+              "estimated_input_tokens": 1170,
+              "estimated_output_tokens": 210,
+              "reported_input_tokens": 759,
+              "reported_output_tokens": 2021,
+              "reported_total_tokens": 2780,
+              "reported_usage_available": true,
+              "request_sha256": "sha256:0aaee50f396beca6040342a0f441d655ac1cfc616fd8b1d9f42f4db623a7b1f8",
+              "response_sha256": "sha256:dc2b333862525b4cc151f058a90d281780bf795997799477481fba6b574ef233",
+              "response_validation": "accepted",
+              "validation_error_sha256": null
+            }
+          ],
+          "replay_provider_calls": 0
+        },
+        {
+          "case_id": "paraphrases",
+          "attempts": [
+            {
+              "number": 1,
+              "estimated_input_tokens": 1175,
+              "estimated_output_tokens": 236,
+              "reported_input_tokens": 765,
+              "reported_output_tokens": 1681,
+              "reported_total_tokens": 2446,
+              "reported_usage_available": true,
+              "request_sha256": "sha256:bd8c4a96b6c43e34d77cf7a875a19b205392d755b69677fd799ebf7af91b3ffc",
+              "response_sha256": "sha256:fa736a064315364579d6979c13e87bda739a01d0106b307db2a8e9ef6f153025",
+              "response_validation": "accepted",
+              "validation_error_sha256": null
+            }
+          ],
+          "replay_provider_calls": 0
+        },
+        {
+          "case_id": "partial_overlap",
+          "attempts": [
+            {
+              "number": 1,
+              "estimated_input_tokens": 1175,
+              "estimated_output_tokens": 275,
+              "reported_input_tokens": 761,
+              "reported_output_tokens": 2769,
+              "reported_total_tokens": 3530,
+              "reported_usage_available": true,
+              "request_sha256": "sha256:e0f748a020dfe20c25a08efc8b718792fa47b557ba19f37bc88928058f449378",
+              "response_sha256": "sha256:9179d24d43ad0d663047a6310d46a84074ba827e0704bc07c262eed353d531d3",
+              "response_validation": "accepted",
+              "validation_error_sha256": null
+            }
+          ],
+          "replay_provider_calls": 0
+        },
+        {
+          "case_id": "polarity",
+          "attempts": [
+            {
+              "number": 1,
+              "estimated_input_tokens": 1171,
+              "estimated_output_tokens": 282,
+              "reported_input_tokens": 760,
+              "reported_output_tokens": 2120,
+              "reported_total_tokens": 2880,
+              "reported_usage_available": true,
+              "request_sha256": "sha256:c56ad6819296ce0aed7dadb6397da8922252a2cca2aaa680a3b93d0269ebef6c",
+              "response_sha256": "sha256:7ecde66ebd254a49420e32af84a7783e4aa69682d654ae5ef592cedfe57e41b5",
+              "response_validation": "accepted",
+              "validation_error_sha256": null
+            }
+          ],
+          "replay_provider_calls": 0
+        },
+        {
+          "case_id": "qualifications",
+          "attempts": [
+            {
+              "number": 1,
+              "estimated_input_tokens": 1178,
+              "estimated_output_tokens": 289,
+              "reported_input_tokens": 769,
+              "reported_output_tokens": 3039,
+              "reported_total_tokens": 3808,
+              "reported_usage_available": true,
+              "request_sha256": "sha256:36d021a674f69c6649ce4aa7f467d136350a57f9271269c59266fb409dd34a03",
+              "response_sha256": "sha256:d6d33cd44a07adde4ffc94b5e29754ab704e702f64a1d15d3bab20943ba8d6f4",
+              "response_validation": "accepted",
+              "validation_error_sha256": null
+            }
+          ],
+          "replay_provider_calls": 0
+        },
+        {
+          "case_id": "temporal_scope",
+          "attempts": [
+            {
+              "number": 1,
+              "estimated_input_tokens": 1170,
+              "estimated_output_tokens": 209,
+              "reported_input_tokens": 767,
+              "reported_output_tokens": 2161,
+              "reported_total_tokens": 2928,
+              "reported_usage_available": true,
+              "request_sha256": "sha256:08e5911d6adfe39ee2958a81391747f116eb8becaff82ce3106a7a3cf6f09b19",
+              "response_sha256": "sha256:4e313418ba7a090410b94d1d821112c4515c2b51972a1835874a416b54f8d1a4",
+              "response_validation": "accepted",
+              "validation_error_sha256": null
+            }
+          ],
+          "replay_provider_calls": 0
+        }
+      ],
+      "phase": "statement-marker-frame"
+    },
+    {
+      "run": 17,
+      "started_at": "2026-10-08T05:28:21.538Z",
+      "completed_at": "2026-10-08T05:36:38.610Z",
+      "source_manifest_sha256": "sha256:b582b3b0a8cd5767e51744a4aba8be3c9fe9780ba2d18090c5e7b623d6c5c840",
+      "run_report_sha256": "sha256:236f870e9809ad9947111cb518b2233294d40bb3113149de7941fd9851b98482",
+      "case_scores_sha256": "sha256:53347f63d0494a77ee43bcf818f703b247e7d89dd28c20928bb19b486ca10e44",
+      "model": "dense-mem-testing",
+      "provider_identity": "sha256:35301efb143f357c2a2cb2a4fc4ede3b7373163339db23f236f320c2792aa923",
+      "reported_input_tokens": 6984,
+      "reported_output_tokens": 20501,
       "cases": [
         {
           "case_id": "different_actors",
@@ -142,13 +331,13 @@
             {
               "number": 1,
               "estimated_input_tokens": 1168,
-              "estimated_output_tokens": 285,
-              "reported_input_tokens": 761,
-              "reported_output_tokens": 2489,
-              "reported_total_tokens": 3250,
+              "estimated_output_tokens": 206,
+              "reported_input_tokens": 755,
+              "reported_output_tokens": 2317,
+              "reported_total_tokens": 3072,
               "reported_usage_available": true,
-              "request_sha256": "sha256:3e0a38844776b687388abaaf18a294a19471460ce273647c176977aec0eed06f",
-              "response_sha256": "sha256:650c7befe594961404f6b11b6079a902b9e40db215c9bdeea7799abfdc94a702",
+              "request_sha256": "sha256:9d64da935530248d253df9d4f10b99ae63b194106a9197f675fe439ab5423683",
+              "response_sha256": "sha256:f6038386d9adbc4655af58e48401aa603f6dc0202801bbdf8e21f15d7bef7509",
               "response_validation": "accepted",
               "validation_error_sha256": null
             }
@@ -160,14 +349,14 @@
           "attempts": [
             {
               "number": 1,
-              "estimated_input_tokens": 1326,
-              "estimated_output_tokens": 283,
-              "reported_input_tokens": 900,
-              "reported_output_tokens": 3146,
-              "reported_total_tokens": 4046,
+              "estimated_input_tokens": 1320,
+              "estimated_output_tokens": 277,
+              "reported_input_tokens": 896,
+              "reported_output_tokens": 2372,
+              "reported_total_tokens": 3268,
               "reported_usage_available": true,
-              "request_sha256": "sha256:3812a3c7eea373d0c6bd0b9e1b49dd94bcc212290b6d4fa4f31b248eafb9980e",
-              "response_sha256": "sha256:e7796c1826d76898c2e926b4272744c0ea49770199ad644a01102562016d09c6",
+              "request_sha256": "sha256:c258d2cc901c6315351ed058431d3c1a0d7639f85b9c9dadeb7f17ebf1a115bb",
+              "response_sha256": "sha256:91ca196bf4266efb70d401a2e1376bd0fcda834da2ed4de8765cd5c6c535217b",
               "response_validation": "accepted",
               "validation_error_sha256": null
             }
@@ -179,14 +368,14 @@
           "attempts": [
             {
               "number": 1,
-              "estimated_input_tokens": 1172,
-              "estimated_output_tokens": 211,
-              "reported_input_tokens": 761,
-              "reported_output_tokens": 2093,
-              "reported_total_tokens": 2854,
+              "estimated_input_tokens": 1170,
+              "estimated_output_tokens": 206,
+              "reported_input_tokens": 756,
+              "reported_output_tokens": 1673,
+              "reported_total_tokens": 2429,
               "reported_usage_available": true,
-              "request_sha256": "sha256:fe1752bb34cae1f4dbd1f0be63792f0a10c67e3859ed899ae3c3b0a7dc6cb200",
-              "response_sha256": "sha256:81b3e0dae433f091ad908cf452d006da21f1a4eb301d150b1b6916d6b22c0ff9",
+              "request_sha256": "sha256:8037be0ef4d2f5abe81702c174d8499e2a2cd4689c03e5d3ba3732961dcec192",
+              "response_sha256": "sha256:ad804e3f426af57eacf323261b898cd4ada7572eddcc92b20d264adab45fc0f1",
               "response_validation": "accepted",
               "validation_error_sha256": null
             }
@@ -198,28 +387,14 @@
           "attempts": [
             {
               "number": 1,
-              "estimated_input_tokens": 1172,
-              "estimated_output_tokens": 279,
-              "reported_input_tokens": 762,
-              "reported_output_tokens": 3273,
-              "reported_total_tokens": 4035,
+              "estimated_input_tokens": 1168,
+              "estimated_output_tokens": 204,
+              "reported_input_tokens": 759,
+              "reported_output_tokens": 2363,
+              "reported_total_tokens": 3122,
               "reported_usage_available": true,
-              "failure_code": "response_invalid",
-              "request_sha256": "sha256:071d04b890105ec112a2e0527ba895b7969d210a32c2ac5da6feba473319f88d",
-              "response_sha256": "sha256:d5a5ebc968823ee18e59c996b25222f0866aec3ac0a34d338d3e071c983b8b5c",
-              "response_validation": "rejected",
-              "validation_error_sha256": "sha256:42746a4b89bc9a0b34c485ec613c02fe674cf358496915e9ec13b6a546374997"
-            },
-            {
-              "number": 2,
-              "estimated_input_tokens": 1645,
-              "estimated_output_tokens": 291,
-              "reported_input_tokens": 1205,
-              "reported_output_tokens": 2478,
-              "reported_total_tokens": 3683,
-              "reported_usage_available": true,
-              "request_sha256": "sha256:f3d628745a654e442f36af41a9bd7a3925a8517eaefae06ee0c9eed858e218ec",
-              "response_sha256": "sha256:d2d8965e02b3ce4a48ec183272a063b5a34f395ee61f05f57cf066117791ae47",
+              "request_sha256": "sha256:670d141253cdbfd397bc934deb3912b70335ab5b2b5cb58f98a726019eaec93f",
+              "response_sha256": "sha256:a26a84f5bc2a024eb3ec2db4a30d617f76d427f2fdf280bdc9c68e0ca113ccf8",
               "response_validation": "accepted",
               "validation_error_sha256": null
             }
@@ -231,14 +406,14 @@
           "attempts": [
             {
               "number": 1,
-              "estimated_input_tokens": 1175,
-              "estimated_output_tokens": 224,
-              "reported_input_tokens": 767,
-              "reported_output_tokens": 2133,
-              "reported_total_tokens": 2900,
+              "estimated_input_tokens": 1177,
+              "estimated_output_tokens": 220,
+              "reported_input_tokens": 765,
+              "reported_output_tokens": 2412,
+              "reported_total_tokens": 3177,
               "reported_usage_available": true,
-              "request_sha256": "sha256:5164d375766e5121f7d6883dfab2eedcf717f8c2312c1cc6b359df0edb03115d",
-              "response_sha256": "sha256:3f2823de5b65390026552cbd198c5c9301bfd468c2347c4c7e30ff2509f1bd92",
+              "request_sha256": "sha256:d612099e735a09dd1fb6618a84834e6c9d027a42c217627982e815285ecca00c",
+              "response_sha256": "sha256:45fba9b097befc5bcb619e58546843f63b21354f36022539f7115b9b322f1b6e",
               "response_validation": "accepted",
               "validation_error_sha256": null
             }
@@ -250,14 +425,14 @@
           "attempts": [
             {
               "number": 1,
-              "estimated_input_tokens": 1173,
-              "estimated_output_tokens": 297,
-              "reported_input_tokens": 762,
-              "reported_output_tokens": 2903,
-              "reported_total_tokens": 3665,
+              "estimated_input_tokens": 1172,
+              "estimated_output_tokens": 289,
+              "reported_input_tokens": 760,
+              "reported_output_tokens": 2918,
+              "reported_total_tokens": 3678,
               "reported_usage_available": true,
-              "request_sha256": "sha256:b957f0e1344876565812eef8aecf5ebce8edab18c19a7098a1767368afbd1447",
-              "response_sha256": "sha256:b18b4ad3aea3c0b72eda2c4b81afe7f7cf7f5dbaacb8f3b400b6700e30ac6dea",
+              "request_sha256": "sha256:bb6ac83bca0e8b955a5578b4966600375efdaf55a58347ba7e1ed31070583e83",
+              "response_sha256": "sha256:a38265b71d6ff7c65327e5a0ddb45bfe6752355653377bd0e3896eb025cdde66",
               "response_validation": "accepted",
               "validation_error_sha256": null
             }
@@ -269,14 +444,14 @@
           "attempts": [
             {
               "number": 1,
-              "estimated_input_tokens": 1170,
-              "estimated_output_tokens": 281,
-              "reported_input_tokens": 760,
-              "reported_output_tokens": 2413,
-              "reported_total_tokens": 3173,
+              "estimated_input_tokens": 1173,
+              "estimated_output_tokens": 230,
+              "reported_input_tokens": 762,
+              "reported_output_tokens": 1886,
+              "reported_total_tokens": 2648,
               "reported_usage_available": true,
-              "request_sha256": "sha256:36f0cf4fe269e6e93dcecb6061ef6dc98b2a307e7bec4325028976667415b996",
-              "response_sha256": "sha256:e317358e63469a1631bf0815d69034b3a84a53099555d23fd88b499bf854895c",
+              "request_sha256": "sha256:06c12883d60a637b2b81e13b1440b57e5c23b23a100c0b78f3f49df97a624647",
+              "response_sha256": "sha256:7508b0c79fe41fc89ee6956fee78a5178332261e1470c45b611bfd19a17b45ba",
               "response_validation": "accepted",
               "validation_error_sha256": null
             }
@@ -288,42 +463,14 @@
           "attempts": [
             {
               "number": 1,
-              "estimated_input_tokens": 1181,
-              "estimated_output_tokens": 192,
-              "reported_input_tokens": 768,
-              "reported_output_tokens": 2341,
-              "reported_total_tokens": 3109,
+              "estimated_input_tokens": 1179,
+              "estimated_output_tokens": 211,
+              "reported_input_tokens": 765,
+              "reported_output_tokens": 2509,
+              "reported_total_tokens": 3274,
               "reported_usage_available": true,
-              "failure_code": "response_invalid",
-              "request_sha256": "sha256:81120ee001b6b0d090df76ce63b1f4d9b94cb6460bd1caff8fbef986d1ab87d2",
-              "response_sha256": "sha256:717591c347161ec4f28df8c9ac8646141140d22afd59aed3cb42bdd77dee7235",
-              "response_validation": "rejected",
-              "validation_error_sha256": "sha256:9d476ec615dbe5c29ca813b4b0af2dab4d324917b8cbbceb1a5b5fc64e7a85c2"
-            },
-            {
-              "number": 2,
-              "estimated_input_tokens": 1537,
-              "estimated_output_tokens": 190,
-              "reported_input_tokens": 1106,
-              "reported_output_tokens": 1958,
-              "reported_total_tokens": 3064,
-              "reported_usage_available": true,
-              "failure_code": "response_invalid",
-              "request_sha256": "sha256:0a6fc961c6846ec0e4a8f45ede61d56bc38abff33c02193336796af222579811",
-              "response_sha256": "sha256:49322cb710fc72bd1b361a1458894293683fbb58f20ac24e3b17f9547dcb3e42",
-              "response_validation": "rejected",
-              "validation_error_sha256": "sha256:9d476ec615dbe5c29ca813b4b0af2dab4d324917b8cbbceb1a5b5fc64e7a85c2"
-            },
-            {
-              "number": 3,
-              "estimated_input_tokens": 1890,
-              "estimated_output_tokens": 298,
-              "reported_input_tokens": 1441,
-              "reported_output_tokens": 1772,
-              "reported_total_tokens": 3213,
-              "reported_usage_available": true,
-              "request_sha256": "sha256:446faa265de4f72722367b6b1335e2d9ac62551d24e6b3607d53643e791ffc02",
-              "response_sha256": "sha256:14dee907619aead6f19c6765e603607f016068db2b389665d2dfe6be28f6c404",
+              "request_sha256": "sha256:9d0d1ed1e0885c421dffd7bca4eedd49072a46bc2e14fc350c29e9783516b4de",
+              "response_sha256": "sha256:df573ea8b9774bee5505a5f39ca3c68f6cbf64fcc0f66a4b9eb31a4cb28e9fa0",
               "response_validation": "accepted",
               "validation_error_sha256": null
             }
@@ -335,14 +482,14 @@
           "attempts": [
             {
               "number": 1,
-              "estimated_input_tokens": 1172,
-              "estimated_output_tokens": 210,
-              "reported_input_tokens": 765,
-              "reported_output_tokens": 2284,
-              "reported_total_tokens": 3049,
+              "estimated_input_tokens": 1168,
+              "estimated_output_tokens": 206,
+              "reported_input_tokens": 766,
+              "reported_output_tokens": 2051,
+              "reported_total_tokens": 2817,
               "reported_usage_available": true,
-              "request_sha256": "sha256:fc1d07c1c9e9097e6bd642b686eeb7a15efc0a6d333a6a483a028442b1d4b58b",
-              "response_sha256": "sha256:ea477981a2a3db87311a8c5db8d4c8ab9e60fdce992300743ba8b40f0219ac0a",
+              "request_sha256": "sha256:8c91d0cfe057b48ca6ccdbd20b9193ba2df4cf6e72d00a79194d4eece27ac78e",
+              "response_sha256": "sha256:d76e2abc973c2169ab9f1f0413b9cfd29ca0bf7a767311ef7787370845bcc7db",
               "response_validation": "accepted",
               "validation_error_sha256": null
             }
@@ -350,233 +497,33 @@
           "replay_provider_calls": 0
         }
       ],
-      "phase": "scoped-marker-first"
+      "phase": "statement-marker-frame"
     },
     {
-      "run": 14,
-      "started_at": "2026-10-08T00:48:29.635Z",
-      "completed_at": "2026-10-08T00:56:28.007Z",
-      "source_manifest_sha256": "sha256:80fd626a255ea4efbed3d104929a84f6e00794dcfa2269a1ad9212ace75ee248",
-      "run_report_sha256": "sha256:1b3cfb1eab58179500c463511a32e6e6ab89404cb34c6a7017a2010d1f7304f9",
+      "run": 18,
+      "started_at": "2026-10-08T05:36:38.806Z",
+      "completed_at": "2026-10-08T05:43:55.094Z",
+      "source_manifest_sha256": "sha256:b582b3b0a8cd5767e51744a4aba8be3c9fe9780ba2d18090c5e7b623d6c5c840",
+      "run_report_sha256": "sha256:721bef20fa293a8e9ca6d8e0439de14fb0ffa8f76fdb9e7defe388bc2ed730e0",
       "case_scores_sha256": "sha256:53347f63d0494a77ee43bcf818f703b247e7d89dd28c20928bb19b486ca10e44",
       "model": "dense-mem-testing",
       "provider_identity": "sha256:35301efb143f357c2a2cb2a4fc4ede3b7373163339db23f236f320c2792aa923",
-      "reported_input_tokens": 8118,
-      "reported_output_tokens": 19417,
+      "reported_input_tokens": 6993,
+      "reported_output_tokens": 18851,
       "cases": [
         {
           "case_id": "different_actors",
           "attempts": [
             {
               "number": 1,
-              "estimated_input_tokens": 1174,
-              "estimated_output_tokens": 284,
-              "reported_input_tokens": 759,
-              "reported_output_tokens": 2157,
-              "reported_total_tokens": 2916,
-              "reported_usage_available": true,
-              "request_sha256": "sha256:06a72813f4b93f7bb01b7176ad4abe35912dbf1a9e397d0f57bdbcfbc7d03a04",
-              "response_sha256": "sha256:d91c0c57f2706e7ae50fc43232d3b8af4f3a18ad79e444333aa13cb0b2c2050a",
-              "response_validation": "accepted",
-              "validation_error_sha256": null
-            }
-          ],
-          "replay_provider_calls": 0
-        },
-        {
-          "case_id": "exact_duplicates",
-          "attempts": [
-            {
-              "number": 1,
-              "estimated_input_tokens": 1324,
-              "estimated_output_tokens": 283,
-              "reported_input_tokens": 898,
-              "reported_output_tokens": 1820,
-              "reported_total_tokens": 2718,
-              "reported_usage_available": true,
-              "request_sha256": "sha256:ef4a7e21d5911f7a0acd1a0da86a6a2ee2c251ce50c1c2b29d4cb8a1692a02a7",
-              "response_sha256": "sha256:00cbc0854bc3b35b49351b435cb60d47fddfe201a57c3e61f078a205374f45f0",
-              "response_validation": "accepted",
-              "validation_error_sha256": null
-            }
-          ],
-          "replay_provider_calls": 0
-        },
-        {
-          "case_id": "manager_grouping",
-          "attempts": [
-            {
-              "number": 1,
-              "estimated_input_tokens": 1171,
+              "estimated_input_tokens": 1167,
               "estimated_output_tokens": 208,
               "reported_input_tokens": 760,
-              "reported_output_tokens": 1867,
-              "reported_total_tokens": 2627,
+              "reported_output_tokens": 1778,
+              "reported_total_tokens": 2538,
               "reported_usage_available": true,
-              "request_sha256": "sha256:43eff09fc90be34343b57ba7fe4fdbb11deb4569ffe6be6302ed49927676bae3",
-              "response_sha256": "sha256:aef8e88930fedfb3ba8e877c6f2660fec3f096b2dd7a9c66463898cd7ae154c2",
-              "response_validation": "accepted",
-              "validation_error_sha256": null
-            }
-          ],
-          "replay_provider_calls": 0
-        },
-        {
-          "case_id": "manager_separation",
-          "attempts": [
-            {
-              "number": 1,
-              "estimated_input_tokens": 1170,
-              "estimated_output_tokens": 212,
-              "reported_input_tokens": 756,
-              "reported_output_tokens": 1726,
-              "reported_total_tokens": 2482,
-              "reported_usage_available": true,
-              "request_sha256": "sha256:47259ddd57ff927bca8d5ab15f3259d34e66a3acfd14ab09c75a0b7c2c875f6d",
-              "response_sha256": "sha256:08e4cd1fbb7335db195ba69a7c50272e8b6afd431a9053e051b1de647d55a38b",
-              "response_validation": "accepted",
-              "validation_error_sha256": null
-            }
-          ],
-          "replay_provider_calls": 0
-        },
-        {
-          "case_id": "paraphrases",
-          "attempts": [
-            {
-              "number": 1,
-              "estimated_input_tokens": 1176,
-              "estimated_output_tokens": 203,
-              "reported_input_tokens": 765,
-              "reported_output_tokens": 2483,
-              "reported_total_tokens": 3248,
-              "reported_usage_available": true,
-              "failure_code": "response_invalid",
-              "request_sha256": "sha256:8851793fde0e47f8372fa46909b574a9b5e18bd9628d19d0a793b5c4020d93b7",
-              "response_sha256": "sha256:1a13b1a6bbe23dd7cb4e751b0763eb1ee3cf5353452ceda4dd7d5d2879c5ddcb",
-              "response_validation": "rejected",
-              "validation_error_sha256": "sha256:d19be581b45beaf0f1acc64f9c0c1bbdfe4bd7478df37abd312fbfefaac8d065"
-            },
-            {
-              "number": 2,
-              "estimated_input_tokens": 1552,
-              "estimated_output_tokens": 214,
-              "reported_input_tokens": 1126,
-              "reported_output_tokens": 1352,
-              "reported_total_tokens": 2478,
-              "reported_usage_available": true,
-              "request_sha256": "sha256:823df207a3082ff12740544c04abaec85ce8812c2c55f7185ea634fa29d5b92d",
-              "response_sha256": "sha256:271d31934b2362bedd14415fa8a20e78ecb9a9569d30334f336bc1b1f4c72be8",
-              "response_validation": "accepted",
-              "validation_error_sha256": null
-            }
-          ],
-          "replay_provider_calls": 0
-        },
-        {
-          "case_id": "partial_overlap",
-          "attempts": [
-            {
-              "number": 1,
-              "estimated_input_tokens": 1170,
-              "estimated_output_tokens": 286,
-              "reported_input_tokens": 763,
-              "reported_output_tokens": 2115,
-              "reported_total_tokens": 2878,
-              "reported_usage_available": true,
-              "request_sha256": "sha256:975db79751aa7bc81ea8a4d217e0ff72a5a6a9f0278dffe9f21399fa3492bd9b",
-              "response_sha256": "sha256:816a9591d2dce6a5856c3269207e4fb5f3bdebc776277ae4e07a71904edff7c1",
-              "response_validation": "accepted",
-              "validation_error_sha256": null
-            }
-          ],
-          "replay_provider_calls": 0
-        },
-        {
-          "case_id": "polarity",
-          "attempts": [
-            {
-              "number": 1,
-              "estimated_input_tokens": 1175,
-              "estimated_output_tokens": 218,
-              "reported_input_tokens": 761,
-              "reported_output_tokens": 1804,
-              "reported_total_tokens": 2565,
-              "reported_usage_available": true,
-              "request_sha256": "sha256:504fd67a92f764fa26fc17f2bb3b544f06ad620886fbb49b8bbd3bcf39123db1",
-              "response_sha256": "sha256:4df95b1ad498cbe3ebf01abb6001dac878756ea988a55c451729342c4f699e27",
-              "response_validation": "accepted",
-              "validation_error_sha256": null
-            }
-          ],
-          "replay_provider_calls": 0
-        },
-        {
-          "case_id": "qualifications",
-          "attempts": [
-            {
-              "number": 1,
-              "estimated_input_tokens": 1175,
-              "estimated_output_tokens": 292,
-              "reported_input_tokens": 766,
-              "reported_output_tokens": 2104,
-              "reported_total_tokens": 2870,
-              "reported_usage_available": true,
-              "request_sha256": "sha256:d25248cf90833162d80aa8f6cfbbe18204d3a85c2ae983bb313e8d0016898fb2",
-              "response_sha256": "sha256:02d66bff793057bc67c98603d823f0beb14ef92ccaa1612af4e74ed9f6667d0f",
-              "response_validation": "accepted",
-              "validation_error_sha256": null
-            }
-          ],
-          "replay_provider_calls": 0
-        },
-        {
-          "case_id": "temporal_scope",
-          "attempts": [
-            {
-              "number": 1,
-              "estimated_input_tokens": 1171,
-              "estimated_output_tokens": 206,
-              "reported_input_tokens": 764,
-              "reported_output_tokens": 1989,
-              "reported_total_tokens": 2753,
-              "reported_usage_available": true,
-              "request_sha256": "sha256:39ba7c6a40a93bf97b0664eb624ccf06cb892adadd10b2040d6c13168c6f3024",
-              "response_sha256": "sha256:e641a1acf27bcfd34417b90f1f36336460093e14a5f49e5413ef5a529b61086f",
-              "response_validation": "accepted",
-              "validation_error_sha256": null
-            }
-          ],
-          "replay_provider_calls": 0
-        }
-      ],
-      "phase": "scoped-marker-first"
-    },
-    {
-      "run": 15,
-      "started_at": "2026-10-08T00:57:56.251Z",
-      "completed_at": "2026-10-08T01:06:49.086Z",
-      "source_manifest_sha256": "sha256:80fd626a255ea4efbed3d104929a84f6e00794dcfa2269a1ad9212ace75ee248",
-      "run_report_sha256": "sha256:f11b26bb5189f5ade066a7095205ab91e8fbb8c843379dcec7058052d6ccdbad",
-      "case_scores_sha256": "sha256:53347f63d0494a77ee43bcf818f703b247e7d89dd28c20928bb19b486ca10e44",
-      "model": "dense-mem-testing",
-      "provider_identity": "sha256:35301efb143f357c2a2cb2a4fc4ede3b7373163339db23f236f320c2792aa923",
-      "reported_input_tokens": 8159,
-      "reported_output_tokens": 20377,
-      "cases": [
-        {
-          "case_id": "different_actors",
-          "attempts": [
-            {
-              "number": 1,
-              "estimated_input_tokens": 1173,
-              "estimated_output_tokens": 276,
-              "reported_input_tokens": 762,
-              "reported_output_tokens": 1999,
-              "reported_total_tokens": 2761,
-              "reported_usage_available": true,
-              "request_sha256": "sha256:9080d569cb006f099014edbccc8304891b85339940b0178770042c502900651c",
-              "response_sha256": "sha256:e6b48be2a6d0605711494b7ac058d316a25c6aa171532d174be264bf1be18c09",
+              "request_sha256": "sha256:bb8b9026cba5a96fb328eca460b79f8cd7942f8f362a4e6ed3bdd6470611b94c",
+              "response_sha256": "sha256:84b65c70861cdfca876ec85990265ccc76160ca2879ca5b651da0ec89671a65b",
               "response_validation": "accepted",
               "validation_error_sha256": null
             }
@@ -588,14 +535,14 @@
           "attempts": [
             {
               "number": 1,
-              "estimated_input_tokens": 1322,
-              "estimated_output_tokens": 282,
+              "estimated_input_tokens": 1325,
+              "estimated_output_tokens": 285,
               "reported_input_tokens": 899,
-              "reported_output_tokens": 1892,
-              "reported_total_tokens": 2791,
+              "reported_output_tokens": 2111,
+              "reported_total_tokens": 3010,
               "reported_usage_available": true,
-              "request_sha256": "sha256:0c2e72dd8d8cfa6af2aa857cef2503924b9439cb8837b5c84fe94aec6c2a9752",
-              "response_sha256": "sha256:bbf874d64edeaa1d9c97ee246496a3d0bf2a38bc5fdf950ff5ddc9af8bb1103e",
+              "request_sha256": "sha256:912bcc7ce2b1823d6369af52a3459c1ca261f01c89e73b5f25e7bd017477a0fd",
+              "response_sha256": "sha256:f78f91c56d94fee1793cb9adcbda2f7cc971bcf351649ab847083877cf7d4013",
               "response_validation": "accepted",
               "validation_error_sha256": null
             }
@@ -608,13 +555,13 @@
             {
               "number": 1,
               "estimated_input_tokens": 1169,
-              "estimated_output_tokens": 213,
-              "reported_input_tokens": 763,
-              "reported_output_tokens": 2582,
-              "reported_total_tokens": 3345,
+              "estimated_output_tokens": 225,
+              "reported_input_tokens": 762,
+              "reported_output_tokens": 2022,
+              "reported_total_tokens": 2784,
               "reported_usage_available": true,
-              "request_sha256": "sha256:d537d6091e222e2e4b75d8546cf8ca6b95f2d3264a49226889782de14896cddc",
-              "response_sha256": "sha256:0ad5e560c25b7c9354426f68167993a812bc39602c9b49063cb38452c96a5d47",
+              "request_sha256": "sha256:f0bbb888c8f4ad2a588be1aa0af60201ceeef60ba4a8343115124e970c51a520",
+              "response_sha256": "sha256:83e3638ffb704c6b7a178d5f65ebef74361da86cf9a50c14a261e3f455522033",
               "response_validation": "accepted",
               "validation_error_sha256": null
             }
@@ -626,14 +573,14 @@
           "attempts": [
             {
               "number": 1,
-              "estimated_input_tokens": 1166,
-              "estimated_output_tokens": 198,
-              "reported_input_tokens": 760,
-              "reported_output_tokens": 2680,
-              "reported_total_tokens": 3440,
+              "estimated_input_tokens": 1168,
+              "estimated_output_tokens": 200,
+              "reported_input_tokens": 758,
+              "reported_output_tokens": 1825,
+              "reported_total_tokens": 2583,
               "reported_usage_available": true,
-              "request_sha256": "sha256:1dd66860d4b3318004874ae29788a095b97278b27ccbfe931de1e922da47022e",
-              "response_sha256": "sha256:ba1c76d621da19847e5c06252f4da9b70536cb7764c13375173d8a56093d3420",
+              "request_sha256": "sha256:c2d790b8f1c45c749644ec44a2f1ac47621e0640c9e79ef2c7f8d0b09e335426",
+              "response_sha256": "sha256:944a22350f06da94aded4104a9bb5e0c3a3dc1184bd5e9b2da9c1e4253eabcf6",
               "response_validation": "accepted",
               "validation_error_sha256": null
             }
@@ -645,28 +592,14 @@
           "attempts": [
             {
               "number": 1,
-              "estimated_input_tokens": 1175,
-              "estimated_output_tokens": 237,
-              "reported_input_tokens": 763,
-              "reported_output_tokens": 671,
-              "reported_total_tokens": 1434,
+              "estimated_input_tokens": 1177,
+              "estimated_output_tokens": 222,
+              "reported_input_tokens": 766,
+              "reported_output_tokens": 2065,
+              "reported_total_tokens": 2831,
               "reported_usage_available": true,
-              "failure_code": "response_invalid",
-              "request_sha256": "sha256:87cf3f9423854b06c6725a8d79c4bd1734dbc43850c7337339282e1a15f2e011",
-              "response_sha256": "sha256:6dd7ffde276020578321f195d4040c3c9407d69a109eee7dcdd4d343e72e0b7f",
-              "response_validation": "rejected",
-              "validation_error_sha256": "sha256:0215fa8bafed23f241c160ab0f4e53b55df78d7e8fd216b6d4a61af45040f9be"
-            },
-            {
-              "number": 2,
-              "estimated_input_tokens": 1589,
-              "estimated_output_tokens": 231,
-              "reported_input_tokens": 1159,
-              "reported_output_tokens": 1790,
-              "reported_total_tokens": 2949,
-              "reported_usage_available": true,
-              "request_sha256": "sha256:5e36d6fa1e5cf50bc9fd13f868cf9504b92e4664ca32b834d319e0ef16a4a5f7",
-              "response_sha256": "sha256:112c03c3cd139c91ccf69b00ca9ef1f10cef79419ec9836a49bbb2e9489b504c",
+              "request_sha256": "sha256:3dd4a4a5656d64f73e1014892a7d9e7a88fc25d3d1bcb3b72679b12aae7e674b",
+              "response_sha256": "sha256:f07feb69d4e5f877ebfb26b05d7e1446a1cbe0a59f68d848f08c615b3721cf79",
               "response_validation": "accepted",
               "validation_error_sha256": null
             }
@@ -678,14 +611,14 @@
           "attempts": [
             {
               "number": 1,
-              "estimated_input_tokens": 1171,
-              "estimated_output_tokens": 294,
-              "reported_input_tokens": 758,
-              "reported_output_tokens": 2177,
-              "reported_total_tokens": 2935,
+              "estimated_input_tokens": 1170,
+              "estimated_output_tokens": 285,
+              "reported_input_tokens": 760,
+              "reported_output_tokens": 2059,
+              "reported_total_tokens": 2819,
               "reported_usage_available": true,
-              "request_sha256": "sha256:daccafeabdf15ddb2cf46b826e692db28af6467d8532706900c00999ca0ba579",
-              "response_sha256": "sha256:1261b05866de0e6571d65d92153de8e9d1c6ccea64c0a20eecf86db73273b1d1",
+              "request_sha256": "sha256:ba9d48b3007b583687fda454c302eadbc26130e36634a1941f3941dff2489a93",
+              "response_sha256": "sha256:c7f06b22f8f5d5267cd29062bcd291420b360aa151aca82196f35372a5f32e9d",
               "response_validation": "accepted",
               "validation_error_sha256": null
             }
@@ -697,14 +630,14 @@
           "attempts": [
             {
               "number": 1,
-              "estimated_input_tokens": 1170,
-              "estimated_output_tokens": 275,
+              "estimated_input_tokens": 1173,
+              "estimated_output_tokens": 292,
               "reported_input_tokens": 759,
-              "reported_output_tokens": 2091,
-              "reported_total_tokens": 2850,
+              "reported_output_tokens": 2179,
+              "reported_total_tokens": 2938,
               "reported_usage_available": true,
-              "request_sha256": "sha256:7c79d5783ea479117a16869cbac471858e8a1d24c4b7a566b456d7f4aabd40b3",
-              "response_sha256": "sha256:82161c5bc6d646567703d15f0cae36d41ade79294960b0e5136113221b4d7e22",
+              "request_sha256": "sha256:186e6b5c2537bace067e7213766d0bf1097df89afca0b1c1c348a3de7e4c370a",
+              "response_sha256": "sha256:9d2b168c7a52ea971d702a6e1078bfde83b19f5b0c8b3ca8df5827172af753a8",
               "response_validation": "accepted",
               "validation_error_sha256": null
             }
@@ -716,14 +649,14 @@
           "attempts": [
             {
               "number": 1,
-              "estimated_input_tokens": 1172,
-              "estimated_output_tokens": 289,
-              "reported_input_tokens": 768,
-              "reported_output_tokens": 2333,
-              "reported_total_tokens": 3101,
+              "estimated_input_tokens": 1176,
+              "estimated_output_tokens": 293,
+              "reported_input_tokens": 764,
+              "reported_output_tokens": 2623,
+              "reported_total_tokens": 3387,
               "reported_usage_available": true,
-              "request_sha256": "sha256:f30ab551ed2791d3dc8d2850bb772d37b3b5ae3e1647557dd611ab561af9ce74",
-              "response_sha256": "sha256:76676093fa50e7a9723f09814e32d089f7e6de896fef2354609d599545281e86",
+              "request_sha256": "sha256:b0f319afce90972d07098903bbda6e52350b896ec795cb07f806e0e182a6d716",
+              "response_sha256": "sha256:c3d72796f401887f27c780d683dd7b34a068419f3db2af8647f10c7dfb8d4224",
               "response_validation": "accepted",
               "validation_error_sha256": null
             }
@@ -735,14 +668,14 @@
           "attempts": [
             {
               "number": 1,
-              "estimated_input_tokens": 1175,
-              "estimated_output_tokens": 221,
-              "reported_input_tokens": 768,
-              "reported_output_tokens": 2162,
-              "reported_total_tokens": 2930,
+              "estimated_input_tokens": 1174,
+              "estimated_output_tokens": 204,
+              "reported_input_tokens": 765,
+              "reported_output_tokens": 2189,
+              "reported_total_tokens": 2954,
               "reported_usage_available": true,
-              "request_sha256": "sha256:42cf48be13eee3590ef1dd38d0e955ddfe01aea32072dc6a0212221aec3efc71",
-              "response_sha256": "sha256:150bb85770cb65ddbd980d64f9b50f65bfa9b8c870e5ab840bbd94c01f21b1b8",
+              "request_sha256": "sha256:f10004f9e99bffe4e88879b6aa01176a8347a9258d8ec06fc3be9f5ece2d3fc1",
+              "response_sha256": "sha256:4b5ea088adc228be1ce0a6d881fef1d30d1821f3576442825fb1455dd908d1a5",
               "response_validation": "accepted",
               "validation_error_sha256": null
             }
@@ -750,39 +683,39 @@
           "replay_provider_calls": 0
         }
       ],
-      "phase": "scoped-marker-first"
+      "phase": "statement-marker-frame"
     }
   ],
   "write_latency": {
-    "samples_sha256": "sha256:b64324682aff5624d54671ef2612812794eb1879d55e02b5e97e2c0d83a7d004",
+    "samples_sha256": "sha256:cd5c99049e3383a1a817cac9f728c28d88b196526c83e67e1ba0a656b23cb408",
     "blocking_gate": "Any paired median or p95 increase exceeding both 10% and 1 ms.",
     "comparisons": [
       {
         "writers": 1,
         "pairs": 5,
         "before": {
-          "median_ms": 1.37949,
-          "p95_ms": 1.7227
+          "median_ms": 1.123944,
+          "p95_ms": 1.35579
         },
         "after": {
-          "median_ms": 1.427561,
-          "p95_ms": 1.764173
+          "median_ms": 1.180379,
+          "p95_ms": 1.458849
         },
-        "largest_pair_increase_ms": 0.3135049999999999,
+        "largest_pair_increase_ms": 0.13713399999999987,
         "passed": true
       },
       {
         "writers": 8,
         "pairs": 5,
         "before": {
-          "median_ms": 1.53479,
-          "p95_ms": 2.089685
+          "median_ms": 1.302325,
+          "p95_ms": 1.681929
         },
         "after": {
-          "median_ms": 1.669438,
-          "p95_ms": 2.219575
+          "median_ms": 1.404984,
+          "p95_ms": 1.754949
         },
-        "largest_pair_increase_ms": 0.3523280000000004,
+        "largest_pair_increase_ms": 0.24416900000000008,
         "passed": true
       }
     ]
@@ -791,185 +724,20 @@
   "post_review_fresh_state_runs": 3,
   "post_enqueue_fresh_state_runs": 3,
   "marker_lock_fast_path_fresh_state_runs": 3,
+  "statement_marker_frame_fresh_state_runs": 3,
   "bounded_regeneration_evidence": "Every attempt is captured and charged; an intermediate invalid response triggers complete regeneration and the final response must validate. No failed quality repetition was retried.",
   "write_latency_history": [
-    {
-      "samples_sha256": "sha256:b0a6ec2b3311e1a4af0b8ec4ca5868b629f42660063b503abd47b6b8d177d8dc",
-      "blocking_gate": "Any paired median or p95 increase exceeding both 10% and 1 ms.",
-      "comparisons": [
-        {
-          "writers": 1,
-          "pairs": 5,
-          "before": {
-            "median_ms": 1.388911,
-            "p95_ms": 1.746465
-          },
-          "after": {
-            "median_ms": 1.633805,
-            "p95_ms": 2.063157
-          },
-          "largest_pair_increase_ms": 0.6921640000000002,
-          "passed": true
-        },
-        {
-          "writers": 8,
-          "pairs": 5,
-          "before": {
-            "median_ms": 1.647788,
-            "p95_ms": 2.167954
-          },
-          "after": {
-            "median_ms": 1.932264,
-            "p95_ms": 2.505299
-          },
-          "largest_pair_increase_ms": 0.5943799999999999,
-          "passed": true
-        }
-      ]
-    },
-    {
-      "samples_sha256": "sha256:20be0a63703311e71ef9ae768fc6e59e04600ca7044a958a443edd4579a5441e",
-      "blocking_gate": "Any paired median or p95 increase exceeding both 10% and 1 ms.",
-      "comparisons": [
-        {
-          "writers": 1,
-          "pairs": 5,
-          "before": {
-            "median_ms": 1.044569,
-            "p95_ms": 1.242336
-          },
-          "after": {
-            "median_ms": 1.119494,
-            "p95_ms": 1.356335
-          },
-          "largest_pair_increase_ms": 0.22310800000000008,
-          "passed": true
-        },
-        {
-          "writers": 8,
-          "pairs": 5,
-          "before": {
-            "median_ms": 1.199055,
-            "p95_ms": 1.425224
-          },
-          "after": {
-            "median_ms": 1.315416,
-            "p95_ms": 1.627832
-          },
-          "largest_pair_increase_ms": 0.402925,
-          "passed": true
-        }
-      ]
-    },
-    {
-      "samples_sha256": "sha256:05a972f2d235d136b33fdec03973d62b6d253e6f28d569576d2c62ee31fdbda7",
-      "blocking_gate": "Any paired median or p95 increase exceeding both 10% and 1 ms.",
-      "comparisons": [
-        {
-          "writers": 1,
-          "pairs": 5,
-          "before": {
-            "median_ms": 1.3369,
-            "p95_ms": 1.604772
-          },
-          "after": {
-            "median_ms": 1.437419,
-            "p95_ms": 1.922596
-          },
-          "largest_pair_increase_ms": 0.5134189999999998,
-          "passed": true
-        },
-        {
-          "writers": 8,
-          "pairs": 5,
-          "before": {
-            "median_ms": 1.488786,
-            "p95_ms": 1.966743
-          },
-          "after": {
-            "median_ms": 1.720556,
-            "p95_ms": 2.408249
-          },
-          "largest_pair_increase_ms": 0.53715,
-          "passed": true
-        }
-      ]
-    },
-    {
-      "samples_sha256": "sha256:005c315e711281250ac2c03eae31ff0876b22756b24bd83d2da7bbd7cb9beed3",
-      "blocking_gate": "Any paired median or p95 increase exceeding both 10% and 1 ms.",
-      "comparisons": [
-        {
-          "writers": 1,
-          "pairs": 5,
-          "before": {
-            "median_ms": 1.520341,
-            "p95_ms": 1.908749
-          },
-          "after": {
-            "median_ms": 1.551905,
-            "p95_ms": 1.996587
-          },
-          "largest_pair_increase_ms": 0.4176709999999999,
-          "passed": true
-        },
-        {
-          "writers": 8,
-          "pairs": 5,
-          "before": {
-            "median_ms": 1.790147,
-            "p95_ms": 2.394357
-          },
-          "after": {
-            "median_ms": 1.941272,
-            "p95_ms": 2.650665
-          },
-          "largest_pair_increase_ms": 0.51851,
-          "passed": true
-        }
-      ]
-    },
-    {
-      "samples_sha256": "sha256:cc785808f456321729758e45cb5890c9f85b86fc54419d29ccb9c362e91659c6",
-      "blocking_gate": "Any paired median or p95 increase exceeding both 10% and 1 ms.",
-      "comparisons": [
-        {
-          "writers": 1,
-          "pairs": 5,
-          "before": {
-            "median_ms": 1.490025,
-            "p95_ms": 1.857505
-          },
-          "after": {
-            "median_ms": 1.630109,
-            "p95_ms": 2.202023
-          },
-          "largest_pair_increase_ms": 0.8655730000000001,
-          "passed": true
-        },
-        {
-          "writers": 8,
-          "pairs": 5,
-          "before": {
-            "median_ms": 1.776161,
-            "p95_ms": 2.28069
-          },
-          "after": {
-            "median_ms": 1.725916,
-            "p95_ms": 2.417399
-          },
-          "largest_pair_increase_ms": 0.7822469999999999,
-          "passed": true
-        }
-      ],
-      "fixture_setup_excluded": true,
-      "samples_per_writer": 100
-    }
+    {"samples_sha256":"sha256:b0a6ec2b3311e1a4af0b8ec4ca5868b629f42660063b503abd47b6b8d177d8dc","blocking_gate":"Any paired median or p95 increase exceeding both 10% and 1 ms.","comparisons":[{"writers":1,"pairs":5,"before":{"median_ms":1.388911,"p95_ms":1.746465},"after":{"median_ms":1.633805,"p95_ms":2.063157},"largest_pair_increase_ms":0.6921640000000002,"passed":true},{"writers":8,"pairs":5,"before":{"median_ms":1.647788,"p95_ms":2.167954},"after":{"median_ms":1.932264,"p95_ms":2.505299},"largest_pair_increase_ms":0.5943799999999999,"passed":true}]},
+    {"samples_sha256":"sha256:20be0a63703311e71ef9ae768fc6e59e04600ca7044a958a443edd4579a5441e","blocking_gate":"Any paired median or p95 increase exceeding both 10% and 1 ms.","comparisons":[{"writers":1,"pairs":5,"before":{"median_ms":1.044569,"p95_ms":1.242336},"after":{"median_ms":1.119494,"p95_ms":1.356335},"largest_pair_increase_ms":0.22310800000000008,"passed":true},{"writers":8,"pairs":5,"before":{"median_ms":1.199055,"p95_ms":1.425224},"after":{"median_ms":1.315416,"p95_ms":1.627832},"largest_pair_increase_ms":0.402925,"passed":true}]},
+    {"samples_sha256":"sha256:05a972f2d235d136b33fdec03973d62b6d253e6f28d569576d2c62ee31fdbda7","blocking_gate":"Any paired median or p95 increase exceeding both 10% and 1 ms.","comparisons":[{"writers":1,"pairs":5,"before":{"median_ms":1.3369,"p95_ms":1.604772},"after":{"median_ms":1.437419,"p95_ms":1.922596},"largest_pair_increase_ms":0.5134189999999998,"passed":true},{"writers":8,"pairs":5,"before":{"median_ms":1.488786,"p95_ms":1.966743},"after":{"median_ms":1.720556,"p95_ms":2.408249},"largest_pair_increase_ms":0.53715,"passed":true}]},
+    {"samples_sha256":"sha256:005c315e711281250ac2c03eae31ff0876b22756b24bd83d2da7bbd7cb9beed3","blocking_gate":"Any paired median or p95 increase exceeding both 10% and 1 ms.","comparisons":[{"writers":1,"pairs":5,"before":{"median_ms":1.520341,"p95_ms":1.908749},"after":{"median_ms":1.551905,"p95_ms":1.996587},"largest_pair_increase_ms":0.4176709999999999,"passed":true},{"writers":8,"pairs":5,"before":{"median_ms":1.790147,"p95_ms":2.394357},"after":{"median_ms":1.941272,"p95_ms":2.650665},"largest_pair_increase_ms":0.51851,"passed":true}]},
+    {"samples_sha256":"sha256:cc785808f456321729758e45cb5890c9f85b86fc54419d29ccb9c362e91659c6","blocking_gate":"Any paired median or p95 increase exceeding both 10% and 1 ms.","comparisons":[{"writers":1,"pairs":5,"before":{"median_ms":1.490025,"p95_ms":1.857505},"after":{"median_ms":1.630109,"p95_ms":2.202023},"largest_pair_increase_ms":0.8655730000000001,"passed":true},{"writers":8,"pairs":5,"before":{"median_ms":1.776161,"p95_ms":2.28069},"after":{"median_ms":1.725916,"p95_ms":2.417399},"largest_pair_increase_ms":0.7822469999999999,"passed":true}],"fixture_setup_excluded":true,"samples_per_writer":100},
+    {"samples_sha256":"sha256:b64324682aff5624d54671ef2612812794eb1879d55e02b5e97e2c0d83a7d004","blocking_gate":"Any paired median or p95 increase exceeding both 10% and 1 ms.","comparisons":[{"writers":1,"pairs":5,"before":{"median_ms":1.37949,"p95_ms":1.7227},"after":{"median_ms":1.427561,"p95_ms":1.764173},"largest_pair_increase_ms":0.3135049999999999,"passed":true},{"writers":8,"pairs":5,"before":{"median_ms":1.53479,"p95_ms":2.089685},"after":{"median_ms":1.669438,"p95_ms":2.219575},"largest_pair_increase_ms":0.3523280000000004,"passed":true}]}
   ],
   "required_final_source_runs": [
-    13,
-    14,
-    15
+    16,
+    17,
+    18
   ],
   "incomplete_capture_runs": [
     {

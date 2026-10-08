@@ -257,3 +257,72 @@ func TestOntologyMaintenancePrivateGenerationAndABCIsolation(t *testing.T) {
 	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_batches WHERE team_id=?::uuid AND space_generation=? AND status='completed'`, f.team, f.generation).Row().Scan(&current))
 	require.Greater(t, current, 0)
 }
+
+func TestOntologyMaintenanceMarkerFrameRLS(t *testing.T) {
+	f := newOrganizationFixture(t)
+	other := maintenanceOtherTeam(t, f)
+	old := maintenanceEntity(t, f, "Historical marker")
+	peer := maintenanceEntity(t, other, "Other-team marker")
+	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.app, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE memory_spaces SET generation=generation+1 WHERE team_id=?::uuid AND id=?::uuid`, f.team, f.space).Error
+	}))
+	f.generation++
+	current := maintenanceEntity(t, f, "Current marker")
+	inspect := func(tx *gorm.DB) error {
+		var visible, historical, crossTeam int
+		err := tx.Raw(`SELECT count(*) FILTER (WHERE anchor_id=?),count(*) FILTER (WHERE anchor_id=?),count(*) FILTER (WHERE anchor_id=?) FROM ontology_maintenance_markers`, current.ID, old.ID, peer.ID).Row().Scan(&visible, &historical, &crossTeam)
+		if err != nil {
+			return err
+		}
+		require.Equal(t, 1, visible)
+		require.Zero(t, historical)
+		require.Zero(t, crossTeam)
+		return nil
+	}
+	for _, owner := range []int{0, 1} {
+		ctx := f.actor(owner, "member")
+		require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, inspect))
+		require.NoError(t, f.rls.WithTeamProfileTx(ctx, f.app, f.team, f.owners[owner], func(tx *gorm.DB) error {
+			if err := inspect(tx); err != nil {
+				return err
+			}
+			if err := tx.Exec(`UPDATE ontology_maintenance_markers SET cursor='expanded' WHERE anchor_kind='entity_records' AND anchor_id=?`, current.ID).Error; err != nil {
+				return err
+			}
+			if err := tx.Exec(`SELECT dense_mem_enqueue_ontology_marker(?::uuid,?::uuid,?,'entity_records',?,'entity',?)`, f.team, f.space, f.generation, current.ID, current.ID).Error; err != nil {
+				return err
+			}
+			var cursor string
+			if err := tx.Raw(`SELECT cursor FROM ontology_maintenance_markers WHERE anchor_kind='entity_records' AND anchor_id=?`, current.ID).Row().Scan(&cursor); err != nil {
+				return err
+			}
+			require.Empty(t, cursor)
+			return nil
+		}))
+		err := f.rls.WithTeamProfileTx(ctx, f.app, f.team, f.owners[owner], func(tx *gorm.DB) error {
+			return tx.Exec(`INSERT INTO ontology_maintenance_markers(team_id,shared_space_id,space_generation,anchor_kind,anchor_id,target_kind,target_id) VALUES (?::uuid,?::uuid,?,'entity_records',?,'entity',?)`, f.team, f.space, f.generation-1, uuid.NewString(), old.ID).Error
+		})
+		require.ErrorContains(t, err, "row-level security")
+	}
+	require.NoError(t, f.rls.WithTeamProfileTx(other.actor(0, "member"), f.app, other.team, other.owners[0], func(tx *gorm.DB) error {
+		var leaked int
+		if err := tx.Raw(`SELECT count(*) FROM ontology_maintenance_markers WHERE team_id=?::uuid`, f.team).Row().Scan(&leaked); err != nil {
+			return err
+		}
+		require.Zero(t, leaked)
+		return nil
+	}))
+	for _, mode := range []string{"system", "migration"} {
+		require.NoError(t, f.rls.WithSystemTx(context.Background(), f.app, func(tx *gorm.DB) error {
+			if err := tx.Exec(`SELECT set_config('app.tx_mode',?,true)`, mode).Error; err != nil {
+				return err
+			}
+			var visible int
+			if err := tx.Raw(`SELECT count(*) FROM ontology_maintenance_markers WHERE anchor_id IN (?,?,?)`, current.ID, old.ID, peer.ID).Row().Scan(&visible); err != nil {
+				return err
+			}
+			require.Equal(t, 3, visible)
+			return nil
+		}))
+	}
+}
