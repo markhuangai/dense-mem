@@ -982,3 +982,15 @@ test("obsolete local Compose entrypoints are removed", async () => {
     await assert.rejects(readFile(join(scripts, name), "utf8"));
   }
 });
+
+test("ontology retains a complete dedicated precheck shard", async () => {
+  const start = controller.indexOf("\ndatabase_case_capabilities()") + 1;
+  const end = controller.indexOf("\nprecheck() {", start);
+  const helper = controller.slice(start, end);
+  const { stdout } = await run("bash", ["-c", `${helper}\npartition_precheck_capabilities "$1"`, "precheck-test", root]);
+  const groups = stdout.trim().split(/\r?\n/).map((group) => group.split(","));
+  assert.equal(groups.length, 3);
+  assert.deepEqual(groups[0], ["ontology"]);
+  const { stdout: expected } = await run("bash", ["-c", `${helper}\ndatabase_case_capabilities "$1" precheck`, "precheck-test", root]);
+  assert.deepEqual(groups.flat().sort(), expected.trim().split(/\r?\n/).sort());
+});

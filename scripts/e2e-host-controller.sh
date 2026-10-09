@@ -506,9 +506,13 @@ function batchWeight(packageCounts) {
   return [...packageCounts.values()].reduce((total, count) => total + Math.ceil(count / batchSize), 0);
 }
 
+// Keep the full ontology stress suite apart from other capability workloads.
+const isolateOntology = records.some((record) => record.capability === "ontology");
+
 for (const record of records) {
   let selected = null;
   for (let index = 0; index < groups.length; index += 1) {
+    if (isolateOntology && ((record.capability === "ontology") !== (index === 0))) continue;
     const projected = new Map(groups[index].packageCounts);
     for (const [packageName, count] of record.packageCounts) {
       projected.set(packageName, (projected.get(packageName) || 0) + count);
