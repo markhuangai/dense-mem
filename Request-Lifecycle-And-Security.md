@@ -648,3 +648,11 @@ intact. A legal hold blocks physical execution of every private purge. The SSO
 credential-delete path still disables the bearer and seals the exact space
 before recording the queued operation, so a held credential cannot continue to
 authenticate while its content awaits authorized hold release.
+
+## Enterprise export boundary (issue #224; verification pending)
+
+Audit and diagnostic downloads exist only on the separate control listener and use its existing static control credential or authorized control-admin SSO session. Ordinary team members, managers, and team-scoped credentials do not gain control-admin access. Revoked sessions retain the existing rejection behavior. No new SSO provisioning or permission path is introduced.
+
+Control-admin audit reads use an internal system transaction, with an optional explicit team filter applied in storage. The cursor is bound to that scope. Export DTOs contain event/time, team UUID, closed operation/entity/role classifications, and valid actor/entity UUIDs. Payloads, arbitrary metadata, client IP, unchecked correlation text, and capture bodies are excluded. Private-content erasure changes neither audit ordering nor the transaction ID; legal holds keep their existing lifecycle policy.
+
+External OTLP has a separate content contract from admitted operator diagnostics. Export spans cannot inherit baggage or request attributes. Metrics aggregate away identity dimensions rather than deleting labels from duplicate series. Configured header credentials receive operational secret protection, but are forwarded only to their chosen destination. Redirects are disabled. Export failures are bounded optional degradation and cannot replace a required memory or audit failure with success.

@@ -279,3 +279,15 @@ A capture does not prove response delivery; a counter does not prove current
 lifecycle; stored evidence does not guarantee recall visibility; and a sealed
 space is not proof that physical erasure completed. Use the corresponding
 authoritative result or durable operation state for each decision.
+
+## Enterprise export operations (issue #224; verification pending)
+
+Enable only the required capability. Configure separate trace and metric destinations and mount destination header files. LangSmith's documented OTLP trace endpoint accepts traces; it is not a metric destination. Collector outage is optional degradation: inspect private `densemem_otlp_*` metrics and the diagnostic exporter state while retaining ordinary readiness and required operation failure checks.
+
+Control admins poll `GET /control/api/audit/export`. Omit `team_id` for the instance, or supply a team UUID. Supply the returned cursor unchanged in the next request and keep the same scope. `limit` defaults to 100 and cannot exceed 1,000. A page contains fixed event metadata and ends with a version-1 checkpoint. Save the cursor only after consuming that checkpoint; deduplicate replayed event IDs. An interrupted page does not establish progress.
+
+The cursor orders insertion transaction ID, timestamp, and event UUID below PostgreSQL's safe transaction frontier. Historical rows have transaction ID zero. Long transactions can delay newer committed events; the checkpoint reports `delayed_by_transaction` and `safe_frontier`. Investigate long-running transactions rather than advancing the cursor manually.
+
+`GET /control/api/diagnostics/bundle` downloads versioned operational JSON: build version, configuration-presence flags, dependency states, authority/schema compatibility, exporter health, and aggregate usage. Unavailable sections are explicit. It does not read capture bodies, filesystem content, or log files.
+
+Rollback disables exporters and download flags. Retain the additive audit insertion column, immutable history, and versioned cursor contract. The migration adds a constant historical value without rewriting payloads, uses a bounded schema lock, and builds matching instance/team indexes concurrently. Interrupted index builds can be resumed; production recovery preserves history.

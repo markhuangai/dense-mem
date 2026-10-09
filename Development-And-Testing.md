@@ -156,3 +156,15 @@ fixture may isolate outbound HTTP behavior but must leave real server
 validation and policy in the path. A green unit suite cannot substitute for
 RLS or commit tests. A report for an earlier commit cannot validate a later
 push.
+
+## Enterprise export verification (issue #224; verification pending)
+
+`enterprise_exports` is a production scenario using the existing OAuth and synchronous-write helpers plus Collector `0.162.0`, pinned to `sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6`. It exercises static/admin authorization, ordinary-team denial, Remember/recall/trace, provider failure, cross-team denial, audit pagination/scope/cancellation, disabled endpoints, content scans, Collector slowness/outage, and private erasure/legal holds. The test Collector writes rotating 32 MiB telemetry files in its disposable container and retains at most one backup; it has no host mounts or published ports.
+
+Run the focused Go packages, real PostgreSQL audit cases, migration history check, and `./scripts/ci-check.sh`. The registered PostgreSQL regressions cover reversed commit order, rollback, immutable transaction IDs, scope-bound replay, non-superuser reads, and historical migration preservation without a rewrite. Required cases must execute rather than skip. Run `enterprise_exports`, `operation_logging`, `private_memory_erasure`, `mcp_oauth`, and `synchronous_write` through `scripts/e2e.sh`.
+
+The maintainer approved an export-only historical 1k waiver before implementation and, on 2026-10-08, waived the forty-run comparative performance acceptance after excessive benchmark cost and unresolved individual live embedding stalls. Replacement verification consists of the focused real-logic, PostgreSQL, repository, and five production scenarios above. Final-head review and full production-image E2E remain required. Comparative latency, throughput, and RSS remain unverified; partial runs do not count as performance acceptance. Features remain disabled by default.
+
+The frozen fixture in `tests/eval/fixtures/enterprise_exports.json` and `scripts/compare-enterprise-exports.sh` remain available for optional future measurements. The benchmark retains its original thresholds and approved disposable-image `GOGC=25`, `GOMEMLIMIT=768MiB`, and 100,000/minute request ceiling. Ordinary production E2E retains its default runtime settings. No response-replay fixture was approved or implemented.
+
+Keep raw runs and configuration in ignored task-owned paths and commit compact evidence with exact source/image/fixture identities. Inspect the independent plan-audit receipt before running implementation tests. A final-head full production-image E2E pass remains a merge gate; focused local results do not replace it. Use `Part of #224` and retain the issue until wiki publication and exact merged-main verification are complete.

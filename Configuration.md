@@ -272,3 +272,19 @@ model/dimension change can make stored vectors incompatible. A runtime policy
 key placed only in an environment file may have no effect. Verify effective
 configuration in the control portal and readiness output, and keep credentials
 out of logs and support bundles.
+
+## Enterprise export startup settings (issue #224; verification pending)
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OTLP_ENABLED` | `false` | Requires `TELEMETRY_ENABLED=true` and at least one destination. |
+| `OTLP_TRACE_ENDPOINT` | unset | Full absolute HTTP(S) OTLP trace URL, such as `/v1/traces`. |
+| `OTLP_METRIC_ENDPOINT` | unset | Independent OTLP metric URL, such as `/v1/metrics`. |
+| `OTLP_TRACE_HEADERS_FILE` | unset | Mounted JSON file containing trace destination headers. |
+| `OTLP_METRIC_HEADERS_FILE` | unset | Mounted JSON file containing metric destination headers. |
+| `AUDIT_EXPORT_ENABLED` | `false` | Registers the control-admin NDJSON audit download. |
+| `DIAGNOSTIC_BUNDLE_ENABLED` | `false` | Registers the control-admin JSON diagnostic download. |
+
+URLs cannot contain embedded credentials, query parameters, or fragments. Header files contain at most 16 HTTP headers within 8 KiB; values never appear in configuration serialization, exporter payloads, or diagnostics. Mount each file explicitly in the deployment. Operational credential protection includes those values and supported authentication forms. Do not put credentials in destination URLs or commit header files.
+
+Trace queues are 2,048 spans with batches of 512. Export/shutdown deadlines are five seconds and metric exports run every 60 seconds. Audit pages default to 100 events and cap at 1,000 events and 1 MiB; diagnostic JSON is capped at 1 MiB. Both downloads have five-second execution/write bounds. These bounds are fixed in this release.

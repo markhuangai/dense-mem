@@ -255,3 +255,13 @@ the ordered telemetry catalog. Test unavailable sources, zero activity, pricing
 absence, audience/scope restrictions, protected credentials, initial rejection,
 and authorized capture details. A green scrape alone does not prove the
 PostgreSQL diagnostic sink is healthy.
+
+## Enterprise exports (issue #224; verification pending)
+
+OTLP export is opt-in and requires telemetry collection. Traces and metrics have separate OTLP/HTTP protobuf destinations. LangSmith supports trace ingestion; use a general OTLP destination for metrics. No resource environment attributes, baggage, exception text, user content, or credentials enter either payload.
+
+Operation spans use the existing MCP outcome classifier and closed operation names, with only `operation` and `outcome` attributes. The resource contains only `service.name=dense-mem`. A queue admits at most 2,048 pending spans, batches at most 512, and exports/shutdown have five-second deadlines. Metrics export every 60 seconds.
+
+Metric names are explicitly listed in `internal/observability/otlp_metrics.go`. Only closed outcome, operation, component, kind, source, method, status class, classification, and configured safe model values survive. All team/profile/credential dimensions are removed by summing counters and each histogram bucket, count, and sum before the Prometheus bridge conversion. Exemplars are discarded. Unapproved values become `other`; unapproved metric families are excluded.
+
+Local `densemem_otlp_*` metrics report pending/dropped spans, failed trace/metric batches, and failed collections. They stay in private Prometheus and are excluded from external export. Failures set diagnostic exporter health and produce transition-only logs; they do not change required memory outcomes.
