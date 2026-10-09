@@ -83,6 +83,7 @@ func (s *DiagnosticService) Bundle(ctx context.Context) ([]byte, error) {
 	if s == nil {
 		return nil, errors.New("diagnostics unavailable")
 	}
+	callerCtx := ctx
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	bundle := DiagnosticBundle{Version: 1, GeneratedAt: time.Now().UTC(), BuildVersion: diagnosticBuildVersion(), ConfigPresence: s.presence, Dependencies: make([]DiagnosticDependency, 0), SchemaStatus: "unavailable", AuthorityStatus: "unavailable", Unavailable: make([]string, 0)}
@@ -135,7 +136,7 @@ func (s *DiagnosticService) Bundle(ctx context.Context) ([]byte, error) {
 	if bundle.Operations == nil {
 		bundle.Unavailable = append(bundle.Unavailable, "operations")
 	}
-	if err := ctx.Err(); err != nil {
+	if err := callerCtx.Err(); err != nil {
 		return nil, err
 	}
 	raw, err := json.Marshal(bundle)

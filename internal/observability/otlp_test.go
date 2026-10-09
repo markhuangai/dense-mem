@@ -60,6 +60,32 @@ func TestOTLPAggregatesCountersAndHistogramBucketsAcrossIdentity(t *testing.T) {
 	}
 }
 
+func TestOTLPPreservesProductionSuccessOutcomes(t *testing.T) {
+	metrics := NewPrometheusMetrics()
+	metrics.ObserveRecallLatencyFor(context.Background(), 1)
+	metrics.ObserveRecallFor(context.Background(), 1, 1, "outcome-content-canary")
+	metrics.ObserveRememberAcknowledgement(context.Background(), 1, "ok")
+	families, err := (exportGatherer{source: metrics.registry}).Gather()
+	require.NoError(t, err)
+	observed := make(map[string]map[string]float64)
+	for _, family := range families {
+		if family.GetName() != "densemem_recall_requests_total" && family.GetName() != "densemem_remember_acknowledgements_total" {
+			continue
+		}
+		outcomes := make(map[string]float64)
+		for _, metric := range family.GetMetric() {
+			for _, label := range metric.GetLabel() {
+				if label.GetName() == "outcome" {
+					outcomes[label.GetValue()] = metric.GetCounter().GetValue()
+				}
+			}
+		}
+		observed[family.GetName()] = outcomes
+	}
+	require.Equal(t, map[string]float64{"ok": 1, "other": 1}, observed["densemem_recall_requests_total"])
+	require.Equal(t, map[string]float64{"ok": 1}, observed["densemem_remember_acknowledgements_total"])
+}
+
 func TestOTLPHTTPProtobufUsesOnlyApprovedContentAndSeparateHeaders(t *testing.T) {
 	var mu sync.Mutex
 	var traces []*tracev1.ExportTraceServiceRequest

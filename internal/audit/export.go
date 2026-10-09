@@ -128,8 +128,8 @@ func safeExportClass(value string, allowed string) string {
 
 func projectExportEntry(entry contract.ExportEntry) ExportEvent {
 	event := ExportEvent{Type: "event", Version: 1, ID: entry.Position.ID, Timestamp: entry.Position.Timestamp,
-		Operation:  safeExportClass(entry.Operation, "CREATE UPDATE DELETE DELETE_BLOCKED REVOKE ROTATE_KEY AUTH_FAILURE CROSS_PROFILE_DENIED RATE_LIMITED SYSTEM_QUERY INVARIANT_VIOLATION SECURITY_REJECTED EVALUATION_TOOL_CALL ONTOLOGY_MAINTENANCE_COMMAND"),
-		EntityType: safeExportClass(entry.EntityType, "profile team api_key credential request system relationship evidence memory_space private_memory_erasure private_memory_legal_hold ontology_maintenance evaluation_tool memory_intake_attempt"),
+		Operation:  safeExportClass(entry.Operation, "CREATE UPDATE DELETE DELETE_BLOCKED REVOKE ROTATE_KEY AUTH_FAILURE CROSS_PROFILE_DENIED RATE_LIMITED SYSTEM_QUERY INVARIANT_VIOLATION SECURITY_REJECTED EVALUATION_TOOL_CALL ONTOLOGY_MAINTENANCE_COMMAND APP_CONFIG_UPDATE SECURITY_AUTO_BAN SECURITY_SETTINGS_UPDATE SECURITY_MANUAL_BAN SECURITY_UNBAN"),
+		EntityType: safeExportClass(entry.EntityType, "profile team api_key credential request system relationship evidence memory_space private_memory_erasure private_memory_legal_hold ontology_maintenance evaluation_tool memory_intake_attempt app_config security_settings security_ip_ban"),
 		EntityID:   safeExportUUID(entry.EntityID), ActorRole: safeExportClass(entry.ActorRole, "admin manager member reader writer control system")}
 	if entry.TeamID != nil {
 		if id := safeExportUUID(*entry.TeamID); id != "" {

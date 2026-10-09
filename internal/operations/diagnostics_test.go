@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -59,4 +60,22 @@ func TestDiagnosticBundleReportsCompatibleAuthorityAndDisabledExporters(t *testi
 	require.Equal(t, observability.OTLPSpanQueueSize, bundle.Exporters.QueueCapacity)
 	require.NotContains(t, bundle.Unavailable, "authority")
 	require.NotContains(t, bundle.Unavailable, "schema")
+}
+
+func TestDiagnosticBundleRetainsUnavailableSectionsOnInternalDeadline(t *testing.T) {
+	service := NewDiagnosticService(DiagnosticPresence{}, []DiagnosticCheck{{Name: "postgres", Check: func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}}}, nil, nil, AuthorityBootstrap{})
+	raw, err := service.Bundle(context.Background())
+	require.NoError(t, err)
+	var bundle DiagnosticBundle
+	require.NoError(t, json.Unmarshal(raw, &bundle))
+	require.Equal(t, []DiagnosticDependency{{Name: "postgres", Status: "unavailable", Reason: "check_failed"}}, bundle.Dependencies)
+	require.Contains(t, bundle.Unavailable, "postgres")
+	require.Contains(t, bundle.Unavailable, "operations")
+	caller, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	_, err = service.Bundle(caller)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }

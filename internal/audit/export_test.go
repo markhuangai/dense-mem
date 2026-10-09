@@ -68,6 +68,23 @@ func TestExportCursorScopeAndClosedShape(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidExport)
 }
 
+func TestExportProjectionPreservesSettingsAndSecurityClasses(t *testing.T) {
+	for _, entry := range []contract.ExportEntry{
+		{Operation: "APP_CONFIG_UPDATE", EntityType: "app_config", EntityID: "general"},
+		{Operation: "SECURITY_SETTINGS_UPDATE", EntityType: "security_settings", EntityID: "global"},
+		{Operation: "SECURITY_AUTO_BAN", EntityType: "security_ip_ban", EntityID: "192.0.2.10"},
+		{Operation: "SECURITY_MANUAL_BAN", EntityType: "security_ip_ban", EntityID: "192.0.2.10"},
+		{Operation: "SECURITY_UNBAN", EntityType: "security_ip_ban", EntityID: "192.0.2.10"},
+	} {
+		t.Run(entry.Operation, func(t *testing.T) {
+			event := projectExportEntry(entry)
+			require.Equal(t, entry.Operation, event.Operation)
+			require.Equal(t, entry.EntityType, event.EntityType)
+			require.Empty(t, event.EntityID)
+		})
+	}
+}
+
 func TestExportWithoutServiceIsUnavailable(t *testing.T) {
 	var service *Service
 	_, err := service.ExportPage(context.Background(), ExportRequest{})

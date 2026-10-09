@@ -25,7 +25,7 @@ densemem_read_stage_duration_seconds densemem_read_sql_statements_total densemem
 `)
 
 var exportLabelValues = map[string]string{
-	"outcome":        "success error failure cancelled rpc_error tool_error missing_result accepted rejected partial stored not_stored completed failed unknown",
+	"outcome":        "ok success error failure cancelled rpc_error tool_error missing_result accepted rejected partial stored not_stored completed failed unknown",
 	"operation":      "remember recall trace semantic_assessment conflict_review dream_generation recall_embedding search_document_embedding community_summary ontology_organization search",
 	"component":      "verifier embedding assessor",
 	"kind":           "input output prompt completion total",
