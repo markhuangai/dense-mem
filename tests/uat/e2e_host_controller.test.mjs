@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { test } from "node:test";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
@@ -267,66 +267,101 @@ partition_precheck_capabilities "${sourceRoot}"
   }
 });
 
-test("weighted precheck partition isolates ontology and spreads other large fragments", async () => {
-  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-weighted-"));
+test("the repository precheck isolates ontology and selects every case once", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-ontology-"));
   try {
-    const sourceRoot = join(fixture, "repo");
-    const casesDir = join(sourceRoot, "scripts/e2e-db-cases");
-    await mkdir(casesDir, { recursive: true });
-    const fragments = [
-      ["access", 80],
-      ["audit", 1],
-      ["community", 1],
-      ["dream", 80],
-      ["graph", 1],
-      ["http", 1],
-      ["knowledge", 80],
-      ["migration", 1],
-      ["ontology", 1],
-      ["operations", 1],
-      ["postgres", 80],
-      ["privacy", 1],
-      ["remember", 1],
-      ["repository", 80],
-      ["search", 1],
-      ["settings", 1],
-      ["trace", 80],
-    ];
-    for (const [capability, count] of fragments) {
-      const cases = Array.from({ length: count }, (_, index) => ({
-        id: `${capability}/Test${capability}${index}`,
-        package: "./fixture",
-        run: `^Test${capability}${index}$`,
-        phase: "precheck",
-      }));
-      await writeFile(join(casesDir, `${capability}.json`), JSON.stringify({
-        version: 1,
-        capability,
-        cases,
-      }));
-    }
+    const casesDir = join(scripts, "e2e-db-cases");
+    const fragments = await Promise.all((await readdir(casesDir))
+      .filter((entry) => entry.endsWith(".json"))
+      .map(async (entry) => JSON.parse(await readFile(join(casesDir, entry), "utf8"))));
+    const casesByCapability = new Map(fragments
+      .map((fragment) => [fragment.capability, fragment.cases.filter((item) => item.phase === "precheck")])
+      .filter(([, cases]) => cases.length > 0));
     const start = controller.indexOf("\ndatabase_case_capabilities()") + 1;
     const end = controller.indexOf("\nprecheck() {", start);
-    const helper = controller.slice(start, end);
-    const script = `#!/usr/bin/env bash
+    const scriptPath = join(fixture, "ontology-registry-test.sh");
+    await executable(scriptPath, `#!/usr/bin/env bash
 set -euo pipefail
-${helper}
-fail() { printf '%s\\n' "$*" >&2; return 1; }
-partition_precheck_capabilities "${sourceRoot}"
-`;
-    const scriptPath = join(fixture, "weighted-registry-test.sh");
-    await executable(scriptPath, script);
-    const { stdout } = await run("bash", [scriptPath]);
+${controller.slice(start, end)}
+partition_precheck_capabilities "$1"
+`);
+    const { stdout } = await run("bash", [scriptPath, root]);
     const groups = stdout.trim().split(/\r?\n/).map((group) => group.split(","));
     assert.equal(groups.length, 3);
     assert.deepEqual(groups[0], ["ontology"]);
-    assert.deepEqual(groups.flat().sort(), fragments.map(([capability]) => capability).sort());
-    const heavy = new Set(["access", "dream", "knowledge", "postgres", "repository", "trace"]);
-    assert.deepEqual(groups.map((group) => group.filter((capability) => heavy.has(capability)).length), [0, 3, 3]);
+    assert.deepEqual(groups.flat().sort(), [...casesByCapability.keys()].sort());
+    const selected = groups.flatMap((group) => group
+      .flatMap((capability) => casesByCapability.get(capability).map((item) => item.id)));
+    const registered = [...casesByCapability.values()].flat().map((item) => item.id);
+    assert.equal(new Set(selected).size, selected.length);
+    assert.deepEqual(selected.sort(), registered.sort());
   } finally {
     await rm(fixture, { recursive: true, force: true });
   }
 });
+
+for (const includeOntology of [false, true]) {
+  test(`weighted precheck partition ${includeOntology ? "isolates ontology and spreads other large fragments" : "spreads large capability fragments"}`, async () => {
+    const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-weighted-"));
+    try {
+      const sourceRoot = join(fixture, "repo");
+      const casesDir = join(sourceRoot, "scripts/e2e-db-cases");
+      await mkdir(casesDir, { recursive: true });
+      const fragments = [
+        ["access", 80],
+        ["audit", 1],
+        ["community", 1],
+        ["dream", 80],
+        ["graph", 1],
+        ["http", 1],
+        ["knowledge", 80],
+        ["migration", 1],
+        ...(includeOntology ? [["ontology", 1]] : []),
+        ["operations", 1],
+        ["postgres", 80],
+        ["privacy", 1],
+        ["remember", 1],
+        ["repository", 80],
+        ["search", 1],
+        ["settings", 1],
+        ["trace", 80],
+      ];
+      for (const [capability, count] of fragments) {
+        const cases = Array.from({ length: count }, (_, index) => ({
+          id: `${capability}/Test${capability}${index}`,
+          package: "./fixture",
+          run: `^Test${capability}${index}$`,
+          phase: "precheck",
+        }));
+        await writeFile(join(casesDir, `${capability}.json`), JSON.stringify({
+          version: 1,
+          capability,
+          cases,
+        }));
+      }
+      const start = controller.indexOf("\ndatabase_case_capabilities()") + 1;
+      const end = controller.indexOf("\nprecheck() {", start);
+      const helper = controller.slice(start, end);
+      const script = `#!/usr/bin/env bash
+  set -euo pipefail
+  ${helper}
+  fail() { printf '%s\\n' "$*" >&2; return 1; }
+  partition_precheck_capabilities "${sourceRoot}"
+  `;
+      const scriptPath = join(fixture, "weighted-registry-test.sh");
+      await executable(scriptPath, script);
+      const { stdout } = await run("bash", [scriptPath]);
+      const groups = stdout.trim().split(/\r?\n/).map((group) => group.split(","));
+      assert.equal(groups.length, 3);
+      if (includeOntology) assert.deepEqual(groups[0], ["ontology"]);
+      assert.deepEqual(groups.flat().sort(), fragments.map(([capability]) => capability).sort());
+      const heavy = new Set(["access", "dream", "knowledge", "postgres", "repository", "trace"]);
+      assert.deepEqual(groups.map((group) => group.filter((capability) => heavy.has(capability)).length), includeOntology ? [0, 3, 3] : [2, 2, 2]);
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+}
 
 test("precheck partition balances cases when package weights overlap", async () => {
   const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-case-balance-"));
