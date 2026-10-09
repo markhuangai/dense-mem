@@ -267,7 +267,7 @@ partition_precheck_capabilities "${sourceRoot}"
   }
 });
 
-test("weighted precheck partition spreads large capability fragments", async () => {
+test("weighted precheck partition isolates ontology and spreads other large fragments", async () => {
   const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-weighted-"));
   try {
     const sourceRoot = join(fixture, "repo");
@@ -282,6 +282,7 @@ test("weighted precheck partition spreads large capability fragments", async () 
       ["http", 1],
       ["knowledge", 80],
       ["migration", 1],
+      ["ontology", 1],
       ["operations", 1],
       ["postgres", 80],
       ["privacy", 1],
@@ -318,8 +319,10 @@ partition_precheck_capabilities "${sourceRoot}"
     const { stdout } = await run("bash", [scriptPath]);
     const groups = stdout.trim().split(/\r?\n/).map((group) => group.split(","));
     assert.equal(groups.length, 3);
+    assert.deepEqual(groups[0], ["ontology"]);
+    assert.deepEqual(groups.flat().sort(), fragments.map(([capability]) => capability).sort());
     const heavy = new Set(["access", "dream", "knowledge", "postgres", "repository", "trace"]);
-    assert.deepEqual(groups.map((group) => group.filter((capability) => heavy.has(capability)).length), [2, 2, 2]);
+    assert.deepEqual(groups.map((group) => group.filter((capability) => heavy.has(capability)).length), [0, 3, 3]);
   } finally {
     await rm(fixture, { recursive: true, force: true });
   }

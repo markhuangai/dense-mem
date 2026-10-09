@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "content": "Dense-Mem stores durable memory in PostgreSQL. enterprise-export-performance-content-canary",
+  "subject": "Dense-Mem",
+  "predicate": "stores_memory_in",
+  "value": "PostgreSQL",
+  "query": "Dense-Mem durable memory PostgreSQL",
+  "warmup_requests": 80,
+  "measured_requests": 1000,
+  "concurrency": 8,
+  "saturation_requests": 3000,
+  "saturation_concurrency": 64,
+  "paired_repetitions": 5,
+  "states": ["disabled", "healthy", "slow", "unavailable"]
+}

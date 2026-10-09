@@ -12,6 +12,13 @@
   },
   "workers": [
     {
+      "path": "internal/observability/otlp.go",
+      "function": "ObserveOperation",
+      "kind": "start",
+      "ordinal": 1,
+      "role": "worker"
+    },
+    {
       "path": "internal/observability/conflict_queue_metrics.go",
       "function": "Collect",
       "kind": "goroutine",

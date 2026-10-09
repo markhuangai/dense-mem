@@ -103,6 +103,10 @@ func TestCrossOwnerRelativeTimeRequiresResolvedCalendarContext(t *testing.T) {
 	}{
 		{"resolved", "Atlas launched today.", "Atlas was launched today.", "2026-10-08 12:00:00+00", `{"timezone":"UTC"}`, true},
 		{"repeated day word", "Today Atlas launched today.", "Atlas launched today.", "2026-10-08 12:00:00+00", `{"timezone":"UTC"}`, true},
+		{"multiple day words", "Atlas launched yesterday and expanded today.", "Atlas launched yesterday and expanded today.", "2026-10-08 12:00:00+00", `{"timezone":"UTC"}`, true},
+		{"reordered day words", "Yesterday Atlas launched and today Atlas expanded.", "TODAY Atlas expanded after launching yesterday.", "2026-10-08 12:00:00+00", `{"timezone":"UTC"}`, true},
+		{"missing day word", "Atlas launched yesterday and expanded today.", "Atlas launched yesterday.", "2026-10-08 12:00:00+00", `{"timezone":"UTC"}`, false},
+		{"extra day word", "Atlas launched yesterday and expanded today.", "Atlas launched yesterday and expanded tomorrow.", "2026-10-08 12:00:00+00", `{"timezone":"UTC"}`, false},
 		{"first person", "I launched today.", "I launched today.", "2026-10-08 12:00:00+00", `{"timezone":"UTC"}`, false},
 		{"spatial", "Atlas launched here today.", "Atlas launched here today.", "2026-10-08 12:00:00+00", `{"timezone":"UTC"}`, false},
 		{"different relative days", "Atlas launched today.", "Atlas launched yesterday.", "2026-10-08 12:00:00+00", `{"timezone":"UTC"}`, false},

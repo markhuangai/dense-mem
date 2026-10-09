@@ -231,3 +231,55 @@ func TestOntologyCrossOwnerSpatialContextRemainsSeparate(t *testing.T) {
 	require.Equal(t, count, calls.Load())
 	require.Equal(t, before, f.canonicalSnapshot(t))
 }
+
+func TestOntologyCrossOwnerMultipleRelativeDays(t *testing.T) {
+	for _, testCase := range []struct {
+		name, right string
+		grouped     bool
+	}{
+		{"matching", "TODAY Atlas expanded after launching yesterday.", true},
+		{"missing term", "Atlas launched yesterday.", false},
+		{"mismatched term", "Atlas launched yesterday and expanded tomorrow.", false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := newOrganizationFixture(t)
+			a := f.organizationEvidenceAt(t, 0, "Atlas launched yesterday and expanded today.", "2026-10-08T12:00:00Z", "UTC")
+			b := f.organizationEvidenceAt(t, 1, testCase.right, "2026-10-08T12:00:00Z", "UTC")
+			ctx := context.Background()
+			handles := []ontology.SourceHandle{a, b}
+			sources, err := f.store.ReadSources(ctx, f.team, handles)
+			require.NoError(t, err)
+			require.Len(t, sources, 2)
+			require.Equal(t, f.owners[0], sources[0].OwnerID)
+			require.Equal(t, f.owners[1], sources[1].OwnerID)
+			require.NotEqual(t, sources[0].OwnerID, sources[1].OwnerID)
+			require.Equal(t, sources[0].State["created_at"], sources[1].State["created_at"])
+			for _, source := range sources {
+				require.JSONEq(t, `{"timezone":"UTC"}`, source.State["metadata"])
+			}
+			before := f.canonicalSnapshot(t)
+			service, calls := organizationFixtureService(t, f, func(_, _ assessment.Item) bool { return true }, nil)
+			result, err := service.Organize(ctx, f.team, ontology.OrganizationInput{OperationKey: "multiple-relative-days", Sources: handles})
+			require.NoError(t, err)
+			require.NotNil(t, result.Publication)
+			groups, err := f.store.ListRecords(ctx, f.team, ontology.EvidenceGroup, "", 20)
+			require.NoError(t, err)
+			if testCase.grouped {
+				require.Len(t, groups.Records, 1)
+				require.True(t, groups.Records[0].Current)
+				require.ElementsMatch(t, handles, groups.Records[0].Group.Members)
+			} else {
+				require.Empty(t, groups.Records)
+			}
+			assignments, err := f.store.ListRecords(ctx, f.team, ontology.AssignmentKind, "", 20)
+			require.NoError(t, err)
+			require.Len(t, assignments.Records, 2)
+			count := calls.Load()
+			replay, err := service.Organize(ctx, f.team, ontology.OrganizationInput{OperationKey: "multiple-relative-days-replay", Sources: handles})
+			require.NoError(t, err)
+			require.True(t, replay.Existing)
+			require.Equal(t, count, calls.Load())
+			require.Equal(t, before, f.canonicalSnapshot(t))
+		})
+	}
+}

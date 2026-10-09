@@ -13,19 +13,19 @@
   ],
   "scope": "Approved historical 1k waiver replacement; existing-memory organization only. No Recall activation or retrieval-quality claim.",
   "evaluation_date": "2026-10-09",
-  "base_sha": "b9e52fe2c566e46abe33d7c4ed7b9699ba1b8397",
+  "base_sha": "8aae241000f629c832d4d3dbfaa84895f04ae6d6",
   "command": "DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 DENSE_MEM_ONTOLOGY_LIVE_EVAL=1 go test -tags integration ./internal/ontology/postgres -run '^TestOntology(MaintenanceCohort|FollowupCohort)$' -count=1 -v -timeout=60m",
   "source_locks": [
     "tests/eval/source_locks/ontology_organization_v1.json",
     "tests/eval/source_locks/ontology_followups_v1.json"
   ],
-  "production_go_manifest_sha256": "sha256:8c30556bcbd4cd68e152d8cdf7f24f244be7745737ee8cd035a8a29f8255b030",
+  "production_go_manifest_sha256": "sha256:9e362de5c802c5516cb90c23b99f2f2643b6968a26b8aef962976904781f2916",
   "model": "dense-mem-testing",
   "provider_identity": "sha256:35301efb143f357c2a2cb2a4fc4ede3b7373163339db23f236f320c2792aa923",
   "fresh_state_repetitions": [
     {
       "repetition": 1,
-      "tested_source_manifest_sha256": "sha256:55d28b9d25f8d1620ba396cb742bc8fafc5f7a6db4021bc39c3b55779f2f4d2b",
+      "tested_source_manifest_sha256": "sha256:f4ec30a0dfeda2ae586ae857fd4087634b402aafc5508c60dc4aaa8b499b308f",
       "cohorts": {
         "maintenance": {
           "cohort_sha256": "sha256:01e78a45a28121f64b36a7b17b8f76051ffd4186d2eed918470a054ad522ae14",
@@ -38,13 +38,13 @@
           "source_preservation": 1,
           "provider_attempts": 9,
           "usage": {
-            "estimated_input_tokens": 10702,
-            "estimated_output_tokens": 2238,
-            "reported_input_tokens": 6995,
-            "reported_output_tokens": 20857,
-            "reported_total_tokens": 27852
+            "estimated_input_tokens": 10700,
+            "estimated_output_tokens": 2249,
+            "reported_input_tokens": 7001,
+            "reported_output_tokens": 19270,
+            "reported_total_tokens": 26271
           },
-          "report_sha256": "sha256:f3a6897b87a3303ddaf312ce3d30ebaa5a8edaeae39b4579a858605cb69a0fc0"
+          "report_sha256": "sha256:4d0d7a2aaa4177cee73c679cf9c0cdfe1220451a2909ce0b71281b2050bec978"
         },
         "followups": {
           "cohort_sha256": "sha256:94f92ddd22fa5affbfa9936248cdf6be3c067a0641424406a9445380ce921b23",
@@ -57,19 +57,19 @@
           "source_preservation": 1,
           "provider_attempts": 6,
           "usage": {
-            "estimated_input_tokens": 6620,
-            "estimated_output_tokens": 1170,
-            "reported_input_tokens": 4290,
-            "reported_output_tokens": 14272,
-            "reported_total_tokens": 18562
+            "estimated_input_tokens": 6629,
+            "estimated_output_tokens": 1522,
+            "reported_input_tokens": 4293,
+            "reported_output_tokens": 14573,
+            "reported_total_tokens": 18866
           },
-          "report_sha256": "sha256:7be5097e2a5d1f9e377317ce2e0c4d4ac3abedc5c133d82eacd9f3abe446075c"
+          "report_sha256": "sha256:9d4e07df3b0376afb4a72d56a2ef358ea73ffef8cbefbcbd23e470f48a9a0043"
         }
       }
     },
     {
       "repetition": 2,
-      "tested_source_manifest_sha256": "sha256:55d28b9d25f8d1620ba396cb742bc8fafc5f7a6db4021bc39c3b55779f2f4d2b",
+      "tested_source_manifest_sha256": "sha256:f4ec30a0dfeda2ae586ae857fd4087634b402aafc5508c60dc4aaa8b499b308f",
       "cohorts": {
         "maintenance": {
           "cohort_sha256": "sha256:01e78a45a28121f64b36a7b17b8f76051ffd4186d2eed918470a054ad522ae14",
@@ -80,15 +80,15 @@
           "false_consolidations": 0,
           "distinct_fact_coverage": 1,
           "source_preservation": 1,
-          "provider_attempts": 9,
+          "provider_attempts": 10,
           "usage": {
-            "estimated_input_tokens": 10699,
-            "estimated_output_tokens": 2186,
-            "reported_input_tokens": 6990,
-            "reported_output_tokens": 21059,
-            "reported_total_tokens": 28049
+            "estimated_input_tokens": 12489,
+            "estimated_output_tokens": 2587,
+            "reported_input_tokens": 8338,
+            "reported_output_tokens": 21904,
+            "reported_total_tokens": 30242
           },
-          "report_sha256": "sha256:c77d6d62152cc639ecea4cafd0f64697122d2e818e656193bc3852ac0c632730"
+          "report_sha256": "sha256:376803a5298c7d770d4af9052f56041b995eb64be1643e602db2df7eb0223235"
         },
         "followups": {
           "cohort_sha256": "sha256:94f92ddd22fa5affbfa9936248cdf6be3c067a0641424406a9445380ce921b23",
@@ -102,18 +102,18 @@
           "provider_attempts": 6,
           "usage": {
             "estimated_input_tokens": 6631,
-            "estimated_output_tokens": 1409,
+            "estimated_output_tokens": 1405,
             "reported_input_tokens": 4296,
-            "reported_output_tokens": 14092,
-            "reported_total_tokens": 18388
+            "reported_output_tokens": 12509,
+            "reported_total_tokens": 16805
           },
-          "report_sha256": "sha256:63cdf4ebd561812e35cfc5ef76fe95ec1b8cc86979bcd7079cedc1ce4e53309f"
+          "report_sha256": "sha256:ebe0755fb948eb06e983295db53aa5cde0e90ad1bf707acb3acfbe8759f9338a"
         }
       }
     },
     {
       "repetition": 3,
-      "tested_source_manifest_sha256": "sha256:55d28b9d25f8d1620ba396cb742bc8fafc5f7a6db4021bc39c3b55779f2f4d2b",
+      "tested_source_manifest_sha256": "sha256:f4ec30a0dfeda2ae586ae857fd4087634b402aafc5508c60dc4aaa8b499b308f",
       "cohorts": {
         "maintenance": {
           "cohort_sha256": "sha256:01e78a45a28121f64b36a7b17b8f76051ffd4186d2eed918470a054ad522ae14",
@@ -126,13 +126,13 @@
           "source_preservation": 1,
           "provider_attempts": 9,
           "usage": {
-            "estimated_input_tokens": 10706,
-            "estimated_output_tokens": 2222,
-            "reported_input_tokens": 6996,
-            "reported_output_tokens": 20581,
-            "reported_total_tokens": 27577
+            "estimated_input_tokens": 10701,
+            "estimated_output_tokens": 2294,
+            "reported_input_tokens": 7000,
+            "reported_output_tokens": 20231,
+            "reported_total_tokens": 27231
           },
-          "report_sha256": "sha256:da1cf76742b7244cadc7c510faa8380dbc5f512555cd000a57d3923da977bda8"
+          "report_sha256": "sha256:17f51aa77bccae725cf75d78a23b469528741bda689e47d6256adac9783f5435"
         },
         "followups": {
           "cohort_sha256": "sha256:94f92ddd22fa5affbfa9936248cdf6be3c067a0641424406a9445380ce921b23",
@@ -143,15 +143,15 @@
           "false_consolidations": 0,
           "distinct_fact_coverage": 1,
           "source_preservation": 1,
-          "provider_attempts": 6,
+          "provider_attempts": 7,
           "usage": {
-            "estimated_input_tokens": 6636,
-            "estimated_output_tokens": 1387,
-            "reported_input_tokens": 4295,
-            "reported_output_tokens": 14354,
-            "reported_total_tokens": 18649
+            "estimated_input_tokens": 8156,
+            "estimated_output_tokens": 1624,
+            "reported_input_tokens": 5423,
+            "reported_output_tokens": 13514,
+            "reported_total_tokens": 18937
           },
-          "report_sha256": "sha256:bb5d45cc4a2cfca162ea869238681c92ad8f805a6fcce780d163e94f68e7ad42"
+          "report_sha256": "sha256:855d5d44a10586b8f640b780515ea7d7b90e6d97fba2bcbe73829728c5ee42f5"
         }
       }
     }
@@ -179,5 +179,17 @@
     "reason": "Three complete responses referenced an undefined definition. Validation rejected every response; no quality credit was granted.",
     "approved_remedy": "Identify the missing item/ref in existing regeneration feedback, preserving schemas, budgets, acceptance rules and frozen cohorts.",
     "qualification": "Three new complete fresh-state repetitions on the corrected implementation. The prior failure remains retained."
+  },
+  "original_plan_base_sha": "b9e52fe2c566e46abe33d7c4ed7b9699ba1b8397",
+  "main_integration": {
+    "base_sha": "8aae241000f629c832d4d3dbfaa84895f04ae6d6",
+    "approved_contract_sha256": "b57952f28fddbd0d79cb40bc21587d0c60b07acf6387b503e7be2de4bee2fd3b",
+    "independent_audit_rounds": 3,
+    "final_audit": "conformant",
+    "all_original_543_postgres_cases_preserved": true,
+    "registered_postgres_cases": 544,
+    "production_scenarios": 26,
+    "local_latency_benchmark_run": false,
+    "required_remote_latency_gate": "Reject increase only when both above 10 percent and above 2 milliseconds; actual final-head remote pass remains mandatory."
   }
 }

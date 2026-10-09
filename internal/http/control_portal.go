@@ -135,6 +135,14 @@ func newControlPortalServerWithMetricsAndTelemetry(
 	api := e.Group("/control/api")
 	api.Use(controlPortalMiddleware(cfg.GetControlPortalToken(), securitySvc, telemetry.ControlIdentity))
 	api.Use(httpmw.TelemetryHTTPMiddleware(telemetry.HTTPMetrics))
+	control.auditExport = telemetry.AuditExport
+	control.diagnostics = telemetry.Diagnostics
+	if telemetry.AuditExport != nil {
+		api.GET("/audit/export", control.exportAudit)
+	}
+	if telemetry.Diagnostics != nil {
+		api.GET("/diagnostics/bundle", control.diagnosticBundle)
+	}
 	api.GET("/session", control.session)
 	api.GET("/metrics", control.getMetrics)
 	api.GET("/telemetry", control.getTelemetry)

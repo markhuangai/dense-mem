@@ -58,15 +58,19 @@ func resolvedRelativeTime(left, right SourceSnapshot) bool {
 	if _, err := time.LoadLocation(metadata.Timezone); err != nil {
 		return false
 	}
-	day := strings.ToLower(relativeTimes.FindString(left.State["content"]))
-	if day == "" || !relativeTimes.MatchString(right.State["content"]) {
+	leftDays, rightDays := map[string]bool{}, map[string]bool{}
+	for _, word := range relativeTimes.FindAllString(left.State["content"], -1) {
+		leftDays[strings.ToLower(word)] = true
+	}
+	for _, word := range relativeTimes.FindAllString(right.State["content"], -1) {
+		rightDays[strings.ToLower(word)] = true
+	}
+	if len(leftDays) == 0 || len(leftDays) != len(rightDays) {
 		return false
 	}
-	for _, content := range []string{left.State["content"], right.State["content"]} {
-		for _, word := range relativeTimes.FindAllString(content, -1) {
-			if strings.ToLower(word) != day {
-				return false
-			}
+	for day := range leftDays {
+		if !rightDays[day] {
+			return false
 		}
 	}
 	return true

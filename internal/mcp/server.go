@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -41,8 +42,13 @@ const (
 	errCodeToolFailure    = -32000
 )
 
+type OperationObserver interface {
+	ObserveOperation(context.Context, string, time.Time, string)
+}
+
 // Server is an MCP server bound to a shared tool registry.
 type Server struct {
+	operationObserver OperationObserver
 	registry          registry.Registry
 	teamID            string
 	scopes            []string
@@ -50,6 +56,10 @@ type Server struct {
 	logger            Logger
 	runtimeToolPolicy registry.RuntimeToolPolicy
 	prompts           promptcatalog.Catalog
+}
+
+func (s *Server) SetOperationObserver(observer OperationObserver) {
+	s.operationObserver = observer
 }
 
 // TeamContext is non-secret team metadata made visible in MCP discovery so

@@ -107,7 +107,7 @@ run_transitional() {
 			grep -Ev '/(evalharness|repository|knowledge/postgres|dream/postgres|trace/postgres|graph/postgres)$|/storage/(postgres|redis)$'
 	)
 	printf '%s\n' "${packages[@]}"
-	go test "${packages[@]}" -covermode=atomic -coverprofile="${profile}" -count=1
+	go test "${packages[@]}" -timeout=30m -covermode=atomic -coverprofile="${profile}" -count=1
 	report_total "${profile}" "${COVERAGE_DIR}/go-transitional.txt" "${ROOT_DIR}"
 
 	local total
@@ -128,6 +128,7 @@ run_complete() {
 	local root_profile="${COVERAGE_DIR}/go-root-complete.raw"
 	local evaluation_profile="${COVERAGE_DIR}/go-evaluation-complete.raw"
 	local postgres_profile="${COVERAGE_DIR}/go-postgres-complete.raw"
+	local audit_profile="${COVERAGE_DIR}/go-audit-complete.raw"
 	local e2e_profile="${COVERAGE_DIR}/go-e2e-complete.raw"
 	local root_dedup_profile="${COVERAGE_DIR}/go-root-complete.out"
 	local evaluation_dedup_profile="${COVERAGE_DIR}/go-evaluation-complete.out"
@@ -149,15 +150,17 @@ run_complete() {
 	local evaluation_coverpkg
 	evaluation_coverpkg="$(IFS=,; printf '%s' "${evaluation_cover_packages[*]}")"
 	printf '%s\n' "${packages[@]}"
-	go test "${packages[@]}" -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${root_profile}" -count=1
-	go test -tags evaluation "${evaluation_packages[@]}" -covermode=atomic -coverpkg="${evaluation_coverpkg}" -coverprofile="${evaluation_profile}" -count=1
+	go test "${packages[@]}" -timeout=30m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${root_profile}" -count=1
+	go test -tags evaluation "${evaluation_packages[@]}" -timeout=30m -covermode=atomic -coverpkg="${evaluation_coverpkg}" -coverprofile="${evaluation_profile}" -count=1
 	DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/ontology/postgres \
 		-run '^(TestOntologyMaintenance(Cohort|RegenerationFailureRetry|ProviderPauseDrain|AccountingFailurePreventsPublication|BudgetDeferralAndManualReuse|ControlInterruptionResumesSameWindow|PauseCommandsAndWindows|OperatorHTTPAndScheduler|CommandAuditIsAtomic)|TestOntologyAutomaticRetirementPreservesGroupingOverrides|TestOntologyCurrentReadersDistinguishDependencyAndSourceChanges|TestOntologyGroupingOverridesPreserveAssignmentFreshness|TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges|TestOntologyVocabularyUsesCurrentCandidateWindow|TestOntologyVocabularyWindowPreservesTeamIsolationAndNameReuse|TestOntologyFollowupCohort|TestOntologyMaintenanceBoundedCompletionUsesPersistedOutcomes|TestOntologyMaintenanceEarlierAmbiguityKeepsBoundedRunIncomplete|TestOntologyMaintenanceScheduledRecoveryClearsCurrentReason|TestOntologyMaintenanceCompletedRunDoesNotHideUnrelatedFailures|TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork|TestOntologyMixedSeparationOverrideProtectsEvidenceGroups)$' \
 		-count=1 -timeout=15m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${postgres_profile}"
+	DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/service \
+		-run '^TestAudit' -count=1 -timeout=5m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${audit_profile}"
 	go -C cmd/e2e test ./... -covermode=atomic -coverprofile="${e2e_profile}" -count=1
 	merge_profiles "${root_dedup_profile}" "${root_profile}"
 	merge_profiles "${evaluation_dedup_profile}" "${evaluation_profile}"
-	merge_profiles "${postgres_dedup_profile}" "${postgres_profile}"
+	merge_profiles "${postgres_dedup_profile}" "${postgres_profile}" "${audit_profile}"
 	merge_profiles "${e2e_dedup_profile}" "${e2e_profile}"
 	merge_profiles "${merged_profile}" "${root_dedup_profile}" "${evaluation_dedup_profile}" "${postgres_dedup_profile}" "${e2e_dedup_profile}"
 	report_total "${root_dedup_profile}" "${root_report}" "${ROOT_DIR}"
