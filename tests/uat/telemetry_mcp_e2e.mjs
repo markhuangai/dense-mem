@@ -598,7 +598,11 @@ async function validateGrafanaDashboardParity(credentialID) {
   }
 
   const zeroErrors = (snapshot.windowed_cards ?? []).find((item) => item.id === "embedding_errors");
-  assert(zeroErrors?.status === "ready" && Number(zeroErrors.value) === 0, "the empty embedding-error counter was not a valid zero with parent activity");
+  const embeddingActivity = (snapshot.windowed_cards ?? [])
+    .filter((item) => ["embedding_requests", "embedding_errors"].includes(item.id))
+    .map(({ id, status, value, reason_code }) => ({ id, status, value, reason_code }));
+  assert(zeroErrors?.status === "ready" && Number(zeroErrors.value) === 0,
+    `the empty embedding-error counter was not a valid zero with parent activity: ${JSON.stringify(embeddingActivity)}`);
   const feedbackPanel = parityPanels.get("card/llm_recall_used_rate");
   const feedback = (snapshot.windowed_cards ?? []).find((item) => item.id === "llm_recall_used_rate");
   assert(feedbackPanel && feedback && feedback.status !== "ready", "the telemetry scenario unexpectedly recorded host feedback");
