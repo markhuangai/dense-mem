@@ -649,7 +649,7 @@ credential-delete path still disables the bearer and seals the exact space
 before recording the queued operation, so a held credential cannot continue to
 authenticate while its content awaits authorized hold release.
 
-## Enterprise export boundary (issue #224; verification pending)
+## Enterprise export boundary (issue #224)
 
 Audit and diagnostic downloads exist only on the separate control listener and use its existing static control credential or authorized control-admin SSO session. Ordinary team members, managers, and team-scoped credentials do not gain control-admin access. Revoked sessions retain the existing rejection behavior. No new SSO provisioning or permission path is introduced.
 

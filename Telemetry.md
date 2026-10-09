@@ -256,7 +256,7 @@ absence, audience/scope restrictions, protected credentials, initial rejection,
 and authorized capture details. A green scrape alone does not prove the
 PostgreSQL diagnostic sink is healthy.
 
-## Enterprise exports (issue #224; verification pending)
+## Enterprise exports (issue #224)
 
 OTLP export is opt-in and requires telemetry collection. Traces and metrics have separate OTLP/HTTP protobuf destinations. LangSmith supports trace ingestion; use a general OTLP destination for metrics. No resource environment attributes, baggage, exception text, user content, or credentials enter either payload.
 

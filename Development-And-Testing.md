@@ -157,7 +157,7 @@ validation and policy in the path. A green unit suite cannot substitute for
 RLS or commit tests. A report for an earlier commit cannot validate a later
 push.
 
-## Enterprise export verification (issue #224; verification pending)
+## Enterprise export verification (issue #224)
 
 `enterprise_exports` is a production scenario using the existing OAuth and synchronous-write helpers plus Collector `0.162.0`, pinned to `sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6`. It exercises static/admin authorization, ordinary-team denial, Remember/recall/trace, provider failure, cross-team denial, audit pagination/scope/cancellation, disabled endpoints, content scans, Collector slowness/outage, and private erasure/legal holds. The test Collector writes rotating 32 MiB telemetry files in its disposable container and retains at most one backup; it has no host mounts or published ports.
 
@@ -169,4 +169,6 @@ The frozen fixture in `tests/eval/fixtures/enterprise_exports.json` and `scripts
 
 The separately required ontology maintenance write-latency check runs in GitHub-hosted PostgreSQL prechecks. On 2026-10-09 the maintainer retained this remote gate and approved a 2 ms absolute allowance: each paired median or p95 fails only when it increases by both more than 10% and more than 2 ms. Its five paired repetitions with one/eight writers and every other assertion remain unchanged. This delivery runs the latency workload only in remote CI. Historical ontology baseline receipts retain their original 1 ms threshold; final-head remote results establish the current gate.
 
-Keep raw runs and configuration in ignored task-owned paths and commit compact evidence with exact source/image/fixture identities. Inspect the independent plan-audit receipt before running implementation tests. A final-head full production-image E2E pass remains a merge gate; focused local results do not replace it. Use `Part of #224` and retain the issue until wiki publication and exact merged-main verification are complete.
+Keep raw runs and configuration in ignored task-owned paths and commit compact evidence with exact source/image/fixture identities. Inspect the independent plan-audit receipt before running implementation tests. A final-head full production-image E2E pass remains a merge gate; focused local results do not replace it.
+
+PR [#547](https://github.com/markhuangai/dense-mem/pull/547) merged as `8aae241000f629c832d4d3dbfaa84895f04ae6d6`. [Remote validation run 37932480780](https://github.com/markhuangai/dense-mem/actions/runs/37932480780) passed all 529 registered PostgreSQL cases and all 26 production scenarios at `bbd3c4645abcd2743ff996c604ceba4cf3568356`; the merged commit has the same Git tree. The required remote latency benchmark passed all five pairs, with a largest logged increase of 0.704 ms. This is validation of the tested source tree; a separate production E2E run against the merge SHA has not been performed.

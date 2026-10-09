@@ -273,7 +273,7 @@ key placed only in an environment file may have no effect. Verify effective
 configuration in the control portal and readiness output, and keep credentials
 out of logs and support bundles.
 
-## Enterprise export startup settings (issue #224; verification pending)
+## Enterprise export startup settings (issue #224)
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

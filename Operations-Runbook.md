@@ -280,7 +280,7 @@ lifecycle; stored evidence does not guarantee recall visibility; and a sealed
 space is not proof that physical erasure completed. Use the corresponding
 authoritative result or durable operation state for each decision.
 
-## Enterprise export operations (issue #224; verification pending)
+## Enterprise export operations (issue #224)
 
 Enable only the required capability. Configure separate trace and metric destinations and mount destination header files. LangSmith's documented OTLP trace endpoint accepts traces; it is not a metric destination. Collector outage is optional degradation: inspect private `densemem_otlp_*` metrics and the diagnostic exporter state while retaining ordinary readiness and required operation failure checks.
 
