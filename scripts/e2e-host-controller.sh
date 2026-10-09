@@ -407,7 +407,7 @@ precheck_capability() {
   trap cleanup_precheck EXIT INT TERM
 
   local test_image
-  test_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.6-bookworm)"
+  test_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.9-bookworm)"
   [[ "$test_image" =~ ^[A-Za-z0-9._/:@-]+$ ]] || fail "invalid precheck Go test image"
   local test_status=0
   local -a runner_command=(go -C cmd/e2e run . --root /workspace --phase precheck --timeout 40m --total-timeout 43m)

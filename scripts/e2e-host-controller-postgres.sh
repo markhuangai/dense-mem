@@ -150,7 +150,7 @@ seed_identity_cleanup_database() {
   export DENSE_MEM_CI_IDENTITY_UPGRADE_TEAM_ID DENSE_MEM_CI_IDENTITY_UPGRADE_PROFILE_ID DENSE_MEM_CI_IDENTITY_UPGRADE_API_KEY
 
   local go_image
-  go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.6-bookworm)"
+  go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.9-bookworm)"
   [[ "$go_image" =~ ^[A-Za-z0-9._/:@-]+$ ]] || fail "invalid identity cleanup Go test image"
   local database_url
   database_url="$(node - "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD" "$DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE" <<'NODE'

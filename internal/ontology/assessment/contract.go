@@ -162,8 +162,11 @@ func Validate(request Request, response Response) error {
 			}
 		case "classified":
 			d, ok := definitions[decision.DefinitionRef]
-			if !ok || (item.LockedDefinitionRef != "" && decision.DefinitionRef != item.LockedDefinitionRef) {
-				return fmt.Errorf("classification is outside allowlist or changes deterministic reuse")
+			if !ok {
+				return fmt.Errorf("item %q definition_ref %q is outside allowlist; include a new definition in response.definitions or reuse a supplied ref", decision.Ref, decision.DefinitionRef)
+			}
+			if item.LockedDefinitionRef != "" && decision.DefinitionRef != item.LockedDefinitionRef {
+				return fmt.Errorf("classification changes deterministic reuse")
 			}
 			if !compatibleDefinition(item, d) {
 				return fmt.Errorf("classification has incompatible source kind")

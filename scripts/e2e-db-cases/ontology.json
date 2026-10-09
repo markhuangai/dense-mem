@@ -435,6 +435,13 @@
       "run": "^TestOntologyMixedSeparationOverrideProtectsEvidenceGroups$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/followup_freshness_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyCrossOwnerSpatialContextRemainsSeparate",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyCrossOwnerSpatialContextRemainsSeparate$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/followup_freshness_integration_test.go"
     }
   ]
 }
