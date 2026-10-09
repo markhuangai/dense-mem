@@ -825,7 +825,8 @@ func TestAuditServiceListIsolatesTeamsForNonSuperuser(t *testing.T) {
 }
 
 func TestAuditExportTransactionFrontierPaginationAndScope(t *testing.T) {
-	ctx := context.Background()
+	ctx, stop := context.WithTimeout(context.Background(), 90*time.Second)
+	defer stop()
 	dsn, cleanup := skipIfNoPostgres(t, ctx)
 	defer cleanup()
 	db, err := postgres.Open(ctx, &testConfig{dsn: dsn})
@@ -843,6 +844,8 @@ func TestAuditExportTransactionFrontierPaginationAndScope(t *testing.T) {
 	}
 	service := newAuditService(db)
 	teamString := teamA.String()
+	_, err = sqlDB.ExecContext(ctx, "INSERT INTO audit_log(id,operation,entity_type,entity_id) SELECT gen_random_uuid(),'CREATE','profile',gen_random_uuid()::text FROM generate_series(1,12)")
+	require.NoError(t, err)
 	oldID, slowID, fastID, rolledID, afterRollbackID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	require.NoError(t, service.Append(ctx, accessservice.AuditLogEntry{ID: oldID, ProfileID: &teamString, Operation: "CREATE", EntityType: "profile", EntityID: teamString, AfterPayload: map[string]interface{}{"prompt": "export-content-canary"}, CorrelationID: "export-correlation-canary"}))
 	read := func(request auditapp.ExportRequest) ([]auditapp.ExportEvent, auditapp.ExportCheckpoint) {
@@ -907,18 +910,24 @@ func TestAuditExportTransactionFrontierPaginationAndScope(t *testing.T) {
 	require.Empty(t, c)
 	_, err = service.ExportPage(ctx, auditapp.ExportRequest{TeamID: &teamB, Cursor: resumedCheckpoint.Cursor})
 	require.ErrorIs(t, err, auditapp.ErrInvalidExport)
-	var instanceIDs []string
-	cursor := ""
-	for page := 0; page < 10; page++ {
-		events, next := read(auditapp.ExportRequest{Cursor: cursor, Limit: 1})
-		for _, event := range events {
-			instanceIDs = append(instanceIDs, event.ID)
-		}
-		cursor = next.Cursor
-		if !next.More {
-			break
+	owned := map[string]bool{oldID: true, slowID: true, fastID: true, rolledID: true, afterRollbackID: true}
+	readOwnedInstance := func(cursor string) ([]string, string) {
+		t.Helper()
+		var ids []string
+		for {
+			events, next := read(auditapp.ExportRequest{Cursor: cursor, Limit: 1})
+			for _, event := range events {
+				if owned[event.ID] {
+					ids = append(ids, event.ID)
+				}
+			}
+			cursor = next.Cursor
+			if !next.More {
+				return ids, cursor
+			}
 		}
 	}
+	instanceIDs, cursor := readOwnedInstance("")
 	require.Equal(t, []string{oldID, slowID, fastID}, instanceIDs)
 	replay, _ := read(auditapp.ExportRequest{TeamID: &teamA, Cursor: checkpoint.Cursor, Limit: 1})
 	require.Equal(t, resumed, replay)
@@ -929,13 +938,39 @@ func TestAuditExportTransactionFrontierPaginationAndScope(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, service.Append(ctx, accessservice.AuditLogEntry{ID: afterRollbackID, ProfileID: &teamBString, Operation: "CREATE", EntityType: "profile", EntityID: teamBString}))
 	require.NoError(t, rollback.Rollback())
-	after, _ := read(auditapp.ExportRequest{Cursor: cursor})
-	require.Len(t, after, 1)
-	require.Equal(t, afterRollbackID, after[0].ID)
-	cancelled, cancel := context.WithCancel(ctx)
-	cancel()
-	_, err = service.ExportPage(cancelled, auditapp.ExportRequest{})
-	require.ErrorIs(t, err, context.Canceled)
+	after, _ := readOwnedInstance(cursor)
+	require.Equal(t, []string{afterRollbackID}, after)
+	lock, err := sqlDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer lock.Rollback()
+	_, err = lock.ExecContext(ctx, "LOCK TABLE audit_log IN ACCESS EXCLUSIVE MODE")
+	require.NoError(t, err)
+	for attempt := 0; attempt < 5; attempt++ {
+		cancelled, cancel := context.WithCancel(ctx)
+		defer cancel()
+		finished := make(chan error, 1)
+		go func() {
+			_, err := service.ExportPage(cancelled, auditapp.ExportRequest{TeamID: &teamA})
+			finished <- err
+		}()
+		blocked := func() bool {
+			var waiting bool
+			err := sqlDB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT insertion_xid::text,%')").Scan(&waiting)
+			return assert.NoError(t, err) && waiting
+		}
+		require.Eventually(t, blocked, 3*time.Second, 10*time.Millisecond)
+		cancel()
+		select {
+		case err := <-finished:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(3 * time.Second):
+			t.Fatal("cancelled audit export did not return")
+		}
+		require.Eventually(t, func() bool { return !blocked() }, 3*time.Second, 10*time.Millisecond)
+	}
+	require.NoError(t, lock.Rollback())
+	_, err = service.ExportPage(ctx, auditapp.ExportRequest{TeamID: &teamA})
+	require.NoError(t, err)
 	_, err = sqlDB.ExecContext(ctx, "UPDATE audit_log SET insertion_xid = '0'::xid8 WHERE id=$1", oldID)
 	require.ErrorContains(t, err, "append-only")
 	role := "densemem_audit_export_" + strings.ReplaceAll(uuid.NewString(), "-", "")
