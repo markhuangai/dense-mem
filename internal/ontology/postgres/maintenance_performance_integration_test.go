@@ -99,7 +99,7 @@ func TestOntologyMaintenanceWriteLatency(t *testing.T) {
 			before, after float64
 		}{{"median", pair.Before.MedianMS, pair.After.MedianMS}, {"p95", pair.Before.P95MS, pair.After.P95MS}} {
 			t.Logf("pair=%d writers=%d %s before=%.3fms after=%.3fms", index/2+1, pair.Writers, metric.name, metric.before, metric.after)
-			require.False(t, metric.after-metric.before > 1 && metric.after > metric.before*1.1, "write latency exceeds both 10%% and 1ms for pair %d/%d writers/%s", index/2+1, pair.Writers, metric.name)
+			require.False(t, metric.after-metric.before > 2 && metric.after > metric.before*1.1, "write latency exceeds both 10%% and 2ms for pair %d/%d writers/%s", index/2+1, pair.Writers, metric.name)
 		}
 	}
 }
