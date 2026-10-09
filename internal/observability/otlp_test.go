@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	prombridge "go.opentelemetry.io/contrib/bridges/prometheus"
 	"go.opentelemetry.io/otel/baggage"
@@ -84,6 +85,61 @@ func TestOTLPPreservesProductionSuccessOutcomes(t *testing.T) {
 	}
 	require.Equal(t, map[string]float64{"ok": 1, "other": 1}, observed["densemem_recall_requests_total"])
 	require.Equal(t, map[string]float64{"ok": 1}, observed["densemem_remember_acknowledgements_total"])
+}
+
+func TestOTLPPreservesBoundedProducerLabelVocabularies(t *testing.T) {
+	metrics := NewPrometheusMetrics()
+	for _, outcome := range []string{"ok", "provider_error", "malformed_exhausted", "catalog_error"} {
+		metrics.ObserveAssessorCall(1, 1, 0.001, outcome)
+	}
+	for _, outcome := range []string{"ok", "error", "timeout", "malformed", "rate_limited", "provider_error"} {
+		metrics.ObserveVerifierLatencyFor(context.Background(), "safe-model", 1, outcome)
+	}
+	for _, outcome := range []string{"ok", "error", "timeout", "rate_limited", "network_error", "provider_quota_exhausted", "provider_authentication_failed", "provider_permission_denied", "provider_contract_rejected", "provider_response_invalid"} {
+		metrics.ObserveEmbeddingLatencyFor(context.Background(), "safe-model", 1, outcome)
+	}
+	for _, operation := range []ReadOperation{ReadOperationEvidenceRecall, ReadOperationRelationshipRecall, ReadOperationSearchContract, ReadOperationSearchReadiness, ReadOperationFullTextSearch, ReadOperationVectorSearch} {
+		for _, outcome := range []ReadOutcome{ReadOutcomeSuccess, ReadOutcomeError, ReadOutcomeCancellation, ReadOutcomeDeadlineExceeded} {
+			metrics.ObserveReadStage(operation, ReadStageTotal, outcome, time.Millisecond, 1)
+		}
+		metrics.IncReadSQLStatement(operation, ReadStageTotal)
+	}
+	signature := func(metric *dto.Metric) string {
+		labels := make(map[string]string)
+		for _, label := range metric.GetLabel() {
+			name, value := label.GetName(), label.GetValue()
+			if name != "operation" && name != "outcome" && name != "classification" {
+				continue
+			}
+			if name != "outcome" && value == unknownMetricLabel {
+				value = "other"
+			}
+			labels[name] = value
+		}
+		raw, err := json.Marshal(labels)
+		require.NoError(t, err)
+		return string(raw)
+	}
+	exported, err := (exportGatherer{source: metrics.registry, models: map[string]bool{"safe-model": true}}).Gather()
+	require.NoError(t, err)
+	labelsByFamily := make(map[string]map[string]bool)
+	for _, family := range exported {
+		labelsByFamily[family.GetName()] = make(map[string]bool)
+		for _, metric := range family.GetMetric() {
+			labelsByFamily[family.GetName()][signature(metric)] = true
+		}
+	}
+	source, err := metrics.registry.Gather()
+	require.NoError(t, err)
+	for _, family := range source {
+		labels, exported := labelsByFamily[family.GetName()]
+		if !exported {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			require.True(t, labels[signature(metric)], "%s lost producer labels %s", family.GetName(), signature(metric))
+		}
+	}
 }
 
 func TestOTLPHTTPProtobufUsesOnlyApprovedContentAndSeparateHeaders(t *testing.T) {

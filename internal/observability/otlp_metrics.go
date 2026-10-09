@@ -25,14 +25,14 @@ densemem_read_stage_duration_seconds densemem_read_sql_statements_total densemem
 `)
 
 var exportLabelValues = map[string]string{
-	"outcome":        "ok success error failure cancelled rpc_error tool_error missing_result accepted rejected partial stored not_stored completed failed unknown",
-	"operation":      "remember recall trace semantic_assessment conflict_review dream_generation recall_embedding search_document_embedding community_summary ontology_organization search",
+	"outcome":        "ok success error failure cancelled rpc_error tool_error missing_result accepted rejected partial stored not_stored completed failed unknown provider_error malformed_exhausted catalog_error replayed evaluated_zero conflict skipped attempted succeeded timeout malformed rate_limited network_error provider_quota_exhausted provider_authentication_failed provider_permission_denied provider_contract_rejected provider_response_invalid cancellation deadline_exceeded",
+	"operation":      "remember recall trace semantic_assessment conflict_review dream_generation recall_embedding search_document_embedding community_summary ontology_organization search evidence_discovery dream_confirmation dream_feedback dream_graph dream_evidence evidence_recall relationship_recall search_contract search_readiness full_text_search vector_search",
 	"component":      "verifier embedding assessor",
 	"kind":           "input output prompt completion total",
 	"source":         "provider tokenizer",
 	"method":         "GET POST PUT PATCH DELETE HEAD OPTIONS",
 	"status_class":   "2xx 3xx 4xx 5xx",
-	"classification": "execution replay conflict recovery initial retry",
+	"classification": "execution replay conflict recovery initial retry confirmation feedback",
 }
 
 type exportGatherer struct {
