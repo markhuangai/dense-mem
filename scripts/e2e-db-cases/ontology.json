@@ -349,22 +349,25 @@
       "id": "repository/TestOntologyUnavailableSnapshotRetainsScopedHandleForMaintenance",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyUnavailableSnapshotRetainsScopedHandleForMaintenance$",
-      "phase": "precheck",
-      "source": "internal/ontology/postgres/sources_integration_test.go"
+      "phase": "scenario",
+      "source": "internal/ontology/postgres/sources_integration_test.go",
+      "scenario": "ontology_organization"
     },
     {
       "id": "repository/TestOntologyOrganizationPreservesValidLargeSourceContext",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyOrganizationPreservesValidLargeSourceContext$",
-      "phase": "precheck",
-      "source": "internal/ontology/postgres/sources_integration_test.go"
+      "phase": "scenario",
+      "source": "internal/ontology/postgres/sources_integration_test.go",
+      "scenario": "ontology_organization"
     },
     {
       "id": "repository/TestOntologyOrganizationPreservesPerRecordDependencyBounds",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyOrganizationPreservesPerRecordDependencyBounds$",
-      "phase": "precheck",
-      "source": "internal/ontology/postgres/sources_integration_test.go"
+      "phase": "scenario",
+      "source": "internal/ontology/postgres/sources_integration_test.go",
+      "scenario": "ontology_organization"
     }
   ]
 }
