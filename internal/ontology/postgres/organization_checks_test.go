@@ -12,7 +12,6 @@ import (
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -66,9 +65,7 @@ func testOntologyOrganizationAtomicReplayAndIsolation(t *testing.T) {
 	require.Equal(t, before, f.canonicalSnapshot(t))
 	require.Error(t, f.admin.Exec(`UPDATE ontology_assessments SET body='{}'::jsonb WHERE team_id=?::uuid`, f.team).Error)
 	require.Error(t, f.admin.Exec(`DELETE FROM ontology_assessments WHERE team_id=?::uuid`, f.team).Error)
-	migrator, err := storage.NewMigrator(f.admin)
-	require.NoError(t, err)
-	require.ErrorContains(t, migrator.RunDown(context.Background()), "cannot roll back populated ontology assessments")
+	require.ErrorContains(t, rollbackOntologySchemaTo(t, f.admin, 20261004113210), "cannot roll back populated ontology assessments")
 }
 
 func testOntologyOrganizationRejectsStaleAndMalformedPublication(t *testing.T) {

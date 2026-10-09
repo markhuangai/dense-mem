@@ -142,7 +142,7 @@ func TestOntologyMaintenancePopulatedMigrationCannotRollback(t *testing.T) {
 	before := f.canonicalSnapshot(t)
 	migrator, err := storage.NewMigrator(f.admin)
 	require.NoError(t, err)
-	require.NoError(t, migrator.RunDown(context.Background()))
+	require.NoError(t, rollbackOntologySchemaTo(t, f.admin, 20261006010001))
 	require.ErrorContains(t, migrator.RunDown(context.Background()), "cannot roll back populated ontology maintenance")
 	require.Equal(t, before, f.canonicalSnapshot(t))
 }

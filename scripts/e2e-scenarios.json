@@ -204,6 +204,14 @@
       ],
       "timeout_minutes": 40,
       "playwright": true
+    },
+    {
+      "name": "enterprise_exports",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": ["oauth", "synchronous_write"],
+      "timeout_minutes": 45,
+      "playwright": false
     }
   ]
 }

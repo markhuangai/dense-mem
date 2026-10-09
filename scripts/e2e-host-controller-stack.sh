@@ -391,6 +391,37 @@ if (scenario === "full") {
     `      io.dense-mem.ci.compose-project: ${JSON.stringify(project)}`,
   ]]);
 }
+if (scenario === "enterprise_exports") {
+  if (process.env.DENSE_MEM_E2E_EXPORT_PERFORMANCE === "1") {
+    serverEnvironment.set("RATE_LIMIT_PER_MINUTE", "100000");
+    serverEnvironment.set("GOGC", "25");
+    serverEnvironment.set("GOMEMLIMIT", "768MiB");
+  }
+  for (const [key, value] of Object.entries({
+    OTLP_ENABLED: process.env.DENSE_MEM_E2E_EXPORT_PERFORMANCE === "1" && process.env.DENSE_MEM_E2E_EXPORT_PERF_STATE === "disabled" ? "false" : "true", OTLP_TRACE_ENDPOINT: "http://enterprise-collector:4318/v1/traces",
+    OTLP_METRIC_ENDPOINT: "http://enterprise-collector:4318/v1/metrics",
+    AUDIT_EXPORT_ENABLED: "true", DIAGNOSTIC_BUNDLE_ENABLED: "true",
+  })) serverEnvironment.set(key, value);
+  const configuration = "receivers:\n  otlp:\n    protocols:\n      http:\n        endpoint: 0.0.0.0:4318\nexporters:\n  file:\n    path: /telemetry.json\n    flush_interval: 1s\n    rotation:\n      max_megabytes: 32\n      max_backups: 1\nservice:\n  pipelines:\n    traces:\n      receivers: [otlp]\n      exporters: [file]\n    metrics:\n      receivers: [otlp]\n      exporters: [file]\n";
+  const collector = [
+    "    image: otel/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6",
+    "    command: [\"--config=env:OTEL_COLLECTOR_CONFIG\"]",
+    "    environment:", `      OTEL_COLLECTOR_CONFIG: ${JSON.stringify(configuration)}`,
+    "    networks: [ci]", "    user: \"0:0\"", "    labels:",
+  ];
+  for (const [label, value] of Object.entries({
+    "io.dense-mem.ci.contract": process.env.DENSE_MEM_CI_CONTRACT,
+    "io.dense-mem.ci.repository": process.env.DENSE_MEM_CI_REPOSITORY,
+    "io.dense-mem.ci.run-id": process.env.DENSE_MEM_CI_RUN_ID,
+    "io.dense-mem.ci.run-attempt": process.env.DENSE_MEM_CI_RUN_ATTEMPT,
+    "io.dense-mem.ci.phase": process.env.DENSE_MEM_CI_PHASE,
+    "io.dense-mem.ci.scenario": process.env.DENSE_MEM_CI_SCENARIO,
+    "io.dense-mem.ci.image-digest": process.env.DENSE_MEM_CI_IMAGE_DIGEST,
+    "io.dense-mem.ci.created-at": process.env.DENSE_MEM_CI_CREATED_AT,
+    "io.dense-mem.ci.compose-project": project,
+  })) collector.push(`      ${label}: ${JSON.stringify(value)}`);
+  helperServices.push(["enterprise-collector", collector]);
+}
 if (serverEnvironment.size > 0 || serverVolumes.length > 0) {
   lines.push("  server:");
   if (serverEnvironment.size > 0) {

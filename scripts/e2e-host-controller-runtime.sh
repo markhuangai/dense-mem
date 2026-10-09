@@ -160,6 +160,9 @@ run_scenario() {
   team_response="$(control_api_request "$project" "$phase" "$stack_scenario" "$digest" "$run_id" "$attempt" "$image_ref" "$helper_overlay" "$control_token" "http://server:8090/control/api/teams" "$team_payload")" || fail "control portal did not return a team"
   team_id="$(printf '%s' "$team_response" | node -e 'let input="";process.stdin.on("data",c=>input+=c);process.stdin.on("end",()=>{const value=JSON.parse(input).data?.id;if(!value)process.exit(1);process.stdout.write(value);});')" || fail "control portal did not return a team"
   credential_payload='{"name":"production-image-e2e","role":"manager","scopes":["read","write"],"rate_limit":300}'
+  if [[ "${DENSE_MEM_E2E_EXPORT_PERFORMANCE:-0}" == "1" && "$scenario" == "enterprise_exports" ]]; then
+    credential_payload='{"name":"enterprise-export-performance","role":"manager","scopes":["read","write"],"rate_limit":100000}'
+  fi
   credential_response="$(control_api_request "$project" "$phase" "$stack_scenario" "$digest" "$run_id" "$attempt" "$image_ref" "$helper_overlay" "$control_token" "http://server:8090/control/api/teams/${team_id}/credentials" "$credential_payload")" || fail "control portal did not return a credential"
   api_key="$(printf '%s' "$credential_response" | node -e 'let input="";process.stdin.on("data",c=>input+=c);process.stdin.on("end",()=>{const value=JSON.parse(input).data?.api_key;if(!value)process.exit(1);process.stdout.write(value);});')" || fail "control portal did not return a credential"
   credential_id="$(printf '%s' "$credential_response" | node -e 'let input="";process.stdin.on("data",c=>input+=c);process.stdin.on("end",()=>{const value=JSON.parse(input).data?.credential?.id;if(!value)process.exit(1);process.stdout.write(value);});')" || fail "control portal did not return a credential ID"
@@ -204,6 +207,10 @@ run_scenario() {
     -e "DENSE_MEM_E2E_COMPOSE_FILE=/ci/runtime-compose.yml"
     -e "DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE=/ci/helper-compose.yml"
     -e "DENSE_MEM_E2E_SCENARIO=${scenario}"
+    -e "DENSE_MEM_E2E_EXPORT_PERFORMANCE=${DENSE_MEM_E2E_EXPORT_PERFORMANCE:-0}"
+    -e "DENSE_MEM_E2E_EXPORT_PERF_STATE=${DENSE_MEM_E2E_EXPORT_PERF_STATE:-}"
+    -e "DENSE_MEM_E2E_EXPORT_PERF_REPETITION=${DENSE_MEM_E2E_EXPORT_PERF_REPETITION:-}"
+    -e "DENSE_MEM_E2E_EXPORT_PERF_VARIANT=${DENSE_MEM_E2E_EXPORT_PERF_VARIANT:-}"
     -e "DENSE_MEM_E2E_RUNTIME=production"
     -e "DENSE_MEM_E2E_TELEMETRY_DISABLED=${DENSE_MEM_E2E_TELEMETRY_DISABLED:-0}"
     -e "DENSE_MEM_E2E_COMMIT_SHA=${tested_commit}"
@@ -351,6 +358,10 @@ run_scenario() {
     if ((diagnostics_pipeline_status[1] != 0)); then
       printf 'dense-mem CI scenario [%s]: stack diagnostic redaction failed\n' "$scenario" >&2
     fi
+  fi
+  if [[ "${DENSE_MEM_E2E_EXPORT_PERFORMANCE:-0}" == "1" && "$scenario" == "enterprise_exports" && "$scenario_status" == "0" ]]; then
+    docker cp "$container:$result_file" "${run_root}/performance-result.json" >/dev/null || fail "performance result receipt is missing"
+    chmod 600 "${run_root}/performance-result.json"
   fi
   trap - EXIT INT TERM
   docker rm "$container" >/dev/null

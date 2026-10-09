@@ -3,9 +3,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"strings"
@@ -819,4 +822,144 @@ func TestAuditServiceListIsolatesTeamsForNonSuperuser(t *testing.T) {
 		return tx.Raw(`SELECT entity_id FROM audit_log ORDER BY entity_id`).Scan(&visibleEntityIDs).Error
 	}))
 	require.Equal(t, []string{"test-audit-rls-a"}, visibleEntityIDs)
+}
+
+func TestAuditExportTransactionFrontierPaginationAndScope(t *testing.T) {
+	ctx := context.Background()
+	dsn, cleanup := skipIfNoPostgres(t, ctx)
+	defer cleanup()
+	db, err := postgres.Open(ctx, &testConfig{dsn: dsn})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	defer sqlDB.Close()
+	migrator, err := postgres.NewMigrator(db)
+	require.NoError(t, err)
+	require.NoError(t, migrator.RunUp(ctx))
+	teamA, teamB, teamC := uuid.New(), uuid.New(), uuid.New()
+	for _, team := range []uuid.UUID{teamA, teamB, teamC} {
+		_, err = sqlDB.ExecContext(ctx, "INSERT INTO teams(id,name) VALUES ($1,$2)", team, "Test Audit Export "+team.String())
+		require.NoError(t, err)
+	}
+	service := newAuditService(db)
+	teamString := teamA.String()
+	oldID, slowID, fastID, rolledID, afterRollbackID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	require.NoError(t, service.Append(ctx, accessservice.AuditLogEntry{ID: oldID, ProfileID: &teamString, Operation: "CREATE", EntityType: "profile", EntityID: teamString, AfterPayload: map[string]interface{}{"prompt": "export-content-canary"}, CorrelationID: "export-correlation-canary"}))
+	read := func(request auditapp.ExportRequest) ([]auditapp.ExportEvent, auditapp.ExportCheckpoint) {
+		t.Helper()
+		raw, err := service.ExportPage(ctx, request)
+		require.NoError(t, err)
+		require.LessOrEqual(t, len(raw), auditapp.ExportMaxBytes)
+		require.NotContains(t, string(raw), "export-content-canary")
+		require.NotContains(t, string(raw), "export-correlation-canary")
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		events := make([]auditapp.ExportEvent, 0)
+		var checkpoint auditapp.ExportCheckpoint
+		for {
+			var line json.RawMessage
+			err := decoder.Decode(&line)
+			if err == io.EOF {
+				break
+			}
+			require.NoError(t, err)
+			var kind struct {
+				Type string `json:"type"`
+			}
+			require.NoError(t, json.Unmarshal(line, &kind))
+			if kind.Type == "event" {
+				var event auditapp.ExportEvent
+				require.NoError(t, json.Unmarshal(line, &event))
+				events = append(events, event)
+			} else {
+				require.Equal(t, "checkpoint", kind.Type)
+				require.NoError(t, json.Unmarshal(line, &checkpoint))
+				require.ErrorIs(t, decoder.Decode(new(any)), io.EOF)
+				break
+			}
+		}
+		require.Equal(t, len(events), checkpoint.Events)
+		require.NotEmpty(t, checkpoint.Cursor)
+		return events, checkpoint
+	}
+	before, checkpoint := read(auditapp.ExportRequest{TeamID: &teamA, Limit: 1})
+	require.Len(t, before, 1)
+	require.Equal(t, oldID, before[0].ID)
+	slow, err := sqlDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer slow.Rollback()
+	_, err = slow.ExecContext(ctx, "INSERT INTO audit_log(id,team_id,timestamp,operation,entity_type,entity_id) VALUES($1,$2::uuid,$3,'CREATE','profile',$2::uuid::text)", slowID, teamA, time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	teamBString := teamB.String()
+	require.NoError(t, service.Append(ctx, accessservice.AuditLogEntry{ID: fastID, ProfileID: &teamBString, Timestamp: time.Now().Add(-time.Hour), Operation: "CREATE", EntityType: "profile", EntityID: teamBString}))
+	hidden, delayed := read(auditapp.ExportRequest{TeamID: &teamB})
+	require.Empty(t, hidden)
+	require.True(t, delayed.Delayed)
+	_, delayed = read(auditapp.ExportRequest{TeamID: &teamA, Cursor: checkpoint.Cursor})
+	require.Equal(t, 0, delayed.Events)
+	require.NoError(t, slow.Commit())
+	resumed, resumedCheckpoint := read(auditapp.ExportRequest{TeamID: &teamA, Cursor: checkpoint.Cursor, Limit: 1})
+	require.Len(t, resumed, 1)
+	require.Equal(t, slowID, resumed[0].ID)
+	b, _ := read(auditapp.ExportRequest{TeamID: &teamB})
+	require.Len(t, b, 1)
+	require.Equal(t, fastID, b[0].ID)
+	c, _ := read(auditapp.ExportRequest{TeamID: &teamC})
+	require.Empty(t, c)
+	_, err = service.ExportPage(ctx, auditapp.ExportRequest{TeamID: &teamB, Cursor: resumedCheckpoint.Cursor})
+	require.ErrorIs(t, err, auditapp.ErrInvalidExport)
+	var instanceIDs []string
+	cursor := ""
+	for page := 0; page < 10; page++ {
+		events, next := read(auditapp.ExportRequest{Cursor: cursor, Limit: 1})
+		for _, event := range events {
+			instanceIDs = append(instanceIDs, event.ID)
+		}
+		cursor = next.Cursor
+		if !next.More {
+			break
+		}
+	}
+	require.Equal(t, []string{oldID, slowID, fastID}, instanceIDs)
+	replay, _ := read(auditapp.ExportRequest{TeamID: &teamA, Cursor: checkpoint.Cursor, Limit: 1})
+	require.Equal(t, resumed, replay)
+	rollback, err := sqlDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer rollback.Rollback()
+	_, err = rollback.ExecContext(ctx, "INSERT INTO audit_log(id,team_id,operation,entity_type,entity_id) VALUES($1,$2::uuid,'CREATE','profile',$2::uuid::text)", rolledID, teamB)
+	require.NoError(t, err)
+	require.NoError(t, service.Append(ctx, accessservice.AuditLogEntry{ID: afterRollbackID, ProfileID: &teamBString, Operation: "CREATE", EntityType: "profile", EntityID: teamBString}))
+	require.NoError(t, rollback.Rollback())
+	after, _ := read(auditapp.ExportRequest{Cursor: cursor})
+	require.Len(t, after, 1)
+	require.Equal(t, afterRollbackID, after[0].ID)
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = service.ExportPage(cancelled, auditapp.ExportRequest{})
+	require.ErrorIs(t, err, context.Canceled)
+	_, err = sqlDB.ExecContext(ctx, "UPDATE audit_log SET insertion_xid = '0'::xid8 WHERE id=$1", oldID)
+	require.ErrorContains(t, err, "append-only")
+	role := "densemem_audit_export_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	_, err = sqlDB.ExecContext(ctx, fmt.Sprintf("CREATE ROLE %s LOGIN PASSWORD 'audit-export-test' NOSUPERUSER NOBYPASSRLS; GRANT USAGE ON SCHEMA public TO %s; GRANT SELECT ON ALL TABLES IN SCHEMA public TO %s", role, role, role))
+	require.NoError(t, err)
+	defer func() {
+		_, err := sqlDB.ExecContext(context.Background(), fmt.Sprintf("DROP OWNED BY %s; DROP ROLE %s", role, role))
+		require.NoError(t, err)
+	}()
+	parsed, err := url.Parse(dsn)
+	require.NoError(t, err)
+	parsed.User = url.UserPassword(role, "audit-export-test")
+	appDB, err := postgres.Open(ctx, &testConfig{dsn: parsed.String()})
+	require.NoError(t, err)
+	appSQL, err := appDB.DB()
+	require.NoError(t, err)
+	defer appSQL.Close()
+	appService := newAuditService(appDB)
+	raw, err := appService.ExportPage(ctx, auditapp.ExportRequest{TeamID: &teamA})
+	require.NoError(t, err)
+	require.Contains(t, string(raw), oldID)
+	require.NotContains(t, string(raw), fastID)
+	raw, err = appService.ExportPage(ctx, auditapp.ExportRequest{})
+	require.NoError(t, err)
+	require.Contains(t, string(raw), oldID)
+	require.Contains(t, string(raw), fastID)
 }

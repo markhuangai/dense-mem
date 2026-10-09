@@ -15,6 +15,7 @@ import (
 )
 
 type telemetryComposition struct {
+	Exports               *observability.OTLP
 	Metrics               observability.DiscoverabilityMetrics
 	Prometheus            *operations.PrometheusTelemetryService
 	HTTPMetrics           observability.HTTPMetrics
@@ -33,6 +34,9 @@ func buildTelemetryApplication(
 	protector *observability.CredentialProtector,
 ) (telemetryComposition, error) {
 	composition := telemetryComposition{Metrics: observability.NoopDiscoverabilityMetrics()}
+	if err := cfg.ValidateExports(); err != nil {
+		return telemetryComposition{}, err
+	}
 	if !cfg.GetTelemetryEnabled() {
 		return composition, nil
 	}
@@ -66,5 +70,17 @@ func buildTelemetryApplication(
 	)
 	composition.Prometheus.SetLifecycleReader(lifecycle)
 	composition.Reader = composition.Prometheus
+	if cfg.OTLPEnabled {
+		exports, err := observability.NewOTLP(startupCtx, prometheusMetrics, observability.OTLPOptions{
+			TraceEndpoint: cfg.OTLPTraceEndpoint, MetricEndpoint: cfg.OTLPMetricEndpoint,
+			TraceHeaders: cfg.OTLPTraceHeaders, MetricHeaders: cfg.OTLPMetricHeaders,
+			Models:    []string{cfg.GetAIVerifierModel(), cfg.GetAIEmbeddingModel(), cfg.GetAIRememberModel(), cfg.GetAIConflictReviewModel(), cfg.GetAIDreamGraphModel(), cfg.GetAICommunitySummaryModel()},
+			Protector: protector, Logger: logger,
+		})
+		if err != nil {
+			return telemetryComposition{}, err
+		}
+		composition.Exports = exports
+	}
 	return composition, nil
 }
