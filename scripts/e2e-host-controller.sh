@@ -496,6 +496,14 @@ for (const entry of fs.readdirSync(directory).filter((item) => item.endsWith(".j
 
 if (records.length === 0) throw new Error("no populated precheck database capability fragments");
 
+const ontologyIndex = records.findIndex((record) => record.capability === "ontology");
+const isolateOntology = ontologyIndex >= 0 && records.length >= 3;
+if (isolateOntology) {
+  // Ontology backlog fixtures need a dedicated shard within the phase deadline.
+  records.splice(ontologyIndex, 1);
+  groups.pop();
+}
+
 records.sort((left, right) =>
   right.weight - left.weight ||
   right.cases - left.cases ||
@@ -506,17 +514,9 @@ function batchWeight(packageCounts) {
   return [...packageCounts.values()].reduce((total, count) => total + Math.ceil(count / batchSize), 0);
 }
 
-const dedicated = records.find((record) => record.capability === "ontology");
-if (dedicated) {
-  groups[0].capabilities.push(dedicated.capability);
-  groups[0].cases = dedicated.cases;
-  groups[0].packageCounts = dedicated.packageCounts;
-}
-
 for (const record of records) {
-  if (record === dedicated) continue;
   let selected = null;
-  for (let index = dedicated ? 1 : 0; index < groups.length; index += 1) {
+  for (let index = 0; index < groups.length; index += 1) {
     const projected = new Map(groups[index].packageCounts);
     for (const [packageName, count] of record.packageCounts) {
       projected.set(packageName, (projected.get(packageName) || 0) + count);
@@ -536,6 +536,7 @@ for (const record of records) {
   }
 }
 
+if (isolateOntology) process.stdout.write("ontology\n");
 for (const group of groups) {
   if (group.capabilities.length > 0) process.stdout.write(`${group.capabilities.join(",")}\n`);
 }

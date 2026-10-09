@@ -13,6 +13,9 @@
     },
     {
       "path": "internal/service/audit_service_integration_test.go"
+    },
+    {
+      "path": "internal/storage/postgres/audit_export_migration_integration_test.go"
     }
   ],
   "go": {

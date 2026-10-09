@@ -175,7 +175,7 @@ func newRootProtector(cfg config.Config) (*observability.CredentialProtector, er
 	if err != nil {
 		return nil, &config.ValidationError{Field: "POSTGRES_DSN", Message: "invalid connection configuration"}
 	}
-	return observability.NewCredentialProtector(
+	secrets := []string{
 		cfg.PostgresDSN,
 		postgresConfig.Password,
 		cfg.RedisPassword,
@@ -183,5 +183,7 @@ func newRootProtector(cfg config.Config) (*observability.CredentialProtector, er
 		cfg.AIVerifierAPIKey,
 		cfg.ControlPortalToken,
 		cfg.TelemetryScrapeToken,
-	), nil
+	}
+	secrets = append(secrets, cfg.ExportHeaderSecrets()...)
+	return observability.NewCredentialProtector(secrets...), nil
 }

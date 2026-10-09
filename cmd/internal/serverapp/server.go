@@ -246,6 +246,11 @@ func RunActiveServer(
 		return fmt.Errorf("failed to build telemetry application: %w", err)
 	}
 	discoverabilityMetrics := telemetry.Metrics
+	defer func() {
+		if err := telemetry.Exports.Shutdown(context.Background()); err != nil {
+			logger.Warn("optional OTLP shutdown incomplete", observability.String("reason", "shutdown_deadline"))
+		}
+	}()
 	telemetryPrometheusService := telemetry.Prometheus
 	searchApplication := buildSearchProviders(cfg, searchRepo, searchContract, knowledgeStore, discoverabilityMetrics, logger)
 	openaiProvider := searchApplication.EmbeddingProvider

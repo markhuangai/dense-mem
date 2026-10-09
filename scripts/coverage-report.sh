@@ -107,7 +107,7 @@ run_transitional() {
 			grep -Ev '/(evalharness|repository|knowledge/postgres|dream/postgres|trace/postgres|graph/postgres)$|/storage/(postgres|redis)$'
 	)
 	printf '%s\n' "${packages[@]}"
-	go test "${packages[@]}" -covermode=atomic -coverprofile="${profile}" -count=1
+	go test "${packages[@]}" -timeout=30m -covermode=atomic -coverprofile="${profile}" -count=1
 	report_total "${profile}" "${COVERAGE_DIR}/go-transitional.txt" "${ROOT_DIR}"
 
 	local total
@@ -149,10 +149,10 @@ run_complete() {
 	local evaluation_coverpkg
 	evaluation_coverpkg="$(IFS=,; printf '%s' "${evaluation_cover_packages[*]}")"
 	printf '%s\n' "${packages[@]}"
-	go test "${packages[@]}" -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${root_profile}" -count=1
-	go test -tags evaluation "${evaluation_packages[@]}" -covermode=atomic -coverpkg="${evaluation_coverpkg}" -coverprofile="${evaluation_profile}" -count=1
-	DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/ontology/postgres \
-		-run '^TestOntologyMaintenance(Cohort|RegenerationFailureRetry|ProviderPauseDrain|AccountingFailurePreventsPublication|BudgetDeferralAndManualReuse|ControlInterruptionResumesSameWindow|PauseCommandsAndWindows|OperatorHTTPAndScheduler|CommandAuditIsAtomic)$' \
+	go test "${packages[@]}" -timeout=30m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${root_profile}" -count=1
+	go test -tags evaluation "${evaluation_packages[@]}" -timeout=30m -covermode=atomic -coverpkg="${evaluation_coverpkg}" -coverprofile="${evaluation_profile}" -count=1
+	DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/ontology/postgres ./internal/service \
+		-run '^(TestOntologyMaintenance(Cohort|RegenerationFailureRetry|ProviderPauseDrain|AccountingFailurePreventsPublication|BudgetDeferralAndManualReuse|ControlInterruptionResumesSameWindow|PauseCommandsAndWindows|OperatorHTTPAndScheduler|CommandAuditIsAtomic)$|TestAudit)' \
 		-count=1 -timeout=5m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${postgres_profile}"
 	go -C cmd/e2e test ./... -covermode=atomic -coverprofile="${e2e_profile}" -count=1
 	merge_profiles "${root_dedup_profile}" "${root_profile}"

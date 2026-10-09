@@ -1,0 +1,37 @@
+{
+  "schema_version": "dense-mem.enterprise_exports.source_lock.v1",
+  "provenance": "Synthetic frozen Dense-Mem storage fact for the maintainer-approved export-only performance comparison; measured Remember calls replay the same accepted seed, keeping semantic state fixed across concurrent reads.",
+  "fixture": "tests/eval/fixtures/enterprise_exports.json",
+  "fixture_sha256": "4ebcf80bfe28de113ff221d4cb9286e2c7d486489ec0b8918d9a205824ecffaa",
+  "runner": "tests/eval/scripts/enterprise_exports_performance.mjs",
+  "runner_sha256": "a9e28e9bba13408ecd274174e85adfae6c2ce5b4a1282057ea1297103e65f2a4",
+  "volatile_projection": "UUID handles and RFC3339 timestamps are normalized; correlation/recall-event IDs are excluded; all other structured result fields must match. Trace verifies its actual requested relationship handle before normalization.",
+  "rss_source": "VmRSS from the production server process at /proc/1/status, sampled outside the diagnostic bundle.",
+  "runtime_environment": {
+    "scope": "Both exact-base and candidate images in the disposable performance fixture only; ordinary production E2E retains its default runtime settings.",
+    "GOGC": "25",
+    "GOMEMLIMIT": "768MiB",
+    "RATE_LIMIT_PER_MINUTE": "100000",
+    "approval": "Maintainer-approved fixed Go memory profile for issue #224 on 2026-10-08; every original acceptance gate remains unchanged."
+  },
+  "protocol": {
+    "version": 1,
+    "content": "Dense-Mem stores durable memory in PostgreSQL. enterprise-export-performance-content-canary",
+    "subject": "Dense-Mem",
+    "predicate": "stores_memory_in",
+    "value": "PostgreSQL",
+    "query": "Dense-Mem durable memory PostgreSQL",
+    "warmup_requests": 80,
+    "measured_requests": 1000,
+    "concurrency": 8,
+    "saturation_requests": 3000,
+    "saturation_concurrency": 64,
+    "paired_repetitions": 5,
+    "states": [
+      "disabled",
+      "healthy",
+      "slow",
+      "unavailable"
+    ]
+  }
+}
