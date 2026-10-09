@@ -166,7 +166,7 @@ func contractToolExamples() map[string]contractToolExample {
 		},
 		ToolSubmitRecallSessionFeedback: {
 			WhenToUse:     "Record bounded, truthful feedback about a recall session.",
-			Prerequisites: "Use the recall_event_id supplied by recall_memory in suggested_actions after using that recall.",
+			Prerequisites: "Feedback is voluntary. After using a recall, set recall_event_id to the recall_id returned by recall_memory.",
 			Request: map[string]any{
 				"recalls": []any{map[string]any{
 					"recall_event_id":  returnedRecallID,
