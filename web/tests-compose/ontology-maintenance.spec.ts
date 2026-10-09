@@ -81,6 +81,26 @@ test("loaded older retry actions follow successful work and server eligibility",
     await control("/ontology/resume", { operation_key: randomUUID() });
     await page.getByRole("button", { name: "Refresh ontology coverage" }).click();
     await expect(row.getByRole("button", { name: "Retry failed work" })).toBeEnabled();
+    const visibleRuns = page.locator("td[title]");
+    const visibleIds = await visibleRuns.evaluateAll((cells) => cells.map((cell) => cell.getAttribute("title")));
+    const historyRoute = "**/control/api/ontology/runs?**";
+    await page.route(historyRoute, async (route) => {
+      if (route.request().method() === "GET" && new URL(route.request().url()).searchParams.has("cursor")) {
+        await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ message: "older history refresh unavailable" }) });
+      } else {
+        await route.continue();
+      }
+    });
+    await page.getByRole("button", { name: "Refresh ontology coverage" }).click();
+    const refreshFailure = page.getByRole("alert").filter({ hasText: "older history refresh unavailable" });
+    await expect(refreshFailure).toBeVisible();
+    expect(await visibleRuns.evaluateAll((cells) => cells.map((cell) => cell.getAttribute("title")))).toEqual(visibleIds);
+    await expect(row.getByRole("button", { name: "Retry failed work" })).toBeDisabled();
+    for (const retryButton of await page.getByRole("button", { name: "Retry failed work" }).all()) await expect(retryButton).toBeDisabled();
+    await page.unroute(historyRoute);
+    await page.getByRole("button", { name: "Refresh ontology coverage" }).click();
+    await expect(refreshFailure).toHaveCount(0);
+    await expect(row.getByRole("button", { name: "Retry failed work" })).toBeEnabled();
     const acceptance = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith(`/ontology/runs/${failed.id}/retry`));
     await row.getByRole("button", { name: "Retry failed work" }).click();
     const accepted = await acceptance;
