@@ -23,11 +23,16 @@ import (
 
 // MCPHandler serves the MCP Streamable HTTP endpoint at /mcp.
 type MCPHandler struct {
+	operationObserver    mcp.OperationObserver
 	reg                  registry.Registry
 	logger               mcp.Logger
 	lifecycle            sse.StreamLifecycle
 	recallFeedbackConfig registry.RecallFeedbackConfigProvider
 	dreams               registry.DreamingConfigProvider
+}
+
+func (h *MCPHandler) SetOperationObserver(observer mcp.OperationObserver) {
+	h.operationObserver = observer
 }
 
 // MCPHandlerInterface is the companion interface for MCPHandler.
@@ -109,6 +114,7 @@ func (h *MCPHandler) handleSDKPost(c echo.Context, teamID uuid.UUID, principal *
 		team.Description = resolvedTeam.Description
 	}
 	server := mcp.NewServerWithScopesTeamContextAndRuntimeConfig(h.reg, teamID.String(), principal.Grants, team, h.logger, h.recallFeedbackConfig, h.dreams)
+	server.SetOperationObserver(h.operationObserver)
 	serverHandler := server.NewSDKHTTPHandler(!acceptsEventStream(accept))
 	work := func(workCtx context.Context) error {
 		serverHandler.ServeHTTP(c.Response(), request.WithContext(workCtx))

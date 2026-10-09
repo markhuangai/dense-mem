@@ -175,6 +175,15 @@ type Config struct {
 	TelemetryPrometheusJob                string
 	TelemetryQueryTimeoutSeconds          int
 	TelemetryScrapeToken                  string `json:"-"`
+	OTLPEnabled                           bool
+	OTLPTraceEndpoint                     string
+	OTLPMetricEndpoint                    string
+	OTLPTraceHeadersFile                  string            `json:"-"`
+	OTLPMetricHeadersFile                 string            `json:"-"`
+	OTLPTraceHeaders                      map[string]string `json:"-"`
+	OTLPMetricHeaders                     map[string]string `json:"-"`
+	AuditExportEnabled                    bool
+	DiagnosticBundleEnabled               bool
 	AppTimezone                           string
 	ConflictReviewTTLDays                 int
 	ConflictReviewStartTimeLocal          string
@@ -634,6 +643,9 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		return cfg, err
 	}
 	cfg.TelemetryScrapeToken = os.Getenv("TELEMETRY_SCRAPE_TOKEN")
+	if err := loadExports(&cfg); err != nil {
+		return cfg, err
+	}
 	// Validation
 	if cfg.PostgresDSN == "" {
 		return cfg, &ValidationError{

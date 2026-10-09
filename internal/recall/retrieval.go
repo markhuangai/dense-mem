@@ -285,9 +285,9 @@ func recallOverfetchLimit(limit int) int {
 func normalizeRecallEvidenceInput(input recallcontract.RecallEvidenceInput) recallcontract.RecallEvidenceInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.Query = strings.TrimSpace(input.Query)
-	input.KnownEvidenceIDs = domain.NormalizeReadIDList(input.KnownEvidenceIDs)
-	input.KnownRelationshipIDs = domain.NormalizeReadIDList(input.KnownRelationshipIDs)
-	input.ExpandFromEntityIDs = domain.NormalizeReadIDList(input.ExpandFromEntityIDs)
+	input.KnownEvidenceIDs = normalizeRecallRequestIDs(input.KnownEvidenceIDs)
+	input.KnownRelationshipIDs = normalizeRecallRequestIDs(input.KnownRelationshipIDs)
+	input.ExpandFromEntityIDs = normalizeRecallRequestIDs(input.ExpandFromEntityIDs)
 	input.SpaceID = strings.TrimSpace(input.SpaceID)
 	input.SpaceKind = strings.TrimSpace(input.SpaceKind)
 	if input.SpaceID == "" && input.SpaceKind == "" {
@@ -305,9 +305,9 @@ func normalizeRecallEvidenceInput(input recallcontract.RecallEvidenceInput) reca
 func normalizeRecallRelationshipsInput(input recallcontract.RecallRelationshipsInput) recallcontract.RecallRelationshipsInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.Query = strings.TrimSpace(input.Query)
-	input.KnownEvidenceIDs = domain.NormalizeReadIDList(input.KnownEvidenceIDs)
-	input.KnownRelationshipIDs = domain.NormalizeReadIDList(input.KnownRelationshipIDs)
-	input.ExpandFromEntityIDs = domain.NormalizeReadIDList(input.ExpandFromEntityIDs)
+	input.KnownEvidenceIDs = normalizeRecallRequestIDs(input.KnownEvidenceIDs)
+	input.KnownRelationshipIDs = normalizeRecallRequestIDs(input.KnownRelationshipIDs)
+	input.ExpandFromEntityIDs = normalizeRecallRequestIDs(input.ExpandFromEntityIDs)
 	input.ExcludedGroupKeys = normalizeRecallGroupKeys(input.ExcludedGroupKeys)
 	input.SpaceID = strings.TrimSpace(input.SpaceID)
 	input.SpaceKind = strings.TrimSpace(input.SpaceKind)

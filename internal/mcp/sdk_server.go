@@ -627,6 +627,9 @@ func (s *Server) sdkToolHandler(name string) sdkmcp.ToolHandler {
 		started := time.Now()
 		defer func() {
 			if sdkToolDispatchRequested(ctx) {
+				if s.operationObserver != nil {
+					s.operationObserver.ObserveOperation(ctx, name, started, sdkToolApplicationOutcome(ctx, result, err))
+				}
 				domain.RecordMCPToolOutcome(ctx, sdkToolApplicationOutcome(ctx, result, err))
 				s.logSDKToolOutcome(ctx, name, started, result, err)
 			}

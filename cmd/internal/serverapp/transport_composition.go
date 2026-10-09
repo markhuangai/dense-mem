@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	auditapp "github.com/markhuangai/dense-mem/internal/audit"
 
 	communityapp "github.com/markhuangai/dense-mem/internal/community/service"
 	"github.com/markhuangai/dense-mem/internal/config"
@@ -241,6 +242,9 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 		deps.appConfig,
 		deps.dream,
 	)
+	if deps.telemetry.Exports != nil {
+		mcpHandler.SetOperationObserver(deps.telemetry.Exports)
+	}
 
 	checks := []densehttp.HealthCheck{
 		{Name: "postgres", Check: func(ctx context.Context) error {
@@ -352,12 +356,35 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 
 	composition := &transportComposition{e: e}
 	if !deps.options.DisableControlPortal {
+		var auditExport densehttp.AuditExportReader
+		if deps.cfg.AuditExportEnabled {
+			var ok bool
+			auditExport, ok = deps.auditService.(*auditapp.Service)
+			if !ok {
+				return nil, fmt.Errorf("audit export application is unavailable")
+			}
+		}
+		var diagnostics densehttp.DiagnosticBundleReader
+		if deps.cfg.DiagnosticBundleEnabled {
+			diagnosticChecks := make([]operations.DiagnosticCheck, 0, len(checks))
+			for _, check := range checks {
+				diagnosticChecks = append(diagnosticChecks, operations.DiagnosticCheck{Name: check.Name, Check: check.Check})
+			}
+			diagnostics = operations.NewDiagnosticService(operations.DiagnosticPresence{
+				Telemetry: deps.cfg.TelemetryEnabled, OTLP: deps.cfg.OTLPEnabled,
+				TraceDestination: deps.cfg.OTLPTraceEndpoint != "", MetricDestination: deps.cfg.OTLPMetricEndpoint != "",
+				TraceHeaders: deps.cfg.OTLPTraceHeadersFile != "", MetricHeaders: deps.cfg.OTLPMetricHeadersFile != "",
+				AuditExport: deps.cfg.AuditExportEnabled, DiagnosticBundle: deps.cfg.DiagnosticBundleEnabled, Redis: deps.cfg.RedisAddr != "",
+			}, diagnosticChecks, deps.usageMetrics, deps.telemetry.Exports, deps.authority)
+		}
 		controlServer, err := densehttp.NewControlPortalServerWithCapabilityBindings(
 			&deps.cfg,
 			deps.teamService,
 			deps.credentialService,
 			deps.usageMetrics,
 			densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{
+				AuditExport:         auditExport,
+				Diagnostics:         diagnostics,
 				Reader:              deps.telemetry.Reader,
 				HTTPMetrics:         deps.telemetry.HTTPMetrics,
 				ScrapeHandler:       deps.telemetry.ScrapeHandler,

@@ -64,6 +64,20 @@
       "run": "^TestAuditServiceListIsolatesTeamsForNonSuperuser$",
       "phase": "precheck",
       "source": "internal/service/audit_service_integration_test.go"
+    },
+    {
+      "id": "service/TestAuditExportTransactionFrontierPaginationAndScope",
+      "package": "./internal/service",
+      "run": "^TestAuditExportTransactionFrontierPaginationAndScope$",
+      "phase": "precheck",
+      "source": "internal/service/audit_service_integration_test.go"
+    },
+    {
+      "id": "postgres/TestAuditExportMigrationPreservesHistoricalRowsAndRollback",
+      "package": "./internal/storage/postgres",
+      "run": "^TestAuditExportMigrationPreservesHistoricalRowsAndRollback$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/audit_export_migration_integration_test.go"
     }
   ]
 }

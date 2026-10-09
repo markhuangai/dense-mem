@@ -801,20 +801,13 @@ func recallOptionalLimitValue(value *int) int {
 }
 
 func normalizeRecallRequestIDs(values []string) []string {
-	out := make([]string, 0, len(values))
-	seen := map[string]struct{}{}
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
+	ids := domain.NormalizeReadIDList(values)
+	for index, value := range ids {
+		if id, err := uuid.Parse(value); err == nil {
+			ids[index] = id.String()
 		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
 	}
-	return out
+	return domain.NormalizeReadIDList(ids)
 }
 
 func validateRecallEmbedding(vector []float32, dims int) error {

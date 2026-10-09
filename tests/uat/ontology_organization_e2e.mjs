@@ -78,10 +78,12 @@ try {
     assert(!item.equivalent_evidence_ids.includes(privateID));
     assert(!item.equivalent_evidence_ids.includes(foreignID));
   }
-  const known = await mcp("recall_memory", { ...args, known_evidence_ids: [sourceIDs[0]] }, reader.api_key);
-  assert(!known.results.some((item) => sourceIDs.slice(0, 2).includes(item.evidence_id)));
-  assert(known.results.some((item) => item.evidence_id === sourceIDs[2]));
-  for (const inaccessible of [privateID, foreignID]) {
+  for (const knownID of [sourceIDs[0], sourceIDs[0].toUpperCase()]) {
+    const known = await mcp("recall_memory", { ...args, known_evidence_ids: [knownID] }, reader.api_key);
+    assert(!known.results.some((item) => sourceIDs.slice(0, 2).includes(item.evidence_id)));
+    assert(known.results.some((item) => item.evidence_id === sourceIDs[2]));
+  }
+  for (const inaccessible of [privateID, foreignID, privateID.toUpperCase(), foreignID.toUpperCase()]) {
     const unchanged = await mcp("recall_memory", { ...args, known_evidence_ids: [inaccessible] }, reader.api_key);
     assert(unchanged.results.some((item) => sourceIDs.slice(0, 2).includes(item.evidence_id)), "inaccessible known handles cannot suppress visible evidence");
   }

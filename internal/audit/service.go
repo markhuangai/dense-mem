@@ -19,14 +19,15 @@ import (
 
 // Service owns the consumer-facing audit policy while Store owns persistence.
 type Service struct {
-	store contract.Store
+	store       contract.Store
+	exportSlots chan struct{}
 }
 
 var _ accessservice.AuditService = (*Service)(nil)
 
 // New constructs the audit application service around its persistence port.
 func New(store contract.Store) *Service {
-	return &Service{store: store}
+	return &Service{store: store, exportSlots: make(chan struct{}, 4)}
 }
 
 // sensitiveFields contains exact normalized field names redacted from audit data.

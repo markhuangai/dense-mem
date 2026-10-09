@@ -19,6 +19,7 @@ import (
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	goosedb "github.com/pressly/goose/v3/database"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	postgrescontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -84,8 +85,7 @@ func newOntologyFixtureWithMaintenance(t *testing.T, maintenance bool) *ontology
 	require.NoError(t, err)
 	require.NoError(t, migrator.RunUp(context.Background()))
 	if !maintenance {
-		require.NoError(t, migrator.RunDown(context.Background()))
-		require.NoError(t, migrator.RunDown(context.Background()))
+		require.NoError(t, rollbackOntologySchemaTo(t, admin, 20261004190000))
 	}
 	require.NoError(t, admin.Exec(`CREATE ROLE ontology_app LOGIN PASSWORD 'ontology_test' NOSUPERUSER NOBYPASSRLS;
 		GRANT USAGE ON SCHEMA public TO ontology_app;
@@ -120,6 +120,32 @@ func newOntologyFixtureWithMaintenance(t *testing.T, maintenance bool) *ontology
 		return tx.Raw(`SELECT id::text,generation FROM memory_spaces WHERE team_id=?::uuid AND kind='team_shared'`, fixture.team).Row().Scan(&fixture.space, &fixture.generation)
 	}))
 	return fixture
+}
+
+func rollbackOntologySchemaTo(t *testing.T, db *gorm.DB, target int64) error {
+	t.Helper()
+	ctx := context.Background()
+	migrator, err := storage.NewMigrator(db)
+	require.NoError(t, err)
+	versions, err := goosedb.NewStore(goosedb.DialectPostgres, "goose_db_version")
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	for {
+		current, err := versions.GetLatestVersion(ctx, sqlDB)
+		if err != nil {
+			return err
+		}
+		if current == target {
+			return nil
+		}
+		if current < target {
+			return fmt.Errorf("ontology fixture migration target %d is unavailable at %d", target, current)
+		}
+		if err := migrator.RunDown(ctx); err != nil {
+			return err
+		}
+	}
 }
 
 func (f *ontologyFixture) actor(owner int, role string) context.Context {

@@ -18,21 +18,36 @@ import (
 const maxValidationRecords = ontology.MaxDependencyRecords
 
 func decodeRecord(body []byte) (ontology.Record, error) {
+	return newStoredRecordDecoder().decode(body)
+}
+
+type storedRecordDecoder struct {
+	reader  *bytes.Reader
+	decoder *json.Decoder
+}
+
+func newStoredRecordDecoder() *storedRecordDecoder {
+	reader := bytes.NewReader(nil)
+	decoder := json.NewDecoder(reader)
+	decoder.DisallowUnknownFields()
+	return &storedRecordDecoder{reader: reader, decoder: decoder}
+}
+
+func (d *storedRecordDecoder) decode(body []byte) (ontology.Record, error) {
 	var record ontology.Record
 	if len(body) > 65536 {
 		return record, fmt.Errorf("ontology: stored record exceeds byte bound")
 	}
 	// JSONB has already normalized duplicate keys in stored record bodies.
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&record); err != nil {
+	d.reader.Reset(body)
+	if err := d.decoder.Decode(&record); err != nil {
 		return record, fmt.Errorf("ontology: decode stored record: %w", err)
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err != nil {
-			return record, fmt.Errorf("ontology: decode stored record: %w", err)
-		}
+	trailing, err := io.ReadAll(d.decoder.Buffered())
+	if err != nil {
+		return record, fmt.Errorf("ontology: decode stored record: %w", err)
+	}
+	if len(bytes.Trim(trailing, " \t\r\n")) != 0 || len(bytes.Trim(body[len(body)-d.reader.Len():], " \t\r\n")) != 0 {
 		return record, fmt.Errorf("ontology: stored body must contain one JSON record")
 	}
 	return record, ontology.ValidateRecord(record)

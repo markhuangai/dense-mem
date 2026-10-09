@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,11 +45,14 @@ func TestRecallOntologyGroupingKnownIDsAndStaleSources(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, duplicateID)
-	input.KnownEvidenceIDs = []string{duplicateID}
-	known, err := f.search.RecallEvidence(f.actor(2, "member"), input)
-	require.NoError(t, err)
-	require.Len(t, known.Results, 1)
-	require.Equal(t, handles[2].ID, known.Results[0].EvidenceID)
+	for _, knownID := range []string{duplicateID, strings.ToUpper(duplicateID), strings.ReplaceAll(duplicateID, "-", ""), "{" + duplicateID + "}", "urn:uuid:" + duplicateID} {
+		input.KnownEvidenceIDs = []string{knownID}
+		known, err := f.search.RecallEvidence(f.actor(2, "member"), input)
+		require.NoError(t, err)
+		require.Empty(t, known.Degradations)
+		require.Len(t, known.Results, 1)
+		require.Equal(t, handles[2].ID, known.Results[0].EvidenceID)
+	}
 	input.KnownEvidenceIDs = []string{uuid.NewString()}
 	unknown, err := f.search.RecallEvidence(f.actor(2, "member"), input)
 	require.NoError(t, err)
@@ -269,15 +273,49 @@ func TestRecallOntologyRelationshipDiscoveryPreservesSemanticGroups(t *testing.T
 
 func TestRecallOntologyBatchKeepsActivePredicateVersions(t *testing.T) {
 	f := newRecallOntologyFixture(t)
+	predicateKey := "aa112233445566778899aabbccddeeff"
+	evidenceIDs, relationshipIDs := []string{}, []string{}
 	object := createSemanticEntity(t, context.Background(), f.knowledge, f.team, f.owners[0], "project", "Atlas")
 	for index, subjectKind := range []string{"person", "place"} {
-		predicate, err := f.knowledge.EnsureSemanticReviewPredicateCandidate(f.actor(index, "member"), knowledge.EnsureSemanticPredicateCandidateInput{TeamID: f.team, OwnerProfileID: f.owners[index], Predicate: "works_on", RelationshipKind: "state", SubjectKind: subjectKind, ObjectKind: "project"})
+		predicate, err := f.knowledge.EnsureSemanticReviewPredicateCandidate(f.actor(index, "member"), knowledge.EnsureSemanticPredicateCandidateInput{TeamID: f.team, OwnerProfileID: f.owners[index], Predicate: predicateKey, RelationshipKind: "state", SubjectKind: subjectKind, ObjectKind: "project"})
 		require.NoError(t, err)
+		require.Equal(t, predicateKey, predicate.PredicateKey)
 		subject := createSemanticEntity(t, context.Background(), f.knowledge, f.team, f.owners[index], subjectKind, "Contributor "+subjectKind)
 		ingest := createSemanticIngest(t, context.Background(), f.knowledge, f.team, f.owners[index], uuid.NewString(), "Contributor works on Atlas.")
-		applySemanticDecision(t, f.actor(index, "member"), f.knowledge, ApplyRelationshipDecisionInput{TeamID: f.team, OwnerProfileID: f.owners[index], IngestID: ingest.IngestID, SubjectEntityID: subject.EntityID, PredicateKey: predicate.PredicateKey, PredicateVersion: predicate.Version, ObjectEntityID: object.EntityID, Support: &EvidenceSupportInput{FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: uuid.NewString(), SpanStart: 0, SpanEnd: len("Contributor works on Atlas."), Authority: "primary"}})
+		decision := applySemanticDecision(t, f.actor(index, "member"), f.knowledge, ApplyRelationshipDecisionInput{TeamID: f.team, OwnerProfileID: f.owners[index], IngestID: ingest.IngestID, SubjectEntityID: subject.EntityID, PredicateKey: predicate.PredicateKey, PredicateVersion: predicate.Version, ObjectEntityID: object.EntityID, Support: &EvidenceSupportInput{FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: uuid.NewString(), SpanStart: 0, SpanEnd: len("Contributor works on Atlas."), Authority: "primary"}})
+		require.NotNil(t, decision.Relationship)
+		evidenceIDs = append(evidenceIDs, ingest.Evidence[0].FragmentID)
+		relationshipIDs = append(relationshipIDs, decision.Relationship.RelationshipID)
+		_, err = f.search.UpsertSearchDocument(context.Background(), knowledge.UpsertSearchDocumentInput{TeamID: f.team, OwnerProfileID: f.owners[index], SourceKind: "evidence", SourceID: ingest.Evidence[0].FragmentID, SourceVersion: 1, DocumentText: "Contributor works on Atlas."})
+		require.NoError(t, err)
+		_, err = f.search.UpsertSearchDocument(context.Background(), knowledge.UpsertSearchDocumentInput{TeamID: f.team, OwnerProfileID: f.owners[index], SourceKind: "relationship", SourceID: decision.Relationship.RelationshipID, SourceVersion: int64(decision.Relationship.Version), DocumentText: "Contributor works on Atlas."})
+		require.NoError(t, err)
 		definition := ontology.Record{ID: uuid.NewString(), Kind: ontology.PredicateConcept, Definition: &ontology.Definition{Key: "registry " + subjectKind, Label: "Registry " + subjectKind}}
 		f.publication(t, definition, f.assignment(t, definition.ID, ontology.SourceHandle{Kind: ontology.PredicateSource, ID: predicate.PredicateKey, Version: int64(predicate.Version)}))
+		evidenceInput := RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: definition.Definition.Key, Limit: 3}
+		ordinaryEvidence, err := f.search.RecallEvidence(f.actor(2, "member"), evidenceInput)
+		require.NoError(t, err)
+		require.Empty(t, ordinaryEvidence.Results)
+		evidenceInput.OrganizationEnabled = true
+		discoveredEvidence, err := f.search.RecallEvidence(f.actor(2, "member"), evidenceInput)
+		require.NoError(t, err)
+		discoveredEvidenceIDs := []string{}
+		for _, hit := range discoveredEvidence.Results {
+			discoveredEvidenceIDs = append(discoveredEvidenceIDs, hit.EvidenceID)
+		}
+		require.ElementsMatch(t, evidenceIDs, discoveredEvidenceIDs)
+		relationshipInput := RecallRelationshipsInput{TeamID: f.team, SpaceID: f.space, Query: definition.Definition.Key, Limit: 3}
+		ordinaryRelationships, err := f.search.RecallRelationships(f.actor(2, "member"), relationshipInput)
+		require.NoError(t, err)
+		require.Empty(t, ordinaryRelationships.Results)
+		relationshipInput.OrganizationEnabled = true
+		discoveredRelationships, err := f.search.RecallRelationships(f.actor(2, "member"), relationshipInput)
+		require.NoError(t, err)
+		discoveredRelationshipIDs := []string{}
+		for _, hit := range discoveredRelationships.Results {
+			discoveredRelationshipIDs = append(discoveredRelationshipIDs, hit.RelationshipID)
+		}
+		require.ElementsMatch(t, relationshipIDs, discoveredRelationshipIDs)
 	}
 	page, err := f.ontology.ListRecords(f.actor(2, "member"), f.team, ontology.AssignmentKind, "", 10)
 	require.NoError(t, err)

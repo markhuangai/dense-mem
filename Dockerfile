@@ -16,7 +16,7 @@ RUN npm run build
 # ============================================================================
 # Build stage
 # ============================================================================
-FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine AS builder-base
+FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine AS builder-base
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -33,13 +33,15 @@ COPY . .
 
 FROM builder-base AS production-builder
 
+ARG IMAGE_VERSION=dev
+
 # CGO=0 produces a static binary that runs on alpine without libc shims.
 # -trimpath strips build-host paths; -ldflags="-s -w" drops symbol + DWARF
 # tables (smaller image, no debugger support in prod).
 RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
+    go build -trimpath -ldflags="-s -w -X github.com/markhuangai/dense-mem/internal/operations.BuildVersion=${IMAGE_VERSION}" -o /out/server ./cmd/server
 
 FROM builder-base AS evaluation-builder
 

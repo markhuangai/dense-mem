@@ -309,12 +309,13 @@ func recallRecords(tx *gorm.DB, fence scope, predicate string, args []any, limit
 	}
 	defer rows.Close()
 	result := []ontology.Record{}
+	decoder := newStoredRecordDecoder()
 	for rows.Next() {
 		var body []byte
 		if err := rows.Scan(&body); err != nil {
 			return nil, err
 		}
-		record, err := decodeRecord(body)
+		record, err := decoder.decode(body)
 		if err != nil {
 			return nil, err
 		}
@@ -339,10 +340,10 @@ func recallDiscoveryRecords(tx *gorm.DB, fence scope, names, evidenceIDs []strin
 		SELECT head.record_id,revision.body FROM ontology_record_heads AS head
 		`+recallRevisionJoinSQL+`
 		JOIN scope USING(team_id,shared_space_id,space_generation)
-		WHERE NOT head.retired AND head.kind='assignment' AND EXISTS (
-			SELECT 1 FROM ontology_revision_dependencies AS dependency JOIN definitions ON definitions.record_id=dependency.dependency_id
-			WHERE dependency.team_id=head.team_id AND dependency.shared_space_id=head.shared_space_id
-			AND dependency.space_generation=head.space_generation AND dependency.record_id=head.record_id AND dependency.record_version=head.version)
+		WHERE NOT head.retired AND head.kind='assignment' AND (head.record_id,head.version) IN (
+			SELECT dependency.record_id,dependency.record_version FROM ontology_revision_dependencies AS dependency
+			JOIN scope USING(team_id,shared_space_id,space_generation)
+			JOIN definitions ON definitions.record_id=dependency.dependency_id)
 		ORDER BY head.record_id LIMIT ?
 	), selected_evidence AS (
 		SELECT unnest(evidence_ids) AS source_id FROM scope
@@ -353,11 +354,10 @@ func recallDiscoveryRecords(tx *gorm.DB, fence scope, names, evidenceIDs []strin
 		SELECT head.record_id,revision.body FROM ontology_record_heads AS head
 		`+recallRevisionJoinSQL+`
 		JOIN scope USING(team_id,shared_space_id,space_generation)
-		WHERE scope.preload_groups AND NOT head.retired AND head.kind='evidence_group' AND EXISTS (
-			SELECT 1 FROM ontology_source_dependencies AS dependency JOIN selected_evidence USING(source_id)
-			WHERE dependency.team_id=head.team_id AND dependency.shared_space_id=head.shared_space_id
-			AND dependency.space_generation=head.space_generation AND dependency.record_id=head.record_id
-			AND dependency.record_version=head.version AND dependency.source_kind='evidence')
+		WHERE scope.preload_groups AND NOT head.retired AND head.kind='evidence_group' AND (head.record_id,head.version) IN (
+			SELECT dependency.record_id,dependency.record_version FROM ontology_source_dependencies AS dependency
+			JOIN scope USING(team_id,shared_space_id,space_generation)
+			JOIN selected_evidence USING(source_id) WHERE dependency.source_kind='evidence')
 		ORDER BY head.record_id LIMIT ?
 	), roots AS (
 		SELECT record_id,body FROM definitions UNION ALL SELECT record_id,body FROM assignments UNION ALL SELECT record_id,body FROM groups
@@ -385,13 +385,14 @@ func recallDiscoveryRecords(tx *gorm.DB, fence scope, names, evidenceIDs []strin
 	}
 	defer rows.Close()
 	result := []ontology.Record{}
+	decoder := newStoredRecordDecoder()
 	definitions, assignments, groups := 0, 0, 0
 	for rows.Next() {
 		var body []byte
 		if err := rows.Scan(&body); err != nil {
 			return nil, err
 		}
-		record, err := decodeRecord(body)
+		record, err := decoder.decode(body)
 		if err != nil {
 			return nil, err
 		}

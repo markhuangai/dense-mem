@@ -63,6 +63,13 @@ func (f *retrievalReadFixture) LoadRecallConflicts(context.Context, recallcontra
 	return f.conflicts, f.conflictError
 }
 
+func TestRecallIDNormalizationCanonicalizesUUIDSpellings(t *testing.T) {
+	id := "aa112233-4455-6677-8899-aabbccddeeff"
+	values := []string{" AA112233-4455-6677-8899-AABBCCDDEEFF ", id, "aa112233445566778899aabbccddeeff", "{" + id + "}", "urn:uuid:" + id, " invalid ", ""}
+	require.Equal(t, []string{id, "invalid"}, normalizeRecallRequestIDs(values))
+	require.Equal(t, " AA112233-4455-6677-8899-AABBCCDDEEFF ", values[0], "normalization cannot mutate caller input")
+}
+
 func TestRetrievalFusesEvidenceAtOriginalBranchPositions(t *testing.T) {
 	team := uuid.NewString()
 	known := uuid.NewString()
