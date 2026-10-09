@@ -26,10 +26,9 @@ import (
 
 	auditapp "github.com/markhuangai/dense-mem/internal/audit"
 	auditpostgres "github.com/markhuangai/dense-mem/internal/audit/postgres"
-	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
-
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 

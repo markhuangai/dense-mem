@@ -147,7 +147,8 @@ try {
   for (const name of ["mcp.remember", "mcp.recall_memory", "mcp.trace_memory"]) assert.ok(payload.includes(name), `missing ${name} span`);
   assert.ok(payload.includes("densemem_mcp_tool_results_total"));
   for (const name of ["team_id", "profile_id", "credential_id", "exception.message", "baggage"]) assert.ok(!payload.includes(`"key":"${name}"`) && !payload.includes(`"key": "${name}"`), "unapproved external attribute");
-  docker(["pause", collectorID]);
+  // Rootless CI lacks a cgroup freezer; stop the Collector process instead.
+  docker(["kill", "--signal=SIGSTOP", collectorID]);
   try {
     const start = Date.now();
     await Promise.all(Array.from({ length: 8 }, () => tool("remember", seed)));
@@ -161,7 +162,7 @@ try {
       if (degraded.exporters.traces.degraded) break;
     } while (Date.now() < healthDeadline);
     assert.ok(degraded.exporters.traces.degraded); assert.ok(degraded.exporters.traces.failures > 0); assert.ok(degraded.exporters.pending_spans <= 2048);
-  } finally { docker(["unpause", collectorID]); }
+  } finally { docker(["kill", "--signal=SIGCONT", collectorID]); }
   await tool("trace_memory", { relationship_id: relationshipID });
 } finally {
   if (disabledID) docker(["rm", "--force", disabledID]);
