@@ -1018,19 +1018,24 @@ async function validateCredentialRollup(credentialID, expectedName) {
 }
 
 async function waitForTelemetrySignals() {
+  let signals;
   for (let attempt = 0; attempt < 30; attempt += 1) {
-    const signals = {
+    signals = {
       rememberCalls: await prometheusValue("densemem_remember_acknowledgements_total"),
       rememberDurationSamples: await prometheusValue("densemem_remember_acknowledgement_duration_seconds_count"),
       recalls: await prometheusValue("densemem_recall_requests_total"),
       aiCostUSD: await prometheusValue("densemem_ai_operation_cost_usd_total"),
+      embeddingRequests: await prometheusValue("densemem_embedding_requests_total"),
     };
-    if (signals.rememberCalls > 0 && signals.rememberDurationSamples > 0 && signals.recalls > 0 && signals.aiCostUSD > 0) {
-      return signals;
+    if (signals.rememberCalls > 0 && signals.rememberDurationSamples > 0 && signals.recalls > 0 && signals.aiCostUSD > 0 && signals.embeddingRequests > 0) {
+      const snapshot = (await controlJSON(`/telemetry?window=15m&scope=team&team_id=${encodeURIComponent(teamID)}`, { method: "GET" })).data;
+      const activity = snapshot?.windowed_cards?.find((item) => item.id === "embedding_requests");
+      signals.embeddingActivity = { status: activity?.status, value: activity?.value, reason_code: activity?.reason_code };
+      if (activity?.status === "ready" && Number(activity.value) > 0) return signals;
     }
     await delay(5_000);
   }
-  throw new Error("timed out waiting for synchronous Remember, recall, and AI-cost telemetry");
+  throw new Error(`timed out waiting for synchronous Remember, recall, AI-cost, and windowed embedding telemetry: ${JSON.stringify(signals)}`);
 }
 
 async function prometheusValue(metric) {
