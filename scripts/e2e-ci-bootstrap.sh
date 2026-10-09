@@ -54,7 +54,7 @@ const values = {
   AI_DREAM_GRAPH_MODEL: "dense-mem-e2e-dream-graph",
   AI_COMMUNITY_SUMMARY_MODEL: "dense-mem-e2e-community-summary",
   AI_VERIFIER_DISABLE_TEMPERATURE: "true",
-  DENSE_MEM_CI_GO_TEST_IMAGE: "golang:1.26.6-bookworm",
+  DENSE_MEM_CI_GO_TEST_IMAGE: "golang:1.26.9-bookworm",
 };
 fs.writeFileSync(path.join(directory, ".env"),
   Object.entries(values).map(([key, value]) => `${key}=${value}`).join("\n") + "\n", { mode: 0o600 });

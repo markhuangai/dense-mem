@@ -407,7 +407,7 @@ precheck_capability() {
   trap cleanup_precheck EXIT INT TERM
 
   local test_image
-  test_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.6-bookworm)"
+  test_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.9-bookworm)"
   [[ "$test_image" =~ ^[A-Za-z0-9._/:@-]+$ ]] || fail "invalid precheck Go test image"
   local test_status=0
   local -a runner_command=(go -C cmd/e2e run . --root /workspace --phase precheck --timeout 40m --total-timeout 42m)
@@ -496,6 +496,14 @@ for (const entry of fs.readdirSync(directory).filter((item) => item.endsWith(".j
 
 if (records.length === 0) throw new Error("no populated precheck database capability fragments");
 
+const ontologyIndex = records.findIndex((record) => record.capability === "ontology");
+const isolateOntology = ontologyIndex >= 0 && records.length >= 3;
+if (isolateOntology) {
+  // Ontology backlog fixtures need a dedicated shard within the phase deadline.
+  records.splice(ontologyIndex, 1);
+  groups.pop();
+}
+
 records.sort((left, right) =>
   right.weight - left.weight ||
   right.cases - left.cases ||
@@ -528,6 +536,7 @@ for (const record of records) {
   }
 }
 
+if (isolateOntology) process.stdout.write("ontology\n");
 for (const group of groups) {
   if (group.capabilities.length > 0) process.stdout.write(`${group.capabilities.join(",")}\n`);
 }
