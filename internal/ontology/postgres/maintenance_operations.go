@@ -133,8 +133,8 @@ const maintenanceActiveSourceJoin = ` FROM ontology_maintenance_sources AS sourc
 func completeMaintenanceRun(tx *gorm.DB, runID, retryRunID string, allSources bool, requiredFailure string, now time.Time) error {
 	var unresolved bool
 	if err := tx.Raw(`SELECT EXISTS(SELECT 1`+maintenanceActiveSourceJoin+`
-	 WHERE source.eligible AND source.status IN ('failed','ambiguous','budget_deferred')
-	 AND (? OR source.last_run_id IN (?::uuid,NULLIF(?,'')::uuid)))`, allSources, runID, retryRunID).Row().Scan(&unresolved); err != nil {
+	 WHERE source.eligible AND (source.status IN ('failed','ambiguous','budget_deferred') OR (NOT ? AND source.status='pending'))
+	 AND (? OR source.last_run_id IN (?::uuid,NULLIF(?,'')::uuid)))`, allSources, allSources, runID, retryRunID).Row().Scan(&unresolved); err != nil {
 		return err
 	}
 	var previousFailure string

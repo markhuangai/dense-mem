@@ -267,6 +267,32 @@ func TestOntologyOverrideApplicabilityFollowsActionAndRecordKind(t *testing.T) {
 	require.Equal(t, one, two)
 }
 
+func TestOntologyMixedSeparationOverrideMatchesEveryMemberKind(t *testing.T) {
+	evidenceA, evidenceB := policySnapshot("evidence-a", EvidenceSource, "same"), policySnapshot("evidence-b", EvidenceSource, "same")
+	relationshipA, relationshipB := policySnapshot("relationship-a", RelationshipSource, "same"), policySnapshot("relationship-b", RelationshipSource, "same")
+	for _, testCase := range []struct {
+		kind    Kind
+		members []SourceHandle
+		group   []SourceHandle
+	}{
+		{EvidenceGroup, []SourceHandle{relationshipA.SourceHandle, evidenceA.SourceHandle, evidenceB.SourceHandle}, []SourceHandle{evidenceA.SourceHandle, evidenceB.SourceHandle}},
+		{RelationshipGroup, []SourceHandle{evidenceA.SourceHandle, relationshipA.SourceHandle, relationshipB.SourceHandle}, []SourceHandle{relationshipA.SourceHandle, relationshipB.SourceHandle}},
+	} {
+		t.Run(string(testCase.kind), func(t *testing.T) {
+			override := Record{ID: policyID("mixed-separation"), Kind: OverrideKind, Override: &Override{Action: KeepSeparate, Members: testCase.members}}
+			require.NoError(t, ValidatePublication(publicationFor(override)))
+			catalog := map[string]Record{override.ID: override}
+			group := Record{ID: policyID("mixed-group"), Kind: testCase.kind, Group: &Group{Members: testCase.group}}
+			require.Equal(t, []Record{override}, ApplicableOverrides(group, catalog))
+			require.ErrorIs(t, CheckOverrides(group, catalog), ErrOverride)
+			group.Retired = true
+			require.NoError(t, CheckOverrides(group, catalog))
+			assignment := Record{ID: policyID("mixed-assignment"), Kind: AssignmentKind, Assignment: &Assignment{Source: testCase.group[0], DefinitionID: policyID("topic")}}
+			require.Empty(t, ApplicableOverrides(assignment, catalog))
+		})
+	}
+}
+
 func TestOntologyPublicationEnforcesAggregateBounds(t *testing.T) {
 	input := publicationFor(topicRecord("escaped"))
 	input.Changes[0].Record.Definition.Description = strings.Repeat("\x01", MaxPublicationBytes)

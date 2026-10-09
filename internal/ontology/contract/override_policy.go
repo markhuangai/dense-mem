@@ -25,9 +25,7 @@ func ApplicableOverrides(record Record, catalog map[string]Record) []Record {
 				continue
 			}
 		case GroupTogether, KeepSeparate:
-			if record.Group == nil || len(candidate.Override.Members) == 0 ||
-				(record.Kind == EvidenceGroup && candidate.Override.Members[0].Kind != EvidenceSource) ||
-				(record.Kind == RelationshipGroup && candidate.Override.Members[0].Kind != RelationshipSource) {
+			if record.Group == nil {
 				continue
 			}
 		default:

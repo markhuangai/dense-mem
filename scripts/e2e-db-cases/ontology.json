@@ -421,6 +421,20 @@
       "run": "^TestOntologyMaintenanceCompletedRunDoesNotHideUnrelatedFailures$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/followup_completion_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/followup_completion_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMixedSeparationOverrideProtectsEvidenceGroups",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMixedSeparationOverrideProtectsEvidenceGroups$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/followup_freshness_integration_test.go"
     }
   ]
 }

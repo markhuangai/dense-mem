@@ -14,6 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func maintenanceRunByID(t *testing.T, f *ontologyFixture, id string) ontology.MaintenanceRun {
@@ -113,6 +114,74 @@ func TestOntologyMaintenanceEarlierAmbiguityKeepsBoundedRunIncomplete(t *testing
 	require.NoError(t, err)
 	require.EqualValues(t, 1, status.Counts.Ambiguous)
 	require.EqualValues(t, 1, status.Counts.Organized)
+}
+
+func TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork(t *testing.T) {
+	f := newOrganizationFixture(t)
+	other := maintenanceOtherTeam(t, f)
+	settings := maintenanceSettings(t, f)
+	ctx := context.Background()
+	_, err := settings.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyConcurrency: "2"}, "control", "", "")
+	require.NoError(t, err)
+	window := maintenanceWindow(t, f, settings)
+	for _, failure := range []string{"maintenance_paused", "maintenance_disabled", ""} {
+		t.Run(failure, func(t *testing.T) {
+			f.organizationEvidence(t, 0, "Atlas uses PostgreSQL "+uuid.NewString(), nil)
+			maintenanceEntity(t, other, "Beta-"+uuid.NewString())
+			run, err := f.store.MaintenanceCommand(ctx, domain.OntologyMaintenanceCommand{Action: "run", OperationKey: uuid.NewString(), MaxBatches: 2}, time.Now().UTC(), nil)
+			require.NoError(t, err)
+			firstTurn, first := maintenanceClaim(t, f, window)
+			lastTurn, last := maintenanceClaim(t, f, window)
+			require.Equal(t, run.ID, first.RunID)
+			require.Equal(t, run.ID, last.RunID)
+			require.NotEqual(t, first.TeamID, last.TeamID)
+			if failure == "maintenance_paused" {
+				_, err = f.store.MaintenanceCommand(ctx, domain.OntologyMaintenanceCommand{Action: "pause", OperationKey: uuid.NewString()}, time.Now().UTC(), nil)
+				require.NoError(t, err)
+				defer func() {
+					_, err := f.store.MaintenanceCommand(ctx, domain.OntologyMaintenanceCommand{Action: "resume", OperationKey: uuid.NewString()}, time.Now().UTC(), nil)
+					require.NoError(t, err)
+				}()
+			} else if failure == "maintenance_disabled" {
+				_, err = settings.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: "false"}, "control", "", "")
+				require.NoError(t, err)
+				defer func() {
+					_, err := settings.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: "true"}, "control", "", "")
+					require.NoError(t, err)
+				}()
+			} else {
+				unrelated := f.organizationEvidence(t, 0, "Unclaimed work "+uuid.NewString(), nil)
+				require.NoError(t, f.store.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+					return refreshMaintenanceSource(tx, scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation}, unrelated, false)
+				}))
+			}
+			before, otherBefore := f.canonicalSnapshot(t), other.canonicalSnapshot(t)
+			result := func(claim *ontology.MaintenanceClaim) ontology.OrganizationResult {
+				result := ontology.OrganizationResult{Current: true}
+				for _, source := range claim.Sources {
+					result.Outcomes = append(result.Outcomes, ontology.OrganizationOutcome{Source: source, Status: "organized"})
+				}
+				return result
+			}
+			require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *first, result(first), failure, time.Now().UTC()))
+			require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *firstTurn))
+			require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *last, result(last), "", time.Now().UTC()))
+			require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *lastTurn))
+			completed := maintenanceRunByID(t, f, run.ID)
+			require.Equal(t, 2, completed.CompletedBatches)
+			require.Equal(t, failure, completed.FailureCode)
+			expected := "incomplete"
+			if failure == "" {
+				expected = "completed"
+			}
+			require.Equal(t, expected, completed.Status)
+			var historicalReason string
+			require.NoError(t, f.admin.Raw(`SELECT failure_code FROM ontology_maintenance_batches WHERE batch_id=?::uuid`, first.ID).Row().Scan(&historicalReason))
+			require.Equal(t, failure, historicalReason)
+			require.Equal(t, before, f.canonicalSnapshot(t))
+			require.Equal(t, otherBefore, other.canonicalSnapshot(t))
+		})
+	}
 }
 
 func TestOntologyMaintenanceScheduledRecoveryClearsCurrentReason(t *testing.T) {

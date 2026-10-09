@@ -141,6 +141,27 @@ func TestOntologyGroupingOverridesPreserveAssignmentFreshness(t *testing.T) {
 	require.Equal(t, before, f.canonicalSnapshot(t))
 }
 
+func TestOntologyMixedSeparationOverrideProtectsEvidenceGroups(t *testing.T) {
+	f := newOrganizationFixture(t)
+	a := f.organizationEvidenceAt(t, 0, "Atlas uses PostgreSQL.", "2026-10-08T12:00:00Z", "")
+	b := f.organizationEvidenceAt(t, 0, "Atlas uses PostgreSQL.", "2026-10-08T12:00:00Z", "")
+	relationship := maintenanceRelationship(t, f)
+	before := f.canonicalSnapshot(t)
+	override := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.KeepSeparate, Members: []ontology.SourceHandle{relationship, a, b}}, Sources: []ontology.SourceDependency{f.source(t, relationship), f.source(t, a), f.source(t, b)}}
+	publication, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("mixed-separation", 0, ontology.Change{Record: override}))
+	require.NoError(t, err)
+	stored, err := f.store.GetRecord(context.Background(), f.team, override.ID, 0)
+	require.NoError(t, err)
+	require.Equal(t, relationship, stored.Override.Members[0])
+	group := ontology.Record{ID: uuid.NewString(), Kind: ontology.EvidenceGroup, Group: &ontology.Group{Members: []ontology.SourceHandle{a, b}}, Sources: []ontology.SourceDependency{f.source(t, a), f.source(t, b)}}
+	_, err = f.store.PublishAutomatic(context.Background(), f.team, testPublication("contradict-mixed-separation", publication.Revision, ontology.Change{Record: group}))
+	require.ErrorIs(t, err, ontology.ErrOverride)
+	history, err := f.store.History(context.Background(), f.team, 0, 20)
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	require.Equal(t, before, f.canonicalSnapshot(t))
+}
+
 func TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges(t *testing.T) {
 	for _, change := range []string{"name", "version"} {
 		t.Run(change, func(t *testing.T) {

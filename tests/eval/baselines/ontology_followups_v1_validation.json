@@ -19,13 +19,13 @@
     "tests/eval/source_locks/ontology_organization_v1.json",
     "tests/eval/source_locks/ontology_followups_v1.json"
   ],
-  "production_go_manifest_sha256": "sha256:b83ceecae8e2385a08f5643704d0ee38374538e04d618b298810779d1af18515",
+  "production_go_manifest_sha256": "sha256:b53beb865c51d7bbf99f7df754be6fe3887c27da0adfab60912b6da783706071",
   "model": "dense-mem-testing",
   "provider_identity": "sha256:35301efb143f357c2a2cb2a4fc4ede3b7373163339db23f236f320c2792aa923",
   "fresh_state_repetitions": [
     {
       "repetition": 1,
-      "tested_source_manifest_sha256": "sha256:e6bfebb7db6e17b62553f553bcfeadd9d0a9eae8427568efb053e2e97ab50906",
+      "tested_source_manifest_sha256": "sha256:8fb60ade305d9ba74d2fa2ddfcfbf5715fede900a63b24e8884320b64cf8afd5",
       "cohorts": {
         "maintenance": {
           "cohort_sha256": "sha256:01e78a45a28121f64b36a7b17b8f76051ffd4186d2eed918470a054ad522ae14",
@@ -38,13 +38,13 @@
           "source_preservation": 1,
           "provider_attempts": 10,
           "usage": {
-            "estimated_input_tokens": 12246,
-            "estimated_output_tokens": 2402,
-            "reported_input_tokens": 8118,
-            "reported_output_tokens": 21560,
-            "reported_total_tokens": 29678
+            "estimated_input_tokens": 12236,
+            "estimated_output_tokens": 2325,
+            "reported_input_tokens": 8114,
+            "reported_output_tokens": 22021,
+            "reported_total_tokens": 30135
           },
-          "report_sha256": "sha256:fd6959349320278a8a3f007a8404240b9d5158b87e7318e814c56d8ddfb36988"
+          "report_sha256": "sha256:44f2bfac2cfb3136088e903854e253466145f3129f55094ec90c32d907d5fb4a"
         },
         "followups": {
           "cohort_sha256": "sha256:94f92ddd22fa5affbfa9936248cdf6be3c067a0641424406a9445380ce921b23",
@@ -57,19 +57,19 @@
           "source_preservation": 1,
           "provider_attempts": 6,
           "usage": {
-            "estimated_input_tokens": 6632,
-            "estimated_output_tokens": 1276,
-            "reported_input_tokens": 4283,
-            "reported_output_tokens": 14856,
-            "reported_total_tokens": 19139
+            "estimated_input_tokens": 6634,
+            "estimated_output_tokens": 1417,
+            "reported_input_tokens": 4288,
+            "reported_output_tokens": 13899,
+            "reported_total_tokens": 18187
           },
-          "report_sha256": "sha256:e20b0bb4219b196f97bfce014aad6216da3152268c98d031653a03ca4a62245e"
+          "report_sha256": "sha256:1e32c76fab6ff56883166cf7b0fe7ef6452ccd07221f88f3e99bd42cd845d453"
         }
       }
     },
     {
       "repetition": 2,
-      "tested_source_manifest_sha256": "sha256:128d3a0733134bf85b5eb9ca7b4960ec833976f5911a77aab6aae39a030da789",
+      "tested_source_manifest_sha256": "sha256:8fb60ade305d9ba74d2fa2ddfcfbf5715fede900a63b24e8884320b64cf8afd5",
       "cohorts": {
         "maintenance": {
           "cohort_sha256": "sha256:01e78a45a28121f64b36a7b17b8f76051ffd4186d2eed918470a054ad522ae14",
@@ -82,13 +82,13 @@
           "source_preservation": 1,
           "provider_attempts": 9,
           "usage": {
-            "estimated_input_tokens": 10695,
-            "estimated_output_tokens": 2071,
-            "reported_input_tokens": 6999,
-            "reported_output_tokens": 20046,
-            "reported_total_tokens": 27045
+            "estimated_input_tokens": 10701,
+            "estimated_output_tokens": 2189,
+            "reported_input_tokens": 6998,
+            "reported_output_tokens": 22390,
+            "reported_total_tokens": 29388
           },
-          "report_sha256": "sha256:4a748abed10d03d8b0343f9e7ce042b767c959fadc0014b087f09e46d56dad27"
+          "report_sha256": "sha256:5257c3ca6ecd8758e48405d9b248105789453b14266f0b6b22b0ecf8fdf74dc1"
         },
         "followups": {
           "cohort_sha256": "sha256:94f92ddd22fa5affbfa9936248cdf6be3c067a0641424406a9445380ce921b23",
@@ -101,19 +101,19 @@
           "source_preservation": 1,
           "provider_attempts": 6,
           "usage": {
-            "estimated_input_tokens": 6637,
-            "estimated_output_tokens": 1510,
-            "reported_input_tokens": 4294,
-            "reported_output_tokens": 14328,
-            "reported_total_tokens": 18622
+            "estimated_input_tokens": 6629,
+            "estimated_output_tokens": 1525,
+            "reported_input_tokens": 4284,
+            "reported_output_tokens": 13759,
+            "reported_total_tokens": 18043
           },
-          "report_sha256": "sha256:37e0dda16168be2847b83da4637b4e1a2ae8e49a624519839a182cdda08efc78"
+          "report_sha256": "sha256:10bbf53f054af7bc172a8a2975e611170ea18f94d05fbe5b790e839c852ab845"
         }
       }
     },
     {
       "repetition": 3,
-      "tested_source_manifest_sha256": "sha256:128d3a0733134bf85b5eb9ca7b4960ec833976f5911a77aab6aae39a030da789",
+      "tested_source_manifest_sha256": "sha256:8fb60ade305d9ba74d2fa2ddfcfbf5715fede900a63b24e8884320b64cf8afd5",
       "cohorts": {
         "maintenance": {
           "cohort_sha256": "sha256:01e78a45a28121f64b36a7b17b8f76051ffd4186d2eed918470a054ad522ae14",
@@ -124,15 +124,15 @@
           "false_consolidations": 0,
           "distinct_fact_coverage": 1,
           "source_preservation": 1,
-          "provider_attempts": 9,
+          "provider_attempts": 11,
           "usage": {
-            "estimated_input_tokens": 10692,
-            "estimated_output_tokens": 2284,
-            "reported_input_tokens": 6999,
-            "reported_output_tokens": 20537,
-            "reported_total_tokens": 27536
+            "estimated_input_tokens": 13843,
+            "estimated_output_tokens": 2612,
+            "reported_input_tokens": 9288,
+            "reported_output_tokens": 24369,
+            "reported_total_tokens": 33657
           },
-          "report_sha256": "sha256:132a2d4cb23e6b94c45588e441c2be70311d6cdd1d44155a244f7f2d676f7f86"
+          "report_sha256": "sha256:92d25988f4703f8a3b3b5704166948e2c488337d4fa272eebb0a50a6a2a9a7ee"
         },
         "followups": {
           "cohort_sha256": "sha256:94f92ddd22fa5affbfa9936248cdf6be3c067a0641424406a9445380ce921b23",
@@ -143,15 +143,15 @@
           "false_consolidations": 0,
           "distinct_fact_coverage": 1,
           "source_preservation": 1,
-          "provider_attempts": 6,
+          "provider_attempts": 7,
           "usage": {
-            "estimated_input_tokens": 6643,
-            "estimated_output_tokens": 1302,
-            "reported_input_tokens": 4294,
-            "reported_output_tokens": 14072,
-            "reported_total_tokens": 18366
+            "estimated_input_tokens": 8101,
+            "estimated_output_tokens": 1475,
+            "reported_input_tokens": 5363,
+            "reported_output_tokens": 15022,
+            "reported_total_tokens": 20385
           },
-          "report_sha256": "sha256:154668704828469190909c8f4b5f017431849562704db238863f88ae7bb0978c"
+          "report_sha256": "sha256:55b69335cebcba9705141231f5e61b42f5bc4c3e37a7bf6e37598c176b33e106"
         }
       }
     }
