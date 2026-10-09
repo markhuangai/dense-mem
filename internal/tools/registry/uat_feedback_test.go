@@ -36,6 +36,9 @@ func TestBuildActiveRecallRecordsFeedbackSnapshot(t *testing.T) {
 	if out["recall_id"] != "rec-canonical" {
 		t.Fatalf("recall_id = %#v, want rec-canonical", out["recall_id"])
 	}
+	for _, action := range out["suggested_actions"].([]recallapp.RecallSuggestedAction) {
+		require.NotEqual(t, ToolSubmitRecallSessionFeedback, action.Tool)
+	}
 	if len(recorder.snapshots) != 1 {
 		t.Fatalf("snapshots = %d; want 1", len(recorder.snapshots))
 	}

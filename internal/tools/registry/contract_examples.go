@@ -148,7 +148,7 @@ func contractToolExamples() map[string]contractToolExample {
 				"community_limit":    0,
 			},
 			Result:     "Results provide bounded evidence context; related_relationships provide relationship_id values; recall_id and suggested_actions identify supported follow-ups. Degradations are explicit.",
-			NextAction: "Use a returned relationship_id for trace_memory. If submit_recall_session_feedback is suggested, pass the returned recall_event_id; report degradations instead of treating an empty or partial result as complete.",
+			NextAction: "Use a returned relationship_id for trace_memory and retain equivalent_evidence_ids as alternate source references. Report degradations instead of treating an empty or partial result as complete.",
 		},
 		ToolTraceMemory: {
 			WhenToUse:     "Trace one same-team Relationship through supporting evidence, decisions, transitions, and lineage.",

@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	ontologycontract "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -46,6 +47,17 @@ type Store struct {
 	search                searchcontract.SearchRepository
 	relationshipConflicts RelationshipConflictReader
 	evidenceConflicts     EvidenceConflictReader
+	ontology              func() OntologyReader
+	snapshot              *gorm.DB
+	snapshotTeam          string
+	organizationFailure   string
+}
+
+type OntologyReader func(context.Context, *gorm.DB, string, ontologycontract.RecallReadInput) (ontologycontract.RecallOrganization, error)
+
+func (r *Store) WithOntology(reader func() OntologyReader) *Store {
+	r.ontology = reader
+	return r
 }
 
 func NewStore(db *gorm.DB, rls storagepostgres.RLSHelper, search searchcontract.SearchRepository, relationshipConflicts RelationshipConflictReader, evidenceConflicts EvidenceConflictReader) *Store {
@@ -71,6 +83,12 @@ func (r *Store) withTeamTx(ctx context.Context, teamID string, fn func(*gorm.DB)
 	}
 	if r.rls == nil {
 		return errors.New("recall: rls helper is required")
+	}
+	if r.snapshot != nil {
+		if teamID != r.snapshotTeam {
+			return ontologycontract.ErrUnauthorized
+		}
+		return fn(r.snapshot.WithContext(ctx))
 	}
 	return r.rls.WithTeamTx(ctx, r.db, teamID, fn)
 }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 )
 
@@ -27,7 +28,8 @@ var _ recallcontract.Repository = (*Store)(nil)
 func (r *Store) ReadEvidenceCandidates(ctx context.Context, input RecallEvidenceInput, contract *ActiveSearchContract, candidateLimit int) (*recallcontract.RecallCandidateBatch, error) {
 	var textHits, vectorHits, expansionHits []SearchHit
 	searchState := string(domain.SearchProjectionCurrent)
-	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+	organizationCode := ""
+	err := r.withRecallTx(ctx, input.TeamID, input.OrganizationEnabled, func(tx *gorm.DB) error {
 		var err error
 		if input.Query != "" {
 			stageCtx, stage := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageFullText)
@@ -54,13 +56,46 @@ func (r *Store) ReadEvidenceCandidates(ctx context.Context, input RecallEvidence
 			}
 		}
 		searchState, err = recallEvidenceSearchState(ctx, tx, input, contract)
-		return err
+		if err != nil {
+			return err
+		}
+		var organizationIDs []string
+		if input.OrganizationEnabled {
+			organizationIDs = append(organizationIDs, input.KnownEvidenceIDs...)
+			for _, hits := range [][]SearchHit{textHits, vectorHits, expansionHits} {
+				for _, hit := range hits {
+					organizationIDs = append(organizationIDs, hit.SourceID)
+				}
+			}
+			organizationIDs = domain.NormalizeReadIDList(organizationIDs)
+		}
+		organization, err := r.readOrganization(ctx, tx, input, nil, organizationIDs, candidateLimit)
+		if err != nil {
+			return err
+		}
+		organizationCode = organization.Degradation
+		additional, err := r.organizationEvidenceCandidates(ctx, tx, input, contract, organization, candidateLimit)
+		if err != nil {
+			return &ontologyReadError{cause: err}
+		}
+		expansionHits = mergeRecallExpansion(expansionHits, additional, candidateLimit)
+		return nil
 	})
+	var optional *ontologyReadError
+	if errors.As(err, &optional) && r.snapshot == nil {
+		input.OrganizationEnabled = false
+		batch, requiredErr := r.ReadEvidenceCandidates(ctx, input, contract, candidateLimit)
+		if batch != nil {
+			batch.OrganizationDegradation = ontologyFailureCode(optional.cause)
+		}
+		return batch, requiredErr
+	}
 	if err != nil {
 		return nil, err
 	}
 	return &recallcontract.RecallCandidateBatch{
-		TextHits: textHits, VectorHits: vectorHits, ExpansionHits: expansionHits, SearchState: searchState,
+		OrganizationDegradation: organizationCode,
+		TextHits:                textHits, VectorHits: vectorHits, ExpansionHits: expansionHits, SearchState: searchState,
 	}, nil
 }
 
@@ -503,6 +538,8 @@ func searchRecallEntityExpansion(
 		  AND (
 		      relationship.subject_entity_id = ANY(?::uuid[])
 		      OR relationship.object_entity_id = ANY(?::uuid[])
+		      OR relationship.predicate_key = ANY(?::text[])
+		      OR relationship.relationship_id = ANY(?::uuid[])
 		  )
 		  AND (
 		      ?::timestamptz IS NULL
@@ -533,6 +570,7 @@ func searchRecallEntityExpansion(
 		input.KnownAt, input.KnownAt, input.KnownAt,
 		eventAt,
 		pq.Array(input.ExpandFromEntityIDs), pq.Array(input.ExpandFromEntityIDs),
+		pq.Array(organizationSourceIDs(input.OrganizationSources, ontology.PredicateSource)), pq.Array(organizationSourceIDs(input.OrganizationSources, ontology.RelationshipSource)),
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
 		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
@@ -661,6 +699,7 @@ func hydrateRecallEvidence(
 				) AS relationship ON TRUE
 			WHERE quarantine.quarantine_id IS NULL
 			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+			  `+recallEvidenceAliasVisibilitySQL("fragment")+`
 			  AND NOT EXISTS (
 			      SELECT 1
 			      FROM evidence_lifecycle_events AS lifecycle
@@ -697,6 +736,7 @@ func hydrateRecallEvidence(
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
 		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
+		input.KnownAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
 		input.KnownAt, input.KnownAt, input.KnownAt).Rows()
 	if err != nil {

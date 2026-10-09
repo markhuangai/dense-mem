@@ -55,9 +55,11 @@ func recallContractOutput(res *recall.RecallResult) map[string]any {
 	results := make([]map[string]any, 0, len(res.Results))
 	for _, item := range res.Results {
 		results = append(results, map[string]any{
-			"evidence_id": item.EvidenceID,
-			"context":     item.Context,
-			"space_kind":  item.SpaceKind,
+			"evidence_id":             item.EvidenceID,
+			"equivalent_evidence_ids": append([]string{}, item.EquivalentEvidenceIDs...),
+			"equivalents_truncated":   item.EquivalentsTruncated,
+			"context":                 item.Context,
+			"space_kind":              item.SpaceKind,
 		})
 	}
 	relatedRelationships := res.RelatedRelationships

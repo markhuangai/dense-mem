@@ -315,7 +315,12 @@ func normalizeRecallFeedbackEvent(event domain.RecallFeedbackEvent) domain.Recal
 	if event.SnapshotMetadata == nil {
 		event.SnapshotMetadata = map[string]any{}
 	}
-	event.ResultCount = len(event.ResultRefs)
+	event.ResultCount = 0
+	for _, ref := range event.ResultRefs {
+		if ref.EquivalentTo == "" {
+			event.ResultCount++
+		}
+	}
 	now := time.Now().UTC()
 	if event.CreatedAt.IsZero() {
 		event.CreatedAt = now

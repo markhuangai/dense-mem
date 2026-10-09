@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -288,4 +289,141 @@ func TestOntologyRelationshipProvenanceAndPredicateSeeds(t *testing.T) {
 	seedAfter, err := f.store.SeedDefinitions(ctx, f.team, ontology.SeedInput{OperationKey: "seed-withdrawn", ExpectedRevision: overridden.Revision, Limit: 20})
 	require.NoError(t, err)
 	require.Empty(t, seedAfter.Records)
+}
+
+func TestOntologyUnavailableSnapshotRetainsScopedHandleForMaintenance(t *testing.T) {
+	f := newOntologyFixture(t)
+	handle := ontology.SourceHandle{Kind: ontology.RelationshipSource, ID: uuid.NewString(), Version: 1}
+	require.NoError(t, f.rls.WithTeamTx(context.Background(), f.app, f.team, func(tx *gorm.DB) error {
+		fence := scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation}
+		snapshot, err := readSource(tx, fence, handle)
+		require.ErrorIs(t, err, ontology.ErrSourceStale)
+		require.False(t, snapshot.Eligible)
+		require.Equal(t, handle, snapshot.SourceHandle)
+		require.Equal(t, f.team, snapshot.TeamID)
+		require.Equal(t, f.space, snapshot.SpaceID)
+		require.Equal(t, f.generation, snapshot.Generation)
+		return refreshMaintenanceSource(tx, fence, handle, false)
+	}))
+	var status string
+	var eligible bool
+	require.NoError(t, f.rls.WithTeamTx(context.Background(), f.app, f.team, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT status,eligible FROM ontology_maintenance_sources WHERE team_id=?::uuid AND source_kind=? AND source_id=?`, f.team, handle.Kind, handle.ID).Row().Scan(&status, &eligible)
+	}))
+	require.Equal(t, "unavailable", status)
+	require.False(t, eligible)
+}
+
+func TestOntologyOrganizationPreservesValidLargeSourceContext(t *testing.T) {
+	f := newOntologyFixture(t)
+	const definitions = 17
+	sourceCount := 1 + definitions*(ontology.MaxMembers-1)
+	handles := make([]ontology.SourceHandle, 0, sourceCount)
+	for offset := 0; offset < sourceCount; offset += 100 {
+		items := []knowledge.EvidenceInput{}
+		for i := offset; i < min(offset+100, sourceCount); i++ {
+			items = append(items, knowledge.EvidenceInput{Content: fmt.Sprintf("Large context source %d.", i)})
+		}
+		ingest, err := f.knowledge.CreateIngestForTest(context.Background(), knowledge.CreateIngestInput{
+			TeamID: f.team, OwnerProfileID: f.owners[0], Evidence: items,
+		})
+		require.NoError(t, err)
+		for _, fragment := range ingest.Evidence {
+			handles = append(handles, ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: fragment.FragmentID, Version: 1})
+		}
+	}
+	require.Greater(t, len(handles), ontology.MaxDependencyRecords)
+	dependencies := map[ontology.SourceHandle]ontology.SourceDependency{}
+	require.NoError(t, f.store.withScope(context.Background(), f.team, true, func(tx *gorm.DB, fence scope) error {
+		for offset := 0; offset < len(handles); offset += ontology.MaxDependencyRecords {
+			snapshots, err := readSources(tx, fence, handles[offset:min(offset+ontology.MaxDependencyRecords, len(handles))])
+			if err != nil {
+				return err
+			}
+			for handle, snapshot := range snapshots {
+				fingerprint, err := ontology.SourceFingerprint(snapshot)
+				if err != nil {
+					return err
+				}
+				dependencies[handle] = ontology.SourceDependency{SourceHandle: handle, Fingerprint: fingerprint}
+			}
+		}
+		return nil
+	}))
+	records := make([]ontology.Record, definitions)
+	for i := range records {
+		records[i] = testTopic(fmt.Sprintf("large-context-%d", i))
+		records[i].Sources = []ontology.SourceDependency{dependencies[handles[0]]}
+		for _, handle := range handles[1+i*(ontology.MaxMembers-1) : 1+(i+1)*(ontology.MaxMembers-1)] {
+			records[i].Sources = append(records[i].Sources, dependencies[handle])
+		}
+	}
+	revision := int64(0)
+	for offset := 0; offset < len(records); offset += 4 {
+		changes := []ontology.Change{}
+		for _, record := range records[offset:min(offset+4, len(records))] {
+			changes = append(changes, ontology.Change{Record: record})
+		}
+		published, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(uuid.NewString(), revision, changes...))
+		require.NoError(t, err)
+		revision = published.Revision
+	}
+	contextData, err := f.store.ReadOrganization(context.Background(), f.team, handles[:1])
+	require.NoError(t, err)
+	require.Len(t, contextData.Records, definitions)
+	for _, record := range contextData.Records {
+		require.True(t, record.Current)
+	}
+	last := handles[len(handles)-1]
+	_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{
+		TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{last.ID}, Reason: "source withdrawn",
+		IdempotencyKey: uuid.NewString(), RequestHash: testHash(last.ID),
+	})
+	require.NoError(t, err)
+	contextData, err = f.store.ReadOrganization(context.Background(), f.team, handles[:1])
+	require.NoError(t, err)
+	require.Len(t, contextData.Records, definitions)
+	for _, record := range contextData.Records {
+		require.Equal(t, record.ID != records[len(records)-1].ID, record.Current)
+	}
+}
+
+func TestOntologyOrganizationPreservesPerRecordDependencyBounds(t *testing.T) {
+	f := newOntologyFixture(t)
+	ingest := f.evidence(t, 0, "Shared source for parent-backed topics.")
+	handle := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: ingest.Evidence[0].FragmentID, Version: 1}
+	dependency := f.source(t, handle)
+	children := ontology.MaxDependencyRecords/2 + 1
+	revision := int64(0)
+	for offset := 0; offset < children; offset += ontology.MaxChanges / 2 {
+		changes := []ontology.Change{}
+		for i := offset; i < min(offset+ontology.MaxChanges/2, children); i++ {
+			parent := testTopic(fmt.Sprintf("context-parent-%d", i))
+			child := testTopic(fmt.Sprintf("context-child-%d", i))
+			child.Definition.ParentID = parent.ID
+			child.Sources = []ontology.SourceDependency{dependency}
+			changes = append(changes, ontology.Change{Record: parent}, ontology.Change{Record: child})
+		}
+		published, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(uuid.NewString(), revision, changes...))
+		require.NoError(t, err)
+		revision = published.Revision
+	}
+	contextData, err := f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{handle})
+	require.NoError(t, err)
+	require.Len(t, contextData.Records, children)
+	for _, view := range contextData.Records {
+		require.True(t, view.Current)
+		require.NotEmpty(t, view.Definition.ParentID)
+	}
+	_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{
+		TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{handle.ID}, Reason: "source withdrawn",
+		IdempotencyKey: uuid.NewString(), RequestHash: testHash(handle.ID),
+	})
+	require.NoError(t, err)
+	contextData, err = f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{handle})
+	require.NoError(t, err)
+	require.Len(t, contextData.Records, children)
+	for _, view := range contextData.Records {
+		require.False(t, view.Current)
+	}
 }

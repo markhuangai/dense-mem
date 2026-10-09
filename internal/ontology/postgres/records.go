@@ -1,16 +1,16 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
+	"io"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
-	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"gorm.io/gorm"
 )
@@ -19,8 +19,21 @@ const maxValidationRecords = ontology.MaxDependencyRecords
 
 func decodeRecord(body []byte) (ontology.Record, error) {
 	var record ontology.Record
-	if err := jsonstrict.Decode(strings.NewReader(string(body)), &record, 65536); err != nil {
+	if len(body) > 65536 {
+		return record, fmt.Errorf("ontology: stored record exceeds byte bound")
+	}
+	// JSONB has already normalized duplicate keys in stored record bodies.
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&record); err != nil {
 		return record, fmt.Errorf("ontology: decode stored record: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err != nil {
+			return record, fmt.Errorf("ontology: decode stored record: %w", err)
+		}
+		return record, fmt.Errorf("ontology: stored body must contain one JSON record")
 	}
 	return record, ontology.ValidateRecord(record)
 }
@@ -72,6 +85,12 @@ func loadHeads(tx *gorm.DB, fence scope, ids, names, sourceKeys []string) (map[s
 }
 
 func validationCatalog(tx *gorm.DB, fence scope, records []ontology.Record, changedDefinitions []string) (map[string]ontology.Record, error) {
+	return validationCatalogWithLoader(tx, fence, records, changedDefinitions, func(ids, names, keys []string) (map[string]ontology.Record, error) {
+		return loadHeads(tx, fence, ids, names, keys)
+	})
+}
+
+func validationCatalogWithLoader(tx *gorm.DB, fence scope, records []ontology.Record, changedDefinitions []string, load func([]string, []string, []string) (map[string]ontology.Record, error)) (map[string]ontology.Record, error) {
 	var ids, names, keys []string
 	if len(changedDefinitions) > 0 {
 		var children []string
@@ -106,7 +125,7 @@ func validationCatalog(tx *gorm.DB, fence scope, records []ontology.Record, chan
 			keys = append(keys, ontology.SourceKey(source))
 		}
 	}
-	catalog, err := loadHeads(tx, fence, ids, names, keys)
+	catalog, err := load(ids, names, keys)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +162,7 @@ func validationCatalog(tx *gorm.DB, fence scope, records []ontology.Record, chan
 		if len(pending) == 0 && len(pendingKeys) == 0 {
 			return catalog, nil
 		}
-		loaded, err := loadHeads(tx, fence, pending, nil, pendingKeys)
+		loaded, err := load(pending, nil, pendingKeys)
 		if err != nil {
 			return nil, err
 		}
@@ -185,37 +204,113 @@ func (s *Store) GetRecord(ctx context.Context, teamID, recordID string, version 
 }
 
 func (s *Store) currentView(tx *gorm.DB, fence scope, record ontology.Record) (ontology.RecordView, error) {
+	views, err := s.currentViews(tx, fence, []ontology.Record{record})
+	if err != nil {
+		return ontology.RecordView{Record: record}, err
+	}
+	return views[0], nil
+}
+
+func (s *Store) currentViews(tx *gorm.DB, fence scope, records []ontology.Record) ([]ontology.RecordView, error) {
+	if len(records) == 0 {
+		return []ontology.RecordView{}, nil
+	}
+	load := func(ids, names, keys []string) (map[string]ontology.Record, error) {
+		return loadHeads(tx, fence, ids, names, keys)
+	}
+	if s.recallCache != nil {
+		for _, record := range records {
+			s.recallCache.records[record.ID] = record
+			s.recallCache.ids[record.ID] = true
+		}
+		// Discovery resolves name ambiguity; freshness depends only on referenced heads and applicable overrides.
+		load = func(ids, _ []string, keys []string) (map[string]ontology.Record, error) {
+			return s.recallCache.loadHeads(tx, fence, ids, keys)
+		}
+	}
+	catalog, err := validationCatalogWithLoader(tx, fence, records, nil, load)
+	if err != nil {
+		return nil, err
+	}
+	handles := []ontology.SourceHandle{}
+	seen := map[ontology.SourceHandle]bool{}
+	for _, record := range catalog {
+		for _, dependency := range record.Sources {
+			if !seen[dependency.SourceHandle] {
+				handles = append(handles, dependency.SourceHandle)
+				seen[dependency.SourceHandle] = true
+			}
+		}
+	}
+	var snapshots map[ontology.SourceHandle]ontology.SourceSnapshot
+	if s.recallCache == nil {
+		snapshots = make(map[ontology.SourceHandle]ontology.SourceSnapshot, len(handles))
+		for offset := 0; offset < len(handles); offset += ontology.MaxDependencyRecords {
+			batch, readErr := readSources(tx, fence, handles[offset:min(offset+ontology.MaxDependencyRecords, len(handles))])
+			if readErr != nil {
+				return nil, readErr
+			}
+			for handle, snapshot := range batch {
+				snapshots[handle] = snapshot
+			}
+		}
+	} else {
+		snapshots, err = s.recallCache.readSources(tx, fence, handles)
+	}
+	if err != nil {
+		return nil, err
+	}
+	views := make([]ontology.RecordView, 0, len(records))
+	fingerprints := ontology.NewRecordFingerprints(snapshots, catalog)
+	for _, record := range records {
+		view, err := currentRecordView(record, catalog, snapshots, fingerprints)
+		if err != nil {
+			return nil, err
+		}
+		views = append(views, view)
+	}
+	return views, nil
+}
+
+func currentRecordView(record ontology.Record, catalog map[string]ontology.Record, available map[ontology.SourceHandle]ontology.SourceSnapshot, fingerprints *ontology.RecordFingerprints) (ontology.RecordView, error) {
 	view := ontology.RecordView{Record: record}
 	if record.Retired {
 		view.StaleReason = "retired"
 		return view, nil
 	}
-	catalog, err := validationCatalog(tx, fence, []ontology.Record{record}, nil)
-	if err != nil {
-		return view, err
-	}
 	if head, exists := catalog[record.ID]; !exists || head.Version != record.Version {
 		view.StaleReason = "historical_revision"
 		return view, nil
 	}
-	snapshots, err := sourceSnapshots(tx, fence, []ontology.Record{record}, catalog)
-	if errors.Is(err, ontology.ErrSourceStale) {
-		view.StaleReason = "source_changed"
-		return view, nil
-	}
+	dependencies, err := ontology.DependencyRecords([]ontology.Record{record}, catalog)
 	if err != nil {
-		return view, err
-	}
-	if err := ontology.CheckDependencies([]ontology.Record{record}, snapshots, catalog); err != nil {
 		if errors.Is(err, ontology.ErrSourceStale) {
 			view.StaleReason = "dependency_changed"
 			return view, nil
 		}
 		return view, err
 	}
-	fingerprint, err := ontology.RecordFingerprint(record, snapshots, catalog)
+	snapshots := map[string]ontology.SourceSnapshot{}
+	for _, dependency := range dependencies {
+		for _, source := range dependency.Sources {
+			key := ontology.SourceKey(source.SourceHandle)
+			if previous, exists := snapshots[key]; exists && previous.SourceHandle != source.SourceHandle {
+				view.StaleReason = "dependency_changed"
+				return view, nil
+			}
+			snapshots[key] = available[source.SourceHandle]
+		}
+	}
+	if err := fingerprints.CheckDependencies([]ontology.Record{record}); err != nil {
+		if errors.Is(err, ontology.ErrSourceStale) {
+			view.StaleReason = "dependency_changed"
+			return view, nil
+		}
+		return view, err
+	}
+	fingerprint, err := fingerprints.Fingerprint(record)
 	if errors.Is(err, ontology.ErrSourceStale) {
-		view.StaleReason = "dependency_changed"
+		view.StaleReason = "source_changed"
 		return view, nil
 	}
 	if err != nil {

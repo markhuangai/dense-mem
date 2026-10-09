@@ -38,6 +38,7 @@ type RecallDependencies struct {
 	Hypotheses      RecallHypothesisRepository
 	Communities     RecallCommunityRepository
 	CommunityConfig RecallCommunityConfigProvider
+	OntologyConfig  RecallOntologyConfigProvider
 	Metrics         observability.DiscoverabilityMetrics
 }
 
@@ -68,6 +69,10 @@ type RecallCommunityConfigProvider interface {
 	CommunityDetectionRuntimeConfig(ctx context.Context) (domain.CommunityDetectionRuntimeConfig, error)
 }
 
+type RecallOntologyConfigProvider interface {
+	OntologyMaintenanceRuntimeConfig(context.Context) (domain.OntologyMaintenanceConfig, error)
+}
+
 type recallService struct {
 	search          RecallSearchRepository
 	retrieval       *Retrieval
@@ -75,6 +80,7 @@ type recallService struct {
 	hypotheses      RecallHypothesisRepository
 	communities     RecallCommunityRepository
 	communityConfig RecallCommunityConfigProvider
+	ontologyConfig  RecallOntologyConfigProvider
 	metrics         observability.DiscoverabilityMetrics
 }
 
@@ -90,6 +96,7 @@ func NewRecallService(deps RecallDependencies) RecallService {
 		hypotheses:      deps.Hypotheses,
 		communities:     deps.Communities,
 		communityConfig: deps.CommunityConfig,
+		ontologyConfig:  deps.OntologyConfig,
 		metrics:         metrics,
 	}
 }
@@ -102,6 +109,9 @@ type recallExecutionRequest struct {
 	recallEmbedding            []float32
 	recallEmbeddingDegradation *RecallDegradationResult
 	recallEmbeddingReady       bool
+	organizationReady          bool
+	organizationEnabled        bool
+	organizationConfigDegraded bool
 }
 
 type RecallResult = recallcontract.RecallResult
@@ -130,6 +140,17 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 	actor, ok := requestctx.ActorFromContext(ctx)
 	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
 		return nil, ErrRecallAuthContext
+	}
+	if !req.organizationReady {
+		req.organizationReady = true
+		if s.ontologyConfig != nil {
+			config, configErr := s.ontologyConfig.OntologyMaintenanceRuntimeConfig(ctx)
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			req.organizationEnabled = configErr == nil && config.Enabled
+			req.organizationConfigDegraded = configErr != nil
+		}
 	}
 	if _, branchSelected := recallBranchFromContext(ctx); !branchSelected && len(actor.AllowedSpaces) > 1 {
 		return s.recallAcrossSpaces(ctx, req, actor)
@@ -161,6 +182,9 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 		}
 	}
 	degradations := []RecallDegradationResult{}
+	if teamSharedBranch && req.organizationConfigDegraded {
+		degradations = append(degradations, organizationDegradation("evidence", "ontology_unavailable")...)
+	}
 	queryEmbedding := append([]float32(nil), req.recallEmbedding...)
 	if req.recallEmbeddingReady {
 		if req.recallEmbeddingDegradation != nil {
@@ -175,6 +199,7 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 		}
 	}
 	recalled, err := s.retrieval.RecallEvidence(ctx, recallcontract.RecallEvidenceInput{
+		OrganizationEnabled:  req.organizationEnabled && teamSharedBranch,
 		TeamID:               actor.TeamID.String(),
 		Query:                req.Query,
 		QueryEmbedding:       queryEmbedding,
@@ -205,7 +230,7 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 	if coverageDegradation != nil {
 		result.Degradations = append(result.Degradations, *coverageDegradation)
 	}
-	relationships, relationshipState, relationshipDegradation, directGroups := s.recallRelatedRelationships(ctx, actor.TeamID.String(), req.RecallRequest, queryEmbedding, coveredGroups)
+	relationships, relationshipState, relationshipDegradation, directGroups := s.recallRelatedRelationships(ctx, actor.TeamID.String(), req.RecallRequest, queryEmbedding, coveredGroups, req.organizationEnabled && teamSharedBranch)
 	result.RelatedRelationships = relationships
 	result.SearchStates.Relationships = relationshipState
 	if relationshipDegradation != nil {
@@ -627,17 +652,15 @@ func cloneGroupSet(groups map[string]struct{}) map[string]struct{} {
 }
 
 func recallResultEvidenceIDs(results []RecallResultItem) []string {
-	ids := make([]string, 0, len(results))
-	seen := map[string]struct{}{}
+	ids := []string{}
+	seen := map[string]bool{}
 	for _, result := range results {
-		if result.EvidenceID == "" {
-			continue
+		for _, id := range append([]string{result.EvidenceID}, result.EquivalentEvidenceIDs...) {
+			if id != "" && !seen[id] {
+				ids = append(ids, id)
+				seen[id] = true
+			}
 		}
-		if _, ok := seen[result.EvidenceID]; ok {
-			continue
-		}
-		seen[result.EvidenceID] = struct{}{}
-		ids = append(ids, result.EvidenceID)
 	}
 	return ids
 }
@@ -816,16 +839,19 @@ func recallResultFromRepository(
 	conflicts := []RecallConflictSummary{}
 	if recalled != nil {
 		searchState = recalled.SearchState
+		degradations = append(degradations, recalled.Degradations...)
 		results = make([]RecallResultItem, 0, len(recalled.Results))
 		for _, item := range recalled.Results {
 			results = append(results, RecallResultItem{
-				EvidenceID:      item.EvidenceID,
-				RelationshipIDs: append([]string(nil), item.RelationshipIDs...),
-				Rank:            item.Rank,
-				Context:         item.Context,
-				Source:          item.Source,
-				SourceType:      item.SourceType,
-				CreatedAt:       recallCreatedAt(item.CreatedAt),
+				EvidenceID:            item.EvidenceID,
+				EquivalentEvidenceIDs: append([]string{}, item.EquivalentEvidenceIDs...),
+				EquivalentsTruncated:  item.EquivalentsTruncated,
+				RelationshipIDs:       append([]string(nil), item.RelationshipIDs...),
+				Rank:                  item.Rank,
+				Context:               item.Context,
+				Source:                item.Source,
+				SourceType:            item.SourceType,
+				CreatedAt:             recallCreatedAt(item.CreatedAt),
 			})
 		}
 		conflicts = append(conflicts, recallConflictSummaries(recalled.Conflicts)...)

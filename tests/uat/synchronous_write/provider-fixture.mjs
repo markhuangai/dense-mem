@@ -213,11 +213,18 @@ function fixtureOntologyOrganization(payload) {
       ref = `new-definition-${definitions.length}`;
       created.set(signature, ref);
       const key = base || (kind === "predicate_concept" ? "registered-predicates" : "memory-storage");
-      definitions.push({ ref, kind, key, label: key.replaceAll("-", " "), description: "Synthetic organization vocabulary", aliases: [], parent_ref: "", base_entity_kind: base });
+      definitions.push({ ref, kind, key, label: key.replaceAll("-", " "), description: "Synthetic organization vocabulary", aliases: kind === "topic" ? ["database platform"] : [], parent_ref: "", base_entity_kind: base });
     }
     return { ref: item.ref, status: "classified", definition_ref: ref, reason: "" };
   });
-  return { request_id: input.request_id, definitions, items, equivalence: input.pairs.map((pair) => ({ ref: pair.ref, relation: pair.required_relation || "distinct" })) };
+  const sourceItems = new Map(input.items.map((item) => [item.ref, item]));
+  const equivalentFixtureTexts = new Set(["Atlas stores PostgreSQL data.", "Atlas uses PostgreSQL for data storage."]);
+  return { request_id: input.request_id, definitions, items, equivalence: input.pairs.map((pair) => {
+    const left = sourceItems.get(pair.left_ref);
+    const right = sourceItems.get(pair.right_ref);
+    const equivalent = left?.kind === "evidence" && right?.kind === "evidence" && equivalentFixtureTexts.has(left.text) && equivalentFixtureTexts.has(right.text);
+    return { ref: pair.ref, relation: pair.required_relation || (equivalent ? "equivalent" : "distinct") };
+  }) };
 }
 
 function fixtureCommunitySummary(payload) {

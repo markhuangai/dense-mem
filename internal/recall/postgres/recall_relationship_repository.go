@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
@@ -17,7 +19,8 @@ import (
 func (r *Store) ReadRelationshipCandidates(ctx context.Context, input RecallRelationshipsInput, contract *ActiveSearchContract, candidateLimit int) (*recallcontract.RecallCandidateBatch, error) {
 	var textHits, vectorHits, expansionHits []SearchHit
 	vectorState := string(domain.SearchProjectionPending)
-	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+	organizationCode := ""
+	err := r.withRecallTx(ctx, input.TeamID, input.OrganizationEnabled, func(tx *gorm.DB) error {
 		var err error
 		vectorState, err = relationshipProjectionSearchState(ctx, tx, input, contract)
 		if err != nil {
@@ -47,13 +50,33 @@ func (r *Store) ReadRelationshipCandidates(ctx context.Context, input RecallRela
 				return err
 			}
 		}
+		organization, err := r.readOrganization(ctx, tx, RecallEvidenceInput{TeamID: input.TeamID, SpaceID: input.SpaceID, SpaceKind: input.SpaceKind, Query: input.Query, ValidAt: input.ValidAt, KnownAt: input.KnownAt, OrganizationEnabled: input.OrganizationEnabled}, nil, nil, candidateLimit)
+		if err != nil {
+			return err
+		}
+		organizationCode = organization.Degradation
+		additional, err := r.organizationRelationshipCandidates(ctx, tx, input, contract, organization, candidateLimit)
+		if err != nil {
+			return &ontologyReadError{cause: err}
+		}
+		expansionHits = mergeRecallExpansion(expansionHits, additional, candidateLimit)
 		return nil
 	})
+	var optional *ontologyReadError
+	if errors.As(err, &optional) {
+		input.OrganizationEnabled = false
+		batch, requiredErr := r.ReadRelationshipCandidates(ctx, input, contract, candidateLimit)
+		if batch != nil {
+			batch.OrganizationDegradation = ontologyFailureCode(optional.cause)
+		}
+		return batch, requiredErr
+	}
 	if err != nil {
 		return nil, err
 	}
 	return &recallcontract.RecallCandidateBatch{
-		TextHits: textHits, VectorHits: vectorHits, ExpansionHits: expansionHits, SearchState: vectorState,
+		OrganizationDegradation: organizationCode,
+		TextHits:                textHits, VectorHits: vectorHits, ExpansionHits: expansionHits, SearchState: vectorState,
 	}, nil
 }
 
@@ -368,6 +391,8 @@ func searchRecallRelationshipEntityExpansion(
 		  AND (
 		      relationship.subject_entity_id = ANY(?::uuid[])
 		      OR relationship.object_entity_id = ANY(?::uuid[])
+		      OR relationship.predicate_key = ANY(?::text[])
+		      OR relationship.relationship_id = ANY(?::uuid[])
 		  )
 		  AND (
 		      ?::timestamptz IS NULL
@@ -391,6 +416,7 @@ func searchRecallRelationshipEntityExpansion(
 		input.KnownAt, input.KnownAt, input.KnownAt,
 		eventAt,
 		pq.Array(input.ExpandFromEntityIDs), pq.Array(input.ExpandFromEntityIDs),
+		pq.Array(organizationSourceIDs(input.OrganizationSources, ontology.PredicateSource)), pq.Array(organizationSourceIDs(input.OrganizationSources, ontology.RelationshipSource)),
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
 		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),

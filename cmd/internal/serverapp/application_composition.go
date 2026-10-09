@@ -88,6 +88,7 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 		Hypotheses:      deps.Dream,
 		Communities:     deps.CommunityStore,
 		CommunityConfig: deps.AppConfig,
+		OntologyConfig:  deps.AppConfig,
 		Metrics:         deps.Metrics,
 	})
 	communityService := buildCommunityApplication(communityApplicationDependencies{

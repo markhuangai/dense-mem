@@ -34,6 +34,7 @@ func recallHypothesisContextFrom(result *RecallResult) recallHypothesisContextHa
 
 	for _, evidence := range result.Results {
 		context.addEvidence(evidence.EvidenceID)
+		context.addEvidence(evidence.EquivalentEvidenceIDs...)
 		context.addRelationships(evidence.RelationshipIDs...)
 	}
 	for _, relationship := range result.RelatedRelationships {

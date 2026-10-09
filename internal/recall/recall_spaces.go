@@ -340,6 +340,7 @@ func (s *recallService) recallRelatedRelationships(
 	req RecallRequest,
 	queryEmbedding []float32,
 	excludedGroups map[string]struct{},
+	organizationEnabled bool,
 ) ([]RelatedRelationshipSummary, string, *RecallDegradationResult, map[string]struct{}) {
 	relationshipLimit := recallOptionalLimitValue(req.RelationshipLimit)
 	if relationshipLimit <= 0 {
@@ -347,6 +348,7 @@ func (s *recallService) recallRelatedRelationships(
 	}
 	branch, _ := recallBranchFromContext(ctx)
 	recalled, err := s.retrieval.RecallRelationships(ctx, recallcontract.RecallRelationshipsInput{
+		OrganizationEnabled:  organizationEnabled,
 		TeamID:               teamID,
 		Query:                req.Query,
 		QueryEmbedding:       queryEmbedding,
@@ -377,6 +379,9 @@ func (s *recallService) recallRelatedRelationships(
 		degradation = relationshipVectorDegradation(state)
 	} else if recalled != nil && recalled.VectorOmitted {
 		degradation = relationshipVectorDegradation(state)
+	}
+	if degradation == nil && recalled != nil && len(recalled.Degradations) > 0 {
+		degradation = &recalled.Degradations[0]
 	}
 	groups := map[string]struct{}{}
 	if recalled != nil {

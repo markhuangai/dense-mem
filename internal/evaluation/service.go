@@ -341,7 +341,7 @@ func resultRefs(result *contract.RecallResult) []map[string]any {
 		if rank <= 0 {
 			rank = len(refs) + 1
 		}
-		ref := map[string]any{"rank": rank, "type": "evidence", "id": item.EvidenceID}
+		ref := map[string]any{"rank": rank, "type": "evidence", "id": item.EvidenceID, "equivalent_evidence_ids": append([]string{}, item.EquivalentEvidenceIDs...), "equivalents_truncated": item.EquivalentsTruncated}
 		if len(item.RelationshipIDs) > 0 {
 			ref["relationship_ids"] = append([]string(nil), item.RelationshipIDs...)
 		}

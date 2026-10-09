@@ -62,9 +62,9 @@ const entitySourceSQL = `
 WITH candidate AS (
     SELECT * FROM entity_records
     WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=?
-      AND entity_id=?::uuid AND status='active'
+      AND entity_id=ANY(?::uuid[]) AND status='active'
 )
-SELECT candidate.version,''::text,candidate.entity_kind,
+SELECT candidate.entity_id::text,candidate.version,''::text,candidate.entity_kind,
        jsonb_build_object('identity',candidate.identity_context::text,
            'names',COALESCE((SELECT jsonb_agg(jsonb_build_array(name.owner_profile_id,
                 name.display_name,name.name_kind,name.locale) ORDER BY name.entity_name_id)::text
@@ -78,10 +78,13 @@ const evidenceSourceSQL = `
 WITH candidate AS (
     SELECT fragment.*,source.current_revision_id
     FROM evidence_fragments AS fragment
-    JOIN knowledge_ingests AS ingest ON ingest.team_id=fragment.team_id AND ingest.ingest_id=fragment.ingest_id
+    JOIN LATERAL (
+        SELECT ingest.status,ingest.source_summary,ingest.metadata FROM knowledge_ingests AS ingest
+        WHERE ingest.team_id=fragment.team_id AND ingest.ingest_id=fragment.ingest_id LIMIT 1
+    ) AS ingest ON TRUE
     LEFT JOIN evidence_sources AS source ON source.team_id=fragment.team_id AND source.source_id=fragment.source_id
     WHERE fragment.team_id=?::uuid AND fragment.space_id=?::uuid AND fragment.space_generation=?
-      AND fragment.fragment_id=?::uuid AND ingest.status='completed'
+      AND fragment.fragment_id=ANY(?::uuid[]) AND ingest.status='completed'
       AND (fragment.source_id IS NULL OR source.current_revision_id=fragment.source_revision_id)
       AND NOT EXISTS (SELECT 1 FROM evidence_quarantines AS quarantine
            WHERE quarantine.team_id=fragment.team_id AND quarantine.fragment_id=fragment.fragment_id AND quarantine.status='active')
@@ -90,7 +93,7 @@ WITH candidate AS (
       AND NOT (ingest.source_summary='overdue conflict deletion-only derivation'
            AND ingest.metadata->>'conflict_resolution_deletion_only'='true')
 )
-SELECT 1::bigint,owner_profile_id::text,''::text,
+SELECT fragment_id::text,1::bigint,owner_profile_id::text,''::text,
        jsonb_build_object('content',content,'hash',content_hash,'authority',authority,'created_at',created_at::text,
            'source_id',COALESCE(source_id::text,''),'source_revision',COALESCE(source_revision_id::text,''),
            'current_revision',COALESCE(current_revision_id::text,''),'labels',labels::text,'metadata',metadata::text,
@@ -129,7 +132,7 @@ const relationshipSourceSQL = `
 WITH candidate AS (
     SELECT * FROM relationship_records
     WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=?
-      AND relationship_id=?::uuid AND status='active'
+      AND relationship_id=ANY(?::uuid[]) AND status='active'
       AND support_count>0 AND identity_alias_of_relationship_id IS NULL
 ), supported AS (
     SELECT candidate.*,support.rows FROM candidate
@@ -137,7 +140,7 @@ WITH candidate AS (
          content_hash,support_decision_id) ORDER BY support_id)::text AS rows
          FROM (` + eligibleSupportsSQL + `) AS eligible) AS support ON support.rows IS NOT NULL
 )
-SELECT version,owner_profile_id::text,''::text,
+SELECT relationship_id::text,version,owner_profile_id::text,''::text,
        jsonb_build_object('subject',subject_entity_id::text,'predicate',predicate_key,
            'predicate_version',predicate_version::text,'object_entity',COALESCE(object_entity_id::text,''),
            'object_value',COALESCE(object_value_id::text,''),'kind',relationship_kind,
@@ -155,8 +158,12 @@ FROM supported`
 
 const predicateSourceSQL = `
 WITH scope AS (SELECT ?::uuid AS team_id,?::uuid AS space_id,?::bigint AS generation),
-candidate AS (SELECT definition.* FROM team_predicate_definitions AS definition,scope
-    WHERE definition.team_id=scope.team_id AND definition.predicate_key=? AND definition.version=?
+requested AS (SELECT * FROM unnest(?::text[],?::bigint[]) AS source(predicate_key,version)),
+candidate AS (SELECT definition.* FROM scope CROSS JOIN requested
+    CROSS JOIN LATERAL (
+    SELECT definition.* FROM team_predicate_definitions AS definition
+    WHERE definition.team_id=scope.team_id AND definition.predicate_key=requested.predicate_key
+      AND definition.version=requested.version
       AND definition.lifecycle_state='active'
       AND EXISTS (SELECT 1 FROM relationship_records AS candidate
           WHERE candidate.team_id=scope.team_id AND candidate.space_id=scope.space_id
@@ -164,8 +171,9 @@ candidate AS (SELECT definition.* FROM team_predicate_definitions AS definition,
             AND candidate.identity_alias_of_relationship_id IS NULL
             AND candidate.support_count>0 AND candidate.predicate_key=definition.predicate_key
             AND candidate.predicate_version=definition.version
-            AND EXISTS (` + eligibleSupportsSQL + `)))
-SELECT version,''::text,''::text,
+            AND EXISTS (` + eligibleSupportsSQL + `))
+    LIMIT 1) AS definition)
+SELECT predicate_key,version,''::text,''::text,
        jsonb_build_object('aliases',aliases::text,'subject_kinds',allowed_subject_kinds::text,
           'object_kinds',allowed_object_kinds::text,'kind',relationship_kind,
           'cardinality',current_cardinality,'lifecycle',lifecycle_state,'metadata',metadata::text),

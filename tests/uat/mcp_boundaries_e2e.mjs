@@ -47,10 +47,11 @@ await updateRecallFeedback(true);
 names = await listedToolNames();
 assertHas(names, feedbackTool, "enabled recall feedback tool");
 const recall = await mcpSuccess("recall_memory", { query: "MCP boundary e2e query with no required match", limit: 1 });
-const feedbackAction = (recall.suggested_actions ?? []).find((item) => item?.tool === feedbackTool);
-if (!feedbackAction || feedbackAction.recall_event_id !== recall.recall_id) {
-  throw new Error(`recall did not suggest feedback with its persisted recall ID: ${JSON.stringify(recall.suggested_actions)}`);
+if ((recall.suggested_actions ?? []).some((item) => item?.tool === feedbackTool)) {
+  throw new Error("recall prompted for optional session feedback");
 }
+const voluntary = await mcpSuccess(feedbackTool, { recalls: [{ recall_event_id: recall.recall_id, used: false, answer_supported: false, quality: "medium" }] });
+if (!voluntary.recorded) throw new Error("voluntary recall feedback was not recorded");
 if ((recall.suggested_actions ?? []).some((item) => item?.tool === "resolve_dream_feedback")) {
   throw new Error("recall suggested Dream feedback while team Dreaming was disabled");
 }
@@ -75,7 +76,7 @@ console.log(JSON.stringify({
   production_eval_tools_absent: true,
   removed_tools_absent: true,
   recall_feedback_gate: true,
-  recall_feedback_hint: true,
+  recall_feedback_prompt_absent: true,
   team_dreaming_gate: true,
   force_dreaming_gate: true,
   global_dreaming_disable: true,

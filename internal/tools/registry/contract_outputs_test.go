@@ -39,6 +39,25 @@ func TestRecallContractOutputValidatesSpaceBranchDegradation(t *testing.T) {
 	}
 }
 
+func TestRecallContractEquivalentEvidenceSchemaAndSerialization(t *testing.T) {
+	tool, err := requireTool(toolMap(t), ToolRecallMemory)
+	require.NoError(t, err)
+	result := &recallapp.RecallResult{RecallID: "rec-equivalents", Results: []recallapp.RecallResultItem{{EvidenceID: "E1", Context: "Atlas uses PostgreSQL.", SpaceKind: "team_shared", EquivalentEvidenceIDs: []string{"E2"}}}}
+	encoded, err := json.Marshal(recallContractOutput(result))
+	require.NoError(t, err)
+	var wire map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &wire))
+	require.NoError(t, ValidateInput(Tool{InputSchema: tool.OutputSchema}, wire))
+	item := wire["results"].([]any)[0].(map[string]any)
+	require.Equal(t, []any{"E2"}, item["equivalent_evidence_ids"])
+	require.Equal(t, false, item["equivalents_truncated"])
+	delete(item, "equivalents_truncated")
+	require.Error(t, ValidateInput(Tool{InputSchema: tool.OutputSchema}, wire))
+	item["equivalents_truncated"] = true
+	item["equivalent_evidence_ids"] = make([]string, 21)
+	require.Error(t, ValidateInput(Tool{InputSchema: tool.OutputSchema}, wire))
+}
+
 func TestDreamContractOutputKeepsEvidenceReferencesOutOfRelationshipIDs(t *testing.T) {
 	dream := &domain.Dream{
 		DreamID: "hypothesis-evidence-1", Hypothesis: "Evidence may imply a relationship.",

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
+	ontologycontract "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 )
@@ -35,10 +36,25 @@ type SearchRepository interface {
 const MaxRecallCandidateCount = 200
 
 type RecallCandidateBatch struct {
-	TextHits      []searchcontract.SearchHit
-	VectorHits    []searchcontract.SearchHit
-	ExpansionHits []searchcontract.SearchHit
-	SearchState   string
+	TextHits                []searchcontract.SearchHit
+	VectorHits              []searchcontract.SearchHit
+	ExpansionHits           []searchcontract.SearchHit
+	SearchState             string
+	OrganizationDegradation string
+}
+
+type EvidenceHydration struct {
+	Hits                    map[string]RecallEvidenceHit
+	Groups                  []ontologycontract.RecallEvidenceGroup
+	OrganizationDegradation string
+}
+
+type EvidenceSnapshotRepository interface {
+	WithEvidenceSnapshot(context.Context, string, func(SearchRepository) error) error
+}
+
+type OrganizedSearchRepository interface {
+	HydrateOrganizedEvidence(context.Context, RecallEvidenceInput, *searchcontract.ActiveSearchContract, []string) (*EvidenceHydration, error)
 }
 
 type RecallConflicts struct {
@@ -47,6 +63,8 @@ type RecallConflicts struct {
 }
 
 type RecallEvidenceInput struct {
+	OrganizationEnabled  bool
+	OrganizationSources  []ontologycontract.SourceHandle
 	TeamID               string
 	Query                string
 	QueryEmbedding       []float32
@@ -61,6 +79,8 @@ type RecallEvidenceInput struct {
 }
 
 type RecallRelationshipsInput struct {
+	OrganizationEnabled  bool
+	OrganizationSources  []ontologycontract.SourceHandle
 	TeamID               string
 	Query                string
 	QueryEmbedding       []float32
@@ -76,6 +96,7 @@ type RecallRelationshipsInput struct {
 }
 
 type RecallEvidenceResult struct {
+	Degradations      []RecallDegradationResult
 	TeamID            string
 	SearchState       string
 	Results           []RecallEvidenceHit
@@ -84,6 +105,7 @@ type RecallEvidenceResult struct {
 }
 
 type RecallRelationshipsResult struct {
+	Degradations  []RecallDegradationResult
 	TeamID        string
 	SearchState   string
 	VectorOmitted bool
@@ -91,17 +113,19 @@ type RecallRelationshipsResult struct {
 }
 
 type RecallEvidenceHit struct {
-	TeamID          string
-	EvidenceID      string
-	RelationshipIDs []string
-	Context         string
-	Source          string
-	SourceType      string
-	CreatedAt       time.Time
-	Rank            int
-	Score           float64
-	SearchState     string
-	SpaceKind       string
+	EquivalentEvidenceIDs []string
+	EquivalentsTruncated  bool
+	TeamID                string
+	EvidenceID            string
+	RelationshipIDs       []string
+	Context               string
+	Source                string
+	SourceType            string
+	CreatedAt             time.Time
+	Rank                  int
+	Score                 float64
+	SearchState           string
+	SpaceKind             string
 }
 
 type RecallRelationshipHit struct {
@@ -155,14 +179,16 @@ type RecallSuggestedAction struct {
 }
 
 type RecallResultItem struct {
-	EvidenceID      string     `json:"evidence_id"`
-	RelationshipIDs []string   `json:"relationship_ids,omitempty"`
-	Rank            int        `json:"rank"`
-	Context         string     `json:"context,omitempty"`
-	Source          string     `json:"source,omitempty"`
-	SourceType      string     `json:"source_type,omitempty"`
-	CreatedAt       *time.Time `json:"created_at,omitempty"`
-	SpaceKind       string     `json:"space_kind,omitempty"`
+	EquivalentEvidenceIDs []string   `json:"equivalent_evidence_ids"`
+	EquivalentsTruncated  bool       `json:"equivalents_truncated"`
+	EvidenceID            string     `json:"evidence_id"`
+	RelationshipIDs       []string   `json:"relationship_ids,omitempty"`
+	Rank                  int        `json:"rank"`
+	Context               string     `json:"context,omitempty"`
+	Source                string     `json:"source,omitempty"`
+	SourceType            string     `json:"source_type,omitempty"`
+	CreatedAt             *time.Time `json:"created_at,omitempty"`
+	SpaceKind             string     `json:"space_kind,omitempty"`
 }
 
 type RecallDiscoveryPath struct {

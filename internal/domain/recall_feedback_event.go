@@ -63,6 +63,7 @@ type RecallFeedbackEvent struct {
 // recall_memory. The control portal dereferences these IDs from PostgreSQL semantic state on demand.
 type RecallFeedbackResultRef struct {
 	Type           string     `json:"type"`
+	EquivalentTo   string     `json:"equivalent_to,omitempty"`
 	ID             string     `json:"id"`
 	Rank           int        `json:"rank"`
 	Tier           string     `json:"tier,omitempty"`

@@ -186,6 +186,9 @@ func FeedbackResultRefs(res *RecallResult) []domain.RecallFeedbackResultRef {
 			return
 		}
 		if index, ok := seen[key]; ok {
+			if ref.EquivalentTo == "" {
+				refs[index].EquivalentTo = ""
+			}
 			if ref.Rank > 0 && (refs[index].Rank <= 0 || ref.Rank < refs[index].Rank) {
 				refs[index].Rank = ref.Rank
 			}
@@ -199,13 +202,14 @@ func FeedbackResultRefs(res *RecallResult) []domain.RecallFeedbackResultRef {
 		if rank <= 0 {
 			rank = resultIndex + 1
 		}
-		if item.EvidenceID != "" {
+		for _, evidenceID := range append([]string{item.EvidenceID}, item.EquivalentEvidenceIDs...) {
+			equivalentTo := ""
+			if evidenceID != item.EvidenceID {
+				equivalentTo = item.EvidenceID
+			}
 			appendRef(domain.RecallFeedbackResultRef{
-				Type:           domain.RecallFeedbackResultTypeEvidence,
-				ID:             item.EvidenceID,
-				Rank:           rank,
-				Tier:           "evidence",
-				StatusAtRecall: res.SearchState,
+				Type: domain.RecallFeedbackResultTypeEvidence, ID: evidenceID, Rank: rank, EquivalentTo: equivalentTo,
+				Tier: "evidence", StatusAtRecall: res.SearchState,
 			})
 		}
 		for _, relationshipID := range item.RelationshipIDs {

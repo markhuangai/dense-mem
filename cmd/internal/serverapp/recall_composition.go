@@ -13,6 +13,7 @@ type recallApplicationDependencies struct {
 	Hypotheses      recall.RecallHypothesisRepository
 	Communities     recall.RecallCommunityRepository
 	CommunityConfig recall.RecallCommunityConfigProvider
+	OntologyConfig  recall.RecallOntologyConfigProvider
 	Metrics         observability.DiscoverabilityMetrics
 }
 
@@ -23,6 +24,7 @@ func buildRecallApplication(deps recallApplicationDependencies) recall.RecallSer
 		Hypotheses:      deps.Hypotheses,
 		Communities:     deps.Communities,
 		CommunityConfig: deps.CommunityConfig,
+		OntologyConfig:  deps.OntologyConfig,
 		Metrics:         deps.Metrics,
 	})
 }

@@ -260,7 +260,7 @@ anchor for an earlier exact name span. Inaccessible or stale known evidence leav
 Relationship unsupported without revealing whether an ID exists. The aggregate known
 evidence content in one request is bounded to 20,000 Unicode code points before
 assessor boundary expansion; larger requests return `input_budget_exceeded`. The
-current public contract is `dense-mem.v2.6.6`; `dense-mem.v2.6.3` and
+current public contract is `dense-mem.v2.6.7`; `dense-mem.v2.6.6`, `dense-mem.v2.6.3`, and
 `dense-mem.v2.6.2` remain accepted for compatible terminal replays. Historical
 requests lacking proposals or complete citations fail current validation even
 with their original keys; stored history is preserved.
@@ -435,12 +435,22 @@ above. `eval_get_manifest`, `eval_get_knowledge_item`,
 `eval_score_retrieval_case` are removed because the current harness does not use
 them.
 
-When recall feedback is enabled and the feedback snapshot is stored,
-`recall_memory.suggested_actions` points to
-`submit_recall_session_feedback` with the matching recall ID. When effective
-team Dreaming is enabled and recall returns Hypotheses, it also points to
-`resolve_dream_feedback`: confirm true or false only with independent evidence,
-and leave uncertain Hypotheses unresolved.
+Recall uses current published ontology groups only for authorized team-shared evidence.
+Each result retains its representative `evidence_id`, exact bounded `context`, and
+`space_kind`, plus up to 20 sorted `equivalent_evidence_ids` and an
+`equivalents_truncated` indicator. Distinct and partially overlapping facts remain
+separate. An eligible known member suppresses its whole current equivalence group;
+private, foreign, withdrawn, or stale handles cannot suppress another result.
+Published concept keys and unambiguous aliases add bounded discovery candidates.
+Temporal requests omit current-only organization and report that degradation.
+Disabling ontology maintenance restores ordinary retrieval; pausing it retains
+current published organization.
+
+When recall feedback is enabled and a snapshot is stored, clients may voluntarily
+call `submit_recall_session_feedback` with `recall_id`; Recall does not prompt for
+session feedback. When effective team Dreaming is enabled and recall returns
+Hypotheses, suggested actions retain `resolve_dream_feedback`: confirm true or false
+only with independent evidence and leave uncertain Hypotheses unresolved.
 
 For local evaluation, the committed compose example builds the evaluation
 target and loads the ignored repository-root `.env` by default:

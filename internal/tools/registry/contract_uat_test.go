@@ -253,17 +253,19 @@ func TestRecallSuggestedActionsMatchEnabledFeatures(t *testing.T) {
 		t.Fatal("enabled Dreaming did not authorize hypothesis recall")
 	}
 	actions, ok := out["suggested_actions"].([]recallapp.RecallSuggestedAction)
-	if !ok || len(actions) != 2 {
-		t.Fatalf("suggested_actions = %#v; want feedback and Dream actions", out["suggested_actions"])
+	if !ok || len(actions) != 1 {
+		t.Fatalf("suggested_actions = %#v; want only the Dream action", out["suggested_actions"])
 	}
-	if actions[0].Tool != ToolSubmitRecallSessionFeedback || actions[0].RecallEventID != "rec-canonical" {
-		t.Fatalf("feedback action = %#v", actions[0])
+	for _, action := range actions {
+		if action.Tool == ToolSubmitRecallSessionFeedback {
+			t.Fatalf("unexpected session-feedback prompt: %#v", action)
+		}
 	}
-	if actions[1].Tool != ToolResolveDreamFeedback || len(actions[1].HypothesisIDs) != 1 || actions[1].HypothesisIDs[0] != "hypothesis-canonical" {
-		t.Fatalf("Dream action = %#v", actions[1])
+	if actions[0].Tool != ToolResolveDreamFeedback || len(actions[0].HypothesisIDs) != 1 || actions[0].HypothesisIDs[0] != "hypothesis-canonical" {
+		t.Fatalf("Dream action = %#v", actions[0])
 	}
-	if !strings.Contains(actions[1].Guidance, "leave uncertain hypotheses unresolved") {
-		t.Fatalf("Dream guidance = %q", actions[1].Guidance)
+	if !strings.Contains(actions[0].Guidance, "leave uncertain hypotheses unresolved") {
+		t.Fatalf("Dream guidance = %q", actions[0].Guidance)
 	}
 	if len(recorder.snapshots) != 1 {
 		t.Fatalf("snapshots = %d; want 1", len(recorder.snapshots))

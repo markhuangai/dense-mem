@@ -45,6 +45,12 @@ func DependencyRecords(records []Record, catalog map[string]Record) ([]Record, e
 }
 
 func CheckDependencies(records []Record, snapshots map[string]SourceSnapshot, catalog map[string]Record) error {
+	return checkDependencies(records, catalog, func(record Record) (string, error) {
+		return RecordFingerprint(record, snapshots, catalog)
+	})
+}
+
+func checkDependencies(records []Record, catalog map[string]Record, fingerprintRecord func(Record) (string, error)) error {
 	dependencies, err := DependencyRecords(records, catalog)
 	if err != nil {
 		return err
@@ -57,7 +63,7 @@ func CheckDependencies(records []Record, snapshots map[string]SourceSnapshot, ca
 		if roots[record.ID] {
 			continue
 		}
-		fingerprint, err := RecordFingerprint(record, snapshots, catalog)
+		fingerprint, err := fingerprintRecord(record)
 		if err != nil {
 			return err
 		}

@@ -571,11 +571,13 @@ func recallDegradationSchema() map[string]any {
 
 func recallResultSchema() map[string]any {
 	return closedObject(
-		[]string{"evidence_id", "context", "space_kind"},
+		[]string{"evidence_id", "context", "space_kind", "equivalent_evidence_ids", "equivalents_truncated"},
 		map[string]any{
-			"evidence_id": schemaString("Evidence ID.", 128),
-			"context":     schemaString("Bounded evidence context.", 2000),
-			"space_kind":  schemaEnum([]string{"team_shared", "profile_private", "credential_private"}),
+			"evidence_id":             schemaString("Evidence ID.", 128),
+			"equivalent_evidence_ids": stringArraySchema("Authorized alternate evidence source ID with equivalent complete content.", 20, 128),
+			"equivalents_truncated":   map[string]any{"type": "boolean"},
+			"context":                 schemaString("Bounded evidence context.", 2000),
+			"space_kind":              schemaEnum([]string{"team_shared", "profile_private", "credential_private"}),
 		},
 	)
 }

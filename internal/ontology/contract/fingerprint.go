@@ -26,6 +26,60 @@ func RequestHash(input Publication, origin, actorID string) (string, error) {
 }
 
 func RecordFingerprint(record Record, snapshots map[string]SourceSnapshot, catalog map[string]Record) (string, error) {
+	return recordFingerprint(record, catalog, func(handle SourceHandle) (string, error) {
+		snapshot, exists := snapshots[SourceKey(handle)]
+		return fingerprintSnapshot(handle, snapshot, exists)
+	})
+}
+
+type RecordFingerprints struct {
+	snapshots    map[SourceHandle]SourceSnapshot
+	catalog      map[string]Record
+	sources      map[SourceHandle]string
+	dependencies map[string]string
+}
+
+// NewRecordFingerprints reuses hashes only for one fixed source and catalog snapshot.
+func NewRecordFingerprints(snapshots map[SourceHandle]SourceSnapshot, catalog map[string]Record) *RecordFingerprints {
+	return &RecordFingerprints{snapshots: snapshots, catalog: catalog, sources: map[SourceHandle]string{}, dependencies: map[string]string{}}
+}
+
+func (f *RecordFingerprints) Fingerprint(record Record) (string, error) {
+	return recordFingerprint(record, f.catalog, func(handle SourceHandle) (string, error) {
+		if fingerprint, exists := f.sources[handle]; exists {
+			return fingerprint, nil
+		}
+		snapshot, exists := f.snapshots[handle]
+		fingerprint, err := fingerprintSnapshot(handle, snapshot, exists)
+		if err != nil {
+			return "", err
+		}
+		f.sources[handle] = fingerprint
+		return fingerprint, nil
+	})
+}
+
+func (f *RecordFingerprints) CheckDependencies(records []Record) error {
+	return checkDependencies(records, f.catalog, func(record Record) (string, error) {
+		if fingerprint, exists := f.dependencies[record.ID]; exists {
+			return fingerprint, nil
+		}
+		fingerprint, err := f.Fingerprint(record)
+		if err == nil {
+			f.dependencies[record.ID] = fingerprint
+		}
+		return fingerprint, err
+	})
+}
+
+func fingerprintSnapshot(handle SourceHandle, snapshot SourceSnapshot, exists bool) (string, error) {
+	if !exists || !snapshot.Eligible || snapshot.SourceHandle != handle {
+		return "", ErrSourceStale
+	}
+	return SourceFingerprint(snapshot)
+}
+
+func recordFingerprint(record Record, catalog map[string]Record, sourceFingerprint func(SourceHandle) (string, error)) (string, error) {
 	if record.Retired {
 		record.Fingerprint = ""
 		return hashJSON(struct {
@@ -35,15 +89,11 @@ func RecordFingerprint(record Record, snapshots map[string]SourceSnapshot, catal
 	}
 	sources := make([]string, 0, len(record.Sources))
 	for _, dependency := range record.Sources {
-		snapshot, exists := snapshots[SourceKey(dependency.SourceHandle)]
-		if !exists || !snapshot.Eligible || snapshot.SourceHandle != dependency.SourceHandle {
-			return "", ErrSourceStale
-		}
-		fingerprint, err := SourceFingerprint(snapshot)
+		fingerprint, err := sourceFingerprint(dependency.SourceHandle)
 		if err != nil {
 			return "", err
 		}
-		sources = append(sources, SourceKey(snapshot.SourceHandle)+":"+fingerprint)
+		sources = append(sources, SourceKey(dependency.SourceHandle)+":"+fingerprint)
 	}
 	sort.Strings(sources)
 	dependencies := dependenciesFor(record, catalog)

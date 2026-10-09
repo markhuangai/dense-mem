@@ -54,18 +54,11 @@ func recordRecallFeedbackSnapshot(
 	return true
 }
 
-func setRecallSuggestedActions(res *recall.RecallResult, feedbackSnapshotStored, dreamingEnabled bool) {
+func setRecallSuggestedActions(res *recall.RecallResult, dreamingEnabled bool) {
 	if res == nil {
 		return
 	}
 	actions := make([]recall.RecallSuggestedAction, 0, 2)
-	if feedbackSnapshotStored && res.RecallID != "" {
-		actions = append(actions, recall.RecallSuggestedAction{
-			Tool:          ToolSubmitRecallSessionFeedback,
-			RecallEventID: res.RecallID,
-			Guidance:      "After using this recall, report the session outcome with this recall_event_id.",
-		})
-	}
 	if dreamingEnabled && len(res.RelatedHypotheses) > 0 {
 		hypothesisIDs := make([]string, 0, len(res.RelatedHypotheses))
 		for _, hypothesis := range res.RelatedHypotheses {

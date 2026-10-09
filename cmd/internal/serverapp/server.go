@@ -148,10 +148,11 @@ func RunActiveServer(
 	if err != nil {
 		return fmt.Errorf("active search bootstrap blocked: %w", err)
 	}
+	ontologyStore := ontologypostgres.NewStore(pgDB.GetDB(), rlsHelper)
 	recallStore := recallpostgres.NewStore(
 		pgDB.GetDB(), rlsHelper, searchRepo,
 		searchRecallConflictReader(), recallpostgres.LoadRecallEvidenceConflictRecords,
-	)
+	).WithOntology(func() recallpostgres.OntologyReader { return ontologyStore.NewRecallReader() })
 	operationLogDB, err := postgres.OpenOperationLogClient(startupCtx, &cfg, logger)
 	if err != nil {
 		return fmt.Errorf("open operation log sink pool: %w", err)
@@ -261,7 +262,7 @@ func RunActiveServer(
 	verifierProvider.SetMetrics(discoverabilityMetrics)
 	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, assessmentLimits, aiConcurrencyGate, sessionModels.remember)
 	assessorProvider.SetMetrics(discoverabilityMetrics)
-	ontologyMaintenance := buildOntologyMaintenance(ontologypostgres.NewStore(pgDB.GetDB(), rlsHelper), appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService)
+	ontologyMaintenance := buildOntologyMaintenance(ontologyStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService)
 	conflictReviewRunner, err := buildConflictReviewApplication(conflictReviewApplicationDependencies{
 		Store:            conflictStore,
 		Provider:         verifierProvider,

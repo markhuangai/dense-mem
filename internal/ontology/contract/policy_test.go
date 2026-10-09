@@ -247,6 +247,65 @@ func TestOntologyFingerprintsAreStableAndSelective(t *testing.T) {
 	require.Equal(t, retired, again)
 }
 
+func TestOntologyBatchFingerprintsPreserveVersionsAndFreshness(t *testing.T) {
+	first := policySnapshot("predicate", PredicateSource, "version one")
+	first.ID = "uses"
+	second := first
+	second.Version++
+	second.State = map[string]string{"contract": "version two"}
+	available := map[SourceHandle]SourceSnapshot{first.SourceHandle: first, second.SourceHandle: second}
+	records := []Record{topicRecord("one"), topicRecord("two")}
+	for i, snapshot := range []SourceSnapshot{first, second} {
+		records[i].Sources = []SourceDependency{sourceDependency(t, snapshot)}
+		fingerprint, err := RecordFingerprint(records[i], map[string]SourceSnapshot{SourceKey(snapshot.SourceHandle): snapshot}, nil)
+		require.NoError(t, err)
+		records[i].Fingerprint = fingerprint
+	}
+	catalog := map[string]Record{records[0].ID: records[0], records[1].ID: records[1]}
+	batch := NewRecordFingerprints(available, catalog)
+	for range 2 {
+		for _, record := range records {
+			fingerprint, err := batch.Fingerprint(record)
+			require.NoError(t, err)
+			require.Equal(t, record.Fingerprint, fingerprint)
+		}
+	}
+	child := topicRecord("child")
+	child.Definition.ParentID = records[0].ID
+	require.NoError(t, batch.CheckDependencies([]Record{child}))
+	require.NoError(t, batch.CheckDependencies([]Record{child}))
+	edited := records[0]
+	definition := *edited.Definition
+	definition.Description = "Changed root with the same ID and version"
+	edited.Definition = &definition
+	fingerprint, err := batch.Fingerprint(edited)
+	require.NoError(t, err)
+	require.NotEqual(t, records[0].Fingerprint, fingerprint)
+	changed := first
+	changed.State = map[string]string{"contract": "changed version one"}
+	available = map[SourceHandle]SourceSnapshot{first.SourceHandle: changed, second.SourceHandle: second}
+	fresh := NewRecordFingerprints(available, catalog)
+	require.ErrorIs(t, fresh.CheckDependencies([]Record{child}), ErrSourceStale)
+	fingerprint, err = fresh.Fingerprint(records[0])
+	require.NoError(t, err)
+	require.NotEqual(t, records[0].Fingerprint, fingerprint)
+	fingerprint, err = fresh.Fingerprint(records[1])
+	require.NoError(t, err)
+	require.Equal(t, records[1].Fingerprint, fingerprint)
+	for name, snapshot := range map[string]SourceSnapshot{
+		"ineligible":    {SourceHandle: first.SourceHandle, Eligible: false},
+		"wrong version": second,
+		"missing":       {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			batch := NewRecordFingerprints(map[SourceHandle]SourceSnapshot{first.SourceHandle: snapshot}, catalog)
+			_, err := batch.Fingerprint(records[0])
+			require.ErrorIs(t, err, ErrSourceStale)
+			require.ErrorIs(t, batch.CheckDependencies([]Record{child}), ErrSourceStale)
+		})
+	}
+}
+
 func TestOntologyPublicationEnforcesAggregateBounds(t *testing.T) {
 	input := publicationFor(topicRecord("escaped"))
 	input.Changes[0].Record.Definition.Description = strings.Repeat("\x01", MaxPublicationBytes)

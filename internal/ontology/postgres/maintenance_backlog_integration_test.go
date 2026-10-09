@@ -4,10 +4,12 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/stretchr/testify/require"
@@ -48,6 +50,42 @@ func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 		return tx.Exec(`INSERT INTO relationship_support_decision_events SELECT (jsonb_populate_record(NULL::relationship_support_decision_events,to_jsonb(template)||jsonb_build_object('support_decision_id',gen_random_uuid(),'support_id',support.support_id,'relationship_id',support.relationship_id,'idempotency_key',gen_random_uuid()::text))).*
 		 FROM relationship_support_decision_events AS template JOIN relationship_evidence_supports AS support ON support.team_id=template.team_id AND support.relationship_id<>template.relationship_id
 		 WHERE template.team_id=?::uuid AND template.relationship_id=?::uuid AND template.decision='grant'`, f.team, relationship.ID).Error
+	}))
+	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
+		var key string
+		var version int64
+		if err := tx.Raw(`SELECT predicate_key,predicate_version FROM relationship_records WHERE team_id=?::uuid AND relationship_id=?::uuid`, f.team, relationship.ID).Row().Scan(&key, &version); err != nil {
+			return err
+		}
+		var plan []byte
+		if err := tx.Raw(`EXPLAIN (ANALYZE,FORMAT JSON) `+predicateSourceSQL, f.team, f.space, f.generation, pq.Array([]string{key}), pq.Array([]int64{version})).Row().Scan(&plan); err != nil {
+			return err
+		}
+		type node struct {
+			Relation string  `json:"Relation Name"`
+			Loops    float64 `json:"Actual Loops"`
+			Rows     float64 `json:"Actual Rows"`
+			Plans    []node  `json:"Plans"`
+		}
+		var reports []struct{ Plan node }
+		if err := json.Unmarshal(plan, &reports); err != nil {
+			return err
+		}
+		require.Len(t, reports, 1)
+		require.Equal(t, float64(1), reports[0].Plan.Rows)
+		loops := float64(0)
+		var visit func(node)
+		visit = func(current node) {
+			if current.Relation == "relationship_support_decision_events" {
+				loops += current.Loops
+			}
+			for _, child := range current.Plans {
+				visit(child)
+			}
+		}
+		visit(reports[0].Plan)
+		require.Equal(t, float64(1), loops, "one eligible predicate needs one supporting decision, regardless of corpus size")
+		return nil
 	}))
 	other := maintenanceOtherTeam(t, f)
 	other.organizationEvidence(t, 0, "Small team's pending work.", nil)

@@ -31,8 +31,8 @@ func bindRecallTool(tool Tool, deps Dependencies) Tool {
 		if res != nil && !dreamingEnabled {
 			res.RelatedHypotheses = []recall.RelatedHypothesisSummary{}
 		}
-		feedbackSnapshotStored := recordRecallFeedbackSnapshot(ctx, deps, input, req, res)
-		setRecallSuggestedActions(res, feedbackSnapshotStored, dreamingEnabled)
+		recordRecallFeedbackSnapshot(ctx, deps, input, req, res)
+		setRecallSuggestedActions(res, dreamingEnabled)
 		return recallContractOutput(res), nil
 	}
 	return tool

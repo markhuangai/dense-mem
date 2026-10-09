@@ -49,6 +49,20 @@ func (r *Retrieval) RecallEvidence(ctx context.Context, input recallcontract.Rec
 	if err != nil {
 		return nil, err
 	}
+	if snapshots, ok := r.repository.(recallcontract.EvidenceSnapshotRepository); ok && input.OrganizationEnabled && input.ValidAt == nil && input.KnownAt == nil && (input.SpaceKind == "" || input.SpaceKind == string(domain.MemorySpaceTeamShared)) {
+		err = snapshots.WithEvidenceSnapshot(ctx, input.TeamID, func(repository recallcontract.SearchRepository) error {
+			result, err = NewRetrieval(repository).recallEvidence(ctx, input, contract)
+			return err
+		})
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+	return r.recallEvidence(ctx, input, contract)
+}
+
+func (r *Retrieval) recallEvidence(ctx context.Context, input recallcontract.RecallEvidenceInput, contract *searchcontract.ActiveSearchContract) (*recallcontract.RecallEvidenceResult, error) {
 	batch, err := r.repository.ReadEvidenceCandidates(ctx, input, contract, recallOverfetchLimit(input.Limit))
 	if err != nil {
 		return nil, fmt.Errorf("recall: search evidence: %w", err)
@@ -58,39 +72,37 @@ func (r *Retrieval) RecallEvidence(ctx context.Context, input recallcontract.Rec
 	fusion.Finish(nil, len(candidates))
 	if len(candidates) == 0 {
 		return &recallcontract.RecallEvidenceResult{
-			TeamID: input.TeamID, SearchState: batch.SearchState, Results: []recallcontract.RecallEvidenceHit{},
+			TeamID: input.TeamID, SearchState: batch.SearchState, Degradations: organizationDegradation("evidence", batch.OrganizationDegradation), Results: []recallcontract.RecallEvidenceHit{},
 		}, nil
 	}
 	ids := recallCandidateIDs(candidates)
 	hydrationCtx, hydration := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageHydration)
-	hydrated, err := r.repository.HydrateEvidence(hydrationCtx, input, contract, ids)
-	hydration.Finish(err, len(hydrated))
+	hydrated := &recallcontract.EvidenceHydration{}
+	if organized, ok := r.repository.(recallcontract.OrganizedSearchRepository); ok && input.OrganizationEnabled {
+		hydrated, err = organized.HydrateOrganizedEvidence(hydrationCtx, input, contract, ids)
+	} else {
+		hydrated.Hits, err = r.repository.HydrateEvidence(hydrationCtx, input, contract, ids)
+	}
+	hydratedCount := 0
+	if hydrated != nil {
+		hydratedCount = len(hydrated.Hits)
+	}
+	hydration.Finish(err, hydratedCount)
 	if err != nil {
 		return nil, fmt.Errorf("recall: hydrate evidence: %w", err)
 	}
 	_, selection := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageSelection)
-	results := make([]recallcontract.RecallEvidenceHit, 0)
+	results, conflictSources, organizationCode := selectRecallEvidence(candidates, hydrated, input)
 	searchState := batch.SearchState
-	for _, candidate := range candidates {
-		hit, ok := hydrated[candidate.ID]
-		if !ok {
-			continue
-		}
-		hit.Score = candidate.Score
-		hit.SpaceKind = input.SpaceKind
-		hit.SearchState = domain.CombineSearchProjectionStates(candidate.SearchState, hit.SearchState)
-		if hit.SearchState == string(domain.SearchProjectionPending) || hit.SearchState == string(domain.SearchProjectionFailed) {
-			searchState = domain.CombineSearchProjectionStates(searchState, hit.SearchState)
-		}
-		hit.Rank = len(results) + 1
-		results = append(results, hit)
-		if len(results) == input.Limit {
-			break
-		}
+	for _, hit := range results {
+		searchState = domain.CombineSearchProjectionStates(searchState, hit.SearchState)
+	}
+	if organizationCode == "" {
+		organizationCode = batch.OrganizationDegradation
 	}
 	selection.Finish(nil, len(results))
 	conflictsCtx, conflictsStage := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageConflicts)
-	conflicts, err := r.repository.LoadRecallConflicts(conflictsCtx, input, results)
+	conflicts, err := r.repository.LoadRecallConflicts(conflictsCtx, input, conflictSources)
 	count := 0
 	if conflicts != nil {
 		count = len(conflicts.Relationships) + len(conflicts.Evidence)
@@ -100,7 +112,7 @@ func (r *Retrieval) RecallEvidence(ctx context.Context, input recallcontract.Rec
 		return nil, fmt.Errorf("recall: load conflicts: %w", err)
 	}
 	return &recallcontract.RecallEvidenceResult{
-		TeamID: input.TeamID, SearchState: searchState, Results: results,
+		TeamID: input.TeamID, SearchState: searchState, Results: results, Degradations: organizationDegradation("evidence", organizationCode),
 		Conflicts: conflicts.Relationships, EvidenceConflicts: conflicts.Evidence,
 	}, nil
 }
@@ -135,7 +147,7 @@ func (r *Retrieval) RecallRelationships(ctx context.Context, input recallcontrac
 	vectorOmitted := len(input.QueryEmbedding) > 0 && batch.SearchState != string(domain.SearchProjectionCurrent)
 	if len(candidates) == 0 {
 		return &recallcontract.RecallRelationshipsResult{
-			TeamID: input.TeamID, SearchState: batch.SearchState, VectorOmitted: vectorOmitted,
+			TeamID: input.TeamID, SearchState: batch.SearchState, VectorOmitted: vectorOmitted, Degradations: organizationDegradation("relationships", batch.OrganizationDegradation),
 			Results: []recallcontract.RecallRelationshipHit{},
 		}, nil
 	}
@@ -178,7 +190,7 @@ func (r *Retrieval) RecallRelationships(ctx context.Context, input recallcontrac
 	}
 	selection.Finish(nil, len(results))
 	return &recallcontract.RecallRelationshipsResult{
-		TeamID: input.TeamID, SearchState: searchState, VectorOmitted: vectorOmitted, Results: results,
+		TeamID: input.TeamID, SearchState: searchState, VectorOmitted: vectorOmitted, Results: results, Degradations: organizationDegradation("relationships", batch.OrganizationDegradation),
 	}, nil
 }
 

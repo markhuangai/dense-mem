@@ -12,13 +12,13 @@ func TestRecallResultJSONOmitsExecutionState(t *testing.T) {
 		DiscoveryGuidance: "internal",
 		SearchState:       "current",
 		Degradation:       &RecallDegradationResult{Code: "internal"},
-		Results:           []RecallResultItem{{EvidenceID: "evidence-1"}},
+		Results:           []RecallResultItem{{EvidenceID: "evidence-1", EquivalentEvidenceIDs: []string{}}},
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil {
 		t.Fatalf("marshal recall result: %v", err)
 	}
-	if got := string(encoded); got != `{"recall_id":"recall-1","results":[{"evidence_id":"evidence-1","rank":0}],"conflicts":null,"related_relationships":null,"related_communities":null,"related_hypotheses":null,"search_states":{"evidence":"","relationships":""},"degradations":null,"suggested_actions":null}` {
+	if got := string(encoded); got != `{"recall_id":"recall-1","results":[{"equivalent_evidence_ids":[],"equivalents_truncated":false,"evidence_id":"evidence-1","rank":0}],"conflicts":null,"related_relationships":null,"related_communities":null,"related_hypotheses":null,"search_states":{"evidence":"","relationships":""},"degradations":null,"suggested_actions":null}` {
 		t.Fatalf("unexpected recall result JSON: %s", got)
 	}
 }
