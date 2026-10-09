@@ -407,7 +407,7 @@ precheck_capability() {
   trap cleanup_precheck EXIT INT TERM
 
   local test_image
-  test_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.6-bookworm)"
+  test_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.9-bookworm)"
   [[ "$test_image" =~ ^[A-Za-z0-9._/:@-]+$ ]] || fail "invalid precheck Go test image"
   local test_status=0
   local -a runner_command=(go -C cmd/e2e run . --root /workspace --phase precheck --timeout 40m --total-timeout 42m)
@@ -506,9 +506,17 @@ function batchWeight(packageCounts) {
   return [...packageCounts.values()].reduce((total, count) => total + Math.ceil(count / batchSize), 0);
 }
 
+const dedicated = records.find((record) => record.capability === "ontology");
+if (dedicated) {
+  groups[0].capabilities.push(dedicated.capability);
+  groups[0].cases = dedicated.cases;
+  groups[0].packageCounts = dedicated.packageCounts;
+}
+
 for (const record of records) {
+  if (record === dedicated) continue;
   let selected = null;
-  for (let index = 0; index < groups.length; index += 1) {
+  for (let index = dedicated ? 1 : 0; index < groups.length; index += 1) {
     const projected = new Map(groups[index].packageCounts);
     for (const [packageName, count] of record.packageCounts) {
       projected.set(packageName, (projected.get(packageName) || 0) + count);

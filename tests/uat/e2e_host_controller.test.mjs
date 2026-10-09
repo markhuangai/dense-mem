@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { test } from "node:test";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
@@ -262,6 +262,39 @@ partition_precheck_capabilities "${sourceRoot}"
       "beta,semantic-write",
       "delta",
     ]);
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("the repository precheck isolates ontology and selects every case once", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-ontology-"));
+  try {
+    const casesDir = join(scripts, "e2e-db-cases");
+    const fragments = await Promise.all((await readdir(casesDir))
+      .filter((entry) => entry.endsWith(".json"))
+      .map(async (entry) => JSON.parse(await readFile(join(casesDir, entry), "utf8"))));
+    const casesByCapability = new Map(fragments
+      .map((fragment) => [fragment.capability, fragment.cases.filter((item) => item.phase === "precheck")])
+      .filter(([, cases]) => cases.length > 0));
+    const start = controller.indexOf("\ndatabase_case_capabilities()") + 1;
+    const end = controller.indexOf("\nprecheck() {", start);
+    const scriptPath = join(fixture, "ontology-registry-test.sh");
+    await executable(scriptPath, `#!/usr/bin/env bash
+set -euo pipefail
+${controller.slice(start, end)}
+partition_precheck_capabilities "$1"
+`);
+    const { stdout } = await run("bash", [scriptPath, root]);
+    const groups = stdout.trim().split(/\r?\n/).map((group) => group.split(","));
+    assert.equal(groups.length, 3);
+    assert.deepEqual(groups[0], ["ontology"]);
+    assert.deepEqual(groups.flat().sort(), [...casesByCapability.keys()].sort());
+    const selected = groups.flatMap((group) => group
+      .flatMap((capability) => casesByCapability.get(capability).map((item) => item.id)));
+    const registered = [...casesByCapability.values()].flat().map((item) => item.id);
+    assert.equal(new Set(selected).size, selected.length);
+    assert.deepEqual(selected.sort(), registered.sort());
   } finally {
     await rm(fixture, { recursive: true, force: true });
   }
