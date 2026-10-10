@@ -32,12 +32,12 @@
   ],
   "artifacts": "ignored local paths only",
   "generator": "tests/eval/scripts/generate_session_ingest_v1.py",
-  "generator_sha256": "62db06cc44abebf9eb8a59b5e618af10e54382be79a192b0c4f3f5a046dbfb35",
+  "generator_sha256": "efbbfc36f1852e3476c2120bbc19c1e2632d52bd3119c8ef8e51f5401a99fec7",
   "remember_control_sources": {
     "tests/uat/synchronous_write/cases/remember.mjs": "d23b14f78bf0711b29e35617ebb1116e5025ff139ac4c96934d13fbfb217a62e",
     "internal/tools/registry/contract_relationship_submission_test.go": "afc4b6ca669091348916181800c39bbe453fcf34cbc39bafa46adff836af17de"
   },
-  "cohort_sha256": "917b4fffba51e15eeb2f7a94298cb62b0a92bd6b9a0cf81e2371463ae5d40560",
+  "cohort_sha256": "2bad34690df07d02a2e5a9ee6de4e9559e23491fded531f3b059bdecc4d9ed8d",
   "approved_control_correction": {
     "issue": 218,
     "control": "mixed-objects",
@@ -48,5 +48,19 @@
     "quality_cases_unchanged": true,
     "other_controls_unchanged": true,
     "scorer_and_thresholds_unchanged": true
+  },
+  "approved_ground_truth_correction": {
+    "issue": 218,
+    "case": "semantics-3",
+    "previous_cohort_sha256": "917b4fffba51e15eeb2f7a94298cb62b0a92bd6b9a0cf81e2371463ae5d40560",
+    "added_exact_facts": [
+      "Jordan has_role designer",
+      "Jordan has_role musician"
+    ],
+    "approval": "User: yes, in response to adding those two facts and rerunning.",
+    "all_input_events_unchanged": true,
+    "all_remember_controls_unchanged": true,
+    "other_expected_facts_unchanged": true,
+    "scorer_thresholds_and_deadlines_unchanged": true
   }
 }

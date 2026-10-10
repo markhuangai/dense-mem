@@ -610,6 +610,12 @@ result. Its original proposed key was non-authoritative and valid normalization
 failed the exact-key scorer on both base and candidate. The other eleven controls,
 five typed-value facts, all 32 quality cases, scoring and deadlines are unchanged.
 
+The maintainer also approved adding the explicitly stated designer and musician
+roles to the homonym case's expected facts. All 32 input cases and all twelve
+Remember controls remain identical; the expected set now includes exactly
+`Jordan has_role designer` and `Jordan has_role musician`. Retain the failed
+45/47 precision result and rerun fresh repetitions with the corrected source lock.
+
 ```bash
 node tests/eval/scripts/run_session_ingest_v1.mjs remember tmp/session-ingest/cohort.json tmp/session-ingest/base.json
 node tests/eval/scripts/run_session_ingest_v1.mjs remember tmp/session-ingest/cohort.json tmp/session-ingest/candidate.json
