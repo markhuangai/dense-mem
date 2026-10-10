@@ -631,3 +631,8 @@ must retain expected facts. Reports include processing latency percentiles,
 structured provider turns, embedding turns and provider-reported chat token usage.
 Missing chat usage fails the gate. Failures retain an incomplete report and stop;
 thresholds and expected facts must not be weakened after a run.
+
+The compact passing #218 evidence is recorded in
+`baselines/session_ingest_v1_evidence.json`, including tested source/image hashes,
+three quality repetitions, paired controls, approved fixture corrections and
+unavailable embedding usage. Raw run outputs remain ignored.
