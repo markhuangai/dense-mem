@@ -92,3 +92,42 @@ func TestSessionLinkingRequiresCompleteCompatibleGroups(t *testing.T) {
 	invalid.Groups = []session.EntityGroup{{Ref: "mixed", CanonicalRef: "first", Members: []string{"first", "second", "product"}}}
 	require.Error(t, session.ValidateLinking(request, invalid))
 }
+
+func TestSessionLinkingRegenerationIdentifiesWrongRequestID(t *testing.T) {
+	request := session.LinkingRequest{RequestID: "session:556a0828-82d8-491e-84d2-5c24afb45717:linking", Entities: []session.EntityProposal{{Ref: "ari", Name: "Ari", Kind: "person"}}}
+	valid := session.LinkingResponse{RequestID: request.RequestID, Groups: []session.EntityGroup{{Ref: "ari", CanonicalRef: "ari", Members: []string{"ari"}}}}
+	invalid := valid
+	invalid.RequestID = "session:556a0828-82d2-491e-84d2-5c24afb45717:linking"
+	invalidJSON, err := json.Marshal(invalid)
+	require.NoError(t, err)
+	validJSON, err := json.Marshal(valid)
+	require.NoError(t, err)
+	transport := &outboundFixture{bodies: []string{string(invalidJSON), string(validJSON)}}
+	response, err := NewProvider(transport, "fixture-model", assessor.DefaultSemanticAssessmentLimits()).Link(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, valid, response)
+	require.Len(t, transport.requests, 2)
+	require.Equal(t, transport.requests[0].Messages[1], transport.requests[1].Messages[1])
+	require.Contains(t, transport.requests[1].Messages[2].Content, "request_id must equal")
+	require.Contains(t, transport.requests[1].Messages[2].Content, request.RequestID)
+	require.NotEqual(t, request.RequestID, invalid.RequestID)
+}
+
+func TestSessionProviderCancellationAndInputBudgetPreventOutboundCalls(t *testing.T) {
+	request, valid := extractionFixture()
+	body, err := json.Marshal(valid)
+	require.NoError(t, err)
+	transport := &outboundFixture{bodies: []string{string(body)}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = NewProvider(transport, "fixture", assessor.DefaultSemanticAssessmentLimits()).Extract(ctx, request)
+	require.ErrorIs(t, err, context.Canceled)
+	limits := assessor.DefaultSemanticAssessmentLimits()
+	limits.MaxInputTokens = 1
+	_, err = NewProvider(transport, "fixture", limits).Extract(context.Background(), request)
+	require.ErrorIs(t, err, session.ErrBudget)
+	require.Empty(t, transport.requests)
+	_, err = NewProvider(nil, "fixture", limits).Extract(context.Background(), request)
+	var unavailable *modelprovider.ProviderError
+	require.ErrorAs(t, err, &unavailable)
+}

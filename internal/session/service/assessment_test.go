@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
@@ -45,4 +46,43 @@ func TestSessionExtractionNumericValueReachesCombinedProposalExactly(t *testing.
 		value := proposal["relationship_hints"].([]map[string]any)[0]["object"].(map[string]any)["value"].(map[string]any)["value"]
 		require.Equal(t, json.Number(number), value)
 	}
+}
+
+func TestSessionCombinedAssessmentPreservesUnitsTimesAndKnownEvidence(t *testing.T) {
+	text := "  Ari records 42 ms on 2026-10-10.  "
+	observed := "2026-10-10T12:00:00Z"
+	request := sessionRequest(session.Event{EventID: "one", Text: text, OccurredAt: &observed})
+	segment := session.Segment{Ref: "current", EventIndex: 0, Start: 0, End: len([]rune(text)), Text: text}
+	value := &session.ValueProposal{Type: "number", Value: json.RawMessage(`42`), Unit: "ms", Display: "42 ms"}
+	proposal := session.RelationshipProposal{Ref: "first", SubjectRef: "ari", Predicate: "records", ObjectValue: value, Polarity: "+", Citations: []session.Citation{{StartRef: segment.Ref, EndRef: segment.Ref}}, KnownEvidenceIDs: []string{"history"}, ValidFrom: &observed, ValidTo: &observed}
+	second := proposal
+	second.Ref, second.KnownEvidenceIDs = "second", []string{"history", "other-history"}
+	input := session.LinkingRequest{Entities: []session.EntityProposal{{Ref: "ari", Name: "Ari", Kind: "person"}}, Relationships: []session.RelationshipProposal{proposal, second}, Segments: []session.Segment{segment}}
+	linked := session.LinkingResponse{Groups: []session.EntityGroup{{Ref: "ari", CanonicalRef: "ari", Members: []string{"ari"}}}}
+	evidence, combined, err := buildSessionAssessment(&session.Submission{Intake: session.Intake{Request: request}}, input, linked)
+	require.NoError(t, err)
+	require.Len(t, evidence, 1)
+	require.Equal(t, observed, evidence[0].Metadata["session"].(map[string]any)["occurred_at"])
+	proposals := combined["relationship_hints"].([]map[string]any)
+	require.Len(t, proposals, 1)
+	require.Equal(t, []string{"history", "other-history"}, proposals[0]["known_evidence_ids"])
+	require.Equal(t, observed, proposals[0]["valid_from"])
+	require.Equal(t, observed, proposals[0]["valid_to"])
+	object := proposals[0]["object"].(map[string]any)["value"].(map[string]any)
+	require.Equal(t, json.Number("42"), object["value"])
+	require.Equal(t, "ms", object["unit"])
+	require.Equal(t, "42 ms", object["display"])
+	input.Relationships[0].Citations[0].StartRef = "unknown"
+	_, _, err = buildSessionAssessment(&session.Submission{Intake: session.Intake{Request: request}}, input, linked)
+	require.ErrorIs(t, err, session.ErrInvalidInput)
+	input.Relationships[0].Citations[0].StartRef = segment.Ref
+	request.Events[0].Text = strings.Repeat(" ", 512) + "Ari uses Go."
+	windows, err := BuildWindows(request, "o200k_base")
+	require.NoError(t, err)
+	input.Segments[0] = windows[0].Core[0]
+	for index := range input.Relationships {
+		input.Relationships[index].Citations = []session.Citation{{StartRef: input.Segments[0].Ref, EndRef: input.Segments[0].Ref}}
+	}
+	_, _, err = buildSessionAssessment(&session.Submission{Intake: session.Intake{Request: request}}, input, linked)
+	require.ErrorIs(t, err, session.ErrInvalidInput)
 }

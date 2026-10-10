@@ -108,6 +108,13 @@
       "source": "internal/knowledge/postgres/session_service_integration_test.go"
     },
     {
+      "id": "repository/TestSessionServiceFactsDiagnosticsAndCheckpointRecoveryThroughPostgres",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionServiceFactsDiagnosticsAndCheckpointRecoveryThroughPostgres$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_service_integration_test.go"
+    },
+    {
       "id": "repository/TestTraceSessionProvenanceRequiresAuthenticatedPrivateOwner",
       "package": "./internal/trace/postgres",
       "run": "^TestTraceSessionProvenanceRequiresAuthenticatedPrivateOwner$",

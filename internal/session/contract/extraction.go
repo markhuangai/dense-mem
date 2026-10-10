@@ -192,8 +192,11 @@ func requireResponseKeys(raw []byte, required, nullable []string) error {
 }
 
 func ValidateExtraction(request ExtractionRequest, response ExtractionResponse) error {
-	if response.RequestID != request.RequestID || response.Coverage == nil || response.Entities == nil || response.Relationships == nil || response.SecuritySignals == nil {
-		return fmt.Errorf("invalid extraction identity or missing array")
+	if response.RequestID != request.RequestID {
+		return fmt.Errorf("request_id must equal %q", request.RequestID)
+	}
+	if response.Coverage == nil || response.Entities == nil || response.Relationships == nil || response.SecuritySignals == nil {
+		return fmt.Errorf("extraction response arrays are required")
 	}
 	if len(response.Entities) > 400 || len(response.Relationships) > 200 || len(response.SecuritySignals) > 64 {
 		return fmt.Errorf("extraction response exceeds closed bounds")
@@ -309,8 +312,11 @@ func ValidateExtraction(request ExtractionRequest, response ExtractionResponse) 
 }
 
 func ValidateLinking(request LinkingRequest, response LinkingResponse) error {
-	if response.RequestID != request.RequestID || response.Groups == nil || len(response.Groups) > 400 {
-		return fmt.Errorf("invalid linking identity or groups")
+	if response.RequestID != request.RequestID {
+		return fmt.Errorf("request_id must equal %q", request.RequestID)
+	}
+	if response.Groups == nil || len(response.Groups) > 400 {
+		return fmt.Errorf("linking groups are required and must contain at most 400 entries")
 	}
 	entities := map[string]EntityProposal{}
 	for _, entity := range request.Entities {

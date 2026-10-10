@@ -71,3 +71,18 @@ func TestSessionAdmissionRejectsOversizedTextWithoutTruncation(t *testing.T) {
 	require.ErrorIs(t, err, session.ErrBudget)
 	require.Nil(t, windows)
 }
+
+func TestSessionAdmissionRejectsInvalidIdentityTextAndOccurrence(t *testing.T) {
+	for _, change := range []func(*session.Request){
+		func(r *session.Request) { r.IdempotencyKey = "" },
+		func(r *session.Request) { r.Framework = string([]byte{0xff}) },
+		func(r *session.Request) { r.Events = nil },
+		func(r *session.Request) { r.Events[0].EventID = " " },
+		func(r *session.Request) { r.Events[0].Text = " " },
+		func(r *session.Request) { invalid := "yesterday"; r.Events[0].OccurredAt = &invalid },
+	} {
+		request := sessionRequest(session.Event{EventID: "one", Text: "Ari uses Go."})
+		change(&request)
+		require.ErrorIs(t, ValidateRequest(request), session.ErrInvalidInput)
+	}
+}
