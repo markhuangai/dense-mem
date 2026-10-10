@@ -233,13 +233,14 @@ function fixtureOntologyOrganization(payload) {
   const items = input.items.map((item) => {
     const kind = item.kind === "entity" ? "entity_class" : item.kind === "predicate" ? "predicate_concept" : "topic";
     const base = kind === "entity_class" ? item.entity_kind : "";
-    const signature = `${kind}:${base}`;
-    let ref = item.locked_definition_ref || input.definitions.find((definition) => definition.kind === kind && (kind !== "entity_class" || definition.base_entity_kind === base))?.ref || created.get(signature);
+    const topicKey = /redis|keydb/i.test(JSON.stringify(item)) ? "memory-coordination" : "memory-storage";
+    const signature = `${kind}:${base}:${kind === "topic" ? topicKey : ""}`;
+    let ref = item.locked_definition_ref || input.definitions.find((definition) => definition.kind === kind && (kind !== "entity_class" || definition.base_entity_kind === base) && (kind !== "topic" || definition.key === topicKey))?.ref || created.get(signature);
     if (!ref) {
       ref = `new-definition-${definitions.length}`;
       created.set(signature, ref);
-      const key = base || (kind === "predicate_concept" ? "registered-predicates" : "memory-storage");
-      definitions.push({ ref, kind, key, label: key.replaceAll("-", " "), description: "Synthetic organization vocabulary", aliases: kind === "topic" ? ["database platform"] : [], parent_ref: "", base_entity_kind: base });
+      const key = base || (kind === "predicate_concept" ? "registered-predicates" : topicKey);
+      definitions.push({ ref, kind, key, label: key.replaceAll("-", " "), description: "Synthetic organization vocabulary", aliases: kind === "topic" ? [topicKey === "memory-storage" ? "database platform" : "coordination platform"] : [], parent_ref: "", base_entity_kind: base });
     }
     return { ref: item.ref, status: "classified", definition_ref: ref, reason: "" };
   });

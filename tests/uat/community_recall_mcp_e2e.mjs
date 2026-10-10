@@ -130,9 +130,9 @@ const communityIndexes = postgresQuery(`
   SELECT string_agg(indexname, ',' ORDER BY indexname)
   FROM pg_indexes
   WHERE schemaname = 'public'
-    AND indexname IN ('community_records_current_logical_unique', 'community_sources_group_idx', 'community_sources_community_idx')
+    AND indexname IN ('community_records_scoped_logical_unique', 'community_sources_group_idx', 'community_sources_community_idx')
 `);
-for (const indexName of ['community_records_current_logical_unique', 'community_sources_group_idx', 'community_sources_community_idx']) {
+for (const indexName of ['community_records_scoped_logical_unique', 'community_sources_group_idx', 'community_sources_community_idx']) {
   if (!communityIndexes.split(',').includes(indexName)) throw new Error(`community migration index is missing: ${indexName}`);
 }
 

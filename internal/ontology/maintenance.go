@@ -33,6 +33,15 @@ type MaintenanceDependencies struct {
 	ProviderTimeout time.Duration
 	Audit           MaintenanceAuditPreparer
 	Now             func() time.Time
+	Projections     ProjectionRunner
+}
+
+type ProjectionRunner interface {
+	RunProjectionTurn(context.Context) (bool, error)
+}
+
+func (s *MaintenanceService) SetProjectionRunner(runner ProjectionRunner) {
+	s.deps.Projections = runner
 }
 
 type MaintenanceService struct{ deps MaintenanceDependencies }

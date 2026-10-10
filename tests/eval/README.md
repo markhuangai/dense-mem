@@ -571,3 +571,32 @@ credential rows in chunks of at most 1,000 rows. Grouping prevents duplicate
 `ON CONFLICT` targets within one statement. The existing flush-ledger transaction,
 RLS context, credential attribution and all-or-nothing rollback must remain.
 This ticket contains no batching prototype or production algorithm change.
+
+## Ontology topic community replacement evaluation (#245)
+
+Keep the frozen nine-case/19-source organization cohort and both existing hashes
+unchanged. The community cohort has a separate source lock. Run the registered
+`TestCommunityTopic*` PostgreSQL cases, including actual Recall over the frozen
+cohort, 5,001 groups supported by one evidence assignment, bounded previews,
+independent refresh, lifecycle, and RLS tests. Set
+`DENSE_MEM_ORGANIZATION_REPORT_DIR` to an unused ignored task directory to retain
+the detailed comparison. Commit only compact verified evidence after the gates.
+The verified quality, scale and latency results are recorded in
+[`baselines/community_topics_v1.json`](baselines/community_topics_v1.json).
+
+Measure normal community Recall on identical canonical fixtures in both modes:
+
+```bash
+env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 \
+  DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 \
+  go test -tags integration ./internal/community/postgres -run '^$' \
+  -bench '^BenchmarkCommunityTopicProjection$' -benchtime=200x -count=5 -timeout=45m
+python3 tests/eval/scripts/compare_community_topics.py \
+  --input tests/eval/runs/issue-245/benchmark.txt \
+  --out tests/eval/runs/issue-245/latency.json
+```
+
+Each mode performs 20 warmups and 200 measurements for five pairs. The comparator
+requires complete pairs and a median paired p95 regression no greater than 10%.
+Large-topic completion, bounded pages, and zero summary-provider attempts are
+reported separately; the legacy detector cannot construct the scale fixture.

@@ -50,6 +50,153 @@
       "run": "^TestCommunityOwnershipTemporalRecallPreservesDirectRelationship$",
       "phase": "precheck",
       "source": "internal/community/postgres/community_ownership_temporal_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicPublicationAndQuality",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicPublicationAndQuality$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicRetractionIsolationAndIndependentRefresh",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicRetractionIsolationAndIndependentRefresh$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicPublicationFencesSourceChangesAndCompetingClaims",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicPublicationFencesSourceChangesAndCompetingClaims$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicFailurePauseAndLegacySwitch",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicFailurePauseAndLegacySwitch$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicLargeFanoutResumesAndRotates",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicLargeFanoutResumesAndRotates$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_scale_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicDefinitionRaceAndModeAdmission",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicDefinitionRaceAndModeAdmission$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_scale_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicFrozenOrganizationCohortThroughRecall",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicFrozenOrganizationCohortThroughRecall$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_cohort_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicWithdrawQuarantineAndGeneration",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicWithdrawQuarantineAndGeneration$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_lifecycle_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicForcedRLSAndRollbackBoundary",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicForcedRLSAndRollbackBoundary$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_lifecycle_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicSchedulerRunsWithoutOrganizationBudget",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicSchedulerRunsWithoutOrganizationBudget$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_lifecycle_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicRejectsPrivateForeignSourcesAndFencesCorrection",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicRejectsPrivateForeignSourcesAndFencesCorrection$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_lifecycle_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicAssignedEvidenceTracksNewAndReinstatedSupport",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicAssignedEvidenceTracksNewAndReinstatedSupport$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_dependencies_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicNewMembershipBetweenPagesRejectsPublication",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicNewMembershipBetweenPagesRejectsPublication$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_dependencies_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicDeclaredDefinitionSourceIsFenced",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicDeclaredDefinitionSourceIsFenced$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_dependencies_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicNewClassificationOverrideInvalidatesOnlyAffectedTopic",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicNewClassificationOverrideInvalidatesOnlyAffectedTopic$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_dependencies_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicModeSwitchOrdersLegacyPublication",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicModeSwitchOrdersLegacyPublication$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_races_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicRecallUsesOneWithdrawalSnapshot",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicRecallUsesOneWithdrawalSnapshot$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_races_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicCapacityIsSharedWithMaintenance",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicCapacityIsSharedWithMaintenance$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_races_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicNewOverrideDuringPublicationIsFenced",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicNewOverrideDuringPublicationIsFenced$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_dependencies_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicPredicateEligibilityDependencyIsFenced",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicPredicateEligibilityDependencyIsFenced$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_dependencies_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicMigrationUsesNonSuperuserWithForcedRLS",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicMigrationUsesNonSuperuserWithForcedRLS$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_lifecycle_integration_test.go"
     }
   ]
 }

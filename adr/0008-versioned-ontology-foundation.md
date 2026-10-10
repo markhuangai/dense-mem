@@ -4,7 +4,7 @@
 - Date: 2026-10-04
 - Supersedes: None
 - Refines: ADR 0003, ADR 0004, ADR 0005, ADR 0006
-- Maintainer approval: issues #241, #242, and #243 and their approved implementation plans
+- Maintainer approval: issues #241, #242, #243, and #245 and their approved implementation plans
 
 ## Decision
 
@@ -53,10 +53,27 @@ and operator-only maintenance settings and controls. Processing remains disabled
 by default. PostgreSQL triggers enqueue small changed-row markers; workers expand
 dependencies outside canonical write transactions. Pause and disable stop new
 admissions and drain dispatched work without resetting reservations. Recall and
-community consumers remain with their later tickets and evaluation gates.
+community consumers retain their issue-specific evaluation gates.
 Existing Recall SemanticGroupKey behavior remains effective.
 ADR 0007's graph Dream and historical Dream preservation requirements remain
 effective until explicitly superseded by approved #530 work.
+
+#245 derives current community projections from explicit current topic
+assignments, including eligible Relationships supported by assigned evidence.
+The community switch remains the master control; ontology enablement selects
+topic projections and fences legacy publication. Ontology-disabled deployments
+retain legacy processing until #530. The ontology maintenance worker processes
+resumable pages of at most 100 assignment-to-Relationship rows, independently
+of organization model budgets. Complete sources and memberships are stored;
+projection turns reuse the existing PostgreSQL team leases and global capacity
+without reserving model tokens. Reads use one scoped repeatable-read snapshot.
+Only final, dependency-validated projections become current. Each topic has a
+stable logical handle and independently versioned publication history. Current
+reads recheck dependency counters and shared-space generation before exposing
+summaries or counts, so unhealthy topics cannot hide healthy topics. Summaries
+use published definitions and deterministic descriptors without model calls.
+Topic membership neither establishes equivalence nor rolls up through parents
+or shared Entities. No canonical Knowledge state is written.
 
 ## Risk
 
@@ -85,3 +102,10 @@ regressions, local production E2E, full CI, and production-image E2E still apply
 Issue #243 records its separately approved historical 1k waiver and mandatory
 maintenance-path cohort, real PostgreSQL, write-latency, local E2E, and final-head
 full CI/E2E replacement checks. Later tickets retain their evaluation gates.
+
+Issue #245 records its separately approved historical 1k waiver, frozen
+nine-case/19-source organization cohort through publication and actual Recall,
+locked community judgments, source/fact preservation, zero false consolidation,
+no Bad@K increase, resumable coverage above 5,000 groups, real PostgreSQL
+isolation and races, and five paired Recall p95 measurements with at most 10%
+median regression. Local registered E2E and final-head full CI/E2E remain gates.

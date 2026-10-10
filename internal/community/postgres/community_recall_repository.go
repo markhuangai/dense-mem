@@ -16,7 +16,10 @@ func (r *Store) RecallCommunities(ctx context.Context, input CommunityRecallInpu
 		return nil, err
 	}
 	communities := []CommunityRecallRecord{}
-	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+	if r == nil || r.db == nil || r.rls == nil {
+		return nil, fmt.Errorf("community: database and RLS helper are required")
+	}
+	err := r.rls.WithTeamReadOnlyRepeatableTx(ctx, r.db, input.TeamID, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(communityRecallSQL, input.TeamID, input.Query,
 			pq.Array(input.ReturnedEvidenceIDs), pq.Array(input.KnownEvidenceIDs),
 			pq.Array(input.KnownRelationshipIDs), pq.Array(input.SeedRelationshipIDs),
@@ -261,6 +264,7 @@ var communityRecallSQL = `
 				  AND record.space_id = dense_mem_team_shared_space(record.team_id)
 				  AND record.space_generation = dense_mem_team_shared_generation(record.team_id)
 				  AND record.status = 'current'
+				  AND ` + communityRecordVisibilitySQL("record") + `
 				  AND (
 					  params.query = ''
 					  OR community_record_search_vector(record.summary, record.top_entities, record.top_predicates) @@ plainto_tsquery('simple', params.query)

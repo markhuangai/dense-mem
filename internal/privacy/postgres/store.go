@@ -66,7 +66,8 @@ var privateMemoryErasureManifest = []string{
 	"relationship_conflict_ai_assessment_events", "search_documents",
 	"evidence_conflict_cases", "evidence_conflict_positions", "evidence_conflict_events",
 	"community_snapshot_runs", "community_records", "community_memberships",
-	"community_sources", "community_summary_attempts", "dream_cycle_runs",
+	"community_sources", "community_summary_attempts", "community_topic_versions",
+	"community_topic_dependencies", "community_topic_work", "dream_cycle_runs",
 	"dream_path_evaluations", "dream_path_evaluation_run_links", "dream_evidence_target_attempts", "dream_evidence_target_evaluations",
 	"hypothesis_evidence_derivation_sources", "recall_feedback_events",
 }

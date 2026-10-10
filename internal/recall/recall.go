@@ -244,7 +244,7 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 				communityGroups[group] = struct{}{}
 			}
 			seedRelationshipIDs := relationshipSummaryIDs(relationships)
-			communities, paths, communityDegradation = s.recallCommunities(ctx, actor.TeamID.String(), req.RecallRequest, communityGroups, evidenceIDs, seedRelationshipIDs, coverageAvailable)
+			communities, paths, communityDegradation = s.recallCommunities(ctx, actor.TeamID.String(), req.RecallRequest, communityGroups, evidenceIDs, seedRelationshipIDs, coverageAvailable, req.organizationEnabled)
 		}
 	}
 	result.RelatedCommunities = communities
@@ -395,6 +395,7 @@ func (s *recallService) recallCommunities(
 	returnedEvidenceIDs []string,
 	seedRelationshipIDs []string,
 	coverageAvailable bool,
+	organizationEnabled bool,
 ) ([]RecallDiscoveryPath, []RecallDiscoveryPath, *RecallDegradationResult) {
 	communityLimit := recallOptionalLimitValue(req.CommunityLimit)
 	if communityLimit <= 0 || s.communities == nil || s.communityConfig == nil {
@@ -416,35 +417,52 @@ func (s *recallService) recallCommunities(
 	if !coverageAvailable {
 		return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community coverage was unavailable; direct relationship fallback was used")
 	}
-	if runRepo, ok := s.communities.(RecallCommunityRunRepository); ok {
-		latest, runErr := runRepo.LatestCommunityRun(ctx, teamID)
-		if runErr != nil {
-			return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community run status was unavailable; direct relationship fallback was used")
-		}
-		if latest != nil {
-			switch latest.Status {
-			case "failed", "cancelled":
-				return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_detection_failed", "community detection failed; direct relationship fallback was used")
-			case "too_large":
-				return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_graph_too_large", "community graph exceeded the configured bound; direct relationship fallback was used")
-			case "running":
-				return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community snapshot generation is in progress; direct relationship fallback was used")
+	var projectionDegradation *RecallDegradationResult
+	if organizationEnabled {
+		if repo, ok := s.communities.(interface {
+			TopicProjectionCoverage(context.Context, string) (communitycontract.TopicProjectionCoverage, error)
+		}); ok {
+			coverage, err := repo.TopicProjectionCoverage(ctx, teamID)
+			if err != nil {
+				projectionDegradation = communitySnapshotDegradation("community_projection_unavailable", "community projection coverage was unavailable; eligible current topics remain readable")
+			} else if !coverage.CoverageComplete {
+				projectionDegradation = communitySnapshotDegradation("community_projection_partial", "community topic coverage is incomplete; eligible current topics and direct retrieval remain available")
 			}
-			if latest.Status != "completed" || !communitySnapshotRunCompatible(latest) {
-				return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community snapshot metadata was incompatible; direct relationship fallback was used")
+		} else {
+			return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_projection_unavailable", "community topic projections were unavailable; direct retrieval remains available")
+		}
+	} else {
+		if runRepo, ok := s.communities.(RecallCommunityRunRepository); ok {
+			latest, runErr := runRepo.LatestCommunityRun(ctx, teamID)
+			if runErr != nil {
+				return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community run status was unavailable; direct relationship fallback was used")
+			}
+			if latest != nil {
+				switch latest.Status {
+				case "failed", "cancelled":
+					return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_detection_failed", "community detection failed; direct relationship fallback was used")
+				case "too_large":
+					return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_graph_too_large", "community graph exceeded the configured bound; direct relationship fallback was used")
+				case "running":
+					return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community snapshot generation is in progress; direct relationship fallback was used")
+				}
+				if latest.Status != "completed" || !communitySnapshotRunCompatible(latest) {
+					return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community snapshot metadata was incompatible; direct relationship fallback was used")
+				}
+			}
+		}
+		if staler, ok := s.communities.(interface {
+			RefreshCommunityStaleness(context.Context, communitycontract.CommunityStalenessInput) (int, error)
+		}); ok {
+			if staleCount, staleErr := staler.RefreshCommunityStaleness(ctx, communitycontract.CommunityStalenessInput{TeamID: teamID, Limit: 200}); staleErr != nil || staleCount > 0 {
+				return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation(
+					"community_snapshot_stale",
+					"community snapshot sources changed; direct relationship fallback was used",
+				)
 			}
 		}
 	}
-	if staler, ok := s.communities.(interface {
-		RefreshCommunityStaleness(context.Context, communitycontract.CommunityStalenessInput) (int, error)
-	}); ok {
-		if staleCount, staleErr := staler.RefreshCommunityStaleness(ctx, communitycontract.CommunityStalenessInput{TeamID: teamID, Limit: 200}); staleErr != nil || staleCount > 0 {
-			return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation(
-				"community_snapshot_stale",
-				"community snapshot sources changed; direct relationship fallback was used",
-			)
-		}
-	}
+
 	if snapshotRepo, ok := s.communities.(RecallCommunitySnapshotRepository); ok {
 		groups := make([]string, 0, len(excludedGroups))
 		for group := range excludedGroups {
@@ -462,7 +480,7 @@ func (s *recallService) recallCommunities(
 		if recallErr != nil {
 			return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community snapshot was unavailable; direct relationship fallback was used")
 		}
-		return recallCommunitiesFromRepository(records), []RecallDiscoveryPath{}, nil
+		return recallCommunitiesFromRepository(records), []RecallDiscoveryPath{}, projectionDegradation
 	}
 	// Transitional adapters remain usable for callers that only implement the
 	// old path reader; production wiring uses RecallCommunities above.

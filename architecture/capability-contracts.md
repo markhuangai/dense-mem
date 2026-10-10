@@ -21,8 +21,14 @@ inside their owning capability.
   assignments, equivalence compatibility, persistent override policy, seeding,
   and dependency fingerprints. `internal/ontology/postgres` owns active shared
   source reads and atomic append-only publications, revisions, and rollback.
-  It never writes canonical Knowledge. This foundation has no production
-  consumer, scheduler, provider, UI, or public transport.
+  It never writes canonical Knowledge. Its maintenance worker supplies bounded
+  topic-assignment readers through public contracts to the Community projection
+  service. Community owns resumable derived sources, membership, publication,
+  dependency freshness, deterministic summaries, and coverage. Composition
+  injects the readers; Community never imports the private ontology adapter.
+  Projection admission consumes the existing global ontology team-lease capacity
+  independently of organization model tokens; scoped Recall reads are repeatable.
+  Recall consumes independently eligible topics through existing Community ports.
 - `internal/knowledge/contract` and `internal/knowledge/postgres` own
   authoritative evidence, semantic, relationship, search-document, canonical
   projection, and reconciliation writes. The contract owns predicate identity,

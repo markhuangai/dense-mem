@@ -241,6 +241,7 @@ func TestCommunityStorePublishSnapshotSuccessAndErrors(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		db, mock := newCommunitySQLMockDB(t)
 		expectCommunityFenceWithArgs(mock, teamID, spaceID, 2)
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT value='true' FROM app_config WHERE key='ONTOLOGY_MAINTENANCE_ENABLED' FOR SHARE")).WillReturnRows(sqlmock.NewRows([]string{"enabled"}).AddRow(false))
 		expectCommunitySourceCheck(mock, false)
 		mock.ExpectExec(regexp.QuoteMeta("UPDATE community_records")).WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectExec(regexp.QuoteMeta("INSERT INTO community_records")).WillReturnResult(sqlmock.NewResult(0, 1))
@@ -255,6 +256,7 @@ func TestCommunityStorePublishSnapshotSuccessAndErrors(t *testing.T) {
 	t.Run("stale source", func(t *testing.T) {
 		db, mock := newCommunitySQLMockDB(t)
 		expectCommunityFenceWithArgs(mock, teamID, spaceID, 2)
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT value='true' FROM app_config WHERE key='ONTOLOGY_MAINTENANCE_ENABLED' FOR SHARE")).WillReturnRows(sqlmock.NewRows([]string{"enabled"}).AddRow(false))
 		expectCommunitySourceCheck(mock, true)
 		store := NewStore(db, communityPassthroughRLS{})
 		err := store.PublishCommunitySnapshot(context.Background(), validCommunityPublishInput(teamID, runID, communityID, relationshipID, profileID, entityID))
@@ -264,6 +266,7 @@ func TestCommunityStorePublishSnapshotSuccessAndErrors(t *testing.T) {
 	t.Run("source query error", func(t *testing.T) {
 		db, mock := newCommunitySQLMockDB(t)
 		expectCommunityFenceWithArgs(mock, teamID, spaceID, 2)
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT value='true' FROM app_config WHERE key='ONTOLOGY_MAINTENANCE_ENABLED' FOR SHARE")).WillReturnRows(sqlmock.NewRows([]string{"enabled"}).AddRow(false))
 		queryErr := errors.New("source check failed")
 		mock.ExpectQuery(regexp.QuoteMeta("WITH expected AS")).WillReturnError(queryErr)
 		store := NewStore(db, communityPassthroughRLS{})
@@ -274,6 +277,7 @@ func TestCommunityStorePublishSnapshotSuccessAndErrors(t *testing.T) {
 	t.Run("record insert error", func(t *testing.T) {
 		db, mock := newCommunitySQLMockDB(t)
 		expectCommunityFenceWithArgs(mock, teamID, spaceID, 2)
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT value='true' FROM app_config WHERE key='ONTOLOGY_MAINTENANCE_ENABLED' FOR SHARE")).WillReturnRows(sqlmock.NewRows([]string{"enabled"}).AddRow(false))
 		expectCommunitySourceCheck(mock, false)
 		mock.ExpectExec(regexp.QuoteMeta("UPDATE community_records")).WillReturnResult(sqlmock.NewResult(0, 1))
 		insertErr := errors.New("record insert failed")
@@ -286,6 +290,7 @@ func TestCommunityStorePublishSnapshotSuccessAndErrors(t *testing.T) {
 	t.Run("completion loses claim", func(t *testing.T) {
 		db, mock := newCommunitySQLMockDB(t)
 		expectCommunityFenceWithArgs(mock, teamID, spaceID, 2)
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT value='true' FROM app_config WHERE key='ONTOLOGY_MAINTENANCE_ENABLED' FOR SHARE")).WillReturnRows(sqlmock.NewRows([]string{"enabled"}).AddRow(false))
 		expectCommunitySourceCheck(mock, false)
 		mock.ExpectExec(regexp.QuoteMeta("UPDATE community_records")).WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectExec(regexp.QuoteMeta("INSERT INTO community_records")).WillReturnResult(sqlmock.NewResult(0, 1))

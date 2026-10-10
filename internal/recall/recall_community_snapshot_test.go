@@ -121,7 +121,7 @@ func TestRecallCommunitiesReportsTemporalDegradation(t *testing.T) {
 	records, paths, degradation := svc.recallCommunities(context.Background(), uuid.NewString(), RecallRequest{
 		CommunityLimit: &limit,
 		ValidAt:        &validAt,
-	}, map[string]struct{}{}, nil, nil, true)
+	}, map[string]struct{}{}, nil, nil, true, false)
 	require.Empty(t, records)
 	require.Empty(t, paths)
 	require.Equal(t, "community_temporal_not_supported", degradation.Code)
@@ -140,7 +140,7 @@ func TestRecallCommunitiesReportsTerminalRunStatuses(t *testing.T) {
 
 		records, paths, degradation := svc.recallCommunities(context.Background(), uuid.NewString(), RecallRequest{
 			CommunityLimit: &limit,
-		}, map[string]struct{}{}, nil, nil, true)
+		}, map[string]struct{}{}, nil, nil, true, false)
 		require.Empty(t, records)
 		require.Empty(t, paths)
 		require.NotNil(t, degradation)
@@ -164,7 +164,7 @@ func TestRecallCommunitiesRejectsIncompatibleCompletedSnapshot(t *testing.T) {
 
 	records, paths, degradation := svc.recallCommunities(context.Background(), uuid.NewString(), RecallRequest{
 		CommunityLimit: &limit,
-	}, map[string]struct{}{}, nil, nil, true)
+	}, map[string]struct{}{}, nil, nil, true, false)
 
 	require.Empty(t, records)
 	require.Empty(t, paths)

@@ -32,6 +32,7 @@ func (r *Store) ListCommunities(ctx context.Context, input CommunityListInput) (
 			  AND space_id = ?::uuid
 			  AND space_generation = ?
 			  AND status = ?
+			  AND (status<>'current' OR `+communityRecordVisibilitySQL("community_records")+`)
 			ORDER BY member_count DESC, community_id ASC
 			LIMIT ?
 		`, input.TeamID, fence.ID, fence.Generation, input.Status, input.Limit).Rows()
@@ -67,6 +68,7 @@ func (r *Store) CountCurrentCommunities(ctx context.Context, teamID string) (int
 			  AND space_id = ?::uuid
 			  AND space_generation = ?
 			  AND status = 'current'
+			  AND `+communityRecordVisibilitySQL("community_records")+`
 		`, teamID, fence.ID, fence.Generation).Scan(&count).Error
 	})
 	if err != nil {
@@ -96,6 +98,8 @@ func (r *Store) GetCommunity(ctx context.Context, input CommunityGetInput) (*Com
 			  AND space_id = ?::uuid
 			  AND space_generation = ?
 			  AND community_id = ?::uuid
+			  AND status <> 'building'
+			  AND (status<>'current' OR `+communityRecordVisibilitySQL("community_records")+`)
 		`, input.TeamID, fence.ID, fence.Generation, input.CommunityID).Rows()
 		if err != nil {
 			return err
@@ -138,6 +142,7 @@ func (r *Store) LatestCommunityRun(ctx context.Context, teamID string) (*Communi
 			WHERE team_id = ?::uuid
 			  AND space_id = ?::uuid
 			  AND space_generation = ?
+			  AND algorithm_kind<>'ontology_topic'
 			ORDER BY started_at DESC, run_id DESC
 			LIMIT 1
 		`, teamID, fence.ID, fence.Generation).Rows()
@@ -189,6 +194,7 @@ func (r *Store) ListCurrentCommunityLineage(ctx context.Context, teamID string) 
 			  AND record.space_id = ?::uuid
 			  AND record.space_generation = ?
 			  AND record.status = 'current'
+			  AND record.topic_id IS NULL
 			GROUP BY record.community_id, record.logical_community_id, record.updated_at,
 			         record.summary_input_hash, record.summary, record.summary_version,
 			         record.summary_provider_model, record.summary_prompt_hash, record.summary_response_hash

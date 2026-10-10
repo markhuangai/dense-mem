@@ -226,8 +226,12 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 
 func (s *Store) ReleaseMaintenanceTurn(ctx context.Context, turn ontology.MaintenanceTurn) error {
 	return s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
-		return tx.Exec(`UPDATE ontology_maintenance_teams SET lease_token=NULL,lease_until=NULL WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND lease_token=?::uuid`, turn.TeamID, turn.SpaceID, turn.Generation, turn.LeaseToken).Error
+		return releaseMaintenanceTurnTx(tx, turn)
 	})
+}
+
+func releaseMaintenanceTurnTx(tx *gorm.DB, turn ontology.MaintenanceTurn) error {
+	return tx.Exec(`UPDATE ontology_maintenance_teams SET lease_token=NULL,lease_until=NULL WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND lease_token=?::uuid`, turn.TeamID, turn.SpaceID, turn.Generation, turn.LeaseToken).Error
 }
 
 func checkMaintenanceTurn(tx *gorm.DB, turn ontology.MaintenanceTurn) error {
