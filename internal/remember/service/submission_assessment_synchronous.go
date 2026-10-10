@@ -50,6 +50,7 @@ type RememberAssessmentItem struct {
 // assessor. IDs are generated before provider work and reused by the final
 // durable commit.
 type RememberAssessmentSnapshot struct {
+	MaxEvidenceItems       int
 	Scope                  RememberAssessmentScope
 	Proposal               map[string]any
 	Evidence               []repository.EvidenceFragment

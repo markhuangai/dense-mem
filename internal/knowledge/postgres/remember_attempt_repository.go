@@ -952,7 +952,11 @@ func (r *Store) purgeRememberAttemptDiagnostics(ctx context.Context) (int, error
 		return deleted, err
 	}
 	invocationDeleted, err := drainExpiredRememberInvocationDiagnostics(ctx, r)
-	return deleted + invocationDeleted, err
+	if err != nil {
+		return deleted + invocationDeleted, err
+	}
+	sessionDeleted, err := r.purgeExpiredSessionDiagnostics(ctx)
+	return deleted + invocationDeleted + sessionDeleted, err
 }
 
 // ShutdownRememberAttemptDiagnosticPurger cancels the diagnostic retention

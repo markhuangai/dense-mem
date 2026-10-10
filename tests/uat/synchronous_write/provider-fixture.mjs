@@ -138,6 +138,49 @@ const server = createServer(async (request, response) => {
   sendJSON(response, 404, { error: { message: "fixture route not found" } });
 });
 
+function fixtureSessionExtraction(input) {
+  const core = input.window.core;
+  const segments = [input.window.before, ...core, input.window.after].filter(Boolean);
+  const result = { request_id: input.request_id, overflow: false, coverage: core.map((item) => item.ref), entities: [], relationships: [], security_signals: [] };
+  const byEvent = new Map();
+  for (const segment of segments) {
+    const list = byEvent.get(segment.event_index) || [];
+    list.push(segment); byEvent.set(segment.event_index, list);
+  }
+  const entities = new Map();
+  const entity = (name, kind) => {
+    const key = `${kind}:${name}`;
+    if (!entities.has(key)) {
+      const ref = `entity:${entities.size}`; entities.set(key, ref);
+      result.entities.push({ ref, name, entity_kind: kind });
+    }
+    return entities.get(key);
+  };
+  for (const parts of byEvent.values()) {
+    const text = parts.map((part) => part.text).join("");
+    const offset = parts[0].start;
+    for (const match of text.matchAll(/([\p{L}\d]+) (?:also )?uses ([\p{L}\d]+)\./gu)) {
+      const start = offset + Array.from(text.slice(0, match.index)).length;
+      const end = start + Array.from(match[0]).length;
+      if (!core.some((part) => part.event_index === parts[0].event_index && part.start < end && part.end > start)) continue;
+      const first = parts.find((part) => part.start <= start && part.end > start);
+      const last = parts.find((part) => part.start < end && part.end >= end);
+      if (!first || !last) continue;
+      result.relationships.push({ ref: `fact:${result.relationships.length}`, subject_ref: entity(match[1],"person"), predicate: "uses", object_ref: entity(match[2],"product"), object_value: null, polarity: "+", citations: [{ start_ref: first.ref, end_ref: last.ref }], known_evidence_ids: [], valid_from: null, valid_to: null });
+    }
+  }
+  return result;
+}
+function fixtureSessionLinking(input) {
+  const groups = new Map();
+  for (const entity of input.entities) {
+    const key = `${entity.entity_kind}:${entity.name}`;
+    if (!groups.has(key)) groups.set(key, { ref: `group:${groups.size}`, canonical_ref: entity.ref, members: [] });
+    groups.get(key).members.push(entity.ref);
+  }
+  return { request_id: input.request_id, groups: [...groups.values()] };
+}
+
 function assessmentInput(payload) {
   const messages = Array.isArray(payload.messages) ? payload.messages : [];
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -154,6 +197,8 @@ function assessmentInput(payload) {
 
 function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
   const schemaName = payload.response_format?.json_schema?.name;
+  if (schemaName === "dense_mem_session_extraction_v1") return fixtureSessionExtraction(structuredInput(payload, (input) => input.window));
+  if (schemaName === "dense_mem_session_linking_v1") return fixtureSessionLinking(structuredInput(payload, (input) => Array.isArray(input.entities)));
   if (schemaName === "community_summary") return fixtureCommunitySummary(payload);
   if (schemaName === "dense_mem_dream_generation_response") return fixtureDreamGeneration(payload);
   if (schemaName === "ontology_organization_v1") return fixtureOntologyOrganization(payload);

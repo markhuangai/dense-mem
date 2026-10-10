@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "cohort": "session_ingest_v1",
+  "issue": 218,
+  "source": "repository-owned deterministic synthetic user events",
+  "quality_cases": 32,
+  "remember_controls": 12,
+  "real_provider_repetitions": 3,
+  "groups": {
+    "short": 8,
+    "long": 8,
+    "incremental": 8,
+    "semantics": 8
+  },
+  "minimum_long_event_characters": 32000,
+  "minimum_long_batch_characters": 128000,
+  "gates": {
+    "fact_precision_minimum": 0.98,
+    "fact_recall_minimum": 0.95,
+    "exact_provenance_required": true,
+    "designated_boundary_facts_required": true,
+    "isolation_failures_maximum": 0,
+    "processing_seconds_maximum": 180,
+    "remember_expected_results_preserved": true
+  },
+  "reports": [
+    "latency_percentiles",
+    "structured_provider_turns",
+    "input_tokens",
+    "output_tokens",
+    "remember_base_candidate_comparison"
+  ],
+  "artifacts": "ignored local paths only",
+  "generator": "tests/eval/scripts/generate_session_ingest_v1.py",
+  "generator_sha256": "3d8dacacd486fcc576df0109ce84904cc11210853c9149286d54473b679e7048",
+  "remember_control_sources": {
+    "tests/uat/synchronous_write/cases/remember.mjs": "d23b14f78bf0711b29e35617ebb1116e5025ff139ac4c96934d13fbfb217a62e",
+    "internal/tools/registry/contract_relationship_submission_test.go": "afc4b6ca669091348916181800c39bbe453fcf34cbc39bafa46adff836af17de"
+  }
+}

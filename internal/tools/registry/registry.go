@@ -32,6 +32,7 @@ type Tool struct {
 	FeatureGate    string
 	Visibility     string
 	Invoke         ToolInvoker
+	Available      func(context.Context) bool
 }
 
 // Registry holds a set of Tools and answers register/list/get queries.

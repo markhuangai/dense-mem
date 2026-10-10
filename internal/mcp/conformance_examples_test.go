@@ -21,6 +21,9 @@ func testConformanceToolExamples(t *testing.T) {
 	for _, tool := range registry.ContractTools() {
 		tool := tool
 		tool.Visibility = "active"
+		if tool.Name == registry.ToolIngestSession {
+			tool.Available = func(context.Context) bool { return true }
+		}
 		tool.Invoke = func(context.Context, string, map[string]any) (map[string]any, error) {
 			invocations[tool.Name]++
 			return map[string]any{}, nil

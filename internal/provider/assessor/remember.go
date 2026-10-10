@@ -175,7 +175,7 @@ func (v *OpenAIAssessor) boundRepairHistory(messages []openAIVerifierMessage) ([
 		v.model,
 		assessor.SemanticAssessmentSchemaName,
 		messages,
-		assessor.SemanticAssessmentResponseSchema(),
+		assessor.SemanticAssessmentResponseSchemaWithLimits(v.assessmentLimits),
 		v.disableTemperature,
 		v.assessmentLimits.Tokenizer,
 	)
@@ -196,7 +196,7 @@ func (v *OpenAIAssessor) boundRepairHistory(messages []openAIVerifierMessage) ([
 			v.model,
 			assessor.SemanticAssessmentSchemaName,
 			candidate,
-			assessor.SemanticAssessmentResponseSchema(),
+			assessor.SemanticAssessmentResponseSchemaWithLimits(v.assessmentLimits),
 			v.disableTemperature,
 			v.assessmentLimits.Tokenizer,
 		)
@@ -225,7 +225,7 @@ func (v *OpenAIAssessor) runRememberAssessmentTurn(
 		v.model,
 		assessor.SemanticAssessmentSchemaName,
 		messages,
-		assessor.SemanticAssessmentResponseSchema(),
+		assessor.SemanticAssessmentResponseSchemaWithLimits(v.assessmentLimits),
 		v.disableTemperature,
 		v.assessmentLimits.Tokenizer,
 	)
@@ -274,7 +274,7 @@ func (v *OpenAIAssessor) runRememberAssessmentTurn(
 		ctx,
 		v.model,
 		assessor.SemanticAssessmentSchemaName,
-		assessor.SemanticAssessmentResponseSchema(),
+		assessor.SemanticAssessmentResponseSchemaWithLimits(v.assessmentLimits),
 		messages,
 	)
 	if err != nil {

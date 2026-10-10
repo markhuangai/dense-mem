@@ -38,6 +38,11 @@ type ExchangeRecorder interface {
 	RecordProviderExchange(context.Context, ProviderExchange)
 }
 
+type SnapshotRecorder interface {
+	ExchangeRecorder
+	Snapshot() []ProviderExchange
+}
+
 type exchangeRecorderContextKey struct{}
 
 func WithExchangeRecorder(ctx context.Context, recorder ExchangeRecorder) context.Context {
