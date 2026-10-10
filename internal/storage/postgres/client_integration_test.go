@@ -145,7 +145,7 @@ func TestMigratorRunUp(t *testing.T) {
 	`).Scan(&retirementApplied))
 	assert.False(t, retirementApplied, "destructive retirement must require its explicit maintenance runner")
 	require.NoError(t, ValidateStartupMigrationState(ctx, sqlDB, getMigrationsDir()))
-	for _, indexName := range []string{"community_records_current_logical_unique", "community_sources_group_idx", "community_sources_community_idx"} {
+	for _, indexName := range []string{"community_records_scoped_logical_unique", "community_sources_group_idx", "community_sources_community_idx"} {
 		assert.True(t, indexExists(t, ctx, sqlDB, indexName), "migration index %s should exist", indexName)
 	}
 	assert.False(t, indexExists(t, ctx, sqlDB, "idx_credentials_owner_team_active_unique"), "SSO credential ownership must not remain singleton")
