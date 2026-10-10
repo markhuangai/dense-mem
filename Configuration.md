@@ -1,5 +1,7 @@
 # Configuration
 
+> Publication pending: issue #218 branch. Publish after the code PR is merged and session ingestion passes against the exact merged-main commit.
+
 Dense-Mem loads startup configuration from environment variables and validated
 runtime policy from PostgreSQL. This page distinguishes application defaults
 from values supplied by Compose examples.
@@ -288,3 +290,11 @@ out of logs and support bundles.
 URLs cannot contain embedded credentials, query parameters, or fragments. Header files contain at most 16 HTTP headers within 8 KiB; values never appear in configuration serialization, exporter payloads, or diagnostics. Mount each file explicitly in the deployment. Operational credential protection includes those values and supported authentication forms. Do not put credentials in destination URLs or commit header files.
 
 Trace queues are 2,048 spans with batches of 512. Export/shutdown deadlines are five seconds and metric exports run every 60 seconds. Audit pages default to 100 events and cap at 1,000 events and 1 MiB; diagnostic JSON is capped at 1 MiB. Both downloads have five-second execution/write bounds. These bounds are fixed in this release.
+
+## Private Session Ingestion
+
+`SESSION_INGEST_ENABLED` is a startup boolean, default `false`. The base Compose example forwards it. Restart the server after changing it. Enable only after deploying the session migration and matching private-erasure manifest together, with old instances stopped.
+
+The capability reuses the configured verifier endpoint/key, Remember model, tokenizer, shared provider concurrency gate and embedding provider. Missing required provider configuration keeps the tool unavailable. Discovery and invocation also require write scope and an active authenticated private binding. It adds no separate configuration framework or runtime control endpoint.
+
+Disabling the flag stops new session calls while preserving compatible durable history. A populated intake migration refuses destructive rollback. See [Write Pipeline](Write-Pipeline#private-session-intake).

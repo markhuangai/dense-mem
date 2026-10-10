@@ -1,6 +1,8 @@
 # Using Dense-Mem
 
-Dense-Mem is an MCP memory service. The client submits exact evidence and optional logical Relationship proposals.
+> Publication pending: issue #218 branch. Publish after the code PR is merged and session ingestion passes against the exact merged-main commit.
+
+Dense-Mem is an MCP memory service. The client submits exact evidence and required logical Relationship proposals through Remember.
 The server validates the complete request and returns the result of the write
 in the same call.
 
@@ -53,9 +55,9 @@ outcome. New source material belongs in a new complete request.
 
 ## Evidence First
 
-Submit exact source material. Optional Relationship proposals express the
+Submit exact source material. Required Relationship proposals express the
 connections you want assessed; each cites its supporting `evidence_indices`.
-They need not cover every evidence item. This example includes one proposal:
+Together they must cite every evidence item. This example includes one proposal:
 
 ~~~json
 {
@@ -251,3 +253,9 @@ does not grant mutation of another owner's records. Use a read-only key for auto
 | Client guesses a correction candidate | Use only returned candidates when confirmation is requested. |
 | Client retries a malicious payload | Reject it at write time and do not use a quarantine-release action. |
 | Client needs proof | Trace the Relationship’s evidence and decision history. |
+
+## Save a Private Session
+
+An enabled private client can save original user events with `ingest_session`. Send new events as the conversation grows; long text is segmented by the server. Retain stable event IDs and exact content. Repeated identical events are duplicates. A completed no-fact event is saved raw without searchable knowledge.
+
+Keep the complete request and operation key until its terminal result is known. Retry failures only as directed, with that unchanged request. Do not rotate keys to bypass an unfinished event. Session ingestion never shares private knowledge automatically. See [Technical Reference](Technical-Reference#ingest-session) for the request example and limits.

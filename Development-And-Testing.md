@@ -1,5 +1,7 @@
 # Development And Testing
 
+> Publication pending: issue #218 branch. Publish after the code PR is merged and session ingestion passes against the exact merged-main commit.
+
 The repository uses Go 1.26, Echo, GORM/pgx, goose, pgvector, and optional Redis.
 The browser applications use React/Vite, Vitest, and Playwright. The MCP proxy
 has its own Node package and tests.
@@ -172,3 +174,13 @@ The separately required ontology maintenance write-latency check runs in GitHub-
 Keep raw runs and configuration in ignored task-owned paths and commit compact evidence with exact source/image/fixture identities. Inspect the independent plan-audit receipt before running implementation tests. A final-head full production-image E2E pass remains a merge gate; focused local results do not replace it.
 
 PR [#547](https://github.com/markhuangai/dense-mem/pull/547) merged as `8aae241000f629c832d4d3dbfaa84895f04ae6d6`. [Remote validation run 37932480780](https://github.com/markhuangai/dense-mem/actions/runs/37932480780) passed all 529 registered PostgreSQL cases and all 26 production scenarios at `bbd3c4645abcd2743ff996c604ceba4cf3568356`; the merged commit has the same Git tree. The required remote latency benchmark passed all five pairs, with a largest logged increase of 0.704 ms. This is validation of the tested source tree; a separate production E2E run against the merge SHA has not been performed.
+
+## Session Intake Verification
+
+Issue [#218](https://github.com/markhuangai/dense-mem/issues/218) records the approved historical deterministic-1k waiver and its replacement gates. The frozen `session_ingest_v1` source lock and generator define 32 quality cases and twelve existing Remember payload controls. Require three fresh real-provider quality repetitions, precision at least 98% and recall at least 95% in each, complete exact-provenance/boundary/isolation checks, completion within 180 seconds, and latency/token reporting. Compare all twelve Remember controls on the recorded base and candidate. Chat input/output token usage must be provider-reported. Record missing embedding token usage explicitly as unavailable, without estimated counts or a combined total; this measurement clarification is maintainer-approved in #218.
+
+Before implementation tests, the approved workflow requires an independent plan audit. After conformance, run the focused session/Remember/assessor/registry/server suites, real PostgreSQL knowledge/privacy/trace suites, migration immutability and repository CI. The registered production scenarios are `session_ingest`, `synchronous_write`, `synchronous_write_primitives`, `submission_terminal_errors`, `mcp_boundaries`, `credential_memory_binding`, `space_aware_recall` and `private_memory_erasure`. The final PR commit still requires full-matrix production-image E2E.
+
+Generators, source locks, scoring and compact evidence belong in Git. Generated cohorts, runtime databases, credentials and run outputs stay ignored. The quality runner and provider accounting proxy live under `tests/eval/scripts`; provider usage must be present and no fixture provider qualifies. See the repository evaluation README for invocation and isolated-stack requirements.
+
+Keep #218 open until code is merged, these wiki changes are published, and `session_ingest` passes against the exact merged-main SHA.

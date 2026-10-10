@@ -1,5 +1,7 @@
 # MCP Clients
 
+> Publication pending: issue #218 branch. Publish after the code PR is merged and session ingestion passes against the exact merged-main commit.
+
 Dense-Mem exposes MCP Streamable HTTP:
 
 ~~~text
@@ -157,3 +159,9 @@ authenticated registry. Unknown protocol revisions, malformed JSON, unsupported
 content types, missing scopes, and cancellation are covered by transport tests.
 Configure proxies to preserve headers and streaming semantics and allow the
 server's bounded synchronous calls to complete.
+
+## Session Adapters
+
+When discovery exposes `ingest_session`, a framework adapter may send incremental original user-authored events. Keep stable event IDs, exact text, original timestamps and the complete request with its retained idempotency key. Dense-Mem owns chunking and extraction. Exclude assistant-generated retrieval context and system instructions from submitted user events. Inspect terminal processing/search states and Relationship dispositions before claiming that knowledge is searchable.
+
+The authenticated private binding fixes authorization. External `user_id` and `session_id` values are provenance only. A shared-only client continues using Remember with required client proposals. See [Technical Reference](Technical-Reference#ingest-session) and [Write Pipeline](Write-Pipeline#private-session-intake).

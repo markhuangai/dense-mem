@@ -1,6 +1,8 @@
 # Memory Write Pipeline
 
-Remember accepts exact evidence and optional Relationship proposals. It returns
+> Publication pending: issue #218 branch. Publish after the code PR is merged and session ingestion passes against the exact merged-main commit.
+
+Remember accepts exact evidence and required client Relationship proposals. It returns
 a terminal result in the originating MCP call. The server owns authentication,
 grounding validation, canonical identity, lifecycle, and the atomic commit.
 
@@ -32,10 +34,9 @@ knowledge. The server does not acknowledge an unfinished write as success.
 ## Client Submission Contract
 
 A request contains evidence and one top-level `idempotency_key`.
-`relationships` may be omitted or empty. Each supplied proposal has a unique
+`relationships` must be nonempty. Each supplied proposal has a unique
 request-local `ref`, subject, predicate, exactly one Entity or typed Value
-object, polarity, and nonempty `evidence_indices`. Proposals need not cover
-every submitted evidence item.
+object, polarity, and nonempty `evidence_indices`. At least one proposal must cite every submitted evidence item.
 
 The client supplies logical names and values. The server owns exact spans and
 canonical IDs. A supplied `known_entity_id` or `known_predicate_key` is an
@@ -189,3 +190,15 @@ See [Recall Ranking](Recall-Ranking).
 The processor tests and Knowledge PostgreSQL integration cases exercise
 provider failures, duplicate decisions, retryability, atomicity, source races,
 and isolation through their owning packages.
+
+## Private Session Intake
+
+Session intake preserves raw events and processing intent in one private RLS transaction before provider work. Dense-Mem builds bounded overlapping windows, validates complete extraction responses, and links draft Entity references without changing proposed facts. Earlier completed events are same-session context, never new evidence. Every accepted Relationship requires a current-event citation.
+
+All validated proposals are assessed together through the existing Remember grounding, identity, lifecycle and embedding owners. One final transaction commits accepted evidence, canonical effects, current search projections, exact event provenance and the successful session receipt. Any required extraction, assessment, embedding or commit failure produces zero new semantic knowledge for that request. Raw events and validated extraction checkpoints remain available for unchanged-request recovery. Unsupported proposals retain explicit `not_stored` dispositions.
+
+Processing is serialized per private session with bounded PostgreSQL advisory locking outside semantic transactions. Commit rechecks generation, ownership, evidence and embedding fences. Private erasure covers raw requests/events, checkpoints, receipts and protected diagnostics. Diagnostics expire after seven days unless held; legal holds and erasure use the existing space-locking boundary.
+
+Disable new intake to roll back behavior while retaining compatible schema and history. Deploy the intake migration and matching private-erasure manifest together with old instances stopped; populated intake history cannot be rolled back by dropping tables.
+
+See [Technical Reference](Technical-Reference#ingest-session) for the exact request and recovery rules.

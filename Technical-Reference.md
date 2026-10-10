@@ -1,6 +1,8 @@
 # Technical Reference
 
-The current memory contract is `dense-mem.v2.6.3`.
+> Publication pending: issue #218 branch. Publish after the code PR is merged and session ingestion passes against the exact merged-main commit.
+
+The current memory contract is `dense-mem.v2.6.8`.
 
 This page defines the current public memory contract. MCP discovery is
 the authoritative source for the exact schema visible to an authenticated
@@ -18,8 +20,8 @@ memory API.
 ## Contract Principles
 
 1. Remember requires exact evidence and one top-level idempotency key.
-   Relationship proposals are optional; each supplied proposal cites submitted
-   evidence. Exact grounding belongs to the server and assessor.
+   Relationship proposals are required; every submitted evidence item must be
+   cited by at least one proposal. Exact grounding belongs to the server and assessor.
 2. The server, not the client or assessor, owns canonical IDs, predicate
    registration, support, lifecycle state, status, and durable commits.
 3. The originating Remember call runs assessment, planning, required embedding,
@@ -45,6 +47,7 @@ role, and scope. Discovery and invocation apply the same checks.
 
 | Tool | Scope | Used by | Registration | Capability |
 | --- | --- | --- | --- | --- |
+| ingest_session | write | Production | Conditional in both images | Stage exact private user events, extract proposals internally, and atomically complete the whole request. |
 | remember | write | Production and harness | Both images | Assess, embed, and atomically commit exact evidence plus logical Relationship proposals and their supporting evidence indexes. The harness imports corpus rows through this production path. |
 | retract_evidence | write | Production | Both images | Retract caller-owned current evidence while preserving append-only provenance. |
 | correct_relationship | write | Production | Both images | Replace one caller-owned active supported Relationship, supersede the original, and retain support lineage. |
@@ -146,8 +149,8 @@ ports; composition supplies providers and private PostgreSQL adapters.
 ### Request
 
 `remember` accepts one to twenty evidence items, each containing at most 999
-Unicode code points, and up to 200 optional Relationship proposals. The
-`relationships` field may be omitted or empty. A safe evidence item can be
+Unicode code points, and one to 200 required Relationship proposals.
+Every evidence item must be cited by at least one proposal. A safe evidence item can be
 stored and indexed without a Relationship proposal or accepted split.
 
 ~~~json
@@ -180,7 +183,7 @@ stored and indexed without a Relationship proposal or accepted split.
 ~~~
 
 Each Relationship has a unique request-local `ref` and one to twenty unique,
-in-range `evidence_indices`. They need not cover every submitted evidence item. A Relationship `object` has exactly one of `entity` or
+in-range `evidence_indices`. Together they must cover every submitted evidence item. A Relationship `object` has exactly one of `entity` or
 typed `value`, never both.
 
 `remember` rejects caller `span`, `surface`, and Relationship `supports` fields.
@@ -521,3 +524,42 @@ and database failures stay distinguishable.
 Protocol negotiation and client configuration are documented in
 [MCP Clients](MCP-Clients). Source contracts and validated request examples live
 in [the registry](https://github.com/markhuangai/dense-mem/tree/main/internal/tools/registry).
+
+## Ingest Session
+
+`ingest_session` is visible and callable only with write scope, an active authenticated profile-private or credential-private binding, configured extraction and embedding providers, and `SESSION_INGEST_ENABLED=true`. The startup flag defaults to false. A shared-only credential cannot call it. Framework, application, external user and session identifiers are provenance; they never choose team, profile or memory space.
+
+Send original user-authored events; adapters do not chunk text or extract proposals:
+
+```json
+{
+  "idempotency_key": "notes-session-save-1",
+  "framework": "generic",
+  "app_name": "notes",
+  "user_id": "external-user-42",
+  "session_id": "conversation-7",
+  "events": [
+    {"event_id": "turn-1", "text": "Ari uses Go.", "occurred_at": "2026-10-10T12:00:00Z"}
+  ]
+}
+```
+
+Objects reject unknown fields. A call contains 1–20 events. Keep each original text and optional RFC3339 timestamp exact. Event identity combines the authenticated private space and framework/application/user/session/event identifiers. Identical repeats are duplicates; changing text or timestamp under an existing event ID returns `session_event_conflict` before staging any of the batch.
+
+The terminal result includes `submission_id`, accepted and duplicate event counts, `processing_state`, `search_state`, per-event evidence IDs, Relationship dispositions, and bounded errors. `accepted_event_count` reports durable raw staging, not searchable knowledge. Only `processing_state=completed` with `search_state=current` reports current searchable knowledge. No-fact events complete with `search_state=not_required`.
+
+Keep the whole original request and retained key. Completed calls replay their original receipt. A retryable failure resumes only with the unchanged original request; an overlapping event under another key returns `session_event_retry_required`. Later incremental calls use a new key and new events. There is no polling API or automatic promotion to shared memory.
+
+| Processing boundary | Limit |
+| --- | --- |
+| Events per request | 20 |
+| Exact source segments | 512 Unicode code points, preferring a nearby newline |
+| Extraction windows | 8, with up to 8,192 source-text tokens each |
+| Boundary context | One neighboring segment on each side |
+| Earlier completed session context | 10 events and 2,048 tokens |
+| Concurrent windows | 4, subject to the shared provider gate |
+| Extraction/linking | 32,768 input tokens, 8,192 output tokens, 3 complete attempts |
+| Combined assessment | 100 excerpts, 400 Entities, 200 Relationships, measured token bounds |
+| Total processing | Existing 180-second write budget |
+
+The existing MCP body limit also applies. These processing limits do not impose Remember's 999-character input limit on raw events. Oversized work returns an explicit budget error; text is never silently truncated. Authorized `trace_memory` evidence includes verified `session` provenance and original Unicode `span_start`/`span_end` positions. Trace content remains bounded and reports truncation.
