@@ -32,9 +32,21 @@
   ],
   "artifacts": "ignored local paths only",
   "generator": "tests/eval/scripts/generate_session_ingest_v1.py",
-  "generator_sha256": "3d8dacacd486fcc576df0109ce84904cc11210853c9149286d54473b679e7048",
+  "generator_sha256": "62db06cc44abebf9eb8a59b5e618af10e54382be79a192b0c4f3f5a046dbfb35",
   "remember_control_sources": {
     "tests/uat/synchronous_write/cases/remember.mjs": "d23b14f78bf0711b29e35617ebb1116e5025ff139ac4c96934d13fbfb217a62e",
     "internal/tools/registry/contract_relationship_submission_test.go": "afc4b6ca669091348916181800c39bbe453fcf34cbc39bafa46adff836af17de"
+  },
+  "cohort_sha256": "917b4fffba51e15eeb2f7a94298cb62b0a92bd6b9a0cf81e2371463ae5d40560",
+  "approved_control_correction": {
+    "issue": 218,
+    "control": "mixed-objects",
+    "original_cohort_sha256": "c3a85e0984cb93e5d1c34cbd636a2a182ad21ff7285518d11f0c664a9f5c70af",
+    "original_proposed_key": "stores_memory_in_mixed_objects_entity_frozen",
+    "known_predicate_key": "primary_database",
+    "approval": "Correct this control and rerun base/candidate (Recommended)",
+    "quality_cases_unchanged": true,
+    "other_controls_unchanged": true,
+    "scorer_and_thresholds_unchanged": true
   }
 }

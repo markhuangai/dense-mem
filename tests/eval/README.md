@@ -604,6 +604,12 @@ provider omits usage, the report explicitly counts those calls under
 token total. This measurement clarification was approved for #218; quality,
 provenance, isolation and deadline requirements remain unchanged.
 
+The maintainer approved correcting the mixed-object Remember control to submit
+the registered `primary_database` as `known_predicate_key` and require that exact
+result. Its original proposed key was non-authoritative and valid normalization
+failed the exact-key scorer on both base and candidate. The other eleven controls,
+five typed-value facts, all 32 quality cases, scoring and deadlines are unchanged.
+
 ```bash
 node tests/eval/scripts/run_session_ingest_v1.mjs remember tmp/session-ingest/cohort.json tmp/session-ingest/base.json
 node tests/eval/scripts/run_session_ingest_v1.mjs remember tmp/session-ingest/cohort.json tmp/session-ingest/candidate.json

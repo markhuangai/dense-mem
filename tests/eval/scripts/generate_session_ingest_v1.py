@@ -129,9 +129,9 @@ def remember_controls():
     ]
     mixed = {"evidence": [{"content": f"{subject} stores its durable memory in {database}. [fixture:mixed-objects-entity]", "source_type": "manual"}],
              "relationships": [{"ref": "entity-object", "subject": {"name": subject, "entity_kind": "project"},
-                                "predicate": {"proposed_key": "stores_memory_in_mixed_objects_entity_frozen"},
+                                "predicate": {"known_predicate_key": "primary_database"},
                                 "object": {"entity": {"name": database, "entity_kind": "product"}}, "polarity": "+", "evidence_indices": [0]}]}
-    mixed_expected = [{"subject": subject, "predicate": "stores_memory_in_mixed_objects_entity_frozen", "object": database, "polarity": "+"}]
+    mixed_expected = [{"subject": subject, "predicate": "primary_database", "object": database, "polarity": "+"}]
     for index, value in enumerate(values):
         scalar = str(value["value"]).lower() if isinstance(value["value"], bool) else str(value["value"])
         predicate = "mixed_objects_" + value["type"] + "_frozen"
