@@ -955,7 +955,7 @@ func (r *Store) purgeRememberAttemptDiagnostics(ctx context.Context) (int, error
 	if err != nil {
 		return deleted + invocationDeleted, err
 	}
-	sessionDeleted, err := r.purgeExpiredSessionDiagnostics(ctx)
+	sessionDeleted, err := r.drainExpiredSessionDiagnostics(ctx)
 	return deleted + invocationDeleted + sessionDeleted, err
 }
 

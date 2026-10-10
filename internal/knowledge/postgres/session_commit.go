@@ -14,6 +14,10 @@ func (r *Store) CommitSession(ctx context.Context, scope session.Scope, id strin
 	if result.ProcessingState != "completed" || result.SubmissionID != id {
 		return nil, session.ErrInvalidInput
 	}
+	result.Events = append([]session.EventResult(nil), result.Events...)
+	for index := range result.Events {
+		result.Events[index].EvidenceIDs = append([]string{}, result.Events[index].EvidenceIDs...)
+	}
 	err := r.withTeamProfileTx(ctx, scope.TeamID, scope.OwnerProfileID, func(tx *gorm.DB) error {
 		if err := sessionSpaceFence(ctx, tx, scope); err != nil {
 			return err

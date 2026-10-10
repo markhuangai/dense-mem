@@ -250,7 +250,7 @@ func loadPriorSessionEvents(ctx context.Context, tx *gorm.DB, scope session.Scop
 		SELECT body::text, result::text FROM session_events
 		WHERE team_id = ?::uuid AND space_id = ?::uuid AND owner_profile_id = ?::uuid AND space_generation = ?
 		 AND framework = ? AND app_name = ? AND user_id = ? AND session_id = ? AND result IS NOT NULL
-		ORDER BY created_at DESC, identity_hash DESC LIMIT ?
+		ORDER BY created_at DESC, event_index DESC LIMIT ?
 	`, scope.TeamID, scope.SpaceID, scope.OwnerProfileID, scope.SpaceGeneration,
 		req.Framework, req.AppName, req.UserID, req.SessionID, session.ContextEvents).Rows()
 	if err != nil {

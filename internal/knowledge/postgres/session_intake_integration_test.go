@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -85,6 +86,45 @@ func TestSessionIntakeExactReplayAndMixedConflictAreAtomic(t *testing.T) {
 	require.NoError(t, err)
 	_, err = store.StageSession(ctx, changed)
 	require.ErrorIs(t, err, session.ErrRequestConflict)
+
+	ordered := intake
+	ordered.Request.IdempotencyKey = "ordered-batch"
+	ordered.Request.SessionID = "ordered-history"
+	ordered.Request.Events = []session.Event{}
+	for index := 0; index < 12; index++ {
+		ordered.Request.Events = append(ordered.Request.Events, session.Event{EventID: fmt.Sprintf("ordered-%d", index), Text: fmt.Sprintf("User turn %d.", index)})
+	}
+	sort.Slice(ordered.Request.Events, func(i, j int) bool {
+		return session.IdentityHash(ordered.Request, ordered.Request.Events[i].EventID) > session.IdentityHash(ordered.Request, ordered.Request.Events[j].EventID)
+	})
+	ordered.RequestHash, err = sessionservice.RequestHash(ordered.Request)
+	require.NoError(t, err)
+	ordered.Windows, err = sessionservice.BuildWindows(ordered.Request, "o200k_base")
+	require.NoError(t, err)
+	batch, err := store.StageSession(ctx, ordered)
+	require.NoError(t, err)
+	for _, window := range batch.Intake.Windows {
+		require.NoError(t, store.SaveSessionExtraction(ctx, ordered.Scope, batch.ID, window.Index, json.RawMessage(`{}`)))
+	}
+	terminal := session.Result{SubmissionID: batch.ID, AcceptedEventCount: 12, ProcessingState: "completed", SearchState: "not_required", Events: []session.EventResult{}}
+	for _, event := range ordered.Request.Events {
+		terminal.Events = append(terminal.Events, session.EventResult{EventID: event.EventID, Disposition: "accepted", ProcessingState: "completed", EvidenceIDs: []string{}})
+	}
+	_, err = store.CommitSession(ctx, ordered.Scope, batch.ID, nil, terminal)
+	require.NoError(t, err)
+	next := ordered
+	next.Request.IdempotencyKey = "after-ordered-batch"
+	next.Request.Events = []session.Event{{EventID: "after-batch", Text: "This remains my preference."}}
+	next.RequestHash, err = sessionservice.RequestHash(next.Request)
+	require.NoError(t, err)
+	next.Windows, err = sessionservice.BuildWindows(next.Request, "o200k_base")
+	require.NoError(t, err)
+	following, err := store.StageSession(ctx, next)
+	require.NoError(t, err)
+	require.Len(t, following.Prior, session.ContextEvents)
+	for index, event := range following.Prior {
+		require.Equal(t, ordered.Request.Events[len(ordered.Request.Events)-1-index], event.Event)
+	}
 }
 
 func TestSessionPrivateRLSAndGenerationFence(t *testing.T) {

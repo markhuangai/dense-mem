@@ -46,21 +46,34 @@ func TestSessionReceiptFailureRollsBackKnowledgeAndRecoversOriginalIntake(t *tes
 	require.NoError(t, err)
 	prepared := &session.Prepared{Commit: input, Embeddings: ownerEmbeddings(plan, false)}
 	result := session.Result{ContractVersion: domain.ContractVersion, SubmissionID: submission.ID, SubmissionKind: "session_ingest", CorrelationID: "fixture", AcceptedEventCount: 1, ProcessingState: "completed", SearchState: "not_required", Events: []session.EventResult{{EventID: "one", Disposition: "accepted", ProcessingState: "completed", EvidenceIDs: []string{}}}, RelationshipResults: []SubmissionRelationshipResult{}, Errors: []session.Error{}}
+	originalResult, err := json.Marshal(result)
+	require.NoError(t, err)
 	require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
 		return tx.Exec(`
-		CREATE FUNCTION session_test_receipt_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced receipt failure'; END $$;
+		CREATE FUNCTION session_test_receipt_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.body->>'processing_state' = 'completed' THEN RAISE EXCEPTION 'forced receipt failure'; END IF; RETURN NEW; END $$;
 		CREATE TRIGGER session_test_receipt_failure BEFORE INSERT ON session_submission_receipts FOR EACH ROW EXECUTE FUNCTION session_test_receipt_failure();
 	`).Error
 	}))
 	_, err = store.CommitSession(ctx, intake.Scope, submission.ID, prepared, result)
 	require.ErrorContains(t, err, "forced receipt failure")
+	afterFailure, err := json.Marshal(result)
+	require.NoError(t, err)
+	require.JSONEq(t, string(originalResult), string(afterFailure))
 	for _, table := range []string{"knowledge_ingests", "evidence_fragments", "search_documents", "remember_attempts"} {
 		require.Zero(t, ownerCount(t, admin, rls, table, team, submission.ID), table)
 	}
+	failure := result
+	failure.ProcessingState = "failed"
+	failure.Events = append([]session.EventResult(nil), result.Events...)
+	failure.Events[0].ProcessingState = "failed"
+	failure.Errors = []session.Error{{Code: "database_failure", Retryable: true, NextAction: "retry_same_request"}}
+	require.NoError(t, store.RecordSessionFailure(ctx, intake.Scope, submission.ID, failure))
 	replayed, err := store.StageSession(ctx, intake)
 	require.NoError(t, err)
 	require.Equal(t, submission.ID, replayed.ID)
 	require.Len(t, replayed.Extractions, 1)
+	require.Equal(t, "failed", replayed.Result.ProcessingState)
+	require.Empty(t, replayed.Result.Events[0].EvidenceIDs)
 	require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
 		return tx.Exec(`DROP TRIGGER session_test_receipt_failure ON session_submission_receipts; DROP FUNCTION session_test_receipt_failure();`).Error
 	}))
@@ -69,6 +82,7 @@ func TestSessionReceiptFailureRollsBackKnowledgeAndRecoversOriginalIntake(t *tes
 	require.Equal(t, "completed", completed.ProcessingState)
 	require.Equal(t, "current", completed.SearchState)
 	require.Len(t, completed.Events[0].EvidenceIDs, 1)
+	require.Empty(t, result.Events[0].EvidenceIDs)
 	for _, table := range []string{"knowledge_ingests", "evidence_fragments", "search_documents", "remember_attempts"} {
 		require.EqualValues(t, 1, ownerCount(t, admin, rls, table, team, submission.ID), table)
 	}

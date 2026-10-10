@@ -35,7 +35,7 @@ func (r *Store) purgeExpiredSessionDiagnostics(ctx context.Context) (int, error)
           JOIN memory_spaces AS space ON space.team_id = diagnostic.team_id AND space.id = diagnostic.space_id
           WHERE diagnostic.expires_at <= clock_timestamp()
           AND NOT EXISTS (SELECT 1 FROM private_memory_legal_holds AS hold WHERE hold.space_id = diagnostic.space_id AND hold.released_at IS NULL)
-          ORDER BY diagnostic.expires_at, diagnostic.diagnostic_id LIMIT 100 FOR KEY SHARE OF space`).Scan(&ids).Error; err != nil {
+			ORDER BY diagnostic.expires_at, diagnostic.diagnostic_id LIMIT ? FOR KEY SHARE OF space`, rememberDiagnosticPurgeBatchSize).Scan(&ids).Error; err != nil {
 			return err
 		}
 		if len(ids) == 0 {
@@ -48,4 +48,18 @@ func (r *Store) purgeExpiredSessionDiagnostics(ctx context.Context) (int, error)
 		return result.Error
 	})
 	return int(deleted), err
+}
+
+func (r *Store) drainExpiredSessionDiagnostics(ctx context.Context) (int, error) {
+	total := 0
+	for {
+		deleted, err := r.purgeExpiredSessionDiagnostics(ctx)
+		total += deleted
+		if err != nil || deleted < rememberDiagnosticPurgeBatchSize {
+			return total, err
+		}
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+	}
 }

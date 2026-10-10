@@ -279,6 +279,16 @@ func ValidateExtraction(request ExtractionRequest, response ExtractionResponse) 
 			if !citesCore {
 				return fmt.Errorf("relationship requires current core evidence")
 			}
+			hasText := false
+			for _, segment := range segments {
+				if segment.EventIndex == start.EventIndex && segment.Start >= start.Start && segment.End <= end.End && strings.TrimSpace(segment.Text) != "" {
+					hasText = true
+					break
+				}
+			}
+			if !hasText {
+				return fmt.Errorf("citation must include non-whitespace source text")
+			}
 		}
 		seenKnown := map[string]bool{}
 		for _, id := range relationship.KnownEvidenceIDs {

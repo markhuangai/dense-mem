@@ -3,6 +3,7 @@ package extraction
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
@@ -53,6 +54,31 @@ func TestSessionProviderRegeneratesCompleteUnknownReferenceResponse(t *testing.T
 	require.Equal(t, transport.requests[0].Messages[1], transport.requests[1].Messages[1])
 	require.Equal(t, 8192, transport.requests[0].MaxOutputTokens)
 	require.Equal(t, 32768, transport.requests[0].MaxInputTokens)
+}
+
+func TestSessionProviderRegeneratesWhitespaceCitationBeforeCheckpointing(t *testing.T) {
+	request, valid := extractionFixture()
+	request.Window.Core[0].Start, request.Window.Core[0].End = 512, 524
+	blank := session.Segment{Ref: "blank", EventIndex: 0, Start: 0, End: 512, Text: strings.Repeat("\u2003", 512)}
+	request.Window.Core = append([]session.Segment{blank}, request.Window.Core...)
+	valid.Coverage = append([]string{blank.Ref}, valid.Coverage...)
+	validJSON, err := json.Marshal(valid)
+	require.NoError(t, err)
+	invalid := valid
+	invalid.Relationships = append([]session.RelationshipProposal(nil), valid.Relationships...)
+	invalid.Relationships[0].Citations = []session.Citation{{StartRef: blank.Ref, EndRef: blank.Ref}}
+	invalidJSON, err := json.Marshal(invalid)
+	require.NoError(t, err)
+	transport := &outboundFixture{bodies: []string{string(invalidJSON), string(validJSON)}}
+	provider := NewProvider(transport, "fixture-model", assessor.DefaultSemanticAssessmentLimits())
+	response, err := provider.Extract(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, valid, response)
+	require.Len(t, transport.requests, 2)
+	require.Equal(t, transport.requests[0].Messages[1], transport.requests[1].Messages[1])
+	require.Contains(t, transport.requests[1].Messages[2].Content, "non-whitespace")
+	valid.Relationships[0].Citations = []session.Citation{{StartRef: blank.Ref, EndRef: request.Window.Core[1].Ref}}
+	require.NoError(t, session.ValidateExtraction(request, valid))
 }
 
 func TestSessionProviderNeverSplicesIncompleteResponses(t *testing.T) {
