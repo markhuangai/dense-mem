@@ -368,6 +368,111 @@
       "phase": "scenario",
       "source": "internal/ontology/postgres/sources_integration_test.go",
       "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestOntologyAutomaticRetirementPreservesGroupingOverrides",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyAutomaticRetirementPreservesGroupingOverrides$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/followup_freshness_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyCurrentReadersDistinguishDependencyAndSourceChanges",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyCurrentReadersDistinguishDependencyAndSourceChanges$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/followup_freshness_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyGroupingOverridesPreserveAssignmentFreshness",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyGroupingOverridesPreserveAssignmentFreshness$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/followup_freshness_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/followup_freshness_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyVocabularyUsesCurrentCandidateWindow",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyVocabularyUsesCurrentCandidateWindow$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/followup_vocabulary_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyVocabularyWindowPreservesTeamIsolationAndNameReuse",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyVocabularyWindowPreservesTeamIsolationAndNameReuse$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/followup_vocabulary_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyFollowupCohort",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyFollowupCohort$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/followup_vocabulary_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceBoundedCompletionUsesPersistedOutcomes",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceBoundedCompletionUsesPersistedOutcomes$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/followup_completion_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceEarlierAmbiguityKeepsBoundedRunIncomplete",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceEarlierAmbiguityKeepsBoundedRunIncomplete$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/followup_completion_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceScheduledRecoveryClearsCurrentReason",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceScheduledRecoveryClearsCurrentReason$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/followup_completion_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceCompletedRunDoesNotHideUnrelatedFailures",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceCompletedRunDoesNotHideUnrelatedFailures$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/followup_completion_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/followup_completion_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMixedSeparationOverrideProtectsEvidenceGroups",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMixedSeparationOverrideProtectsEvidenceGroups$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/followup_freshness_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyCrossOwnerMultipleRelativeDays",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyCrossOwnerMultipleRelativeDays$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/followup_freshness_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyCrossOwnerSpatialContextRemainsSeparate",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyCrossOwnerSpatialContextRemainsSeparate$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/followup_freshness_integration_test.go"
     }
   ]
 }

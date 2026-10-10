@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ControlApi, type OntologyMaintenanceStatus } from "../api";
 import { generalConfigSnapshot, jsonResponse } from "../App.test-helpers";
@@ -9,7 +9,7 @@ const policy = { enabled: true, cadence_hours: 12 as const, start_time_local: "0
 const status: OntologyMaintenanceStatus = { observed_at: "2026-10-06T12:00:00Z", enabled: true, paused: false, discovery_complete: false, coverage_complete: false, counts: { eligible: 4, organized: 1, pending: 1, failed: 1, ambiguous: 0, budget_deferred: 1 }, pending_policy: { ...policy, model: "pending-model" }, window: { id: "window", starts_at: "2026-10-06T03:00:00Z", ends_at: "2026-10-06T15:00:00Z", policy, charged_input_tokens: 100, charged_output_tokens: 200, reported_input_tokens: 60, reported_output_tokens: 0, reserved_input_tokens: 40, reserved_output_tokens: 200, overrun: false } };
 const run = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", window_id: "window", kind: "run", status: "incomplete", retryable: true, max_batches: 1, completed_batches: 1, failure_code: "provider_unavailable", created_at: status.observed_at, updated_at: status.observed_at };
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 function fixture() {
   const api = new ControlApi("http://localhost", "synthetic-control");
@@ -61,15 +61,109 @@ describe("Ontology maintenance controls", () => {
   it("keeps older run pages after polling and disables invalid batch limits", async () => {
     const api = fixture();
     const older = { ...run, id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", failure_code: "lease_lost" };
-    vi.mocked(api.listOntologyMaintenanceRuns).mockResolvedValueOnce({ runs: [run], next_cursor: run.id }).mockResolvedValueOnce({ runs: [older] }).mockResolvedValue({ runs: [run], next_cursor: run.id });
+    vi.mocked(api.listOntologyMaintenanceRuns).mockImplementation(async (cursor) => cursor ? { runs: [older] } : { runs: [run], next_cursor: run.id });
     render(<OntologyMaintenancePanel api={api} />);
     fireEvent.click(await screen.findByRole("button", { name: "Load older runs" }));
     await screen.findByText("lease_lost");
     fireEvent.click(screen.getByRole("button", { name: "Refresh ontology coverage" }));
-    await waitFor(() => expect(api.listOntologyMaintenanceRuns).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(api.listOntologyMaintenanceRuns).toHaveBeenCalledTimes(4));
     expect(screen.getByText("lease_lost")).toBeVisible();
     fireEvent.change(screen.getByLabelText("Maximum batches"), { target: { value: "101" } });
     expect(screen.getByRole("button", { name: "Run bounded maintenance" })).toBeDisabled();
+  });
+
+  it.each(["command", "poll", "manual"])("refreshes older eligibility and pagination after %s", async (trigger) => {
+    const api = fixture();
+    const first = Array.from({ length: 50 }, (_, index) => ({ ...run, id: `${(index + 1).toString(16).padStart(8, "0")}-aaaa-4aaa-8aaa-aaaaaaaaaaaa`, retryable: false, failure_code: "" }));
+    const older = { ...run, id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" };
+    let changed = false;
+    let poll: () => void = () => {};
+    const interval = window.setInterval.bind(window);
+    vi.spyOn(window, "setInterval").mockImplementation((callback, timeout, ...args) => {
+      if (timeout === 10000) poll = callback as () => void;
+      return interval(callback, timeout, ...args);
+    });
+    vi.mocked(api.listOntologyMaintenanceRuns).mockImplementation(async (cursor) => {
+      if (!cursor) return { runs: changed ? [{ ...run, id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", retryable: false }, ...first.slice(0, 49)] : first, next_cursor: changed ? first[48].id : first[49].id };
+      return { runs: changed ? [first[49], { ...older, retryable: false }] : [older] };
+    });
+    const command = vi.spyOn(api, "runOntologyMaintenance").mockImplementation(async () => { changed = true; return run; });
+    render(<OntologyMaintenancePanel api={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Load older runs" }));
+    const retry = await screen.findByRole("button", { name: "Retry failed work" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh ontology coverage" })).toBeEnabled());
+    if (trigger === "command") fireEvent.click(retry);
+    else {
+      changed = true;
+      if (trigger === "manual") fireEvent.click(screen.getByRole("button", { name: "Refresh ontology coverage" }));
+      else await act(async () => poll());
+    }
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry failed work" })).not.toBeInTheDocument());
+    expect(screen.getByText("bbbbbbbb")).toBeVisible();
+    expect(screen.getByText("cccccccc")).toBeVisible();
+    expect(screen.getByText(first[49].id.slice(0, 8))).toBeVisible();
+    expect(screen.getAllByRole("row").filter((row) => row.textContent?.includes("bbbbbbbb"))).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Load older runs" })).not.toBeInTheDocument();
+    if (trigger === "command") expect(command).toHaveBeenCalledWith(expect.any(String), 1, older.id);
+  });
+
+  it("retains history and disables stale retries when an older-page refresh fails", async () => {
+    const api = fixture();
+    const older = { ...run, id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" };
+    const oldest = { ...run, id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", retryable: false };
+    let failure = false;
+    let recovered = false;
+    vi.mocked(api.listOntologyMaintenanceRuns).mockImplementation(async (cursor) => {
+      if (!cursor) return { runs: [{ ...run, retryable: false }], next_cursor: run.id };
+      if (cursor === older.id) return { runs: [oldest] };
+      if (failure) throw new Error("older history unavailable");
+      return { runs: [{ ...older, retryable: !recovered }], next_cursor: older.id };
+    });
+    render(<OntologyMaintenancePanel api={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Load older runs" }));
+    await screen.findByRole("button", { name: "Retry failed work" });
+    failure = true;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh ontology coverage" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("older history unavailable");
+    expect(screen.getByText("bbbbbbbb")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry failed work" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Load older runs" }));
+    await screen.findByText("cccccccc");
+    expect(screen.getByRole("alert")).toHaveTextContent("older history unavailable");
+    expect(screen.getByRole("button", { name: "Retry failed work" })).toBeDisabled();
+    failure = false;
+    recovered = true;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh ontology coverage" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry failed work" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("coalesces polling during a loaded-page refresh", async () => {
+    const api = fixture();
+    const older = { ...run, id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", retryable: false };
+    let resolve!: (value: { runs: typeof run[] }) => void;
+    const pending = new Promise<{ runs: typeof run[] }>((done) => { resolve = done; });
+    let blocked = false;
+    let poll: () => void = () => {};
+    const interval = window.setInterval.bind(window);
+    vi.spyOn(window, "setInterval").mockImplementation((callback, timeout, ...args) => {
+      if (timeout === 10000) poll = callback as () => void;
+      return interval(callback, timeout, ...args);
+    });
+    vi.mocked(api.listOntologyMaintenanceRuns).mockImplementation(async (cursor) => cursor ? blocked ? pending : { runs: [older] } : { runs: [run], next_cursor: run.id });
+    render(<OntologyMaintenancePanel api={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Load older runs" }));
+    await screen.findByText("bbbbbbbb");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh ontology coverage" })).toBeEnabled());
+    blocked = true;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh ontology coverage" }));
+    await waitFor(() => expect(api.listOntologyMaintenanceRuns).toHaveBeenCalledTimes(4));
+    act(() => { poll(); poll(); });
+    expect(api.listOntologyMaintenanceRuns).toHaveBeenCalledTimes(4);
+    expect(screen.getByRole("button", { name: "Refresh ontology coverage" })).toBeDisabled();
+    await act(async () => resolve({ runs: [older] }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh ontology coverage" })).toBeEnabled());
+    expect(screen.getByText("bbbbbbbb")).toBeVisible();
   });
 
   it("saves operator policy through the configuration API and shows the saved values", async () => {

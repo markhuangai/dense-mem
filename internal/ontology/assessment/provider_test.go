@@ -358,3 +358,42 @@ func TestOrganizationEvidenceClassificationUsesTopics(t *testing.T) {
 	response.Definitions[0].BaseEntityKind = ""
 	require.NoError(t, Validate(request, response))
 }
+
+func TestOrganizationMissingDefinitionCorrectionPreservesLockedReuse(t *testing.T) {
+	request, valid := assessmentFixture()
+	supplied := valid.Definitions[0]
+	supplied.Ref = "d0"
+	request.Definitions = []Definition{supplied}
+	request.Items[0].LockedDefinitionRef = supplied.Ref
+	valid.Definitions[0].Ref = "d1"
+	valid.Definitions[0].Key = "postgresql"
+	valid.Definitions[0].Label = "PostgreSQL"
+	valid.Items[0].DefinitionRef = supplied.Ref
+	valid.Items[1].DefinitionRef = "d1"
+	missing := valid
+	missing.Definitions = []Definition{}
+	require.EqualError(t, Validate(request, missing), `item "b" definition_ref "d1" is outside allowlist; include a new definition in response.definitions or reuse a supplied ref`)
+	unlocked := valid
+	unlocked.Items = append([]Decision{}, valid.Items...)
+	unlocked.Items[0].DefinitionRef = "d1"
+	require.EqualError(t, Validate(request, unlocked), "classification changes deterministic reuse")
+	responses := []Response{missing, unlocked, valid}
+	calls := 0
+	provider := NewProvider(fixtureTransport(func(_ context.Context, req modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+		require.Less(t, calls, len(responses))
+		if calls > 0 {
+			var correction map[string]string
+			require.NoError(t, json.Unmarshal([]byte(req.Messages[len(req.Messages)-1].Content), &correction))
+			require.Equal(t, Validate(request, responses[calls-1]).Error(), correction["validation_errors"])
+		}
+		encoded, err := json.Marshal(responses[calls])
+		require.NoError(t, err)
+		calls++
+		return modelprovider.StructuredResult{Content: string(encoded)}, nil
+	}), "model", assessor.DefaultSemanticAssessmentLimits())
+	result, attempts, err := provider.Assess(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, valid, result)
+	require.Len(t, attempts, 3)
+	require.Equal(t, 3, calls)
+}

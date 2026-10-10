@@ -864,12 +864,14 @@ test("Grafana range panels use a scrape-safe lookback", async () => {
   }
 });
 
-test("community and conflict fixtures forward healthy embeddings upstream", () => {
+test("community, ontology, and conflict fixtures forward healthy embeddings upstream", () => {
   const communityStart = stack.indexOf('if (scenario === "community")');
   const communityEnd = stack.indexOf('if (has("conflict_provider"))', communityStart);
   const communityBlock = stack.slice(communityStart, communityEnd);
   assert.ok(communityStart >= 0 && communityEnd > communityStart);
   assert.match(communityBlock, /AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
+  assert.match(stack, /const fixtureEmbeddingProvider = [^;]*scenario === "ontology_organization"/);
+  assert.match(stack, /if \(scenario === "ontology_organization"\) \{[\s\S]*?AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
   assert.match(stack, /DENSE_MEM_E2E_EMBEDDING_BASE_URL/);
   assert.match(stack, /DENSE_MEM_E2E_EMBEDDING_API_KEY/);
   assert.match(stack, /embedding_upstream\.mjs/);
@@ -962,7 +964,7 @@ test("production workflows give each hosted scenario its own stack", () => {
   assert.match(scenarioWorkflow, /stop-commands/);
   assert.match(scenarioWorkflow, /dreaming_telemetry_portal/);
   assert.doesNotMatch(scenarioWorkflow, /continue-on-error|Preserve scenario result|Print failed scenario diagnostics/);
-  assert.match(controller, /--timeout 40m --total-timeout 42m/);
+  assert.match(controller, /--timeout 40m --total-timeout 43m/);
 });
 
 test("hosted bootstrap writes private Cloudflare configuration and masks generated credentials", async () => {
@@ -1019,4 +1021,16 @@ test("obsolete local Compose entrypoints are removed", async () => {
   ]) {
     await assert.rejects(readFile(join(scripts, name), "utf8"));
   }
+});
+
+test("ontology retains a complete dedicated precheck shard", async () => {
+  const start = controller.indexOf("\ndatabase_case_capabilities()") + 1;
+  const end = controller.indexOf("\nprecheck() {", start);
+  const helper = controller.slice(start, end);
+  const { stdout } = await run("bash", ["-c", `${helper}\npartition_precheck_capabilities "$1"`, "precheck-test", root]);
+  const groups = stdout.trim().split(/\r?\n/).map((group) => group.split(","));
+  assert.equal(groups.length, 3);
+  assert.deepEqual(groups[0], ["ontology"]);
+  const { stdout: expected } = await run("bash", ["-c", `${helper}\ndatabase_case_capabilities "$1" precheck`, "precheck-test", root]);
+  assert.deepEqual(groups.flat().sort(), expected.trim().split(/\r?\n/).sort());
 });

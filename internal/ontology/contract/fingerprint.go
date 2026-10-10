@@ -17,6 +17,26 @@ func SourceFingerprint(snapshot SourceSnapshot) (string, error) {
 	}{FingerprintVersion, snapshot})
 }
 
+func CheckSourceDependencies(record Record, snapshots map[string]SourceSnapshot) error {
+	return checkSourceDependencies(record, func(handle SourceHandle) (string, error) {
+		snapshot, exists := snapshots[SourceKey(handle)]
+		return fingerprintSnapshot(handle, snapshot, exists)
+	})
+}
+
+func checkSourceDependencies(record Record, sourceFingerprint func(SourceHandle) (string, error)) error {
+	for _, dependency := range record.Sources {
+		fingerprint, err := sourceFingerprint(dependency.SourceHandle)
+		if err != nil {
+			return err
+		}
+		if fingerprint != dependency.Fingerprint {
+			return ErrSourceStale
+		}
+	}
+	return nil
+}
+
 func RequestHash(input Publication, origin, actorID string) (string, error) {
 	return hashJSON(struct {
 		Origin  string
@@ -45,18 +65,24 @@ func NewRecordFingerprints(snapshots map[SourceHandle]SourceSnapshot, catalog ma
 }
 
 func (f *RecordFingerprints) Fingerprint(record Record) (string, error) {
-	return recordFingerprint(record, f.catalog, func(handle SourceHandle) (string, error) {
-		if fingerprint, exists := f.sources[handle]; exists {
-			return fingerprint, nil
-		}
-		snapshot, exists := f.snapshots[handle]
-		fingerprint, err := fingerprintSnapshot(handle, snapshot, exists)
-		if err != nil {
-			return "", err
-		}
-		f.sources[handle] = fingerprint
+	return recordFingerprint(record, f.catalog, f.sourceFingerprint)
+}
+
+func (f *RecordFingerprints) CheckSourceDependencies(record Record) error {
+	return checkSourceDependencies(record, f.sourceFingerprint)
+}
+
+func (f *RecordFingerprints) sourceFingerprint(handle SourceHandle) (string, error) {
+	if fingerprint, exists := f.sources[handle]; exists {
 		return fingerprint, nil
-	})
+	}
+	snapshot, exists := f.snapshots[handle]
+	fingerprint, err := fingerprintSnapshot(handle, snapshot, exists)
+	if err != nil {
+		return "", err
+	}
+	f.sources[handle] = fingerprint
+	return fingerprint, nil
 }
 
 func (f *RecordFingerprints) CheckDependencies(records []Record) error {

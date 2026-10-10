@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 
@@ -76,7 +77,7 @@ func readSources(tx *gorm.DB, fence scope, handles []ontology.SourceHandle) (map
 		for rows.Next() {
 			snapshot := ontology.SourceSnapshot{TeamID: fence.TeamID, SpaceID: fence.SpaceID, Generation: fence.Generation, Eligible: true}
 			snapshot.Kind = kind
-			var state []byte
+			var state sql.RawBytes
 			if err := rows.Scan(&snapshot.ID, &snapshot.Version, &snapshot.OwnerID, &snapshot.EntityKind, &state, &snapshot.MeaningKey); err != nil {
 				_ = rows.Close()
 				return nil, err

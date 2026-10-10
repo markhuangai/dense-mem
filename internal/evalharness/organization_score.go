@@ -61,14 +61,10 @@ func ScoreOrganization(testCase OrganizationCase, items []OrganizationItem) (Org
 		if len(meanings) > 1 {
 			score.FalseConsolidations++
 		}
-		if len(meanings) == 1 {
-			for meaning := range meanings {
-				if seenMeanings[meaning] {
-					score.RepeatedSlots++
-				}
-			}
-		}
 		for meaning := range meanings {
+			if seenMeanings[meaning] {
+				score.RepeatedSlots++
+			}
 			seenMeanings[meaning] = true
 		}
 	}

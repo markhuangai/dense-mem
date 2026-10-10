@@ -217,19 +217,11 @@ func validateRecordSources(record Record, snapshots map[string]SourceSnapshot, c
 	if record.Retired {
 		return nil
 	}
+	if err := CheckSourceDependencies(record, snapshots); err != nil {
+		return err
+	}
 	declared := map[string]SourceHandle{}
 	for _, dependency := range record.Sources {
-		snapshot, exists := snapshots[SourceKey(dependency.SourceHandle)]
-		if !exists || !snapshot.Eligible || snapshot.SourceHandle != dependency.SourceHandle {
-			return ErrSourceStale
-		}
-		fingerprint, err := SourceFingerprint(snapshot)
-		if err != nil {
-			return err
-		}
-		if fingerprint != dependency.Fingerprint {
-			return ErrSourceStale
-		}
 		declared[SourceKey(dependency.SourceHandle)] = dependency.SourceHandle
 	}
 	for _, source := range RequiredSources(record) {

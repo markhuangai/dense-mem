@@ -249,7 +249,7 @@ const fs = require("node:fs");
 const [destination, helpers, oauthToken, harnessImage, providerModel, providerDimensions, scenario, project, embeddingTimeoutSeconds] = process.argv.slice(2);
 const has = (name) => new Set(helpers.split(",").filter(Boolean)).has(name);
 const hosted = process.env.DENSE_MEM_CI_HOSTED === "1";
-const fixtureEmbeddingProvider = hosted || scenario === "community" || scenario === "identity_cleanup" || has("synchronous_write") || scenario === "full";
+const fixtureEmbeddingProvider = hosted || scenario === "community" || scenario === "identity_cleanup" || scenario === "ontology_organization" || has("synchronous_write") || scenario === "full";
 const fromEnv = (name, fallback) => JSON.stringify(fallback ? `\${${name}:-${fallback}}` : `\${${name}}`);
 const lines = ["# dense-mem-ci-e2e.v1 generated helper overlay", "services:"];
 const serverEnvironment = new Map();
@@ -276,6 +276,12 @@ if (scenario === "identity_cleanup") {
   for (const [key, value] of Object.entries({
     AI_API_URL: "http://synchronous-write-provider:8787/v1",
     AI_API_KEY: "dense-mem-identity-cleanup-e2e-key",
+  })) serverEnvironment.set(key, value);
+}
+if (scenario === "ontology_organization") {
+  for (const [key, value] of Object.entries({
+    AI_API_URL: "http://synchronous-write-provider:8787/v1",
+    AI_API_KEY: "dense-mem-ontology-e2e-key",
   })) serverEnvironment.set(key, value);
 }
 if (scenario === "full") {

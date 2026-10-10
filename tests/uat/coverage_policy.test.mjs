@@ -143,10 +143,12 @@ test("complete Go coverage deduplicates profiles and rejects exact thresholds", 
   const complete = runCoverage(fakeGo, completeDir, "--complete");
   assert.equal(complete.status, 1, complete.stderr);
   const merged = readFixture(join(completeDir, "go-complete.out"));
-  assert.equal((merged.match(/^example\//gmu) || []).length, 5);
+  assert.equal((merged.match(/^example\//gmu) || []).length, 6);
   assert.match(merged, /example\/evaluation\.go/);
+  assert.match(merged, /example\/audit\.go:1\.1,1\.2 1 1/);
   assert.match(merged, /example\/root\.go:2\.1,2\.2 1 1/);
-  assert.match(readFixture(join(completeDir, "go-complete.txt")), /complete total: 4\/5 80\.0%/);
+  assert.match(readFixture(join(completeDir, "go-postgres-complete.out")), /example\/audit\.go:1\.1,1\.2 1 1/);
+  assert.match(readFixture(join(completeDir, "go-complete.txt")), /complete total: 5\/6 83\.3%/);
 
   const missing = runCoverage(fakeGo, join(fixture, "missing"), "--complete", { FAKE_SKIP_EVALUATION: "1" });
   assert.notEqual(missing.status, 0);
@@ -154,6 +156,11 @@ test("complete Go coverage deduplicates profiles and rejects exact thresholds", 
     const missingPostgres = runCoverage(fakeGo, join(fixture, flag), "--complete", { [flag]: "1" });
     assert.notEqual(missingPostgres.status, 0);
     assert.match(missingPostgres.stderr, /coverage profile is missing or empty: .*go-postgres-complete\.raw/);
+  }
+  for (const flag of ["FAKE_SKIP_AUDIT", "FAKE_EMPTY_AUDIT"]) {
+    const missingAudit = runCoverage(fakeGo, join(fixture, flag), "--complete", { [flag]: "1" });
+    assert.notEqual(missingAudit.status, 0);
+    assert.match(missingAudit.stderr, /coverage profile is missing or empty: .*go-audit-complete\.raw/);
   }
 
   const exact = runCoverage(fakeGo, join(fixture, "exact"), "--transitional", { FAKE_COVERAGE_TOTAL: "90.0" });
@@ -237,6 +244,10 @@ function fakeGoScript() {
     "  [[ \"${DENSE_MEM_REPOSITORY_TESTCONTAINERS:-}\" == \"1\" ]] || exit 1",
     "  if [[ \"${FAKE_SKIP_POSTGRES:-}\" == \"1\" ]]; then exit 0; fi",
     "fi",
+    "if [[ \"${profile}\" == *go-audit-complete.raw ]]; then",
+    "  [[ \"${DENSE_MEM_REPOSITORY_TESTCONTAINERS:-}\" == \"1\" ]] || exit 1",
+    "  if [[ \"${FAKE_SKIP_AUDIT:-}\" == \"1\" ]]; then exit 0; fi",
+    "fi",
     "mkdir -p \"$(dirname \"${profile}\")\"",
     "{",
     "  printf 'mode: atomic\\n'",
@@ -258,6 +269,12 @@ function fakeGoScript() {
     "      if [[ \"${FAKE_EMPTY_POSTGRES:-}\" != \"1\" ]]; then",
     "        printf 'example/root.go:2.1,2.2 1 1\\n'",
     "        printf 'example/evaluation.go:1.1,1.2 1 1\\n'",
+    "      fi",
+    "      ;;",
+    "    *go-audit-complete.raw)",
+    "      if [[ \"${FAKE_EMPTY_AUDIT:-}\" != \"1\" ]]; then",
+    "        printf 'example/audit.go:1.1,1.2 1 1\\n'",
+    "        printf 'example/root.go:2.1,2.2 1 0\\n'",
     "      fi",
     "      ;;",
     "  esac",

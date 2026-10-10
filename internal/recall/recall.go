@@ -230,12 +230,10 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 	if coverageDegradation != nil {
 		result.Degradations = append(result.Degradations, *coverageDegradation)
 	}
-	relationships, relationshipState, relationshipDegradation, directGroups := s.recallRelatedRelationships(ctx, actor.TeamID.String(), req.RecallRequest, queryEmbedding, coveredGroups, req.organizationEnabled && teamSharedBranch)
+	relationships, relationshipState, relationshipDegradations, directGroups := s.recallRelatedRelationships(ctx, actor.TeamID.String(), req.RecallRequest, queryEmbedding, coveredGroups, req.organizationEnabled && teamSharedBranch)
 	result.RelatedRelationships = relationships
 	result.SearchStates.Relationships = relationshipState
-	if relationshipDegradation != nil {
-		result.Degradations = append(result.Degradations, *relationshipDegradation)
-	}
+	result.Degradations = append(result.Degradations, relationshipDegradations...)
 	communities, paths, communityDegradation := []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, (*RecallDegradationResult)(nil)
 	if teamSharedBranch {
 		if _, snapshotRepo := s.communities.(RecallCommunitySnapshotRepository); snapshotRepo || len(result.Results) < req.Limit {

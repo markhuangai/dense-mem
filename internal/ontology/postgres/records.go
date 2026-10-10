@@ -305,16 +305,23 @@ func currentRecordView(record ontology.Record, catalog map[string]ontology.Recor
 		}
 		return view, err
 	}
-	snapshots := map[string]ontology.SourceSnapshot{}
+	sourceVersions := map[string]ontology.SourceHandle{}
 	for _, dependency := range dependencies {
 		for _, source := range dependency.Sources {
 			key := ontology.SourceKey(source.SourceHandle)
-			if previous, exists := snapshots[key]; exists && previous.SourceHandle != source.SourceHandle {
+			if previous, exists := sourceVersions[key]; exists && previous != source.SourceHandle {
 				view.StaleReason = "dependency_changed"
 				return view, nil
 			}
-			snapshots[key] = available[source.SourceHandle]
+			sourceVersions[key] = available[source.SourceHandle].SourceHandle
 		}
+	}
+	if err := fingerprints.CheckSourceDependencies(record); err != nil {
+		if errors.Is(err, ontology.ErrSourceStale) {
+			view.StaleReason = "source_changed"
+			return view, nil
+		}
+		return view, err
 	}
 	if err := fingerprints.CheckDependencies([]ontology.Record{record}); err != nil {
 		if errors.Is(err, ontology.ErrSourceStale) {

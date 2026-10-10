@@ -15,6 +15,22 @@ func ApplicableOverrides(record Record, catalog map[string]Record) []Record {
 		if candidate.Retired || candidate.Override == nil {
 			continue
 		}
+		switch candidate.Override.Action {
+		case PinDefinition:
+			if record.Definition == nil {
+				continue
+			}
+		case SetClassification:
+			if record.Assignment == nil {
+				continue
+			}
+		case GroupTogether, KeepSeparate:
+			if record.Group == nil {
+				continue
+			}
+		default:
+			continue
+		}
 		applies := candidate.Override.TargetID == record.ID
 		for _, member := range candidate.Override.Members {
 			applies = applies || members[SourceKey(member)]

@@ -251,9 +251,19 @@ func (s *Store) CompleteMaintenanceBatch(ctx context.Context, claim ontology.Mai
 		if err := tx.Exec(`UPDATE ontology_maintenance_batches SET status='completed',failure_code=?,completed_at=? WHERE batch_id=?::uuid`, failure, now, claim.ID).Error; err != nil {
 			return err
 		}
-		if err := tx.Exec(`UPDATE ontology_maintenance_runs SET completed_batches=completed_batches+1,failure_code=CASE WHEN ?<>'' THEN ? ELSE failure_code END,
-		 status=CASE WHEN max_batches>0 AND completed_batches+1>=max_batches THEN CASE WHEN ?<>'' THEN 'incomplete' ELSE 'completed' END ELSE status END,updated_at=? WHERE run_id=?::uuid`, failure, failure, failure, now, claim.RunID).Error; err != nil {
+		var bounded bool
+		if err := tx.Raw(`UPDATE ontology_maintenance_runs SET completed_batches=completed_batches+1,failure_code=CASE WHEN ?<>'' THEN ? ELSE failure_code END,
+		 updated_at=? WHERE run_id=?::uuid RETURNING max_batches>0 AND completed_batches>=max_batches`, failure, failure, now, claim.RunID).Row().Scan(&bounded); err != nil {
 			return err
+		}
+		if bounded {
+			requiredFailure := failure
+			if requiredFailure == "" {
+				requiredFailure = result.FailureCode
+			}
+			if err := completeMaintenanceRun(tx, claim.RunID, "", false, requiredFailure, now); err != nil {
+				return err
+			}
 		}
 		if progress && failure == "" && result.FailureCode == "" && result.Current {
 			return tx.Exec(`UPDATE ontology_maintenance_state SET last_successful_progress=? WHERE singleton`, now).Error

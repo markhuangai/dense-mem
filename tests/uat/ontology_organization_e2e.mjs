@@ -99,6 +99,10 @@ try {
     assert.equal(temporal.results.filter((item) => sourceIDs.includes(item.evidence_id)).length, 3);
     assert(temporal.degradations.some((item) => item.code === "ontology_temporal_not_supported"));
   }
+  const combinedFallback = await mcp("recall_memory", { ...args, query: "Atlas PostgreSQL [fixture-fault:embedding-malformed]", relationship_limit: 20, known_at: new Date().toISOString() }, reader.api_key);
+  assert(combinedFallback.degradations.some((item) => item.frontier === "evidence" && item.code === "provider_unavailable"), "the provider fixture must make the query vector unavailable");
+  assert(combinedFallback.degradations.some((item) => item.frontier === "relationships" && item.code === "relationship_vector_warming"), "relationship recall must report its vector fallback");
+  assert(combinedFallback.degradations.some((item) => item.frontier === "relationships" && item.code === "ontology_temporal_not_supported"), "the vector fallback must retain the independent ontology omission");
   await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "false" }] }, "PATCH");
   const ordinary = await mcp("recall_memory", args, reader.api_key);
   assert.equal(ordinary.results.filter((item) => sourceIDs.includes(item.evidence_id)).length, 3);
@@ -121,8 +125,39 @@ try {
   const accountingAfter = (await control("/ontology/status")).data.window;
   assert.equal(accountingAfter.charged_input_tokens, accountingBefore.charged_input_tokens, "Recall added organization provider input tokens");
   assert.equal(accountingAfter.charged_output_tokens, accountingBefore.charged_output_tokens, "Recall added organization provider output tokens");
-  console.log(JSON.stringify({ status: "ok", scenario: "ontology_organization", window_id: status.window.id, counts: status.counts, durable_command_replay: true, operator_isolation: true, grouped_recall: true, original_sources_retained: true, private_and_foreign_isolation: true, stale_group_fallback: true, recall_organization_provider_tokens: 0 }));
+  await control("/ontology/pause", { operation_key: randomUUID() });
+  paused = true;
+  await fixtureMode("ambiguous");
+  await rememberFixture(shared.api_key, "Atlas uses PostgreSQL for ontology status acceptance.");
+  await control("/ontology/resume", { operation_key: randomUUID() });
+  paused = false;
+  const ambiguousCommand = (await control("/ontology/runs", { operation_key: randomUUID(), max_batches: 1 })).data;
+  const ambiguousRun = await terminalRun(ambiguousCommand.id);
+  assert.equal(ambiguousRun.status, "incomplete");
+  assert.equal(ambiguousRun.completed_batches, 1);
+  assert.equal(ambiguousRun.failure_code || "", "");
+  assert.equal(ambiguousRun.retryable, false);
+  await fixtureMode("normal");
+
+  await control("/ontology/pause", { operation_key: randomUUID() });
+  paused = true;
+  await fixtureMode("fail-three-then-success");
+  await rememberFixture(shared.api_key, "Atlas uses PostgreSQL for ontology retry acceptance.");
+  await control("/ontology/resume", { operation_key: randomUUID() });
+  paused = false;
+  const failedCommand = (await control("/ontology/runs", { operation_key: randomUUID(), max_batches: 1 })).data;
+  const failedRun = await terminalRun(failedCommand.id);
+  assert.equal(failedRun.status, "incomplete");
+  assert(failedRun.failure_code, "required failure remains visible");
+  assert.equal(failedRun.retryable, true);
+  await fixtureMode("normal");
+  const history = (await control("/ontology/runs?limit=200")).data;
+  for (const run of history.runs) {
+    if (run.status === "completed") assert.equal(run.failure_code || "", "", "completed runs must have no current failure reason");
+  }
+  console.log(JSON.stringify({ status: "ok", scenario: "ontology_organization", window_id: status.window.id, counts: status.counts, durable_command_replay: true, operator_isolation: true, grouped_recall: true, original_sources_retained: true, private_and_foreign_isolation: true, stale_group_fallback: true, recall_organization_provider_tokens: 0, bounded_ambiguity_run: ambiguousRun.id, retryable_failure_run: failedRun.id }));
 } finally {
+  await fixtureMode("normal");
   if (paused) await control("/ontology/resume", { operation_key: randomUUID() });
   await control("/config/ontology-maintenance", { items: original.items.map(({ key, value }) => ({ key, value })) }, "PATCH");
 }
@@ -157,4 +192,25 @@ async function remember(content, key, relationshipIDs = []) {
   const evidence = result.evidence.find((item) => item.disposition === "stored");
   assert(evidence?.evidence_id, "Remember did not retain the source evidence");
   return evidence.evidence_id;
+}
+
+async function fixtureMode(mode) {
+  const response = await fetch(`${required("DENSE_MEM_E2E_PROVIDER_URL")}/ontology-fixture`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }) });
+  assert.equal(response.status, 200);
+}
+async function rememberFixture(key, content) {
+  const response = await fetch(`${userURL}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${key}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: randomUUID(), method: "tools/call", params: { name: "remember", arguments: { idempotency_key: randomUUID(), evidence: [{ content, source_type: "document", source: "ontology-followups", source_group: randomUUID() }], relationships: [{ ref: "storage", subject: { name: "Atlas", entity_kind: "project" }, predicate: { proposed_key: "uses" }, object: { entity: { name: "PostgreSQL", entity_kind: "product" } }, polarity: "+", evidence_indices: [0] }] } } }) });
+  assert.equal(response.status, 200);
+  const rpc = await response.json();
+  assert.notEqual(rpc.result?.isError, true, JSON.stringify(rpc.error ?? rpc.result));
+  assert.equal(JSON.parse(rpc.result.content[0].text).processing_state, "completed");
+}
+async function terminalRun(id) {
+  for (let index = 0; index < 150; index++) {
+    const page = (await control("/ontology/runs?limit=200")).data;
+    const run = page.runs.find((run) => run.id === id);
+    if (run && ["completed", "incomplete"].includes(run.status)) return run;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  assert.fail(`maintenance run ${id} did not finish`);
 }

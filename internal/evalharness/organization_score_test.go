@@ -89,3 +89,16 @@ func TestOrganizationScoringDetectsLostFactsAndFalseConsolidation(t *testing.T) 
 	_, err = ScoreOrganization(invalid, nil)
 	require.Error(t, err)
 }
+
+func TestOrganizationScoringCountsRepeatedMeaningsInMixedItems(t *testing.T) {
+	testCase := OntologyOrganizationCohort()[7]
+	score, err := ScoreOrganization(testCase, []OrganizationItem{
+		{ID: "first", SourceIDs: []string{"separate:1"}},
+		{ID: "mixed", SourceIDs: []string{"separate:1", "separate:2", "separate:1"}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, score.RepeatedSlots)
+	require.Equal(t, 1, score.FalseConsolidations)
+	require.Equal(t, 1.0, score.DistinctFactCoverage)
+	require.Equal(t, 1.0, score.SourcePreservation)
+}

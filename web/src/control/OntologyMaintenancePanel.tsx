@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import type { ControlApi, OntologyMaintenanceRunPage, OntologyMaintenanceStatus } from "../api";
 import { LoadingState, SectionHeading } from "../ui/components";
@@ -14,20 +14,46 @@ export function OntologyMaintenancePanel({ api }: { api: ControlApi }) {
   const [message, setMessage] = useState("");
   const [retryKey, setRetryKey] = useState<{ intent: string; key: string } | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      const [nextStatus, nextRuns] = await Promise.all([api.getOntologyMaintenanceStatus(), api.listOntologyMaintenanceRuns()]);
-      setStatus(nextStatus);
-      setRuns((previous) => {
-        if (previous.runs.length <= nextRuns.runs.length) return nextRuns;
-        const current = new Map(nextRuns.runs.map((run) => [run.id, run]));
-        return { runs: [...nextRuns.runs, ...previous.runs.filter((run) => !current.has(run.id))], next_cursor: previous.next_cursor };
-      });
-      setRefreshError("");
-    } catch (err) {
-      setRefreshError(readError(err));
-    }
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const historyLoad = useRef<Promise<void> | null>(null);
+  const loadedPages = useRef(1);
+  const currentRuns = useRef<OntologyMaintenanceRunPage>({ runs: [] });
+
+  const loadHistory = useCallback((more = false): Promise<void> => {
+    if (historyLoad.current) return more ? historyLoad.current.then(() => loadHistory(true)) : historyLoad.current;
+    if (more && !currentRuns.current.next_cursor) return Promise.resolve();
+    setHistoryLoading(true);
+    const request = Promise.resolve().then(async () => {
+      try {
+        let nextRuns: OntologyMaintenanceRunPage;
+        if (more) {
+          const page = await api.listOntologyMaintenanceRuns(currentRuns.current.next_cursor);
+          nextRuns = { runs: [...currentRuns.current.runs, ...page.runs], next_cursor: page.next_cursor };
+          loadedPages.current += 1;
+        } else {
+          const [nextStatus, firstPage] = await Promise.all([api.getOntologyMaintenanceStatus(), api.listOntologyMaintenanceRuns()]);
+          nextRuns = firstPage;
+          for (let page = 1; page < loadedPages.current && nextRuns.next_cursor; page += 1) {
+            const older = await api.listOntologyMaintenanceRuns(nextRuns.next_cursor);
+            nextRuns = { runs: [...nextRuns.runs, ...older.runs], next_cursor: older.next_cursor };
+          }
+          setStatus(nextStatus);
+        }
+        nextRuns = { ...nextRuns, runs: [...new Map(nextRuns.runs.map((run) => [run.id, run])).values()] };
+        currentRuns.current = nextRuns;
+        setRuns(nextRuns);
+        if (!more) setRefreshError("");
+      } catch (err) {
+        setRefreshError(readError(err));
+      }
+    }).finally(() => {
+      historyLoad.current = null;
+      setHistoryLoading(false);
+    });
+    historyLoad.current = request;
+    return request;
   }, [api]);
+  const refresh = useCallback(() => loadHistory(), [loadHistory]);
 
   useEffect(() => {
     void refresh();
@@ -49,6 +75,7 @@ export function OntologyMaintenancePanel({ api }: { api: ControlApi }) {
         : await api.pauseOntologyMaintenance(key, action === "pause");
       setMessage(action === "run" ? `Run ${run.id.slice(0, 8)} accepted · ${run.status}` : action === "pause" ? "Maintenance paused; dispatched work will finish." : "Maintenance resumed.");
       setRetryKey(null);
+      await historyLoad.current;
       await refresh();
     } catch (err) {
       setError(readError(err));
@@ -58,13 +85,7 @@ export function OntologyMaintenancePanel({ api }: { api: ControlApi }) {
   }
 
   async function loadMore() {
-    if (!runs.next_cursor) return;
-    try {
-      const page = await api.listOntologyMaintenanceRuns(runs.next_cursor);
-      setRuns((previous) => ({ runs: [...previous.runs, ...page.runs], next_cursor: page.next_cursor }));
-    } catch (err) {
-      setError(readError(err));
-    }
+    await loadHistory(true);
   }
 
   const windowState = status?.window;
@@ -73,7 +94,7 @@ export function OntologyMaintenancePanel({ api }: { api: ControlApi }) {
   return (
     <section className="surface">
       <SectionHeading title="Ontology coverage" actions={(
-        <button className="icon-button" type="button" aria-label="Refresh ontology coverage" onClick={() => void refresh()}><RefreshCw size={16} aria-hidden="true" /></button>
+        <button className="icon-button" type="button" aria-label="Refresh ontology coverage" disabled={historyLoading} onClick={() => void refresh()}><RefreshCw size={16} aria-hidden="true" /></button>
       )} />
       {error && <div className="banner error" role="alert">{error}</div>}
       {refreshError && <div className="banner error" role="alert">{refreshError}</div>}
@@ -109,10 +130,10 @@ export function OntologyMaintenancePanel({ api }: { api: ControlApi }) {
           <table className="data-table"><thead><tr><th>Run</th><th>Kind</th><th>Status</th><th>Batches</th><th>Reason</th><th>Action</th></tr></thead><tbody>
             {runs.runs.map((run) => <tr key={run.id}>
               <td title={run.id}>{run.id.slice(0, 8)}</td><td>{run.kind}</td><td>{run.status}</td><td>{run.completed_batches}{run.max_batches ? ` / ${run.max_batches}` : ""}</td><td>{run.failure_code ?? "—"}</td>
-              <td>{run.retryable && <button type="button" disabled={busy || !status.enabled || status.paused} onClick={() => void command("run", run.id)}>Retry failed work</button>}</td>
+              <td>{run.retryable && <button type="button" disabled={busy || historyLoading || Boolean(refreshError) || !status.enabled || status.paused} onClick={() => void command("run", run.id)}>Retry failed work</button>}</td>
             </tr>)}
           </tbody></table>
-          {runs.next_cursor && <button type="button" onClick={() => void loadMore()}>Load older runs</button>}
+          {runs.next_cursor && <button type="button" disabled={historyLoading || busy} onClick={() => void loadMore()}>Load older runs</button>}
         </>
       )}
     </section>

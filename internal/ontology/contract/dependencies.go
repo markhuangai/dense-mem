@@ -5,6 +5,7 @@ import "fmt"
 const MaxDependencyRecords = 2048
 
 var ErrContextBound = fmt.Errorf("%w: ontology context exceeds bound", ErrInvalid)
+var ErrDependencyStale = fmt.Errorf("%w: ontology dependency is unavailable or stale", ErrSourceStale)
 
 func DependencyRecords(records []Record, catalog map[string]Record) ([]Record, error) {
 	state := map[string]int{}
@@ -25,7 +26,7 @@ func DependencyRecords(records []Record, catalog map[string]Record) ([]Record, e
 			for _, ref := range dependenciesFor(record, catalog) {
 				dependency, exists := catalog[ref.ID]
 				if !exists || dependency.Retired {
-					return ErrSourceStale
+					return ErrDependencyStale
 				}
 				if err := visit(dependency, depth+1); err != nil {
 					return err

@@ -60,6 +60,9 @@ func TestStoredOntologyRecordDecoderKeepsRowsIndependent(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, record, value)
 		decoded = append(decoded, value)
+		for i := range body {
+			body[i] = 'x'
+		}
 	}
 	require.Equal(t, group, decoded[0])
 	require.Nil(t, decoded[1].Group)

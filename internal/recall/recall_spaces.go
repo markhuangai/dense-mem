@@ -341,7 +341,7 @@ func (s *recallService) recallRelatedRelationships(
 	queryEmbedding []float32,
 	excludedGroups map[string]struct{},
 	organizationEnabled bool,
-) ([]RelatedRelationshipSummary, string, *RecallDegradationResult, map[string]struct{}) {
+) ([]RelatedRelationshipSummary, string, []RecallDegradationResult, map[string]struct{}) {
 	relationshipLimit := recallOptionalLimitValue(req.RelationshipLimit)
 	if relationshipLimit <= 0 {
 		return []RelatedRelationshipSummary{}, string(domain.SearchProjectionNotRequired), nil, map[string]struct{}{}
@@ -363,12 +363,12 @@ func (s *recallService) recallRelatedRelationships(
 		SpaceKind:            branchKind(branch),
 	})
 	if err != nil {
-		return []RelatedRelationshipSummary{}, string(domain.SearchProjectionFailed), &RecallDegradationResult{
+		return []RelatedRelationshipSummary{}, string(domain.SearchProjectionFailed), []RecallDegradationResult{{
 			Frontier: "relationships",
 			Optional: true,
 			Code:     "relationship_discovery_unavailable",
 			Message:  "relationship discovery was unavailable; primary evidence recall was used",
-		}, map[string]struct{}{}
+		}}, map[string]struct{}{}
 	}
 	state := string(domain.SearchProjectionCurrent)
 	if recalled != nil && recalled.SearchState != "" {
@@ -380,8 +380,12 @@ func (s *recallService) recallRelatedRelationships(
 	} else if recalled != nil && recalled.VectorOmitted {
 		degradation = relationshipVectorDegradation(state)
 	}
-	if degradation == nil && recalled != nil && len(recalled.Degradations) > 0 {
-		degradation = &recalled.Degradations[0]
+	degradations := []RecallDegradationResult{}
+	if degradation != nil {
+		degradations = append(degradations, *degradation)
+	}
+	if recalled != nil {
+		degradations = append(degradations, recalled.Degradations...)
 	}
 	groups := map[string]struct{}{}
 	if recalled != nil {
@@ -391,5 +395,5 @@ func (s *recallService) recallRelatedRelationships(
 			}
 		}
 	}
-	return relatedRelationshipSummaries(recalled), state, degradation, groups
+	return relatedRelationshipSummaries(recalled), state, degradations, groups
 }

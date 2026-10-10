@@ -712,6 +712,65 @@ func TestRecallReturnsRelatedRelationshipsAndVectorDegradation(t *testing.T) {
 	require.Equal(t, relationshipLimit, search.relationshipInput.Limit)
 }
 
+func TestRecallPreservesRelationshipOrganizationDegradation(t *testing.T) {
+	for _, tc := range []struct {
+		name, query, state, organizationCode, vectorCode string
+		empty                                            bool
+	}{
+		{name: "warming and stale", query: "Atlas PostgreSQL", state: "pending", organizationCode: "ontology_stale", vectorCode: "relationship_vector_warming"},
+		{name: "failed and unavailable", query: "Atlas PostgreSQL", state: "failed", organizationCode: "ontology_unavailable", vectorCode: "relationship_vector_failed"},
+		{name: "empty frontier and temporal omission", query: "Atlas PostgreSQL", state: "current", organizationCode: "ontology_temporal_not_supported", vectorCode: "relationship_vector_warming", empty: true},
+		{name: "ontology only", state: "current", organizationCode: "ontology_bound_exceeded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			teamID, ownerID, credentialID := uuid.New(), uuid.New(), uuid.New()
+			relationshipID := uuid.NewString()
+			fixture := &retrievalReadFixture{
+				evidenceBatch: &recallcontract.RecallCandidateBatch{SearchState: "current"},
+				relationshipBatch: &recallcontract.RecallCandidateBatch{
+					SearchState: tc.state, OrganizationDegradation: tc.organizationCode,
+					TextHits: []searchcontract.SearchHit{{SourceKind: "relationship", SourceID: relationshipID}},
+				},
+				relationships: map[string]recallcontract.RecallRelationshipHit{
+					relationshipID: {RelationshipID: relationshipID, PredicateKey: "uses", SemanticGroupKey: "storage", SearchState: tc.state},
+				},
+			}
+			if tc.empty {
+				fixture.relationshipBatch.TextHits = nil
+			}
+			expandIDs := []string{}
+			if tc.query == "" {
+				expandIDs = append(expandIDs, uuid.NewString())
+			}
+			limit, zero := 2, 0
+			result, err := NewRecallService(RecallDependencies{Search: fixture}).Recall(
+				authenticatedRememberContext(teamID, ownerID, credentialID),
+				RecallRequest{Query: tc.query, ExpandFromEntityIDs: expandIDs, RelationshipLimit: &limit, CommunityLimit: &zero},
+			)
+			require.NoError(t, err)
+			codes := []string{}
+			for _, warning := range result.Degradations {
+				if warning.Frontier == "relationships" {
+					require.True(t, warning.Optional)
+					codes = append(codes, warning.Code)
+				}
+			}
+			want := []string{tc.organizationCode}
+			if tc.vectorCode != "" {
+				want = append([]string{tc.vectorCode}, want...)
+			}
+			require.Equal(t, want, codes)
+			require.Equal(t, tc.state, result.SearchStates.Relationships)
+			if tc.empty {
+				require.Empty(t, result.RelatedRelationships)
+			} else {
+				require.Len(t, result.RelatedRelationships, 1)
+				require.Equal(t, relationshipID, result.RelatedRelationships[0].RelationshipID)
+			}
+		})
+	}
+}
+
 func TestRecallSkipsRelatedRelationshipsWhenLimitIsZero(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
