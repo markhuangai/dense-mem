@@ -225,6 +225,13 @@
       "run": "^TestCommunityTopicRecallModePreconditionUsesSelectionSnapshot$",
       "phase": "precheck",
       "source": "internal/community/postgres/topic_projection_races_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicRecallCoverageTracksSelectionSnapshot",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicRecallCoverageTracksSelectionSnapshot$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_races_integration_test.go"
     }
   ]
 }

@@ -66,7 +66,7 @@ func TestCommunityOwnershipPreservesRecallOrderBoundsAndCoverage(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f.counters.reset()
-			records, err := f.store.RecallCommunities(ctx, tc.input)
+			records, _, err := f.store.RecallCommunities(ctx, tc.input)
 			require.NoError(t, err)
 			expected := make([]string, 0, len(tc.want))
 			for _, i := range tc.want {
@@ -91,7 +91,7 @@ func TestCommunityOwnershipPreservesRecallOrderBoundsAndCoverage(t *testing.T) {
 	for _, limit := range []int{-1, 0, 1, 5, 20, 100} {
 		input := f.mixedInput()
 		input.RelationshipLimit = limit
-		records, err := f.store.RecallCommunities(ctx, input)
+		records, _, err := f.store.RecallCommunities(ctx, input)
 		require.NoError(t, err)
 		count := limit
 		if count <= 0 {
@@ -109,7 +109,7 @@ func TestCommunityOwnershipPreservesRecallOrderBoundsAndCoverage(t *testing.T) {
 	input := f.mixedInput()
 	input.CoveredGroupKeys = []string{f.sources[4].SemanticGroupKey}
 	input.ExcludedGroupKeys = []string{f.sources[5].SemanticGroupKey}
-	records, err := f.store.RecallCommunities(ctx, input)
+	records, _, err := f.store.RecallCommunities(ctx, input)
 	require.NoError(t, err)
 	for _, record := range records {
 		for _, hit := range record.Relationships {
@@ -122,7 +122,7 @@ func TestCommunityOwnershipPreservesRecallOrderBoundsAndCoverage(t *testing.T) {
 	for _, source := range f.sources[9:] {
 		boundary.CoveredGroupKeys = append(boundary.CoveredGroupKeys, source.SemanticGroupKey)
 	}
-	bounded, err := f.store.RecallCommunities(ctx, boundary)
+	bounded, _, err := f.store.RecallCommunities(ctx, boundary)
 	require.NoError(t, err)
 	for _, record := range bounded {
 		require.Len(t, record.Relationships, 5)
@@ -135,7 +135,7 @@ func TestCommunityOwnershipPreservesRecallOrderBoundsAndCoverage(t *testing.T) {
 	for _, source := range f.sources {
 		input.CoveredGroupKeys = append(input.CoveredGroupKeys, source.SemanticGroupKey)
 	}
-	records, err = f.store.RecallCommunities(ctx, input)
+	records, _, err = f.store.RecallCommunities(ctx, input)
 	require.NoError(t, err)
 	require.Empty(t, records)
 	groups, err := f.store.ListCommunitySemanticGroups(ctx, CommunityCoverageInput{TeamID: f.teamID, EvidenceIDs: []string{f.evidenceIDs[0]}, RelationshipIDs: []string{f.sources[2].RelationshipID}})
@@ -145,7 +145,7 @@ func TestCommunityOwnershipPreservesRecallOrderBoundsAndCoverage(t *testing.T) {
 	require.NoError(t, f.rls.WithSystemTx(ctx, f.adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE community_sources SET source_rank=1 WHERE team_id=?::uuid AND community_id=?::uuid AND relationship_id IN (?::uuid,?::uuid)`, f.teamID, communityOwnershipID(0), f.sources[4].RelationshipID, f.sources[5].RelationshipID).Error
 	}))
-	tied, err := f.store.RecallCommunities(ctx, CommunityRecallInput{TeamID: f.teamID, ReturnedEvidenceIDs: []string{f.evidenceIDs[0]}, Limit: 1})
+	tied, _, err := f.store.RecallCommunities(ctx, CommunityRecallInput{TeamID: f.teamID, ReturnedEvidenceIDs: []string{f.evidenceIDs[0]}, Limit: 1})
 	require.NoError(t, err)
 	require.Len(t, tied, 1)
 	tieIDs := []string{f.sources[4].RelationshipID, f.sources[5].RelationshipID}
@@ -238,14 +238,14 @@ func TestCommunityOwnershipExcludesPrivateAndStaleSnapshots(t *testing.T) {
 		return tx.Exec(`UPDATE community_records SET space_id=?::uuid,space_generation=? WHERE team_id=?::uuid AND community_id=?::uuid`, private.ID, private.Generation, f.teamID, communityOwnershipID(0)).Error
 	}))
 	input := f.mixedInput()
-	records, err := f.store.RecallCommunities(ctx, input)
+	records, _, err := f.store.RecallCommunities(ctx, input)
 	require.NoError(t, err)
 	require.NotContains(t, communityOwnershipIDs(records), communityOwnershipID(0))
 	t.Logf("case=private_snapshot signature=%s", f.signature(records))
 	require.NoError(t, f.rls.WithSystemTx(ctx, f.adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE relationship_records SET version=version+1 WHERE team_id=?::uuid AND relationship_id=?::uuid`, f.teamID, f.sources[4].RelationshipID).Error
 	}))
-	records, err = f.store.RecallCommunities(ctx, input)
+	records, _, err = f.store.RecallCommunities(ctx, input)
 	require.NoError(t, err)
 	for _, record := range records {
 		for _, hit := range record.Relationships {
@@ -255,7 +255,7 @@ func TestCommunityOwnershipExcludesPrivateAndStaleSnapshots(t *testing.T) {
 	stale, err := f.store.RefreshCommunityStaleness(ctx, CommunityStalenessInput{TeamID: f.teamID})
 	require.NoError(t, err)
 	require.Equal(t, 11, stale)
-	records, err = f.store.RecallCommunities(ctx, input)
+	records, _, err = f.store.RecallCommunities(ctx, input)
 	require.NoError(t, err)
 	require.Empty(t, records)
 	t.Log("case=source_version_stale stale=11 signature=[]")

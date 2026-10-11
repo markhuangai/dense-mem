@@ -64,11 +64,11 @@ func TestCommunityTopicRejectsPrivateForeignSourcesAndFencesCorrection(t *testin
 	result, err := semantic.CorrectRelationshipWithEmbeddings(f.actor(f.ownerA), input, embeddings)
 	require.NoError(t, err)
 	require.Equal(t, "completed", result.ProcessingState)
-	records, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10})
+	records, _, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, records, 2)
 	f.drain(t, 10)
-	records, err = f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
+	records, _, err = f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
 	require.NoError(t, err)
 	for _, record := range records {
 		for _, relationship := range record.Relationships {
@@ -96,12 +96,12 @@ func TestCommunityTopicWithdrawQuarantineAndGeneration(t *testing.T) {
 			SELECT team_id,fragment_id,ingest_id,owner_profile_id,'fixture quarantine',space_id,space_generation FROM evidence_fragments
 			WHERE team_id=?::uuid AND fragment_id=?::uuid`, f.teamID, f.evidenceIDs[18]).Error
 	}))
-	records, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
+	records, _, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	require.Equal(t, f.topics["runtime"], records[0].LogicalCommunityID)
 	f.drain(t, 10)
-	records, err = f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
+	records, _, err = f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
 	require.NoError(t, err)
 	require.Len(t, records, 3)
 	for _, record := range records {
@@ -113,7 +113,7 @@ func TestCommunityTopicWithdrawQuarantineAndGeneration(t *testing.T) {
 	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE memory_spaces SET generation=generation+1 WHERE team_id=?::uuid AND id=?::uuid`, f.teamID, f.space).Error
 	}))
-	records, err = f.store.RecallCommunities(context.Background(), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10})
+	records, _, err = f.store.RecallCommunities(context.Background(), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10})
 	require.NoError(t, err)
 	require.Empty(t, records)
 }
@@ -256,7 +256,7 @@ func TestCommunityTopicMigrationValidationAllowsConcurrentReadsAndWrites(t *test
 	require.NoError(t, tx.Exec(validation).Error)
 	readCtx, cancelRead := context.WithTimeout(f.actor(f.reader), 2*time.Second)
 	defer cancelRead()
-	records, err := f.store.RecallCommunities(readCtx, CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10})
+	records, _, err := f.store.RecallCommunities(readCtx, CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10})
 	require.NoError(t, err, "constraint validation blocked current community reads")
 	require.Len(t, records, 3)
 	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 2*time.Second)

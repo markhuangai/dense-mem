@@ -216,14 +216,14 @@ func (s *recallCommunitySnapshotStub) ListCommunitySemanticGroups(_ context.Cont
 	return append([]string(nil), s.covered...), nil
 }
 
-func (s *recallCommunitySnapshotStub) RecallCommunities(_ context.Context, input communitycontract.CommunityRecallInput) ([]communitycontract.CommunityRecallRecord, error) {
+func (s *recallCommunitySnapshotStub) RecallCommunities(_ context.Context, input communitycontract.CommunityRecallInput) ([]communitycontract.CommunityRecallRecord, *communitycontract.TopicProjectionCoverage, error) {
 	s.recallInput = communitycontract.CommunityDiscoveryInput{TeamID: input.TeamID, Query: input.Query, Limit: input.Limit}
 	// Keep the complete input separately so tests can inspect suppression keys.
 	s.snapshotInput = input
 	if s.recallErr != nil {
-		return nil, s.recallErr
+		return nil, nil, s.recallErr
 	}
-	return s.records, nil
+	return s.records, nil, nil
 }
 
 var _ RecallCommunityRepository = (*recallCommunitySnapshotStub)(nil)

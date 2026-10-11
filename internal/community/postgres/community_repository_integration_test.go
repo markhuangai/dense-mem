@@ -250,7 +250,7 @@ func TestCommunityRepositorySnapshotLifecycleAndRecallExpansion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, otherTeamList)
 
-	recalledCommunities, err := communityRepo.RecallCommunities(ctx, CommunityRecallInput{
+	recalledCommunities, _, err := communityRepo.RecallCommunities(ctx, CommunityRecallInput{
 		TeamID:            teamA,
 		Query:             "PostgreSQL",
 		Limit:             10,

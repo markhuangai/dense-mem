@@ -86,7 +86,7 @@ func TestCommunityTopicRecallUsesOneWithdrawalSnapshot(t *testing.T) {
 	completed := make(chan response, 1)
 	input := CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20}
 	go func() {
-		records, err := f.store.RecallCommunities(f.actor(f.reader), input)
+		records, _, err := f.store.RecallCommunities(f.actor(f.reader), input)
 		completed <- response{records, err}
 	}()
 	select {
@@ -113,7 +113,7 @@ func TestCommunityTopicRecallUsesOneWithdrawalSnapshot(t *testing.T) {
 			require.True(t, found, "hydration mixed a later withdrawal into the earlier validated snapshot")
 		}
 	}
-	current, err := f.store.RecallCommunities(f.actor(f.reader), input)
+	current, _, err := f.store.RecallCommunities(f.actor(f.reader), input)
 	require.NoError(t, err)
 	require.Len(t, current, 2)
 }
@@ -124,7 +124,7 @@ func TestCommunityTopicRecallModeSwitchRejectsUnvalidatedLegacy(t *testing.T) {
 	f.drain(t, 10)
 	f.retract(t, 4)
 	service := f.recallService(t)
-	selected, resume := pauseCommunityQuery(t, f.appDB, "AND discovery_kind=4)")
+	selected, resume := pauseCommunityQuery(t, f.appDB, "SELECT key, value, updated_at")
 	type response struct {
 		result *recallapp.RecallResult
 		err    error
@@ -139,7 +139,7 @@ func TestCommunityTopicRecallModeSwitchRejectsUnvalidatedLegacy(t *testing.T) {
 	select {
 	case <-selected:
 	case <-time.After(5 * time.Second):
-		t.Fatal("Recall did not reach topic coverage validation")
+		t.Fatal("Recall did not reach the configuration snapshot")
 	}
 	f.setMode(t, false)
 	resume()
@@ -162,7 +162,7 @@ func TestCommunityTopicRecallModePreconditionUsesSelectionSnapshot(t *testing.T)
 	for _, enabled := range []bool{false, true} {
 		f.setMode(t, enabled)
 		for _, expected := range []bool{false, true} {
-			records, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID,
+			records, _, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID,
 				Query: "marker", Limit: 10, ExpectedOntologyEnabled: &expected})
 			if enabled == expected {
 				require.NoError(t, err)
@@ -182,7 +182,7 @@ func TestCommunityTopicRecallModePreconditionUsesSelectionSnapshot(t *testing.T)
 	enabled := true
 	input := CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, ExpectedOntologyEnabled: &enabled}
 	go func() {
-		records, err := f.store.RecallCommunities(f.actor(f.reader), input)
+		records, _, err := f.store.RecallCommunities(f.actor(f.reader), input)
 		completed <- response{records, err}
 	}()
 	select {
@@ -198,8 +198,70 @@ func TestCommunityTopicRecallModePreconditionUsesSelectionSnapshot(t *testing.T)
 	for _, record := range result.records {
 		require.Contains(t, f.currentIDs(t), record.LogicalCommunityID, "selection mixed a later mode into the validated snapshot")
 	}
-	_, err := f.store.RecallCommunities(f.actor(f.reader), input)
+	_, _, err := f.store.RecallCommunities(f.actor(f.reader), input)
 	require.ErrorIs(t, err, community.ErrCommunitySourceStale)
+}
+
+func TestCommunityTopicRecallCoverageTracksSelectionSnapshot(t *testing.T) {
+	f := newTopicProjectionFixture(t)
+	f.seedCohort(t)
+	f.drain(t, 10)
+	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
+		updated := tx.Exec(`UPDATE ontology_maintenance_teams SET discovery_kind=4 WHERE team_id=?::uuid`, f.teamID)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		require.EqualValues(t, 1, updated.RowsAffected)
+		if err := tx.Exec(`UPDATE ontology_maintenance_sources SET status='organized' WHERE team_id=?::uuid AND eligible`, f.teamID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`DELETE FROM ontology_maintenance_markers WHERE team_id=?::uuid`, f.teamID).Error
+	}))
+	coverage, err := f.store.TopicProjectionCoverage(f.actor(f.reader), f.teamID)
+	require.NoError(t, err)
+	require.True(t, coverage.CoverageComplete)
+	service := f.recallService(t)
+	selected, resume := pauseCommunityQuery(t, f.appDB, "AND discovery_kind=4)")
+	type response struct {
+		result *recallapp.RecallResult
+		err    error
+	}
+	completed := make(chan response, 1)
+	zero, ten, twenty := 0, 10, 20
+	request := recallapp.RecallRequest{Query: "marker", Limit: 1, RelationshipLimit: &zero,
+		CommunityLimit: &ten, CommunityRelationshipLimit: &twenty}
+	go func() {
+		result, err := service.Recall(f.actor(f.reader), request)
+		completed <- response{result, err}
+	}()
+	select {
+	case <-selected:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Recall did not reach complete coverage validation")
+	}
+	f.retract(t, 0)
+	resume()
+	result := <-completed
+	require.NoError(t, result.err)
+	partial := recallapp.RecallDegradationResult{Frontier: "communities", Code: "community_projection_partial", Optional: true,
+		Message: "community topic coverage is incomplete; eligible current topics and direct retrieval remain available"}
+	if len(result.result.RelatedCommunities) == 3 {
+		require.NotContains(t, result.result.Degradations, partial)
+	} else {
+		require.Len(t, result.result.RelatedCommunities, 2)
+		require.Contains(t, result.result.Degradations, partial, "selection omitted a stale topic without partial coverage")
+	}
+	current, err := service.Recall(f.actor(f.reader), request)
+	require.NoError(t, err)
+	require.Len(t, current.RelatedCommunities, 2)
+	require.Contains(t, current.Degradations, partial)
+	for index := 1; index < len(f.sources); index++ {
+		f.retract(t, index)
+	}
+	empty, err := service.Recall(f.actor(f.reader), request)
+	require.NoError(t, err)
+	require.Empty(t, empty.RelatedCommunities)
+	require.Contains(t, empty.Degradations, partial, "empty selection still needs its coverage metadata")
 }
 
 func TestCommunityTopicCapacityIsSharedWithMaintenance(t *testing.T) {

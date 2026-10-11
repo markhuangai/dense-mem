@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -10,14 +11,21 @@ import (
 	"gorm.io/gorm"
 )
 
-func (r *Store) RecallCommunities(ctx context.Context, input CommunityRecallInput) ([]CommunityRecallRecord, error) {
+func (r *Store) RecallCommunities(ctx context.Context, input CommunityRecallInput) ([]CommunityRecallRecord, *communitycontract.TopicProjectionCoverage, error) {
 	input = communitycontract.NormalizeCommunityRecallInput(input)
 	if err := communitycontract.ValidateCommunityRecallInput(input); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	communities := []CommunityRecallRecord{}
+	withCoverage := input.ExpectedOntologyEnabled != nil && *input.ExpectedOntologyEnabled
+	var coverage *communitycontract.TopicProjectionCoverage
 	if r == nil || r.db == nil || r.rls == nil {
-		return nil, fmt.Errorf("community: database and RLS helper are required")
+		return nil, nil, fmt.Errorf("community: database and RLS helper are required")
+	}
+	if withCoverage {
+		if err := authorizeTopicProjectionTeam(ctx, input.TeamID); err != nil {
+			return nil, nil, err
+		}
 	}
 	err := r.rls.WithTeamReadOnlyRepeatableTx(ctx, r.db, input.TeamID, func(tx *gorm.DB) error {
 		if input.ExpectedOntologyEnabled != nil {
@@ -29,10 +37,19 @@ func (r *Store) RecallCommunities(ctx context.Context, input CommunityRecallInpu
 				return communitycontract.ErrCommunitySourceStale
 			}
 		}
-		rows, err := tx.WithContext(ctx).Raw(communityRecallSQL, input.TeamID, input.Query,
-			pq.Array(input.ReturnedEvidenceIDs), pq.Array(input.KnownEvidenceIDs),
-			pq.Array(input.KnownRelationshipIDs), pq.Array(input.SeedRelationshipIDs),
-			pq.Array(input.ExpandFromEntityIDs), pq.Array(input.CoveredGroupKeys), input.Limit).Rows()
+		query := communityRecallSQL
+		args := []any{input.TeamID, input.Query, pq.Array(input.ReturnedEvidenceIDs), pq.Array(input.KnownEvidenceIDs),
+			pq.Array(input.KnownRelationshipIDs), pq.Array(input.SeedRelationshipIDs), pq.Array(input.ExpandFromEntityIDs), pq.Array(input.CoveredGroupKeys)}
+		if withCoverage {
+			fence, err := loadTeamSharedSpaceFence(ctx, tx, input.TeamID)
+			if err != nil {
+				return err
+			}
+			query = communityProjectionRecallSQL
+			args = append(args, fence.ID, fence.Generation)
+		}
+		args = append(args, input.Limit)
+		rows, err := tx.WithContext(ctx).Raw(query, args...).Rows()
 		if err != nil {
 			return err
 		}
@@ -41,9 +58,21 @@ func (r *Store) RecallCommunities(ctx context.Context, input CommunityRecallInpu
 		for rows.Next() {
 			record := CommunityRecallRecord{}
 			var topPredicates pq.StringArray
-			if err := rows.Scan(&record.CommunityID, &record.LogicalCommunityID, &record.Rank, &record.Summary, &record.EntityCount, &record.RelationshipCount, &topPredicates); err != nil {
+			var communityID, logicalID sql.NullString
+			targets := []any{&communityID, &logicalID, &record.Rank, &record.Summary, &record.EntityCount, &record.RelationshipCount, &topPredicates}
+			if withCoverage {
+				if coverage == nil {
+					coverage = &communitycontract.TopicProjectionCoverage{}
+				}
+				targets = append(targets, &coverage.TotalTopics, &coverage.CurrentTopics, &coverage.PendingTopics, &coverage.StaleTopics, &coverage.FailedTopics, &coverage.CoverageComplete)
+			}
+			if err := rows.Scan(targets...); err != nil {
 				return err
 			}
+			if !communityID.Valid {
+				continue
+			}
+			record.CommunityID, record.LogicalCommunityID = communityID.String, logicalID.String
 			record.TopPredicates = []string(topPredicates)
 			matched = append(matched, record)
 		}
@@ -66,9 +95,9 @@ func (r *Store) RecallCommunities(ctx context.Context, input CommunityRecallInpu
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("community: recall communities: %w", err)
+		return nil, nil, fmt.Errorf("community: recall communities: %w", err)
 	}
-	return communities, nil
+	return communities, coverage, nil
 }
 
 func loadCommunityTopEntitiesBatch(ctx context.Context, tx *gorm.DB, teamID string, records []CommunityRecallRecord) error {
@@ -249,7 +278,51 @@ func loadCommunityRecallRelationshipsBatch(ctx context.Context, tx *gorm.DB, inp
 	return nil
 }
 
-var communityRecallSQL = `
+var communityRecallSQL = buildCommunityRecallSQL(false)
+var communityProjectionRecallSQL = buildCommunityRecallSQL(true)
+
+func buildCommunityRecallSQL(withCoverage bool) string {
+	scopeParams, projectionCTEs := "", ""
+	visibility := communityRecordVisibilitySQL("record")
+	resultSQL := `
+			SELECT community_id::text,
+			       COALESCE(logical_community_id, community_id)::text,
+			       row_number() OVER (ORDER BY seed_lane ASC, member_count DESC, community_id ASC)::int,
+			       summary, member_count, source_count, top_predicates
+			FROM matched_communities
+			ORDER BY seed_lane ASC, member_count DESC, community_id ASC
+			LIMIT ?
+		`
+	if withCoverage {
+		scopeParams = `, ?::uuid AS projection_space_id,?::bigint AS projection_generation`
+		projectionCTEs = `,
+  scope AS (SELECT team_id,projection_space_id AS space_id,projection_generation AS generation FROM params),
+  projection_snapshots AS MATERIALIZED (
+   SELECT record.community_id FROM community_records AS record CROSS JOIN scope
+   WHERE record.team_id=scope.team_id AND record.space_id=scope.space_id AND record.space_generation=scope.generation
+   AND record.status='current' AND record.topic_id IS NOT NULL
+   UNION
+   SELECT work.community_id FROM community_topic_work AS work CROSS JOIN scope
+   WHERE work.team_id=scope.team_id AND work.space_id=scope.space_id AND work.space_generation=scope.generation
+   AND work.community_id IS NOT NULL AND work.status IN ('current','empty')
+  ), projection_freshness AS MATERIALIZED (
+   SELECT community_id,dense_mem_community_topic_current(scope.team_id,community_id) AS fresh
+   FROM projection_snapshots CROSS JOIN scope
+  ), topics AS MATERIALIZED (SELECT work.status,COALESCE(freshness.fresh,false) AS fresh` +
+			topicProjectionFromSQL + ` LEFT JOIN projection_freshness AS freshness ON freshness.community_id=work.community_id` +
+			topicProjectionWhereSQL + `), counts AS (` + topicProjectionCountsSQL + `),
+  projection_coverage AS MATERIALIZED (` + topicProjectionCoverageResultSQL + `)`
+		visibility = `record.topic_id IS NOT NULL AND EXISTS(SELECT 1 FROM projection_freshness AS freshness WHERE freshness.community_id=record.community_id AND freshness.fresh)`
+		resultSQL = `
+  SELECT selected.community_id::text,COALESCE(selected.logical_community_id,selected.community_id)::text,
+  COALESCE(selected.rank,0),COALESCE(selected.summary,''),COALESCE(selected.member_count,0),COALESCE(selected.source_count,0),selected.top_predicates,
+  coverage.total_topics,coverage.current_topics,coverage.pending_topics,coverage.stale_topics,coverage.failed_topics,coverage.coverage_complete
+  FROM projection_coverage AS coverage LEFT JOIN LATERAL (
+   SELECT matched.*,row_number() OVER(ORDER BY seed_lane ASC,member_count DESC,community_id ASC)::int AS rank
+   FROM matched_communities AS matched ORDER BY seed_lane ASC,member_count DESC,community_id ASC LIMIT ?
+  ) AS selected ON true ORDER BY selected.rank`
+	}
+	return `
 			WITH params AS (
 				SELECT ?::uuid AS team_id,
 				       ?::text AS query,
@@ -258,8 +331,8 @@ var communityRecallSQL = `
 				       ?::uuid[] AS known_relationship_ids,
 				       ?::uuid[] AS seed_relationship_ids,
 				       ?::uuid[] AS expand_entity_ids,
-				       ?::text[] AS covered_groups
-			), matched_communities AS (
+				       ?::text[] AS covered_groups` + scopeParams + `
+			)` + projectionCTEs + `, matched_communities AS (
 				SELECT record.community_id,
 				       record.logical_community_id,
 				       record.summary,
@@ -273,7 +346,7 @@ var communityRecallSQL = `
 				  AND record.space_id = dense_mem_team_shared_space(record.team_id)
 				  AND record.space_generation = dense_mem_team_shared_generation(record.team_id)
 				  AND record.status = 'current'
-				  AND ` + communityRecordVisibilitySQL("record") + `
+				  AND ` + visibility + `
 				  AND (
 					  params.query = ''
 					  OR community_record_search_vector(record.summary, record.top_entities, record.top_predicates) @@ plainto_tsquery('simple', params.query)
@@ -319,15 +392,8 @@ var communityRecallSQL = `
 						    AND source.semantic_group_key <> ALL(params.covered_groups)
 					  )
 				  )
-			)
-			SELECT community_id::text,
-			       COALESCE(logical_community_id, community_id)::text,
-			       row_number() OVER (ORDER BY seed_lane ASC, member_count DESC, community_id ASC)::int,
-			       summary, member_count, source_count, top_predicates
-			FROM matched_communities
-			ORDER BY seed_lane ASC, member_count DESC, community_id ASC
-			LIMIT ?
-		`
+			)` + resultSQL
+}
 
 func buildCommunityRecallRankingSQL() string {
 	expressions := map[communitycontract.RecallCommunityMatchCategory]string{

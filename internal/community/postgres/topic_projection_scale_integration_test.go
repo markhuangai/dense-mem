@@ -85,7 +85,7 @@ func TestCommunityTopicLargeFanoutResumesAndRotates(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, groups, record.SourceCount)
 	require.Equal(t, groups+1, record.MemberCount)
-	records, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 5})
+	records, _, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 5})
 	require.NoError(t, err)
 	for _, record := range records {
 		if record.LogicalCommunityID == large {

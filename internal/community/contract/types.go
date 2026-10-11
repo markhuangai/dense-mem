@@ -35,7 +35,7 @@ type CommunityRepository interface {
 	LatestCommunityRun(ctx context.Context, teamID string) (*CommunityRun, error)
 	ListCurrentCommunityLineage(ctx context.Context, teamID string) ([]CommunityLineageRecord, error)
 	ListCommunitySemanticGroups(ctx context.Context, input CommunityCoverageInput) ([]string, error)
-	RecallCommunities(ctx context.Context, input CommunityRecallInput) ([]CommunityRecallRecord, error)
+	RecallCommunities(ctx context.Context, input CommunityRecallInput) ([]CommunityRecallRecord, *TopicProjectionCoverage, error)
 	RecordCommunitySummaryAttempt(ctx context.Context, input CommunitySummaryAttemptInput) error
 }
 

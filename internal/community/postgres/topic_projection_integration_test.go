@@ -26,7 +26,7 @@ import (
 func TestCommunityTopicPublicationAndQuality(t *testing.T) {
 	f := newTopicProjectionFixture(t)
 	f.setMode(t, false)
-	baseline, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
+	baseline, _, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
 	require.NoError(t, err)
 	baselineSources := map[string]bool{}
 	baselineBad := 0
@@ -49,9 +49,17 @@ func TestCommunityTopicPublicationAndQuality(t *testing.T) {
 	ids := f.currentIDs(t)
 	require.Len(t, ids, 3)
 	require.Equal(t, canonical, f.canonicalSnapshot(t))
-	records, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
+	records, _, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
 	require.NoError(t, err)
 	require.Len(t, records, 3)
+	enabled := true
+	qualified, coverage, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID,
+		Query: "marker", Limit: 10, RelationshipLimit: 20, ExpectedOntologyEnabled: &enabled})
+	require.NoError(t, err)
+	require.Equal(t, records, qualified)
+	expectedCoverage, err := f.store.TopicProjectionCoverage(f.actor(f.reader), f.teamID)
+	require.NoError(t, err)
+	require.Equal(t, &expectedCoverage, coverage)
 	indices := map[string]int{}
 	for index, source := range f.sources {
 		indices[source.RelationshipID] = index
@@ -82,8 +90,12 @@ func TestCommunityTopicPublicationAndQuality(t *testing.T) {
 	require.Zero(t, score.FalseConsolidations)
 	require.LessOrEqual(t, score.BadAtK, baselineBad)
 	for _, limit := range []int{1, 3, 5, 20, 100} {
-		preview, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 100, RelationshipLimit: limit})
+		preview, _, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 100, RelationshipLimit: limit})
 		require.NoError(t, err)
+		qualified, _, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID,
+			Query: "marker", Limit: 100, RelationshipLimit: limit, ExpectedOntologyEnabled: &enabled})
+		require.NoError(t, err)
+		require.Equal(t, preview, qualified)
 		for _, record := range preview {
 			require.LessOrEqual(t, len(record.Relationships), min(limit, 20))
 			require.Equal(t, record.RelationshipCount > len(record.Relationships), record.RelationshipsTruncated)
@@ -148,8 +160,12 @@ func TestCommunityTopicRetractionIsolationAndIndependentRefresh(t *testing.T) {
 	require.ErrorIs(t, err, ontology.ErrUnauthorized)
 	_, err = f.store.TopicProjectionCoverage(f.actor(f.reader), f.otherTeam)
 	require.ErrorIs(t, err, ontology.ErrUnauthorized)
+	enabled := true
+	_, foreignCoverage, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.otherTeam, ExpectedOntologyEnabled: &enabled})
+	require.ErrorIs(t, err, ontology.ErrUnauthorized)
+	require.Nil(t, foreignCoverage)
 	f.retract(t, 0)
-	records, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
+	records, _, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
 	require.NoError(t, err)
 	require.Len(t, records, 2, "one stale topic hid healthy topics")
 	coverage, err := f.store.TopicProjectionCoverage(f.actor(f.reader), f.teamID)
@@ -161,7 +177,7 @@ func TestCommunityTopicRetractionIsolationAndIndependentRefresh(t *testing.T) {
 	require.NotEqual(t, before[f.topics["runtime"]], after[f.topics["runtime"]])
 	require.Equal(t, before[f.topics["storage"]], after[f.topics["storage"]])
 	require.Equal(t, before[f.topics["maintenance"]], after[f.topics["maintenance"]])
-	records, err = f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
+	records, _, err = f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
 	require.NoError(t, err)
 	for _, record := range records {
 		for _, relationship := range record.Relationships {
@@ -228,7 +244,7 @@ func TestCommunityTopicFailurePauseAndLegacySwitch(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, coverage.FailedTopics)
 	require.Equal(t, 2, coverage.CurrentTopics)
-	records, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
+	records, _, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
 	require.NoError(t, err)
 	require.Len(t, records, 2)
 	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
@@ -237,13 +253,13 @@ func TestCommunityTopicFailurePauseAndLegacySwitch(t *testing.T) {
 	progress, err := f.service.RunProjectionTurn(context.Background())
 	require.NoError(t, err)
 	require.False(t, progress)
-	paused, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
+	paused, _, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
 	require.NoError(t, err)
 	require.Equal(t, communityOwnershipIDs(records), communityOwnershipIDs(paused))
 	err = f.store.PublishCommunitySnapshot(context.Background(), f.publication)
 	require.ErrorIs(t, err, ontology.ErrMaintenanceDisabled)
 	f.setMode(t, false)
-	legacy, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
+	legacy, _, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
 	require.NoError(t, err)
 	for _, record := range legacy {
 		for _, topicID := range f.topics {
@@ -271,14 +287,14 @@ func BenchmarkCommunityTopicProjection(b *testing.B) {
 			f.setMode(b, enabled)
 			input := CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 3, RelationshipLimit: 5, ExpectedOntologyEnabled: &enabled}
 			for range 20 {
-				_, err := f.store.RecallCommunities(f.actor(f.reader), input)
+				_, _, err := f.store.RecallCommunities(f.actor(f.reader), input)
 				require.NoError(b, err)
 			}
 			durations := make([]time.Duration, b.N)
 			b.ResetTimer()
 			for i := range b.N {
 				start := time.Now()
-				records, err := f.store.RecallCommunities(f.actor(f.reader), input)
+				records, _, err := f.store.RecallCommunities(f.actor(f.reader), input)
 				durations[i] = time.Since(start)
 				require.NoError(b, err)
 				require.NotEmpty(b, records)

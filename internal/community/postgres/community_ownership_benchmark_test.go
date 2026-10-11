@@ -38,7 +38,7 @@ func BenchmarkCommunityOwnership(b *testing.B) {
 			}
 			b.StopTimer()
 			run := func() (string, error) {
-				records, err := f.store.RecallCommunities(context.Background(), workload.input)
+				records, _, err := f.store.RecallCommunities(context.Background(), workload.input)
 				if err != nil {
 					return "", err
 				}

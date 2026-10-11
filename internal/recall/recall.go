@@ -54,7 +54,7 @@ type RecallCommunityRepository interface {
 }
 
 type RecallCommunitySnapshotRepository interface {
-	RecallCommunities(ctx context.Context, input communitycontract.CommunityRecallInput) ([]communitycontract.CommunityRecallRecord, error)
+	RecallCommunities(ctx context.Context, input communitycontract.CommunityRecallInput) ([]communitycontract.CommunityRecallRecord, *communitycontract.TopicProjectionCoverage, error)
 }
 
 type RecallCommunityCoverageRepository interface {
@@ -418,20 +418,7 @@ func (s *recallService) recallCommunities(
 		return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community coverage was unavailable; direct relationship fallback was used")
 	}
 	var projectionDegradation *RecallDegradationResult
-	if organizationEnabled {
-		if repo, ok := s.communities.(interface {
-			TopicProjectionCoverage(context.Context, string) (communitycontract.TopicProjectionCoverage, error)
-		}); ok {
-			coverage, err := repo.TopicProjectionCoverage(ctx, teamID)
-			if err != nil {
-				projectionDegradation = communitySnapshotDegradation("community_projection_unavailable", "community projection coverage was unavailable; eligible current topics remain readable")
-			} else if !coverage.CoverageComplete {
-				projectionDegradation = communitySnapshotDegradation("community_projection_partial", "community topic coverage is incomplete; eligible current topics and direct retrieval remain available")
-			}
-		} else {
-			return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_projection_unavailable", "community topic projections were unavailable; direct retrieval remains available")
-		}
-	} else {
+	if !organizationEnabled {
 		if runRepo, ok := s.communities.(RecallCommunityRunRepository); ok {
 			latest, runErr := runRepo.LatestCommunityRun(ctx, teamID)
 			if runErr != nil {
@@ -469,7 +456,7 @@ func (s *recallService) recallCommunities(
 			groups = append(groups, group)
 		}
 		sort.Strings(groups)
-		records, recallErr := snapshotRepo.RecallCommunities(ctx, communitycontract.CommunityRecallInput{
+		records, coverage, recallErr := snapshotRepo.RecallCommunities(ctx, communitycontract.CommunityRecallInput{
 			TeamID: teamID, Query: req.Query, ValidAt: req.ValidAt, KnownAt: req.KnownAt,
 			ExpectedOntologyEnabled: &organizationEnabled,
 			ReturnedEvidenceIDs:     returnedEvidenceIDs, SeedRelationshipIDs: seedRelationshipIDs,
@@ -480,6 +467,13 @@ func (s *recallService) recallCommunities(
 		})
 		if recallErr != nil {
 			return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community snapshot was unavailable; direct relationship fallback was used")
+		}
+		if organizationEnabled {
+			if coverage == nil {
+				projectionDegradation = communitySnapshotDegradation("community_projection_unavailable", "community projection coverage was unavailable; eligible current topics remain readable")
+			} else if !coverage.CoverageComplete {
+				projectionDegradation = communitySnapshotDegradation("community_projection_partial", "community topic coverage is incomplete; eligible current topics and direct retrieval remain available")
+			}
 		}
 		return recallCommunitiesFromRepository(records), []RecallDiscoveryPath{}, projectionDegradation
 	}

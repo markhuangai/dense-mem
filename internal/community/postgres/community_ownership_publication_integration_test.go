@@ -54,7 +54,7 @@ func TestCommunityOwnershipExcludesOldGenerationRecall(t *testing.T) {
 	f := newCommunityOwnershipFixture(t)
 	ctx := context.Background()
 	input := f.mixedInput()
-	before, err := f.store.RecallCommunities(ctx, input)
+	before, _, err := f.store.RecallCommunities(ctx, input)
 	require.NoError(t, err)
 	require.Len(t, before, 10)
 	for _, record := range before {
@@ -68,7 +68,7 @@ func TestCommunityOwnershipExcludesOldGenerationRecall(t *testing.T) {
 		return tx.Raw(`SELECT count(*) FROM community_records WHERE team_id=?::uuid AND status='current'`, f.teamID).Row().Scan(&currentCount)
 	}))
 	require.Equal(t, 12, currentCount)
-	after, err := f.store.RecallCommunities(ctx, input)
+	after, _, err := f.store.RecallCommunities(ctx, input)
 	require.NoError(t, err)
 	require.Empty(t, after)
 	t.Logf("case=fresh_generation_change before=%s after=[] status_current=12", f.signature(before))
