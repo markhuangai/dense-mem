@@ -70,7 +70,8 @@ use forced RLS, team/shared-space constraints, and generation fences. Small
 source counters make publication and current reads reject changed dependencies;
 canonical triggers never expand memberships. Adding the nullable topic column
 and replacing the status constraint require a brief table lock with a five-second
-lock timeout. Constraint validation scans existing records. The scoped current
+lock-wait timeout. Constraint validation scans existing records in a separate
+transaction that permits community reads and writes. The scoped current
 logical-ID index is built concurrently before the stronger legacy index is
 dropped concurrently; no historical rows are rewritten. A failed concurrent
 index build requires separately authorized removal of its invalid derived index

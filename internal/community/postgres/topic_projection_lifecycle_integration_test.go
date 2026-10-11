@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -230,4 +231,37 @@ func TestCommunityTopicMigrationUsesNonSuperuserWithForcedRLS(t *testing.T) {
 		require.True(t, enabled, "migration overwrote configured enablement")
 		return nil
 	}))
+}
+
+func TestCommunityTopicMigrationValidationAllowsConcurrentReadsAndWrites(t *testing.T) {
+	f := newTopicProjectionFixture(t)
+	f.seedCohort(t)
+	f.drain(t, 10)
+	script, err := os.ReadFile("../../../migrations/postgres/v2_6/20261010101000_ontology_community_projections.sql")
+	require.NoError(t, err)
+	up := strings.Split(string(script), "-- +goose Down")[0]
+	var validation string
+	for _, block := range strings.Split(up, "-- +goose StatementBegin")[1:] {
+		block = strings.Split(block, "-- +goose StatementEnd")[0]
+		if strings.Contains(block, "ALTER TABLE community_records VALIDATE CONSTRAINT community_records_status_check;") {
+			validation = strings.TrimPrefix(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(block), "COMMIT;")), "BEGIN;")
+			break
+		}
+	}
+	require.NotEmpty(t, validation)
+	// Keep the actual validation phase open to verify its locks allow concurrent application reads and writes.
+	tx := f.adminDB.Begin()
+	require.NoError(t, tx.Error)
+	defer func() { require.NoError(t, tx.Rollback().Error) }()
+	require.NoError(t, tx.Exec(validation).Error)
+	readCtx, cancelRead := context.WithTimeout(f.actor(f.reader), 2*time.Second)
+	defer cancelRead()
+	records, err := f.store.RecallCommunities(readCtx, CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10})
+	require.NoError(t, err, "constraint validation blocked current community reads")
+	require.Len(t, records, 3)
+	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelWrite()
+	require.NoError(t, f.rls.WithSystemTx(writeCtx, f.appDB, func(writer *gorm.DB) error {
+		return writer.Exec(`UPDATE community_records SET updated_at=updated_at WHERE team_id=?::uuid AND status='current'`, f.teamID).Error
+	}), "constraint validation blocked community writes")
 }

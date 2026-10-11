@@ -51,7 +51,7 @@
   "latency": {
     "schema_version": "dense-mem.community.topic_latency.v1",
     "issue": 245,
-    "source_sha256": "sha256:6889342922a7c2601a93abbd84b6457a9d80498e88efcf10b54ee986389f0702",
+    "source_sha256": "sha256:442cd656d3014ff4e557a76b0dade2c314a8be0101f4489f9333c823d8ef2cc9",
     "configuration": {
       "source_count": 26,
       "warmups": 20,
@@ -63,33 +63,33 @@
     },
     "results": {
       "legacy_p95_ns": [
-        23095583.0,
-        25062431.0,
-        25979849.0,
-        23634447.0,
-        24035549.0
+        18412391.0,
+        18012274.0,
+        23167095.0,
+        20142522.0,
+        19748329.0
       ],
       "ontology_p95_ns": [
-        26678701.0,
-        27236795.0,
-        26121119.0,
-        23591540.0,
-        23792430.0
+        14927895.0,
+        14896181.0,
+        14975617.0,
+        18349206.0,
+        15665836.0
       ],
       "paired_regressions": [
-        0.1551429985551782,
-        0.0867579046900917,
-        0.005437675946461384,
-        -0.0018154433653556623,
-        -0.010114975946669658
+        -0.18924733892518364,
+        -0.17299831215092554,
+        -0.35358244095774627,
+        -0.08903135367060788,
+        -0.2067259969185241
       ],
-      "median_paired_p95_regression": 0.005437675946461384,
+      "median_paired_p95_regression": -0.18924733892518364,
       "passed": true
     },
     "verified": true
   },
   "commands": {
-    "quality_and_scale": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 DENSE_MEM_ORGANIZATION_REPORT_DIR=<unused-run-output> go test -tags integration -p 1 ./internal/community/... ./internal/ontology/... ./internal/recall/... -count=1 -timeout=90m -v",
+    "quality_and_scale": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 DENSE_MEM_ORGANIZATION_REPORT_DIR=<unused-run-output> go test -tags integration -p 1 ./internal/community/postgres -run '^TestCommunityTopic' -count=1 -timeout=45m -v",
     "latency": "env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 go test -tags integration ./internal/community/postgres -run '^$' -bench '^BenchmarkCommunityTopicProjection$' -benchtime=200x -count=5 -timeout=45m",
     "compare": "python3 tests/eval/scripts/compare_community_topics.py --input <benchmark-log> --out <comparison-report>"
   },

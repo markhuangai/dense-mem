@@ -12,7 +12,10 @@ import (
 
 	"github.com/google/uuid"
 	community "github.com/markhuangai/dense-mem/internal/community/contract"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	"github.com/markhuangai/dense-mem/internal/settings"
+	settingspg "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -152,4 +155,44 @@ func TestCommunityTopicCapacityIsSharedWithMaintenance(t *testing.T) {
 	require.NotNil(t, recovered)
 	require.ErrorIs(t, instanceB.AppendTopicProjection(context.Background(), community.TopicProjectionBatch{Work: *other}, time.Now()), community.ErrCommunityRunAlreadyClaimed)
 	require.NoError(t, f.store.FailTopicProjection(context.Background(), *recovered, "interrupted", time.Now()))
+}
+
+func TestCommunityTopicBusyTeamDoesNotStarveAvailableTeam(t *testing.T) {
+	f := newTopicProjectionFixture(t)
+	ctx := context.Background()
+	f.topic(t, "available-capacity", []ontology.SourceHandle{{Kind: ontology.RelationshipSource, ID: f.sources[0].RelationshipID, Version: int64(f.sources[0].RelationshipVersion)}})
+	_, err := f.ontology.PublishAutomatic(ctx, f.otherTeam, ontology.Publication{OperationKey: uuid.NewString(), Reason: "busy team rotation fixture", Changes: []ontology.Change{{Record: ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "foreign-rotation", Label: "Foreign rotation"}}}}})
+	require.NoError(t, err)
+	config := settings.NewAppConfigService(settingspg.NewAppConfigRepository(f.appDB, f.rls), nil)
+	_, err = config.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyConcurrency: "2"}, "control", "", "")
+	require.NoError(t, err)
+	policy, err := config.OntologyMaintenanceRuntimeConfig(ctx)
+	require.NoError(t, err)
+	window, err := f.ontology.EnsureMaintenanceWindow(ctx, policy, time.Now())
+	require.NoError(t, err)
+	require.NotNil(t, window)
+	now := window.EndsAt.Add(time.Minute)
+	window, err = f.ontology.EnsureMaintenanceWindow(ctx, policy, now)
+	require.NoError(t, err)
+	require.NotNil(t, window)
+	require.Equal(t, 2, window.Policy.MaxConcurrency)
+	f.windowID = window.ID
+	turn, err := f.ontology.ClaimMaintenanceTurn(ctx, f.windowID, now, 15*time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, turn)
+	defer func() { require.NoError(t, f.ontology.ReleaseMaintenanceTurn(ctx, *turn)) }()
+	require.NoError(t, f.store.withProjectionTx(ctx, func(tx *gorm.DB) error {
+		if err := f.store.discoverTopicProjections(ctx, tx); err != nil {
+			return err
+		}
+		return tx.Exec(`UPDATE community_topic_work SET last_turn=CASE WHEN team_id=?::uuid THEN ?::timestamptz ELSE ?::timestamptz END`, turn.TeamID, now.Add(-2*time.Minute), now.Add(-time.Minute)).Error
+	}))
+	work, err := f.store.ClaimTopicProjection(ctx, now)
+	require.NoError(t, err)
+	require.Nil(t, work, "busy team must not receive a second lease")
+	work, err = f.store.ClaimTopicProjection(ctx, now.Add(time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, work, "refused candidate starved another team with available capacity")
+	require.NotEqual(t, turn.TeamID, work.TeamID)
+	require.NoError(t, f.store.FailTopicProjection(ctx, *work, "interrupted", now.Add(time.Second)))
 }

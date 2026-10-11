@@ -73,8 +73,13 @@ func (r *Store) ClaimTopicProjection(ctx context.Context, now time.Time) (*commu
 		}
 		candidate.LeaseToken = uuid.NewString()
 		admitted, err = r.topicAdmission(ctx, tx, topicMaintenanceTurn(*candidate, now), now)
-		if err != nil || !admitted {
+		if err != nil {
 			return err
+		}
+		if !admitted {
+			return tx.Exec(`UPDATE community_topic_work SET last_turn=?
+				WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=? AND topic_id=?::uuid`,
+				now, candidate.TeamID, candidate.SpaceID, candidate.Generation, candidate.TopicID).Error
 		}
 		if status != "building" || !current {
 			if err := startTopicProjection(tx, candidate, now); err != nil {

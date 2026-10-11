@@ -1,4 +1,4 @@
--- Lock/rewrite impact: brief ALTER/trigger locks bounded to five seconds; status validation scans history and the replacement index builds concurrently.
+-- Lock/rewrite impact: DDL waits are bounded to five seconds; history validation runs in a separate transaction and the replacement index builds concurrently.
 -- RLS impact: derived state remains forced and scoped; SELECT exposes only the nonsecret ontology mode flag, with no configuration write permission.
 -- Backfill: none; workers capture derived topic dependencies in bounded pages.
 -- Backward compatibility: additive projections retain legacy history and ontology-disabled publication.
@@ -27,7 +27,6 @@ ALTER TABLE community_records ADD COLUMN IF NOT EXISTS topic_id UUID;
 ALTER TABLE community_records DROP CONSTRAINT IF EXISTS community_records_status_check;
 ALTER TABLE community_records ADD CONSTRAINT community_records_status_check
     CHECK(status IN ('building','current','stale','superseded')) NOT VALID;
-ALTER TABLE community_records VALIDATE CONSTRAINT community_records_status_check;
 
 CREATE TABLE IF NOT EXISTS community_topic_versions (
     team_id UUID NOT NULL,
@@ -282,6 +281,14 @@ LANGUAGE SQL STABLE AS $body$
         WHERE dependency.team_id=p_team AND dependency.community_id=p_community
         AND dependency.version<>COALESCE(live.version,0))
 $body$;
+COMMIT;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+BEGIN;
+SELECT set_config('app.tx_mode','migration',true);
+SELECT set_config('lock_timeout','5s',true);
+ALTER TABLE community_records VALIDATE CONSTRAINT community_records_status_check;
 COMMIT;
 -- +goose StatementEnd
 

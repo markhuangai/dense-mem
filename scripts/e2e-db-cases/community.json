@@ -197,6 +197,20 @@
       "run": "^TestCommunityTopicMigrationUsesNonSuperuserWithForcedRLS$",
       "phase": "precheck",
       "source": "internal/community/postgres/topic_projection_lifecycle_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicBusyTeamDoesNotStarveAvailableTeam",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicBusyTeamDoesNotStarveAvailableTeam$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_races_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicMigrationValidationAllowsConcurrentReadsAndWrites",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicMigrationValidationAllowsConcurrentReadsAndWrites$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_lifecycle_integration_test.go"
     }
   ]
 }
