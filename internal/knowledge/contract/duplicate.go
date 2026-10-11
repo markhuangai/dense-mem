@@ -1,8 +1,9 @@
 package contract
 
 const (
-	RememberDuplicateCandidateLimit = 10
-	RememberDuplicateMaxEvidence    = 20
+	RememberDuplicateCandidateLimit      = 10
+	RememberDuplicateMaxEvidence         = 20
+	RememberDuplicateMaxInternalEvidence = 100
 )
 
 // RememberDuplicateCandidate is a canonical evidence item that the assessor
@@ -53,11 +54,12 @@ type RememberDuplicateEmbeddingPlan struct {
 // request. Evidence content is read-only provider input; no durable row exists
 // until the terminal commit.
 type RememberDuplicateCandidateInput struct {
-	TeamID          string
-	OwnerProfileID  string
-	SpaceID         string
-	SpaceGeneration int64
-	Evidence        []EvidenceInput
+	MaxEvidenceItems int
+	TeamID           string
+	OwnerProfileID   string
+	SpaceID          string
+	SpaceGeneration  int64
+	Evidence         []EvidenceInput
 }
 
 type RememberDuplicateResolutionResult struct {

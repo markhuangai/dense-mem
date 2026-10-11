@@ -411,6 +411,7 @@ func TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact(t *testing.T) {
 
 	targetIngest := seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, target.MemorySpaceID, "target private content")
 	otherIngest := seedPrivateMemoryIngest(t, adminDB, rls, teamID, other.ID, other.MemorySpaceID, "other private content")
+	seedSessionErasureFixture(t, ctx, adminDB, rls, teamID, target.ID, target.MemorySpaceID)
 	sharedIngest := seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, sharedSpaceID, "shared content")
 	seedPrivateMemoryEvidenceConflict(t, adminDB, rls, teamID, target, targetIngest)
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
@@ -504,6 +505,9 @@ func TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact(t *testing.T) {
 	require.Contains(t, completed.DeletedCounts, "evidence_conflict_cases")
 	require.Contains(t, completed.DeletedCounts, "evidence_conflict_positions")
 	require.Contains(t, completed.DeletedCounts, "evidence_conflict_events")
+	for _, table := range []string{"session_submissions", "session_events", "session_extraction_checkpoints", "session_submission_receipts", "session_submission_diagnostics"} {
+		require.Equal(t, int64(1), completed.DeletedCounts[table], table)
+	}
 	require.Equal(t, int64(1), completed.DeletedCounts["knowledge_ingests"])
 	require.Equal(t, int64(1), completed.DeletedCounts["evidence_conflict_cases"])
 	require.Equal(t, int64(2), completed.DeletedCounts["evidence_conflict_positions"])

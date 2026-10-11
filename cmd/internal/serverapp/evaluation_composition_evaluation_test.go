@@ -28,8 +28,8 @@ func TestEvaluationCompositionUsesDedicatedReader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("evaluation registry: %v", err)
 	}
-	if got := len(reg.List()); got != 13 {
-		t.Fatalf("evaluation catalog size = %d; want 13", got)
+	if got := len(reg.List()); got != 14 {
+		t.Fatalf("evaluation catalog size = %d; want 14", got)
 	}
 }
 

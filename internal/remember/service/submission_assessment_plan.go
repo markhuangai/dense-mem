@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -66,8 +67,15 @@ func buildSubmissionAssessmentPlan(snapshot RememberAssessmentSnapshot) (submiss
 	if len(fragmentsByIndex) == 0 {
 		return submissionAssessmentPlan{}, errors.New("submission assessment evidence is required")
 	}
-	if len(fragmentsByIndex) > assessor.SemanticAssessmentMaxEvidenceSpans {
-		return submissionAssessmentPlan{}, fmt.Errorf("submission assessment evidence must contain at most %d entries", assessor.SemanticAssessmentMaxEvidenceSpans)
+	maxEvidence := snapshot.MaxEvidenceItems
+	if maxEvidence <= 0 {
+		maxEvidence = assessor.SemanticAssessmentMaxEvidenceSpans
+	}
+	if maxEvidence > 100 {
+		return submissionAssessmentPlan{}, errors.New("submission assessment evidence limit exceeds server bound")
+	}
+	if len(fragmentsByIndex) > maxEvidence {
+		return submissionAssessmentPlan{}, fmt.Errorf("submission assessment evidence must contain at most %d entries", maxEvidence)
 	}
 
 	items := make([]submissionAssessmentItem, 0, len(snapshot.Items))
@@ -123,6 +131,7 @@ func buildSubmissionAssessmentPlan(snapshot RememberAssessmentSnapshot) (submiss
 		}
 		plan.duplicateCandidatesByEvidenceID[group.EvidenceID] = group
 	}
+	sessionRefs, _ := snapshot.Proposal["session_extraction"].(bool)
 	rawRelationships, err := submissionAssessmentObjectArray(snapshot.Proposal, "relationship_hints", "relationships")
 	if err != nil {
 		return submissionAssessmentPlan{}, err
@@ -131,7 +140,7 @@ func buildSubmissionAssessmentPlan(snapshot RememberAssessmentSnapshot) (submiss
 		return submissionAssessmentPlan{}, errors.New("submission assessment relationships exceed the configured bound")
 	}
 	for index, raw := range rawRelationships {
-		target, entities, err := submissionAssessmentRelationshipTargetFromProposal(raw, index, plan.itemsByEvidenceID)
+		target, entities, err := submissionAssessmentRelationshipTargetFromProposal(raw, index, plan.itemsByEvidenceID, sessionRefs)
 		if err != nil {
 			return submissionAssessmentPlan{}, err
 		}
@@ -139,8 +148,21 @@ func buildSubmissionAssessmentPlan(snapshot RememberAssessmentSnapshot) (submiss
 			return submissionAssessmentPlan{}, errors.New("submission assessment relationship ref is duplicated")
 		}
 		for _, entity := range entities {
-			if _, exists := plan.entityTargetsByRef[entity.Target.Ref]; exists {
-				return submissionAssessmentPlan{}, errors.New("submission assessment entity ref is duplicated")
+
+			if existing, exists := plan.entityTargetsByRef[entity.Target.Ref]; exists {
+				if !sessionRefs || existing.Target.Name != entity.Target.Name || existing.Target.Kind != entity.Target.Kind || existing.KnownEntityID != entity.KnownEntityID {
+					return submissionAssessmentPlan{}, errors.New("submission assessment entity ref is duplicated or inconsistent")
+				}
+				existing.Target.EvidenceIDs = mergeAssessmentEvidenceIDs(existing.Target.EvidenceIDs, entity.Target.EvidenceIDs)
+				existing.Target.KnownEvidenceIDs = mergeAssessmentEvidenceIDs(existing.Target.KnownEvidenceIDs, entity.Target.KnownEvidenceIDs)
+				plan.entityTargetsByRef[entity.Target.Ref] = existing
+				for i := range plan.EntityTargets {
+					if plan.EntityTargets[i].Target.Ref == entity.Target.Ref {
+						plan.EntityTargets[i] = existing
+						break
+					}
+				}
+				continue
 			}
 			plan.EntityTargets = append(plan.EntityTargets, entity)
 			plan.entityTargetsByRef[entity.Target.Ref] = entity
@@ -197,6 +219,7 @@ func submissionAssessmentRelationshipTargetFromProposal(
 	raw map[string]any,
 	index int,
 	itemsByEvidenceID map[string]submissionAssessmentItem,
+	sessionRefs ...bool,
 ) (submissionAssessmentRelationshipTarget, []submissionAssessmentEntityTarget, error) {
 	ref := strings.TrimSpace(submissionAssessmentRawString(raw, "ref"))
 	if ref == "" || len([]rune(ref)) > 128 {
@@ -215,7 +238,11 @@ func submissionAssessmentRelationshipTargetFromProposal(
 	if !ok {
 		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment relationship subject is required")
 	}
-	subject, err := submissionAssessmentEntityTargetFromProposal(subjectRaw, fmt.Sprintf("entity:%d:subject", index), evidenceIDs, knownEvidenceIDs)
+	subjectRef := fmt.Sprintf("entity:%d:subject", index)
+	if len(sessionRefs) > 0 && sessionRefs[0] {
+		subjectRef = "session:" + submissionAssessmentRawString(subjectRaw, "session_ref")
+	}
+	subject, err := submissionAssessmentEntityTargetFromProposal(subjectRaw, subjectRef, evidenceIDs, knownEvidenceIDs)
 	if err != nil {
 		return submissionAssessmentRelationshipTarget{}, nil, err
 	}
@@ -248,7 +275,11 @@ func submissionAssessmentRelationshipTargetFromProposal(
 	var objectRef *string
 	var objectValue *assessor.SemanticAssessmentValue
 	if hasEntity {
-		objectEntity, err := submissionAssessmentEntityTargetFromProposal(objectEntityRaw, fmt.Sprintf("entity:%d:object", index), evidenceIDs, knownEvidenceIDs)
+		entityRef := fmt.Sprintf("entity:%d:object", index)
+		if len(sessionRefs) > 0 && sessionRefs[0] {
+			entityRef = "session:" + submissionAssessmentRawString(objectEntityRaw, "session_ref")
+		}
+		objectEntity, err := submissionAssessmentEntityTargetFromProposal(objectEntityRaw, entityRef, evidenceIDs, knownEvidenceIDs)
 		if err != nil {
 			return submissionAssessmentRelationshipTarget{}, nil, err
 		}
@@ -466,6 +497,8 @@ func submissionAssessmentRawString(raw map[string]any, key string) string {
 
 func submissionAssessmentRawValueString(raw any) string {
 	switch value := raw.(type) {
+	case json.Number:
+		return string(value)
 	case string:
 		return strings.TrimSpace(value)
 	case float64:
@@ -511,4 +544,20 @@ func submissionAssessmentOneOf(value string, allowed ...string) bool {
 		}
 	}
 	return false
+}
+
+func mergeAssessmentEvidenceIDs(existing, additional []string) []string {
+	for _, id := range additional {
+		found := false
+		for _, previous := range existing {
+			if previous == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			existing = append(existing, id)
+		}
+	}
+	return existing
 }

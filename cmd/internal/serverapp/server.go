@@ -267,6 +267,10 @@ func RunActiveServer(
 	verifierProvider.SetMetrics(discoverabilityMetrics)
 	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, assessmentLimits, aiConcurrencyGate, sessionModels.remember)
 	assessorProvider.SetMetrics(discoverabilityMetrics)
+	sessionAssessmentLimits := assessmentLimits
+	sessionAssessmentLimits.MaxEvidenceItems = 100
+	sessionAssessor := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, sessionAssessmentLimits, aiConcurrencyGate, sessionModels.remember)
+	sessionAssessor.SetMetrics(discoverabilityMetrics)
 	ontologyMaintenance := buildOntologyMaintenance(ontologyStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService)
 	conflictReviewRunner, err := buildConflictReviewApplication(conflictReviewApplicationDependencies{
 		Store:            conflictStore,
@@ -292,6 +296,9 @@ func RunActiveServer(
 		RecallSearch:           recallStore,
 		RecallFeedbackEvents:   recallFeedbackEventRepo,
 		Assessor:               assessorProvider,
+		SessionAssessor:        sessionAssessor,
+		SessionEnabled:         cfg.SessionIngestEnabled && cfg.GetAIVerifierAPIURL() != "" && cfg.GetAIVerifierAPIKey() != "" && cfg.IsEmbeddingConfigured(),
+		RememberModel:          sessionModels.remember,
 		GeneratorTransport:     assessorProvider,
 		EmbeddingProvider:      openaiProvider,
 		RetryEmbeddingProvider: retryEmbedder,
@@ -334,6 +341,7 @@ func RunActiveServer(
 			RecallFeedbackEvents: recallFeedbackEventService,
 		},
 		RememberBindings:   registry.RememberBindings{Service: rememberSvc},
+		SessionBindings:    registry.SessionBindings{Service: applications.Session},
 		RecallBindings:     registry.RecallBindings{Service: recallSvc, Dreams: dreamSvc},
 		LifecycleBindings:  registry.LifecycleBindings{Service: lifecycleSvc},
 		TraceBindings:      registry.TraceBindings{Service: contextSvc},

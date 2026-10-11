@@ -20,7 +20,7 @@ func TestProductionEvaluationCompositionIsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("production registry: %v", err)
 	}
-	if got := len(reg.List()); got != 10 {
-		t.Fatalf("production catalog size = %d; want 10", got)
+	if got, want := len(reg.List()), len(registry.ContractToolNames()); got != want {
+		t.Fatalf("production catalog size = %d; want %d", got, want)
 	}
 }

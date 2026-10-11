@@ -29,6 +29,9 @@ func IsEvaluationTool(name string) bool {
 // ContractToolRuntimeOptional reports whether a contract tool may be omitted
 // from discovery while its runtime feature is disabled.
 func ContractToolRuntimeOptional(name string) bool {
+	if name == ToolIngestSession {
+		return true
+	}
 	if name == ToolSubmitRecallSessionFeedback {
 		return true
 	}
@@ -113,6 +116,9 @@ func WithRuntimeToolPolicy(ctx context.Context, policy RuntimeToolPolicy) contex
 
 // ToolVisible reports whether a registered tool should be visible for a request.
 func ToolVisible(ctx context.Context, tool Tool, policy RuntimeToolPolicy) bool {
+	if tool.Name == ToolIngestSession {
+		return tool.Available != nil && tool.Available(ctx)
+	}
 	policy = ResolveRuntimeToolPolicy(ctx, policy, tool)
 	if tool.Name == ToolSubmitRecallSessionFeedback {
 		return policy.resolved.recallFeedbackEnabled

@@ -1,0 +1,303 @@
+{
+  "schema_version": "dense-mem.session_ingest.evidence.v1",
+  "issue": 218,
+  "scope": "Maintainer-approved historical deterministic-1k waiver replacement; session ingestion and Remember compatibility only.",
+  "current_validation_status": {
+    "source_sha": "0b0ca025bd761abc9180499575fbf25a6ae79396",
+    "date": "2026-10-11",
+    "model": "dense-mem",
+    "model_policy": "Use maintainer-maintained CI environment configuration; no model substitution without explicit direction. Gateway owns backend routing.",
+    "historical_quality_scope": "The passing quality metrics below certify only their recorded historical source. The current source has not passed three fresh quality repetitions.",
+    "full_local_ci": "passed",
+    "real_postgres_session_regressions": 16,
+    "local_session_e2e": "passed",
+    "remember_controls": {
+      "base_passed": true,
+      "candidate_passed": true,
+      "controls": 12,
+      "facts_and_outcomes_equal": true,
+      "first_candidate_failure_retained": true,
+      "candidate_attempts": 2,
+      "base_usage": {
+        "chat_turns": 4,
+        "embedding_turns": 8,
+        "input_tokens": 24417,
+        "output_tokens": 4708,
+        "missing_chat_usage": 0,
+        "embedding_input_tokens": 0,
+        "embedding_usage_unavailable": 8
+      },
+      "candidate_usage": {
+        "chat_turns": 5,
+        "embedding_turns": 8,
+        "input_tokens": 28167,
+        "output_tokens": 5617,
+        "missing_chat_usage": 0,
+        "embedding_input_tokens": 0,
+        "embedding_usage_unavailable": 8
+      },
+      "base_latency_seconds": {
+        "p50": 0.1643566520000022,
+        "p95": 28.713919408999995,
+        "p99": 28.713919408999995
+      },
+      "candidate_latency_seconds": {
+        "p50": 0.1851624670000001,
+        "p95": 48.181920334,
+        "p99": 48.181920334
+      }
+    },
+    "quality": {
+      "status": "incomplete",
+      "complete_repetitions": 0,
+      "matching_cases_before_failure": 9,
+      "failed_case": "long-1",
+      "failed_phase": "linking",
+      "error": "request_timeout",
+      "extraction_seconds": 17.449,
+      "linking_header_wait_seconds": 151.327,
+      "checkpoint_count": 1,
+      "new_semantic_records": 0,
+      "processing_deadline_seconds": 180
+    },
+    "required_remaining": "Three fresh complete 32-case quality repetitions, unchanged comparator, current-head reviews and full remote CI/E2E.",
+    "artifact_sha256": {
+      "pr-553-dense-mem-runtime-proof.json": "2d685648e20866e2f47fbf0645e68aaf6bf31fb49c42cd0ca37bb9de97f6f673",
+      "pr-553-dense-mem-paired-controls.json": "7153f32014c0d4d6223e0359c946bc108a37fce96868200bed4471cdea106669",
+      "pr-553-dense-mem-quality-timeout-receipt.json": "4611a6678dfd3f4af2bf25cfc35d6691eccfff562ae784c57e47f782911ba6a7",
+      "pr-553-dense-mem-candidate-control-failure-analysis.json": "a96ee4725b063cddc15b4f51da3f9c5d83b4857a1258a8efaf04ad5173ceca27",
+      "local-validation-0b0ca025.json": "1d8f453261bfbc4b96d4046685e79bfefbdfc1e5612329f849acedd18a479e4b"
+    }
+  },
+  "evaluation_date": "2026-10-10",
+  "base_sha": "13fec633f4e48e0e61378d60972f236f36b7c213",
+  "evaluated_candidate_sha": "d8fd271cf03d3af7e0d12c330803c78a74a280e9",
+  "validated_go_source_sha": "f8f86df51e5c6b7df251f0fb8e664a78394d8535",
+  "cohort_sha256": "2bad34690df07d02a2e5a9ee6de4e9559e23491fded531f3b059bdecc4d9ed8d",
+  "source_lock": "tests/eval/source_locks/session_ingest_v1.json",
+  "approved_plan_sha256": "31e2509bc2f4e9b8db4df2eb9dbbf63fc65d6bb174dbe7644b9970a0c796e3eb",
+  "runtime_provenance": [
+    {
+      "stack": "base",
+      "revision": "13fec633f4e48e0e61378d60972f236f36b7c213",
+      "image": "sha256:240c000633cfc85940786ca0e0b94e5342ed7d14a54fe3570620c284f86b059f",
+      "model": "gpt-6.1-sol",
+      "embedding_model": "@cf/baai/bge-m3",
+      "embedding_dimensions": 1024
+    },
+    {
+      "stack": "candidate",
+      "revision": "d8fd271cf03d3af7e0d12c330803c78a74a280e9",
+      "image": "sha256:234f377ed22a561c35652d04df0efcdf0298c13da115224f14a25ad37a1dd67f",
+      "model": "gpt-6.1-sol",
+      "embedding_model": "@cf/baai/bge-m3",
+      "embedding_dimensions": 1024
+    }
+  ],
+  "quality": [
+    {
+      "repetition": 1,
+      "precision": 1,
+      "recall": 1,
+      "latency_seconds": {
+        "p50": 21.62726647299994,
+        "p95": 32.72488678000003,
+        "p99": 77.13457205400005
+      },
+      "usage": {
+        "chat_turns": 120,
+        "embedding_turns": 76,
+        "input_tokens": 256863,
+        "output_tokens": 32053,
+        "missing_chat_usage": 0,
+        "embedding_input_tokens": 0,
+        "embedding_usage_unavailable": 76
+      },
+      "cases": 32,
+      "facts": {
+        "expected": 47,
+        "predicted": 47,
+        "matched": 47
+      },
+      "max_processing_seconds": 77.13457205400005
+    },
+    {
+      "repetition": 2,
+      "precision": 1,
+      "recall": 1,
+      "latency_seconds": {
+        "p50": 21.43433612100012,
+        "p95": 31.66578780299984,
+        "p99": 72.30390205000015
+      },
+      "usage": {
+        "chat_turns": 120,
+        "embedding_turns": 76,
+        "input_tokens": 256936,
+        "output_tokens": 32046,
+        "missing_chat_usage": 0,
+        "embedding_input_tokens": 0,
+        "embedding_usage_unavailable": 76
+      },
+      "cases": 32,
+      "facts": {
+        "expected": 47,
+        "predicted": 47,
+        "matched": 47
+      },
+      "max_processing_seconds": 72.30390205000015
+    },
+    {
+      "repetition": 3,
+      "precision": 1,
+      "recall": 1,
+      "latency_seconds": {
+        "p50": 21.117934233000035,
+        "p95": 37.39359557500016,
+        "p99": 71.82176219699997
+      },
+      "usage": {
+        "chat_turns": 120,
+        "embedding_turns": 76,
+        "input_tokens": 256992,
+        "output_tokens": 32385,
+        "missing_chat_usage": 0,
+        "embedding_input_tokens": 0,
+        "embedding_usage_unavailable": 76
+      },
+      "cases": 32,
+      "facts": {
+        "expected": 47,
+        "predicted": 47,
+        "matched": 47
+      },
+      "max_processing_seconds": 71.82176219699997
+    }
+  ],
+  "required_assertions": {
+    "exact_event_provenance": "passed in all three repetitions",
+    "designated_boundary_facts": "passed in all three repetitions",
+    "private_actor_isolation": "passed in all three repetitions",
+    "processing_deadline_seconds": 180,
+    "all_admissible_calls_completed": true
+  },
+  "quality_chat_tokens": {
+    "input": 770791,
+    "output": 96484
+  },
+  "embedding_accounting": {
+    "quality_calls_without_usage": 228,
+    "base_control_calls_without_usage": 8,
+    "candidate_control_calls_without_usage": 8,
+    "input_tokens": null,
+    "reason": "The real embedding endpoint omits usage; no estimate or complete combined token total is claimed."
+  },
+  "remember_controls": {
+    "count": 12,
+    "facts_and_outcomes_equal": true,
+    "control_ids": [
+      "required-missing",
+      "required-empty",
+      "required-uncited",
+      "required-malformed",
+      "provider-none",
+      "mixed-objects",
+      "legacy-proposal",
+      "subject-span",
+      "predicate-surface",
+      "supports",
+      "concurrent",
+      "conflict"
+    ],
+    "base_usage": {
+      "chat_turns": 4,
+      "embedding_turns": 8,
+      "input_tokens": 24411,
+      "output_tokens": 3428,
+      "missing_chat_usage": 0,
+      "embedding_input_tokens": 0,
+      "embedding_usage_unavailable": 8
+    },
+    "candidate_usage": {
+      "chat_turns": 4,
+      "embedding_turns": 8,
+      "input_tokens": 24413,
+      "output_tokens": 3943,
+      "missing_chat_usage": 0,
+      "embedding_input_tokens": 0,
+      "embedding_usage_unavailable": 8
+    },
+    "base_latency_seconds": {
+      "p50": 0.15232786099999998,
+      "p95": 40.943320041999996,
+      "p99": 40.943320041999996
+    },
+    "candidate_latency_seconds": {
+      "p50": 0.15394318300000004,
+      "p95": 44.187835628,
+      "p99": 44.187835628
+    }
+  },
+  "approval_clarifications": [
+    "Report provider-measured chat tokens and explicitly unavailable embedding usage.",
+    "Submit known_predicate_key primary_database in the mixed-object Remember control and require its exact result; all six facts retained.",
+    "Add only Jordan has_role designer and Jordan has_role musician to the homonym ground truth; all 32 input texts, other facts, twelve controls, scorer, thresholds and deadlines retained."
+  ],
+  "previous_cohort_sha256": [
+    "c3a85e0984cb93e5d1c34cbd636a2a182ad21ff7285518d11f0c664a9f5c70af",
+    "917b4fffba51e15eeb2f7a94298cb62b0a92bd6b9a0cf81e2371463ae5d40560"
+  ],
+  "prior_failures": [
+    "Exact homonym names originally failed; proper names were separated from role qualifiers without changing acceptance policy.",
+    "A wrong immutable request UUID exhausted complete regeneration; feedback now supplies the expected ID without coercing responses.",
+    "Both models validly normalized the original non-authoritative Remember predicate, requiring the approved fixture correction.",
+    "A complete 45/47 precision failure omitted two explicitly supported role facts from the ground truth; the approved correction is source-locked.",
+    "Earlier embedding/chat no-response attempts failed under unchanged deadlines with zero semantic ingests; no complete credit was granted. The exact cause of sporadic no-response timeouts remains unestablished."
+  ],
+  "proxy_provenance": {
+    "original_proxy_sha256": "8d9b1dec127c4286d0d908e140fa47812f1f13baf24b885ce8227d0879d5d446",
+    "diagnostic_proxy_sha256": "4944ce2f1d23063a0d1ca06c98a26932c6f6651542d6c024ecf725f4279bddae",
+    "changes": "bounded timing/status metadata only; no request/response retention or forwarding/accounting changes",
+    "cohort_and_scorer_unchanged": true,
+    "service_deadlines_unchanged": true
+  },
+  "diagnostic_exclusion": "The isolated long-0 probe is diagnostic-only and is not counted among the three quality repetitions.",
+  "audit": {
+    "round": 7,
+    "verdict": "conformant",
+    "findings": [],
+    "approved_plan_sha256": "d39cf12499b44b772adca40cf92ea67920e6b7e1872c9190e34ecfbe4fb0e24e",
+    "snapshot_sha256": "98a43ae31b606bc8ca67d720c868e44ccb9871a7c2a7b82b6295ba4670987b38"
+  },
+  "local_validation": {
+    "real_postgres_cases_including_subtests": {
+      "knowledge": 248,
+      "privacy": 25,
+      "trace": 19
+    },
+    "registered_e2e_scenarios": [
+      "session_ingest",
+      "synchronous_write",
+      "synchronous_write_primitives",
+      "submission_terminal_errors",
+      "mcp_boundaries",
+      "credential_memory_binding",
+      "space_aware_recall",
+      "private_memory_erasure"
+    ],
+    "complete_go_coverage": {
+      "covered": 35964,
+      "total": 39958,
+      "strict_above_90_gate": true
+    },
+    "registry_postgres_workflow": "passed",
+    "architecture_migrations_line_limits_diff_and_coverage_policy": "passed"
+  },
+  "artifact_sha256": {
+    "quality-role-gpt61-instrumented.json": "8189ba20767dedd10b1470d1730b3080156ce0e154c1c4e3e8b629a834de5d0e",
+    "base-role-gpt61.json": "6d3155923c70e1663f30751680c03af22e3a207036cbf6332a6448257dc67df1",
+    "candidate-role-gpt61.json": "66cd40a33f64d32abc9aa6f41358884e470a39fc287ad8dcf088a5ba2d74d812",
+    "comparison-final.json": "8cf1697d207b048200cf63491f151a026a9df03b5c0c6705140fbaa3241347d1"
+  },
+  "verified": true
+}

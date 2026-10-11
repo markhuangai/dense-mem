@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "capability": "session-ingest",
+  "cases": [
+    {
+      "id": "repository/TestSessionReceiptFailureRollsBackKnowledgeAndRecoversOriginalIntake",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionReceiptFailureRollsBackKnowledgeAndRecoversOriginalIntake$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_commit_integration_test.go"
+    },
+    {
+      "id": "repository/TestSessionCheckpointAndSuccessfulReceiptAreImmutable",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionCheckpointAndSuccessfulReceiptAreImmutable$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_commit_integration_test.go"
+    },
+    {
+      "id": "repository/TestSessionPreparedCommitCannotReviveChangedOrErasedPrivateGeneration",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionPreparedCommitCannotReviveChangedOrErasedPrivateGeneration$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_commit_integration_test.go"
+    },
+    {
+      "id": "repository/TestSessionDiagnosticsRetentionHonorsLegalHold",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionDiagnosticsRetentionHonorsLegalHold$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_diagnostics_integration_test.go"
+    },
+    {
+      "id": "repository/TestSessionIntakeExactReplayAndMixedConflictAreAtomic",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionIntakeExactReplayAndMixedConflictAreAtomic$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_intake_integration_test.go"
+    },
+    {
+      "id": "repository/TestSessionPrivateRLSAndGenerationFence",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionPrivateRLSAndGenerationFence$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_intake_integration_test.go"
+    },
+    {
+      "id": "repository/TestSessionLockSerializesConcurrentSameKeyIntake",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionLockSerializesConcurrentSameKeyIntake$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_intake_integration_test.go"
+    },
+    {
+      "id": "repository/TestSessionLockSerializesDifferentKeysAcrossStoreInstances",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionLockSerializesDifferentKeysAcrossStoreInstances$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_intake_integration_test.go"
+    },
+    {
+      "id": "repository/TestSessionConcurrentMixedConflictsStageOnlyTheWinningBatch",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionConcurrentMixedConflictsStageOnlyTheWinningBatch$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_intake_integration_test.go"
+    },
+    {
+      "id": "repository/TestSessionDuplicatePreparationSupportsOneHundredPrivateExcerpts",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionDuplicatePreparationSupportsOneHundredPrivateExcerpts$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_intake_integration_test.go"
+    },
+    {
+      "id": "repository/TestSessionServiceDurableFailureRecoveryNoFactsAndReplay",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionServiceDurableFailureRecoveryNoFactsAndReplay$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestSessionServiceCancellationAndTimeoutRetainIntakeWithoutKnowledge",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionServiceCancellationAndTimeoutRetainIntakeWithoutKnowledge$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestSessionServiceBudgetRejectionHasNoIntake",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionServiceBudgetRejectionHasNoIntake$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestSessionServiceResumesValidatedExtractionCheckpoint",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionServiceResumesValidatedExtractionCheckpoint$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestSessionHTTPProviderFailureReceiptsPreserveActualClassifications",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionHTTPProviderFailureReceiptsPreserveActualClassifications$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestSessionServiceFactsDiagnosticsAndCheckpointRecoveryThroughPostgres",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionServiceFactsDiagnosticsAndCheckpointRecoveryThroughPostgres$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestTraceSessionProvenanceRequiresAuthenticatedPrivateOwner",
+      "package": "./internal/trace/postgres",
+      "run": "^TestTraceSessionProvenanceRequiresAuthenticatedPrivateOwner$",
+      "phase": "precheck",
+      "source": "internal/trace/postgres/session_provenance_integration_test.go"
+    }
+  ]
+}

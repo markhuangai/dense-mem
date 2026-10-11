@@ -124,6 +124,7 @@ func AIVerifierMaxConcurrency(cfg ConfigProvider) int {
 // Config holds all configuration for the application.
 // All fields are populated from environment variables with sensible defaults.
 type Config struct {
+	SessionIngestEnabled            bool
 	PostgresDSN                     string `json:"-"`
 	PostgresMaxOpenConns            int
 	PostgresMaxIdleConns            int
@@ -561,6 +562,10 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		return cfg, err
 	}
 	cfg.DistributedCoordinationRequired, err = parseBoolOrDefault("DISTRIBUTED_COORDINATION_REQUIRED", false)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.SessionIngestEnabled, err = parseBoolOrDefault("SESSION_INGEST_ENABLED", false)
 	if err != nil {
 		return cfg, err
 	}

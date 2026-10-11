@@ -283,6 +283,10 @@ type rememberExchangeRecorder struct {
 	protector observability.DiagnosticProtector
 }
 
+func NewDiagnosticRecorder(protector observability.DiagnosticProtector) modelprovider.SnapshotRecorder {
+	return &rememberExchangeRecorder{protector: protector}
+}
+
 func (r *rememberExchangeRecorder) RecordProviderExchange(ctx context.Context, exchange modelprovider.ProviderExchange) {
 	if r == nil {
 		return

@@ -128,27 +128,40 @@ type RelationshipSupportDecisionEvent struct {
 	CreatedAt         time.Time      `json:"created_at,omitempty"`
 }
 
+type SessionProvenance struct {
+	Framework  string  `json:"framework"`
+	AppName    string  `json:"app_name"`
+	UserID     string  `json:"user_id"`
+	SessionID  string  `json:"session_id"`
+	EventID    string  `json:"event_id"`
+	EventIndex int     `json:"event_index"`
+	SpanStart  int     `json:"span_start"`
+	SpanEnd    int     `json:"span_end"`
+	OccurredAt *string `json:"occurred_at,omitempty"`
+}
+
 type TraceEvidenceFragment struct {
-	FragmentID        string         `json:"evidence_id,omitempty"`
-	OccurrenceID      string         `json:"occurrence_id,omitempty"`
-	IngestID          string         `json:"ingest_id,omitempty"`
-	OwnerProfileID    string         `json:"owner_profile_id,omitempty"`
-	SourceID          string         `json:"source_id,omitempty"`
-	SourceRevisionID  string         `json:"source_revision_id,omitempty"`
-	SourceKey         string         `json:"source_key,omitempty"`
-	SourceKind        string         `json:"source_kind,omitempty"`
-	RevisionToken     string         `json:"revision_token,omitempty"`
-	CurrentRevisionID string         `json:"current_revision_id,omitempty"`
-	EvidenceIndex     int            `json:"evidence_index,omitempty"`
-	Content           string         `json:"content,omitempty"`
-	ContentHash       string         `json:"content_hash,omitempty"`
-	ContentTruncated  bool           `json:"content_truncated,omitempty"`
-	SourceType        string         `json:"source_type,omitempty"`
-	Authority         string         `json:"authority,omitempty"`
-	SourceRef         string         `json:"source_ref,omitempty"`
-	Labels            []string       `json:"labels,omitempty"`
-	Metadata          map[string]any `json:"metadata,omitempty"`
-	CreatedAt         time.Time      `json:"created_at,omitempty"`
+	Session           *SessionProvenance `json:"session,omitempty"`
+	FragmentID        string             `json:"evidence_id,omitempty"`
+	OccurrenceID      string             `json:"occurrence_id,omitempty"`
+	IngestID          string             `json:"ingest_id,omitempty"`
+	OwnerProfileID    string             `json:"owner_profile_id,omitempty"`
+	SourceID          string             `json:"source_id,omitempty"`
+	SourceRevisionID  string             `json:"source_revision_id,omitempty"`
+	SourceKey         string             `json:"source_key,omitempty"`
+	SourceKind        string             `json:"source_kind,omitempty"`
+	RevisionToken     string             `json:"revision_token,omitempty"`
+	CurrentRevisionID string             `json:"current_revision_id,omitempty"`
+	EvidenceIndex     int                `json:"evidence_index,omitempty"`
+	Content           string             `json:"content,omitempty"`
+	ContentHash       string             `json:"content_hash,omitempty"`
+	ContentTruncated  bool               `json:"content_truncated,omitempty"`
+	SourceType        string             `json:"source_type,omitempty"`
+	Authority         string             `json:"authority,omitempty"`
+	SourceRef         string             `json:"source_ref,omitempty"`
+	Labels            []string           `json:"labels,omitempty"`
+	Metadata          map[string]any     `json:"metadata,omitempty"`
+	CreatedAt         time.Time          `json:"created_at,omitempty"`
 }
 
 type TraceEvidenceLifecycleEvent struct {

@@ -571,3 +571,75 @@ credential rows in chunks of at most 1,000 rows. Grouping prevents duplicate
 `ON CONFLICT` targets within one statement. The existing flush-ledger transaction,
 RLS context, credential attribution and all-or-nothing rollback must remain.
 This ticket contains no batching prototype or production algorithm change.
+
+## Private Session Gate (#218)
+
+The issue records the approved historical-1k waiver. Generate the frozen 32-case
+cohort and twelve existing Remember payload controls into an ignored path:
+
+```bash
+python3 tests/eval/scripts/generate_session_ingest_v1.py --output tmp/session-ingest/cohort.json
+```
+
+Use disposable production stacks with isolated PostgreSQL databases for the
+recorded base and candidate. Enable `SESSION_INGEST_ENABLED=true` only on the
+candidate. The provider accounting proxy forwards the configured real verifier
+and embedding endpoints without retaining prompts, credentials or responses:
+
+```bash
+node tests/eval/scripts/session_provider_proxy.mjs
+```
+
+Use the maintainer's configured model and provider settings for both stacks.
+Record the configured model alias in the evidence; gateway backend routing is
+owned by the gateway. Do not substitute another model without explicit maintainer
+direction. Provider failures stop the gate and retain the failed report.
+
+Point both stack provider URLs at the proxy's `/v1` route. Supply the real model
+and embedding contract unchanged. Never run this gate against a shared database.
+For each stack set `DENSE_MEM_USER_URL`, `DENSE_MEM_CONTROL_URL`,
+`DENSE_MEM_CONTROL_TOKEN`, `DENSE_MEM_EVAL_POSTGRES_CONTAINER`,
+`DENSE_MEM_EVAL_PROXY_URL`, and `DENSE_MEM_EVAL_SOURCE_SHA`; provide the disposable
+PostgreSQL user/database through `POSTGRES_USER`/`POSTGRES_DB` when nondefault.
+The runner creates fresh private actors and reads canonical facts from that
+isolated PostgreSQL container. It never includes credentials in its output.
+Chat input/output counts require provider-reported usage. When an embedding
+provider omits usage, the report explicitly counts those calls under
+`embedding_usage_unavailable`; it reports no estimated or complete combined
+token total. This measurement clarification was approved for #218; quality,
+provenance, isolation and deadline requirements remain unchanged.
+
+The maintainer approved correcting the mixed-object Remember control to submit
+the registered `primary_database` as `known_predicate_key` and require that exact
+result. Its original proposed key was non-authoritative and valid normalization
+failed the exact-key scorer on both base and candidate. The other eleven controls,
+five typed-value facts, all 32 quality cases, scoring and deadlines are unchanged.
+
+The maintainer also approved adding the explicitly stated designer and musician
+roles to the homonym case's expected facts. All 32 input cases and all twelve
+Remember controls remain identical; the expected set now includes exactly
+`Jordan has_role designer` and `Jordan has_role musician`. Retain the failed
+45/47 precision result and rerun fresh repetitions with the corrected source lock.
+
+```bash
+node tests/eval/scripts/run_session_ingest_v1.mjs remember tmp/session-ingest/cohort.json tmp/session-ingest/base.json
+node tests/eval/scripts/run_session_ingest_v1.mjs remember tmp/session-ingest/cohort.json tmp/session-ingest/candidate.json
+node tests/eval/scripts/run_session_ingest_v1.mjs quality tmp/session-ingest/cohort.json tmp/session-ingest/quality.json
+python3 tests/eval/scripts/compare_session_ingest_v1.py --quality tmp/session-ingest/quality.json --base tmp/session-ingest/base.json --candidate tmp/session-ingest/candidate.json --out tmp/session-ingest/comparison.json
+```
+
+Run the first command against base and the remaining commands against candidate.
+Quality runs three fresh repetitions. Every admissible call must finish within
+180 seconds; each repetition requires precision ≥98%, recall ≥95%, complete
+provenance, designated boundary facts and actor isolation. All Remember controls
+must retain expected facts. Reports include processing latency percentiles,
+structured provider turns, embedding turns and provider-reported chat token usage.
+Missing chat usage fails the gate. Failures retain an incomplete report and stop;
+thresholds and expected facts must not be weakened after a run.
+
+Historical passing #218 evidence is recorded in
+`baselines/session_ingest_v1_evidence.json`, including tested source/image hashes,
+three quality repetitions, paired controls, approved fixture corrections and
+unavailable embedding usage. Its `current_validation_status` records the later
+runtime source and outstanding gates; historical metrics certify only their
+recorded source. Raw run outputs remain ignored.

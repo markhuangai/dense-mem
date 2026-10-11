@@ -16,7 +16,7 @@ import (
 
 const (
 	RememberDuplicateCandidateLimit = 10
-	RememberDuplicateMaxEvidence    = 20
+	RememberDuplicateMaxEvidence    = knowledgecontract.RememberDuplicateMaxEvidence
 )
 
 // RememberDuplicateCandidate is a canonical evidence item that the assessor
@@ -219,8 +219,15 @@ func validateRememberDuplicateCandidateInput(input RememberDuplicateCandidateInp
 	} else if input.SpaceGeneration != 0 {
 		return errors.New("duplicate space_id is required when space_generation is set")
 	}
-	if len(input.Evidence) == 0 || len(input.Evidence) > RememberDuplicateMaxEvidence {
-		return fmt.Errorf("duplicate evidence must contain between 1 and %d items", RememberDuplicateMaxEvidence)
+	limit := input.MaxEvidenceItems
+	if limit == 0 {
+		limit = RememberDuplicateMaxEvidence
+	}
+	if limit < 1 || limit > knowledgecontract.RememberDuplicateMaxInternalEvidence {
+		return errors.New("duplicate evidence limit is invalid")
+	}
+	if len(input.Evidence) == 0 || len(input.Evidence) > limit {
+		return fmt.Errorf("duplicate evidence must contain between 1 and %d items", limit)
 	}
 	seen := make(map[string]struct{}, len(input.Evidence))
 	for index, evidence := range input.Evidence {
