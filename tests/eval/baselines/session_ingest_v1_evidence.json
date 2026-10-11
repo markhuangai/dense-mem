@@ -3,11 +3,11 @@
   "issue": 218,
   "scope": "Maintainer-approved historical deterministic-1k waiver replacement; session ingestion and Remember compatibility only.",
   "current_validation_status": {
-    "source_sha": "44fbb56fcaf937c1219f1f70aa667c5782d28dbc",
+    "source_sha": "cf4af5b404f0bae276f4957a197eb1dd89ef8b45",
     "date": "2026-10-11",
     "model": "dense-mem",
     "model_policy": "Use maintainer-maintained CI environment configuration; no model substitution without explicit direction. Gateway owns backend routing.",
-    "historical_quality_scope": "Historical metrics are retained separately; current metrics certify the recorded reviewed runtime source.",
+    "historical_quality_scope": "Quality and paired controls remain attributed to their recorded source. Current local validation separately certifies the later trace-label runtime source.",
     "full_local_ci": "complete uninterrupted ci-check.sh passed with exit 0",
     "real_postgres_session_regressions": 16,
     "local_session_e2e": "passed",
@@ -49,7 +49,9 @@
       "status": "passed",
       "complete_repetitions": 3,
       "cases_per_repetition": 32,
-      "processing_deadline_seconds": 180
+      "processing_deadline_seconds": 180,
+      "source_sha": "44fbb56fcaf937c1219f1f70aa667c5782d28dbc",
+      "scope": "Measured repetitions certify 44fbb56f only; the later source-label-only fix retains all frozen labels and provider/semantic inputs, with separate regression, full local checks and exact-source E2E."
     },
     "required_remaining": "Current-head reviews and full remote CI/E2E.",
     "artifact_sha256": {
@@ -115,12 +117,13 @@
       "complete_repetitions": 3,
       "cases_per_repetition": 32,
       "processing_deadline_seconds": 180
-    }
+    },
+    "source_label_bound_fix": "passed Unicode boundary/max regression, complete repository checks and exact committed-source session_ingest E2E; remote review/full CI pending"
   },
   "evaluation_date": "2026-10-11",
   "base_sha": "13fec633f4e48e0e61378d60972f236f36b7c213",
   "evaluated_candidate_sha": "44fbb56fcaf937c1219f1f70aa667c5782d28dbc",
-  "validated_go_source_sha": "44fbb56fcaf937c1219f1f70aa667c5782d28dbc",
+  "validated_go_source_sha": "cf4af5b404f0bae276f4957a197eb1dd89ef8b45",
   "cohort_sha256": "2bad34690df07d02a2e5a9ee6de4e9559e23491fded531f3b059bdecc4d9ed8d",
   "source_lock": "tests/eval/source_locks/session_ingest_v1.json",
   "approved_plan_sha256": "31e2509bc2f4e9b8db4df2eb9dbbf63fc65d6bb174dbe7644b9970a0c796e3eb",
@@ -342,8 +345,8 @@
       "private_memory_erasure"
     ],
     "complete_go_coverage": {
-      "covered": 35974,
-      "total": 39967,
+      "covered": 35979,
+      "total": 39971,
       "strict_above_90_gate": true
     },
     "registry_postgres_workflow": "passed",
@@ -358,11 +361,12 @@
     },
     "local_production_e2e": {
       "scenario": "session_ingest",
-      "source_sha": "44fbb56fcaf937c1219f1f70aa667c5782d28dbc",
+      "source_sha": "cf4af5b404f0bae276f4957a197eb1dd89ef8b45",
       "result": "passed",
-      "owned_stack_cleanup": "completed by registered E2E wrapper"
+      "owned_stack_cleanup": "completed by registered E2E wrapper",
+      "image_manifest_digest": "sha256:6a1daa443313bbd593aad98f45a1acb4e53bfd8990ad974ef50a8cb0241171f6"
     },
-    "source_sha": "44fbb56fcaf937c1219f1f70aa667c5782d28dbc",
+    "source_sha": "cf4af5b404f0bae276f4957a197eb1dd89ef8b45",
     "full_ci_check": "complete uninterrupted ci-check.sh passed with exit 0",
     "full_ci_check_exit": 0
   },
@@ -399,7 +403,14 @@
     "pr-553-gateway-connection-probes.json": "5ec4d3afcccffa33a1718db4abfab1314d2a87adda0bbef136ff88ec69be086d",
     "pr-553-dense-mem-testing-base-timeout-receipt.json": "5f3b5f5ad4d99d19d0d8e2624c0e1816d8a32bd0d9891b43ff34cd48df78400f",
     "pr-553-source-assessment-direct-probe.json": "aa0e069e61868753779a0e0fe1b4d1149d9ce8a4a4035271512d5a9e8722eec7",
-    "pr-553-dense-mem-testing-interruption-receipt.json": "1d3d3c8e8785a089451ab5594e9d5616fa8efa566d83e151fc465cb6b260b9f0"
+    "pr-553-dense-mem-testing-interruption-receipt.json": "1d3d3c8e8785a089451ab5594e9d5616fa8efa566d83e151fc465cb6b260b9f0",
+    "pr-553-source-bound-ci-check.log": "678ee265499afce43b3744679a80bbeff3e54baa8fedad467b523d57a3b160c6",
+    "pr-553-source-bound-focused.log": "8e7c604a1375fa59115f634a8e8d81af4c743fe43049d4eb0cb54823f5970dcd",
+    "pr-553-source-bound-regression-before.log": "61dff8524174039e81208e3bc8d28fe279bd456eaef58f952e672b2e18eacf88",
+    "pr-553-source-bound-session-e2e.log": "d385d5734759d7c917ffe475078e55498f4dd4195a5c9761c6d24d617355aa31",
+    "pr-553-source-bound-quality-carry-forward.json": "4f8b7902b05c85a24c30e959cadaddf8cc2c075c336581103fc3c6da62d798d3",
+    "local-validation-source-bound.json": "a41e27fac308db75095fcfe5e3739c71d4b473326166f66cadf04d97caf0ee19",
+    "pr-553-context-index-probe-receipt.json": "8c00cf8aed8b313a4071075cbbc51878f4c10e9a3f7a90f69266e48c754cb728"
   },
   "verified": true,
   "historical_passing_evaluation": {
@@ -695,5 +706,29 @@
     "regression": "TestSessionLinkingReportsCanonicalBudgetAfterCompleteValidation",
     "regression_before_fix": "failed as expected",
     "required_canonical_fixes_total": 5
+  },
+  "source_label_bound_fix": {
+    "commit": "cf4af5b404f0bae276f4957a197eb1dd89ef8b45",
+    "review_root": 4240417360,
+    "behavior": "Use the existing session identity group as the display source label only above 256 Unicode characters; preserve exact framework/app identifiers and source-group identity.",
+    "regression": "TestSessionCombinedAssessmentBoundsSourceWithoutChangingProvenance",
+    "regression_before_fix": "fails at 258 and 513 characters; accepted 256-character Unicode label stays unchanged",
+    "quality_evaluation_source": "44fbb56fcaf937c1219f1f70aa667c5782d28dbc",
+    "new_live_evaluation": false,
+    "quality_scope_proof": "Frozen runner labels total 22 Unicode characters and remain byte-identical. Provider/semantic evidence inputs omit the display SourceRef; extraction, linking, assessment, embeddings and ownership are unchanged.",
+    "canonical_required_fixes_total": 6
+  },
+  "deferred_review_defects": {
+    "session_context_history_scan": {
+      "issue": "https://github.com/markhuangai/dense-mem/issues/561",
+      "review_root": 4240417364,
+      "severity": "P3",
+      "probe_events": 200000,
+      "probe_latency_ms": [
+        86.899,
+        81.407
+      ],
+      "scope": "Linear scan confirmed with correct dormant/new-session results; no processing timeout demonstrated. Follow-up preserves complete Unicode identities and owner/generation filters."
+    }
   }
 }
