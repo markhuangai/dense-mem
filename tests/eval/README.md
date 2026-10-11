@@ -590,6 +590,11 @@ and embedding endpoints without retaining prompts, credentials or responses:
 node tests/eval/scripts/session_provider_proxy.mjs
 ```
 
+Use the maintainer's configured model and provider settings for both stacks.
+Record the configured model alias in the evidence; gateway backend routing is
+owned by the gateway. Do not substitute another model without explicit maintainer
+direction. Provider failures stop the gate and retain the failed report.
+
 Point both stack provider URLs at the proxy's `/v1` route. Supply the real model
 and embedding contract unchanged. Never run this gate against a shared database.
 For each stack set `DENSE_MEM_USER_URL`, `DENSE_MEM_CONTROL_URL`,
@@ -632,7 +637,9 @@ structured provider turns, embedding turns and provider-reported chat token usag
 Missing chat usage fails the gate. Failures retain an incomplete report and stop;
 thresholds and expected facts must not be weakened after a run.
 
-The compact passing #218 evidence is recorded in
+Historical passing #218 evidence is recorded in
 `baselines/session_ingest_v1_evidence.json`, including tested source/image hashes,
 three quality repetitions, paired controls, approved fixture corrections and
-unavailable embedding usage. Raw run outputs remain ignored.
+unavailable embedding usage. Its `current_validation_status` records the later
+runtime source and outstanding gates; historical metrics certify only their
+recorded source. Raw run outputs remain ignored.

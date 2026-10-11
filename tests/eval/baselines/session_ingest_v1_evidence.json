@@ -2,6 +2,73 @@
   "schema_version": "dense-mem.session_ingest.evidence.v1",
   "issue": 218,
   "scope": "Maintainer-approved historical deterministic-1k waiver replacement; session ingestion and Remember compatibility only.",
+  "current_validation_status": {
+    "source_sha": "0b0ca025bd761abc9180499575fbf25a6ae79396",
+    "date": "2026-10-11",
+    "model": "dense-mem",
+    "model_policy": "Use maintainer-maintained CI environment configuration; no model substitution without explicit direction. Gateway owns backend routing.",
+    "historical_quality_scope": "The passing quality metrics below certify only their recorded historical source. The current source has not passed three fresh quality repetitions.",
+    "full_local_ci": "passed",
+    "real_postgres_session_regressions": 16,
+    "local_session_e2e": "passed",
+    "remember_controls": {
+      "base_passed": true,
+      "candidate_passed": true,
+      "controls": 12,
+      "facts_and_outcomes_equal": true,
+      "first_candidate_failure_retained": true,
+      "candidate_attempts": 2,
+      "base_usage": {
+        "chat_turns": 4,
+        "embedding_turns": 8,
+        "input_tokens": 24417,
+        "output_tokens": 4708,
+        "missing_chat_usage": 0,
+        "embedding_input_tokens": 0,
+        "embedding_usage_unavailable": 8
+      },
+      "candidate_usage": {
+        "chat_turns": 5,
+        "embedding_turns": 8,
+        "input_tokens": 28167,
+        "output_tokens": 5617,
+        "missing_chat_usage": 0,
+        "embedding_input_tokens": 0,
+        "embedding_usage_unavailable": 8
+      },
+      "base_latency_seconds": {
+        "p50": 0.1643566520000022,
+        "p95": 28.713919408999995,
+        "p99": 28.713919408999995
+      },
+      "candidate_latency_seconds": {
+        "p50": 0.1851624670000001,
+        "p95": 48.181920334,
+        "p99": 48.181920334
+      }
+    },
+    "quality": {
+      "status": "incomplete",
+      "complete_repetitions": 0,
+      "matching_cases_before_failure": 9,
+      "failed_case": "long-1",
+      "failed_phase": "linking",
+      "error": "request_timeout",
+      "extraction_seconds": 17.449,
+      "linking_header_wait_seconds": 151.327,
+      "checkpoint_count": 1,
+      "new_semantic_records": 0,
+      "processing_deadline_seconds": 180
+    },
+    "required_remaining": "Three fresh complete 32-case quality repetitions, unchanged comparator, current-head reviews and full remote CI/E2E.",
+    "artifact_sha256": {
+      "pr-553-dense-mem-runtime-proof.json": "2d685648e20866e2f47fbf0645e68aaf6bf31fb49c42cd0ca37bb9de97f6f673",
+      "pr-553-dense-mem-paired-controls.json": "7153f32014c0d4d6223e0359c946bc108a37fce96868200bed4471cdea106669",
+      "pr-553-dense-mem-quality-timeout-receipt.json": "4611a6678dfd3f4af2bf25cfc35d6691eccfff562ae784c57e47f782911ba6a7",
+      "pr-553-dense-mem-candidate-control-failure-analysis.json": "a96ee4725b063cddc15b4f51da3f9c5d83b4857a1258a8efaf04ad5173ceca27",
+      "local-validation-0b0ca025.json": "1d8f453261bfbc4b96d4046685e79bfefbdfc1e5612329f849acedd18a479e4b"
+    }
+  },
   "evaluation_date": "2026-10-10",
   "base_sha": "13fec633f4e48e0e61378d60972f236f36b7c213",
   "evaluated_candidate_sha": "d8fd271cf03d3af7e0d12c330803c78a74a280e9",
