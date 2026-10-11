@@ -187,4 +187,6 @@ Before implementation tests, the approved workflow requires an independent plan 
 
 Generators, source locks, scoring and compact evidence belong in Git. Generated cohorts, runtime databases, credentials and run outputs stay ignored. The quality runner and provider accounting proxy live under `tests/eval/scripts`; provider usage must be present and no fixture provider qualifies. See the repository evaluation README for invocation and isolated-stack requirements.
 
+Use the maintainer-maintained CI environment's verifier/Remember model and provider configuration for local evaluation. Record the configured alias and runtime source; substitute another model only with explicit maintainer direction. Gateway backend routing belongs to the gateway. Failed attempts and isolated diagnostics earn no credit toward the three complete quality repetitions, and historical passing metrics certify only their recorded source and configuration.
+
 Keep #218 open until code is merged, these wiki changes are published, and `session_ingest` passes against the exact merged-main SHA.

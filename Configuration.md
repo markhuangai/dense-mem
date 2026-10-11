@@ -297,4 +297,6 @@ Trace queues are 2,048 spans with batches of 512. Export/shutdown deadlines are 
 
 The capability reuses the configured verifier endpoint/key, Remember model, tokenizer, shared provider concurrency gate and embedding provider. Missing required provider configuration keeps the tool unavailable. Discovery and invocation also require write scope and an active authenticated private binding. It adds no separate configuration framework or runtime control endpoint.
 
+The synchronous budget is 180 seconds from service entry. Extraction, linking and assessment share the first 160 seconds; embedding and commit retain their existing phase bounds. A configured provider timeout is a ceiling and cannot extend the remaining phase or request deadline.
+
 Disabling the flag stops new session calls while preserving compatible durable history. A populated intake migration refuses destructive rollback. See [Write Pipeline](Write-Pipeline#private-session-intake).
