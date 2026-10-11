@@ -84,6 +84,7 @@ func (r *Store) ListCommunitySemanticGroups(ctx context.Context, input Community
 			  AND relationship.space_id = dense_mem_team_shared_space(relationship.team_id)
 			  AND relationship.space_generation = dense_mem_team_shared_generation(relationship.team_id)
 			  AND record.status = 'current'
+				  AND `+communityRecordVisibilitySQL("record")+`
 			  AND relationship.status = 'active'
 			  AND relationship.identity_alias_of_relationship_id IS NULL
 			  AND source.semantic_group_key <> ''

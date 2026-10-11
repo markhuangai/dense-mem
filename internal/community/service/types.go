@@ -73,6 +73,7 @@ type Dependencies struct {
 
 type Service interface {
 	RunScheduled(context.Context, string, time.Time) (*RunResult, error)
+	RunProjectionTurn(context.Context) (bool, error)
 	Status(context.Context, string) (*StatusResult, error)
 }
 
@@ -93,9 +94,10 @@ type RunResult struct {
 }
 
 type StatusResult struct {
-	EffectiveConfig       domain.CommunityDetectionRuntimeConfig `json:"effective_config"`
-	LatestRun             *RunResult                             `json:"latest_run,omitempty"`
-	CurrentCommunityCount int                                    `json:"current_community_count"`
+	EffectiveConfig       domain.CommunityDetectionRuntimeConfig     `json:"effective_config"`
+	LatestRun             *RunResult                                 `json:"latest_run,omitempty"`
+	CurrentCommunityCount int                                        `json:"current_community_count"`
+	ProjectionCoverage    *communitycontract.TopicProjectionCoverage `json:"projection_coverage,omitempty"`
 }
 
 func uuidString(value string) uuid.UUID {

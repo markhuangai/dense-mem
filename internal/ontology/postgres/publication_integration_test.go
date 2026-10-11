@@ -19,7 +19,6 @@ import (
 
 func TestOntologyMigrationRLSAndHistory(t *testing.T) {
 	f := newOntologyFixtureWithMaintenance(t, false)
-	require.NoError(t, privacy.NewPrivateMemoryRepository(f.app, f.rls).Prepare(context.Background()))
 	before := f.canonicalSnapshot(t)
 	var forced, secured int
 	require.NoError(t, f.admin.Raw(`SELECT count(*) FILTER(WHERE relforcerowsecurity),count(*) FILTER(WHERE relrowsecurity)
@@ -36,8 +35,9 @@ func TestOntologyMigrationRLSAndHistory(t *testing.T) {
 	require.NoError(t, migrator.RunDown(context.Background()))
 	require.Equal(t, before, f.canonicalSnapshot(t))
 	require.NoError(t, migrator.RunUp(context.Background()))
-	require.NoError(t, rollbackOntologySchemaTo(t, f.admin, 20261004190000))
 	require.NoError(t, f.admin.Exec(`GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ontology_app`).Error)
+	require.NoError(t, privacy.NewPrivateMemoryRepository(f.app, f.rls).Prepare(context.Background()))
+	require.NoError(t, rollbackOntologySchemaTo(t, f.admin, 20261004190000))
 	seed, err := f.store.SeedDefinitions(context.Background(), f.team, ontology.SeedInput{OperationKey: "seed", ExpectedRevision: 0, Limit: 20})
 	require.NoError(t, err)
 	require.Len(t, seed.Records, 8)

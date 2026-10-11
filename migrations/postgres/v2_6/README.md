@@ -61,3 +61,20 @@ registered as `repository/TestAuthorityRepositoryOperationLogRetentionSurvivesRe
 Recovery is a verified backup restoration or a separately reviewed forward
 recovery migration after all instances are stopped. Recreating empty tables
 cannot restore discarded migration evidence and is not a rollback.
+
+`20261010101000_ontology_community_projections.sql` adds resumable derived
+topic projections without canonical backfill or history rewriting. Team reads may
+select only the nonsecret ontology mode flag from app_config; configuration
+writes and all other settings remain system-only. New tables
+use forced RLS, team/shared-space constraints, and generation fences. Small
+source counters make publication and current reads reject changed dependencies;
+canonical triggers never expand memberships. Adding the nullable topic column
+and replacing the status constraint require a brief table lock with a five-second
+lock-wait timeout. Constraint validation scans existing records in a separate
+transaction that permits community reads and writes. The scoped current
+logical-ID index is built concurrently before the stronger legacy index is
+dropped concurrently; no historical rows are rewritten. A failed concurrent
+index build requires separately authorized removal of its invalid derived index
+before retrying. Down refuses any topic projection history, including incomplete
+builds. Production recovery preserves that history and rolls forward; an empty
+test installation can use Down.

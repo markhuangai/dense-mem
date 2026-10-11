@@ -286,7 +286,7 @@ func RunActiveServer(
 		RememberPersistence:    knowledgeStore,
 		GraphStore:             graphStore,
 		TraceStore:             traceStore,
-		CommunityStore:         communitypostgres.NewStore(pgDB.GetDB(), rlsHelper),
+		CommunityStore:         communitypostgres.NewStore(pgDB.GetDB(), rlsHelper).WithTopics(ontologyStore.NewTopicCatalogReader(), ontologyStore.NewTopicMembershipReader(), ontologyStore.NewTopicProjectionAdmission(), ontologyStore.NewTopicProjectionRelease()),
 		RememberCatalog:        knowledgeStore,
 		Search:                 searchRepo,
 		RecallSearch:           recallStore,
@@ -315,6 +315,7 @@ func RunActiveServer(
 	rememberSvc := applications.Remember
 	recallSvc := applications.Recall
 	communitySvc := applications.Community
+	ontologyMaintenance.SetProjectionRunner(communitySvc)
 	lifecycleSvc := applications.Lifecycle
 	contextSvc := applications.Context
 	dreamSvc := applications.Dream

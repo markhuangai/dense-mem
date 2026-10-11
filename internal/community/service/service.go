@@ -60,6 +60,11 @@ func (s *service) RunScheduled(ctx context.Context, teamID string, windowAt time
 		windowAt = s.now()
 	}
 	windowKey := windowAt.UTC().Format("2006-01-02")
+	if enabled, err := s.ontologyEnabled(ctx); err != nil {
+		return nil, err
+	} else if enabled {
+		return &RunResult{TeamID: teamID, WindowKey: windowKey, Status: "skipped"}, nil
+	}
 	inputs, err := s.store.ListCommunityInputs(ctx, CommunityInputListInput{TeamID: teamID, Limit: inputLimit})
 	if err != nil {
 		return nil, fmt.Errorf("community: list graph inputs: %w", err)
@@ -216,6 +221,21 @@ func (s *service) Status(ctx context.Context, teamID string) (*StatusResult, err
 			return nil, err
 		}
 		status.EffectiveConfig = cfg
+	}
+	if enabled, err := s.ontologyEnabled(ctx); err != nil {
+		return nil, err
+	} else if enabled {
+		store, ok := s.store.(communitycontract.TopicProjectionRepository)
+		if !ok {
+			return nil, errors.New("community: topic projection repository is required")
+		}
+		coverage, err := store.TopicProjectionCoverage(ctx, teamID)
+		if err != nil {
+			return nil, err
+		}
+		status.ProjectionCoverage = &coverage
+		status.CurrentCommunityCount = coverage.CurrentTopics
+		return status, nil
 	}
 	if run, err := s.store.LatestCommunityRun(ctx, teamID); err != nil {
 		return nil, err

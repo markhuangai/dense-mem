@@ -29,6 +29,9 @@ func TestPrivateMemoryManifestMatchesCatalog(t *testing.T) {
 	require.Contains(t, PrivateMemoryErasureManifest(), "evidence_conflict_positions")
 	require.Contains(t, PrivateMemoryErasureManifest(), "evidence_conflict_events")
 	require.Contains(t, PrivateMemoryErasureManifest(), "dream_path_evaluation_run_links")
+	for _, table := range []string{"community_topic_versions", "community_topic_dependencies", "community_topic_work"} {
+		require.Contains(t, PrivateMemoryErasureManifest(), table)
+	}
 }
 
 func TestPrivateMemoryManifestMismatchBlocksPrepare(t *testing.T) {

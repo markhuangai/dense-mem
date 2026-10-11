@@ -28,6 +28,7 @@ func (r *Store) RecallCommunityDiscovery(ctx context.Context, input CommunityDis
 				  AND record.space_id = dense_mem_team_shared_space(record.team_id)
 				  AND record.space_generation = dense_mem_team_shared_generation(record.team_id)
 				  AND record.status = 'current'
+				  AND `+communityRecordVisibilitySQL("record")+`
 				  AND (
 				      (
 				          ? <> ''

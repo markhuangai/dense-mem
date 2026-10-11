@@ -90,8 +90,9 @@ type CommunityRun struct {
 }
 
 type CommunityInputListInput struct {
-	TeamID string
-	Limit  int
+	TeamID          string
+	Limit           int
+	RelationshipIDs []string
 }
 
 type CommunityInput struct {

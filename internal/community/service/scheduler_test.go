@@ -94,6 +94,8 @@ type schedulerServiceStub struct {
 	started chan struct{}
 }
 
+func (*schedulerServiceStub) RunProjectionTurn(context.Context) (bool, error) { return false, nil }
+
 func (s *schedulerServiceStub) RunScheduled(ctx context.Context, _ string, _ time.Time) (*RunResult, error) {
 	close(s.started)
 	<-ctx.Done()
