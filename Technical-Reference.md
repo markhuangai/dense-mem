@@ -1,8 +1,8 @@
 # Technical Reference
 
-> Publication pending: issue #218 branch. Publish after the code PR is merged and session ingestion passes against the exact merged-main commit.
+> Session-ingestion documentation for [PR #553](https://github.com/markhuangai/dense-mem/pull/553). Code merge and validation against the exact merged `main` commit remain pending.
 
-The current memory contract is `dense-mem.v2.6.8`.
+The memory contract documented here is `dense-mem.v2.6.8`.
 
 This page defines the current public memory contract. MCP discovery is
 the authoritative source for the exact schema visible to an authenticated
@@ -150,8 +150,8 @@ ports; composition supplies providers and private PostgreSQL adapters.
 
 `remember` accepts one to twenty evidence items, each containing at most 999
 Unicode code points, and one to 200 required Relationship proposals.
-Every evidence item must be cited by at least one proposal. A safe evidence item can be
-stored and indexed without a Relationship proposal or accepted split.
+Every evidence item must be cited by at least one proposal. Safe evidence can
+still be stored and indexed when assessment accepts no Relationship split.
 
 ~~~json
 {

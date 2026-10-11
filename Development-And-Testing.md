@@ -1,6 +1,6 @@
 # Development And Testing
 
-> Publication pending: issue #218 branch. Publish after the code PR is merged and session ingestion passes against the exact merged-main commit.
+> Session-ingestion documentation for [PR #553](https://github.com/markhuangai/dense-mem/pull/553). Code merge and validation against the exact merged `main` commit remain pending.
 
 The repository uses Go 1.26, Echo, GORM/pgx, goose, pgvector, and optional Redis.
 The browser applications use React/Vite, Vitest, and Playwright. The MCP proxy
@@ -189,4 +189,4 @@ Generators, source locks, scoring and compact evidence belong in Git. Generated 
 
 Use the maintainer-maintained CI environment's verifier/Remember model and provider configuration for local evaluation. Record the configured alias and runtime source; substitute another model only with explicit maintainer direction. Gateway backend routing belongs to the gateway. Failed attempts and isolated diagnostics earn no credit toward the three complete quality repetitions, and historical passing metrics certify only their recorded source and configuration.
 
-Keep #218 open until code is merged, these wiki changes are published, and `session_ingest` passes against the exact merged-main SHA.
+These wiki changes are published. Keep #218 open until code is merged and `session_ingest` passes against the exact merged-main SHA.

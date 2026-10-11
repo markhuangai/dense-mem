@@ -1,6 +1,6 @@
 # MCP Clients
 
-> Publication pending: issue #218 branch. Publish after the code PR is merged and session ingestion passes against the exact merged-main commit.
+> Session-ingestion documentation for [PR #553](https://github.com/markhuangai/dense-mem/pull/553). Code merge and validation against the exact merged `main` commit remain pending.
 
 Dense-Mem exposes MCP Streamable HTTP:
 

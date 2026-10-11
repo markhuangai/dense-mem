@@ -1,6 +1,6 @@
 # Using Dense-Mem
 
-> Publication pending: issue #218 branch. Publish after the code PR is merged and session ingestion passes against the exact merged-main commit.
+> Session-ingestion documentation for [PR #553](https://github.com/markhuangai/dense-mem/pull/553). Code merge and validation against the exact merged `main` commit remain pending.
 
 Dense-Mem is an MCP memory service. The client submits exact evidence and required logical Relationship proposals through Remember.
 The server validates the complete request and returns the result of the write
