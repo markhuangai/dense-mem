@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"gorm.io/gorm"
 )
@@ -20,6 +22,9 @@ func (r *Store) withTeamTx(ctx context.Context, teamID string, fn func(*gorm.DB)
 	}
 	if r.rls == nil {
 		return errors.New("trace: rls helper is required")
+	}
+	if actor, ok := requestctx.ActorFromContext(ctx); ok && actor.TeamID.String() == teamID && actor.OwnerID != uuid.Nil {
+		return r.rls.WithTeamProfileTx(ctx, r.db, teamID, actor.OwnerID.String(), fn)
 	}
 	return r.rls.WithTeamTx(ctx, r.db, teamID, fn)
 }

@@ -15,6 +15,10 @@ import (
 
 var ErrSecurityAuditPersistence = errors.New("memory security: audit persistence failed")
 
+func RecordSubmissionSecurityRejection(ctx context.Context, auditor SecurityRejectionAuditor, logger observability.LogProvider, actor requestctx.Actor, surface string, scan SubmissionSecurityBatchScan, rejection error) error {
+	return recordSubmissionSecurityRejection(ctx, auditor, logger, actor, surface, scan, rejection)
+}
+
 // SecurityRejectionAuditor records a pre-staging rejection without accepting
 // or retaining the rejected evidence in the knowledge ledger.
 // SecurityRejectionAuditInput intentionally excludes evidence, decoded text,

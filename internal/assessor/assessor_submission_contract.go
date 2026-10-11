@@ -353,7 +353,7 @@ func normalizeSemanticAssessmentSubmissionContract(
 		} else if from != nil && to != nil && to.Before(*from) {
 			errs = append(errs, semanticErr(field+".valid_to", "must not be before valid_from"))
 		}
-		if len(target.EvidenceIDs) == 0 || len(target.EvidenceIDs) > SemanticAssessmentMaxEvidenceSpans {
+		if len(target.EvidenceIDs) == 0 || len(target.EvidenceIDs) > len(req.Evidence) {
 			errs = append(errs, semanticErr(field+".evidence_ids", "must be present and bounded"))
 		}
 		for _, evidenceID := range target.EvidenceIDs {

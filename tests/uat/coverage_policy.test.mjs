@@ -162,6 +162,11 @@ test("complete Go coverage deduplicates profiles and rejects exact thresholds", 
     assert.notEqual(missingAudit.status, 0);
     assert.match(missingAudit.stderr, /coverage profile is missing or empty: .*go-audit-complete\.raw/);
   }
+  for (const flag of ["FAKE_SKIP_SESSION", "FAKE_EMPTY_SESSION"]) {
+    const missingSession = runCoverage(fakeGo, join(fixture, flag), "--complete", { [flag]: "1" });
+    assert.notEqual(missingSession.status, 0);
+    assert.match(missingSession.stderr, /coverage profile is missing or empty: .*go-session-complete\.raw/);
+  }
 
   const exact = runCoverage(fakeGo, join(fixture, "exact"), "--transitional", { FAKE_COVERAGE_TOTAL: "90.0" });
   assert.equal(exact.status, 1, exact.stderr);
@@ -248,6 +253,10 @@ function fakeGoScript() {
     "  [[ \"${DENSE_MEM_REPOSITORY_TESTCONTAINERS:-}\" == \"1\" ]] || exit 1",
     "  if [[ \"${FAKE_SKIP_AUDIT:-}\" == \"1\" ]]; then exit 0; fi",
     "fi",
+    "if [[ \"${profile}\" == *go-session-complete.raw ]]; then",
+    "  [[ \"${DENSE_MEM_REPOSITORY_TESTCONTAINERS:-}\" == \"1\" && \"${DENSE_MEM_REQUIRE_POSTGRES_TESTS:-}\" == \"1\" ]] || exit 1",
+    "  if [[ \"${FAKE_SKIP_SESSION:-}\" == \"1\" ]]; then exit 0; fi",
+    "fi",
     "mkdir -p \"$(dirname \"${profile}\")\"",
     "{",
     "  printf 'mode: atomic\\n'",
@@ -275,6 +284,11 @@ function fakeGoScript() {
     "      if [[ \"${FAKE_EMPTY_AUDIT:-}\" != \"1\" ]]; then",
     "        printf 'example/audit.go:1.1,1.2 1 1\\n'",
     "        printf 'example/root.go:2.1,2.2 1 0\\n'",
+    "      fi",
+    "      ;;",
+    "    *go-session-complete.raw)",
+    "      if [[ \"${FAKE_EMPTY_SESSION:-}\" != \"1\" ]]; then",
+    "        printf 'example/root.go:2.1,2.2 1 1\\n'",
     "      fi",
     "      ;;",
     "  esac",

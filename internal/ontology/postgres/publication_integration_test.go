@@ -18,6 +18,10 @@ import (
 )
 
 func TestOntologyMigrationRLSAndHistory(t *testing.T) {
+	t.Run("current_schema_erasure_manifest", func(t *testing.T) {
+		f := newOntologyFixture(t)
+		require.NoError(t, privacy.NewPrivateMemoryRepository(f.app, f.rls).Prepare(context.Background()))
+	})
 	f := newOntologyFixtureWithMaintenance(t, false)
 	before := f.canonicalSnapshot(t)
 	var forced, secured int

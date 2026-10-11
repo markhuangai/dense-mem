@@ -55,10 +55,38 @@ func (r *Store) CommitRememberWithEmbeddings(
 	if err := validateRememberEmbeddingContractFence(embeddings); err != nil {
 		return nil, err
 	}
+	var result *SynchronousRememberCommitResult
+	stage := "transaction_setup"
+	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+		var err error
+		result, err = r.commitRememberInTx(ctx, tx, input, embeddings)
+		stage = "transaction_commit"
+		return err
+	})
+	if err != nil {
+		var staged *rememberCommitStageError
+		if !errors.As(err, &staged) {
+			err = &rememberCommitStageError{stage: stage, err: err}
+		}
+	}
+	return result, err
+}
+
+func (r *Store) commitRememberInTx(ctx context.Context, tx *gorm.DB, input SynchronousRememberCommitInput, embeddings []InlineEmbeddingResult) (*SynchronousRememberCommitResult, error) {
+	input = normalizeSynchronousRememberCommitInput(input)
+	if err := validateSynchronousRememberCommitInput(input); err != nil {
+		return nil, err
+	}
+	if input.AssessmentID == "" || len(input.AssessmentJSON) == 0 {
+		return nil, errors.New("remember assessment response is required for an accepted commit")
+	}
+	if err := validateRememberEmbeddingContractFence(embeddings); err != nil {
+		return nil, err
+	}
 	ctx = WithInlineEmbeddingResults(ctx, embeddings)
 	result := &SynchronousRememberCommitResult{IngestID: input.IngestID, AssessmentID: input.AssessmentID, Outcome: "completed"}
 	stage := "transaction_setup"
-	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+	run := func() error {
 		stage = "idempotency_fence"
 		if err := lockRememberIdempotencyKeyInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey); err != nil {
 			return err
@@ -298,7 +326,8 @@ func (r *Store) CommitRememberWithEmbeddings(
 		result.EntityResolutionIDs = append([]string(nil), semanticResult.EntityResolutionIDs...)
 		stage = "transaction_commit"
 		return nil
-	})
+	}
+	err := run()
 	if err != nil {
 		return result, &rememberCommitStageError{stage: stage, err: err}
 	}

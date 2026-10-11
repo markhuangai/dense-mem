@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "cohort": "session_ingest_v1",
+  "issue": 218,
+  "source": "repository-owned deterministic synthetic user events",
+  "quality_cases": 32,
+  "remember_controls": 12,
+  "real_provider_repetitions": 3,
+  "groups": {
+    "short": 8,
+    "long": 8,
+    "incremental": 8,
+    "semantics": 8
+  },
+  "minimum_long_event_characters": 32000,
+  "minimum_long_batch_characters": 128000,
+  "gates": {
+    "fact_precision_minimum": 0.98,
+    "fact_recall_minimum": 0.95,
+    "exact_provenance_required": true,
+    "designated_boundary_facts_required": true,
+    "isolation_failures_maximum": 0,
+    "processing_seconds_maximum": 180,
+    "remember_expected_results_preserved": true
+  },
+  "reports": [
+    "latency_percentiles",
+    "structured_provider_turns",
+    "input_tokens",
+    "output_tokens",
+    "remember_base_candidate_comparison"
+  ],
+  "artifacts": "ignored local paths only",
+  "generator": "tests/eval/scripts/generate_session_ingest_v1.py",
+  "generator_sha256": "efbbfc36f1852e3476c2120bbc19c1e2632d52bd3119c8ef8e51f5401a99fec7",
+  "remember_control_sources": {
+    "tests/uat/synchronous_write/cases/remember.mjs": "d23b14f78bf0711b29e35617ebb1116e5025ff139ac4c96934d13fbfb217a62e",
+    "internal/tools/registry/contract_relationship_submission_test.go": "afc4b6ca669091348916181800c39bbe453fcf34cbc39bafa46adff836af17de"
+  },
+  "cohort_sha256": "2bad34690df07d02a2e5a9ee6de4e9559e23491fded531f3b059bdecc4d9ed8d",
+  "approved_control_correction": {
+    "issue": 218,
+    "control": "mixed-objects",
+    "original_cohort_sha256": "c3a85e0984cb93e5d1c34cbd636a2a182ad21ff7285518d11f0c664a9f5c70af",
+    "original_proposed_key": "stores_memory_in_mixed_objects_entity_frozen",
+    "known_predicate_key": "primary_database",
+    "approval": "Correct this control and rerun base/candidate (Recommended)",
+    "quality_cases_unchanged": true,
+    "other_controls_unchanged": true,
+    "scorer_and_thresholds_unchanged": true
+  },
+  "approved_ground_truth_correction": {
+    "issue": 218,
+    "case": "semantics-3",
+    "previous_cohort_sha256": "917b4fffba51e15eeb2f7a94298cb62b0a92bd6b9a0cf81e2371463ae5d40560",
+    "added_exact_facts": [
+      "Jordan has_role designer",
+      "Jordan has_role musician"
+    ],
+    "approval": "User: yes, in response to adding those two facts and rerunning.",
+    "all_input_events_unchanged": true,
+    "all_remember_controls_unchanged": true,
+    "other_expected_facts_unchanged": true,
+    "scorer_thresholds_and_deadlines_unchanged": true
+  }
+}

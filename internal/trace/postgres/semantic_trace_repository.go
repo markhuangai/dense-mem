@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -443,7 +444,8 @@ func loadTraceEvidenceFragments(
 		       f.content_hash,
 		       CASE WHEN ? THEN char_length(f.content) > ? ELSE false END,
 		       f.source_type, f.authority, f.source_ref, f.labels,
-		       f.metadata::text, f.created_at
+		       f.metadata::text, f.created_at,
+           CASE WHEN session.submission_id IS NOT NULL THEN COALESCE(f.metadata->'session', 'null'::jsonb)::text ELSE 'null' END
 		FROM evidence_fragments f
 		LEFT JOIN evidence_sources src
 		  ON src.team_id = f.team_id
@@ -453,6 +455,11 @@ func loadTraceEvidenceFragments(
 		  ON rev.team_id = f.team_id
 		 AND rev.source_revision_id = f.source_revision_id
 		 AND rev.space_id = f.space_id
+        LEFT JOIN session_submissions AS session
+          ON session.team_id = f.team_id AND session.space_id = f.space_id
+         AND session.owner_profile_id = f.owner_profile_id
+         AND session.space_generation = f.space_generation
+         AND session.submission_id = f.ingest_id
 		WHERE f.team_id = ?::uuid
 		  AND f.fragment_id = ANY(?::uuid[])
 		  AND f.space_id = ?::uuid
@@ -475,18 +482,24 @@ func loadTraceEvidenceFragments(
 	var out []TraceEvidenceFragment
 	for rows.Next() {
 		var row TraceEvidenceFragment
-		var metadataJSON string
+		var metadataJSON, sessionJSON string
 		if err := rows.Scan(
 			&row.FragmentID, &row.IngestID, &row.OwnerProfileID,
 			&row.SourceID, &row.SourceRevisionID, &row.SourceKey,
 			&row.SourceKind, &row.RevisionToken, &row.CurrentRevisionID,
 			&row.EvidenceIndex, &row.Content, &row.ContentHash,
 			&row.ContentTruncated, &row.SourceType, &row.Authority,
-			&row.SourceRef, pq.Array(&row.Labels), &metadataJSON, &row.CreatedAt,
+			&row.SourceRef, pq.Array(&row.Labels), &metadataJSON, &row.CreatedAt, &sessionJSON,
 		); err != nil {
 			return nil, err
 		}
 		row.Metadata = jSONMap(metadataJSON)
+		if sessionJSON != "null" {
+			row.Session = &tracecontract.SessionProvenance{}
+			if err := json.Unmarshal([]byte(sessionJSON), row.Session); err != nil {
+				return nil, err
+			}
+		}
 		out = append(out, row)
 	}
 	return out, rows.Err()

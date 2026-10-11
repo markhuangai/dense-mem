@@ -13,6 +13,7 @@ import (
 type Dependencies struct {
 	Core               CoreDependencies
 	RememberBindings   RememberBindings
+	SessionBindings    SessionBindings
 	RecallBindings     RecallBindings
 	LifecycleBindings  LifecycleBindings
 	TraceBindings      TraceBindings

@@ -2,6 +2,7 @@ package registry
 
 func bindContractTool(tool Tool, deps Dependencies) Tool {
 	tool = bindRememberTool(tool, deps)
+	tool = bindSessionTool(tool, deps)
 	tool = bindLifecycleTool(tool, deps)
 	tool = bindRecallTool(tool, deps)
 	tool = bindRecallFeedbackTool(tool, deps)

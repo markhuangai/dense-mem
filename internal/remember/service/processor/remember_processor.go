@@ -250,94 +250,18 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 	if input.SecurityRejected {
 		return fail(rememberapp.SecurityRejectionFailure(input.SecuritySignals, input.SecuritySignalsTruncated, "initial_scan"), "assessment")
 	}
-	duplicateInput := repository.RememberDuplicateCandidateInput{
-		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID,
-		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
-		Evidence: rememberEvidenceInputsForCommit(input, snapshot),
-	}
-	embeddingStarted := time.Now()
-	duplicateEmbeddingCtx, duplicateEmbeddingCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)
-	duplicatePlan, err := p.ledger.PlanRememberDuplicateEmbeddings(duplicateEmbeddingCtx, duplicateInput)
-	if err != nil {
-		duplicateEmbeddingCancel()
-		observability.RecordRememberPhase(p.metrics, "embedding", rememberMetricPhaseOutcome(err), time.Since(embeddingStarted))
-		return fail(&rememberEmbeddingPlanFailure{cause: err}, "embedding")
-	}
-	duplicateDocuments, err := p.embedSearchDocumentBatch(
-		duplicateEmbeddingCtx, input.TeamID, input.OwnerProfileID,
-		duplicatePlan.EmbeddingModel, duplicatePlan.Documents,
-	)
-	duplicateEmbeddingCancel()
-	if err != nil {
-		observability.RecordRememberPhase(p.metrics, "embedding", rememberMetricPhaseOutcome(err), time.Since(embeddingStarted))
-		return fail(err, "embedding")
-	}
-	duplicateEmbeddings := inlineEmbeddingResultsFromDuplicateDocuments(duplicateDocuments, duplicatePlan)
-	duplicateResolution, err := p.ledger.ResolveRememberDuplicateCandidates(ctx, duplicateInput, duplicateEmbeddings)
-	observability.RecordRememberPhase(p.metrics, "embedding", rememberMetricPhaseOutcome(err), time.Since(embeddingStarted))
-	if err != nil {
-		return fail(&rememberEmbeddingPlanFailure{cause: err}, "embedding")
-	}
-	snapshot.DuplicateCandidates = append([]repository.RememberDuplicateCandidateGroup(nil), duplicateResolution.Candidates...)
-	snapshot.ExactDuplicateEvidence = make(map[int]repository.RememberDuplicateResolution, len(duplicateResolution.Exact))
-	for index, resolution := range duplicateResolution.Exact {
-		if resolution.Disposition == "reuse" {
-			snapshot.ExactDuplicateEvidence[index] = resolution
+	preparedWrite, prepareErr := p.prepareRemember(ctx, input, snapshot, scope, started)
+	if prepareErr != nil {
+		var preparation *rememberPreparationError
+		if errors.As(prepareErr, &preparation) {
+			assessorTurns = preparation.AssessorTurns
+			input.AssessorSecurityRejected = preparation.AssessorSecurityRejected
+			return fail(preparation.Cause, preparation.Phase)
 		}
+		return fail(prepareErr, "assessment")
 	}
-	assessmentStarted := time.Now()
-	prepared, err := rememberapp.AssessSynchronousRemember(ctx, rememberapp.SynchronousAssessmentDependencies{
-		Catalog: p.catalog, Provider: p.provider, Limits: p.limits, Metrics: p.metrics, Logger: p.logger,
-	}, rememberapp.SynchronousAssessmentInput{Scope: scope, Snapshot: snapshot})
-	observability.RecordRememberPhase(p.metrics, "assessment", rememberMetricPhaseOutcome(err), time.Since(assessmentStarted))
-	if err != nil {
-		assessorTurns = rememberapp.SynchronousAssessmentProviderTurns(err)
-		return fail(err, "assessment")
-	}
-	assessorTurns = prepared.Assessment.ProviderTurns
-	commitInput, buildErr := rememberapp.BuildSynchronousRememberCommitInput(rememberapp.SynchronousRememberCommitRequest{
-		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID,
-		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
-		RequestHash:   input.RequestHash,
-		SourceSummary: input.SourceSummary, Proposal: input.Proposal,
-		Metadata: input.Metadata, Evidence: rememberEvidenceInputsForCommit(input, snapshot), Assessment: prepared,
-		Duration: time.Since(started),
-	})
-	commitInput.StartedAt = started
-	if buildErr != nil {
-		if p.isRememberStaleInput(buildErr) {
-			return fail(newRememberStaleInputError(buildErr), "assessment")
-		}
-		return fail(buildErr, "assessment")
-	}
-	if input.SecurityRejected || rememberAssessmentSecurityRejected(prepared) {
-		input.AssessorSecurityRejected = true
-		return fail(rememberapp.AssessmentSecurityRejectionFailure(prepared), "assessment")
-	}
-	embeddingStarted = time.Now()
-	embeddingCtx, embeddingCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)
-	defer embeddingCancel()
-	plan, err := p.ledger.PlanRememberEmbeddings(embeddingCtx, commitInput)
-	if err != nil {
-		observability.RecordRememberPhase(p.metrics, "embedding", rememberMetricPhaseOutcome(err), time.Since(embeddingStarted))
-		if errors.Is(err, repository.ErrSubmissionPredicateRegistrationHeld) && len(commitInput.Commit.PredicateRegistrations) > 0 {
-			err = fmt.Errorf("%w: predicate catalog changed before embedding planning: %w", rememberapp.ErrRememberCommitConflict, err)
-		}
-		return fail(&rememberEmbeddingPlanFailure{cause: err}, "embedding")
-	}
-	plannedEmbeddings, err := p.embedSearchDocumentBatch(
-		embeddingCtx,
-		input.TeamID,
-		input.OwnerProfileID,
-		plan.EmbeddingModel,
-		plan.Documents,
-	)
-	observability.RecordRememberPhase(p.metrics, "embedding", rememberMetricPhaseOutcome(err), time.Since(embeddingStarted))
-	if err != nil {
-		return fail(err, "embedding")
-	}
-	inlineEmbeddings := inlineEmbeddingResultsFromDocuments(plannedEmbeddings, plan)
-	inlineEmbeddings = mergeInlineEmbeddingResults(duplicateEmbeddings, inlineEmbeddings)
+	assessorTurns = preparedWrite.AssessorTurns
+	commitInput, inlineEmbeddings := preparedWrite.Commit, preparedWrite.Embeddings
 	commitStarted := time.Now()
 	commitCtx, commitCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseCommit)
 	if err := commitCtx.Err(); err != nil {

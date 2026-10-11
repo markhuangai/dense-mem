@@ -104,7 +104,7 @@ func CountSemanticAssessmentRequestTokens(
 	inputTokens, err = CountSemanticAssessmentProviderRequestTokens(
 		limits.ProviderModel,
 		limits.ProviderSchemaName,
-		SemanticAssessmentResponseSchema(),
+		SemanticAssessmentResponseSchemaWithLimits(limits),
 		limits.ProviderTemperatureDisabled,
 		[]SemanticAssessmentProviderMessage{
 			{Role: "system", Content: SemanticAssessmentSystemPrompt},

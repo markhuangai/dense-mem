@@ -45,3 +45,7 @@ func evidenceContentHash(content string) string {
 	sum := sha256.Sum256([]byte(content))
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
+
+func RepositoryEvidenceInputs(evidence []RememberEvidenceInput) []EvidenceInput {
+	return repositoryEvidenceInputs(evidence)
+}

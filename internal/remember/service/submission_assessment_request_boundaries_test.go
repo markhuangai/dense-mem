@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -607,3 +608,16 @@ func TestSubmissionAssessmentCatalogFailuresCarryDatabaseClassification(t *testi
 }
 
 var errTestAssessmentCatalog = errors.New("catalog test failure")
+
+func TestSessionNumericProposalBuildsAssessmentWithoutPrecisionLoss(t *testing.T) {
+	for _, number := range []string{"42", "9007199254740993", "0.1234567890123456789"} {
+		fixture := synchronousAssessmentFixture(t)
+		relationship := fixture.input.Snapshot.Proposal["relationship_hints"].([]any)[1].(map[string]any)
+		relationship["object"].(map[string]any)["value"].(map[string]any)["value"] = json.Number(number)
+		plan, err := buildSubmissionAssessmentPlan(fixture.input.Snapshot)
+		require.NoError(t, err)
+		target := plan.relationshipsByRef["r:latency"].Target.ObjectValue
+		require.NotNil(t, target)
+		require.Equal(t, number, target.CanonicalValue)
+	}
+}

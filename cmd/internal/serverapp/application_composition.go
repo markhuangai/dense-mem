@@ -22,6 +22,7 @@ import (
 	remembercontract "github.com/markhuangai/dense-mem/internal/remember/contract"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
+	session "github.com/markhuangai/dense-mem/internal/session/contract"
 	settings "github.com/markhuangai/dense-mem/internal/settings"
 	traceapp "github.com/markhuangai/dense-mem/internal/trace"
 )
@@ -37,6 +38,9 @@ type applicationCompositionDependencies struct {
 	RecallSearch           recallcontract.SearchRepository
 	RecallFeedbackEvents   recallcontract.FeedbackEventRepository
 	Assessor               assessor.Provider
+	SessionAssessor        assessor.Provider
+	SessionEnabled         bool
+	RememberModel          string
 	GeneratorTransport     modelprovider.StructuredTransport
 	EmbeddingProvider      embeddingcontract.EmbeddingProviderInterface
 	RetryEmbeddingProvider embeddingcontract.EmbeddingProviderInterface
@@ -58,6 +62,7 @@ type applicationCompositionDependencies struct {
 
 type applicationBundle struct {
 	Remember                rememberapp.Service
+	Session                 session.API
 	Recall                  recall.RecallService
 	Community               communityapp.Service
 	Lifecycle               lifecycle.LifecycleService
@@ -82,6 +87,11 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 		DiagnosticProtector: deps.DiagnosticProtector,
 		Audit:               deps.Audit,
 	})
+	sessionService := buildSessionApplication(rememberApplicationDependencies{
+		Persistence: deps.RememberPersistence, Catalog: deps.RememberCatalog, Assessor: deps.SessionAssessor,
+		Embedder: deps.EmbeddingProvider, Limits: deps.AssessmentLimits, Metrics: deps.Metrics,
+		Logger: deps.Logger, DiagnosticProtector: deps.DiagnosticProtector, Audit: deps.Audit,
+	}, deps.Knowledge, deps.GeneratorTransport, deps.RememberModel, deps.SessionEnabled)
 	recallService := buildRecallApplication(recallApplicationDependencies{
 		Search:          deps.RecallSearch,
 		Provider:        deps.RetryEmbeddingProvider,
@@ -126,6 +136,7 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 	})
 	return applicationBundle{
 		Remember:                rememberService,
+		Session:                 sessionService,
 		Recall:                  recallService,
 		Community:               communityService,
 		Lifecycle:               lifecycleService,

@@ -250,7 +250,7 @@ func actionableTransientRemediation(tool string) string {
 
 func actionableToolRequiresIdempotency(tool string) bool {
 	switch strings.TrimSpace(tool) {
-	case ToolRemember, ToolRetractEvidence, ToolCorrectRelationship, ToolSubmitRecallSessionFeedback:
+	case ToolIngestSession, ToolRemember, ToolRetractEvidence, ToolCorrectRelationship, ToolSubmitRecallSessionFeedback:
 		return true
 	default:
 		return false

@@ -304,6 +304,7 @@ if (has("conflict_provider")) {
   })) serverEnvironment.set(key, value);
   helperServices.push(["conflict-provider", ["    command: [\"sh\", \"-c\", \"sleep infinity\"]"]]);
 }
+if (scenario === "session_ingest" || scenario === "full") serverEnvironment.set("SESSION_INGEST_ENABLED", "true");
 if (has("synchronous_write")) {
   for (const [key, value] of Object.entries({
     AI_API_URL: "http://synchronous-write-provider:8787/v1",

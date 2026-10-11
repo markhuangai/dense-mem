@@ -2,9 +2,11 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/lib/pq"
+	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 	"gorm.io/gorm"
 )
 
@@ -41,7 +43,8 @@ func loadTraceEvidenceOccurrences(
 		       occurrence.content_hash,
 		       CASE WHEN ? THEN char_length(occurrence.content) > ? ELSE false END,
 		       occurrence.source_type, occurrence.authority, occurrence.source_ref,
-		       occurrence.labels, occurrence.metadata::text, occurrence.created_at
+		       occurrence.labels, occurrence.metadata::text, occurrence.created_at,
+           CASE WHEN session.submission_id IS NOT NULL THEN COALESCE(occurrence.metadata->'session', 'null'::jsonb)::text ELSE 'null' END
 		FROM evidence_occurrences AS occurrence
 		LEFT JOIN evidence_exact_aliases AS alias
 		  ON alias.team_id = occurrence.team_id
@@ -60,6 +63,11 @@ func loadTraceEvidenceOccurrences(
 		 AND revision.source_revision_id = occurrence.source_revision_id
 		 AND revision.owner_profile_id = occurrence.owner_profile_id
 		 AND revision.space_id = occurrence.space_id
+        LEFT JOIN session_submissions AS session
+          ON session.team_id = occurrence.team_id AND session.space_id = occurrence.space_id
+         AND session.owner_profile_id = occurrence.owner_profile_id
+         AND session.space_generation = occurrence.space_generation
+         AND session.submission_id = occurrence.ingest_id
 		WHERE occurrence.team_id = ?::uuid
 		  AND occurrence.occurrence_id = ANY(?::uuid[])
 		  AND occurrence.space_id = ?::uuid
@@ -83,18 +91,24 @@ func loadTraceEvidenceOccurrences(
 	var out []TraceEvidenceFragment
 	for rows.Next() {
 		var row TraceEvidenceFragment
-		var metadataJSON string
+		var metadataJSON, sessionJSON string
 		if err := rows.Scan(
 			&row.FragmentID, &row.OccurrenceID, &row.IngestID, &row.OwnerProfileID,
 			&row.SourceID, &row.SourceRevisionID, &row.SourceKey, &row.SourceKind,
 			&row.RevisionToken, &row.CurrentRevisionID, &row.EvidenceIndex,
 			&row.Content, &row.ContentHash, &row.ContentTruncated, &row.SourceType,
 			&row.Authority, &row.SourceRef, pq.Array(&row.Labels), &metadataJSON,
-			&row.CreatedAt,
+			&row.CreatedAt, &sessionJSON,
 		); err != nil {
 			return nil, err
 		}
 		row.Metadata = jSONMap(metadataJSON)
+		if sessionJSON != "null" {
+			row.Session = &tracecontract.SessionProvenance{}
+			if err := json.Unmarshal([]byte(sessionJSON), row.Session); err != nil {
+				return nil, err
+			}
+		}
 		out = append(out, row)
 	}
 	return out, rows.Err()

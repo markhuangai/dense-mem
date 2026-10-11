@@ -70,6 +70,16 @@ func contractExampleJSON(request map[string]any) string {
 
 func contractToolExamples() map[string]contractToolExample {
 	return map[string]contractToolExample{
+		ToolIngestSession: {
+			WhenToUse:     "Save incremental user-authored session events in the authenticated private binding. Send original events; Dense-Mem owns chunking, extraction, grounding, and atomic completion.",
+			Prerequisites: "The tool must appear in tools/list for an authorized private write credential. Create a fresh operation key and retain the complete request before sending it.",
+			Request: map[string]any{
+				"idempotency_key": newOperationKey, "framework": "generic", "app_name": "notes", "user_id": "external-user", "session_id": "external-session",
+				"events": []any{map[string]any{"event_id": "user-event-1", "text": "Ari uses Go.", "occurred_at": "2026-10-10T10:00:00Z"}},
+			},
+			Result:     "The terminal result provides submission_id, durable accepted/duplicate event counts, per-event outcomes, and relationship dispositions. Failed processing commits no new semantic knowledge. completed with not_required may mean no facts were extracted.",
+			NextAction: "On retry_same_request, resend the unchanged complete original request with its retained key. session_event_retry_required requires the unfinished original request. Do not rotate keys or alter immutable events to bypass conflicts. Use returned relationship_id values with trace_memory and inspect source event IDs and offsets.",
+		},
 		ToolRemember: {
 			WhenToUse:     "Store exact evidence with required client Relationship proposals in one synchronous terminal operation. Every evidence item must be cited by a proposal through evidence_indices; the server owns grounding and acceptance. Use exactly one object shape: {\"object\":{\"entity\":{\"name\":\"PostgreSQL\",\"entity_kind\":\"product\"}}} or {\"object\":{\"value\":{\"type\":\"string\",\"value\":\"PostgreSQL\"}}}.",
 			Prerequisites: "Create a fresh operation key and retain this complete request before sending it.",

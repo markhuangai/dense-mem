@@ -3,6 +3,16 @@
   "runtime": "production",
   "scenarios": [
     {
+      "name": "session_ingest",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": [
+        "synchronous_write"
+      ],
+      "timeout_minutes": 45,
+      "playwright": false
+    },
+    {
       "name": "mcp_boundaries",
       "isolation": "exclusive",
       "runtime": "production",

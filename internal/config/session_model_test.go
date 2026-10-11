@@ -57,3 +57,27 @@ func assertSessionModels(t *testing.T, cfg *Config, want map[string]string) {
 		}
 	}
 }
+
+func TestSessionIngestFeatureDefaultsOffAndRejectsInvalidBoolean(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	setRequiredEmbeddingEnv()
+	setRequiredModelEnv()
+	t.Setenv("SESSION_INGEST_ENABLED", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SessionIngestEnabled {
+		t.Fatal("session ingestion must default off")
+	}
+	t.Setenv("SESSION_INGEST_ENABLED", "true")
+	cfg, err = Load()
+	if err != nil || !cfg.SessionIngestEnabled {
+		t.Fatalf("enabled config: %v", err)
+	}
+	t.Setenv("SESSION_INGEST_ENABLED", "sometimes")
+	if _, err := Load(); err == nil {
+		t.Fatal("invalid session boolean was accepted")
+	}
+}

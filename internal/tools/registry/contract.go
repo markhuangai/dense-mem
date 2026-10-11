@@ -12,6 +12,7 @@ import (
 
 const (
 	ToolRemember                    = "remember"
+	ToolIngestSession               = "ingest_session"
 	ToolRetractEvidence             = "retract_evidence"
 	ToolCorrectRelationship         = "correct_relationship"
 	ToolRecallMemory                = "recall_memory"
@@ -27,6 +28,7 @@ const (
 // portal data; it is intentionally absent from the public MCP catalog.
 var contractToolNames = []string{
 	ToolRemember,
+	ToolIngestSession,
 	ToolRetractEvidence,
 	ToolCorrectRelationship,
 	ToolRecallMemory,
@@ -49,6 +51,7 @@ func ContractTools() []Tool {
 			rememberInputSchema(),
 			rememberOutputSchema(),
 		),
+		contractTool(ToolIngestSession, contractToolDescription(ToolIngestSession), []string{"write"}, sessionInputSchema(), sessionOutputSchema()),
 		contractTool(
 			ToolRetractEvidence,
 			contractToolDescription(ToolRetractEvidence),

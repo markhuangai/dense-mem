@@ -6,7 +6,12 @@ import "github.com/markhuangai/dense-mem/internal/domain"
 // the integrated V2.6 assessor. Request-dependent spans and allowlists are
 // intentionally validated after decoding against the frozen request.
 func SemanticAssessmentResponseSchema() map[string]any {
-	return closedObject(
+	return SemanticAssessmentResponseSchemaWithLimits(DefaultSemanticAssessmentLimits())
+}
+
+func SemanticAssessmentResponseSchemaWithLimits(limits SemanticAssessmentLimits) map[string]any {
+	limits = normalizeSemanticAssessmentLimits(limits)
+	schema := closedObject(
 		[]string{"request_id", "evidence_security_results", "evidence_equivalence_results", "evidence_conflict_results", "entity_results", "relationship_results"},
 		map[string]any{
 			"request_id":                   stringSchema(1, 128),
@@ -17,6 +22,11 @@ func SemanticAssessmentResponseSchema() map[string]any {
 			"relationship_results":         semanticAssessmentRelationshipResultSchema(),
 		},
 	)
+	properties := schema["properties"].(map[string]any)
+	properties["evidence_security_results"].(map[string]any)["maxItems"] = limits.MaxEvidenceItems
+	properties["evidence_equivalence_results"].(map[string]any)["maxItems"] = limits.MaxEvidenceItems
+	return schema
+
 }
 
 func semanticAssessmentEvidenceConflictResultSchema() map[string]any {

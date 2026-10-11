@@ -363,13 +363,14 @@ func traceEvidenceSchema() map[string]any {
 			"evidence_id":       schemaString("Evidence ID.", 128),
 			"occurrence_id":     schemaString("Evidence occurrence ID.", 128),
 			"submission_id":     schemaString("Submission ID.", 128),
-			"evidence_index":    map[string]any{"type": "integer", "minimum": 0, "maximum": 19},
+			"evidence_index":    map[string]any{"type": "integer", "minimum": 0, "maximum": 99},
 			"content":           schemaString("Optional bounded evidence content.", 999),
 			"content_hash":      schemaString("Evidence content hash.", 128),
 			"content_truncated": map[string]any{"type": "boolean"},
 			"source_type":       schemaEnum([]string{"conversation", "document", "observation", "manual"}),
 			"source":            schemaString("Bounded provenance locator.", 256),
 			"created_at":        map[string]any{"type": "string", "format": "date-time"},
+			"session":           sessionProvenanceSchema(),
 		},
 	)
 }

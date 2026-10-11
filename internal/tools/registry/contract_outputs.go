@@ -244,6 +244,13 @@ func traceEvidenceOutputs(records []tracecontract.TraceEvidenceFragment) []map[s
 			"content_hash":      record.ContentHash,
 			"content_truncated": record.ContentTruncated,
 		}
+		if record.Session != nil {
+			provenance := record.Session
+			item["session"] = map[string]any{"framework": provenance.Framework, "app_name": provenance.AppName, "user_id": provenance.UserID, "session_id": provenance.SessionID, "event_id": provenance.EventID, "event_index": provenance.EventIndex, "span_start": provenance.SpanStart, "span_end": provenance.SpanEnd}
+			if provenance.OccurredAt != nil {
+				item["session"].(map[string]any)["occurred_at"] = *provenance.OccurredAt
+			}
+		}
 		putString(item, "occurrence_id", record.OccurrenceID)
 		putString(item, "content", record.Content)
 		putString(item, "source_type", record.SourceType)

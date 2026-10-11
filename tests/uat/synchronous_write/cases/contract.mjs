@@ -9,8 +9,8 @@ import {
 
 export const name = "contract";
 
-const CURRENT_CONTRACT_VERSION = "dense-mem.v2.6.7";
-const ACCEPTED_CONTRACT_VERSIONS = [CURRENT_CONTRACT_VERSION, "dense-mem.v2.6.6", "dense-mem.v2.6.3", "dense-mem.v2.6.2"];
+const CURRENT_CONTRACT_VERSION = "dense-mem.v2.6.8";
+const ACCEPTED_CONTRACT_VERSIONS = [CURRENT_CONTRACT_VERSION, "dense-mem.v2.6.7", "dense-mem.v2.6.6", "dense-mem.v2.6.3", "dense-mem.v2.6.2"];
 
 export async function run({ rpc, expect }) {
   await enableTargetFeatureGates();

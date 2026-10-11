@@ -56,7 +56,8 @@ Each evidence boundary_text inserts request-local markers around every Unicode c
 
 // SemanticAssessmentLimits bounds one immutable assessor request; token limits are semantic and transport byte limits belong to provider adapters.
 type SemanticAssessmentLimits struct {
-	Tokenizer string
+	MaxEvidenceItems int
+	Tokenizer        string
 	// Provider framing is part of the configured assessor budget. These fields
 	// are populated by the provider constructor and shared with preflight.
 	ProviderModel               string
@@ -75,6 +76,7 @@ type SemanticAssessmentLimits struct {
 func DefaultSemanticAssessmentLimits() SemanticAssessmentLimits {
 	return SemanticAssessmentLimits{
 		Tokenizer:                 "o200k_base",
+		MaxEvidenceItems:          SemanticAssessmentMaxEvidenceSpans,
 		ProviderSchemaName:        SemanticAssessmentSchemaName,
 		MaxInputTokens:            200000,
 		MaxOutputTokens:           65536,
@@ -88,6 +90,12 @@ func DefaultSemanticAssessmentLimits() SemanticAssessmentLimits {
 
 func normalizeSemanticAssessmentLimits(limits SemanticAssessmentLimits) SemanticAssessmentLimits {
 	defaults := DefaultSemanticAssessmentLimits()
+	if limits.MaxEvidenceItems <= 0 {
+		limits.MaxEvidenceItems = defaults.MaxEvidenceItems
+	}
+	if limits.MaxEvidenceItems > 100 {
+		limits.MaxEvidenceItems = 100
+	}
 	if strings.TrimSpace(limits.Tokenizer) == "" {
 		limits.Tokenizer = defaults.Tokenizer
 	}
@@ -177,7 +185,7 @@ func PrepareSemanticAssessmentRequest(
 		}
 	}
 
-	errs := validateSemanticAssessmentRequestBasics(&req)
+	errs := validateSemanticAssessmentRequestBasics(&req, limits)
 	evidenceByID := semanticEvidenceByID(req.Evidence)
 	knownEvidenceByID := semanticEvidenceByID(req.KnownEvidence)
 	errs = append(errs, normalizeAssessmentRequiredRelationshipRefs(&req, evidenceByID, knownEvidenceByID)...)
@@ -313,7 +321,7 @@ func PrepareSemanticAssessmentResponse(
 	return response, nil
 }
 
-func validateSemanticAssessmentRequestBasics(req *SemanticAssessmentRequest) []SemanticValidationError {
+func validateSemanticAssessmentRequestBasics(req *SemanticAssessmentRequest, limits SemanticAssessmentLimits) []SemanticValidationError {
 	var errs []SemanticValidationError
 	if req.RequestID == "" || len([]rune(req.RequestID)) > 128 {
 		errs = append(errs, semanticErr("request_id", "is required and must be at most 128 characters"))
@@ -323,8 +331,8 @@ func validateSemanticAssessmentRequestBasics(req *SemanticAssessmentRequest) []S
 	}
 	if len(req.Evidence) == 0 {
 		errs = append(errs, semanticErr("evidence", "is required"))
-	} else if len(req.Evidence) > SemanticAssessmentMaxEvidenceSpans {
-		errs = append(errs, semanticErr("evidence", fmt.Sprintf("must contain at most %d entries", SemanticAssessmentMaxEvidenceSpans)))
+	} else if len(req.Evidence) > limits.MaxEvidenceItems {
+		errs = append(errs, semanticErr("evidence", fmt.Sprintf("must contain at most %d entries", limits.MaxEvidenceItems)))
 	}
 	seen := map[string]struct{}{}
 	knownSeen := map[string]struct{}{}
@@ -685,13 +693,13 @@ func validateSemanticAssessmentResponseShape(response SemanticAssessmentResponse
 	}
 	if response.EvidenceSecurityResults == nil {
 		errs = append(errs, semanticErr("evidence_security_results", "is required"))
-	} else if len(response.EvidenceSecurityResults) > SemanticAssessmentMaxEvidenceSpans {
-		errs = append(errs, semanticErr("evidence_security_results", fmt.Sprintf("must contain at most %d entries", SemanticAssessmentMaxEvidenceSpans)))
+	} else if len(response.EvidenceSecurityResults) > limits.MaxEvidenceItems {
+		errs = append(errs, semanticErr("evidence_security_results", fmt.Sprintf("must contain at most %d entries", limits.MaxEvidenceItems)))
 	}
 	if response.EvidenceEquivalenceResults == nil {
 		errs = append(errs, semanticErr("evidence_equivalence_results", "is required"))
-	} else if len(response.EvidenceEquivalenceResults) > SemanticAssessmentMaxEvidenceSpans {
-		errs = append(errs, semanticErr("evidence_equivalence_results", fmt.Sprintf("must contain at most %d entries", SemanticAssessmentMaxEvidenceSpans)))
+	} else if len(response.EvidenceEquivalenceResults) > limits.MaxEvidenceItems {
+		errs = append(errs, semanticErr("evidence_equivalence_results", fmt.Sprintf("must contain at most %d entries", limits.MaxEvidenceItems)))
 	}
 	if response.EntityResults == nil {
 		errs = append(errs, semanticErr("entity_results", "is required"))

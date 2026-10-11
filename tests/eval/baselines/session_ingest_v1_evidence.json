@@ -1,0 +1,734 @@
+{
+  "schema_version": "dense-mem.session_ingest.evidence.v1",
+  "issue": 218,
+  "scope": "Maintainer-approved historical deterministic-1k waiver replacement; session ingestion and Remember compatibility only.",
+  "current_validation_status": {
+    "source_sha": "cf4af5b404f0bae276f4957a197eb1dd89ef8b45",
+    "date": "2026-10-11",
+    "model": "dense-mem",
+    "model_policy": "Use maintainer-maintained CI environment configuration; no model substitution without explicit direction. Gateway owns backend routing.",
+    "historical_quality_scope": "Quality and paired controls remain attributed to their recorded source. Current local validation separately certifies the later trace-label runtime source.",
+    "full_local_ci": "complete uninterrupted ci-check.sh passed with exit 0",
+    "real_postgres_session_regressions": 16,
+    "local_session_e2e": "passed",
+    "remember_controls": {
+      "base_passed": true,
+      "candidate_passed": true,
+      "controls": 12,
+      "facts_and_outcomes_equal": true,
+      "base_usage": {
+        "chat_turns": 4,
+        "embedding_turns": 8,
+        "input_tokens": 24417,
+        "output_tokens": 4708,
+        "missing_chat_usage": 0,
+        "embedding_input_tokens": 0,
+        "embedding_usage_unavailable": 8
+      },
+      "candidate_usage": {
+        "chat_turns": 4,
+        "embedding_turns": 8,
+        "input_tokens": 24420,
+        "output_tokens": 4764,
+        "missing_chat_usage": 0,
+        "embedding_input_tokens": 0,
+        "embedding_usage_unavailable": 8
+      },
+      "base_latency_seconds": {
+        "p50": 0.1643566520000022,
+        "p95": 28.713919408999995,
+        "p99": 28.713919408999995
+      },
+      "candidate_latency_seconds": {
+        "p50": 0.08303229999999996,
+        "p95": 43.079215305999995,
+        "p99": 43.079215305999995
+      }
+    },
+    "quality": {
+      "status": "passed",
+      "complete_repetitions": 3,
+      "cases_per_repetition": 32,
+      "processing_deadline_seconds": 180,
+      "source_sha": "44fbb56fcaf937c1219f1f70aa667c5782d28dbc",
+      "scope": "Measured repetitions certify 44fbb56f only; the later source-label-only fix retains all frozen labels and provider/semantic inputs, with separate regression, full local checks and exact-source E2E."
+    },
+    "required_remaining": "Current-head reviews and full remote CI/E2E.",
+    "artifact_sha256": {
+      "quality-linking-budget-dense-mem.json": "b810ab1848f70ce001956c1a67546af279a6ac0720c0faaca0ea0ff1e347a7ee",
+      "candidate-linking-budget-dense-mem.json": "4065de4aacab3546f7af3a61d9c6060b7db6f21058723e203d7a9abce839bcb1",
+      "pr-553-dense-mem-quality-timeout-receipt.json": "4611a6678dfd3f4af2bf25cfc35d6691eccfff562ae784c57e47f782911ba6a7",
+      "diagnostic-long1-dense-mem.json": "04c3571deba58e74d421e21393d74e58c8a9eb12d553d772a01d81dc05cee299"
+    },
+    "previous_remember_controls": {
+      "base_passed": true,
+      "candidate_passed": true,
+      "controls": 12,
+      "facts_and_outcomes_equal": true,
+      "base_usage": {
+        "chat_turns": 4,
+        "embedding_turns": 8,
+        "input_tokens": 24417,
+        "output_tokens": 4708,
+        "missing_chat_usage": 0,
+        "embedding_input_tokens": 0,
+        "embedding_usage_unavailable": 8
+      },
+      "candidate_usage": {
+        "chat_turns": 5,
+        "embedding_turns": 8,
+        "input_tokens": 28157,
+        "output_tokens": 7468,
+        "missing_chat_usage": 0,
+        "embedding_input_tokens": 0,
+        "embedding_usage_unavailable": 8
+      },
+      "base_latency_seconds": {
+        "p50": 0.1643566520000022,
+        "p95": 28.713919408999995,
+        "p99": 28.713919408999995
+      },
+      "candidate_latency_seconds": {
+        "p50": 0.08451979700000004,
+        "p95": 67.387171471,
+        "p99": 67.387171471
+      }
+    },
+    "repository_command_set": "complete uninterrupted ci-check.sh command set; script exit 0",
+    "previous_quality_failure": {
+      "status": "incomplete",
+      "complete_repetitions": 0,
+      "matching_cases_before_failure": 9,
+      "failed_case": "long-1",
+      "failed_phase": "linking",
+      "error": "request_timeout",
+      "extraction_seconds": 17.449,
+      "linking_header_wait_seconds": 151.327,
+      "checkpoint_count": 1,
+      "new_semantic_records": 0,
+      "processing_deadline_seconds": 180
+    },
+    "quality_gate": "passed",
+    "complete_repetitions": 3,
+    "first_quality_timeout_retained": true,
+    "diagnostic_probe_quality_credit": false,
+    "prior_current_quality": {
+      "status": "passed",
+      "complete_repetitions": 3,
+      "cases_per_repetition": 32,
+      "processing_deadline_seconds": 180
+    },
+    "source_label_bound_fix": "passed Unicode boundary/max regression, complete repository checks and exact committed-source session_ingest E2E; remote review/full CI pending"
+  },
+  "evaluation_date": "2026-10-11",
+  "base_sha": "13fec633f4e48e0e61378d60972f236f36b7c213",
+  "evaluated_candidate_sha": "44fbb56fcaf937c1219f1f70aa667c5782d28dbc",
+  "validated_go_source_sha": "cf4af5b404f0bae276f4957a197eb1dd89ef8b45",
+  "cohort_sha256": "2bad34690df07d02a2e5a9ee6de4e9559e23491fded531f3b059bdecc4d9ed8d",
+  "source_lock": "tests/eval/source_locks/session_ingest_v1.json",
+  "approved_plan_sha256": "31e2509bc2f4e9b8db4df2eb9dbbf63fc65d6bb174dbe7644b9970a0c796e3eb",
+  "runtime_provenance": [
+    {
+      "stack": "base",
+      "revision": "13fec633f4e48e0e61378d60972f236f36b7c213",
+      "image": "sha256:a892469a3e9c1295d9c1fe639f9b115241bc690b11d3558ef3e57ce2decc131e",
+      "model": "dense-mem",
+      "embedding_model": "@cf/baai/bge-m3",
+      "embedding_dimensions": 1024
+    },
+    {
+      "stack": "candidate",
+      "revision": "44fbb56fcaf937c1219f1f70aa667c5782d28dbc",
+      "image": "sha256:e9996ecb2c3a10b9dcffdb9d9e90d5e1194d8d6106d824bcf0ee4c4b2a9676fc",
+      "model": "dense-mem",
+      "embedding_model": "@cf/baai/bge-m3",
+      "embedding_dimensions": 1024
+    }
+  ],
+  "quality": [
+    {
+      "repetition": 1,
+      "precision": 1,
+      "recall": 1,
+      "latency_seconds": {
+        "p50": 14.12575441200001,
+        "p95": 27.740553681999998,
+        "p99": 34.27911077
+      },
+      "usage": {
+        "chat_turns": 120,
+        "embedding_turns": 76,
+        "input_tokens": 260736,
+        "output_tokens": 45589,
+        "missing_chat_usage": 0,
+        "embedding_input_tokens": 0,
+        "embedding_usage_unavailable": 76
+      },
+      "cases": 32,
+      "facts": {
+        "expected": 47,
+        "predicted": 47,
+        "matched": 47
+      },
+      "max_processing_seconds": 34.27911077
+    },
+    {
+      "repetition": 2,
+      "precision": 1,
+      "recall": 1,
+      "latency_seconds": {
+        "p50": 13.242924980999902,
+        "p95": 28.073855821999953,
+        "p99": 47.88021475000004
+      },
+      "usage": {
+        "chat_turns": 120,
+        "embedding_turns": 76,
+        "input_tokens": 260573,
+        "output_tokens": 45013,
+        "missing_chat_usage": 0,
+        "embedding_input_tokens": 0,
+        "embedding_usage_unavailable": 76
+      },
+      "cases": 32,
+      "facts": {
+        "expected": 47,
+        "predicted": 47,
+        "matched": 47
+      },
+      "max_processing_seconds": 47.88021475000004
+    },
+    {
+      "repetition": 3,
+      "precision": 1,
+      "recall": 1,
+      "latency_seconds": {
+        "p50": 14.304037557000061,
+        "p95": 26.136195938999997,
+        "p99": 29.544469493999845
+      },
+      "usage": {
+        "chat_turns": 122,
+        "embedding_turns": 76,
+        "input_tokens": 261836,
+        "output_tokens": 46491,
+        "missing_chat_usage": 0,
+        "embedding_input_tokens": 0,
+        "embedding_usage_unavailable": 76
+      },
+      "cases": 32,
+      "facts": {
+        "expected": 47,
+        "predicted": 47,
+        "matched": 47
+      },
+      "max_processing_seconds": 29.544469493999845
+    }
+  ],
+  "required_assertions": {
+    "exact_event_provenance": "passed in all three repetitions",
+    "designated_boundary_facts": "passed in all three repetitions",
+    "private_actor_isolation": "passed in all three repetitions",
+    "processing_deadline_seconds": 180,
+    "all_admissible_calls_completed": true
+  },
+  "quality_chat_tokens": {
+    "input": 783145,
+    "output": 137093
+  },
+  "embedding_accounting": {
+    "quality_calls_without_usage": 228,
+    "base_control_calls_without_usage": 8,
+    "candidate_control_calls_without_usage": 8,
+    "input_tokens": null,
+    "reason": "The real embedding endpoint omits usage; no estimate or complete combined token total is claimed."
+  },
+  "remember_controls": {
+    "count": 12,
+    "facts_and_outcomes_equal": true,
+    "control_ids": [
+      "required-missing",
+      "required-empty",
+      "required-uncited",
+      "required-malformed",
+      "provider-none",
+      "mixed-objects",
+      "legacy-proposal",
+      "subject-span",
+      "predicate-surface",
+      "supports",
+      "concurrent",
+      "conflict"
+    ],
+    "base_usage": {
+      "chat_turns": 4,
+      "embedding_turns": 8,
+      "input_tokens": 24417,
+      "output_tokens": 4708,
+      "missing_chat_usage": 0,
+      "embedding_input_tokens": 0,
+      "embedding_usage_unavailable": 8
+    },
+    "candidate_usage": {
+      "chat_turns": 4,
+      "embedding_turns": 8,
+      "input_tokens": 24420,
+      "output_tokens": 4764,
+      "missing_chat_usage": 0,
+      "embedding_input_tokens": 0,
+      "embedding_usage_unavailable": 8
+    },
+    "base_latency_seconds": {
+      "p50": 0.1643566520000022,
+      "p95": 28.713919408999995,
+      "p99": 28.713919408999995
+    },
+    "candidate_latency_seconds": {
+      "p50": 0.08303229999999996,
+      "p95": 43.079215305999995,
+      "p99": 43.079215305999995
+    }
+  },
+  "approval_clarifications": [
+    "Report provider-measured chat tokens and explicitly unavailable embedding usage.",
+    "Submit known_predicate_key primary_database in the mixed-object Remember control and require its exact result; all six facts retained.",
+    "Add only Jordan has_role designer and Jordan has_role musician to the homonym ground truth; all 32 input texts, other facts, twelve controls, scorer, thresholds and deadlines retained."
+  ],
+  "previous_cohort_sha256": [
+    "c3a85e0984cb93e5d1c34cbd636a2a182ad21ff7285518d11f0c664a9f5c70af",
+    "917b4fffba51e15eeb2f7a94298cb62b0a92bd6b9a0cf81e2371463ae5d40560"
+  ],
+  "prior_failures": [
+    "Exact homonym names originally failed; proper names were separated from role qualifiers without changing acceptance policy.",
+    "A wrong immutable request UUID exhausted complete regeneration; feedback now supplies the expected ID without coercing responses.",
+    "Both models validly normalized the original non-authoritative Remember predicate, requiring the approved fixture correction.",
+    "A complete 45/47 precision failure omitted two explicitly supported role facts from the ground truth; the approved correction is source-locked.",
+    "Earlier embedding/chat no-response attempts failed under unchanged deadlines with zero semantic ingests; no complete credit was granted. The exact cause of sporadic no-response timeouts remains unestablished.",
+    "The maintainer-configured dense-mem-testing attempt stopped on the unchanged-base mixed-object assessment deadline after five controls. Candidate assessment repeated an unsupported hidden_control_markup signal twice before timeout; a direct archived assessment probe also timed out at 180 seconds. The partial quality run completed two cases, one without its expected fact, before the maintainer explicitly changed the source alias to dense-mem. No complete quality credit was granted.",
+    "The separately attempted GLM-5 gate stopped on the unchanged base mixed-object Remember assessment deadline after five completed controls; no candidate or session-quality credit was granted.",
+    "The subsequent source-configured dense-mem retry completed two repetitions at 100% precision/recall and 100% precision/93.62% recall. Extraction omitted two explicit roles and emitted a named language as a string Value incompatible with the existing uses predicate. Two general extraction-prompt clarifications correct proposal completeness and node representation; six fresh diagnostic cases pass and earn no full-cohort credit. Inputs, scorer, thresholds, model and deadlines remain unchanged.",
+    "The first source-configured dense-mem quality run stopped at long-1 after nine matching cases. One extraction checkpoint and zero semantic ingests were retained. A fresh exact-fixture diagnostic completed in 19.62 seconds under unchanged deadlines and earned no quality credit; the gateway delay cause remains unestablished.",
+    "Post-review gpt-6.1-sol stopped at long-1 after nine completed cases and at semantics-1 after 25; both failed submissions committed zero semantic ingests. The second retained one validated extraction checkpoint. Upstream no-response stall root cause remains unestablished.",
+    "Post-review gpt-6-luna completed 32 cases but failed frozen precision at 41/43 (95.35%) and recall at 41/47 (87.23%); no passing quality credit was granted.",
+    "A further Sol 6.1 attempt passed one complete 32-case repetition, then the authoritative assessment stalled at repetition 2 short-1 after extraction and linking. Two checkpoints and zero semantic ingests were retained; it did not pass the three-repetition gate.",
+    "The gpt-6-sol run passed paired Remember controls and 26 quality cases, then linking timed out with one extraction checkpoint and zero semantic ingests. Exact captured linking replay returned validated HTTP 200 responses directly and through the accounting proxy in 2.68/3.03 seconds; intermittent gateway root cause remains unestablished."
+  ],
+  "proxy_provenance": {
+    "original_proxy_sha256": "8d9b1dec127c4286d0d908e140fa47812f1f13baf24b885ce8227d0879d5d446",
+    "diagnostic_proxy_sha256": "4944ce2f1d23063a0d1ca06c98a26932c6f6651542d6c024ecf725f4279bddae",
+    "changes": "bounded timing/status metadata only; no request/response retention or forwarding/accounting changes",
+    "cohort_and_scorer_unchanged": true,
+    "service_deadlines_unchanged": true
+  },
+  "diagnostic_exclusion": "All isolated provider probes and failed attempts are diagnostic-only and excluded from the three complete quality repetitions.",
+  "audit": {
+    "round": 7,
+    "verdict": "conformant",
+    "findings": [],
+    "approved_plan_sha256": "d39cf12499b44b772adca40cf92ea67920e6b7e1872c9190e34ecfbe4fb0e24e",
+    "snapshot_sha256": "98a43ae31b606bc8ca67d720c868e44ccb9871a7c2a7b82b6295ba4670987b38"
+  },
+  "local_validation": {
+    "real_postgres_cases_including_subtests": {
+      "knowledge": 248,
+      "privacy": 25,
+      "trace": 19
+    },
+    "registered_e2e_scenarios": [
+      "session_ingest",
+      "synchronous_write",
+      "synchronous_write_primitives",
+      "submission_terminal_errors",
+      "mcp_boundaries",
+      "credential_memory_binding",
+      "space_aware_recall",
+      "private_memory_erasure"
+    ],
+    "complete_go_coverage": {
+      "covered": 35979,
+      "total": 39971,
+      "strict_above_90_gate": true
+    },
+    "registry_postgres_workflow": "passed",
+    "architecture_migrations_line_limits_diff_and_coverage_policy": "passed",
+    "browser_statement_coverage": {
+      "covered": 3369,
+      "total": 3730
+    },
+    "mcp_proxy_statement_coverage": {
+      "covered": 320,
+      "total": 351
+    },
+    "local_production_e2e": {
+      "scenario": "session_ingest",
+      "source_sha": "cf4af5b404f0bae276f4957a197eb1dd89ef8b45",
+      "result": "passed",
+      "owned_stack_cleanup": "completed by registered E2E wrapper",
+      "image_manifest_digest": "sha256:6a1daa443313bbd593aad98f45a1acb4e53bfd8990ad974ef50a8cb0241171f6"
+    },
+    "source_sha": "cf4af5b404f0bae276f4957a197eb1dd89ef8b45",
+    "full_ci_check": "complete uninterrupted ci-check.sh passed with exit 0",
+    "full_ci_check_exit": 0
+  },
+  "artifact_sha256": {
+    "quality-linking-budget-dense-mem.json": "b810ab1848f70ce001956c1a67546af279a6ac0720c0faaca0ea0ff1e347a7ee",
+    "base-review-dense-mem.json": "c35dee6cbb138bf7d3f8116b92952a7eebf1fb91bb5737fa9f286807df62ced1",
+    "candidate-linking-budget-dense-mem.json": "4065de4aacab3546f7af3a61d9c6060b7db6f21058723e203d7a9abce839bcb1",
+    "comparison-linking-budget-dense-mem.json": "f6bd3f4e41968f519ac1805abfb2b8493422917d06cdaa519d688fa5d1d2cda6",
+    "pr-553-linking-budget-ci-check.log": "5acf7663002d7765369c4cd9a891b2433f98b12e8bf52259b45c8b70f5513789",
+    "pr-553-linking-budget-session-e2e.log": "e0e838d2f4f59c65618094dffcf34b3fcf79a94101af1968aa249918f384062f",
+    "pr-553-linking-budget-focused-tests.log": "e564780e9d847825b838c2404ddd3b829702698c7ce35774388d175844b2b0d4",
+    "pr-553-linking-budget-regression-before.log": "d64614e8ad64dc23499b380f4fd8aa590ea6f1870a5253a7160b0c8f98810ad3",
+    "pr-553-review-probes-full-token-bound-14a7f8e2.log": "58b81440cec98c76ea02fabeb2e9a87e075feac4648367fbd7075cdfa14640f9",
+    "pr-553-push-gate-protocol-incident.json": "657d728a35fe353e6bcd60e52111bb29460f0729251b744503bcf0b132951b95",
+    "pr-553-role-object-prompt-ci-check.log": "6e2ea4030b808dd47616162b3fe75171c8c7ef7ca9e4324792cc8753ee1182a9",
+    "pr-553-role-object-prompt-ci-resume.log": "13e8bb5e2879858b4ca949ec1743e56f16c7e237ae55b4cd93f883b757d465d1",
+    "pr-553-role-object-ci-lock-recovery.json": "c4c32fd89c48ce6f4b169aea40ae2f02426dcca801affdfb8e6106e072447cc8",
+    "pr-553-role-object-session-e2e.log": "a102389fdd87972a6e1d2dc5633de3c34e74d86afa1041efcb89aa97d7be876c",
+    "pr-553-role-object-homonym-pass-receipt.json": "9d4fef1e3471abaeb0941e424569f44b806676e8e60ab385560d5d93b471b81f",
+    "pr-553-role-object-incremental-pass-receipt.json": "2a3304fea4e9224ebc66d7c58d1385300a5eaf87f2c28e99fa902ab913e40c9a",
+    "pr-553-dense-mem-quality-retry1-failure-receipt.json": "14ea78c74f7ee435cdf8ab0ed17451b3e072a721474dd4a82e88c8a03fe2d14a",
+    "pr-553-postgres-regressions.log": "623a35f8418345b5b89c0c5750e8eb7d205081a507f760e1e98625da52bfc2cb",
+    "pr-553-session-e2e.log": "a9bcfcaf2a94f7d1a4f32cd24aec59d7e62799f5064db9e561baa8fd4738e9b9",
+    "pr-553-linking-budget-dense-mem-runtime-proof.json": "941f5ea3819f92beb1ea6e36d5ae487e7b5641b633324806e7679acd4a4f2315",
+    "pr-553-dense-mem-quality-repetition2-miss.json": "4f61496b7caef85f3e8ce45e027a064a9f5553d948a8ec93ff6fee3c9f476fb1",
+    "wiki-model-policy-deadlines-push-receipt.json": "b8e51644294f92a1aa505937b732f8a745a045fd64e40456108f08c9d235a8d8",
+    "pr-553-quality-timeout-receipt.json": "ff8aa0d78a464ea1a31f8390a6da1962cfa207af1260c7d85247826d4cb1e543",
+    "pr-553-quality-retry1-timeout-receipt.json": "3f42efed585e0a413ef9689911a723deb7b20b27ad29d96e1330f683f9dfa760",
+    "pr-553-gpt6luna-quality-failure-receipt.json": "668baebdc8235e775c0b2a94e15137b9733266866d3ff1438675032da27b7398",
+    "pr-553-gpt6astra-interruption-receipt.json": "970f151ee99a733e7a6b4948a29867b8e1b474dea5ed06bbef93369894e26be7",
+    "pr-553-sol-final-timeout-receipt.json": "835020ec5efb824a05a8cfd8f8c0fb0c0b820f5c7c4501d804870dfcf0561d50",
+    "pr-553-gpt6sol-timeout-receipt.json": "d22eba3db54eb8439ebdce0cf35c982667e0aa6e83237f8483abff7b464a2219",
+    "pr-553-glm5-base-timeout-receipt.json": "b1edd5e2ee61447b8e9d2a8fd37dc1ce44ad67406473380128873388179a23cc",
+    "pr-553-gateway-connection-probes.json": "5ec4d3afcccffa33a1718db4abfab1314d2a87adda0bbef136ff88ec69be086d",
+    "pr-553-dense-mem-testing-base-timeout-receipt.json": "5f3b5f5ad4d99d19d0d8e2624c0e1816d8a32bd0d9891b43ff34cd48df78400f",
+    "pr-553-source-assessment-direct-probe.json": "aa0e069e61868753779a0e0fe1b4d1149d9ce8a4a4035271512d5a9e8722eec7",
+    "pr-553-dense-mem-testing-interruption-receipt.json": "1d3d3c8e8785a089451ab5594e9d5616fa8efa566d83e151fc465cb6b260b9f0",
+    "pr-553-source-bound-ci-check.log": "678ee265499afce43b3744679a80bbeff3e54baa8fedad467b523d57a3b160c6",
+    "pr-553-source-bound-focused.log": "8e7c604a1375fa59115f634a8e8d81af4c743fe43049d4eb0cb54823f5970dcd",
+    "pr-553-source-bound-regression-before.log": "61dff8524174039e81208e3bc8d28fe279bd456eaef58f952e672b2e18eacf88",
+    "pr-553-source-bound-session-e2e.log": "d385d5734759d7c917ffe475078e55498f4dd4195a5c9761c6d24d617355aa31",
+    "pr-553-source-bound-quality-carry-forward.json": "4f8b7902b05c85a24c30e959cadaddf8cc2c075c336581103fc3c6da62d798d3",
+    "local-validation-source-bound.json": "a41e27fac308db75095fcfe5e3739c71d4b473326166f66cadf04d97caf0ee19",
+    "pr-553-context-index-probe-receipt.json": "8c00cf8aed8b313a4071075cbbc51878f4c10e9a3f7a90f69266e48c754cb728"
+  },
+  "verified": true,
+  "historical_passing_evaluation": {
+    "evaluated_candidate_sha": "d8fd271cf03d3af7e0d12c330803c78a74a280e9",
+    "runtime_provenance": [
+      {
+        "stack": "base",
+        "revision": "13fec633f4e48e0e61378d60972f236f36b7c213",
+        "image": "sha256:240c000633cfc85940786ca0e0b94e5342ed7d14a54fe3570620c284f86b059f",
+        "model": "gpt-6.1-sol",
+        "embedding_model": "@cf/baai/bge-m3",
+        "embedding_dimensions": 1024
+      },
+      {
+        "stack": "candidate",
+        "revision": "d8fd271cf03d3af7e0d12c330803c78a74a280e9",
+        "image": "sha256:234f377ed22a561c35652d04df0efcdf0298c13da115224f14a25ad37a1dd67f",
+        "model": "gpt-6.1-sol",
+        "embedding_model": "@cf/baai/bge-m3",
+        "embedding_dimensions": 1024
+      }
+    ],
+    "quality": [
+      {
+        "repetition": 1,
+        "precision": 1,
+        "recall": 1,
+        "latency_seconds": {
+          "p50": 21.62726647299994,
+          "p95": 32.72488678000003,
+          "p99": 77.13457205400005
+        },
+        "usage": {
+          "chat_turns": 120,
+          "embedding_turns": 76,
+          "input_tokens": 256863,
+          "output_tokens": 32053,
+          "missing_chat_usage": 0,
+          "embedding_input_tokens": 0,
+          "embedding_usage_unavailable": 76
+        },
+        "cases": 32,
+        "facts": {
+          "expected": 47,
+          "predicted": 47,
+          "matched": 47
+        },
+        "max_processing_seconds": 77.13457205400005
+      },
+      {
+        "repetition": 2,
+        "precision": 1,
+        "recall": 1,
+        "latency_seconds": {
+          "p50": 21.43433612100012,
+          "p95": 31.66578780299984,
+          "p99": 72.30390205000015
+        },
+        "usage": {
+          "chat_turns": 120,
+          "embedding_turns": 76,
+          "input_tokens": 256936,
+          "output_tokens": 32046,
+          "missing_chat_usage": 0,
+          "embedding_input_tokens": 0,
+          "embedding_usage_unavailable": 76
+        },
+        "cases": 32,
+        "facts": {
+          "expected": 47,
+          "predicted": 47,
+          "matched": 47
+        },
+        "max_processing_seconds": 72.30390205000015
+      },
+      {
+        "repetition": 3,
+        "precision": 1,
+        "recall": 1,
+        "latency_seconds": {
+          "p50": 21.117934233000035,
+          "p95": 37.39359557500016,
+          "p99": 71.82176219699997
+        },
+        "usage": {
+          "chat_turns": 120,
+          "embedding_turns": 76,
+          "input_tokens": 256992,
+          "output_tokens": 32385,
+          "missing_chat_usage": 0,
+          "embedding_input_tokens": 0,
+          "embedding_usage_unavailable": 76
+        },
+        "cases": 32,
+        "facts": {
+          "expected": 47,
+          "predicted": 47,
+          "matched": 47
+        },
+        "max_processing_seconds": 71.82176219699997
+      }
+    ],
+    "quality_chat_tokens": {
+      "input": 770791,
+      "output": 96484
+    },
+    "artifact_sha256": {
+      "quality-role-gpt61-instrumented.json": "8189ba20767dedd10b1470d1730b3080156ce0e154c1c4e3e8b629a834de5d0e",
+      "base-role-gpt61.json": "6d3155923c70e1663f30751680c03af22e3a207036cbf6332a6448257dc67df1",
+      "candidate-role-gpt61.json": "66cd40a33f64d32abc9aa6f41358884e470a39fc287ad8dcf088a5ba2d74d812",
+      "comparison-final.json": "8cf1697d207b048200cf63491f151a026a9df03b5c0c6705140fbaa3241347d1"
+    }
+  },
+  "model_configuration_policy": "Use the maintainer-maintained CI environment model and provider settings. Record the configured alias; do not substitute another model without explicit maintainer direction. Gateway backend routing is delegated to the gateway.",
+  "model_constraint": "Maintainer prohibited Astra during the post-review attempt; the interrupted Astra run is retained without quality gate credit. Final evaluation uses the maintainer-configured dense-mem alias; no model substitution without explicit maintainer direction. Gateway backend selection belongs to the gateway.",
+  "quality_scored_misses": [],
+  "extraction_quality_fix": {
+    "commit": "923c580fd7d74961d715a3432633c6b52d2033f9",
+    "behavior": [
+      "Extract explicitly stated role attributes separately from name disambiguation",
+      "Represent named referents as Entity proposals and literal attributes as typed Values"
+    ],
+    "diagnostic_probes": {
+      "homonym": 3,
+      "incremental_coreference": 3,
+      "result": "passed",
+      "full_cohort_credit": false
+    }
+  },
+  "review_fixes": {
+    "commit": "0b0ca025bd761abc9180499575fbf25a6ae79396",
+    "canonical_required_fixes": 4,
+    "review_roots": [
+      4239079916,
+      4239089581,
+      4239089589,
+      4239089599,
+      4239089608
+    ],
+    "behavior": [
+      "No caller evidence-ID mutation on semantic rollback",
+      "Drain every expired session-diagnostic batch while preserving legal holds",
+      "Select latest prior events by original within-batch event order",
+      "Reject whitespace-only citations before checkpoint persistence and regenerate complete responses"
+    ]
+  },
+  "historical_passing_evaluations": [
+    {
+      "evaluated_candidate_sha": "923c580fd7d74961d715a3432633c6b52d2033f9",
+      "runtime_provenance": [
+        {
+          "stack": "base",
+          "revision": "13fec633f4e48e0e61378d60972f236f36b7c213",
+          "image": "sha256:a892469a3e9c1295d9c1fe639f9b115241bc690b11d3558ef3e57ce2decc131e",
+          "model": "dense-mem",
+          "embedding_model": "@cf/baai/bge-m3",
+          "embedding_dimensions": 1024
+        },
+        {
+          "stack": "candidate",
+          "revision": "923c580fd7d74961d715a3432633c6b52d2033f9",
+          "image": "sha256:426084602b9a6a041216137fcabc601bef0ba07b418cfe8a2b0dcc13748d3efc",
+          "model": "dense-mem",
+          "embedding_model": "@cf/baai/bge-m3",
+          "embedding_dimensions": 1024
+        }
+      ],
+      "quality": [
+        {
+          "repetition": 1,
+          "precision": 1,
+          "recall": 1,
+          "latency_seconds": {
+            "p50": 16.18447760599997,
+            "p95": 30.677866608000013,
+            "p99": 34.60450217600004
+          },
+          "usage": {
+            "chat_turns": 123,
+            "embedding_turns": 76,
+            "input_tokens": 266063,
+            "output_tokens": 46207,
+            "missing_chat_usage": 0,
+            "embedding_input_tokens": 0,
+            "embedding_usage_unavailable": 76
+          },
+          "cases": 32,
+          "facts": {
+            "expected": 47,
+            "predicted": 47,
+            "matched": 47
+          },
+          "max_processing_seconds": 34.60450217600004
+        },
+        {
+          "repetition": 2,
+          "precision": 1,
+          "recall": 1,
+          "latency_seconds": {
+            "p50": 15.664097464000108,
+            "p95": 28.454307046000032,
+            "p99": 156.24145943300007
+          },
+          "usage": {
+            "chat_turns": 123,
+            "embedding_turns": 76,
+            "input_tokens": 268790,
+            "output_tokens": 46375,
+            "missing_chat_usage": 0,
+            "embedding_input_tokens": 0,
+            "embedding_usage_unavailable": 76
+          },
+          "cases": 32,
+          "facts": {
+            "expected": 47,
+            "predicted": 47,
+            "matched": 47
+          },
+          "max_processing_seconds": 156.24145943300007
+        },
+        {
+          "repetition": 3,
+          "precision": 1,
+          "recall": 1,
+          "latency_seconds": {
+            "p50": 15.037005283999955,
+            "p95": 29.990017071000068,
+            "p99": 48.75788228300028
+          },
+          "usage": {
+            "chat_turns": 122,
+            "embedding_turns": 76,
+            "input_tokens": 266787,
+            "output_tokens": 47465,
+            "missing_chat_usage": 0,
+            "embedding_input_tokens": 0,
+            "embedding_usage_unavailable": 76
+          },
+          "cases": 32,
+          "facts": {
+            "expected": 47,
+            "predicted": 47,
+            "matched": 47
+          },
+          "max_processing_seconds": 48.75788228300028
+        }
+      ],
+      "quality_chat_tokens": {
+        "input": 801640,
+        "output": 140047
+      },
+      "artifact_sha256": {
+        "quality-role-object-dense-mem.json": "161b47c941ce7dcb10cba743e0c4f77fd2ff4c514b3473cc14db232a392a9709",
+        "base-review-dense-mem.json": "c35dee6cbb138bf7d3f8116b92952a7eebf1fb91bb5737fa9f286807df62ced1",
+        "candidate-role-object-dense-mem.json": "f0e622c915667691acd2981a7f0ce529f821bf69ac92a24e3e3ae4363419f9d8",
+        "comparison-role-object-dense-mem.json": "62ab9cd1f8c80f141d47a620512bc411e33ffd506843eef6cd89d10769f79724",
+        "pr-553-role-object-prompt-ci-check.log": "6e2ea4030b808dd47616162b3fe75171c8c7ef7ca9e4324792cc8753ee1182a9",
+        "pr-553-role-object-prompt-ci-resume.log": "13e8bb5e2879858b4ca949ec1743e56f16c7e237ae55b4cd93f883b757d465d1",
+        "pr-553-role-object-ci-lock-recovery.json": "c4c32fd89c48ce6f4b169aea40ae2f02426dcca801affdfb8e6106e072447cc8",
+        "pr-553-role-object-session-e2e.log": "a102389fdd87972a6e1d2dc5633de3c34e74d86afa1041efcb89aa97d7be876c",
+        "pr-553-role-object-homonym-pass-receipt.json": "9d4fef1e3471abaeb0941e424569f44b806676e8e60ab385560d5d93b471b81f",
+        "pr-553-role-object-incremental-pass-receipt.json": "2a3304fea4e9224ebc66d7c58d1385300a5eaf87f2c28e99fa902ab913e40c9a",
+        "pr-553-dense-mem-quality-retry1-failure-receipt.json": "14ea78c74f7ee435cdf8ab0ed17451b3e072a721474dd4a82e88c8a03fe2d14a",
+        "pr-553-postgres-regressions.log": "623a35f8418345b5b89c0c5750e8eb7d205081a507f760e1e98625da52bfc2cb",
+        "pr-553-session-e2e.log": "a9bcfcaf2a94f7d1a4f32cd24aec59d7e62799f5064db9e561baa8fd4738e9b9",
+        "pr-553-role-object-dense-mem-runtime-proof.json": "857955e3a98437de7bde5d0047931c8184a6b6ee8ec6750009e8d73c47ade740",
+        "pr-553-dense-mem-quality-repetition2-miss.json": "4f61496b7caef85f3e8ce45e027a064a9f5553d948a8ec93ff6fee3c9f476fb1",
+        "wiki-model-policy-deadlines-push-receipt.json": "b8e51644294f92a1aa505937b732f8a745a045fd64e40456108f08c9d235a8d8",
+        "pr-553-quality-timeout-receipt.json": "ff8aa0d78a464ea1a31f8390a6da1962cfa207af1260c7d85247826d4cb1e543",
+        "pr-553-quality-retry1-timeout-receipt.json": "3f42efed585e0a413ef9689911a723deb7b20b27ad29d96e1330f683f9dfa760",
+        "pr-553-gpt6luna-quality-failure-receipt.json": "668baebdc8235e775c0b2a94e15137b9733266866d3ff1438675032da27b7398",
+        "pr-553-gpt6astra-interruption-receipt.json": "970f151ee99a733e7a6b4948a29867b8e1b474dea5ed06bbef93369894e26be7",
+        "pr-553-sol-final-timeout-receipt.json": "835020ec5efb824a05a8cfd8f8c0fb0c0b820f5c7c4501d804870dfcf0561d50",
+        "pr-553-gpt6sol-timeout-receipt.json": "d22eba3db54eb8439ebdce0cf35c982667e0aa6e83237f8483abff7b464a2219",
+        "pr-553-glm5-base-timeout-receipt.json": "b1edd5e2ee61447b8e9d2a8fd37dc1ce44ad67406473380128873388179a23cc",
+        "pr-553-gateway-connection-probes.json": "5ec4d3afcccffa33a1718db4abfab1314d2a87adda0bbef136ff88ec69be086d",
+        "pr-553-dense-mem-testing-base-timeout-receipt.json": "5f3b5f5ad4d99d19d0d8e2624c0e1816d8a32bd0d9891b43ff34cd48df78400f",
+        "pr-553-source-assessment-direct-probe.json": "aa0e069e61868753779a0e0fe1b4d1149d9ce8a4a4035271512d5a9e8722eec7",
+        "pr-553-dense-mem-testing-interruption-receipt.json": "1d3d3c8e8785a089451ab5594e9d5616fa8efa566d83e151fc465cb6b260b9f0"
+      }
+    }
+  ],
+  "historical_ci_lock_recovery": {
+    "original_ci_exit": 1,
+    "resume_exit": 0,
+    "original_failure": "stale Vitest lock; zombie owner belonged to prior interrupted CI group",
+    "source_sha": "923c580fd7d74961d715a3432633c6b52d2033f9"
+  },
+  "linking_budget_fix": {
+    "commit": "44fbb56fcaf937c1219f1f70aa667c5782d28dbc",
+    "review_root": 4240155545,
+    "behavior": "Allow complete grouping of up to 3200 admitted drafts; after complete validation return ErrBudget above 400 canonical entities before checkpointing",
+    "regression": "TestSessionLinkingReportsCanonicalBudgetAfterCompleteValidation",
+    "regression_before_fix": "failed as expected",
+    "required_canonical_fixes_total": 5
+  },
+  "source_label_bound_fix": {
+    "commit": "cf4af5b404f0bae276f4957a197eb1dd89ef8b45",
+    "review_root": 4240417360,
+    "behavior": "Use the existing session identity group as the display source label only above 256 Unicode characters; preserve exact framework/app identifiers and source-group identity.",
+    "regression": "TestSessionCombinedAssessmentBoundsSourceWithoutChangingProvenance",
+    "regression_before_fix": "fails at 258 and 513 characters; accepted 256-character Unicode label stays unchanged",
+    "quality_evaluation_source": "44fbb56fcaf937c1219f1f70aa667c5782d28dbc",
+    "new_live_evaluation": false,
+    "quality_scope_proof": "Frozen runner labels total 22 Unicode characters and remain byte-identical. Provider/semantic evidence inputs omit the display SourceRef; extraction, linking, assessment, embeddings and ownership are unchanged.",
+    "canonical_required_fixes_total": 6
+  },
+  "deferred_review_defects": {
+    "session_context_history_scan": {
+      "issue": "https://github.com/markhuangai/dense-mem/issues/561",
+      "review_root": 4240417364,
+      "severity": "P3",
+      "probe_events": 200000,
+      "probe_latency_ms": [
+        86.899,
+        81.407
+      ],
+      "scope": "Linear scan confirmed with correct dormant/new-session results; no processing timeout demonstrated. Follow-up preserves complete Unicode identities and owner/generation filters."
+    }
+  }
+}
