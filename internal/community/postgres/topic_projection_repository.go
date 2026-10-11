@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -48,9 +49,10 @@ func (r *Store) ClaimTopicProjection(ctx context.Context, now time.Time) (*commu
 			return err
 		}
 		candidate := &community.TopicProjectionWork{}
+		var dependencyCursor []byte
 		var status string
 		err = tx.Raw(`SELECT work.team_id::text,work.space_id::text,work.space_generation,work.topic_id::text,
-			COALESCE(work.community_id::text,''),COALESCE(work.run_id::text,''),work.assignment_cursor,work.relationship_cursor,work.status
+			COALESCE(work.community_id::text,''),COALESCE(work.run_id::text,''),work.assignment_cursor,work.relationship_cursor,work.dependency_cursor,work.status
 			FROM community_topic_work AS work JOIN memory_spaces AS space
 			ON space.team_id=work.team_id AND space.id=work.space_id AND space.generation=work.space_generation
 			AND space.lifecycle_state='active' JOIN teams AS team ON team.id=work.team_id AND team.status='active' AND team.deleted_at IS NULL
@@ -58,11 +60,14 @@ func (r *Store) ClaimTopicProjection(ctx context.Context, now time.Time) (*commu
 			OR (work.community_id IS NOT NULL AND NOT dense_mem_community_topic_current(work.team_id,work.community_id)))
 			ORDER BY work.last_turn,work.team_id,work.topic_id LIMIT 1 FOR UPDATE OF work SKIP LOCKED`, now).Row().Scan(
 			&candidate.TeamID, &candidate.SpaceID, &candidate.Generation, &candidate.TopicID, &candidate.CommunityID, &candidate.RunID,
-			&candidate.Cursor.AssignmentID, &candidate.Cursor.RelationshipID, &status)
+			&candidate.Cursor.AssignmentID, &candidate.Cursor.RelationshipID, &dependencyCursor, &status)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(dependencyCursor, &candidate.DependencyCursor); err != nil {
 			return err
 		}
 		var current bool
@@ -99,6 +104,7 @@ func (r *Store) ClaimTopicProjection(ctx context.Context, now time.Time) (*commu
 	}
 	err = r.db.WithContext(ctx).Transaction(func(snapshot *gorm.DB) error {
 		return r.rls.WithSystemTx(ctx, snapshot, func(tx *gorm.DB) error {
+			membershipCursor := work.Cursor
 			page, err := r.topicMembership(ctx, tx, work.TeamID, work.TopicID, work.Cursor)
 			if err != nil {
 				return err
@@ -127,7 +133,7 @@ func (r *Store) ClaimTopicProjection(ctx context.Context, now time.Time) (*commu
 				}
 				work.Inputs = inputs
 			}
-			keys, err := projectionSourceKeys(tx, *work, page)
+			keys, err := projectionSourceKeys(tx, work, page)
 			if err != nil {
 				return err
 			}
@@ -135,15 +141,22 @@ func (r *Store) ClaimTopicProjection(ctx context.Context, now time.Time) (*commu
 			if err != nil {
 				return err
 			}
+			if work.DependenciesPending {
+				work.Cursor, work.More, work.Inputs = membershipCursor, true, nil
+			}
 			work.DependencyFingerprints = map[string]string{"definition:" + page.Topic.ID: page.Topic.Fingerprint}
 			for _, record := range page.Records {
-				work.Fingerprints = append(work.Fingerprints, record.ID+":"+record.Fingerprint)
+				if !work.DependenciesPending {
+					work.Fingerprints = append(work.Fingerprints, record.ID+":"+record.Fingerprint)
+				}
 				work.DependencyFingerprints["definition:"+record.ID] = record.Fingerprint
 				for _, source := range record.Sources {
 					work.DependencyFingerprints[ontology.SourceKey(source.SourceHandle)] = source.Fingerprint
 				}
 			}
-			work.Fingerprints = append(work.Fingerprints, page.Topic.ID+":"+page.Topic.Fingerprint)
+			if !work.DependenciesPending {
+				work.Fingerprints = append(work.Fingerprints, page.Topic.ID+":"+page.Topic.Fingerprint)
+			}
 			return nil
 		})
 	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
@@ -163,6 +176,7 @@ func startTopicProjection(tx *gorm.DB, work *community.TopicProjectionWork, now 
 	}
 	work.CommunityID, work.RunID = uuid.NewString(), uuid.NewString()
 	work.Cursor = ontology.TopicMembershipCursor{}
+	work.DependencyCursor = community.TopicProjectionDependencyCursor{}
 	if err := tx.Exec(`INSERT INTO community_snapshot_runs(team_id,space_id,space_generation,run_id,window_key,status,
 		algorithm_kind,algorithm_version,profile_version,max_nodes,max_edges,started_at)
 		VALUES(?::uuid,?::uuid,?,?::uuid,?,'running','ontology_topic','v1','postgres-v2',0,0,?)`,
@@ -185,7 +199,7 @@ func startTopicProjection(tx *gorm.DB, work *community.TopicProjectionWork, now 
 			return err
 		}
 	}
-	return tx.Exec(`UPDATE community_topic_work SET community_id=?::uuid,run_id=?::uuid,assignment_cursor='',relationship_cursor=''
+	return tx.Exec(`UPDATE community_topic_work SET community_id=?::uuid,run_id=?::uuid,assignment_cursor='',relationship_cursor='',dependency_cursor='{}'::jsonb
 		WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=? AND topic_id=?::uuid`,
 		work.CommunityID, work.RunID, work.TeamID, work.SpaceID, work.Generation, work.TopicID).Error
 }

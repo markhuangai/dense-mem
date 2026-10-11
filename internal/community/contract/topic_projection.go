@@ -63,11 +63,19 @@ type TopicProjectionWork struct {
 	LeaseToken             string
 	Topic                  ontology.RecordView
 	Cursor                 ontology.TopicMembershipCursor
+	DependencyCursor       TopicProjectionDependencyCursor
+	DependenciesPending    bool
 	More                   bool
 	Inputs                 []CommunityInput
 	Dependencies           map[string]int64
 	Fingerprints           []string
 	DependencyFingerprints map[string]string
+}
+
+type TopicProjectionDependencyCursor struct {
+	SourceKey      string `json:"source_key,omitempty"`
+	RelationshipID string `json:"relationship_id,omitempty"`
+	SupportID      string `json:"support_id,omitempty"`
 }
 
 type TopicProjectionBatch struct {

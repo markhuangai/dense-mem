@@ -232,6 +232,13 @@
       "run": "^TestCommunityTopicRecallCoverageTracksSelectionSnapshot$",
       "phase": "precheck",
       "source": "internal/community/postgres/topic_projection_races_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicDependencyExpansionResumesWithinTurnBounds",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicDependencyExpansionResumesWithinTurnBounds$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_dependencies_integration_test.go"
     }
   ]
 }

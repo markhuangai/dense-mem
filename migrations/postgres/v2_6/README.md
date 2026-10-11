@@ -63,8 +63,10 @@ recovery migration after all instances are stopped. Recreating empty tables
 cannot restore discarded migration evidence and is not a rollback.
 
 `20261010101000_ontology_community_projections.sql` adds resumable derived
-topic projections without canonical backfill or history rewriting. Team reads may
-select only the nonsecret ontology mode flag from app_config; configuration
+topic projections without canonical backfill or history rewriting.
+Dependency expansion shares a 100-row turn budget and persists its own cursor;
+dependency-only turns retain the membership cursor and publication fingerprint.
+Team reads may select only the nonsecret ontology mode flag from app_config; configuration
 writes and all other settings remain system-only. New tables
 use forced RLS, team/shared-space constraints, and generation fences. Small
 source counters make publication and current reads reject changed dependencies;

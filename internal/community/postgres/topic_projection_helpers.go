@@ -85,7 +85,7 @@ func compactProjectionKeys(keys []string) []string {
 	return out
 }
 
-func projectionSourceKeys(tx *gorm.DB, work community.TopicProjectionWork, page ontology.TopicMembershipPage) ([]string, error) {
+func projectionSourceKeys(tx *gorm.DB, work *community.TopicProjectionWork, page ontology.TopicMembershipPage) ([]string, error) {
 	keys := []string{"topic:" + work.TopicID, "definition:" + work.TopicID}
 	for _, record := range append([]ontology.Record{page.Topic.Record}, page.Records...) {
 		keys = append(keys, "definition:"+record.ID)
@@ -100,7 +100,6 @@ func projectionSourceKeys(tx *gorm.DB, work community.TopicProjectionWork, page 
 		keys = append(keys, ontology.SourceKey(source), "classification:"+ontology.SourceKey(source))
 	}
 	evidence := []string{}
-	relationships := []string{}
 	for _, input := range work.Inputs {
 		keys = append(keys, "relationship:"+input.RelationshipID, "entity:"+input.SubjectEntityID, "predicate:"+input.PredicateKey)
 		if input.ObjectEntityID != "" {
@@ -115,21 +114,16 @@ func projectionSourceKeys(tx *gorm.DB, work community.TopicProjectionWork, page 
 		switch source.Kind {
 		case ontology.EvidenceSource:
 			evidence = append(evidence, source.ID)
-		case ontology.RelationshipSource:
-			relationships = append(relationships, source.ID)
 		case ontology.PredicateSource:
-			predicateKeys, err := projectionPredicateSourceKeys(tx, work, source)
-			if err != nil {
-				return nil, err
-			}
-			keys = append(keys, predicateKeys...)
+			keys = append(keys, "predicate-membership:"+source.ID+"@"+strconv.FormatInt(source.Version, 10))
 		}
 	}
-	declaredKeys, err := projectionRelationshipSourceKeys(tx, work, relationships)
+	expanded, cursor, pending, err := projectionExpandedSourceKeys(tx, *work, page.Sources)
 	if err != nil {
 		return nil, err
 	}
-	keys = append(keys, declaredKeys...)
+	work.DependencyCursor, work.DependenciesPending = cursor, pending
+	keys = append(keys, expanded...)
 	if len(evidence) == 0 {
 		return keys, nil
 	}
@@ -153,48 +147,59 @@ func projectionSourceKeys(tx *gorm.DB, work community.TopicProjectionWork, page 
 	return keys, rows.Err()
 }
 
-func projectionPredicateSourceKeys(tx *gorm.DB, work community.TopicProjectionWork, source ontology.SourceHandle) ([]string, error) {
-	keys := []string{"predicate-membership:" + source.ID + "@" + strconv.FormatInt(source.Version, 10)}
-	after := ""
-	for {
-		var ids []string
-		if err := tx.Raw(`SELECT relationship_id::text FROM relationship_records
-			WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=? AND predicate_key=? AND predicate_version=?
-			AND relationship_id>COALESCE(NULLIF(?,'')::uuid,'00000000-0000-0000-0000-000000000000'::uuid)
-			ORDER BY relationship_id LIMIT ?`, work.TeamID, work.SpaceID, work.Generation,
-			source.ID, source.Version, after, ontology.TopicProjectionPageSize).Scan(&ids).Error; err != nil {
-			return nil, err
-		}
-		for _, id := range ids {
-			keys = append(keys, "relationship:"+id)
-			after = id
-		}
-		dependencies, err := projectionRelationshipSourceKeys(tx, work, ids)
-		if err != nil {
-			return nil, err
-		}
-		keys = append(keys, dependencies...)
-		if len(ids) < ontology.TopicProjectionPageSize {
-			return keys, nil
-		}
+func projectionExpandedSourceKeys(tx *gorm.DB, work community.TopicProjectionWork, sources []ontology.SourceHandle) ([]string, community.TopicProjectionDependencyCursor, bool, error) {
+	ordered := append([]ontology.SourceHandle(nil), sources...)
+	key := func(source ontology.SourceHandle) string {
+		return ontology.SourceKey(source) + "@" + strconv.FormatInt(source.Version, 10)
 	}
-}
-
-func projectionRelationshipSourceKeys(tx *gorm.DB, work community.TopicProjectionWork, ids []string) ([]string, error) {
-	keys := []string{}
-	for offset := 0; offset < len(ids); offset += ontology.TopicProjectionPageSize {
-		batch := ids[offset:min(offset+ontology.TopicProjectionPageSize, len(ids))]
-		var predicates []string
-		if err := tx.Raw(`SELECT predicate_key FROM relationship_records
-			WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=? AND relationship_id=ANY(?::uuid[])`,
-			work.TeamID, work.SpaceID, work.Generation, pq.Array(batch)).Scan(&predicates).Error; err != nil {
-			return nil, err
+	sort.Slice(ordered, func(i, j int) bool { return key(ordered[i]) < key(ordered[j]) })
+	cursor, remaining, keys := work.DependencyCursor, ontology.TopicProjectionPageSize, []string{}
+	for _, source := range ordered {
+		if source.Kind != ontology.PredicateSource && source.Kind != ontology.RelationshipSource {
+			continue
 		}
-		for _, predicate := range predicates {
-			keys = append(keys, "predicate:"+predicate)
+		sourceKey := key(source)
+		if sourceKey < cursor.SourceKey || (sourceKey == cursor.SourceKey && cursor.RelationshipID == "") {
+			continue
 		}
-		after := ""
-		for {
+		if remaining == 0 {
+			return keys, cursor, true, nil
+		}
+		if sourceKey != cursor.SourceKey {
+			cursor = community.TopicProjectionDependencyCursor{SourceKey: sourceKey}
+		}
+		for remaining > 0 {
+			var relationship struct{ ID, Predicate string }
+			query := `SELECT relationship_id::text AS id,predicate_key AS predicate FROM relationship_records
+				WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=?`
+			args := []any{work.TeamID, work.SpaceID, work.Generation}
+			if source.Kind == ontology.PredicateSource && cursor.SupportID == "" {
+				query += ` AND predicate_key=? AND predicate_version=?
+					AND relationship_id>COALESCE(NULLIF(?,'')::uuid,'00000000-0000-0000-0000-000000000000'::uuid)
+					ORDER BY relationship_id LIMIT 1`
+				args = append(args, source.ID, source.Version, cursor.RelationshipID)
+			} else {
+				id := source.ID
+				if source.Kind == ontology.PredicateSource {
+					id = cursor.RelationshipID
+				}
+				query += ` AND relationship_id=?::uuid`
+				args = append(args, id)
+			}
+			if err := tx.Raw(query, args...).Scan(&relationship).Error; err != nil {
+				return nil, cursor, false, err
+			}
+			if relationship.ID == "" {
+				cursor.RelationshipID, cursor.SupportID = "", ""
+				break
+			}
+			keys = append(keys, "relationship:"+relationship.ID, "predicate:"+relationship.Predicate)
+			remaining--
+			cursor.RelationshipID = relationship.ID
+			if cursor.SupportID == "" {
+				// Zero resumes this relationship before its first support; empty advances to the next relationship.
+				cursor.SupportID = "00000000-0000-0000-0000-000000000000"
+			}
 			var supports []struct{ ID, Evidence, Ingest, Source, FragmentSource string }
 			if err := tx.Raw(`SELECT support.support_id::text AS id,support.fragment_id::text AS evidence,
 				fragment.ingest_id::text AS ingest,COALESCE(support.source_id::text,'') AS source,
@@ -203,13 +208,12 @@ func projectionRelationshipSourceKeys(tx *gorm.DB, work community.TopicProjectio
 				ON fragment.team_id=support.team_id AND fragment.fragment_id=support.fragment_id
 				AND fragment.space_id=support.space_id AND fragment.space_generation=support.space_generation
 				WHERE support.team_id=?::uuid AND support.space_id=?::uuid AND support.space_generation=?
-				AND support.relationship_id=ANY(?::uuid[])
-				AND support.support_id>COALESCE(NULLIF(?,'')::uuid,'00000000-0000-0000-0000-000000000000'::uuid)
-				ORDER BY support.support_id LIMIT ?`, work.TeamID, work.SpaceID, work.Generation,
-				pq.Array(batch), after, ontology.TopicProjectionPageSize).Scan(&supports).Error; err != nil {
-				return nil, err
+				AND support.relationship_id=?::uuid AND support.support_id>?::uuid ORDER BY support.support_id LIMIT ?`,
+				work.TeamID, work.SpaceID, work.Generation, relationship.ID, cursor.SupportID, remaining+1).Scan(&supports).Error; err != nil {
+				return nil, cursor, false, err
 			}
-			for _, support := range supports {
+			more := len(supports) > remaining
+			for _, support := range supports[:min(len(supports), remaining)] {
 				keys = append(keys, "evidence:"+support.Evidence, "ingest:"+support.Ingest)
 				if support.Source != "" {
 					keys = append(keys, "source:"+support.Source)
@@ -217,14 +221,23 @@ func projectionRelationshipSourceKeys(tx *gorm.DB, work community.TopicProjectio
 				if support.FragmentSource != "" {
 					keys = append(keys, "source:"+support.FragmentSource)
 				}
-				after = support.ID
+				cursor.SupportID = support.ID
 			}
-			if len(supports) < ontology.TopicProjectionPageSize {
+			remaining -= min(len(supports), remaining)
+			if more {
+				return keys, cursor, true, nil
+			}
+			cursor.SupportID = ""
+			if source.Kind == ontology.RelationshipSource {
+				cursor.RelationshipID = ""
 				break
 			}
 		}
+		if remaining == 0 && cursor.RelationshipID != "" {
+			return keys, cursor, true, nil
+		}
 	}
-	return keys, nil
+	return keys, community.TopicProjectionDependencyCursor{}, false, nil
 }
 
 func lockProjectionDependencies(tx *gorm.DB, work community.TopicProjectionWork) error {

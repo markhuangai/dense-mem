@@ -48,6 +48,16 @@ func (r *Store) AppendTopicProjection(ctx context.Context, batch community.Topic
 				return err
 			}
 		}
+		if work.DependenciesPending {
+			if err := tx.Exec(`UPDATE community_topic_work SET dependency_cursor=jsonb_build_object(
+				'source_key',?::text,'relationship_id',?::text,'support_id',?::text),lease_token=NULL,lease_until=NULL
+				WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=? AND topic_id=?::uuid`,
+				work.DependencyCursor.SourceKey, work.DependencyCursor.RelationshipID, work.DependencyCursor.SupportID,
+				work.TeamID, work.SpaceID, work.Generation, work.TopicID).Error; err != nil {
+				return err
+			}
+			return r.topicRelease(ctx, tx, topicMaintenanceTurn(work, now))
+		}
 		for _, source := range batch.Sources {
 			if err := tx.Exec(`INSERT INTO community_sources(team_id,space_id,space_generation,community_id,relationship_id,
 				owner_profile_id,relationship_version,source_rank,semantic_group_key,source_state_hash)
@@ -77,7 +87,7 @@ func (r *Store) AppendTopicProjection(ctx context.Context, batch community.Topic
 			return err
 		}
 		if work.More {
-			if err := tx.Exec(`UPDATE community_topic_work SET assignment_cursor=?,relationship_cursor=?,lease_token=NULL,lease_until=NULL
+			if err := tx.Exec(`UPDATE community_topic_work SET assignment_cursor=?,relationship_cursor=?,dependency_cursor='{}'::jsonb,lease_token=NULL,lease_until=NULL
 				WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=? AND topic_id=?::uuid`, work.Cursor.AssignmentID,
 				work.Cursor.RelationshipID, work.TeamID, work.SpaceID, work.Generation, work.TopicID).Error; err != nil {
 				return err
@@ -149,7 +159,7 @@ func publishTopicProjection(ctx context.Context, tx *gorm.DB, work community.Top
 	if previousID != "" && status == "current" {
 		work.CommunityID = previousID
 	}
-	return tx.Exec(`UPDATE community_topic_work SET status=?,community_id=?::uuid,assignment_cursor='',relationship_cursor='',
+	return tx.Exec(`UPDATE community_topic_work SET status=?,community_id=?::uuid,assignment_cursor='',relationship_cursor='',dependency_cursor='{}'::jsonb,
 		lease_token=NULL,lease_until=NULL,failure_code='' WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=? AND topic_id=?::uuid`,
 		status, work.CommunityID, work.TeamID, work.SpaceID, work.Generation, work.TopicID).Error
 }

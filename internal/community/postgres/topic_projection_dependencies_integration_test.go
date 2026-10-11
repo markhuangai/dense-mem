@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	community "github.com/markhuangai/dense-mem/internal/community/contract"
+	communityapp "github.com/markhuangai/dense-mem/internal/community/service"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
@@ -268,5 +269,114 @@ func TestCommunityTopicPredicateEligibilityDependencyIsFenced(t *testing.T) {
 				require.Equal(t, healthyID, current[healthy])
 			})
 		}
+	}
+}
+
+func TestCommunityTopicDependencyExpansionResumesWithinTurnBounds(t *testing.T) {
+	for _, fanout := range []string{"relationships", "evidence_assignment", "supports"} {
+		t.Run(fanout, func(t *testing.T) {
+			f := newTopicProjectionFixture(t)
+			ctx := f.actor(f.ownerB)
+			semantic := knowledge.NewStore(f.appDB, f.rls, knowledge.ConflictRuntimeConfig{})
+			subject := createSemanticEntity(t, ctx, semantic, f.teamID, f.ownerB, "project", "Bounded dependency subject")
+			object := createSemanticEntity(t, ctx, semantic, f.teamID, f.ownerB, "product", "Bounded dependency object")
+			predicate, err := semantic.EnsureSemanticReviewPredicateCandidate(ctx, knowledge.EnsureSemanticPredicateCandidateInput{
+				TeamID: f.teamID, OwnerProfileID: f.ownerB, Predicate: "bounds_projection", RelationshipKind: "state", SubjectKind: "project", ObjectKind: "product"})
+			require.NoError(t, err)
+			content := "Bounded dependency source 0"
+			ingest := createSemanticIngest(t, ctx, semantic, f.teamID, f.ownerB, uuid.NewString(), content)
+			relationships, evidence := map[string]bool{}, map[string]bool{}
+			for index := range 201 {
+				if fanout != "supports" {
+					object = createSemanticEntity(t, ctx, semantic, f.teamID, f.ownerB, "product", fmt.Sprintf("Dependency object %d", index))
+				} else {
+					content = fmt.Sprintf("Bounded dependency source %d", index)
+					ingest = createSemanticIngest(t, ctx, semantic, f.teamID, f.ownerB, uuid.NewString(), content)
+				}
+				result := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{TeamID: f.teamID, OwnerProfileID: f.ownerB,
+					IngestID: ingest.IngestID, SubjectEntityID: subject.EntityID, PredicateKey: predicate.PredicateKey, PredicateVersion: predicate.Version,
+					ObjectEntityID: object.EntityID, Support: &EvidenceSupportInput{FragmentID: ingest.Evidence[0].FragmentID,
+						SourceGroupKey: uuid.NewString(), SpanEnd: len(content), Authority: "primary"}})
+				relationships[result.Relationship.RelationshipID], evidence[ingest.Evidence[0].FragmentID] = true, true
+			}
+			dependency := f.sourceDependency(t, ontology.SourceHandle{Kind: ontology.PredicateSource, ID: predicate.PredicateKey, Version: int64(predicate.Version)})
+			handle := ontology.SourceHandle{Kind: ontology.RelationshipSource, ID: f.sources[0].RelationshipID, Version: int64(f.sources[0].RelationshipVersion)}
+			if fanout == "evidence_assignment" {
+				handle = ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: f.evidenceIDs[0], Version: 1}
+			}
+			topic := f.topic(t, "bounded-dependencies", []ontology.SourceHandle{handle}, dependency)
+			work, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
+			require.NoError(t, err)
+			require.NotNil(t, work)
+			require.True(t, work.More, "dependency corpus exceeded one turn without resumable work")
+			require.True(t, work.DependenciesPending)
+			require.Empty(t, work.Inputs)
+			captured := 0
+			ids, prefix := relationships, "relationship:"
+			if fanout == "supports" {
+				ids, prefix = evidence, "evidence:"
+			}
+			for id := range ids {
+				if _, exists := work.Dependencies[prefix+id]; exists {
+					captured++
+				}
+			}
+			require.Positive(t, captured)
+			require.LessOrEqual(t, captured, ontology.TopicProjectionPageSize)
+			require.NoError(t, f.store.AppendTopicProjection(context.Background(), community.TopicProjectionBatch{Work: *work}, time.Now()))
+			require.NoError(t, f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
+				var fingerprint, assignment, relationship string
+				var emptyCursor bool
+				if err := tx.Raw(`SELECT record.source_fingerprint,work.assignment_cursor,work.relationship_cursor,work.dependency_cursor='{}'::jsonb
+					FROM community_topic_work AS work JOIN community_records AS record USING(team_id,community_id) WHERE work.topic_id=?::uuid`, topic).
+					Row().Scan(&fingerprint, &assignment, &relationship, &emptyCursor); err != nil {
+					return err
+				}
+				require.Empty(t, fingerprint)
+				require.Empty(t, assignment)
+				require.Empty(t, relationship)
+				require.False(t, emptyCursor)
+				return nil
+			}))
+			object = createSemanticEntity(t, ctx, semantic, f.teamID, f.ownerB, "product", "Dependency changed between turns")
+			added := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{TeamID: f.teamID, OwnerProfileID: f.ownerB,
+				IngestID: ingest.IngestID, SubjectEntityID: subject.EntityID, PredicateKey: predicate.PredicateKey, PredicateVersion: predicate.Version,
+				ObjectEntityID: object.EntityID, Support: &EvidenceSupportInput{FragmentID: ingest.Evidence[0].FragmentID,
+					SourceGroupKey: uuid.NewString(), SpanEnd: len(content), Authority: "primary"}})
+			relationships[added.Relationship.RelationshipID] = true
+			restarted, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
+			require.NoError(t, err)
+			require.NotNil(t, restarted)
+			require.NotEqual(t, work.CommunityID, restarted.CommunityID, "changed predicate corpus resumed a stale build")
+			require.NoError(t, f.store.FailTopicProjection(context.Background(), *restarted, "interrupted", time.Now()))
+			f.store = NewStore(f.appDB.Session(&gorm.Session{NewDB: true}), f.rls).WithTopics(f.ontology.NewTopicCatalogReader(),
+				f.ontology.NewTopicMembershipReader(), f.ontology.NewTopicProjectionAdmission(), f.ontology.NewTopicProjectionRelease())
+			f.service = communityapp.New(communityapp.Dependencies{Store: f.store, AppConfig: topicFixtureConfig{}})
+			small := f.topic(t, "dependency-progress", []ontology.SourceHandle{{Kind: ontology.RelationshipSource,
+				ID: f.sources[18].RelationshipID, Version: int64(f.sources[18].RelationshipVersion)}})
+			progress, err := f.service.RunProjectionTurn(context.Background())
+			require.NoError(t, err)
+			require.True(t, progress)
+			require.NotEmpty(t, f.currentIDs(t)[small], "dependency expansion monopolized maintenance")
+			require.Empty(t, f.currentIDs(t)[topic], "partial dependencies became visible")
+			f.drain(t, 20)
+			id := f.currentIDs(t)[topic]
+			require.NotEmpty(t, id)
+			require.NoError(t, f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
+				var dependencies []string
+				if err := tx.Raw(`SELECT dependency_key FROM community_topic_dependencies WHERE team_id=?::uuid AND community_id=?::uuid`, f.teamID, id).Scan(&dependencies).Error; err != nil {
+					return err
+				}
+				for source := range ids {
+					require.Contains(t, dependencies, prefix+source, "restart skipped a dependency")
+				}
+				return nil
+			}))
+			require.NoError(t, f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
+				return tx.Exec(`UPDATE community_topic_work SET status='pending' WHERE topic_id=?::uuid`, topic).Error
+			}))
+			f.drain(t, 20)
+			require.Equal(t, id, f.currentIDs(t)[topic], "dependency-only turns changed the unchanged topic fingerprint")
+		})
 	}
 }

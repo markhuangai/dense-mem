@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS community_topic_work (
     run_id UUID,
     assignment_cursor TEXT NOT NULL DEFAULT '',
     relationship_cursor TEXT NOT NULL DEFAULT '',
+    dependency_cursor JSONB NOT NULL DEFAULT '{}'::jsonb CHECK(jsonb_typeof(dependency_cursor)='object'),
     lease_token UUID,
     lease_until TIMESTAMPTZ,
     last_turn TIMESTAMPTZ NOT NULL DEFAULT '-infinity',
