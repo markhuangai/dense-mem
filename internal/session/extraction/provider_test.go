@@ -3,6 +3,7 @@ package extraction
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -117,6 +118,50 @@ func TestSessionLinkingRequiresCompleteCompatibleGroups(t *testing.T) {
 	invalid = valid
 	invalid.Groups = []session.EntityGroup{{Ref: "mixed", CanonicalRef: "first", Members: []string{"first", "second", "product"}}}
 	require.Error(t, session.ValidateLinking(request, invalid))
+}
+
+func TestSessionLinkingReportsCanonicalBudgetAfterCompleteValidation(t *testing.T) {
+	request := session.LinkingRequest{RequestID: "link-budget", Entities: []session.EntityProposal{}}
+	complete := session.LinkingResponse{RequestID: request.RequestID, Groups: []session.EntityGroup{}}
+	for index := range 401 {
+		ref := fmt.Sprintf("e%d", index)
+		request.Entities = append(request.Entities, session.EntityProposal{Ref: ref, Name: fmt.Sprintf("Person%d", index), Kind: "person"})
+		complete.Groups = append(complete.Groups, session.EntityGroup{Ref: fmt.Sprint(index), CanonicalRef: ref, Members: []string{ref}})
+	}
+	request.Entities[400].Name = request.Entities[0].Name
+	invalid := session.LinkingResponse{RequestID: request.RequestID, Groups: append([]session.EntityGroup(nil), complete.Groups...)}
+	invalid.Groups[400].Members = []string{"unknown"}
+	deduplicated := session.LinkingResponse{RequestID: request.RequestID, Groups: append([]session.EntityGroup(nil), complete.Groups[:400]...)}
+	deduplicated.Groups[0].Members = []string{"e0", "e400"}
+	for _, test := range []struct {
+		name     string
+		first    session.LinkingResponse
+		attempts int
+		budget   bool
+	}{
+		{"complete overflow", complete, 1, true},
+		{"unknown member then overflow", invalid, 2, true},
+		{"duplicate drafts within canonical limit", deduplicated, 1, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			first, err := json.Marshal(test.first)
+			require.NoError(t, err)
+			last, err := json.Marshal(complete)
+			require.NoError(t, err)
+			transport := &outboundFixture{bodies: []string{string(first), string(last)}}
+			response, err := NewProvider(transport, "fixture", assessor.DefaultSemanticAssessmentLimits()).Link(context.Background(), request)
+			if test.budget {
+				require.ErrorIs(t, err, session.ErrBudget)
+				require.Equal(t, session.LinkingResponse{}, response)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, deduplicated, response)
+			}
+			require.Len(t, transport.requests, test.attempts)
+			groups := transport.requests[0].Schema["properties"].(map[string]any)["groups"].(map[string]any)
+			require.GreaterOrEqual(t, groups["maxItems"].(int), len(request.Entities))
+		})
+	}
 }
 
 func TestSessionLinkingRegenerationIdentifiesWrongRequestID(t *testing.T) {

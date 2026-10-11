@@ -325,8 +325,8 @@ func ValidateLinking(request LinkingRequest, response LinkingResponse) error {
 	if response.RequestID != request.RequestID {
 		return fmt.Errorf("request_id must equal %q", request.RequestID)
 	}
-	if response.Groups == nil || len(response.Groups) > 400 {
-		return fmt.Errorf("linking groups are required and must contain at most 400 entries")
+	if response.Groups == nil || len(response.Groups) > 3200 {
+		return fmt.Errorf("linking groups are required and must contain at most 3200 entries")
 	}
 	entities := map[string]EntityProposal{}
 	for _, entity := range request.Entities {
@@ -357,6 +357,9 @@ func ValidateLinking(request LinkingRequest, response LinkingResponse) error {
 	}
 	if len(seen) != len(entities) {
 		return fmt.Errorf("incomplete entity linking coverage")
+	}
+	if len(response.Groups) > 400 {
+		return ErrBudget
 	}
 	return nil
 }

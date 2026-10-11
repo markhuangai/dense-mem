@@ -38,7 +38,7 @@ func LinkingResponseSchema() map[string]any {
 		"groups": extractionArray(extractionObject(map[string]any{
 			"ref": extractionString(64), "canonical_ref": extractionString(128),
 			"members": extractionArray(extractionString(128), 3200),
-		}), 400),
+		}), 3200),
 	})
 }
 
