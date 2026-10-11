@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,6 +23,51 @@ import (
 type maintenanceLatency struct {
 	MedianMS float64 `json:"median_ms"`
 	P95MS    float64 `json:"p95_ms"`
+}
+
+func TestOntologyMaintenanceCommunityDependencyCounters(t *testing.T) {
+	f := newOntologyFixtureWithMaintenance(t, false)
+	source := maintenanceEntity(t, f, "Pre-migration counter source")
+	migrator, err := storage.NewMigrator(f.admin)
+	require.NoError(t, err)
+	require.NoError(t, migrator.RunUp(context.Background()))
+	require.NoError(t, f.admin.Exec(`GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ontology_app; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ontology_app`).Error)
+	write := func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE entity_records SET version=version+1 WHERE team_id=?::uuid AND entity_id=?::uuid`, f.team, source.ID).Error
+	}
+	read := func() int64 {
+		var version int64
+		require.NoError(t, f.rls.WithTeamTx(context.Background(), f.app, f.team, func(tx *gorm.DB) error {
+			return tx.Raw(`SELECT version FROM community_topic_versions WHERE team_id=?::uuid AND space_id=?::uuid
+				AND space_generation=? AND dependency_key=?`, f.team, f.space, f.generation, "entity:"+source.ID).Row().Scan(&version)
+		}))
+		return version
+	}
+	require.NoError(t, f.rls.WithTeamTx(context.Background(), f.app, f.team, write))
+	require.EqualValues(t, 1, read())
+	rollback := errors.New("counter transaction rollback")
+	require.ErrorIs(t, f.rls.WithTeamTx(context.Background(), f.app, f.team, func(tx *gorm.DB) error {
+		if err := write(tx); err != nil {
+			return err
+		}
+		return rollback
+	}), rollback)
+	require.EqualValues(t, 1, read())
+	errs := make(chan error, 8)
+	var workers sync.WaitGroup
+	for range 8 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			errs <- f.rls.WithTeamTx(context.Background(), f.app, f.team, write)
+		}()
+	}
+	workers.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	require.EqualValues(t, 9, read())
 }
 
 func TestOntologyMaintenanceWriteLatency(t *testing.T) {

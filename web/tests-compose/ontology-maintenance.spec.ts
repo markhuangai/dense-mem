@@ -59,7 +59,7 @@ test("loaded older retry actions follow successful work and server eligibility",
     }, { timeout: 120000 }).toBe("incomplete");
     const history = await control("/ontology/runs?limit=200");
     const failed = history.runs.find((run: { id: string }) => run.id === failedCommand.id);
-    expect(failed.retryable).toBe(true);
+    expect(failed.retryable, JSON.stringify({ status: failed.status, failure_code: failed.failure_code, completed_batches: failed.completed_batches })).toBe(true);
     expect(failed.failure_code).toBeTruthy();
     await fixtureMode("normal");
     await control("/ontology/pause", { operation_key: randomUUID() });

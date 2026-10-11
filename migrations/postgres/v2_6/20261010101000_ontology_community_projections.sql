@@ -107,14 +107,19 @@ CREATE POLICY community_topic_system ON community_topic_discovery FOR ALL
 
 CREATE OR REPLACE FUNCTION dense_mem_touch_community_topic_dependency(p_team UUID,p_space UUID,p_generation BIGINT,p_kind TEXT,p_id TEXT)
 RETURNS VOID LANGUAGE plpgsql AS $body$
-DECLARE shared_id UUID; active_generation BIGINT;
 BEGIN
-    SELECT id,generation INTO shared_id,active_generation FROM memory_spaces
-        WHERE team_id=p_team AND kind='team_shared' AND lifecycle_state='active'
-        AND (p_space IS NULL OR id=p_space) AND (p_generation IS NULL OR generation=p_generation);
-    IF shared_id IS NULL THEN RETURN; END IF;
+    -- Forced RLS fences the active shared generation for scoped writers.
+    IF p_space IS NOT NULL AND p_generation IS NOT NULL
+        AND current_setting('app.tx_mode',true) IN ('team','profile') THEN
+        UPDATE community_topic_versions SET version=version+1
+            WHERE team_id=p_team AND space_id=p_space AND space_generation=p_generation
+            AND dependency_key=p_kind || ':' || p_id;
+        IF FOUND THEN RETURN; END IF;
+    END IF;
     INSERT INTO community_topic_versions(team_id,space_id,space_generation,dependency_key,version)
-        VALUES(p_team,shared_id,active_generation,p_kind || ':' || p_id,1)
+        SELECT p_team,id,generation,p_kind || ':' || p_id,1 FROM memory_spaces
+        WHERE team_id=p_team AND kind='team_shared' AND lifecycle_state='active'
+        AND (p_space IS NULL OR id=p_space) AND (p_generation IS NULL OR generation=p_generation)
         ON CONFLICT(team_id,space_id,space_generation,dependency_key)
         DO UPDATE SET version=community_topic_versions.version+1;
 END $body$;

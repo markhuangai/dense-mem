@@ -185,6 +185,13 @@
       "source": "internal/ontology/postgres/maintenance_integration_test.go"
     },
     {
+      "id": "repository/TestOntologyMaintenanceCommunityDependencyCounters",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceCommunityDependencyCounters$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_performance_integration_test.go"
+    },
+    {
       "id": "repository/TestOntologyMaintenanceWriteLatency",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyMaintenanceWriteLatency$",
