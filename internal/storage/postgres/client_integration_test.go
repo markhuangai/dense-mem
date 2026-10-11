@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/google/uuid"
@@ -167,6 +168,35 @@ func TestMigratorRunUpAppliesPostCutoverCleanupAfterEmbeddingRetry(t *testing.T)
 	require.NoError(t, m.RunUp(ctx))
 	require.False(t, tableExists(t, ctx, sqlDB, "community_detection_runs"))
 	require.NoError(t, m.RunUp(ctx), "repeat RunUp should remain idempotent")
+}
+
+func TestMigratorRunUpAppliesTopicProjectionAfterUpdatedMain(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	filesystem, err := runtimeMigrationFilesystem(getMigrationsDir())
+	require.NoError(t, err)
+	var projectionMigration string
+	for name := range filesystem {
+		if strings.HasSuffix(name, "_ontology_community_projections.sql") {
+			require.Empty(t, projectionMigration)
+			projectionMigration = name
+		}
+	}
+	require.NotEmpty(t, projectionMigration)
+	delete(filesystem, projectionMigration)
+	provider, err := newMigrationProviderWithFilesystem(getMigrationsDir(), db, true, func(string) (fstest.MapFS, error) { return filesystem, nil })
+	require.NoError(t, err)
+	_, err = provider.Up(ctx)
+	require.NoError(t, err)
+	require.True(t, tableExists(t, ctx, db, "session_submissions"))
+	require.False(t, tableExists(t, ctx, db, "community_topic_versions"))
+	migrator := NewMigratorWithDB(db)
+	require.NoError(t, migrator.RunUp(ctx))
+	require.True(t, tableExists(t, ctx, db, "community_topic_versions"))
+	require.True(t, tableExists(t, ctx, db, "session_submissions"))
+	require.NoError(t, migrator.RunUp(ctx))
+	require.NoError(t, ValidateStartupMigrationState(ctx, db, getMigrationsDir()))
 }
 
 // TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingOrganizationIdentity

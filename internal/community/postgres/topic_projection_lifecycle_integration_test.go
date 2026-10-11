@@ -152,6 +152,7 @@ func TestCommunityTopicForcedRLSAndRollbackBoundary(t *testing.T) {
 	}))
 	migrator, err := storagepg.NewMigrator(f.adminDB)
 	require.NoError(t, err)
+	rollbackMigrationsAfterTopicProjection(t, f.adminDB, migrator)
 	require.ErrorContains(t, migrator.RunDown(context.Background()), "ontology community projection history is populated; recover by rolling forward")
 	require.Equal(t, before, f.currentIDs(t))
 }
@@ -199,7 +200,11 @@ func TestCommunityTopicMigrationUsesNonSuperuserWithForcedRLS(t *testing.T) {
 	before := f.canonicalSnapshot(t)
 	adminMigrator, err := storagepg.NewMigrator(f.adminDB)
 	require.NoError(t, err)
+	rollbackMigrationsAfterTopicProjection(t, f.adminDB, adminMigrator)
 	require.NoError(t, adminMigrator.RunDown(ctx))
+	var projectionTable *string
+	require.NoError(t, f.adminDB.Raw(`SELECT to_regclass('community_topic_versions')::text`).Row().Scan(&projectionTable))
+	require.Nil(t, projectionTable)
 	require.NoError(t, f.rls.WithSystemTx(ctx, f.adminDB, func(tx *gorm.DB) error {
 		if err := tx.Exec(fmt.Sprintf(`GRANT CREATE ON SCHEMA public TO %s`, ledgerTestRole)).Error; err != nil {
 			return err
@@ -233,11 +238,24 @@ func TestCommunityTopicMigrationUsesNonSuperuserWithForcedRLS(t *testing.T) {
 	}))
 }
 
+func rollbackMigrationsAfterTopicProjection(t *testing.T, db *gorm.DB, migrator *storagepg.Migrator) {
+	t.Helper()
+	for {
+		var version int64
+		require.NoError(t, db.Raw(`SELECT max(version_id) FROM goose_db_version WHERE is_applied`).Row().Scan(&version))
+		if version <= 20261011125000 {
+			require.Equal(t, int64(20261011125000), version)
+			return
+		}
+		require.NoError(t, migrator.RunDown(context.Background()))
+	}
+}
+
 func TestCommunityTopicMigrationValidationAllowsConcurrentReadsAndWrites(t *testing.T) {
 	f := newTopicProjectionFixture(t)
 	f.seedCohort(t)
 	f.drain(t, 10)
-	script, err := os.ReadFile("../../../migrations/postgres/v2_6/20261010101000_ontology_community_projections.sql")
+	script, err := os.ReadFile("../../../migrations/postgres/v2_6/20261011125000_ontology_community_projections.sql")
 	require.NoError(t, err)
 	up := strings.Split(string(script), "-- +goose Down")[0]
 	var validation string

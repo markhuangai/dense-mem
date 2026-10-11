@@ -62,7 +62,7 @@ Recovery is a verified backup restoration or a separately reviewed forward
 recovery migration after all instances are stopped. Recreating empty tables
 cannot restore discarded migration evidence and is not a rollback.
 
-`20261010101000_ontology_community_projections.sql` adds resumable derived
+`20261011125000_ontology_community_projections.sql` adds resumable derived
 topic projections without canonical backfill or history rewriting.
 Dependency expansion shares a 100-row turn budget and persists its own cursor;
 dependency-only turns retain the membership cursor and publication fingerprint.

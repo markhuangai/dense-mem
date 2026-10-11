@@ -407,9 +407,9 @@ func runBatch(root string, batch packageBatch, timeout time.Duration) error {
 	pattern := "^(?:" + strings.Join(parts, "|") + ")$"
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	testTimeout := timeout - time.Minute
-	if testTimeout <= 0 {
-		testTimeout = timeout
+	testTimeout := timeout
+	if timeout > time.Minute {
+		testTimeout -= min(time.Minute, timeout/100)
 	}
 	command := exec.CommandContext(ctx, "go", "test", "-tags=integration", "-json", "-count=1", "-timeout", testTimeout.String(), "-run", pattern, batch.Package)
 	command.Dir = root

@@ -777,6 +777,13 @@
       "run": "^TestWithTeamTxSetsLegacyProfileSetting$",
       "phase": "precheck",
       "source": "internal/storage/postgres/rls_integration_test.go"
+    },
+    {
+      "id": "postgres/TestMigratorRunUpAppliesTopicProjectionAfterUpdatedMain",
+      "package": "./internal/storage/postgres",
+      "run": "^TestMigratorRunUpAppliesTopicProjectionAfterUpdatedMain$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/client_integration_test.go"
     }
   ]
 }

@@ -96,7 +96,7 @@ func TestRunBatchUsesIntegrationTagWithRealGoPackage(t *testing.T) {
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	contents := "//go:build integration\n\npackage fixture\n\nimport (\n\t\"testing\"\n\t\"time\"\n)\n\nfunc TestIntegrationFixture(t *testing.T) {}\n\nfunc TestSkippedIntegrationFixture(t *testing.T) { t.Skip(\"intentional runner fixture skip\") }\n\nfunc TestFailedIntegrationFixture(t *testing.T) { t.Fatal(\"intentional runner fixture failure\") }\n\nfunc TestSlowIntegrationFixture(t *testing.T) {\n\ttime.Sleep(10 * time.Second)\n}\n"
+	contents := "//go:build integration\n\npackage fixture\n\nimport (\n\t\"testing\"\n\t\"time\"\n)\n\nfunc TestIntegrationFixture(t *testing.T) {}\n\nfunc TestSkippedIntegrationFixture(t *testing.T) { t.Skip(\"intentional runner fixture skip\") }\n\nfunc TestFailedIntegrationFixture(t *testing.T) { t.Fatal(\"intentional runner fixture failure\") }\n\nfunc TestSlowIntegrationFixture(t *testing.T) {\n\ttime.Sleep(10 * time.Second)\n}\n\nfunc TestRemainingBudgetIntegrationFixture(t *testing.T) {\n\ttime.Sleep(2 * time.Second)\n}\n"
 	if err := os.WriteFile(filepath.Join(pkgDir, "fixture_integration_test.go"), []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -109,6 +109,13 @@ func TestRunBatchUsesIntegrationTagWithRealGoPackage(t *testing.T) {
 		Cases:   []databaseCase{{ID: "fixture/TestIntegrationFixture", Run: "^TestIntegrationFixture$"}},
 	}, 10*time.Second); err != nil {
 		t.Fatalf("tagged runBatch() error = %v", err)
+	}
+
+	if err := runBatch(root, packageBatch{
+		Package: "./fixture",
+		Cases:   []databaseCase{{ID: "fixture/TestRemainingBudgetIntegrationFixture", Run: "^TestRemainingBudgetIntegrationFixture$"}},
+	}, 61*time.Second); err != nil {
+		t.Fatalf("remaining-budget runBatch() error = %v", err)
 	}
 
 	ordinary := exec.Command("go", "test", "-json", "-run", "^TestIntegrationFixture$", "./fixture")
