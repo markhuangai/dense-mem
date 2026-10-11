@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/stretchr/testify/require"
@@ -90,6 +91,8 @@ func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 	other := maintenanceOtherTeam(t, f)
 	other.organizationEvidence(t, 0, "Small team's pending work.", nil)
 	config := maintenanceSettings(t, f)
+	_, err := config.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyStartTime: time.Now().UTC().Format("15:04")}, "control", "", "")
+	require.NoError(t, err)
 	window := maintenanceWindow(t, f, config)
 	first, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Hour)
 	require.NoError(t, err)
