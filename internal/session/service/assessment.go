@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"unicode"
+	"unicode/utf8"
 
 	remembercontract "github.com/markhuangai/dense-mem/internal/remember/contract"
 	remember "github.com/markhuangai/dense-mem/internal/remember/service"
@@ -48,6 +49,11 @@ func buildSessionAssessment(submission *session.Submission, request session.Link
 	if len(ranges) > session.MaxExcerpts {
 		return nil, nil, session.ErrBudget
 	}
+	sourceGroup := "session:" + session.IdentityHash(submission.Intake.Request, "")
+	source := submission.Intake.Request.Framework + ":" + submission.Intake.Request.AppName
+	if utf8.RuneCountInString(source) > 256 {
+		source = sourceGroup
+	}
 	evidence := []remember.RememberEvidenceInput{}
 	for _, span := range ranges {
 		event := submission.Intake.Request.Events[span.event]
@@ -61,8 +67,7 @@ func buildSessionAssessment(submission *session.Submission, request session.Link
 		}
 		evidence = append(evidence, remember.RememberEvidenceInput{
 			Content: string([]rune(event.Text)[span.start:span.end]), SourceType: "conversation",
-			Source:      submission.Intake.Request.Framework + ":" + submission.Intake.Request.AppName,
-			SourceGroup: "session:" + session.IdentityHash(submission.Intake.Request, ""), Authority: "primary", Metadata: map[string]any{"session": provenance},
+			Source: source, SourceGroup: sourceGroup, Authority: "primary", Metadata: map[string]any{"session": provenance},
 		})
 	}
 	entities := map[string]session.EntityProposal{}

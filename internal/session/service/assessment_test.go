@@ -2,12 +2,47 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSessionCombinedAssessmentBoundsSourceWithoutChangingProvenance(t *testing.T) {
+	for _, count := range []int{127, 128, 256} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			req := sessionRequest(session.Event{EventID: "one", Text: "Ari uses Go."})
+			req.Framework, req.AppName = strings.Repeat("🧭", count), strings.Repeat("é", min(count+1, 256))
+			require.NoError(t, ValidateRequest(req))
+			segment := session.Segment{Ref: "current", EventIndex: 0, End: len([]rune(req.Events[0].Text)), Text: req.Events[0].Text}
+			object := "go"
+			input := session.LinkingRequest{
+				Entities:      []session.EntityProposal{{Ref: "ari", Name: "Ari", Kind: "person"}, {Ref: "go", Name: "Go", Kind: "product"}},
+				Relationships: []session.RelationshipProposal{{Ref: "uses", SubjectRef: "ari", Predicate: "uses", ObjectRef: &object, Polarity: "+", Citations: []session.Citation{{StartRef: segment.Ref, EndRef: segment.Ref}}}},
+				Segments:      []session.Segment{segment},
+			}
+			linked := session.LinkingResponse{Groups: []session.EntityGroup{{Ref: "ari", CanonicalRef: "ari", Members: []string{"ari"}}, {Ref: "go", CanonicalRef: "go", Members: []string{"go"}}}}
+			evidence, _, err := buildSessionAssessment(&session.Submission{Intake: session.Intake{Request: req}}, input, linked)
+			require.NoError(t, err)
+			require.Len(t, evidence, 1)
+			require.LessOrEqual(t, utf8.RuneCountInString(evidence[0].SourceRef), 256)
+			want := req.Framework + ":" + req.AppName
+			group := "session:" + session.IdentityHash(req, "")
+			if count > 127 {
+				want = group
+			}
+			require.Equal(t, want, evidence[0].SourceRef)
+			require.Equal(t, group, evidence[0].Metadata["contract_source_group"])
+			provenance := evidence[0].Metadata["session"].(map[string]any)
+			require.Equal(t, req.Framework, provenance["framework"])
+			require.Equal(t, req.AppName, provenance["app_name"])
+			require.Equal(t, req.Events[0].Text, evidence[0].Content)
+		})
+	}
+}
 
 func TestSessionCombinedAssessmentPreservesExactOffsetsAndOneEntityRef(t *testing.T) {
 	text := " 🧭 Ari uses Go. Ari uses Go."
