@@ -471,7 +471,8 @@ func (s *recallService) recallCommunities(
 		sort.Strings(groups)
 		records, recallErr := snapshotRepo.RecallCommunities(ctx, communitycontract.CommunityRecallInput{
 			TeamID: teamID, Query: req.Query, ValidAt: req.ValidAt, KnownAt: req.KnownAt,
-			ReturnedEvidenceIDs: returnedEvidenceIDs, SeedRelationshipIDs: seedRelationshipIDs,
+			ExpectedOntologyEnabled: &organizationEnabled,
+			ReturnedEvidenceIDs:     returnedEvidenceIDs, SeedRelationshipIDs: seedRelationshipIDs,
 			KnownEvidenceIDs: req.KnownEvidenceIDs, KnownRelationshipIDs: req.KnownRelationshipIDs,
 			ExpandFromEntityIDs: req.ExpandFromEntityIDs, ExcludedGroupKeys: groups,
 			Limit: communityLimit, RelationshipLimit: recallOptionalLimitValue(req.CommunityRelationshipLimit),

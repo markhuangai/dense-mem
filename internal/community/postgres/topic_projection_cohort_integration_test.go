@@ -17,6 +17,8 @@ import (
 	recallapp "github.com/markhuangai/dense-mem/internal/recall"
 	recallpg "github.com/markhuangai/dense-mem/internal/recall/postgres"
 	searchpg "github.com/markhuangai/dense-mem/internal/search/postgres"
+	"github.com/markhuangai/dense-mem/internal/settings"
+	settingspg "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,7 +27,8 @@ func (f *topicProjectionFixture) recallService(t *testing.T) recallapp.RecallSer
 	insertSearchTestContract(t, f.adminDB, f.rls, "topic-recall", 3, "exact", "")
 	search := searchpg.NewStore(f.appDB, f.rls)
 	reader := recallpg.NewStore(f.appDB, f.rls, search, nil, nil).WithOntology(func() recallpg.OntologyReader { return f.ontology.NewRecallReader() })
-	return recallapp.NewRecallService(recallapp.RecallDependencies{Search: reader, Communities: f.store, CommunityConfig: topicFixtureConfig{}, OntologyConfig: topicFixtureConfig{}})
+	config := settings.NewAppConfigService(settingspg.NewAppConfigRepository(f.appDB, f.rls), nil)
+	return recallapp.NewRecallService(recallapp.RecallDependencies{Search: reader, Communities: f.store, CommunityConfig: config, OntologyConfig: config})
 }
 
 func TestCommunityTopicFrozenOrganizationCohortThroughRecall(t *testing.T) {

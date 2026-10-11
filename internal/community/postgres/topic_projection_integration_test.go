@@ -267,8 +267,9 @@ func BenchmarkCommunityTopicProjection(b *testing.B) {
 	f.drain(b, 10)
 	for _, mode := range []string{"legacy", "ontology"} {
 		b.Run(mode, func(b *testing.B) {
-			f.setMode(b, mode == "ontology")
-			input := CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 3, RelationshipLimit: 5}
+			enabled := mode == "ontology"
+			f.setMode(b, enabled)
+			input := CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 3, RelationshipLimit: 5, ExpectedOntologyEnabled: &enabled}
 			for range 20 {
 				_, err := f.store.RecallCommunities(f.actor(f.reader), input)
 				require.NoError(b, err)

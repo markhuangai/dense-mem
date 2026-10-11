@@ -14,6 +14,7 @@ import (
 	community "github.com/markhuangai/dense-mem/internal/community/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	recallapp "github.com/markhuangai/dense-mem/internal/recall"
 	"github.com/markhuangai/dense-mem/internal/settings"
 	settingspg "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	"github.com/stretchr/testify/require"
@@ -115,6 +116,90 @@ func TestCommunityTopicRecallUsesOneWithdrawalSnapshot(t *testing.T) {
 	current, err := f.store.RecallCommunities(f.actor(f.reader), input)
 	require.NoError(t, err)
 	require.Len(t, current, 2)
+}
+
+func TestCommunityTopicRecallModeSwitchRejectsUnvalidatedLegacy(t *testing.T) {
+	f := newTopicProjectionFixture(t)
+	f.seedCohort(t)
+	f.drain(t, 10)
+	f.retract(t, 4)
+	service := f.recallService(t)
+	selected, resume := pauseCommunityQuery(t, f.appDB, "AND discovery_kind=4)")
+	type response struct {
+		result *recallapp.RecallResult
+		err    error
+	}
+	completed := make(chan response, 1)
+	zero, ten, twenty := 0, 10, 20
+	go func() {
+		result, err := service.Recall(f.actor(f.reader), recallapp.RecallRequest{Query: "marker", Limit: 1,
+			RelationshipLimit: &zero, CommunityLimit: &ten, CommunityRelationshipLimit: &twenty})
+		completed <- response{result, err}
+	}()
+	select {
+	case <-selected:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Recall did not reach topic coverage validation")
+	}
+	f.setMode(t, false)
+	resume()
+	result := <-completed
+	require.NoError(t, result.err)
+	stale, err := f.store.RefreshCommunityStaleness(f.actor(f.reader), CommunityStalenessInput{TeamID: f.teamID, Limit: 200})
+	require.NoError(t, err)
+	require.Positive(t, stale, "legacy records must have changed sources for this regression")
+	require.Empty(t, result.result.RelatedCommunities, "mode switch exposed stale legacy communities without legacy validation")
+	require.Contains(t, result.result.Degradations, recallapp.RecallDegradationResult{
+		Frontier: "communities", Code: "community_snapshot_unavailable", Optional: true,
+		Message: "community snapshot was unavailable; direct relationship fallback was used",
+	})
+}
+
+func TestCommunityTopicRecallModePreconditionUsesSelectionSnapshot(t *testing.T) {
+	f := newTopicProjectionFixture(t)
+	f.seedCohort(t)
+	f.drain(t, 10)
+	for _, enabled := range []bool{false, true} {
+		f.setMode(t, enabled)
+		for _, expected := range []bool{false, true} {
+			records, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID,
+				Query: "marker", Limit: 10, ExpectedOntologyEnabled: &expected})
+			if enabled == expected {
+				require.NoError(t, err)
+				require.NotEmpty(t, records)
+			} else {
+				require.ErrorIs(t, err, community.ErrCommunitySourceStale)
+				require.Empty(t, records)
+			}
+		}
+	}
+	selected, resume := pauseCommunityQuery(t, f.appDB, "SELECT "+communityOntologyModeSQL)
+	type response struct {
+		records []CommunityRecallRecord
+		err     error
+	}
+	completed := make(chan response, 1)
+	enabled := true
+	input := CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, ExpectedOntologyEnabled: &enabled}
+	go func() {
+		records, err := f.store.RecallCommunities(f.actor(f.reader), input)
+		completed <- response{records, err}
+	}()
+	select {
+	case <-selected:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Recall did not reach the mode precondition")
+	}
+	f.setMode(t, false)
+	resume()
+	result := <-completed
+	require.NoError(t, result.err)
+	require.Len(t, result.records, 3)
+	for _, record := range result.records {
+		require.Contains(t, f.currentIDs(t), record.LogicalCommunityID, "selection mixed a later mode into the validated snapshot")
+	}
+	_, err := f.store.RecallCommunities(f.actor(f.reader), input)
+	require.ErrorIs(t, err, community.ErrCommunitySourceStale)
 }
 
 func TestCommunityTopicCapacityIsSharedWithMaintenance(t *testing.T) {

@@ -175,19 +175,20 @@ type CommunityLineageRecord struct {
 }
 
 type CommunityRecallInput struct {
-	TeamID               string
-	Query                string
-	ValidAt              *time.Time
-	KnownAt              *time.Time
-	ReturnedEvidenceIDs  []string
-	KnownEvidenceIDs     []string
-	KnownRelationshipIDs []string
-	SeedRelationshipIDs  []string
-	ExpandFromEntityIDs  []string
-	ExcludedGroupKeys    []string
-	CoveredGroupKeys     []string
-	Limit                int
-	RelationshipLimit    int
+	TeamID                  string
+	ExpectedOntologyEnabled *bool
+	Query                   string
+	ValidAt                 *time.Time
+	KnownAt                 *time.Time
+	ReturnedEvidenceIDs     []string
+	KnownEvidenceIDs        []string
+	KnownRelationshipIDs    []string
+	SeedRelationshipIDs     []string
+	ExpandFromEntityIDs     []string
+	ExcludedGroupKeys       []string
+	CoveredGroupKeys        []string
+	Limit                   int
+	RelationshipLimit       int
 }
 
 type CommunityCoverageInput struct {

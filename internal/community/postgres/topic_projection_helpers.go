@@ -270,8 +270,10 @@ func lockProjectionDependencies(tx *gorm.DB, work community.TopicProjectionWork)
 	return nil
 }
 
+const communityOntologyModeSQL = `COALESCE((SELECT value='true' FROM app_config WHERE key='` + domain.AppConfigOntologyEnabled + `'),false)`
+
 func communityRecordVisibilitySQL(alias string) string {
-	mode := `COALESCE((SELECT value='true' FROM app_config WHERE key='` + domain.AppConfigOntologyEnabled + `'),false)`
+	mode := communityOntologyModeSQL
 	return `((` + alias + `.topic_id IS NULL AND NOT ` + mode + `) OR (` + alias + `.topic_id IS NOT NULL AND ` + mode + `
 		AND dense_mem_community_topic_current(` + alias + `.team_id,` + alias + `.community_id)))`
 }

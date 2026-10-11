@@ -20,6 +20,15 @@ func (r *Store) RecallCommunities(ctx context.Context, input CommunityRecallInpu
 		return nil, fmt.Errorf("community: database and RLS helper are required")
 	}
 	err := r.rls.WithTeamReadOnlyRepeatableTx(ctx, r.db, input.TeamID, func(tx *gorm.DB) error {
+		if input.ExpectedOntologyEnabled != nil {
+			var enabled bool
+			if err := tx.Raw("SELECT " + communityOntologyModeSQL).Row().Scan(&enabled); err != nil {
+				return err
+			}
+			if enabled != *input.ExpectedOntologyEnabled {
+				return communitycontract.ErrCommunitySourceStale
+			}
+		}
 		rows, err := tx.WithContext(ctx).Raw(communityRecallSQL, input.TeamID, input.Query,
 			pq.Array(input.ReturnedEvidenceIDs), pq.Array(input.KnownEvidenceIDs),
 			pq.Array(input.KnownRelationshipIDs), pq.Array(input.SeedRelationshipIDs),

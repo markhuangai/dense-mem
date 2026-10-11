@@ -211,6 +211,20 @@
       "run": "^TestCommunityTopicMigrationValidationAllowsConcurrentReadsAndWrites$",
       "phase": "precheck",
       "source": "internal/community/postgres/topic_projection_lifecycle_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicRecallModeSwitchRejectsUnvalidatedLegacy",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicRecallModeSwitchRejectsUnvalidatedLegacy$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_races_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicRecallModePreconditionUsesSelectionSnapshot",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicRecallModePreconditionUsesSelectionSnapshot$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_races_integration_test.go"
     }
   ]
 }
