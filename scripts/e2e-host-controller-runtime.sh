@@ -145,7 +145,7 @@ run_scenario() {
   docker_cli_paths
   local docker_socket
   docker_socket="$(docker_socket_path)"
-  if [[ "$scenario" == "ontology_organization" ]]; then
+  if [[ "$scenario" == "ontology_organization" || "$scenario" == "ontology_management" ]]; then
     local go_image
     go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.9-bookworm)"
     run_go_source_container \
@@ -155,8 +155,8 @@ run_scenario() {
       "DENSE_MEM_REQUIRE_POSTGRES_TESTS=1" \
       "DENSE_MEM_CI_PRECHECK_NETWORK=${project}_ci" -- \
       go -C cmd/e2e run . --root /workspace \
-        --phase scenario --scenario ontology_organization --timeout 20m --total-timeout 25m ||
-      fail "ontology organization database cases failed"
+        --phase scenario --scenario "$scenario" --timeout 20m --total-timeout 25m ||
+      fail "ontology database cases failed for $scenario"
   fi
   if [[ "$scenario" == "synchronous_write_primitives" ]]; then
     run_synchronous_primitives_driver "$source_dir" "$project" "$postgres_db" "$run_id" "$attempt" "$phase" "$scenario" "$digest" ||

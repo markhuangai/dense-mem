@@ -90,3 +90,17 @@ func TestExportWithoutServiceIsUnavailable(t *testing.T) {
 	_, err := service.ExportPage(context.Background(), ExportRequest{})
 	require.ErrorIs(t, err, ErrExportUnavailable)
 }
+
+func TestOntologyManagementExportClasses(t *testing.T) {
+	for _, operation := range []string{"ONTOLOGY_DRAFT_SAVE", "ONTOLOGY_DRAFT_DISCARD", "ONTOLOGY_PUBLISH", "ONTOLOGY_ROLLBACK"} {
+		entity := "ontology_draft"
+		if operation == "ONTOLOGY_PUBLISH" || operation == "ONTOLOGY_ROLLBACK" {
+			entity = "ontology_publication"
+		}
+		entry := contract.ExportEntry{Operation: operation, EntityType: entity, EntityID: uuid.NewString(), ActorRole: "manager"}
+		event := projectExportEntry(entry)
+		require.Equal(t, operation, event.Operation)
+		require.Equal(t, entity, event.EntityType)
+		require.Equal(t, entry.EntityID, event.EntityID)
+	}
+}

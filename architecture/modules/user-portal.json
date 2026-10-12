@@ -37,6 +37,21 @@
         "id": "web/src/user/main.tsx",
         "role": "transport",
         "visibility": "public"
+      },
+      {
+        "id": "web/src/user/OntologyPanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/user/OntologyEditor.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/user/ontology-types.ts",
+        "role": "transport",
+        "visibility": "private"
       }
     ]
   }

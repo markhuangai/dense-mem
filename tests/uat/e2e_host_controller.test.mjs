@@ -870,8 +870,8 @@ test("community, ontology, and conflict fixtures forward healthy embeddings upst
   const communityBlock = stack.slice(communityStart, communityEnd);
   assert.ok(communityStart >= 0 && communityEnd > communityStart);
   assert.match(communityBlock, /AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
-  assert.match(stack, /const fixtureEmbeddingProvider = [^;]*scenario === "ontology_organization"/);
-  assert.match(stack, /if \(scenario === "ontology_organization"\) \{[\s\S]*?AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
+  assert.match(stack, /const fixtureEmbeddingProvider = [^;]*\["ontology_organization", "ontology_management"\]\.includes\(scenario\)/);
+  assert.match(stack, /if \(\["ontology_organization", "ontology_management"\]\.includes\(scenario\)\) \{[\s\S]*?AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
   assert.match(stack, /DENSE_MEM_E2E_EMBEDDING_BASE_URL/);
   assert.match(stack, /DENSE_MEM_E2E_EMBEDDING_API_KEY/);
   assert.match(stack, /embedding_upstream\.mjs/);

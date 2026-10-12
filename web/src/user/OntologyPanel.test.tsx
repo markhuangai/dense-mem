@@ -1,0 +1,190 @@
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { UserApi, type UserSession } from "./api";
+import { OntologyPanel } from "./OntologyPanel";
+import type { OntologyDraft } from "./ontology-types";
+
+const session = { team: { id: "team-a" }, membership: { role: "manager", grants: ["read", "write"] } } as UserSession;
+const edit = { action: "define" as const, expected_version: 0, kind: "topic" as const, definition: { key: "storage", label: "Storage", description: "Durable storage" } };
+const draft: OntologyDraft = { id: "draft-a", version: 1, state: "open", base_revision: 1, reason: "Storage correction", edits: [edit], updated_at: "2026-10-11T00:00:00Z" };
+
+function install(saved: OntologyDraft[] = [], mutation?: (url: string, body: Record<string, unknown>) => Response) {
+  const response = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200 });
+  const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
+    const body = options?.body ? JSON.parse(options.body as string) : {};
+    if (options?.method && options.method !== "GET") return mutation?.(url, body) ?? response(draft);
+    if (url.includes("/records")) return response({ records: [], revision: 1 });
+    if (url.includes("/status")) return response({ revision: 1, coverage_complete: false, counts: { organized: 0, pending: 2, ambiguous: 0, failed: 0, budget_deferred: 0 } });
+    if (url.includes("/publications")) return response({ publications: [] });
+    if (url.includes("/sources")) return response({ sources: [] });
+    if (new URL(url, "http://localhost").pathname.endsWith("/drafts")) return response({ drafts: saved });
+    return response(draft);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  return fetcher;
+}
+
+describe("OntologyPanel", () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  it("keeps corrections on a conflict and requires explicit refresh", async () => {
+    install([draft], () => new Response(JSON.stringify({ message: "refresh the draft before resubmitting" }), { status: 409 }));
+    render(<OntologyPanel api={new UserApi("key")} session={session} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Storage correction/ }));
+    await screen.findByRole("heading", { name: /Draft draft-a/ });
+    fireEvent.change(screen.getByLabelText("Audit reason"), { target: { value: "Retained manager edits" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByRole("alert");
+    expect(screen.getByLabelText("Audit reason")).toHaveValue("Retained manager edits");
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh draft before resubmitting" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    expect(screen.getByLabelText("Audit reason")).toHaveValue("Retained manager edits");
+  });
+
+  it.each([true, false])("reuses the operation key and cookie CSRF (UUID available: %s)", async (uuidAvailable) => {
+    if (!uuidAvailable) vi.stubGlobal("crypto", { randomUUID: undefined });
+    document.cookie = "dense_mem_ui_csrf=ontology-csrf";
+    let count = 0;
+    const fetcher = install([draft], () => ++count === 1 ? new Response(JSON.stringify({ message: "temporary failure" }), { status: 503 }) : new Response(JSON.stringify({ data: { ...draft, version: 2 } }), { status: 200 }));
+    render(<OntologyPanel api={new UserApi("", "api_key_session")} session={session} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Storage correction/ }));
+    await screen.findByRole("heading", { name: /Draft draft-a/ });
+    fireEvent.change(screen.getByLabelText("Audit reason"), { target: { value: "Unchanged retry" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Draft saved. Preview its impact before publishing.");
+    const writes = fetcher.mock.calls.filter(([, options]) => options?.method === "PUT");
+    expect(writes).toHaveLength(2);
+    expect(JSON.parse(writes[0][1]!.body as string).operation_key).toBe(JSON.parse(writes[1][1]!.body as string).operation_key);
+    expect(writes[0][1]?.headers).toMatchObject({ "X-Dense-Mem-CSRF": "ontology-csrf" });
+  });
+
+  it("allows a read-only manager to inspect and preview a saved draft", async () => {
+    const fetcher = install([draft], () => new Response(JSON.stringify({ data: { changed_records: 2, affected_records: 0, affected_sources: 0, examples: [], complete: true, requires_reassessment: true } }), { status: 200 }));
+    render(<OntologyPanel api={new UserApi("key")} session={{ ...session, membership: { ...session.membership, grants: ["read"] } }} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Storage correction/ }));
+    await screen.findByRole("heading", { name: /Draft draft-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Preview impact" }));
+    await screen.findByRole("heading", { name: "Impact preview" });
+    expect(screen.getByRole("button", { name: "Publish correction" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    expect(fetcher.mock.calls.some(([url]) => url.endsWith("/preview"))).toBe(true);
+  });
+
+  it("builds a definition correction using the editor", async () => {
+    const fetcher = install();
+    render(<OntologyPanel api={new UserApi("key")} session={session} />);
+    await screen.findByRole("heading", { name: "New correction draft" });
+    for (const [label, value] of [["Definition key", "storage"], ["Definition label", "Storage"], ["Definition description", "Durable storage"], ["Audit reason", "Manager correction"]]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Add correction to draft" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Draft saved. Preview its impact before publishing.");
+    const call = fetcher.mock.calls.find(([, options]) => options?.method === "POST");
+    expect(JSON.parse(call![1]!.body as string)).toMatchObject({ expected_version: 0, expected_revision: 1, edits: [edit] });
+  });
+
+  it("identifies distinct classification targets and correction members in catalog and history", async () => {
+	const response = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200 });
+	const records = [
+		{ id:"definition-a",kind:"topic",version:1,definition:{key:"a",label:"First classification",description:"A"} },
+		{ id:"definition-b",kind:"topic",version:1,definition:{key:"b",label:"Second classification",description:"B"} },
+		{ id:"assignment-a",kind:"assignment",version:1,assignment:{source:{kind:"evidence",id:"source-a",version:1},definition_id:"definition-a"} },
+		{ id:"assignment-b",kind:"assignment",version:1,assignment:{source:{kind:"evidence",id:"source-b",version:1},definition_id:"definition-b"} },
+		{ id:"correction-a",kind:"override",version:1,override:{action:"set_classification",definition_id:"definition-a",members:[{kind:"evidence",id:"source-a",version:1}]} },
+		{ id:"correction-b",kind:"override",version:1,override:{action:"pin_definition",target_id:"definition-b"} },
+	];
+	vi.stubGlobal("fetch",vi.fn(async (url:string) => {
+		if(url.includes("/records"))return response({records,revision:1});
+		if(url.includes("/status"))return response({revision:1,counts:{}});
+		if(url.endsWith("/publications/history-a"))return response({id:"history-a",revision:1,record_views:records});
+		if(url.includes("/publications"))return response({publications:[{id:"history-a",revision:1,origin:"manager",reason:"Inspection history"}]});
+		if(url.includes("/sources"))return response({sources:[]});return response({drafts:[]});
+	}));
+	render(<OntologyPanel api={new UserApi("key")} session={session} />);
+	await screen.findByText("Classification: First classification (definition-a)");
+	expect(screen.getByText("Target: Second classification (definition-b)")).toBeVisible();
+	expect(screen.getAllByText(/source-a/)).toHaveLength(2);expect(screen.getByText(/source-b/)).toBeVisible();
+	fireEvent.click(screen.getByRole("button",{name:/Inspection history/}));
+	await waitFor(()=>expect(screen.getAllByText("Classification: First classification (definition-a)")).toHaveLength(2));
+  });
+
+  it("inspects and pages shared sources, publishes a group correction, and reverses its history", async () => {
+    const response = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200 });
+    const handles = [{kind:"evidence",id:"source-a",version:1},{kind:"evidence",id:"source-b",version:1}];
+    const group = {id:"group-a",kind:"evidence_group",version:1,current:true,group:{members:handles}};
+    let revision=1;let saved:OntologyDraft|null=null;let published=false;
+    const fetcher=vi.fn(async(url:string,options?:RequestInit)=>{
+      const path=new URL(url,"http://localhost");const body=options?.body?JSON.parse(options.body as string):{};
+      if(options?.method==="POST"){
+        if(path.pathname.endsWith("/preview"))return response({changed_records:1,affected_records:2,affected_sources:12,examples:[{...handles[0],text:"Atlas source",truncated:true}],examples_truncated:true,complete:true,requires_reassessment:true});
+        if(path.pathname.endsWith("/rollback")){revision++;return response({id:"rollback-a",revision});}
+        if(path.pathname.endsWith("/publish")){published=true;revision++;saved={...saved!,state:"published",version:2,publication:{id:"publication-a",revision,existing:false,records:[{id:"override-a",version:1}]}};return response(saved);}
+        saved={...draft,id:"saved-group",reason:body.reason,edits:body.edits,base_revision:revision};return response(saved);
+      }
+      if(path.pathname.endsWith("/status"))return response({revision,counts:{organized:2,pending:1,ambiguous:0,failed:0,budget_deferred:0}});
+      if(path.pathname.endsWith("/sources"))return response({sources:path.searchParams.get("cursor")?[{...handles[1],id:"source-c",text:"Additional shared source",truncated:false}]:handles.map((source)=>({...source,text:source.id,truncated:false})),next_cursor:path.searchParams.get("cursor")?undefined:"source-b"});
+      if(path.pathname.endsWith("/records"))return response({records:[group],revision,next_cursor:path.searchParams.get("cursor")?undefined:"group-a"});
+      if(path.pathname.endsWith("/drafts"))return response({drafts:saved?[saved]:[],next_cursor:path.searchParams.get("cursor")?undefined:"draft-cursor"});
+      if(path.pathname.endsWith("/publications"))return response({publications:published?[{id:"publication-a",revision:2,origin:"manager",reason:"Separate source grouping"}]:[],next_revision:path.searchParams.get("after")==="0"?1:0});
+      return response({id:"publication-a",revision:2,origin:"manager",reason:"Separate source grouping",record_views:[{id:"override-a",kind:"override",version:1,current:true,override:{action:"keep_separate",members:handles}}]});
+    });vi.stubGlobal("fetch",fetcher);
+    render(<OntologyPanel api={new UserApi("key")} session={session}/>);
+    fireEvent.click(await screen.findByRole("button",{name:"Correct grouping"}));
+    expect(screen.getByLabelText("Correction",{exact:true})).toHaveValue("keep_separate");
+    fireEvent.click(screen.getByRole("button",{name:"Clear selected sources"}));
+    fireEvent.change(screen.getByLabelText("Source type"),{target:{value:"evidence"}});fireEvent.change(screen.getByLabelText("Source text or ID"),{target:{value:"Atlas"}});
+    fireEvent.click(screen.getByRole("button",{name:"Inspect sources"}));await waitFor(()=>expect(screen.getByRole("button",{name:"Inspect sources"})).toBeEnabled());
+    fireEvent.click(screen.getByRole("button",{name:"Load more sources"}));await screen.findByText("Additional shared source");
+    fireEvent.click(screen.getByLabelText("Select source source-a"));fireEvent.click(screen.getByLabelText("Select source source-b"));
+    fireEvent.click(screen.getByRole("button",{name:"Add correction to draft"}));fireEvent.change(screen.getByLabelText("Audit reason"),{target:{value:"Separate source grouping"}});
+    fireEvent.click(screen.getByRole("button",{name:"Save draft"}));await screen.findByText("Draft saved. Preview its impact before publishing.");
+    fireEvent.click(screen.getByRole("button",{name:"Preview impact"}));await screen.findByText("Examples are truncated; counts cover the stored dependency set.");
+    fireEvent.click(screen.getByRole("button",{name:"Publish correction"}));await screen.findByText("Correction published. Affected organization is waiting for reassessment.");
+    fireEvent.click(screen.getByRole("button",{name:/Revision 2 · manager/}));await screen.findByRole("heading",{name:"Publication revision 2"});
+    expect(within(screen.getByLabelText("Publication detail")).getByText(/source-a/)).toBeVisible();
+    fireEvent.change(screen.getByLabelText("Rollback reason"),{target:{value:"Reverse selected correction"}});fireEvent.click(screen.getByRole("button",{name:"Publish rollback"}));await screen.findByText(/Rollback published as a new revision/);
+    const rollbackCall=fetcher.mock.calls.find(([url])=>url.endsWith("/rollback"));expect(JSON.parse(rollbackCall![1]!.body as string)).toMatchObject({expected_revision:2,reason:"Reverse selected correction"});
+    fireEvent.click(screen.getByRole("button",{name:"Load more publications"}));await waitFor(()=>expect(fetcher.mock.calls.some(([url])=>url.includes("after=1"))).toBe(true));
+    fireEvent.click(screen.getByRole("button",{name:"Load more drafts"}));await waitFor(()=>expect(fetcher.mock.calls.some(([url])=>url.includes("cursor=draft-cursor"))).toBe(true));
+    fireEvent.click(screen.getByRole("button",{name:"Load more catalog records"}));await waitFor(()=>expect(fetcher.mock.calls.some(([url])=>url.includes("cursor=group-a"))).toBe(true));
+    fireEvent.change(screen.getByLabelText("Catalog type"),{target:{value:"evidence_group"}});await waitFor(()=>expect(fetcher.mock.calls.some(([url])=>url.includes("kind=evidence_group"))).toBe(true));
+  });
+
+  it("edits definition fields, removes draft edits, unpins explicitly, and discards the saved draft",async()=>{
+    const response=(data:unknown)=>new Response(JSON.stringify({data}),{status:200});
+    const records=[{id:"class-a",kind:"entity_class",version:3,current:true,definition:{key:"people",label:"People",description:"People class",aliases:["humans"],parent_id:"parent-a",base_entity_kind:"person"}},{id:"parent-a",kind:"entity_class",version:1,current:true,definition:{key:"parent",label:"Parent class",description:"Parent",base_entity_kind:"person"}},{id:"pin-a",kind:"override",version:4,current:true,override:{action:"pin_definition",target_id:"class-a"}}];
+    let saved:OntologyDraft|null=null;
+    const fetcher=vi.fn(async(url:string,options?:RequestInit)=>{
+      const path=new URL(url,"http://localhost").pathname;const body=options?.body?JSON.parse(options.body as string):{};
+      if(options?.method==="POST"){if(path.endsWith("/discard")){saved={...saved!,state:"discarded",version:2};return response(saved);}saved={...draft,reason:body.reason,edits:body.edits};return response(saved);}
+      if(path.endsWith("/records"))return response({records,revision:1});if(path.endsWith("/status"))return response({revision:1,counts:{}});if(path.endsWith("/sources"))return response({sources:[]});if(path.endsWith("/publications"))return response({publications:[]});return response({drafts:saved?[saved]:[]});
+    });vi.stubGlobal("fetch",fetcher);render(<OntologyPanel api={new UserApi("key")} session={session}/>);
+    fireEvent.click(await screen.findByRole("button",{name:"Edit People"}));await waitFor(()=>expect(screen.getByLabelText("Definition label")).toHaveValue("People"));
+    for(const [label,value] of [["Definition key","people-revised"],["Definition label","People revised"],["Definition description","Corrected people class"],["Definition aliases","humans, people"],["Definition parent","parent-a"]])fireEvent.change(screen.getByLabelText(label),{target:{value}});
+    fireEvent.change(screen.getByLabelText("Class entity kind"),{target:{value:"person"}});fireEvent.click(screen.getByRole("button",{name:"Add correction to draft"}));
+    fireEvent.click(screen.getByRole("button",{name:"Remove correction 1"}));expect(screen.queryByRole("button",{name:"Remove correction 1"})).toBeNull();
+    fireEvent.click(screen.getByRole("button",{name:"Add correction to draft"}));fireEvent.click(screen.getByRole("button",{name:"Unpin definition"}));fireEvent.change(screen.getByLabelText("Audit reason"),{target:{value:"Edit and unpin definition"}});
+    fireEvent.click(screen.getByRole("button",{name:"Save draft"}));await screen.findByText("Draft saved. Preview its impact before publishing.");
+    const body=JSON.parse(fetcher.mock.calls.find(([,options])=>options?.method==="POST")![1]!.body as string);
+    expect(body.edits).toEqual([{action:"define",record_id:"class-a",expected_version:3,kind:"entity_class",definition:{key:"people-revised",label:"People revised",description:"Corrected people class",aliases:["humans","people"],parent_id:"parent-a",base_entity_kind:"person"}},{action:"remove_override",record_id:"pin-a",expected_version:4}]);
+    fireEvent.click(screen.getByRole("button",{name:"Discard draft"}));await screen.findByText("Draft discarded. Its history is retained.");expect(screen.queryByRole("button",{name:"Preview impact"})).toBeNull();
+    fireEvent.click(screen.getByRole("button",{name:"New draft"}));fireEvent.change(screen.getByLabelText("Definition type"),{target:{value:"topic"}});expect(screen.getByLabelText("Definition parent")).toHaveValue("");
+  });
+
+  it("refreshes current record and source versions while preserving the manager's unsaved reason",async()=>{
+    const response=(data:unknown)=>new Response(JSON.stringify({data}),{status:200});
+    const saved={...draft,base_revision:0,edits:[{action:"classify",record_id:"override-a",expected_version:1,source:{kind:"relationship",id:"relationship-a",version:1},definition_id:"topic-a"}]};
+    let refreshedBody:Record<string,unknown>|null=null;
+    vi.stubGlobal("fetch",vi.fn(async(url:string,options?:RequestInit)=>{
+      const path=new URL(url,"http://localhost").pathname;
+      if(options?.method==="PUT"){refreshedBody=JSON.parse(options.body as string);return response({...saved,version:5,base_revision:1,reason:refreshedBody!.reason,edits:refreshedBody!.edits});}
+      if(path.endsWith("/records/override-a"))return response({version:3});if(path.endsWith("/records"))return response({records:[],revision:1});if(path.endsWith("/status"))return response({revision:1,counts:{}});if(path.endsWith("/sources"))return response({sources:[{kind:"relationship",id:"relationship-a",version:2,text:"Updated source",truncated:false}]});if(path.endsWith("/publications"))return response({publications:[]});if(path.endsWith("/drafts"))return response({drafts:[saved]});return response({...saved,version:4});
+    }));render(<OntologyPanel api={new UserApi("key")} session={session}/>);
+    fireEvent.click(await screen.findByRole("button",{name:/Storage correction/}));await screen.findByText("This draft uses an older catalog revision. Refresh it before publishing.");
+    fireEvent.change(screen.getByLabelText("Audit reason"),{target:{value:"Keep my unsaved reason"}});fireEvent.click(screen.getByRole("button",{name:"Refresh draft before resubmitting"}));await screen.findByText("Draft refreshed. Review the corrections, save, and preview again.");
+    fireEvent.click(screen.getByRole("button",{name:"Save draft"}));await screen.findByText("Draft saved. Preview its impact before publishing.");
+    expect(refreshedBody).toMatchObject({expected_version:4,expected_revision:1,reason:"Keep my unsaved reason",edits:[{expected_version:3,source:{kind:"relationship",id:"relationship-a",version:2}}]});
+  });
+});

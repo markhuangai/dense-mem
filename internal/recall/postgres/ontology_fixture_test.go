@@ -109,6 +109,10 @@ func (f *recallOntologyFixture) override(t testing.TB, action ontology.OverrideA
 }
 
 func (f *recallOntologyFixture) organizer(t testing.TB, meanings map[string]string) (*organization.Service, *atomic.Int32) {
+	return f.organizerWithAccounting(t, meanings, false, nil)
+}
+
+func (f *recallOntologyFixture) organizerWithAccounting(t testing.TB, meanings map[string]string, forceDistinct bool, accounting assessment.AttemptAccounting) (*organization.Service, *atomic.Int32) {
 	t.Helper()
 	calls := &atomic.Int32{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -144,7 +148,7 @@ func (f *recallOntologyFixture) organizer(t testing.TB, meanings map[string]stri
 			if relation == "" {
 				relation = "distinct"
 				left, right := meanings[items[pair.LeftRef].Text], meanings[items[pair.RightRef].Text]
-				if left != "" && left == right {
+				if !forceDistinct && left != "" && left == right {
 					relation = "equivalent"
 				}
 			}
@@ -159,7 +163,7 @@ func (f *recallOntologyFixture) organizer(t testing.TB, meanings map[string]stri
 	limits := assessor.DefaultSemanticAssessmentLimits()
 	cfg := &config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "synthetic-provider-key", AIVerifierModel: "fixture-model"}
 	transport := assessorprovider.NewOpenAIAssessorWithAssessmentLimits(cfg, server.Client(), limits)
-	return organization.NewService(f.ontology, assessment.NewProvider(transport, "fixture-model", limits)), calls
+	return organization.NewService(f.ontology, assessment.NewProviderWithAccounting(transport, "fixture-model", limits, accounting)), calls
 }
 
 func (f *recallOntologyFixture) assignment(t testing.TB, definitionID string, handle ontology.SourceHandle) ontology.Record {

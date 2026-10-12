@@ -1,4 +1,5 @@
 import { ApiError, requestJson } from "../http";
+import type { OntologyCoverage, OntologyDraft, OntologyDraftCommand, OntologyDraftPage, OntologyKind, OntologyPreview, OntologyPublication, OntologyPublicationPage, OntologyRecord, OntologyRecordPage, OntologySourcePage, SaveOntologyDraft, SourceKind } from "./ontology-types";
 export { ApiError } from "../http";
 
 export type UserTeam = {
@@ -340,6 +341,35 @@ export class UserApi {
     this.authMode = authMode;
   }
 
+  async ontologyRecords(kind: OntologyKind | "" = "", cursor = ""): Promise<OntologyRecordPage> {
+    return (await this.request<Envelope<OntologyRecordPage>>(`/ui/api/ontology/records?${new URLSearchParams({ kind, cursor, limit: "50" })}`)).data;
+  }
+  async ontologyRecord(id: string, version = 0): Promise<OntologyRecord> {
+    return (await this.request<Envelope<OntologyRecord>>(`/ui/api/ontology/records/${encodeURIComponent(id)}?version=${version}`)).data;
+  }
+  async ontologySources(kind: SourceKind = "evidence", cursor = "", query = ""): Promise<OntologySourcePage> {
+    return (await this.request<Envelope<OntologySourcePage>>(`/ui/api/ontology/sources?${new URLSearchParams({ kind, cursor, q: query, limit: "50" })}`)).data;
+  }
+  async ontologyStatus(): Promise<OntologyCoverage> { return (await this.request<Envelope<OntologyCoverage>>("/ui/api/ontology/status")).data; }
+  async ontologyDrafts(cursor = ""): Promise<OntologyDraftPage> { return (await this.request<Envelope<OntologyDraftPage>>(`/ui/api/ontology/drafts?${new URLSearchParams({ cursor, limit: "50" })}`)).data; }
+  async ontologyDraft(id: string): Promise<OntologyDraft> { return (await this.request<Envelope<OntologyDraft>>(`/ui/api/ontology/drafts/${encodeURIComponent(id)}`)).data; }
+  async saveOntologyDraft(id: string, input: SaveOntologyDraft): Promise<OntologyDraft> {
+    return (await this.request<Envelope<OntologyDraft>>(`/ui/api/ontology/drafts${id ? `/${encodeURIComponent(id)}` : ""}`, { method: id ? "PUT" : "POST", body: input })).data;
+  }
+  async previewOntologyDraft(id: string, version: number): Promise<OntologyPreview> {
+    return (await this.request<Envelope<OntologyPreview>>(`/ui/api/ontology/drafts/${encodeURIComponent(id)}/preview`, { method: "POST", body: { expected_version: version } })).data;
+  }
+  async commandOntologyDraft(id: string, action: "publish" | "discard", input: OntologyDraftCommand): Promise<OntologyDraft> {
+    return (await this.request<Envelope<OntologyDraft>>(`/ui/api/ontology/drafts/${encodeURIComponent(id)}/${action}`, { method: "POST", body: input })).data;
+  }
+  async ontologyPublications(after = 0): Promise<OntologyPublicationPage> {
+    return (await this.request<Envelope<OntologyPublicationPage>>(`/ui/api/ontology/publications?after=${after}&limit=50`)).data;
+  }
+  async ontologyPublication(id: string): Promise<OntologyPublication> { return (await this.request<Envelope<OntologyPublication>>(`/ui/api/ontology/publications/${encodeURIComponent(id)}`)).data; }
+  async rollbackOntologyPublication(id: string, input: Omit<OntologyDraftCommand, "expected_version">): Promise<OntologyPublication> {
+    return (await this.request<Envelope<OntologyPublication>>(`/ui/api/ontology/publications/${encodeURIComponent(id)}/rollback`, { method: "POST", body: input })).data;
+  }
+
   async session(): Promise<UserSession> {
     const payload = await this.request<Envelope<UserSession>>("/ui/api/session");
     return payload.data;
@@ -561,7 +591,7 @@ export class UserApi {
   }
 }
 
-function newIdempotencyKey(prefix: string): string {
+export function newIdempotencyKey(prefix: string): string {
   const randomUUID = globalThis.crypto?.randomUUID?.();
   return `${prefix}-${randomUUID ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`}`;
 }

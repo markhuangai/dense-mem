@@ -148,7 +148,7 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 		admitted[contract.SourceKey(source.SourceHandle)] = true
 	}
 	for _, view := range context.Records {
-		if view.Group == nil || usedGroups[view.ID] {
+		if view.Group == nil || view.Retired || usedGroups[view.ID] {
 			continue
 		}
 		complete := true

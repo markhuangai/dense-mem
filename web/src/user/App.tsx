@@ -27,13 +27,14 @@ import { SearchPanel } from "./SearchPanel";
 const TeamManagementPanel = lazy(() => import("./TeamManagementPanel").then((module) => ({ default: module.TeamManagementPanel })));
 const UserDreamsPanel = lazy(() => import("./DreamsPanel").then((module) => ({ default: module.UserDreamsPanel })));
 const GraphPanel = lazy(() => import("./GraphPanel").then((module) => ({ default: module.GraphPanel })));
+const OntologyPanel = lazy(() => import("./OntologyPanel").then((module) => ({ default: module.OntologyPanel })));
 
 const TOKEN_STORAGE_KEY = "denseMem.userApiKey";
 const THEME_STORAGE_KEY = "denseMem.userTheme";
 
 type Theme = "light" | "dark";
 type AuthMode = "none" | "api_key" | "api_key_session" | "sso";
-type UserTab = "search" | "graph" | "dreams" | "team" | "credential";
+type UserTab = "search" | "graph" | "dreams" | "team" | "credential" | "ontology";
 type CredentialPermission = "read" | "read_write";
 
 function sessionAuthMode(session: UserSession, token: string): AuthMode {
@@ -314,7 +315,7 @@ function UserPortal({
   }, [api]);
 
   useEffect(() => {
-    if (session && !canManageTeam(session) && activeTab === "team") {
+    if (session && !canManageTeam(session) && (activeTab === "team" || activeTab === "ontology")) {
       setActiveTab("search");
     }
   }, [activeTab, session]);
@@ -330,6 +331,7 @@ function UserPortal({
     { id: "graph", label: "Graph", icon: <Network size={17} aria-hidden="true" />, active: activeTab === "graph", onClick: () => setActiveTab("graph") },
     { id: "dreams", label: "Dreams", icon: <Moon size={17} aria-hidden="true" />, active: activeTab === "dreams", onClick: () => setActiveTab("dreams") },
     ...(canManageTeam(session) ? [
+      { id: "ontology", label: "Ontology", icon: <Network size={17} aria-hidden="true" />, active: activeTab === "ontology", onClick: () => setActiveTab("ontology") },
       { id: "team", label: "Team", icon: <Users size={17} aria-hidden="true" />, active: activeTab === "team", onClick: () => setActiveTab("team") },
     ] : []),
     ...(canShowMyCredential(session) ? [
@@ -388,6 +390,7 @@ function UserPortal({
           {activeTab === "search" && <SearchPanel api={api} />}
           {activeTab === "graph" && <GraphPanel api={api} />}
           {activeTab === "dreams" && <UserDreamsPanel api={api} />}
+          {activeTab === "ontology" && session && canManageTeam(session) && <OntologyPanel key={session.team.id} api={api} session={session} />}
           {activeTab === "team" && session && canManageTeam(session) && (
             <TeamManagementPanel
               api={api}

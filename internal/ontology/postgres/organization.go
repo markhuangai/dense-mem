@@ -83,7 +83,8 @@ func (s *Store) organizationContext(tx *gorm.DB, fence scope, handles []ontology
               AND dependency.space_generation=head.space_generation AND dependency.record_id=head.record_id
               AND dependency.record_version=head.version
             WHERE head.team_id=?::uuid AND head.shared_space_id=?::uuid AND head.space_generation=?
-              AND NOT head.retired AND dependency.source_kind || ':' || dependency.source_id=ANY(?::text[])
+              AND (NOT head.retired OR head.kind IN ('evidence_group','relationship_group'))
+              AND dependency.source_kind || ':' || dependency.source_id=ANY(?::text[])
             ORDER BY head.record_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(keys), ontology.MaxDependencyRecords+1).Rows()
 	if err != nil {
 		return result, err

@@ -222,6 +222,17 @@
       "helper_profiles": ["oauth", "synchronous_write"],
       "timeout_minutes": 45,
       "playwright": false
+    },
+    {
+      "name": "ontology_management",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": [
+        "verifier",
+        "playwright"
+      ],
+      "timeout_minutes": 45,
+      "playwright": true
     }
   ]
 }

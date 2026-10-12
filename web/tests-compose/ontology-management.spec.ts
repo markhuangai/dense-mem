@@ -1,0 +1,102 @@
+import { randomUUID } from "node:crypto";
+import { expect, test } from "@playwright/test";
+
+const userURL = process.env.DENSE_MEM_USER_URL!;
+const controlURL = process.env.DENSE_MEM_CONTROL_URL!;
+const controlToken = process.env.DENSE_MEM_CONTROL_TOKEN!;
+const teamID = process.env.DENSE_MEM_E2E_TEAM_ID!;
+
+test("manager saves a cookie-authenticated draft across sign-out, handles a real conflict, previews and publishes", async ({ page, request }) => {
+  async function credential(role: string) {
+    const response = await request.post(`${controlURL}/control/api/teams/${teamID}/credentials`, { headers: { Authorization: `Bearer ${controlToken}` }, data: { name: `ontology-browser-${randomUUID()}`, role, scopes: ["read", "write"], rate_limit: 300, memory_binding: "shared_only" } });
+    expect(response.ok()).toBeTruthy(); return (await response.json()).data;
+  }
+  const manager = await credential("manager");
+  const member = await credential("member");
+  const label = `Browser vocabulary ${randomUUID()}`;
+  const reason = `Browser correction ${randomUUID()}`;
+  async function login(key: string) {
+    await page.goto(`${userURL}/ui/`); await page.getByLabel("API key").fill(key);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Knowledge", exact: true })).toBeVisible();
+  }
+  await login(manager.api_key);
+  await page.getByRole("button", { name: "Ontology", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Ontology", exact: true })).toBeVisible();
+  await page.getByLabel("Definition key").fill(`browser-${randomUUID()}`);
+  await page.getByLabel("Definition label").fill(label);
+  await page.getByLabel("Definition description").fill("Browser manager description");
+  await page.getByLabel("Audit reason").fill(reason);
+  await page.getByRole("button", { name: "Add correction to draft" }).click();
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("Draft saved");
+  const noCSRF = await page.evaluate(async () => (await fetch("/ui/api/ontology/drafts", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).status);
+  expect(noCSRF).toBe(403);
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await login(manager.api_key);
+  await page.getByRole("button", { name: "Ontology", exact: true }).click();
+  await page.getByRole("button", { name: new RegExp(reason) }).click();
+  await expect(page.getByLabel("Audit reason")).toHaveValue(reason);
+  expect(await page.evaluate(() => sessionStorage.getItem("denseMem.userApiKey"))).toBeNull();
+  const headers = { Authorization: `Bearer ${manager.api_key}` };
+  const base = (await (await request.get(`${userURL}/ui/api/ontology/status`, { headers })).json()).data.revision;
+  const body = { operation_key: randomUUID(), expected_version: 0, expected_revision: base, reason: "Intervening browser correction", edits: [{ action: "define", expected_version: 0, kind: "topic", definition: { key: `intervening-${randomUUID()}`, label: `Intervening ${randomUUID()}`, description: "Concurrency fixture" } }] };
+  const saved = await request.post(`${userURL}/ui/api/ontology/drafts`, { headers, data: body }); expect(saved.status()).toBe(200);
+  const draft = (await saved.json()).data;
+  const published = await request.post(`${userURL}/ui/api/ontology/drafts/${draft.id}/publish`, { headers, data: { operation_key: randomUUID(), expected_version: draft.version, expected_revision: draft.base_revision, reason: draft.reason } }); expect(published.status()).toBe(200);
+  await page.getByLabel("Audit reason").fill(`${reason} retained`);
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("refresh the draft");
+  await expect(page.getByLabel("Audit reason")).toHaveValue(`${reason} retained`);
+  await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Refresh draft before resubmitting" }).click();
+  await expect(page.getByRole("status")).toContainText("Draft refreshed");
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("Draft saved");
+  await page.getByRole("button", { name: "Preview impact" }).click();
+  await expect(page.getByRole("heading", { name: "Impact preview", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Publish correction", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("Correction published");
+  await expect(page.getByRole("region", { name: "Ontology catalog" }).getByText(label, { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await login(member.api_key);
+  await expect(page.getByRole("button", { name: "Ontology", exact: true })).toHaveCount(0);
+  const denied = await request.get(`${userURL}/ui/api/ontology/status`, { headers: { Authorization: `Bearer ${member.api_key}` } }); expect(denied.status()).toBe(403);
+});
+
+test("manager inspects sources, corrects grouping and classification, reverses history, and pins or unpins", async ({ page, request }) => {
+  const created = await request.post(`${controlURL}/control/api/teams/${teamID}/credentials`, { headers: { Authorization: `Bearer ${controlToken}` }, data: { name: `ontology-controls-${randomUUID()}`, role: "manager", scopes: ["read", "write"], rate_limit: 300, memory_binding: "shared_only" } });
+  expect(created.status()).toBe(201);const manager=(await created.json()).data;
+  const headers={Authorization:`Bearer ${manager.api_key}`};
+  const topics=(await (await request.get(`${userURL}/ui/api/ontology/records?kind=topic&limit=200`,{headers})).json()).data.records;
+  const topic=topics.find((record:{retired:boolean;definition:{label:string}})=>!record.retired && record.definition.label==="Manager storage vocabulary");expect(topic).toBeTruthy();
+  await page.goto(`${userURL}/ui/`);await page.getByLabel("API key").fill(manager.api_key);await page.getByRole("button",{name:"Sign in",exact:true}).click();
+  await page.getByRole("button",{name:"Ontology",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"Shared sources",exact:true})).toBeVisible();
+  const sources=page.getByRole("checkbox",{name:/Select source/});await expect(sources).toHaveCount(2);
+  async function publish(reason:string){
+    await page.getByLabel("Audit reason").fill(reason);await page.getByRole("button",{name:"Save draft",exact:true}).click();await expect(page.getByRole("status")).toContainText("Draft saved");
+    await page.getByRole("button",{name:"Preview impact",exact:true}).click();await expect(page.getByRole("heading",{name:"Impact preview",exact:true})).toBeVisible();
+    const response=page.waitForResponse((res)=>res.request().method()==="POST" && res.url().endsWith("/publish"));await page.getByRole("button",{name:"Publish correction",exact:true}).click();
+    const accepted=await response;expect(accepted.status()).toBe(200);await expect(page.getByRole("status")).toContainText("Correction published");return (await accepted.json()).data;
+  }
+  await sources.nth(0).check();await sources.nth(1).check();await page.getByLabel("Correction",{exact:true}).selectOption("keep_separate");await page.getByRole("button",{name:"Add correction to draft"}).click();
+  const reason=`Browser separation ${randomUUID()}`;const separation=await publish(reason);
+  await page.getByRole("button",{name:new RegExp(`Revision.*${reason}$`)}).click();
+  await expect(page.getByRole("heading",{name:`Publication revision ${separation.publication.revision}`,exact:true})).toBeVisible();
+  await page.getByLabel("Rollback reason").fill("Browser reverses separation");await page.getByRole("button",{name:"Publish rollback",exact:true}).click();await expect(page.getByRole("status")).toContainText("Rollback published");
+  await page.getByRole("button",{name:new RegExp(`Revision.*${reason}$`)}).click();await page.getByLabel("Rollback reason").fill("Stale rollback must conflict");await page.getByRole("button",{name:"Publish rollback",exact:true}).click();await expect(page.getByRole("alert").filter({hasText:"ontology state changed;"})).toContainText("refresh the draft");
+  await page.getByRole("button",{name:"Refresh ontology",exact:true}).click();await expect(page.getByRole("button",{name:"Refresh ontology",exact:true})).toBeEnabled();
+  const classifiedSource=(await sources.nth(0).getAttribute("aria-label"))!.replace("Select source ","");
+  await page.getByRole("button",{name:"New draft",exact:true}).click();await sources.nth(0).check();await page.getByLabel("Correction",{exact:true}).selectOption("classify");await page.getByLabel("Target definition").fill(topic.id);await page.getByRole("button",{name:"Add correction to draft"}).click();
+  const classified=await publish(`Browser classification ${randomUUID()}`);await page.getByRole("button",{name:new RegExp(`Revision ${classified.publication.revision} · manager`)}).click();
+  const classificationRow=page.getByRole("region",{name:"Ontology catalog"}).locator("tr").filter({has:page.locator(`small[title="${classified.publication.records[0].id}"]`)});
+  await expect(classificationRow.getByText(`Classification: ${topic.definition.label} (${topic.id})`)).toBeVisible();await expect(classificationRow.getByRole("button",{name:"Remove correction",exact:true})).toBeVisible();
+  const detail=page.getByLabel("Publication detail",{exact:true});await expect(detail.getByText(`Classification: ${topic.id}`,{exact:true})).toBeVisible();await expect(detail.getByText(`evidence ${classifiedSource} · version 1`,{exact:true})).toBeVisible();
+  await page.getByLabel("Rollback reason").fill("Reverse browser classification before the next project");await page.getByRole("button",{name:"Publish rollback",exact:true}).click();await expect(page.getByRole("status")).toContainText("Rollback published");
+  await page.getByRole("button",{name:"New draft",exact:true}).click();await page.getByLabel("Correction",{exact:true}).selectOption("pin_definition");await page.getByLabel("Target definition").fill(topic.id);await page.getByRole("button",{name:"Add correction to draft"}).click();await publish(`Browser pin ${randomUUID()}`);
+  await page.getByRole("button",{name:"New draft",exact:true}).click();
+  const pinRow=page.locator("tr").filter({hasText:`Target: ${topic.definition.label} (${topic.id})`}).filter({has:page.getByRole("button",{name:"Unpin definition",exact:true})});
+  await expect(pinRow).toHaveCount(1);await pinRow.getByRole("button",{name:"Unpin definition",exact:true}).click();await publish(`Browser unpin ${randomUUID()}`);
+  await expect(pinRow).toHaveCount(0);
+});

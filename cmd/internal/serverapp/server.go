@@ -396,6 +396,7 @@ func RunActiveServer(
 		recallFeedback:           recallFeedbackEventService,
 		community:                communitySvc,
 		ontologyMaintenance:      ontologyMaintenance,
+		ontologyManagement:       ontology.NewManagementService(ontologyStore, auditService),
 		controlDream:             controlDreamSvc,
 		controlDreamDiagnostics:  applications.ControlDreamDiagnostics,
 		graph:                    graphViewSvc,

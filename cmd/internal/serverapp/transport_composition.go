@@ -75,6 +75,7 @@ type transportCompositionInputs struct {
 	recallFeedback          recall.RecallFeedbackEventReader
 	community               communityapp.Service
 	ontologyMaintenance     *ontology.MaintenanceService
+	ontologyManagement      *ontology.ManagementService
 	controlDream            dream.ControlService
 	controlDreamDiagnostics dream.DiagnosticService
 	graph                   graph.Service
@@ -329,6 +330,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 	})
 
 	userPortalDeps := densehttp.UserPortalDeps{
+		OntologyManagement:       deps.ontologyManagement,
 		CredentialRepo:           deps.credentialRepo,
 		TeamSvc:                  deps.teamService,
 		CredentialSvc:            deps.credentialService,

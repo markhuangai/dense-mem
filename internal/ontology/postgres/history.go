@@ -64,69 +64,8 @@ func (s *Store) Rollback(ctx context.Context, teamID, targetID, key string, expe
 		if err != nil || found {
 			return err
 		}
-		var encoded []byte
-		err = tx.Raw(`SELECT result FROM ontology_publications WHERE team_id=?::uuid AND shared_space_id=?::uuid
-			AND space_generation=? AND publication_id=?::uuid`, fence.TeamID, fence.SpaceID, fence.Generation, targetID).Row().Scan(&encoded)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ontology.ErrNotFound
-		}
-		if err != nil {
-			return err
-		}
-		var target ontology.PublicationResult
-		if err := json.Unmarshal(encoded, &target); err != nil {
-			return err
-		}
-		for _, ref := range target.Records {
-			current, err := loadHeads(tx, fence, []string{ref.ID}, nil, nil)
-			if err != nil {
-				return err
-			}
-			head, exists := current[ref.ID]
-			if !exists || head.Version != ref.Version {
-				return ontology.ErrConflict
-			}
-			desired := head
-			if ref.Version == 1 {
-				desired.Retired = true
-			} else {
-				var body []byte
-				if err := tx.Raw(`SELECT body FROM ontology_record_revisions WHERE team_id=?::uuid
-					AND shared_space_id=?::uuid AND space_generation=? AND record_id=?::uuid AND version=?`,
-					fence.TeamID, fence.SpaceID, fence.Generation, ref.ID, ref.Version-1).Row().Scan(&body); err != nil {
-					return err
-				}
-				desired, err = decodeRecord(body)
-				if err != nil {
-					return err
-				}
-			}
-			input.Changes = append(input.Changes, ontology.Change{ExpectedVersion: head.Version, Record: desired})
-		}
-		records := make([]ontology.Record, 0, len(input.Changes))
-		for _, change := range input.Changes {
-			records = append(records, change.Record)
-		}
-		catalog, err := validationCatalog(tx, fence, records, nil)
-		if err != nil {
-			return err
-		}
-		for i := range input.Changes {
-			if input.Changes[i].Record.Retired {
-				continue
-			}
-			for j := range input.Changes[i].Record.Dependencies {
-				if dependency, exists := catalog[input.Changes[i].Record.Dependencies[j].ID]; exists {
-					input.Changes[i].Record.Dependencies[j].Version = dependency.Version
-				}
-				for _, change := range input.Changes {
-					if input.Changes[i].Record.Dependencies[j].ID == change.Record.ID {
-						input.Changes[i].Record.Dependencies[j].Version = change.ExpectedVersion + 1
-					}
-				}
-			}
-		}
-		return ontology.ValidatePublication(input)
+		input, err = prepareOntologyRollback(tx, fence, input)
+		return err
 	})
 	if err != nil {
 		return ontology.PublicationResult{}, err
@@ -135,4 +74,70 @@ func (s *Store) Rollback(ctx context.Context, teamID, targetID, key string, expe
 		return replay, nil
 	}
 	return s.commit(ctx, teamID, input, "rollback", actor, hash, "")
+}
+
+func prepareOntologyRollback(tx *gorm.DB, fence scope, input ontology.Publication) (ontology.Publication, error) {
+	var encoded []byte
+	err := tx.Raw(`SELECT result FROM ontology_publications WHERE team_id=?::uuid AND shared_space_id=?::uuid
+		AND space_generation=? AND publication_id=?::uuid`, fence.TeamID, fence.SpaceID, fence.Generation, input.RollbackOf).Row().Scan(&encoded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return input, ontology.ErrNotFound
+	}
+	if err != nil {
+		return input, err
+	}
+	var target ontology.PublicationResult
+	if err := json.Unmarshal(encoded, &target); err != nil {
+		return input, err
+	}
+	for _, ref := range target.Records {
+		current, err := loadHeads(tx, fence, []string{ref.ID}, nil, nil)
+		if err != nil {
+			return input, err
+		}
+		head, exists := current[ref.ID]
+		if !exists || head.Version != ref.Version {
+			return input, ontology.ErrConflict
+		}
+		desired := head
+		if ref.Version == 1 {
+			desired.Retired = true
+		} else {
+			var body []byte
+			if err := tx.Raw(`SELECT body FROM ontology_record_revisions WHERE team_id=?::uuid
+				AND shared_space_id=?::uuid AND space_generation=? AND record_id=?::uuid AND version=?`,
+				fence.TeamID, fence.SpaceID, fence.Generation, ref.ID, ref.Version-1).Row().Scan(&body); err != nil {
+				return input, err
+			}
+			desired, err = decodeRecord(body)
+			if err != nil {
+				return input, err
+			}
+		}
+		input.Changes = append(input.Changes, ontology.Change{ExpectedVersion: head.Version, Record: desired})
+	}
+	records := make([]ontology.Record, 0, len(input.Changes))
+	for _, change := range input.Changes {
+		records = append(records, change.Record)
+	}
+	catalog, err := validationCatalog(tx, fence, records, nil)
+	if err != nil {
+		return input, err
+	}
+	for i := range input.Changes {
+		if input.Changes[i].Record.Retired {
+			continue
+		}
+		for j := range input.Changes[i].Record.Dependencies {
+			if dependency, exists := catalog[input.Changes[i].Record.Dependencies[j].ID]; exists {
+				input.Changes[i].Record.Dependencies[j].Version = dependency.Version
+			}
+			for _, change := range input.Changes {
+				if input.Changes[i].Record.Dependencies[j].ID == change.Record.ID {
+					input.Changes[i].Record.Dependencies[j].Version = change.ExpectedVersion + 1
+				}
+			}
+		}
+	}
+	return input, ontology.ValidatePublication(input)
 }

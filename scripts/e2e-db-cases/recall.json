@@ -401,6 +401,14 @@
       "phase": "scenario",
       "source": "internal/recall/postgres/recall_ontology_scope_integration_test.go",
       "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestRecallOntologyManagementLockedCohort",
+      "package": "./internal/recall/postgres",
+      "run": "^TestRecallOntologyManagementLockedCohort$",
+      "phase": "scenario",
+      "source": "internal/recall/postgres/ontology_management_cohort_integration_test.go",
+      "scenario": "ontology_management"
     }
   ]
 }

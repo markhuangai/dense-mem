@@ -1,0 +1,31 @@
+{
+  "bad_at_k": 0,
+  "cases": 3,
+  "command": "DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 DENSE_MEM_ORGANIZATION_REPORT_DIR=<ignored-report-directory> go test -tags integration ./internal/recall/postgres -run ^TestRecallOntologyManagementLockedCohort$ -count=1 -timeout=20m",
+  "distinct_fact_preservation": 1,
+  "existing_ontology_recall_comparison": {
+    "baseline_bad_at_k": 0,
+    "baseline_repeated_slots": 4,
+    "candidate_bad_at_k": 0,
+    "candidate_repeated_slots": 0,
+    "case_count": 9,
+    "cohort_sha256": "sha256:01e78a45a28121f64b36a7b17b8f76051ffd4186d2eed918470a054ad522ae14",
+    "distinct_fact_coverage": 1,
+    "false_consolidations": 0,
+    "recall_provider_calls": 0,
+    "source_count": 19,
+    "source_lock": "tests/eval/source_locks/ontology_organization_v1.json",
+    "source_lock_sha256": "sha256:ad99f97d67411d2211bbe0e6dd7aaa18b81799aaeec82e64197abdbc0c8e9a0a",
+    "source_preservation": 1
+  },
+  "false_consolidations": 0,
+  "issue": 529,
+  "manager_provider_calls": 0,
+  "schema_version": "dense-mem.ontology.management_comparison.v1",
+  "scope": "Locked manager correction and rollback cases through real PostgreSQL maintenance and Recall; the existing nine-case/19-source ontology cohort remains unchanged. Issue #529 records the approved historical 1k waiver.",
+  "source_lock": "tests/eval/source_locks/ontology_management_v1.json",
+  "source_lock_sha256": "sha256:8633d8a588c3e4ebfb232b9ba8f6118a5db357665ccdbc01111d740ab05d2a55",
+  "source_preservation": 1,
+  "sources": 6,
+  "verified": true
+}

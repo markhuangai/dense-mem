@@ -22,6 +22,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/ontology"
 	operations "github.com/markhuangai/dense-mem/internal/operations"
 	"github.com/markhuangai/dense-mem/internal/recall"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
@@ -30,6 +31,7 @@ import (
 
 // UserPortalDeps holds the dependencies for the user portal.
 type UserPortalDeps struct {
+	OntologyManagement       *ontology.ManagementService
 	CredentialRepo           accessservice.CredentialStore
 	TeamSvc                  handler.TeamServiceInterface
 	CredentialSvc            handler.CredentialServiceInterface

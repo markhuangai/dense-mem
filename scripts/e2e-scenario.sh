@@ -141,6 +141,7 @@ run_playwright() {
   local -a specs=("tests-compose/search-convergence.spec.ts" "tests-compose/compose-portal.spec.ts")
   case "$SCENARIO" in
     synchronous_write) specs=("tests-compose/remember-attempts.spec.ts") ;;
+    ontology_management) specs=("tests-compose/ontology-management.spec.ts") ;;
     ontology_organization) specs=("tests-compose/ontology-maintenance.spec.ts") ;;
     community) specs=("tests-compose/community-recall.spec.ts") ;;
     conflict_queue) specs=("tests-compose/compose-conflict-queue.spec.ts") ;;
@@ -168,6 +169,7 @@ run_playwright() {
 }
 
 case "$SCENARIO" in
+  ontology_management) run_node_case tests/uat/ontology_management_e2e.mjs ;;
   ontology_organization) run_node_case tests/uat/ontology_organization_e2e.mjs ;;
   session_ingest) run_node_case tests/uat/session_ingest_e2e.mjs ;;
   mcp_boundaries|mcp_transport_cancellation) run_node_case tests/uat/mcp_boundaries_e2e.mjs ;;
@@ -229,7 +231,7 @@ if [[ "$SCENARIO" == "mcp_oauth" && "${DENSE_MEM_E2E_RUN_PLAYWRIGHT:-0}" == "1" 
 fi
 
 case "$SCENARIO" in
-  mcp_oauth|community|conflict_queue|synchronous_write|ontology_organization|full) run_playwright ;;
+  mcp_oauth|community|conflict_queue|synchronous_write|ontology_organization|ontology_management|full) run_playwright ;;
 esac
 
 log "completed"

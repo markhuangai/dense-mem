@@ -1,0 +1,10 @@
+{
+  "schema_version": "dense-mem.ontology.management_cohort.v1",
+  "provenance": "Synthetic manual manager-correction judgments for issue #529. Existing ontology cohort and hashes remain unchanged.",
+  "cases": [
+    { "id": "split_paraphrases", "texts": ["Atlas stores data in PostgreSQL.", "PostgreSQL is Atlas's datastore."], "action": "keep_separate", "same_owner": false, "reject": false, "expected_slots": 2, "rollback_slots": 1 },
+    { "id": "group_duplicates", "texts": ["Atlas uses PostgreSQL.", "Atlas uses PostgreSQL."], "action": "group_together", "same_owner": true, "reject": false, "expected_slots": 1, "rollback_slots": 2 },
+    { "id": "reject_distinct_facts", "texts": ["Atlas uses PostgreSQL.", "Atlas uses MongoDB."], "action": "group_together", "same_owner": true, "reject": true, "expected_slots": 2, "rollback_slots": 2 }
+  ],
+  "acceptance": { "source_preservation": 1, "distinct_fact_preservation": 1, "false_consolidations": 0, "bad_at_k": 0, "manager_provider_calls": 0 }
+}
