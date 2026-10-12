@@ -3,6 +3,17 @@
   "runtime": "production",
   "scenarios": [
     {
+      "name": "python_client",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": [
+        "oauth",
+        "synchronous_write"
+      ],
+      "timeout_minutes": 60,
+      "playwright": false
+    },
+    {
       "name": "session_ingest",
       "isolation": "exclusive",
       "runtime": "production",

@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "densemem"
+version = "0.1.0rc1"
+description = "Typed async and sync clients for Dense-Mem MCP"
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = ["mcp>=1.30.0,<2", "httpx>=0.28.1,<1"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Repository = "https://github.com/markhuangai/dense-mem"
+Documentation = "https://github.com/markhuangai/dense-mem/wiki/Framework-Integrations"
+Issues = "https://github.com/markhuangai/dense-mem/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/densemem"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "examples", "scripts", "pyproject.toml", "requirements-dev.txt", "README.md", "LICENSE"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+strict = true
+files = ["src/densemem", "examples"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]

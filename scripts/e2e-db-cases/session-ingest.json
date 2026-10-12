@@ -45,6 +45,13 @@
       "source": "internal/knowledge/postgres/session_intake_integration_test.go"
     },
     {
+      "id": "repository/TestSessionProfilePrivateOwnerAliasesAndIsolation",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionProfilePrivateOwnerAliasesAndIsolation$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_intake_integration_test.go"
+    },
+    {
       "id": "repository/TestSessionLockSerializesConcurrentSameKeyIntake",
       "package": "./internal/knowledge/postgres",
       "run": "^TestSessionLockSerializesConcurrentSameKeyIntake$",

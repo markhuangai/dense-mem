@@ -175,7 +175,7 @@ test("repository CI aggregate rejects absent and non-successful mandatory jobs",
   const directory = await mkdtemp(join(tmpdir(), "dense-mem-ci-result-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const env = {
-    NPM_RESULT: "success", MIGRATIONS_RESULT: "success", QUALITY_RESULT: "success",
+    NPM_RESULT: "success", MIGRATIONS_RESULT: "success", QUALITY_RESULT: "success", PYTHON_RESULT: "success",
     GITHUB_OUTPUT: join(directory, "output"),
   };
   assert.equal(spawnSync("bash", ["-c", script], { env }).status, 0);
@@ -186,7 +186,7 @@ test("repository CI aggregate rejects absent and non-successful mandatory jobs",
   assert.equal(workflowValue(workflow, "value", {
     jobs: { result: { outputs: { passed: "true" } } },
   }), "true");
-  for (const name of ["NPM_RESULT", "MIGRATIONS_RESULT", "QUALITY_RESULT"]) {
+  for (const name of ["NPM_RESULT", "MIGRATIONS_RESULT", "QUALITY_RESULT", "PYTHON_RESULT"]) {
     for (const result of ["", "failure", "skipped", "cancelled", "pending"]) {
       const output = join(directory, `${name}-${result || "missing"}`);
       assert.notEqual(spawnSync("bash", ["-c", script], { env: { ...env, [name]: result, GITHUB_OUTPUT: output } }).status, 0);
@@ -336,7 +336,7 @@ test("approved owner and fork CI handoffs preserve the resolved source through e
     const inputs = Object.fromEntries(["source-repository", "source-revision", "migration-base-ref"]
       .map((name) => [name, workflowValue(caller, name, { needs })]));
     assert.deepEqual(inputs, { "source-repository": current.head.repo.full_name, "source-revision": head, "migration-base-ref": pull.base.sha });
-    for (const name of ["npm-audit", "postgres-migrations", "quality"]) {
+    for (const name of ["npm-audit", "postgres-migrations", "quality", "python"]) {
       const checkout = workflowJob(shared, name);
       const values = { inputs, github: { repository, sha: "e".repeat(40) } };
       assert.equal(workflowValue(checkout, "repository", values), current.head.repo.full_name);

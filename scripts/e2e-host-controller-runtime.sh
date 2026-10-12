@@ -51,6 +51,9 @@ run_scenario() {
   local tested_commit
   tested_commit="$(git -C "$source_dir" rev-parse HEAD 2>/dev/null || true)"
   validate_revision "$tested_commit"
+  local source_epoch
+  source_epoch="$(git -C "$source_dir" show -s --format=%ct HEAD)" || fail "source timestamp is unavailable"
+  [[ "$source_epoch" =~ ^[0-9]+$ ]] || fail "source timestamp is invalid"
   validate_registered_scenario "$source_dir" "$scenario" "$phase"
 
   local project
@@ -227,6 +230,7 @@ run_scenario() {
     -e "DENSE_MEM_E2E_RUNTIME=production"
     -e "DENSE_MEM_E2E_TELEMETRY_DISABLED=${DENSE_MEM_E2E_TELEMETRY_DISABLED:-0}"
     -e "DENSE_MEM_E2E_COMMIT_SHA=${tested_commit}"
+    -e "SOURCE_DATE_EPOCH=${source_epoch}"
     -e "DENSE_MEM_E2E_RUN_ID=${run_id}"
     -e "DENSE_MEM_E2E_RUN_ATTEMPT=${attempt}"
     -e "DENSE_MEM_E2E_RUN_PLAYWRIGHT=${DENSE_MEM_CI_RUN_PLAYWRIGHT:-0}"

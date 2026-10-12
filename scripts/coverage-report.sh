@@ -128,6 +128,7 @@ run_complete() {
 	local root_profile="${COVERAGE_DIR}/go-root-complete.raw"
 	local evaluation_profile="${COVERAGE_DIR}/go-evaluation-complete.raw"
 	local postgres_profile="${COVERAGE_DIR}/go-postgres-complete.raw"
+	local community_scale_profile="${COVERAGE_DIR}/go-community-scale-complete.raw"
 	local audit_profile="${COVERAGE_DIR}/go-audit-complete.raw"
 	local session_profile="${COVERAGE_DIR}/go-session-complete.raw"
 	local e2e_profile="${COVERAGE_DIR}/go-e2e-complete.raw"
@@ -155,7 +156,11 @@ run_complete() {
 	go test -tags evaluation "${evaluation_packages[@]}" -timeout=30m -covermode=atomic -coverpkg="${evaluation_coverpkg}" -coverprofile="${evaluation_profile}" -count=1
 	DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/ontology/postgres ./internal/community/postgres \
 		-run '^(TestOntologyMaintenance(Cohort|RegenerationFailureRetry|ProviderPauseDrain|AccountingFailurePreventsPublication|BudgetDeferralAndManualReuse|ControlInterruptionResumesSameWindow|PauseCommandsAndWindows|OperatorHTTPAndScheduler|CommandAuditIsAtomic)|TestOntologyAutomaticRetirementPreservesGroupingOverrides|TestOntologyCurrentReadersDistinguishDependencyAndSourceChanges|TestOntologyGroupingOverridesPreserveAssignmentFreshness|TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges|TestOntologyVocabularyUsesCurrentCandidateWindow|TestOntologyVocabularyWindowPreservesTeamIsolationAndNameReuse|TestOntologyFollowupCohort|TestOntologyMaintenanceBoundedCompletionUsesPersistedOutcomes|TestOntologyMaintenanceEarlierAmbiguityKeepsBoundedRunIncomplete|TestOntologyMaintenanceScheduledRecoveryClearsCurrentReason|TestOntologyMaintenanceCompletedRunDoesNotHideUnrelatedFailures|TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork|TestOntologyMixedSeparationOverrideProtectsEvidenceGroups|TestCommunityTopic.*)$' \
+		-skip '^TestCommunityTopicLargeFanoutResumesAndRotates$' \
 		-count=1 -timeout=15m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${postgres_profile}"
+	DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/community/postgres \
+		-run '^TestCommunityTopicLargeFanoutResumesAndRotates$' \
+		-count=1 -timeout=15m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${community_scale_profile}"
 	DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/service \
 		-run '^TestAudit' -count=1 -timeout=5m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${audit_profile}"
 	DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 go test -tags integration ./internal/knowledge/postgres \
@@ -163,7 +168,7 @@ run_complete() {
 	go -C cmd/e2e test ./... -covermode=atomic -coverprofile="${e2e_profile}" -count=1
 	merge_profiles "${root_dedup_profile}" "${root_profile}"
 	merge_profiles "${evaluation_dedup_profile}" "${evaluation_profile}"
-	merge_profiles "${postgres_dedup_profile}" "${postgres_profile}" "${audit_profile}" "${session_profile}"
+	merge_profiles "${postgres_dedup_profile}" "${postgres_profile}" "${community_scale_profile}" "${audit_profile}" "${session_profile}"
 	merge_profiles "${e2e_dedup_profile}" "${e2e_profile}"
 	merge_profiles "${merged_profile}" "${root_dedup_profile}" "${evaluation_dedup_profile}" "${postgres_dedup_profile}" "${e2e_dedup_profile}"
 	report_total "${root_dedup_profile}" "${root_report}" "${ROOT_DIR}"

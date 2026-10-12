@@ -67,7 +67,7 @@ const server = createServer(async (request, response) => {
     embeddingFaultCall = (embeddingCallsByFault.get(embeddingFaultKey) || 0) + 1;
     embeddingCallsByFault.set(embeddingFaultKey, embeddingFaultCall);
   }
-  if (routeFault === "timeout" || routeFault === "assessment-timeout" || routeFault === "embedding-timeout" || routeFault === "embedding-only-timeout" || (routeFault === "embedding-cancel" && embeddingFaultCall === 1)) {
+  if (routeFault === "timeout" || routeFault === "assessment-timeout" || routeFault === "embedding-timeout" || routeFault === "embedding-only-timeout" || (routeFault === "embedding-cancel" && embeddingFaultCall === 1) || (routeFault === "embedding-session-cancel" && embeddingFaultCall === 1)) {
     await new Promise((resolve) => setTimeout(resolve, timeoutDelayMs));
   }
   if (routeFault === "unavailable" || routeFault === "assessment-unavailable" || routeFault === "embedding-unavailable") {

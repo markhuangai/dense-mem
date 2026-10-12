@@ -60,3 +60,11 @@ prometheus.yml
 .codex/*
 .claude
 .mcp.json
+# Python package development and validation
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

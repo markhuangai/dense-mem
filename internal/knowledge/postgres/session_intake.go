@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/ownership"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 	"gorm.io/gorm"
 )
@@ -38,6 +39,9 @@ func (r *Store) WithSessionLock(ctx context.Context, scope session.Scope, req se
 }
 
 func sessionSpaceFence(ctx context.Context, tx *gorm.DB, scope session.Scope) error {
+	if err := ownership.RequireOwner(ctx, scope.OwnerProfileID); err != nil {
+		return session.ErrUnauthorized
+	}
 	for _, id := range []string{scope.TeamID, scope.OwnerProfileID, scope.SpaceID} {
 		parsed, err := uuid.Parse(id)
 		if err != nil || parsed == uuid.Nil {
@@ -51,13 +55,13 @@ func sessionSpaceFence(ctx context.Context, tx *gorm.DB, scope session.Scope) er
 		return err
 	}
 	var spaceID string
+	// Canonical space owners and permanent semantic owner aliases are different identities.
 	err := tx.WithContext(ctx).Raw(`
 		SELECT id::text FROM memory_spaces
 		WHERE team_id = ?::uuid AND id = ?::uuid AND generation = ?
 		  AND lifecycle_state = 'active' AND kind IN ('profile_private', 'credential_private')
 		  AND dense_mem_space_allowed(id)
-		  AND (kind <> 'profile_private' OR owner_profile_id = ?::uuid)
-	`, scope.TeamID, scope.SpaceID, scope.SpaceGeneration, scope.OwnerProfileID).Row().Scan(&spaceID)
+	`, scope.TeamID, scope.SpaceID, scope.SpaceGeneration).Row().Scan(&spaceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return session.ErrStale
 	}

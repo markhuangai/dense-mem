@@ -143,12 +143,13 @@ test("complete Go coverage deduplicates profiles and rejects exact thresholds", 
   const complete = runCoverage(fakeGo, completeDir, "--complete");
   assert.equal(complete.status, 1, complete.stderr);
   const merged = readFixture(join(completeDir, "go-complete.out"));
-  assert.equal((merged.match(/^example\//gmu) || []).length, 6);
+  assert.equal((merged.match(/^example\//gmu) || []).length, 7);
   assert.match(merged, /example\/evaluation\.go/);
   assert.match(merged, /example\/audit\.go:1\.1,1\.2 1 1/);
   assert.match(merged, /example\/root\.go:2\.1,2\.2 1 1/);
   assert.match(readFixture(join(completeDir, "go-postgres-complete.out")), /example\/audit\.go:1\.1,1\.2 1 1/);
-  assert.match(readFixture(join(completeDir, "go-complete.txt")), /complete total: 5\/6 83\.3%/);
+  assert.match(readFixture(join(completeDir, "go-postgres-complete.out")), /example\/community-scale\.go:1\.1,1\.2 1 1/);
+  assert.match(readFixture(join(completeDir, "go-complete.txt")), /complete total: 6\/7 85\.7%/);
 
   const missing = runCoverage(fakeGo, join(fixture, "missing"), "--complete", { FAKE_SKIP_EVALUATION: "1" });
   assert.notEqual(missing.status, 0);
@@ -166,6 +167,11 @@ test("complete Go coverage deduplicates profiles and rejects exact thresholds", 
     const missingSession = runCoverage(fakeGo, join(fixture, flag), "--complete", { [flag]: "1" });
     assert.notEqual(missingSession.status, 0);
     assert.match(missingSession.stderr, /coverage profile is missing or empty: .*go-session-complete\.raw/);
+  }
+  for (const flag of ["FAKE_SKIP_COMMUNITY_SCALE", "FAKE_EMPTY_COMMUNITY_SCALE"]) {
+    const missingScale = runCoverage(fakeGo, join(fixture, flag), "--complete", { [flag]: "1" });
+    assert.notEqual(missingScale.status, 0);
+    assert.match(missingScale.stderr, /coverage profile is missing or empty: .*go-community-scale-complete\.raw/);
   }
 
   const exact = runCoverage(fakeGo, join(fixture, "exact"), "--transitional", { FAKE_COVERAGE_TOTAL: "90.0" });
@@ -249,6 +255,10 @@ function fakeGoScript() {
     "  [[ \"${DENSE_MEM_REPOSITORY_TESTCONTAINERS:-}\" == \"1\" ]] || exit 1",
     "  if [[ \"${FAKE_SKIP_POSTGRES:-}\" == \"1\" ]]; then exit 0; fi",
     "fi",
+    "if [[ \"${profile}\" == *go-community-scale-complete.raw ]]; then",
+    "  [[ \"${DENSE_MEM_REPOSITORY_TESTCONTAINERS:-}\" == \"1\" ]] || exit 1",
+    "  if [[ \"${FAKE_SKIP_COMMUNITY_SCALE:-}\" == \"1\" ]]; then exit 0; fi",
+    "fi",
     "if [[ \"${profile}\" == *go-audit-complete.raw ]]; then",
     "  [[ \"${DENSE_MEM_REPOSITORY_TESTCONTAINERS:-}\" == \"1\" ]] || exit 1",
     "  if [[ \"${FAKE_SKIP_AUDIT:-}\" == \"1\" ]]; then exit 0; fi",
@@ -284,6 +294,11 @@ function fakeGoScript() {
     "      if [[ \"${FAKE_EMPTY_AUDIT:-}\" != \"1\" ]]; then",
     "        printf 'example/audit.go:1.1,1.2 1 1\\n'",
     "        printf 'example/root.go:2.1,2.2 1 0\\n'",
+    "      fi",
+    "      ;;",
+    "    *go-community-scale-complete.raw)",
+    "      if [[ \"${FAKE_EMPTY_COMMUNITY_SCALE:-}\" != \"1\" ]]; then",
+    "        printf 'example/community-scale.go:1.1,1.2 1 1\\n'",
     "      fi",
     "      ;;",
     "    *go-session-complete.raw)",

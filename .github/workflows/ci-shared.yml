@@ -233,9 +233,33 @@ jobs:
       - name: Run unit coverage gate
         run: scripts/coverage-report.sh --complete
 
+  python:
+    name: Python ${{ matrix.python }} (${{ matrix.sdk }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13', '3.14']
+        sdk: [latest]
+        include:
+          - python: '3.12'
+            sdk: minimum
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          repository: ${{ inputs.source-repository || github.repository }}
+          ref: ${{ inputs.source-revision }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Validate installed Python package
+        run: bash packages/python/scripts/check.sh --sdk '${{ matrix.sdk }}'
+
   result:
     name: Aggregate repository CI
-    needs: [npm-audit, postgres-migrations, quality]
+    needs: [npm-audit, postgres-migrations, quality, python]
     if: always()
     runs-on: ubuntu-latest
     permissions: {}
@@ -248,10 +272,12 @@ jobs:
           NPM_RESULT: ${{ needs.npm-audit.result }}
           MIGRATIONS_RESULT: ${{ needs.postgres-migrations.result }}
           QUALITY_RESULT: ${{ needs.quality.result }}
+          PYTHON_RESULT: ${{ needs.python.result }}
         shell: bash
         run: |
           set -euo pipefail
           test "${NPM_RESULT}" = success
           test "${MIGRATIONS_RESULT}" = success
           test "${QUALITY_RESULT}" = success
+          test "${PYTHON_RESULT}" = success
           echo 'passed=true' >> "${GITHUB_OUTPUT}"
