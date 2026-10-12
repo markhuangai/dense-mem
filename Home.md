@@ -21,8 +21,8 @@ Hypotheses remain readable. Exact schemas and examples are in
 
 ## Python Integration
 
-The Python core client is being prepared for release. Its companion branch
-documents verified-wheel installation, authenticated operations and safe retries
+The Python core client is merged. This wiki documents verified-wheel
+installation, authenticated operations and safe retries
 in [Framework Integrations](Framework-Integrations). ADK/LangChain extras and PyPI
 publication remain pending.
 

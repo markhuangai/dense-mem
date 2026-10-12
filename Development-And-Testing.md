@@ -220,6 +220,8 @@ evaluation gate.
 The manual publish-python workflow builds and verifies a tagged version already
 merged into main, generates an SBOM and provenance, and publishes through a
 verified OIDC PyPI trusted publisher. Ownership/publisher setup, tags and actual
-publication remain separate maintainer steps. This delivery produces a reviewed
-code PR and companion wiki branch; live wiki publication, merged-main validation
-and issue closure remain pending. See [Framework Integrations](Framework-Integrations).
+publication remain separate maintainer steps. The client code is merged through
+[PR #563](https://github.com/markhuangai/dense-mem/pull/563), and the matching wiki
+documentation is published. Keep #219 open until PyPI publication and
+`python_client` validation against the exact merged-main SHA are complete.
+See [Framework Integrations](Framework-Integrations).

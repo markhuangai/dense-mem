@@ -1,8 +1,9 @@
 # Framework Integrations
 
 The Dense-Mem Python core client uses the official MCP SDK. It supports Python
-3.11–3.14 and MCP SDK 1.30 through the compatible 1.x line. This package is being
-prepared for release; PyPI publication is pending. Install a verified wheel:
+3.11–3.14 and MCP SDK 1.30 through the compatible 1.x line. The client code is
+merged through [PR #563](https://github.com/markhuangai/dense-mem/pull/563);
+PyPI publication is pending. Install a verified wheel:
 
 ~~~bash
 python -m pip install /path/to/densemem-0.1.0rc1-py3-none-any.whl
