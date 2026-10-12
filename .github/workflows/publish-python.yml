@@ -2,6 +2,9 @@ name: Publish Python package
 
 on:
   workflow_call:
+    outputs:
+      should_publish:
+        value: ${{ jobs.build.outputs.should_publish }}
     inputs:
       tag:
         required: true
@@ -95,9 +98,11 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish through PyPI trusted publisher
+    name: Publish manually through PyPI trusted publisher
     needs: build
-    if: needs.build.outputs.should_publish == 'true'
+    if: >-
+      github.workflow_ref == format('{0}/.github/workflows/publish-python.yml@refs/heads/main', github.repository) &&
+      needs.build.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

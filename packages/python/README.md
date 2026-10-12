@@ -138,8 +138,11 @@ version matrix, and scripts/e2e.sh python_client for real server boundaries.
 The example scripts require DENSEMEM_ENDPOINT, DENSEMEM_TOKEN and a retained
 DENSEMEM_OPERATION_KEY. Keep the exact request unchanged when rerunning them.
 
-The server prerelease and stable-release workflows call publish-python after their
-release gates pass. Only tags whose exact source belongs to merged main are eligible;
+The server prerelease and stable-release workflows call publish-python to build
+and verify artifacts after their release gates pass, then upload through their own
+top-level publishing jobs. Manual recovery uploads directly from publish-python;
+the reusable invocation never uploads to PyPI. Only tags whose exact source belongs
+to merged main are eligible;
 PR branches cannot publish. Python shares the server release version: v2.6.6-rc.10
 becomes 2.6.6rc10 and v2.6.6 becomes 2.6.6. The checkout's 0.0.0 version is for local
 development; release builds stamp the selected tag's version and exact Source URL
@@ -154,7 +157,9 @@ tag for recovery. Never overwrite an existing version or silently accept differe
 bytes; a broken prerelease may be yanked through a separate maintainer action.
 
 Before the first publication, verify control of the densemem PyPI name and configure
-the trusted publisher for markhuangai/dense-mem, workflow publish-python.yml and
-environment pypi. This repository does not register publishers or change account
-settings. Release builds retain the installed-wheel/version matrix, reproducibility,
+three trusted publishers for markhuangai/dense-mem, workflows release-rc.yml,
+release.yml and publish-python.yml, each with environment pypi. PyPI does not support
+reusable workflows as trusted publishers. This repository does not register
+publishers or change account settings. Release builds retain the
+installed-wheel/version matrix, reproducibility,
 vulnerability scan, SBOM and provenance gates.
