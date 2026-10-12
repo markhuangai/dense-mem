@@ -334,11 +334,20 @@
     },
     "compose-assessment-provider-1": {
       "command": [
-        "python3",
-        "tmp/issue-530-workflow-m0wxwqu_/run-compose-assessment-local.py"
+        "go",
+        "test",
+        "-tags=integration",
+        "./cmd/internal/serverapp",
+        "-run",
+        "^TestComposeSynchronousUnsupportedProposalPreservesSafeEvidence$",
+        "-count=1",
+        "-timeout=2m",
+        "-json"
       ],
       "seconds": 2.82,
-      "receipt_sha256": "sha256:aec29acc770ef5ad939807015ce7a068deaeb2325ae2db5d1572f9256e34fdb9"
+      "receipt_sha256": "sha256:aec29acc770ef5ad939807015ce7a068deaeb2325ae2db5d1572f9256e34fdb9",
+      "provider_fixture": "tests/uat/synchronous_write/provider-fixture.mjs",
+      "provider_configuration": "DENSE_MEM_E2E_PRIMITIVES_PROVIDER_URL points to the temporary registered fixture."
     },
     "recall-latency-1": {
       "command": [
