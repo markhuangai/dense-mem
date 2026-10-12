@@ -12,10 +12,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
+	processor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
+	"github.com/markhuangai/dense-mem/internal/session/extraction"
 	sessionservice "github.com/markhuangai/dense-mem/internal/session/service"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/require"
@@ -161,6 +165,118 @@ func TestSessionPrivateRLSAndGenerationFence(t *testing.T) {
 			}))
 			require.ErrorIs(t, store.SaveSessionExtraction(ctxA, intakeA.Scope, first.ID, 0, json.RawMessage(`{}`)), session.ErrStale)
 		})
+	}
+}
+
+func TestSessionProfilePrivateOwnerAliasesAndIsolation(t *testing.T) {
+	admin, app, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	team := createLedgerTeam(t, admin, rls, "session-profile-aliases")
+	foreignTeam := createLedgerTeam(t, admin, rls, "session-profile-aliases-foreign")
+	spaces := privacypostgres.NewMemorySpaceRepository(app, rls)
+	type actorScope struct {
+		ctx      context.Context
+		scope    session.Scope
+		identity uuid.UUID
+	}
+	newOAuth := func(team string, preserved bool) actorScope {
+		identity := createLedgerSSOIdentity(t, admin, rls, uuid.MustParse(team))
+		var membership uuid.UUID
+		require.NoError(t, rls.WithSystemTx(context.Background(), admin, func(tx *gorm.DB) error {
+			return tx.Raw(`SELECT id FROM team_memberships WHERE team_id = ?::uuid AND actor_identity_id = ?`, team, identity).Row().Scan(&membership)
+		}))
+		owner := membership
+		if preserved {
+			owner = uuid.New()
+			require.NotEqual(t, membership, owner)
+		}
+		require.NotEqual(t, identity, owner)
+		require.NoError(t, rls.WithSystemTx(context.Background(), admin, func(tx *gorm.DB) error {
+			return tx.Exec(`INSERT INTO ownership_aliases (team_id, legacy_owner_id, canonical_identity_id, reason)
+				VALUES (?::uuid, ?, ?, 'session-alias-regression')`, team, owner, identity).Error
+		}))
+		space, err := spaces.EnsureProfilePrivate(context.Background(), uuid.MustParse(team), identity)
+		require.NoError(t, err)
+		generation := privateSpaceGeneration(t, context.Background(), admin, rls, space.ID)
+		ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
+			TeamID: uuid.MustParse(team), IdentityID: identity, MembershipID: membership, OwnerID: owner,
+			AuthMethod: "oauth", Grants: []string{"read", "write"},
+			AllowedSpaces: []domain.MemorySpaceAccess{{ID: space.ID, Kind: space.Kind, Generation: generation}},
+		})
+		scope, err := sessionservice.PrivateScope(ctx)
+		require.NoError(t, err)
+		require.Equal(t, owner.String(), scope.OwnerProfileID)
+		return actorScope{ctx: ctx, scope: scope, identity: identity}
+	}
+	a, b, c := newOAuth(team, false), newOAuth(team, true), newOAuth(foreignTeam, true)
+	key := createOwnedCredential(t, accesspostgres.NewCredentialRepository(app, rls, nil), uuid.MustParse(team), a.identity, "profile-session-key", domain.CredentialBindingProfilePrivate)
+	require.NotEqual(t, a.identity, key.OwnerID)
+	keyCtx := requestctx.WithActor(context.Background(), requestctx.Actor{
+		TeamID: key.TeamID, IdentityID: key.ActorIdentityID, MembershipID: key.MembershipID, OwnerID: key.OwnerID,
+		CredentialID: &key.ID, AuthMethod: "api_key", Grants: key.Scopes,
+		AllowedSpaces: []domain.MemorySpaceAccess{{ID: key.MemorySpaceID, Kind: domain.MemorySpaceProfilePrivate, Generation: key.MemorySpaceGeneration}},
+	})
+	keyScope, err := sessionservice.PrivateScope(keyCtx)
+	require.NoError(t, err)
+	require.Equal(t, a.scope.SpaceID, keyScope.SpaceID)
+	require.NotEqual(t, a.scope.OwnerProfileID, keyScope.OwnerProfileID)
+	store := NewStore(app, rls, ConflictRuntimeConfig{})
+	api := sessionservice.NewService(sessionservice.Dependencies{
+		Enabled: true, Repository: store, Tokenizer: "o200k_base",
+		Preparer:  processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store}),
+		Extractor: extraction.NewProvider(&sessionOutbound{}, "fixture", assessor.DefaultSemanticAssessmentLimits()),
+	})
+	req := session.Request{IdempotencyKey: "alias-replay", Framework: "generic", AppName: "notes", UserID: "same-external-user", SessionID: "same-session", Events: []session.Event{{EventID: "one", Text: "Thanks. Let's continue."}}}
+	ids := map[string]bool{}
+	keys := map[string]string{}
+	for _, actor := range []actorScope{a, b, c, {ctx: keyCtx, scope: keyScope}} {
+		actorRequest := req
+		actorRequest.IdempotencyKey = uuid.NewString()
+		actorRequest.SessionID = uuid.NewString()
+		keys[actor.scope.OwnerProfileID] = actorRequest.IdempotencyKey
+		result, err := api.Ingest(actor.ctx, actorRequest)
+		require.NoError(t, err)
+		require.Equal(t, "completed", result.ProcessingState)
+		require.False(t, ids[result.SubmissionID])
+		ids[result.SubmissionID] = true
+		replay, err := api.Ingest(actor.ctx, actorRequest)
+		require.NoError(t, err)
+		expectedReceipt, err := json.Marshal(result)
+		require.NoError(t, err)
+		replayedReceipt, err := json.Marshal(replay)
+		require.NoError(t, err)
+		require.Equal(t, string(expectedReceipt), string(replayedReceipt))
+		var owner string
+		require.NoError(t, rls.WithSystemTx(context.Background(), admin, func(tx *gorm.DB) error {
+			return tx.Raw(`SELECT owner_profile_id::text FROM session_submissions WHERE submission_id = ?::uuid`, result.SubmissionID).Row().Scan(&owner)
+		}))
+		require.Equal(t, actor.scope.OwnerProfileID, owner)
+	}
+	_, err = store.LookupSession(keyCtx, a.scope, keys[a.scope.OwnerProfileID])
+	require.ErrorIs(t, err, session.ErrUnauthorized)
+	_, err = store.LookupSession(a.ctx, keyScope, keys[keyScope.OwnerProfileID])
+	require.ErrorIs(t, err, session.ErrUnauthorized)
+	for _, foreign := range []actorScope{b, c} {
+		forged := foreign.scope
+		forged.SpaceID, forged.SpaceGeneration = a.scope.SpaceID, a.scope.SpaceGeneration
+		_, err = store.LookupSession(foreign.ctx, forged, keys[a.scope.OwnerProfileID])
+		require.ErrorIs(t, err, session.ErrStale)
+	}
+	actor, ok := requestctx.ActorFromContext(a.ctx)
+	require.True(t, ok)
+	actor.Grants = []string{"read"}
+	_, err = api.Ingest(requestctx.WithActor(context.Background(), actor), req)
+	require.ErrorIs(t, err, session.ErrUnauthorized)
+	actor.Grants = []string{"read", "write"}
+	actor.AllowedSpaces[0].Kind = domain.MemorySpaceTeamShared
+	_, err = api.Ingest(requestctx.WithActor(context.Background(), actor), req)
+	require.ErrorIs(t, err, session.ErrUnauthorized)
+	require.NoError(t, rls.WithSystemTx(context.Background(), admin, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE memory_spaces SET generation = generation + 1 WHERE id = ?::uuid`, a.scope.SpaceID).Error
+	}))
+	for _, actor := range []actorScope{a, {ctx: keyCtx, scope: keyScope}} {
+		_, err = store.LookupSession(actor.ctx, actor.scope, keys[actor.scope.OwnerProfileID])
+		require.ErrorIs(t, err, session.ErrStale)
 	}
 }
 

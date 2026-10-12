@@ -1,0 +1,72 @@
+name: Publish Python package
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing python-vVERSION tag identifying current merged main"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Verify Python release artifacts
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Verify selected version and merged source
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          python packages/python/scripts/release.py --tag "$RELEASE_TAG" \
+            --workflow-ref "$GITHUB_REF" --receipt "$RUNNER_TEMP/python-source.json"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Check Python version and SDK matrix
+        run: bash packages/python/scripts/matrix.sh "$RUNNER_TEMP/python-matrix"
+      - name: Build reproducible release artifacts and SBOM
+        run: |
+          bash packages/python/scripts/check.sh --output "$RUNNER_TEMP/python-release"
+          cp "$RUNNER_TEMP/python-source.json" "$RUNNER_TEMP/python-release/source.json"
+      - name: Attest distributions
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: ${{ runner.temp }}/python-release/dist/*
+      - name: Upload verified release package
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-release
+          path: ${{ runner.temp }}/python-release
+          if-no-files-found: error
+
+  publish:
+    name: Publish through PyPI trusted publisher
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-release
+          path: release
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
+        with:
+          packages-dir: release/dist

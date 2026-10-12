@@ -398,6 +398,15 @@ durable staging -> validated terminal commit -> active eligible Relationships
                          support-gated evidence recall and trace lineage
 ```
 
+## Python Core Client
+
+The official Python core package is under [packages/python](packages/python).
+It uses the official MCP SDK 1.x, supports Python 3.11–3.14, and provides typed
+async and sync methods with static or caller-managed token-provider authentication.
+Install a verified wheel; PyPI publication and framework adapters are pending.
+Complete requests, terminal-result handling and unchanged-request replay examples
+are in the package README.
+
 ## MCP Tool Catalog
 
 Discover the current closed-schema catalog with MCP `tools/list`; callers do

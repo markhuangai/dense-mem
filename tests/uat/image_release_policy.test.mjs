@@ -185,7 +185,7 @@ test("shared CI partitions slow gates into independent hosted jobs", async () =>
     readFile(new URL("../../.github/workflows/ci-push.yml", import.meta.url), "utf8"),
   ]);
   const jobIds = [...shared.matchAll(/^  ([a-z0-9-]+):$/gm)].map(([, id]) => id);
-  assert.deepEqual(jobIds, ["npm-audit", "postgres-migrations", "quality", "result"]);
+  assert.deepEqual(jobIds, ["npm-audit", "postgres-migrations", "quality", "python", "result"]);
   const audit = workflowJob(shared, "npm-audit");
   const migrations = workflowJob(shared, "postgres-migrations");
   const quality = workflowJob(shared, "quality");
