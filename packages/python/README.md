@@ -156,9 +156,11 @@ uploading missing files. The manual publish-python workflow accepts the same sha
 tag for recovery. Never overwrite an existing version or silently accept different
 bytes; a broken prerelease may be yanked through a separate maintainer action.
 
-Before the first publication, verify control of the densemem PyPI name and configure
-three trusted publishers for markhuangai/dense-mem, workflows release-rc.yml,
-release.yml and publish-python.yml, each with environment pypi. PyPI does not support
+Verify control of the densemem PyPI name and register trusted publishers for
+markhuangai/dense-mem, workflows release-rc.yml, release.yml and publish-python.yml,
+each with environment pypi. For a new project, configure one pending publisher for
+the first publishing workflow; after it creates the project, register the other
+two as normal project publishers before using those paths. PyPI does not support
 reusable workflows as trusted publishers. This repository does not register
 publishers or change account settings. Release builds retain the
 installed-wheel/version matrix, reproducibility,

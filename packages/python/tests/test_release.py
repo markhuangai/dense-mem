@@ -181,9 +181,19 @@ def test_existing_version_and_partial_upload_require_identical_artifact_bytes(
         release.verify_artifacts(receipt, dist, complete=True)
     registry(monkeypatch, {"2.6.6rc10": published("2.6.6rc10", source, files)})
     release.verify_artifacts(receipt, dist, complete=True)
+    for name in release.artifact_names("2.6.6rc10"):
+        (dist / (name + ".publish.attestation")).write_text("{}")
+    with pytest.raises(ValueError, match="selected wheel and sdist"):
+        release.verify_artifacts(receipt, dist)
+    release.verify_artifacts(receipt, dist, complete=True)
+    unexpected = dist / "unexpected.whl.publish.attestation"
+    unexpected.write_text("{}")
+    with pytest.raises(ValueError, match="selected wheel and sdist"):
+        release.verify_artifacts(receipt, dist, complete=True)
+    unexpected.unlink()
     (dist / files[0]["filename"]).write_bytes(b"different artifact")
     with pytest.raises(ValueError, match="differs"):
-        release.verify_artifacts(receipt, dist)
+        release.verify_artifacts(receipt, dist, complete=True)
 
 
 def test_reject_published_source_outside_main(repository, monkeypatch):

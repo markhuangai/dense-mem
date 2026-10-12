@@ -139,7 +139,10 @@ def stamp_version(path: Path, version: str, source: str) -> None:
 
 def verify_artifacts(receipt: dict, dist: Path, complete: bool = False) -> None:
     names = artifact_names(receipt["version"])
-    if {path.name for path in dist.iterdir()} != names:
+    local_names = {path.name for path in dist.iterdir()}
+    if complete:
+        local_names -= {name + ".publish.attestation" for name in names}
+    if local_names != names:
         raise ValueError("release must contain exactly the selected wheel and sdist")
     data = fetch_json(f"{PYPI_URL}/{receipt['version']}/json")
     files = data["urls"] if data is not None else []
