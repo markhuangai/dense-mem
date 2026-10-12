@@ -31,6 +31,14 @@ Use an API key for static client configuration. Use OAuth only when the client
 supports protected-resource discovery and can obtain an access token from the
 configured authorization server.
 
+## Official Python Core Client
+
+The densemem wheel provides async DenseMemClient and SyncDenseMemClient on the
+official Python MCP SDK 1.x. Package publication is pending. Install a verified
+wheel and follow [Framework Integrations](Framework-Integrations) for complete
+requests, static/token-provider auth, terminal results and unchanged-request replay.
+ADK/LangChain extras are deferred.
+
 ## OAuth Protected-Resource Discovery
 
 OAuth-aware clients discover the resource contract at one of:
@@ -107,7 +115,7 @@ closed schema; callers do not select a contract version.
 
 Verify that the catalog matches the credential's scopes and effective feature
 policy. Remember requires exact evidence and one top-level idempotency key;
-Relationship proposals are optional and each supplied proposal cites
+Relationship proposals are required, every evidence item must be cited, and each proposal cites
 `evidence_indices`.
 
 The call returns a terminal completed or failed result. Recall returns evidence

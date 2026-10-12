@@ -190,3 +190,36 @@ Generators, source locks, scoring and compact evidence belong in Git. Generated 
 Use the maintainer-maintained CI environment's verifier/Remember model and provider configuration for local evaluation. Record the configured alias and runtime source; substitute another model only with explicit maintainer direction. Gateway backend routing belongs to the gateway. Failed attempts and isolated diagnostics earn no credit toward the three complete quality repetitions, and historical passing metrics certify only their recorded source and configuration.
 
 These wiki changes are published. Keep #218 open until code is merged and `session_ingest` passes against the exact merged-main SHA.
+
+
+## Python Core Client Verification
+
+Issue #219 owns the densemem core distribution. Python 3.11–3.14 and official MCP
+SDK >=1.30,<2 are supported; framework extras belong to later adapter tickets.
+Run packages/python/scripts/check.sh for Ruff, mypy, pytest/async transport tests,
+clean wheel installation, sdist rebuild, reproducibility, vulnerability scan and
+SBOM. Run packages/python/scripts/matrix.sh with a new output directory for the
+version matrix. Keep generated artifacts ignored.
+
+Run scripts/e2e.sh python_client against the exact source under test. The
+exclusive production scenario installs the wheel outside the checkout and uses
+real PostgreSQL/pgvector, Redis, signed OAuth and static/private credentials.
+Existing synchronous-write fixtures isolate outbound provider behavior only.
+Positive/adverse cases cover discovery, Remember partial acceptance, atomic
+session intake, recall/trace provenance, A/B/C isolation, complete-request replay
+and conflicts, failed receipts, timeout/cancellation, redaction and fidelity.
+Also run session_ingest, mcp_transport_cancellation and mcp_oauth, focused
+MCP/registry/harness tests and ./scripts/ci-check.sh.
+
+Require conformant independent plan audit before implementation tests and
+current-head full PR CI/production E2E after reviews_clean. No remote development
+substitution or new deterministic evaluation waiver is approved. Changes to
+semantic content, ranking or server performance return to the applicable
+evaluation gate.
+
+The manual publish-python workflow builds and verifies a tagged version already
+merged into main, generates an SBOM and provenance, and publishes through a
+verified OIDC PyPI trusted publisher. Ownership/publisher setup, tags and actual
+publication remain separate maintainer steps. This delivery produces a reviewed
+code PR and companion wiki branch; live wiki publication, merged-main validation
+and issue closure remain pending. See [Framework Integrations](Framework-Integrations).

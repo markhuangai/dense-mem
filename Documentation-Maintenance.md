@@ -42,6 +42,7 @@ git log -1 --format='%cI %s'
 | recall branches, eligibility, frontier, trace escalation, and degradation | [Recall Ranking](Recall-Ranking) |
 | embedding and distance meaning, candidate fusion, RRF, and post-fusion reranking | [Vector Search And Ranking](Vector-Search-And-Ranking) |
 | exact/ANN execution, HNSW, halfvec, vector index lifecycle/load, and vector-search topology | [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
+| Python core authentication, typed results, installation and safe replay | [Framework Integrations](Framework-Integrations) |
 | current MCP contract, examples, and schema discovery | [Technical Reference](Technical-Reference) |
 | authentication, tenant identity, scopes, MCP discovery/execution, and portal boundaries | [Request Lifecycle And Security](Request-Lifecycle-And-Security) |
 | durable team Conflict cases, recall disposition, and evidence-backed correction | [Conflicts And Corrections](Conflicts-And-Corrections) |

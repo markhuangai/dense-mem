@@ -8,16 +8,23 @@ a second valid architecture.
 
 ## Current Memory Contract
 
-The current contract is `dense-mem.v2.6.3`. `remember` accepts exact evidence
-and optional Relationship proposals, validates the complete batch, and returns
+The current source contract is `dense-mem.v2.6.8`. `remember` accepts exact evidence
+and required client Relationship proposals, validates the complete batch, and returns
 a terminal result. Safe evidence can be stored without an accepted
 Relationship. Default recall still requires an eligible Relationship support
 path.
 
 The private control portal provides operation logs and Remember/Dream
-diagnostics. Graph and evidence-discovery Dream lanes produce isolated
-Hypotheses. Exact schemas and examples are in
+diagnostics. Graph Dream generation produces isolated Hypotheses; historical evidence-discovery
+Hypotheses remain readable. Exact schemas and examples are in
 [Technical Reference](Technical-Reference).
+
+## Python Integration
+
+The Python core client is being prepared for release. Its companion branch
+documents verified-wheel installation, authenticated operations and safe retries
+in [Framework Integrations](Framework-Integrations). ADK/LangChain extras and PyPI
+publication remain pending.
 
 ## What Dense-Mem Remembers
 
@@ -44,7 +51,7 @@ sequenceDiagram
   participant DM as Dense-Mem
   participant PG as PostgreSQL and pgvector
   User->>Host: Share exact evidence
-  Host->>DM: remember with optional proposals and a retry key
+  Host->>DM: remember with required proposals and a retry key
   DM->>DM: Validate, resolve duplicates, and assess
   alt Accepted
     DM->>DM: Embed required documents

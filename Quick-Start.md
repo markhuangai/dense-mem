@@ -77,7 +77,15 @@ available privately and allow the server's bounded synchronous writes to finish.
 
 The authenticated `tools/list` schema is authoritative. Remember requires
 exact evidence and a retained top-level idempotency key. Relationship proposals
-are optional; tools can be hidden by scopes or feature settings.
+are required and must cite every evidence item; tools can be hidden by scopes or feature settings.
+
+## Python Wheel Option
+
+Install the verified densemem wheel; PyPI publication is pending. Use
+DenseMemClient(endpoint, token=api_key), or provide a caller-owned async token
+provider. Call list_tools to discover the authenticated schemas.
+[Framework Integrations](Framework-Integrations) contains complete Remember and
+private-session requests, result handling and safe replay examples.
 
 ## 5. Remember, Recall, And Trace
 
