@@ -71,7 +71,7 @@ export function OntologyPanel({ api, session }: { api: UserApi; session: UserSes
   }
 
   function add(edit: OntologyEdit) { setEdits((current) => [...current, edit]); setDirty(true); setPreview(null); setMessage("Correction added. Save the draft to validate it."); }
-  function startDraft() { setDraft(null); setEdits([]); setReason(""); setDirty(false); setPreview(null); setTarget(null); setSelected([]); setMessage(""); }
+  function startDraft() { operationKeys.current.clear(); setDraft(null); setEdits([]); setReason(""); setDirty(false); setPreview(null); setTarget(null); setSelected([]); setMessage(""); }
 
   async function openDraft(id: string) {
     const next = await api.ontologyDraft(id); setDraft(next); setEdits(next.edits); setReason(next.reason); setDirty(false); setPreview(null); setTarget(null); setSelected([]);

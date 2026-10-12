@@ -85,6 +85,36 @@ describe("OntologyPanel", () => {
     expect(JSON.parse(call![1]!.body as string)).toMatchObject({ expected_version: 0, expected_revision: 1, edits: [edit] });
   });
 
+  it("keeps creation keys for an ambiguous retry and renews them for a new draft intent", async () => {
+    let attempts = 0;
+    const fetcher = install([], () => ++attempts === 1
+      ? new Response(JSON.stringify({ message: "temporary failure" }), { status: 503 })
+      : new Response(JSON.stringify({ data: draft }), { status: 200 }));
+    render(<OntologyPanel api={new UserApi("key")} session={session} />);
+    await screen.findByRole("heading", { name: "New correction draft" });
+    const fillDraft = () => {
+      for (const [label, value] of [["Definition key", "storage"], ["Definition label", "Storage"], ["Definition description", "Durable storage"], ["Audit reason", "Identical new intent"]]) {
+        fireEvent.change(screen.getByLabelText(label), { target: { value } });
+      }
+      fireEvent.click(screen.getByRole("button", { name: "Add correction to draft" }));
+    };
+    fillDraft();
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Draft saved. Preview its impact before publishing.");
+    fireEvent.click(screen.getByRole("button", { name: "New draft" }));
+    fillDraft();
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Draft saved. Preview its impact before publishing.");
+    const writes = fetcher.mock.calls.filter(([, options]) => options?.method === "POST");
+    expect(writes).toHaveLength(3);
+    const [initial, retry, next] = writes.map(([, options]) => JSON.parse(options!.body as string));
+    expect(retry).toEqual(initial);
+    expect({ ...next, operation_key: initial.operation_key }).toEqual(initial);
+    expect(next.operation_key).not.toBe(initial.operation_key);
+  });
+
   it("identifies distinct classification targets and correction members in catalog and history", async () => {
 	const response = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200 });
 	const records = [

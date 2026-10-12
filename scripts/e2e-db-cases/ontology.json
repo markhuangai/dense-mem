@@ -562,6 +562,14 @@
       "scenario": "ontology_management"
     },
     {
+      "id": "repository/TestOntologyManagementRetiredGroupSplitsIntoDistinctRecords",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyManagementRetiredGroupSplitsIntoDistinctRecords$",
+      "phase": "scenario",
+      "source": "internal/ontology/postgres/management_regressions_integration_test.go",
+      "scenario": "ontology_management"
+    },
+    {
       "id": "repository/TestOntologyManagementPredicateLookupBeyondFirstPage",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyManagementPredicateLookupBeyondFirstPage$",

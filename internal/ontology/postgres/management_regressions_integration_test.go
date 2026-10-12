@@ -5,11 +5,14 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/stretchr/testify/require"
@@ -53,6 +56,65 @@ func TestOntologyManagementPredicateLookupBeyondFirstPage(t *testing.T) {
 	denied, err := manager.Sources(foreign.actor(0, "manager"), ontology.PredicateSource, "", last.ID, 50)
 	require.NoError(t, err)
 	require.Empty(t, denied.Sources)
+	require.Equal(t, before, f.canonicalSnapshot(t))
+}
+
+func TestOntologyManagementRetiredGroupSplitsIntoDistinctRecords(t *testing.T) {
+	f := newOrganizationFixture(t)
+	handles := []ontology.SourceHandle{}
+	for index := range 6 {
+		handles = append(handles, f.organizationEvidence(t, 0, fmt.Sprintf("Atlas uses PostgreSQL. Occurrence %d.", index), nil))
+	}
+	slices.SortFunc(handles, func(a, b ontology.SourceHandle) int { return strings.Compare(a.ID, b.ID) })
+	before := f.canonicalSnapshot(t)
+	grouped, _ := organizationFixtureService(t, f, func(assessment.Item, assessment.Item) bool { return true }, nil)
+	_, err := grouped.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "later-anchored-group", Sources: handles[4:]})
+	require.NoError(t, err)
+	original, err := f.store.ListRecords(context.Background(), f.team, ontology.EvidenceGroup, "", 20)
+	require.NoError(t, err)
+	require.Len(t, original.Records, 1)
+	expanded, err := grouped.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "expanded-group", Sources: handles})
+	require.NoError(t, err)
+	manager := managementService(f)
+	ctx := f.actor(0, "manager")
+	draft, err := manager.SaveDraft(ctx, "", managementInput(expanded.Publication.Revision, ontology.ManagementEdit{Action: "keep_separate", Members: handles}))
+	require.NoError(t, err)
+	separated, err := manager.CommandDraft(ctx, draft.ID, "publish", managementCommand(draft))
+	require.NoError(t, err)
+	distinct, err := grouped.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "retired-group", Sources: handles})
+	require.NoError(t, err)
+	retired, err := f.store.GetRecord(context.Background(), f.team, original.Records[0].ID, 0)
+	require.NoError(t, err)
+	require.True(t, retired.Retired)
+	draft, err = manager.SaveDraft(ctx, "", managementInput(distinct.Publication.Revision, ontology.ManagementEdit{Action: "remove_override", RecordID: separated.Publication.Records[0].ID, ExpectedVersion: separated.Publication.Records[0].Version}))
+	require.NoError(t, err)
+	_, err = manager.CommandDraft(ctx, draft.ID, "publish", managementCommand(draft))
+	require.NoError(t, err)
+	snapshots, err := f.store.ReadSources(context.Background(), f.team, handles)
+	require.NoError(t, err)
+	partition := map[string]int{}
+	for index, snapshot := range snapshots {
+		partition[ontology.SourceDisplayText(snapshot)] = index / 2
+	}
+	split, _ := organizationFixtureService(t, f, func(a, b assessment.Item) bool { return partition[a.Text] == partition[b.Text] }, nil)
+	_, err = split.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "split-retired-group", Sources: handles})
+	require.NoError(t, err)
+	current, err := f.store.ListRecords(context.Background(), f.team, ontology.EvidenceGroup, "", 20)
+	require.NoError(t, err)
+	require.Len(t, current.Records, 3)
+	seen := map[string]bool{}
+	for _, group := range current.Records {
+		require.True(t, group.Current)
+		require.Len(t, group.Group.Members, 2)
+		for _, member := range group.Group.Members {
+			require.False(t, seen[member.ID])
+			seen[member.ID] = true
+		}
+	}
+	require.Len(t, seen, len(handles))
+	historical, err := f.store.GetRecord(context.Background(), f.team, retired.ID, retired.Version)
+	require.NoError(t, err)
+	require.Equal(t, retired.Record, historical.Record)
 	require.Equal(t, before, f.canonicalSnapshot(t))
 }
 

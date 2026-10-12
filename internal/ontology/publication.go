@@ -3,6 +3,7 @@ package ontology
 import (
 	"reflect"
 	"sort"
+	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	contract "github.com/markhuangai/dense-mem/internal/ontology/contract"
@@ -123,8 +124,18 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 			}
 		}
 		sort.Strings(previousIDs)
-		if len(previousIDs) > 0 {
-			id = previousIDs[0]
+		for _, previousID := range previousIDs {
+			if !usedGroups[previousID] || !current[previousID].Retired {
+				id = previousID
+				break
+			}
+		}
+		if usedGroups[id] && current[id].Retired {
+			memberKeys := make([]string, len(members))
+			for index, member := range members {
+				memberKeys[index] = contract.SourceKey(member)
+			}
+			id = contract.OrganizationRecordID(teamID, kind, strings.Join(memberKeys, ","))
 		}
 		if usedGroups[id] {
 			return publication, contract.ErrConflict
