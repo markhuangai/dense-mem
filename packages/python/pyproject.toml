@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "densemem"
-version = "0.1.0rc1"
+version = "0.0.0"
 description = "Typed async and sync clients for Dense-Mem MCP"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"

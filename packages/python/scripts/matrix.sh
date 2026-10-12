@@ -18,7 +18,11 @@ run_case() {
   mkdir -p "$destination"
   CONTAINER="$(docker create --workdir /package \
     -e "SOURCE_DATE_EPOCH=$EPOCH" "python:$version-slim" \
-    bash /package/scripts/check.sh --output /results --sdk "$sdk")"
+    bash -c 'set -euo pipefail
+      apt-get update -qq
+      apt-get install -y --no-install-recommends git
+      exec bash /package/scripts/check.sh --output /results --sdk "$1"
+    ' -- "$sdk")"
   docker cp "$ROOT/packages/python/." "$CONTAINER:/package"
   if docker start --attach "$CONTAINER"; then
     status="$(docker inspect --format '{{.State.ExitCode}}' "$CONTAINER")"

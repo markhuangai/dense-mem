@@ -362,3 +362,18 @@ jobs:
                 prerelease: false,
               });
             }
+
+  publish-python:
+    name: Publish changed Python stable release
+    needs:
+      - prepare-release
+      - create-github-release
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/publish-python.yml
+    with:
+      tag: ${{ needs.prepare-release.outputs.release_tag }}
+      source-sha: ${{ needs.prepare-release.outputs.source_commit }}

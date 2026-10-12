@@ -5,7 +5,7 @@ set -euo pipefail
   exit 1
 }
 apt-get update -qq
-apt-get install -y --no-install-recommends python3 python3-venv
+apt-get install -y --no-install-recommends git python3 python3-venv
 OUTPUT="$(mktemp -d /tmp/densemem-python-e2e.XXXXXX)"
 trap 'rm -r -- "$OUTPUT"' EXIT
 bash /workspace/packages/python/scripts/check.sh --output "$OUTPUT/artifacts"

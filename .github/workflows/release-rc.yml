@@ -567,3 +567,26 @@ jobs:
     uses: ./.github/workflows/publish-demo-image.yml
     with:
       tag: ${{ needs.prepare-prerelease.outputs.tag }}
+
+  publish-python:
+    name: Publish changed Python prerelease
+    needs:
+      - prepare-prerelease
+      - publish-image
+      - promote-preview-image
+      - publish-demo-image
+    if: >-
+      ${{
+        always() && !cancelled() &&
+        needs.prepare-prerelease.outputs.should_publish == 'true' &&
+        (needs.publish-image.result == 'success' || needs.promote-preview-image.result == 'success') &&
+        needs.publish-demo-image.result == 'success'
+      }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/publish-python.yml
+    with:
+      tag: ${{ needs.prepare-prerelease.outputs.tag }}
+      source-sha: ${{ github.event.workflow_run.head_sha }}
