@@ -5,19 +5,11 @@ import (
 	"errors"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/dream"
 )
 
 var evaluationToolNames = map[string]struct{}{
 	"eval_list_knowledge_refs": {},
-	"eval_run_dream_cycle":     {},
 	"eval_run_recall_case":     {},
-}
-
-var dreamToolNames = map[string]struct{}{
-	ToolListDreams:           {},
-	ToolGetDream:             {},
-	ToolResolveDreamFeedback: {},
 }
 
 // IsEvaluationTool reports whether a tool belongs to the evaluation-only surface.
@@ -35,8 +27,7 @@ func ContractToolRuntimeOptional(name string) bool {
 	if name == ToolSubmitRecallSessionFeedback {
 		return true
 	}
-	_, ok := dreamToolNames[name]
-	return ok
+	return false
 }
 
 // ErrToolDisabled is returned when a registered tool is unavailable under the
@@ -49,26 +40,17 @@ type RecallFeedbackConfigProvider interface {
 	RecallFeedbackRuntimeConfig(ctx context.Context) (domain.RecallFeedbackRuntimeConfig, error)
 }
 
-// DreamingConfigProvider resolves the authenticated team's effective Dreaming
-// policy. The argument is a fallback team ID for non-request callers;
-// authenticated request context takes precedence.
-type DreamingConfigProvider interface {
-	EffectiveConfig(ctx context.Context, fallbackTeamID string) (dream.EffectiveConfig, error)
-}
-
 // RuntimeToolPolicy contains request-time feature dependencies shared by MCP
 // discovery and invocation.
 type RuntimeToolPolicy struct {
 	RecallFeedback RecallFeedbackConfigProvider
-	Dreams         DreamingConfigProvider
-	resolved       *runtimeToolFeatures
+
+	resolved *runtimeToolFeatures
 }
 
 type runtimeToolFeatures struct {
 	recallFeedbackEnabled  bool
 	recallFeedbackResolved bool
-	dreamingEnabled        bool
-	dreamingResolved       bool
 }
 
 type runtimeToolFeaturesContextKey struct{}
@@ -81,25 +63,14 @@ func ResolveRuntimeToolPolicy(ctx context.Context, policy RuntimeToolPolicy, too
 		features = *policy.resolved
 	}
 	needsRecallFeedback := false
-	needsDreaming := false
 	for _, tool := range tools {
 		if tool.Name == ToolSubmitRecallSessionFeedback || tool.Name == ToolRecallMemory {
 			needsRecallFeedback = true
-		}
-		if tool.Name == ToolRecallMemory {
-			needsDreaming = true
-		}
-		if _, ok := dreamToolNames[tool.Name]; ok {
-			needsDreaming = true
 		}
 	}
 	if needsRecallFeedback && !features.recallFeedbackResolved {
 		features.recallFeedbackEnabled = recallFeedbackEnabledFromConfig(ctx, policy.RecallFeedback)
 		features.recallFeedbackResolved = true
-	}
-	if needsDreaming && !features.dreamingResolved {
-		features.dreamingEnabled = dreamingEnabledFromConfig(ctx, policy.Dreams)
-		features.dreamingResolved = true
 	}
 	policy.resolved = &features
 	return policy
@@ -123,9 +94,6 @@ func ToolVisible(ctx context.Context, tool Tool, policy RuntimeToolPolicy) bool 
 	if tool.Name == ToolSubmitRecallSessionFeedback {
 		return policy.resolved.recallFeedbackEnabled
 	}
-	if _, ok := dreamToolNames[tool.Name]; ok {
-		return policy.resolved.dreamingEnabled
-	}
 	if IsContractTool(tool) {
 		return true
 	}
@@ -144,27 +112,10 @@ func RecallFeedbackEnabled(ctx context.Context, cfg RecallFeedbackConfigProvider
 	return recallFeedbackEnabledFromConfig(ctx, cfg)
 }
 
-// DreamingEnabled fails closed so disabled or unreadable team configuration
-// cannot expose Hypothesis lifecycle tools.
-func DreamingEnabled(ctx context.Context, cfg DreamingConfigProvider) bool {
-	if resolved, ok := ctx.Value(runtimeToolFeaturesContextKey{}).(runtimeToolFeatures); ok && resolved.dreamingResolved {
-		return resolved.dreamingEnabled
-	}
-	return dreamingEnabledFromConfig(ctx, cfg)
-}
-
 func recallFeedbackEnabledFromConfig(ctx context.Context, cfg RecallFeedbackConfigProvider) bool {
 	if cfg == nil {
 		return false
 	}
 	runtime, err := cfg.RecallFeedbackRuntimeConfig(ctx)
 	return err == nil && runtime.Enabled
-}
-
-func dreamingEnabledFromConfig(ctx context.Context, cfg DreamingConfigProvider) bool {
-	if cfg == nil {
-		return false
-	}
-	effective, err := cfg.EffectiveConfig(ctx, "")
-	return err == nil && effective.Enabled
 }

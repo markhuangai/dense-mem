@@ -2,4 +2,4 @@
 
 package mcp
 
-func conformanceCatalogSize() int { return 14 }
+func conformanceCatalogSize() int { return 10 }

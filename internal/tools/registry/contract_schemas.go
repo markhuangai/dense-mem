@@ -54,15 +54,6 @@ func evidenceArraySchema() map[string]any {
 	}
 }
 
-func dreamEvidenceArraySchema() map[string]any {
-	schema := evidenceArraySchema()
-	item, _ := schema["items"].(map[string]any)
-	properties, _ := item["properties"].(map[string]any)
-	delete(properties, "force_insert")
-	properties["idempotency_key"] = schemaString("Evidence retry key scoped to team and profile.", 128)
-	return schema
-}
-
 func relationshipSubmissionArraySchema() map[string]any {
 	return map[string]any{
 		"type":        "array",
@@ -298,19 +289,9 @@ func recallFeedbackInputSchema() map[string]any {
 					"irrelevant_result_refs": array(closedObject(
 						[]string{"type", "id", "rank"},
 						map[string]any{
-							"type": schemaEnum([]string{"relationship", "fragment", "community", "hypothesis"}),
+							"type": schemaEnum([]string{"relationship", "fragment", "community"}),
 							"id":   schemaString("Result ID from the recall event.", 128),
 							"rank": map[string]any{"type": "integer", "minimum": 1, "maximum": 1000},
-						},
-					), 0, 100),
-					"hypothesis_feedback": array(closedObject(
-						[]string{"hypothesis_id", "used", "quality", "contradicted"},
-						map[string]any{
-							"hypothesis_id":    schemaString("Hypothesis ID returned with recall.", 128),
-							"used":             map[string]any{"type": "boolean"},
-							"quality":          schemaEnum([]string{"high", "medium", "low"}),
-							"contradicted":     map[string]any{"type": "boolean"},
-							"feedback_comment": schemaString("Bounded Hypothesis feedback note.", 1000),
 						},
 					), 0, 100),
 				},
@@ -318,67 +299,6 @@ func recallFeedbackInputSchema() map[string]any {
 			},
 		},
 	})
-}
-
-func listDreamsInputSchema() map[string]any {
-	return contractInput(nil, map[string]any{
-		"status": schemaEnum(domain.HypothesisStatuses()),
-		"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
-		"cursor": schemaString("Opaque page cursor.", 512),
-	})
-}
-
-func getDreamInputSchema() map[string]any {
-	return contractInput([]string{"hypothesis_id"}, map[string]any{
-		"hypothesis_id": schemaString("Hypothesis ID.", 128),
-	})
-}
-
-func resolveDreamFeedbackInputSchema() map[string]any {
-	return contractInput([]string{"hypothesis_id", "decision"}, map[string]any{
-		"hypothesis_id": schemaString("Hypothesis ID.", 128),
-		"decision": schemaEnum([]string{
-			"reinforce",
-			"stale",
-			"reject",
-			"confirm_true",
-			"confirm_false",
-		}),
-		"reason":        schemaString("Bounded lifecycle feedback reason.", 1000),
-		"evidence":      dreamEvidenceArraySchema(),
-		"relationships": dreamRelationshipSubmissionArraySchema(),
-	})
-}
-
-func dreamRelationshipSubmissionArraySchema() map[string]any {
-	schema := relationshipSubmissionArraySchema()
-	item, _ := schema["items"].(map[string]any)
-	if item == nil {
-		return schema
-	}
-	required, _ := item["required"].([]string)
-	item["required"] = append(required, "modality")
-	properties, _ := item["properties"].(map[string]any)
-	if properties == nil {
-		properties = map[string]any{}
-		item["properties"] = properties
-	}
-	properties["modality"] = schemaEnum([]string{"statement", "question", "proposal", "speculation", "quoted"})
-	delete(properties, "known_evidence_ids")
-	if subject, ok := properties["subject"].(map[string]any); ok {
-		subject["required"] = []string{"name", "entity_kind"}
-	}
-	if predicate, ok := properties["predicate"].(map[string]any); ok {
-		predicate["required"] = []string{"proposed_key"}
-		predicateProperties, _ := predicate["properties"].(map[string]any)
-		delete(predicateProperties, "known_predicate_key")
-	}
-	if object, ok := properties["object"].(map[string]any); ok {
-		if entity := schemaProperties(object)["entity"]; entity != nil {
-			entity["required"] = []string{"name", "entity_kind"}
-		}
-	}
-	return schema
 }
 
 func exportMemoryPackInputSchema() map[string]any {
@@ -501,7 +421,7 @@ func recallMemoryOutputSchema() map[string]any {
 	return closedObject(
 		[]string{
 			"recall_id", "results", "conflicts", "related_relationships",
-			"related_communities", "related_hypotheses", "search_states", "degradations", "suggested_actions",
+			"related_communities", "search_states", "degradations", "suggested_actions",
 		},
 		map[string]any{
 			"recall_id":             schemaString("Recall event ID.", 128),
@@ -509,7 +429,6 @@ func recallMemoryOutputSchema() map[string]any {
 			"conflicts":             array(recallConflictSchema(), 0, 20),
 			"related_relationships": array(relatedRelationshipSchema(), 0, 20),
 			"related_communities":   array(recallDiscoveryPathSchema(), 0, 10),
-			"related_hypotheses":    array(hypothesisSummarySchema(), 0, 20),
 			"search_states":         recallSearchStatesSchema(),
 			"degradations":          array(recallDegradationSchema(), 0, 10),
 			"suggested_actions":     array(recallSuggestedActionSchema(), 0, 2),
@@ -521,10 +440,9 @@ func recallSuggestedActionSchema() map[string]any {
 	return closedObject(
 		[]string{"tool", "guidance"},
 		map[string]any{
-			"tool":            schemaEnum([]string{ToolSubmitRecallSessionFeedback, ToolResolveDreamFeedback}),
+			"tool":            schemaEnum([]string{ToolSubmitRecallSessionFeedback}),
 			"guidance":        schemaString("Bounded next-step guidance.", 512),
 			"recall_event_id": schemaString("Recall event ID accepted by the feedback tool.", 128),
-			"hypothesis_ids":  stringArraySchema("Hypothesis IDs returned by this recall.", 20, 128),
 		},
 	)
 }
@@ -560,7 +478,7 @@ func recallDegradationSchema() map[string]any {
 	return closedObject(
 		[]string{"frontier", "code", "message"},
 		map[string]any{
-			"frontier":         schemaEnum([]string{"evidence", "relationships", "communities", "hypotheses", "feedback"}),
+			"frontier":         schemaEnum([]string{"evidence", "relationships", "communities", "feedback"}),
 			"required_failure": map[string]any{"type": "boolean"},
 			"optional":         map[string]any{"type": "boolean"},
 			"code":             schemaString("Stable bounded degradation code.", 128),

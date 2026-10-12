@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/dream"
+
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
@@ -128,15 +128,14 @@ func TestTelemetryHelperNoopAndCanceledPaths(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	RefreshTelemetryPricingCacheUntilCanceled(ctx, nil, nil)
-	ConfigureTelemetryFeatures(nil, nil, nil)
-	ConfigureTelemetryFeatures(NewPrometheusTelemetryService(nil, 0, "", nil), nil, nil)
+	ConfigureTelemetryFeatures(nil, nil)
+	ConfigureTelemetryFeatures(NewPrometheusTelemetryService(nil, 0, "", nil), nil)
 }
 
 func TestConfigureTelemetryFeaturesEvaluatesApplicationAndTeamSettings(t *testing.T) {
 	appConfig := telemetryAppConfigStub{}
-	dreams := telemetryDreamServiceStub{}
 	prometheus := NewPrometheusTelemetryService(nil, 0, "", nil)
-	ConfigureTelemetryFeatures(prometheus, appConfig, dreams)
+	ConfigureTelemetryFeatures(prometheus, appConfig)
 
 	snapshot, err := prometheus.Snapshot(context.Background(), TelemetryFilter{Window: "1h", Scope: "system"})
 	require.NoError(t, err)
@@ -171,7 +170,6 @@ func TestTelemetryFeatureErrorsAndRangeBuilders(t *testing.T) {
 	service := NewPrometheusTelemetryService(nil, 0, "", nil)
 	service.SetFeatureResolver(TelemetryFeatureResolver{
 		RecallFeedbackEnabled: func(context.Context) (bool, error) { return false, errors.New("recall unavailable") },
-		DreamingEnabled:       func(context.Context, *uuid.UUID) (bool, error) { return false, errors.New("dream unavailable") },
 	})
 	states := service.telemetryFeatureStates(context.Background(), TelemetryScope{Type: "team", TeamID: &teamID})
 	require.True(t, states["recall"].Set)
@@ -191,18 +189,6 @@ type telemetryAppConfigStub struct {
 
 func (telemetryAppConfigStub) RecallFeedbackRuntimeConfig(context.Context) (domain.RecallFeedbackRuntimeConfig, error) {
 	return domain.RecallFeedbackRuntimeConfig{Enabled: false}, nil
-}
-
-func (telemetryAppConfigStub) DreamingRuntimeConfig(context.Context) (domain.DreamingRuntimeConfig, error) {
-	return domain.DreamingRuntimeConfig{Enabled: false}, nil
-}
-
-type telemetryDreamServiceStub struct {
-	dream.Service
-}
-
-func (telemetryDreamServiceStub) EffectiveConfig(context.Context, string) (dream.EffectiveConfig, error) {
-	return dream.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: false}}, nil
 }
 
 type telemetryPricingStub struct {

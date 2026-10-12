@@ -2,7 +2,6 @@ import { FormEvent, useEffect, useState } from "react";
 import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { CreatedCredential, UserApi, UserCredential, UserSession, UserTeam } from "./api";
 import { LoadingState, SecretBox, SectionHeading } from "../ui/components";
-import { TeamDreamingConfigForm } from "../teamDreamingConfig";
 import { CredentialPermissionCheckboxes, normalizeCredentialScopes } from "../credentialPermissions";
 
 export function TeamManagementPanel({
@@ -171,17 +170,6 @@ export function TeamManagementPanel({
         </form>
       </div>
 
-      <div className="surface-section">
-        <TeamDreamingConfigForm
-          key={session.team.id}
-          config={session.team.config}
-          effective={session.team.dreaming_effective}
-          disabled={teamBusy}
-          onSave={async (config) => {
-            onTeamUpdated(await api.updateTeam({ name: session.team.name, description: session.team.description ?? "", config }));
-          }}
-        />
-      </div>
 
       <div className="surface-section">
         <SectionHeading

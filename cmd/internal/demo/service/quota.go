@@ -195,8 +195,7 @@ func (m *QuotaManager) ConsumeTool(ctx context.Context, teamID, toolName string,
 	case registry.ToolRecallMemory:
 		return m.ConsumeRecall(ctx, teamID)
 	case registry.ToolCorrectRelationship,
-		registry.ToolRetractEvidence,
-		registry.ToolResolveDreamFeedback:
+		registry.ToolRetractEvidence:
 		return m.ConsumeWrite(ctx, teamID)
 	default:
 		return nil

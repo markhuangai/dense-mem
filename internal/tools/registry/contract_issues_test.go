@@ -84,7 +84,6 @@ func TestValidateContractInputIssuesDispatchesToolSpecificValidation(t *testing.
 		{name: "export", tool: ToolExportMemoryPack, args: map[string]any{"relationship_ids": []any{"same", "same"}}, scope: "read", want: "duplicate"},
 		{name: "correction", tool: ToolCorrectRelationship, args: map[string]any{"action": "unknown"}, scope: "write", want: "submit or confirm"},
 		{name: "recall feedback", tool: ToolSubmitRecallSessionFeedback, args: map[string]any{"recalls": []any{map[string]any{"quality": "low"}}}, scope: "write", want: "feedback_comment"},
-		{name: "dream feedback", tool: ToolResolveDreamFeedback, args: map[string]any{"decision": "unknown"}, scope: "write", want: "reason"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -108,24 +107,6 @@ func TestValidateContractInputIssuesRejectsMalformedRecallUUIDFilters(t *testing
 			}, []string{"read"})
 			require.Len(t, result.Issues, 1)
 			require.Equal(t, field+"[0] must be a valid UUID", result.Issues[0].Message)
-		})
-	}
-}
-
-func TestValidateContractInputIssuesRejectsUnsupportedIdempotencyKey(t *testing.T) {
-	tool, err := requireTool(toolMap(t), ToolResolveDreamFeedback)
-	require.NoError(t, err)
-
-	for _, decision := range []string{"reject", "stale", "reinforce"} {
-		t.Run(decision, func(t *testing.T) {
-			result := ValidateContractInputIssues(tool, map[string]any{
-				"hypothesis_id":   "dream-1",
-				"decision":        decision,
-				"reason":          "not useful",
-				"idempotency_key": "lifecycle-retry",
-			}, []string{"write"})
-
-			require.Contains(t, issueMessages(result), "unknown field: idempotency_key")
 		})
 	}
 }

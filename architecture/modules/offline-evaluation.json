@@ -30,9 +30,6 @@
       "path": "internal/tools/registry/evaluation_catalog_evaluation.go"
     },
     {
-      "path": "internal/tools/registry/evaluation_dream_tools.go"
-    },
-    {
       "path": "internal/tools/registry/evaluation_knowledge_tools_test.go"
     },
     {

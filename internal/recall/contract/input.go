@@ -4,9 +4,9 @@ package contract
 import "time"
 
 type Request struct {
-	Query                      string     `json:"query"`
-	Limit                      int        `json:"limit,omitempty"`
-	IncludeHypotheses          bool       `json:"-"`
+	Query string `json:"query"`
+	Limit int    `json:"limit,omitempty"`
+
 	RelationshipLimit          *int       `json:"relationship_limit,omitempty"`
 	CommunityLimit             *int       `json:"community_limit,omitempty"`
 	CommunityRelationshipLimit *int       `json:"community_relationship_limit,omitempty"`

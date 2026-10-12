@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
-	"time"
 
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -21,8 +20,6 @@ type communityOwnershipFixture struct {
 	rls                                         *storagepostgres.RLS
 	counters                                    *communityOwnershipCounters
 	teamID, ownerA, ownerB, otherTeam, expandID string
-	run                                         *CommunityRun
-	publication                                 CommunitySnapshotPublishInput
 	sources                                     []CommunitySourceInput
 	evidenceIDs                                 []string
 	labels                                      map[string]string
@@ -51,7 +48,6 @@ func newCommunityOwnershipFixture(t testing.TB) *communityOwnershipFixture {
 	f.labels[f.teamID] = "team-a"
 	f.labels[subject.EntityID] = "subject"
 	f.labels[expansion.EntityID] = "expansion"
-	members := []CommunityMembershipInput{}
 	for i := range 26 {
 		owner := f.ownerA
 		if i%2 == 1 {
@@ -76,38 +72,8 @@ func newCommunityOwnershipFixture(t testing.TB) *communityOwnershipFixture {
 		f.labels[relationship.SemanticGroupKey] = fmt.Sprintf("group-%02d", i)
 		f.labels[ingest.Evidence[0].FragmentID] = fmt.Sprintf("evidence-%02d", i)
 		f.labels[object.EntityID] = fmt.Sprintf("object-%02d", i)
-		if i < 7 {
-			members = append(members, CommunityMembershipInput{EntityID: object.EntityID, Rank: i, MembershipScore: 1, SourceCount: 1})
-		}
+
 	}
-	run, err := f.store.ClaimCommunityRun(ctx, CommunityRunClaimInput{
-		TeamID: f.teamID, WindowKey: "community-ownership", LeaseUntil: time.Now().UTC().Add(time.Hour),
-		AlgorithmKind: "louvain", AlgorithmVersion: "v2", ProfileVersion: "postgres-v2",
-		ConfigurationHash: "fixture-config", SourceFingerprint: "fixture-sources", MaxNodes: 5000, MaxEdges: 20000,
-	})
-	require.NoError(t, err)
-	f.run = run
-	f.publication = CommunitySnapshotPublishInput{
-		TeamID: f.teamID, RunID: run.RunID, AlgorithmKind: "louvain", AlgorithmVersion: "v2", ProfileVersion: "postgres-v2",
-		ConfigurationHash: "fixture-config", SourceFingerprint: "fixture-sources", NodeCount: 26, EdgeCount: 26,
-	}
-	counts := []int{1, 2, 2, 3, 4, 10, 10, 50, 9, 8, 7, 6}
-	for i, count := range counts {
-		sources := append([]CommunitySourceInput(nil), f.sources[4:]...)
-		if i < 4 {
-			sources = append([]CommunitySourceInput{f.sources[i]}, sources...)
-		}
-		memberships := append([]CommunityMembershipInput(nil), members...)
-		if i == 4 {
-			memberships = append(memberships, CommunityMembershipInput{EntityID: f.expandID, Rank: 8, MembershipScore: 1, SourceCount: 1})
-		}
-		f.publication.Communities = append(f.publication.Communities, CommunityPublishRecord{
-			CommunityID: communityOwnershipID(i), Ordinal: i, Summary: "Community snapshot marker", SummaryVersion: "fixture-summary",
-			MemberCount: count, SourceCount: len(sources), TopEntities: []string{}, TopPredicates: []string{"uses"}, SourceFingerprint: "fixture-sources",
-			Memberships: memberships, Sources: sources,
-		})
-	}
-	require.NoError(t, f.store.PublishCommunitySnapshot(ctx, f.publication))
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE relationship_records SET created_at = '2026-01-01T00:00:00Z' WHERE team_id = ?::uuid`, f.teamID).Error
 	}))

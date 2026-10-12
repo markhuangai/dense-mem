@@ -261,7 +261,6 @@ if (has("verifier")) {
     AI_VERIFIER_API_KEY: "dense-mem-e2e-verifier-key",
     AI_VERIFIER_MODEL: "dense-mem-e2e-verifier",
     AI_CONFLICT_REVIEW_MODEL: "dense-mem-e2e-conflict-review",
-    AI_DREAM_GRAPH_MODEL: "dense-mem-e2e-dream-graph",
     AI_VERIFIER_DISABLE_TEMPERATURE: "true",
   })) serverEnvironment.set(key, value);
 }
@@ -269,7 +268,6 @@ if (scenario === "community") {
   for (const [key, value] of Object.entries({
     AI_API_URL: "http://synchronous-write-provider:8787/v1",
     AI_API_KEY: "dense-mem-community-e2e-key",
-    AI_COMMUNITY_SUMMARY_MODEL: "dense-mem-e2e-community-summary",
   })) serverEnvironment.set(key, value);
 }
 if (scenario === "identity_cleanup") {

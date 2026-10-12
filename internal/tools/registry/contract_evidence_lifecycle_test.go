@@ -62,35 +62,6 @@ func TestRememberContractDirectEvidenceSupersessionRules(t *testing.T) {
 	}
 }
 
-func TestDreamFeedbackContractKeepsItsIndependentSubmissionShape(t *testing.T) {
-	tool, err := requireTool(toolMap(t), ToolResolveDreamFeedback)
-	require.NoError(t, err)
-	properties := schemaProperties(tool.InputSchema)
-	evidence := properties["evidence"]
-	evidenceItem, ok := evidence["items"].(map[string]any)
-	require.True(t, ok)
-	require.Contains(t, schemaProperties(evidenceItem), "idempotency_key")
-
-	relationships := properties["relationships"]
-	relationshipItem, ok := relationships["items"].(map[string]any)
-	require.True(t, ok)
-	require.Contains(t, schemaRequiredFields(relationshipItem), "modality")
-	relationshipProperties := schemaProperties(relationshipItem)
-	require.ElementsMatch(t, []string{"name", "entity_kind"}, schemaRequiredFields(relationshipProperties["subject"]))
-	require.Equal(t, []string{"proposed_key"}, schemaRequiredFields(relationshipProperties["predicate"]))
-	require.NotContains(t, schemaProperties(relationshipProperties["predicate"]), "known_predicate_key")
-	objectEntity := schemaProperties(relationshipProperties["object"])["entity"]
-	require.ElementsMatch(t, []string{"name", "entity_kind"}, schemaRequiredFields(objectEntity))
-
-	input := validFlatRelationshipSubmission()
-	delete(input, "idempotency_key")
-	input["hypothesis_id"] = uuid.NewString()
-	input["decision"] = "confirm_true"
-	input["evidence"].([]any)[0].(map[string]any)["idempotency_key"] = "dream-evidence-key"
-	input["relationships"].([]any)[0].(map[string]any)["modality"] = "statement"
-	require.NoError(t, ValidateContractInput(tool, input, []string{"write"}))
-}
-
 func TestRetractEvidenceContractRejectsDuplicateEvidenceIDs(t *testing.T) {
 	retract, err := requireTool(toolMap(t), ToolRetractEvidence)
 	require.NoError(t, err)

@@ -114,7 +114,7 @@ migration 容器。共享同一个可写 primary 的多个 server replica 会串
 普通滚动发布期间，migration 必须与上一版应用保持向后兼容。v2.6.1 同步 Remember
 迁移仍是停服边界：必须停止所有 server 实例、完成所需的 PostgreSQL 快照，并在启动新二进制
 前应用停服边界；v2.6.2 的 evidence-first 激活在该边界之后进行。彼此独立的数据库仍需分别由连接到该数据库的 server 完成 migration。
-管理操作通过私有控制门户/API 完成；dreaming 和自动 conflict review 仍由 server 后台
+管理操作通过私有控制门户/API 完成；ontology maintenance 和自动 conflict review 由 server 后台
 worker 执行。
 
 镜像 healthcheck 为默认的 30 分钟 migration 窗口保留启动宽限期，并在首次检查成功后
@@ -129,8 +129,7 @@ RC 标签为 `vX.Y.Z-rc.N` 和 `demo-vX.Y.Z-rc.N`。稳定版标签为 `vX.Y.Z`�
 `AI_VERIFIER_MODEL`。compose 示例为 embedding 提供
 OpenAI 默认值；chat model 需要在 `.env` 中明确选择。
 
-`AI_REMEMBER_MODEL`、`AI_CONFLICT_REVIEW_MODEL`、`AI_DREAM_GRAPH_MODEL`、
-`AI_COMMUNITY_SUMMARY_MODEL` 是对应现有 AI
+`AI_REMEMBER_MODEL` 和 `AI_CONFLICT_REVIEW_MODEL` 是对应现有 AI
 session 的可选覆盖。未设置或仅包含空白字符时使用 `AI_VERIFIER_MODEL`；已配置
 model 的失败会直接返回，不会改用 fallback model。
 
@@ -184,12 +183,19 @@ Relationship 仍必须至少包含一个提交证据的 `evidence_indices` 支�
 canonical 名称或 alias；代词只有在 assessor 收到服务端为更早精确名称范围签发的 anchor 时才可用。
 不可访问或在评估后变为陈旧的 known evidence 只会让该 Relationship 变为不支持，不泄露 ID 是否存在。
 单个请求中的 known evidence 文本总量在 assessor 边界展开前限制为 20,000 个 Unicode 码点；
-超过限制的请求会返回 `input_budget_exceeded`。当前公共契约为 `dense-mem.v2.6.6`；
-`dense-mem.v2.6.3` 和 `dense-mem.v2.6.2` 仍接受用于兼容终态重放。旧请求若缺少提议或完整引用，
+超过限制的请求会返回 `input_budget_exceeded`。当前公共契约为 `dense-mem.v2.7.0`；
+v2.6.8、v2.6.7、v2.6.6、v2.6.3 和 v2.6.2 仍接受用于兼容 Remember 终态重放。旧请求若缺少提议或完整引用，
 即使使用原有 key 重试也会被拒绝，已存储历史仍保留。
 
-Dream 仅保留图推理生成，不再运行每小时 evidence discovery。历史 discovery Dream 仍可读取，
-并由其所有者确认。运行退役 migration 前必须停止旧服务实例；未完成的 discovery run 会不可逆取消，历史不会删除。
+Dream 生成、客户端 Hypothesis 读取和确认、旧社区聚类均已退役。私有控制门户仅保留
+Dream 历史、来源、诊断及诊断保留管理。运行退役 migration 前必须停止所有旧服务实例，
+然后启动匹配的 v2.7.0 binary；未完成的旧运行和预留会不可逆取消，已完成历史及规范知识保持不变。
+Down 不会恢复已退役工作。
+
+现有 ontology 开关是唯一组织控制。保留所有已存储值；缺失时默认关闭。启用后在下一次分钟
+tick 按暂停、调度、并发及全局 token 预算纳入活跃团队；关闭后停止接纳并排空已派发工作。
+社区读取仅使用当前 topic projection；ontology 关闭时仍可读取普通证据，不恢复旧社区快照。
+旧团队 Dream 开关不影响纳入。
 
 若要替换自己拥有的一条当前证据，把其 UUID 放入新证据的
 `supersedes_evidence_ids`。直接指定目标与通过 `previous_source_revision` 推进
@@ -316,25 +322,19 @@ remember 证据（可选 Entity/Relationship 提议）
 | `recall_memory` | 正式 | 正式与评估镜像 | 检索活跃证据上下文和 Relationship；有可执行后续动作时返回 `suggested_actions`。 |
 | `trace_memory` | 正式 | 正式与评估镜像 | 沿证据、决策和生命周期追踪一条同团队 Relationship。 |
 | `submit_recall_session_feedback` | 正式 | 两种镜像中均为条件注册 | 记录有界的 session 级检索质量反馈；只有 recall feedback 启用时才注册。 |
-| `list_dreams` | 正式 | 两种镜像中均为条件注册 | 列出可审查 Hypothesis；仅在 authenticated team 的 Dreaming 生效时注册。 |
-| `get_dream` | 正式 | 两种镜像中均为条件注册 | 在同一团队 Dreaming gate 下获取 Hypothesis 与来源引用。 |
-| `resolve_dream_feedback` | 正式 | 两种镜像中均为条件注册 | 用独立证据确认或否定 Hypothesis；不确定项保持 unresolved。使用同一团队 Dreaming gate。 |
 | `export_memory_pack` | 正式 | 正式与评估镜像 | 导出选定活跃 Relationships 及其支持来源。 |
 | `eval_list_knowledge_refs` | 评估 harness | 仅评估镜像 | 分页列出稳定、团队隔离的知识引用，用于 seed 文档映射。 |
-| `eval_run_dream_cycle` | 评估 harness | 仅评估镜像 | 为评估运行隔离、有界的手动 Dream cycle，并可传入 seed Hypothesis。 |
 | `eval_run_recall_case` | 评估 harness | 仅评估镜像 | 执行当前 recall 逻辑并返回用于确定性评分的 ranked/context refs。 |
 
 正式发布 binary 不带 `evaluation` build tag，因此任何环境变量或控制面设置都无法在
-线上注册评估工具。评估 target 只增加上表三个 harness 工具。
+线上注册评估工具。评估 target 只增加上表两个 harness 工具。
 `eval_get_manifest`、`eval_get_knowledge_item`、
 `eval_list_recall_feedback_events`、`eval_get_recall_feedback_event` 和
 `eval_score_retrieval_case` 已删除，因为当前 harness 不使用它们。
 
-启用 recall feedback 且 feedback snapshot 保存成功后，
-`recall_memory.suggested_actions` 会携带对应 recall ID，提示调用
-`submit_recall_session_feedback`。团队有效 Dreaming 启用且 recall 返回 Hypothesis 时，
-还会提示调用 `resolve_dream_feedback`：只有独立证据充分时才确认 true 或 false；
-不确定项保持 unresolved。
+一般 Recall 反馈保持可选，不提示客户端提交。启用反馈且 snapshot 保存成功后返回的 recall ID
+可用于 `submit_recall_session_feedback`；写入不会覆盖历史 Dream 反馈。公共结果不包含
+`related_hypotheses`，也不接受 Hypothesis 专用反馈。
 
 本地评估使用已提交的 compose 示例。它会构建评估 target，并默认读取仓库根目录中
 未提交的 `.env`：

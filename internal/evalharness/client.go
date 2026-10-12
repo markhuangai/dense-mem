@@ -487,11 +487,7 @@ func (c *HTTPClient) ExportEvidenceMapping(ctx context.Context, limit int) (Know
 }
 
 func (c *HTTPClient) ExportKnowledgeMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
-	return c.exportKnowledgeMapping(ctx, limit, []string{"evidence", "entity", "value", "relationship", "hypothesis"})
-}
-
-func (c *HTTPClient) ExportDreamMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
-	return c.exportKnowledgeMapping(ctx, limit, []string{"dream"})
+	return c.exportKnowledgeMapping(ctx, limit, []string{"evidence", "entity", "value", "relationship"})
 }
 
 func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kinds []string) (KnowledgeMapping, error) {
@@ -541,21 +537,6 @@ func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kind
 	return mapping, nil
 }
 
-func (c *HTTPClient) RunDreamCycle(ctx context.Context, expectedDreams int, seeds ...DreamCycleSeed) error {
-	if expectedDreams <= 0 {
-		return nil
-	}
-	input := map[string]any{
-		"manual":      true,
-		"max_outputs": expectedDreams,
-	}
-	if len(seeds) > 0 {
-		input["seed_dreams"] = seeds
-	}
-	var out map[string]any
-	return c.CallTool(ctx, "eval_run_dream_cycle", input, &out)
-}
-
 func (c *HTTPClient) RunRecallCase(ctx context.Context, tc Case) (RecallTrace, error) {
 	input := map[string]any{
 		"case_id": tc.CaseID,
@@ -571,7 +552,7 @@ func (c *HTTPClient) RunRecallCase(ctx context.Context, tc Case) (RecallTrace, e
 		input["known_at"] = tc.KnownAt
 	}
 	if tc.IncludeDreams {
-		input["include_dreams"] = true
+		return RecallTrace{}, errors.New("legacy Dream evaluation is retired")
 	}
 	if tc.UseCommunities {
 		input["use_communities"] = true

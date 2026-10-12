@@ -153,27 +153,6 @@ func TestRememberKnownEvidenceIDsAreBoundedUUIDs(t *testing.T) {
 	}
 }
 
-func TestDreamFeedbackRejectsKnownEvidenceIDs(t *testing.T) {
-	dream, err := requireTool(toolMap(t), ToolResolveDreamFeedback)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input := map[string]any{
-		"hypothesis_id": "hypothesis-1", "decision": "confirm_true",
-		"evidence": []any{map[string]any{"content": "independent evidence"}},
-		"relationships": []any{map[string]any{
-			"ref": "r-1", "subject": map[string]any{"name": "Dense-Mem", "entity_kind": "project"},
-			"predicate": map[string]any{"proposed_key": "uses"},
-			"object":    map[string]any{"entity": map[string]any{"name": "PostgreSQL", "entity_kind": "product"}},
-			"polarity":  "+", "modality": "statement", "evidence_indices": []any{0},
-			"known_evidence_ids": []any{uuid.NewString()},
-		}},
-	}
-	if err := ValidateContractInput(dream, input, []string{"write"}); err == nil || !strings.Contains(err.Error(), "not allowed") {
-		t.Fatalf("dream known evidence validation error = %v", err)
-	}
-}
-
 func validFlatRelationshipSubmission() map[string]any {
 	return map[string]any{
 		"idempotency_key": "remember-test-batch",

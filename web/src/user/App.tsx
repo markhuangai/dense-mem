@@ -25,7 +25,6 @@ import { AuthShell, LoadingState, PortalShell, SecretBox, SectionHeading, writeC
 import { SearchPanel } from "./SearchPanel";
 
 const TeamManagementPanel = lazy(() => import("./TeamManagementPanel").then((module) => ({ default: module.TeamManagementPanel })));
-const UserDreamsPanel = lazy(() => import("./DreamsPanel").then((module) => ({ default: module.UserDreamsPanel })));
 const GraphPanel = lazy(() => import("./GraphPanel").then((module) => ({ default: module.GraphPanel })));
 const OntologyPanel = lazy(() => import("./OntologyPanel").then((module) => ({ default: module.OntologyPanel })));
 
@@ -34,7 +33,7 @@ const THEME_STORAGE_KEY = "denseMem.userTheme";
 
 type Theme = "light" | "dark";
 type AuthMode = "none" | "api_key" | "api_key_session" | "sso";
-type UserTab = "search" | "graph" | "dreams" | "team" | "credential" | "ontology";
+type UserTab = "search" | "graph" | "team" | "credential" | "ontology";
 type CredentialPermission = "read" | "read_write";
 
 function sessionAuthMode(session: UserSession, token: string): AuthMode {
@@ -329,7 +328,6 @@ function UserPortal({
   const navItems = [
     { id: "search", label: "Recall", icon: <Search size={17} aria-hidden="true" />, active: activeTab === "search", onClick: () => setActiveTab("search") },
     { id: "graph", label: "Graph", icon: <Network size={17} aria-hidden="true" />, active: activeTab === "graph", onClick: () => setActiveTab("graph") },
-    { id: "dreams", label: "Dreams", icon: <Moon size={17} aria-hidden="true" />, active: activeTab === "dreams", onClick: () => setActiveTab("dreams") },
     ...(canManageTeam(session) ? [
       { id: "ontology", label: "Ontology", icon: <Network size={17} aria-hidden="true" />, active: activeTab === "ontology", onClick: () => setActiveTab("ontology") },
       { id: "team", label: "Team", icon: <Users size={17} aria-hidden="true" />, active: activeTab === "team", onClick: () => setActiveTab("team") },
@@ -389,7 +387,6 @@ function UserPortal({
         <Suspense fallback={<LazyPanelFallback />}>
           {activeTab === "search" && <SearchPanel api={api} />}
           {activeTab === "graph" && <GraphPanel api={api} />}
-          {activeTab === "dreams" && <UserDreamsPanel api={api} />}
           {activeTab === "ontology" && session && canManageTeam(session) && <OntologyPanel key={session.team.id} api={api} session={session} />}
           {activeTab === "team" && session && canManageTeam(session) && (
             <TeamManagementPanel

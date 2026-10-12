@@ -22,12 +22,8 @@ var (
 )
 
 type CommunityRepository interface {
-	ClaimCommunityRun(ctx context.Context, input CommunityRunClaimInput) (*CommunityRun, error)
-	RenewCommunityRunLease(ctx context.Context, input CommunityRunLeaseInput) error
-	CompleteCommunityRun(ctx context.Context, input CommunityRunCompleteInput) error
 	ListCommunityInputs(ctx context.Context, input CommunityInputListInput) ([]CommunityInput, error)
-	PublishCommunitySnapshot(ctx context.Context, input CommunitySnapshotPublishInput) error
-	RefreshCommunityStaleness(ctx context.Context, input CommunityStalenessInput) (int, error)
+
 	ListCommunities(ctx context.Context, input CommunityListInput) ([]CommunityRecord, error)
 	CountCurrentCommunities(ctx context.Context, teamID string) (int, error)
 	GetCommunity(ctx context.Context, input CommunityGetInput) (*CommunityRecord, error)
@@ -36,7 +32,6 @@ type CommunityRepository interface {
 	ListCurrentCommunityLineage(ctx context.Context, teamID string) ([]CommunityLineageRecord, error)
 	ListCommunitySemanticGroups(ctx context.Context, input CommunityCoverageInput) ([]string, error)
 	RecallCommunities(ctx context.Context, input CommunityRecallInput) ([]CommunityRecallRecord, *TopicProjectionCoverage, error)
-	RecordCommunitySummaryAttempt(ctx context.Context, input CommunitySummaryAttemptInput) error
 }
 
 type CommunityRunClaimInput struct {

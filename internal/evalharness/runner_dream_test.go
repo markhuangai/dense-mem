@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
+func TestRunBaselineRejectsRetiredDreamExecution(t *testing.T) {
 	dir := t.TempDir()
 	manifest := SeedManifest{
 		SchemaVersion: SeedSchemaVersionV2,
@@ -164,7 +164,7 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 	}))
 	defer server.Close()
 
-	summary, err := Run(context.Background(), RunOptions{
+	_, err := Run(context.Background(), RunOptions{
 		Mode:             "baseline",
 		SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
 		SuitePath:        filepath.Join(dir, "suite.jsonl"),
@@ -174,13 +174,10 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 		MaxPageSize:      50,
 		RunID:            "live-dream-baseline-test",
 	})
-	if err != nil {
-		t.Fatalf("Run live dream baseline: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "Dream evaluation is retired") {
+		t.Fatalf("retired Dream evaluation error = %v", err)
 	}
-	if !dreamCycleCalled {
-		t.Fatal("dream cycle was not called")
-	}
-	if summary.DreamScoredCaseCount != 1 || summary.AverageDreamRecallAtK != 1 || summary.AverageDreamMRR != 1 {
-		t.Fatalf("dream summary = %+v", summary)
+	if dreamCycleCalled {
+		t.Fatal("retired Dream cycle was called")
 	}
 }

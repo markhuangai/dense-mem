@@ -85,8 +85,8 @@ func TestFeedbackStoreFeedbackPreservesNullableJudgmentsAndFence(t *testing.T) {
 	db, mock := newRecallSQLMockDB(t)
 	team, space := uuid.MustParse(recallTeam), uuid.MustParse(recallSpace)
 	used, unsupported := true, false
-	mock.ExpectExec(`(?s)UPDATE recall_feedback_events.*WHERE recall_id = \$1 AND team_id = \$14 AND space_id = \$15 AND space_generation = \$16`).WithArgs(
-		"rec_test", recallTime, recallTime, nil, "", true, false, "high", nil, nil, "useful", "[]", "[]", recallTeam, recallSpace, int64(4),
+	mock.ExpectExec(`(?s)UPDATE recall_feedback_events.*WHERE recall_id = \$1 AND team_id = \$13 AND space_id = \$14 AND space_generation = \$15`).WithArgs(
+		"rec_test", recallTime, recallTime, nil, "", true, false, "high", nil, nil, "useful", "[]", recallTeam, recallSpace, int64(4),
 	).WillReturnResult(sqlmock.NewResult(0, 1))
 	err := NewFeedbackStore(db, recallQueryRLS{}).RecordFeedback(t.Context(), domain.RecallFeedbackEvent{
 		RecallID: "rec_test", CreatedAt: recallTime, UpdatedAt: recallTime, FeedbackAt: &recallTime,

@@ -7,21 +7,10 @@
     },
     {
       "path": "cmd/internal/serverapp/community_composition_test.go"
-    },
-    {
-      "path": "internal/community/detector.go"
-    },
-    {
-      "path": "internal/community/detector_test.go"
     }
   ],
   "go": {
     "units": [
-      {
-        "id": "github.com/markhuangai/dense-mem/internal/community/provider",
-        "role": "port",
-        "visibility": "public"
-      },
       {
         "id": "github.com/markhuangai/dense-mem/internal/community/contract",
         "role": "port",
@@ -38,21 +27,5 @@
         "visibility": "public"
       }
     ]
-  },
-  "workers": [
-    {
-      "path": "internal/community/service/scheduler.go",
-      "function": "runDue",
-      "kind": "goroutine",
-      "ordinal": 1,
-      "role": "worker"
-    },
-    {
-      "path": "internal/community/service/service.go",
-      "function": "RunScheduled",
-      "kind": "goroutine",
-      "ordinal": 1,
-      "role": "worker"
-    }
-  ]
+  }
 }

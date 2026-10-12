@@ -54,27 +54,10 @@ func recordRecallFeedbackSnapshot(
 	return true
 }
 
-func setRecallSuggestedActions(res *recall.RecallResult, dreamingEnabled bool) {
-	if res == nil {
-		return
+func setRecallSuggestedActions(res *recall.RecallResult) {
+	if res != nil {
+		res.SuggestedActions = []recall.RecallSuggestedAction{}
 	}
-	actions := make([]recall.RecallSuggestedAction, 0, 2)
-	if dreamingEnabled && len(res.RelatedHypotheses) > 0 {
-		hypothesisIDs := make([]string, 0, len(res.RelatedHypotheses))
-		for _, hypothesis := range res.RelatedHypotheses {
-			if hypothesis.HypothesisID != "" {
-				hypothesisIDs = append(hypothesisIDs, hypothesis.HypothesisID)
-			}
-		}
-		if len(hypothesisIDs) > 0 {
-			actions = append(actions, recall.RecallSuggestedAction{
-				Tool:          ToolResolveDreamFeedback,
-				HypothesisIDs: hypothesisIDs,
-				Guidance:      "Confirm true or false only with independent evidence; leave uncertain hypotheses unresolved.",
-			})
-		}
-	}
-	res.SuggestedActions = actions
 }
 
 func submitRecallFeedback(ctx context.Context, deps Dependencies, input map[string]any) (map[string]any, error) {
@@ -108,7 +91,6 @@ func recallFeedbackSubmissions(input map[string]any) []domain.RecallFeedbackSubm
 			Irrelevant:      boolInput(item["irrelevant"]),
 			FeedbackComment: stringInput(item["feedback_comment"]),
 			IrrelevantRefs:  recallFeedbackJudgedRefs(item["irrelevant_result_refs"]),
-			DreamFeedback:   recallHypothesisFeedback(item["hypothesis_feedback"]),
 		})
 	}
 	return out
@@ -126,21 +108,6 @@ func recallFeedbackJudgedRefs(value any) []domain.RecallFeedbackJudgedResultRef 
 		})
 	}
 	return refs
-}
-
-func recallHypothesisFeedback(value any) []domain.RecallFeedbackDreamFeedback {
-	rawItems := objectArray(value)
-	items := make([]domain.RecallFeedbackDreamFeedback, 0, len(rawItems))
-	for _, raw := range rawItems {
-		items = append(items, domain.RecallFeedbackDreamFeedback{
-			DreamID:         stringInput(raw["hypothesis_id"]),
-			Used:            boolInput(raw["used"]),
-			Quality:         stringInput(raw["quality"]),
-			Contradicted:    boolInput(raw["contradicted"]),
-			FeedbackComment: stringInput(raw["feedback_comment"]),
-		})
-	}
-	return items
 }
 
 func recallFeedbackToolArgs(input map[string]any, req recall.RecallRequest) map[string]any {

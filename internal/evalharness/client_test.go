@@ -222,13 +222,6 @@ func TestHTTPClientKnowledgeMapping(t *testing.T) {
 				"id":       "relationship-alpha",
 				"metadata": map[string]any{"source_doc_id": "doc-alpha"},
 			}}
-		case "hypothesis":
-			items = []map[string]any{{
-				"id": "hypothesis-alpha",
-				"payload": map[string]any{
-					"source_refs": []any{map[string]any{"type": "evidence", "id": "evidence-alpha"}},
-				},
-			}}
 		default:
 			t.Fatalf("unexpected export type %q", kind)
 		}
@@ -245,14 +238,13 @@ func TestHTTPClientKnowledgeMapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExportKnowledgeMapping: %v", err)
 	}
-	if strings.Join(requestedTypes, ",") != "evidence,entity,value,relationship,hypothesis" {
+	if strings.Join(requestedTypes, ",") != "evidence,entity,value,relationship" {
 		t.Fatalf("requested types = %v", requestedTypes)
 	}
 	alphaByType := mapping.BySourceDocIDAndType["doc-alpha"]
 	if alphaByType["evidence"][0].ID != "evidence-alpha" ||
 		alphaByType["entity"][0].ID != "entity-alpha" ||
-		alphaByType["relationship"][0].ID != "relationship-alpha" ||
-		alphaByType["hypothesis"][0].ID != "hypothesis-alpha" {
+		alphaByType["relationship"][0].ID != "relationship-alpha" {
 		t.Fatalf("doc-alpha mapping = %+v", alphaByType)
 	}
 	if mapping.BySourceDocIDAndType["doc-beta"]["value"][0].ID != "value-beta" {
@@ -737,11 +729,6 @@ func TestHTTPClientExportKnowledgeMappingIncludesCanonicalRefs(t *testing.T) {
 				"id":       "relationship-tiered",
 				"metadata": map[string]any{"source_doc_id": "doc-tiered"},
 			}}})
-		case "hypothesis":
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
-				"id":          "hypothesis-tiered",
-				"source_refs": []map[string]any{{"type": "evidence", "id": "evidence-tiered"}},
-			}}})
 		default:
 			t.Fatalf("unexpected export type %v", input["type"])
 		}
@@ -763,8 +750,8 @@ func TestHTTPClientExportKnowledgeMappingIncludesCanonicalRefs(t *testing.T) {
 	if mapping.BySourceDocIDAndType["doc-tiered"]["relationship"][0].ID != "relationship-tiered" {
 		t.Fatalf("relationship mapping = %+v", mapping.BySourceDocIDAndType)
 	}
-	if mapping.BySourceDocIDAndType["doc-tiered"]["hypothesis"][0].ID != "hypothesis-tiered" {
-		t.Fatalf("hypothesis mapping = %+v", mapping.BySourceDocIDAndType)
+	if len(mapping.BySourceDocIDAndType["doc-tiered"]["hypothesis"]) != 0 {
+		t.Fatalf("retired hypotheses returned = %+v", mapping.BySourceDocIDAndType)
 	}
 	if mapping.BySourceDocIDAndType["doc-other"]["value"][0].ID != "value-other" {
 		t.Fatalf("value mapping = %+v", mapping.BySourceDocIDAndType)

@@ -93,7 +93,6 @@ func (r *TelemetryLifecycleRepository) ReadOperationalTelemetry(ctx context.Cont
 		return snapshot, fmt.Errorf("operational telemetry reader is unavailable")
 	}
 	snapshot.DreamRuns = []operationscontract.DreamRunTelemetry{}
-	snapshot.Hypotheses = []operationscontract.HypothesisTelemetry{}
 	snapshot.Feedback = []operationscontract.WindowedTelemetryCount{}
 	snapshot.RememberAttempts = []operationscontract.WindowedTelemetryCount{}
 	snapshot.ConfirmedRelationships = []operationscontract.WindowedTelemetryCount{}
@@ -128,30 +127,6 @@ func (r *TelemetryLifecycleRepository) ReadOperationalTelemetry(ctx context.Cont
 				return err
 			}
 			snapshot.DreamRuns = append(snapshot.DreamRuns, value)
-			return nil
-		}); err != nil {
-			return err
-		}
-
-		if err := scanOperationalTelemetryRows(ctx, tx, `WITH `+operationalTelemetryActiveSpacesCTE+`
-			SELECT hypothesis.lane, hypothesis.status, count(*)::double precision,
-			       count(*) FILTER (WHERE hypothesis.status IN ('proposed', 'reinforced'))::double precision,
-			       COALESCE(EXTRACT(EPOCH FROM (now() - MIN(hypothesis.created_at) FILTER (
-			           WHERE hypothesis.status IN ('proposed', 'reinforced')
-				       ))), 0)::double precision
-			FROM hypotheses AS hypothesis
-			JOIN active_semantic_spaces AS active_space
-			  ON active_space.team_id = hypothesis.team_id
-			 AND active_space.space_id = hypothesis.space_id
-			 AND active_space.generation = hypothesis.space_generation
-			WHERE hypothesis.canonical_hypothesis_id IS NULL
-			GROUP BY hypothesis.lane, hypothesis.status
-		`, func(rows *sql.Rows) error {
-			var value operationscontract.HypothesisTelemetry
-			if err := rows.Scan(&value.Lane, &value.Status, &value.Count, &value.BacklogCount, &value.OldestBacklogAge); err != nil {
-				return err
-			}
-			snapshot.Hypotheses = append(snapshot.Hypotheses, value)
 			return nil
 		}); err != nil {
 			return err

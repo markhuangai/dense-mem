@@ -4,9 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-
-	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/dream"
 )
 
 func TestRegistry_RegisterAndList(t *testing.T) {
@@ -170,7 +167,7 @@ func TestToolRegistry_ListReturnsAllRegistered(t *testing.T) {
 
 func TestToolVisibleRuntimeGates(t *testing.T) {
 	ctx := context.Background()
-	if !IsEvaluationTool("eval_run_dream_cycle") || IsEvaluationTool("remember") {
+	if IsEvaluationTool("eval_run_dream_cycle") || IsEvaluationTool("remember") {
 		t.Fatal("IsEvaluationTool returned unexpected result")
 	}
 	if IsEvaluationTool("eval_get_manifest") || IsEvaluationTool("eval_score_retrieval_case") {
@@ -182,25 +179,7 @@ func TestToolVisibleRuntimeGates(t *testing.T) {
 	if !ToolVisible(ctx, Tool{Name: ToolSubmitRecallSessionFeedback}, RuntimeToolPolicy{RecallFeedback: stubRecallFeedbackConfig{enabled: true}}) {
 		t.Fatal("recall feedback tool should be visible when feedback is enabled")
 	}
-	if ToolVisible(ctx, Tool{Name: ToolListDreams}, RuntimeToolPolicy{}) {
-		t.Fatal("Dream tool should fail closed")
-	}
-	if ToolVisible(ctx, Tool{Name: ToolListDreams}, RuntimeToolPolicy{Dreams: dreamingConfigStub{err: errors.New("config failed")}}) {
-		t.Fatal("Dream tool should fail closed on config errors")
-	}
-	if !ToolVisible(ctx, Tool{Name: ToolListDreams}, RuntimeToolPolicy{Dreams: dreamingConfigStub{enabled: true}}) {
-		t.Fatal("Dream tool should be visible for an enabled team")
-	}
 	if !ToolVisible(ctx, Tool{Name: "ordinary_tool"}, RuntimeToolPolicy{}) {
 		t.Fatal("ordinary tools should be visible by default")
 	}
-}
-
-type dreamingConfigStub struct {
-	enabled bool
-	err     error
-}
-
-func (s dreamingConfigStub) EffectiveConfig(context.Context, string) (dream.EffectiveConfig, error) {
-	return dream.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: s.enabled}}, s.err
 }

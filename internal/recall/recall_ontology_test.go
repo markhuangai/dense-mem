@@ -65,7 +65,6 @@ func TestRecallOntologyEquivalentEvidenceBoundAndProvenance(t *testing.T) {
 	require.NotContains(t, results[0].EquivalentEvidenceIDs, "E00")
 	result := &RecallResult{Results: []RecallResultItem{{EvidenceID: "E00", EquivalentEvidenceIDs: results[0].EquivalentEvidenceIDs, Rank: 1}}}
 	require.Len(t, recallResultEvidenceIDs(result.Results), 21)
-	require.Len(t, recallHypothesisContextFrom(result).evidenceIDs, 21)
 	refs := FeedbackResultRefs(result)
 	require.Len(t, refs, 21)
 	for _, ref := range refs {

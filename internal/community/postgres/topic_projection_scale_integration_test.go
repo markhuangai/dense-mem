@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	community "github.com/markhuangai/dense-mem/internal/community/contract"
 	communityapp "github.com/markhuangai/dense-mem/internal/community/service"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
@@ -132,13 +131,7 @@ func TestCommunityTopicDefinitionRaceAndModeAdmission(t *testing.T) {
 	require.ErrorIs(t, f.store.AppendTopicProjection(context.Background(), community.TopicProjectionBatch{Work: *work}, time.Now()), ontology.ErrMaintenanceDisabled)
 	require.Empty(t, f.currentIDs(t))
 	require.NoError(t, f.store.FailTopicProjection(context.Background(), *work, "interrupted", time.Now()))
-	// The legacy publisher was admitted before ontology enablement but must fence at publication.
-	run, err := f.store.ClaimCommunityRun(context.Background(), CommunityRunClaimInput{TeamID: f.teamID, WindowKey: uuid.NewString(), SourceFingerprint: "fixture-sources"})
-	require.NoError(t, err)
 	f.setMode(t, true)
-	publication := f.publication
-	publication.RunID = run.RunID
-	require.ErrorIs(t, f.store.PublishCommunitySnapshot(context.Background(), publication), ontology.ErrMaintenanceDisabled)
 	f.drain(t, 10)
 	require.Len(t, f.currentIDs(t), 2)
 	f.assignTopic(t, changedTopic, handles)

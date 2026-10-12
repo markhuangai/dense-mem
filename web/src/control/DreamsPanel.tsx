@@ -184,13 +184,12 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
   return (
     <>
       <section className={panelClassName}>
-        <SectionHeading title="Dreaming" meta={team.name} />
+        <SectionHeading title="Dream history" meta={team.name} />
         {error && <div className="banner error" role="alert">{error}</div>}
         {status && (
-          <div className="dream-status-bar" aria-label="Dreaming status">
-            <StatusItem label="Source" value={sourceLabel(status.effective_config.source)} />
-            <StatusItem label="Scheduled" value={status.effective_config.enabled ? "Enabled" : "Disabled"} />
-            <StatusItem label="Pending" value={status.pending_count} />
+          <div className="dream-status-bar" aria-label="Dream history status">
+            <StatusItem label="Workflow" value="Retired" />
+            <StatusItem label="Historical proposed" value={status.historical_proposed_count} />
             <StatusItem label="Latest run" value={status.latest_run ? runLabel(status.latest_run) : "None"} />
           </div>
         )}
@@ -449,16 +448,6 @@ function RunTable({ runs, onInspect }: { runs: DreamRun[]; onInspect: (run: Drea
 
 function runLabel(run: DreamRun): string {
   return `${run.status} ${formatDate(run.started_at)}`;
-}
-
-function sourceLabel(source: string): string {
-  if (source === "global_force") {
-    return "Global force";
-  }
-  if (source === "team") {
-    return "Team";
-  }
-  return "Global";
 }
 
 function dreamStatusClass(status: string): string {

@@ -17,39 +17,32 @@ func (r *Store) RecallCommunities(ctx context.Context, input CommunityRecallInpu
 		return nil, nil, err
 	}
 	communities := []CommunityRecallRecord{}
-	withCoverage := input.ExpectedOntologyEnabled != nil && *input.ExpectedOntologyEnabled
 	var coverage *communitycontract.TopicProjectionCoverage
 	if r == nil || r.db == nil || r.rls == nil {
 		return nil, nil, fmt.Errorf("community: database and RLS helper are required")
 	}
-	if withCoverage {
-		if err := authorizeTopicProjectionTeam(ctx, input.TeamID); err != nil {
-			return nil, nil, err
-		}
+	if err := authorizeTopicProjectionTeam(ctx, input.TeamID); err != nil {
+		return nil, nil, err
 	}
 	err := r.rls.WithTeamReadOnlyRepeatableTx(ctx, r.db, input.TeamID, func(tx *gorm.DB) error {
-		if input.ExpectedOntologyEnabled != nil {
-			var enabled bool
-			if err := tx.Raw("SELECT " + communityOntologyModeSQL).Row().Scan(&enabled); err != nil {
-				return err
-			}
-			if enabled != *input.ExpectedOntologyEnabled {
-				return communitycontract.ErrCommunitySourceStale
-			}
+		var enabled bool
+		if err := tx.Raw("SELECT " + communityOntologyModeSQL).Row().Scan(&enabled); err != nil {
+			return err
 		}
-		query := communityRecallSQL
+		if input.ExpectedOntologyEnabled != nil && enabled != *input.ExpectedOntologyEnabled {
+			return communitycontract.ErrCommunitySourceStale
+		}
+		if !enabled {
+			return nil
+		}
+		fence, err := loadTeamSharedSpaceFence(ctx, tx, input.TeamID)
+		if err != nil {
+			return err
+		}
 		args := []any{input.TeamID, input.Query, pq.Array(input.ReturnedEvidenceIDs), pq.Array(input.KnownEvidenceIDs),
 			pq.Array(input.KnownRelationshipIDs), pq.Array(input.SeedRelationshipIDs), pq.Array(input.ExpandFromEntityIDs), pq.Array(input.CoveredGroupKeys)}
-		if withCoverage {
-			fence, err := loadTeamSharedSpaceFence(ctx, tx, input.TeamID)
-			if err != nil {
-				return err
-			}
-			query = communityProjectionRecallSQL
-			args = append(args, fence.ID, fence.Generation)
-		}
-		args = append(args, input.Limit)
-		rows, err := tx.WithContext(ctx).Raw(query, args...).Rows()
+		args = append(args, fence.ID, fence.Generation, input.Limit)
+		rows, err := tx.WithContext(ctx).Raw(communityProjectionRecallSQL, args...).Rows()
 		if err != nil {
 			return err
 		}
@@ -60,12 +53,10 @@ func (r *Store) RecallCommunities(ctx context.Context, input CommunityRecallInpu
 			var topPredicates pq.StringArray
 			var communityID, logicalID sql.NullString
 			targets := []any{&communityID, &logicalID, &record.Rank, &record.Summary, &record.EntityCount, &record.RelationshipCount, &topPredicates}
-			if withCoverage {
-				if coverage == nil {
-					coverage = &communitycontract.TopicProjectionCoverage{}
-				}
-				targets = append(targets, &coverage.TotalTopics, &coverage.CurrentTopics, &coverage.PendingTopics, &coverage.StaleTopics, &coverage.FailedTopics, &coverage.CoverageComplete)
+			if coverage == nil {
+				coverage = &communitycontract.TopicProjectionCoverage{}
 			}
+			targets = append(targets, &coverage.TotalTopics, &coverage.CurrentTopics, &coverage.PendingTopics, &coverage.StaleTopics, &coverage.FailedTopics, &coverage.CoverageComplete)
 			if err := rows.Scan(targets...); err != nil {
 				return err
 			}
@@ -278,24 +269,11 @@ func loadCommunityRecallRelationshipsBatch(ctx context.Context, tx *gorm.DB, inp
 	return nil
 }
 
-var communityRecallSQL = buildCommunityRecallSQL(false)
-var communityProjectionRecallSQL = buildCommunityRecallSQL(true)
+var communityProjectionRecallSQL = buildCommunityRecallSQL()
 
-func buildCommunityRecallSQL(withCoverage bool) string {
-	scopeParams, projectionCTEs := "", ""
-	visibility := communityRecordVisibilitySQL("record")
-	resultSQL := `
-			SELECT community_id::text,
-			       COALESCE(logical_community_id, community_id)::text,
-			       row_number() OVER (ORDER BY seed_lane ASC, member_count DESC, community_id ASC)::int,
-			       summary, member_count, source_count, top_predicates
-			FROM matched_communities
-			ORDER BY seed_lane ASC, member_count DESC, community_id ASC
-			LIMIT ?
-		`
-	if withCoverage {
-		scopeParams = `, ?::uuid AS projection_space_id,?::bigint AS projection_generation`
-		projectionCTEs = `,
+func buildCommunityRecallSQL() string {
+	scopeParams := `, ?::uuid AS projection_space_id,?::bigint AS projection_generation`
+	projectionCTEs := `,
   scope AS (SELECT team_id,projection_space_id AS space_id,projection_generation AS generation FROM params),
   projection_snapshots AS MATERIALIZED (
    SELECT record.community_id FROM community_records AS record CROSS JOIN scope
@@ -309,11 +287,11 @@ func buildCommunityRecallSQL(withCoverage bool) string {
    SELECT community_id,dense_mem_community_topic_current(scope.team_id,community_id) AS fresh
    FROM projection_snapshots CROSS JOIN scope
   ), topics AS MATERIALIZED (SELECT work.status,COALESCE(freshness.fresh,false) AS fresh` +
-			topicProjectionFromSQL + ` LEFT JOIN projection_freshness AS freshness ON freshness.community_id=work.community_id` +
-			topicProjectionWhereSQL + `), counts AS (` + topicProjectionCountsSQL + `),
+		topicProjectionFromSQL + ` LEFT JOIN projection_freshness AS freshness ON freshness.community_id=work.community_id` +
+		topicProjectionWhereSQL + `), counts AS (` + topicProjectionCountsSQL + `),
   projection_coverage AS MATERIALIZED (` + topicProjectionCoverageResultSQL + `)`
-		visibility = `record.topic_id IS NOT NULL AND EXISTS(SELECT 1 FROM projection_freshness AS freshness WHERE freshness.community_id=record.community_id AND freshness.fresh)`
-		resultSQL = `
+	visibility := `record.topic_id IS NOT NULL AND EXISTS(SELECT 1 FROM projection_freshness AS freshness WHERE freshness.community_id=record.community_id AND freshness.fresh)`
+	resultSQL := `
   SELECT selected.community_id::text,COALESCE(selected.logical_community_id,selected.community_id)::text,
   COALESCE(selected.rank,0),COALESCE(selected.summary,''),COALESCE(selected.member_count,0),COALESCE(selected.source_count,0),selected.top_predicates,
   coverage.total_topics,coverage.current_topics,coverage.pending_topics,coverage.stale_topics,coverage.failed_topics,coverage.coverage_complete
@@ -321,7 +299,6 @@ func buildCommunityRecallSQL(withCoverage bool) string {
    SELECT matched.*,row_number() OVER(ORDER BY seed_lane ASC,member_count DESC,community_id ASC)::int AS rank
    FROM matched_communities AS matched ORDER BY seed_lane ASC,member_count DESC,community_id ASC LIMIT ?
   ) AS selected ON true ORDER BY selected.rank`
-	}
 	return `
 			WITH params AS (
 				SELECT ?::uuid AS team_id,

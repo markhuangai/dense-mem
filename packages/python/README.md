@@ -35,7 +35,7 @@ use inside an active event loop.
 Methods are initialize, list_tools, remember, ingest_session, recall_memory and
 trace_memory. Requests/results are typed dictionaries with py.typed. Server
 validation and authenticated discovery remain authoritative. Current-server
-compatibility is dense-mem.v2.6.8, including server-supported historical terminal
+compatibility is dense-mem.v2.7.0, including server-supported historical terminal
 replay versions; this does not promise compatibility with older deployments.
 
 ## Complete Remember request and safe replay
@@ -76,7 +76,7 @@ one proposal citing every evidence item. The client does not infer Relationships
 Inspect evidence and relationship_results: completed processing can include
 not_stored proposals and remediation. Returned warnings remain visible. Recall
 results preserve server order, equivalent IDs, conflicts, topic communities,
-hypotheses, provenance, search states and degradations. These frontiers do not
+provenance, search states and degradations. These frontiers do not
 establish new factual support. Trace requires a returned relationship_id.
 
 ## Exact private session ingestion

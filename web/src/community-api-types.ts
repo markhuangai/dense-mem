@@ -1,11 +1,8 @@
+import type { OntologyMaintenancePolicy } from "./ontology-maintenance-api-types";
+
 export type CommunityStatus = {
-  effective_config: {
-    enabled: boolean;
-    start_time_local: string;
-    timezone: string;
-    max_concurrency: number;
-    jitter_seconds: number;
-  };
+  effective_config: OntologyMaintenancePolicy;
+  legacy_processing_retired: boolean;
   latest_run?: {
     run_id: string;
     team_id: string;

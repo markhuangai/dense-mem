@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -9,7 +8,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/dream"
+
 	dto "github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/http/response"
@@ -25,18 +24,13 @@ type RecallHandlerInterface interface {
 
 // RecallHandler serves GET /ui/api/recall from the active recall pipeline.
 type RecallHandler struct {
-	svc    recall.RecallService
-	dreams recallDreamingConfigProvider
-}
-
-type recallDreamingConfigProvider interface {
-	EffectiveConfig(ctx context.Context, fallbackTeamID string) (dream.EffectiveConfig, error)
+	svc recall.RecallService
 }
 
 var _ RecallHandlerInterface = (*RecallHandler)(nil)
 
-func NewRecallHandler(svc recall.RecallService, dreams recallDreamingConfigProvider) *RecallHandler {
-	return &RecallHandler{svc: svc, dreams: dreams}
+func NewRecallHandler(svc recall.RecallService) *RecallHandler {
+	return &RecallHandler{svc: svc}
 }
 
 func (h *RecallHandler) Handle(c echo.Context) error {
@@ -56,12 +50,9 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 	if err := validation.ValidateStruct(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
-
-	dreamingEnabled := recallDreamingEnabled(ctx, h.dreams)
 	result, err := h.svc.Recall(ctx, recall.RecallRequest{
 		Query:                      req.Query,
 		Limit:                      req.Limit,
-		IncludeHypotheses:          dreamingEnabled,
 		RelationshipLimit:          req.RelationshipLimit,
 		CommunityLimit:             req.CommunityLimit,
 		CommunityRelationshipLimit: req.CommunityRelationshipLimit,
@@ -86,9 +77,6 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 		}
 		return httperr.New(httperr.INTERNAL_ERROR, "recall failed")
 	}
-	if result != nil && !dreamingEnabled {
-		result.RelatedHypotheses = []recall.RelatedHypothesisSummary{}
-	}
 	if degradation := requiredRecallDegradation(result); degradation != nil {
 		message := strings.TrimSpace(degradation.Message)
 		if message == "" {
@@ -98,14 +86,6 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 	}
 
 	return response.SuccessOK(c, recallHTTPResult(result))
-}
-
-func recallDreamingEnabled(ctx context.Context, cfg recallDreamingConfigProvider) bool {
-	if cfg == nil {
-		return false
-	}
-	effective, err := cfg.EffectiveConfig(ctx, "")
-	return err == nil && effective.Enabled
 }
 
 func recallHTTPResult(result *recall.RecallResult) recall.RecallResult {
@@ -127,9 +107,6 @@ func recallHTTPResult(result *recall.RecallResult) recall.RecallResult {
 	}
 	if out.DiscoveryPaths == nil {
 		out.DiscoveryPaths = []recall.RecallDiscoveryPath{}
-	}
-	if out.RelatedHypotheses == nil {
-		out.RelatedHypotheses = []recall.RelatedHypothesisSummary{}
 	}
 	if out.Degradations == nil {
 		out.Degradations = []recall.RecallDegradationResult{}

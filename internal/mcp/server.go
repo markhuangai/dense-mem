@@ -87,11 +87,7 @@ func NewServerWithScopesAndTeamContext(reg registry.Registry, teamID string, sco
 
 // NewServerWithScopesTeamContextAndRuntimeConfig constructs a Server with
 // request-scoped team metadata and runtime feature visibility.
-func NewServerWithScopesTeamContextAndRuntimeConfig(reg registry.Registry, teamID string, scopes []string, team TeamContext, logger Logger, recallFeedbackConfig registry.RecallFeedbackConfigProvider, dreams ...registry.DreamingConfigProvider) *Server {
-	var dreamConfig registry.DreamingConfigProvider
-	if len(dreams) > 0 {
-		dreamConfig = dreams[0]
-	}
+func NewServerWithScopesTeamContextAndRuntimeConfig(reg registry.Registry, teamID string, scopes []string, team TeamContext, logger Logger, recallFeedbackConfig registry.RecallFeedbackConfigProvider) *Server {
 	return &Server{
 		registry: reg,
 		teamID:   teamID,
@@ -100,7 +96,6 @@ func NewServerWithScopesTeamContextAndRuntimeConfig(reg registry.Registry, teamI
 		logger:   logger,
 		runtimeToolPolicy: registry.RuntimeToolPolicy{
 			RecallFeedback: recallFeedbackConfig,
-			Dreams:         dreamConfig,
 		},
 		prompts: defaultPromptCatalog(logger),
 	}

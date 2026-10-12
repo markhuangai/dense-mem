@@ -512,9 +512,7 @@ func TestUserPortalCurrentSessionErrors(t *testing.T) {
 	require.ErrorContains(t, err, "credential not found")
 
 	h.credentials = &userPortalKeySvc{keys: []*domain.Credential{authKey}}
-	h.appConfig = &controlAppConfigSvc{dreamingRuntimeErr: errors.New("config failed")}
-	_, err = h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", userPortalPrincipal(teamID, keyID, accessservice.CredentialRoleMember, []string{"read"}, "api_key")))
-	require.ErrorContains(t, err, "load dreaming runtime config")
+
 }
 
 func TestUserPortalRotateCurrentKeyErrors(t *testing.T) {
@@ -617,16 +615,17 @@ func TestRegisterUserPortalRegistersCurrentSurface(t *testing.T) {
 		"PATCH /ui/api/team/credentials/:credentialId",
 		"POST /ui/api/team/credentials/:credentialId/rotate",
 		"DELETE /ui/api/team/credentials/:credentialId",
-		"GET /ui/api/dreaming/status",
-		"GET /ui/api/dreaming/runs",
-		"GET /ui/api/dreams",
-		"GET /ui/api/dreams/:dreamId",
 	} {
 		require.True(t, routes[route], "route %q not registered", route)
 	}
 
 	for _, route := range []string{
 		"POST /ui/api/key/rotate",
+		"GET /ui/api/dreaming/status",
+		"GET /ui/api/dreaming/runs",
+		"GET /ui/api/dreams",
+		"GET /ui/api/dreams/:dreamId",
+
 		"POST /ui/api/sso/key",
 		"POST /ui/api/sso/key/rotate",
 		"GET /ui/api/team/profiles",
@@ -690,7 +689,6 @@ func TestUserPortalMountedRoutesUseAuthenticatedTeam(t *testing.T) {
 		UpdatedAt:   time.Now().UTC().Truncate(time.Second),
 	}}}
 	keys := &userPortalKeySvc{keys: []*domain.Credential{managerKey, memberKey}}
-	dreams := &controlDreamServiceStub{dream: &domain.Dream{TeamID: teamID.String(), Status: domain.DreamStatusProposed}}
 	e := NewServer(config.Config{
 		HTTPMaxBodyBytes:   1048576,
 		RateLimitPerMinute: 100,
@@ -700,7 +698,6 @@ func TestUserPortalMountedRoutesUseAuthenticatedTeam(t *testing.T) {
 		TeamSvc:                  profiles,
 		CredentialSvc:            keys,
 		RateLimitSvc:             accessservice.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
-		DreamSvc:                 dreams,
 		Config:                   &config.Config{RateLimitPerMinute: 100},
 		CredentialVerifier:       crypto.NewArgon2Verifier(0),
 		CredentialLookupPrefixes: crypto.GetLookupPrefixes,
@@ -714,7 +711,6 @@ func TestUserPortalMountedRoutesUseAuthenticatedTeam(t *testing.T) {
 		{method: http.MethodGet, path: "/ui/api/team", want: `"name":"Team"`},
 		{method: http.MethodGet, path: "/ui/api/team/credentials", want: `"name":"Member"`},
 		{method: http.MethodGet, path: "/ui/api/team/credentials/" + memberID.String(), want: `"name":"Member"`},
-		{method: http.MethodGet, path: "/ui/api/dreams/dream-1", want: `"dream_id":"dream-1"`},
 	} {
 		req := httptest.NewRequest(tt.method, tt.path, nil)
 		req.Header.Set("Authorization", "Bearer "+rawKey)
@@ -765,7 +761,6 @@ func TestUserPortalMountedRoutesUseAuthenticatedTeam(t *testing.T) {
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, teamID, profiles.deleted)
-	require.Equal(t, teamID.String(), dreams.profileID)
 }
 
 func TestUserPortalMissingRouteServicesReturnUnavailable(t *testing.T) {
@@ -793,7 +788,6 @@ func TestUserPortalMissingRouteServicesReturnUnavailable(t *testing.T) {
 		{path: "/ui/api/session", want: "service unavailable"},
 		{path: "/ui/api/team", want: "service unavailable"},
 		{path: "/ui/api/team/credentials/" + uuid.NewString(), want: "service unavailable"},
-		{path: "/ui/api/dreams/dream-1", want: "service unavailable"},
 	} {
 		req := httptest.NewRequest(http.MethodGet, tt.path, nil)
 		req.Header.Set("Authorization", "Bearer "+rawKey)

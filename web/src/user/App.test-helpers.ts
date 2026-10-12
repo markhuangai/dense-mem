@@ -68,7 +68,6 @@ export function recallPayloadForHits(hits: RecallHit[]): RecallPayload {
       };
     }),
     related_relationships: [],
-    related_hypotheses: [],
     search_states: { evidence: "current", relationships: "current" },
     degradations: [],
   };

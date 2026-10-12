@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/lib/pq"
 	"gorm.io/gorm"
@@ -78,67 +77,6 @@ func ensureCommunitySourcesCurrent(ctx context.Context, tx *gorm.DB, teamID stri
 	}
 	if err := rows.Err(); err != nil {
 		return err
-	}
-	return nil
-}
-
-func flattenCommunitySources(communities []CommunityPublishRecord) []CommunitySourceInput {
-	seen := map[string]struct{}{}
-	out := make([]CommunitySourceInput, 0)
-	for _, community := range communities {
-		for _, source := range community.Sources {
-			key := source.RelationshipID + "\x00" + strconv.Itoa(source.RelationshipVersion)
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			out = append(out, source)
-		}
-	}
-	return out
-}
-
-func insertCommunityRecord(ctx context.Context, tx *gorm.DB, input CommunitySnapshotPublishInput, fence semanticSpaceFence, community CommunityPublishRecord) error {
-	if err := tx.WithContext(ctx).Exec(`
-		INSERT INTO community_records (
-			team_id, space_id, space_generation, community_id, run_id, ordinal, status, summary, summary_version,
-			logical_community_id, member_count, source_count, top_entities, top_predicates, source_fingerprint,
-			summary_input_hash, summary_provider_model, summary_prompt_hash, summary_response_hash, summary_generated_at
-		) VALUES (
-			?::uuid, ?::uuid, ?, ?::uuid, ?::uuid, ?, 'current', ?, ?, ?::uuid, ?, ?, ?::text[], ?::text[], ?, ?, ?, ?, ?, now()
-		)
-	`, input.TeamID, fence.ID, fence.Generation, community.CommunityID, input.RunID, community.Ordinal,
-		community.Summary, community.SummaryVersion, community.LogicalCommunityID, community.MemberCount,
-		community.SourceCount, pq.Array(community.TopEntities),
-		pq.Array(community.TopPredicates), community.SourceFingerprint, community.SummaryInputHash,
-		community.SummaryProviderModel, community.SummaryPromptHash, community.SummaryResponseHash).Error; err != nil {
-		return err
-	}
-	for _, membership := range community.Memberships {
-		if err := tx.WithContext(ctx).Exec(`
-			INSERT INTO community_memberships (
-				team_id, space_id, space_generation, community_id, entity_id, rank, membership_score, source_count
-			) VALUES (
-				?::uuid, ?::uuid, ?, ?::uuid, ?::uuid, ?, ?, ?
-			)
-		`, input.TeamID, fence.ID, fence.Generation, community.CommunityID, membership.EntityID,
-			membership.Rank, membership.MembershipScore, membership.SourceCount).Error; err != nil {
-			return err
-		}
-	}
-	for _, source := range community.Sources {
-		if err := tx.WithContext(ctx).Exec(`
-			INSERT INTO community_sources (
-				team_id, space_id, space_generation, community_id, relationship_id, owner_profile_id,
-				relationship_version, source_rank, semantic_group_key, source_state_hash
-			) VALUES (
-				?::uuid, ?::uuid, ?, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?
-			)
-		`, input.TeamID, fence.ID, fence.Generation, community.CommunityID, source.RelationshipID,
-			source.OwnerProfileID, source.RelationshipVersion, source.SourceRank,
-			source.SemanticGroupKey, source.SourceStateHash).Error; err != nil {
-			return err
-		}
 	}
 	return nil
 }

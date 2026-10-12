@@ -127,12 +127,6 @@ func TestBuildActiveSubmitRecallSessionFeedbackRecordsFeedback(t *testing.T) {
 				"id":   "relationship-canonical",
 				"rank": 1,
 			}},
-			"hypothesis_feedback": []any{map[string]any{
-				"hypothesis_id": "dream-v2",
-				"used":          true,
-				"quality":       "medium",
-				"contradicted":  false,
-			}},
 		}},
 	})
 	if err != nil {
@@ -150,9 +144,6 @@ func TestBuildActiveSubmitRecallSessionFeedbackRecordsFeedback(t *testing.T) {
 	}
 	if len(feedback.IrrelevantRefs) != 1 || feedback.IrrelevantRefs[0].ID != "relationship-canonical" {
 		t.Fatalf("irrelevant refs = %+v", feedback.IrrelevantRefs)
-	}
-	if len(feedback.DreamFeedback) != 1 || feedback.DreamFeedback[0].DreamID != "dream-v2" {
-		t.Fatalf("hypothesis feedback = %+v", feedback.DreamFeedback)
 	}
 	if got := len(metrics.RecallFeedbackSamples()); got != 1 {
 		t.Fatalf("metrics feedback samples = %d; want 1", got)

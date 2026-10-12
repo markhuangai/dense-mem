@@ -27,7 +27,6 @@ func TestPrometheusTelemetryService_UnconfiguredPreservesProfileAndTeamSeriesSta
 			svc := NewPrometheusTelemetryService(nil, time.Second, "", nil)
 			svc.SetFeatureResolver(TelemetryFeatureResolver{
 				RecallFeedbackEnabled: func(context.Context) (bool, error) { return false, nil },
-				DreamingEnabled:       func(context.Context, *uuid.UUID) (bool, error) { return false, nil },
 			})
 
 			snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{
@@ -63,7 +62,7 @@ func TestPrometheusTelemetryService_UnconfiguredPreservesProfileAndTeamSeriesSta
 			dream := telemetrySeriesByID(snapshot.ActivitySeries, "dream_feedbacks")
 			require.NotNil(t, dream)
 			require.Equal(t, TelemetryItemInactive, dream.Status)
-			require.Equal(t, "feature_disabled", dream.ReasonCode)
+			require.Equal(t, "feature_retired", dream.ReasonCode)
 		})
 	}
 }

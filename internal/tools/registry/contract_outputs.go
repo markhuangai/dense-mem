@@ -1,12 +1,11 @@
 package registry
 
 import (
-	"errors"
 	"strings"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/dream"
+
 	"github.com/markhuangai/dense-mem/internal/graph/contract"
 	"github.com/markhuangai/dense-mem/internal/memorypack"
 	"github.com/markhuangai/dense-mem/internal/recall"
@@ -24,17 +23,6 @@ func rememberRequestFromContractInput(input map[string]any) (rememberapp.Remembe
 	return req, nil
 }
 
-func resolveDreamFeedbackRequestFromContractInput(input map[string]any) (dream.ResolveFeedbackRequest, error) {
-	var req dream.ResolveFeedbackRequest
-	if err := remapInput(input, &req); err != nil {
-		return req, err
-	}
-	req.DreamID = stringInput(input["hypothesis_id"])
-	req.Feedback = stringInput(input["reason"])
-	req.RelationshipHints = objectArray(input["relationships"])
-	return req, nil
-}
-
 func recallContractOutput(res *recall.RecallResult) map[string]any {
 	if res == nil {
 		return map[string]any{
@@ -43,7 +31,6 @@ func recallContractOutput(res *recall.RecallResult) map[string]any {
 			"conflicts":             []any{},
 			"related_relationships": []any{},
 			"related_communities":   []any{},
-			"related_hypotheses":    []any{},
 			"search_states": map[string]any{
 				"evidence":      string(domain.SearchProjectionCurrent),
 				"relationships": string(domain.SearchProjectionCurrent),
@@ -74,10 +61,6 @@ func recallContractOutput(res *recall.RecallResult) map[string]any {
 	if conflicts == nil {
 		conflicts = []recall.RecallConflictSummary{}
 	}
-	relatedHypotheses := res.RelatedHypotheses
-	if relatedHypotheses == nil {
-		relatedHypotheses = []recall.RelatedHypothesisSummary{}
-	}
 	degradations := res.Degradations
 	if degradations == nil {
 		degradations = []recall.RecallDegradationResult{}
@@ -105,7 +88,6 @@ func recallContractOutput(res *recall.RecallResult) map[string]any {
 		"conflicts":             conflicts,
 		"related_relationships": relatedRelationships,
 		"related_communities":   relatedCommunities,
-		"related_hypotheses":    relatedHypotheses,
 		"search_states":         searchStates,
 		"degradations":          degradations,
 		"suggested_actions":     suggestedActions,
@@ -498,69 +480,6 @@ func putNullableTime(out map[string]any, key string, value *time.Time) {
 	}
 }
 
-func listDreamsContractOutput(dreams []*domain.Dream, next string) map[string]any {
-	items := make([]map[string]any, 0, len(dreams))
-	for _, dream := range dreams {
-		items = append(items, dreamSummaryContractOutput(dream))
-	}
-	out := map[string]any{"dreams": items}
-	if strings.TrimSpace(next) != "" {
-		out["next_cursor"] = next
-	}
-	return out
-}
-
-func resolveDreamFeedbackContractOutput(res *dream.ResolveFeedbackResult) map[string]any {
-	out := map[string]any{
-		"hypothesis_id": "",
-		"status":        string(domain.HypothesisProposed),
-	}
-	if res == nil || res.Dream == nil {
-		return out
-	}
-	out["hypothesis_id"] = res.Dream.DreamID
-	out["status"] = string(res.Dream.Status)
-	if res.Memory != nil {
-		submissionID := firstNonEmpty(res.Memory.SubmissionID, res.Memory.IngestID)
-		if submissionID != "" {
-			out["submission_id"] = submissionID
-		}
-	}
-	return out
-}
-
-func resolveDreamConfirmationBusyOutcome(err error) (map[string]any, bool) {
-	var busy *dream.ConfirmationBusyError
-	if !errors.As(err, &busy) || busy == nil {
-		return nil, false
-	}
-	message := "dream confirmation is already in progress"
-	remediation := "Retry resolve_dream_feedback with the same evidence and idempotency_key after the in-progress confirmation completes."
-	if busy.IsLifecycle() {
-		message = "dream lifecycle feedback is already in progress"
-		remediation = "Retry resolve_dream_feedback with the same decision and reason after the in-progress lifecycle update completes; omit idempotency_key."
-	}
-	return map[string]any{
-		"code":        "dream_confirmation_busy",
-		"message":     message,
-		"retryable":   true,
-		"next_action": string(rememberapp.TerminalNextActionRetryDreamFeedback),
-		"remediation": remediation,
-	}, true
-}
-
-func resolveDreamTerminalOutcome(res *dream.ResolveFeedbackResult) (map[string]any, bool, error) {
-	if res == nil || res.Memory == nil || res.Memory.Terminal == nil ||
-		res.Memory.Terminal.ProcessingState == string(rememberapp.TerminalProcessingCompleted) {
-		return nil, false, nil
-	}
-	output, err := structToMap(res.Memory.Terminal)
-	if err != nil {
-		return nil, false, err
-	}
-	return output, true, nil
-}
-
 func exportMemoryPackContractOutput(res *memorypack.ExportResult) map[string]any {
 	if res == nil {
 		return map[string]any{
@@ -593,137 +512,4 @@ func memoryPackOmissionsContractOutput(omissions []string) []map[string]any {
 		out = append(out, map[string]any{"item_id": "artifact", "reason": omission})
 	}
 	return out
-}
-
-func dreamSummaryContractOutput(dream *domain.Dream) map[string]any {
-	if dream == nil {
-		return map[string]any{}
-	}
-	out := map[string]any{
-		"hypothesis_id":           dream.DreamID,
-		"subject_entity_id":       dream.SubjectEntityID,
-		"predicate_key":           dream.PredicateKey,
-		"statement":               dream.Hypothesis,
-		"status":                  string(dream.Status),
-		"source_relationship_ids": dreamOutputSourceIDs(dream, false),
-		"source_evidence_ids":     append([]string{}, dream.SourceEvidenceIDs...),
-		"lane":                    firstNonEmpty(string(dream.Lane), string(domain.DreamLaneGraph)),
-		"generator_kind":          dreamOutputGeneratorKind(dream),
-		"generator_version":       firstNonEmpty(dream.GeneratorVersion, dream.GeneratorModel, "dream-v2"),
-		"created_at":              dreamOutputCreatedAt(dream),
-	}
-	if strings.TrimSpace(dream.ObjectEntityID) != "" {
-		out["object_entity_id"] = dream.ObjectEntityID
-	}
-	if strings.TrimSpace(dream.ObjectValueID) != "" {
-		out["object_value_id"] = dream.ObjectValueID
-	}
-	return out
-}
-
-func dreamContractOutput(dream *domain.Dream) map[string]any {
-	out := dreamSummaryContractOutput(dream)
-	if dream == nil {
-		return out
-	}
-	out["source_owner_profile_ids"] = dreamOutputOwnerIDs(dream)
-	out["rationale"] = firstNonEmpty(dream.Rationale, "No rationale supplied.")
-	out["likelihood"] = dream.Likelihood
-	out["confidence"] = dream.Confidence
-	out["source_candidate_relationship_ids"] = dreamOutputSourceIDs(dream, true)
-	out["source_versions"] = dreamOutputSourceVersions(dream)
-	out["derivations"] = dreamDerivationsContractOutput(dream)
-	out["evidence_derivations"] = dreamEvidenceDerivationsContractOutput(dream)
-	return out
-}
-
-func dreamDerivationsContractOutput(dream *domain.Dream) []map[string]any {
-	if dream == nil || len(dream.Derivations) == 0 {
-		return []map[string]any{}
-	}
-	out := make([]map[string]any, 0, len(dream.Derivations))
-	for _, derivation := range dream.Derivations {
-		out = append(out, map[string]any{
-			"premise_position":     derivation.PremisePosition,
-			"relationship_id":      derivation.RelationshipID,
-			"relationship_version": derivation.RelationshipVersion,
-			"source_group_key":     derivation.SourceGroupKey,
-			"quote":                derivation.Quote,
-			"authority":            derivation.Authority,
-		})
-	}
-	return out
-}
-
-func dreamEvidenceDerivationsContractOutput(dream *domain.Dream) []map[string]any {
-	if dream == nil || len(dream.EvidenceDerivations) == 0 {
-		return []map[string]any{}
-	}
-	out := make([]map[string]any, 0, len(dream.EvidenceDerivations))
-	for _, derivation := range dream.EvidenceDerivations {
-		out = append(out, map[string]any{
-			"evidence_id":      derivation.EvidenceID,
-			"source_group_key": derivation.SourceGroupKey,
-			"span_start":       derivation.SpanStart,
-			"span_end":         derivation.SpanEnd,
-			"quote":            derivation.Quote,
-			"authority":        derivation.Authority,
-		})
-	}
-	return out
-}
-
-func dreamOutputOwnerIDs(dream *domain.Dream) []string {
-	if len(dream.SourceOwnerProfileIDs) > 0 {
-		return append([]string(nil), dream.SourceOwnerProfileIDs...)
-	}
-	return []string{}
-}
-
-func dreamOutputSourceIDs(dream *domain.Dream, candidates bool) []string {
-	if candidates && len(dream.SourceCandidateRelationshipIDs) > 0 {
-		return append([]string(nil), dream.SourceCandidateRelationshipIDs...)
-	}
-	if !candidates && len(dream.SourceRelationshipIDs) > 0 {
-		return append([]string(nil), dream.SourceRelationshipIDs...)
-	}
-	out := []string{}
-	for _, ref := range dream.SourceRefs {
-		if candidates && ref.Type != "candidate_relationship" {
-			continue
-		}
-		if !candidates && ref.Type != "relationship" {
-			continue
-		}
-		if strings.TrimSpace(ref.ID) != "" {
-			out = append(out, ref.ID)
-		}
-	}
-	return out
-}
-
-func dreamOutputSourceVersions(dream *domain.Dream) map[string]int {
-	if dream.SourceVersions == nil {
-		return map[string]int{}
-	}
-	out := make(map[string]int, len(dream.SourceVersions))
-	for key, value := range dream.SourceVersions {
-		out[key] = value
-	}
-	return out
-}
-
-func dreamOutputGeneratorKind(dream *domain.Dream) string {
-	if strings.TrimSpace(dream.GeneratorKind) == "provider" {
-		return "provider"
-	}
-	return "deterministic"
-}
-
-func dreamOutputCreatedAt(dream *domain.Dream) string {
-	createdAt := dream.CreatedAt
-	if createdAt.IsZero() {
-		createdAt = time.Unix(0, 0).UTC()
-	}
-	return createdAt.UTC().Format(time.RFC3339Nano)
 }

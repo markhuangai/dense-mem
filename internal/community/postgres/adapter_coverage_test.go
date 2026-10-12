@@ -43,16 +43,6 @@ func communityRecordRows(teamID, communityID, runID string, supersededAt any) *s
 		pq.StringArray{"Entity"}, pq.StringArray{"uses"}, "source", "", now, now.Add(time.Minute), supersededAt)
 }
 
-func TestCommunityAdapterEncodingAndSources(t *testing.T) {
-	_, _, _, _, relationshipID, _, _ := communityTestIDs()
-	encoded, err := marshalCommunitySnapshot(nil)
-	require.NoError(t, err)
-	assert.JSONEq(t, "[]", string(encoded))
-	_, err = marshalCommunitySnapshot([]map[string]any{{"bad": func() {}}})
-	assert.Error(t, err)
-	assert.Equal(t, []CommunitySourceInput{{RelationshipID: relationshipID, RelationshipVersion: 1}}, flattenCommunitySources([]CommunityPublishRecord{{Sources: []CommunitySourceInput{{RelationshipID: relationshipID, RelationshipVersion: 1}, {RelationshipID: relationshipID, RelationshipVersion: 1}}}}))
-}
-
 func TestCommunityAdapterScanHelpers(t *testing.T) {
 	db, mock := newCommunitySQLMockDB(t)
 	teamID, _, runID, communityID, _, _, _ := communityTestIDs()

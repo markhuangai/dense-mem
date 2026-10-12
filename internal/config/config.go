@@ -152,13 +152,12 @@ type Config struct {
 	AIEmbeddingMaxConcurrency       int
 	AIEmbeddingMaxBatchItems        int
 	// Knowledge-pipeline knobs (AC-X3)
-	AIVerifierAPIURL                      string
-	AIVerifierAPIKey                      string `json:"-"`
-	AIVerifierModel                       string
-	AIRememberModel                       string
-	AIConflictReviewModel                 string
-	AIDreamGraphModel                     string
-	AICommunitySummaryModel               string
+	AIVerifierAPIURL      string
+	AIVerifierAPIKey      string `json:"-"`
+	AIVerifierModel       string
+	AIRememberModel       string
+	AIConflictReviewModel string
+
 	AIVerifierDisableTemperature          bool
 	AIVerifierTimeoutSeconds              int
 	AIVerifierMaxConcurrency              int
@@ -265,12 +264,6 @@ func (c *Config) GetAIRememberModel() string {
 }
 func (c *Config) GetAIConflictReviewModel() string {
 	return effectiveAISessionModel(c.AIConflictReviewModel, c.AIVerifierModel)
-}
-func (c *Config) GetAIDreamGraphModel() string {
-	return effectiveAISessionModel(c.AIDreamGraphModel, c.AIVerifierModel)
-}
-func (c *Config) GetAICommunitySummaryModel() string {
-	return effectiveAISessionModel(c.AICommunitySummaryModel, c.AIVerifierModel)
 }
 
 func effectiveAISessionModel(override, fallback string) string {
@@ -595,8 +588,6 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 	cfg.AIVerifierModel = os.Getenv("AI_VERIFIER_MODEL")
 	cfg.AIRememberModel = os.Getenv("AI_REMEMBER_MODEL")
 	cfg.AIConflictReviewModel = os.Getenv("AI_CONFLICT_REVIEW_MODEL")
-	cfg.AIDreamGraphModel = os.Getenv("AI_DREAM_GRAPH_MODEL")
-	cfg.AICommunitySummaryModel = os.Getenv("AI_COMMUNITY_SUMMARY_MODEL")
 	cfg.AIVerifierDisableTemperature, err = parseBoolOrDefault("AI_VERIFIER_DISABLE_TEMPERATURE", false)
 	if err != nil {
 		return cfg, err
@@ -717,12 +708,6 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		return cfg, &ValidationError{
 			Field:   "AI_API_EMBEDDING_MAX_BATCH_ITEMS",
 			Message: fmt.Sprintf("must be at most %d", domain.MaxEmbeddingBatchDocuments),
-		}
-	}
-	if cfg.PostgresMaxOpenConns < 2 {
-		return cfg, &ValidationError{
-			Field:   "POSTGRES_MAX_OPEN_CONNS",
-			Message: fmt.Sprintf("must be at least 2 for Dream confirmation locking, got %d", cfg.PostgresMaxOpenConns),
 		}
 	}
 	if cfg.AIVerifierMaxCandidateContextTokens > cfg.AIVerifierMaxInputTokens {

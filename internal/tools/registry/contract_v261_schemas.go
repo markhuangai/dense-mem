@@ -8,9 +8,6 @@ import (
 func terminalRememberOutputSchema(version string) map[string]any {
 	return terminalRememberOutputSchemaForActions(version, terminalErrorNextActions(false))
 }
-func dreamTerminalRememberOutputSchema(version string) map[string]any {
-	return terminalRememberOutputSchemaForActions(version, terminalErrorNextActions(true))
-}
 
 func terminalRememberOutputSchemaForActions(version string, nextActions []string) map[string]any {
 	return closedObject(

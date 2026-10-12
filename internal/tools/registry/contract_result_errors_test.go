@@ -3,7 +3,7 @@ package registry
 import (
 	"context"
 	"errors"
-	"fmt"
+
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -13,12 +13,11 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/dream"
-	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/lifecycle"
-	"github.com/markhuangai/dense-mem/internal/memorypack"
+
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
@@ -42,13 +41,9 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 		{name: "authorization", tool: ToolRemember, err: rememberapp.ErrRememberAuthContext, code: string(domain.ErrorUnauthorizedScope), reasonCode: "authenticated_context_required", nextAction: actionAuthorization},
 		{name: "reference", tool: ToolTraceMemory, err: tracecontract.ErrRelationshipNotFound, code: string(domain.ErrorInvalidInput), reasonCode: "reference_not_found", nextAction: actionRefreshState},
 		{name: "invalid trace id", tool: ToolTraceMemory, err: tracecontract.ErrRelationshipIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
-		{name: "invalid dream id", tool: ToolGetDream, err: dreamcontract.ErrDreamHypothesisIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
-		{name: "invalid dream feedback id", tool: ToolResolveDreamFeedback, err: dreamcontract.ErrDreamHypothesisIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
 		{name: "invalid retract evidence id", tool: ToolRetractEvidence, err: knowledgecontract.ErrEvidenceLifecycleIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
-		{name: "dream feedback input", tool: ToolResolveDreamFeedback, err: dream.ErrDreamFeedbackInvalidInput, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
 		{name: "read repository", tool: ToolRecallMemory, err: errors.New("database unavailable"), code: string(domain.ErrorProviderUnavailable), reasonCode: "read_unavailable", nextAction: actionRetrySameRequest, retryable: true},
 		{name: "retract repository", tool: ToolRetractEvidence, err: errors.New("database unavailable"), code: string(domain.ErrorProviderUnavailable), reasonCode: "write_unavailable", nextAction: actionRetrySameRequest, retryable: true},
-		{name: "dream feedback repository", tool: ToolResolveDreamFeedback, err: errors.New("database unavailable"), code: string(domain.ErrorProviderUnavailable), reasonCode: "write_unavailable", nextAction: actionRetrySameRequest, retryable: true},
 		{name: "budget", tool: ToolRemember, err: rememberapp.ErrRememberInputBudgetExceeded, code: string(domain.ErrorInvalidInput), reasonCode: "input_budget_exceeded", nextAction: actionContactOperator},
 		{name: "stale", tool: ToolRemember, err: rememberapp.ErrRememberStaleInput, code: string(domain.ErrorConflict), reasonCode: "stale_state", nextAction: actionRefreshState},
 		{name: "remember timeout", tool: ToolRemember, err: rememberapp.ErrRememberRequestTimeout, code: string(domain.ErrorProviderUnavailable), reasonCode: "request_timeout", nextAction: actionRetrySameRequest, retryable: true},
@@ -72,10 +67,7 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 				require.Equal(t, 7, details["retry_after_seconds"])
 				require.Equal(t, 7, result["retry_after_seconds"])
 			}
-			if test.name == "invalid dream id" || test.name == "invalid dream feedback id" {
-				require.Equal(t, "dream.hypothesis_id", details["component"])
-				require.Equal(t, true, details["client_controlled"])
-			}
+
 			if test.name == "invalid retract evidence id" {
 				require.Equal(t, "retract_evidence.evidence_ids", details["component"])
 				require.Equal(t, true, details["client_controlled"])
@@ -88,19 +80,7 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 	require.NotEqual(t, longCorrelation, bounded["correlation_id"])
 	serverMessage := ActionableErrorData(ctx, ToolRecallMemory, httperr.New(httperr.SERVICE_UNAVAILABLE, "internal database password"))
 	require.Equal(t, "service unavailable", serverMessage["message"])
-	dreamInput := ActionableErrorData(ctx, ToolResolveDreamFeedback, fmt.Errorf("%w: hypothesis text cannot be submitted as its own evidence", dream.ErrDreamFeedbackInvalidInput))
-	require.Contains(t, dreamInput["message"], "evidence field")
-	dreamDetails := dreamInput["details"].(map[string]any)
-	require.Equal(t, "dream_feedback.evidence", dreamDetails["component"])
-	require.Equal(t, true, dreamDetails["client_controlled"])
-	inactiveExport := ActionableErrorData(ctx, ToolExportMemoryPack, fmt.Errorf("%w: relationship-1", memorypack.ErrMemoryPackRelationshipNotActive))
-	require.Equal(t, string(domain.ErrorInvalidInput), inactiveExport["code"])
-	require.Equal(t, "relationship_not_active", inactiveExport["reason_code"])
-	require.Equal(t, actionRefreshState, inactiveExport["next_action"])
-	require.False(t, inactiveExport["retryable"].(bool))
-	inactiveDetails := inactiveExport["details"].(map[string]any)
-	require.Equal(t, "memory_pack.relationship", inactiveDetails["component"])
-	require.Equal(t, true, inactiveDetails["client_controlled"])
+
 }
 
 func TestActionableErrorDataMapsHTTPStatusesAndBudgetMeasurements(t *testing.T) {
@@ -183,10 +163,7 @@ func TestActionableErrorHelpersExposeBoundedRecoveryActions(t *testing.T) {
 		require.Contains(t, actionableTimeoutRemediation(tool), "same idempotency key")
 		require.Contains(t, actionableTransientRemediation(tool), "same idempotency key")
 	}
-	require.False(t, actionableToolRequiresIdempotency(ToolResolveDreamFeedback))
-	require.Contains(t, actionableTimeoutRemediation(ToolResolveDreamFeedback), "same arguments")
-	require.Contains(t, actionableTransientRemediation(ToolResolveDreamFeedback), "same arguments")
-	for _, tool := range []string{ToolRecallMemory, ToolTraceMemory, ToolListDreams, ToolGetDream, ToolExportMemoryPack} {
+	for _, tool := range []string{ToolRecallMemory, ToolTraceMemory, ToolExportMemoryPack} {
 		require.True(t, actionableToolIsRead(tool), tool)
 		require.Contains(t, actionableTimeoutRemediation(tool), "read request")
 		require.Contains(t, actionableTransientRemediation(tool), "read request")

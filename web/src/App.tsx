@@ -28,7 +28,6 @@ import type { OperationLogQuery } from "./api";
 import { TeamCredentialsPanel } from "./control/TeamCredentialsPanel";
 import { TeamOverviewPanel, TeamWorkspaceShell } from "./control/TeamWorkspace";
 import type { TeamWorkspaceTab } from "./control/TeamWorkspace";
-import { TeamDreamingConfigForm } from "./teamDreamingConfig";
 import { formatDate, readError, shortId } from "./control/utils";
 import { AuthShell, LoadingState, PortalShell, SectionHeading } from "./ui/components";
 
@@ -766,17 +765,6 @@ function TeamEditor({
           </button>
         </div>
       </form>
-      <div className="surface-section team-dreaming-section">
-        <TeamDreamingConfigForm
-          key={team.id}
-          config={team.config}
-          effective={team.dreaming_effective}
-          disabled={busy}
-          onSave={async (config) => {
-            onUpdated(await api.updateTeam(team.id, { name: team.name, description: team.description ?? "", config }));
-          }}
-        />
-      </div>
     </section>
   );
 }

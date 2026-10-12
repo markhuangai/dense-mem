@@ -244,14 +244,9 @@ func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
 		}
 		return false
 	})
-	require.Condition(t, func() bool {
-		for _, query := range queries {
-			if strings.Contains(query, `densemem_dream_feedback_total`) {
-				return true
-			}
-		}
-		return false
-	})
+	for _, query := range queries {
+		require.NotContains(t, query, "densemem_dream_feedback_total")
+	}
 	require.Condition(t, func() bool {
 		for _, query := range queries {
 			if strings.Contains(query, `histogram_quantile(0.95`) &&
@@ -549,12 +544,11 @@ func TestPrometheusTelemetryServiceReportsFeatureAndScopeStates(t *testing.T) {
 	svc := NewPrometheusTelemetryService(operationsprometheus.NewClient(prom.URL, time.Second), time.Second, "", nil)
 	svc.SetFeatureResolver(TelemetryFeatureResolver{
 		RecallFeedbackEnabled: func(context.Context) (bool, error) { return false, nil },
-		DreamingEnabled:       func(context.Context, *uuid.UUID) (bool, error) { return false, nil },
 	})
 	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "profile", TeamID: &teamID, ProfileID: &profileID, Audience: TelemetryAudienceOperator})
 	require.NoError(t, err)
 	require.Equal(t, TelemetryItemInactive, telemetrySpecByID(snapshot.WindowedCards, "llm_recall_used_rate").Status)
-	require.Equal(t, "feature_disabled", telemetrySpecByID(snapshot.WindowedCards, "dream_feedbacks").ReasonCode)
+	require.Equal(t, "feature_retired", telemetrySpecByID(snapshot.WindowedCards, "dream_feedbacks").ReasonCode)
 	require.Equal(t, TelemetryItemUnsupported, telemetrySpecByID(snapshot.WindowedCards, "embedding_requests").Status)
 	require.Equal(t, TelemetryItemUnsupported, telemetrySpecByID(snapshot.WindowedCards, "embedding_cost_usd").Status)
 	require.Nil(t, telemetrySpecByID(snapshot.WindowedCards, "assessor_requests"))
@@ -781,6 +775,22 @@ func TestTelemetrySnapshotDispositionIgnoresUnsupportedItems(t *testing.T) {
 	require.NotEqual(t, TelemetrySnapshotUnavailable, status)
 	require.True(t, available)
 	require.Empty(t, message)
+}
+
+func TestTelemetrySnapshotDispositionRetiredItemsDoNotProveAvailability(t *testing.T) {
+	for _, reason := range []string{"feature_retired", "feature_disabled"} {
+		status, available, _ := telemetrySnapshotDisposition(
+			[]TelemetryCard{{ID: "failed", Status: TelemetryItemUnavailable}, {ID: "dream_feedbacks", Status: TelemetryItemInactive, ReasonCode: reason}},
+			[]TelemetrySeries{{ID: "dream_feedbacks", Status: TelemetryItemInactive, ReasonCode: reason}},
+		)
+		if reason == "feature_retired" {
+			require.Equal(t, TelemetrySnapshotUnavailable, status)
+			require.False(t, available)
+		} else {
+			require.Equal(t, TelemetrySnapshotDegraded, status)
+			require.True(t, available)
+		}
+	}
 }
 
 type captureTelemetryLogger struct {

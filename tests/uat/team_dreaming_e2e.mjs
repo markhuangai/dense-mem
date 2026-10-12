@@ -1,9 +1,8 @@
 #!/usr/bin/env node
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-
-import { nextScheduledUTCMinute } from "./team_dreaming_schedule.mjs";
 
 const userURL = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -12,259 +11,35 @@ const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const apiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
 const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
 const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
-const graphModel = "dense-mem-e2e-dream-graph";
-
 let rpcID = 0;
-const maxPollingAttempts = 60;
 const ownerProfileID = await apiCredentialOwnerID();
 const adverseTeam = await createAdverseEvidenceTeam();
 const seeded = await seedSchedulerInputs(ownerProfileID);
 const evidenceSeeded = await seedEvidenceDiscoveryInputs(ownerProfileID);
-const historicalKnownAt = new Date().toISOString();
-const scheduledAt = nextScheduledUTCMinute(Date.now(), 3);
-const runDate = formatDate(scheduledAt);
-
-await updateControlConfig("/config/general", [{ key: "APP_TIMEZONE", value: "UTC" }]);
-await updateControlConfig("/config/dreaming", [
-  { key: "DREAMING_ENABLED", value: "true" },
-  { key: "DREAMING_FORCE_ENABLED", value: "true" },
-  { key: "DREAMING_START_TIME_LOCAL", value: formatTime(scheduledAt) },
-  { key: "DREAMING_MAX_OUTPUTS", value: "1" },
-]);
-
-const scheduledRun = await waitForScheduledRun();
-assertEqual(scheduledRun.team_id, teamID, "scheduled run team");
-assertEqual(scheduledRun.run_date, runDate, "scheduled run date");
-assertEqual(scheduledRun.status, "completed", "scheduled run status");
-assertEqual(Number(scheduledRun.input_relationships), 2, "scheduled input count");
-assertEqual(Number(scheduledRun.created_dreams), 1, "scheduled created output count");
-assertAtLeast(Number(scheduledRun.attempted_paths), 1, "scheduled attempted paths");
-assertAtLeast(Number(scheduledRun.provider_turns), 1, "scheduled provider turns");
-assertAtLeast(Number(scheduledRun.provider_proposals), 1, "scheduled provider proposals");
-assertEqual(Number(scheduledRun.outcome_summary?.provider_failed ?? 0), 0, "scheduled provider failure");
-await assertSystemRun(scheduledRun.run_id);
-
-const controlDreams = await controlJSON(`/teams/${teamID}/dreams?limit=10`);
-const scheduledDream = findDream(controlDreams.data?.items, scheduledRun.run_id, "control portal API");
-assertEvidenceDerivedDream(scheduledDream, seeded, "control portal API");
-const runDiagnostics = await waitForRunDiagnostic(scheduledRun.run_id, completeRunDiagnosticReady);
-assertAtLeast(runDiagnostics.length, 1, "Dream run diagnostic capture");
-const completeRunCaptures = runDiagnostics.filter((item) => item.phase === "run");
-assertEqual(completeRunCaptures.length, 1, "complete Dream trace has one run capture");
-assertEqual(completeRunCaptures[0].details?.phase_trace_truncated ?? false, false, "complete Dream phase trace marker");
-const diagnosticPhases = new Set(runDiagnostics.map((item) => item.phase));
-for (const phase of ["run", "target", "provider", "validation", "proposal", "disposition"]) {
-  assertEqual(diagnosticPhases.has(phase), true, `Dream diagnostic phase ${phase}`);
-}
-const retainedCapture = runDiagnostics.find((item) => item.capture_state !== "expired") ?? runDiagnostics[0];
-const retainedDetail = await controlResponse(`/teams/${teamID}/dreaming/runs/${scheduledRun.run_id}/diagnostics/${retainedCapture.capture_id}`);
-assertEqual(retainedDetail.status, 200, "Dream diagnostic detail status");
-assertEqual(retainedDetail.body?.data?.capture_id, retainedCapture.capture_id, "Dream diagnostic detail capture");
-assertEqual(retainedDetail.body?.data?.run_id, scheduledRun.run_id, "Dream diagnostic detail run");
-assertEqual(retainedDetail.cacheControl, "no-store", "Dream diagnostic detail cache policy");
-assertEqual(retainedDetail.contentTypeOptions, "nosniff", "Dream diagnostic detail content type policy");
-const crossTeamDetail = await controlResponse(`/teams/${adverseTeam.teamID}/dreaming/runs/${scheduledRun.run_id}/diagnostics/${retainedCapture.capture_id}`);
-assertEqual(crossTeamDetail.status, 404, "cross-team Dream diagnostic detail");
-const hypothesisID = scheduledDream.dream_id;
-const statement = scheduledDream.hypothesis;
-const reviewer = await createTeamCredential("Team Dreaming E2E reviewer");
-const feedback = await mcpTool(reviewer.apiKey, "resolve_dream_feedback", {
-  hypothesis_id: hypothesisID,
-  decision: "reinforce",
-  reason: "Independent same-team review confirmed this output remains useful.",
-});
-assertEqual(feedback.hypothesis_id, hypothesisID, "feedback hypothesis");
-assertEqual(feedback.status, "reinforced", "feedback status");
-await assertFeedbackActor(hypothesisID, reviewer.credentialID);
-  const hypothesisDiagnostics = await controlJSON(`/teams/${teamID}/dreams/${hypothesisID}/diagnostics?limit=10`);
-  assertEqual(Array.isArray(hypothesisDiagnostics.data?.items), true, "Dream hypothesis diagnostics page");
-  assertEqual(hypothesisDiagnostics.data.items.some((item) => item.phase === "feedback"), true, "Dream feedback diagnostic phase");
-  const crossTeamHypothesisDiagnostics = await controlResponse(`/teams/${adverseTeam.teamID}/dreams/${hypothesisID}/diagnostics?limit=10`);
-  assertEqual(crossTeamHypothesisDiagnostics.status, 200, "cross-team Dream hypothesis diagnostics response");
-  assertEqual(Array.isArray(crossTeamHypothesisDiagnostics.body?.data?.items), true, "cross-team Dream hypothesis diagnostics page");
-  assertEqual(crossTeamHypothesisDiagnostics.body.data.items.length, 0, "cross-team Dream hypothesis diagnostics empty");
-
-assertContainsDream(controlDreams.data?.items, hypothesisID, statement, "control portal API");
-const userDreams = await userJSON("/ui/api/dreams?limit=10");
-assertEvidenceDerivedDream(assertContainsDream(userDreams.data?.items, hypothesisID, statement, "user portal API"), seeded, "user portal API");
-const listOutput = await mcpTool(apiKey, "list_dreams", { limit: 10 }, true);
-assertContainsDream(listOutput.dreams, hypothesisID, statement, "MCP list_dreams");
-const getOutput = await mcpTool(apiKey, "get_dream", { hypothesis_id: hypothesisID }, true);
-assertEvidenceDerivedDream(getOutput.hypothesis, seeded, "MCP get_dream");
-const paraphraseContextRecall = await mcpTool(apiKey, "recall_memory", {
-  query: "Which service keeps Dense-Mem's durable data available?",
-});
-assertHypothesisFromPublicRecallContext(
-  paraphraseContextRecall, hypothesisID, getOutput.hypothesis.derivations,
-  "recall from paraphrase-retrieved context",
-);
-const historicalContextRecall = await mcpTool(apiKey, "recall_memory", {
-  query: "Which service keeps Dense-Mem's durable data available?",
-  known_at: historicalKnownAt,
-});
-assertEqual((historicalContextRecall.results ?? []).length > 0, true, "historical recall retained earlier evidence context");
-assertEqual(
-  (historicalContextRecall.related_hypotheses ?? []).some((item) => item?.hypothesis_id === hypothesisID),
-  false,
-  "historical recall omitted the later-created hypothesis",
-);
-assertEqual(
-  (historicalContextRecall.degradations ?? []).some((item) => item?.code === "related_hypotheses_temporal_not_supported"),
-  true,
-  "historical hypothesis omission reported its optional degradation",
-);
-
-assertEqual(postgresQuery(`
-  SELECT count(*) FROM dream_cycle_runs
-  WHERE team_id = ${sqlLiteral(teamID)}::uuid AND lane = 'evidence_discovery'
-`), "0", "eligible standalone evidence does not start hourly discovery");
 const historical = seedHistoricalEvidenceHypothesis(ownerProfileID, evidenceSeeded, seeded);
-const historicalOutput = await mcpTool(apiKey, "get_dream", { hypothesis_id: historical.hypothesisID }, true);
-assertEvidenceDiscoveryDream(historicalOutput.hypothesis, evidenceSeeded, "historical MCP get_dream");
-const historicalControl = await controlJSON(`/teams/${teamID}/dreams?limit=20`);
-assertEvidenceDiscoveryDream(findDream(historicalControl.data?.items, historical.runID, "historical control reader"), evidenceSeeded, "historical control reader");
-const historicalUser = await userJSON("/ui/api/dreams?limit=20");
-assertEvidenceDiscoveryDream(findDream(historicalUser.data?.items, historical.runID, "historical user reader"), evidenceSeeded, "historical user reader");
-const historicalRecall = await mcpTool(apiKey, "recall_memory", { query: "PostgreSQL durable memory" });
-assertEqual((historicalRecall.related_relationships ?? []).some((item) => (item.evidence_ids ?? []).includes(evidenceSeeded.targetID)), false, "historical discovery has not created an active Relationship");
-const historicalList = await mcpTool(reviewer.apiKey, "list_dreams", { limit: 20 }, true);
-assertContainsDream(historicalList.dreams, historical.hypothesisID, historical.statement, "same-team historical reader");
-const denied = await mcpTool(reviewer.apiKey, "resolve_dream_feedback", {
-  hypothesis_id: historical.hypothesisID, decision: "reinforce", reason: "A different owner cannot mutate this historical record.",
-}, false, true);
-assertEqual(Boolean(denied.code), true, "historical feedback returns a bounded error");
-const unchanged = await mcpTool(apiKey, "get_dream", { hypothesis_id: historical.hypothesisID }, true);
-assertEqual(unchanged.hypothesis.status, "proposed", "different owner did not mutate historical state");
-const crossTeamList = await mcpTool(adverseTeam.apiKey, "list_dreams", { limit: 20 }, true);
-assertEqual((crossTeamList.dreams ?? []).some((item) => item.hypothesis_id === historical.hypothesisID), false, "historical cross-team isolation");
-const confirmed = await mcpTool(apiKey, "resolve_dream_feedback", {
-  hypothesis_id: historical.hypothesisID, decision: "confirm_true",
-  evidence: [{ content: "Independent evidence confirms Legacy Dense-Mem uses PostgreSQL.", source_type: "manual", source: `historical-confirmation-${historical.hypothesisID}` }],
-  relationships: [{
-    ref: `historical-confirmation-${historical.hypothesisID}`,
-    subject: { name: "Legacy Dense-Mem", entity_kind: "project" },
-    predicate: { proposed_key: "uses" }, object: { entity: { name: "PostgreSQL", entity_kind: "product" } },
-    polarity: "+", modality: "statement", evidence_indices: [0],
-  }],
-});
-assertEqual(confirmed.hypothesis_id, historical.hypothesisID, "historical confirmation hypothesis");
-assertEqual(confirmed.status, "submitted", "historical confirmation status");
-assertDreamProviderModels(scheduledRun);
-await assertDreamProviderRequests();
-console.log(JSON.stringify({
-  status: "ok", team_id: teamID, run_id: scheduledRun.run_id, hypothesis_id: hypothesisID,
-  statement, scheduled_at: scheduledAt.toISOString(),
-  historical_run_id: historical.runID, historical_hypothesis_id: historical.hypothesisID,
-  historical_statement: historical.statement,
-  evidence_hypothesis_id: historical.hypothesisID, evidence_dream_statement: historical.statement,
-  evidence_target_id: evidenceSeeded.targetID, evidence_target_content: evidenceSeeded.targetContent,
-  evidence_failure_run_id: historical.failureRunID, evidence_failure_team_name: adverseTeam.teamName,
-  provider_models: { graph: graphModel },
-}, null, 2));
-
-function formatDate(value) {
-  return value.toISOString().slice(0, 10);
+const captureID = randomUUID();
+postgresQuery(`INSERT INTO dream_diagnostic_captures(team_id,capture_id,run_id,phase,outcome,capture_state,details,payload,expires_at)
+ VALUES(${sqlLiteral(teamID)}::uuid,${sqlLiteral(captureID)}::uuid,${sqlLiteral(historical.runID)}::uuid,'run','completed','captured','{"historical":true}','{"historical":true}',now()+interval '1 day')`);
+const historyBefore = postgresQuery(`SELECT jsonb_agg(to_jsonb(hypothesis))::text FROM hypotheses AS hypothesis WHERE team_id=${sqlLiteral(teamID)}::uuid`);
+const status = (await controlJSON(`/teams/${teamID}/dreaming/status`)).data;
+assert.equal(status.retired, true);
+assert.equal(status.historical_proposed_count, 1);
+const history = (await controlJSON(`/teams/${teamID}/dreams`)).data.items;
+assert(history.some((item) => item.dream_id === historical.hypothesisID && item.evidence_derivations.length === 1));
+const operatorDenied = await fetch(`${controlURL}/control/api/teams/${teamID}/dreams`, {headers:{Authorization:`Bearer ${apiKey}`}});
+assert.equal(operatorDenied.status,401);
+for (const name of ["list_dreams", "get_dream", "resolve_dream_feedback"]) {
+ const response = await fetch(`${userURL}/mcp`,{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,Accept:"application/json","Content-Type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id:++rpcID,method:"tools/call",params:{name,arguments:{}}})});
+ assert.equal((await response.json()).error.code,-32601);
 }
-
-function formatTime(value) {
-  return value.toISOString().slice(11, 16);
-}
-
-async function updateControlConfig(path, items) {
-  await controlJSON(path, {
-    method: "PATCH",
-    body: JSON.stringify({ items }),
-  }, true);
-}
-
-async function waitForScheduledRun() {
-  let lastRuns = [];
-  for (let attempt = 0; attempt < maxPollingAttempts; attempt += 1) {
-    const payload = await controlJSON(`/teams/${teamID}/dreaming/runs?limit=20`);
-    const runs = Array.isArray(payload.data) ? payload.data : [];
-    lastRuns = runs;
-    const run = runs.find((item) => (
-      item?.run_date === runDate &&
-      item?.status === "completed" &&
-      Number(item?.input_relationships) === 2 &&
-      Number(item?.created_dreams) === 1
-    ));
-    if (run) {
-      return run;
-    }
-    await delay(5_000);
-  }
-  const finalPayload = await controlJSON(`/teams/${teamID}/dreaming/runs?limit=20`);
-  const finalRuns = Array.isArray(finalPayload.data) ? finalPayload.data : [];
-  lastRuns = finalRuns;
-  const finalRun = finalRuns.find((item) => (
-    item?.run_date === runDate &&
-    item?.status === "completed" &&
-    Number(item?.input_relationships) === 2 &&
-    Number(item?.created_dreams) === 1
-  ));
-  if (finalRun) {
-    return finalRun;
-  }
-  throw new Error(`timed out waiting for scheduled team run at ${scheduledAt.toISOString()}: ${JSON.stringify(lastRuns)}`);
-}
-
-async function waitForRunDiagnostic(runID, ready = completeRunDiagnosticReady) {
-  let lastItems = [];
-  for (let attempt = 0; attempt < maxPollingAttempts; attempt += 1) {
-    const page = await controlJSON(`/teams/${teamID}/dreaming/runs/${runID}/diagnostics?limit=100`);
-    lastItems = Array.isArray(page.data?.items) ? page.data.items : [];
-    if (ready(lastItems)) return lastItems;
-    await delay(1_000);
-  }
-  throw new Error(`timed out waiting for the persisted Dream run diagnostic: ${JSON.stringify(lastItems)}`);
-}
-
-function completeRunDiagnosticReady(items) {
-  const runCapture = items.find((item) => item.phase === "run");
-  const phases = new Set(items.map((item) => item.phase));
-  return Boolean(runCapture) &&
-    runCapture.details?.phase_trace_pending !== true &&
-    runCapture.details?.phase_trace_truncated !== true &&
-    ["target", "provider", "validation", "proposal", "disposition"].every((phase) => phases.has(phase));
-}
-
-async function assertSystemRun(runID) {
-  const row = postgresQuery(`
-    SELECT 'present', COALESCE(initiated_by_profile_id::text, '')
-    FROM dream_cycle_runs
-    WHERE team_id = ${sqlLiteral(teamID)}::uuid
-      AND run_id = ${sqlLiteral(runID)}::uuid
-  `);
-  const [present, owner] = row.split("|");
-  assertEqual(present, "present", "scheduled run row");
-  assertEqual(owner, "", "scheduled run initiator");
-}
-
-function assertDreamProviderModels(graphRun) {
-  const persistedGraphModel = postgresQuery(`
-    SELECT provider_model
-    FROM dream_cycle_runs
-    WHERE team_id = ${sqlLiteral(teamID)}::uuid
-      AND run_id = ${sqlLiteral(graphRun.run_id)}::uuid
-  `);
-  assertEqual(persistedGraphModel, graphModel, "persisted graph Dream provider model");
-
-}
-
-async function assertDreamProviderRequests() {
-  const providerURL = (process.env.DENSE_MEM_E2E_PROVIDER_URL || "").replace(/\/$/, "");
-  if (!providerURL) throw new Error("Dream model routing requires the deterministic provider fixture");
-  const response = await fetch(`${providerURL}/health`);
-  const state = await response.json();
-  if (!response.ok) throw new Error(`Dream provider fixture health returned HTTP ${response.status}`);
-  const graphRequests = (state.chat_requests || []).filter((request) => request.schema_name === "dense_mem_dream_generation_response");
-  const evidenceRequests = (state.chat_requests || []).filter((request) => request.schema_name === "dense_mem_evidence_discovery_response");
-  if (graphRequests.length === 0 || !graphRequests.every((request) => request.model === graphModel)) {
-    throw new Error(`Dream graph requests used an unexpected model: ${JSON.stringify(graphRequests)}`);
-  }
-  assertEqual(evidenceRequests.length, 0, "retired evidence provider receives no requests");
-}
+const recalled = await mcpTool(apiKey,"recall_memory",{query:"Dense-Mem PostgreSQL",limit:10});
+assert(!Object.hasOwn(recalled,"related_hypotheses"));
+assert(recalled.results.some((item)=>item.evidence_id===evidenceSeeded.targetID));
+assert.equal(postgresQuery(`SELECT jsonb_agg(to_jsonb(hypothesis))::text FROM hypotheses AS hypothesis WHERE team_id=${sqlLiteral(teamID)}::uuid`),historyBefore);
+const provider = await fetch(`${requiredEnv("DENSE_MEM_E2E_PROVIDER_URL")}/health`);
+assert.equal(provider.status,200);
+assert.equal(((await provider.json()).chat_requests||[]).filter((item)=>["dense_mem_dream_generation_response","dense_mem_evidence_discovery_response","community_summary"].includes(item.schema_name)).length,0);
+console.log(JSON.stringify({status:"ok",statement:historical.statement,evidence_hypothesis_id:historical.hypothesisID,evidence_dream_statement:historical.statement,evidence_target_id:evidenceSeeded.targetID,evidence_target_content:evidenceSeeded.targetContent,evidence_failure_run_id:historical.failureRunID,evidence_failure_team_name:adverseTeam.teamName,history_retained:true,clients_retired:true}));
 
 async function apiCredentialOwnerID() {
   const session = await userJSON("/ui/api/session");
@@ -274,6 +49,7 @@ async function apiCredentialOwnerID() {
   }
   return credentialID;
 }
+
 
 async function seedSchedulerInputs(ownerProfileID) {
   const subjectID = randomUUID();
@@ -462,6 +238,7 @@ async function seedSchedulerInputs(ownerProfileID) {
   };
 }
 
+
 async function seedEvidenceDiscoveryInputs(ownerProfileID, targetTeamID = teamID, targetContentOverride = "") {
   const targetID = randomUUID();
   const quarantinedID = randomUUID();
@@ -540,6 +317,7 @@ async function seedEvidenceDiscoveryInputs(ownerProfileID, targetTeamID = teamID
   return { targetID, targetContent, ingestID };
 }
 
+
 function seedHistoricalEvidenceHypothesis(ownerProfileID, evidence, graph) {
   const runID = randomUUID(), failureRunID = randomUUID(), hypothesisID = randomUUID(), subjectID = randomUUID();
   const statement = "Legacy Dense-Mem may use PostgreSQL.";
@@ -568,6 +346,7 @@ function seedHistoricalEvidenceHypothesis(ownerProfileID, evidence, graph) {
   `);
   return { runID, failureRunID, hypothesisID, statement };
 }
+
 
 async function evidenceSearchDocumentsSQL(targetTeamID, ownerProfileID, documents) {
   const model = requiredEnv("AI_API_EMBEDDING_MODEL");
@@ -625,6 +404,7 @@ async function evidenceSearchDocumentsSQL(targetTeamID, ownerProfileID, document
   `;
 }
 
+
 async function createAdverseEvidenceTeam() {
   const teamName = `Historical discovery failure ${Date.now()}`;
   const team = await controlJSON("/teams", {
@@ -650,49 +430,6 @@ async function createAdverseEvidenceTeam() {
   return { teamID: targetTeamID, teamName, ownerProfileID, apiKey };
 }
 
-async function createTeamCredential(name) {
-  const payload = await controlJSON(`/teams/${teamID}/credentials`, {
-    method: "POST",
-    body: JSON.stringify({
-      name,
-      role: "member",
-      scopes: ["read", "write"],
-      rate_limit: 300,
-    }),
-  });
-  const createdCredential = payload.data?.api_key;
-  const credentialID = payload.data?.credential?.id;
-  if (typeof createdCredential !== "string" || !createdCredential || typeof credentialID !== "string" || !credentialID) {
-    throw new Error(`team reviewer creation did not return a key and credential ID: ${JSON.stringify(payload)}`);
-  }
-  return { apiKey: createdCredential, credentialID };
-}
-
-async function assertFeedbackActor(hypothesisID, profileID) {
-  const row = postgresQuery(`
-    SELECT
-      'present',
-      COALESCE(h.created_by_profile_id::text, ''),
-      f.actor_profile_id::text,
-      f.decision
-    FROM hypotheses h
-    JOIN LATERAL (
-      SELECT actor_profile_id, decision
-      FROM hypothesis_feedback_events
-      WHERE team_id = h.team_id
-        AND hypothesis_id = h.hypothesis_id
-      ORDER BY created_at DESC, feedback_event_id DESC
-      LIMIT 1
-    ) f ON true
-    WHERE h.team_id = ${sqlLiteral(teamID)}::uuid
-      AND h.hypothesis_id = ${sqlLiteral(hypothesisID)}::uuid
-  `);
-  const [present, createdBy, actor, decision] = row.split("|");
-  assertEqual(present, "present", "feedback row");
-  assertEqual(createdBy, "", "team hypothesis creator");
-  assertEqual(actor, profileID, "feedback actor");
-  assertEqual(decision, "reinforce", "feedback decision");
-}
 
 async function controlJSON(path, options = {}, retryTransport = (options.method ?? "GET") === "GET") {
   return httpJSON(`${controlURL}/control/api${path}`, {
@@ -704,6 +441,7 @@ async function controlJSON(path, options = {}, retryTransport = (options.method 
     },
   }, retryTransport);
 }
+
 
 async function controlResponse(path, options = {}) {
   const response = await fetchWithTransportRetry(`${controlURL}/control/api${path}`, {
@@ -723,6 +461,7 @@ async function controlResponse(path, options = {}) {
   };
 }
 
+
 async function userJSON(path) {
   return httpJSON(`${userURL}${path}`, {
     headers: {
@@ -730,6 +469,7 @@ async function userJSON(path) {
     },
   }, true);
 }
+
 
 async function mcpTool(token, name, args, retryTransport = false, expectError = false) {
   const response = await httpJSON(`${userURL}/mcp`, {
@@ -758,6 +498,7 @@ async function mcpTool(token, name, args, retryTransport = false, expectError = 
   return JSON.parse(text);
 }
 
+
 async function httpJSON(url, options, retryTransport = false) {
   const response = await fetchWithTransportRetry(url, options, retryTransport);
   const text = await response.text();
@@ -766,6 +507,7 @@ async function httpJSON(url, options, retryTransport = false) {
   }
   return text ? JSON.parse(text) : {};
 }
+
 
 async function fetchWithTransportRetry(url, options, retryTransport = true) {
   let response;
@@ -783,6 +525,7 @@ async function fetchWithTransportRetry(url, options, retryTransport = true) {
   }
   return response;
 }
+
 
 function postgresQuery(sql) {
   const scopedSQL = [
@@ -818,115 +561,6 @@ function postgresQuery(sql) {
   return result.stdout.trim();
 }
 
-function findDream(items, runID, label) {
-  if (!Array.isArray(items)) {
-    throw new Error(`${label} did not return a dream list`);
-  }
-  const dream = items.find((item) => (
-    item?.cycle_run_id === runID &&
-    typeof item.dream_id === "string" &&
-    typeof item.hypothesis === "string" &&
-    item.hypothesis !== ""
-  ));
-  if (!dream) {
-    throw new Error(`${label} did not return a generated hypothesis for run ${runID}: ${JSON.stringify(items)}`);
-  }
-  return dream;
-}
-
-function assertContainsDream(items, hypothesisID, expectedStatement, label) {
-  if (!Array.isArray(items)) {
-    throw new Error(`${label} did not return a dream list`);
-  }
-  const dream = items.find((item) => item?.dream_id === hypothesisID || item?.hypothesis_id === hypothesisID);
-  if (!dream || (dream.hypothesis !== expectedStatement && dream.statement !== expectedStatement)) {
-    throw new Error(`${label} did not return team-owned hypothesis ${hypothesisID}: ${JSON.stringify(items)}`);
-  }
-  return dream;
-}
-
-function assertRelatedHypothesis(recall, hypothesisID, label) {
-  if (!Array.isArray(recall?.related_hypotheses) ||
-      !recall.related_hypotheses.some((item) => item?.hypothesis_id === hypothesisID)) {
-    throw new Error(`${label} did not return hypothesis ${hypothesisID}: ${JSON.stringify(recall?.related_hypotheses)}`);
-  }
-}
-
-function assertHypothesisFromPublicRecallContext(recall, hypothesisID, derivations, label) {
-  const evidenceIDs = new Set((recall?.results ?? []).map((item) => item?.evidence_id).filter(Boolean));
-  const citedQuotes = new Set((derivations ?? []).map((item) => item?.quote).filter(Boolean));
-  const relationshipIDs = new Set();
-  const entityIDs = new Set();
-  const addRelationship = (relationship) => {
-    if (relationship?.relationship_id) relationshipIDs.add(relationship.relationship_id);
-    for (const id of relationship?.equivalent_relationship_ids ?? []) relationshipIDs.add(id);
-    for (const id of relationship?.evidence_ids ?? []) evidenceIDs.add(id);
-    if (relationship?.subject?.entity_id) entityIDs.add(relationship.subject.entity_id);
-    if (relationship?.object?.entity_id) entityIDs.add(relationship.object.entity_id);
-  };
-
-  for (const relationship of recall?.related_relationships ?? []) addRelationship(relationship);
-  for (const path of recall?.related_communities ?? []) {
-    for (const id of path?.evidence_ids ?? []) evidenceIDs.add(id);
-    for (const entity of path?.top_entities ?? []) {
-      if (entity?.entity_id) entityIDs.add(entity.entity_id);
-    }
-    for (const relationship of path?.relationships ?? []) addRelationship(relationship);
-  }
-
-  const hypothesis = (recall?.related_hypotheses ?? []).find((item) => (
-    item?.hypothesis_id === hypothesisID && (
-      [...citedQuotes].some((quote) => (recall?.results ?? []).some((result) => result?.context?.includes(quote))) ||
-      (item?.source_evidence_ids ?? []).some((id) => evidenceIDs.has(id)) ||
-      (item?.source_relationship_ids ?? []).some((id) => relationshipIDs.has(id)) ||
-      [item?.subject_entity_id, item?.object_entity_id].some((id) => entityIDs.has(id))
-    )
-  ));
-  if (!hypothesis) {
-    throw new Error(`${label} returned no hypothesis grounded in public recall context: ${JSON.stringify({
-      results: recall?.results,
-      related_relationships: recall?.related_relationships,
-      related_communities: recall?.related_communities,
-      related_hypotheses: recall?.related_hypotheses,
-    })}`);
-  }
-}
-
-function assertEvidenceDerivedDream(dream, seededInputs, label) {
-  const derivations = dream?.derivations;
-  if (!Array.isArray(derivations) || derivations.length !== 2) {
-    throw new Error(`${label} did not return exactly two cited premise excerpts: ${JSON.stringify(dream)}`);
-  }
-  const byPosition = new Map(derivations.map((derivation) => [Number(derivation?.premise_position), derivation]));
-  const first = byPosition.get(1);
-  const second = byPosition.get(2);
-  if (!first || !second) {
-    throw new Error(`${label} did not return premise positions 1 and 2: ${JSON.stringify(derivations)}`);
-  }
-  assertEqual(first.relationship_id, seededInputs.firstRelationshipID, `${label} first derivation relationship`);
-  assertEqual(second.relationship_id, seededInputs.secondRelationshipID, `${label} second derivation relationship`);
-  assertEqual(first.quote, seededInputs.firstQuote, `${label} first derivation quote`);
-  assertEqual(second.quote, seededInputs.secondQuote, `${label} second derivation quote`);
-  if (!first.source_group_key || !second.source_group_key) {
-    throw new Error(`${label} derivations omitted source groups: ${JSON.stringify(derivations)}`);
-  }
-}
-
-function assertEvidenceDiscoveryDream(dream, seededInputs, label) {
-  assertEqual(dream?.lane, "evidence_discovery", `${label} lane`);
-  const evidenceIDs = Array.isArray(dream?.source_evidence_ids) ? dream.source_evidence_ids : [];
-  if (!evidenceIDs.includes(seededInputs.targetID)) {
-    throw new Error(`${label} omitted the target evidence ID: ${JSON.stringify(dream)}`);
-  }
-  const derivations = dream?.evidence_derivations;
-  if (!Array.isArray(derivations) || derivations.length !== 1) {
-    throw new Error(`${label} did not return one evidence derivation: ${JSON.stringify(dream)}`);
-  }
-  assertEqual(derivations[0].evidence_id, seededInputs.targetID, `${label} evidence ID`);
-  assertEqual(derivations[0].quote, seededInputs.targetContent, `${label} exact quote`);
-  assertEqual(Number(derivations[0].span_start), 0, `${label} span start`);
-  assertEqual(Number(derivations[0].span_end), seededInputs.targetContent.length, `${label} span end`);
-}
 
 function assertEqual(actual, expected, label) {
   if (actual !== expected) {
@@ -934,23 +568,21 @@ function assertEqual(actual, expected, label) {
   }
 }
 
-function assertAtLeast(actual, minimum, label) {
-  if (!Number.isFinite(actual) || actual < minimum) {
-    throw new Error(`${label} = ${JSON.stringify(actual)}; want at least ${minimum}`);
-  }
-}
 
 function sqlLiteral(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
+
 function sha256Hash(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+
 function redactHTTPBody(text) {
   return text.replace(/"api_key"\s*:\s*"[^"]*"/g, "\"api_key\":\"<redacted>\"");
 }
+
 
 function requiredEnv(name) {
   const value = process.env[name];
@@ -959,6 +591,7 @@ function requiredEnv(name) {
   }
   return value;
 }
+
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

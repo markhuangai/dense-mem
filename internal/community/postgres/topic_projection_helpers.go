@@ -28,14 +28,14 @@ func (r *Store) withProjectionTx(ctx context.Context, fn func(*gorm.DB) error) e
 func projectionAdmission(tx *gorm.DB) (bool, error) {
 	var values []struct{ Key, Value string }
 	if err := tx.Raw(`SELECT key,value FROM app_config WHERE key=ANY(?::text[]) ORDER BY key FOR SHARE`,
-		pq.Array([]string{domain.AppConfigCommunityDetectionEnabled, domain.AppConfigOntologyEnabled})).Scan(&values).Error; err != nil {
+		pq.Array([]string{domain.AppConfigOntologyEnabled})).Scan(&values).Error; err != nil {
 		return false, err
 	}
 	enabled := map[string]bool{}
 	for _, item := range values {
 		enabled[item.Key] = item.Value == "true"
 	}
-	if !enabled[domain.AppConfigCommunityDetectionEnabled] || !enabled[domain.AppConfigOntologyEnabled] {
+	if !enabled[domain.AppConfigOntologyEnabled] {
 		return false, nil
 	}
 	var paused bool
@@ -286,7 +286,6 @@ func lockProjectionDependencies(tx *gorm.DB, work community.TopicProjectionWork)
 const communityOntologyModeSQL = `COALESCE((SELECT value='true' FROM app_config WHERE key='` + domain.AppConfigOntologyEnabled + `'),false)`
 
 func communityRecordVisibilitySQL(alias string) string {
-	mode := communityOntologyModeSQL
-	return `((` + alias + `.topic_id IS NULL AND NOT ` + mode + `) OR (` + alias + `.topic_id IS NOT NULL AND ` + mode + `
-		AND dense_mem_community_topic_current(` + alias + `.team_id,` + alias + `.community_id)))`
+	return `(` + communityOntologyModeSQL + ` AND ` + alias + `.topic_id IS NOT NULL
+ AND dense_mem_community_topic_current(` + alias + `.team_id,` + alias + `.community_id))`
 }

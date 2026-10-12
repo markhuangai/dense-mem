@@ -38,42 +38,6 @@ func pauseCommunityQuery(t *testing.T, db *gorm.DB, fragment string) (<-chan str
 	return selected, finish
 }
 
-func TestCommunityTopicModeSwitchOrdersLegacyPublication(t *testing.T) {
-	f := newTopicProjectionFixture(t)
-	f.setMode(t, false)
-	run, err := f.store.ClaimCommunityRun(context.Background(), CommunityRunClaimInput{TeamID: f.teamID, WindowKey: uuid.NewString(), SourceFingerprint: "fixture-sources"})
-	require.NoError(t, err)
-	input := f.publication
-	input.RunID = run.RunID
-	input.Communities = append([]CommunityPublishRecord(nil), input.Communities...)
-	for i := range input.Communities {
-		input.Communities[i].CommunityID = uuid.NewString()
-	}
-	selected, resume := pauseCommunityQuery(t, f.appDB, "SELECT value='true' FROM app_config WHERE key='ONTOLOGY_MAINTENANCE_ENABLED' FOR SHARE")
-	published := make(chan error, 1)
-	go func() { published <- f.store.PublishCommunitySnapshot(context.Background(), input) }()
-	select {
-	case <-selected:
-	case <-time.After(5 * time.Second):
-		t.Fatal("legacy publisher did not reach the mode fence")
-	}
-	enabled := make(chan error, 1)
-	go func() {
-		enabled <- f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
-			return tx.Exec(`UPDATE app_config SET value='true' WHERE key='ONTOLOGY_MAINTENANCE_ENABLED'`).Error
-		})
-	}()
-	require.Eventually(t, func() bool {
-		var blocked bool
-		err := f.adminDB.Raw(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE query LIKE '%UPDATE app_config SET value%' AND state='active' AND wait_event_type='Lock')`).Row().Scan(&blocked)
-		return err == nil && blocked
-	}, 5*time.Second, 20*time.Millisecond)
-	resume()
-	require.NoError(t, <-published)
-	require.NoError(t, <-enabled)
-	require.ErrorIs(t, f.store.PublishCommunitySnapshot(context.Background(), input), ontology.ErrMaintenanceDisabled)
-}
-
 func TestCommunityTopicRecallUsesOneWithdrawalSnapshot(t *testing.T) {
 	f := newTopicProjectionFixture(t)
 	f.seedCohort(t)
@@ -145,14 +109,10 @@ func TestCommunityTopicRecallModeSwitchRejectsUnvalidatedLegacy(t *testing.T) {
 	resume()
 	result := <-completed
 	require.NoError(t, result.err)
-	stale, err := f.store.RefreshCommunityStaleness(f.actor(f.reader), CommunityStalenessInput{TeamID: f.teamID, Limit: 200})
-	require.NoError(t, err)
-	require.Positive(t, stale, "legacy records must have changed sources for this regression")
 	require.Empty(t, result.result.RelatedCommunities, "mode switch exposed stale legacy communities without legacy validation")
-	require.Contains(t, result.result.Degradations, recallapp.RecallDegradationResult{
-		Frontier: "communities", Code: "community_snapshot_unavailable", Optional: true,
-		Message: "community snapshot was unavailable; direct relationship fallback was used",
-	})
+	for _, degradation := range result.result.Degradations {
+		require.NotEqual(t, "communities", degradation.Frontier, "disabled ontology is an intentional empty community result")
+	}
 }
 
 func TestCommunityTopicRecallModePreconditionUsesSelectionSnapshot(t *testing.T) {
@@ -166,7 +126,11 @@ func TestCommunityTopicRecallModePreconditionUsesSelectionSnapshot(t *testing.T)
 				Query: "marker", Limit: 10, ExpectedOntologyEnabled: &expected})
 			if enabled == expected {
 				require.NoError(t, err)
-				require.NotEmpty(t, records)
+				if enabled {
+					require.NotEmpty(t, records)
+				} else {
+					require.Empty(t, records)
+				}
 			} else {
 				require.ErrorIs(t, err, community.ErrCommunitySourceStale)
 				require.Empty(t, records)

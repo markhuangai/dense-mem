@@ -35,9 +35,6 @@ type topicProjectionFixture struct {
 
 type topicFixtureConfig struct{}
 
-func (topicFixtureConfig) CommunityDetectionRuntimeConfig(context.Context) (domain.CommunityDetectionRuntimeConfig, error) {
-	return domain.CommunityDetectionRuntimeConfig{Enabled: true}, nil
-}
 func (topicFixtureConfig) OntologyMaintenanceRuntimeConfig(context.Context) (domain.OntologyMaintenanceConfig, error) {
 	return domain.OntologyMaintenanceConfig{Enabled: true}, nil
 }

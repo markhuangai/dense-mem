@@ -241,6 +241,13 @@
       "source": "internal/ontology/postgres/maintenance_service_integration_test.go"
     },
     {
+      "id": "repository/TestOntologyMaintenanceProviderDisableDrain",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceProviderDisableDrain$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_service_integration_test.go"
+    },
+    {
       "id": "repository/TestOntologyMaintenanceAccountingFailurePreventsPublication",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyMaintenanceAccountingFailurePreventsPublication$",
@@ -608,6 +615,13 @@
       "phase": "scenario",
       "source": "internal/ontology/postgres/management_regressions_integration_test.go",
       "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceEnrollsActiveTeamsDespiteRetiredOptouts",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceEnrollsActiveTeamsDespiteRetiredOptouts$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_integration_test.go"
     }
   ]
 }

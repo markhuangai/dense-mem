@@ -63,7 +63,6 @@ async def test_sdk_discovery_and_every_method_preserve_payload_and_result(wire_s
         "results": [{"context": " café 🧭\n", "equivalent_evidence_ids": ["B", "A"]}],
         "conflicts": [{"positions": ["second", "first"]}],
         "related_communities": [{"logical_community_id": "topic", "summary": "derived"}],
-        "related_hypotheses": [{"status": "proposed"}],
         "degradations": [{"code": "optional_context_omitted"}],
         "warnings": ["context omitted"],
         "session": {"event_id": "immutable"},

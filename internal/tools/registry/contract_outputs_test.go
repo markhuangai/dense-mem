@@ -58,18 +58,6 @@ func TestRecallContractEquivalentEvidenceSchemaAndSerialization(t *testing.T) {
 	require.Error(t, ValidateInput(Tool{InputSchema: tool.OutputSchema}, wire))
 }
 
-func TestDreamContractOutputKeepsEvidenceReferencesOutOfRelationshipIDs(t *testing.T) {
-	dream := &domain.Dream{
-		DreamID: "hypothesis-evidence-1", Hypothesis: "Evidence may imply a relationship.",
-		Status: domain.DreamStatusProposed, Lane: domain.DreamLaneEvidenceDiscovery,
-		SourceRefs:        []domain.DreamSourceRef{{Type: "evidence", ID: "evidence-1"}},
-		SourceEvidenceIDs: []string{"evidence-1"},
-	}
-	output := dreamContractOutput(dream)
-	require.Empty(t, output["source_relationship_ids"])
-	require.Equal(t, []string{"evidence-1"}, output["source_evidence_ids"])
-}
-
 func TestRecallContractOutputValidatesEmptyEquivalentRelationshipIDs(t *testing.T) {
 	recall, err := requireTool(toolMap(t), ToolRecallMemory)
 	if err != nil {

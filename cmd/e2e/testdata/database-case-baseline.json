@@ -212,11 +212,6 @@
       "phase": "precheck"
     },
     {
-      "id": "repository/TestCommunityRepositorySnapshotLifecycleAndRecallExpansion",
-      "run": "^TestCommunityRepositorySnapshotLifecycleAndRecallExpansion$",
-      "phase": "precheck"
-    },
-    {
       "id": "postgres/TestHypothesisTeamPredicateMigrationRollsBackBeforeTeamOnlyHypothesesExist",
       "run": "^TestHypothesisTeamPredicateMigrationRollsBackBeforeTeamOnlyHypothesesExist$",
       "phase": "precheck"
@@ -224,61 +219,6 @@
     {
       "id": "postgres/TestHypothesisTeamPredicateMigrationScopesForeignKeyByTeam",
       "run": "^TestHypothesisTeamPredicateMigrationScopesForeignKeyByTeam$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment",
-      "run": "^TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestDreamRepositoryPersistsTeamScopedPredicateHypothesis",
-      "run": "^TestDreamRepositoryPersistsTeamScopedPredicateHypothesis$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestHypothesisConfirmationLockAdmitsOneCallback",
-      "run": "^TestHypothesisConfirmationLockAdmitsOneCallback$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestHypothesisConfirmationLockAllowsNestedRepositoryUseWithinPoolBudget",
-      "run": "^TestHypothesisConfirmationLockAllowsNestedRepositoryUseWithinPoolBudget$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestHypothesisConfirmationLockBoundsDifferentHypothesesWithinPoolBudget",
-      "run": "^TestHypothesisConfirmationLockBoundsDifferentHypothesesWithinPoolBudget$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestHypothesisConfirmationLockDiscardsFailedCleanupConnection",
-      "run": "^TestHypothesisConfirmationLockDiscardsFailedCleanupConnection$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestHypothesisConfirmationLockRejectsPoolWithoutApplicationCapacity",
-      "run": "^TestHypothesisConfirmationLockRejectsPoolWithoutApplicationCapacity$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestHypothesisConfirmationLockReleasesAfterContextCancellation",
-      "run": "^TestHypothesisConfirmationLockReleasesAfterContextCancellation$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestHypothesisConfirmationLockUsesCanonicalAlias",
-      "run": "^TestHypothesisConfirmationLockUsesCanonicalAlias$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestScheduledDreamRecoveryFencesExpiredLease",
-      "run": "^TestScheduledDreamRecoveryFencesExpiredLease$",
-      "phase": "precheck"
-    },
-    {
-      "id": "repository/TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited",
-      "run": "^TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited$",
       "phase": "precheck"
     },
     {
@@ -1787,8 +1727,1369 @@
       "phase": "precheck"
     },
     {
-      "id": "repository/TestHistoricalEvidenceDreamPreservesReadsAndOwnerConfirmation",
-      "run": "^TestHistoricalEvidenceDreamPreservesReadsAndOwnerConfirmation$",
+      "id": "http/TestConcurrencyLimiter_Contract_Redis",
+      "run": "^TestConcurrencyLimiter_Contract_Redis$",
+      "phase": "precheck"
+    },
+    {
+      "id": "http/TestRateLimitMiddleware_Contract_Redis",
+      "run": "^TestRateLimitMiddleware_Contract_Redis$",
+      "phase": "precheck"
+    },
+    {
+      "id": "http/TestRedisHealth_Ping",
+      "run": "^TestRedisHealth_Ping$",
+      "phase": "precheck"
+    },
+    {
+      "id": "http/TestStreamLifecycle_Contract_Redis",
+      "run": "^TestStreamLifecycle_Contract_Redis$",
+      "phase": "precheck"
+    },
+    {
+      "id": "knowledge/TestLifecycleOwnershipConcurrentRetractionRetiresDocumentsOnce",
+      "run": "^TestLifecycleOwnershipConcurrentRetractionRetiresDocumentsOnce$",
+      "phase": "precheck"
+    },
+    {
+      "id": "knowledge/TestLifecycleOwnershipCorrectionPreviewEligibility",
+      "run": "^TestLifecycleOwnershipCorrectionPreviewEligibility$",
+      "phase": "precheck"
+    },
+    {
+      "id": "knowledge/TestLifecycleOwnershipSupportRecomputePreservesTerminalAndAliasState",
+      "run": "^TestLifecycleOwnershipSupportRecomputePreservesTerminalAndAliasState$",
+      "phase": "precheck"
+    },
+    {
+      "id": "knowledge/TestPredicateOwnershipCountedSessionPreservesApplicationPool",
+      "run": "^TestPredicateOwnershipCountedSessionPreservesApplicationPool$",
+      "phase": "precheck"
+    },
+    {
+      "id": "knowledge/TestPredicateOwnershipGeneratedIdentityAndReuse",
+      "run": "^TestPredicateOwnershipGeneratedIdentityAndReuse$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestAuditExportMigrationPreservesHistoricalRowsAndRollback",
+      "run": "^TestAuditExportMigrationPreservesHistoricalRowsAndRollback$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestDemoCleanupRepositorySelectsOnlyExpiredDemoTeamsInBatches",
+      "run": "^TestDemoCleanupRepositorySelectsOnlyExpiredDemoTeamsInBatches$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestDeprecatedANNIndexMigrationChecksCatalogDependencies",
+      "run": "^TestDeprecatedANNIndexMigrationChecksCatalogDependencies$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestDeprecatedANNIndexMigrationDownRequiresCatalogRecovery",
+      "run": "^TestDeprecatedANNIndexMigrationDownRequiresCatalogRecovery$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestDeprecatedANNIndexMigrationFailsClosedOnActiveTarget",
+      "run": "^TestDeprecatedANNIndexMigrationFailsClosedOnActiveTarget$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestDeprecatedANNIndexMigrationFailsClosedOnDefinitionMismatch",
+      "run": "^TestDeprecatedANNIndexMigrationFailsClosedOnDefinitionMismatch$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestDeprecatedANNIndexMigrationFailsClosedWhenReplacementIsInvalid",
+      "run": "^TestDeprecatedANNIndexMigrationFailsClosedWhenReplacementIsInvalid$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestDeprecatedANNIndexMigrationFailsClosedWhenReplacementIsMissing",
+      "run": "^TestDeprecatedANNIndexMigrationFailsClosedWhenReplacementIsMissing$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestDeprecatedANNIndexMigrationIgnoresSessionIdentifierQuoting",
+      "run": "^TestDeprecatedANNIndexMigrationIgnoresSessionIdentifierQuoting$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestDeprecatedANNIndexMigrationIsIdempotentWhenTargetAbsent",
+      "run": "^TestDeprecatedANNIndexMigrationIsIdempotentWhenTargetAbsent$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestDeprecatedANNIndexMigrationRejectsDependentTarget",
+      "run": "^TestDeprecatedANNIndexMigrationRejectsDependentTarget$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestDeprecatedANNIndexMigrationReleasesLockAfterBoundedFailure",
+      "run": "^TestDeprecatedANNIndexMigrationReleasesLockAfterBoundedFailure$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestDeprecatedANNIndexMigrationRetiresExactDuplicate",
+      "run": "^TestDeprecatedANNIndexMigrationRetiresExactDuplicate$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestDreamCommunityRetirementMigrationPreservesSettingsAndHistory",
+      "run": "^TestDreamCommunityRetirementMigrationPreservesSettingsAndHistory$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestDreamDiagnosticsMigrationRetriesAndRejectsRollback",
+      "run": "^TestDreamDiagnosticsMigrationRetriesAndRejectsRollback$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlDetachmentAcquiresDDLLocksBeforeValidationLocks",
+      "run": "^TestMigrationControlDetachmentAcquiresDDLLocksBeforeValidationLocks$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlDetachmentLockFailureRollsBackAndCanRetry",
+      "run": "^TestMigrationControlDetachmentLockFailureRollsBackAndCanRetry$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlDetachmentPreservesRetainedTablesAndMarker",
+      "run": "^TestMigrationControlDetachmentPreservesRetainedTablesAndMarker$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlDetachmentRejectsUnexpectedDependenciesAndRollsBack",
+      "run": "^TestMigrationControlDetachmentRejectsUnexpectedDependenciesAndRollsBack$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlDetachmentRejectsUnexpectedFunctionAndRollsBack",
+      "run": "^TestMigrationControlDetachmentRejectsUnexpectedFunctionAndRollsBack$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementAppliesPendingRuntimeMigrationsFirst",
+      "run": "^TestMigrationControlRetirementAppliesPendingRuntimeMigrationsFirst$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementBackupRestoreRecreatesPopulatedPreRetirementState",
+      "run": "^TestMigrationControlRetirementBackupRestoreRecreatesPopulatedPreRetirementState$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementDropsOnlyApprovedTablesAndPreservesMarker",
+      "run": "^TestMigrationControlRetirementDropsOnlyApprovedTablesAndPreservesMarker$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementFailureAfterFirstDropRollsBack",
+      "run": "^TestMigrationControlRetirementFailureAfterFirstDropRollsBack$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementLockFailureRollsBackAndCanRetry",
+      "run": "^TestMigrationControlRetirementLockFailureRollsBackAndCanRetry$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsAlteredIndex",
+      "run": "^TestMigrationControlRetirementRejectsAlteredIndex$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsAlteredTarget",
+      "run": "^TestMigrationControlRetirementRejectsAlteredTarget$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsChangedApprovedRowCounts",
+      "run": "^TestMigrationControlRetirementRejectsChangedApprovedRowCounts$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsHiddenLineageColumnWithNOBYPASSRLS",
+      "run": "^TestMigrationControlRetirementRejectsHiddenLineageColumnWithNOBYPASSRLS$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsIncompleteDetachment",
+      "run": "^TestMigrationControlRetirementRejectsIncompleteDetachment$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsInheritance",
+      "run": "^TestMigrationControlRetirementRejectsInheritance$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsMissingApprovedCommit",
+      "run": "^TestMigrationControlRetirementRejectsMissingApprovedCommit$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsMissingDetachmentHistory",
+      "run": "^TestMigrationControlRetirementRejectsMissingDetachmentHistory$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsMissingTarget",
+      "run": "^TestMigrationControlRetirementRejectsMissingTarget$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsOlderNodeAfterUpgrade",
+      "run": "^TestMigrationControlRetirementRejectsOlderNodeAfterUpgrade$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsPendingRuntimePredecessor",
+      "run": "^TestMigrationControlRetirementRejectsPendingRuntimePredecessor$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsUnboundOperatorMetadata",
+      "run": "^TestMigrationControlRetirementRejectsUnboundOperatorMetadata$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRejectsUnexpectedDependenciesAndRollsBack",
+      "run": "^TestMigrationControlRetirementRejectsUnexpectedDependenciesAndRollsBack$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRequiresApprovedOperationalPreflight",
+      "run": "^TestMigrationControlRetirementRequiresApprovedOperationalPreflight$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRequiresCompatibleMarker",
+      "run": "^TestMigrationControlRetirementRequiresCompatibleMarker$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigrationControlRetirementRunsWithNOBYPASSRLS",
+      "run": "^TestMigrationControlRetirementRunsWithNOBYPASSRLS$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestMigratorRunUpAppliesTopicProjectionAfterUpdatedMain",
+      "run": "^TestMigratorRunUpAppliesTopicProjectionAfterUpdatedMain$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestOpenOperationLogClientUsesDedicatedTwoConnectionPool",
+      "run": "^TestOpenOperationLogClientUsesDedicatedTwoConnectionPool$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestOperationLogInvocationIndexMigrationCreatesRecoverablePartialIndex",
+      "run": "^TestOperationLogInvocationIndexMigrationCreatesRecoverablePartialIndex$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestOperationLogPoolMakesProgressWhileApplicationPoolIsHeld",
+      "run": "^TestOperationLogPoolMakesProgressWhileApplicationPoolIsHeld$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestOperationalTelemetryWindowIndexMigrationRecoversInvalidBuildsAndRollsBack",
+      "run": "^TestOperationalTelemetryWindowIndexMigrationRecoversInvalidBuildsAndRollsBack$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestRememberAttemptDiagnosticsUnavailableMigrationSerializesRollbackAndResetsLockTimeout",
+      "run": "^TestRememberAttemptDiagnosticsUnavailableMigrationSerializesRollbackAndResetsLockTimeout$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestTelemetryModelPriceMigrationPreservesExistingRates",
+      "run": "^TestTelemetryModelPriceMigrationPreservesExistingRates$",
+      "phase": "precheck"
+    },
+    {
+      "id": "postgres/TestUsageCredentialBucketMigrationUpAndDown",
+      "run": "^TestUsageCredentialBucketMigrationUpAndDown$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicAssignedEvidenceTracksNewAndReinstatedSupport",
+      "run": "^TestCommunityTopicAssignedEvidenceTracksNewAndReinstatedSupport$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicBusyTeamDoesNotStarveAvailableTeam",
+      "run": "^TestCommunityTopicBusyTeamDoesNotStarveAvailableTeam$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicCapacityIsSharedWithMaintenance",
+      "run": "^TestCommunityTopicCapacityIsSharedWithMaintenance$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicDeclaredDefinitionSourceIsFenced",
+      "run": "^TestCommunityTopicDeclaredDefinitionSourceIsFenced$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicDefinitionRaceAndModeAdmission",
+      "run": "^TestCommunityTopicDefinitionRaceAndModeAdmission$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicDependencyExpansionResumesWithinTurnBounds",
+      "run": "^TestCommunityTopicDependencyExpansionResumesWithinTurnBounds$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicFailurePauseAndDisable",
+      "run": "^TestCommunityTopicFailurePauseAndDisable$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicForcedRLSAndRollbackBoundary",
+      "run": "^TestCommunityTopicForcedRLSAndRollbackBoundary$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicFrozenOrganizationCohortThroughRecall",
+      "run": "^TestCommunityTopicFrozenOrganizationCohortThroughRecall$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicLargeFanoutResumesAndRotates",
+      "run": "^TestCommunityTopicLargeFanoutResumesAndRotates$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicMigrationUsesNonSuperuserWithForcedRLS",
+      "run": "^TestCommunityTopicMigrationUsesNonSuperuserWithForcedRLS$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicMigrationValidationAllowsConcurrentReadsAndWrites",
+      "run": "^TestCommunityTopicMigrationValidationAllowsConcurrentReadsAndWrites$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicNewClassificationOverrideInvalidatesOnlyAffectedTopic",
+      "run": "^TestCommunityTopicNewClassificationOverrideInvalidatesOnlyAffectedTopic$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicNewMembershipBetweenPagesRejectsPublication",
+      "run": "^TestCommunityTopicNewMembershipBetweenPagesRejectsPublication$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicNewOverrideDuringPublicationIsFenced",
+      "run": "^TestCommunityTopicNewOverrideDuringPublicationIsFenced$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicPredicateEligibilityDependencyIsFenced",
+      "run": "^TestCommunityTopicPredicateEligibilityDependencyIsFenced$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicPublicationAndQuality",
+      "run": "^TestCommunityTopicPublicationAndQuality$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicPublicationFencesSourceChangesAndCompetingClaims",
+      "run": "^TestCommunityTopicPublicationFencesSourceChangesAndCompetingClaims$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicRecallCoverageTracksSelectionSnapshot",
+      "run": "^TestCommunityTopicRecallCoverageTracksSelectionSnapshot$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicRecallModePreconditionUsesSelectionSnapshot",
+      "run": "^TestCommunityTopicRecallModePreconditionUsesSelectionSnapshot$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicRecallModeSwitchRejectsUnvalidatedLegacy",
+      "run": "^TestCommunityTopicRecallModeSwitchRejectsUnvalidatedLegacy$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicRecallUsesOneWithdrawalSnapshot",
+      "run": "^TestCommunityTopicRecallUsesOneWithdrawalSnapshot$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicRejectsPrivateForeignSourcesAndFencesCorrection",
+      "run": "^TestCommunityTopicRejectsPrivateForeignSourcesAndFencesCorrection$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicRetractionIsolationAndIndependentRefresh",
+      "run": "^TestCommunityTopicRetractionIsolationAndIndependentRefresh$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicSchedulerRunsWithoutOrganizationBudget",
+      "run": "^TestCommunityTopicSchedulerRunsWithoutOrganizationBudget$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestCommunityTopicWithdrawQuarantineAndGeneration",
+      "run": "^TestCommunityTopicWithdrawQuarantineAndGeneration$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestConflictReviewCompetingWorkersSerializeTerminalEffects",
+      "run": "^TestConflictReviewCompetingWorkersSerializeTerminalEffects$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestDirectoryPageOwnership",
+      "run": "^TestDirectoryPageOwnership$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestGraphOwnershipNormalizedServiceAndAdapter",
+      "run": "^TestGraphOwnershipNormalizedServiceAndAdapter$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyAtomicPublicationReplayAndRaces",
+      "run": "^TestOntologyAtomicPublicationReplayAndRaces$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyAutomaticRetirementPreservesGroupingOverrides",
+      "run": "^TestOntologyAutomaticRetirementPreservesGroupingOverrides$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyCrossOwnerMultipleRelativeDays",
+      "run": "^TestOntologyCrossOwnerMultipleRelativeDays$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyCrossOwnerSpatialContextRemainsSeparate",
+      "run": "^TestOntologyCrossOwnerSpatialContextRemainsSeparate$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyCurrentReadersDistinguishDependencyAndSourceChanges",
+      "run": "^TestOntologyCurrentReadersDistinguishDependencyAndSourceChanges$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges",
+      "run": "^TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyDefinitionChangesValidateActiveChildren",
+      "run": "^TestOntologyDefinitionChangesValidateActiveChildren$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyEnrichmentBoundRejectsAtomically",
+      "run": "^TestOntologyEnrichmentBoundRejectsAtomically$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyExcludesOldSharedGeneration",
+      "run": "^TestOntologyExcludesOldSharedGeneration$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyFollowupCohort",
+      "run": "^TestOntologyFollowupCohort$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyGroupingOverridesPreserveAssignmentFreshness",
+      "run": "^TestOntologyGroupingOverridesPreserveAssignmentFreshness$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceAccountingFailurePreventsPublication",
+      "run": "^TestOntologyMaintenanceAccountingFailurePreventsPublication$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceBoundedCompletionUsesPersistedOutcomes",
+      "run": "^TestOntologyMaintenanceBoundedCompletionUsesPersistedOutcomes$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceBudgetDeferralAndManualReuse",
+      "run": "^TestOntologyMaintenanceBudgetDeferralAndManualReuse$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceClaimRefreshesCurrentVersion",
+      "run": "^TestOntologyMaintenanceClaimRefreshesCurrentVersion$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceCohort",
+      "run": "^TestOntologyMaintenanceCohort$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceCommandAuditIsAtomic",
+      "run": "^TestOntologyMaintenanceCommandAuditIsAtomic$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceCommunityDependencyCounters",
+      "run": "^TestOntologyMaintenanceCommunityDependencyCounters$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceCompetingAdmissionAndCrashRecovery",
+      "run": "^TestOntologyMaintenanceCompetingAdmissionAndCrashRecovery$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceCompletedRunDoesNotHideUnrelatedFailures",
+      "run": "^TestOntologyMaintenanceCompletedRunDoesNotHideUnrelatedFailures$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork",
+      "run": "^TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceControlInterruptionResumesSameWindow",
+      "run": "^TestOntologyMaintenanceControlInterruptionResumesSameWindow$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceDefinitionMarkersTargetReceiptsAndVocabulary",
+      "run": "^TestOntologyMaintenanceDefinitionMarkersTargetReceiptsAndVocabulary$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceEarlierAmbiguityKeepsBoundedRunIncomplete",
+      "run": "^TestOntologyMaintenanceEarlierAmbiguityKeepsBoundedRunIncomplete$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceEnrollsActiveTeamsDespiteRetiredOptouts",
+      "run": "^TestOntologyMaintenanceEnrollsActiveTeamsDespiteRetiredOptouts$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceExpiredLeaseAndNewInvalidation",
+      "run": "^TestOntologyMaintenanceExpiredLeaseAndNewInvalidation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceGlobalAccounting",
+      "run": "^TestOntologyMaintenanceGlobalAccounting$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceIndexMigrationRestoresLockTimeout",
+      "run": "^TestOntologyMaintenanceIndexMigrationRestoresLockTimeout$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceInvalidationFamilies",
+      "run": "^TestOntologyMaintenanceInvalidationFamilies$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
+      "run": "^TestOntologyMaintenanceLargeBacklogAndFairTurns$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceMarkerFrameRLS",
+      "run": "^TestOntologyMaintenanceMarkerFrameRLS$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceMarkerRollbackAndRLS",
+      "run": "^TestOntologyMaintenanceMarkerRollbackAndRLS$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceOperatorHTTPAndScheduler",
+      "run": "^TestOntologyMaintenanceOperatorHTTPAndScheduler$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceOversizedGroupClosure",
+      "run": "^TestOntologyMaintenanceOversizedGroupClosure$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenancePauseCommandsAndWindows",
+      "run": "^TestOntologyMaintenancePauseCommandsAndWindows$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenancePopulatedMigrationCannotRollback",
+      "run": "^TestOntologyMaintenancePopulatedMigrationCannotRollback$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenancePrivateGenerationAndABCIsolation",
+      "run": "^TestOntologyMaintenancePrivateGenerationAndABCIsolation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceProviderDisableDrain",
+      "run": "^TestOntologyMaintenanceProviderDisableDrain$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceProviderPauseDrain",
+      "run": "^TestOntologyMaintenanceProviderPauseDrain$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceQueuedMarkerCoalescingAndConsumption",
+      "run": "^TestOntologyMaintenanceQueuedMarkerCoalescingAndConsumption$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceRegenerationFailureRetry",
+      "run": "^TestOntologyMaintenanceRegenerationFailureRetry$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceRetryDoesNotReleaseUnselectedFailures",
+      "run": "^TestOntologyMaintenanceRetryDoesNotReleaseUnselectedFailures$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceRunCompletionUsesActiveScope",
+      "run": "^TestOntologyMaintenanceRunCompletionUsesActiveScope$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceScheduledRecoveryClearsCurrentReason",
+      "run": "^TestOntologyMaintenanceScheduledRecoveryClearsCurrentReason$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceTransitiveInvalidation",
+      "run": "^TestOntologyMaintenanceTransitiveInvalidation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceWriteLatency",
+      "run": "^TestOntologyMaintenanceWriteLatency$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyManagementAuditFailureIsAtomic",
+      "run": "^TestOntologyManagementAuditFailureIsAtomic$",
+      "phase": "scenario",
+      "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestOntologyManagementCompetingDraftsAndPublications",
+      "run": "^TestOntologyManagementCompetingDraftsAndPublications$",
+      "phase": "scenario",
+      "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestOntologyManagementCompetingSavesKeepLosingEdits",
+      "run": "^TestOntologyManagementCompetingSavesKeepLosingEdits$",
+      "phase": "scenario",
+      "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestOntologyManagementCorrectionWhileMaintenanceInFlight",
+      "run": "^TestOntologyManagementCorrectionWhileMaintenanceInFlight$",
+      "phase": "scenario",
+      "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestOntologyManagementDraftIsolationReplayAndRLS",
+      "run": "^TestOntologyManagementDraftIsolationReplayAndRLS$",
+      "phase": "scenario",
+      "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestOntologyManagementEditAndUnpinTogether",
+      "run": "^TestOntologyManagementEditAndUnpinTogether$",
+      "phase": "scenario",
+      "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestOntologyManagementExcludesManagersOwnPrivateSpaces",
+      "run": "^TestOntologyManagementExcludesManagersOwnPrivateSpaces$",
+      "phase": "scenario",
+      "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestOntologyManagementHTTPPersistedWorkflow",
+      "run": "^TestOntologyManagementHTTPPersistedWorkflow$",
+      "phase": "scenario",
+      "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestOntologyManagementPinUnpinRollbackAndHistory",
+      "run": "^TestOntologyManagementPinUnpinRollbackAndHistory$",
+      "phase": "scenario",
+      "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestOntologyManagementPredicateLookupBeyondFirstPage",
+      "run": "^TestOntologyManagementPredicateLookupBeyondFirstPage$",
+      "phase": "scenario",
+      "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestOntologyManagementPreviewsAreBoundedAndPreserveOtherGroups",
+      "run": "^TestOntologyManagementPreviewsAreBoundedAndPreserveOtherGroups$",
+      "phase": "scenario",
+      "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestOntologyManagementPrivateForeignAndStaleSources",
+      "run": "^TestOntologyManagementPrivateForeignAndStaleSources$",
+      "phase": "scenario",
+      "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestOntologyManagementRejectsCyclesAndExplicitReplacementCollisions",
+      "run": "^TestOntologyManagementRejectsCyclesAndExplicitReplacementCollisions$",
+      "phase": "scenario",
+      "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestOntologyManagementReplacesAdvancedSourceAndRemovesWithdrawnCorrection",
+      "run": "^TestOntologyManagementReplacesAdvancedSourceAndRemovesWithdrawnCorrection$",
+      "phase": "scenario",
+      "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestOntologyManagementRetiredGroupSplitsIntoDistinctRecords",
+      "run": "^TestOntologyManagementRetiredGroupSplitsIntoDistinctRecords$",
+      "phase": "scenario",
+      "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestOntologyManagementStatusCountsOnlyAuthenticatedTeam",
+      "run": "^TestOntologyManagementStatusCountsOnlyAuthenticatedTeam$",
+      "phase": "scenario",
+      "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestOntologyManagerOverridesAndRollback",
+      "run": "^TestOntologyManagerOverridesAndRollback$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMigrationRLSAndHistory",
+      "run": "^TestOntologyMigrationRLSAndHistory$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMismatchedSourceVersionDoesNotCommit",
+      "run": "^TestOntologyMismatchedSourceVersionDoesNotCommit$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyMixedSeparationOverrideProtectsEvidenceGroups",
+      "run": "^TestOntologyMixedSeparationOverrideProtectsEvidenceGroups$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationAmbiguousComparisonReceipt",
+      "run": "^TestOntologyOrganizationAmbiguousComparisonReceipt$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationAtomicReplayAndIsolation",
+      "run": "^TestOntologyOrganizationAtomicReplayAndIsolation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationCancellationReceipt",
+      "run": "^TestOntologyOrganizationCancellationReceipt$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationCohort",
+      "run": "^TestOntologyOrganizationCohort$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationCompletedReceiptInvalidation",
+      "run": "^TestOntologyOrganizationCompletedReceiptInvalidation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationOverridesAndIncompleteGroups",
+      "run": "^TestOntologyOrganizationOverridesAndIncompleteGroups$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationPreservesPerRecordDependencyBounds",
+      "run": "^TestOntologyOrganizationPreservesPerRecordDependencyBounds$",
+      "phase": "scenario",
+      "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationPreservesValidLargeSourceContext",
+      "run": "^TestOntologyOrganizationPreservesValidLargeSourceContext$",
+      "phase": "scenario",
+      "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationRejectsSplitGroupIdentityConflict",
+      "run": "^TestOntologyOrganizationRejectsSplitGroupIdentityConflict$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationRejectsStaleAndMalformedPublication",
+      "run": "^TestOntologyOrganizationRejectsStaleAndMalformedPublication$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationVocabularyAndSourceFences",
+      "run": "^TestOntologyOrganizationVocabularyAndSourceFences$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyRejectedInputsDoNotCommit",
+      "run": "^TestOntologyRejectedInputsDoNotCommit$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyRelationshipProvenanceAndPredicateSeeds",
+      "run": "^TestOntologyRelationshipProvenanceAndPredicateSeeds$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyRollbackRefreshesDependencyVersions",
+      "run": "^TestOntologyRollbackRefreshesDependencyVersions$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyRollbackRejectsStaleSources",
+      "run": "^TestOntologyRollbackRejectsStaleSources$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologySharedSourceIsolationAndFreshness",
+      "run": "^TestOntologySharedSourceIsolationAndFreshness$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyTransitiveSourceFreshness",
+      "run": "^TestOntologyTransitiveSourceFreshness$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyUnavailableSnapshotRetainsScopedHandleForMaintenance",
+      "run": "^TestOntologyUnavailableSnapshotRetainsScopedHandleForMaintenance$",
+      "phase": "scenario",
+      "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestOntologyVocabularyUsesCurrentCandidateWindow",
+      "run": "^TestOntologyVocabularyUsesCurrentCandidateWindow$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOntologyVocabularyWindowPreservesTeamIsolationAndNameReuse",
+      "run": "^TestOntologyVocabularyWindowPreservesTeamIsolationAndNameReuse$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOperationLogOwnershipEquivalentFilters",
+      "run": "^TestOperationLogOwnershipEquivalentFilters$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOperationLogOwnershipWritesFlushBeforeReadsAndPreserveFailures",
+      "run": "^TestOperationLogOwnershipWritesFlushBeforeReadsAndPreserveFailures$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOperationLogRepositoryInvocationLookupUsesIdentityIndex",
+      "run": "^TestOperationLogRepositoryInvocationLookupUsesIdentityIndex$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOperationLogRepositoryRetriesStableEventIDWithoutDuplication",
+      "run": "^TestOperationLogRepositoryRetriesStableEventIDWithoutDuplication$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOperationLogRootFanoutPersistsOneEventWithoutRepositoryRecursion",
+      "run": "^TestOperationLogRootFanoutPersistsOneEventWithoutRepositoryRecursion$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOperationLogServicePersistsQueueGapRecoveryInPostgres",
+      "run": "^TestOperationLogServicePersistsQueueGapRecoveryInPostgres$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOperationLogServiceShutdownFlushPersistsPendingEventInPostgres",
+      "run": "^TestOperationLogServiceShutdownFlushPersistsPendingEventInPostgres$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOperationLogSinkPoolAppendsAttributedEventWhileApplicationPoolIsHeld",
+      "run": "^TestOperationLogSinkPoolAppendsAttributedEventWhileApplicationPoolIsHeld$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestOperationalTelemetryCollectionMarksPartialLedgerFailureUnavailable",
+      "run": "^TestOperationalTelemetryCollectionMarksPartialLedgerFailureUnavailable$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemoryCredentialRetirementOperationHashesStayStable",
+      "run": "^TestPrivateMemoryCredentialRetirementOperationHashesStayStable$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestPrivateMemoryStaleReleaseCannotRequeueReclaimedLease",
+      "run": "^TestPrivateMemoryStaleReleaseCannotRequeueReclaimedLease$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestReadOperationalTelemetryUsesDurableLedgerAndSurvivesCollectorRecreation",
+      "run": "^TestReadOperationalTelemetryUsesDurableLedgerAndSurvivesCollectorRecreation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallOntologyBatchKeepsActivePredicateVersions",
+      "run": "^TestRecallOntologyBatchKeepsActivePredicateVersions$",
+      "phase": "scenario",
+      "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestRecallOntologyDiscoveryAliasesAndTemporalFallback",
+      "run": "^TestRecallOntologyDiscoveryAliasesAndTemporalFallback$",
+      "phase": "scenario",
+      "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestRecallOntologyDiscoveryHydrationEnforcesEligibilityAndState",
+      "run": "^TestRecallOntologyDiscoveryHydrationEnforcesEligibilityAndState$",
+      "phase": "scenario",
+      "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestRecallOntologyFeedbackAlternatesDoNotInflateResults",
+      "run": "^TestRecallOntologyFeedbackAlternatesDoNotInflateResults$",
+      "phase": "scenario",
+      "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestRecallOntologyFrozenCohort",
+      "run": "^TestRecallOntologyFrozenCohort$",
+      "phase": "scenario",
+      "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestRecallOntologyGroupingKnownIDsAndStaleSources",
+      "run": "^TestRecallOntologyGroupingKnownIDsAndStaleSources$",
+      "phase": "scenario",
+      "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestRecallOntologyHydrationUsesOneSnapshotAcrossRetraction",
+      "run": "^TestRecallOntologyHydrationUsesOneSnapshotAcrossRetraction$",
+      "phase": "scenario",
+      "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestRecallOntologyManagementLockedCohort",
+      "run": "^TestRecallOntologyManagementLockedCohort$",
+      "phase": "scenario",
+      "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestRecallOntologyMigratedAliasRemainsIneligibleWithCurrentProjection",
+      "run": "^TestRecallOntologyMigratedAliasRemainsIneligibleWithCurrentProjection$",
+      "phase": "scenario",
+      "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestRecallOntologyOptionalFailureAndRequiredFailureRemainDistinct",
+      "run": "^TestRecallOntologyOptionalFailureAndRequiredFailureRemainDistinct$",
+      "phase": "scenario",
+      "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestRecallOntologyPrefetchedGroupsReadNewEvidenceAndReauthorize",
+      "run": "^TestRecallOntologyPrefetchedGroupsReadNewEvidenceAndReauthorize$",
+      "phase": "scenario",
+      "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestRecallOntologyPrivateForeignAndOldGenerationSources",
+      "run": "^TestRecallOntologyPrivateForeignAndOldGenerationSources$",
+      "phase": "scenario",
+      "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestRecallOntologyPunctuatedKeysAndAliases",
+      "run": "^TestRecallOntologyPunctuatedKeysAndAliases$",
+      "phase": "scenario",
+      "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestRecallOntologyReaderResetsBetweenTransactions",
+      "run": "^TestRecallOntologyReaderResetsBetweenTransactions$",
+      "phase": "scenario",
+      "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestRecallOntologyRelationshipDiscoveryPreservesSemanticGroups",
+      "run": "^TestRecallOntologyRelationshipDiscoveryPreservesSemanticGroups$",
+      "phase": "scenario",
+      "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestRecallOntologySourceRevisionCorrectionAndDefinitionStaleness",
+      "run": "^TestRecallOntologySourceRevisionCorrectionAndDefinitionStaleness$",
+      "phase": "scenario",
+      "scenario": "ontology_organization"
+    },
+    {
+      "id": "repository/TestRecallReadBenchmarkCountsTransactionStatements",
+      "run": "^TestRecallReadBenchmarkCountsTransactionStatements$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallReadPerformanceMetricsCountMultiSpaceStagesOnce",
+      "run": "^TestRecallReadPerformanceMetricsCountMultiSpaceStagesOnce$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallReadPerformanceMetricsMatchDisabledResults",
+      "run": "^TestRecallReadPerformanceMetricsMatchDisabledResults$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallReadPerformanceMetricsRemainRequestScoped",
+      "run": "^TestRecallReadPerformanceMetricsRemainRequestScoped$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallRetrievalCancellationAfterCandidates",
+      "run": "^TestRecallRetrievalCancellationAfterCandidates$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecallRetrievalEquivalenceCorpus",
+      "run": "^TestRecallRetrievalEquivalenceCorpus$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRecordRememberFailurePreservesUnavailableCaptureStateAfterAttemptBudget",
+      "run": "^TestRecordRememberFailurePreservesUnavailableCaptureStateAfterAttemptBudget$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRelationshipConflictProjectionAbstainsOnEqualNewestPositions",
+      "run": "^TestRelationshipConflictProjectionAbstainsOnEqualNewestPositions$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRelationshipConflictProjectionCountsBeforeSupporterDisplayLimit",
+      "run": "^TestRelationshipConflictProjectionCountsBeforeSupporterDisplayLimit$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRelationshipConflictProjectionFencesRetiredPrivateGeneration",
+      "run": "^TestRelationshipConflictProjectionFencesRetiredPrivateGeneration$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRelationshipConflictProjectionUsesCallerTransactionAndTeamFence",
+      "run": "^TestRelationshipConflictProjectionUsesCallerTransactionAndTeamFence$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRelationshipProjectionANNAndAllTeamReadinessKeepDistinctGenerationPolicies",
+      "run": "^TestRelationshipProjectionANNAndAllTeamReadinessKeepDistinctGenerationPolicies$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberInvocationDiagnosticsFiltersIdentityAndRetryable",
+      "run": "^TestRememberInvocationDiagnosticsFiltersIdentityAndRetryable$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberInvocationDiagnosticsRejectsPrivateSpaceSealRace",
+      "run": "^TestRememberInvocationDiagnosticsRejectsPrivateSpaceSealRace$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberInvocationDiagnosticsScopesBodiesAndPurgesExpiredRows",
+      "run": "^TestRememberInvocationDiagnosticsScopesBodiesAndPurgesExpiredRows$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberInvocationDiagnosticsTrimsAgainstJSONBTextLimit",
+      "run": "^TestRememberInvocationDiagnosticsTrimsAgainstJSONBTextLimit$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberInvocationLeavesCanonicalAttemptEmptyAfterRollback",
+      "run": "^TestRememberInvocationLeavesCanonicalAttemptEmptyAfterRollback$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberProcessorPersistsInvocationDiagnosticsThroughPostgres",
+      "run": "^TestRememberProcessorPersistsInvocationDiagnosticsThroughPostgres$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberPublicDiagnosticsLocateMultiItemSourceConflictAndRollback",
+      "run": "^TestRememberPublicDiagnosticsLocateMultiItemSourceConflictAndRollback$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRememberPublicDiagnosticsPersistReplayAndIsolateOwners",
+      "run": "^TestRememberPublicDiagnosticsPersistReplayAndIsolateOwners$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention",
+      "run": "^TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSearchReconciliationConfiguredBatchUsesRealAdapterAndDurableCursor",
+      "run": "^TestSearchReconciliationConfiguredBatchUsesRealAdapterAndDurableCursor$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSearchReconciliationLateBatchFailureRollsBackEarlierUpdates",
+      "run": "^TestSearchReconciliationLateBatchFailureRollsBackEarlierUpdates$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSearchReconciliationRepairWriteRaceSkipsStaleSnapshot",
+      "run": "^TestSearchReconciliationRepairWriteRaceSkipsStaleSnapshot$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSessionCheckpointAndSuccessfulReceiptAreImmutable",
+      "run": "^TestSessionCheckpointAndSuccessfulReceiptAreImmutable$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSessionConcurrentMixedConflictsStageOnlyTheWinningBatch",
+      "run": "^TestSessionConcurrentMixedConflictsStageOnlyTheWinningBatch$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSessionDiagnosticsRetentionHonorsLegalHold",
+      "run": "^TestSessionDiagnosticsRetentionHonorsLegalHold$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSessionDuplicatePreparationSupportsOneHundredPrivateExcerpts",
+      "run": "^TestSessionDuplicatePreparationSupportsOneHundredPrivateExcerpts$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSessionHTTPProviderFailureReceiptsPreserveActualClassifications",
+      "run": "^TestSessionHTTPProviderFailureReceiptsPreserveActualClassifications$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSessionIntakeExactReplayAndMixedConflictAreAtomic",
+      "run": "^TestSessionIntakeExactReplayAndMixedConflictAreAtomic$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSessionLockSerializesConcurrentSameKeyIntake",
+      "run": "^TestSessionLockSerializesConcurrentSameKeyIntake$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSessionLockSerializesDifferentKeysAcrossStoreInstances",
+      "run": "^TestSessionLockSerializesDifferentKeysAcrossStoreInstances$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSessionPreparedCommitCannotReviveChangedOrErasedPrivateGeneration",
+      "run": "^TestSessionPreparedCommitCannotReviveChangedOrErasedPrivateGeneration$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSessionPrivateRLSAndGenerationFence",
+      "run": "^TestSessionPrivateRLSAndGenerationFence$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSessionProfilePrivateOwnerAliasesAndIsolation",
+      "run": "^TestSessionProfilePrivateOwnerAliasesAndIsolation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSessionReceiptFailureRollsBackKnowledgeAndRecoversOriginalIntake",
+      "run": "^TestSessionReceiptFailureRollsBackKnowledgeAndRecoversOriginalIntake$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSessionServiceBudgetRejectionHasNoIntake",
+      "run": "^TestSessionServiceBudgetRejectionHasNoIntake$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSessionServiceCancellationAndTimeoutRetainIntakeWithoutKnowledge",
+      "run": "^TestSessionServiceCancellationAndTimeoutRetainIntakeWithoutKnowledge$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSessionServiceDurableFailureRecoveryNoFactsAndReplay",
+      "run": "^TestSessionServiceDurableFailureRecoveryNoFactsAndReplay$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSessionServiceFactsDiagnosticsAndCheckpointRecoveryThroughPostgres",
+      "run": "^TestSessionServiceFactsDiagnosticsAndCheckpointRecoveryThroughPostgres$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSessionServiceResumesValidatedExtractionCheckpoint",
+      "run": "^TestSessionServiceResumesValidatedExtractionCheckpoint$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSubmissionPredicateRegistrationCatalogDriftPreservesPreviewAndCommitFences",
+      "run": "^TestSubmissionPredicateRegistrationCatalogDriftPreservesPreviewAndCommitFences$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSubmissionPredicateRegistrationPreflightBatchOverlayAndNoWrites",
+      "run": "^TestSubmissionPredicateRegistrationPreflightBatchOverlayAndNoWrites$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestSubmissionPredicateRegistrationPreflightCatalogAndIsolation",
+      "run": "^TestSubmissionPredicateRegistrationPreflightCatalogAndIsolation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestTeamHardDeleteSerializesGlobalInvocationDiagnosticInsert",
+      "run": "^TestTeamHardDeleteSerializesGlobalInvocationDiagnosticInsert$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestTeamHardDeleteSerializesInvocationDiagnosticInsert",
+      "run": "^TestTeamHardDeleteSerializesInvocationDiagnosticInsert$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestTraceOwnershipBoundsAndCompleteness",
+      "run": "^TestTraceOwnershipBoundsAndCompleteness$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestTraceOwnershipLegacyFragmentRuneBounds",
+      "run": "^TestTraceOwnershipLegacyFragmentRuneBounds$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestTraceOwnershipServiceAndAdapterEquivalent",
+      "run": "^TestTraceOwnershipServiceAndAdapterEquivalent$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestTraceSessionProvenanceRequiresAuthenticatedPrivateOwner",
+      "run": "^TestTraceSessionProvenanceRequiresAuthenticatedPrivateOwner$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestTraceVerificationPreservesNullableLegacyVerdicts",
+      "run": "^TestTraceVerificationPreservesNullableLegacyVerdicts$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestUsageCredentialBucketsEnforceTeamRLS",
+      "run": "^TestUsageCredentialBucketsEnforceTeamRLS$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestUsageMetricsFlushScalingCardinalities",
+      "run": "^TestUsageMetricsFlushScalingCardinalities$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestUsageMetricsFlushScalingCommittedRetryPreservesNewEvents",
+      "run": "^TestUsageMetricsFlushScalingCommittedRetryPreservesNewEvents$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestUsageMetricsFlushScalingConcurrentRecording",
+      "run": "^TestUsageMetricsFlushScalingConcurrentRecording$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestUsageMetricsFlushScalingFailureRollsBackLedgerAndBothTables",
+      "run": "^TestUsageMetricsFlushScalingFailureRollsBackLedgerAndBothTables$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestUsageMetricsPruneKeepsThirtyDayBoundaryInBothBucketTables",
+      "run": "^TestUsageMetricsPruneKeepsThirtyDayBoundaryInBothBucketTables$",
+      "phase": "precheck"
+    },
+    {
+      "id": "server/TestRememberPredicateRegistrationCatalogDriftThroughPostgres",
+      "run": "^TestRememberPredicateRegistrationCatalogDriftThroughPostgres$",
+      "phase": "scenario",
+      "scenario": "synchronous_write_primitives"
+    },
+    {
+      "id": "server/TestRunActiveServerCanceledBeforeWorkersDoesNotBuildRuntimeWorker",
+      "run": "^TestRunActiveServerCanceledBeforeWorkersDoesNotBuildRuntimeWorker$",
+      "phase": "precheck"
+    },
+    {
+      "id": "server/TestServerLifecycleBuildWorkerFailureUsesStartupAbort",
+      "run": "^TestServerLifecycleBuildWorkerFailureUsesStartupAbort$",
+      "phase": "precheck"
+    },
+    {
+      "id": "server/TestServerLifecycleCancelsPreHandoffRuntimeWorkerBeforeRun",
+      "run": "^TestServerLifecycleCancelsPreHandoffRuntimeWorkerBeforeRun$",
+      "phase": "precheck"
+    },
+    {
+      "id": "server/TestServerLifecycleDrainsRequestsBeforeAdapters",
+      "run": "^TestServerLifecycleDrainsRequestsBeforeAdapters$",
+      "phase": "precheck"
+    },
+    {
+      "id": "server/TestServerLifecycleForcesListenerCloseAfterCancellation",
+      "run": "^TestServerLifecycleForcesListenerCloseAfterCancellation$",
+      "phase": "precheck"
+    },
+    {
+      "id": "server/TestServerLifecycleRejectsOccupiedListenerBeforeWorkers",
+      "run": "^TestServerLifecycleRejectsOccupiedListenerBeforeWorkers$",
+      "phase": "precheck"
+    },
+    {
+      "id": "service/TestAuditExportTransactionFrontierPaginationAndScope",
+      "run": "^TestAuditExportTransactionFrontierPaginationAndScope$",
       "phase": "precheck"
     }
   ]

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/observability"
+
 	recallapp "github.com/markhuangai/dense-mem/internal/recall"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
@@ -205,8 +205,8 @@ func TestBuildActiveWiresExecutableRecallMemory(t *testing.T) {
 	if result["evidence_id"] != "evidence-canonical" || result["context"] != "Dense-Mem uses PostgreSQL." || result["space_kind"] != string(domain.MemorySpaceTeamShared) {
 		t.Fatalf("result = %#v, want public evidence context", result)
 	}
-	if _, ok := out["related_hypotheses"].([]recallapp.RelatedHypothesisSummary); !ok {
-		t.Fatalf("related_hypotheses = %#v, want typed empty array", out["related_hypotheses"])
+	if _, ok := out["related_hypotheses"]; ok {
+		t.Fatal("recall exposed retired hypotheses")
 	}
 	if _, ok := out["related_relationships"].([]recallapp.RelatedRelationshipSummary); !ok {
 		t.Fatalf("related_relationships = %#v, want typed empty array", out["related_relationships"])
@@ -219,81 +219,6 @@ func TestBuildActiveWiresExecutableRecallMemory(t *testing.T) {
 	}
 	if stub.req.Query != "PostgreSQL memory" {
 		t.Fatalf("stub request not populated: %#v", stub.req)
-	}
-	if stub.req.IncludeHypotheses {
-		t.Fatal("recall enabled hypotheses without effective team Dreaming")
-	}
-}
-
-func TestRecallSuggestedActionsMatchEnabledFeatures(t *testing.T) {
-	recall := &stubRecallService{result: &recallapp.RecallResult{
-		RecallID: "rec-canonical",
-		RelatedHypotheses: []recallapp.RelatedHypothesisSummary{{
-			HypothesisID: "hypothesis-canonical",
-		}},
-	}}
-	recorder := &stubRecallFeedbackRecorder{}
-	reg, err := BuildActive(Dependencies{
-		Core: CoreDependencies{
-			RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
-			RecallFeedbackEvents: recorder,
-			Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
-		},
-		RecallBindings: RecallBindings{Service: recall, Dreams: &stubDreamService{}},
-	})
-	if err != nil {
-		t.Fatalf("BuildActive: %v", err)
-	}
-	tool, _ := reg.Get(ToolRecallMemory)
-	out, err := tool.Invoke(contractInvokeContext("read"), "profile-canonical", map[string]any{"query": "PostgreSQL"})
-	if err != nil {
-		t.Fatalf("recall_memory.Invoke: %v", err)
-	}
-	if !recall.req.IncludeHypotheses {
-		t.Fatal("enabled Dreaming did not authorize hypothesis recall")
-	}
-	actions, ok := out["suggested_actions"].([]recallapp.RecallSuggestedAction)
-	if !ok || len(actions) != 1 {
-		t.Fatalf("suggested_actions = %#v; want only the Dream action", out["suggested_actions"])
-	}
-	for _, action := range actions {
-		if action.Tool == ToolSubmitRecallSessionFeedback {
-			t.Fatalf("unexpected session-feedback prompt: %#v", action)
-		}
-	}
-	if actions[0].Tool != ToolResolveDreamFeedback || len(actions[0].HypothesisIDs) != 1 || actions[0].HypothesisIDs[0] != "hypothesis-canonical" {
-		t.Fatalf("Dream action = %#v", actions[0])
-	}
-	if !strings.Contains(actions[0].Guidance, "leave uncertain hypotheses unresolved") {
-		t.Fatalf("Dream guidance = %q", actions[0].Guidance)
-	}
-	if len(recorder.snapshots) != 1 {
-		t.Fatalf("snapshots = %d; want 1", len(recorder.snapshots))
-	}
-
-	disabledRecall := &stubRecallService{result: &recallapp.RecallResult{
-		RecallID: "rec-disabled",
-		RelatedHypotheses: []recallapp.RelatedHypothesisSummary{{
-			HypothesisID: "must-not-leak",
-		}},
-	}}
-	disabledReg, err := BuildActive(Dependencies{RecallBindings: RecallBindings{Service: disabledRecall}})
-	if err != nil {
-		t.Fatalf("BuildActive disabled: %v", err)
-	}
-	disabledTool, _ := disabledReg.Get(ToolRecallMemory)
-	disabledOut, err := disabledTool.Invoke(contractInvokeContext("read"), "profile-canonical", map[string]any{"query": "PostgreSQL"})
-	if err != nil {
-		t.Fatalf("disabled recall_memory.Invoke: %v", err)
-	}
-	if disabledRecall.req.IncludeHypotheses {
-		t.Fatal("disabled Dreaming authorized hypothesis recall")
-	}
-	if hypotheses := disabledOut["related_hypotheses"].([]recallapp.RelatedHypothesisSummary); len(hypotheses) != 0 {
-		t.Fatalf("disabled recall leaked hypotheses: %#v", hypotheses)
-	}
-	if actions := disabledOut["suggested_actions"].([]recallapp.RecallSuggestedAction); len(actions) != 0 {
-		t.Fatalf("disabled recall suggested unavailable tools: %#v", actions)
 	}
 }
 

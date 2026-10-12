@@ -23,7 +23,6 @@ func evalRunRecallCaseTool(deps Dependencies) Tool {
 				"known_at":          map[string]any{"type": "string", "format": "date-time"},
 				"include_evidence":  map[string]any{"type": "boolean"},
 				"use_communities":   map[string]any{"type": "boolean"},
-				"include_dreams":    map[string]any{"type": "boolean"},
 				"max_context_chars": map[string]any{"type": "integer", "minimum": 1, "maximum": 20000},
 			},
 			"additionalProperties": false,
@@ -40,7 +39,7 @@ func evalRunRecallCaseTool(deps Dependencies) Tool {
 			}
 			out, err := deps.EvaluationBindings.Application.RunRecallCase(ctx, rawStringInput(input["case_id"]), req,
 				rawStringInput(input["valid_at"]), rawStringInput(input["known_at"]),
-				boolInputOrDefault(input["include_evidence"], true), boolInput(input["include_dreams"]))
+				boolInputOrDefault(input["include_evidence"], true))
 			return out, translateEvaluationError(err)
 		},
 	}

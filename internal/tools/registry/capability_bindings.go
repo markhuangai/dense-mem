@@ -1,7 +1,6 @@
 package registry
 
 import (
-	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/lifecycle"
 	"github.com/markhuangai/dense-mem/internal/memorypack"
 	"github.com/markhuangai/dense-mem/internal/recall"
@@ -30,15 +29,10 @@ type LifecycleBindings struct {
 
 type RecallBindings struct {
 	Service recall.RecallService
-	Dreams  DreamingConfigProvider
 }
 
 type TraceBindings struct {
 	Service traceapp.Service
-}
-
-type DreamBindings struct {
-	Service dream.Service
 }
 
 type MemoryPackBindings struct {

@@ -148,7 +148,7 @@ func recallFeedbackFailureGuidance(err error) recallFeedbackFailureGuidanceResul
 		guidance.errorCode = "invalid_input"
 		guidance.reasonCode = "result_reference_invalid"
 		guidance.nextAction = "correct_and_resubmit"
-		guidance.remediation = "Correct or remove the invalid irrelevant_result_refs or hypothesis_feedback references and resubmit with the current recall_event_id."
+		guidance.remediation = "Correct or remove the invalid irrelevant_result_refs references and resubmit with the current recall_event_id."
 	case errors.Is(err, ErrRecallFeedbackEventNotFound):
 		guidance.errorCode = "invalid_input"
 		guidance.reasonCode = "reference_not_found"
@@ -247,14 +247,6 @@ func FeedbackResultRefs(res *RecallResult) []domain.RecallFeedbackResultRef {
 			StatusAtRecall: relationship.SearchState,
 		})
 	}
-	for rank, hypothesis := range res.RelatedHypotheses {
-		appendRef(domain.RecallFeedbackResultRef{
-			Type:           domain.RecallFeedbackResultTypeHypothesis,
-			ID:             hypothesis.HypothesisID,
-			Rank:           rank + 1,
-			StatusAtRecall: hypothesis.Status,
-		})
-	}
 	return refs
 }
 
@@ -348,7 +340,6 @@ func (s *RecallFeedbackEventServiceImpl) RecordRecallFeedback(ctx context.Contex
 	event.Irrelevant = &irrelevant
 	event.FeedbackComment = strings.TrimSpace(feedback.FeedbackComment)
 	event.IrrelevantRefs = feedback.IrrelevantRefs
-	event.DreamFeedback = feedback.DreamFeedback
 	if event.CreatedAt.IsZero() {
 		event.CreatedAt = now
 	}
@@ -583,20 +574,6 @@ func validateRecallFeedbackSubmissionRefs(feedback domain.RecallFeedbackSubmissi
 		seen[key] = struct{}{}
 		if !lookup.contains(ref.Type, ref.ID, ref.Rank) {
 			return fmt.Errorf("recall feedback result ref was not returned by recall event")
-		}
-	}
-	seenHypotheses := map[string]struct{}{}
-	for _, item := range feedback.DreamFeedback {
-		key := recallFeedbackRefKey(domain.RecallFeedbackResultTypeHypothesis, item.DreamID)
-		if key == "" {
-			return fmt.Errorf("recall feedback hypothesis ref was not returned by recall event")
-		}
-		if _, ok := seenHypotheses[key]; ok {
-			return fmt.Errorf("recall feedback hypothesis refs must not contain duplicates")
-		}
-		seenHypotheses[key] = struct{}{}
-		if !lookup.contains(domain.RecallFeedbackResultTypeHypothesis, item.DreamID, 0) {
-			return fmt.Errorf("recall feedback hypothesis ref was not returned by recall event")
 		}
 	}
 	return nil

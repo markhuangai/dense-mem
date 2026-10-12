@@ -7,6 +7,5 @@ func bindContractTool(tool Tool, deps Dependencies) Tool {
 	tool = bindRecallTool(tool, deps)
 	tool = bindRecallFeedbackTool(tool, deps)
 	tool = bindTraceTool(tool, deps)
-	tool = bindDreamTool(tool, deps)
 	return bindMemoryPackTool(tool, deps)
 }

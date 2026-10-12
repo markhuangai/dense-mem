@@ -9,8 +9,8 @@ import {
 
 export const name = "contract";
 
-const CURRENT_CONTRACT_VERSION = "dense-mem.v2.6.8";
-const ACCEPTED_CONTRACT_VERSIONS = [CURRENT_CONTRACT_VERSION, "dense-mem.v2.6.7", "dense-mem.v2.6.6", "dense-mem.v2.6.3", "dense-mem.v2.6.2"];
+const CURRENT_CONTRACT_VERSION = "dense-mem.v2.7.0";
+const ACCEPTED_CONTRACT_VERSIONS = [CURRENT_CONTRACT_VERSION, "dense-mem.v2.6.8", "dense-mem.v2.6.7", "dense-mem.v2.6.6", "dense-mem.v2.6.3", "dense-mem.v2.6.2"];
 
 export async function run({ rpc, expect }) {
   await enableTargetFeatureGates();
@@ -18,7 +18,7 @@ export async function run({ rpc, expect }) {
   const listed = await rpc("tools/list", {});
   const tools = listed.tools || [];
   const names = tools.map((tool) => tool.name);
-  expect(names.length === TERMINAL_TOOLS.length && TERMINAL_TOOLS.every((tool) => names.includes(tool)), "current catalog must expose exactly ten tools");
+  expect(names.length === TERMINAL_TOOLS.length && TERMINAL_TOOLS.every((tool) => names.includes(tool)), "current catalog must expose exactly seven tools");
   expect(!names.includes("get_submission_status"), "current catalog must remove get_submission_status");
 
   const rememberTool = tools.find((tool) => tool.name === "remember");
@@ -167,24 +167,12 @@ export async function run({ rpc, expect }) {
 async function enableTargetFeatureGates() {
   const controlURL = validatedControlURL();
   const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
-  const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
   await controlJSON(controlURL, controlToken, "/config/recall-feedback", {
     items: [
       { key: "RECALL_FEEDBACK_ENABLED", value: "true" },
       { key: "RECALL_FEEDBACK_RETENTION_DAYS", value: "30" },
     ],
   });
-  await controlJSON(controlURL, controlToken, "/config/dreaming", {
-    items: [
-      { key: "DREAMING_ENABLED", value: "true" },
-      { key: "DREAMING_FORCE_ENABLED", value: "true" },
-      { key: "DREAMING_START_TIME_LOCAL", value: "03:00" },
-      { key: "DREAMING_MAX_OUTPUTS", value: "5" },
-    ],
-  });
-  await controlJSON(controlURL, controlToken, `/teams/${teamID}`, {
-    config: { dreaming: { enabled: true } },
-  }, "PATCH");
 }
 
 function validatedControlURL() {

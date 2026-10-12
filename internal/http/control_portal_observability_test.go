@@ -68,18 +68,6 @@ type controlDreamServiceStub struct {
 	listErr    error
 }
 
-func (s *controlDreamServiceStub) RunCycle(context.Context, string, dream.RunCycleRequest) (*dream.RunCycleResult, error) {
-	return nil, nil
-}
-
-func (s *controlDreamServiceStub) RunScheduledCycle(context.Context, string, time.Time) (*dream.RunCycleResult, error) {
-	return nil, nil
-}
-
-func (s *controlDreamServiceStub) RecordMissedScheduledCycle(context.Context, string, string) (*dream.RunCycleResult, error) {
-	return nil, nil
-}
-
 func (s *controlDreamServiceStub) List(_ context.Context, profileID string, opts dream.ListOptions) ([]*domain.Dream, string, error) {
 	s.profileID = profileID
 	s.listOpts = opts
@@ -107,21 +95,9 @@ func (s *controlDreamServiceStub) ListRuns(_ context.Context, profileID string, 
 	return s.runs, nil
 }
 
-func (s *controlDreamServiceStub) Recall(context.Context, string, string, int) ([]*domain.Dream, error) {
-	return nil, nil
-}
-
-func (s *controlDreamServiceStub) ResolveFeedback(context.Context, string, dream.ResolveFeedbackRequest) (*dream.ResolveFeedbackResult, error) {
-	return &dream.ResolveFeedbackResult{}, nil
-}
-
 func (s *controlDreamServiceStub) Status(_ context.Context, profileID string) (*dream.StatusResult, error) {
 	s.profileID = profileID
 	return s.status, nil
-}
-
-func (s *controlDreamServiceStub) EffectiveConfig(context.Context, string) (dream.EffectiveConfig, error) {
-	return dream.EffectiveConfig{}, nil
 }
 
 func TestControlPortalObservabilityRoutes(t *testing.T) {
@@ -154,7 +130,7 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 		SnapshotState: domain.RecallFeedbackSnapshotCaptured,
 	}}
 	dreams := &controlDreamServiceStub{
-		status: &dream.StatusResult{PendingCount: 1},
+		status: &dream.StatusResult{Retired: true, HistoricalProposedCount: 1},
 		runs: []*dream.RunCycleResult{{
 			RunID:   "run-1",
 			TeamID:  teamID.String(),
@@ -244,7 +220,9 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 
 	rec = do("/control/api/teams/" + teamID.String() + "/dreaming/status")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), `"pending_count":1`)
+	assert.Contains(t, rec.Body.String(), `"retired":true`)
+	assert.Contains(t, rec.Body.String(), `"historical_proposed_count":1`)
+	assert.NotContains(t, rec.Body.String(), `"pending_count"`)
 
 	rec = do("/control/api/teams/" + teamID.String() + "/dreaming/runs?limit=3")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -459,4 +437,4 @@ func TestControlDependencySnapshotErrorAndDegraded(t *testing.T) {
 }
 
 var _ operations.OperationLogReader = (*controlOperationLogReaderStub)(nil)
-var _ dream.Service = (*controlDreamServiceStub)(nil)
+var _ dream.ControlService = (*controlDreamServiceStub)(nil)

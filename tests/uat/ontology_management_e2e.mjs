@@ -11,12 +11,10 @@ const teamID = required("DENSE_MEM_E2E_TEAM_ID");
 let manager = required("DENSE_MEM_E2E_API_KEY");
 const original = await control("/config/ontology-maintenance");
 const initial = await control("/ontology/status");
-const originalCommunity = await control("/config/community-detection");
 
 try {
   await control("/ontology/pause", { operation_key: randomUUID() });
   await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
-  await control("/config/community-detection", { items: [{ key: "COMMUNITY_DETECTION_ENABLED", value: "false" }] }, "PATCH");
   const shared = await credential(teamID, "manager", ["read", "write"]);
   assert.equal(shared.credential.memory_binding, "shared_only");
   manager = shared.api_key;
@@ -89,7 +87,6 @@ try {
 } finally {
   await control(initial.paused ? "/ontology/pause" : "/ontology/resume", { operation_key: randomUUID() });
   await control("/config/ontology-maintenance", { items: original.items.map(({ key, value }) => ({ key, value })) }, "PATCH");
-  await control("/config/community-detection", { items: originalCommunity.items.map(({ key, value }) => ({ key, value })) }, "PATCH");
 }
 
 async function request(base, path, key, body, method = body ? "POST" : "GET") {

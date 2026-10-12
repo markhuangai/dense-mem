@@ -17,7 +17,7 @@ import (
 	echomw "github.com/labstack/echo/v4/middleware"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/dream"
+
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	dto "github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
@@ -198,10 +198,6 @@ func newControlPortalServerWithMetricsAndTelemetry(
 		api.PATCH("/config/general", control.updateGeneralConfig)
 		api.GET("/config/sso", control.getSSOConfig)
 		api.PATCH("/config/sso", control.updateSSOConfig)
-		api.GET("/config/dreaming", control.getDreamingConfig)
-		api.PATCH("/config/dreaming", control.updateDreamingConfig)
-		api.GET("/config/community-detection", control.getCommunityDetectionConfig)
-		api.PATCH("/config/community-detection", control.updateCommunityDetectionConfig)
 		api.GET("/config/operation-logs", control.getOperationLogConfig)
 		api.PATCH("/config/operation-logs", control.updateOperationLogConfig)
 		api.GET("/config/recall-feedback", control.getRecallFeedbackConfig)
@@ -896,30 +892,25 @@ func toControlSecurityBan(ban domain.SecurityIPBan) controlSecurityBanResponse {
 }
 
 type controlTeamResponse struct {
-	ID                uuid.UUID              `json:"id"`
-	Name              string                 `json:"name"`
-	Description       string                 `json:"description"`
-	Metadata          map[string]any         `json:"metadata"`
-	Config            map[string]any         `json:"config"`
-	DreamingEffective *dream.EffectiveConfig `json:"dreaming_effective,omitempty"`
-	CreatedAt         string                 `json:"created_at"`
-	UpdatedAt         string                 `json:"updated_at"`
+	ID          uuid.UUID      `json:"id"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Metadata    map[string]any `json:"metadata"`
+	Config      map[string]any `json:"config"`
+
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 func (h *controlPortalHandler) toControlTeam(ctx context.Context, team *domain.Team) (controlTeamResponse, error) {
-	effective, err := effectiveDreamingConfig(ctx, h.appConfig, team.Config)
-	if err != nil {
-		return controlTeamResponse{}, err
-	}
 	return controlTeamResponse{
-		ID:                team.ID,
-		Name:              team.Name,
-		Description:       team.Description,
-		Metadata:          team.Metadata,
-		Config:            team.Config,
-		DreamingEffective: effective,
-		CreatedAt:         team.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:         team.UpdatedAt.Format(time.RFC3339),
+		ID:          team.ID,
+		Name:        team.Name,
+		Description: team.Description,
+		Metadata:    team.Metadata,
+		Config:      team.Config,
+		CreatedAt:   team.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:   team.UpdatedAt.Format(time.RFC3339),
 	}, nil
 }
 

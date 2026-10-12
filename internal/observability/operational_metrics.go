@@ -510,40 +510,7 @@ func (c *OperationalTelemetryCollector) collectSnapshot(ch chan<- prometheus.Met
 			}
 		}
 	}
-	lanes := []string{"graph", "evidence_discovery"}
-	hypothesisStatuses := []string{"proposed", "reinforced", "stale", "rejected", "submitted"}
-	hypotheses := make(map[string]operationscontract.HypothesisTelemetry, len(snapshot.Hypotheses))
-	for _, hypothesis := range snapshot.Hypotheses {
-		lane := boundedMetricLabel(hypothesis.Lane, lanes)
-		status := boundedMetricLabel(hypothesis.Status, hypothesisStatuses)
-		key := lane + "/" + status
-		value := hypotheses[key]
-		value.Lane = lane
-		value.Status = status
-		value.Count += hypothesis.Count
-		value.BacklogCount += hypothesis.BacklogCount
-		if hypothesis.OldestBacklogAge > value.OldestBacklogAge {
-			value.OldestBacklogAge = hypothesis.OldestBacklogAge
-		}
-		hypotheses[key] = value
-	}
-	for _, lane := range lanes {
-		var backlog float64
-		var oldest float64
-		for _, status := range hypothesisStatuses {
-			hypothesis := hypotheses[lane+"/"+status]
-			ch <- prometheus.MustNewConstMetric(c.hypotheses, prometheus.GaugeValue, hypothesis.Count, lane, status)
-			backlog += hypothesis.BacklogCount
-			if hypothesis.OldestBacklogAge > oldest {
-				oldest = hypothesis.OldestBacklogAge
-			}
-		}
-		ch <- prometheus.MustNewConstMetric(c.backlog, prometheus.GaugeValue, backlog, lane)
-		ch <- prometheus.MustNewConstMetric(c.oldestBacklogAge, prometheus.GaugeValue, oldest, lane)
-	}
-	c.collectWindowed(ch, snapshot.Feedback, c.feedback, []string{"ignore", "reject", "stale", "reinforce", "confirm_true", "confirm_false", "promote_candidate"})
 	c.collectWindowed(ch, snapshot.RememberAttempts, c.rememberAttempts, []string{"completed", "rejected", "quarantined", "failed", "replayed"})
-	c.collectWindowed(ch, snapshot.ConfirmedRelationships, c.confirmedRelationships, domain.RelationshipStatuses())
 	c.collectWindowed(ch, snapshot.RelationshipTransitions, c.transitions, domain.RelationshipStatuses())
 	c.collectWindowed(ch, snapshot.RelationshipCorrections, c.corrections, []string{"corrections"})
 	current := make(map[string]float64, len(snapshot.RelationshipsCurrent))

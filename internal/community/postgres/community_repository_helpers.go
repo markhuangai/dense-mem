@@ -2,8 +2,6 @@ package postgres
 
 import (
 	"database/sql"
-	"encoding/json"
-	"fmt"
 
 	"github.com/lib/pq"
 )
@@ -47,15 +45,4 @@ func scanCommunityRecords(rows *sql.Rows) ([]CommunityRecord, error) {
 		out = append(out, record)
 	}
 	return out, rows.Err()
-}
-
-func marshalCommunitySnapshot(value []map[string]any) ([]byte, error) {
-	if value == nil {
-		value = []map[string]any{}
-	}
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return nil, fmt.Errorf("marshal community source snapshot: %w", err)
-	}
-	return encoded, nil
 }

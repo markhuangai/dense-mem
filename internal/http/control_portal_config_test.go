@@ -380,121 +380,6 @@ func TestControlPortalSSOConfigFlows(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
-func TestControlPortalDreamingConfigFlows(t *testing.T) {
-	now := time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC)
-	appConfig := &controlAppConfigSvc{
-		dreamingSettings: &domain.DreamingConfigSettings{
-			UpdateTime: now.Format(time.RFC3339Nano),
-			Items: []domain.DreamingConfigItem{{
-				Key:            domain.AppConfigDreamingEnabled,
-				Value:          "false",
-				EffectiveValue: "false",
-				UpdatedAt:      now,
-			}, {
-				Key:            domain.AppConfigDreamingStartTimeLocal,
-				Value:          "03:00",
-				EffectiveValue: "03:00",
-				UpdatedAt:      now,
-			}},
-			Effective: domain.DreamingRuntimeConfig{
-				StartTimeLocal: "03:00",
-				Timezone:       "UTC",
-				MaxOutputs:     5,
-			},
-		},
-	}
-	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
-		ControlHTTPAddr:    "127.0.0.1:8090",
-		ControlPortalToken: "secret",
-	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
-		Config: appConfig,
-	}, HealthConfig{}, nil)
-	require.NoError(t, err)
-
-	do := func(method, path, body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, path, strings.NewReader(body))
-		req.Header.Set("Authorization", "Bearer secret")
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		e.ServeHTTP(rec, req)
-		return rec
-	}
-
-	rec := do(http.MethodGet, "/control/api/config/dreaming", "")
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), `"update_time":"2026-06-11T03:00:00Z"`)
-	require.Contains(t, rec.Body.String(), `"start_time_local":"03:00"`)
-
-	rec = do(http.MethodPatch, "/control/api/config/dreaming", `{"items":[{"key":"DREAMING_START_TIME_LOCAL","value":"02:30"}]}`)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "02:30", appConfig.dreamingValues[domain.AppConfigDreamingStartTimeLocal])
-
-	rec = do(http.MethodPatch, "/control/api/config/dreaming", "{")
-	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-
-	appConfig.updateErr = settings.ErrInvalidAppConfig
-	rec = do(http.MethodPatch, "/control/api/config/dreaming", `{"items":[{"key":"DREAMING_MAX_OUTPUTS","value":"0"}]}`)
-	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-}
-
-func TestControlPortalCommunityDetectionConfigFlows(t *testing.T) {
-	now := time.Date(2026, 6, 15, 3, 30, 0, 0, time.UTC)
-	appConfig := &controlAppConfigSvc{
-		communitySettings: &domain.CommunityDetectionConfigSettings{
-			UpdateTime: now.Format(time.RFC3339Nano),
-			Items: []domain.CommunityDetectionConfigItem{{
-				Key:            domain.AppConfigCommunityDetectionEnabled,
-				Value:          "false",
-				EffectiveValue: "false",
-				UpdatedAt:      now,
-			}, {
-				Key:            domain.AppConfigCommunityDetectionStartTimeLocal,
-				Value:          "03:30",
-				EffectiveValue: "03:30",
-				UpdatedAt:      now,
-			}},
-			Effective: domain.CommunityDetectionRuntimeConfig{
-				StartTimeLocal: "03:30",
-				Timezone:       "Local",
-				MaxConcurrency: 1,
-				JitterSeconds:  600,
-			},
-		},
-	}
-	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
-		ControlHTTPAddr:    "127.0.0.1:8090",
-		ControlPortalToken: "secret",
-	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
-		Config: appConfig,
-	}, HealthConfig{}, nil)
-	require.NoError(t, err)
-
-	do := func(method, path, body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, path, strings.NewReader(body))
-		req.Header.Set("Authorization", "Bearer secret")
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		e.ServeHTTP(rec, req)
-		return rec
-	}
-
-	rec := do(http.MethodGet, "/control/api/config/community-detection", "")
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), `"update_time":"2026-06-15T03:30:00Z"`)
-	require.Contains(t, rec.Body.String(), `"start_time_local":"03:30"`)
-
-	rec = do(http.MethodPatch, "/control/api/config/community-detection", `{"items":[{"key":"COMMUNITY_DETECTION_ENABLED","value":"true"}]}`)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "true", appConfig.communityValues[domain.AppConfigCommunityDetectionEnabled])
-
-	rec = do(http.MethodPatch, "/control/api/config/community-detection", "{")
-	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-
-	appConfig.updateErr = settings.ErrInvalidAppConfig
-	rec = do(http.MethodPatch, "/control/api/config/community-detection", `{"items":[{"key":"COMMUNITY_DETECTION_MAX_CONCURRENCY","value":"0"}]}`)
-	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-}
-
 func TestControlPortalOperationLogConfigFlows(t *testing.T) {
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	appConfig := &controlAppConfigSvc{
@@ -732,8 +617,6 @@ func TestControlPortalTelemetryPricingConfigFlows(t *testing.T) {
 func TestControlConfigNilResponses(t *testing.T) {
 	require.Empty(t, toControlGeneralConfig(nil).Items)
 	require.Empty(t, toControlSSOConfig(nil).Items)
-	require.Empty(t, toControlDreamingConfig(nil).Items)
-	require.Empty(t, toControlCommunityDetectionConfig(nil).Items)
 	require.Empty(t, toControlOperationLogConfig(nil).Items)
 	require.Empty(t, toControlRecallFeedbackConfig(nil).Items)
 	require.Empty(t, toControlTelemetryPricingConfig(nil, "", "").Items)
@@ -748,10 +631,6 @@ func TestControlPortalConfigUnavailableHandlers(t *testing.T) {
 		{name: "update general", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateGeneralConfig(c) }},
 		{name: "get sso", call: func(h *controlPortalHandler, c echo.Context) error { return h.getSSOConfig(c) }},
 		{name: "update sso", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateSSOConfig(c) }},
-		{name: "get dreaming", call: func(h *controlPortalHandler, c echo.Context) error { return h.getDreamingConfig(c) }},
-		{name: "update dreaming", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateDreamingConfig(c) }},
-		{name: "get community", call: func(h *controlPortalHandler, c echo.Context) error { return h.getCommunityDetectionConfig(c) }},
-		{name: "update community", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateCommunityDetectionConfig(c) }},
 		{name: "get operation logs", call: func(h *controlPortalHandler, c echo.Context) error { return h.getOperationLogConfig(c) }},
 		{name: "update operation logs", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateOperationLogConfig(c) }},
 		{name: "get recall feedback", call: func(h *controlPortalHandler, c echo.Context) error { return h.getRecallFeedbackConfig(c) }},
@@ -775,8 +654,6 @@ func TestControlPortalConfigGetErrors(t *testing.T) {
 	}{
 		{name: "general", call: h.getGeneralConfig},
 		{name: "sso", call: h.getSSOConfig},
-		{name: "dreaming", call: h.getDreamingConfig},
-		{name: "community detection", call: h.getCommunityDetectionConfig},
 		{name: "operation logs", call: h.getOperationLogConfig},
 		{name: "recall feedback", call: h.getRecallFeedbackConfig},
 		{name: "telemetry pricing", call: h.getTelemetryPricingConfig},
@@ -800,16 +677,6 @@ func TestControlPortalConfigUpdateBackendErrors(t *testing.T) {
 			name: "general",
 			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateGeneralConfig(c) },
 			body: `{"items":[{"key":"APP_TIMEZONE","value":"UTC"}]}`,
-		},
-		{
-			name: "dreaming",
-			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateDreamingConfig(c) },
-			body: `{"items":[{"key":"DREAMING_ENABLED","value":"true"}]}`,
-		},
-		{
-			name: "community detection",
-			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateCommunityDetectionConfig(c) },
-			body: `{"items":[{"key":"COMMUNITY_DETECTION_ENABLED","value":"true"}]}`,
 		},
 		{
 			name: "operation logs",

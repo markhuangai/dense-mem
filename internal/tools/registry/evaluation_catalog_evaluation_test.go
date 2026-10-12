@@ -18,7 +18,7 @@ func TestEvaluationCatalogAddsOnlyHarnessTools(t *testing.T) {
 			got = append(got, tool.Name)
 		}
 	}
-	want := []string{"eval_list_knowledge_refs", "eval_run_dream_cycle", "eval_run_recall_case"}
+	want := []string{"eval_list_knowledge_refs", "eval_run_recall_case"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("evaluation tools = %v; want %v", got, want)
 	}

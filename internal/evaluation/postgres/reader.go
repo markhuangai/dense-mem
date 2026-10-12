@@ -12,28 +12,22 @@ import (
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-// EvaluationHypothesisQuery is the Dream-owned SQL seam used by the
-// evaluation reader. Evaluation can move without copying Dream's query or
-// making the registry depend on a concrete adapter.
-type EvaluationHypothesisQuery func(EvaluationListInput, int, int, ...string) (string, []any, error)
-
 // EvaluationReader exposes the team-scoped evaluation read model.
 type EvaluationReader struct {
-	db              *gorm.DB
-	rls             storagepostgres.RLSHelper
-	hypothesisQuery EvaluationHypothesisQuery
+	db  *gorm.DB
+	rls storagepostgres.RLSHelper
 }
 
 var _ EvaluationRepository = (*EvaluationReader)(nil)
 
-func NewReader(db *gorm.DB, rls storagepostgres.RLSHelper, hypothesisQuery EvaluationHypothesisQuery) *EvaluationReader {
-	return &EvaluationReader{db: db, rls: rls, hypothesisQuery: hypothesisQuery}
+func NewReader(db *gorm.DB, rls storagepostgres.RLSHelper) *EvaluationReader {
+	return &EvaluationReader{db: db, rls: rls}
 }
 
 // NewEvaluationReader preserves the adapter constructor name for compatibility
 // callers while new composition uses NewReader.
-func NewEvaluationReader(db *gorm.DB, rls storagepostgres.RLSHelper, hypothesisQuery EvaluationHypothesisQuery) *EvaluationReader {
-	return NewReader(db, rls, hypothesisQuery)
+func NewEvaluationReader(db *gorm.DB, rls storagepostgres.RLSHelper) *EvaluationReader {
+	return NewReader(db, rls)
 }
 
 func (r *EvaluationReader) ListEvaluationRefs(ctx context.Context, input EvaluationListInput) (*EvaluationPage, error) {
@@ -46,7 +40,7 @@ func (r *EvaluationReader) ListEvaluationRefs(ctx context.Context, input Evaluat
 	var items []map[string]any
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
-		items, err = queryEvaluationItemsWithHypothesis(ctx, tx, input, limit, offset, r.hypothesisQuery)
+		items, err = queryEvaluationItems(ctx, tx, input, limit, offset)
 		return err
 	})
 	if err != nil {
@@ -70,12 +64,12 @@ func (r *EvaluationReader) GetEvaluationItem(ctx context.Context, input Evaluati
 	}
 	var item map[string]any
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		items, err := queryEvaluationItemsWithHypothesis(ctx, tx, EvaluationListInput{
+		items, err := queryEvaluationItems(ctx, tx, EvaluationListInput{
 			TeamID: input.TeamID,
 			Type:   input.Type,
 			Limit:  1,
 			Status: "",
-		}, 1, 0, r.hypothesisQuery, input.ID)
+		}, 1, 0, input.ID)
 		if err != nil {
 			return err
 		}
@@ -104,9 +98,6 @@ func (r *EvaluationReader) validateDependencies() error {
 	}
 	if r.rls == nil {
 		return errors.New("semantic: rls helper is required")
-	}
-	if r.hypothesisQuery == nil {
-		return errors.New("evaluation: hypothesis query is required")
 	}
 	return nil
 }

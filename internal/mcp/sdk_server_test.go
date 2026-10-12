@@ -578,57 +578,6 @@ func TestSDKHTTPHandlerValidatesBeforeToolLookup(t *testing.T) {
 	require.NotContains(t, response.Body.String(), "tool not found")
 }
 
-func TestSDKHTTPHandlerResolvesRuntimeToolPolicyOncePerRequest(t *testing.T) {
-	logger, _ := testLogger(t)
-	reg := registry.New()
-	for _, name := range []string{
-		registry.ToolSubmitRecallSessionFeedback,
-		registry.ToolRecallMemory,
-		registry.ToolListDreams,
-	} {
-		require.NoError(t, reg.Register(registry.Tool{Name: name, InputSchema: map[string]any{"type": "object"}}))
-	}
-	var recallCalls, dreamCalls int
-	feedback := recallFeedbackConfigStub{calls: &recallCalls}
-	dreams := dreamingConfigStub{calls: &dreamCalls}
-	server := NewServerWithScopesTeamContextAndRuntimeConfig(
-		reg,
-		"profile-a",
-		[]string{"read"},
-		TeamContext{},
-		logger,
-		&feedback,
-		&dreams,
-	)
-	handler := server.NewSDKHTTPHandler(true)
-
-	for _, enabled := range []bool{true, false, true} {
-		feedback.enabled, dreams.enabled = enabled, enabled
-		recallCalls, dreamCalls = 0, 0
-		request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`))
-		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("Accept", "application/json, text/event-stream")
-		request.Header.Set("MCP-Protocol-Version", ProtocolVersion)
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, request)
-
-		require.Equal(t, http.StatusOK, response.Code)
-		var envelope rpcResp
-		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
-		require.Nil(t, envelope.Error)
-		var listed sdkmcp.ListToolsResult
-		require.NoError(t, json.Unmarshal(envelope.Result, &listed))
-		if enabled {
-			require.Len(t, listed.Tools, 3)
-		} else {
-			require.Len(t, listed.Tools, 1)
-			require.Equal(t, registry.ToolRecallMemory, listed.Tools[0].Name)
-		}
-		require.Equal(t, 1, recallCalls)
-		require.Equal(t, 1, dreamCalls)
-	}
-}
-
 func TestSDKHTTPHandlerDoesNotAnswerInitializedNotification(t *testing.T) {
 	logger, _ := testLogger(t)
 	reg := registry.New()

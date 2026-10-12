@@ -6,6 +6,9 @@
 - Refines: ADR 0001, ADR 0003, ADR 0004
 - Maintainer approval: issue #526 and the approved implementation plan
 
+ADR 0010 supersedes the Dream client/generation requirements and the transitional
+community master switch and legacy fallback. Other decisions remain in force.
+
 ## Decision
 
 Contract `dense-mem.v2.6.6` requires a nonempty `relationships` array for

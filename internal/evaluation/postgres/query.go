@@ -44,8 +44,6 @@ func normalizeEvaluationType(value string) string {
 	switch normalized {
 	case "fragment":
 		return "evidence"
-	case "dream":
-		return "hypothesis"
 	default:
 		return normalized
 	}
@@ -76,7 +74,7 @@ func validateEvaluationGetInput(input EvaluationGetInput) error {
 
 func evaluationTypeSupported(value string) bool {
 	switch value {
-	case "evidence", "relationship", "entity", "value", "hypothesis":
+	case "evidence", "relationship", "entity", "value":
 		return true
 	default:
 		return false
@@ -94,16 +92,15 @@ func evaluationCursorOffset(cursor string) int {
 	return offset
 }
 
-func queryEvaluationItemsWithHypothesis(
+func queryEvaluationItems(
 	ctx context.Context,
 	tx *gorm.DB,
 	input EvaluationListInput,
 	limit int,
 	offset int,
-	hypothesisQuery EvaluationHypothesisQuery,
 	ids ...string,
 ) ([]map[string]any, error) {
-	query, args, err := evaluationQueryWithHypothesis(input, limit, offset, hypothesisQuery, ids...)
+	query, args, err := evaluationQuery(input, limit, offset, ids...)
 	if err != nil {
 		return nil, err
 	}
@@ -128,10 +125,6 @@ func queryEvaluationItemsWithHypothesis(
 }
 
 func evaluationQuery(input EvaluationListInput, limit int, offset int, ids ...string) (string, []any, error) {
-	return evaluationQueryWithHypothesis(input, limit, offset, nil, ids...)
-}
-
-func evaluationQueryWithHypothesis(input EvaluationListInput, limit int, offset int, hypothesisQuery EvaluationHypothesisQuery, ids ...string) (string, []any, error) {
 	if len(ids) > 1 {
 		return "", nil, errors.New("only one id lookup is supported")
 	}
@@ -280,11 +273,6 @@ func evaluationQueryWithHypothesis(input EvaluationListInput, limit int, offset 
 			WHERE true` + idFilter + statusFilter + `
 			ORDER BY created_at DESC, id
 			LIMIT ? OFFSET ?`, args.values, nil
-	case "hypothesis":
-		if hypothesisQuery == nil {
-			return "", nil, errors.New("hypothesis evaluation query is required")
-		}
-		return hypothesisQuery(input, limit, offset, ids...)
 	default:
 		return "", nil, fmt.Errorf("unsupported type %q", input.Type)
 	}

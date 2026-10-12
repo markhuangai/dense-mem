@@ -5,10 +5,8 @@ import (
 	"errors"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"testing"
-	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/dream"
 )
 
 type evaluationAuditStub struct {
@@ -62,102 +60,4 @@ func (s *stubRecallFeedbackRecorder) RecordRecallFeedback(_ context.Context, fee
 	}
 	s.feedback = append(s.feedback, feedback)
 	return nil
-}
-
-type stubDreamService struct {
-	lastRunReq     dream.RunCycleRequest
-	lastListOpts   dream.ListOptions
-	lastResolveReq dream.ResolveFeedbackRequest
-	recallQuery    string
-	recallErr      error
-	resolveResult  *dream.ResolveFeedbackResult
-	resolveErr     error
-}
-
-func (s *stubDreamService) RunCycle(_ context.Context, profileID string, req dream.RunCycleRequest) (*dream.RunCycleResult, error) {
-	s.lastRunReq = req
-	return &dream.RunCycleResult{RunID: "run-1", TeamID: profileID, RunDate: "2026-06-11", Status: "completed"}, nil
-}
-
-func (s *stubDreamService) RunScheduledCycle(context.Context, string, time.Time) (*dream.RunCycleResult, error) {
-	return &dream.RunCycleResult{RunID: "run-1", Status: "completed"}, nil
-}
-
-func (s *stubDreamService) RecordMissedScheduledCycle(context.Context, string, string) (*dream.RunCycleResult, error) {
-	return &dream.RunCycleResult{RunID: "run-1", Status: "missed"}, nil
-}
-
-func (s *stubDreamService) List(_ context.Context, profileID string, opts dream.ListOptions) ([]*domain.Dream, string, error) {
-	s.lastListOpts = opts
-	return []*domain.Dream{stubDream(profileID)}, "next-dream", nil
-}
-
-func (s *stubDreamService) Get(_ context.Context, profileID, dreamID string) (*domain.Dream, error) {
-	dream := stubDream(profileID)
-	dream.DreamID = dreamID
-	return dream, nil
-}
-
-func (s *stubDreamService) ListRuns(context.Context, string, int) ([]*dream.RunCycleResult, error) {
-	return []*dream.RunCycleResult{{RunID: "run-1", Status: "completed"}}, nil
-}
-
-func (s *stubDreamService) Recall(_ context.Context, profileID, query string, _ int) ([]*domain.Dream, error) {
-	s.recallQuery = query
-	if s.recallErr != nil {
-		return nil, s.recallErr
-	}
-	return []*domain.Dream{stubDream(profileID)}, nil
-}
-
-func (s *stubDreamService) ResolveFeedback(_ context.Context, profileID string, req dream.ResolveFeedbackRequest) (*dream.ResolveFeedbackResult, error) {
-	s.lastResolveReq = req
-	if s.resolveErr != nil {
-		return nil, s.resolveErr
-	}
-	if s.resolveResult != nil {
-		return s.resolveResult, nil
-	}
-	return &dream.ResolveFeedbackResult{Dream: stubDream(profileID)}, nil
-}
-
-func (s *stubDreamService) Status(context.Context, string) (*dream.StatusResult, error) {
-	return &dream.StatusResult{
-		EffectiveConfig: dream.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, StartTimeLocal: "03:00", Timezone: "UTC", MaxOutputs: 5}},
-		LatestRun:       &dream.RunCycleResult{RunID: "run-1", Status: "completed"},
-		PendingCount:    1,
-	}, nil
-}
-
-func (s *stubDreamService) EffectiveConfig(context.Context, string) (dream.EffectiveConfig, error) {
-	return dream.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, StartTimeLocal: "03:00", Timezone: "UTC", MaxOutputs: 5}}, nil
-}
-
-func stubDream(profileID string) *domain.Dream {
-	return &domain.Dream{
-		DreamID:                        "dream-1",
-		TeamID:                         profileID,
-		Hypothesis:                     "A may affect B.",
-		WhatIf:                         "What if A and B interact?",
-		PossibleOutcome:                "Review before promotion.",
-		Rationale:                      "Eligible relationship context suggests review.",
-		SubjectEntityID:                "entity-a",
-		PredicateKey:                   "affects",
-		ObjectEntityID:                 "entity-b",
-		SourceRelationshipIDs:          []string{"relationship-1"},
-		SourceCandidateRelationshipIDs: []string{},
-		SourceVersions:                 map[string]int{"relationship-1": 1},
-		Derivations: []domain.DreamDerivation{{
-			PremisePosition:     1,
-			RelationshipID:      "relationship-1",
-			RelationshipVersion: 1,
-			SourceGroupKey:      "source-group-1",
-			Quote:               "A affects B.",
-			Authority:           "primary",
-		}},
-		GeneratorKind:    "deterministic",
-		GeneratorVersion: "dream-v2",
-		Status:           domain.DreamStatusProposed,
-		CreatedAt:        time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC),
-	}
 }

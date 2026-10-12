@@ -74,8 +74,8 @@ func buildTelemetryApplication(
 		exports, err := observability.NewOTLP(startupCtx, prometheusMetrics, observability.OTLPOptions{
 			TraceEndpoint: cfg.OTLPTraceEndpoint, MetricEndpoint: cfg.OTLPMetricEndpoint,
 			TraceHeaders: cfg.OTLPTraceHeaders, MetricHeaders: cfg.OTLPMetricHeaders,
-			Models:    []string{cfg.GetAIVerifierModel(), cfg.GetAIEmbeddingModel(), cfg.GetAIRememberModel(), cfg.GetAIConflictReviewModel(), cfg.GetAIDreamGraphModel(), cfg.GetAICommunitySummaryModel()},
 			Protector: protector, Logger: logger,
+			Models: []string{cfg.GetAIVerifierModel(), cfg.GetAIEmbeddingModel(), cfg.GetAIRememberModel(), cfg.GetAIConflictReviewModel()},
 		})
 		if err != nil {
 			return telemetryComposition{}, err

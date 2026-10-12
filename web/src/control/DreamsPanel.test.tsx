@@ -15,17 +15,9 @@ const team: Team = {
 };
 
 const status: DreamStatus = {
-  effective_config: {
-    enabled: true,
-    force_enabled: false,
-    start_time_local: "03:00",
-    timezone: "UTC",
-    max_outputs: 5,
-    team_enabled: true,
-    source: "team",
-  },
+  retired: true,
   latest_run: null,
-  pending_count: 1,
+  historical_proposed_count: 1,
 };
 
 const dream: Dream = {

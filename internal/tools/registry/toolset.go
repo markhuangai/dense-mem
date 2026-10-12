@@ -11,13 +11,13 @@ import (
 
 // Dependencies is the wiring bundle used to construct the active tool catalog.
 type Dependencies struct {
-	Core               CoreDependencies
-	RememberBindings   RememberBindings
-	SessionBindings    SessionBindings
-	RecallBindings     RecallBindings
-	LifecycleBindings  LifecycleBindings
-	TraceBindings      TraceBindings
-	DreamBindings      DreamBindings
+	Core              CoreDependencies
+	RememberBindings  RememberBindings
+	SessionBindings   SessionBindings
+	RecallBindings    RecallBindings
+	LifecycleBindings LifecycleBindings
+	TraceBindings     TraceBindings
+
 	MemoryPackBindings MemoryPackBindings
 	EvaluationBindings EvaluationBindings
 }
