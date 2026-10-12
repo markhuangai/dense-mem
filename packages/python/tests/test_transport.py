@@ -221,6 +221,52 @@ async def test_http_auth_errors_are_typed_and_do_not_leak(wire_server, caplog, s
     assert secret not in repr(raised.value) + caplog.text
 
 
+@pytest.mark.parametrize("status", [401, 403, 404, 429, 503])
+async def test_http_errors_after_initialization_preserve_status_and_guidance(wire_server, status):
+    endpoint, state = wire_server
+    state["status_after_initialize"] = status
+    state["http_error"] = {
+        "code": "expired_token" if status == 401 else "request_rejected",
+        "message": "Request rejected after initialization",
+        "next_action": "refresh_credentials",
+        "remediation": "Acquire a new credential.",
+        "retryable": False,
+    }
+    state["http_headers"] = {"X-Correlation-ID": "late-http-correlation"}
+    cls = DenseMemAuthenticationError if status in (401, 403) else DenseMemTransportError
+    with pytest.raises(cls) as raised:
+        await DenseMemClient(endpoint, token="token", timeout=3).remember(
+            {"idempotency_key": "retained"}
+        )
+    assert raised.value.status_code == status
+    assert raised.value.result == {**state["http_error"], "correlation_id": "late-http-correlation"}
+    assert raised.value.submission_id is None
+    assert not state["calls"]
+
+
+async def test_concurrent_http_failures_stay_with_their_operation(wire_server):
+    endpoint, state = wire_server
+    state["status_after_initialize"] = {b"Bearer token-1": 401, b"Bearer token-2": 503}
+    state["http_error"] = {"code": "request_rejected", "message": "Request rejected"}
+    count = 0
+
+    async def provider():
+        nonlocal count
+        count += 1
+        return f"token-{count}"
+
+    client = DenseMemClient(endpoint, token_provider=provider, timeout=3)
+    first, second = await asyncio.gather(
+        client.remember({"idempotency_key": "first"}),
+        client.remember({"idempotency_key": "second"}),
+        return_exceptions=True,
+    )
+    assert isinstance(first, DenseMemAuthenticationError) and first.status_code == 401
+    assert isinstance(second, DenseMemTransportError) and second.status_code == 503
+    assert first.result == second.result == state["http_error"]
+    assert count == 2 and not state["calls"]
+
+
 async def test_provider_exception_is_sanitized_and_has_no_recovery(wire_server, caplog):
     endpoint, state = wire_server
 

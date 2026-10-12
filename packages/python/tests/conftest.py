@@ -77,6 +77,14 @@ def wire_server():
             if body:
                 headers = dict(scope["headers"])
                 state["requests"].append((headers.get(b"authorization"), json.loads(body)))
+                status = state.get("status_after_initialize")
+                if isinstance(status, dict):
+                    status = status.get(headers.get(b"authorization"))
+                if status and json.loads(body).get("method") != "initialize":
+                    await JSONResponse(
+                        state["http_error"], status, headers=state.get("http_headers")
+                    )(scope, receive, send)
+                    return
             replayed = False
 
             async def replay():

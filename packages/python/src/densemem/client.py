@@ -112,6 +112,18 @@ class DenseMemClient:
         payload = copy.deepcopy(request)
         token = ""
         token_context = _operation_token.set("")
+        response_error: httpx.HTTPStatusError | None = None
+
+        async def inspect_response(response: httpx.Response) -> None:
+            nonlocal response_error
+            try:
+                await _inspect_response(response)
+            except httpx.HTTPStatusError as exc:
+                # The SDK can swallow notification HTTP failures during transport cleanup.
+                if response_error is None:
+                    response_error = exc
+                raise
+
         try:
             async with asyncio.timeout(self.timeout):
                 token = await self._credential()
@@ -120,7 +132,7 @@ class DenseMemClient:
                     headers={"Authorization": f"Bearer {token}"},
                     timeout=httpx.Timeout(self.timeout, connect=min(10.0, self.timeout)),
                     follow_redirects=False,
-                    event_hooks={"response": [_inspect_response]},
+                    event_hooks={"response": [inspect_response]},
                 ) as http:
                     async with streamable_http_client(self.endpoint, http_client=http) as streams:
                         async with ClientSession(streams[0], streams[1]) as session:
@@ -159,7 +171,10 @@ class DenseMemClient:
                 "Dense-Mem operation cancelled; receipt is unknown"
             ) from None
         except Exception as exc:
-            raise _translate_error(exc, token) from None
+            error = _translate_error(exc, token)
+            if response_error is not None and error.result is None:
+                error = _translate_error(response_error, token)
+            raise error from None
         finally:
             _operation_token.reset(token_context)
 
