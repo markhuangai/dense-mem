@@ -10,10 +10,10 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -184,16 +184,19 @@ func TestMigratorRunUpAppliesTopicProjectionAfterUpdatedMain(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, projectionMigration)
-	delete(filesystem, projectionMigration)
-	provider, err := newMigrationProviderWithFilesystem(getMigrationsDir(), db, true, func(string) (fstest.MapFS, error) { return filesystem, nil })
+	projectionVersion, err := goose.NumericComponent(projectionMigration)
 	require.NoError(t, err)
-	_, err = provider.Up(ctx)
+	provider, err := newRuntimeMigrationProvider(getMigrationsDir(), db, true)
+	require.NoError(t, err)
+	_, err = provider.UpTo(ctx, projectionVersion-1)
 	require.NoError(t, err)
 	require.True(t, tableExists(t, ctx, db, "session_submissions"))
 	require.False(t, tableExists(t, ctx, db, "community_topic_versions"))
+	require.False(t, tableExists(t, ctx, db, "ontology_draft_heads"))
 	migrator := NewMigratorWithDB(db)
 	require.NoError(t, migrator.RunUp(ctx))
 	require.True(t, tableExists(t, ctx, db, "community_topic_versions"))
+	require.True(t, tableExists(t, ctx, db, "ontology_draft_heads"))
 	require.True(t, tableExists(t, ctx, db, "session_submissions"))
 	require.NoError(t, migrator.RunUp(ctx))
 	require.NoError(t, ValidateStartupMigrationState(ctx, db, getMigrationsDir()))
