@@ -40,6 +40,16 @@ func (s *Store) ListManagementSources(ctx context.Context, teamID string, kind o
 		if err != nil {
 			return err
 		}
+		if kind == ontology.PredicateSource && query != "" {
+			handle := ontology.SourceHandle{Kind: kind}
+			lookupErr := tx.Raw(eligiblePredicateSelect+` AND definition.predicate_key=? ORDER BY definition.predicate_key,definition.version DESC LIMIT 1`, fence.TeamID, fence.SpaceID, fence.Generation, query).Row().Scan(&handle.ID, &handle.Version)
+			if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+				return lookupErr
+			}
+			if lookupErr == nil {
+				handles = []ontology.SourceHandle{handle}
+			}
+		}
 		if parsed, parseErr := uuid.Parse(query); parseErr == nil && parsed.String() == query && kind != ontology.PredicateSource {
 			handle, lookupErr := latestMaintenanceHandle(tx, fence, ontology.SourceHandle{Kind: kind, ID: query, Version: 1})
 			if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {

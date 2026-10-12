@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -14,6 +15,46 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestOntologyManagementPredicateLookupBeyondFirstPage(t *testing.T) {
+	f := newOntologyFixture(t)
+	ctx := f.actor(0, "manager")
+	manager := managementService(f)
+	subject := maintenanceEntity(t, f, "Atlas")
+	object := maintenanceEntity(t, f, "PostgreSQL")
+	text := "Atlas has independently supported storage classifications."
+	evidence := f.evidence(t, 0, text)
+	var last ontology.SourceHandle
+	for index := range 51 {
+		predicate, err := f.knowledge.EnsureSemanticReviewPredicateCandidate(context.Background(), knowledge.EnsureSemanticPredicateCandidateInput{TeamID: f.team, OwnerProfileID: f.owners[0], Predicate: fmt.Sprintf("ordered_storage_%03d", index), RelationshipKind: "state", SubjectKind: "project", ObjectKind: "project"})
+		require.NoError(t, err)
+		decision, err := f.knowledge.ApplyRelationshipDecision(context.Background(), knowledge.ApplyRelationshipDecisionInput{TeamID: f.team, OwnerProfileID: f.owners[0], IngestID: evidence.IngestID, SubjectEntityID: subject.ID, ObjectEntityID: object.ID, PredicateKey: predicate.PredicateKey, PredicateVersion: predicate.Version, Polarity: "+", Support: &knowledge.EvidenceSupportInput{FragmentID: evidence.Evidence[0].FragmentID, SourceGroupKey: uuid.NewString(), SpanEnd: len(text), Authority: "primary"}})
+		require.NoError(t, err)
+		require.NotNil(t, decision.Relationship)
+		last = ontology.SourceHandle{Kind: ontology.PredicateSource, ID: predicate.PredicateKey, Version: int64(predicate.Version)}
+	}
+	before := f.canonicalSnapshot(t)
+	first, err := manager.Sources(ctx, ontology.PredicateSource, "", "", 50)
+	require.NoError(t, err)
+	require.Len(t, first.Sources, 50)
+	require.NotEmpty(t, first.NextCursor)
+	for _, source := range first.Sources {
+		require.NotEqual(t, last.ID, source.ID)
+	}
+	found, err := manager.Sources(ctx, ontology.PredicateSource, "", last.ID, 50)
+	require.NoError(t, err)
+	require.Len(t, found.Sources, 1)
+	require.Equal(t, last, found.Sources[0].SourceHandle)
+	require.Empty(t, found.NextCursor)
+	filtered, err := manager.Sources(ctx, ontology.PredicateSource, "", "ordered_storage", 50)
+	require.NoError(t, err)
+	require.Equal(t, first, filtered)
+	foreign := maintenanceOtherTeam(t, f)
+	denied, err := manager.Sources(foreign.actor(0, "manager"), ontology.PredicateSource, "", last.ID, 50)
+	require.NoError(t, err)
+	require.Empty(t, denied.Sources)
+	require.Equal(t, before, f.canonicalSnapshot(t))
+}
 
 func TestOntologyManagementEditAndUnpinTogether(t *testing.T) {
 	f := newOntologyFixture(t)
