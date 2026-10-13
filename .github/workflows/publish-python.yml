@@ -92,7 +92,7 @@ jobs:
           subject-path: ${{ runner.temp }}/python-release/dist/*
       - name: Upload verified release package
         if: steps.source.outputs.should_publish == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: python-release
           path: ${{ runner.temp }}/python-release
@@ -113,7 +113,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: python-release
           path: release
