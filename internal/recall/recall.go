@@ -10,10 +10,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/community"
 	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
@@ -33,24 +32,19 @@ var ErrRecallAuthContext = errors.New("recall: authenticated actor context is re
 type RecallService = recallcontract.Service
 
 type RecallDependencies struct {
-	Search          RecallSearchRepository
-	Provider        embeddingcontract.EmbeddingProviderInterface
-	Hypotheses      RecallHypothesisRepository
-	Communities     RecallCommunityRepository
-	CommunityConfig RecallCommunityConfigProvider
-	OntologyConfig  RecallOntologyConfigProvider
-	Metrics         observability.DiscoverabilityMetrics
+	Search   RecallSearchRepository
+	Provider embeddingcontract.EmbeddingProviderInterface
+
+	Communities RecallCommunityRepository
+
+	OntologyConfig RecallOntologyConfigProvider
+	Metrics        observability.DiscoverabilityMetrics
 }
 
 type RecallSearchRepository = recallcontract.SearchRepository
 
-type RecallHypothesisRepository interface {
-	RecallHypotheses(ctx context.Context, input dreamcontract.RecallHypothesesInput) ([]dreamcontract.HypothesisRecord, error)
-}
-
 type RecallCommunityRepository interface {
 	RecallCommunityDiscovery(ctx context.Context, input communitycontract.CommunityDiscoveryInput) ([]communitycontract.CommunityDiscoveryPath, error)
-	RefreshCommunityStaleness(ctx context.Context, input communitycontract.CommunityStalenessInput) (int, error)
 }
 
 type RecallCommunitySnapshotRepository interface {
@@ -61,27 +55,19 @@ type RecallCommunityCoverageRepository interface {
 	ListCommunitySemanticGroups(ctx context.Context, input communitycontract.CommunityCoverageInput) ([]string, error)
 }
 
-type RecallCommunityRunRepository interface {
-	LatestCommunityRun(ctx context.Context, teamID string) (*communitycontract.CommunityRun, error)
-}
-
-type RecallCommunityConfigProvider interface {
-	CommunityDetectionRuntimeConfig(ctx context.Context) (domain.CommunityDetectionRuntimeConfig, error)
-}
-
 type RecallOntologyConfigProvider interface {
 	OntologyMaintenanceRuntimeConfig(context.Context) (domain.OntologyMaintenanceConfig, error)
 }
 
 type recallService struct {
-	search          RecallSearchRepository
-	retrieval       *Retrieval
-	provider        embeddingcontract.EmbeddingProviderInterface
-	hypotheses      RecallHypothesisRepository
-	communities     RecallCommunityRepository
-	communityConfig RecallCommunityConfigProvider
-	ontologyConfig  RecallOntologyConfigProvider
-	metrics         observability.DiscoverabilityMetrics
+	search    RecallSearchRepository
+	retrieval *Retrieval
+	provider  embeddingcontract.EmbeddingProviderInterface
+
+	communities RecallCommunityRepository
+
+	ontologyConfig RecallOntologyConfigProvider
+	metrics        observability.DiscoverabilityMetrics
 }
 
 func NewRecallService(deps RecallDependencies) RecallService {
@@ -90,14 +76,12 @@ func NewRecallService(deps RecallDependencies) RecallService {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
 	return &recallService{
-		search:          deps.Search,
-		retrieval:       NewRetrieval(deps.Search),
-		provider:        deps.Provider,
-		hypotheses:      deps.Hypotheses,
-		communities:     deps.Communities,
-		communityConfig: deps.CommunityConfig,
-		ontologyConfig:  deps.OntologyConfig,
-		metrics:         metrics,
+		search:         deps.Search,
+		retrieval:      NewRetrieval(deps.Search),
+		provider:       deps.Provider,
+		communities:    deps.Communities,
+		ontologyConfig: deps.OntologyConfig,
+		metrics:        metrics,
 	}
 }
 
@@ -124,7 +108,7 @@ type RecallRelationshipHandle = recallcontract.RecallRelationshipHandle
 type RelatedRelationshipSummary = recallcontract.RelatedRelationshipSummary
 type EntityHandle = recallcontract.EntityHandle
 type SemanticObject = recallcontract.SemanticObject
-type RelatedHypothesisSummary = recallcontract.RelatedHypothesisSummary
+
 type RecallDegradationResult = recallcontract.RecallDegradationResult
 type RecallSearchStates = recallcontract.RecallSearchStates
 
@@ -273,37 +257,6 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 	if !recallBranchMetricsSuppressed(ctx) {
 		recordRecallCommunityMetric(ctx, s.metrics, result)
 	}
-	result.RelatedHypotheses = []RelatedHypothesisSummary{}
-	hypothesisOutcome := "not_requested"
-	hypothesesReturned := 0
-	if teamSharedBranch && req.IncludeHypotheses {
-		if req.KnownAt != nil {
-			result.Degradations = append(result.Degradations, relatedHypothesisTemporalDegradation())
-			hypothesisOutcome = "temporal_unsupported"
-		} else if s.hypotheses == nil {
-			hypothesisOutcome = "unavailable"
-		} else {
-			related, relatedDegradation := s.recallRelatedHypotheses(
-				ctx,
-				actor.TeamID.String(),
-				req.Query,
-				recallHypothesisContextFrom(result),
-			)
-			result.RelatedHypotheses = related
-			if relatedDegradation != nil {
-				result.Degradations = append(result.Degradations, *relatedDegradation)
-				hypothesisOutcome = "unavailable"
-			} else if len(related) > 0 {
-				hypothesisOutcome = "returned"
-			} else {
-				hypothesisOutcome = "empty"
-			}
-			hypothesesReturned = len(related)
-		}
-	}
-	if !recallBranchMetricsSuppressed(ctx) {
-		observability.RecordRecallHypotheses(s.metrics, hypothesisOutcome, hypothesesReturned)
-	}
 	if len(result.Degradations) > 0 {
 		result.Degradation = &result.Degradations[0]
 	}
@@ -362,10 +315,10 @@ func (s *recallService) recallCommunityDiscovery(
 	req RecallRequest,
 ) ([]RecallDiscoveryPath, *RecallDegradationResult) {
 	communityLimit := recallOptionalLimitValue(req.CommunityLimit)
-	if s.communities == nil || s.communityConfig == nil || communityLimit <= 0 {
+	if s.communities == nil || s.ontologyConfig == nil || communityLimit <= 0 {
 		return []RecallDiscoveryPath{}, nil
 	}
-	cfg, err := s.communityConfig.CommunityDetectionRuntimeConfig(ctx)
+	cfg, err := s.ontologyConfig.OntologyMaintenanceRuntimeConfig(ctx)
 	if err != nil {
 		return []RecallDiscoveryPath{}, communityDiscoveryDegradation()
 	}
@@ -398,10 +351,10 @@ func (s *recallService) recallCommunities(
 	organizationEnabled bool,
 ) ([]RecallDiscoveryPath, []RecallDiscoveryPath, *RecallDegradationResult) {
 	communityLimit := recallOptionalLimitValue(req.CommunityLimit)
-	if communityLimit <= 0 || s.communities == nil || s.communityConfig == nil {
+	if !organizationEnabled || communityLimit <= 0 || s.communities == nil || s.ontologyConfig == nil {
 		return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, nil
 	}
-	cfg, err := s.communityConfig.CommunityDetectionRuntimeConfig(ctx)
+	cfg, err := s.ontologyConfig.OntologyMaintenanceRuntimeConfig(ctx)
 	if err != nil {
 		return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communityDiscoveryDegradation()
 	}
@@ -418,38 +371,6 @@ func (s *recallService) recallCommunities(
 		return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community coverage was unavailable; direct relationship fallback was used")
 	}
 	var projectionDegradation *RecallDegradationResult
-	if !organizationEnabled {
-		if runRepo, ok := s.communities.(RecallCommunityRunRepository); ok {
-			latest, runErr := runRepo.LatestCommunityRun(ctx, teamID)
-			if runErr != nil {
-				return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community run status was unavailable; direct relationship fallback was used")
-			}
-			if latest != nil {
-				switch latest.Status {
-				case "failed", "cancelled":
-					return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_detection_failed", "community detection failed; direct relationship fallback was used")
-				case "too_large":
-					return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_graph_too_large", "community graph exceeded the configured bound; direct relationship fallback was used")
-				case "running":
-					return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community snapshot generation is in progress; direct relationship fallback was used")
-				}
-				if latest.Status != "completed" || !communitySnapshotRunCompatible(latest) {
-					return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community snapshot metadata was incompatible; direct relationship fallback was used")
-				}
-			}
-		}
-		if staler, ok := s.communities.(interface {
-			RefreshCommunityStaleness(context.Context, communitycontract.CommunityStalenessInput) (int, error)
-		}); ok {
-			if staleCount, staleErr := staler.RefreshCommunityStaleness(ctx, communitycontract.CommunityStalenessInput{TeamID: teamID, Limit: 200}); staleErr != nil || staleCount > 0 {
-				return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation(
-					"community_snapshot_stale",
-					"community snapshot sources changed; direct relationship fallback was used",
-				)
-			}
-		}
-	}
-
 	if snapshotRepo, ok := s.communities.(RecallCommunitySnapshotRepository); ok {
 		groups := make([]string, 0, len(excludedGroups))
 		for group := range excludedGroups {
@@ -483,16 +404,6 @@ func (s *recallService) recallCommunities(
 	return []RecallDiscoveryPath{}, paths, degradation
 }
 
-func communitySnapshotRunCompatible(run *communitycontract.CommunityRun) bool {
-	if run == nil {
-		return false
-	}
-	return run.AlgorithmKind == community.AlgorithmKind &&
-		run.AlgorithmVersion == community.AlgorithmVersion &&
-		run.ProfileVersion == communitycontract.CommunityProfileVersion &&
-		run.ConfigurationHash == community.ConfigurationHash(community.DefaultSeed)
-}
-
 func communitySnapshotDegradation(code, message string) *RecallDegradationResult {
 	return &RecallDegradationResult{Frontier: "communities", Optional: true, Code: code, Message: message}
 }
@@ -518,48 +429,6 @@ func relationshipVectorDegradation(state string) *RecallDegradationResult {
 		Optional: true,
 		Code:     code,
 		Message:  message,
-	}
-}
-
-func (s *recallService) recallRelatedHypotheses(
-	ctx context.Context,
-	teamID string,
-	query string,
-	contextHandles recallHypothesisContextHandles,
-) ([]RelatedHypothesisSummary, *RecallDegradationResult) {
-	if s.hypotheses == nil || (strings.TrimSpace(query) == "" && contextHandles.empty()) {
-		return []RelatedHypothesisSummary{}, nil
-	}
-	records, err := s.hypotheses.RecallHypotheses(ctx, dreamcontract.RecallHypothesesInput{
-		TeamID:          teamID,
-		Query:           query,
-		Limit:           dreamcontract.DefaultRecallHypothesisLimit,
-		EvidenceIDs:     contextHandles.evidenceIDs,
-		RelationshipIDs: contextHandles.relationshipIDs,
-		EntityIDs:       contextHandles.entityIDs,
-		ValueIDs:        contextHandles.valueIDs,
-	})
-	if err != nil {
-		return []RelatedHypothesisSummary{}, relatedHypothesisDegradation()
-	}
-	return relatedHypothesisSummaries(records), nil
-}
-
-func relatedHypothesisDegradation() *RecallDegradationResult {
-	return &RecallDegradationResult{
-		Frontier: "hypotheses",
-		Optional: true,
-		Code:     "related_hypotheses_unavailable",
-		Message:  "related hypotheses were unavailable; primary evidence recall was used",
-	}
-}
-
-func relatedHypothesisTemporalDegradation() RecallDegradationResult {
-	return RecallDegradationResult{
-		Frontier: "hypotheses",
-		Optional: true,
-		Code:     "related_hypotheses_temporal_not_supported",
-		Message:  "related hypotheses are current-only; historical recall omitted them",
 	}
 }
 
@@ -868,7 +737,6 @@ func recallResultFromRepository(
 		Conflicts:            conflicts,
 		RelatedRelationships: []RelatedRelationshipSummary{},
 		RelatedCommunities:   []RecallDiscoveryPath{},
-		RelatedHypotheses:    []RelatedHypothesisSummary{},
 		SearchStates: RecallSearchStates{
 			Evidence:      searchState,
 			Relationships: string(domain.SearchProjectionCurrent),

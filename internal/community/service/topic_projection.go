@@ -7,22 +7,9 @@ import (
 	"time"
 
 	community "github.com/markhuangai/dense-mem/internal/community/contract"
-	"github.com/markhuangai/dense-mem/internal/domain"
+
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 )
-
-type ontologyConfig interface {
-	OntologyMaintenanceRuntimeConfig(context.Context) (domain.OntologyMaintenanceConfig, error)
-}
-
-func (s *service) ontologyEnabled(ctx context.Context) (bool, error) {
-	config, ok := s.config.(ontologyConfig)
-	if !ok {
-		return false, nil
-	}
-	policy, err := config.OntologyMaintenanceRuntimeConfig(ctx)
-	return policy.Enabled, err
-}
 
 func (s *service) RunProjectionTurn(ctx context.Context) (bool, error) {
 	store, ok := s.store.(community.TopicProjectionRepository)

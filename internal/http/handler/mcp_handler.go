@@ -28,7 +28,6 @@ type MCPHandler struct {
 	logger               mcp.Logger
 	lifecycle            sse.StreamLifecycle
 	recallFeedbackConfig registry.RecallFeedbackConfigProvider
-	dreams               registry.DreamingConfigProvider
 }
 
 func (h *MCPHandler) SetOperationObserver(observer mcp.OperationObserver) {
@@ -54,12 +53,8 @@ func NewMCPHandlerWithLifecycle(reg registry.Registry, logger mcp.Logger, lifecy
 
 // NewMCPHandlerWithLifecycleAndRuntimeConfig constructs a Streamable HTTP MCP
 // handler with runtime feature visibility.
-func NewMCPHandlerWithLifecycleAndRuntimeConfig(reg registry.Registry, logger mcp.Logger, lifecycle sse.StreamLifecycle, recallFeedbackConfig registry.RecallFeedbackConfigProvider, dreams ...registry.DreamingConfigProvider) *MCPHandler {
-	var dreamConfig registry.DreamingConfigProvider
-	if len(dreams) > 0 {
-		dreamConfig = dreams[0]
-	}
-	return &MCPHandler{reg: reg, logger: logger, lifecycle: lifecycle, recallFeedbackConfig: recallFeedbackConfig, dreams: dreamConfig}
+func NewMCPHandlerWithLifecycleAndRuntimeConfig(reg registry.Registry, logger mcp.Logger, lifecycle sse.StreamLifecycle, recallFeedbackConfig registry.RecallFeedbackConfigProvider) *MCPHandler {
+	return &MCPHandler{reg: reg, logger: logger, lifecycle: lifecycle, recallFeedbackConfig: recallFeedbackConfig}
 }
 
 // HandlePost serves POST /mcp. It accepts a single JSON-RPC payload and returns
@@ -113,7 +108,7 @@ func (h *MCPHandler) handleSDKPost(c echo.Context, teamID uuid.UUID, principal *
 		team.Name = resolvedTeam.Name
 		team.Description = resolvedTeam.Description
 	}
-	server := mcp.NewServerWithScopesTeamContextAndRuntimeConfig(h.reg, teamID.String(), principal.Grants, team, h.logger, h.recallFeedbackConfig, h.dreams)
+	server := mcp.NewServerWithScopesTeamContextAndRuntimeConfig(h.reg, teamID.String(), principal.Grants, team, h.logger, h.recallFeedbackConfig)
 	server.SetOperationObserver(h.operationObserver)
 	serverHandler := server.NewSDKHTTPHandler(!acceptsEventStream(accept))
 	work := func(workCtx context.Context) error {

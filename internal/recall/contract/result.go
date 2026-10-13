@@ -160,10 +160,10 @@ type RecallResult struct {
 	Conflicts            []RecallConflictSummary      `json:"conflicts"`
 	RelatedRelationships []RelatedRelationshipSummary `json:"related_relationships"`
 	RelatedCommunities   []RecallDiscoveryPath        `json:"related_communities"`
-	RelatedHypotheses    []RelatedHypothesisSummary   `json:"related_hypotheses"`
-	SearchStates         RecallSearchStates           `json:"search_states"`
-	Degradations         []RecallDegradationResult    `json:"degradations"`
-	SuggestedActions     []RecallSuggestedAction      `json:"suggested_actions"`
+
+	SearchStates     RecallSearchStates        `json:"search_states"`
+	Degradations     []RecallDegradationResult `json:"degradations"`
+	SuggestedActions []RecallSuggestedAction   `json:"suggested_actions"`
 
 	DiscoveryPaths    []RecallDiscoveryPath    `json:"-"`
 	DiscoveryGuidance string                   `json:"-"`
@@ -172,10 +172,9 @@ type RecallResult struct {
 }
 
 type RecallSuggestedAction struct {
-	Tool          string   `json:"tool"`
-	Guidance      string   `json:"guidance"`
-	RecallEventID string   `json:"recall_event_id,omitempty"`
-	HypothesisIDs []string `json:"hypothesis_ids,omitempty"`
+	Tool          string `json:"tool"`
+	Guidance      string `json:"guidance"`
+	RecallEventID string `json:"recall_event_id,omitempty"`
 }
 
 type RecallResultItem struct {
@@ -403,22 +402,6 @@ type SemanticObject struct {
 	Value    any    `json:"value,omitempty"`
 	Display  string `json:"display,omitempty"`
 	Unit     string `json:"unit,omitempty"`
-}
-
-type RelatedHypothesisSummary struct {
-	HypothesisID          string    `json:"hypothesis_id"`
-	SubjectEntityID       string    `json:"subject_entity_id"`
-	PredicateKey          string    `json:"predicate_key"`
-	ObjectEntityID        string    `json:"object_entity_id,omitempty"`
-	ObjectValueID         string    `json:"object_value_id,omitempty"`
-	Statement             string    `json:"statement"`
-	Status                string    `json:"status"`
-	SourceRelationshipIDs []string  `json:"source_relationship_ids"`
-	SourceEvidenceIDs     []string  `json:"source_evidence_ids"`
-	Lane                  string    `json:"lane"`
-	GeneratorKind         string    `json:"generator_kind"`
-	GeneratorVersion      string    `json:"generator_version"`
-	CreatedAt             time.Time `json:"created_at"`
 }
 
 type RecallDegradationResult struct {

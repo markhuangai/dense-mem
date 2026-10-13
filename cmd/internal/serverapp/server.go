@@ -15,7 +15,7 @@ import (
 
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	communitypostgres "github.com/markhuangai/dense-mem/internal/community/postgres"
-	communityapp "github.com/markhuangai/dense-mem/internal/community/service"
+
 	"github.com/markhuangai/dense-mem/internal/config"
 	conflictassessment "github.com/markhuangai/dense-mem/internal/conflict/assessment"
 	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
@@ -51,10 +51,8 @@ func (e runtimeWorkerFailure) Error() string { return "runtime worker failed" }
 func (e runtimeWorkerFailure) Unwrap() error { return e.cause }
 
 type aiSessionModels struct {
-	remember         string
-	conflictReview   string
-	dreamGraph       string
-	communitySummary string
+	remember       string
+	conflictReview string
 }
 
 func aiSessionModelsForConfig(cfg *config.Config) aiSessionModels {
@@ -62,10 +60,8 @@ func aiSessionModelsForConfig(cfg *config.Config) aiSessionModels {
 		return aiSessionModels{}
 	}
 	return aiSessionModels{
-		remember:         cfg.GetAIRememberModel(),
-		conflictReview:   cfg.GetAIConflictReviewModel(),
-		dreamGraph:       cfg.GetAIDreamGraphModel(),
-		communitySummary: cfg.GetAICommunitySummaryModel(),
+		remember:       cfg.GetAIRememberModel(),
+		conflictReview: cfg.GetAIConflictReviewModel(),
 	}
 }
 
@@ -135,7 +131,7 @@ func RunActiveServer(
 		ReviewTTLDays: cfg.GetConflictReviewTTLDays(),
 		Timezone:      cfg.GetAppTimezone(),
 	})
-	dreamStore := dreampostgres.NewStoreWithLogger(pgDB.GetDB(), rlsHelper, logger)
+	dreamStore := dreampostgres.NewStore(pgDB.GetDB(), rlsHelper)
 	conflictStore := conflictpostgres.NewStore(pgDB.GetDB(), rlsHelper, knowledgeStore)
 	graphStore := graphpostgres.NewStore(pgDB.GetDB(), rlsHelper)
 	traceStore := buildTraceStore(pgDB.GetDB(), rlsHelper)
@@ -308,16 +304,9 @@ func RunActiveServer(
 		DiagnosticProtector:    diagnosticProtector,
 		Audit:                  auditService,
 		AppConfig:              appConfigService,
-		Teams:                  teamService,
-		CommunitySummary: communitySummaryProvider{
-			model:    sessionModels.communitySummary,
-			complete: verifierProvider.StructuredChatJSON,
-		},
-		DreamGraphModel:     sessionModels.dreamGraph,
-		ProviderCycleLease:  dreamProviderCycleLease(cfg),
-		CorrectionTimeout:   time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
-		CorrectionExecutor:  buildSemanticWriteCorrectionExecutor(openaiProvider),
-		TelemetryPrometheus: telemetryPrometheusService,
+		CorrectionTimeout:      time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
+		CorrectionExecutor:     buildSemanticWriteCorrectionExecutor(openaiProvider),
+		TelemetryPrometheus:    telemetryPrometheusService,
 	})
 	rememberSvc := applications.Remember
 	recallSvc := applications.Recall
@@ -325,7 +314,6 @@ func RunActiveServer(
 	ontologyMaintenance.SetProjectionRunner(communitySvc)
 	lifecycleSvc := applications.Lifecycle
 	contextSvc := applications.Context
-	dreamSvc := applications.Dream
 	controlDreamSvc := applications.ControlDream
 	graphViewSvc := applications.Graph
 	memoryPackSvc := applications.MemoryPack
@@ -343,10 +331,9 @@ func RunActiveServer(
 		},
 		RememberBindings:   registry.RememberBindings{Service: rememberSvc},
 		SessionBindings:    registry.SessionBindings{Service: applications.Session},
-		RecallBindings:     registry.RecallBindings{Service: recallSvc, Dreams: dreamSvc},
+		RecallBindings:     registry.RecallBindings{Service: recallSvc},
 		LifecycleBindings:  registry.LifecycleBindings{Service: lifecycleSvc},
 		TraceBindings:      registry.TraceBindings{Service: contextSvc},
-		DreamBindings:      registry.DreamBindings{Service: dreamSvc},
 		MemoryPackBindings: registry.MemoryPackBindings{Service: memoryPackSvc},
 		EvaluationBindings: evaluationBindings,
 	})
@@ -401,7 +388,6 @@ func RunActiveServer(
 		controlDreamDiagnostics:  applications.ControlDreamDiagnostics,
 		graph:                    graphViewSvc,
 		recall:                   recallSvc,
-		dream:                    dreamSvc,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to build transport composition: %w", err)
@@ -544,18 +530,6 @@ func RunActiveServer(
 	lifecycle.add(managedRuntimeWorker{name: "remember diagnostics", done: diagnosticDone, shutdown: knowledgeStore.ShutdownRememberAttemptDiagnosticPurger})
 	lifecycle.start("dream diagnostics", func(ctx context.Context) {
 		dream.RunDiagnosticPurger(ctx, dreamStore, time.Hour, rootSlogLogger(logger))
-	})
-	if err := startupCheck(); err != nil {
-		return abortStartup(err)
-	}
-	lifecycle.start("dream scheduler", func(ctx context.Context) {
-		dream.NewScheduler(dreamSvc, teamService, rootSlogLogger(logger)).Start(ctx)
-	})
-	if err := startupCheck(); err != nil {
-		return abortStartup(err)
-	}
-	lifecycle.start("community scheduler", func(ctx context.Context) {
-		communityapp.NewScheduler(communitySvc, teamService, appConfigService, rootSlogLogger(logger)).Start(ctx)
 	})
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)

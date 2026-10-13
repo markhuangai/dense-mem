@@ -90,28 +90,6 @@ describe("UserApi", () => {
     }));
   });
 
-  it("requests dreams with cursor pagination", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      data: {
-        items: [],
-        next_cursor: "next-dream",
-      },
-    }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    const result = await new UserApi("dm_key").listDreams({
-      status: "proposed",
-      limit: 50,
-      cursor: "current-dream",
-      sort: "updated_at",
-      direction: "desc",
-    });
-
-    expect(result.next_cursor).toBe("next-dream");
-    expect(fetchMock).toHaveBeenCalledWith("/ui/api/dreams?limit=50&status=proposed&cursor=current-dream&sort=updated_at&direction=desc", expect.objectContaining({
-      headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
-    }));
-  });
 
   it("requests graph snapshots with scoped query params", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
@@ -207,8 +185,7 @@ describe("UserApi", () => {
             relationships_truncated: false,
           },
         ],
-        related_hypotheses: [],
-        search_states: { evidence: "current", relationships: "current" },
+            search_states: { evidence: "current", relationships: "current" },
         degradations: [],
       },
     }), { status: 200 }));
@@ -280,8 +257,7 @@ describe("UserApi", () => {
           },
         ],
         related_communities: [],
-        related_hypotheses: [],
-        search_states: { evidence: "current", relationships: "current" },
+            search_states: { evidence: "current", relationships: "current" },
         degradations: [],
       },
     }), { status: 200 }));

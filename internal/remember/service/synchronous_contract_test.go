@@ -13,7 +13,7 @@ import (
 )
 
 func TestTerminalRememberReplayRetainsSupportedContractVersions(t *testing.T) {
-	for _, version := range []string{"dense-mem.v2.6.7", "dense-mem.v2.6.6", "dense-mem.v2.6.3", "dense-mem.v2.6.2"} {
+	for _, version := range []string{"dense-mem.v2.6.8", "dense-mem.v2.6.7", "dense-mem.v2.6.6", "dense-mem.v2.6.3", "dense-mem.v2.6.2"} {
 		result := validTerminalResultForTest()
 		result.ContractVersion = version
 		require.NoError(t, ValidateTerminalRememberResult(result, 2, []string{"rel-a", "rel-b"}))

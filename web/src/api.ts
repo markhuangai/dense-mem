@@ -1,5 +1,5 @@
-import type { GeneralConfig, GeneralConfigInput, GeneralConfigItem, SSOConfigInput, DreamingRuntimeConfig, DreamingEffectiveConfig } from "./configuration-api-types";
-export type { GeneralConfig, GeneralConfigInput, GeneralConfigItem, SSOConfigInput, DreamingRuntimeConfig, DreamingEffectiveConfig } from "./configuration-api-types";
+import type { GeneralConfig, GeneralConfigInput, GeneralConfigItem, SSOConfigInput } from "./configuration-api-types";
+export type { GeneralConfig, GeneralConfigInput, GeneralConfigItem, SSOConfigInput } from "./configuration-api-types";
 import type { OntologyMaintenanceConfig, OntologyMaintenanceRun, OntologyMaintenanceStatus, OntologyMaintenanceRunPage } from "./ontology-maintenance-api-types";
 export type { OntologyMaintenanceConfig, OntologyMaintenanceRun, OntologyMaintenanceStatus, OntologyMaintenanceRunPage } from "./ontology-maintenance-api-types";
 import type { ControlTelemetryQuery, TelemetrySnapshot } from "./telemetry/types";
@@ -47,7 +47,6 @@ export type Team = {
   description: string;
   metadata: Record<string, unknown> | null;
   config: Record<string, unknown> | null;
-  dreaming_effective?: DreamingEffectiveConfig | null;
   created_at: string;
   updated_at: string;
 };
@@ -341,44 +340,6 @@ export type GeneralRuntimeConfig = {
   timezone: string;
 };
 
-export type DreamingConfigItem = SSOConfigItem;
-
-export type DreamingConfig = {
-  update_time: string;
-  items: DreamingConfigItem[];
-  effective: DreamingRuntimeConfig;
-};
-
-export type DreamingConfigInput = {
-  items: Array<{
-    key: string;
-    value: string;
-  }>;
-};
-
-export type CommunityDetectionRuntimeConfig = {
-  enabled: boolean;
-  start_time_local: string;
-  timezone: string;
-  max_concurrency: number;
-  jitter_seconds: number;
-};
-
-export type CommunityDetectionConfigItem = SSOConfigItem;
-
-export type CommunityDetectionConfig = {
-  update_time: string;
-  items: CommunityDetectionConfigItem[];
-  effective: CommunityDetectionRuntimeConfig;
-};
-
-export type CommunityDetectionConfigInput = {
-  items: Array<{
-    key: string;
-    value: string;
-  }>;
-};
-
 export type OperationLogRuntimeConfig = {
   retention_days: number;
 };
@@ -570,9 +531,9 @@ export type DreamRun = {
 };
 
 export type DreamStatus = {
-  effective_config: DreamingEffectiveConfig;
+  retired: boolean;
   latest_run?: DreamRun | null;
-  pending_count: number;
+  historical_proposed_count: number;
 };
 export type DreamQuery = {
   limit?: number;
@@ -829,22 +790,6 @@ export class ControlApi {
 
   updateSSOConfig(input: SSOConfigInput): Promise<SSOConfig> {
     return this.requestEnvelope<SSOConfig>("/config/sso", { method: "PATCH", body: input });
-  }
-
-  getDreamingConfig(): Promise<DreamingConfig> {
-    return this.requestEnvelope<DreamingConfig>("/config/dreaming");
-  }
-
-  updateDreamingConfig(input: DreamingConfigInput): Promise<DreamingConfig> {
-    return this.requestEnvelope<DreamingConfig>("/config/dreaming", { method: "PATCH", body: input });
-  }
-
-  getCommunityDetectionConfig(): Promise<CommunityDetectionConfig> {
-    return this.requestEnvelope<CommunityDetectionConfig>("/config/community-detection");
-  }
-
-  updateCommunityDetectionConfig(input: CommunityDetectionConfigInput): Promise<CommunityDetectionConfig> {
-    return this.requestEnvelope<CommunityDetectionConfig>("/config/community-detection", { method: "PATCH", body: input });
   }
 
   getOperationLogConfig(): Promise<OperationLogConfig> {

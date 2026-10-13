@@ -1,13 +1,5 @@
 {
   "version": 1,
   "capability": "evaluation",
-  "cases": [
-    {
-      "id": "evaluation/TestEvaluationReaderPreservesTeamIsolationPaginationAndHypothesisFilter",
-      "package": "./internal/evaluation/postgres",
-      "run": "^TestEvaluationReaderPreservesTeamIsolationPaginationAndHypothesisFilter$",
-      "phase": "precheck",
-      "source": "internal/evaluation/postgres/evaluation_reader_integration_test.go"
-    }
-  ]
+  "cases": []
 }

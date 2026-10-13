@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/markhuangai/dense-mem/internal/domain"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 )
 
@@ -29,22 +28,7 @@ func TestControlServiceReadsTeamDreamsWithoutActorContext(t *testing.T) {
 		},
 		pending: 1,
 	}
-	teams := &dreamControlTeamConfigStub{team: &domain.Team{
-		ID: uuid.MustParse(teamID),
-		Config: map[string]any{
-			"dreaming": map[string]any{"enabled": false},
-		},
-	}}
-	svc := NewControl(ControlDependencies{
-		Store: store,
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{
-			Enabled:        true,
-			StartTimeLocal: "03:00",
-			Timezone:       "UTC",
-			MaxOutputs:     5,
-		}},
-		Teams: teams,
-	})
+	svc := NewControl(ControlDependencies{Store: store})
 
 	dreams, _, err := svc.List(context.Background(), teamID, ListOptions{
 		Limit:     20,
@@ -73,12 +57,9 @@ func TestControlServiceReadsTeamDreamsWithoutActorContext(t *testing.T) {
 
 	status, err := svc.Status(context.Background(), teamID)
 	require.NoError(t, err)
-	assert.Equal(t, 1, status.PendingCount)
+	assert.Equal(t, 1, status.HistoricalProposedCount)
 	require.NotNil(t, status.LatestRun)
 	assert.Equal(t, store.runs[0].RunID, status.LatestRun.RunID)
-	assert.False(t, status.EffectiveConfig.Enabled)
-	assert.Equal(t, "team", status.EffectiveConfig.Source)
-	assert.Equal(t, uuid.MustParse(teamID), teams.requestedID)
 
 }
 
@@ -98,14 +79,6 @@ func TestControlServiceRequiresRepository(t *testing.T) {
 	_, err = svc.Status(ctx, uuid.NewString())
 	require.ErrorContains(t, err, "repository is required")
 
-}
-
-func TestPublicDreamListStillRequiresAuthenticatedActor(t *testing.T) {
-	svc := New(Dependencies{Store: &dreamRepositoryStub{}})
-
-	_, _, err := svc.List(context.Background(), uuid.NewString(), ListOptions{Limit: 20})
-
-	require.ErrorIs(t, err, ErrDreamAuthContext)
 }
 
 type dreamControlRepositoryStub struct {
@@ -136,16 +109,5 @@ func (s *dreamControlRepositoryStub) ListDreamCyclesForTeam(context.Context, str
 	return append([]dreamcontract.DreamCycleRun(nil), s.runs...), nil
 }
 
-type dreamControlTeamConfigStub struct {
-	team        *domain.Team
-	requestedID uuid.UUID
-}
-
-func (s *dreamControlTeamConfigStub) GetByID(_ context.Context, id uuid.UUID) (*domain.Team, error) {
-	s.requestedID = id
-	return s.team, nil
-}
-
 var _ ControlService = (*controlService)(nil)
 var _ dreamcontract.DreamControlRepository = (*dreamControlRepositoryStub)(nil)
-var _ TeamConfigService = (*dreamControlTeamConfigStub)(nil)

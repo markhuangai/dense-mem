@@ -21,16 +21,3 @@ export type SSOConfigInput = {
     value: string;
   }>;
 };
-
-export type DreamingRuntimeConfig = {
-  enabled: boolean;
-  force_enabled: boolean;
-  start_time_local: string;
-  timezone: string;
-  max_outputs: number;
-};
-
-export type DreamingEffectiveConfig = DreamingRuntimeConfig & {
-  team_enabled: boolean;
-  source: "global" | "team" | "global_force" | string;
-};

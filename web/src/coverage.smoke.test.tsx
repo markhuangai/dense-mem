@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, ControlApi, DirectoryConnector, DirectoryPreview, SSOProvider, Team } from "./api";
 import { App } from "./App";
 import { requestBytes, requestJson } from "./http";
-import { TeamDreamingConfigForm } from "./teamDreamingConfig";
 import { buildOperationLogsPath, buildRememberAttemptDiagnosticPath, buildRememberAttemptDiagnosticsPath } from "./control-observability-api";
 import { getEvidenceConflict, listEvidenceConflicts, resolveEvidenceConflict } from "./evidence-conflict-api";
 import { ConflictQueuePanel } from "./control/ConflictQueuePanel";
@@ -12,7 +11,6 @@ import { SecurityPanel } from "./control/SecurityPanel";
 import { DirectoryAutomationPanel } from "./control/DirectoryAutomationPanel";
 import { SSOPanel } from "./control/SSOPanel";
 import { RecallFeedbackPanel } from "./control/RecallFeedbackPanel";
-import { UserDreamsPanel } from "./user/DreamsPanel";
 import { ControlDreamsPanel } from "./control/DreamsPanel";
 import { ConfigPanel } from "./control/ConfigPanel";
 import { TeamManagementPanel } from "./user/TeamManagementPanel";
@@ -120,7 +118,7 @@ describe("coverage contracts", () => {
     await api.getMetrics({ window_minutes: 60, team_id: "team/a" }); await api.getConflictQueue("team/a", { status: "open", limit: 5, cursor: "c" }); await api.listEvidenceConflicts("team/a", { status: "open", limit: 5, cursor: "c" }); await api.getEvidenceConflict("team/a", "conflict/a", 5, "cursor"); await api.resolveEvidenceConflict("team/a", "conflict/a", { expected_version: 1, decision: "resolve", reason: "ok" }); await api.getSearchConvergence(); await api.getTelemetry({ window: "1h", scope: "team", team_id: "team/a", profile_id: "profile/a" });
     await api.listSSOProviders(); await api.createSSOProvider({ name: "x", kind: "generic_oidc", issuer_url: "https://issuer", tenant_id: "", identity_claim: "sub", client_id: "id", client_secret_env: "secret", scopes: [], group_claims: [], groups_endpoint: "", groups_scopes: [], protected_resource: provider.protected_resource, enabled: true }); await api.updateSSOProvider("provider/a", {} as never); await api.deleteSSOProvider("provider/a"); await api.listSSOGroupMappings("provider/a"); await api.createSSOGroupMapping("provider/a", {} as never); await api.updateSSOGroupMapping("provider/a", "mapping/a", {} as never); await api.deleteSSOGroupMapping("provider/a", "mapping/a");
     await api.listDirectoryConnectors(); await api.getDirectoryConnector("provider/a"); await api.createDirectoryConnector("provider/a", { group_pattern: "", role_entitlements: {}, max_auto_teams: 1 }); await api.updateDirectoryConnector("connector/a", { group_pattern: "", role_entitlements: {}, max_auto_teams: 1 }); await api.rotateDirectoryCredentials("connector/a"); await api.previewDirectoryConnector("connector/a"); await api.setDirectoryConnectorStatus("connector/a", "observe", ""); await api.adoptDirectoryGroupTeam("connector/a", "group/a", "team/a"); await api.listControlAdminGroups("provider/a"); await api.createControlAdminGroup("provider/a", { group_id: "g", group_name: "G", enabled: true }); await api.deleteControlAdminGroup("provider/a", "group/a");
-    await api.getGeneralConfig(); await api.updateGeneralConfig({ items: [] }); await api.getSSOConfig(); await api.updateSSOConfig({ items: [] }); await api.getDreamingConfig(); await api.updateDreamingConfig({ items: [] }); await api.getCommunityDetectionConfig(); await api.updateCommunityDetectionConfig({ items: [] }); await api.getOperationLogConfig(); await api.updateOperationLogConfig({ items: [] }); await api.getRecallFeedbackConfig(); await api.updateRecallFeedbackConfig({ items: [] }); await api.getTelemetryPricingConfig(); await api.updateTelemetryPricingConfig({ items: [] });
+    await api.getGeneralConfig(); await api.updateGeneralConfig({ items: [] }); await api.getSSOConfig(); await api.updateSSOConfig({ items: [] }); await api.getOperationLogConfig(); await api.updateOperationLogConfig({ items: [] }); await api.getRecallFeedbackConfig(); await api.updateRecallFeedbackConfig({ items: [] }); await api.getTelemetryPricingConfig(); await api.updateTelemetryPricingConfig({ items: [] });
     await api.listOperationLogs({ limit: 5, offset: 1, severity: "ERROR", event: "x" }); await api.listRememberAttemptDiagnostics({ limit: 5, offset: 1, outcome: "failed" }); await api.getRememberAttemptDiagnostic("team/a", "attempt/a"); await api.listRecallFeedbackEvents({ limit: 5, offset: 1, team_id: "team/a", profile_id: "profile/a", quality: "low", include_pending: true, missing_context: false, irrelevant: true, from: "2026-09-01T00:00:00Z", to: "2026-09-02T00:00:00Z" }); await api.getRecallFeedbackEvent("recall/a"); await api.getTeamDreamingStatus("team/a"); await api.getTeamCommunityStatus("team/a"); await api.listTeamDreamingRuns("team/a", 5); await api.listTeamDreams("team/a", { limit: 5, status: "proposed", cursor: "c" });
     expect(fetchMock.mock.calls.length).toBeGreaterThan(50);
   });
@@ -128,12 +126,12 @@ describe("coverage contracts", () => {
   it("covers UserApi authentication modes, recall normalization, and request builders", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      const data = url.includes("/recall?") ? { results: [], related_communities: [], related_relationships: [], discovery_paths: [], related_hypotheses: [] } : {};
+      const data = url.includes("/recall?") ? { results: [], related_communities: [], related_relationships: [], discovery_paths: [] } : {};
       return new Response(JSON.stringify({ data, pagination: { limit: 25, offset: 0, total: 0 } }), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
     const api = new UserApi("token");
-    await api.session(); await api.ssoProviders(); expect(api.ssoStartUrl("provider/a")).toContain("provider%2Fa"); await api.switchSSOTeam("team/a"); await api.logoutSSO(); await api.createPortalSession(true); await api.logoutPortalSession(); await api.createSSOCredential({ name: "x", rate_limit: 1 }); await api.listSSOCredentials(); await api.getSSOCredential("key/a"); await api.rotateSSOCredential("key/a"); await api.revokeSSOCredential("key/a", "idem"); await api.rotateCredential(); await api.updateTeam({ name: "x", description: "" }); await api.listTeamCredentials(); await api.createTeamCredential({ name: "x", rate_limit: 1 }); await api.updateTeamCredential("key/a", { name: "x" }); await api.rotateTeamCredential("key/a", { name: "x", rate_limit: 1 }); await api.deleteTeamCredential("key/a"); await api.recall("query", 5); await api.graph({ scope: "local", q: "q", types: ["entity"], anchorType: "entity", anchorId: "id", depth: 2, limit: 5 }); await api.nodeDetail("entity", "id"); await api.dreamingStatus(); await api.listDreamingRuns(5); await api.listDreams({ limit: 5, status: "proposed", cursor: "c", sort: "created_at", direction: "asc" });
+    await api.session(); await api.ssoProviders(); expect(api.ssoStartUrl("provider/a")).toContain("provider%2Fa"); await api.switchSSOTeam("team/a"); await api.logoutSSO(); await api.createPortalSession(true); await api.logoutPortalSession(); await api.createSSOCredential({ name: "x", rate_limit: 1 }); await api.listSSOCredentials(); await api.getSSOCredential("key/a"); await api.rotateSSOCredential("key/a"); await api.revokeSSOCredential("key/a", "idem"); await api.rotateCredential(); await api.updateTeam({ name: "x", description: "" }); await api.listTeamCredentials(); await api.createTeamCredential({ name: "x", rate_limit: 1 }); await api.updateTeamCredential("key/a", { name: "x" }); await api.rotateTeamCredential("key/a", { name: "x", rate_limit: 1 }); await api.deleteTeamCredential("key/a"); await api.recall("query", 5); await api.graph({ scope: "local", q: "q", types: ["entity"], anchorType: "entity", anchorId: "id", depth: 2, limit: 5 }); await api.nodeDetail("entity", "id");
     const anonymous = new UserApi("", "api_key_session");
     await anonymous.createPortalSession(false);
     expect(fetchMock).toHaveBeenCalled();
@@ -144,20 +142,6 @@ describe("coverage contracts", () => {
     await expect(new UserApi("token").recall("malformed")).rejects.toMatchObject({ status: 500 });
   });
 
-  it("covers the team dreaming form overrides and save/error paths", async () => {
-    const save = vi.fn(async () => undefined);
-    const user = userEvent.setup();
-    render(<TeamDreamingConfigForm config={{ dreaming: { enabled: "true", stale: true } }} effective={{ enabled: true, force_enabled: false, start_time_local: "03:00", timezone: "UTC", max_outputs: 5, team_enabled: true, source: "global_force" }} onSave={save} />);
-    expect(screen.getByText("Global force")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Clear Scheduled cycle override" }));
-    await user.click(screen.getByRole("button", { name: "Save dreaming" }));
-    await waitFor(() => expect(save).toHaveBeenCalledWith({ dreaming: { stale: true } }));
-    expect(screen.getByRole("status")).toHaveTextContent("Saved");
-
-    save.mockRejectedValueOnce(new Error("save failed"));
-    await user.click(screen.getByRole("button", { name: "Save dreaming" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("save failed");
-  });
 
   it("covers shared UI fallbacks and dream presentation branches", async () => {
     expect(runOutcome({})).toBe("-");
@@ -579,41 +563,15 @@ describe("coverage contracts", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("recall failed");
   });
 
-  it("covers user dreams sorting, pagination, empty and error states", async () => {
-    const dream = { dream_id: "dream-1", team_id: team.id, hypothesis: "A hypothesis", what_if: "", possible_outcome: "", rationale: "Because", likelihood: 0.5, confidence: 0.8, status: "rejected", lane: "evidence_discovery", source_evidence_ids: ["e1"], cycle_run_id: "run-12345678", created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-02T00:00:00Z" };
-    const run = { run_id: "run-1", team_id: team.id, run_date: "2026-09-01", started_at: "2026-09-01T00:00:00Z", completed_at: "2026-09-01T00:01:00Z", input_relationships: 1, attempted_paths: 1, provider_proposals: 0, created_dreams: 0, rejected_dreams: 1, status: "failed", lane: "evidence_discovery", evidence_targets: 2, evaluated_evidence_targets: 1, outcome_summary: { provider_failed: 1 } };
-    const graphRun = { ...run, run_id: "run-graph", lane: "graph", input_relationships: 0, attempted_paths: 0, provider_proposals: 1, outcome_summary: { blocked_targets: 1 } };
-    const listDreams = vi.fn(async () => ({ items: [dream], next_cursor: "next" }));
-    const api = { dreamingStatus: vi.fn(async () => ({ effective_config: { enabled: true, force_enabled: true, start_time_local: "03:00", timezone: "UTC", max_outputs: 5, team_enabled: true, source: "global_force" }, latest_run: run, pending_count: 2 })), listDreamingRuns: vi.fn(async () => [run, graphRun]), listDreams } as unknown as UserApi;
-    const user = userEvent.setup();
-    render(<UserDreamsPanel api={api} />);
-    expect(await screen.findByText("A hypothesis")).toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText("Sort"), "created_at");
-    await user.selectOptions(screen.getByLabelText("Direction"), "asc");
-    await user.click(screen.getByRole("button", { name: "Next" }));
-    await waitFor(() => expect(api.listDreams).toHaveBeenCalledTimes(4));
-    await user.click(screen.getByRole("button", { name: "Previous" }));
-    await user.selectOptions(screen.getByLabelText("Rows"), "10");
-    await user.selectOptions(screen.getByLabelText("Status"), "rejected");
-    await user.click(screen.getByRole("button", { name: "Refresh dreams" }));
-    expect(screen.getByText("Evidence discovery")).toBeInTheDocument();
-    listDreams.mockResolvedValueOnce({ items: [], next_cursor: "" });
-    await user.selectOptions(screen.getByLabelText("Status"), "submitted");
-    expect(await screen.findByText("No dreams")).toBeInTheDocument();
-    const failingApi = { dreamingStatus: vi.fn(async () => { throw new Error("dreams unavailable"); }), listDreamingRuns: vi.fn(async () => []), listDreams: vi.fn(async () => ({ items: [], next_cursor: "" })) } as unknown as UserApi;
-    const view = render(<UserDreamsPanel api={failingApi} />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("dreams unavailable");
-    view.unmount();
-  });
 
   it("covers control dreams empty and error states", async () => {
-    const emptyApi = { getTeamDreamingStatus: vi.fn(async () => ({ effective_config: { enabled: false, force_enabled: false, start_time_local: "03:00", timezone: "UTC", max_outputs: 5, team_enabled: false, source: "team" }, latest_run: null, pending_count: 0 })), listTeamDreamingRuns: vi.fn(async () => []), listTeamDreams: vi.fn(async () => ({ items: [], next_cursor: "" })) } as unknown as ControlApi;
+    const emptyApi = { getTeamDreamingStatus: vi.fn(async () => ({ retired: true, latest_run: null, historical_proposed_count: 0 })), listTeamDreamingRuns: vi.fn(async () => []), listTeamDreams: vi.fn(async () => ({ items: [], next_cursor: "" })) } as unknown as ControlApi;
     const view = render(<ControlDreamsPanel api={emptyApi} team={team} />);
     expect(await screen.findByText("No dreams")).toBeInTheDocument();
     expect(screen.getByText("No runs")).toBeInTheDocument();
     view.unmount();
     const statusDream = (status: string) => ({ dream_id: `dream-${status}`, team_id: team.id, hypothesis: status, what_if: "", possible_outcome: "", rationale: "", likelihood: 0.1, confidence: 0.1, status, created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z" });
-    const statusApi = { getTeamDreamingStatus: vi.fn(async () => ({ effective_config: { enabled: true, force_enabled: false, start_time_local: "03:00", timezone: "UTC", max_outputs: 5, team_enabled: true, source: "global" }, latest_run: null, pending_count: 0 })), listTeamDreamingRuns: vi.fn(async () => []), listTeamDreams: vi.fn(async () => ({ items: [statusDream("reinforced"), statusDream("submitted"), statusDream("stale"), statusDream("proposed")], next_cursor: "" })) } as unknown as ControlApi;
+    const statusApi = { getTeamDreamingStatus: vi.fn(async () => ({ retired: true, latest_run: null, historical_proposed_count: 0 })), listTeamDreamingRuns: vi.fn(async () => []), listTeamDreams: vi.fn(async () => ({ items: [statusDream("reinforced"), statusDream("submitted"), statusDream("stale"), statusDream("proposed")], next_cursor: "" })) } as unknown as ControlApi;
     render(<ControlDreamsPanel api={statusApi} team={team} />);
     expect(await screen.findByText("reinforced")).toBeInTheDocument();
     expect(screen.getByText("submitted", { selector: "strong" })).toBeInTheDocument();

@@ -192,29 +192,22 @@ function assertTelemetrySnapshot(snapshot, expectedScope, expectedWindow) {
 
 async function validateDisabledFeatureReasons() {
   const recallBefore = await controlJSON("/config/recall-feedback", { method: "GET" });
-  const dreamingBefore = await controlJSON("/config/dreaming", { method: "GET" });
   try {
     await controlJSON("/config/recall-feedback", {
       method: "PATCH",
       body: JSON.stringify({ items: [{ key: "RECALL_FEEDBACK_ENABLED", value: "false" }] }),
     });
-    await controlJSON("/config/dreaming", {
-      method: "PATCH",
-      body: JSON.stringify({ items: [{ key: "DREAMING_ENABLED", value: "false" }] }),
-    });
     const snapshot = await controlJSON("/telemetry?window=15m&scope=system", { method: "GET" });
-    for (const id of ["llm_recall_used_rate", "llm_recall_quality_score", "dream_feedbacks"]) {
+    for (const id of ["llm_recall_used_rate", "llm_recall_quality_score"]) {
       const item = (snapshot.data.windowed_cards ?? []).find((card) => card.id === id);
       assert(item?.status === "inactive", `disabled feature item ${id} was not inactive`);
       assert(item.reason_code === "feature_disabled", `disabled feature item ${id} omitted feature_disabled`);
     }
+    const dream = (snapshot.data.windowed_cards ?? []).find((card) => card.id === "dream_feedbacks");
+    assert(dream?.status === "inactive" && dream.reason_code === "feature_retired", "Dream feedback telemetry must remain retired regardless of general feedback configuration");
     return true;
   } finally {
-    try {
-      await restoreConfig("/config/recall-feedback", recallBefore);
-    } finally {
-      await restoreConfig("/config/dreaming", dreamingBefore);
-    }
+    await restoreConfig("/config/recall-feedback", recallBefore);
   }
 }
 

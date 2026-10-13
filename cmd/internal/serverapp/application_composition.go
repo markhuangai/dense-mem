@@ -50,24 +50,22 @@ type applicationCompositionDependencies struct {
 	DiagnosticProtector    observability.DiagnosticProtector
 	Audit                  securityRejectionAuditAppender
 	AppConfig              settings.AppConfigService
-	Teams                  dream.TeamService
-	CommunitySummary       communityapp.SummaryProvider
-	CommunityStore         communitycontract.CommunityRepository
-	DreamGraphModel        string
-	ProviderCycleLease     time.Duration
-	CorrectionTimeout      time.Duration
-	CorrectionExecutor     lifecycle.LifecycleCorrectionExecutor
-	TelemetryPrometheus    *operations.PrometheusTelemetryService
+
+	CommunityStore communitycontract.CommunityRepository
+
+	CorrectionTimeout   time.Duration
+	CorrectionExecutor  lifecycle.LifecycleCorrectionExecutor
+	TelemetryPrometheus *operations.PrometheusTelemetryService
 }
 
 type applicationBundle struct {
-	Remember                rememberapp.Service
-	Session                 session.API
-	Recall                  recall.RecallService
-	Community               communityapp.Service
-	Lifecycle               lifecycle.LifecycleService
-	Context                 traceapp.Service
-	Dream                   dream.Service
+	Remember  rememberapp.Service
+	Session   session.API
+	Recall    recall.RecallService
+	Community communityapp.Service
+	Lifecycle lifecycle.LifecycleService
+	Context   traceapp.Service
+
 	ControlDream            dream.ControlService
 	ControlDreamDiagnostics dream.DiagnosticService
 	Graph                   graph.Service
@@ -93,18 +91,15 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 		Logger: deps.Logger, DiagnosticProtector: deps.DiagnosticProtector, Audit: deps.Audit,
 	}, deps.Knowledge, deps.GeneratorTransport, deps.RememberModel, deps.SessionEnabled)
 	recallService := buildRecallApplication(recallApplicationDependencies{
-		Search:          deps.RecallSearch,
-		Provider:        deps.RetryEmbeddingProvider,
-		Hypotheses:      deps.Dream,
-		Communities:     deps.CommunityStore,
-		CommunityConfig: deps.AppConfig,
-		OntologyConfig:  deps.AppConfig,
-		Metrics:         deps.Metrics,
+		Search:         deps.RecallSearch,
+		Provider:       deps.RetryEmbeddingProvider,
+		Communities:    deps.CommunityStore,
+		OntologyConfig: deps.AppConfig,
+		Metrics:        deps.Metrics,
 	})
 	communityService := buildCommunityApplication(communityApplicationDependencies{
 		Store:     deps.CommunityStore,
 		AppConfig: deps.AppConfig,
-		Summary:   deps.CommunitySummary,
 		Metrics:   deps.Metrics,
 	})
 	lifecycleService := buildLifecycleApplication(lifecycleApplicationDependencies{
@@ -113,26 +108,9 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 		CorrectionEmbeddingTimeout: deps.CorrectionTimeout,
 	})
 	contextService := buildContextApplication(deps.TraceStore)
-	dreamService := buildDreamApplication(dreamApplicationDependencies{
-		Remember:            rememberService,
-		Store:               deps.Dream,
-		ScheduledStore:      deps.Dream,
-		AppConfig:           deps.AppConfig,
-		Teams:               deps.Teams,
-		GeneratorTransport:  deps.GeneratorTransport,
-		Diagnostics:         deps.Dream,
-		DiagnosticProtector: deps.DiagnosticProtector,
-		GraphModel:          deps.DreamGraphModel,
-		Limits:              deps.AssessmentLimits,
-		Metrics:             deps.Metrics,
-		Logger:              deps.Logger,
-		ProviderCycleLease:  deps.ProviderCycleLease,
-	})
-	configureTelemetryFeatures(deps.TelemetryPrometheus, deps.AppConfig, dreamService)
+	configureTelemetryFeatures(deps.TelemetryPrometheus, deps.AppConfig)
 	controlDreamService := buildControlDreamApplication(controlDreamApplicationDependencies{
-		Store:     deps.Dream,
-		AppConfig: deps.AppConfig,
-		Teams:     deps.Teams,
+		Store: deps.Dream,
 	})
 	return applicationBundle{
 		Remember:                rememberService,
@@ -141,7 +119,6 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 		Community:               communityService,
 		Lifecycle:               lifecycleService,
 		Context:                 contextService,
-		Dream:                   dreamService,
 		ControlDream:            controlDreamService,
 		ControlDreamDiagnostics: dream.NewDiagnosticService(deps.Dream),
 		Graph:                   buildGraphApplication(deps.GraphStore),
@@ -150,6 +127,6 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 	}
 }
 
-func configureTelemetryFeatures(prometheus *operations.PrometheusTelemetryService, appConfig settings.AppConfigService, dreams dream.Service) {
-	operations.ConfigureTelemetryFeatures(prometheus, appConfig, dreams)
+func configureTelemetryFeatures(prometheus *operations.PrometheusTelemetryService, appConfig settings.AppConfigService) {
+	operations.ConfigureTelemetryFeatures(prometheus, appConfig)
 }

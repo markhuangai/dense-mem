@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/dream"
+
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/promptcatalog"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
@@ -30,19 +30,6 @@ func (s recallFeedbackConfigStub) RecallFeedbackRuntimeConfig(context.Context) (
 		(*s.calls)++
 	}
 	return domain.RecallFeedbackRuntimeConfig{Enabled: s.enabled}, nil
-}
-
-type dreamingConfigStub struct {
-	enabled bool
-	err     error
-	calls   *int
-}
-
-func (s dreamingConfigStub) EffectiveConfig(context.Context, string) (dream.EffectiveConfig, error) {
-	if s.calls != nil {
-		(*s.calls)++
-	}
-	return dream.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: s.enabled}}, s.err
 }
 
 // testLogger returns a LogProvider that writes to a bytes.Buffer.
@@ -472,65 +459,6 @@ func TestMCP_ToolsListHidesRecallFeedbackWhenRuntimeDisabled(t *testing.T) {
 	}
 	if resp.Error == nil || resp.Error.Code != errCodeMethodNotFound {
 		t.Fatalf("tools/call error = %+v; want method not found", resp.Error)
-	}
-}
-
-func TestMCP_RuntimeFeaturePolicyIsResolvedOncePerRequest(t *testing.T) {
-	logger, _ := testLogger(t)
-	feedbackCalls := 0
-	dreamCalls := 0
-	feedback := recallFeedbackConfigStub{enabled: true, calls: &feedbackCalls}
-	dreams := dreamingConfigStub{enabled: true, calls: &dreamCalls}
-	reg := registry.New()
-	for _, name := range []string{
-		registry.ToolSubmitRecallSessionFeedback,
-		registry.ToolListDreams,
-		registry.ToolGetDream,
-		registry.ToolResolveDreamFeedback,
-	} {
-		if err := reg.Register(registry.Tool{Name: name}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	server := NewServerWithScopesTeamContextAndRuntimeConfig(reg, "profile-a", nil, TeamContext{}, logger, feedback, dreams)
-	runRPC(t, server, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
-	if feedbackCalls != 1 || dreamCalls != 1 {
-		t.Fatalf("feature config calls after tools/list = feedback:%d dreams:%d; want one each", feedbackCalls, dreamCalls)
-	}
-
-	feedbackCalls = 0
-	dreamCalls = 0
-	ordinaryRegistry := registry.New()
-	if err := ordinaryRegistry.Register(registry.Tool{
-		Name: "probe",
-		Invoke: func(context.Context, string, map[string]any) (map[string]any, error) {
-			return map[string]any{"ok": true}, nil
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	server = NewServerWithScopesTeamContextAndRuntimeConfig(ordinaryRegistry, "profile-a", nil, TeamContext{}, logger, feedback, dreams)
-	runRPC(t, server, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"probe","arguments":{}}}`)
-	if feedbackCalls != 0 || dreamCalls != 0 {
-		t.Fatalf("unrelated tool feature config calls = feedback:%d dreams:%d; want none", feedbackCalls, dreamCalls)
-	}
-
-	invokeRegistry := registry.New()
-	if err := invokeRegistry.Register(registry.Tool{
-		Name: registry.ToolListDreams,
-		Invoke: func(ctx context.Context, _ string, _ map[string]any) (map[string]any, error) {
-			if !registry.DreamingEnabled(ctx, dreams) {
-				t.Fatal("resolved Dreaming policy was not available to the invoker")
-			}
-			return map[string]any{"ok": true}, nil
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	server = NewServerWithScopesTeamContextAndRuntimeConfig(invokeRegistry, "profile-a", nil, TeamContext{}, logger, feedback, dreams)
-	runRPC(t, server, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_dreams","arguments":{}}}`)
-	if feedbackCalls != 0 || dreamCalls < 1 {
-		t.Fatalf("feature config calls after Dream tools/call = feedback:%d dreams:%d; want Dreaming policy resolution only", feedbackCalls, dreamCalls)
 	}
 }
 

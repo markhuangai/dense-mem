@@ -7,7 +7,6 @@ export type UserTeam = {
   name: string;
   description: string;
   config?: Record<string, unknown> | null;
-  dreaming_effective?: DreamingEffectiveConfig | null;
   created_at: string;
   updated_at: string;
 };
@@ -95,97 +94,6 @@ export type ListResponse<T> = {
   total?: number;
 };
 
-export type DreamingRuntimeConfig = {
-  enabled: boolean;
-  force_enabled: boolean;
-  start_time_local: string;
-  timezone: string;
-  max_outputs: number;
-};
-
-export type DreamingEffectiveConfig = DreamingRuntimeConfig & {
-  team_enabled: boolean;
-  source: "global" | "team" | "global_force" | string;
-};
-
-export type Dream = {
-  dream_id: string;
-  team_id: string;
-  hypothesis: string;
-  what_if: string;
-  possible_outcome: string;
-  rationale: string;
-  likelihood: number;
-  confidence: number;
-  lane?: "graph" | "evidence_discovery" | string;
-  source_evidence_ids?: string[];
-  status: "proposed" | "reinforced" | "stale" | "rejected" | "submitted" | string;
-  cycle_run_id?: string;
-  generator_model?: string;
-  source_refs?: Array<{ type: string; id: string }>;
-  derivations?: Array<{
-    premise_position: number;
-    relationship_id: string;
-    relationship_version: number;
-    source_group_key: string;
-    quote: string;
-    authority: string;
-  }>;
-  evidence_derivations?: Array<{
-    evidence_id: string;
-    source_group_key: string;
-    span_start: number;
-    span_end: number;
-    quote: string;
-    authority: string;
-  }>;
-  invalidated_reason?: string;
-  created_at: string;
-  updated_at: string;
-};
-
-export type DreamSort = "updated_at" | "created_at";
-export type DreamDirection = "asc" | "desc";
-
-export type DreamQuery = {
-  limit?: number;
-  status?: Dream["status"] | "";
-  cursor?: string;
-  sort?: DreamSort;
-  direction?: DreamDirection;
-};
-
-export type DreamRun = {
-  run_id: string;
-  team_id: string;
-  run_date: string;
-  started_at: string;
-  completed_at: string;
-  input_relationships: number;
-  created_dreams: number;
-  rejected_dreams: number;
-  scheduled_for?: string;
-  attempt_count?: number;
-  provider_model?: string;
-  provider_turns?: number;
-  provider_input_tokens?: number;
-  provider_output_tokens?: number;
-  attempted_paths?: number;
-  provider_proposals?: number;
-  lane?: "graph" | "evidence_discovery" | string;
-  evidence_targets?: number;
-  evaluated_evidence_targets?: number;
-  outcome_summary?: Record<string, number>;
-  status: string;
-  error?: string;
-};
-
-export type DreamStatus = {
-  effective_config: DreamingEffectiveConfig;
-  latest_run?: DreamRun | null;
-  pending_count: number;
-};
-
 export type RecallCommunity = {
   community_id: string;
   logical_community_id: string;
@@ -210,7 +118,6 @@ export type RecallHit = {
   keyword_rank?: number;
   final_score?: number;
   discovery_paths?: RecallDiscoveryPath[];
-  related_hypotheses?: unknown[];
   community?: RecallCommunity;
 };
 
@@ -265,7 +172,6 @@ export type RecallPayload = {
   related_communities?: RecallCommunity[];
   discovery_paths?: RecallDiscoveryPath[];
   discovery_guidance?: string;
-  related_hypotheses?: unknown[];
   search_states?: {
     evidence?: string;
     relationships?: string;
@@ -483,7 +389,6 @@ export class UserApi {
         community,
         relationships: community.relationships ?? [],
         discovery_paths: communityPaths,
-        related_hypotheses: data.related_hypotheses ?? [],
         semantic_rank: community.rank || index + 1,
         final_score: community.rank ? 1 / community.rank : undefined,
       }));
@@ -493,7 +398,6 @@ export class UserApi {
         relationships: [relationship],
         evidences: [],
         discovery_paths: communityPaths,
-        related_hypotheses: data.related_hypotheses ?? [],
         semantic_rank: index + 1,
         final_score: relationship.search_state === "current" ? 1 : undefined,
       }));
@@ -502,7 +406,6 @@ export class UserApi {
         evidences: [evidence],
         relationships: relationshipsForEvidence(communityPaths, evidence.evidence_id),
         discovery_paths: communityPaths,
-        related_hypotheses: data.related_hypotheses ?? [],
         final_score: evidence.rank ? 1 / evidence.rank : undefined,
         semantic_rank: evidence.rank,
       }));
@@ -542,34 +445,6 @@ export class UserApi {
   async nodeDetail(type: string, id: string): Promise<GraphNode> {
     const params = new URLSearchParams({ type, id });
     const payload = await this.request<Envelope<GraphNode>>(`/ui/api/node-detail?${params.toString()}`, { cache: "no-store" });
-    return payload.data;
-  }
-
-  async dreamingStatus(): Promise<DreamStatus> {
-    const payload = await this.request<Envelope<DreamStatus>>("/ui/api/dreaming/status");
-    return payload.data;
-  }
-
-  async listDreamingRuns(limit = 20): Promise<DreamRun[]> {
-    const payload = await this.request<Envelope<DreamRun[]>>(`/ui/api/dreaming/runs?limit=${limit}`);
-    return payload.data;
-  }
-
-  async listDreams(query: DreamQuery = {}): Promise<ListResponse<Dream>> {
-    const params = new URLSearchParams({ limit: String(query.limit ?? 20) });
-    if (query.status) {
-      params.set("status", query.status);
-    }
-    if (query.cursor) {
-      params.set("cursor", query.cursor);
-    }
-    if (query.sort) {
-      params.set("sort", query.sort);
-    }
-    if (query.direction) {
-      params.set("direction", query.direction);
-    }
-    const payload = await this.request<Envelope<ListResponse<Dream>>>(`/ui/api/dreams?${params.toString()}`);
     return payload.data;
   }
 

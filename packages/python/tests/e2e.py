@@ -234,7 +234,6 @@ async def main():
             "results",
             "related_relationships",
             "related_communities",
-            "related_hypotheses",
             "conflicts",
             "search_states",
             "degradations",

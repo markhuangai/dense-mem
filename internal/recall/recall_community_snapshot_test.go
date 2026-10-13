@@ -3,6 +3,7 @@ package recall
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -78,7 +79,7 @@ func TestRecallUsesCurrentCommunitySnapshotAndCoverage(t *testing.T) {
 	}
 	svc := NewRecallService(RecallDependencies{
 		Search: search, Communities: communities,
-		CommunityConfig: recallCommunityConfigStub{enabled: true},
+		OntologyConfig: recallOntologyConfigStub{enabled: true},
 	})
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
@@ -114,14 +115,14 @@ func TestRecallCommunitiesReportsTemporalDegradation(t *testing.T) {
 	validAt := time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC)
 	communities := &recallCommunitySnapshotStub{}
 	svc := &recallService{
-		communities:     communities,
-		communityConfig: recallCommunityConfigStub{enabled: true},
+		communities:    communities,
+		ontologyConfig: recallOntologyConfigStub{enabled: true},
 	}
 
 	records, paths, degradation := svc.recallCommunities(context.Background(), uuid.NewString(), RecallRequest{
 		CommunityLimit: &limit,
 		ValidAt:        &validAt,
-	}, map[string]struct{}{}, nil, nil, true, false)
+	}, map[string]struct{}{}, nil, nil, true, true)
 	require.Empty(t, records)
 	require.Empty(t, paths)
 	require.Equal(t, "community_temporal_not_supported", degradation.Code)
@@ -129,13 +130,13 @@ func TestRecallCommunitiesReportsTemporalDegradation(t *testing.T) {
 	require.Empty(t, communities.recallInput.TeamID)
 }
 
-func TestRecallCommunitiesReportsTerminalRunStatuses(t *testing.T) {
+func TestRecallCommunitiesDisabledSkipsProjectionReads(t *testing.T) {
 	limit := 1
-	for _, status := range []string{"failed", "cancelled", "too_large", "running"} {
-		communities := &recallCommunityRunStub{status: status}
+	for _, configured := range []bool{false, true} {
+		communities := &recallCommunitySnapshotStub{recallErr: errors.New("must not query disabled organization")}
 		svc := &recallService{
-			communities:     communities,
-			communityConfig: recallCommunityConfigStub{enabled: true},
+			communities:    communities,
+			ontologyConfig: recallOntologyConfigStub{enabled: configured},
 		}
 
 		records, paths, degradation := svc.recallCommunities(context.Background(), uuid.NewString(), RecallRequest{
@@ -143,28 +144,22 @@ func TestRecallCommunitiesReportsTerminalRunStatuses(t *testing.T) {
 		}, map[string]struct{}{}, nil, nil, true, false)
 		require.Empty(t, records)
 		require.Empty(t, paths)
-		require.NotNil(t, degradation)
-		require.True(t, degradation.Optional)
+		require.Nil(t, degradation)
+		require.Empty(t, communities.snapshotInput.TeamID)
 	}
 }
 
-func TestRecallCommunitiesRejectsIncompatibleCompletedSnapshot(t *testing.T) {
+func TestRecallCommunitiesReportsProjectionReadFailure(t *testing.T) {
 	limit := 1
-	communities := &recallCommunityRunStub{
-		status:            "completed",
-		algorithmKind:     "connected_components",
-		algorithmVersion:  "v1",
-		profileVersion:    communitycontract.CommunityProfileVersion,
-		configurationHash: "sha256:legacy",
-	}
+	communities := &recallCommunitySnapshotStub{recallErr: errors.New("projection read failed")}
 	svc := &recallService{
-		communities:     communities,
-		communityConfig: recallCommunityConfigStub{enabled: true},
+		communities:    communities,
+		ontologyConfig: recallOntologyConfigStub{enabled: true},
 	}
 
 	records, paths, degradation := svc.recallCommunities(context.Background(), uuid.NewString(), RecallRequest{
 		CommunityLimit: &limit,
-	}, map[string]struct{}{}, nil, nil, true, false)
+	}, map[string]struct{}{}, nil, nil, true, true)
 
 	require.Empty(t, records)
 	require.Empty(t, paths)
@@ -191,22 +186,6 @@ type recallCommunitySnapshotStub struct {
 	records       []communitycontract.CommunityRecallRecord
 	recallErr     error
 	snapshotInput communitycontract.CommunityRecallInput
-}
-
-type recallCommunityRunStub struct {
-	recallCommunitySnapshotStub
-	status            string
-	algorithmKind     string
-	algorithmVersion  string
-	profileVersion    string
-	configurationHash string
-}
-
-func (s *recallCommunityRunStub) LatestCommunityRun(_ context.Context, _ string) (*communitycontract.CommunityRun, error) {
-	return &communitycontract.CommunityRun{
-		Status: s.status, AlgorithmKind: s.algorithmKind, AlgorithmVersion: s.algorithmVersion,
-		ProfileVersion: s.profileVersion, ConfigurationHash: s.configurationHash,
-	}, nil
 }
 
 func (s *recallCommunitySnapshotStub) ListCommunitySemanticGroups(_ context.Context, _ communitycontract.CommunityCoverageInput) ([]string, error) {

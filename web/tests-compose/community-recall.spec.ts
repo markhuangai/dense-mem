@@ -13,12 +13,12 @@ test("control workspace exposes the current community snapshot", async ({ page }
 
   await expect(page.getByText("Communities", { exact: true })).toBeVisible();
   await expect(page.getByText("Community snapshot", { exact: true })).toBeVisible();
-  await expect(page.getByText(/Nightly enabled|Nightly disabled/)).toBeVisible();
+  await expect(page.getByText(/Ontology enabled|Ontology disabled/)).toBeVisible();
 });
 
 test("user recall renders a community result and the exact nested contract", async ({ page, request }) => {
   const response = await request.get(`${userUrl}/ui/api/recall`, {
-    params: { query: "Dense-Mem Runtime PostgreSQL", limit: "5" },
+    params: { query: "Atlas Redis", limit: "5" },
     headers: { Authorization: `Bearer ${apiKey}` },
   });
   expect(response.status()).toBe(200);
@@ -47,16 +47,20 @@ test("user recall renders a community result and the exact nested contract", asy
   await page.getByLabel("API key").fill(apiKey);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("heading", { name: "Dense-Mem Knowledge" })).toBeVisible();
-  await page.getByLabel("Keyword").fill("Dense-Mem Runtime PostgreSQL");
+  await page.getByLabel("Keyword").fill("Atlas Redis");
   const recallResponsePromise = page.waitForResponse((response) => {
     const url = new URL(response.url());
-    return response.request().method() === "GET" && url.pathname === "/ui/api/recall" && url.searchParams.get("query") === "Dense-Mem Runtime PostgreSQL";
+    return response.request().method() === "GET" && url.pathname === "/ui/api/recall" && url.searchParams.get("query") === "Atlas Redis";
   });
   await page.getByRole("button", { name: "Search", exact: true }).click();
-  expect((await recallResponsePromise).status()).toBe(200);
+  const searchResponse = await recallResponsePromise;
+  expect(searchResponse.status()).toBe(200);
+  const searchBody = await searchResponse.json() as { data: { related_communities: unknown[] } };
 
   await expect(page.getByRole("listbox", { name: "Recall result list" })).toBeVisible();
-  await expect(page.getByRole("listbox", { name: "Recall result list" }).getByText("Community", { exact: true })).toBeVisible();
+  const communityResults = page.getByRole("listbox", { name: "Recall result list" }).getByText("Community", { exact: true });
+  await expect(communityResults).toHaveCount(searchBody.data.related_communities.length);
+  await expect(communityResults.first()).toBeVisible();
 });
 
 async function openControlPanel(page: Page) {

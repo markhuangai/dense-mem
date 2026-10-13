@@ -6,6 +6,9 @@
 - Refines: ADR 0003, ADR 0004, ADR 0005, ADR 0006
 - Maintainer approval: issues #241, #242, #243, and #245 and their approved implementation plans
 
+ADR 0010 supersedes the Dream client/generation requirements and the transitional
+community master switch and legacy fallback. Other decisions remain in force.
+
 ## Decision
 
 Ontology is derived organization metadata over canonical Knowledge records.

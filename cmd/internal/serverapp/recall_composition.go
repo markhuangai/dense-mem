@@ -8,23 +8,21 @@ import (
 )
 
 type recallApplicationDependencies struct {
-	Search          recallcontract.SearchRepository
-	Provider        embeddingcontract.EmbeddingProviderInterface
-	Hypotheses      recall.RecallHypothesisRepository
-	Communities     recall.RecallCommunityRepository
-	CommunityConfig recall.RecallCommunityConfigProvider
-	OntologyConfig  recall.RecallOntologyConfigProvider
-	Metrics         observability.DiscoverabilityMetrics
+	Search   recallcontract.SearchRepository
+	Provider embeddingcontract.EmbeddingProviderInterface
+
+	Communities recall.RecallCommunityRepository
+
+	OntologyConfig recall.RecallOntologyConfigProvider
+	Metrics        observability.DiscoverabilityMetrics
 }
 
 func buildRecallApplication(deps recallApplicationDependencies) recall.RecallService {
 	return recall.NewRecallService(recall.RecallDependencies{
-		Search:          deps.Search,
-		Provider:        deps.Provider,
-		Hypotheses:      deps.Hypotheses,
-		Communities:     deps.Communities,
-		CommunityConfig: deps.CommunityConfig,
-		OntologyConfig:  deps.OntologyConfig,
-		Metrics:         deps.Metrics,
+		Search:         deps.Search,
+		Provider:       deps.Provider,
+		Communities:    deps.Communities,
+		OntologyConfig: deps.OntologyConfig,
+		Metrics:        deps.Metrics,
 	})
 }

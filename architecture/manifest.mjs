@@ -78,7 +78,6 @@ const requiredSourceOwnership = Object.freeze([
   ["cmd/internal/serverapp/remember_composition.go", "remember-application"],
   ["internal/tools/registry/remember_bindings.go", "remember-application"],
   ["cmd/internal/serverapp/dream_composition.go", "dream-application"],
-  ["internal/tools/registry/dream_bindings.go", "dream-application"],
   ["cmd/internal/serverapp/trace_composition.go", "context-application"],
   ["internal/tools/registry/trace_bindings.go", "context-application"],
   ["cmd/internal/serverapp/graph_composition.go", "graph-application"],

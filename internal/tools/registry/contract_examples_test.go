@@ -98,30 +98,6 @@ func TestRememberExampleRetainsTheWholePayloadForReplay(t *testing.T) {
 	}
 }
 
-func TestDreamConfirmationExampleRequiresIndependentEvidence(t *testing.T) {
-	example := contractToolExamples()[ToolResolveDreamFeedback]
-	if len(example.Continuations) != 1 {
-		t.Fatalf("confirmation continuations = %d, want 1", len(example.Continuations))
-	}
-	input := instantiateContractExampleRequest(t, example.Continuations[0].Request)
-	if input["decision"] != "confirm_true" {
-		t.Fatalf("confirmation decision = %#v", input["decision"])
-	}
-	evidence := input["evidence"].([]any)
-	if len(evidence) != 1 || !strings.Contains(evidence[0].(map[string]any)["content"].(string), "independent") {
-		t.Fatalf("confirmation evidence = %#v", evidence)
-	}
-	relationship := input["relationships"].([]any)[0].(map[string]any)
-	if _, exists := relationship["known_evidence_ids"]; exists {
-		t.Fatalf("confirmation example reused known evidence: %#v", relationship)
-	}
-	tool, err := requireTool(toolMap(t), ToolResolveDreamFeedback)
-	if err != nil {
-		t.Fatal(err)
-	}
-	require.NoError(t, ValidateContractInput(tool, input, tool.RequiredScopes))
-}
-
 func TestCorrectionExampleUsesReturnedTraceState(t *testing.T) {
 	description := contractToolDescription(ToolCorrectRelationship)
 	for _, want := range []string{
@@ -215,12 +191,6 @@ func TestContractToolExamplesDescribeBoundedRecovery(t *testing.T) {
 		}
 	}
 
-	dream := contractToolDescription(ToolResolveDreamFeedback)
-	for _, want := range []string{"hypothesis_id, status, and optional submission_id", "structured terminal failure", "next_action", "remediation", "bypass a conflict", "corrected resubmission", "expressly requires it"} {
-		if !strings.Contains(dream, want) {
-			t.Fatalf("Dream guidance missing %q", want)
-		}
-	}
 }
 
 func continuationRequests(continuations []contractToolExampleContinuation) []map[string]any {

@@ -21,15 +21,14 @@ func (s failingEvaluationAudit) Append(context.Context, accessservice.AuditLogEn
 func TestEvaluationAuditFailureBlocksEvaluationTool(t *testing.T) {
 	sentinel := errors.New("audit unavailable")
 	reg, err := BuildActive(Dependencies{
-		DreamBindings:      DreamBindings{Service: &stubDreamService{}},
 		EvaluationBindings: EvaluationBindings{Audit: failingEvaluationAudit{err: sentinel}},
 	})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
-	tool, ok := reg.Get("eval_run_dream_cycle")
+	tool, ok := reg.Get("eval_list_knowledge_refs")
 	if !ok {
-		t.Fatal("evaluation build omitted eval_run_dream_cycle")
+		t.Fatal("evaluation build omitted eval_list_knowledge_refs")
 	}
 	_, err = tool.Invoke(context.Background(), "team-id", map[string]any{})
 	if !errors.Is(err, sentinel) {

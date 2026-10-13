@@ -150,7 +150,7 @@ boundary; v2.6.2 evidence-first activation runs after it. For the v2.6.1
 migration, stop every server instance, take the required PostgreSQL snapshot,
 and apply the stopped-service boundary before starting the new binary. Independent databases
 must each be migrated by a server connected to that database. Administration
-stays on the private control portal/API, while dreaming and automatic conflict
+stays on the private control portal/API, while ontology maintenance and automatic conflict
 review run as server background workers.
 
 The image healthcheck allows the default 30-minute migration window and becomes
@@ -194,8 +194,7 @@ tokens. Neurons are calculated from reported tokens using the published BGE-M3
 rate of 1075 per million input tokens; they are not measured billing usage.
 Missing provider usage remains unavailable.
 
-`AI_REMEMBER_MODEL`, `AI_CONFLICT_REVIEW_MODEL`, `AI_DREAM_GRAPH_MODEL`,
-and `AI_COMMUNITY_SUMMARY_MODEL` are optional
+`AI_REMEMBER_MODEL` and `AI_CONFLICT_REVIEW_MODEL` are optional
 overrides for their existing AI sessions. An unset or whitespace-only override
 uses `AI_VERIFIER_MODEL`; a configured model failure is returned without trying
 the fallback model.
@@ -260,15 +259,24 @@ anchor for an earlier exact name span. Inaccessible or stale known evidence leav
 Relationship unsupported without revealing whether an ID exists. The aggregate known
 evidence content in one request is bounded to 20,000 Unicode code points before
 assessor boundary expansion; larger requests return `input_budget_exceeded`. The
-current public contract is `dense-mem.v2.6.7`; `dense-mem.v2.6.6`, `dense-mem.v2.6.3`, and
-`dense-mem.v2.6.2` remain accepted for compatible terminal replays. Historical
+current public contract is `dense-mem.v2.7.0`; v2.6.8, v2.6.7, v2.6.6, v2.6.3, and
+v2.6.2 remain accepted for compatible terminal Remember replays. Historical
 requests lacking proposals or complete citations fail current validation even
 with their original keys; stored history is preserved.
 
-Dream generation now uses graph inference only. Hourly evidence discovery is
-retired; historical discovery Dreams remain readable and confirmable by their
-owners. Apply the retirement migration with old service instances stopped;
-unfinished discovery runs are cancelled irreversibly without deleting history.
+Dream generation, client hypothesis reads, confirmation, and legacy community
+clustering are retired. The private control portal retains Dream history,
+provenance, diagnostics, and diagnostic retention. Apply the retirement migration
+with every old server instance stopped, then start the matching v2.7.0 binary.
+Unfinished legacy runs and reservations are cancelled irreversibly; completed
+history and canonical memory remain intact. Down never restarts retired work.
+
+The existing ontology switch is the sole organization control. Stored values
+are preserved and missing values default off. Enabling admits active teams on
+the next minute tick under existing pause, schedule, concurrency, and global
+token bounds. Disabling stops admissions and drains dispatched work. Community
+reads use current topic projections; disabled ontology never restores old
+community snapshots. Retired per-team Dream flags do not affect enrollment.
 
 To replace a specific current evidence item you own, put its UUID in the new
 item's `supersedes_evidence_ids`. Direct targeting is separate from advancing a
@@ -421,12 +429,8 @@ visibility checks to `tools/call`.
 | `recall_memory` | Production | Production and evaluation images | Recall active evidence contexts and Relationship handles. When enabled features produce an actionable follow-up, the result includes `suggested_actions`. |
 | `trace_memory` | Production | Production and evaluation images | Trace one same-team Relationship through evidence, decisions, and lineage. |
 | `submit_recall_session_feedback` | Production | Conditional in both images | Record bounded session-level recall quality feedback. Registered only while recall feedback is enabled. |
-| `list_dreams` | Production | Conditional in both images | List reviewable Hypotheses without treating them as memory. Registered only when Dreaming is effective for the authenticated team. |
-| `get_dream` | Production | Conditional in both images | Fetch one authorized Hypothesis and its source references under the same team Dreaming gate. |
-| `resolve_dream_feedback` | Production | Conditional in both images | Confirm independently supported or refuted Hypotheses; uncertain items remain unresolved. Uses the same team Dreaming gate. |
 | `export_memory_pack` | Production | Production and evaluation images | Export selected active Relationships with support provenance. |
 | `eval_list_knowledge_refs` | Evaluation harness | Evaluation image only | Page stable team-scoped knowledge references used to map seed documents to stored records. |
-| `eval_run_dream_cycle` | Evaluation harness | Evaluation image only | Run an isolated, bounded manual Dream cycle, optionally with seed Hypotheses, for evaluation. |
 | `eval_run_recall_case` | Evaluation harness | Evaluation image only | Execute current recall logic and return ranked/context references for deterministic scoring. |
 
 The private control portal exposes bounded Dream investigation reads at
@@ -457,9 +461,8 @@ current published organization.
 
 When recall feedback is enabled and a snapshot is stored, clients may voluntarily
 call `submit_recall_session_feedback` with `recall_id`; Recall does not prompt for
-session feedback. When effective team Dreaming is enabled and recall returns
-Hypotheses, suggested actions retain `resolve_dream_feedback`: confirm true or false
-only with independent evidence and leave uncertain Hypotheses unresolved.
+session feedback. General feedback does not overwrite historical Dream-feedback
+records. Recall does not return or suggest actions for Hypotheses.
 
 For local evaluation, the committed compose example builds the evaluation
 target and loads the ignored repository-root `.env` by default:
@@ -549,7 +552,6 @@ to these identifiers. The metric names and labels remain available to operators.
 | `verifier_requests`, `verifier_tokens`, `avg_verifier_latency` | `densemem_verifier_requests_total`, `densemem_verifier_tokens_total`, `densemem_verifier_duration_seconds` | Assessor and provider instrumentation in `internal/observability` | Missing provider usage stays unavailable when verifier calls occurred. |
 | `recalls`, `avg_recall_results`, `p95_recall_latency`, `recall_results`, `recall_p95_latency` | `densemem_recall_requests_total`, `densemem_recall_results`, `densemem_recall_duration_seconds` | `internal/recall` | Results and latency are unavailable until a Recall request provides a sample. |
 | `llm_recall_used_rate`, `llm_recall_answer_supported_rate`, `llm_recall_quality_score`, `llm_recall_missing_context_rate`, `llm_recall_irrelevant_rate` | `densemem_recall_feedback_total`, `densemem_recall_feedback_quality_score` | `internal/recall/feedback.go` | No host feedback is unavailable, not a negative judgment. `llm_recall_feedback_events` is an internal parent activity series. |
-| `dream_feedbacks` | `densemem_dream_feedback_total` | `internal/dream` | An ignore count comes from an explicit ignore action; absence of feedback creates no event. |
 | `remember_requests`, `avg_remember_duration`, `p95_remember_duration` | `densemem_remember_acknowledgements_total`, `densemem_remember_acknowledgement_duration_seconds` | `internal/remember` | A successful scrape with no acknowledgements is zero. |
 | `assessor_requests`, `assessor_request_failures`, `assessor_validation_failures`, `assessor_tokens`, `avg_assessor_duration`, `assessor_duration`, `assessor_terminal_failures` | `densemem_assessor_requests_total`, `densemem_assessor_validation_failures_total`, `densemem_assessor_tokens_total`, `densemem_assessor_duration_seconds`, `densemem_assessor_terminal_failures_total` | Integrated assessor instrumentation | Token usage is unavailable when the provider does not report usage. |
 | `ai_cost_usd`, `verifier_cost_usd`, `embedding_cost_usd` | `densemem_ai_operation_cost_usd_total`, `densemem_ai_operation_unpriced_total` | `internal/observability/telemetry_cost.go` | Missing usage, pricing, or rate configuration remains unavailable, not zero cost. |
@@ -562,16 +564,12 @@ Additional operational families are `densemem_mcp_transport_requests_total`,
 `densemem_logical_operation_attempts_total`,
 `densemem_logical_operation_duration_seconds`,
 `densemem_logical_operation_recoveries_total`,
-`densemem_remember_phase_duration_seconds`, `densemem_dream_cycle_attempts_total`,
-`densemem_dream_cycle_duration_seconds`, `densemem_dream_provider_attempts_total`,
-`densemem_dream_provider_duration_seconds`, `densemem_dream_feedback_actions_total`,
-`densemem_recall_hypothesis_expansions_total`,
-`densemem_recall_hypotheses_returned_total`,
+`densemem_remember_phase_duration_seconds`,
 `densemem_operation_provider_tokens_total`, and
 `densemem_operation_provider_usage_unpriced_total`. They distinguish MCP HTTP
 status from logical tool outcome, Remember execution/replay/conflict/recovery,
-bounded phase and provider usage, Dream run/provider outcomes, Recall hypothesis
-expansion, and canonical ledger state. New families use closed labels without
+bounded phase and provider usage, and canonical ledger state. Historical Dream
+metrics are marked retired and do not report an actionable hypothesis backlog. New families use closed labels without
 team, profile, request, model, or content values. Their histogram buckets
 include the 180-second Remember budget and larger overruns. The canonical ledger collector reports
 `densemem_operational_ledger_collection_success`; a zero collection status
@@ -620,7 +618,7 @@ Enter registered scenario names in `scenarios`, separated by commas, or `all`
 for the entire scenario registry. Leave it blank for PostgreSQL-only testing.
 For `postgres_shards`, enter `0`, `1`, `2`, a comma-separated subset, or `all`;
 leave it blank for E2E-only testing. Select at least one group. The scenario
-named `full` runs its existing dreaming/telemetry/portal coverage; `all` runs
+named `full` runs Dream retirement, historical inspection, telemetry, and portal coverage; `all` runs
 every registered scenario. Available names live in
 [`scripts/e2e-scenarios.json`](scripts/e2e-scenarios.json).
 

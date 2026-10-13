@@ -243,6 +243,6 @@ func TestTeamOwnedDreamingMigrationCanonicalizesLegacyRows(t *testing.T) {
 	assert.Equal(t, 1, canonicalNullHashCount)
 	assert.Equal(t, 1, nullHashAliasCount)
 	assert.True(t, strings.HasPrefix(backfilledHash, "sha256:"))
-	assert.Equal(t, "true", enabled)
+	assert.Equal(t, "false", enabled, "the full upgrade retires Dream enablement while preserving canonicalized history")
 	assert.Zero(t, legacyConfigCount)
 }

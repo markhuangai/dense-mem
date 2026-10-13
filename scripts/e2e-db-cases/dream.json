@@ -24,172 +24,25 @@
       "source": "internal/storage/postgres/dream_diagnostics_migration_integration_test.go"
     },
     {
-      "id": "repository/TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment",
-      "package": "./internal/dream/postgres",
-      "run": "^TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/dream_repository_integration_test.go"
-    },
-    {
-      "id": "repository/TestDreamDiagnosticDeadlineMarkerPersistsWithPartialPhaseTrace",
-      "package": "./internal/dream/postgres",
-      "run": "^TestDreamDiagnosticDeadlineMarkerPersistsWithPartialPhaseTrace$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/dream_diagnostics_integration_test.go"
-    },
-    {
-      "id": "repository/TestDreamDiagnosticRunSummaryRetriesSerializeConcurrently",
-      "package": "./internal/dream/postgres",
-      "run": "^TestDreamDiagnosticRunSummaryRetriesSerializeConcurrently$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/dream_diagnostics_integration_test.go"
-    },
-    {
-      "id": "repository/TestDreamRepositoryPersistsTeamScopedPredicateHypothesis",
-      "package": "./internal/dream/postgres",
-      "run": "^TestDreamRepositoryPersistsTeamScopedPredicateHypothesis$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/dream_repository_integration_test.go"
-    },
-    {
-      "id": "repository/TestDreamDiagnosticsAreTeamScopedAndExpirePayloads",
-      "package": "./internal/dream/postgres",
-      "run": "^TestDreamDiagnosticsAreTeamScopedAndExpirePayloads$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/dream_diagnostics_integration_test.go"
-    },
-    {
-      "id": "repository/TestDreamDiagnosticsPersistBothLanesWithScopedPagination",
-      "package": "./internal/dream/postgres",
-      "run": "^TestDreamDiagnosticsPersistBothLanesWithScopedPagination$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/dream_diagnostics_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallHypothesesRanksSourceEndpointAndLiteralMatches",
-      "package": "./internal/dream/postgres",
-      "run": "^TestRecallHypothesesRanksSourceEndpointAndLiteralMatches$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/recall_hypothesis_context_integration_test.go"
-    },
-    {
-      "id": "repository/TestHypothesisConfirmationLockAdmitsOneCallback",
-      "package": "./internal/dream/postgres",
-      "run": "^TestHypothesisConfirmationLockAdmitsOneCallback$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/dream_confirmation_lock_integration_test.go"
-    },
-    {
-      "id": "repository/TestHypothesisConfirmationLockAllowsNestedRepositoryUseWithinPoolBudget",
-      "package": "./internal/dream/postgres",
-      "run": "^TestHypothesisConfirmationLockAllowsNestedRepositoryUseWithinPoolBudget$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/dream_confirmation_lock_integration_test.go"
-    },
-    {
-      "id": "repository/TestHypothesisConfirmationLockBoundsDifferentHypothesesWithinPoolBudget",
-      "package": "./internal/dream/postgres",
-      "run": "^TestHypothesisConfirmationLockBoundsDifferentHypothesesWithinPoolBudget$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/dream_confirmation_lock_integration_test.go"
-    },
-    {
-      "id": "repository/TestHypothesisConfirmationLockDiscardsFailedCleanupConnection",
-      "package": "./internal/dream/postgres",
-      "run": "^TestHypothesisConfirmationLockDiscardsFailedCleanupConnection$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/dream_confirmation_lock_integration_test.go"
-    },
-    {
-      "id": "repository/TestHypothesisConfirmationLockRejectsPoolWithoutApplicationCapacity",
-      "package": "./internal/dream/postgres",
-      "run": "^TestHypothesisConfirmationLockRejectsPoolWithoutApplicationCapacity$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/dream_confirmation_lock_integration_test.go"
-    },
-    {
-      "id": "repository/TestHypothesisConfirmationLockReleasesAfterContextCancellation",
-      "package": "./internal/dream/postgres",
-      "run": "^TestHypothesisConfirmationLockReleasesAfterContextCancellation$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/dream_confirmation_lock_integration_test.go"
-    },
-    {
-      "id": "repository/TestHypothesisConfirmationLockUsesCanonicalAlias",
-      "package": "./internal/dream/postgres",
-      "run": "^TestHypothesisConfirmationLockUsesCanonicalAlias$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/dream_confirmation_lock_integration_test.go"
-    },
-    {
-      "id": "repository/TestResolveFeedbackRecordsBusyConfirmationMetricFromPostgresLock",
-      "package": "./internal/dream/postgres",
-      "run": "^TestResolveFeedbackRecordsBusyConfirmationMetricFromPostgresLock$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/dream_confirmation_lock_integration_test.go"
-    },
-    {
-      "id": "repository/TestResolveFeedbackRecordsDiagnosticAfterConfirmationLockRelease",
-      "package": "./internal/dream/postgres",
-      "run": "^TestResolveFeedbackRecordsDiagnosticAfterConfirmationLockRelease$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/dream_confirmation_lock_integration_test.go"
-    },
-    {
-      "id": "repository/TestScheduledDreamRecoveryFencesExpiredLease",
-      "package": "./internal/dream/postgres",
-      "run": "^TestScheduledDreamRecoveryFencesExpiredLease$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/dream_repository_integration_test.go"
-    },
-    {
-      "id": "repository/TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited",
-      "package": "./internal/dream/postgres",
-      "run": "^TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/dream_repository_integration_test.go"
-    },
-    {
-      "id": "repository/TestDreamPolicyOwnershipPreservesGraphAndFeedback",
-      "package": "./internal/dream/postgres",
-      "run": "^TestDreamPolicyOwnershipPreservesGraphAndFeedback$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/dream_policy_ownership_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallHypothesesPolicyPreservesOrderedResultsAndBounds",
-      "package": "./internal/dream/postgres",
-      "run": "^TestRecallHypothesesPolicyPreservesOrderedResultsAndBounds$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/recall_policy_ownership_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallHypothesesPolicyPreservesValidationBeforeTransactions",
-      "package": "./internal/dream/postgres",
-      "run": "^TestRecallHypothesesPolicyPreservesValidationBeforeTransactions$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/recall_policy_ownership_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallHypothesesPolicyExcludesAliasedAndStaleGraphSources",
-      "package": "./internal/dream/postgres",
-      "run": "^TestRecallHypothesesPolicyExcludesAliasedAndStaleGraphSources$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/recall_policy_ownership_integration_test.go"
-    },
-    {
-      "id": "repository/TestHistoricalEvidenceDreamPreservesReadsAndOwnerConfirmation",
-      "package": "./internal/dream/postgres",
-      "run": "^TestHistoricalEvidenceDreamPreservesReadsAndOwnerConfirmation$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/historical_evidence_dream_integration_test.go"
-    },
-    {
       "id": "postgres/TestRetireEvidenceDiscoveryMigrationPreservesHistoryAndGraph",
       "package": "./internal/storage/postgres",
       "run": "^TestRetireEvidenceDiscoveryMigrationPreservesHistoryAndGraph$",
       "phase": "precheck",
       "source": "internal/storage/postgres/retire_evidence_discovery_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestDreamCommunityRetirementMigrationPreservesSettingsAndHistory",
+      "package": "./internal/storage/postgres",
+      "run": "^TestDreamCommunityRetirementMigrationPreservesSettingsAndHistory$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/dream_community_retirement_migration_integration_test.go"
+    },
+    {
+      "id": "repository/TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention",
+      "package": "./internal/dream/postgres",
+      "run": "^TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention$",
+      "phase": "precheck",
+      "source": "internal/dream/postgres/history_integration_test.go"
     }
   ]
 }

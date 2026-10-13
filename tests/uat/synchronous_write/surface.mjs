@@ -5,9 +5,6 @@ export const TERMINAL_TOOLS = Object.freeze([
   "recall_memory",
   "trace_memory",
   "submit_recall_session_feedback",
-  "list_dreams",
-  "get_dream",
-  "resolve_dream_feedback",
   "export_memory_pack",
 ]);
 

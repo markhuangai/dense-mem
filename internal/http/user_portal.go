@@ -16,7 +16,6 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/graph"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
@@ -39,7 +38,6 @@ type UserPortalDeps struct {
 	UsageMetrics             operations.UsageMetricsRecorder
 	GraphView                graph.Service
 	RecallSvc                recall.RecallService
-	DreamSvc                 dream.Service
 	AuditSvc                 accessservice.AuditService
 	SecuritySvc              httpmw.SecurityBanService
 	SSOService               *accessservice.SSOService
@@ -55,11 +53,11 @@ type UserPortalDeps struct {
 }
 
 type userPortalHandler struct {
-	teams         handler.TeamServiceInterface
-	credentials   handler.CredentialServiceInterface
-	graph         graph.Service
-	recall        *handler.RecallHandler
-	dreams        *handler.DreamHandler
+	teams       handler.TeamServiceInterface
+	credentials handler.CredentialServiceInterface
+	graph       graph.Service
+	recall      *handler.RecallHandler
+
 	audit         *handler.AuditHandler
 	sso           *accessservice.SSOService
 	portal        accessservice.UserPortalSessionManager
@@ -88,13 +86,13 @@ type userPortalTeamOptionResponse struct {
 }
 
 type userPortalTeamResponse struct {
-	ID                uuid.UUID              `json:"id"`
-	Name              string                 `json:"name"`
-	Description       string                 `json:"description"`
-	Config            map[string]any         `json:"config"`
-	DreamingEffective *dream.EffectiveConfig `json:"dreaming_effective,omitempty"`
-	CreatedAt         string                 `json:"created_at"`
-	UpdatedAt         string                 `json:"updated_at"`
+	ID          uuid.UUID      `json:"id"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Config      map[string]any `json:"config"`
+
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 type userPortalMembershipResponse struct {
@@ -808,18 +806,13 @@ func rejectEditableRotateBody(c echo.Context) error {
 }
 
 func (h *userPortalHandler) toUserPortalTeam(ctx context.Context, team *domain.Team) (userPortalTeamResponse, error) {
-	effective, err := effectiveDreamingConfig(ctx, h.appConfig, team.Config)
-	if err != nil {
-		return userPortalTeamResponse{}, err
-	}
 	return userPortalTeamResponse{
-		ID:                team.ID,
-		Name:              team.Name,
-		Description:       team.Description,
-		Config:            team.Config,
-		DreamingEffective: effective,
-		CreatedAt:         team.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:         team.UpdatedAt.Format(time.RFC3339),
+		ID:          team.ID,
+		Name:        team.Name,
+		Description: team.Description,
+		Config:      team.Config,
+		CreatedAt:   team.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:   team.UpdatedAt.Format(time.RFC3339),
 	}, nil
 }
 

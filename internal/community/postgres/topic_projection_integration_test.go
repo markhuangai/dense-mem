@@ -233,7 +233,7 @@ func TestCommunityTopicPublicationFencesSourceChangesAndCompetingClaims(t *testi
 	require.NotEqual(t, current[work.TopicID], f.currentIDs(t)[work.TopicID])
 }
 
-func TestCommunityTopicFailurePauseAndLegacySwitch(t *testing.T) {
+func TestCommunityTopicFailurePauseAndDisable(t *testing.T) {
 	f := newTopicProjectionFixture(t)
 	f.seedCohort(t)
 	work, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
@@ -256,17 +256,10 @@ func TestCommunityTopicFailurePauseAndLegacySwitch(t *testing.T) {
 	paused, _, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
 	require.NoError(t, err)
 	require.Equal(t, communityOwnershipIDs(records), communityOwnershipIDs(paused))
-	err = f.store.PublishCommunitySnapshot(context.Background(), f.publication)
-	require.ErrorIs(t, err, ontology.ErrMaintenanceDisabled)
 	f.setMode(t, false)
-	legacy, _, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
+	disabled, _, err := f.store.RecallCommunities(f.actor(f.reader), CommunityRecallInput{TeamID: f.teamID, Query: "marker", Limit: 10, RelationshipLimit: 20})
 	require.NoError(t, err)
-	for _, record := range legacy {
-		for _, topicID := range f.topics {
-			require.NotEqual(t, topicID, record.LogicalCommunityID)
-		}
-	}
-	require.NotEmpty(t, legacy)
+	require.Empty(t, disabled)
 	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
 		var count int
 		if err := tx.Raw(`SELECT count(*) FROM community_records WHERE team_id=?::uuid AND status='current' AND topic_id IS NOT NULL`, f.teamID).Row().Scan(&count); err != nil {
@@ -281,7 +274,7 @@ func BenchmarkCommunityTopicProjection(b *testing.B) {
 	f := newTopicProjectionFixture(b)
 	f.seedCohort(b)
 	f.drain(b, 10)
-	for _, mode := range []string{"legacy", "ontology"} {
+	for _, mode := range []string{"disabled", "ontology"} {
 		b.Run(mode, func(b *testing.B) {
 			enabled := mode == "ontology"
 			f.setMode(b, enabled)
@@ -297,7 +290,11 @@ func BenchmarkCommunityTopicProjection(b *testing.B) {
 				records, _, err := f.store.RecallCommunities(f.actor(f.reader), input)
 				durations[i] = time.Since(start)
 				require.NoError(b, err)
-				require.NotEmpty(b, records)
+				if enabled {
+					require.NotEmpty(b, records)
+				} else {
+					require.Empty(b, records)
+				}
 			}
 			b.StopTimer()
 			sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })

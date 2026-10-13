@@ -75,11 +75,9 @@ func TestContractRememberBoundaryContent(t *testing.T) {
 	}
 }
 
-func TestDreamOutputSchemasAllowOwnerPrefixedSourceGroupKeys(t *testing.T) {
+func TestTraceOutputSchemaAllowsOwnerPrefixedSourceGroupKeys(t *testing.T) {
 	const ownerPrefixedSourceGroupKeyLength = len("owner:") + 36 + len(":") + 256
 	for name, schema := range map[string]map[string]any{
-		"dream derivation":       dreamDerivationSchema(),
-		"evidence derivation":    dreamEvidenceDerivationSchema(),
 		"trace evidence support": traceEvidenceSupportSchema(),
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -452,7 +450,7 @@ func TestDefaultRecallDoesNotPermitCandidatesOrHypotheses(t *testing.T) {
 			t.Fatalf("recall result exposes %s", forbidden)
 		}
 	}
-	for _, required := range []string{"related_relationships", "related_communities", "related_hypotheses", "search_states", "degradations"} {
+	for _, required := range []string{"related_relationships", "related_communities", "search_states", "degradations"} {
 		if _, ok := props[required]; !ok {
 			t.Fatalf("recall output missing %s", required)
 		}
@@ -504,8 +502,6 @@ func TestCanonicalInputFieldNames(t *testing.T) {
 		{ToolRecallMemory, []string{"known_evidence_ids", "known_relationship_ids", "expand_from_entity_ids"}, nil, []string{"include_evidence", "use_communities"}},
 		{ToolTraceMemory, []string{"include_verification", "include_transitions", "max_depth", "predicate_keys", "topic", "min_relevance"}, nil, []string{"max_chars"}},
 		{ToolSubmitRecallSessionFeedback, []string{"recalls"}, nil, nil},
-		{ToolGetDream, []string{"hypothesis_id"}, nil, []string{"dream_id"}},
-		{ToolResolveDreamFeedback, []string{"hypothesis_id", "decision", "reason", "evidence", "relationships"}, nil, []string{"dream_id", "feedback", "proposal"}},
 		{ToolExportMemoryPack, []string{"relationship_ids"}, []string{"name", "relationship_ids"}, []string{"include_support"}},
 	}
 	for _, tc := range cases {
@@ -820,12 +816,8 @@ func TestPublicErrorSchemaContract(t *testing.T) {
 }
 
 func TestActionableOutputSchemaAcceptsPublicErrorsWithCollidingSuccessFields(t *testing.T) {
-	resolve := toolMap(t)[ToolResolveDreamFeedback]
-	codeSchema := schemaProperties(resolve.OutputSchema)["code"]
-	if _, ok := codeSchema["anyOf"]; !ok {
-		t.Fatalf("resolve_dream_feedback code schema = %#v, want a property union", codeSchema)
-	}
-	nextActionSchema := schemaProperties(toolMap(t)[ToolSubmitRecallSessionFeedback].OutputSchema)["next_action"]
+	feedback := toolMap(t)[ToolSubmitRecallSessionFeedback]
+	nextActionSchema := schemaProperties(feedback.OutputSchema)["next_action"]
 	if _, ok := nextActionSchema["anyOf"]; !ok {
 		t.Fatalf("submit_recall_session_feedback next_action schema = %#v, want a property union", nextActionSchema)
 	}
@@ -837,8 +829,8 @@ func TestActionableOutputSchemaAcceptsPublicErrorsWithCollidingSuccessFields(t *
 		"remediation":    "Correct the request and submit again.",
 		"correlation_id": uuid.NewString(),
 	}
-	if err := ValidateInput(Tool{InputSchema: resolve.OutputSchema}, publicError); err != nil {
-		t.Fatalf("public error rejected by resolve output schema: %v", err)
+	if err := ValidateInput(Tool{InputSchema: feedback.OutputSchema}, publicError); err != nil {
+		t.Fatalf("public error rejected by feedback output schema: %v", err)
 	}
 }
 

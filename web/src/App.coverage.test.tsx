@@ -53,7 +53,7 @@ describe("App coverage additions", () => {
     expect(await screen.findByRole("heading", { name: /SSO providers/i })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Teams" }));
     await userEvent.click(screen.getByRole("button", { name: "Dreams" }));
-    expect(await screen.findByRole("heading", { name: "Dreaming" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Dream history" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Teams" }));
     await userEvent.click(screen.getByRole("button", { name: "Conflicts" }));
     expect(await screen.findByRole("heading", { name: "Conflict queue" })).toBeInTheDocument();

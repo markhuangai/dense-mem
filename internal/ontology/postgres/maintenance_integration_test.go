@@ -65,6 +65,53 @@ func TestOntologyMaintenanceGlobalAccounting(t *testing.T) {
 	require.NoError(t, second.ReleaseMaintenanceTurn(ctx, *turn))
 }
 
+func TestOntologyMaintenanceEnrollsActiveTeamsDespiteRetiredOptouts(t *testing.T) {
+	f := newOrganizationFixture(t)
+	maintenanceEntity(t, f, "Existing active team")
+	ctx := context.Background()
+	config := maintenanceSettings(t, f)
+	_, err := config.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: "false"}, "control", "", "")
+	require.NoError(t, err)
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.admin, func(tx *gorm.DB) error {
+		if err := tx.Exec(`UPDATE teams SET config='{"dreaming":{"enabled":false}}' WHERE id=?::uuid`, f.team).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`UPDATE app_config SET value='true' WHERE key IN ('DREAMING_ENABLED','DREAMING_FORCE_ENABLED','COMMUNITY_DETECTION_ENABLED')`).Error
+	}))
+	policy, err := config.OntologyMaintenanceRuntimeConfig(ctx)
+	require.NoError(t, err)
+	require.False(t, policy.Enabled, "retired enable flags cannot activate ontology")
+	window, err := f.store.EnsureMaintenanceWindow(ctx, policy, time.Now().UTC())
+	require.NoError(t, err)
+	require.Nil(t, window)
+	_, err = config.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: "true"}, "control", "", "")
+	require.NoError(t, err)
+	window = maintenanceWindow(t, f, config)
+	newTeam := maintenanceOtherTeam(t, f)
+	maintenanceEntity(t, newTeam, "Newly active team")
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.admin, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE teams SET config='{"dreaming":{"enabled":false}}' WHERE id=?::uuid`, newTeam.team).Error
+	}))
+	seen := map[string]bool{}
+	for range 12 {
+		turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
+		require.NoError(t, err)
+		if turn == nil {
+			break
+		}
+		for range 6 {
+			require.NoError(t, f.store.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize))
+		}
+		seen[turn.TeamID] = true
+		require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
+		if seen[f.team] && seen[newTeam.team] {
+			break
+		}
+	}
+	require.True(t, seen[f.team])
+	require.True(t, seen[newTeam.team])
+}
+
 func TestOntologyMaintenancePauseCommandsAndWindows(t *testing.T) {
 	f := newOrganizationFixture(t)
 	f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)

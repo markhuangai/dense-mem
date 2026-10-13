@@ -554,61 +554,6 @@ describe("UserPortalApp", () => {
     });
   });
 
-  it("lets a manager edit team dreaming config", async () => {
-    const managerSession: UserSession = {
-      ...baseSession,
-      team: {
-        ...baseSession.team,
-        config: {
-          retention: "long",
-          dreaming: {
-            enabled: false,
-            timezone: "UTC",
-            max_outputs: 4,
-          },
-        },
-      },
-      membership: {
-        ...baseSession.membership,
-        name: "Manager",
-        grants: ["read", "write"],
-        role: "manager",
-      },
-      credential: {
-        ...baseSession.credential!,
-        name: "Manager",
-        scopes: ["read", "write"],
-        role: "manager",
-      },
-    };
-    const fetchMock = mockUserFetch(managerSession, [{ ...managerSession.credential! }]);
-    sessionStorage.setItem("denseMem.userApiKey", "dm_manager");
-
-    render(<UserPortalApp />);
-    await screen.findByText("Research Team");
-    await userEvent.click(screen.getByRole("button", { name: /^team$/i }));
-
-    const scheduledToggle = await screen.findByLabelText("Scheduled cycle", { selector: "input" });
-    expect(scheduledToggle).not.toBeChecked();
-    await userEvent.click(scheduledToggle);
-    await userEvent.click(screen.getByRole("button", { name: /save dreaming/i }));
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining("/ui/api/team"),
-        expect.objectContaining({ method: "PATCH" }),
-      );
-    });
-    const patchCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/ui/api/team") && init?.method === "PATCH");
-    const body = JSON.parse(String(patchCall?.[1]?.body));
-    expect(body.config.retention).toBe("long");
-    expect(body.config.dreaming).toMatchObject({
-      enabled: true,
-    });
-    expect(body.config.dreaming.timezone).toBeUndefined();
-    expect(body.config.dreaming.max_outputs).toBeUndefined();
-    expect(await screen.findByText("Saved")).toBeInTheDocument();
-  });
 
   it("omits the retired Usage tab for managers", async () => {
     const managerSession: UserSession = {

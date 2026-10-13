@@ -15,7 +15,7 @@ import (
 	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
@@ -122,19 +122,9 @@ func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 	}}, result.Conflicts[0].Positions[0].Supporters)
 	require.NotEmpty(t, result.DiscoveryGuidance)
 	require.Empty(t, result.DiscoveryPaths)
-	require.Empty(t, result.RelatedHypotheses)
 	require.Equal(t, []float32{1, 0, 0}, search.input.QueryEmbedding)
 	require.Equal(t, teamID.String(), search.input.TeamID)
 	require.Equal(t, "PostgreSQL memory", provider.query)
-}
-
-func TestRelatedHypothesisSourceIDsExcludeEvidenceReferences(t *testing.T) {
-	got := relatedHypothesisSourceIDs([]map[string]any{
-		{"type": "relationship", "id": "relationship-1"},
-		{"type": "candidate_relationship", "id": "candidate-1"},
-		{"type": "evidence", "id": "evidence-1"},
-	})
-	require.Equal(t, []string{"relationship-1", "candidate-1"}, got)
 }
 
 func TestRecallRejectsMismatchedConflictTeam(t *testing.T) {
@@ -212,92 +202,6 @@ func TestRecallConflictJSONKeepsRelationshipShapeAndAddsEvidenceBranch(t *testin
 	require.Contains(t, string(evidenceJSON), `"span_start":0`)
 	require.Contains(t, string(evidenceJSON), `"occurrence_id":"occurrence-1"`)
 	require.NotContains(t, string(evidenceJSON), `"question"`)
-}
-
-func TestPublicHypothesisGeneratorKindPreservesProvider(t *testing.T) {
-	require.Equal(t, "provider", publicHypothesisGeneratorKind("provider"))
-}
-
-func TestRecallReturnsRelatedHypothesesOutsidePrimaryResults(t *testing.T) {
-	teamID := uuid.New()
-	profileID := uuid.New()
-	keyID := uuid.New()
-	evidenceID := uuid.NewString()
-	hypothesisID := uuid.NewString()
-	sourceRelationshipID := uuid.NewString()
-	search := &recallSearchStub{
-		contract: &searchcontract.ActiveSearchContract{
-			EmbeddingContractID: uuid.NewString(),
-			EmbeddingDimensions: 3,
-			EmbeddingModel:      "test-model",
-		},
-		result: &recallcontract.RecallEvidenceResult{
-			SearchState: string(domain.SearchProjectionCurrent),
-			Results: []recallcontract.RecallEvidenceHit{{
-				EvidenceID: evidenceID,
-				Rank:       1,
-				Context:    "Dense-Mem uses PostgreSQL for durable memory.",
-			}},
-		},
-	}
-	hypotheses := &recallHypothesisStub{
-		records: []dreamcontract.HypothesisRecord{{
-			HypothesisID:    hypothesisID,
-			SubjectEntityID: uuid.NewString(),
-			PredicateKey:    "benefits_from",
-			Statement:       "Dense-Mem may benefit from explicit search freshness.",
-			Status:          string(domain.DreamStatusProposed),
-			SourceRefs: []map[string]any{{
-				"type": "relationship",
-				"id":   sourceRelationshipID,
-			}},
-			GeneratorKind:    "server",
-			GeneratorVersion: "dream-v2.candidate-safe",
-			CreatedAt:        time.Now().UTC(),
-		}},
-	}
-	svc := NewRecallService(RecallDependencies{Search: search, Hypotheses: hypotheses})
-
-	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-		Query:             "PostgreSQL memory",
-		IncludeHypotheses: true,
-	})
-	require.NoError(t, err)
-	require.Len(t, result.Results, 1)
-	require.Equal(t, evidenceID, result.Results[0].EvidenceID)
-	require.Len(t, result.RelatedHypotheses, 1)
-	require.Equal(t, hypothesisID, result.RelatedHypotheses[0].HypothesisID)
-	require.Equal(t, "deterministic", result.RelatedHypotheses[0].GeneratorKind)
-	require.Equal(t, []string{sourceRelationshipID}, result.RelatedHypotheses[0].SourceRelationshipIDs)
-	require.Equal(t, dreamcontract.DefaultRecallHypothesisLimit, hypotheses.recallInput.Limit)
-	require.Equal(t, "PostgreSQL memory", hypotheses.recallInput.Query)
-	require.Equal(t, []string{evidenceID}, hypotheses.recallInput.EvidenceIDs)
-}
-
-func TestRecallUsesReturnedContextForHypothesesWithoutTextQuery(t *testing.T) {
-	teamID := uuid.New()
-	profileID := uuid.New()
-	keyID := uuid.New()
-	entityID := uuid.NewString()
-	evidenceID := uuid.NewString()
-	search := &recallSearchStub{
-		contract: &searchcontract.ActiveSearchContract{EmbeddingDimensions: 3},
-		result: &recallcontract.RecallEvidenceResult{
-			SearchState: string(domain.SearchProjectionCurrent),
-			Results:     []recallcontract.RecallEvidenceHit{{EvidenceID: evidenceID, Rank: 1}},
-		},
-	}
-	hypotheses := &recallHypothesisStub{}
-	svc := NewRecallService(RecallDependencies{Search: search, Hypotheses: hypotheses})
-
-	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-		IncludeHypotheses:   true,
-		ExpandFromEntityIDs: []string{entityID},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, []string{entityID}, search.input.ExpandFromEntityIDs)
-	require.Equal(t, []string{evidenceID}, hypotheses.recallInput.EvidenceIDs)
 }
 
 func TestRecallProviderFailureIsOptionalDegradation(t *testing.T) {
@@ -566,10 +470,10 @@ func TestRecallAddsCommunityDiscoveryWhenEnabledAndPrimaryHasRoom(t *testing.T) 
 		}},
 	}
 	svc := NewRecallService(RecallDependencies{
-		Search:          search,
-		Provider:        &recallProviderStub{available: true, model: "test-model", dims: 3, vector: []float32{1, 0, 0}},
-		Communities:     communities,
-		CommunityConfig: recallCommunityConfigStub{enabled: true},
+		Search:         search,
+		Provider:       &recallProviderStub{available: true, model: "test-model", dims: 3, vector: []float32{1, 0, 0}},
+		Communities:    communities,
+		OntologyConfig: recallOntologyConfigStub{enabled: true},
 	})
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
@@ -584,7 +488,7 @@ func TestRecallAddsCommunityDiscoveryWhenEnabledAndPrimaryHasRoom(t *testing.T) 
 	require.Equal(t, objectID, result.DiscoveryPaths[0].Relationships[0].Object.EntityID)
 	require.Equal(t, "PostgreSQL", result.DiscoveryPaths[0].Relationships[0].Object.Name)
 	require.Equal(t, []string{evidenceID}, result.DiscoveryPaths[0].EvidenceIDs)
-	require.Equal(t, teamID.String(), communities.refreshInput.TeamID)
+	require.Empty(t, communities.refreshInput.TeamID, "Recall must not invoke the retired community staleness writer")
 	require.Equal(t, "PostgreSQL", communities.recallInput.Query)
 	require.Equal(t, 3, communities.recallInput.Limit)
 }
@@ -613,10 +517,10 @@ func TestRecallSkipsCommunityDiscoveryWhenPrimaryResultsFillLimit(t *testing.T) 
 	}
 	communities := &recallCommunityStub{}
 	svc := NewRecallService(RecallDependencies{
-		Search:          search,
-		Provider:        &recallProviderStub{available: true, model: "test-model", dims: 3, vector: []float32{1, 0, 0}},
-		Communities:     communities,
-		CommunityConfig: recallCommunityConfigStub{enabled: true},
+		Search:         search,
+		Provider:       &recallProviderStub{available: true, model: "test-model", dims: 3, vector: []float32{1, 0, 0}},
+		Communities:    communities,
+		OntologyConfig: recallOntologyConfigStub{enabled: true},
 	})
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
@@ -841,27 +745,24 @@ func TestRecallAddsOptionalFrontierDegradations(t *testing.T) {
 		relationshipErr: errors.New("relationship recall failed"),
 	}
 	communities := &recallCommunityStub{}
-	hypotheses := &recallHypothesisStub{err: errors.New("hypotheses failed")}
 	svc := NewRecallService(RecallDependencies{
-		Search:          search,
-		Provider:        &recallProviderStub{available: true, model: "test-model", dims: 3, vector: []float32{1, 0, 0}},
-		Communities:     communities,
-		CommunityConfig: recallCommunityConfigStub{err: errors.New("community config failed")},
-		Hypotheses:      hypotheses,
+		Search:         search,
+		Provider:       &recallProviderStub{available: true, model: "test-model", dims: 3, vector: []float32{1, 0, 0}},
+		Communities:    communities,
+		OntologyConfig: recallOntologyConfigStub{err: errors.New("community config failed")},
 	})
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-		Query:             "PostgreSQL",
-		IncludeHypotheses: true,
+		Query: "PostgreSQL",
 	})
 	require.NoError(t, err)
-	require.Len(t, result.Degradations, 3)
-	require.Equal(t, "relationships", result.Degradations[0].Frontier)
-	require.Equal(t, "relationship_discovery_unavailable", result.Degradations[0].Code)
-	require.Equal(t, "communities", result.Degradations[1].Frontier)
-	require.Equal(t, "community_discovery_unavailable", result.Degradations[1].Code)
-	require.Equal(t, "hypotheses", result.Degradations[2].Frontier)
-	require.Equal(t, "related_hypotheses_unavailable", result.Degradations[2].Code)
+	require.Len(t, result.Degradations, 2)
+	require.Equal(t, "evidence", result.Degradations[0].Frontier)
+	require.Equal(t, "ontology_unavailable", result.Degradations[0].Code)
+	require.Equal(t, "relationships", result.Degradations[1].Frontier)
+	require.Equal(t, "relationship_discovery_unavailable", result.Degradations[1].Code)
+	require.True(t, result.Degradations[0].Optional)
+	require.True(t, result.Degradations[1].Optional)
 	require.Equal(t, string(domain.SearchProjectionFailed), result.SearchStates.Relationships)
 	require.Equal(t, &result.Degradations[0], result.Degradation)
 }
@@ -904,20 +805,6 @@ func TestValidateRecallEmbeddingRejectsInvalidVectors(t *testing.T) {
 	require.Error(t, validateRecallEmbedding([]float32{float32(math.Inf(1)), 0, 0}, 3))
 }
 
-type recallHypothesisStub struct {
-	recallInput dreamcontract.RecallHypothesesInput
-	records     []dreamcontract.HypothesisRecord
-	err         error
-}
-
-func (s *recallHypothesisStub) RecallHypotheses(_ context.Context, input dreamcontract.RecallHypothesesInput) ([]dreamcontract.HypothesisRecord, error) {
-	s.recallInput = input
-	if s.err != nil {
-		return nil, s.err
-	}
-	return s.records, nil
-}
-
 type recallCommunityStub struct {
 	refreshInput communitycontract.CommunityStalenessInput
 	recallInput  communitycontract.CommunityDiscoveryInput
@@ -941,16 +828,16 @@ func (s *recallCommunityStub) RecallCommunityDiscovery(_ context.Context, input 
 	return s.paths, nil
 }
 
-type recallCommunityConfigStub struct {
+type recallOntologyConfigStub struct {
 	enabled bool
 	err     error
 }
 
-func (s recallCommunityConfigStub) CommunityDetectionRuntimeConfig(context.Context) (domain.CommunityDetectionRuntimeConfig, error) {
+func (s recallOntologyConfigStub) OntologyMaintenanceRuntimeConfig(context.Context) (domain.OntologyMaintenanceConfig, error) {
 	if s.err != nil {
-		return domain.CommunityDetectionRuntimeConfig{}, s.err
+		return domain.OntologyMaintenanceConfig{}, s.err
 	}
-	return domain.CommunityDetectionRuntimeConfig{Enabled: s.enabled}, nil
+	return domain.OntologyMaintenanceConfig{Enabled: s.enabled}, nil
 }
 
 type recallProviderStub struct {

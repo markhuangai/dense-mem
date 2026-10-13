@@ -34,13 +34,10 @@ func TestRecallFeedbackAdditionalValidationBranches(t *testing.T) {
 	require.Equal(t, 1, refs[0].Rank)
 	require.Equal(t, "", recallFeedbackFirstNonEmpty(" ", ""))
 
-	returned := []domain.RecallFeedbackResultRef{{Type: domain.RecallFeedbackResultTypeDream, ID: "dream-1"}}
+	returned := []domain.RecallFeedbackResultRef{{Type: domain.RecallFeedbackResultTypeEvidence, ID: "evidence-1"}}
 	for _, feedback := range []domain.RecallFeedbackSubmission{
 		{IrrelevantRefs: []domain.RecallFeedbackJudgedResultRef{{Type: "", ID: "id"}}},
-		{IrrelevantRefs: []domain.RecallFeedbackJudgedResultRef{{Type: domain.RecallFeedbackResultTypeHypothesis, ID: "dream-1"}, {Type: domain.RecallFeedbackResultTypeHypothesis, ID: "dream-1"}}},
-		{DreamFeedback: []domain.RecallFeedbackDreamFeedback{{DreamID: ""}}},
-		{DreamFeedback: []domain.RecallFeedbackDreamFeedback{{DreamID: "dream-1"}, {DreamID: "dream-1"}}},
-		{DreamFeedback: []domain.RecallFeedbackDreamFeedback{{DreamID: "missing"}}},
+		{IrrelevantRefs: []domain.RecallFeedbackJudgedResultRef{{Type: domain.RecallFeedbackResultTypeEvidence, ID: "evidence-1"}, {Type: domain.RecallFeedbackResultTypeEvidence, ID: "evidence-1"}}},
 	} {
 		require.Error(t, validateRecallFeedbackSubmissionRefs(feedback, returned))
 	}

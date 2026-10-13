@@ -329,6 +329,36 @@ func TestOntologyMaintenanceProviderPauseDrain(t *testing.T) {
 	require.True(t, page.Records[0].Current)
 }
 
+func TestOntologyMaintenanceProviderDisableDrain(t *testing.T) {
+	f := newOrganizationFixture(t)
+	f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
+	config := maintenanceSettings(t, f)
+	service, calls := maintenanceServiceFixture(t, f, config, func(_ assessment.Request, _ *assessment.Response) {
+		_, err := config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyEnabled: "false"}, "control", "", "")
+		require.NoError(t, err)
+	})
+	for range 10 {
+		progress, err := service.RunTurn(context.Background())
+		require.NoError(t, err)
+		if calls() > 0 {
+			require.True(t, progress)
+			break
+		}
+	}
+	status, err := service.Status(context.Background())
+	require.NoError(t, err)
+	require.False(t, status.PendingPolicy.Enabled)
+	require.EqualValues(t, 1, status.Counts.Organized)
+	progress, err := service.RunTurn(context.Background())
+	require.NoError(t, err)
+	require.False(t, progress)
+	require.EqualValues(t, 1, calls())
+	page, err := f.store.ListRecords(context.Background(), f.team, ontology.AssignmentKind, "", 20)
+	require.NoError(t, err)
+	require.Len(t, page.Records, 1)
+	require.True(t, page.Records[0].Current)
+}
+
 func TestOntologyMaintenanceAccountingFailurePreventsPublication(t *testing.T) {
 	f := newOrganizationFixture(t)
 	f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)

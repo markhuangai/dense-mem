@@ -107,6 +107,9 @@ func TestOperationalTelemetryCollectorEmitsDurableSnapshotAndFixedLabelSets(t *t
 				{Lane: "graph", Status: "proposed", Count: 3, BacklogCount: 3, OldestBacklogAge: 40},
 				{Lane: "graph", Status: "proposed", Count: 2, BacklogCount: 2, OldestBacklogAge: 70},
 			},
+			RememberAttempts:        []operationscontract.WindowedTelemetryCount{{Window: "1h", Kind: "completed", Count: 7}},
+			RelationshipTransitions: []operationscontract.WindowedTelemetryCount{{Window: "1h", Kind: "active", Count: 8}},
+			RelationshipCorrections: []operationscontract.WindowedTelemetryCount{{Window: "1h", Kind: "corrections", Count: 2}},
 			RelationshipsCurrent: []operationscontract.NamedTelemetryCount{
 				{Kind: "active", Count: 4}, {Kind: "active", Count: 2}, {Kind: "raw-status", Count: 99},
 			},
@@ -120,8 +123,11 @@ func TestOperationalTelemetryCollectorEmitsDurableSnapshotAndFixedLabelSets(t *t
 	require.Contains(t, body, `densemem_operational_ledger_collection_success 1`)
 	require.Contains(t, body, `densemem_operational_dream_runs{lane="graph",status="completed",window="1h"} 3`)
 	require.NotContains(t, body, "densemem_operational_dream_run_attempts")
-	require.Contains(t, body, `densemem_operational_hypothesis_backlog{lane="graph"} 5`)
-	require.Contains(t, body, `densemem_operational_hypothesis_oldest_backlog_age_seconds{lane="graph"} 70`)
+	require.NotContains(t, body, "densemem_operational_hypothesis_backlog")
+	require.NotContains(t, body, "densemem_operational_hypothesis_oldest_backlog_age_seconds")
+	require.Contains(t, body, `densemem_operational_remember_attempts{outcome="completed",window="1h"} 7`)
+	require.Contains(t, body, `densemem_operational_relationship_transitions{status="active",window="1h"} 8`)
+	require.Contains(t, body, `densemem_operational_relationship_corrections{window="1h"} 2`)
 	require.Contains(t, body, `densemem_operational_relationships_current{status="active"} 6`)
 	require.NotContains(t, body, "private-query")
 	require.NotContains(t, body, "raw-lane")

@@ -2,7 +2,9 @@
   {
     "name": "valid remember with source revision and relationships",
     "tool": "remember",
-    "scopes": ["write"],
+    "scopes": [
+      "write"
+    ],
     "valid": true,
     "input": {
       "idempotency_key": "fixture-remember-1",
@@ -34,7 +36,9 @@
             }
           },
           "polarity": "+",
-          "evidence_indices": [0]
+          "evidence_indices": [
+            0
+          ]
         }
       ]
     },
@@ -54,34 +58,46 @@
           "search_state": "current"
         }
       ],
-	      "relationship_results": [
-	        {
-	          "ref": "rel:authority",
-	          "disposition": "stored",
-	          "splits": [
-	            {
-	              "split_index": 0,
-	              "relationship_id": "rel-authority",
-	              "relationship_version": 1,
-	              "status": "active"
-	            }
-	          ]
-	        }
-	      ],
-	      "errors": []
+      "relationship_results": [
+        {
+          "ref": "rel:authority",
+          "disposition": "stored",
+          "splits": [
+            {
+              "split_index": 0,
+              "relationship_id": "rel-authority",
+              "relationship_version": 1,
+              "status": "active"
+            }
+          ]
+        }
+      ],
+      "errors": []
     }
   },
   {
     "name": "valid relationship correction submit",
     "tool": "correct_relationship",
-    "scopes": ["write"],
+    "scopes": [
+      "write"
+    ],
     "valid": true,
     "input": {
       "action": "submit",
       "relationship_id": "00000000-0000-0000-0000-000000000601",
       "expected_version": 2,
-      "patch": {"predicate": {"key": "works_with"}},
-      "supports": [{"evidence_id": "00000000-0000-0000-0000-000000000602", "start": 0, "end": 34}],
+      "patch": {
+        "predicate": {
+          "key": "works_with"
+        }
+      },
+      "supports": [
+        {
+          "evidence_id": "00000000-0000-0000-0000-000000000602",
+          "start": 0,
+          "end": 34
+        }
+      ],
       "reason": "The predicate was resolved incorrectly.",
       "idempotency_key": "relationship-correction-1"
     },
@@ -98,13 +114,17 @@
   {
     "name": "valid relationship correction confirm",
     "tool": "correct_relationship",
-    "scopes": ["write"],
+    "scopes": [
+      "write"
+    ],
     "valid": true,
     "input": {
       "action": "confirm",
       "submission_id": "00000000-0000-0000-0000-000000000603",
       "confirmation_token": "00000000-0000-0000-0000-000000000604",
-      "selection": {"object_entity_id": "00000000-0000-0000-0000-000000000605"},
+      "selection": {
+        "object_entity_id": "00000000-0000-0000-0000-000000000605"
+      },
       "idempotency_key": "relationship-correction-confirm-1"
     },
     "output": {
@@ -120,37 +140,66 @@
   {
     "name": "valid recall boundary limit",
     "tool": "recall_memory",
-    "scopes": ["read"],
+    "scopes": [
+      "read"
+    ],
     "valid": true,
     "input": {
       "query": "postgres authority",
       "limit": 50,
       "valid_at": null,
       "known_at": null,
-      "known_evidence_ids": ["00000000-0000-4000-8000-000000000001"],
-      "known_relationship_ids": ["00000000-0000-4000-8000-000000000002"],
-      "expand_from_entity_ids": ["00000000-0000-4000-8000-000000000003"]
+      "known_evidence_ids": [
+        "00000000-0000-4000-8000-000000000001"
+      ],
+      "known_relationship_ids": [
+        "00000000-0000-4000-8000-000000000002"
+      ],
+      "expand_from_entity_ids": [
+        "00000000-0000-4000-8000-000000000003"
+      ]
     },
     "output": {
       "recall_id": "rec-1",
-      "results": [{"evidence_id": "ev-2", "context": "PostgreSQL is the durable authority.", "space_kind": "team_shared", "equivalent_evidence_ids": [], "equivalents_truncated": false}],
+      "results": [
+        {
+          "evidence_id": "ev-2",
+          "context": "PostgreSQL is the durable authority.",
+          "space_kind": "team_shared",
+          "equivalent_evidence_ids": [],
+          "equivalents_truncated": false
+        }
+      ],
       "conflicts": [],
       "related_relationships": [
         {
           "relationship_id": "rel-2",
-          "equivalent_relationship_ids": ["rel-2"],
-          "subject": {"entity_id": "entity-1", "name": "Dense-Mem"},
+          "equivalent_relationship_ids": [
+            "rel-2"
+          ],
+          "subject": {
+            "entity_id": "entity-1",
+            "name": "Dense-Mem"
+          },
           "predicate": "uses",
-          "object": {"value_id": "value-1", "type": "string", "value": "PostgreSQL"},
+          "object": {
+            "value_id": "value-1",
+            "type": "string",
+            "value": "PostgreSQL"
+          },
           "polarity": "+",
-          "evidence_ids": ["ev-2"],
+          "evidence_ids": [
+            "ev-2"
+          ],
           "space_kind": "team_shared",
           "search_state": "current"
         }
       ],
       "related_communities": [],
-      "related_hypotheses": [],
-      "search_states": {"evidence": "current", "relationships": "current"},
+      "search_states": {
+        "evidence": "current",
+        "relationships": "current"
+      },
       "degradations": [],
       "suggested_actions": []
     }
@@ -158,7 +207,9 @@
   {
     "name": "valid relationship trace",
     "tool": "trace_memory",
-    "scopes": ["read"],
+    "scopes": [
+      "read"
+    ],
     "valid": true,
     "input": {
       "relationship_id": "rel-1",
@@ -172,7 +223,9 @@
       "min_relevance": null
     },
     "output": {
-      "relationship": {"relationship_id": "rel-1"},
+      "relationship": {
+        "relationship_id": "rel-1"
+      },
       "observations": [],
       "evidence_supports": [],
       "evidence_support_decision_events": [],
@@ -193,7 +246,9 @@
   {
     "name": "valid recall session feedback",
     "tool": "submit_recall_session_feedback",
-    "scopes": ["write"],
+    "scopes": [
+      "write"
+    ],
     "valid": true,
     "input": {
       "recalls": [
@@ -205,76 +260,34 @@
           "missing_context": true,
           "irrelevant": true,
           "feedback_comment": "The result omitted the current architecture.",
-          "irrelevant_result_refs": [{"type": "relationship", "id": "rel-old", "rank": 1}],
-          "hypothesis_feedback": [
+          "irrelevant_result_refs": [
             {
-              "hypothesis_id": "hyp-1",
-              "used": false,
-              "quality": "low",
-              "contradicted": true,
-              "feedback_comment": "The source relationships were stale."
+              "type": "relationship",
+              "id": "rel-old",
+              "rank": 1
             }
           ]
         }
       ]
     },
-    "output": {"recorded": true, "recorded_count": 1}
-  },
-  {
-    "name": "valid dream list",
-    "tool": "list_dreams",
-    "scopes": ["read"],
-    "valid": true,
-    "input": {"status": "proposed", "limit": 20},
-    "output": {"dreams": [], "next_cursor": "cursor-2"}
-  },
-  {
-    "name": "valid dream read",
-    "tool": "get_dream",
-    "scopes": ["read"],
-    "valid": true,
-    "input": {"hypothesis_id": "hyp-1"},
     "output": {
-      "hypothesis": {
-        "hypothesis_id": "hyp-1",
-        "source_owner_profile_ids": ["profile-a"],
-        "subject_entity_id": "ent-1",
-        "predicate_key": "benefits_from",
-        "object_entity_id": "ent-2",
-        "statement": "Dense-Mem may benefit from explicit freshness.",
-        "rationale": "Eligible source relationships suggest it.",
-        "likelihood": 0.68,
-        "confidence": 0.61,
-        "source_relationship_ids": ["rel-1"],
-        "source_candidate_relationship_ids": [],
-        "source_evidence_ids": [],
-        "evidence_derivations": [],
-        "source_versions": {"rel-1": 4},
-        "generator_kind": "provider",
-        "generator_version": "dream-v2",
-        "status": "proposed",
-        "lane": "graph",
-        "created_at": "2026-07-17T00:00:00Z"
-      }
+      "recorded": true,
+      "recorded_count": 1
     }
-  },
-  {
-    "name": "valid dream rejection",
-    "tool": "resolve_dream_feedback",
-    "scopes": ["write"],
-    "valid": true,
-    "input": {"hypothesis_id": "hyp-1", "decision": "reject", "reason": "No longer applicable."},
-    "output": {"hypothesis_id": "hyp-1", "status": "rejected"}
   },
   {
     "name": "valid memory pack export",
     "tool": "export_memory_pack",
-    "scopes": ["read"],
+    "scopes": [
+      "read"
+    ],
     "valid": true,
     "input": {
       "name": "release-workflow",
       "description": "Reusable release relationships",
-      "relationship_ids": ["rel-1"],
+      "relationship_ids": [
+        "rel-1"
+      ],
       "include_evidence": true,
       "include_entity_names": true
     },
@@ -282,52 +295,99 @@
       "artifact_json": "{\"format\":\"dense-mem.memory-pack.v2.4\"}",
       "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "filename": "release-workflow.json",
-      "counts": {"relationships": 1, "evidence": 1},
+      "counts": {
+        "relationships": 1,
+        "evidence": 1
+      },
       "omissions": []
     }
   },
   {
     "name": "unknown lifecycle field",
     "tool": "remember",
-    "scopes": ["write"],
+    "scopes": [
+      "write"
+    ],
     "valid": false,
     "want_error": "unknown field: tier",
     "input": {
       "idempotency_key": "fixture-remember-invalid-1",
       "tier": "fact",
-      "evidence": [{"content": "Dense-Mem uses PostgreSQL."}],
-      "relationships": [{
-        "ref": "rel:uses",
-        "subject": {"name": "Dense-Mem", "entity_kind": "project"},
-        "predicate": {"proposed_key": "uses"},
-        "object": {"entity": {"name": "PostgreSQL", "entity_kind": "product"}},
-        "polarity": "+", "evidence_indices": [0]
-      }]
+      "evidence": [
+        {
+          "content": "Dense-Mem uses PostgreSQL."
+        }
+      ],
+      "relationships": [
+        {
+          "ref": "rel:uses",
+          "subject": {
+            "name": "Dense-Mem",
+            "entity_kind": "project"
+          },
+          "predicate": {
+            "proposed_key": "uses"
+          },
+          "object": {
+            "entity": {
+              "name": "PostgreSQL",
+              "entity_kind": "product"
+            }
+          },
+          "polarity": "+",
+          "evidence_indices": [
+            0
+          ]
+        }
+      ]
     }
   },
   {
     "name": "legacy remember hint fields rejected",
     "tool": "remember",
-    "scopes": ["write"],
+    "scopes": [
+      "write"
+    ],
     "valid": false,
     "want_error": "unknown field: entity_hints",
     "input": {
       "idempotency_key": "fixture-remember-invalid-2",
-      "evidence": [{"content": "Dense-Mem uses PostgreSQL."}],
+      "evidence": [
+        {
+          "content": "Dense-Mem uses PostgreSQL."
+        }
+      ],
       "entity_hints": [],
-      "relationships": [{
-        "ref": "rel:uses",
-        "subject": {"name": "Dense-Mem", "entity_kind": "project"},
-        "predicate": {"proposed_key": "uses"},
-        "object": {"entity": {"name": "PostgreSQL", "entity_kind": "product"}},
-        "polarity": "+", "evidence_indices": [0]
-      }]
+      "relationships": [
+        {
+          "ref": "rel:uses",
+          "subject": {
+            "name": "Dense-Mem",
+            "entity_kind": "project"
+          },
+          "predicate": {
+            "proposed_key": "uses"
+          },
+          "object": {
+            "entity": {
+              "name": "PostgreSQL",
+              "entity_kind": "product"
+            }
+          },
+          "polarity": "+",
+          "evidence_indices": [
+            0
+          ]
+        }
+      ]
     }
   },
   {
     "name": "missing required evidence",
     "tool": "remember",
-    "scopes": ["write"],
+    "scopes": [
+      "write"
+    ],
     "valid": false,
     "want_error": "evidence is required",
     "input": {}
@@ -335,26 +395,58 @@
   {
     "name": "duplicate relationship ref",
     "tool": "remember",
-    "scopes": ["write"],
+    "scopes": [
+      "write"
+    ],
     "valid": false,
     "want_error": "duplicate ref",
     "input": {
       "idempotency_key": "fixture-remember-invalid-3",
-      "evidence": [{"content": "A uses B."}],
+      "evidence": [
+        {
+          "content": "A uses B."
+        }
+      ],
       "relationships": [
         {
           "ref": "r1",
-          "subject": {"name": "A", "entity_kind": "other"},
-          "predicate": {"proposed_key": "uses"},
-          "object": {"entity": {"name": "B", "entity_kind": "other"}},
-          "polarity": "+", "evidence_indices": [0]
+          "subject": {
+            "name": "A",
+            "entity_kind": "other"
+          },
+          "predicate": {
+            "proposed_key": "uses"
+          },
+          "object": {
+            "entity": {
+              "name": "B",
+              "entity_kind": "other"
+            }
+          },
+          "polarity": "+",
+          "evidence_indices": [
+            0
+          ]
         },
         {
           "ref": "r1",
-          "subject": {"name": "A", "entity_kind": "other"},
-          "predicate": {"proposed_key": "uses"},
-          "object": {"entity": {"name": "B", "entity_kind": "other"}},
-          "polarity": "+", "evidence_indices": [0]
+          "subject": {
+            "name": "A",
+            "entity_kind": "other"
+          },
+          "predicate": {
+            "proposed_key": "uses"
+          },
+          "object": {
+            "entity": {
+              "name": "B",
+              "entity_kind": "other"
+            }
+          },
+          "polarity": "+",
+          "evidence_indices": [
+            0
+          ]
         }
       ]
     }
@@ -362,23 +454,41 @@
   {
     "name": "wrong scope",
     "tool": "remember",
-    "scopes": ["read"],
+    "scopes": [
+      "read"
+    ],
     "valid": false,
     "want_error": "missing required scope",
-    "input": {"evidence": [{"content": "Write scope is required."}]}
+    "input": {
+      "evidence": [
+        {
+          "content": "Write scope is required."
+        }
+      ]
+    }
   },
   {
     "name": "duplicate recall evidence id",
     "tool": "recall_memory",
-    "scopes": ["read"],
+    "scopes": [
+      "read"
+    ],
     "valid": false,
     "want_error": "duplicate value",
-    "input": {"query": "postgres", "known_evidence_ids": ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000001"]}
+    "input": {
+      "query": "postgres",
+      "known_evidence_ids": [
+        "00000000-0000-4000-8000-000000000001",
+        "00000000-0000-4000-8000-000000000001"
+      ]
+    }
   },
   {
     "name": "cross profile override rejected",
     "tool": "correct_relationship",
-    "scopes": ["write"],
+    "scopes": [
+      "write"
+    ],
     "valid": false,
     "want_error": "team_id and profile_id are not accepted",
     "input": {
@@ -386,8 +496,18 @@
       "action": "submit",
       "relationship_id": "relationship-a",
       "expected_version": 1,
-      "patch": {"predicate": {"key": "works_with"}},
-      "supports": [{"evidence_id": "evidence-1", "start": 0, "end": 8}],
+      "patch": {
+        "predicate": {
+          "key": "works_with"
+        }
+      },
+      "supports": [
+        {
+          "evidence_id": "evidence-1",
+          "start": 0,
+          "end": 8
+        }
+      ],
       "reason": "The predicate was resolved incorrectly.",
       "idempotency_key": "relationship-correction-override-1"
     }
@@ -395,14 +515,18 @@
   {
     "name": "mixed relationship correction confirm rejected",
     "tool": "correct_relationship",
-    "scopes": ["write"],
+    "scopes": [
+      "write"
+    ],
     "valid": false,
     "want_error": "relationship_id is not accepted for action confirm",
     "input": {
       "action": "confirm",
       "submission_id": "00000000-0000-0000-0000-000000000603",
       "confirmation_token": "00000000-0000-0000-0000-000000000604",
-      "selection": {"object_entity_id": "00000000-0000-0000-0000-000000000605"},
+      "selection": {
+        "object_entity_id": "00000000-0000-0000-0000-000000000605"
+      },
       "relationship_id": "00000000-0000-0000-0000-000000000601",
       "idempotency_key": "relationship-correction-confirm-mixed-1"
     }
@@ -410,32 +534,64 @@
   {
     "name": "unpaired source revision rejected",
     "tool": "remember",
-    "scopes": ["write"],
+    "scopes": [
+      "write"
+    ],
     "valid": false,
     "want_error": "source_key and source_revision must appear together",
     "input": {
       "idempotency_key": "fixture-remember-invalid-4",
       "evidence": [
-        {"content": "A source key needs a revision.", "source_key": "wiki:target-architecture"},
-        {"content": "Dense-Mem uses PostgreSQL."}
+        {
+          "content": "A source key needs a revision.",
+          "source_key": "wiki:target-architecture"
+        },
+        {
+          "content": "Dense-Mem uses PostgreSQL."
+        }
       ],
-      "relationships": [{
-        "ref": "rel:uses",
-        "subject": {"name": "Dense-Mem", "entity_kind": "project"},
-        "predicate": {"proposed_key": "uses"},
-        "object": {"entity": {"name": "PostgreSQL", "entity_kind": "product"}},
-        "polarity": "+", "evidence_indices": [0, 1]
-      }]
+      "relationships": [
+        {
+          "ref": "rel:uses",
+          "subject": {
+            "name": "Dense-Mem",
+            "entity_kind": "project"
+          },
+          "predicate": {
+            "proposed_key": "uses"
+          },
+          "object": {
+            "entity": {
+              "name": "PostgreSQL",
+              "entity_kind": "product"
+            }
+          },
+          "polarity": "+",
+          "evidence_indices": [
+            0,
+            1
+          ]
+        }
+      ]
     }
   },
   {
     "name": "feedback judgment requires comment",
     "tool": "submit_recall_session_feedback",
-    "scopes": ["write"],
+    "scopes": [
+      "write"
+    ],
     "valid": false,
     "want_error": "feedback_comment is required",
     "input": {
-      "recalls": [{"recall_event_id": "rec-1", "used": false, "answer_supported": false, "quality": "low"}]
+      "recalls": [
+        {
+          "recall_event_id": "rec-1",
+          "used": false,
+          "answer_supported": false,
+          "quality": "low"
+        }
+      ]
     }
   }
 ]

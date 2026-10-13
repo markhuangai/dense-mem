@@ -188,62 +188,6 @@ func contractToolExamples() map[string]contractToolExample {
 			Result:     "The result reports recorded and recorded_count, or a bounded partial failure with the failed index and remediation.",
 			NextAction: "For a partial failure, use failed_index with the returned next_action and remediation. Items before failed_index were recorded; omit them. For correct_and_resubmit, correct the failed item and submit it with all later unprocessed items. For retry_same_request, resend the failed item and all later unprocessed items unchanged; stop only when instructed. Do not invent feedback for a recall you did not use.",
 		},
-		ToolListDreams: {
-			WhenToUse:     "List reviewable Hypotheses without treating them as accepted memory.",
-			Prerequisites: "None. Dream visibility can be feature-gated, and an empty list is not a memory result.",
-			Request: map[string]any{
-				"status": "proposed",
-				"limit":  20,
-			},
-			Result:     "The result returns Hypothesis summaries and an optional next_cursor for another page.",
-			NextAction: "Use a returned hypothesis_id with get_dream or resolve_dream_feedback. Keep a Hypothesis separate from accepted evidence and default recall.",
-		},
-		ToolGetDream: {
-			WhenToUse:     "Fetch one authorized Hypothesis with its source references before reviewing it.",
-			Prerequisites: "Use a hypothesis_id returned by list_dreams, recall_memory, or another authorized workflow.",
-			Request: map[string]any{
-				"hypothesis_id": returnedHypothesisID,
-			},
-			Result:     "The result returns the Hypothesis, status, source references, and derivation context; it is not accepted memory or submitted evidence.",
-			NextAction: "Use its hypothesis_id only for feedback. Supply independently obtained evidence for confirmation; never turn this Hypothesis or recalled context into new evidence.",
-		},
-		ToolResolveDreamFeedback: {
-			WhenToUse:     "Record a lifecycle decision about one Hypothesis, or confirm it only with independently supplied evidence.",
-			Prerequisites: "Use a hypothesis_id returned by an authorized workflow. For confirmation, gather new evidence independently of the Hypothesis and any recalled context.",
-			Request: map[string]any{
-				"hypothesis_id": returnedHypothesisID,
-				"decision":      "reject",
-				"reason":        "The hypothesis is not supported by the available evidence.",
-			},
-			Result:     "Lifecycle feedback returns the Hypothesis status. Successful confirmation returns hypothesis_id, status, and optional submission_id; structured terminal failures carry their own next_action and remediation.",
-			NextAction: "For lifecycle feedback, use the returned status. For a confirmation failure, follow its returned next_action and remediation; reuse an exact payload only when that guidance says to retry. Never alter a payload or key to bypass a conflict; make a corrected resubmission only when the returned remediation expressly requires it. Never use the Hypothesis itself as evidence.",
-			Continuations: []contractToolExampleContinuation{{
-				When:          "confirming a Hypothesis with independently obtained evidence",
-				Prerequisites: "Use the returned hypothesis_id and new evidence that was not copied from the Hypothesis or recall output.",
-				Request: map[string]any{
-					"hypothesis_id": returnedHypothesisID,
-					"decision":      "confirm_true",
-					"evidence": []any{map[string]any{
-						"content":         "An independent architecture source states that Dense-Mem stores durable knowledge in PostgreSQL.",
-						"source_type":     "document",
-						"source":          "independent architecture source",
-						"source_key":      "example:independent-architecture-source",
-						"source_revision": "1",
-					}},
-					"relationships": []any{map[string]any{
-						"ref":              "independent-durable-store",
-						"subject":          map[string]any{"name": "Dense-Mem", "entity_kind": "project"},
-						"predicate":        map[string]any{"proposed_key": "stores_in"},
-						"object":           map[string]any{"entity": map[string]any{"name": "PostgreSQL", "entity_kind": "product"}},
-						"polarity":         "+",
-						"modality":         "statement",
-						"evidence_indices": []any{0},
-					}},
-				},
-				Result:     "A successful confirmation returns hypothesis_id, status, and optional submission_id. A structured terminal failure returns bounded next_action and remediation with no partial semantic commit.",
-				NextAction: "Follow the returned next_action and remediation. Keep the exact confirmation payload only for a retry the server explicitly authorizes. Never change an input or key to bypass a conflict; make a corrected resubmission only when the returned remediation expressly directs it. A failed confirmation never makes the Hypothesis accepted memory by itself.",
-			}},
-		},
 		ToolExportMemoryPack: {
 			WhenToUse:     "Export selected active Relationships with support provenance.",
 			Prerequisites: "Use active relationship_id values returned by remember, recall_memory, or trace_memory.",

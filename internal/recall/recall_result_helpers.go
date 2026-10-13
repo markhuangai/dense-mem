@@ -1,7 +1,6 @@
 package recall
 
 import (
-	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -151,32 +150,6 @@ func limitStrings(values []string, limit int) []string {
 		values = values[:limit]
 	}
 	return append([]string(nil), values...)
-}
-
-func relatedHypothesisSummaries(records []dreamcontract.HypothesisRecord) []RelatedHypothesisSummary {
-	out := make([]RelatedHypothesisSummary, 0, len(records))
-	for _, record := range records {
-		lane := string(record.Lane)
-		if lane == "" {
-			lane = "graph"
-		}
-		out = append(out, RelatedHypothesisSummary{
-			HypothesisID:          record.HypothesisID,
-			SubjectEntityID:       record.SubjectEntityID,
-			PredicateKey:          record.PredicateKey,
-			ObjectEntityID:        record.ObjectEntityID,
-			ObjectValueID:         record.ObjectValueID,
-			Statement:             record.Statement,
-			Status:                record.Status,
-			SourceRelationshipIDs: relatedHypothesisSourceIDs(record.SourceRefs),
-			SourceEvidenceIDs:     append([]string{}, record.SourceEvidenceIDs...),
-			Lane:                  lane,
-			GeneratorKind:         publicHypothesisGeneratorKind(record.GeneratorKind),
-			GeneratorVersion:      record.GeneratorVersion,
-			CreatedAt:             record.CreatedAt,
-		})
-	}
-	return out
 }
 
 func relatedHypothesisSourceIDs(refs []map[string]any) []string {

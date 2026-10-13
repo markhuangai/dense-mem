@@ -33,7 +33,6 @@ func TestFeedbackResultRefsPreservesOrderAndEarliestDuplicateRank(t *testing.T) 
 				SearchState:    string(domain.SearchProjectionFailed),
 			}},
 		}},
-		RelatedHypotheses: []RelatedHypothesisSummary{{HypothesisID: "hypothesis-1", Status: "proposed"}},
 	}
 
 	refs := FeedbackResultRefs(result)
@@ -42,7 +41,6 @@ func TestFeedbackResultRefsPreservesOrderAndEarliestDuplicateRank(t *testing.T) 
 		{Type: domain.RecallFeedbackResultTypeRelationship, ID: "relationship-1", Rank: 2, Tier: "relationship", StatusAtRecall: string(domain.SearchProjectionCurrent)},
 		{Type: domain.RecallFeedbackResultTypeEvidence, ID: "evidence-2", Rank: 2, Tier: "evidence", StatusAtRecall: string(domain.SearchProjectionCurrent)},
 		{Type: domain.RecallFeedbackResultTypeCommunity, ID: "community-1", Rank: 4, StatusAtRecall: string(domain.SearchProjectionCurrent)},
-		{Type: domain.RecallFeedbackResultTypeHypothesis, ID: "hypothesis-1", Rank: 1, StatusAtRecall: "proposed"},
 	}, refs)
 	assert.Empty(t, FeedbackResultRefs(nil))
 }

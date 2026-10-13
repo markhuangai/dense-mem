@@ -1,7 +1,6 @@
 package registry
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -20,10 +19,6 @@ func TestContractSchemaBuildersRemainConstructible(t *testing.T) {
 		recallEvidenceConflictPositionSchema,
 		recallConflictPositionSchema,
 		recallConflictSupporterSchema,
-		hypothesisSummarySchema,
-		hypothesisSchema,
-		dreamDerivationSchema,
-		dreamEvidenceDerivationSchema,
 		versionMapSchema,
 		correctionRelationshipChangeSchema,
 		correctionEntityCandidateSchema,
@@ -41,10 +36,6 @@ func TestContractSchemaBuildersRemainConstructible(t *testing.T) {
 		semanticNodeSchema,
 		semanticEdgeSchema,
 		recallFeedbackOutputSchema,
-		listDreamsOutputSchema,
-		getDreamOutputSchema,
-		resolveDreamFeedbackOutputSchema,
-		dreamConfirmationBusyOutputSchema,
 		TerminalRememberOutputSchema,
 		exportMemoryPackOutputSchema,
 		memoryPackOmissionSchema,
@@ -57,7 +48,7 @@ func TestContractSchemaBuildersRemainConstructible(t *testing.T) {
 		}
 	}
 	for _, version := range []string{domain.PreviousContractVersion, domain.ContractVersion} {
-		if len(terminalCorrectionOutputSchema(version)) == 0 || len(terminalErrorSchema()) == 0 || len(dreamTerminalRememberOutputSchema(version)) == 0 {
+		if len(terminalCorrectionOutputSchema(version)) == 0 || len(terminalErrorSchema()) == 0 {
 			t.Fatalf("terminal schemas were empty for version %q", version)
 		}
 	}
@@ -70,16 +61,10 @@ func TestContractSchemaBuildersRemainConstructible(t *testing.T) {
 	if output, err := traceContractOutput(nil); err != nil || len(output) == 0 {
 		t.Fatalf("nil trace output = %#v, %v", output, err)
 	}
-	if len(listDreamsContractOutput(nil, "")) == 0 || len(resolveDreamFeedbackContractOutput(nil)) == 0 || len(exportMemoryPackContractOutput(nil)) == 0 {
+	if len(exportMemoryPackContractOutput(nil)) == 0 {
 		t.Fatal("nil auxiliary output was empty")
-	}
-	if len(dreamSummaryContractOutput(nil)) != 0 || len(dreamContractOutput(nil)) != 0 || len(dreamDerivationsContractOutput(nil)) != 0 || len(dreamEvidenceDerivationsContractOutput(nil)) != 0 {
-		t.Fatal("nil dream output was not empty")
 	}
 	if len(memoryPackOmissionsContractOutput([]string{"", "omitted"})) != 1 {
 		t.Fatal("memory pack omissions did not filter blanks")
-	}
-	if _, ok := resolveDreamConfirmationBusyOutcome(errors.New("not busy")); ok {
-		t.Fatal("ordinary error was classified as dream busy")
 	}
 }

@@ -86,7 +86,6 @@ class RecallResult(TypedDict):
     results: list[RecallEvidence]
     related_relationships: list[dict[str, Any]]
     related_communities: list[dict[str, Any]]
-    related_hypotheses: list[dict[str, Any]]
     conflicts: list[dict[str, Any]]
     search_states: dict[str, SearchState]
     degradations: list[dict[str, Any]]

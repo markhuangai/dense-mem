@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 type contractSourceRevision struct {
@@ -232,59 +231,8 @@ func validateRecallFeedback(args map[string]any) error {
 		if (quality == "low" || missing || irrelevant) && strings.TrimSpace(comment) == "" {
 			return fmt.Errorf("recalls[%d].feedback_comment is required for negative feedback", i)
 		}
-		hypotheses, _ := item["hypothesis_feedback"].([]any)
-		for j, hypothesisRaw := range hypotheses {
-			hypothesis, _ := objectFields(hypothesisRaw)
-			hypothesisQuality, _ := hypothesis["quality"].(string)
-			contradicted, _ := hypothesis["contradicted"].(bool)
-			hypothesisComment, _ := hypothesis["feedback_comment"].(string)
-			if (hypothesisQuality == "low" || contradicted) && strings.TrimSpace(hypothesisComment) == "" {
-				return fmt.Errorf("recalls[%d].hypothesis_feedback[%d].feedback_comment is required for negative feedback", i, j)
-			}
-		}
 	}
 	return nil
-}
-
-func validateDreamFeedback(args map[string]any) error {
-	decision, _ := args["decision"].(string)
-	switch decision {
-	case "confirm_true", "confirm_false":
-		if err := validateRequiredFields(args, "evidence"); err != nil {
-			return err
-		}
-		evidence, _ := args["evidence"].([]any)
-		sourceRevisions := map[string]contractSourceRevision{}
-		for i, item := range evidence {
-			fields, ok := objectFields(item)
-			if !ok {
-				continue
-			}
-			if err := validateSourceRevisionFields(i, fields); err != nil {
-				return err
-			}
-			if err := validateSourceRevisionBatch(i, fields, sourceRevisions); err != nil {
-				return err
-			}
-		}
-		if err := validateDirectEvidenceSupersessions(evidence); err != nil {
-			return err
-		}
-		if err := validateRequiredFields(args, "relationships"); err != nil {
-			return err
-		}
-		if err := validateSubmittedRelationships(args["relationships"], evidence, "relationships", false); err != nil {
-			return err
-		}
-		return rememberapp.ValidateRelationshipCoverage(len(evidence), objectArray(args["relationships"]))
-	case "reject", "stale", "reinforce":
-		if value, ok := args["idempotency_key"]; ok && strings.TrimSpace(stringInput(value)) != "" {
-			return errors.New("idempotency_key is only supported for confirmation decisions")
-		}
-		return validateRequiredFields(args, "reason")
-	default:
-		return validateRequiredFields(args, "reason")
-	}
 }
 
 func validateSubmittedRelationships(raw any, evidence []any, path string, allowKnownEvidence ...bool) error {

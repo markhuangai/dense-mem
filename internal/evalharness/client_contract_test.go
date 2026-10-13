@@ -126,16 +126,17 @@ func TestClassifyContractAllowsEvaluationToolsAndRejectsUnknownTools(t *testing.
 	for _, tool := range registry.ContractTools() {
 		definitions = append(definitions, mcpToolDefinition{Name: tool.Name, OutputSchema: tool.OutputSchema})
 	}
-	for _, name := range []string{"eval_list_knowledge_refs", "eval_run_dream_cycle", "eval_run_recall_case"} {
+	for _, name := range []string{"eval_list_knowledge_refs", "eval_run_recall_case"} {
 		definitions = append(definitions, mcpToolDefinition{Name: name})
 	}
 	mode, err := classifyContract(definitions)
 	require.NoError(t, err)
 	require.Equal(t, contractModeV262, mode)
 
-	definitions = append(definitions, mcpToolDefinition{Name: "unexpected_tool"})
-	_, err = classifyContract(definitions)
-	require.ErrorContains(t, err, "unsupported or mixed MCP contract")
+	for _, name := range []string{"eval_run_dream_cycle", "unexpected_tool"} {
+		_, err = classifyContract(append(definitions, mcpToolDefinition{Name: name}))
+		require.ErrorContains(t, err, "unsupported or mixed MCP contract", name)
+	}
 }
 
 func TestClassifyContractAllowsOmittedRuntimeOptionalTools(t *testing.T) {

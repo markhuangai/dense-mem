@@ -15,8 +15,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/dream"
 	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
@@ -27,7 +25,6 @@ const (
 	DefaultPageSize       = 100
 	MaxPageSize           = 500
 	DefaultRecallCaseSize = 10
-	MaxDreamCycleOutputs  = 10000
 )
 
 var ErrToolUnavailable = errors.New("evaluation: required dependency is unavailable")
@@ -43,8 +40,8 @@ type AuditAppender interface {
 type Dependencies struct {
 	Repository Repository
 	Recall     contract.Service
-	Dreams     dream.Service
-	Audit      AuditAppender
+
+	Audit AuditAppender
 }
 
 // Service owns evaluation orchestration and result shaping. Transport and
@@ -66,9 +63,6 @@ func (s *Service) ListKnowledgeRefs(ctx context.Context, fallbackTeamID, kind st
 	teamID, err := actorTeamID(ctx, fallbackTeamID)
 	if err != nil {
 		return nil, err
-	}
-	if kind == "dream" {
-		return s.listDreams(ctx, teamID, limit, cursor, status, metadataOnly)
 	}
 	if s.deps.Repository == nil {
 		return nil, ErrToolUnavailable
@@ -94,33 +88,7 @@ func (s *Service) ListKnowledgeRefs(ctx context.Context, fallbackTeamID, kind st
 	return pageResult(items, page.NextCursor, page.HasMore), nil
 }
 
-func (s *Service) listDreams(ctx context.Context, teamID string, limit int, cursor, status string, metadataOnly bool) (map[string]any, error) {
-	if s.deps.Dreams == nil {
-		return nil, ErrToolUnavailable
-	}
-	dreams, nextCursor, err := s.deps.Dreams.List(ctx, teamID, dream.ListOptions{
-		Limit:  limit,
-		Cursor: cursor,
-		Status: status,
-	})
-	if err != nil {
-		return nil, err
-	}
-	items := make([]map[string]any, 0, len(dreams))
-	for _, item := range dreams {
-		mapped, err := structMap(item)
-		if err != nil {
-			return nil, err
-		}
-		if metadataOnly {
-			stripContent("dream", mapped)
-		}
-		items = append(items, mapped)
-	}
-	return pageResult(items, nextCursor, nextCursor != ""), nil
-}
-
-func (s *Service) RunRecallCase(ctx context.Context, caseID string, req contract.Request, validAt, knownAt string, includeEvidence, includeDreams bool) (map[string]any, error) {
+func (s *Service) RunRecallCase(ctx context.Context, caseID string, req contract.Request, validAt, knownAt string, includeEvidence bool) (map[string]any, error) {
 	if s.deps.Recall == nil {
 		return nil, ErrToolUnavailable
 	}
@@ -164,41 +132,7 @@ func (s *Service) RunRecallCase(ctx context.Context, caseID string, req contract
 	if includeEvidence {
 		out["context_evidence_refs"] = resultRefs(result)
 	}
-	if includeDreams {
-		if s.deps.Dreams == nil {
-			return nil, ErrToolUnavailable
-		}
-		dreams, err := s.deps.Dreams.Recall(ctx, "", req.Query, limit)
-		if err != nil {
-			return nil, err
-		}
-		out["dream_refs"] = dreamRefs(dreams)
-	}
 	return out, nil
-}
-
-func (s *Service) RunDreamCycle(ctx context.Context, teamID string, req dream.RunCycleRequest) (map[string]any, error) {
-	if s.deps.Dreams == nil {
-		return nil, ErrToolUnavailable
-	}
-	maxOutputs := positiveOrDefault(req.MaxOutputs, dream.DefaultMaxOutputs)
-	if maxOutputs > MaxDreamCycleOutputs {
-		maxOutputs = MaxDreamCycleOutputs
-	}
-	req.MaxOutputs = maxOutputs
-	if err := s.audit(ctx, "eval_run_dream_cycle", maxOutputs, false, nil); err != nil {
-		return nil, err
-	}
-	teamID, err := actorTeamID(ctx, teamID)
-	if err != nil {
-		return nil, err
-	}
-	req.Manual = true
-	result, err := s.deps.Dreams.RunCycle(ctx, teamID, req)
-	if err != nil {
-		return nil, err
-	}
-	return structMap(result)
 }
 
 func (s *Service) audit(ctx context.Context, tool string, pageSize int, contentReturned bool, filters map[string]any) error {
@@ -259,8 +193,6 @@ func normalizeListType(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "fragment":
 		return "evidence"
-	case "dream":
-		return "dream"
 	default:
 		return strings.ToLower(strings.TrimSpace(value))
 	}
@@ -298,11 +230,6 @@ func copyItem(item map[string]any) map[string]any {
 
 func stripContent(kind string, item map[string]any) {
 	switch kind {
-	case "dream":
-		delete(item, "hypothesis")
-		delete(item, "what_if")
-		delete(item, "possible_outcome")
-		delete(item, "rationale")
 	case "evidence":
 		delete(item, "content")
 	case "entity":
@@ -311,8 +238,6 @@ func stripContent(kind string, item map[string]any) {
 	case "value":
 		delete(item, "canonical_value")
 		delete(item, "display")
-	case "hypothesis":
-		delete(item, "payload")
 	}
 }
 
@@ -346,17 +271,6 @@ func resultRefs(result *contract.RecallResult) []map[string]any {
 			ref["relationship_ids"] = append([]string(nil), item.RelationshipIDs...)
 		}
 		refs = append(refs, ref)
-	}
-	return refs
-}
-
-func dreamRefs(dreams []*domain.Dream) []map[string]any {
-	refs := make([]map[string]any, 0, len(dreams))
-	for i, item := range dreams {
-		if item == nil || strings.TrimSpace(item.DreamID) == "" {
-			continue
-		}
-		refs = append(refs, map[string]any{"rank": i + 1, "type": "dream", "id": item.DreamID, "status": string(item.Status)})
 	}
 	return refs
 }

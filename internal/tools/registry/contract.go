@@ -18,9 +18,6 @@ const (
 	ToolRecallMemory                = "recall_memory"
 	ToolTraceMemory                 = "trace_memory"
 	ToolSubmitRecallSessionFeedback = "submit_recall_session_feedback"
-	ToolListDreams                  = "list_dreams"
-	ToolGetDream                    = "get_dream"
-	ToolResolveDreamFeedback        = "resolve_dream_feedback"
 	ToolExportMemoryPack            = "export_memory_pack"
 )
 
@@ -34,9 +31,6 @@ var contractToolNames = []string{
 	ToolRecallMemory,
 	ToolTraceMemory,
 	ToolSubmitRecallSessionFeedback,
-	ToolListDreams,
-	ToolGetDream,
-	ToolResolveDreamFeedback,
 	ToolExportMemoryPack,
 }
 
@@ -86,27 +80,6 @@ func ContractTools() []Tool {
 			[]string{"write"},
 			recallFeedbackInputSchema(),
 			recallFeedbackOutputSchema(),
-		),
-		contractTool(
-			ToolListDreams,
-			contractToolDescription(ToolListDreams),
-			[]string{"read"},
-			listDreamsInputSchema(),
-			listDreamsOutputSchema(),
-		),
-		contractTool(
-			ToolGetDream,
-			contractToolDescription(ToolGetDream),
-			[]string{"read"},
-			getDreamInputSchema(),
-			getDreamOutputSchema(),
-		),
-		contractTool(
-			ToolResolveDreamFeedback,
-			contractToolDescription(ToolResolveDreamFeedback),
-			[]string{"write"},
-			resolveDreamFeedbackInputSchema(),
-			resolveDreamFeedbackOutputSchema(),
 		),
 		contractTool(
 			ToolExportMemoryPack,
@@ -204,8 +177,6 @@ func ValidateContractInput(tool Tool, args map[string]any, scopes []string) erro
 		return validateCorrectRelationship(args)
 	case ToolSubmitRecallSessionFeedback:
 		return validateRecallFeedback(args)
-	case ToolResolveDreamFeedback:
-		return validateDreamFeedback(args)
 	case ToolExportMemoryPack:
 		return validateUniqueStringArray(args, "relationship_ids")
 	default:

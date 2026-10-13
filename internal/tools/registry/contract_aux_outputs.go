@@ -2,7 +2,6 @@ package registry
 
 import (
 	"github.com/markhuangai/dense-mem/internal/domain"
-	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 func recallFeedbackOutputSchema() map[string]any {
@@ -18,53 +17,6 @@ func recallFeedbackOutputSchema() map[string]any {
 			"reason_code":     schemaString("Code-specific bounded failure reason.", 128),
 			"next_action":     schemaEnum([]string{"correct_and_resubmit", "retry_same_request", "contact_operator", "stop"}),
 			"remediation":     schemaString("Bounded action for the remaining feedback items.", 512),
-		},
-	)
-}
-
-func listDreamsOutputSchema() map[string]any {
-	return closedObject(
-		[]string{"dreams"},
-		map[string]any{
-			"dreams":      array(hypothesisSummarySchema(), 0, 100),
-			"next_cursor": nullableString("Opaque next-page cursor.", 512),
-		},
-	)
-}
-
-func getDreamOutputSchema() map[string]any {
-	return closedObject(
-		[]string{"hypothesis"},
-		map[string]any{"hypothesis": hypothesisSchema()},
-	)
-}
-
-func resolveDreamFeedbackOutputSchema() map[string]any {
-	return map[string]any{
-		"oneOf": []any{
-			closedObject(
-				[]string{"hypothesis_id", "status"},
-				map[string]any{
-					"hypothesis_id": schemaString("Hypothesis ID.", 128),
-					"status":        schemaEnum(domain.HypothesisStatuses()),
-					"submission_id": schemaString("Submission ID for submitted evidence.", 128),
-				},
-			),
-			dreamTerminalRememberOutputSchema(domain.ContractVersion),
-			dreamConfirmationBusyOutputSchema(),
-		},
-	}
-}
-
-func dreamConfirmationBusyOutputSchema() map[string]any {
-	return closedObject(
-		[]string{"code", "message", "retryable", "next_action", "remediation"},
-		map[string]any{
-			"code":        schemaEnum([]string{"dream_confirmation_busy"}),
-			"message":     schemaString("Bounded Dream confirmation admission error.", 512),
-			"retryable":   map[string]any{"type": "boolean"},
-			"next_action": schemaEnum([]string{string(rememberapp.TerminalNextActionRetryDreamFeedback)}),
-			"remediation": schemaString("Bounded action the caller can take next.", 512),
 		},
 	)
 }

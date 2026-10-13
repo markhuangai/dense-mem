@@ -971,7 +971,7 @@ func TestControlPortalServiceAndValidationErrorBranches(t *testing.T) {
 	require.NoError(t, ShutdownControlPortal(server, nil))
 }
 
-func TestControlPortalProfileDreamingConfigErrors(t *testing.T) {
+func TestControlPortalTeamsIgnoreRetiredDreamingConfig(t *testing.T) {
 	profileID := uuid.New()
 	profiles := &controlProfileSvc{profiles: []*domain.Team{{
 		ID:        profileID,
@@ -993,6 +993,6 @@ func TestControlPortalProfileDreamingConfigErrors(t *testing.T) {
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 
-	require.Equal(t, http.StatusInternalServerError, rec.Code)
-	require.Contains(t, rec.Body.String(), `"message":"internal server error"`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), profileID.String())
 }

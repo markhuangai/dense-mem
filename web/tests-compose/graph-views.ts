@@ -41,7 +41,7 @@ export function registerGraphViewTests() {
     }], next_cursor: "" }));
     await openControlPanel(page);
     await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
-    await page.getByRole("button", { name: /team dreams/i }).click();
+    await page.getByRole("button", { name: /team dream history/i }).click();
     await page.locator(".dream-runs-table tbody tr").first().getByRole("button", { name: "Inspect" }).click();
     const diagnostics = page.getByRole("region", { name: "Dream diagnostics" });
     try {
@@ -58,7 +58,7 @@ export function registerGraphViewTests() {
     const releaseDiagnostics = await stubDreamDiagnostics(page, () => ({ items: [], next_cursor: "" }));
     await openControlPanel(page);
     await page.getByRole("button", { name: new RegExp(escapeRegExp(evidenceFailureTeamName)) }).click();
-    await page.getByRole("button", { name: /team dreams/i }).click();
+    await page.getByRole("button", { name: /team dream history/i }).click();
     const failedRun = page.locator(".dream-runs-table tbody tr").filter({ hasText: "Evidence discovery" }).filter({ hasText: "failed" });
     await expect(failedRun).toHaveCount(1);
     await failedRun.getByRole("button", { name: "Inspect" }).click();
@@ -106,8 +106,18 @@ export function registerGraphViewTests() {
     const repeat = (await repeatResponse.json() as { data?: unknown }).data;
     expect(JSON.stringify(repeat)).toBe(JSON.stringify(overview));
 
-    const dreamsResponse = await request.get(`${userUrl}/ui/api/dreams`, {
+    const retiredDreamsResponse = await request.get(`${userUrl}/ui/api/dreams`, {
       headers,
+      params: { limit: "20" },
+    });
+    expect(retiredDreamsResponse.status()).toBe(404);
+
+    const historyUrl = `${controlUrl}/control/api/teams/${seedTeamID}/dreams`;
+    const unauthorizedHistoryResponse = await request.get(historyUrl, { headers });
+    expect(unauthorizedHistoryResponse.status()).toBe(401);
+
+    const dreamsResponse = await request.get(historyUrl, {
+      headers: bearer(controlToken),
       params: { limit: "20" },
     });
     expect(dreamsResponse.status()).toBe(200);

@@ -690,7 +690,6 @@ async function mockUserApi(
           conflicts: [],
           related_relationships: [relationships[0]],
           related_communities: [{ relationships, evidence_ids: evidences.map((evidence) => evidence.evidence_id) }],
-          related_hypotheses: [],
           search_states: { evidence: "current", relationships: "current" },
           degradations: [],
         },

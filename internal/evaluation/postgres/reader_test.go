@@ -32,25 +32,20 @@ func newEvaluationReaderSQLMock(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 	return db, mock
 }
 
-func evaluationReaderHypothesisQuery(EvaluationListInput, int, int, ...string) (string, []any, error) {
-	return "SELECT $1::jsonb", []any{[]byte(`{"type":"hypothesis","id":"hypothesis-id"}`)}, nil
-}
-
-func TestEvaluationReaderUsesInjectedQueryAndDecodesRows(t *testing.T) {
+func TestEvaluationReaderDecodesCanonicalRows(t *testing.T) {
 	db, mock := newEvaluationReaderSQLMock(t)
-	mock.ExpectQuery(`SELECT \$1::jsonb`).
-		WithArgs([]byte(`{"type":"hypothesis","id":"hypothesis-id"}`)).
-		WillReturnRows(sqlmock.NewRows([]string{"item"}).AddRow([]byte(`{"type":"hypothesis","id":"hypothesis-id"}`)))
+	mock.ExpectQuery(`SELECT jsonb_build_object`).
+		WillReturnRows(sqlmock.NewRows([]string{"item"}).AddRow([]byte(`{"type":"evidence","id":"evidence-id"}`)))
 
-	reader := NewEvaluationReader(db, evaluationReaderTestRLS{}, evaluationReaderHypothesisQuery)
+	reader := NewEvaluationReader(db, evaluationReaderTestRLS{})
 	page, err := reader.ListEvaluationRefs(t.Context(), EvaluationListInput{
 		TeamID: "00000000-0000-0000-0000-000000000101",
-		Type:   "hypothesis",
+		Type:   "evidence",
 		Limit:  1,
 	})
 	require.NoError(t, err)
 	require.False(t, page.HasMore)
-	require.Equal(t, "hypothesis-id", page.Items[0]["id"])
+	require.Equal(t, "evidence-id", page.Items[0]["id"])
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -68,18 +63,17 @@ func TestEvaluationReaderReturnsQueryAndDecodeErrors(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			db, mock := newEvaluationReaderSQLMock(t)
-			expectation := mock.ExpectQuery(`SELECT \$1::jsonb`)
-			expectation.WithArgs([]byte(`{"type":"hypothesis","id":"hypothesis-id"}`))
+			expectation := mock.ExpectQuery(`SELECT jsonb_build_object`)
 			if test.queryError != nil {
 				expectation.WillReturnError(test.queryError)
 			} else {
 				expectation.WillReturnRows(test.rows)
 			}
 
-			reader := NewEvaluationReader(db, evaluationReaderTestRLS{}, evaluationReaderHypothesisQuery)
+			reader := NewEvaluationReader(db, evaluationReaderTestRLS{})
 			_, err := reader.ListEvaluationRefs(t.Context(), EvaluationListInput{
 				TeamID: "00000000-0000-0000-0000-000000000101",
-				Type:   "hypothesis",
+				Type:   "evidence",
 				Limit:  1,
 			})
 			if test.queryError != nil {
@@ -95,15 +89,14 @@ func TestEvaluationReaderReturnsQueryAndDecodeErrors(t *testing.T) {
 func TestEvaluationReaderReturnsScanAndRowsErrors(t *testing.T) {
 	t.Run("scan error", func(t *testing.T) {
 		db, mock := newEvaluationReaderSQLMock(t)
-		mock.ExpectQuery(`SELECT \$1::jsonb`).
-			WithArgs([]byte(`{"type":"hypothesis","id":"hypothesis-id"}`)).
+		mock.ExpectQuery(`SELECT jsonb_build_object`).
 			WillReturnRows(sqlmock.NewRows([]string{"item", "unexpected"}).AddRow(
-				[]byte(`{"type":"hypothesis","id":"hypothesis-id"}`), "unexpected"))
+				[]byte(`{"type":"evidence","id":"evidence-id"}`), "unexpected"))
 
-		reader := NewEvaluationReader(db, evaluationReaderTestRLS{}, evaluationReaderHypothesisQuery)
+		reader := NewEvaluationReader(db, evaluationReaderTestRLS{})
 		_, err := reader.ListEvaluationRefs(t.Context(), EvaluationListInput{
 			TeamID: "00000000-0000-0000-0000-000000000101",
-			Type:   "hypothesis",
+			Type:   "evidence",
 			Limit:  1,
 		})
 		require.Error(t, err)
@@ -114,16 +107,15 @@ func TestEvaluationReaderReturnsScanAndRowsErrors(t *testing.T) {
 	t.Run("rows error", func(t *testing.T) {
 		db, mock := newEvaluationReaderSQLMock(t)
 		rowsErr := errors.New("row iterator failed")
-		mock.ExpectQuery(`SELECT \$1::jsonb`).
-			WithArgs([]byte(`{"type":"hypothesis","id":"hypothesis-id"}`)).
+		mock.ExpectQuery(`SELECT jsonb_build_object`).
 			WillReturnRows(sqlmock.NewRows([]string{"item"}).
-				AddRow([]byte(`{"type":"hypothesis","id":"hypothesis-id"}`)).
+				AddRow([]byte(`{"type":"evidence","id":"evidence-id"}`)).
 				RowError(0, rowsErr))
 
-		reader := NewEvaluationReader(db, evaluationReaderTestRLS{}, evaluationReaderHypothesisQuery)
+		reader := NewEvaluationReader(db, evaluationReaderTestRLS{})
 		_, err := reader.ListEvaluationRefs(t.Context(), EvaluationListInput{
 			TeamID: "00000000-0000-0000-0000-000000000101",
-			Type:   "hypothesis",
+			Type:   "evidence",
 			Limit:  1,
 		})
 		require.ErrorIs(t, err, rowsErr)
@@ -133,21 +125,20 @@ func TestEvaluationReaderReturnsScanAndRowsErrors(t *testing.T) {
 
 func TestEvaluationReaderGetsItemsAndRejectsInvalidInputs(t *testing.T) {
 	db, mock := newEvaluationReaderSQLMock(t)
-	mock.ExpectQuery(`SELECT \$1::jsonb`).
-		WithArgs([]byte(`{"type":"hypothesis","id":"hypothesis-id"}`)).
-		WillReturnRows(sqlmock.NewRows([]string{"item"}).AddRow([]byte(`{"type":"hypothesis","id":"hypothesis-id"}`)))
+	mock.ExpectQuery(`SELECT jsonb_build_object`).
+		WillReturnRows(sqlmock.NewRows([]string{"item"}).AddRow([]byte(`{"type":"evidence","id":"evidence-id"}`)))
 
-	reader := NewReader(db, evaluationReaderTestRLS{}, evaluationReaderHypothesisQuery)
+	reader := NewReader(db, evaluationReaderTestRLS{})
 	item, err := reader.GetEvaluationItem(t.Context(), EvaluationGetInput{
 		TeamID: "00000000-0000-0000-0000-000000000101",
-		Type:   "dream",
+		Type:   "evidence",
 		ID:     "00000000-0000-0000-0000-000000000102",
 	})
 	require.NoError(t, err)
-	require.Equal(t, "hypothesis-id", item["id"])
+	require.Equal(t, "evidence-id", item["id"])
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	_, err = reader.GetEvaluationItem(t.Context(), EvaluationGetInput{TeamID: "bad", Type: "hypothesis", ID: "bad"})
+	_, err = reader.GetEvaluationItem(t.Context(), EvaluationGetInput{TeamID: "bad", Type: "evidence", ID: "bad"})
 	require.Error(t, err)
 
 	_, err = reader.ListEvaluationRefs(t.Context(), EvaluationListInput{TeamID: "bad", Type: "unsupported"})
@@ -156,14 +147,13 @@ func TestEvaluationReaderGetsItemsAndRejectsInvalidInputs(t *testing.T) {
 
 func TestEvaluationReaderGetReturnsNotFound(t *testing.T) {
 	db, mock := newEvaluationReaderSQLMock(t)
-	mock.ExpectQuery(`SELECT \$1::jsonb`).
-		WithArgs([]byte(`{"type":"hypothesis","id":"hypothesis-id"}`)).
+	mock.ExpectQuery(`SELECT jsonb_build_object`).
 		WillReturnRows(sqlmock.NewRows([]string{"item"}))
 
-	reader := NewReader(db, evaluationReaderTestRLS{}, evaluationReaderHypothesisQuery)
+	reader := NewReader(db, evaluationReaderTestRLS{})
 	_, err := reader.GetEvaluationItem(t.Context(), EvaluationGetInput{
 		TeamID: "00000000-0000-0000-0000-000000000101",
-		Type:   "hypothesis",
+		Type:   "evidence",
 		ID:     "00000000-0000-0000-0000-000000000102",
 	})
 	require.ErrorIs(t, err, sql.ErrNoRows)
@@ -173,22 +163,15 @@ func TestEvaluationReaderGetReturnsNotFound(t *testing.T) {
 func TestEvaluationReaderRejectsMissingDependencies(t *testing.T) {
 	_, err := (&EvaluationReader{}).ListEvaluationRefs(t.Context(), EvaluationListInput{
 		TeamID: "00000000-0000-0000-0000-000000000101",
-		Type:   "hypothesis",
+		Type:   "evidence",
 	})
-	require.EqualError(t, err, "evaluation: list hypothesis: semantic: database is required")
+	require.EqualError(t, err, "evaluation: list evidence: semantic: database is required")
 
 	db, _ := newEvaluationReaderSQLMock(t)
-	reader := NewEvaluationReader(db, evaluationReaderTestRLS{}, nil)
+	reader := NewEvaluationReader(db, nil)
 	_, err = reader.ListEvaluationRefs(t.Context(), EvaluationListInput{
 		TeamID: "00000000-0000-0000-0000-000000000101",
-		Type:   "hypothesis",
+		Type:   "evidence",
 	})
-	require.EqualError(t, err, "evaluation: list hypothesis: evaluation: hypothesis query is required")
-
-	reader = NewEvaluationReader(db, nil, evaluationReaderHypothesisQuery)
-	_, err = reader.ListEvaluationRefs(t.Context(), EvaluationListInput{
-		TeamID: "00000000-0000-0000-0000-000000000101",
-		Type:   "hypothesis",
-	})
-	require.EqualError(t, err, "evaluation: list hypothesis: semantic: rls helper is required")
+	require.EqualError(t, err, "evaluation: list evidence: semantic: rls helper is required")
 }

@@ -13,7 +13,6 @@ func bindEvaluationApplication(deps Dependencies) Dependencies {
 		deps.EvaluationBindings.Application = evaluationapp.New(evaluationapp.Dependencies{
 			Repository: deps.EvaluationBindings.Repository,
 			Recall:     deps.RecallBindings.Service,
-			Dreams:     deps.DreamBindings.Service,
 			Audit:      deps.EvaluationBindings.Audit,
 		})
 	}

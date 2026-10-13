@@ -72,7 +72,7 @@ func TestRememberServiceRejectsHistoricalOutcomesThroughPostgres(t *testing.T) {
 		Grants: []string{"read", "write"},
 	})
 
-	for _, version := range []string{"dense-mem.v2.6.2", "dense-mem.v2.6.3"} {
+	for _, version := range []string{"dense-mem.v2.6.8", "dense-mem.v2.6.7", "dense-mem.v2.6.6", "dense-mem.v2.6.3", "dense-mem.v2.6.2"} {
 		for _, covered := range []bool{false, true} {
 			t.Run(fmt.Sprintf("terminal %s covered=%t", version, covered), func(t *testing.T) {
 				key, attemptID := "legacy-coverage-"+uuid.NewString(), uuid.NewString()
@@ -91,12 +91,18 @@ func TestRememberServiceRejectsHistoricalOutcomesThroughPostgres(t *testing.T) {
 				require.NoError(t, ledger.RecordRememberAttempt(ctx, knowledgecontract.RememberAttemptRecordInput{TeamID: teamID.String(), OwnerProfileID: ownerID.String(), AttemptID: attemptID, IdempotencyKey: key, RequestHash: hash, ContractVersion: version, SubmissionKind: "remember", Outcome: "completed", PublicResult: public}))
 				before, err := ledger.LoadRememberAttempt(ctx, knowledgecontract.RememberAttemptLookupInput{TeamID: teamID.String(), OwnerProfileID: ownerID.String(), IdempotencyKey: key})
 				require.NoError(t, err)
+				require.Equal(t, hash, before.RequestHash)
 				result, err := service.Remember(actorCtx, rememberapp.RememberRequest{Evidence: evidence, IdempotencyKey: key, RelationshipHints: proposals})
 				if covered {
 					require.NoError(t, err)
 					require.Equal(t, version, result.ContractVersion)
 					require.Equal(t, attemptID, result.SubmissionID)
 					require.NoError(t, rememberapp.ValidateTerminalRememberResult(result.Terminal, 1, []string{"legacy"}))
+					encoded, err := json.Marshal(result.Terminal)
+					require.NoError(t, err)
+					expected, err := json.Marshal(public)
+					require.NoError(t, err)
+					require.JSONEq(t, string(expected), string(encoded))
 				} else {
 					require.Nil(t, result)
 					var validation *rememberapp.RememberValidationError
@@ -882,12 +888,14 @@ func insertHistoricalRememberOutcome(
 
 func setupRememberProcessorIntegrationDB(t *testing.T) (*gorm.DB, *gorm.DB, *storagepostgres.RLS, func()) {
 	t.Helper()
-	if os.Getenv("DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS") != "1" {
-		t.Skip("set DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1 to run PostgreSQL integration tests")
-	}
 	dsn := strings.TrimSpace(storagepostgres.GetTestDSN())
 	if dsn == "" {
-		t.Skip("DATABASE_URL is required for Remember processor PostgreSQL integration tests")
+		if os.Getenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS") != "1" {
+			t.Skip("set DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 for disposable Remember processor PostgreSQL tests")
+		}
+		withLifecyclePostgres(t, func(t *testing.T) { dsn = os.Getenv("POSTGRES_DSN") })
+	} else if os.Getenv("DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS") != "1" {
+		t.Skip("set DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1 to test an existing DATABASE_URL")
 	}
 	adminDB, err := gorm.Open(gormpostgres.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)

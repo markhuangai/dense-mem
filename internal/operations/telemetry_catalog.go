@@ -6,8 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-
 	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
 )
 
@@ -252,8 +250,8 @@ func collectTelemetryRangeFailures(specs []telemetryQuerySpec, results map[strin
 }
 
 func (s *PrometheusTelemetryService) telemetryFeatureStates(ctx context.Context, scope TelemetryScope) map[string]telemetryFeatureState {
-	states := make(map[string]telemetryFeatureState)
-	if s == nil || (s.features.RecallFeedbackEnabled == nil && s.features.DreamingEnabled == nil) {
+	states := map[string]telemetryFeatureState{"dream": {Set: true, Disposition: telemetryInactive("feature_retired")}}
+	if s == nil || s.features.RecallFeedbackEnabled == nil {
 		return states
 	}
 	if s.features.RecallFeedbackEnabled != nil {
@@ -262,18 +260,6 @@ func (s *PrometheusTelemetryService) telemetryFeatureStates(ctx context.Context,
 			states["recall"] = telemetryFeatureState{Set: true, Disposition: telemetryUnavailable("source_unconfigured")}
 		} else if !enabled {
 			states["recall"] = telemetryFeatureState{Set: true, Disposition: telemetryInactive("feature_disabled")}
-		}
-	}
-	if s.features.DreamingEnabled != nil {
-		var teamID *uuid.UUID
-		if scope.Type != "system" {
-			teamID = scope.TeamID
-		}
-		enabled, err := s.features.DreamingEnabled(ctx, teamID)
-		if err != nil {
-			states["dream"] = telemetryFeatureState{Set: true, Disposition: telemetryUnavailable("source_unconfigured")}
-		} else if !enabled {
-			states["dream"] = telemetryFeatureState{Set: true, Disposition: telemetryInactive("feature_disabled")}
 		}
 	}
 	return states
@@ -521,11 +507,11 @@ func telemetrySnapshotDisposition(cards []TelemetryCard, series []TelemetrySerie
 	hasUsable := false
 	for _, card := range cards {
 		hasUnavailable = hasUnavailable || card.Status == TelemetryItemUnavailable
-		hasUsable = hasUsable || card.Status == TelemetryItemReady || card.Status == TelemetryItemInactive
+		hasUsable = hasUsable || card.Status == TelemetryItemReady || card.Status == TelemetryItemInactive && card.ReasonCode != "feature_retired"
 	}
 	for _, item := range series {
 		hasUnavailable = hasUnavailable || item.Status == TelemetryItemUnavailable
-		hasUsable = hasUsable || item.Status == TelemetryItemReady || item.Status == TelemetryItemInactive
+		hasUsable = hasUsable || item.Status == TelemetryItemReady || item.Status == TelemetryItemInactive && item.ReasonCode != "feature_retired"
 	}
 	if hasUnavailable && !hasUsable {
 		return TelemetrySnapshotUnavailable, false, "telemetry sources are unavailable"

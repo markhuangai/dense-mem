@@ -9,7 +9,6 @@ const controlToken = required("DENSE_MEM_CONTROL_TOKEN");
 const apiKey = required("DENSE_MEM_E2E_API_KEY");
 const teamID = required("DENSE_MEM_E2E_TEAM_ID");
 const original = (await control("/config/ontology-maintenance")).data;
-const originalCommunity = (await control("/config/community-detection")).data;
 const summaryCallsBefore = await summaryCalls();
 let paused = false;
 try {
@@ -17,7 +16,6 @@ try {
   await control("/ontology/pause", { operation_key: randomUUID() });
   paused = true;
   await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
-  await control("/config/community-detection", { items: [{ key: "COMMUNITY_DETECTION_ENABLED", value: "false" }] }, "PATCH");
   assert.equal((await control("/ontology/status")).data.paused, true);
   const shared = (await control(`/teams/${teamID}/credentials`, { name: "Ontology shared acceptance", scopes: ["read", "write"], rate_limit: 300, memory_binding: "shared_only" })).data;
   assert.equal(shared.credential.memory_binding, "shared_only");
@@ -114,7 +112,6 @@ try {
   const accountingAfterOntologyRecall = (await control("/ontology/status")).data.window;
   assert.equal(accountingAfterOntologyRecall.charged_input_tokens, accountingBefore.charged_input_tokens, "Recall added organization provider input tokens");
   assert.equal(accountingAfterOntologyRecall.charged_output_tokens, accountingBefore.charged_output_tokens, "Recall added organization provider output tokens");
-  await control("/config/community-detection", { items: [{ key: "COMMUNITY_DETECTION_ENABLED", value: "true" }] }, "PATCH");
   await control("/ontology/resume", { operation_key: randomUUID() });
   paused = false;
   let communityStatus;
@@ -167,13 +164,14 @@ try {
     WHERE team_id=${sqlLiteral(teamID)}::uuid AND topic_id=${sqlLiteral(failedTopic.logical_community_id)}::uuid;
     UPDATE community_records SET status='current',stale_reason=''
     WHERE team_id=${sqlLiteral(teamID)}::uuid AND community_id=${sqlLiteral(failedTopic.community_id)}::uuid`);
-  await control("/config/community-detection", { items: [{ key: "COMMUNITY_DETECTION_ENABLED", value: "false" }] }, "PATCH");
   await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "false" }] }, "PATCH");
+  const noCommunity = await mcp("recall_memory", topicArgs, reader.api_key);
+  assert.equal(noCommunity.related_communities.length, 0, "disabled ontology must not expose historical communities");
+  assert(!Object.hasOwn(noCommunity, "related_hypotheses"));
   const ordinary = await mcp("recall_memory", args, reader.api_key);
   assert.equal(ordinary.results.filter((item) => sourceIDs.includes(item.evidence_id)).length, 3);
   assert(ordinary.results.every((item) => item.equivalent_evidence_ids.length === 0 && !item.equivalents_truncated));
   await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
-  await control("/config/community-detection", { items: [{ key: "COMMUNITY_DETECTION_ENABLED", value: "true" }] }, "PATCH");
   const deniedRetraction = await rpc("retract_evidence", { evidence_ids: [sourceIDs[0]], reason: "wrong owner regression", idempotency_key: randomUUID() }, reader.api_key);
   assert(deniedRetraction.error || deniedRetraction.result?.isError, "reader C must not mutate owner A's source");
   const retracted = await mcp("retract_evidence", { evidence_ids: [sourceIDs[0]], reason: "withdraw grouping source", idempotency_key: randomUUID() }, shared.api_key);
@@ -235,7 +233,6 @@ try {
   await fixtureMode("normal");
   if (paused) await control("/ontology/resume", { operation_key: randomUUID() });
   await control("/config/ontology-maintenance", { items: original.items.map(({ key, value }) => ({ key, value })) }, "PATCH");
-  await control("/config/community-detection", { items: originalCommunity.items.map(({ key, value }) => ({ key, value })) }, "PATCH");
 }
 
 function required(name) { assert(process.env[name], `${name} is required`); return process.env[name]; }

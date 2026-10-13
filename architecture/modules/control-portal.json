@@ -139,11 +139,6 @@
         "visibility": "private"
       },
       {
-        "id": "web/src/teamDreamingConfig.tsx",
-        "role": "transport",
-        "visibility": "public"
-      },
-      {
         "id": "web/src/telemetry/types.ts",
         "role": "transport",
         "visibility": "public"

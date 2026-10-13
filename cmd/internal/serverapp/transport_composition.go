@@ -80,7 +80,6 @@ type transportCompositionInputs struct {
 	controlDreamDiagnostics dream.DiagnosticService
 	graph                   graph.Service
 	recall                  recall.RecallService
-	dream                   dream.Service
 }
 
 type transportComposition struct {
@@ -241,7 +240,6 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 		handler.NewMCPLogger(transportLogger(deps.logger)),
 		streamLifecycle,
 		deps.appConfig,
-		deps.dream,
 	)
 	if deps.telemetry.Exports != nil {
 		mcpHandler.SetOperationObserver(deps.telemetry.Exports)
@@ -338,7 +336,6 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 		UsageMetrics:             deps.usageMetrics,
 		GraphView:                deps.graph,
 		RecallSvc:                deps.recall,
-		DreamSvc:                 deps.dream,
 		PrivateMemory:            deps.privateMemory,
 		AuditSvc:                 deps.auditService,
 		SecuritySvc:              deps.securityService,

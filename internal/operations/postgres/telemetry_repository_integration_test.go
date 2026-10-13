@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
-	dreampostgres "github.com/markhuangai/dense-mem/internal/dream/postgres"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
 	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
@@ -191,20 +189,15 @@ func TestReadOperationalTelemetryUsesDurableLedgerAndSurvivesCollectorRecreation
 	fourthIngestID := createTelemetryRelationship(t, ctx, semantic, ledger, teamID, ownerID, "telemetry-refuted", "-")
 	createTelemetryRelationshipIdentityAlias(t, ctx, adminDB, rls, teamID, ownerID, firstIngestID)
 
-	dreamStore := dreampostgres.NewStore(appDB, rls)
-	started := time.Now().UTC()
-	run, err := dreamStore.ClaimDreamCycle(ctx, dreamcontract.DreamCycleClaimInput{
-		TeamID: teamID, InitiatedByProfileID: ownerID, RunDate: started.Format("2006-01-02"),
-		WindowKey: "operational-telemetry-" + uuid.NewString(), LeaseToken: uuid.NewString(), LeaseUntil: started.Add(time.Minute),
-	})
-	require.NoError(t, err)
-	require.True(t, run.Claimed)
-	require.NoError(t, dreamStore.CompleteDreamCycle(ctx, dreamcontract.DreamCycleCompleteInput{
-		TeamID: teamID, InitiatedByProfileID: ownerID, RunID: run.RunID, LeaseToken: run.LeaseToken,
-		Status: "completed", InputCount: 4, ProviderProposals: 0, CreatedHypotheses: 0,
-	}))
 	hypothesisID := uuid.NewString()
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`INSERT INTO dream_cycle_runs (
+			team_id, run_id, initiated_by_profile_id, run_date, window_key,
+			status, lane, input_count, started_at, completed_at
+		) VALUES (?::uuid, ?::uuid, ?::uuid, current_date, ?, 'completed', 'graph', 4, now(), now())`,
+			teamID, uuid.NewString(), ownerID, "operational-telemetry-"+uuid.NewString()).Error; err != nil {
+			return err
+		}
 		if err := tx.Exec(`
 			INSERT INTO hypotheses (
 				team_id, hypothesis_id, created_by_profile_id, status, payload, statement,
@@ -280,11 +273,7 @@ func TestReadOperationalTelemetryUsesDurableLedgerAndSurvivesCollectorRecreation
 	require.Equal(t, 4.0, dreamRun.InputTargets)
 	require.Zero(t, dreamRun.ProviderProposals)
 	require.Zero(t, dreamRun.CreatedHypotheses)
-	hypothesis := findHypothesisTelemetry(snapshot.Hypotheses, "graph", "proposed")
-	require.Equal(t, 1.0, hypothesis.Count)
-	require.Equal(t, 1.0, hypothesis.BacklogCount)
-	require.GreaterOrEqual(t, hypothesis.OldestBacklogAge, 7000.0)
-	require.Less(t, hypothesis.OldestBacklogAge, 8000.0)
+	require.Empty(t, snapshot.Hypotheses, "retired hypotheses must not be reported as an active backlog")
 	require.Equal(t, 2.0, findWindowedTelemetryCount(snapshot.Feedback, "15m", "confirm_true"))
 	require.Equal(t, 1.0, findWindowedTelemetryCount(snapshot.Feedback, "15m", "confirm_false"))
 	require.Equal(t, 2.0, findWindowedTelemetryCount(snapshot.Feedback, "12h", "confirm_false"))
@@ -309,7 +298,10 @@ func TestReadOperationalTelemetryUsesDurableLedgerAndSurvivesCollectorRecreation
 		metrics.Handler().ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
 		require.Contains(t, response.Body.String(), `densemem_operational_ledger_collection_success 1`)
 		require.Contains(t, response.Body.String(), `densemem_operational_dream_provider_proposals{lane="graph",status="completed",window="1h"} 0`)
-		require.Contains(t, response.Body.String(), `densemem_operational_dream_confirmed_relationships{status="active",window="15m"} 2`)
+		require.NotContains(t, response.Body.String(), "densemem_operational_dream_confirmed_relationships")
+		require.NotContains(t, response.Body.String(), "densemem_operational_hypothesis_backlog")
+		require.Contains(t, response.Body.String(), `densemem_operational_remember_attempts{outcome="completed",window="15m"} 1`)
+		require.Contains(t, response.Body.String(), `densemem_operational_relationships_current{status="active"} 4`)
 		require.NotContains(t, response.Body.String(), teamID)
 		require.NotContains(t, response.Body.String(), ownerID)
 		require.NotContains(t, response.Body.String(), hypothesisID)

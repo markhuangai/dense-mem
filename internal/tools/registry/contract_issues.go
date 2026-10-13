@@ -109,17 +109,7 @@ func ValidateContractInputIssues(tool Tool, args map[string]any, scopes []string
 				if err := validateRecallFeedback(args); err != nil {
 					collector.add("", classifyContractIssue(err.Error()), err.Error())
 				}
-			case ToolResolveDreamFeedback:
-				if err := validateDreamFeedback(args); err != nil {
-					if validation, ok := ContractValidationResultFromError(wrapRememberValidationError(err)); ok {
-						for _, issue := range validation.Issues {
-							collector.add(issue.Path, issue.Code, issue.Message)
-						}
-						collector.truncated = collector.truncated || validation.IssuesTruncated
-					} else {
-						collector.add("", classifyContractIssue(err.Error()), err.Error())
-					}
-				}
+
 			}
 		}
 	}

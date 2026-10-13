@@ -181,8 +181,8 @@ func TestRecallPrivateBranchDoesNotExpandTeamGraph(t *testing.T) {
 	metrics := &recallCommunityMetricsStub{InMemoryDiscoverabilityMetrics: observability.NewInMemoryDiscoverabilityMetrics()}
 	svc := NewRecallService(RecallDependencies{
 		Search: search, Communities: communities,
-		CommunityConfig: recallCommunityConfigStub{enabled: true},
-		Metrics:         metrics,
+		OntologyConfig: recallOntologyConfigStub{enabled: true},
+		Metrics:        metrics,
 	})
 	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
 		TeamID: teamID, IdentityID: ownerID, MembershipID: ownerID, OwnerID: ownerID,
@@ -208,7 +208,7 @@ func TestRecallSingleSharedSpaceRecordsCommunityMetric(t *testing.T) {
 	metrics := &recallCommunityMetricsStub{InMemoryDiscoverabilityMetrics: observability.NewInMemoryDiscoverabilityMetrics()}
 	svc := NewRecallService(RecallDependencies{
 		Search: search, Communities: communities, Metrics: metrics,
-		CommunityConfig: recallCommunityConfigStub{enabled: true},
+		OntologyConfig: recallOntologyConfigStub{enabled: true},
 	})
 	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
 		TeamID: teamID, IdentityID: ownerID, MembershipID: ownerID, OwnerID: ownerID,

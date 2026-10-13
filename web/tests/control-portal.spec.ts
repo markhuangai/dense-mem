@@ -432,10 +432,10 @@ test("dream outputs keep rationale behind info tooltip", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [key] });
   await openPortal(page);
 
-  await page.getByRole("button", { name: /Team Dreams/ }).click();
+  await page.getByRole("button", { name: /Team Dream history/ }).click();
   await expect(page.locator(".resource-rail")).toBeVisible();
 
-  await expect(page.getByLabel("Dreaming status")).toContainText("Global force");
+  await expect(page.getByLabel("Dream history status")).toContainText("Retired");
   await expect(page.getByText("A may affect B.")).toBeVisible();
   await expectNoShellOverlap(page);
   const rationale = page.locator(".info-tooltip-content", { hasText: dreamRationale });
@@ -450,7 +450,7 @@ test("team workspace header stays compact across team tabs", async ({ page }) =>
 
   const heights: number[] = [];
   const workspaceTabs = page.locator(".team-workspace-tabs");
-  for (const tab of ["Overview", "Credentials", "Dreams", "Settings"]) {
+  for (const tab of ["Overview", "Credentials", "Dream history", "Settings"]) {
     await workspaceTabs.getByRole("button", { name: `Team ${tab}` }).click();
     const box = await page.locator(".team-workspace-header").boundingBox();
     expect(box, `${tab} header was not rendered`).not.toBeNull();
@@ -793,17 +793,9 @@ async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[
         contentType: "application/json",
         body: JSON.stringify({
           data: {
-            effective_config: {
-              enabled: true,
-              force_enabled: true,
-              start_time_local: "03:00",
-              timezone: "UTC",
-              max_outputs: 5,
-              team_enabled: true,
-              source: "global_force",
-            },
+            retired: true,
             latest_run: dreamRun,
-            pending_count: 0,
+            historical_proposed_count: 0,
           },
         }),
       });

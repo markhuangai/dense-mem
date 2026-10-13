@@ -115,7 +115,6 @@ func TestMCP_RoundTripsContractFixtures(t *testing.T) {
 				TeamContext{},
 				logger,
 				recallFeedbackConfigStub{enabled: true},
-				dreamingConfigStub{enabled: true},
 			)
 
 			params, err := json.Marshal(map[string]any{
@@ -218,7 +217,6 @@ func TestMCP_ToolListRequiredFieldsAreArraysOrOmitted(t *testing.T) {
 		TeamContext{},
 		logger,
 		recallFeedbackConfigStub{enabled: true},
-		dreamingConfigStub{enabled: true},
 	)
 	out := runRPC(t, server, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
 	var response rpcResp
@@ -237,7 +235,6 @@ func TestMCP_ToolListRequiredFieldsAreArraysOrOmitted(t *testing.T) {
 	if err := json.Unmarshal(response.Result, &result); err != nil {
 		t.Fatal(err)
 	}
-	listDreamsFound := false
 	for _, tool := range result.Tools {
 		required, exists := tool.InputSchema["required"]
 		if exists {
@@ -245,15 +242,6 @@ func TestMCP_ToolListRequiredFieldsAreArraysOrOmitted(t *testing.T) {
 				t.Errorf("%s inputSchema.required = %#v; want array or omitted", tool.Name, required)
 			}
 		}
-		if tool.Name == registry.ToolListDreams {
-			listDreamsFound = true
-			if exists {
-				t.Errorf("%s inputSchema.required = %#v; want omitted", tool.Name, required)
-			}
-		}
-	}
-	if !listDreamsFound {
-		t.Fatal("tools/list did not expose list_dreams")
 	}
 }
 

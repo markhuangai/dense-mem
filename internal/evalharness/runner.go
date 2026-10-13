@@ -3,6 +3,7 @@ package evalharness
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -197,6 +198,9 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			mergeKnowledgeMapping(&mapping, existing)
 			skipSourceDocIDs = completedMappedSourceDocIDs(checkpoint, existing)
 		}
+		if len(expectedDreams) > 0 {
+			return Summary{}, errors.New("legacy Dream evaluation is retired")
+		}
 		if opts.ImportSeed {
 			if mode == "import" {
 				keepSourceDocIDs := sourceDocIDsForQRelMappings(qrels, expectedDreams)
@@ -223,12 +227,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 				}
 				mergeKnowledgeMapping(&mapping, imported)
 			}
-			if len(expectedDreams) > 0 {
-				seeds := expectedDreamCycleSeeds(mapping, expectedDreams)
-				if err := client.RunDreamCycle(ctx, len(expectedDreams), seeds...); err != nil {
-					return Summary{}, err
-				}
-			}
+
 		}
 		if !mappingLoadedFromPath && mode != "import" {
 			exported, err := client.ExportKnowledgeMapping(ctx, opts.MaxPageSize)
@@ -236,14 +235,6 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 				return Summary{}, err
 			}
 			mergeKnowledgeMapping(&mapping, exported)
-		}
-		if len(expectedDreams) > 0 {
-			dreams, err := client.ExportDreamMapping(ctx, opts.MaxPageSize)
-			if err != nil {
-				return Summary{}, err
-			}
-			mergeKnowledgeMapping(&mapping, dreams)
-			mapExpectedDreams(&mapping, expectedDreams)
 		}
 		if err := validateRequiredQRelMappings(IndexQrels(qrels), suite, mapping); err != nil {
 			return Summary{}, err

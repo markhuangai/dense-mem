@@ -39,7 +39,6 @@ func testConformanceToolExamples(t *testing.T) {
 		TeamContext{},
 		logger,
 		recallFeedbackConfigStub{enabled: true},
-		dreamingConfigStub{enabled: true},
 	)
 	response := conformanceRPC(t, server, `{"jsonrpc":"2.0","id":7,"method":"tools/list","params":{}}`)
 	if response.Error != nil {

@@ -18,8 +18,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 		teams:         deps.TeamSvc,
 		credentials:   deps.CredentialSvc,
 		graph:         deps.GraphView,
-		recall:        handler.NewRecallHandler(deps.RecallSvc, deps.DreamSvc),
-		dreams:        handler.NewDreamHandler(deps.DreamSvc),
+		recall:        handler.NewRecallHandler(deps.RecallSvc),
 		audit:         handler.NewAuditHandler(deps.AuditSvc),
 		sso:           deps.SSOService,
 		portal:        deps.PortalSession,
@@ -66,7 +65,6 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	authorizeTeamMW := httpmw.AuthorizeTeam(teamAuthz)
 	teamSvcMW := userPortalServiceAvailable(deps.TeamSvc != nil, "team service unavailable")
 	credentialSvcMW := userPortalServiceAvailable(deps.CredentialSvc != nil, "credential service unavailable")
-	dreamSvcMW := userPortalServiceAvailable(deps.DreamSvc != nil, "dream service unavailable")
 
 	api.GET("/graph", portal.graphSnapshot, httpmw.RequireScopes("read"))
 	api.GET("/node-detail", portal.graphNodeDetail, httpmw.RequireScopes("read"))
@@ -86,10 +84,6 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	api.POST("/team/credentials/:credentialId/rotate", credentialHandler.Rotate, httpmw.RequireRole(accessservice.CredentialRoleManager), credentialSvcMW, httpmw.BindAndValidate[dto.CreateCredentialRequest](httpmw.CreateCredentialBodyKey))
 	api.DELETE("/team/credentials/:credentialId", credentialHandler.Delete, httpmw.RequireRole(accessservice.CredentialRoleManager), credentialSvcMW)
 	api.GET("/recall", portal.recall.Handle, teamSvcMW, teamResolutionMW, authorizeTeamMW, httpmw.RequireScopes("read"))
-	api.GET("/dreaming/status", portal.dreams.Status, dreamSvcMW, teamSvcMW, teamResolutionMW, authorizeTeamMW, httpmw.RequireScopes("read"))
-	api.GET("/dreaming/runs", portal.dreams.Runs, dreamSvcMW, teamSvcMW, teamResolutionMW, authorizeTeamMW, httpmw.RequireScopes("read"))
-	api.GET("/dreams", portal.dreams.List, dreamSvcMW, teamSvcMW, teamResolutionMW, authorizeTeamMW, httpmw.RequireScopes("read"))
-	api.GET("/dreams/:dreamId", portal.dreams.Get, dreamSvcMW, teamSvcMW, teamResolutionMW, authorizeTeamMW, httpmw.RequireScopes("read"))
 	if deps.SSOService != nil {
 		api.POST("/sso/team", portal.switchSSOTeam, httpmw.RequireScopes("read"))
 		api.GET("/sso/credentials", portal.listSSOCredentials, httpmw.RequireScopes("read"))

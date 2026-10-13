@@ -174,6 +174,7 @@ func TestOntologyManagementDraftIsolationReplayAndRLS(t *testing.T) {
 	require.Error(t, f.admin.Exec(`UPDATE ontology_draft_revisions SET version=version+1`).Error)
 	migrator, err := storage.NewMigrator(f.admin)
 	require.NoError(t, err)
+	require.NoError(t, rollbackOntologySchemaTo(t, f.admin, 20261011220000))
 	require.ErrorContains(t, migrator.RunDown(context.Background()), "populated ontology draft history")
 	preview, err := service.Preview(ctx, draft.ID, draft.Version)
 	require.NoError(t, err)

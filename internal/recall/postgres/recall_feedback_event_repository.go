@@ -128,10 +128,6 @@ func (r *FeedbackStore) RecordFeedback(ctx context.Context, event domain.RecallF
 	if err != nil {
 		return err
 	}
-	dreamFeedback, err := marshalRecallFeedbackDreamFeedback(event.DreamFeedback)
-	if err != nil {
-		return err
-	}
 	err = r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		result := tx.Exec(`
 			UPDATE recall_feedback_events SET
@@ -148,12 +144,11 @@ func (r *FeedbackStore) RecordFeedback(ctx context.Context, event domain.RecallF
 				missing_context = $9,
 				irrelevant = $10,
 				feedback_comment = $11,
-					irrelevant_result_refs = $12::jsonb,
-					dream_feedback = $13::jsonb
+					irrelevant_result_refs = $12::jsonb
 				WHERE recall_id = $1
-				  AND team_id = $14
-				  AND space_id = $15
-				  AND space_generation = $16
+				  AND team_id = $13
+				  AND space_id = $14
+				  AND space_generation = $15
 		`,
 			event.RecallID,
 			event.UpdatedAt.UTC(),
@@ -167,7 +162,6 @@ func (r *FeedbackStore) RecordFeedback(ctx context.Context, event domain.RecallF
 			boolPtrValue(event.Irrelevant),
 			event.FeedbackComment,
 			string(irrelevantRefs),
-			string(dreamFeedback),
 			uuidPtrValue(event.TeamID),
 			uuidPtrValue(event.SpaceID),
 			event.SpaceGeneration,

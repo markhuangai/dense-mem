@@ -121,46 +121,6 @@ func hypothesisSelectSQL(where string) string {
 	` + where
 }
 
-func hypothesisUpdateReturningSQL(update string) string {
-	return update + `
-		RETURNING team_id::text, hypothesis_id::text, COALESCE(created_by_profile_id::text, ''),
-		          status, COALESCE(lane, 'graph'), statement, rationale, likelihood, confidence,
-		          COALESCE(subject_entity_id::text, ''), COALESCE(predicate_key, ''),
-		          COALESCE(predicate_version, 0), COALESCE(object_entity_id::text, ''),
-		          COALESCE(object_value_id::text, ''), source_refs, source_versions,
-		          ARRAY(SELECT source_owner_id::text FROM unnest(source_owner_profile_ids) AS source_owner(source_owner_id)),
-		          COALESCE(content_hash, ''), COALESCE(target_identity, ''), COALESCE(cycle_run_id::text, ''),
-		          generator_kind, generator_version, invalidated_reason,
-		          COALESCE(submitted_ingest_id::text, ''),
-		          COALESCE((
-		              SELECT ingest.idempotency_key
-		              FROM knowledge_ingests AS ingest
-		              WHERE ingest.team_id = hypotheses.team_id
-		                AND ingest.ingest_id = hypotheses.submitted_ingest_id
-		              LIMIT 1
-		          ), ''),
-		          COALESCE((
-		              SELECT ingest.request_hash
-		              FROM knowledge_ingests AS ingest
-		              WHERE ingest.team_id = hypotheses.team_id
-		                AND ingest.ingest_id = hypotheses.submitted_ingest_id
-		              LIMIT 1
-		          ), ''),
-		          COALESCE((
-		              SELECT feedback.decision
-		              FROM hypothesis_feedback_events AS feedback
-		              WHERE feedback.team_id = hypotheses.team_id
-		                AND feedback.hypothesis_id = hypotheses.hypothesis_id
-		                AND feedback.submitted_ingest_id = hypotheses.submitted_ingest_id
-		                AND feedback.submitted_ingest_id IS NOT NULL
-		              ORDER BY feedback.created_at DESC, feedback.feedback_event_id DESC
-		              LIMIT 1
-		          ), ''),
-		          submitted_at,
-		          payload, created_at, updated_at
-	`
-}
-
 func scanHypothesisRecords(rows *sql.Rows) ([]HypothesisRecord, error) {
 	records := []HypothesisRecord{}
 	for rows.Next() {

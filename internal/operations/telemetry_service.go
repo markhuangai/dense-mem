@@ -122,7 +122,6 @@ type PrometheusTelemetryService struct {
 
 type TelemetryFeatureResolver struct {
 	RecallFeedbackEnabled func(context.Context) (bool, error)
-	DreamingEnabled       func(context.Context, *uuid.UUID) (bool, error)
 }
 
 func (s *PrometheusTelemetryService) SetLifecycleReader(reader operationscontract.TelemetryLifecycleReader) {

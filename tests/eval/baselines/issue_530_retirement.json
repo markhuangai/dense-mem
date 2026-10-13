@@ -1,0 +1,540 @@
+{
+  "schema_version": "dense-mem.retirement_evidence.v1",
+  "issue": 530,
+  "contract_version": "dense-mem.v2.7.0",
+  "base_commit": "38b73d347bd45500304d2bba86231abc2120db93",
+  "historical_1k_waiver": "Maintainer-approved in issue #530 before implementation; frozen inputs unchanged.",
+  "frozen_inputs": [
+    {
+      "path": "tests/eval/source_locks/ontology_organization_v1.json",
+      "sha256": "sha256:ad99f97d67411d2211bbe0e6dd7aaa18b81799aaeec82e64197abdbc0c8e9a0a",
+      "unchanged_from_base": true
+    },
+    {
+      "path": "tests/eval/source_locks/ontology_management_v1.json",
+      "sha256": "sha256:8633d8a588c3e4ebfb232b9ba8f6118a5db357665ccdbc01111d740ab05d2a55",
+      "unchanged_from_base": true
+    },
+    {
+      "path": "tests/eval/source_locks/community_topics_v1.json",
+      "sha256": "sha256:592904a2deab62ec8915b179b0b917eb642ec489d2830d755f7bb9efcd654c75",
+      "unchanged_from_base": true
+    },
+    {
+      "path": "internal/evalharness/organization_cohort.go",
+      "sha256": "sha256:c631b1ae10a9427dba2706bb4984c9dc524b75f7d7c715e385ec17bdb9a77229",
+      "unchanged_from_base": true
+    },
+    {
+      "path": "tests/eval/baselines/ontology_organization_v1.json",
+      "sha256": "sha256:df0dea8ceac6437f608749fcd42a8619b221fb51f8bc69e2ba0298765e693714",
+      "unchanged_from_base": true
+    },
+    {
+      "path": "tests/eval/baselines/ontology_management_v1.json",
+      "sha256": "sha256:6881d397b1069b35fc3f093dce14b162422ce4c76d932de1092467f4c9a1dfec",
+      "unchanged_from_base": true
+    },
+    {
+      "path": "tests/eval/baselines/community_topics_v1.json",
+      "sha256": "sha256:4a8739836e7948c5da411db130dafba59c35babaa851f37a362a3c04588fde8e",
+      "unchanged_from_base": true
+    },
+    {
+      "path": "tests/eval/baselines/ontology_recall_v1.json",
+      "sha256": "sha256:05b0d3ae2c83c5cac5b290d8dc419a9162bb046f2fe7539ce605255edc5cc287",
+      "unchanged_from_base": true
+    },
+    {
+      "path": "tests/eval/baselines/ontology_maintenance_v1.json",
+      "sha256": "sha256:1dc42095155118d5c23f1485c344d045cdac787cdc63399d40233e32773e7e6f",
+      "unchanged_from_base": true
+    },
+    {
+      "path": "tests/eval/baselines/v2.1.1_public_6axis_1k_baseline.json",
+      "sha256": "sha256:3f89064e063cf6305833a93754985c8d9c03b746a287f5bbe74bcfefc0c59481",
+      "unchanged_from_base": true
+    }
+  ],
+  "configured_provider": {
+    "model": "dense-mem-testing",
+    "configuration_unchanged": true,
+    "fresh_repetitions": 3,
+    "cases_per_repetition": 9,
+    "eligible_reports": 27,
+    "false_consolidations": 0,
+    "repeated_slots": 0,
+    "distinct_fact_coverage": 1,
+    "source_preservation": 1,
+    "cohort_sha256": "sha256:01e78a45a28121f64b36a7b17b8f76051ffd4186d2eed918470a054ad522ae14",
+    "report_sha256": "sha256:4c544df8f147e4dc72ae6dfad3de29eaec4cd2228f4c7f37e469ca63c6de9635"
+  },
+  "recall_quality": {
+    "baseline_bad_at_k": 0,
+    "baseline_repeated_slots": 4,
+    "candidate_bad_at_k": 0,
+    "candidate_repeated_slots": 0,
+    "case_count": 9,
+    "cohort_sha256": "sha256:01e78a45a28121f64b36a7b17b8f76051ffd4186d2eed918470a054ad522ae14",
+    "distinct_fact_coverage": 1,
+    "false_consolidations": 0,
+    "recall_provider_calls": 0,
+    "source_count": 19,
+    "source_preservation": 1,
+    "verified": true
+  },
+  "manager_quality": {
+    "bad_at_k": 0,
+    "cases": 3,
+    "distinct_fact_preservation": 1,
+    "false_consolidations": 0,
+    "manager_provider_calls": 0,
+    "source_lock_sha256": "sha256:8633d8a588c3e4ebfb232b9ba8f6118a5db357665ccdbc01111d740ab05d2a55",
+    "source_preservation": 1,
+    "sources": 6,
+    "verified": true
+  },
+  "community_quality": {
+    "baseline_bad_at_k": 0,
+    "baseline_retained_source_count": 0,
+    "candidate": {
+      "source_preservation": 1,
+      "distinct_fact_coverage": 1,
+      "bad_at_k": 0,
+      "false_consolidations": 0
+    },
+    "candidate_bad_at_k": 0,
+    "cohort_sha256": "sha256:affcf7685effbe59c214333ff8141cfcd41e12484cb9ba3cf0b28552f5171814",
+    "projection_summary_provider_calls": 0,
+    "source_count": 26,
+    "verified": true
+  },
+  "latency": {
+    "source_sha256": "sha256:d70e5793c90b020524db37d7d7e4393d57cbefad28894b0f75bb21e8e713e573",
+    "configuration": {
+      "corpus_count": 96,
+      "limit": 10,
+      "query_embedding": [
+        1,
+        0,
+        0
+      ],
+      "index_strategy": "exact",
+      "warmups": 20,
+      "measurements": 200,
+      "pairs": 5,
+      "maximum_p95_regression": 0.1
+    },
+    "workloads": {
+      "grouping": {
+        "disabled_p95_ns": [
+          15529992.0,
+          15479208.0,
+          14359232.0,
+          14522740.0,
+          14122366.0
+        ],
+        "enabled_p95_ns": [
+          15529079.0,
+          16091384.0,
+          15976783.0,
+          15973948.0,
+          16754492.0
+        ],
+        "paired_regressions": [
+          -5.8789470078313144e-05,
+          0.039548276630173795,
+          0.11264885197202745,
+          0.09992659787340408,
+          0.18637995927877804
+        ],
+        "median_paired_p95_regression": 0.09992659787340408,
+        "passed": true
+      },
+      "discovery": {
+        "disabled_p95_ns": [
+          14175541.0,
+          14104455.0,
+          13735005.0,
+          13542203.0,
+          15110542.0
+        ],
+        "enabled_p95_ns": [
+          14950417.0,
+          15441953.0,
+          14911404.0,
+          15930620.0,
+          15764840.0
+        ],
+        "paired_regressions": [
+          0.05466288729297886,
+          0.09482805255502602,
+          0.08564969579552395,
+          0.17636842395583652,
+          0.04330076313609399
+        ],
+        "median_paired_p95_regression": 0.08564969579552395,
+        "passed": true
+      },
+      "ordinary_fallback": {
+        "disabled_p95_ns": [
+          15410470.0,
+          15173685.0,
+          14261253.0,
+          16298473.0,
+          14275218.0
+        ],
+        "enabled_p95_ns": [
+          13366105.0,
+          13389069.0,
+          13217461.0,
+          13598566.0,
+          13405122.0
+        ],
+        "paired_regressions": [
+          -0.1326607819229394,
+          -0.11761256412005394,
+          -0.0731907638129693,
+          -0.16565398488557792,
+          -0.06095150350768719
+        ],
+        "median_paired_p95_regression": -0.11761256412005394,
+        "passed": true
+      }
+    },
+    "verified": true
+  },
+  "postgres_reconciliation": {
+    "passing_test_events": 1117,
+    "initial_exit_code": 1,
+    "assertion_corrections": [
+      {
+        "initial_failure": "TestTeamOwnedDreamingMigrationCanonicalizesLegacyRows",
+        "verified_corrected_attempt": "legacy-migration-retirement-1.json",
+        "receipt_sha256": "sha256:20ae4992c922bee5f57ee23e03f2c1d6f2a22def90fcd1e3718f4d0c0e5c42fd",
+        "exit_code": 0,
+        "real_disposable_postgres_required": true
+      },
+      {
+        "initial_failure": "TestCommunityTopicRecallModeSwitchRejectsUnvalidatedLegacy",
+        "verified_corrected_attempt": "community-mode-race-1.json",
+        "receipt_sha256": "sha256:bdc848235a82330efe626d00fb0f78fdc710aa55a5acbf8b54d5747919c8553c",
+        "exit_code": 0,
+        "real_disposable_postgres_required": true
+      },
+      {
+        "initial_failure": "TestOntologyManagementDraftIsolationReplayAndRLS",
+        "verified_corrected_attempt": "ontology-manager-migration-guard-1.json",
+        "receipt_sha256": "sha256:c1992d4366fdfd1df327d0fc064ed473bbbea9c97f291873874bbcde98506a6c",
+        "exit_code": 0,
+        "real_disposable_postgres_required": true
+      }
+    ],
+    "operations_compile_correction_receipt": "operations-postgres-2.json",
+    "compose_provider_case_receipt": "compose-assessment-provider-1.json",
+    "skips": [
+      {
+        "Package": "github.com/markhuangai/dense-mem/internal/storage/postgres",
+        "Test": "TestIdentityCleanupComposeSeed"
+      },
+      {
+        "Package": "github.com/markhuangai/dense-mem/internal/knowledge/postgres",
+        "Test": "TestComposeRememberPrimitives"
+      }
+    ],
+    "skip_scope": "Both cases require Compose-seeded databases; they are registered scenario cases and remain mandatory in final Production image E2E.",
+    "unresolved_applicable_test_failure_count": 0
+  },
+  "repository_coverage": {
+    "covered_statements": 32936,
+    "total_statements": 36508,
+    "percentage": 90.21584310288156,
+    "threshold_unchanged": true,
+    "profile_sha256": "sha256:b658aec0b5423415e826dd7ec2ba101d32f554ab105a1aeef8a4d7f15c1bc272"
+  },
+  "local_e2e_gate": {
+    "required_scenarios": [
+      "mcp_boundaries",
+      "ontology_organization",
+      "ontology_management",
+      "community",
+      "space_aware_recall",
+      "synchronous_write",
+      "python_client",
+      "private_memory_erasure"
+    ],
+    "all_scenarios_passed": true,
+    "resource_cleanup_verified": true,
+    "cleanup_receipt_sha256": "sha256:3f2be736d3f38a9457226a2fd79dc938ffd399375d97c869b6d164bfccb73a87"
+  },
+  "local_checks": {
+    "repository-ci-5": {
+      "command": [
+        "./scripts/ci-check.sh"
+      ],
+      "seconds": 2012.14,
+      "receipt_sha256": "sha256:9407cc798e7b9710d8368eef8b88bd7253458bab154bc136565d5c6044639186"
+    },
+    "migrations-policy-1": {
+      "command": [
+        "./scripts/check-postgres-migrations.sh",
+        "38b73d347bd45500304d2bba86231abc2120db93"
+      ],
+      "seconds": 5.01,
+      "receipt_sha256": "sha256:bb19f3f3f1e2f0bc08d5ada57e9dcb0e3e645c99ee09b43465f51797a1e4e8ad"
+    },
+    "retirement-postgres-1": {
+      "command": [
+        "go",
+        "test",
+        "-tags=integration",
+        "-p=1",
+        "./internal/storage/postgres",
+        "./internal/dream/postgres",
+        "./cmd/internal/serverapp",
+        "./internal/recall/postgres",
+        "./internal/ontology/postgres",
+        "-run",
+        "^(TestDreamCommunityRetirementMigrationPreservesSettingsAndHistory|TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention|TestRememberServiceRejectsHistoricalOutcomesThroughPostgres|TestRecallFeedbackEventRepositoryRecordsSnapshotBeforeFeedback|TestOntologyMaintenanceEnrollsActiveTeamsDespiteRetiredOptouts|TestOntologyMaintenanceProviderDisableDrain)$",
+        "-count=1",
+        "-timeout=90m",
+        "-v"
+      ],
+      "seconds": 55.41,
+      "receipt_sha256": "sha256:22277a925cab3f7c098c6dfd9ea82eec08bd12b1be40204e8c9341dc1caef773"
+    },
+    "replay-postgres-1": {
+      "command": [
+        "go",
+        "test",
+        "-tags=integration",
+        "-p=1",
+        "./cmd/internal/serverapp",
+        "-run",
+        "^TestRememberServiceRejectsHistoricalOutcomesThroughPostgres$",
+        "-count=1",
+        "-timeout=90m",
+        "-v"
+      ],
+      "seconds": 10.9,
+      "receipt_sha256": "sha256:3032dda6e00ba9e7f063f952ded27fed23c9238f889c4f05cd3057fe50e07a9c"
+    },
+    "operations-postgres-2": {
+      "command": [
+        "go",
+        "test",
+        "-tags=integration",
+        "./internal/operations/postgres",
+        "-count=1",
+        "-timeout=15m",
+        "-json"
+      ],
+      "seconds": 175.16,
+      "receipt_sha256": "sha256:c661ec8886d9967b0c4029b33cd103759b6e21850ef0c95a19a9d43709bf05f5"
+    },
+    "compose-assessment-provider-1": {
+      "command": [
+        "go",
+        "test",
+        "-tags=integration",
+        "./cmd/internal/serverapp",
+        "-run",
+        "^TestComposeSynchronousUnsupportedProposalPreservesSafeEvidence$",
+        "-count=1",
+        "-timeout=2m",
+        "-json"
+      ],
+      "seconds": 2.82,
+      "receipt_sha256": "sha256:aec29acc770ef5ad939807015ce7a068deaeb2325ae2db5d1572f9256e34fdb9",
+      "provider_fixture": "tests/uat/synchronous_write/provider-fixture.mjs",
+      "provider_configuration": "DENSE_MEM_E2E_PRIMITIVES_PROVIDER_URL points to the temporary registered fixture."
+    },
+    "recall-latency-1": {
+      "command": [
+        "go",
+        "test",
+        "-tags=integration",
+        "-p=1",
+        "./internal/recall/postgres",
+        "-run",
+        "^$",
+        "-bench",
+        "^BenchmarkRecallOntology$",
+        "-benchtime=200x",
+        "-count=5",
+        "-timeout=30m"
+      ],
+      "seconds": 122.89,
+      "receipt_sha256": "sha256:3576ea7fdbd05dcd02da24a529cf8561f795ebd55cc91ef90892035ffba4b324"
+    },
+    "live-maintenance-1": {
+      "command": [
+        "go",
+        "test",
+        "-tags=integration",
+        "-p=1",
+        "./internal/ontology/postgres",
+        "-run",
+        "^TestOntologyMaintenanceCohort$",
+        "-count=1",
+        "-timeout=90m",
+        "-v"
+      ],
+      "seconds": 472.93,
+      "receipt_sha256": "sha256:fb856d83ca722f4d7db2b36dba211ec1838899df25a1716996cb28531a0f083e"
+    },
+    "live-maintenance-2": {
+      "command": [
+        "go",
+        "test",
+        "-tags=integration",
+        "-p=1",
+        "./internal/ontology/postgres",
+        "-run",
+        "^TestOntologyMaintenanceCohort$",
+        "-count=1",
+        "-timeout=90m",
+        "-v"
+      ],
+      "seconds": 428.97,
+      "receipt_sha256": "sha256:df202da17a274aaff7c3d62afc6036c0350350d9036cc6aa0938ccfca87f66f8"
+    },
+    "live-maintenance-3": {
+      "command": [
+        "go",
+        "test",
+        "-tags=integration",
+        "-p=1",
+        "./internal/ontology/postgres",
+        "-run",
+        "^TestOntologyMaintenanceCohort$",
+        "-count=1",
+        "-timeout=90m",
+        "-v"
+      ],
+      "seconds": 494.37,
+      "receipt_sha256": "sha256:0da554797dcda2a520fa3d0a03adc6ee2926e3b34caeeac07284fbb471f2bbca"
+    },
+    "e2e-mcp-boundaries-2": {
+      "command": [
+        "scripts/e2e.sh",
+        "mcp_boundaries"
+      ],
+      "seconds": 59.5,
+      "receipt_sha256": "sha256:0e7ebbeb93aa3770e04055022e81450f2bea023377cba565d8740d65e4e5a89c"
+    },
+    "e2e-ontology-organization-1": {
+      "command": [
+        "scripts/e2e.sh",
+        "ontology_organization"
+      ],
+      "seconds": 882.67,
+      "receipt_sha256": "sha256:588ff97b49a7fbf1ca2d9ba2548f79a5428f5df61c3b1a98df5bf544937414f8"
+    },
+    "e2e-ontology-management-2": {
+      "command": [
+        "scripts/e2e.sh",
+        "ontology_management"
+      ],
+      "seconds": 444.79,
+      "receipt_sha256": "sha256:a39953dd75137683d8886e002f2371c3bf3bb593cec211b42da56a7847010cc9"
+    },
+    "e2e-community-7": {
+      "command": [
+        "scripts/e2e.sh",
+        "community"
+      ],
+      "seconds": 175.07,
+      "receipt_sha256": "sha256:ae8e82bdc75dda34c20cb7b8ee74f3f10784659a89975c6645e83cf794a013de"
+    },
+    "e2e-space-aware-recall-1": {
+      "command": [
+        "scripts/e2e.sh",
+        "space_aware_recall"
+      ],
+      "seconds": 49.35,
+      "receipt_sha256": "sha256:919ada48f9cdca6c40c2732fd9b8885de820ec7cf85453f1dc1251e572357f40"
+    },
+    "e2e-synchronous-write-1": {
+      "command": [
+        "scripts/e2e.sh",
+        "synchronous_write"
+      ],
+      "seconds": 1026.21,
+      "receipt_sha256": "sha256:e0d0654465d9203030571f67327b2af23c19201340c010cc4b0f73fcf9fe49b6"
+    },
+    "e2e-python-client-1": {
+      "command": [
+        "scripts/e2e.sh",
+        "python_client"
+      ],
+      "seconds": 274.18,
+      "receipt_sha256": "sha256:c9c9220f8426abb11b2d52b2912daa26b6faeff08f3ca822c7a18d6529524c5d"
+    },
+    "e2e-private-memory-erasure-1": {
+      "command": [
+        "scripts/e2e.sh",
+        "private_memory_erasure"
+      ],
+      "seconds": 81.57,
+      "receipt_sha256": "sha256:00f7e133240e5014d5fe4f8edcc948bc5d15e7ebdb4c189ea6669d80f75739cf"
+    },
+    "repository-ci-6": {
+      "command": [
+        "./scripts/ci-check.sh"
+      ],
+      "seconds": 2446.45,
+      "receipt_sha256": "sha256:8721ec0155843875b32a01bde4d4024987b3bbf1c695e7382b1f69e93be25e35"
+    },
+    "retirement-postgres-main-update-1": {
+      "command": [
+        "go",
+        "test",
+        "-tags=integration",
+        "-p=1",
+        "./internal/storage/postgres",
+        "./internal/dream/postgres",
+        "./cmd/internal/serverapp",
+        "./internal/recall/postgres",
+        "./internal/ontology/postgres",
+        "-run",
+        "^(TestDreamCommunityRetirementMigrationPreservesSettingsAndHistory|TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention|TestRememberServiceRejectsHistoricalOutcomesThroughPostgres|TestRecallFeedbackEventRepositoryRecordsSnapshotBeforeFeedback|TestOntologyMaintenanceEnrollsActiveTeamsDespiteRetiredOptouts|TestOntologyMaintenanceProviderDisableDrain)$",
+        "-count=1",
+        "-timeout=90m",
+        "-v"
+      ],
+      "seconds": 61.9,
+      "receipt_sha256": "sha256:71e838b989386b58757ad5214dd14acb35dc03427e314bb7e55d46c93ce05cda"
+    },
+    "e2e-python-client-main-update-1": {
+      "command": [
+        "scripts/e2e.sh",
+        "python_client"
+      ],
+      "seconds": 235.07,
+      "receipt_sha256": "sha256:83685d43fd226b40bf0cd1e382c9a2cb280ad5b0a2f17f5aef36ce6a4d3bb923"
+    }
+  },
+  "final_pr_validation": "Required separately on the published final head; local results are not remote proof.",
+  "current_main_reconciliation": {
+    "main_commit": "3323df8e196d8627c53f97f374d3f8a1a11f79f2",
+    "published_parent": "b7c370c1f7043a05d41646585c416147d454fbb8",
+    "incoming_prs": [
+      565,
+      552
+    ],
+    "reason": "Trusted image controller requires current main ancestry.",
+    "retirement_core_files_unchanged": 1631,
+    "production_dependency_change": false,
+    "test_dependency": "github.com/moby/sys/user 0.4.0 -> 0.4.1",
+    "unchanged_quality_and_seven_other_local_e2e_receipts_retained": true,
+    "merged_source_diff_sha256": "b756dc19a975ae16b2f2470212c465b672adc847ae09444b85f234ae947c0ada",
+    "complete_go_coverage": {
+      "covered_statements": 32936,
+      "total_statements": 36508,
+      "percentage": 90.21584310288156,
+      "threshold_unchanged": true,
+      "profile_sha256": "sha256:4084e092757a5a90d9f5bb3530c1bd53c1c14053afb4e7712bdb0abd5b2d8352"
+    }
+  }
+}

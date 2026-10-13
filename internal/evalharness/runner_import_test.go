@@ -70,7 +70,7 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 					{"id": "evidence-alpha", "metadata": map[string]any{"source_doc_id": "doc-alpha"}},
 					{"id": "evidence-beta", "metadata": map[string]any{"source_doc_id": "doc-beta"}},
 				}})
-			case "entity", "value", "relationship", "hypothesis":
+			case "entity", "value", "relationship":
 				_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{}})
 			default:
 				t.Fatalf("unexpected export type %q", kind)
@@ -106,12 +106,12 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 	if rememberCalls != 2 || recallCalls != 0 {
 		t.Fatalf("remember/recall calls = %d/%d", rememberCalls, recallCalls)
 	}
-	for _, kind := range []string{"evidence", "entity", "value", "relationship", "hypothesis"} {
+	for _, kind := range []string{"evidence", "entity", "value", "relationship"} {
 		if exportCalls[kind] != 1 {
 			t.Fatalf("export calls = %#v; want one post-placement export per canonical type", exportCalls)
 		}
 	}
-	if len(exportCalls) != 5 {
+	if len(exportCalls) != 4 {
 		t.Fatalf("export calls = %#v; want one post-placement export per knowledge type", exportCalls)
 	}
 	for _, name := range []string{"run_config.json", "seed_manifest.json", "suite.jsonl", "summary.json", "knowledge_mapping.json"} {

@@ -41,7 +41,7 @@ function TeamWorkspaceHeader({
     { id: "overview", label: "Overview" },
     { id: "remember-attempts", label: "Remember Attempts" },
     { id: "credentials", label: "Credentials" },
-    { id: "dreams", label: "Dreams" },
+    { id: "dreams", label: "Dream history" },
     { id: "conflicts", label: "Conflicts" },
     { id: "settings", label: "Settings" },
   ];
@@ -163,7 +163,7 @@ export function TeamOverviewPanel({
     <div className="team-overview" aria-label="Team overview">
       <div className="summary-strip" aria-label="Summary">
         <SummaryCard label="Credentials" value={credentials.length} detail={`${managerCount} managers`} />
-        <SummaryCard label="Communities" value={communityStatus?.current_community_count ?? "n/a"} detail={loading ? "Loading" : communityUnavailable ? "Status unavailable" : communityEnabled ? "Nightly enabled" : "Nightly disabled"} tone={communityUnavailable || !communityEnabled ? "warning" : "neutral"} />
+        <SummaryCard label="Communities" value={communityStatus?.current_community_count ?? "n/a"} detail={loading ? "Loading" : communityUnavailable ? "Status unavailable" : communityEnabled ? "Ontology enabled" : "Ontology disabled"} tone={communityUnavailable || !communityEnabled ? "warning" : "neutral"} />
         <SummaryCard label="Requests" value={requestValue} detail="Last hour" tone={metricsFailed ? "warning" : "neutral"} />
         <SummaryCard label="Recall health" value={healthValue} detail={healthDetail} tone={metricsFailed ? "warning" : "neutral"} />
         <div className="health-stack" aria-label="Health summary">
@@ -179,7 +179,6 @@ export function TeamOverviewPanel({
           <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="HTTP requests" value={requestValue} trend={metricsReady ? requests > 0 ? "+ active" : "idle" : "unavailable"} tone={metricsFailed ? "warning" : "neutral"} />
           <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="Errors" value={errorValue} trend={metricsReady ? errors > 0 ? "review" : "clear" : "unavailable"} tone={errors > 0 ? "danger" : metricsFailed ? "warning" : "neutral"} />
           <MetricRow icon={<Users size={15} aria-hidden="true" />} label="Writable credentials" value={readWriteCount} trend={`${credentials.length} total`} />
-          <MetricRow icon={<Moon size={15} aria-hidden="true" />} label="Dreaming" value={team.dreaming_effective?.enabled ? "Enabled" : "Inherited"} trend={team.dreaming_effective?.source ?? "global"} />
           <MetricRow icon={<Network size={15} aria-hidden="true" />} label="Community snapshot" value={communityStatus?.current_community_count ?? "n/a"} trend={communityStatus?.latest_run?.status ?? "not run"} tone={communityStatus?.latest_run?.status === "failed" ? "warning" : "neutral"} />
         </section>
 

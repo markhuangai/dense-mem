@@ -9,11 +9,6 @@
         "visibility": "public"
       },
       {
-        "id": "web/src/user/DreamsPanel.tsx",
-        "role": "transport",
-        "visibility": "private"
-      },
-      {
         "id": "web/src/user/GraphPanel.tsx",
         "role": "transport",
         "visibility": "private"

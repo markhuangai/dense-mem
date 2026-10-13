@@ -28,7 +28,7 @@ func (f *topicProjectionFixture) recallService(t *testing.T) recallapp.RecallSer
 	search := searchpg.NewStore(f.appDB, f.rls)
 	reader := recallpg.NewStore(f.appDB, f.rls, search, nil, nil).WithOntology(func() recallpg.OntologyReader { return f.ontology.NewRecallReader() })
 	config := settings.NewAppConfigService(settingspg.NewAppConfigRepository(f.appDB, f.rls), nil)
-	return recallapp.NewRecallService(recallapp.RecallDependencies{Search: reader, Communities: f.store, CommunityConfig: config, OntologyConfig: config})
+	return recallapp.NewRecallService(recallapp.RecallDependencies{Search: reader, Communities: f.store, OntologyConfig: config})
 }
 
 func TestCommunityTopicFrozenOrganizationCohortThroughRecall(t *testing.T) {

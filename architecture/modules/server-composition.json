@@ -103,20 +103,6 @@
       "kind": "start",
       "ordinal": 6,
       "role": "worker"
-    },
-    {
-      "path": "cmd/internal/serverapp/server.go",
-      "function": "RunActiveServer",
-      "kind": "start",
-      "ordinal": 7,
-      "role": "worker"
-    },
-    {
-      "path": "cmd/internal/serverapp/server.go",
-      "function": "RunActiveServer",
-      "kind": "start",
-      "ordinal": 8,
-      "role": "worker"
     }
   ]
 }

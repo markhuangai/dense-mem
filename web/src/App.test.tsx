@@ -2,9 +2,9 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { CommunityDetectionConfig, ControlMetrics, Credential, Dream, DreamRun, DreamStatus, DreamingConfig, GeneralConfig, OperationLog, OperationLogConfig, SecurityBan, SecuritySettings, SSOConfig, Team } from "./api";
+import { ControlMetrics, Credential, Dream, DreamRun, DreamStatus, GeneralConfig, OperationLog, OperationLogConfig, SecurityBan, SecuritySettings, SSOConfig, Team } from "./api";
 
-import { communityDetectionConfigSnapshot, dreamRationale, dreamRunSnapshot, dreamSnapshot, dreamStatusSnapshot, generalConfigSnapshot, jsonResponse, keyA, metricsSnapshot, mockPortalFetch, operationLogConfigSnapshot, operationLogsSnapshot, page, profileA, securityBan, securitySettings, ssoConfigSnapshot } from "./App.test-helpers";
+import { dreamRationale, dreamRunSnapshot, dreamSnapshot, dreamStatusSnapshot, generalConfigSnapshot, jsonResponse, keyA, metricsSnapshot, mockPortalFetch, operationLogConfigSnapshot, operationLogsSnapshot, page, profileA, securityBan, securitySettings, ssoConfigSnapshot } from "./App.test-helpers";
 
 beforeEach(() => {
   sessionStorage.clear();
@@ -155,43 +155,6 @@ describe("App", () => {
     });
   });
 
-  it("edits team dreaming config without dropping other team config", async () => {
-    const configuredTeam: Team = {
-      ...profileA,
-      config: {
-        retention: "standard",
-        dreaming: {
-          enabled: false,
-          timezone: "UTC",
-          max_outputs: 3,
-          provider: "manual",
-        },
-      },
-    };
-    const fetchMock = mockPortalFetch({ teams: [configuredTeam], keys: [] });
-    sessionStorage.setItem("denseMem.controlToken", "secret");
-
-    render(<App />);
-    await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /team settings/i }));
-
-    const scheduledToggle = screen.getByLabelText("Scheduled cycle", { selector: "input" });
-    expect(scheduledToggle).not.toBeChecked();
-    await userEvent.click(scheduledToggle);
-    await userEvent.click(screen.getByRole("button", { name: /save dreaming/i }));
-
-    const patchCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith(`/teams/${configuredTeam.id}`) && init?.method === "PATCH");
-    expect(patchCall).toBeDefined();
-    const body = JSON.parse(String(patchCall?.[1]?.body));
-    expect(body.config.retention).toBe("standard");
-    expect(body.config.dreaming).toMatchObject({
-      enabled: true,
-      provider: "manual",
-    });
-    expect(body.config.dreaming.timezone).toBeUndefined();
-    expect(body.config.dreaming.max_outputs).toBeUndefined();
-    expect(await screen.findByText("Saved")).toBeInTheDocument();
-  });
 
   it("shows team credentials with suffix, last used time, and delete action", async () => {
     const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
@@ -517,10 +480,10 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /team dreams/i }));
+    await userEvent.click(screen.getByRole("button", { name: /team dream history/i }));
 
     expect(await screen.findByText("A may affect B.")).toBeInTheDocument();
-    expect(screen.getByLabelText("Dreaming status")).toHaveTextContent("Global force");
+    expect(screen.getByLabelText("Dream history status")).toHaveTextContent("Retired");
     const rationale = screen.getByText(dreamRationale);
     expect(rationale.closest("small")).toBeNull();
     expect(rationale.closest(".info-tooltip")).not.toBeNull();
@@ -606,79 +569,7 @@ describe("App", () => {
     });
   });
 
-  it("edits dreaming runtime config", async () => {
-    const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
-    sessionStorage.setItem("denseMem.controlToken", "secret");
 
-    render(<App />);
-    await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /^Config$/i }));
-    await userEvent.click(await screen.findByRole("tab", { name: /dreaming/i }));
-
-    expect(await screen.findByRole("heading", { name: "Dreaming" })).toBeInTheDocument();
-    expect(screen.queryByText(/^effective /i)).not.toBeInTheDocument();
-    const enabledToggle = screen.getByLabelText("Enable scheduled cycle", { selector: "input" });
-    expect(enabledToggle).toHaveAttribute("type", "checkbox");
-    expect(enabledToggle).not.toBeChecked();
-    await userEvent.click(enabledToggle);
-    await userEvent.clear(screen.getByLabelText("Cycle start time"));
-    await userEvent.type(screen.getByLabelText("Cycle start time"), "02:30");
-    await userEvent.click(screen.getByRole("button", { name: /save config/i }));
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining("/config/dreaming"),
-        expect.objectContaining({
-          method: "PATCH",
-          body: expect.stringContaining(`"DREAMING_START_TIME_LOCAL"`),
-        }),
-      );
-    });
-    const patchCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/config/dreaming") && init?.method === "PATCH");
-    expect(patchCall).toBeDefined();
-    const body = JSON.parse(String(patchCall?.[1]?.body));
-    expect(body.items).toEqual(expect.arrayContaining([
-      { key: "DREAMING_ENABLED", value: "true" },
-      { key: "DREAMING_FORCE_ENABLED", value: "false" },
-      { key: "DREAMING_START_TIME_LOCAL", value: "02:30" },
-    ]));
-    expect(await screen.findByText("Saved")).toBeInTheDocument();
-  });
-
-  it("edits community detection runtime config", async () => {
-    const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
-    sessionStorage.setItem("denseMem.controlToken", "secret");
-
-    render(<App />);
-    await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /^Config$/i }));
-    await userEvent.click(await screen.findByRole("tab", { name: /community/i }));
-
-    expect(await screen.findByRole("heading", { name: "Community Detection" })).toBeInTheDocument();
-    const enabledToggle = screen.getByLabelText("Enable scheduled detection", { selector: "input" });
-    expect(enabledToggle).not.toBeChecked();
-    await userEvent.click(enabledToggle);
-    await userEvent.clear(screen.getByLabelText("Jitter seconds"));
-    await userEvent.type(screen.getByLabelText("Jitter seconds"), "0");
-    await userEvent.click(screen.getByRole("button", { name: /save config/i }));
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining("/config/community-detection"),
-        expect.objectContaining({
-          method: "PATCH",
-          body: expect.stringContaining(`"COMMUNITY_DETECTION_ENABLED"`),
-        }),
-      );
-    });
-    const patchCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/config/community-detection") && init?.method === "PATCH");
-    expect(patchCall).toBeDefined();
-    const body = JSON.parse(String(patchCall?.[1]?.body));
-    expect(body.items).toEqual(expect.arrayContaining([
-      { key: "COMMUNITY_DETECTION_ENABLED", value: "true" },
-      { key: "COMMUNITY_DETECTION_JITTER_SECONDS", value: "0" },
-    ]));
-  });
 
   it("deletes a team", async () => {
     const deleteMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });

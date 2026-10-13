@@ -51,28 +51,18 @@ var (
 )
 
 type AppConfig interface {
-	CommunityDetectionRuntimeConfig(context.Context) (domain.CommunityDetectionRuntimeConfig, error)
-}
-
-type TeamService interface {
-	List(context.Context, int, int) ([]*domain.Team, error)
-}
-
-type SummaryProvider interface {
-	ModelName() string
-	SummarizeCommunity(context.Context, domain.CommunitySummaryInput) (domain.CommunitySummary, error)
+	OntologyMaintenanceRuntimeConfig(context.Context) (domain.OntologyMaintenanceConfig, error)
 }
 
 type Dependencies struct {
 	Store     CommunityRepository
 	AppConfig AppConfig
-	Summary   SummaryProvider
-	Metrics   observability.DiscoverabilityMetrics
-	Now       func() time.Time
+
+	Metrics observability.DiscoverabilityMetrics
+	Now     func() time.Time
 }
 
 type Service interface {
-	RunScheduled(context.Context, string, time.Time) (*RunResult, error)
 	RunProjectionTurn(context.Context) (bool, error)
 	Status(context.Context, string) (*StatusResult, error)
 }
@@ -94,10 +84,11 @@ type RunResult struct {
 }
 
 type StatusResult struct {
-	EffectiveConfig       domain.CommunityDetectionRuntimeConfig     `json:"effective_config"`
-	LatestRun             *RunResult                                 `json:"latest_run,omitempty"`
-	CurrentCommunityCount int                                        `json:"current_community_count"`
-	ProjectionCoverage    *communitycontract.TopicProjectionCoverage `json:"projection_coverage,omitempty"`
+	LegacyProcessingRetired bool                                       `json:"legacy_processing_retired"`
+	EffectiveConfig         domain.OntologyMaintenanceConfig           `json:"effective_config"`
+	LatestRun               *RunResult                                 `json:"latest_run,omitempty"`
+	CurrentCommunityCount   int                                        `json:"current_community_count"`
+	ProjectionCoverage      *communitycontract.TopicProjectionCoverage `json:"projection_coverage,omitempty"`
 }
 
 func uuidString(value string) uuid.UUID {

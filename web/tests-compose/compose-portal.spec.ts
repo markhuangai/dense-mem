@@ -152,10 +152,11 @@ test("control panel loads team Dreams without re-evaluation", async ({ page }) =
 
   await openControlPanel(page);
   await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
-  await page.getByRole("button", { name: /team dreams/i }).click();
+  await page.getByRole("button", { name: /team dream history/i }).click();
 
   await expect(page.getByRole("heading", { name: "Dream Outputs" })).toBeVisible();
   await expect(page.getByText(dreamStatement, { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Dream history status")).toContainText("Retired");
   const runRow = page.locator(".dream-runs-table tbody tr").first();
   await runRow.getByRole("button", { name: "Inspect" }).click();
   await expect(page.getByRole("region", { name: "Dream diagnostics" })).toBeVisible();
@@ -171,7 +172,7 @@ test("control panel loads team Dreams without re-evaluation", async ({ page }) =
 test("control panel renders historical discovery citations and lane output", async ({ page }) => {
   await openControlPanel(page);
   await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
-  await page.getByRole("button", { name: /team dreams/i }).click();
+  await page.getByRole("button", { name: /team dream history/i }).click();
 
   const dreamRow = page.locator(".dreams-table tbody tr").filter({ hasText: evidenceDreamStatement });
   await expect(dreamRow).toBeVisible();
@@ -187,7 +188,7 @@ test("control panel renders historical discovery citations and lane output", asy
 test("control panel surfaces a historical failed discovery run", async ({ page }) => {
   await openControlPanel(page);
   await page.getByRole("button", { name: new RegExp(escapeRegExp(evidenceFailureTeamName)) }).click();
-  await page.getByRole("button", { name: /team dreams/i }).click();
+  await page.getByRole("button", { name: /team dream history/i }).click();
 
   const failedRun = page.locator(".dream-runs-table tbody tr").filter({ hasText: "Evidence discovery" }).filter({ hasText: "failed" });
   await expect(failedRun).toHaveCount(1);
@@ -217,7 +218,7 @@ test("Prometheus telemetry remains available without portal dashboards", async (
   await expect(page.getByRole("button", { name: "Remember Attempts", exact: true })).toBeVisible();
   await openUserPortal(page, seedApiKey);
   await expect(page.getByRole("button", { name: "Usage" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Dreams" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Dreams" })).toHaveCount(0);
   await expectNoShellOverlap(page);
 
   const retired = await request.get(`${userUrl}/ui/api/telemetry?window=15m`, { headers: bearer(seedApiKey) });
@@ -406,9 +407,7 @@ test("user portal logs in with a real API key and shows only that credential", a
   await expect(page.getByLabel("Knowledge graph")).toBeVisible();
   await expect(page.getByLabel("Graph totals")).toContainText(/Nodes\s*[1-9]/);
 
-  await page.getByRole("button", { name: "Dreams" }).click();
-  await expect(page.getByRole("heading", { name: "Dream Outputs" })).toBeVisible();
-  await expect(page.getByText(dreamStatement, { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Dreams" })).toHaveCount(0);
 });
 
 if (graphAnchorEntityId && graphOriginalObjectEntityId && graphCorrectedObjectEntityId && graphOriginalRelationshipId && graphSuccessorRelationshipId) {

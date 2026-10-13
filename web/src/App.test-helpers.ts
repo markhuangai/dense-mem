@@ -1,5 +1,5 @@
 import { expect, vi } from "vitest";
-import { CommunityDetectionConfig, ControlMetrics, Credential, Dream, DreamRun, DreamStatus, DreamingConfig, GeneralConfig, OperationLog, OperationLogConfig, SecurityBan, SecuritySettings, SSOConfig, Team } from "./api";
+import { ControlMetrics, Credential, Dream, DreamRun, DreamStatus, GeneralConfig, OperationLog, OperationLogConfig, SecurityBan, SecuritySettings, SSOConfig, Team } from "./api";
 
 export const profileA: Team = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -108,22 +108,6 @@ export const generalConfigSnapshot: GeneralConfig = {
   },
 };
 
-export const dreamingConfigSnapshot: DreamingConfig = {
-  update_time: "2026-06-11T03:00:00Z",
-  items: [
-    { key: "DREAMING_ENABLED", value: "false", effective_value: "false", updated_at: "2026-06-11T03:00:00Z" },
-    { key: "DREAMING_FORCE_ENABLED", value: "false", effective_value: "false", updated_at: "2026-06-11T03:00:00Z" },
-    { key: "DREAMING_START_TIME_LOCAL", value: "03:00", effective_value: "03:00", updated_at: "2026-06-11T03:00:00Z" },
-    { key: "DREAMING_MAX_OUTPUTS", value: "5", effective_value: "5", updated_at: "2026-06-11T03:00:00Z" },
-  ],
-  effective: {
-    enabled: false,
-    force_enabled: false,
-    start_time_local: "03:00",
-    timezone: "Local",
-    max_outputs: 5,
-  },
-};
 
 export const operationLogConfigSnapshot: OperationLogConfig = {
   update_time: "2026-06-14T12:00:00Z",
@@ -135,22 +119,6 @@ export const operationLogConfigSnapshot: OperationLogConfig = {
   },
 };
 
-export const communityDetectionConfigSnapshot: CommunityDetectionConfig = {
-  update_time: "2026-06-15T03:30:00Z",
-  items: [
-    { key: "COMMUNITY_DETECTION_ENABLED", value: "false", effective_value: "false", updated_at: "2026-06-15T03:30:00Z" },
-    { key: "COMMUNITY_DETECTION_START_TIME_LOCAL", value: "03:30", effective_value: "03:30", updated_at: "2026-06-15T03:30:00Z" },
-    { key: "COMMUNITY_DETECTION_MAX_CONCURRENCY", value: "1", effective_value: "1", updated_at: "2026-06-15T03:30:00Z" },
-    { key: "COMMUNITY_DETECTION_JITTER_SECONDS", value: "600", effective_value: "600", updated_at: "2026-06-15T03:30:00Z" },
-  ],
-  effective: {
-    enabled: false,
-    start_time_local: "03:30",
-    timezone: "Local",
-    max_concurrency: 1,
-    jitter_seconds: 600,
-  },
-};
 
 export const operationLogsSnapshot: OperationLog[] = [
   {
@@ -222,17 +190,9 @@ export const dreamRunSnapshot: DreamRun = {
 };
 
 export const dreamStatusSnapshot: DreamStatus = {
-  effective_config: {
-    enabled: true,
-    force_enabled: true,
-    start_time_local: "03:00",
-    timezone: "UTC",
-    max_outputs: 5,
-    team_enabled: true,
-    source: "global_force",
-  },
+  retired: true,
   latest_run: dreamRunSnapshot,
-  pending_count: 0,
+  historical_proposed_count: 0,
 };
 
 export const dreamSnapshot: Dream = {
@@ -293,8 +253,6 @@ export function mockPortalFetch({
   let currentBans = bans;
   let currentGeneralConfig = structuredClone(generalConfigSnapshot);
   let currentSSOConfig = structuredClone(ssoConfigSnapshot);
-  let currentDreamingConfig = structuredClone(dreamingConfigSnapshot);
-  let currentCommunityDetectionConfig = structuredClone(communityDetectionConfigSnapshot);
   let currentOperationLogConfig = structuredClone(operationLogConfigSnapshot);
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -341,36 +299,6 @@ export function mockPortalFetch({
         }),
       };
       return jsonResponse({ data: currentSSOConfig });
-    }
-    if (url.endsWith("/config/dreaming") && method === "GET") {
-      return jsonResponse({ data: currentDreamingConfig });
-    }
-    if (url.endsWith("/config/dreaming") && method === "PATCH") {
-      const body = JSON.parse(String(init?.body));
-      currentDreamingConfig = {
-        ...currentDreamingConfig,
-        update_time: "2026-06-11T03:01:00Z",
-        items: currentDreamingConfig.items.map((item) => {
-          const update = body.items.find((candidate: { key: string }) => candidate.key === item.key);
-          return update ? { ...item, value: update.value, updated_at: "2026-06-11T03:01:00Z" } : item;
-        }),
-      };
-      return jsonResponse({ data: currentDreamingConfig });
-    }
-    if (url.endsWith("/config/community-detection") && method === "GET") {
-      return jsonResponse({ data: currentCommunityDetectionConfig });
-    }
-    if (url.endsWith("/config/community-detection") && method === "PATCH") {
-      const body = JSON.parse(String(init?.body));
-      currentCommunityDetectionConfig = {
-        ...currentCommunityDetectionConfig,
-        update_time: "2026-06-15T03:31:00Z",
-        items: currentCommunityDetectionConfig.items.map((item) => {
-          const update = body.items.find((candidate: { key: string }) => candidate.key === item.key);
-          return update ? { ...item, value: update.value, updated_at: "2026-06-15T03:31:00Z" } : item;
-        }),
-      };
-      return jsonResponse({ data: currentCommunityDetectionConfig });
     }
     if (url.endsWith("/config/operation-logs") && method === "GET") {
       return jsonResponse({ data: currentOperationLogConfig });

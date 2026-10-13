@@ -11,8 +11,9 @@ const apiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
 
 const feedbackTool = "submit_recall_session_feedback";
 const dreamTools = ["list_dreams", "get_dream", "resolve_dream_feedback"];
-const activeEvalTools = ["eval_list_knowledge_refs", "eval_run_dream_cycle", "eval_run_recall_case"];
+const activeEvalTools = ["eval_list_knowledge_refs", "eval_run_recall_case"];
 const removedTools = [
+  "eval_run_dream_cycle",
   "correct_entity_resolution",
   "eval_get_manifest",
   "eval_get_knowledge_item",
@@ -23,7 +24,6 @@ const removedTools = [
 let rpcID = 0;
 
 await updateRecallFeedback(false);
-await updateDreaming(true, false);
 await updateTeamDreaming(false);
 
 let names = await listedToolNames();
@@ -56,20 +56,23 @@ if ((recall.suggested_actions ?? []).some((item) => item?.tool === "resolve_drea
   throw new Error("recall suggested Dream feedback while team Dreaming was disabled");
 }
 
-await updateTeamDreaming(true);
-names = await listedToolNames();
-for (const tool of dreamTools) assertHas(names, tool, "team-enabled Dream tool");
-
-await updateTeamDreaming(false);
-await updateDreaming(true, true);
-names = await listedToolNames();
-for (const tool of dreamTools) assertHas(names, tool, "force-enabled Dream tool");
-
-await updateTeamDreaming(true);
-await updateDreaming(false, false);
-names = await listedToolNames();
-for (const tool of dreamTools) assertMissing(names, tool, "globally disabled Dream tool");
-await assertToolNotFound("resolve_dream_feedback", {});
+for (const enabled of [true, false]) {
+  await updateTeamDreaming(enabled);
+  names = await listedToolNames();
+  for (const tool of dreamTools) {
+    assertMissing(names, tool, "retired Dream tool");
+    await assertToolNotFound(tool, {});
+  }
+}
+if (Object.hasOwn(recall, "related_hypotheses")) throw new Error("Recall exposed retired hypotheses");
+for (const path of ["/ui/api/dreams", "/ui/api/dreaming/status", "/ui/api/dreaming/runs"]) {
+  const response = await fetch(`${userURL}${path}`, { headers: { Authorization: `Bearer ${apiKey}` } });
+  if (response.status !== 404) throw new Error(`retired client route ${path} returned ${response.status}`);
+}
+for (const path of ["/config/dreaming", "/config/community-detection"]) {
+  const response = await fetch(`${controlURL}/control/api${path}`, { headers: { Authorization: `Bearer ${controlToken}` } });
+  if (response.status !== 404) throw new Error(`retired control ${path} returned ${response.status}`);
+}
 
 console.log(JSON.stringify({
   status: "ok",
@@ -77,9 +80,9 @@ console.log(JSON.stringify({
   removed_tools_absent: true,
   recall_feedback_gate: true,
   recall_feedback_prompt_absent: true,
-  team_dreaming_gate: true,
-  force_dreaming_gate: true,
-  global_dreaming_disable: true,
+  dream_tools_retired: true,
+  dream_routes_retired: true,
+  legacy_controls_retired: true,
 }, null, 2));
 
 async function listedToolNames() {
@@ -334,18 +337,6 @@ async function updateRecallFeedback(enabled) {
     body: JSON.stringify({ items: [
       { key: "RECALL_FEEDBACK_ENABLED", value: String(enabled) },
       { key: "RECALL_FEEDBACK_RETENTION_DAYS", value: "30" },
-    ] }),
-  });
-}
-
-async function updateDreaming(enabled, forceEnabled) {
-  await controlJSON("/config/dreaming", {
-    method: "PATCH",
-    body: JSON.stringify({ items: [
-      { key: "DREAMING_ENABLED", value: String(enabled) },
-      { key: "DREAMING_FORCE_ENABLED", value: String(forceEnabled) },
-      { key: "DREAMING_START_TIME_LOCAL", value: "03:00" },
-      { key: "DREAMING_MAX_OUTPUTS", value: "5" },
     ] }),
   });
 }
