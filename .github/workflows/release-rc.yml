@@ -567,3 +567,57 @@ jobs:
     uses: ./.github/workflows/publish-demo-image.yml
     with:
       tag: ${{ needs.prepare-prerelease.outputs.tag }}
+
+  verify-python:
+    name: Verify changed Python prerelease
+    needs:
+      - prepare-prerelease
+      - publish-image
+      - promote-preview-image
+      - publish-demo-image
+    if: >-
+      ${{
+        always() && !cancelled() &&
+        needs.prepare-prerelease.outputs.should_publish == 'true' &&
+        (needs.publish-image.result == 'success' || needs.promote-preview-image.result == 'success') &&
+        needs.publish-demo-image.result == 'success'
+      }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/publish-python.yml
+    with:
+      tag: ${{ needs.prepare-prerelease.outputs.tag }}
+      source-sha: ${{ github.event.workflow_run.head_sha }}
+
+  publish-python:
+    name: Publish changed Python prerelease
+    needs: verify-python
+    if: >-
+      always() && !cancelled() &&
+      needs.verify-python.result == 'success' &&
+      needs.verify-python.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-release
+          path: release
+      - name: Verify existing files immediately before publication
+        run: python release/policy.py verify --receipt release/source.json --dist release/dist
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
+        with:
+          packages-dir: release/dist
+          skip-existing: true
+      - name: Require complete matching wheel and sdist on PyPI
+        run: |
+          python release/policy.py verify --receipt release/source.json \
+            --dist release/dist --complete

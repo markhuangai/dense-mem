@@ -478,7 +478,63 @@
       ],
       "seconds": 81.57,
       "receipt_sha256": "sha256:00f7e133240e5014d5fe4f8edcc948bc5d15e7ebdb4c189ea6669d80f75739cf"
+    },
+    "repository-ci-6": {
+      "command": [
+        "./scripts/ci-check.sh"
+      ],
+      "seconds": 2446.45,
+      "receipt_sha256": "sha256:8721ec0155843875b32a01bde4d4024987b3bbf1c695e7382b1f69e93be25e35"
+    },
+    "retirement-postgres-main-update-1": {
+      "command": [
+        "go",
+        "test",
+        "-tags=integration",
+        "-p=1",
+        "./internal/storage/postgres",
+        "./internal/dream/postgres",
+        "./cmd/internal/serverapp",
+        "./internal/recall/postgres",
+        "./internal/ontology/postgres",
+        "-run",
+        "^(TestDreamCommunityRetirementMigrationPreservesSettingsAndHistory|TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention|TestRememberServiceRejectsHistoricalOutcomesThroughPostgres|TestRecallFeedbackEventRepositoryRecordsSnapshotBeforeFeedback|TestOntologyMaintenanceEnrollsActiveTeamsDespiteRetiredOptouts|TestOntologyMaintenanceProviderDisableDrain)$",
+        "-count=1",
+        "-timeout=90m",
+        "-v"
+      ],
+      "seconds": 61.9,
+      "receipt_sha256": "sha256:71e838b989386b58757ad5214dd14acb35dc03427e314bb7e55d46c93ce05cda"
+    },
+    "e2e-python-client-main-update-1": {
+      "command": [
+        "scripts/e2e.sh",
+        "python_client"
+      ],
+      "seconds": 235.07,
+      "receipt_sha256": "sha256:83685d43fd226b40bf0cd1e382c9a2cb280ad5b0a2f17f5aef36ce6a4d3bb923"
     }
   },
-  "final_pr_validation": "Required separately on the published final head; local results are not remote proof."
+  "final_pr_validation": "Required separately on the published final head; local results are not remote proof.",
+  "current_main_reconciliation": {
+    "main_commit": "3323df8e196d8627c53f97f374d3f8a1a11f79f2",
+    "published_parent": "b7c370c1f7043a05d41646585c416147d454fbb8",
+    "incoming_prs": [
+      565,
+      552
+    ],
+    "reason": "Trusted image controller requires current main ancestry.",
+    "retirement_core_files_unchanged": 1631,
+    "production_dependency_change": false,
+    "test_dependency": "github.com/moby/sys/user 0.4.0 -> 0.4.1",
+    "unchanged_quality_and_seven_other_local_e2e_receipts_retained": true,
+    "merged_source_diff_sha256": "b756dc19a975ae16b2f2470212c465b672adc847ae09444b85f234ae947c0ada",
+    "complete_go_coverage": {
+      "covered_statements": 32936,
+      "total_statements": 36508,
+      "percentage": 90.21584310288156,
+      "threshold_unchanged": true,
+      "profile_sha256": "sha256:4084e092757a5a90d9f5bb3530c1bd53c1c14053afb4e7712bdb0abd5b2d8352"
+    }
+  }
 }

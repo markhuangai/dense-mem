@@ -5,7 +5,7 @@ The Dense-Mem Python core client uses the official MCP SDK. It supports Python
 prepared for release; PyPI publication is pending. Install a verified wheel:
 
 ~~~bash
-python -m pip install /path/to/densemem-0.1.0rc1-py3-none-any.whl
+python -m pip install /path/to/densemem-VERSION-py3-none-any.whl
 ~~~
 
 ADK and LangChain adapters/extras will arrive with issues #220 and #221.
@@ -138,9 +138,30 @@ version matrix, and scripts/e2e.sh python_client for real server boundaries.
 The example scripts require DENSEMEM_ENDPOINT, DENSEMEM_TOKEN and a retained
 DENSEMEM_OPERATION_KEY. Keep the exact request unchanged when rerunning them.
 
-The manual publish-python workflow requires an existing python-vVERSION tag on
-merged main matching package metadata, verified PyPI ownership and an OIDC trusted
-publisher for this repository/workflow/environment. It verifies artifacts and
-produces provenance. Publication is independent of server releases. Never overwrite
-a package version; a broken prerelease may be yanked through a separate maintainer
-action. This implementation does not register publishers, create tags or publish.
+The server prerelease and stable-release workflows call publish-python to build
+and verify artifacts after their release gates pass, then upload through their own
+top-level publishing jobs. Manual recovery uploads directly from publish-python;
+the reusable invocation never uploads to PyPI. Only tags whose exact source belongs
+to merged main are eligible;
+PR branches cannot publish. Python shares the server release version: v2.6.6-rc.10
+becomes 2.6.6rc10 and v2.6.6 becomes 2.6.6. The checkout's 0.0.0 version is for local
+development; release builds stamp the selected tag's version and exact Source URL
+into artifact metadata without changing Git history.
+
+Change detection compares packages/python with the last successfully published
+Python source recorded on PyPI. Unchanged prereleases are skipped, and publishing
+a final version after a Python RC does not require another code change. Incomplete
+uploads remain eligible; retries verify every existing artifact's SHA-256 before
+uploading missing files. The manual publish-python workflow accepts the same shared
+tag for recovery. Never overwrite an existing version or silently accept different
+bytes; a broken prerelease may be yanked through a separate maintainer action.
+
+Verify control of the densemem PyPI name and register trusted publishers for
+markhuangai/dense-mem, workflows release-rc.yml, release.yml and publish-python.yml,
+each with environment pypi. For a new project, configure one pending publisher for
+the first publishing workflow; after it creates the project, register the other
+two as normal project publishers before using those paths. PyPI does not support
+reusable workflows as trusted publishers. This repository does not register
+publishers or change account settings. Release builds retain the
+installed-wheel/version matrix, reproducibility,
+vulnerability scan, SBOM and provenance gates.

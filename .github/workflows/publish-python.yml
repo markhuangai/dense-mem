@@ -1,15 +1,32 @@
 name: Publish Python package
 
 on:
+  workflow_call:
+    outputs:
+      should_publish:
+        value: ${{ jobs.build.outputs.should_publish }}
+    inputs:
+      tag:
+        required: true
+        type: string
+      source-sha:
+        required: false
+        default: ''
+        type: string
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing python-vVERSION tag identifying current merged main"
+        description: "Existing shared vX.Y.Z or vX.Y.Z-rc.N tag on merged main"
         required: true
         type: string
 
 permissions:
   contents: read
+
+concurrency:
+  group: python-package-publish
+  cancel-in-progress: false
+  queue: max
 
 jobs:
   build:
@@ -17,6 +34,8 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      should_publish: ${{ steps.source.outputs.should_publish }}
     permissions:
       contents: read
       id-token: write
@@ -30,24 +49,49 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - name: Verify selected version and merged source
+      - name: Verify selected source and detect unpublished package changes
+        id: source
         env:
           RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_SHA: ${{ inputs.source-sha }}
         run: |
-          python packages/python/scripts/release.py --tag "$RELEASE_TAG" \
-            --workflow-ref "$GITHUB_REF" --receipt "$RUNNER_TEMP/python-source.json"
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          cp packages/python/scripts/release.py "$RUNNER_TEMP/python-release-policy.py"
+          python "$RUNNER_TEMP/python-release-policy.py" prepare --tag "$RELEASE_TAG" \
+            --workflow-ref "$GITHUB_REF" --source-sha "$SOURCE_SHA" \
+            --receipt "$RUNNER_TEMP/python-source.json" --output "$GITHUB_OUTPUT"
+      - name: Checkout exact tagged package source
+        if: steps.source.outputs.should_publish == 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.source.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Stamp shared release version and source metadata
+        if: steps.source.outputs.should_publish == 'true'
+        run: |
+          python "$RUNNER_TEMP/python-release-policy.py" stamp \
+            --receipt "$RUNNER_TEMP/python-source.json"
       - name: Check Python version and SDK matrix
+        if: steps.source.outputs.should_publish == 'true'
         run: bash packages/python/scripts/matrix.sh "$RUNNER_TEMP/python-matrix"
       - name: Build reproducible release artifacts and SBOM
+        if: steps.source.outputs.should_publish == 'true'
         run: |
           bash packages/python/scripts/check.sh --output "$RUNNER_TEMP/python-release"
           cp "$RUNNER_TEMP/python-source.json" "$RUNNER_TEMP/python-release/source.json"
+          cp "$RUNNER_TEMP/python-release-policy.py" "$RUNNER_TEMP/python-release/policy.py"
+      - name: Verify immutable files before allowing publication retries
+        if: steps.source.outputs.should_publish == 'true'
+        run: |
+          python "$RUNNER_TEMP/python-release-policy.py" verify \
+            --receipt "$RUNNER_TEMP/python-source.json" --dist "$RUNNER_TEMP/python-release/dist"
       - name: Attest distributions
+        if: steps.source.outputs.should_publish == 'true'
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: ${{ runner.temp }}/python-release/dist/*
       - name: Upload verified release package
+        if: steps.source.outputs.should_publish == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: python-release
@@ -55,18 +99,31 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish through PyPI trusted publisher
+    name: Publish manually through PyPI trusted publisher
     needs: build
+    if: >-
+      github.workflow_ref == format('{0}/.github/workflows/publish-python.yml@refs/heads/main', github.repository) &&
+      needs.build.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
       id-token: write
       contents: read
     steps:
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
       - uses: actions/download-artifact@v4
         with:
           name: python-release
           path: release
+      - name: Verify existing files immediately before publication
+        run: python release/policy.py verify --receipt release/source.json --dist release/dist
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
         with:
           packages-dir: release/dist
+          skip-existing: true
+      - name: Require complete matching wheel and sdist on PyPI
+        run: |
+          python release/policy.py verify --receipt release/source.json \
+            --dist release/dist --complete

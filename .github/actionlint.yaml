@@ -14,6 +14,9 @@ paths:
   .github/workflows/pr-image-cleanup.yml:
     ignore:
       - 'unexpected key "queue" for "concurrency" section'
+  .github/workflows/publish-python.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'
   .github/workflows/release-rc.yml:
     ignore:
       - 'unexpected key "queue" for "concurrency" section'
