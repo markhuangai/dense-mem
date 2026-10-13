@@ -1,8 +1,9 @@
 -- +goose NO TRANSACTION
 
--- Lock/rewrite: concurrent index creation preserves writes and does not rewrite intake.
--- RLS: fixed-size identity hashes narrow lookup; exact identity and authorization predicates remain required.
+-- Lock/rewrite impact: concurrent index creation preserves writes and does not rewrite intake.
+-- RLS impact: fixed-size identity hashes narrow lookup; exact identity and authorization predicates remain required.
 -- Backfill/recovery: index existing completed rows; repair an interrupted invalid index before retry.
+-- Backward compatibility: previous releases retain their existing exact lookup and context index.
 -- Rollback: drop only the derived index; retain intake, diagnostics, and the previous context index.
 
 -- +goose Up

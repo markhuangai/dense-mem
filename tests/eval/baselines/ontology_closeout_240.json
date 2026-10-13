@@ -74,7 +74,7 @@
     "internal/ontology/scheduler.go": "aaa8a11a32c2778c3548a1ad9eaf1e870e977278b0dfc26be1101a502e9825cd",
     "internal/recall/quality/metrics.go": "d045f53801d85d2a1f7e3ebd1f8e537496ab490d61246b35756c2d09f98716e9",
     "internal/session/service/diagnostics.go": "21bd6ae163f9537fef50b6265ca755ae8e5df3dd3534dec8be82b14dd4bcdffd",
-    "migrations/postgres/v2_6/20261013020000_session_context_index.sql": "274cb3bd05c627d40634783e2bd818cad08dc4e3787cbce81f524f83f60d8222",
+    "migrations/postgres/v2_6/20261013020000_session_context_index.sql": "ce028d1427d509d6a1f04c18beb797c2b9ab69adb90a2475ca5ec0ed95747027",
     "packages/python/scripts/release.py": "c9e230385cbf687d3b132c4e0cdbb1ed264b0283d979b3259dd9bbf524b85489",
     "tests/eval/scripts/session_provider_proxy.mjs": "0aaa73026d62478cd546421fa2890bc2277232bc0fcfaf6a927bf3b6f71c82df",
     "tests/uat/enterprise_exports_e2e.mjs": "b992c5f1c3bb4ee73163e9316e0d881833d955502bd07bbcc0f4e48673ec1860",
