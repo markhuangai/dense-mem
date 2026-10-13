@@ -16,9 +16,9 @@ func (s *service) RunProjectionTurn(ctx context.Context) (bool, error) {
 	if !ok {
 		return false, errors.New("community: topic projection repository is required")
 	}
-	work, err := store.ClaimTopicProjection(ctx, s.now())
+	work, progress, err := store.ClaimTopicProjection(ctx, s.now())
 	if work == nil {
-		return false, err
+		return progress, err
 	}
 	if err == nil {
 		sort.Slice(work.Inputs, func(i, j int) bool { return work.Inputs[i].RelationshipID < work.Inputs[j].RelationshipID })

@@ -237,10 +237,10 @@ func TestCommunityTopicCapacityIsSharedWithMaintenance(t *testing.T) {
 		return tx.Exec(`UPDATE ontology_maintenance_windows SET policy=jsonb_set(policy,'{max_concurrency}','1') WHERE window_id=?::uuid`, f.windowID).Error
 	}))
 	instanceB := NewStore(f.appDB.Session(&gorm.Session{NewDB: true}), f.rls).WithTopics(f.ontology.NewTopicCatalogReader(), f.ontology.NewTopicMembershipReader(), f.ontology.NewTopicProjectionAdmission(), f.ontology.NewTopicProjectionRelease())
-	work, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
+	work, _, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
 	require.NoError(t, err)
 	require.NotNil(t, work)
-	other, err := instanceB.ClaimTopicProjection(context.Background(), time.Now())
+	other, _, err := instanceB.ClaimTopicProjection(context.Background(), time.Now())
 	require.NoError(t, err)
 	require.Nil(t, other, "separate projection instance exceeded global concurrency")
 	turn, err := f.ontology.ClaimMaintenanceTurn(context.Background(), f.windowID, time.Now(), time.Minute)
@@ -250,18 +250,18 @@ func TestCommunityTopicCapacityIsSharedWithMaintenance(t *testing.T) {
 	turn, err = f.ontology.ClaimMaintenanceTurn(context.Background(), f.windowID, time.Now(), time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, turn)
-	other, err = instanceB.ClaimTopicProjection(context.Background(), time.Now())
+	other, _, err = instanceB.ClaimTopicProjection(context.Background(), time.Now())
 	require.NoError(t, err)
 	require.Nil(t, other, "projection overlapped an admitted organization turn")
 	require.NoError(t, f.ontology.ReleaseMaintenanceTurn(context.Background(), *turn))
 	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE ontology_maintenance_windows SET overrun=true WHERE window_id=?::uuid`, f.windowID).Error
 	}))
-	other, err = instanceB.ClaimTopicProjection(context.Background(), time.Now())
+	other, _, err = instanceB.ClaimTopicProjection(context.Background(), time.Now())
 	require.NoError(t, err)
 	require.NotNil(t, other, "model budget overrun blocked independent projection work")
 	f.expireLease(t, other.CommunityID)
-	recovered, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
+	recovered, _, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
 	require.NoError(t, err)
 	require.NotNil(t, recovered)
 	require.ErrorIs(t, instanceB.AppendTopicProjection(context.Background(), community.TopicProjectionBatch{Work: *other}, time.Now()), community.ErrCommunityRunAlreadyClaimed)
@@ -293,15 +293,15 @@ func TestCommunityTopicBusyTeamDoesNotStarveAvailableTeam(t *testing.T) {
 	require.NotNil(t, turn)
 	defer func() { require.NoError(t, f.ontology.ReleaseMaintenanceTurn(ctx, *turn)) }()
 	require.NoError(t, f.store.withProjectionTx(ctx, func(tx *gorm.DB) error {
-		if err := f.store.discoverTopicProjections(ctx, tx); err != nil {
+		if _, err := f.store.discoverTopicProjections(ctx, tx); err != nil {
 			return err
 		}
 		return tx.Exec(`UPDATE community_topic_work SET last_turn=CASE WHEN team_id=?::uuid THEN ?::timestamptz ELSE ?::timestamptz END`, turn.TeamID, now.Add(-2*time.Minute), now.Add(-time.Minute)).Error
 	}))
-	work, err := f.store.ClaimTopicProjection(ctx, now)
+	work, _, err := f.store.ClaimTopicProjection(ctx, now)
 	require.NoError(t, err)
 	require.Nil(t, work, "busy team must not receive a second lease")
-	work, err = f.store.ClaimTopicProjection(ctx, now.Add(time.Second))
+	work, _, err = f.store.ClaimTopicProjection(ctx, now.Add(time.Second))
 	require.NoError(t, err)
 	require.NotNil(t, work, "refused candidate starved another team with available capacity")
 	require.NotEqual(t, turn.TeamID, work.TeamID)

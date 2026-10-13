@@ -129,12 +129,14 @@ type Case struct {
 }
 
 type Ref struct {
-	Type        string  `json:"type"`
-	ID          string  `json:"id,omitempty"`
-	SourceDocID string  `json:"source_doc_id,omitempty"`
-	Rank        int     `json:"rank,omitempty"`
-	Grade       float64 `json:"grade,omitempty"`
-	Reason      string  `json:"reason,omitempty"`
+	EquivalentEvidenceIDs []string `json:"equivalent_evidence_ids,omitempty"`
+	EquivalentsTruncated  bool     `json:"equivalents_truncated,omitempty"`
+	Type                  string   `json:"type"`
+	ID                    string   `json:"id,omitempty"`
+	SourceDocID           string   `json:"source_doc_id,omitempty"`
+	Rank                  int      `json:"rank,omitempty"`
+	Grade                 float64  `json:"grade,omitempty"`
+	Reason                string   `json:"reason,omitempty"`
 }
 
 type QRel struct {

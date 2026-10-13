@@ -127,6 +127,27 @@
       "run": "^TestTraceSessionProvenanceRequiresAuthenticatedPrivateOwner$",
       "phase": "precheck",
       "source": "internal/trace/postgres/session_provenance_integration_test.go"
+    },
+    {
+      "id": "repository/TestSessionContextIndexBoundsPrivateLookupAcrossUnrelatedHistory",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionContextIndexBoundsPrivateLookupAcrossUnrelatedHistory$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_context_index_integration_test.go"
+    },
+    {
+      "id": "repository/TestSessionContextIndexMigrationRetainsIntakeAndRepairsInterruptedBuild",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionContextIndexMigrationRetainsIntakeAndRepairsInterruptedBuild$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_context_index_integration_test.go"
+    },
+    {
+      "id": "repository/TestSessionCancelledDiagnosticsCannotReviveSealedOrErasedGeneration",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSessionCancelledDiagnosticsCannotReviveSealedOrErasedGeneration$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_diagnostics_cancellation_integration_test.go"
     }
   ]
 }

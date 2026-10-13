@@ -180,14 +180,18 @@ func TestCommunityTopicSchedulerRunsWithoutOrganizationBudget(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
+	stop := func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("maintenance did not release on cancellation")
+		}
+	}
+	t.Cleanup(stop)
 	go func() { defer close(done); organization.NewMaintenanceScheduler(maintenance, nil).Start(ctx) }()
 	require.Eventually(t, func() bool { return len(f.currentIDs(t)) == 3 }, 20*time.Second, 20*time.Millisecond)
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("maintenance did not release on cancellation")
-	}
+	stop()
 	status, err := f.ontology.MaintenanceStatus(context.Background(), time.Now())
 	require.NoError(t, err)
 	require.Equal(t, policy.InputTokens, status.Window.ChargedInput)
@@ -212,7 +216,7 @@ func TestCommunityTopicMigrationUsesNonSuperuserWithForcedRLS(t *testing.T) {
 		if err := tx.Exec(fmt.Sprintf(`GRANT REFERENCES,TRIGGER ON ALL TABLES IN SCHEMA public TO %s`, ledgerTestRole)).Error; err != nil {
 			return err
 		}
-		for _, table := range []string{"app_config", "community_records"} {
+		for _, table := range []string{"app_config", "community_records", "session_events"} {
 			if err := tx.Exec(fmt.Sprintf(`ALTER TABLE %s OWNER TO %s`, table, ledgerTestRole)).Error; err != nil {
 				return err
 			}

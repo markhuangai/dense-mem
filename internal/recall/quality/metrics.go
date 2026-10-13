@@ -8,8 +8,16 @@ import (
 
 // ResultRef identifies one ranked recall result without content.
 type ResultRef struct {
-	Type string
-	ID   string
+	Type          string
+	ID            string
+	EquivalentIDs []string
+}
+
+func (ref ResultRef) IDs() []string {
+	if resultKey(ref.Type, ref.ID) == "" {
+		return nil
+	}
+	return append([]string{ref.ID}, ref.EquivalentIDs...)
 }
 
 // Judgment grades an expected relevant result. Grades must be positive.
@@ -60,25 +68,32 @@ func ScoreAtK(ranked []ResultRef, relevant []Judgment, irrelevant []ResultRef, k
 	firstRelevantRank := 0
 	dcg := 0.0
 	for i := 0; i < k; i++ {
-		key := resultKey(ranked[i].Type, ranked[i].ID)
-		if key == "" {
-			continue
+		grade := 0.0
+		badSlot := false
+		for _, id := range ranked[i].IDs() {
+			key := resultKey(ranked[i].Type, id)
+			if key == "" {
+				continue
+			}
+			if _, bad := badRefs[key]; bad {
+				badSlot = true
+			}
+			if relevantGrades[key] <= 0 {
+				continue
+			}
+			if _, seen := seenRelevant[key]; !seen {
+				seenRelevant[key] = struct{}{}
+				metrics.RelevantAtK++
+				grade = math.Max(grade, relevantGrades[key])
+			}
 		}
-		if _, bad := badRefs[key]; bad {
+		if badSlot {
 			metrics.BadAtK++
 		}
-		grade := relevantGrades[key]
-		if grade <= 0 {
-			continue
+		if grade > 0 && firstRelevantRank == 0 {
+			firstRelevantRank = i + 1
 		}
-		if _, seen := seenRelevant[key]; !seen {
-			seenRelevant[key] = struct{}{}
-			metrics.RelevantAtK++
-			if firstRelevantRank == 0 {
-				firstRelevantRank = i + 1
-			}
-			dcg += discountedGain(grade, i+1)
-		}
+		dcg += discountedGain(grade, i+1)
 	}
 	if metrics.RelevantTotal > 0 {
 		metrics.RecallAtK = float64(metrics.RelevantAtK) / float64(metrics.RelevantTotal)
@@ -86,7 +101,25 @@ func ScoreAtK(ranked []ResultRef, relevant []Judgment, irrelevant []ResultRef, k
 	if firstRelevantRank > 0 {
 		metrics.MRR = 1 / float64(firstRelevantRank)
 	}
-	ideal := idealDCG(relevantGrades, k)
+	idealGrades := make(map[string]float64, len(relevantGrades))
+	for key, grade := range relevantGrades {
+		idealGrades[key] = grade
+	}
+	for _, ref := range ranked {
+		if len(ref.EquivalentIDs) == 0 {
+			continue
+		}
+		grade := 0.0
+		for _, id := range ref.IDs() {
+			key := resultKey(ref.Type, id)
+			grade = math.Max(grade, relevantGrades[key])
+			delete(idealGrades, key)
+		}
+		if grade > 0 {
+			idealGrades[resultKey(ref.Type, ref.ID)] = grade
+		}
+	}
+	ideal := idealDCG(idealGrades, k)
 	if ideal > 0 {
 		metrics.NDCGAtK = dcg / ideal
 	}

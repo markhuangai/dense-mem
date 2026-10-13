@@ -24,18 +24,20 @@ const server = createServer(async (request, response) => {
     const upstream = await fetch(`${(chat ? chatBase : embeddingBase).replace(/\/$/, "")}/${chat ? "chat/completions" : "embeddings"}`, { method: "POST", headers: { Authorization: `Bearer ${chat ? chatKey : embeddingKey}`, "Content-Type": "application/json" }, body: Buffer.concat(chunks), signal: controller.signal });
     const body = await upstream.text();
     usage[chat ? "chat_turns" : "embedding_turns"]++;
-    const tokens = JSON.parse(body).usage;
+    let tokens;
+    try { tokens = JSON.parse(body)?.usage; }
+    catch (error) { if (!(error instanceof SyntaxError)) throw error; }
     if (chat && Number.isFinite(tokens?.prompt_tokens) && Number.isFinite(tokens?.completion_tokens)) {
       usage.input_tokens += tokens.prompt_tokens;
       usage.output_tokens += tokens.completion_tokens;
     } else if (chat) usage.missing_chat_usage++;
     else if (Number.isFinite(tokens?.prompt_tokens)) usage.embedding_input_tokens += tokens.prompt_tokens;
     else usage.embedding_usage_unavailable++;
-    send(response, upstream.status, body);
+    send(response, upstream.status, body, upstream.headers.get("content-type") || "application/json");
   } catch (error) {
     if (!controller.signal.aborted) send(response, 502, JSON.stringify({ error: { message: "evaluation provider request failed" } }));
   }
 });
 server.listen(Number(process.env.DENSE_MEM_EVAL_PROXY_PORT || 8788), "0.0.0.0", () => console.log("session evaluation provider proxy ready"));
 function required(name, fallback) { const value = process.env[name] || fallback; assert(value, `${name} is required`); return value; }
-function send(response, status, body) { response.writeHead(status, { "Content-Type": "application/json" }); response.end(body); }
+function send(response, status, body, contentType = "application/json") { response.writeHead(status, { "Content-Type": contentType }); response.end(body); }

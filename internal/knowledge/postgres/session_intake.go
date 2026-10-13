@@ -250,12 +250,9 @@ func loadSessionByKey(ctx context.Context, tx *gorm.DB, scope session.Scope, key
 }
 
 func loadPriorSessionEvents(ctx context.Context, tx *gorm.DB, scope session.Scope, req session.Request, submission *session.Submission) error {
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT body::text, result::text FROM session_events
-		WHERE team_id = ?::uuid AND space_id = ?::uuid AND owner_profile_id = ?::uuid AND space_generation = ?
-		 AND framework = ? AND app_name = ? AND user_id = ? AND session_id = ? AND result IS NOT NULL
-		ORDER BY created_at DESC, event_index DESC LIMIT ?
-	`, scope.TeamID, scope.SpaceID, scope.OwnerProfileID, scope.SpaceGeneration,
+	rows, err := tx.WithContext(ctx).Raw(priorSessionEventsSQL,
+		scope.TeamID, scope.SpaceID, scope.OwnerProfileID, scope.SpaceGeneration,
+		req.Framework, req.AppName, req.UserID, req.SessionID,
 		req.Framework, req.AppName, req.UserID, req.SessionID, session.ContextEvents).Rows()
 	if err != nil {
 		return err
@@ -279,6 +276,14 @@ func loadPriorSessionEvents(ctx context.Context, tx *gorm.DB, scope session.Scop
 	}
 	return rows.Err()
 }
+
+const priorSessionEventsSQL = `
+	SELECT body::text, result::text FROM session_events
+	WHERE team_id = ?::uuid AND space_id = ?::uuid AND owner_profile_id = ?::uuid AND space_generation = ?
+	 AND framework = ? AND app_name = ? AND user_id = ? AND session_id = ? AND result IS NOT NULL
+	 AND md5(framework) = md5(?) AND md5(app_name) = md5(?) AND md5(user_id) = md5(?) AND md5(session_id) = md5(?)
+	ORDER BY created_at DESC, event_index DESC LIMIT ?
+`
 
 func loadSessionCheckpoints(ctx context.Context, tx *gorm.DB, scope session.Scope, submission *session.Submission) error {
 	submission.Extractions = map[int]json.RawMessage{}

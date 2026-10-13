@@ -584,13 +584,21 @@ the detailed comparison. Commit only compact verified evidence after the gates.
 The verified quality, scale and latency results are recorded in
 [`baselines/community_topics_v1.json`](baselines/community_topics_v1.json).
 
-Measure normal community Recall on identical canonical fixtures in both modes:
+The legacy/ontology comparison is historical. Run it from the exact #245 source
+revision below; #530 retired the legacy mode, so the current benchmark cannot
+supply this comparison. Capture both stdout and stderr before running its scorer:
 
 ```bash
-env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 \
-  DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 \
-  go test -tags integration ./internal/community/postgres -run '^$' \
-  -bench '^BenchmarkCommunityTopicProjection$' -benchtime=200x -count=5 -timeout=45m
+mkdir -p tests/eval/runs/issue-245
+issue245_source=$(mktemp -d tests/eval/runs/issue-245/source.XXXXXX)
+git archive d16c15229120e83e740a4730b32e3694f9269e10 | tar -x -C "$issue245_source"
+(
+  cd "$issue245_source"
+  env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 \
+    DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 \
+    go test -tags integration ./internal/community/postgres -run '^$' \
+    -bench '^BenchmarkCommunityTopicProjection$' -benchtime=200x -count=5 -timeout=45m
+) > tests/eval/runs/issue-245/benchmark.txt 2>&1
 python3 tests/eval/scripts/compare_community_topics.py \
   --input tests/eval/runs/issue-245/benchmark.txt \
   --out tests/eval/runs/issue-245/latency.json
@@ -600,6 +608,11 @@ Each mode performs 20 warmups and 200 measurements for five pairs. The comparato
 requires complete pairs and a median paired p95 regression no greater than 10%.
 Large-topic completion, bounded pages, and zero summary-provider attempts are
 reported separately; the legacy detector cannot construct the scale fixture.
+
+Current closeout validation uses `BenchmarkRecallOntology` and
+`scripts/compare_ontology_recall.py` with the frozen five paired disabled/enabled
+measurements and unchanged 10% median p95 bound. Historical metrics certify only
+their recorded source revision; disabled community reads now return no topics.
 
 ## Private Session Gate (#218)
 

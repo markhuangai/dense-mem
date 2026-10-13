@@ -2,6 +2,14 @@ package contract
 
 const TopicProjectionPageSize = 100
 
+type TopicProjectionAdmission uint8
+
+const (
+	TopicProjectionUnavailable TopicProjectionAdmission = iota
+	TopicProjectionAdmitted
+	TopicProjectionTeamBusy
+)
+
 type TopicCatalogCursor struct {
 	TeamID  string
 	TopicID string

@@ -183,6 +183,41 @@
       "run": "^TestCommunityTopicDependencyExpansionResumesWithinTurnBounds$",
       "phase": "precheck",
       "source": "internal/community/postgres/topic_projection_dependencies_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicSchedulerContinuesAfterAllCurrentCatalogPage",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicSchedulerContinuesAfterAllCurrentCatalogPage$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_scheduler_progress_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicSchedulerRotatesBusyTeamsAndStopsAtCapacityBounds",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicSchedulerRotatesBusyTeamsAndStopsAtCapacityBounds$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_scheduler_progress_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicSchedulerEarlyAssertionCleanup",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicSchedulerEarlyAssertionCleanup$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_scheduler_progress_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicStatusOmitsHistoricalRunOnlyWhileEnabled",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicStatusOmitsHistoricalRunOnlyWhileEnabled$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_status_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicSchedulerCancellationRestartsPersistedDiscovery",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicSchedulerCancellationRestartsPersistedDiscovery$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_scheduler_progress_integration_test.go"
     }
   ]
 }

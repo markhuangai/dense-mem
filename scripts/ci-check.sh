@@ -14,6 +14,7 @@ node scripts/check-architecture.mjs
 node --test tests/uat/architecture_conformance.test.mjs
 node --test tests/uat/synchronous_write/*.test.mjs
 node --test tests/uat/embedding_upstream.test.mjs
+node --test tests/uat/ontology_organization_cleanup.test.mjs tests/eval/scripts/session_provider_proxy.test.mjs
 scripts/static-analysis.sh
 node --test tests/uat/team_dreaming_schedule.test.mjs
 node --test tests/uat/image_release_policy.test.mjs tests/uat/preview_receipt.test.mjs tests/uat/fork_e2e_policy.test.mjs tests/uat/fork_e2e_workspace.test.mjs

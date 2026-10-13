@@ -86,7 +86,7 @@ func TestCommunityTopicNewMembershipBetweenPagesRejectsPublication(t *testing.T)
 	progress, err := f.service.RunProjectionTurn(context.Background())
 	require.NoError(t, err)
 	require.True(t, progress)
-	work, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
+	work, _, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
 	require.NoError(t, err)
 	require.NotNil(t, work)
 	f.additionalSupport(t, 1)
@@ -116,7 +116,7 @@ func TestCommunityTopicDeclaredDefinitionSourceIsFenced(t *testing.T) {
 				var work *community.TopicProjectionWork
 				if phase == "publication" {
 					var err error
-					work, err = f.store.ClaimTopicProjection(context.Background(), time.Now())
+					work, _, err = f.store.ClaimTopicProjection(context.Background(), time.Now())
 					require.NoError(t, err)
 					require.NotNil(t, work)
 				} else {
@@ -171,7 +171,7 @@ func TestCommunityTopicNewOverrideDuringPublicationIsFenced(t *testing.T) {
 	f := newTopicProjectionFixture(t)
 	handle := ontology.SourceHandle{Kind: ontology.RelationshipSource, ID: f.sources[0].RelationshipID, Version: int64(f.sources[0].RelationshipVersion)}
 	f.topic(t, "original", []ontology.SourceHandle{handle})
-	work, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
+	work, _, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
 	require.NoError(t, err)
 	require.NotNil(t, work)
 	alternate := f.topic(t, "override-target", nil)
@@ -230,7 +230,7 @@ func TestCommunityTopicPredicateEligibilityDependencyIsFenced(t *testing.T) {
 				}
 				var work *community.TopicProjectionWork
 				if phase == "publication" {
-					work, err = f.store.ClaimTopicProjection(ctx, time.Now())
+					work, _, err = f.store.ClaimTopicProjection(ctx, time.Now())
 					require.NoError(t, err)
 					require.NotNil(t, work)
 					require.True(t, work.Topic.Current)
@@ -305,7 +305,7 @@ func TestCommunityTopicDependencyExpansionResumesWithinTurnBounds(t *testing.T) 
 				handle = ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: f.evidenceIDs[0], Version: 1}
 			}
 			topic := f.topic(t, "bounded-dependencies", []ontology.SourceHandle{handle}, dependency)
-			work, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
+			work, _, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
 			require.NoError(t, err)
 			require.NotNil(t, work)
 			require.True(t, work.More, "dependency corpus exceeded one turn without resumable work")
@@ -344,7 +344,7 @@ func TestCommunityTopicDependencyExpansionResumesWithinTurnBounds(t *testing.T) 
 				ObjectEntityID: object.EntityID, Support: &EvidenceSupportInput{FragmentID: ingest.Evidence[0].FragmentID,
 					SourceGroupKey: uuid.NewString(), SpanEnd: len(content), Authority: "primary"}})
 			relationships[added.Relationship.RelationshipID] = true
-			restarted, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
+			restarted, _, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
 			require.NoError(t, err)
 			require.NotNil(t, restarted)
 			require.NotEqual(t, work.CommunityID, restarted.CommunityID, "changed predicate corpus resumed a stale build")

@@ -145,14 +145,14 @@ func (s *service) Status(ctx context.Context, teamID string) (*StatusResult, err
 		return nil, err
 	}
 	result := &StatusResult{EffectiveConfig: policy, LegacyProcessingRetired: true}
-	run, err := s.store.LatestCommunityRun(ctx, teamID)
-	if err != nil {
-		return nil, err
-	}
-	if run != nil {
-		result.LatestRun = runResultFromRecord(run, run.Status)
-	}
 	if !policy.Enabled {
+		run, err := s.store.LatestCommunityRun(ctx, teamID)
+		if err != nil {
+			return nil, err
+		}
+		if run != nil {
+			result.LatestRun = runResultFromRecord(run, run.Status)
+		}
 		return result, nil
 	}
 	store, ok := s.store.(communitycontract.TopicProjectionRepository)

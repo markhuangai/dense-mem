@@ -156,7 +156,7 @@ func TestCommunityTopicRetractionIsolationAndIndependentRefresh(t *testing.T) {
 		EvidenceIDs: []string{f.evidenceIDs[0]}, Reason: "wrong owner", IdempotencyKey: uuid.NewString(), RequestHash: "sha256:" + strings.Repeat("0", 64)})
 	require.ErrorIs(t, err, knowledge.ErrEvidenceLifecycleNotFound)
 	require.Equal(t, before, f.currentIDs(t))
-	_, err = f.store.ClaimTopicProjection(f.actor(f.reader), time.Now())
+	_, _, err = f.store.ClaimTopicProjection(f.actor(f.reader), time.Now())
 	require.ErrorIs(t, err, ontology.ErrUnauthorized)
 	_, err = f.store.TopicProjectionCoverage(f.actor(f.reader), f.otherTeam)
 	require.ErrorIs(t, err, ontology.ErrUnauthorized)
@@ -193,7 +193,7 @@ func TestCommunityTopicRetractionIsolationAndIndependentRefresh(t *testing.T) {
 func TestCommunityTopicPublicationFencesSourceChangesAndCompetingClaims(t *testing.T) {
 	f := newTopicProjectionFixture(t)
 	f.seedCohort(t)
-	work, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
+	work, _, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
 	require.NoError(t, err)
 	require.NotNil(t, work)
 	index := -1
@@ -218,11 +218,11 @@ func TestCommunityTopicPublicationFencesSourceChangesAndCompetingClaims(t *testi
 	require.NoError(t, err)
 	definition.Definition.Description = "Changed community snapshot marker"
 	f.publish(t, ontology.Change{ExpectedVersion: definition.Version, Record: definition.Record})
-	work, err = f.store.ClaimTopicProjection(context.Background(), time.Now())
+	work, _, err = f.store.ClaimTopicProjection(context.Background(), time.Now())
 	require.NoError(t, err)
 	require.NotNil(t, work)
 	f.expireLease(t, work.CommunityID)
-	replacement, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
+	replacement, _, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
 	require.NoError(t, err)
 	require.NotNil(t, replacement)
 	require.Equal(t, work.CommunityID, replacement.CommunityID)
@@ -236,7 +236,7 @@ func TestCommunityTopicPublicationFencesSourceChangesAndCompetingClaims(t *testi
 func TestCommunityTopicFailurePauseAndDisable(t *testing.T) {
 	f := newTopicProjectionFixture(t)
 	f.seedCohort(t)
-	work, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
+	work, _, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
 	require.NoError(t, err)
 	require.NoError(t, f.store.FailTopicProjection(context.Background(), *work, "projection_failed", time.Now()))
 	f.drain(t, 10)

@@ -12,6 +12,8 @@ from pathlib import Path
 SOURCE_URL = "https://github.com/markhuangai/dense-mem/tree/"
 PYPI_URL = "https://pypi.org/pypi/densemem"
 NUMBER = r"(0|[1-9][0-9]*)"
+PUBLICATION_WAIT_SECONDS = 300
+PUBLICATION_POLL_SECONDS = 5
 
 
 def package_version(tag: str) -> str:
@@ -44,11 +46,11 @@ def require_merged(source: str) -> None:
         raise ValueError("Python release source must belong to merged main")
 
 
-def fetch_json(url: str) -> dict | None:
+def fetch_json(url: str, timeout: float = 30) -> dict | None:
     try:
         # PyPI JSON caches can retain partial uploads while a publication retry completes.
         with urllib.request.urlopen(
-            f"{url}?release_check={time.time_ns()}", timeout=30
+            f"{url}?release_check={time.time_ns()}", timeout=timeout
         ) as response:
             return json.load(response)
     except urllib.error.HTTPError as error:
@@ -144,19 +146,30 @@ def verify_artifacts(receipt: dict, dist: Path, complete: bool = False) -> None:
         local_names -= {name + ".publish.attestation" for name in names}
     if local_names != names:
         raise ValueError("release must contain exactly the selected wheel and sdist")
-    data = fetch_json(f"{PYPI_URL}/{receipt['version']}/json")
-    files = data["urls"] if data is not None else []
-    if data is not None and published_source(data) != receipt["source_sha"]:
-        raise ValueError("existing Python version identifies a different source")
-    for item in files:
-        name = item["filename"]
-        if (
-            name not in names
-            or hashlib.sha256((dist / name).read_bytes()).hexdigest() != (item["digests"]["sha256"])
-        ):
-            raise ValueError("published artifact differs from verified release artifact")
-    if complete and {item["filename"] for item in files} != names:
-        raise ValueError("Python publication is incomplete")
+    deadline = time.monotonic() + PUBLICATION_WAIT_SECONDS
+    hashes = {name: hashlib.sha256((dist / name).read_bytes()).hexdigest() for name in names}
+    while True:
+        timeout = min(30, max(0.001, deadline - time.monotonic())) if complete else 30
+        data = fetch_json(f"{PYPI_URL}/{receipt['version']}/json", timeout=timeout)
+        files = data["urls"] if data is not None else []
+        if data is not None and published_source(data) != receipt["source_sha"]:
+            raise ValueError("existing Python version identifies a different source")
+        for item in files:
+            name = item["filename"]
+            if name not in names or hashes[name] != item["digests"]["sha256"]:
+                raise ValueError("published artifact differs from verified release artifact")
+        missing = names - {item["filename"] for item in files}
+        if not complete or not missing:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(PUBLICATION_POLL_SECONDS, remaining))
+            if time.monotonic() < deadline:
+                continue
+        raise ValueError(
+            f"Python publication is incomplete after {PUBLICATION_WAIT_SECONDS}s: "
+            f"version {receipt['version']} is missing {', '.join(sorted(missing))}"
+        )
 
 
 def main() -> None:

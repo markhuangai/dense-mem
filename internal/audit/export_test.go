@@ -35,6 +35,22 @@ func TestExportProjectionExcludesUntrustedFields(t *testing.T) {
 	require.Equal(t, entry.EntityID, event.EntityID)
 }
 
+func TestExportProjectionPreservesHistoricalScheduledDreamOutcomes(t *testing.T) {
+	for _, operation := range []string{"dream_cycle_completed", "dream_cycle_failed", "dream_cycle_missed"} {
+		t.Run(operation, func(t *testing.T) {
+			id := uuid.NewString()
+			event := projectExportEntry(contract.ExportEntry{Operation: operation, EntityType: "dream_cycle_run", EntityID: id, ActorRole: "system"})
+			require.Equal(t, operation, event.Operation)
+			require.Equal(t, "dream_cycle_run", event.EntityType)
+			require.Equal(t, id, event.EntityID)
+			invalid := projectExportEntry(contract.ExportEntry{Operation: operation + "-content-canary", EntityType: "dream_cycle_run-content-canary", EntityID: "credential-content-canary"})
+			require.Equal(t, "other", invalid.Operation)
+			require.Equal(t, "other", invalid.EntityType)
+			require.Empty(t, invalid.EntityID)
+		})
+	}
+}
+
 func TestExportCursorScopeAndClosedShape(t *testing.T) {
 	team := uuid.New()
 	cursor := exportCursor{Version: 1, Scope: team.String(), Position: &contract.ExportPosition{XID: "125", Timestamp: time.Now().UTC(), ID: uuid.NewString()}}

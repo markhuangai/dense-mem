@@ -27,6 +27,7 @@ const docker = (args) => { const result = spawnSync("docker", args, { encoding: 
 const serviceID = (service) => { const value = docker([...composeArgs, "ps", "-q", service]); assert.match(value, /^[a-f0-9]{12,64}$/); return value; };
 const collectorID = serviceID("enterprise-collector");
 const serverID = serviceID("server");
+const postgresID = serviceID("postgres");
 const inspected = JSON.parse(docker(["inspect", serverID]))[0];
 const canary = "enterprise-export-evidence-content-canary";
 const prohibited = [canary, apiKey, controlToken, "private-erasure-", "export-correlation-content-canary"];
@@ -73,6 +74,14 @@ const deniedTrace = await tool("trace_memory", { relationship_id: relationshipID
 assert.ok(deniedTrace.code || deniedTrace.errors?.length);
 assert.ok(!JSON.stringify(deniedTrace).includes(canary), "foreign-team denial exposed evidence content");
 
+const historicalAudit = ["dream_cycle_completed", "dream_cycle_failed", "dream_cycle_missed"].map((operation) => ({ id: randomUUID(), entityID: randomUUID(), operation }));
+assert.match(teamID, /^[0-9a-f-]{36}$/);
+sql(`BEGIN; SELECT set_config('app.tx_mode','system',true);
+ ${historicalAudit.map((event) => `INSERT INTO audit_log(id,team_id,timestamp,operation,entity_type,entity_id,actor_role,metadata)
+ VALUES('${event.id}','${teamID}',now(),'${event.operation}','dream_cycle_run','${event.entityID}','system','{"content":"${canary}"}'::jsonb);`).join("\n")}
+ INSERT INTO audit_log(id,team_id,timestamp,operation,entity_type,entity_id,actor_role,metadata)
+ VALUES('${randomUUID()}','${teamID}',now(),'dream_cycle_failed-content-canary','dream_cycle_run-content-canary','credential-content-canary','system','{}'::jsonb); COMMIT;`);
+
 let cursor = "";
 const events = [];
 for (let page = 0; page < 100; page++) {
@@ -84,6 +93,14 @@ for (let page = 0; page < 100; page++) {
   cursor = checkpoint.cursor; if (!checkpoint.more) break;
 }
 assert.equal(new Set(events.map((event) => event.id)).size, events.length);
+for (const expected of historicalAudit) {
+ const actual = events.find((event) => event.id === expected.id);
+ assert(actual, "historical scheduled-Dream event must appear in paginated export");
+ assert.equal(actual.operation, expected.operation);
+ assert.equal(actual.entity_type, "dream_cycle_run");
+ assert.equal(actual.entity_id, expected.entityID);
+}
+assert(events.some((event) => event.operation === "other" && event.entity_type === "other" && !event.entity_id), "unknown classifications and non-UUID identifiers must remain bounded");
 assert.ok(events.some((event) => event.team_id === teamID)); assert.ok(events.some((event) => event.team_id === second.id));
 const scoped = await controlRaw(`/audit/export?team_id=${teamID}`); const scopedRaw = await scoped.text(); scan(scopedRaw);
 const scopedLines = scopedRaw.trim().split("\n").map(JSON.parse);
@@ -95,7 +112,6 @@ assert.equal((await controlRaw("/audit/export")).status, 200);
 
 const privateCase = spawnSync(process.execPath, [new URL("./private_memory_erasure_e2e.mjs", import.meta.url).pathname], { env: process.env, encoding: "utf8", timeout: 300000, maxBuffer: 8 << 20 });
 assert.equal(privateCase.status, 0, "private erasure and legal-hold production regressions failed");
-const postgresID = serviceID("postgres");
 function sql(statement) {
   const result = spawnSync("docker", ["exec", "-i", postgresID, "sh", "-ec", 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -At'], { input: statement, encoding: "utf8", timeout: 10000 });
   assert.equal(result.status, 0, "export authorization fixture SQL failed"); return result.stdout.trim();
@@ -169,4 +185,4 @@ try {
   for (const entry of fs.readdirSync(temporary)) fs.unlinkSync(path.join(temporary, entry));
   fs.rmdirSync(temporary);
 }
-console.log(JSON.stringify({ status: "ok", collector_digest: "sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6", static_control_auth: true, ordinary_manager_denied: true, prohibited_content_absent: true, instance_and_team_export: true, cursor_scope_bound: true, bounded_pages: true, cancellation: true, disabled_endpoints: true, collector_outage_nonblocking: true, private_erasure_and_legal_hold: true }));
+console.log(JSON.stringify({ status: "ok", collector_digest: "sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6", static_control_auth: true, ordinary_manager_denied: true, prohibited_content_absent: true, historical_dream_classifications: true, instance_and_team_export: true, cursor_scope_bound: true, bounded_pages: true, cancellation: true, disabled_endpoints: true, collector_outage_nonblocking: true, private_erasure_and_legal_hold: true }));

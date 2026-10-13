@@ -138,7 +138,7 @@ func TestSessionServiceCancellationAndTimeoutRetainIntakeWithoutKnowledge(t *tes
 			req.IdempotencyKey = mode
 			req.Events = []session.Event{{EventID: mode, Text: "Thanks."}}
 			outbound := &sessionOutbound{block: true, entered: make(chan struct{}, 1)}
-			api := service.NewService(service.Dependencies{Enabled: true, Repository: store, Preparer: processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store}), Tokenizer: "o200k_base", Extractor: extraction.NewProvider(outbound, "fixture", assessor.DefaultSemanticAssessmentLimits())})
+			api := service.NewService(service.Dependencies{Enabled: true, Repository: store, Preparer: processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store}), Tokenizer: "o200k_base", Extractor: extraction.NewProvider(outbound, "fixture", assessor.DefaultSemanticAssessmentLimits()), DiagnosticProtector: observability.NewCredentialProtector("session-credential-canary")})
 			ctx, cancel := context.WithCancel(base)
 			if mode == "timeout" {
 				ctx, cancel = context.WithTimeout(base, 150*time.Millisecond)
@@ -153,6 +153,11 @@ func TestSessionServiceCancellationAndTimeoutRetainIntakeWithoutKnowledge(t *tes
 			require.Error(t, <-done)
 			retained, err := store.LookupSession(base, intake.Scope, mode)
 			require.NoError(t, err)
+			var diagnostic []byte
+			require.NoError(t, rls.WithSystemTx(base, admin, func(tx *gorm.DB) error {
+				return tx.Raw(`SELECT body FROM session_submission_diagnostics WHERE submission_id=?::uuid`, retained.ID).Row().Scan(&diagnostic)
+			}))
+			require.JSONEq(t, fmt.Sprintf(`{"event_id":%q,"text":"Thanks."}`, mode), extractSessionDiagnosticEvent(t, diagnostic))
 			require.Equal(t, "failed", retained.Result.ProcessingState)
 			if mode == "timeout" {
 				require.Equal(t, "request_timeout", retained.Result.Errors[0].Code)
@@ -166,6 +171,18 @@ func TestSessionServiceCancellationAndTimeoutRetainIntakeWithoutKnowledge(t *tes
 		return tx.Raw(`SELECT count(*) FROM knowledge_ingests WHERE team_id = ?::uuid`, team).Row().Scan(&count)
 	}))
 	require.Zero(t, count)
+}
+
+func extractSessionDiagnosticEvent(t *testing.T, body []byte) string {
+	t.Helper()
+	var diagnostic struct {
+		Payload struct{ Request session.Request } `json:"payload"`
+	}
+	require.NoError(t, json.Unmarshal(body, &diagnostic))
+	require.Len(t, diagnostic.Payload.Request.Events, 1)
+	event, err := json.Marshal(diagnostic.Payload.Request.Events[0])
+	require.NoError(t, err)
+	return string(event)
 }
 
 func TestSessionServiceBudgetRejectionHasNoIntake(t *testing.T) {

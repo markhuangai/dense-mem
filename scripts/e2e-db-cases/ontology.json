@@ -622,6 +622,13 @@
       "run": "^TestOntologyMaintenanceEnrollsActiveTeamsDespiteRetiredOptouts$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/maintenance_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologySchedulerStatusFailurePreservesRealOrganizationTurns",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologySchedulerStatusFailurePreservesRealOrganizationTurns$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/scheduler_status_failure_integration_test.go"
     }
   ]
 }

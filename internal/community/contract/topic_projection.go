@@ -85,7 +85,7 @@ type TopicProjectionBatch struct {
 }
 
 type TopicProjectionRepository interface {
-	ClaimTopicProjection(context.Context, time.Time) (*TopicProjectionWork, error)
+	ClaimTopicProjection(context.Context, time.Time) (*TopicProjectionWork, bool, error)
 	AppendTopicProjection(context.Context, TopicProjectionBatch, time.Time) error
 	FailTopicProjection(context.Context, TopicProjectionWork, string, time.Time) error
 	TopicProjectionCoverage(context.Context, string) (TopicProjectionCoverage, error)

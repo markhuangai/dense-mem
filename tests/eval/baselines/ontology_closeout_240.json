@@ -1,0 +1,84 @@
+{
+  "schema_version": "dense-mem.ontology.closeout.v1",
+  "issue": 240,
+  "base_sha": "bd736450454e237f1ab6d138f4ae9755916d73f6",
+  "evaluation_policy": "maintainer-approved historical 1k waiver and scoped replacement recorded on issue #240 before implementation",
+  "live_cohorts": {
+    "model": "dense-mem-testing",
+    "repetitions": 3,
+    "cases_per_repetition": 15,
+    "false_consolidations": 0,
+    "source_preservation": 1,
+    "distinct_fact_coverage": 1,
+    "repeated_slots": 0,
+    "diagnostic_only": false
+  },
+  "frozen_cohorts": {
+    "actual_recall": true,
+    "community": true,
+    "manager": true,
+    "source_and_fact_preservation": 1,
+    "false_consolidations": 0,
+    "bad_at_k": 0
+  },
+  "latency": {
+    "pairs": 5,
+    "warmups": 20,
+    "measurements": 200,
+    "maximum_median_paired_p95_regression": 0.1,
+    "median_paired_p95_regression": {
+      "grouping": -0.008711988783454472,
+      "discovery": 0.029610493398257498,
+      "ordinary_fallback": -0.038071367453927696
+    },
+    "verified": true,
+    "output_sha256": "sha256:10da6febefe95539e82bfb7e883df96408640fa7589122e6448fb636fec33184"
+  },
+  "session_context": {
+    "unrelated_events": 200000,
+    "force_rls": true,
+    "superuser": false,
+    "bypass_rls": false,
+    "identity_fields": 4,
+    "unicode_characters_per_identity": 256,
+    "index": "session_events_session_context_idx",
+    "all_four_plans_use_index": true
+  },
+  "production_e2e_scenarios": [
+    "ontology_organization",
+    "ontology_management",
+    "community",
+    "session_ingest",
+    "enterprise_exports",
+    "space_aware_recall"
+  ],
+  "source_locks_sha256": {
+    "tests/eval/source_locks/ontology_organization_v1.json": "ad99f97d67411d2211bbe0e6dd7aaa18b81799aaeec82e64197abdbc0c8e9a0a",
+    "tests/eval/source_locks/ontology_followups_v1.json": "cb547b81de9ae8ea10ed0c05b27090e6f08ec834d8578d68c9c42493ee3caea9",
+    "tests/eval/baselines/ontology_recall_v1.json": "05b0d3ae2c83c5cac5b290d8dc419a9162bb046f2fe7539ce605255edc5cc287",
+    "tests/eval/baselines/community_topics_v1.json": "4a8739836e7948c5da411db130dafba59c35babaa851f37a362a3c04588fde8e"
+  },
+  "implementation_files_sha256": {
+    "internal/audit/export.go": "1dd9b1804c8dfc9c4175eeec6952fd3fa73956802569fefbb27eb14b5f08b1ae",
+    "internal/community/contract/topic_projection.go": "0f83dad600f00ef9a7ad2704a52f29c3fa30c6cf9ff791fadabef2c758809625",
+    "internal/community/postgres/topic_projection_repository.go": "5c982dbe188da259625941286547c48ca99696dce7bdc9c30af15af4e4da8427",
+    "internal/community/postgres/types.go": "2d8effb476c5117daca55ce17920c0a9c4c740cd2b2c68130e9f84b90b11eb05",
+    "internal/community/service/service.go": "1698323898315a13f1c0cbd0be50ee1b05a9e7419ffd40dc9e58ee616f31b310",
+    "internal/community/service/topic_projection.go": "4821b99ba13a3f10567321fa15d30282d634b5b77a2f83bb9842994ee7d90672",
+    "internal/evalharness/client.go": "d3a1aad6f1e201c4226818c6be5dc4c4fee01a252ecac13d4a11f7c2dff59702",
+    "internal/evalharness/score.go": "9674bbd183e18fb4346cee6416b35f64a6775d985e48017802155ab2cb63d8db",
+    "internal/evalharness/types.go": "4acd2a52632ea057b329cf73aec76f83e762e19d2266545e4551a53cf8ee812e",
+    "internal/knowledge/postgres/session_intake.go": "c8c35bebbf4b1d249f0b78d56a74a03286c97cf3fda83e644194048e22e2d600",
+    "internal/ontology/contract/topics.go": "ae02df7164805fb5a8b9d15c50648e6d0cbf4b09b87d95cf2d9b74a41a2cb72c",
+    "internal/ontology/postgres/topic_coordination.go": "fb4978554e1aff825b793045aa7e2c3cd7ab5cb7b95673d51ed6d553fe5074da",
+    "internal/ontology/scheduler.go": "aaa8a11a32c2778c3548a1ad9eaf1e870e977278b0dfc26be1101a502e9825cd",
+    "internal/recall/quality/metrics.go": "d045f53801d85d2a1f7e3ebd1f8e537496ab490d61246b35756c2d09f98716e9",
+    "internal/session/service/diagnostics.go": "21bd6ae163f9537fef50b6265ca755ae8e5df3dd3534dec8be82b14dd4bcdffd",
+    "migrations/postgres/v2_6/20261013020000_session_context_index.sql": "274cb3bd05c627d40634783e2bd818cad08dc4e3787cbce81f524f83f60d8222",
+    "packages/python/scripts/release.py": "c9e230385cbf687d3b132c4e0cdbb1ed264b0283d979b3259dd9bbf524b85489",
+    "tests/eval/scripts/session_provider_proxy.mjs": "0aaa73026d62478cd546421fa2890bc2277232bc0fcfaf6a927bf3b6f71c82df",
+    "tests/uat/enterprise_exports_e2e.mjs": "b992c5f1c3bb4ee73163e9316e0d881833d955502bd07bbcc0f4e48673ec1860",
+    "tests/uat/ontology_organization_e2e.mjs": "a5e7efbed936080359d42d56582f74ae825814d4a3def838e5bc04517b67917f",
+    "tests/uat/session_ingest_e2e.mjs": "a299a961da25239eb80cad3fa6080f8fe0773a9afa10a27ff41f652a8d0c23a1"
+  }
+}

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 
 const userURL = required("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = required("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -83,12 +85,44 @@ const embedding = assertFailed(await rpc("ingest_session", embeddingFailure, a.a
 assert.equal(embedding.processing_state, "failed");
 assert.equal(embedding.errors[0].code, "embedding_response_invalid");
 assert.deepEqual(embedding.events[0].evidence_ids, []);
+const cancelledRequest = request([{ event_id: "cancelled", text: "Casey uses Ruby. [fixture-fault:embedding-session-cancel]" }]);
+const cancel = new AbortController();
+const embeddingsBeforeCancellation = (await providerHealth()).embedding_calls;
+const pending = fetch(`${userURL}/mcp`, { method: "POST", signal: cancel.signal, headers: { Authorization: `Bearer ${a.api_key}`, "Content-Type": "application/json", Accept: "application/json", "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call", "Mcp-Name": "ingest_session" }, body: JSON.stringify({ jsonrpc: "2.0", id: randomUUID(), method: "tools/call", params: { name: "ingest_session", arguments: cancelledRequest, _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {} } } }) });
+const rejected = assert.rejects(pending);
+try {
+ const deadline = Date.now() + 15000;
+ while ((await providerHealth()).embedding_calls <= embeddingsBeforeCancellation && Date.now() < deadline) await delay(50);
+ assert((await providerHealth()).embedding_calls > embeddingsBeforeCancellation, "cancellation must occur after provider dispatch");
+} finally { cancel.abort(); }
+await rejected;
+const project = required("DENSE_MEM_E2E_COMPOSE_PROJECT");
+assert.match(project, /^densemem-ci-[a-z0-9-]+$/);
+const composeFiles = [required("DENSE_MEM_E2E_COMPOSE_FILE"), required("DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE")];
+const postgres = spawnSync("docker", ["compose", ...composeFiles.flatMap((file) => ["-f", file]), "-p", project, "ps", "-q", "postgres"], { encoding: "utf8", timeout: 10000 });
+assert.equal(postgres.status, 0);
+const postgresID = postgres.stdout.trim();
+assert.match(postgresID, /^[a-f0-9]{12,64}$/);
+let diagnostic;
+// Failure receipts and diagnostics each have a separate five-second persistence budget.
+const diagnosticDeadline = Date.now() + 20000;
+do {
+ const query = spawnSync("docker", ["exec", "-i", postgresID, "sh", "-ec", 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -At'], { input: `BEGIN; SELECT set_config('app.tx_mode','system',true); SELECT diagnostics.body::text FROM session_submission_diagnostics AS diagnostics JOIN session_submissions AS submission USING(team_id,space_id,submission_id) WHERE submission.idempotency_key='${cancelledRequest.idempotency_key}'; COMMIT;`, encoding: "utf8", timeout: 10000 });
+ assert.equal(query.status, 0, "cancelled diagnostic lookup failed");
+ const encoded = query.stdout.split("\n").find((line) => line.startsWith("{"));
+ if (encoded) { diagnostic = JSON.parse(encoded); break; }
+ await delay(100);
+} while (Date.now() < diagnosticDeadline);
+assert(diagnostic, "cancelled production request must retain its diagnostic");
+assert.deepEqual(diagnostic.payload.request, cancelledRequest);
+assert.equal(diagnostic.payload.result.errors[0].code, "request_cancelled");
+assert(!JSON.stringify(diagnostic).includes(a.api_key), "diagnostic must protect authentication material");
 const finalRecall = await call("recall_memory", { query: "Taylor Ruby Ari Java Python", limit: 20, relationship_limit: 20, community_limit: 0 }, a.api_key);
 assert(!finalRecall.related_relationships.some((item) => ["Java", "Python", "Ruby"].includes(item.object?.name)));
 await control(`/teams/${teamID}/credentials/${readOnly.credential.id}`, undefined, "DELETE");
 const response = await fetch(`${userURL}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${readOnly.api_key}`, "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: "revoked", method: "tools/list" }) });
 assert.equal(response.status, 401);
-console.log(JSON.stringify({ status: "ok", scenario: "session_ingest", exact_provenance: true, long_event_characters: 32000, atomic_failures: true, replay: true, incremental: true, isolation_actors: 3 }));
+console.log(JSON.stringify({ status: "ok", scenario: "session_ingest", exact_provenance: true, long_event_characters: 32000, atomic_failures: true, cancelled_diagnostic_retained: true, replay: true, incremental: true, isolation_actors: 3 }));
 
 function required(name) { assert(process.env[name], `${name} is required`); return process.env[name]; }
 function request(events, sessionID = randomUUID()) { return { idempotency_key: randomUUID(), framework: "generic", app_name: "session-e2e", user_id: "external-user", session_id: sessionID, events }; }
@@ -107,3 +141,5 @@ async function list(key) { return (await wire("tools/list", {}, key)).result.too
 async function call(name, args, key) { const response = await rpc(name, args, key); assert(!response.error && !response.result?.isError, JSON.stringify(response)); return response.result.structuredContent || JSON.parse(response.result.content[0].text); }
 function assertFailed(response) { assert(response.error || response.result?.isError, "expected rejection"); return response.result?.structuredContent || response.error?.data || JSON.parse(response.result.content[0].text); }
 async function providerCalls() { const response = await fetch(`${providerURL.replace(/\/v1$/, "")}/health`); assert(response.ok); return (await response.json()).assessment_calls; }
+
+async function providerHealth() { const response = await fetch(`${providerURL.replace(/\/v1$/, "")}/health`); assert(response.ok); return response.json(); }

@@ -72,7 +72,9 @@ def registry(monkeypatch, records):
     monkeypatch.setattr(
         release,
         "fetch_json",
-        lambda url: index if url.endswith("densemem/json") else records.get(url.split("/")[-2]),
+        lambda url, **_: (
+            index if url.endswith("densemem/json") else records.get(url.split("/")[-2])
+        ),
     )
 
 
@@ -175,6 +177,7 @@ def test_existing_version_and_partial_upload_require_identical_artifact_bytes(
             {"filename": name, "digests": {"sha256": hashlib.sha256(path.read_bytes()).hexdigest()}}
         )
     receipt = {"version": "2.6.6rc10", "source_sha": source}
+    monkeypatch.setattr(release, "PUBLICATION_WAIT_SECONDS", 0)
     registry(monkeypatch, {"2.6.6rc10": published("2.6.6rc10", source, files[:1])})
     release.verify_artifacts(receipt, dist)
     with pytest.raises(ValueError, match="incomplete"):

@@ -14,14 +14,14 @@ import (
 	"gorm.io/gorm"
 )
 
-func (r *Store) discoverTopicProjections(ctx context.Context, tx *gorm.DB) error {
+func (r *Store) discoverTopicProjections(ctx context.Context, tx *gorm.DB) (bool, error) {
 	var cursor ontology.TopicCatalogCursor
 	if err := tx.Raw(`SELECT after_team,after_topic FROM community_topic_discovery WHERE singleton FOR UPDATE`).Row().Scan(&cursor.TeamID, &cursor.TopicID); err != nil {
-		return err
+		return false, err
 	}
 	page, err := r.topicCatalog(ctx, tx, cursor)
 	if err != nil {
-		return err
+		return false, err
 	}
 	for _, topic := range page.Topics {
 		if err := tx.Exec(`INSERT INTO community_topic_work(team_id,space_id,space_generation,topic_id,topic_version)
@@ -29,23 +29,26 @@ func (r *Store) discoverTopicProjections(ctx context.Context, tx *gorm.DB) error
 			DO UPDATE SET topic_version=EXCLUDED.topic_version,
 			status=CASE WHEN community_topic_work.status='building' THEN 'building' ELSE 'pending' END,failure_code=''
 			WHERE community_topic_work.topic_version<>EXCLUDED.topic_version`, topic.TeamID, topic.SpaceID, topic.Generation, topic.TopicID, topic.Version).Error; err != nil {
-			return err
+			return false, err
 		}
 	}
 	if !page.More {
 		page.Next = ontology.TopicCatalogCursor{}
 	}
-	return tx.Exec(`UPDATE community_topic_discovery SET after_team=?,after_topic=? WHERE singleton`, page.Next.TeamID, page.Next.TopicID).Error
+	err = tx.Exec(`UPDATE community_topic_discovery SET after_team=?,after_topic=? WHERE singleton`, page.Next.TeamID, page.Next.TopicID).Error
+	return page.More && err == nil, err
 }
 
-func (r *Store) ClaimTopicProjection(ctx context.Context, now time.Time) (*community.TopicProjectionWork, error) {
+func (r *Store) ClaimTopicProjection(ctx context.Context, now time.Time) (*community.TopicProjectionWork, bool, error) {
 	var work *community.TopicProjectionWork
+	progress := false
 	err := r.withProjectionTx(ctx, func(tx *gorm.DB) error {
 		admitted, err := projectionAdmission(tx)
 		if err != nil || !admitted {
 			return err
 		}
-		if err := r.discoverTopicProjections(ctx, tx); err != nil {
+		progress, err = r.discoverTopicProjections(ctx, tx)
+		if err != nil {
 			return err
 		}
 		candidate := &community.TopicProjectionWork{}
@@ -77,11 +80,16 @@ func (r *Store) ClaimTopicProjection(ctx context.Context, now time.Time) (*commu
 			}
 		}
 		candidate.LeaseToken = uuid.NewString()
-		admitted, err = r.topicAdmission(ctx, tx, topicMaintenanceTurn(*candidate, now), now)
+		admission, err := r.topicAdmission(ctx, tx, topicMaintenanceTurn(*candidate, now), now)
 		if err != nil {
 			return err
 		}
-		if !admitted {
+		if admission == ontology.TopicProjectionUnavailable {
+			progress = false
+			return nil
+		}
+		if admission == ontology.TopicProjectionTeamBusy {
+			progress = true
 			return tx.Exec(`UPDATE community_topic_work SET last_turn=?
 				WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=? AND topic_id=?::uuid`,
 				now, candidate.TeamID, candidate.SpaceID, candidate.Generation, candidate.TopicID).Error
@@ -97,10 +105,14 @@ func (r *Store) ClaimTopicProjection(ctx context.Context, now time.Time) (*commu
 			return err
 		}
 		work = candidate
+		progress = true
 		return nil
 	})
-	if err != nil || work == nil {
-		return work, err
+	if err != nil {
+		return nil, false, err
+	}
+	if work == nil {
+		return nil, progress, nil
 	}
 	err = r.db.WithContext(ctx).Transaction(func(snapshot *gorm.DB) error {
 		return r.rls.WithSystemTx(ctx, snapshot, func(tx *gorm.DB) error {
@@ -164,7 +176,7 @@ func (r *Store) ClaimTopicProjection(ctx context.Context, now time.Time) (*commu
 	if errors.As(err, &state) && state.SQLState() == "40001" {
 		err = errors.Join(community.ErrCommunitySourceStale, err)
 	}
-	return work, err
+	return work, true, err
 }
 
 func startTopicProjection(tx *gorm.DB, work *community.TopicProjectionWork, now time.Time) error {

@@ -57,7 +57,7 @@ type Store struct {
 	rls             storagepostgres.RLSHelper
 	topicCatalog    func(context.Context, *gorm.DB, ontology.TopicCatalogCursor) (ontology.TopicCatalogPage, error)
 	topicMembership func(context.Context, *gorm.DB, string, string, ontology.TopicMembershipCursor) (ontology.TopicMembershipPage, error)
-	topicAdmission  func(context.Context, *gorm.DB, ontology.MaintenanceTurn, time.Time) (bool, error)
+	topicAdmission  func(context.Context, *gorm.DB, ontology.MaintenanceTurn, time.Time) (ontology.TopicProjectionAdmission, error)
 	topicRelease    func(context.Context, *gorm.DB, ontology.MaintenanceTurn) error
 }
 
@@ -65,7 +65,7 @@ func NewStore(db *gorm.DB, rls storagepostgres.RLSHelper) *Store {
 	return &Store{db: db, rls: rls}
 }
 
-func (r *Store) WithTopics(catalog func(context.Context, *gorm.DB, ontology.TopicCatalogCursor) (ontology.TopicCatalogPage, error), membership func(context.Context, *gorm.DB, string, string, ontology.TopicMembershipCursor) (ontology.TopicMembershipPage, error), admission func(context.Context, *gorm.DB, ontology.MaintenanceTurn, time.Time) (bool, error), release func(context.Context, *gorm.DB, ontology.MaintenanceTurn) error) *Store {
+func (r *Store) WithTopics(catalog func(context.Context, *gorm.DB, ontology.TopicCatalogCursor) (ontology.TopicCatalogPage, error), membership func(context.Context, *gorm.DB, string, string, ontology.TopicMembershipCursor) (ontology.TopicMembershipPage, error), admission func(context.Context, *gorm.DB, ontology.MaintenanceTurn, time.Time) (ontology.TopicProjectionAdmission, error), release func(context.Context, *gorm.DB, ontology.MaintenanceTurn) error) *Store {
 	r.topicCatalog, r.topicMembership = catalog, membership
 	r.topicAdmission, r.topicRelease = admission, release
 	return r

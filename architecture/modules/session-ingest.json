@@ -22,6 +22,12 @@
     },
     {
       "path": "internal/knowledge/postgres/session_service_integration_test.go"
+    },
+    {
+      "path": "internal/knowledge/postgres/session_context_index_integration_test.go"
+    },
+    {
+      "path": "internal/knowledge/postgres/session_diagnostics_cancellation_integration_test.go"
     }
   ],
   "go": {

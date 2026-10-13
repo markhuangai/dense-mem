@@ -58,19 +58,18 @@ func (s *MaintenanceScheduler) run(ctx context.Context) {
 				status, err := s.service.deps.Repository.MaintenanceStatus(ctx, s.service.deps.Now())
 				if err != nil {
 					s.logFailure("projection_status_unavailable")
+				} else if status.Paused {
 					return
-				}
-				if status.Paused {
-					return
-				}
-				for range 20 {
-					progress, err := s.service.deps.Projections.RunProjectionTurn(ctx)
-					if err != nil {
-						s.logFailure("topic_projection_failed")
-						break
-					}
-					if !progress {
-						break
+				} else {
+					for range 20 {
+						progress, err := s.service.deps.Projections.RunProjectionTurn(ctx)
+						if err != nil {
+							s.logFailure("topic_projection_failed")
+							break
+						}
+						if !progress {
+							break
+						}
 					}
 				}
 			}

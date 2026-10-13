@@ -11,6 +11,7 @@ const teamID = required("DENSE_MEM_E2E_TEAM_ID");
 const original = (await control("/config/ontology-maintenance")).data;
 const summaryCallsBefore = await summaryCalls();
 let paused = false;
+let failure;
 try {
   const initial = (await control("/ontology/status")).data;
   await control("/ontology/pause", { operation_key: randomUUID() });
@@ -112,6 +113,10 @@ try {
   const accountingAfterOntologyRecall = (await control("/ontology/status")).data.window;
   assert.equal(accountingAfterOntologyRecall.charged_input_tokens, accountingBefore.charged_input_tokens, "Recall added organization provider input tokens");
   assert.equal(accountingAfterOntologyRecall.charged_output_tokens, accountingBefore.charged_output_tokens, "Recall added organization provider output tokens");
+  const historicalRunID = randomUUID();
+  postgresQuery(`INSERT INTO community_snapshot_runs(team_id,space_id,space_generation,run_id,window_key,algorithm_kind,status,error)
+    VALUES(${sqlLiteral(teamID)}::uuid,dense_mem_team_shared_space(${sqlLiteral(teamID)}::uuid),dense_mem_team_shared_generation(${sqlLiteral(teamID)}::uuid),
+    ${sqlLiteral(historicalRunID)}::uuid,${sqlLiteral(`historical-status-${historicalRunID}`)},'louvain','failed','retained historical failure')`);
   await control("/ontology/resume", { operation_key: randomUUID() });
   paused = false;
   let communityStatus;
@@ -121,6 +126,7 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   assert(communityStatus.projection_coverage.current_topics >= 2, JSON.stringify(communityStatus));
+  assert(!communityStatus.latest_run, "enabled ontology status must not present a historical failed legacy run as current work");
   await control("/ontology/pause", { operation_key: randomUUID() });
   paused = true;
   const accountingBeforeCommunityRecall = (await control("/ontology/status")).data.window;
@@ -165,6 +171,10 @@ try {
     UPDATE community_records SET status='current',stale_reason=''
     WHERE team_id=${sqlLiteral(teamID)}::uuid AND community_id=${sqlLiteral(failedTopic.community_id)}::uuid`);
   await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "false" }] }, "PATCH");
+  const disabledStatus = (await control(`/teams/${teamID}/community/status`)).data;
+  assert.equal(disabledStatus.latest_run.run_id, historicalRunID);
+  assert.equal(disabledStatus.latest_run.status, "failed");
+  assert.equal(disabledStatus.latest_run.error, "community run failed");
   const noCommunity = await mcp("recall_memory", topicArgs, reader.api_key);
   assert.equal(noCommunity.related_communities.length, 0, "disabled ontology must not expose historical communities");
   assert(!Object.hasOwn(noCommunity, "related_hypotheses"));
@@ -229,10 +239,19 @@ try {
     if (run.status === "completed") assert.equal(run.failure_code || "", "", "completed runs must have no current failure reason");
   }
   console.log(JSON.stringify({ status: "ok", scenario: "ontology_organization", window_id: status.window.id, counts: status.counts, durable_command_replay: true, operator_isolation: true, grouped_recall: true, original_sources_retained: true, private_and_foreign_isolation: true, stale_group_fallback: true, recall_organization_provider_tokens: 0, bounded_ambiguity_run: ambiguousRun.id, retryable_failure_run: failedRun.id }));
+} catch (error) {
+  failure = error;
 } finally {
-  await fixtureMode("normal");
-  if (paused) await control("/ontology/resume", { operation_key: randomUUID() });
-  await control("/config/ontology-maintenance", { items: original.items.map(({ key, value }) => ({ key, value })) }, "PATCH");
+  const failures = failure ? [failure] : [];
+  for (const restore of [
+    () => fixtureMode("normal"),
+    async () => { if (paused) await control("/ontology/resume", { operation_key: randomUUID() }); },
+    () => control("/config/ontology-maintenance", { items: original.items.map(({ key, value }) => ({ key, value })) }, "PATCH"),
+  ]) {
+    try { await restore(); } catch (error) { failures.push(error); }
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, "ontology UAT and restoration failed", { cause: failure });
 }
 
 function required(name) { assert(process.env[name], `${name} is required`); return process.env[name]; }

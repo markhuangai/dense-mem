@@ -44,7 +44,7 @@ func TestCommunityTopicLargeFanoutResumesAndRotates(t *testing.T) {
 	require.NotEmpty(t, relationshipCursor)
 	_, err = f.store.GetCommunity(f.actor(f.reader), CommunityGetInput{TeamID: f.teamID, CommunityID: storedID})
 	require.ErrorIs(t, err, community.ErrCommunityNotFound)
-	work, err := f.store.ClaimTopicProjection(ctx, time.Now())
+	work, _, err := f.store.ClaimTopicProjection(ctx, time.Now())
 	require.NoError(t, err)
 	require.NotNil(t, work)
 	require.Equal(t, storedID, work.CommunityID)
@@ -112,7 +112,7 @@ func TestCommunityTopicLargeFanoutResumesAndRotates(t *testing.T) {
 func TestCommunityTopicDefinitionRaceAndModeAdmission(t *testing.T) {
 	f := newTopicProjectionFixture(t)
 	f.seedCohort(t)
-	work, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
+	work, _, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
 	require.NoError(t, err)
 	changedTopic := work.TopicID
 	handles := []ontology.SourceHandle{}
@@ -125,7 +125,7 @@ func TestCommunityTopicDefinitionRaceAndModeAdmission(t *testing.T) {
 	f.publish(t, ontology.Change{ExpectedVersion: definition.Version, Record: definition.Record})
 	require.ErrorIs(t, f.store.AppendTopicProjection(context.Background(), community.TopicProjectionBatch{Work: *work}, time.Now()), community.ErrCommunitySourceStale)
 	require.NoError(t, f.store.FailTopicProjection(context.Background(), *work, "source_changed", time.Now()))
-	work, err = f.store.ClaimTopicProjection(context.Background(), time.Now())
+	work, _, err = f.store.ClaimTopicProjection(context.Background(), time.Now())
 	require.NoError(t, err)
 	f.setMode(t, false)
 	require.ErrorIs(t, f.store.AppendTopicProjection(context.Background(), community.TopicProjectionBatch{Work: *work}, time.Now()), ontology.ErrMaintenanceDisabled)

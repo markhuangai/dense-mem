@@ -776,10 +776,13 @@ func refsFromAny(value any) []Ref {
 		if !ok {
 			continue
 		}
+		truncated, _ := m["equivalents_truncated"].(bool)
 		refs = append(refs, Ref{
-			Type: stringValue(m["type"]),
-			ID:   stringValue(m["id"]),
-			Rank: intValue(m["rank"]),
+			Type:                  stringValue(m["type"]),
+			ID:                    stringValue(m["id"]),
+			Rank:                  intValue(m["rank"]),
+			EquivalentEvidenceIDs: stringsFromAny(m["equivalent_evidence_ids"]),
+			EquivalentsTruncated:  truncated,
 		})
 	}
 	return refs

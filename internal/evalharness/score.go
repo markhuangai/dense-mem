@@ -519,9 +519,17 @@ func remapResultRefs(refs []Ref, mapping KnowledgeMapping) ([]recallquality.Resu
 func resultRefs(refs []Ref) []recallquality.ResultRef {
 	out := make([]recallquality.ResultRef, 0, len(refs))
 	for _, ref := range refs {
-		out = append(out, recallquality.ResultRef{Type: ref.Type, ID: ref.ID})
+		out = append(out, resultRef(ref))
 	}
 	return out
+}
+
+func resultRef(ref Ref) recallquality.ResultRef {
+	item := recallquality.ResultRef{Type: ref.Type, ID: ref.ID}
+	if ref.Type == "evidence" {
+		item.EquivalentIDs = ref.EquivalentEvidenceIDs
+	}
+	return item
 }
 
 type scoringContext struct {
@@ -708,8 +716,10 @@ func firstRank(ranked []Ref, refs []Ref, mapping KnowledgeMapping) int {
 		return 0
 	}
 	for i, ref := range ranked {
-		if _, ok := keys[refKey(ref.Type, ref.ID)]; ok {
-			return i + 1
+		for _, id := range resultRef(ref).IDs() {
+			if _, ok := keys[refKey(ref.Type, id)]; ok {
+				return i + 1
+			}
 		}
 	}
 	return 0
@@ -724,7 +734,9 @@ func topKSet(ranked []Ref, k int) map[string]bool {
 	}
 	out := map[string]bool{}
 	for i := 0; i < k; i++ {
-		out[refKey(ranked[i].Type, ranked[i].ID)] = true
+		for _, id := range resultRef(ranked[i]).IDs() {
+			out[refKey(ranked[i].Type, id)] = true
+		}
 	}
 	return out
 }
