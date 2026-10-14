@@ -29,6 +29,19 @@ for (const item of created) {
 }
 
 if (scenario === "credential_memory_binding") {
+  for (const [patch, sharedWritable] of [
+    [{ scopes: ["read"] }, false],
+    [{ scopes: ["read", "write"] }, true],
+    [{ scopes: ["read"] }, false],
+    [{ role: "manager" }, true],
+    [{ role: "member" }, true],
+  ]) {
+    const updated = await controlJSON(`/teams/${teamID}/credentials/${sharedWrite.credential.id}`, {
+      method: "PATCH", body: JSON.stringify(patch),
+    });
+    assert(updated.data.memory_access.private.write, "scope/role update lost private access");
+    assert(updated.data.memory_access.team_shared.write === sharedWritable, "scope/role PATCH returned stale shared-write access");
+  }
   await assertTeamReadOnlyPrivateWrite(privateRead.apiKey, sharedRead.apiKey);
   for (const binding of [null, "", "credential_private", "profile_private", "shared_only"]) {
     const rejected = await fetch(`${controlURL}/control/api/teams/${teamID}/credentials`, {

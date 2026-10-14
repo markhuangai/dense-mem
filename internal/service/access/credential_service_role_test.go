@@ -130,7 +130,7 @@ func TestCredentialServiceUpdateRoleBranches(t *testing.T) {
 		require.ErrorContains(t, err, "failed to update credential role")
 		require.Nil(t, updated)
 
-		mockRepo.On("GetByIDForTeam", ctx, profileID, keyID).Return(key, nil).Once()
+		mockRepo.On("GetByIDForTeam", ctx, profileID, keyID).Return(key, nil).Twice()
 		mockRepo.On("UpdateRoleForTeam", ctx, profileID, keyID, CredentialRoleManager, StandardCredentialScopes()).Return(int64(1), nil).Once()
 		mockAuditService.On("Append", ctx, mock.AnythingOfType("access.AuditLogEntry")).Return(errors.New("audit failed")).Once()
 		updated, err = svc.UpdateRoleForTeam(ctx, profileID, keyID, CredentialRoleManager, nil, "system", "127.0.0.1", "corr")

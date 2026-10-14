@@ -436,7 +436,7 @@ func (s *CredentialServiceImpl) UpdateRoleForTeam(ctx context.Context, teamID, i
 		s.logAuditError(err, "UPDATE_ROLE", credential.ID.String(), correlationID)
 	}
 
-	return credential, nil
+	return s.GetByIDForTeam(ctx, teamID, id)
 }
 
 // UpdateScopesForTeam changes a credential's data scopes without rotating
@@ -503,7 +503,7 @@ func (s *CredentialServiceImpl) UpdateScopesForTeam(ctx context.Context, teamID,
 		s.logAuditError(err, "UPDATE_SCOPES", credential.ID.String(), correlationID)
 	}
 
-	return credential, nil
+	return s.GetByIDForTeam(ctx, teamID, id)
 }
 
 // UpdateNameForTeam renames a credential without rotating its credential.

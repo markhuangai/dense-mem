@@ -13,8 +13,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/markhuangai/dense-mem/internal/audit"
+	auditpostgres "github.com/markhuangai/dense-mem/internal/audit/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	privacycontract "github.com/markhuangai/dense-mem/internal/privacy/contract"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -363,6 +366,39 @@ func TestCanonicalCredentialScopesRespectMembershipGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, key)
 	require.Equal(t, []string{"read", "write"}, key.Scopes)
+
+	service := accessservice.NewCredentialService(repo, nil, audit.New(auditpostgres.NewStore(appDB, rls)), nil)
+	teamUUID, credentialID := uuid.MustParse(teamID), uuid.MustParse(profileID)
+	updated, err := service.UpdateScopesForTeam(ctx, teamUUID, credentialID, []string{"read"}, nil, "control", "127.0.0.1", "scope-downgrade")
+	require.NoError(t, err)
+	require.True(t, updated.MemoryCapabilities().Private.Write)
+	require.False(t, updated.MemoryCapabilities().TeamShared.Write)
+	require.Empty(t, updated.KeyHash)
+
+	updated, err = service.UpdateRoleForTeam(ctx, teamUUID, credentialID, "manager", nil, "control", "127.0.0.1", "role-promotion")
+	require.NoError(t, err)
+	require.True(t, updated.MemoryCapabilities().Private.Write)
+	require.True(t, updated.MemoryCapabilities().TeamShared.Write)
+	require.Equal(t, "manager", updated.Role)
+	require.Empty(t, updated.KeyHash)
+
+	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamUUID)
+	owned := createOwnedCredential(t, repo, teamUUID, ownerID, "read-only-owner-key")
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE team_memberships SET maximum_grants = ARRAY['read']::text[] WHERE team_id = ? AND actor_identity_id = ?`, teamUUID, ownerID).Error
+	}))
+	updated, err = service.UpdateScopesForTeam(ctx, teamUUID, owned.ID, []string{"read"}, nil, "control", "127.0.0.1", "owned-scope-downgrade")
+	require.NoError(t, err)
+	updated, err = service.UpdateScopesForTeam(ctx, teamUUID, owned.ID, []string{"read", "write"}, nil, "control", "127.0.0.1", "owned-scope-upgrade")
+	require.NoError(t, err)
+	require.True(t, updated.MemoryCapabilities().Private.Write)
+	require.False(t, updated.MemoryCapabilities().TeamShared.Write)
+	updated, err = service.UpdateRoleForTeam(ctx, teamUUID, owned.ID, "manager", nil, "control", "127.0.0.1", "owned-role-promotion")
+	require.NoError(t, err)
+	require.True(t, updated.MemoryCapabilities().Private.Write)
+	require.False(t, updated.MemoryCapabilities().TeamShared.Write)
+	require.Equal(t, []string{"read", "write"}, updated.Scopes)
+	require.Equal(t, []string{"read"}, updated.EffectiveMemoryGrants)
 
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
