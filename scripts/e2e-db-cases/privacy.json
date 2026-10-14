@@ -206,6 +206,13 @@
       "source": "internal/privacy/postgres/private_memory_migration_integration_test.go"
     },
     {
+      "id": "repository/TestPrivateMigrationArchiveHoldBlocksLineageErasure",
+      "package": "./internal/privacy/postgres",
+      "run": "^TestPrivateMigrationArchiveHoldBlocksLineageErasure$",
+      "phase": "precheck",
+      "source": "internal/privacy/postgres/private_memory_migration_integration_test.go"
+    },
+    {
       "id": "repository/TestCredentialAuditResolvesMembershipPrivateSpace",
       "package": "./internal/privacy/postgres",
       "run": "^TestCredentialAuditResolvesMembershipPrivateSpace$",

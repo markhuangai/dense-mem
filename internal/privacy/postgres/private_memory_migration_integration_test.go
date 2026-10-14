@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -800,4 +801,107 @@ func TestPrivateMigrationCarriesLegacyHoldAndPreservesSharedHistory(t *testing.T
 	require.NoError(t, err)
 	_, _, err = f.repo.RequestControlErasure(ctx, destination, strings.Repeat("6", 64), strings.Repeat("7", 64), "legacy-hold")
 	require.NoError(t, err)
+}
+
+func TestPrivateMigrationArchiveHoldBlocksLineageErasure(t *testing.T) {
+	f := legacyPrivateMigrationFixture(t)
+	ctx := context.Background()
+	report, err := f.repo.InspectPrivateMemoryMigration(ctx)
+	require.NoError(t, err)
+	migrator, err := storage.NewMigrator(f.db)
+	require.NoError(t, err)
+	require.NoError(t, migrator.PreparePrivateMemoryMigration(ctx))
+	require.NoError(t, f.repo.MigratePrivateMemory(ctx, report.SourceFingerprint))
+	require.NoError(t, migrator.RunUp(ctx))
+	app := f.applicationDB(t)
+	f.repo = NewPrivateMemoryRepository(app, f.rls)
+	require.NoError(t, f.repo.Prepare(ctx))
+	// Purge expired diagnostics so their row-delete guard cannot mask erasure of the held audit archive.
+	deleted, err := knowledgepostgres.NewStore(app, f.rls, knowledgepostgres.ConflictRuntimeConfig{}).PurgeExpiredRememberAttemptDiagnostics(ctx, 100)
+	require.NoError(t, err)
+	require.Positive(t, deleted)
+	unrelatedOwner := createLedgerProfile(t, f.db, f.rls, f.team.String(), "unrelated-private")
+	var destination, unrelatedSpace uuid.UUID
+	var cutoverAt time.Time
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.db, func(tx *gorm.DB) error {
+		if err := tx.Raw(`SELECT id FROM memory_spaces WHERE owner_membership_id=? AND NOT migration_archive`, f.memberA).Row().Scan(&destination); err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT space.id FROM memory_spaces space JOIN team_memberships membership ON membership.id=space.owner_membership_id WHERE membership.actor_identity_id=? AND space.kind='private'`, unrelatedOwner).Row().Scan(&unrelatedSpace); err != nil {
+			return err
+		}
+		return tx.Raw(`SELECT updated_at FROM private_memory_migration_state WHERE singleton AND phase='complete'`).Row().Scan(&cutoverAt)
+	}))
+	hold, created, err := f.repo.PlaceLegalHold(ctx, f.legacy, "post-cutover-archive-hold")
+	require.NoError(t, err)
+	require.True(t, created)
+	require.True(t, hold.PlacedAt.After(cutoverAt))
+	spaces, err := f.repo.ListSpaces(ctx, 100, 0)
+	require.NoError(t, err)
+	listedHold := false
+	for _, space := range spaces {
+		if space.Space.ID == f.legacy && space.ActiveHold != nil && space.ActiveHold.ID == hold.ID {
+			listedHold = true
+		}
+	}
+	require.True(t, listedHold)
+	require.NoError(t, f.rls.WithSystemTx(ctx, app, func(tx *gorm.DB) error {
+		var held bool
+		if err := tx.Raw(`SELECT dense_mem_private_space_held(?)`, unrelatedSpace).Row().Scan(&held); err != nil {
+			return err
+		}
+		require.False(t, held, "archive holds do not extend to unrelated private spaces")
+		return nil
+	}))
+	_, created, err = f.repo.RequestControlErasure(ctx, destination, strings.Repeat("1", 64), strings.Repeat("2", 64), "archive-hold")
+	assert.ErrorIs(t, err, ErrPrivateMemoryLegalHold)
+	assert.False(t, created)
+	_, _, err = f.repo.ReleaseLegalHold(ctx, f.legacy)
+	require.NoError(t, err)
+	operation, _, err := f.repo.RequestControlErasure(ctx, destination, strings.Repeat("1", 64), strings.Repeat("2", 64), "archive-hold")
+	require.NoError(t, err)
+	claim, err := f.repo.ClaimNext(ctx, "archive-hold-test", 0)
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	_, _, err = f.repo.PlaceLegalHold(ctx, f.legacy, "claimed-archive-hold")
+	require.NoError(t, err)
+	completed, err := f.repo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
+	assert.ErrorIs(t, err, ErrPrivateMemoryLegalHold)
+	assert.Nil(t, completed)
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.db, func(tx *gorm.DB) error {
+		var before, after string
+		if err := tx.Raw(`SELECT COALESCE(before_payload->>'content',''),COALESCE(after_payload->>'content','') FROM audit_log WHERE id=?`, f.auditID).Row().Scan(&before, &after); err != nil {
+			return err
+		}
+		assert.Equal(t, "A private audit before", before)
+		assert.Equal(t, "A private audit after", after)
+		return nil
+	}))
+	if err == nil {
+		return
+	}
+	require.NoError(t, f.repo.ReleaseClaim(ctx, claim.ID, claim.WorkerID, claim.Fence, "legal_hold"))
+	retrying, err := f.repo.GetOperation(ctx, operation.ID)
+	require.NoError(t, err)
+	require.NotNil(t, retrying.NextAttemptAt)
+	f.repo.now = func() time.Time { return *retrying.NextAttemptAt }
+	claim, err = f.repo.ClaimNext(ctx, "archive-hold-test", 0)
+	require.NoError(t, err)
+	require.Nil(t, claim, "a queued archive hold must not consume another attempt")
+	_, _, err = f.repo.ReleaseLegalHold(ctx, f.legacy)
+	require.NoError(t, err)
+	claim, err = f.repo.ClaimNext(ctx, "archive-hold-test", 0)
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	completed, err = f.repo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
+	require.NoError(t, err)
+	require.Equal(t, domain.PrivateMemoryErasureCompleted, completed.Status)
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.db, func(tx *gorm.DB) error {
+		var scrubbed bool
+		if err := tx.Raw(`SELECT before_payload IS NULL AND after_payload IS NULL FROM audit_log WHERE id=?`, f.auditID).Row().Scan(&scrubbed); err != nil {
+			return err
+		}
+		require.True(t, scrubbed)
+		return nil
+	}))
 }

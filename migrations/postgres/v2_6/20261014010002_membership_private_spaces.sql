@@ -192,7 +192,7 @@ BEGIN
  PERFORM set_config('app.tx_mode','system',true);
  SELECT EXISTS(SELECT 1 FROM private_memory_legal_holds hold
  JOIN dense_mem_private_lineage_spaces(p_space,p_legacy) lineage ON lineage.space_id=hold.space_id
- WHERE hold.released_at IS NULL AND (NOT lineage.legacy_source OR hold.placed_at <= (SELECT updated_at FROM private_memory_migration_state WHERE singleton AND phase='complete'))) INTO held;
+ WHERE hold.released_at IS NULL) INTO held;
  PERFORM set_config('app.tx_mode',COALESCE(previous_mode,''),true);
  RETURN held;
 EXCEPTION WHEN OTHERS THEN PERFORM set_config('app.tx_mode',COALESCE(previous_mode,''),true); RAISE;
