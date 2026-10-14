@@ -282,11 +282,11 @@ flowchart TD
 | Capability | Scope | Role/policy note |
 | --- | --- | --- |
 | recall, trace, context, Entity/Relationship inspection | `read` | member or manager |
-| remember, retraction, and owned correction | `write` | submits caller-owned evidence/proposals or applies authorized owned lifecycle work; authoritative evidence additionally follows authority policy |
-| advance owned source revision | `write` | exact source ownership and prior-revision compare-and-set; effects follow indexed support dependencies |
-| evidence replacement/retraction | `write` | Owned evidence IDs; canonical support/lifecycle changes follow accepted server policy. |
+| remember, retraction, and owned correction | private: `read`; shared: `write` | submits caller-owned evidence/proposals or applies authorized owned lifecycle work; authoritative evidence additionally follows authority policy |
+| advance owned source revision | private: `read`; shared: `write` | exact source ownership and prior-revision compare-and-set; effects follow indexed support dependencies |
+| evidence replacement/retraction | private: `read`; shared: `write` | Owned evidence IDs; canonical support/lifecycle changes follow accepted server policy. |
 | confirm/challenge another owner | `write` | submit caller-owned evidence through normal remember; target remains immutable |
-| submit corrected safe evidence | `write` | Follow the returned remediation and retain a complete new operation when input changes. |
+| submit corrected safe evidence | private: `read`; shared: `write` | Follow the returned remediation and retain a complete new operation when input changes. |
 | recall-feedback submission | `write` | feature enabled |
 | stored feedback inspection | `read + feedback:read` | feature enabled; same-team/control restrictions |
 | evaluation tools | `read + write` | compiled into the evaluation image only; disposable teams only |
@@ -570,7 +570,7 @@ audit ledger.
 | Quarantine bypass | a writer tries to release or reuse malicious quarantined input | no release tool or raw quarantine payload; bounded terminal/audit metadata remains and replacement is a fresh complete submission |
 | Recalled prompt injection | returned evidence asks a host to export environment variables | returned evidence is untrusted data; client action/tool policy and least privilege remain mandatory |
 | Source-key takeover | a writer advances another integration's source and demotes team knowledge | bind source identity to immutable owner and require exact prior-revision compare-and-set |
-| Private erasure crosses a space | deleting one SSO-owned credential removes profile-private or team-shared knowledge | seal and generation-fence the exact credential-private space, delete through a catalog-complete manifest, and verify zero rows before completion |
+| Private erasure removes unrelated data or leaves copies | deleting an SSO-owned key removes its issuer's independent records or leaves recoverable migration copies | seal its membership-private space, purge original-writer lineage across destinations under legal-hold locks, invalidate dependent memories, and preserve unrelated private/shared records |
 
 ## Verification
 
@@ -603,18 +603,18 @@ uses its own controlled boundary.
 
 Authentication fixes the team, membership, credential, effective scopes, and
 allowed memory-space set before an application service runs. The set is derived
-from the immutable credential binding and membership policy; request payloads,
+from canonical membership ownership and current grants; request payloads,
 headers, MCP arguments, and provider output cannot add or replace a space.
 
-An SSO profile context may authorize its profile-private space plus team-shared.
-A private-bound credential may authorize its credential-private space plus
-team-shared. A shared-only or read-only integration authorizes team-shared only
-unless policy explicitly grants a private binding; read-only still cannot
-mutate. Team-manager role does not grant access to another member's private
-space. PostgreSQL RLS and every repository query enforce this set, including
-hydration, trace, conflict handling, and applicable background jobs. Remember
-writes to the authenticated private space when present, otherwise shared.
-Current recall related graph/community/Hypothesis frontiers remain shared-only.
+Each API credential authorizes its own membership-private space plus team-shared
+reads, including credentials issued by SSO users. SSO sessions and OAuth tokens
+use the SSO user's team-membership space. A team-read-only caller may mutate its
+own private memory. Shared mutation additionally requires current write permission
+and semantic ownership. Team-manager role never grants another member's private
+space. PostgreSQL RLS and scoped adapters enforce these boundaries during retrieval,
+hydration, trace, graph, conflict handling, and background work. Remember requires
+an explicit private or team-shared target and never redirects denied writes.
+Private sources remain excluded from shared ontology and shared derived frontiers.
 
 ## Private-Memory Erasure Boundary
 
@@ -640,11 +640,12 @@ and advances its generation, so old or concurrent writers cannot repopulate
 it. A fenced worker rechecks legal holds and ownership, deletes the exact
 catalog manifest, verifies zero remaining rows, scrubs private audit payloads,
 and then completes the operation. Worker failures use bounded backoff and enter
-terminal `failed` after five claims instead of retrying forever. Profile-private
-erasure reopens an empty space at the new generation. Deleting an accepted
-SSO-owned credential disables that credential immediately and retires only its
-`credential_private` space; its profile-private and team-shared spaces remain
-intact. A legal hold blocks physical execution of every private purge. The SSO
+terminal `failed` after five claims instead of retrying forever. Private erasure
+reopens an empty space at the new generation. Deleting an SSO-issued credential
+disables it immediately and retires its private space; the issuing user's
+separate private space and team-shared memory remain intact. Erasure also purges
+migration copies of the writer's records and invalidates dependent memories in
+other destinations, fencing their unfinished work with a new generation. A legal hold blocks physical execution of every private purge. The SSO
 credential-delete path still disables the bearer and seals the exact space
 before recording the queued operation, so a held credential cannot continue to
 authenticate while its content awaits authorized hold release.

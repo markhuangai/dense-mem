@@ -104,7 +104,7 @@ evidence. See [Conflicts And Corrections](Conflicts-And-Corrections).
 
 ## Independent Space Branches And Fusion
 
-A private-bound principal can read shared memory and its permitted private
+Each authenticated principal can read shared memory and its own membership-private
 branch. Evidence search and hydration run independently in each space. The
 service fuses authorized results with equal-weight RRF constant 60; stable ties
 prefer private, then shared, then immutable ID.

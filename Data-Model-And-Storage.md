@@ -144,14 +144,18 @@ are enforced independently of public result schemas. See [Telemetry](Telemetry).
 
 ## Memory Spaces And Catalog Coverage
 
-`memory_spaces` is the durable catalog. A team has a shared space and may
-have identity-private or credential-private spaces. Memory-owned rows and
-derived state carry the applicable space and generation.
+`memory_spaces` is the durable catalog. Public kinds are `private` and
+`team_shared`. Each API-client membership owns a separate private space,
+including credentials issued by an SSO user. The SSO user's team membership
+owns another private space shared by its sessions and OAuth tokens.
+`owner_membership_id` records private ownership; memory-owned rows and derived
+state carry the applicable space and generation.
 
-Authentication supplies allowed spaces. Remember selects the authenticated
-private space when present; otherwise it uses the shared space. Reads retain
-space predicates through search and hydration. Deduplication and identity
-resolution do not cross spaces.
+Authentication supplies allowed spaces and effective capabilities. Remember
+requires `target_space: "private" | "team_shared"` on every request, including
+retries. The service validates that choice without a default or denial fallback.
+Reads retain space predicates through search and hydration. Deduplication and
+identity resolution do not cross spaces.
 
 ### Private-memory lifecycle and erasure
 
@@ -161,7 +165,7 @@ Private spaces add an explicit generation and lifecycle:
 active generation N
   -> accepted erasure seals space and advances catalog generation to N+1
   -> fenced worker deletes rows stamped with N
-  -> profile/private purge: active generation N+1
+  -> owner private purge: active generation N+1
   -> credential deletion: retired generation N+1
 ```
 

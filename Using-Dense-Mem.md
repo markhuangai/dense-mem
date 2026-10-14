@@ -21,7 +21,7 @@ sequenceDiagram
 
   User->>Host: Share source material
   Host->>Host: Identify logical Relationships and supporting evidence items
-  Host->>DM: remember(evidence, relationships)
+  Host->>DM: remember(target_space, evidence, relationships)
   DM-->>Host: terminal outcome, evidence, Relationships, and errors
   Host->>DM: recall_memory(query)
   DM-->>Host: Evidence contexts plus related frontiers
@@ -30,6 +30,9 @@ sequenceDiagram
     DM-->>Host: Evidence, decisions, and lineage
   end
 ~~~
+
+Each Remember request requires `target_space: "private"` or `"team_shared"`.
+The LLM selects one destination for the whole submission; a denied shared write is never redirected.
 
 `remember` returns `completed` or a typed failure. A completed result reports
 stored evidence and accepted or unsupported proposals. Keep the whole request
@@ -238,11 +241,11 @@ normal evidence.
 | Team | Top-level memory isolation boundary. |
 | Profile / owner alias | Permanent authored-memory ownership identity; credentials and memberships are managed separately. |
 | read | Recall, trace, Dream inspection, and memory-pack export. |
-| write | Evidence submission/retraction, owned corrections, feedback, and Dream decisions. |
+| write | Team-shared evidence submission/retraction and owned corrections, plus feedback and Dream decisions. |
 | feedback:read | Authorized inspection of stored feedback. |
 
 Visibility also depends on the credential's memory space. Same-team visibility
-does not grant mutation of another owner's records. Use a read-only key for automation that must never write memory.
+does not grant mutation of another owner's records. Use a team-read-only key for automation that may remember private experience but must not change shared memory.
 
 ## Risk
 

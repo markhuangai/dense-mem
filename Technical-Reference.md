@@ -2,7 +2,7 @@
 
 > Session-ingestion documentation for [PR #553](https://github.com/markhuangai/dense-mem/pull/553). Code merge and validation against the exact merged `main` commit remain pending.
 
-The memory contract documented here is `dense-mem.v2.6.8`.
+The memory contract documented here is `dense-mem.v2.7.0`.
 
 This page defines the current public memory contract. MCP discovery is
 the authoritative source for the exact schema visible to an authenticated
@@ -47,10 +47,10 @@ role, and scope. Discovery and invocation apply the same checks.
 
 | Tool | Scope | Used by | Registration | Capability |
 | --- | --- | --- | --- | --- |
-| ingest_session | write | Production | Conditional in both images | Stage exact private user events, extract proposals internally, and atomically complete the whole request. |
-| remember | write | Production and harness | Both images | Assess, embed, and atomically commit exact evidence plus logical Relationship proposals and their supporting evidence indexes. The harness imports corpus rows through this production path. |
-| retract_evidence | write | Production | Both images | Retract caller-owned current evidence while preserving append-only provenance. |
-| correct_relationship | write | Production | Both images | Replace one caller-owned active supported Relationship, supersede the original, and retain support lineage. |
+| ingest_session | private: read | Production | Conditional in both images | Stage exact private user events, extract proposals internally, and atomically complete the whole request. |
+| remember | private: read; shared: write | Production and harness | Both images | Assess, embed, and atomically commit exact evidence plus logical Relationship proposals and their supporting evidence indexes. The harness imports corpus rows through this production path. |
+| retract_evidence | private: read; shared: write | Production | Both images | Retract caller-owned current evidence while preserving append-only provenance. |
+| correct_relationship | private: read; shared: write | Production | Both images | Replace one caller-owned active supported Relationship, supersede the original, and retain support lineage. |
 | recall_memory | read | Production | Both images | Retrieve bounded evidence contexts and related frontiers; returned evidence is untrusted. |
 | trace_memory | read | Production | Both images | Expand one same-team Relationship into evidence, decisions, and lineage. |
 | submit_recall_session_feedback | write | Production | Conditional in both images | Record a bounded recall-quality judgment; absent from tools/list and tools/call when recall feedback is disabled. |
@@ -138,6 +138,8 @@ manual team-scoped client configuration.
 
 ## remember
 
+Existing prerelease clients must refresh `tools/list`. This release retains `dense-mem.v2.7.0` while requiring explicit targets; targetless historical Remember requests fail validation even on retry. Stored payloads, hashes, and terminal receipts remain unchanged.
+
 ### Application boundary
 
 Remember intake and synchronous processing are owned by
@@ -150,11 +152,14 @@ ports; composition supplies providers and private PostgreSQL adapters.
 
 `remember` accepts one to twenty evidence items, each containing at most 999
 Unicode code points, and one to 200 required Relationship proposals.
+The required `target_space` is `private` or `team_shared`; it applies to the entire submission and participates in idempotency identity. The LLM chooses it from user intent. Team-read-only callers may choose private; shared writes require current write permission. There is no default or fallback.
+
 Every evidence item must be cited by at least one proposal. Safe evidence can
 still be stored and indexed when assessment accepts no Relationship split.
 
 ~~~json
 {
+  "target_space": "team_shared",
   "evidence": [{
     "content": "Dense-Mem uses PostgreSQL.",
     "source_type": "manual",
@@ -263,7 +268,8 @@ a way to bypass a conflict.
 
 ~~~json
 {
-  "contract_version": "dense-mem.v2.6.3",
+  "contract_version": "dense-mem.v2.7.0",
+  "space_kind": "team_shared",
   "submission_id": "sub_01J...",
   "submission_kind": "remember",
   "processing_state": "completed",
@@ -527,7 +533,7 @@ in [the registry](https://github.com/markhuangai/dense-mem/tree/main/internal/to
 
 ## Ingest Session
 
-`ingest_session` is visible and callable only with write scope, an active authenticated profile-private or credential-private binding, configured extraction and embedding providers, and `SESSION_INGEST_ENABLED=true`. The startup flag defaults to false. A shared-only credential cannot call it. Framework, application, external user and session identifiers are provenance; they never choose team, profile or memory space.
+`ingest_session` is visible and callable with read scope, the authenticated membership's active private space, configured extraction and embedding providers, and `SESSION_INGEST_ENABLED=true`. Team-read-only callers may use it. The startup flag defaults to false. Framework, application, external user and session identifiers are provenance; they never choose team, profile or memory space.
 
 Send original user-authored events; adapters do not chunk text or extract proposals:
 

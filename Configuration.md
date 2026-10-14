@@ -295,7 +295,7 @@ Trace queues are 2,048 spans with batches of 512. Export/shutdown deadlines are 
 
 `SESSION_INGEST_ENABLED` is a startup boolean, default `false`. The base Compose example forwards it. Restart the server after changing it. Enable only after deploying the session migration and matching private-erasure manifest together, with old instances stopped.
 
-The capability reuses the configured verifier endpoint/key, Remember model, tokenizer, shared provider concurrency gate and embedding provider. Missing required provider configuration keeps the tool unavailable. Discovery and invocation also require write scope and an active authenticated private binding. It adds no separate configuration framework or runtime control endpoint.
+The capability reuses the configured verifier endpoint/key, Remember model, tokenizer, shared provider concurrency gate and embedding provider. Missing required provider configuration keeps the tool unavailable. Discovery and invocation also require read access and the authenticated membership's active private space. Team-read-only callers retain private write access. It adds no separate configuration framework or runtime control endpoint.
 
 The synchronous budget is 180 seconds from service entry. Extraction, linking and assessment share the first 160 seconds; embedding and commit retain their existing phase bounds. A configured provider timeout is a ceiling and cannot extend the remaining phase or request deadline.
 

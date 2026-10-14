@@ -36,8 +36,7 @@ use inside an active event loop.
 Methods are initialize, list_tools, remember, ingest_session, recall_memory and
 trace_memory. Requests/results are typed dictionaries with py.typed. Server
 validation and authenticated discovery remain authoritative. Current-server
-compatibility is dense-mem.v2.6.8, including server-supported historical terminal
-replay versions; this does not promise compatibility with older deployments.
+compatibility is dense-mem.v2.7.0. Refresh tool discovery: Remember requires an explicit target even when an older prerelease used the same version string. Targetless historical requests cannot replay.
 
 ## Complete Remember request and safe replay
 
@@ -45,6 +44,7 @@ replay versions; this does not promise compatibility with older deployments.
 from densemem import RememberRequest
 
 request: RememberRequest = {
+    "target_space": "private",
     "idempotency_key": retained_operation_key,
     "evidence": [{
         "content": "Dense-Mem stores durable memory in PostgreSQL.",
@@ -66,7 +66,7 @@ result = await client.remember(request)
 
 Create the operation key once for a deliberate new operation, and retain this
 entire request before sending it. For a replay, resend this unchanged request,
-including metadata and key. Never rotate a key to bypass a conflict. The client
+including target_space, metadata, and key. Never rotate a key to bypass a conflict. The client
 never retries automatically or fills in keys/defaults. Remember requires at least
 one proposal citing every evidence item. The client does not infer Relationships.
 
@@ -99,7 +99,7 @@ result = await client.ingest_session(request)
 Send only exact user-authored events. Event IDs/text/timestamps are immutable;
 the server owns chunking and extraction. External identifiers are provenance,
 never authorization or private-space selection. The server must enable session
-ingestion and the credential must have a writable private binding; discovery
+ingestion and the caller must have effective private write access, including team-read-only callers; discovery
 hides unavailable tools. Remember retains its separate proposal requirements.
 Session semantic acceptance is atomic across the request. A no-fact completed
 result with search_state not_required is valid.

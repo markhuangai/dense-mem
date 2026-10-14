@@ -55,9 +55,9 @@ Dense-Mem exposes these user-portal SSO endpoints:
 | `GET` | `/ui/api/sso/credentials` | Lists all active credentials owned by the current SSO identity in the selected team. |
 | `POST` | `/ui/api/sso/credentials` | Creates one SSO-owned credential and returns its plaintext API key once. |
 | `GET` | `/ui/api/sso/credentials/:credentialId` | Gets one owned credential by its stable ID. |
-| `POST` | `/ui/api/sso/credentials/:credentialId/rotate` | Rotates one writable owned credential in place, preserving its ID and binding. |
-| `DELETE` | `/ui/api/sso/credentials/:credentialId` | Disables one owned credential and, only for a credential-private binding, queues erasure and retirement of that credential's private space. |
-| `DELETE` | `/ui/api/sso/private-memory` | Queues erasure of the selected identity's profile-private space. |
+| `POST` | `/ui/api/sso/credentials/:credentialId/rotate` | Rotates one writable owned credential in place, preserving its identity, membership, and private space. |
+| `DELETE` | `/ui/api/sso/credentials/:credentialId` | Disables one owned credential and queues erasure and retirement of its private space. |
+| `DELETE` | `/ui/api/sso/private-memory` | Queues erasure of the selected SSO membership's private space. |
 | `GET` | `/ui/api/private-memory/erasures/:operationId` | Polls an owner-visible erasure operation without exposing control-only target IDs. |
 | `POST` | `/ui/api/sso/logout` | Clears the local Dense-Mem SSO session cookies. |
 
@@ -182,39 +182,30 @@ SSO member sessions see the My credentials tab. One SSO identity may own any
 number of active credentials in the selected team. The session response lists
 them in `personal_credentials`, and every follow-up operation addresses a
 specific `credentialId`; the server never selects an arbitrary or newest key.
-Each credential has a stable ID and one immutable `memory_binding`:
-`profile_private` credentials share that identity's team-scoped profile-private
-space, `credential_private` credentials use an isolated credential space, and
-`shared_only` credentials use only the team-shared space. Remember derives its write destination from that authenticated binding;
-callers cannot select a space in tool arguments. Rotation preserves
-the ID and binding; revocation affects only the selected credential. The
-plaintext key is returned only from create or rotate and is not stored by the
-browser after the one-time notice is dismissed.
+Each credential has a stable ID and its own private space through its API-client
+membership. Two keys from one SSO user are isolated from each other and from the
+user's SSO session/OAuth private space. Rotation preserves the ID and private
+space; revocation affects the selected credential. Plaintext keys are returned
+only on creation or rotation.
 
-Bearer-token login with any of these keys uses the standard API-key format
-rather than the browser session. When SSO authentication is configured,
-the auth middleware revalidates an SSO-owned key's current entitlement, so a
-revoked external entitlement can deny a still-present local key. It is not a
-hybrid cookie-and-bearer login.
+The LLM chooses `private` or `team_shared` through the required
+`remember.target_space` field. The portal displays effective private/shared
+read/write capabilities; `memory_binding` inputs are rejected. Team-read-only
+members and keys can write their own private memory, including gated session
+intake. Shared writes require current write permission and semantic ownership.
 
-Creation and rotation are constrained by the selected membership grants and
-the credential's own scopes. Irreversible self-service credential deletion and
-profile erasure require the `write` portal scope in addition to ownership; the
-destructive routes do not grant access to another memory space.
+Bearer authentication revalidates the issuing SSO membership's current
+entitlement. Credential creation and rotation remain constrained by membership
+grants and the credential's own scopes. Private erasure requires private access
+and ownership; it does not require shared write permission.
 
-Credential deletion and private-memory erasure are irreversible operations.
-The destructive first-party owner routes require an `Idempotency-Key` and exactly
-`{"acknowledge_irreversible":true}`; `202 Accepted` means the durable erasure
-operation was queued and must be polled. The My credentials browser action
-sends this contract when revoking an SSO-owned key. Once accepted, credential
-deletion disables the bearer immediately. A `credential_private` binding is
-erased and retired, while the same identity's `profile_private` space and the
-team's `team_shared` space are preserved. Deleting a `profile_private` or
-`shared_only` credential does not erase either retained space. An active legal
-hold keeps a credential-private erasure queued until governance releases the
-hold, while the deleted credential remains disabled immediately. Profile
-erasure and operation polling are first-party API routes; the browser UI has no
-dedicated privacy workspace yet.
+Credential deletion and private erasure require an `Idempotency-Key` and exactly
+`{"acknowledge_irreversible":true}`. A `202 Accepted` response means the durable
+operation is queued and must be polled. Credential deletion disables its bearer
+and retires its private space. The issuing user's separate private space and
+team-shared memory remain intact. Applicable legal holds can delay physical
+purge. Erasure follows migration-copy lineage and invalidates dependent memory
+without granting access to another private space.
 
 The current SSO entitlement limits what the member can create or rotate from
 `/ui`:
@@ -222,8 +213,8 @@ The current SSO entitlement limits what the member can create or rotate from
 | SSO entitlement on selected team | Self-service behavior |
 | --- | --- |
 | Manager | Use the Team tab instead of My credentials. |
-| Member with read/write permission | Can create multiple read/write or read-only personal API keys, choose the binding and expiry for each, rotate only a selected key when both membership and credential scopes include write, and delete owned keys or request profile erasure. |
-| Member with read-only permission | Can create multiple read-only personal API keys, but cannot rotate or delete them or request profile erasure from `/ui`. |
+| Member with read/write permission | Can create multiple read/write or read-only personal API keys, choose the expiry for each, rotate only a selected key when both membership and credential scopes include write, and delete owned keys or request profile erasure. |
+| Member with team-read-only permission | Can create multiple team-read-only personal API keys and erase their own SSO private memory. Credential rotation and deletion retain their existing team-write requirements. |
 
 SSO managers retain the established Team-tab contract: they can manage
 team-scoped credentials through `/ui/api/team/credentials`, but the

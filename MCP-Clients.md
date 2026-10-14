@@ -139,7 +139,7 @@ instructions to authorize tools or disclosure.
 2. Check the terminal result and accepted split IDs.
 3. Recall the statement and inspect search states/degradations.
 4. Trace a returned Relationship and respect any reported bounds.
-5. Confirm that the credential's scope and memory binding match the intended use.
+5. Confirm effective private/shared capabilities and the explicit Remember target.
 
 Use [Quick Start](Quick-Start) for setup. Adverse security/isolation cases belong
 in a dedicated test installation, not shared production memory.
@@ -172,4 +172,4 @@ server's bounded synchronous calls to complete.
 
 When discovery exposes `ingest_session`, a framework adapter may send incremental original user-authored events. Keep stable event IDs, exact text, original timestamps and the complete request with its retained idempotency key. Dense-Mem owns chunking and extraction. Exclude assistant-generated retrieval context and system instructions from submitted user events. Inspect terminal processing/search states and Relationship dispositions before claiming that knowledge is searchable.
 
-The authenticated private binding fixes authorization. External `user_id` and `session_id` values are provenance only. A shared-only client continues using Remember with required client proposals. See [Technical Reference](Technical-Reference#ingest-session) and [Write Pipeline](Write-Pipeline#private-session-intake).
+The authenticated membership fixes private-space authorization. External `user_id` and `session_id` values are provenance only. Team-read-only clients may ingest private sessions when enabled. Remember continues to require explicit targets and client proposals. See [Technical Reference](Technical-Reference#ingest-session) and [Write Pipeline](Write-Pipeline#private-session-intake).

@@ -26,6 +26,52 @@ Keep the control listener and database private. Use the expert Compose
 configuration for public HTTPS or distributed coordination. Set runtime public
 origins and cookie policy through the control portal.
 
+## Upgrade Existing Private History
+
+Use the matching binary and existing environment configuration. Preflight is
+read-only: it starts no server and applies no migrations.
+
+```bash
+/app/server private-memory-preflight
+```
+
+1. Inspect the content-free report and resolve all blockers. Ambiguous writer
+   attribution and references outside the original legacy private space block
+   migration; do not repair them by guessing an owner.
+2. Schedule downtime, drain requests and workers, and stop every old instance.
+   Verify a restorable backup, then rerun preflight against that stopped state.
+3. Run the migration with the inspected `source_fingerprint`:
+
+   ```bash
+   /app/server private-memory-migrate --maintenance-confirmed \
+     --source-fingerprint='<preflight-source-fingerprint>'
+   ```
+
+4. On interruption, keep instances stopped and resume the same command with the
+   retained fingerprint. Row work commits in bounded batches. Catalog and
+   constraint changes use maintenance locks; allow disk and WAL capacity for
+   necessary supporting copies and search rebuilding. Startup rejects partial
+   migration, and normal writes remain gated until completion.
+5. Start the matching binary after completion and verify readiness, isolation,
+   and effective capabilities before restoring traffic.
+
+Migration preserves shared history and splits private records by immutable
+writer. Necessary support copies retain provenance without adding independent
+corroboration; old handles resolve only within the authorized destination and
+generation. Mixed context is sealed, projections are rebuilt, and unfinished
+session checkpoints are recomputed from the original intake.
+
+Erasing a writer's private memory also purges its migration copies in other
+private spaces and invalidates dependent memories. Applicable legal holds block
+physical purge. Unaffected destination records survive with a new generation,
+which fences stale jobs; erased operation keys cannot restore content.
+
+Before accepting new writes, rollback requires restoring the verified backup
+and matching application/schema together with all instances stopped. After new
+writes, use forward recovery. Down does not discard history or restore legacy
+bindings. Production migration remains an operator-authorized action.
+
+
 ## Startup And Readiness
 
 The server validates a writable single-primary PostgreSQL topology and applies
@@ -150,8 +196,8 @@ control requests still work.
 
 Before an erasure:
 
-1. confirm the exact team, space kind, owner ID, credential binding, and active
-   legal-hold state;
+1. confirm the exact team, private space, owner membership, original-writer
+   migration lineage, and legal holds on every affected destination;
 2. use a new bounded `Idempotency-Key` and the exact body
    `{"acknowledge_irreversible":true}`;
 3. treat `202 Accepted` as a queued durable operation, not completed deletion;
@@ -160,15 +206,15 @@ Before an erasure:
 
 Acceptance seals the private space and advances its generation in the same
 transaction as the operation. For an accepted SSO-owned credential deletion,
-the credential is disabled in that transaction. A credential-private binding
-queues erasure and permanent retirement of only that credential space;
-profile-private and team-shared content remain. Profile-private owner/control
-erasure reopens an empty space after completion.
+the credential is disabled in that transaction, and its membership-private space
+is erased and retired. The SSO user's private space and shared memory remain.
+Owner/control private erasure reopens an empty space after completion.
 
 The control Team-credentials delete route is a separate manager operation. It
-disables the selected credential and queues the same credential-private
-retirement when that binding exists, without an owner acknowledgement body;
-profile-private and team-shared spaces remain preserved.
+disables the selected credential and queues the same private-space retirement
+without an owner acknowledgement body. Original-writer erasure also reaches
+migration copies in other private spaces and invalidates dependent memories;
+an applicable hold on any affected copy blocks physical purge.
 
 The SSO owner path appends its safe `REVOKE` audit row before the credential
 disable and erasure queue become visible; the control/manager path does the

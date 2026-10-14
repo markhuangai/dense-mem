@@ -194,18 +194,18 @@ credential.
 
 | Scope | Purpose |
 | --- | --- |
-| `read` | recall, trace, Entity/Relationship inspection |
-| `write` | remember and supported lifecycle/dream decisions; merge/split/supersede only caller-owned knowledge; create evidence-backed cross-profile corrections |
+| `read` | recall, trace, Entity/Relationship inspection, and owned private memory writes |
+| `write` | team-shared Remember and owned lifecycle changes, plus supported feedback/Dream decisions |
 | `feedback:read` | stored recall-feedback details |
 
-Role does not imply scope. A manager key without `write` cannot remember.
+Role does not imply scope. Without `write`, a key can remember and mutate its own private memory; team-shared mutation is denied.
 
 Use cases:
 
 | Key | Use |
 | --- | --- |
 | read-write member | main AI client |
-| read-only member | LLM host that must never mutate memory |
+| team-read-only member | automation that remembers private experience while reading shared memory |
 | manager with minimal scopes | team administration |
 | SSO-owned personal key | user client tied to current entitlement |
 
@@ -258,8 +258,8 @@ Revocation stops future authentication but preserves audit and actor references.
 Credential deletion deactivates authentication while retaining its tombstone
 when durable records still reference the actor/owner. Control/manager
 credential deletion also queues erasure of the selected credential's
-`credential_private` space when one exists; it preserves `profile_private`,
-`team_shared`, and the audit tombstone. The safe credential-deletion audit is
+membership-owned `private` space; it preserves the issuing SSO user's separate
+private space, `team_shared`, and the audit tombstone. The safe credential-deletion audit is
 committed before the erasure operation becomes visible to a worker. The
 explicit SSO owner deletion flow requires irreversible acknowledgement and has
 the same private-space boundary.
@@ -281,15 +281,16 @@ valid. Manual rotation cannot sever that ownership silently.
 Deleting an SSO-owned key requires `Idempotency-Key` and exactly
 `{"acknowledge_irreversible":true}`. An accepted response is `202`, disables
 the key immediately, and returns the durable operation to poll. A legal hold on
-its credential-private space leaves that operation queued until the hold is
-released; it never permits the physical purge to run. A profile-private or
-shared-only key has no credential-private content to erase, so its disable
-operation completes without deleting those retained spaces.
+its membership-owned private space, or an affected migration copy, leaves that
+operation queued until the hold is released. Every credential has a private
+space eligible for erasure. The purge reaches copies of its original records
+in other private spaces and invalidates dependent memories while preserving
+unrelated records, shared memory, and bounded audit history.
 
 ## Private-Memory Erasure
 
-The user portal API exposes irreversible owner routes for the current
-profile-private or credential-private space and owner-scoped status polling.
+The user portal API exposes irreversible owner routes for the authenticated
+membership's private space and owner-scoped status polling.
 The current browser UI exposes SSO-owned credential revocation; it does not yet
 provide a dedicated privacy workspace or controls for profile erasure. The
 control portal API can inventory private spaces, place/release legal holds,
@@ -335,7 +336,7 @@ procedure and does not re-enable a credential.
 | SSO entitlement drift | removed user keeps a local personal key | periodic/request-time entitlement revalidation |
 | Profile deletion erases audit | cascading FK removes actor history | deactivate/tombstone actor and preserve durable references |
 | Team deletion erases knowledge | delete path cascades team-owned semantic rows | tombstone team, revoke credentials, and preserve durable knowledge/audit |
-| Credential-private erasure expands to identity/team data | SSO key deletion removes another personal key's profile memory or team knowledge | immutable space binding, exact manifest predicate, A/B/C tests, and terminal zero-count verification |
+| Private erasure removes unrelated records | SSO key deletion removes the issuer's independent memory or team knowledge | membership ownership and original-writer lineage, exact purge targets, A/B/C tests, and terminal zero-count verification |
 
 ## Acceptance Invariants
 
@@ -346,8 +347,10 @@ procedure and does not re-enable a credential.
 4. browser decisions use the canonical PostgreSQL write pipeline
 5. role and scopes remain independent
 6. raw API keys are returned once and never stored reversibly
-7. credential deletion may erase only the selected credential-private space
-   while preserving profile-private, team-shared, and redacted audit history
+7. credential deletion erases its membership-private space and every migration
+   copy of its original records, invalidating dependent memories; applicable
+   holds block purge, and unrelated private records, shared memory, and redacted
+   audit history remain
 8. team deletion tombstones the team and revokes credentials without deleting
    knowledge or audit rows
 9. external memory automation uses MCP; portal handlers remain first-party UI
@@ -384,18 +387,22 @@ Rotation changes bearer material in place. Deletion disables the credential
 while retaining the credential and alias for audit. Actor deactivation depends
 on remaining active memberships, so another team membership is preserved. No portal or public API can invoke schema cleanup.
 
-## Immutable Memory Bindings
+## Memory Destinations and Effective Access
 
-Credential creation chooses exactly one immutable binding: `shared_only`,
-`profile_private`, or `credential_private` (the last two are team-scoped). A
-credential cannot be rebound, and rotation preserves its ID, binding, and
-private space. Revoked credentials cannot authenticate or rotate; expired
-credentials may rotate in place only while still active. SSO self-service
-creation requires the selected membership's existing grants. A token-derived
-portal session cannot create or link credentials. Linking requires SSO
-authentication plus proof of an existing same-team token and never unions token
-grants into membership grants. The immutable binding determines the authenticated write destination.
+Every credential has an inherent private space. `memory_binding` is obsolete
+and rejected when supplied. Rotation preserves the credential ID, membership,
+and private space; revoked identities cannot be reactivated through rotation or
+provisioning. Expired credentials retain their spaces for authorized rotation.
 
-`remember` has no caller-selectable space parameter. It uses the authenticated
-private space when present, otherwise `team_shared`. Read-only grants still
-cannot write, and the payload cannot broaden the allowed spaces.
+Portals display `memory_access.private.{read,write}` and
+`memory_access.team_shared.{read,write}`. Team-read-only keys can remember,
+correct, retract, and erase their own private memory. They can use private
+`ingest_session` when its feature gate is enabled. Shared writes require the
+current write grant and retain semantic ownership checks.
+
+The LLM chooses `private` or `team_shared` in the required `remember.target_space`
+field on each submission. The portal has no destination selector. One target
+covers the batch, and changing it under an existing idempotency key conflicts.
+A denied shared request is not redirected. Contract `dense-mem.v2.7.0` requires
+refreshed tool discovery even for clients already using that version; targetless
+historical retries fail validation without rewriting stored history.

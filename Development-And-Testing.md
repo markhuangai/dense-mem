@@ -105,7 +105,7 @@ assertions reach the changed behavior.
 | --- | --- |
 | MCP schemas and tool visibility | Registry/transport tests, valid examples, rejected unknown fields, and scope/feature denial. |
 | Remember | Evidence-only and proposal writes; unsafe evidence; invalid provider response; embedding/commit failure; exact retry and changed-body conflict. |
-| Authorization or private memory | Same-team owners with different mutation authority, another team, and each affected space binding. |
+| Authorization or private memory | Same-team memberships with different mutation authority, another team, and separate SSO/session and API-key private spaces. |
 | Conflict/correction | A/B/C actors, fresh/stale versions, current/historical recall, and preserved owner lineage. |
 | Derived jobs or diagnostics | Lease/generation fences, cancellation, retention/erasure, unavailable/truncated payloads, and public/private exposure boundaries. |
 

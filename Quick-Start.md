@@ -60,11 +60,11 @@ See [Configuration](Configuration#required-startup-settings).
 ## 3. Create A Team And Credential
 
 Open the private control portal with `CONTROL_PORTAL_TOKEN`. Create a team,
-then a credential with the scopes and immutable memory binding you need.
+then a credential with the team permissions you need. Every credential has its own private space.
 Save its one-time raw key securely.
 
-For a shared-memory smoke test, use a `shared_only` credential with `read`
-and `write`. The user portal shows the full team UUID and the copyable
+For a shared-memory smoke test, use a credential with `read` and `write`,
+and submit `remember.target_space: "team_shared"`. The user portal shows the full team UUID and the copyable
 `/teams/{team-id}/mcp` URL.
 
 See [Portals And API Keys](Portals-And-API-Keys). A user API key and a control

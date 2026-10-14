@@ -26,6 +26,8 @@ flowchart TD
   Commit --> Result
 ~~~
 
+Destination-aware authorization runs before provider calls and again at the authoritative commit. Team-read-only callers can write their own private memory; shared mutation also requires current write permission and semantic ownership.
+
 Provider calls occur outside the canonical semantic transaction. Exact evidence
 and canonical state become durable in the successful terminal commit.
 Operational attempt records and diagnostic captures are separate from accepted
@@ -33,7 +35,7 @@ knowledge. The server does not acknowledge an unfinished write as success.
 
 ## Client Submission Contract
 
-A request contains evidence and one top-level `idempotency_key`.
+A request contains evidence, a required `target_space: "private" | "team_shared"`, and one top-level `idempotency_key`. The target is part of the request hash. The LLM chooses it; the server resolves the space from authentication and rejects unauthorized targets without redirection.
 `relationships` must be nonempty. Each supplied proposal has a unique
 request-local `ref`, subject, predicate, exactly one Entity or typed Value
 object, polarity, and nonempty `evidence_indices`. At least one proposal must cite every submitted evidence item.

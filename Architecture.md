@@ -126,26 +126,27 @@ write. See [Recall Ranking](Recall-Ranking) and
 
 ## Memory-Space Ownership Boundary
 
-Authentication fixes team, actor, membership, permanent owner alias, grants,
-credential, and allowed spaces. Tool arguments cannot choose the tenant or
-write space.
+Authentication fixes team, identity, membership, permanent semantic owner alias,
+credential, grants, and allowed space IDs. Public kinds are `private` and
+`team_shared`. A private space belongs to one team membership.
 
-| Space | Visibility |
-| --- | --- |
-| `team_shared` | Authorized team members. |
-| `profile_private` | The authenticated identity's private space within that team. |
-| `credential_private` | The bound credential's private space within that team. |
+Each API credential owns a private space through its API-client membership,
+including SSO-issued keys. SSO sessions and OAuth tokens share only the SSO
+user/team membership's separate private space. Rotation preserves the key's
+identity and private space.
 
-A credential has an immutable `shared_only`, `profile_private`, or
-`credential_private` binding. Remember chooses the authenticated private space
-when present, otherwise the shared space. The write scope is still required.
-Private-bound recall searches the shared and permitted private branches
-independently and fuses authorized results. It never links semantic identities
-across those branches.
+The calling LLM selects `remember.target_space: "private" | "team_shared"`.
+There is no default or denied-write fallback. Team-read-only callers can mutate
+their own private memory; shared mutation requires current write permission plus
+semantic ownership. Read visibility never grants mutation of another owner's
+records. Private sources remain excluded from shared ontology.
 
-Same-team read visibility does not grant mutation of another owner's records.
-Private erasure also uses space generations and worker fences. See
-[Request Lifecycle And Security](Request-Lifecycle-And-Security).
+Legacy private history is split by immutable writer during maintenance. Necessary
+support copies from the same old private space retain provenance and do not
+inflate support. Historical handles are scoped by owner, destination, and
+generation; mixed artifacts remain sealed. Erasing an original writer's private
+memory purges its migration copies and invalidates dependent memories. Applicable
+holds block physical purge. See [Operations Runbook](Operations-Runbook).
 
 ## Risks And Mitigations
 

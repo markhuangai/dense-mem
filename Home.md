@@ -8,7 +8,7 @@ a second valid architecture.
 
 ## Current Memory Contract
 
-The current source contract is `dense-mem.v2.6.8`. `remember` accepts exact evidence
+The current source contract is `dense-mem.v2.7.0`. `remember` requires an explicit private or team-shared destination and accepts exact evidence
 and required client Relationship proposals, validates the complete batch, and returns
 a terminal result. Safe evidence can be stored without an accepted
 Relationship. Default recall still requires an eligible Relationship support
