@@ -82,7 +82,7 @@ func TestRecallRetrievalEquivalenceCorpus(t *testing.T) {
 		},
 		{
 			name: "private_space", wantIDs: []string{fixture.privateEvidenceID},
-			input:    RecallEvidenceInput{TeamID: fixture.privateTeam, Query: "private benchmark marker deterministic evidence record 0000", SpaceID: fixture.privateID, SpaceKind: string(domain.MemorySpaceCredentialPrivate), Limit: 1},
+			input:    RecallEvidenceInput{TeamID: fixture.privateTeam, Query: "private benchmark marker deterministic evidence record 0000", SpaceID: fixture.privateID, SpaceKind: string(domain.MemorySpacePrivate), Limit: 1},
 			contexts: []string{"private benchmark marker deterministic evidence record 0000"},
 			actor:    &fixture.privateActor,
 		},

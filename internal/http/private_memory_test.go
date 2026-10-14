@@ -175,10 +175,10 @@ func TestCredentialPrivateMemoryHTTPContract(t *testing.T) {
 	require.Equal(t, teamID, stub.credentialTeamID)
 	require.Equal(t, credentialID, stub.credentialID)
 	require.Equal(t, "request-3", stub.credentialCommand.IdempotencyKey)
-	require.Equal(t, domain.PrivateMemoryEraseCredentialPrivate, operation.Action)
+	require.Equal(t, domain.PrivateMemoryErase, operation.Action)
 }
 
-func TestCredentialPrivateMemoryHTTPRequiresWriteScope(t *testing.T) {
+func TestCredentialPrivateMemoryHTTPAllowsTeamReadOnly(t *testing.T) {
 	teamID := uuid.New()
 	credentialID := uuid.New()
 	stub := &privateMemoryHTTPServiceStub{operation: privateMemoryHTTPTestOperation(teamID, credentialID)}
@@ -196,7 +196,7 @@ func TestCredentialPrivateMemoryHTTPRequiresWriteScope(t *testing.T) {
 	})
 	handler := &userPortalHandler{privateMemory: stub}
 	e.DELETE("/ui/api/credential/private-memory", handler.eraseCredentialPrivateMemory,
-		httpmw.RequireScopes("write"),
+		httpmw.RequireScopes("read"),
 		httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
 
 	req := httptest.NewRequest(http.MethodDelete, "/ui/api/credential/private-memory", strings.NewReader(`{"acknowledge_irreversible":true}`))
@@ -205,13 +205,13 @@ func TestCredentialPrivateMemoryHTTPRequiresWriteScope(t *testing.T) {
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
-	require.Equal(t, http.StatusForbidden, rec.Code)
-	require.Equal(t, uuid.Nil, stub.credentialID)
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	require.Equal(t, credentialID, stub.credentialID)
 }
 
-func TestSSOPrivateMemoryDeleteRoutesRequireWriteScope(t *testing.T) {
-	teamID := uuid.New()
-	identityID := uuid.New()
+func TestSSOPrivateMemoryErasureAllowsTeamReadOnly(t *testing.T) {
+	fixture := newSSOPersonalKeyFixture(accessservice.CredentialRoleMember, []string{"read"})
+	teamID, identityID := fixture.teamID, fixture.identityID
 	credentialID := uuid.New()
 	stub := &privateMemoryHTTPServiceStub{operation: privateMemoryHTTPTestOperation(teamID, credentialID)}
 	e := echo.New()
@@ -220,15 +220,16 @@ func TestSSOPrivateMemoryDeleteRoutesRequireWriteScope(t *testing.T) {
 		return func(c echo.Context) error {
 			ctx := httpmw.SetPrincipalForTest(c.Request().Context(), &httpmw.Principal{
 				TeamID: teamID, IdentityID: identityID, OwnerID: identityID,
-				AuthMethod: "oauth", Grants: []string{"read"},
+				AuthMethod: "sso_session", Grants: []string{"read"},
 			})
 			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
 		}
 	})
-	handler := &userPortalHandler{privateMemory: stub}
+	handler := fixture.handler
+	handler.privateMemory = stub
 	e.DELETE("/ui/api/sso/private-memory", handler.eraseSSOPrivateMemory,
-		httpmw.RequireScopes("write"),
+		httpmw.RequireScopes("read"),
 		httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
 	e.DELETE("/ui/api/sso/credentials/:credentialId", handler.deleteSSOCredential,
 		httpmw.RequireScopes("write"),
@@ -238,18 +239,19 @@ func TestSSOPrivateMemoryDeleteRoutesRequireWriteScope(t *testing.T) {
 		path       string
 		wantStatus int
 	}{
-		{path: "/ui/api/sso/private-memory", wantStatus: http.StatusForbidden},
+		{path: "/ui/api/sso/private-memory", wantStatus: http.StatusAccepted},
 		{path: "/ui/api/sso/credentials/" + credentialID.String(), wantStatus: http.StatusForbidden},
 	} {
 		req := httptest.NewRequest(http.MethodDelete, test.path, strings.NewReader(`{"acknowledge_irreversible":true}`))
 		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 		req.Header.Set("Idempotency-Key", "read-only-erasure")
+		req.AddCookie(&http.Cookie{Name: accessservice.SSOSessionCookieName, Value: fixture.sessionToken})
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
 
 		require.Equal(t, test.wantStatus, rec.Code, test.path)
 	}
-	require.Equal(t, uuid.Nil, stub.profileIdentityID)
+	require.Equal(t, identityID, stub.profileIdentityID)
 	require.Equal(t, uuid.Nil, stub.credentialID)
 }
 
@@ -376,8 +378,8 @@ func TestPrivateMemoryControlHTTPRoutes(t *testing.T) {
 		operation: operation, operations: []domain.PrivateMemoryErasureOperation{*operation},
 		spaces: []domain.PrivateMemorySpaceMetadata{{
 			Space: domain.MemorySpace{
-				ID: spaceID, TeamID: teamID, Kind: domain.MemorySpaceProfilePrivate,
-				OwnerProfileID: &ownerProfileID, Generation: 2,
+				ID: spaceID, TeamID: teamID, Kind: domain.MemorySpacePrivate,
+				OwnerMembershipID: &ownerProfileID, Generation: 2,
 				LifecycleState: domain.MemorySpaceActive, PrivateContentAt: &now,
 				CreatedAt: now, UpdatedAt: now,
 			},
@@ -683,20 +685,20 @@ func TestPrivateMemoryControlHandlersPropagateRepositoryFailures(t *testing.T) {
 
 	credentialID := uuid.New()
 	space := toPrivateMemorySpace(domain.PrivateMemorySpaceMetadata{Space: domain.MemorySpace{
-		ID: credentialID, TeamID: uuid.New(), Kind: domain.MemorySpaceCredentialPrivate,
-		OwnerCredentialID: &credentialID,
+		ID: credentialID, TeamID: uuid.New(), Kind: domain.MemorySpacePrivate,
+		OwnerMembershipID: &credentialID,
 	}})
-	require.Equal(t, credentialID.String(), space.OwnerCredentialID)
+	require.Equal(t, credentialID.String(), space.OwnerMembershipID)
 }
 
 func privateMemoryHTTPTestOperation(teamID, credentialID uuid.UUID) *domain.PrivateMemoryErasureOperation {
 	now := time.Date(2026, 8, 18, 1, 2, 3, 0, time.UTC)
 	spaceID := uuid.New()
-	spaceKind := domain.MemorySpaceCredentialPrivate
+	spaceKind := domain.MemorySpacePrivate
 	generation := int64(2)
 	return &domain.PrivateMemoryErasureOperation{
 		ID: uuid.New(), TeamID: teamID, SpaceID: &spaceID, SpaceKind: &spaceKind,
-		TargetCredentialID: &credentialID, Action: domain.PrivateMemoryEraseCredentialPrivate,
+		TargetCredentialID: &credentialID, Action: domain.PrivateMemoryErase,
 		ActorClass: domain.PrivateMemoryActorOwnerCredential, ReasonCode: "owner_request",
 		TargetGeneration: &generation, Status: domain.PrivateMemoryErasureQueued,
 		DeletedCounts: map[string]int64{}, RequestedAt: now, UpdatedAt: now,

@@ -30,12 +30,15 @@ func TestRememberServiceHelpersCoverTypedInputAndSpaceBranches(t *testing.T) {
 	spaceID := uuid.New()
 	require.Equal(t, spaceID.String(), rememberSpaceID(domain.MemorySpaceAccess{ID: spaceID}))
 	privateID := uuid.New()
-	space := rememberSpace(requestctx.Actor{AllowedSpaces: []domain.MemorySpaceAccess{
-		{Kind: domain.MemorySpaceTeamShared},
-		{Kind: domain.MemorySpaceProfilePrivate, ID: privateID, Generation: 2},
-	}})
+	actor := requestctx.Actor{Grants: []string{"read", "write"}, AllowedSpaces: []domain.MemorySpaceAccess{
+		{Kind: domain.MemorySpaceTeamShared, ID: spaceID, Generation: 1},
+		{Kind: domain.MemorySpacePrivate, ID: privateID, Generation: 2},
+	}}
+	space, err := domain.ResolveMemoryWriteSpace(domain.MemorySpacePrivate, actor.Grants, actor.AllowedSpaces)
+	require.NoError(t, err)
 	require.Equal(t, privateID, space.ID)
-	shared := rememberSpace(requestctx.Actor{AllowedSpaces: []domain.MemorySpaceAccess{{Kind: domain.MemorySpaceTeamShared, ID: spaceID}}})
+	shared, err := domain.ResolveMemoryWriteSpace(domain.MemorySpaceTeamShared, actor.Grants, actor.AllowedSpaces)
+	require.NoError(t, err)
 	require.Equal(t, spaceID, shared.ID)
 
 }

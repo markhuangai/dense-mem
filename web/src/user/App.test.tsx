@@ -32,6 +32,7 @@ vi.mock("react-force-graph-2d", async () => {
 });
 
 const baseSession: UserSession = {
+  memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: false } },
   mcp_public_base_url: "https://memory.example.test",
   team: {
     id: "11111111-1111-4111-8111-111111111111",
@@ -57,8 +58,7 @@ const baseSession: UserSession = {
     last_used_at: null,
     expires_at: null,
     created_at: "2026-05-01T12:00:00Z",
-    memory_binding: "shared_only",
-    memory_space_kind: "team_shared",
+    memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: false } },
   },
   teams: [],
   personal_credentials: [],
@@ -75,8 +75,7 @@ const memberCredential: UserCredential = {
   last_used_at: null,
   expires_at: null,
   created_at: "2026-05-01T12:00:00Z",
-  memory_binding: "shared_only",
-  memory_space_kind: "team_shared",
+  memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: false } },
 };
 
 const recallHits: RecallHit[] = [
@@ -613,6 +612,31 @@ describe("UserPortalApp", () => {
     expect(sessionStorage.getItem("denseMem.userApiKey")).toBeNull();
   });
 
+  it("shows effective SSO and API-key capabilities independently of declared grants", async () => {
+    const { initial, switched } = ssoSessions();
+    const session: UserSession = {
+      ...initial,
+      membership: { ...initial.membership, grants: ["read", "write"] },
+      memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: false } },
+      personal_credentials: [{
+        ...memberCredential,
+        scopes: ["read", "write"],
+        memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: false } },
+      }],
+    };
+    mockSSOUserFetch(session, switched);
+
+    render(<UserPortalApp />);
+    await expectCurrentWorkspace("Research Team");
+    await userEvent.click(screen.getByRole("button", { name: /my credential/i }));
+
+    expect(screen.getByText("Private: Read/write · Team-read-only")).toBeInTheDocument();
+    expect(screen.getByText("Private memory").parentElement).toHaveTextContent("Read/write");
+    expect(screen.getByText("Team memory").parentElement).toHaveTextContent("Team-read-only");
+    expect(screen.getByText("Team memory").parentElement).not.toHaveTextContent("Team read/write");
+    expect(screen.queryByLabelText("Memory binding")).not.toBeInTheDocument();
+  });
+
   it("keeps the SSO portal open when logout fails", async () => {
     const { initial, switched } = ssoSessions();
     mockSSOUserFetch(initial, switched, { logoutStatus: 500 });
@@ -658,7 +682,7 @@ describe("UserPortalApp", () => {
 
     const secondName = screen.getByLabelText("Credential name", { selector: "#sso-personal-credential-name" });
     await userEvent.type(secondName, "Second key");
-    await userEvent.selectOptions(screen.getByLabelText("Memory binding", { selector: "#sso-personal-credential-binding" }), "credential_private");
+    expect(screen.queryByLabelText("Memory binding")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /create api key/i }));
     expect((await screen.findAllByText("Second key")).length).toBeGreaterThan(0);
     expect(screen.getAllByLabelText("Credential name")).toHaveLength(1);
@@ -864,8 +888,7 @@ function mockSSOUserFetch(initial: UserSession, switched: UserSession, options: 
         key_suffix: "own123",
         scopes: body.scopes,
         role: "member",
-        memory_binding: body.memory_binding ?? "profile_private",
-        memory_space_kind: body.memory_binding === "credential_private" ? "credential_private" : body.memory_binding === "shared_only" ? "team_shared" : "profile_private",
+        memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: body.scopes.includes("write") } },
       };
       current = {
         ...current,

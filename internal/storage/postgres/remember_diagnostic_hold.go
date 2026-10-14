@@ -22,11 +22,7 @@ func SetRememberAttemptDiagnosticHoldStateTx(ctx context.Context, tx *gorm.DB, s
 	result := tx.WithContext(ctx).Exec(`
 		UPDATE remember_attempt_diagnostics AS diagnostic
 		SET retained_by_legal_hold = ?
-		FROM remember_attempts AS attempt
-		WHERE attempt.team_id = diagnostic.team_id
-		  AND attempt.attempt_id = diagnostic.attempt_id
-		  AND attempt.owner_profile_id = diagnostic.owner_profile_id
-		  AND attempt.space_id = ?::uuid
+		WHERE diagnostic.space_id = ?::uuid
 		  AND diagnostic.retained_by_legal_hold IS DISTINCT FROM ?
 	`, retained, spaceID, retained)
 	if result.Error != nil {

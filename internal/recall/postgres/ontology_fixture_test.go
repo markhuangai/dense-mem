@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	access "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -33,6 +34,7 @@ type recallOntologyFixture struct {
 	team, space string
 	generation  int64
 	owners      []string
+	credentials []*domain.Credential
 	search      *searchFixtureStore
 	knowledge   *knowledgepostgres.Store
 	ontology    *ontologypostgres.Store
@@ -45,7 +47,11 @@ func newRecallOntologyFixture(t testing.TB) *recallOntologyFixture {
 	f := &recallOntologyFixture{admin: admin, app: app, rls: rls}
 	f.team = createLedgerTeam(t, admin, rls, "ontology recall")
 	for _, name := range []string{"A", "B", "C"} {
-		f.owners = append(f.owners, createLedgerProfile(t, admin, rls, f.team, name))
+		owner := createLedgerProfile(t, admin, rls, f.team, name)
+		credential, err := access.NewCredentialRepository(admin, rls, nil).GetByIDForTeam(context.Background(), uuid.MustParse(f.team), uuid.MustParse(owner))
+		require.NoError(t, err)
+		f.owners = append(f.owners, owner)
+		f.credentials = append(f.credentials, credential)
 	}
 	require.NoError(t, rls.WithSystemTx(context.Background(), admin, func(tx *gorm.DB) error {
 		return tx.Raw(`SELECT id::text,generation FROM memory_spaces WHERE team_id=?::uuid AND kind='team_shared'`, f.team).Row().Scan(&f.space, &f.generation)
@@ -59,8 +65,11 @@ func newRecallOntologyFixture(t testing.TB) *recallOntologyFixture {
 }
 
 func (f *recallOntologyFixture) actor(owner int, role string) context.Context {
+	credential := f.credentials[owner]
 	return requestctx.WithActor(context.Background(), requestctx.Actor{
-		TeamID: uuid.MustParse(f.team), OwnerID: uuid.MustParse(f.owners[owner]), Role: role,
+		TeamID: credential.TeamID, OwnerID: credential.OwnerID, Role: role,
+		IdentityID: credential.ActorIdentityID, MembershipID: credential.MembershipID,
+		CredentialID: &credential.ID, AuthMethod: "api_key",
 		Grants: []string{"read", "write"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: uuid.MustParse(f.space), Kind: domain.MemorySpaceTeamShared, Generation: f.generation}},
 	})
 }

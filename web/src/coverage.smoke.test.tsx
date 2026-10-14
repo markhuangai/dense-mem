@@ -304,8 +304,8 @@ describe("coverage contracts", () => {
   });
 
   it("covers team management validation and member credential failures", async () => {
-    const member = { id: "member-key", team_id: team.id, name: "Member key", key_suffix: "xyz", scopes: ["read", "write"], role: "member", rate_limit: 60, last_used_at: null, expires_at: null, created_at: "2026-09-01T00:00:00Z", memory_binding: "shared_only", memory_space_kind: "team_shared" };
-    const session: UserSession = { mcp_public_base_url: "", team: { id: team.id, name: team.name, description: "desc", created_at: team.created_at, updated_at: team.updated_at }, membership: { team_id: team.id, name: "Manager", grants: ["read", "write"], role: "manager" }, credential: { ...member, id: "manager-key", name: "Manager key", role: "manager" }, teams: [], personal_credentials: [] };
+    const member = { id: "member-key", team_id: team.id, name: "Member key", key_suffix: "xyz", scopes: ["read", "write"], role: "member", rate_limit: 60, last_used_at: null, expires_at: null, created_at: "2026-09-01T00:00:00Z", memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: true } } };
+    const session: UserSession = { memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: true } }, mcp_public_base_url: "", team: { id: team.id, name: team.name, description: "desc", created_at: team.created_at, updated_at: team.updated_at }, membership: { team_id: team.id, name: "Manager", grants: ["read", "write"], role: "manager" }, credential: { ...member, id: "manager-key", name: "Manager key", role: "manager" }, teams: [], personal_credentials: [] };
     const api = {
       listTeamCredentials: vi.fn(async () => ({ data: [member], pagination: { limit: 25, offset: 0, total: 1 } })),
       updateTeam: vi.fn(async () => { throw new Error("team update failed"); }),

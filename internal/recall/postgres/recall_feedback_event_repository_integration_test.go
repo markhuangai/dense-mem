@@ -140,7 +140,7 @@ func TestRecallFeedbackEventRepositoryFencesSealedPrivateSpace(t *testing.T) {
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "recall-feedback-private-fence"))
 	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	privateCredential := createOwnedCredential(t, credentialRepo, teamID, ownerID, "private-feedback", domain.CredentialBindingCredentialPrivate)
+	privateCredential := createOwnedCredential(t, credentialRepo, teamID, ownerID, "private-feedback")
 
 	var privateGeneration, teamSharedGeneration int64
 	var teamSharedSpaceID uuid.UUID

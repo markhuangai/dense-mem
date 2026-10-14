@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -187,10 +186,10 @@ func TestOntologyMaintenancePopulatedMigrationCannotRollback(t *testing.T) {
 	f := newOrganizationFixture(t)
 	maintenanceEntity(t, f, "Preserved canonical entity")
 	before := f.canonicalSnapshot(t)
-	migrator, err := storage.NewMigrator(f.admin)
-	require.NoError(t, err)
+	migrator := ontologyMigrationProvider(t, f.admin)
 	require.NoError(t, rollbackOntologySchemaTo(t, f.admin, 20261006010001))
-	require.ErrorContains(t, migrator.RunDown(context.Background()), "cannot roll back populated ontology maintenance")
+	_, err := migrator.ApplyVersion(context.Background(), 20261006010001, false)
+	require.ErrorContains(t, err, "cannot roll back populated ontology maintenance")
 	require.Equal(t, before, f.canonicalSnapshot(t))
 }
 

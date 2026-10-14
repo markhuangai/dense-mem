@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	graphcontract "github.com/markhuangai/dense-mem/internal/graph/contract"
+	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 )
 
@@ -36,6 +37,11 @@ func (r *Store) TraceRelationship(
 	}
 	result := &RelationshipTraceResult{}
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		resolved, err := storage.ResolveMemoryHandleTx(ctx, tx, input.TeamID, "relationship_records", input.RelationshipID, "")
+		if err != nil {
+			return err
+		}
+		input.RelationshipID = resolved
 		relationship, err := loadTraceRelationship(ctx, tx, input.TeamID, input.RelationshipID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrTraceRelationshipNotFound

@@ -367,14 +367,8 @@ func (r *TeamRepositoryImpl) HardDelete(ctx context.Context, id uuid.UUID) error
 		if err := tx.Exec(`DELETE FROM credentials WHERE team_id = $1`, id).Error; err != nil {
 			return err
 		}
-		if err := tx.Exec(`DELETE FROM team_memberships WHERE team_id = $1`, id).Error; err != nil {
-			return err
-		}
-		if err := tx.Exec(`DELETE FROM actor_identities WHERE team_id = $1`, id).Error; err != nil {
-			return err
-		}
 		// The catalog is system-owned and has no team-mode DELETE policy. Remove
-		// it after credential deletion while retaining RESTRICT protection for
+		// it before its owner memberships while retaining RESTRICT protection for
 		// any semantic/search rows that still reference a space.
 		if err := tx.Exec("SELECT set_config('app.tx_mode', 'system', true)").Error; err != nil {
 			return err
@@ -423,6 +417,12 @@ func (r *TeamRepositoryImpl) HardDelete(ctx context.Context, id uuid.UUID) error
 			return err
 		}
 		if err := tx.Exec("SELECT set_config('app.tx_mode', 'team', true)").Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`DELETE FROM team_memberships WHERE team_id = $1`, id).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`DELETE FROM actor_identities WHERE team_id = $1`, id).Error; err != nil {
 			return err
 		}
 		return tx.Exec(`

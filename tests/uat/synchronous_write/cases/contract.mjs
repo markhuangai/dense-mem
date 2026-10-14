@@ -41,7 +41,7 @@ export async function run({ rpc, expect }) {
 
   const runID = `synchronous-write-contract-${randomUUID()}`;
   const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
-  const sourceCredential = await createControlCredential(teamID, `${runID}-shared-source`, "shared_only");
+  const sourceCredential = await createControlCredential(teamID, `${runID}-shared-source`);
   const malformedTrace = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", {
     name: "trace_memory",
     arguments: { relationship_id: "not-a-uuid" },
@@ -288,13 +288,12 @@ async function assertOwnershipIsolation({ runID, source, split, trace, support, 
   };
 }
 
-async function createControlCredential(teamID, name, memoryBinding) {
+async function createControlCredential(teamID, name) {
   const request = {
     name,
     scopes: ["read", "write"],
     rate_limit: 300,
   };
-  if (memoryBinding) request.memory_binding = memoryBinding;
   const payload = await controlPayload(`/teams/${teamID}/credentials`, request);
   return { apiKey: requiredString(payload.data?.api_key, "credential api key") };
 }
@@ -342,6 +341,7 @@ function rememberArguments(label, fault) {
   const object = `${label} object`;
   const marker = fault === "none" ? "fixture-contract" : `fixture-fault:${fault}`;
   return {
+    target_space: "team_shared",
     idempotency_key: `${label}-remember`,
     evidence: [{ content: `${subject} uses ${object}. [${marker}]`, source_type: "manual", source: label, source_group: label }],
     relationships: [{

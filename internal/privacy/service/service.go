@@ -139,8 +139,9 @@ func (s *PrivateMemoryService) RequestSSOProfileErasure(ctx context.Context, tea
 	operation, _, err := s.repository.RequestProfileErasure(ctx, privacycontract.PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: identityID,
 		IdempotencyScopeHash: privacycontract.Hash("owner_sso", teamID.String(), identityID.String(), key),
-		RequestHash:          privacycontract.Hash(string(domain.PrivateMemoryEraseProfilePrivate), teamID.String(), identityID.String(), "acknowledged"),
-		ReasonCode:           reason,
+		// Preserve the historical hash namespace so an upgrade does not invalidate erasure retries.
+		RequestHash: privacycontract.Hash("erase_profile_private", teamID.String(), identityID.String(), "acknowledged"),
+		ReasonCode:  reason,
 	})
 	return operation, err
 }
@@ -153,7 +154,7 @@ func (s *PrivateMemoryService) RequestCredentialErasure(ctx context.Context, tea
 	operation, _, err := s.repository.RequestCredentialErasure(ctx, privacycontract.PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: credentialID, CredentialID: credentialID,
 		IdempotencyScopeHash: privacycontract.Hash("owner_credential", teamID.String(), credentialID.String(), key),
-		RequestHash:          privacycontract.Hash(string(domain.PrivateMemoryEraseCredentialPrivate), teamID.String(), credentialID.String(), "acknowledged"),
+		RequestHash:          privacycontract.Hash("erase_credential_private", teamID.String(), credentialID.String(), "acknowledged"),
 		ReasonCode:           reason,
 	})
 	return operation, err

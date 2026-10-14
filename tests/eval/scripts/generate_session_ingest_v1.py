@@ -101,7 +101,7 @@ def remember_controls():
                 "predicate": {"proposed_key": "stores_memory_in"},
                 "object": {"value": {"type": "string", "value": "PostgreSQL"}},
                 "polarity": "+", "evidence_indices": [0]}
-    base = {"evidence": evidence, "relationships": [proposal]}
+    base = {"target_space": "team_shared", "evidence": evidence, "relationships": [proposal]}
     expected = [{"subject": subject, "predicate": "stores_memory_in", "object": "PostgreSQL", "polarity": "+"}]
     controls = []
     for name in ("missing", "empty", "uncited", "malformed"):
@@ -128,7 +128,7 @@ def remember_controls():
         {"type": "date", "value": "2026-09-13", "display": "13 September 2026"},
         {"type": "date_time", "value": "2026-09-13T10:45:28Z", "display": "13 September 2026 at 10:45:28 UTC"},
     ]
-    mixed = {"evidence": [{"content": f"{subject} stores its durable memory in {database}. [fixture:mixed-objects-entity]", "source_type": "manual"}],
+    mixed = {"target_space": "team_shared", "evidence": [{"content": f"{subject} stores its durable memory in {database}. [fixture:mixed-objects-entity]", "source_type": "manual"}],
              "relationships": [{"ref": "entity-object", "subject": {"name": subject, "entity_kind": "project"},
                                 "predicate": {"known_predicate_key": "primary_database"},
                                 "object": {"entity": {"name": database, "entity_kind": "product"}}, "polarity": "+", "evidence_indices": [0]}]}
@@ -142,7 +142,7 @@ def remember_controls():
         mixed_expected.append({"subject": subject, "predicate": predicate, "object": scalar, "polarity": "+"})
     controls.append({"id": "mixed-objects", "source": source + "#runMixedObjectCase", "operation": "success", "arguments": mixed, "expected": mixed_expected})
     registry_source = "internal/tools/registry/contract_relationship_submission_test.go"
-    registry_base = {"evidence": [{"content": "Dense-Mem uses PostgreSQL."}],
+    registry_base = {"target_space": "team_shared", "evidence": [{"content": "Dense-Mem uses PostgreSQL."}],
                      "relationships": [{"ref": "uses-postgresql", "subject": {"name": "Dense-Mem", "entity_kind": "project"},
                                         "predicate": {"proposed_key": "uses"}, "object": {"entity": {"name": "PostgreSQL", "entity_kind": "product"}}, "polarity": "+", "evidence_indices": [0]}]}
     for name in ("legacy-proposal", "subject-span", "predicate-surface", "supports"):

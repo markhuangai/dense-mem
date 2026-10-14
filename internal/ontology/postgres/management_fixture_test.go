@@ -28,4 +28,5 @@ func managementOwnerC(t *testing.T, f *ontologyFixture) {
 	credential := &domain.Credential{ID: uuid.New(), TeamID: uuid.MustParse(f.team), Name: "management-reader-c", KeyHash: "synthetic-" + uuid.NewString(), KeyPrefix: uuid.NewString()[:24], KeySuffix: "test", Scopes: []string{"read", "write"}}
 	require.NoError(t, access.NewCredentialRepository(f.admin, f.rls, nil).CreateCredential(context.Background(), credential))
 	f.owners = append(f.owners, credential.ID.String())
+	f.credentials = append(f.credentials, credential)
 }

@@ -19,6 +19,7 @@ const credential: Credential = {
   team_id: team.id,
   name: "default credential",
   key_suffix: "abc123",
+    memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: true } },
   scopes: ["read", "write"],
   role: "manager",
   rate_limit: 120,

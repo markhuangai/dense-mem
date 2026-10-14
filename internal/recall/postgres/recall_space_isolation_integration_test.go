@@ -30,14 +30,13 @@ func TestRecallEvidenceIsolatesCredentialPrivateSpacesWithinTeam(t *testing.T) {
 	for i, name := range []string{"credential-private-a", "credential-private-b"} {
 		keyPrefix := "dm_" + uuid.NewString()[:20]
 		credential := &domain.Credential{
-			ID:            uuid.New(),
-			TeamID:        teamID,
-			Name:          name,
-			KeyHash:       "hash-" + name,
-			KeyPrefix:     keyPrefix,
-			KeySuffix:     "suffix",
-			Scopes:        []string{"read", "write"},
-			MemoryBinding: domain.CredentialBindingCredentialPrivate,
+			ID:        uuid.New(),
+			TeamID:    teamID,
+			Name:      name,
+			KeyHash:   "hash-" + name,
+			KeyPrefix: keyPrefix,
+			KeySuffix: "suffix",
+			Scopes:    []string{"read", "write"},
 		}
 		require.NoError(t, credentialRepo.CreateCredential(ctx, credential))
 		credentials[i] = credential
@@ -62,7 +61,7 @@ func TestRecallEvidenceIsolatesCredentialPrivateSpacesWithinTeam(t *testing.T) {
 			OwnerID:       credential.OwnerID,
 			CredentialID:  &credential.ID,
 			AuthMethod:    "api_key",
-			AllowedSpaces: []domain.MemorySpaceAccess{{ID: shared.ID, Kind: domain.MemorySpaceTeamShared}, {ID: privateSpace, Kind: domain.MemorySpaceCredentialPrivate}},
+			AllowedSpaces: []domain.MemorySpaceAccess{{ID: shared.ID, Kind: domain.MemorySpaceTeamShared}, {ID: privateSpace, Kind: domain.MemorySpacePrivate}},
 		})
 		content := fmt.Sprintf("credential %c %s", rune('a'+i), query)
 		ingest, err := ledgerRepo.CreateIngestForTest(actorCtx, CreateIngestInput{
@@ -110,14 +109,14 @@ func TestRecallEvidenceIsolatesCredentialPrivateSpacesWithinTeam(t *testing.T) {
 			OwnerID:       credential.OwnerID,
 			CredentialID:  &credential.ID,
 			AuthMethod:    "api_key",
-			AllowedSpaces: []domain.MemorySpaceAccess{{ID: shared.ID, Kind: domain.MemorySpaceTeamShared}, {ID: privateSpace, Kind: domain.MemorySpaceCredentialPrivate}},
+			AllowedSpaces: []domain.MemorySpaceAccess{{ID: shared.ID, Kind: domain.MemorySpaceTeamShared}, {ID: privateSpace, Kind: domain.MemorySpacePrivate}},
 		})
 		recall, err := searchRepo.RecallEvidence(actorCtx, RecallEvidenceInput{
 			TeamID:    teamID.String(),
 			Query:     query,
 			Limit:     10,
 			SpaceID:   privateSpace.String(),
-			SpaceKind: string(domain.MemorySpaceCredentialPrivate),
+			SpaceKind: string(domain.MemorySpacePrivate),
 		})
 		require.NoError(t, err)
 		require.Len(t, recall.Results, 1)
@@ -133,14 +132,14 @@ func TestRecallEvidenceIsolatesCredentialPrivateSpacesWithinTeam(t *testing.T) {
 		OwnerID:       firstCredential.OwnerID,
 		CredentialID:  &firstCredential.ID,
 		AuthMethod:    "api_key",
-		AllowedSpaces: []domain.MemorySpaceAccess{{ID: shared.ID, Kind: domain.MemorySpaceTeamShared}, {ID: firstSpace, Kind: domain.MemorySpaceCredentialPrivate}},
+		AllowedSpaces: []domain.MemorySpaceAccess{{ID: shared.ID, Kind: domain.MemorySpaceTeamShared}, {ID: firstSpace, Kind: domain.MemorySpacePrivate}},
 	})
 	recall, err := searchRepo.RecallEvidence(firstActorCtx, RecallEvidenceInput{
 		TeamID:    teamID.String(),
 		Query:     query,
 		Limit:     10,
 		SpaceID:   firstSpace.String(),
-		SpaceKind: string(domain.MemorySpaceCredentialPrivate),
+		SpaceKind: string(domain.MemorySpacePrivate),
 	})
 	require.NoError(t, err)
 	require.Len(t, recall.Results, 1)

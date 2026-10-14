@@ -64,11 +64,11 @@ func TestActorFromContextEmptyWhenUnsetOrWrongType(t *testing.T) {
 
 func TestActorContextCopiesAllowedMemorySpaces(t *testing.T) {
 	teamID := uuid.New()
-	actor := Actor{TeamID: teamID, AllowedSpaces: []domain.MemorySpaceAccess{{ID: uuid.New(), Kind: domain.MemorySpaceCredentialPrivate}}}
+	actor := Actor{TeamID: teamID, AllowedSpaces: []domain.MemorySpaceAccess{{ID: uuid.New(), Kind: domain.MemorySpacePrivate}}}
 	ctx := WithActor(context.Background(), actor)
 	actor.AllowedSpaces[0].Kind = domain.MemorySpaceTeamShared
 	got, ok := ActorFromContext(ctx)
-	if !ok || got.AllowedSpaces[0].Kind != domain.MemorySpaceCredentialPrivate {
+	if !ok || got.AllowedSpaces[0].Kind != domain.MemorySpacePrivate {
 		t.Fatalf("ActorFromContext allowed spaces = %#v, %v", got.AllowedSpaces, ok)
 	}
 }
@@ -124,12 +124,12 @@ func TestAuthenticationVerifiedContextIsIndependentFromPresentedSecrets(t *testi
 func TestAllowedSpacesContextCopiesValues(t *testing.T) {
 	spaces := []domain.MemorySpaceAccess{{ID: uuid.New(), Kind: domain.MemorySpaceTeamShared}}
 	ctx := WithAllowedSpaces(context.Background(), spaces)
-	spaces[0].Kind = domain.MemorySpaceProfilePrivate
+	spaces[0].Kind = domain.MemorySpacePrivate
 	got := AllowedSpacesFromContext(ctx)
 	if len(got) != 1 || got[0].Kind != domain.MemorySpaceTeamShared {
 		t.Fatalf("AllowedSpacesFromContext = %#v", got)
 	}
-	got[0].Kind = domain.MemorySpaceCredentialPrivate
+	got[0].Kind = domain.MemorySpacePrivate
 	again := AllowedSpacesFromContext(ctx)
 	if len(again) != 1 || again[0].Kind != domain.MemorySpaceTeamShared {
 		t.Fatalf("AllowedSpacesFromContext returned mutable values: %#v", again)

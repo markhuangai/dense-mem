@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	repository "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
@@ -33,6 +34,11 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 	assessorTurns := 0
 	fail := func(err error, phase string) (*preparedRemember, error) {
 		return nil, &rememberPreparationError{Phase: phase, AssessorTurns: assessorTurns, AssessorSecurityRejected: input.AssessorSecurityRejected, Cause: err}
+	}
+	var handleErr error
+	input, snapshot, handleErr = p.resolveRememberHandles(ctx, input, snapshot)
+	if handleErr != nil {
+		return fail(handleErr, "assessment")
 	}
 	duplicateInput := repository.RememberDuplicateCandidateInput{
 		MaxEvidenceItems: snapshot.MaxEvidenceItems,
@@ -132,6 +138,7 @@ func (p *rememberSynchronousProcessor) PrepareSession(ctx context.Context, req s
 	}
 	started := time.Now()
 	input := rememberapp.RememberProcessRequest{
+		SpaceKind:           domain.MemorySpacePrivate,
 		InvocationStartedAt: started, TeamID: req.Scope.TeamID, OwnerProfileID: req.Scope.OwnerProfileID,
 		SpaceID: req.Scope.SpaceID, SpaceGeneration: req.Scope.SpaceGeneration,
 		IdempotencyKey: "session:" + req.SubmissionID, RequestHash: req.RequestHash,

@@ -71,7 +71,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	api.GET("/team/audit-log", portal.audit.Get, httpmw.RequireScopes("read"))
 	api.POST("/credential/rotate", portal.rotateCurrentCredential, httpmw.RequireScopes("write"), credentialSvcMW)
 	if deps.PrivateMemory != nil {
-		api.DELETE("/credential/private-memory", portal.eraseCredentialPrivateMemory, httpmw.RequireScopes("write"), httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
+		api.DELETE("/credential/private-memory", portal.eraseCredentialPrivateMemory, httpmw.RequireScopes("read"), httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
 		api.GET("/private-memory/erasures/:operationId", portal.getOwnerPrivateMemoryErasure, httpmw.RequireScopes("read"))
 	}
 	api.GET("/team", teamHandler.Get, httpmw.RequireRole(accessservice.CredentialRoleManager), teamSvcMW)
@@ -91,7 +91,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 		api.GET("/sso/credentials/:credentialId", portal.getSSOCredential, httpmw.RequireScopes("read"))
 		api.POST("/sso/credentials/:credentialId/rotate", portal.rotateSSOCredential, httpmw.RequireScopes("read"))
 		if deps.PrivateMemory != nil {
-			api.DELETE("/sso/private-memory", portal.eraseSSOPrivateMemory, httpmw.RequireScopes("write"), httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
+			api.DELETE("/sso/private-memory", portal.eraseSSOPrivateMemory, httpmw.RequireScopes("read"), httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
 			api.DELETE("/sso/credentials/:credentialId", portal.deleteSSOCredential, httpmw.RequireScopes("write"), httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
 		}
 	}

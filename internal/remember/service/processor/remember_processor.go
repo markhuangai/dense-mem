@@ -207,6 +207,7 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 	}
 	attempt, lookupErr := p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey,
+		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
 	})
 	if lookupErr == nil && attempt != nil {
 		if !rememberAttemptMatchesRequest(attempt, input) {
@@ -245,6 +246,9 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		recoveryAttempt = true
 		observability.RecordLogicalRecovery(p.metrics, "remember", "attempted")
 	} else if lookupErr != nil && !errors.Is(lookupErr, repository.ErrRememberAttemptNotFound) {
+		if errors.Is(lookupErr, domain.ErrMemoryWriteDenied) || errors.Is(lookupErr, domain.ErrMemoryOperationErased) {
+			return nil, lookupErr
+		}
 		return fail(lookupErr, "commit")
 	}
 	if input.SecurityRejected {
@@ -298,6 +302,9 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		}
 		p.recordRememberInvocation(ctx, input, ingestID, classification, canonicalAttemptID, "commit", replayErr, invocationStatus, exchangeRecorder.Snapshot(), recoveryAttempt)
 		return replay, replayErr
+	}
+	if errors.Is(err, domain.ErrMemoryWriteDenied) || errors.Is(err, domain.ErrMemoryOperationErased) {
+		return nil, err
 	}
 	if err != nil {
 		return fail(normalizeRememberCommitFailure(err, len(commitInput.Commit.PredicateRegistrations) > 0), "commit")
@@ -374,6 +381,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	notStoredReason := rememberapp.TerminalNotStoredReasonForError(rememberapp.TerminalErrorCode(code))
 	evidence, relationshipResults := rememberFailureResults(input, notStoredReason)
 	status := &rememberapp.SubmissionStatusResult{
+		SpaceKind:       input.SpaceKind,
 		ContractVersion: domain.ContractVersion, SubmissionID: attemptID, SubmissionKind: "remember",
 		ProcessingState: processingState, SearchState: "not_required", CorrelationID: correlationID,
 		Evidence: evidence, RelationshipResults: relationshipResults,
@@ -415,6 +423,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		if errors.Is(recordErr, repository.ErrRememberReplay) {
 			winner, loadErr := p.ledger.LoadRememberAttempt(recoveryCtx, repository.RememberAttemptLookupInput{
 				TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey,
+				SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
 			})
 			if loadErr != nil {
 				return nil, "", loadErr
@@ -519,6 +528,7 @@ func rememberFailureProcessErrorWithStatus(
 ) *rememberapp.RememberProcessError {
 	evidence, relationshipResults := rememberFailureResults(input, "internal_failure")
 	status := &rememberapp.SubmissionStatusResult{
+		SpaceKind:       input.SpaceKind,
 		ContractVersion: domain.ContractVersion, SubmissionID: submissionID, SubmissionKind: "remember",
 		ProcessingState: "failed", SearchState: "not_required", CorrelationID: rememberProcessCorrelationID(input.Metadata),
 		Evidence: evidence, RelationshipResults: relationshipResults,
@@ -793,6 +803,7 @@ func (p *rememberSynchronousProcessor) loadRememberReplay(
 	defer cancel()
 	attempt, err := p.ledger.LoadRememberAttempt(recoveryCtx, repository.RememberAttemptLookupInput{
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey,
+		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
 	})
 	if err == nil && attempt != nil {
 		replayed, replayErr := rememberAttemptReplay(attempt, input)

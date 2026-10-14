@@ -7,8 +7,11 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,10 +21,9 @@ import (
 	organization "github.com/markhuangai/dense-mem/internal/ontology"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	privacy "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	"github.com/markhuangai/dense-mem/internal/settings"
 	settingspg "github.com/markhuangai/dense-mem/internal/settings/postgres"
-	storagepg "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -31,7 +33,7 @@ func TestCommunityTopicRejectsPrivateForeignSourcesAndFencesCorrection(t *testin
 	f.seedCohort(t)
 	f.drain(t, 10)
 	semantic := knowledge.NewStore(f.appDB, f.rls, knowledge.ConflictRuntimeConfig{})
-	private, err := privacy.NewMemorySpaceRepository(f.adminDB, f.rls).EnsureProfilePrivate(context.Background(), uuid.MustParse(f.teamID), uuid.MustParse(f.ownerA))
+	private, err := ensurePrivateSpaceForOwner(t, f.adminDB, f.rls, context.Background(), uuid.MustParse(f.teamID), uuid.MustParse(f.ownerA))
 	require.NoError(t, err)
 	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
 		return tx.Raw(`SELECT generation FROM memory_spaces WHERE team_id=?::uuid AND id=?::uuid AND lifecycle_state='active'`,
@@ -150,10 +152,10 @@ func TestCommunityTopicForcedRLSAndRollbackBoundary(t *testing.T) {
 		}
 		return nil
 	}))
-	migrator, err := storagepg.NewMigrator(f.adminDB)
-	require.NoError(t, err)
-	rollbackMigrationsAfterTopicProjection(t, f.adminDB, migrator)
-	require.ErrorContains(t, migrator.RunDown(context.Background()), "ontology community projection history is populated; recover by rolling forward")
+	migrator := topicMigrationProvider(t, f.adminDB)
+	rollbackMigrationsAfterTopicProjection(t, migrator)
+	_, err = migrator.ApplyVersion(context.Background(), 20261011125000, false)
+	require.ErrorContains(t, err, "ontology community projection history is populated; recover by rolling forward")
 	require.Equal(t, before, f.currentIDs(t))
 }
 
@@ -198,10 +200,10 @@ func TestCommunityTopicMigrationUsesNonSuperuserWithForcedRLS(t *testing.T) {
 	f := newTopicProjectionFixture(t)
 	ctx := context.Background()
 	before := f.canonicalSnapshot(t)
-	adminMigrator, err := storagepg.NewMigrator(f.adminDB)
+	adminMigrator := topicMigrationProvider(t, f.adminDB)
+	rollbackMigrationsAfterTopicProjection(t, adminMigrator)
+	_, err := adminMigrator.ApplyVersion(ctx, 20261011125000, false)
 	require.NoError(t, err)
-	rollbackMigrationsAfterTopicProjection(t, f.adminDB, adminMigrator)
-	require.NoError(t, adminMigrator.RunDown(ctx))
 	var projectionTable *string
 	require.NoError(t, f.adminDB.Raw(`SELECT to_regclass('community_topic_versions')::text`).Row().Scan(&projectionTable))
 	require.Nil(t, projectionTable)
@@ -223,10 +225,9 @@ func TestCommunityTopicMigrationUsesNonSuperuserWithForcedRLS(t *testing.T) {
 	require.NoError(t, f.appDB.Raw(`SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user`).Row().Scan(&superuser, &bypass))
 	require.False(t, superuser)
 	require.False(t, bypass)
-	applicationPool, ok := f.appDB.ConnPool.(*sql.DB)
-	require.True(t, ok)
-	migrator := storagepg.NewMigratorWithDB(applicationPool)
-	require.NoError(t, migrator.RunUp(ctx))
+	migrator := topicMigrationProvider(t, f.appDB)
+	_, err = migrator.Up(ctx)
+	require.NoError(t, err)
 	require.Equal(t, before, f.canonicalSnapshot(t))
 	require.NoError(t, f.rls.WithTeamTx(f.actor(f.reader), f.appDB, f.teamID, func(tx *gorm.DB) error {
 		var enabled bool
@@ -238,16 +239,35 @@ func TestCommunityTopicMigrationUsesNonSuperuserWithForcedRLS(t *testing.T) {
 	}))
 }
 
-func rollbackMigrationsAfterTopicProjection(t *testing.T, db *gorm.DB, migrator *storagepg.Migrator) {
+func topicMigrationProvider(t *testing.T, db *gorm.DB) *goose.Provider {
 	t.Helper()
-	for {
-		var version int64
-		require.NoError(t, db.Raw(`SELECT max(version_id) FROM goose_db_version WHERE is_applied`).Row().Scan(&version))
-		if version <= 20261011125000 {
-			require.Equal(t, int64(20261011125000), version)
-			return
+	paths, err := filepath.Glob("../../../migrations/postgres/v2_6/*_ontology_*.sql")
+	require.NoError(t, err)
+	require.NotEmpty(t, paths)
+	files := fstest.MapFS{}
+	for _, path := range paths {
+		contents, err := os.ReadFile(path)
+		require.NoError(t, err)
+		files[filepath.Base(path)] = &fstest.MapFile{Data: contents}
+	}
+	sqlDB, ok := db.ConnPool.(*sql.DB)
+	require.True(t, ok)
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, files,
+		goose.WithDisableGlobalRegistry(true), goose.WithAllowOutofOrder(true))
+	require.NoError(t, err)
+	return provider
+}
+
+func rollbackMigrationsAfterTopicProjection(t *testing.T, migrator *goose.Provider) {
+	t.Helper()
+	sources := migrator.ListSources()
+	slices.Reverse(sources)
+	for _, source := range sources {
+		if source.Version <= 20261011125000 {
+			break
 		}
-		require.NoError(t, migrator.RunDown(context.Background()))
+		_, err := migrator.ApplyVersion(context.Background(), source.Version, false)
+		require.NoError(t, err)
 	}
 }
 

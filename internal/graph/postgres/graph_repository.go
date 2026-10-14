@@ -86,6 +86,12 @@ func (r *Store) SemanticGraph(
 	var rows []graphEdgeRow
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
+		if input.Scope == "local" {
+			input.AnchorID, err = storagepostgres.ResolveMemoryHandleTx(ctx, tx, input.TeamID, input.AnchorType+"_records", input.AnchorID, "")
+			if err != nil {
+				return err
+			}
+		}
 		execution := graphExecutionQuery{Query: input}
 		if input.Scope == "local" {
 			rows, err = loadSemanticLocalGraphRows(ctx, tx, execution)
@@ -111,6 +117,10 @@ func (r *Store) SemanticGraphNodeDetail(
 	var node *graphcontract.Node
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
+		input.NodeID, err = storagepostgres.ResolveMemoryHandleTx(ctx, tx, input.TeamID, input.NodeType+"_records", input.NodeID, "")
+		if err != nil {
+			return err
+		}
 		switch input.NodeType {
 		case "entity":
 			node, err = loadSemanticEntityGraphNode(ctx, tx, input.TeamID, input.NodeID)

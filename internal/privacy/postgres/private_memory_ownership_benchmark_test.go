@@ -22,7 +22,6 @@ import (
 	"gorm.io/gorm"
 
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
-	"github.com/markhuangai/dense-mem/internal/domain"
 	privacyservice "github.com/markhuangai/dense-mem/internal/privacy/service"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
@@ -203,7 +202,7 @@ func newPrivacyOwnershipFixture(b *testing.B) *privacyOwnershipFixture {
 	teamID := uuid.MustParse(createLedgerTeam(b, adminDB, rls, "privacy-ownership-benchmark"))
 	ownerID := createLedgerSSOIdentity(b, adminDB, rls, teamID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	target := createOwnedCredential(b, credentialRepo, teamID, ownerID, "benchmark-target", domain.CredentialBindingCredentialPrivate)
+	target := createOwnedCredential(b, credentialRepo, teamID, ownerID, "benchmark-target")
 	counters := &privacyOwnershipCounters{}
 	repo := NewStore(privacyOwnershipCountedDB(appDB, counters), rls)
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)

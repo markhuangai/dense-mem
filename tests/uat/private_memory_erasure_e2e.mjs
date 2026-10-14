@@ -38,17 +38,17 @@ async function runScenario() {
   await assertSSOSession(sso.b);
   await assertSSOSession(sso.c);
 
-  const ownerA = await createControlCredential(teamAID, `${runID} owner A`, "credential_private");
-  const ownerB = await createControlCredential(teamAID, `${runID} owner B`, "credential_private");
-  const ownerC = await createControlCredential(teamC.id, `${runID} owner C`, "credential_private");
-  const controlTarget = await createControlCredential(teamAID, `${runID} control`, "credential_private");
-  const idempotencyTarget = await createControlCredential(teamAID, `${runID} idempotency target`, "credential_private");
-  const recoveryTarget = await createControlCredential(teamAID, `${runID} recovery`, "credential_private");
-  const retentionEligible = await createControlCredential(teamAID, `${runID} retention eligible`, "credential_private");
-  const retentionHeld = await createControlCredential(teamAID, `${runID} retention held`, "credential_private");
-  const ssoCredentialTarget = await createSSOCredential(sso.a, `${runID} SSO isolated`, "credential_private");
-  const ssoProfileCredential = await createSSOCredential(sso.a, `${runID} SSO profile`, "profile_private");
-  const ssoSharedCredential = await createSSOCredential(sso.a, `${runID} SSO shared`, "shared_only");
+  const ownerA = await createControlCredential(teamAID, `${runID} owner A`);
+  const ownerB = await createControlCredential(teamAID, `${runID} owner B`);
+  const ownerC = await createControlCredential(teamC.id, `${runID} owner C`);
+  const controlTarget = await createControlCredential(teamAID, `${runID} control`);
+  const idempotencyTarget = await createControlCredential(teamAID, `${runID} idempotency target`);
+  const recoveryTarget = await createControlCredential(teamAID, `${runID} recovery`);
+  const retentionEligible = await createControlCredential(teamAID, `${runID} retention eligible`);
+  const retentionHeld = await createControlCredential(teamAID, `${runID} retention held`);
+  const ssoCredentialTarget = await createSSOCredential(sso.a, `${runID} SSO isolated`);
+  const ssoProfileCredential = await createSSOCredential(sso.a, `${runID} SSO profile`);
+  const ssoSharedCredential = await createSSOCredential(sso.a, `${runID} SSO shared`);
 
   for (const credential of [ownerA, ownerB, ownerC, controlTarget, idempotencyTarget, recoveryTarget, retentionEligible, retentionHeld, ssoCredentialTarget, ssoProfileCredential, ssoSharedCredential]) {
     sensitiveValues.add(credential.apiKey);
@@ -69,7 +69,7 @@ async function runScenario() {
   const retentionEligibleSpace = credentialSpace(spaces, retentionEligible.credential.id);
   const retentionHeldSpace = credentialSpace(spaces, retentionHeld.credential.id);
   const ssoCredentialSpace = credentialSpace(spaces, ssoCredentialTarget.credential.id);
-  const ssoProfileSpace = requiredSpace(spaces, (space) => space.team_id === teamAID && space.kind === "profile_private" && space.owner_profile_id === sso.a.identityID, "SSO profile-private");
+  const ssoProfileSpace = requiredSpace(spaces, (space) => space.team_id === teamAID && space.kind === "private" && space.owner_membership_id === sso.a.membershipID, "SSO profile-private");
 
   const sharedFixture = seedSpaceContent({ teamID: teamAID, ownerID: sharedCredentialID, keyID: sharedCredentialID, spaceID: sharedSpace.id, label: "team-shared", rich: true });
   const ownerAFixture = seedSpaceContent({ teamID: teamAID, ownerID: ownerA.credential.id, keyID: ownerA.credential.id, spaceID: ownerASpace.id, label: "owner-a", rich: true });
@@ -77,7 +77,7 @@ async function runScenario() {
   const ownerCFixture = seedSpaceContent({ teamID: teamC.id, ownerID: ownerC.credential.id, keyID: ownerC.credential.id, spaceID: ownerCSpace.id, label: "owner-c" });
   const controlFixture = seedSpaceContent({ teamID: teamAID, ownerID: controlTarget.credential.id, keyID: controlTarget.credential.id, spaceID: controlSpace.id, label: "control" });
   const recoveryFixture = seedSpaceContent({ teamID: teamAID, ownerID: recoveryTarget.credential.id, keyID: recoveryTarget.credential.id, spaceID: recoverySpace.id, label: "recovery" });
-  const profileFixture = seedSpaceContent({ teamID: teamAID, ownerID: ssoProfileCredential.credential.id, keyID: ssoProfileCredential.credential.id, spaceID: ssoProfileSpace.id, label: "sso-profile" });
+  const profileFixture = seedSpaceContent({ teamID: teamAID, ownerID: sso.a.ownerID, keyID: ssoProfileCredential.credential.id, spaceID: ssoProfileSpace.id, label: "sso-profile" });
   const ssoCredentialFixture = seedSpaceContent({ teamID: teamAID, ownerID: ssoCredentialTarget.credential.id, keyID: ssoCredentialTarget.credential.id, spaceID: ssoCredentialSpace.id, label: "sso-credential", rich: true });
   const retentionEligibleFixture = seedSpaceContent({ teamID: teamAID, ownerID: retentionEligible.credential.id, keyID: retentionEligible.credential.id, spaceID: retentionEligibleSpace.id, label: "retention-eligible" });
   const retentionHeldFixture = seedSpaceContent({ teamID: teamAID, ownerID: retentionHeld.credential.id, keyID: retentionHeld.credential.id, spaceID: retentionHeldSpace.id, label: "retention-held" });
@@ -129,7 +129,7 @@ async function runScenario() {
   assertCredentialStatus(ssoCredentialTarget.credential.id, "active");
   assertPreserved(ssoCredentialSpace.id, ssoCredentialFixture);
   assertPreserved(sharedSpace.id, sharedFixture);
-  const profilePreservedAfterErase = seedSpaceContent({ teamID: teamAID, ownerID: ssoProfileCredential.credential.id, keyID: ssoProfileCredential.credential.id, spaceID: ssoProfileSpace.id, label: "profile-preserved-after-credential-delete" });
+  const profilePreservedAfterErase = seedSpaceContent({ teamID: teamAID, ownerID: sso.a.ownerID, keyID: ssoProfileCredential.credential.id, spaceID: ssoProfileSpace.id, label: "profile-preserved-after-credential-delete" });
 
   await placeHold(controlSpace.id, "control_hold");
   await expectStatus(controlErasure(controlSpace.id, "control-held"), 409, "control erasure bypassed legal hold");
@@ -290,10 +290,10 @@ async function createTeam(name) {
   return { id: requiredString(response.data?.id, "created team ID") };
 }
 
-async function createControlCredential(teamID, name, memoryBinding) {
+async function createControlCredential(teamID, name) {
   const response = await controlJSON(`/teams/${teamID}/credentials`, {
     method: "POST",
-    body: { name, scopes: ["read", "write"], rate_limit: 300, memory_binding: memoryBinding },
+    body: { name, scopes: ["read", "write"], rate_limit: 300 },
   });
   return {
     apiKey: requiredString(response.data?.api_key, "created API key"),
@@ -337,7 +337,7 @@ async function createSSOActors(teamCID) {
         ${sqlLiteral(actor.groupID)}, ${sqlLiteral(actor.subject)}, 'active', now(), now()
       );
       INSERT INTO ownership_aliases (team_id, legacy_owner_id, canonical_identity_id, credential_id, reason)
-      VALUES (${sqlLiteral(actor.teamID)}::uuid, ${sqlLiteral(randomUUID())}::uuid, ${sqlLiteral(actor.identityID)}::uuid, NULL, 'private_erasure_e2e');
+      VALUES (${sqlLiteral(actor.teamID)}::uuid, ${sqlLiteral(actor.ownerID)}::uuid, ${sqlLiteral(actor.identityID)}::uuid, NULL, 'private_erasure_e2e');
       INSERT INTO membership_grants (membership_id, grant_name, source)
       VALUES (${sqlLiteral(actor.membershipID)}::uuid, 'read', 'explicit'), (${sqlLiteral(actor.membershipID)}::uuid, 'write', 'explicit');
       INSERT INTO sso_entitlement_cache (provider_id, subject, groups, status, checked_at, expires_at, error)
@@ -366,7 +366,7 @@ async function createSSOMapping(providerID, teamID, groupID) {
 
 function ssoActor(providerID, teamID, subject, groupID) {
   return {
-    providerID, teamID, subject, groupID, identityID: randomUUID(), membershipID: randomUUID(),
+    providerID, teamID, subject, groupID, identityID: randomUUID(), membershipID: randomUUID(), ownerID: randomUUID(),
     sessionToken: `sso-session-${randomUUID()}`, csrfToken: `sso-csrf-${randomUUID()}`,
   };
 }
@@ -376,10 +376,10 @@ async function assertSSOSession(actor) {
   assert(response.status === 200 && response.payload.data?.team?.id === actor.teamID, "SSO fixture did not authenticate to its selected team");
 }
 
-async function createSSOCredential(actor, name, memoryBinding) {
+async function createSSOCredential(actor, name) {
   const response = await ssoRequest(actor, "/ui/api/sso/credentials", {
     method: "POST",
-    body: { name, scopes: ["read", "write"], rate_limit: 300, memory_binding: memoryBinding },
+    body: { name, scopes: ["read", "write"], rate_limit: 300 },
   });
   assert(response.status === 201, "SSO credential creation failed");
   return {
@@ -403,7 +403,8 @@ function loadTeamSharedSpace(teamID) {
 }
 
 function credentialSpace(spaces, credentialID) {
-  return requiredSpace(spaces, (space) => space.kind === "credential_private" && space.owner_credential_id === credentialID, `credential ${credentialID}`);
+  const membership = postgresScalar(`SELECT member.id FROM team_memberships member JOIN credentials credential ON credential.actor_identity_id=member.actor_identity_id AND credential.team_id=member.team_id WHERE credential.id=${sqlLiteral(credentialID)}::uuid`);
+  return requiredSpace(spaces, (space) => space.kind === "private" && space.owner_membership_id === membership, `credential ${credentialID}`);
 }
 
 function requiredSpace(spaces, predicate, label) {

@@ -507,35 +507,10 @@ func actorAllowedSpaces(actor *domain.AuthenticatedActor) []domain.MemorySpaceAc
 	if actor == nil {
 		return nil
 	}
-	sharedID := uuid.Nil
 	if actor.Credential != nil {
-		sharedID = actor.Credential.TeamSharedSpaceID
+		return actor.Credential.MemorySpaces()
 	}
-	sharedGeneration := int64(0)
-	if actor.Credential != nil {
-		sharedGeneration = actor.Credential.TeamSharedSpaceGeneration
-	}
-	spaces := []domain.MemorySpaceAccess{{ID: sharedID, Kind: domain.MemorySpaceTeamShared, Generation: sharedGeneration}}
-	if actor.Credential != nil {
-		switch actor.Credential.MemoryBinding {
-		case domain.CredentialBindingProfilePrivate:
-			spaceID := actor.Credential.MemorySpaceID
-			if spaceID != uuid.Nil {
-				spaces = append(spaces, domain.MemorySpaceAccess{ID: spaceID, Kind: domain.MemorySpaceProfilePrivate, Generation: actor.Credential.MemorySpaceGeneration})
-			}
-		case domain.CredentialBindingCredentialPrivate:
-			spaceID := actor.Credential.MemorySpaceID
-			if spaceID != uuid.Nil {
-				spaces = append(spaces, domain.MemorySpaceAccess{ID: spaceID, Kind: domain.MemorySpaceCredentialPrivate, Generation: actor.Credential.MemorySpaceGeneration})
-			}
-		}
-		return spaces
-	}
-	// An authenticated SSO session is owned by the selected team membership.
-	if actor.Membership.MemorySpaceID != uuid.Nil {
-		spaces = append(spaces, domain.MemorySpaceAccess{ID: actor.Membership.MemorySpaceID, Kind: domain.MemorySpaceProfilePrivate, Generation: actor.Membership.MemorySpaceGeneration})
-	}
-	return spaces
+	return actor.Membership.MemorySpaces()
 }
 
 func requestRequiresCSRF(method string) bool {

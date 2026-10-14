@@ -7,6 +7,7 @@ from densemem import DenseMemClient, RememberRequest, RememberResult
 def make_request(key: str) -> RememberRequest:
     return {
         "idempotency_key": key,
+        "target_space": "private",
         "evidence": [
             {
                 "content": "Dense-Mem stores durable memory in PostgreSQL.",

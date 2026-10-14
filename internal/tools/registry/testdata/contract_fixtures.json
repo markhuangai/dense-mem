@@ -3,6 +3,7 @@
     "name": "valid remember with source revision and relationships",
     "tool": "remember",
     "scopes": [
+      "read",
       "write"
     ],
     "valid": true,
@@ -40,7 +41,8 @@
             0
           ]
         }
-      ]
+      ],
+      "target_space": "team_shared"
     },
     "output": {
       "contract_version": "dense-mem.v2.6.2",
@@ -72,13 +74,15 @@
           ]
         }
       ],
-      "errors": []
+      "errors": [],
+      "space_kind": "team_shared"
     }
   },
   {
     "name": "valid relationship correction submit",
     "tool": "correct_relationship",
     "scopes": [
+      "read",
       "write"
     ],
     "valid": true,
@@ -115,6 +119,7 @@
     "name": "valid relationship correction confirm",
     "tool": "correct_relationship",
     "scopes": [
+      "read",
       "write"
     ],
     "valid": true,
@@ -247,6 +252,7 @@
     "name": "valid recall session feedback",
     "tool": "submit_recall_session_feedback",
     "scopes": [
+      "read",
       "write"
     ],
     "valid": true,
@@ -306,6 +312,7 @@
     "name": "unknown lifecycle field",
     "tool": "remember",
     "scopes": [
+      "read",
       "write"
     ],
     "valid": false,
@@ -339,13 +346,15 @@
             0
           ]
         }
-      ]
+      ],
+      "target_space": "team_shared"
     }
   },
   {
     "name": "legacy remember hint fields rejected",
     "tool": "remember",
     "scopes": [
+      "read",
       "write"
     ],
     "valid": false,
@@ -379,23 +388,28 @@
             0
           ]
         }
-      ]
+      ],
+      "target_space": "team_shared"
     }
   },
   {
     "name": "missing required evidence",
     "tool": "remember",
     "scopes": [
+      "read",
       "write"
     ],
     "valid": false,
     "want_error": "evidence is required",
-    "input": {}
+    "input": {
+      "target_space": "team_shared"
+    }
   },
   {
     "name": "duplicate relationship ref",
     "tool": "remember",
     "scopes": [
+      "read",
       "write"
     ],
     "valid": false,
@@ -448,15 +462,14 @@
             0
           ]
         }
-      ]
+      ],
+      "target_space": "team_shared"
     }
   },
   {
-    "name": "wrong scope",
+    "name": "missing read scope",
     "tool": "remember",
-    "scopes": [
-      "read"
-    ],
+    "scopes": [],
     "valid": false,
     "want_error": "missing required scope",
     "input": {
@@ -464,7 +477,8 @@
         {
           "content": "Write scope is required."
         }
-      ]
+      ],
+      "target_space": "team_shared"
     }
   },
   {
@@ -487,6 +501,7 @@
     "name": "cross profile override rejected",
     "tool": "correct_relationship",
     "scopes": [
+      "read",
       "write"
     ],
     "valid": false,
@@ -516,6 +531,7 @@
     "name": "mixed relationship correction confirm rejected",
     "tool": "correct_relationship",
     "scopes": [
+      "read",
       "write"
     ],
     "valid": false,
@@ -535,6 +551,7 @@
     "name": "unpaired source revision rejected",
     "tool": "remember",
     "scopes": [
+      "read",
       "write"
     ],
     "valid": false,
@@ -572,13 +589,15 @@
             1
           ]
         }
-      ]
+      ],
+      "target_space": "team_shared"
     }
   },
   {
     "name": "feedback judgment requires comment",
     "tool": "submit_recall_session_feedback",
     "scopes": [
+      "read",
       "write"
     ],
     "valid": false,
@@ -592,6 +611,221 @@
           "quality": "low"
         }
       ]
+    }
+  },
+  {
+    "name": "target is required even under v2.7.0",
+    "tool": "remember",
+    "scopes": [
+      "read",
+      "write"
+    ],
+    "valid": false,
+    "input": {
+      "idempotency_key": "fixture-remember-1",
+      "evidence": [
+        {
+          "content": "Dense-Mem durable authority is PostgreSQL with pgvector.",
+          "source_type": "manual",
+          "source": "architecture review",
+          "source_group": "wiki:target-architecture",
+          "source_key": "wiki:target-architecture",
+          "source_revision": "rev-1"
+        }
+      ],
+      "relationships": [
+        {
+          "ref": "rel:authority",
+          "subject": {
+            "name": "Dense-Mem",
+            "entity_kind": "project",
+            "known_entity_id": null
+          },
+          "predicate": {
+            "proposed_key": "uses_durable_authority"
+          },
+          "object": {
+            "value": {
+              "type": "string",
+              "value": "PostgreSQL with pgvector"
+            }
+          },
+          "polarity": "+",
+          "evidence_indices": [
+            0
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "legacy private kind is rejected",
+    "tool": "remember",
+    "scopes": [
+      "read",
+      "write"
+    ],
+    "valid": false,
+    "input": {
+      "idempotency_key": "fixture-remember-1",
+      "evidence": [
+        {
+          "content": "Dense-Mem durable authority is PostgreSQL with pgvector.",
+          "source_type": "manual",
+          "source": "architecture review",
+          "source_group": "wiki:target-architecture",
+          "source_key": "wiki:target-architecture",
+          "source_revision": "rev-1"
+        }
+      ],
+      "relationships": [
+        {
+          "ref": "rel:authority",
+          "subject": {
+            "name": "Dense-Mem",
+            "entity_kind": "project",
+            "known_entity_id": null
+          },
+          "predicate": {
+            "proposed_key": "uses_durable_authority"
+          },
+          "object": {
+            "value": {
+              "type": "string",
+              "value": "PostgreSQL with pgvector"
+            }
+          },
+          "polarity": "+",
+          "evidence_indices": [
+            0
+          ]
+        }
+      ],
+      "target_space": "profile_private"
+    }
+  },
+  {
+    "name": "unknown destination is rejected",
+    "tool": "remember",
+    "scopes": [
+      "read",
+      "write"
+    ],
+    "valid": false,
+    "input": {
+      "idempotency_key": "fixture-remember-1",
+      "evidence": [
+        {
+          "content": "Dense-Mem durable authority is PostgreSQL with pgvector.",
+          "source_type": "manual",
+          "source": "architecture review",
+          "source_group": "wiki:target-architecture",
+          "source_key": "wiki:target-architecture",
+          "source_revision": "rev-1"
+        }
+      ],
+      "relationships": [
+        {
+          "ref": "rel:authority",
+          "subject": {
+            "name": "Dense-Mem",
+            "entity_kind": "project",
+            "known_entity_id": null
+          },
+          "predicate": {
+            "proposed_key": "uses_durable_authority"
+          },
+          "object": {
+            "value": {
+              "type": "string",
+              "value": "PostgreSQL with pgvector"
+            }
+          },
+          "polarity": "+",
+          "evidence_indices": [
+            0
+          ]
+        }
+      ],
+      "target_space": "other"
+    }
+  },
+  {
+    "name": "team-read-only private remember",
+    "tool": "remember",
+    "scopes": [
+      "read"
+    ],
+    "valid": true,
+    "input": {
+      "idempotency_key": "fixture-remember-1",
+      "evidence": [
+        {
+          "content": "Dense-Mem durable authority is PostgreSQL with pgvector.",
+          "source_type": "manual",
+          "source": "architecture review",
+          "source_group": "wiki:target-architecture",
+          "source_key": "wiki:target-architecture",
+          "source_revision": "rev-1"
+        }
+      ],
+      "relationships": [
+        {
+          "ref": "rel:authority",
+          "subject": {
+            "name": "Dense-Mem",
+            "entity_kind": "project",
+            "known_entity_id": null
+          },
+          "predicate": {
+            "proposed_key": "uses_durable_authority"
+          },
+          "object": {
+            "value": {
+              "type": "string",
+              "value": "PostgreSQL with pgvector"
+            }
+          },
+          "polarity": "+",
+          "evidence_indices": [
+            0
+          ]
+        }
+      ],
+      "target_space": "private"
+    },
+    "output": {
+      "contract_version": "dense-mem.v2.6.2",
+      "submission_id": "ing-1",
+      "submission_kind": "remember",
+      "processing_state": "completed",
+      "search_state": "current",
+      "correlation_id": "req-1",
+      "evidence": [
+        {
+          "disposition": "stored",
+          "evidence_id": "ev-1",
+          "evidence_index": 0,
+          "superseded_evidence_ids": [],
+          "search_state": "current"
+        }
+      ],
+      "relationship_results": [
+        {
+          "ref": "rel:authority",
+          "disposition": "stored",
+          "splits": [
+            {
+              "split_index": 0,
+              "relationship_id": "rel-authority",
+              "relationship_version": 1,
+              "status": "active"
+            }
+          ]
+        }
+      ],
+      "errors": [],
+      "space_kind": "private"
     }
   }
 ]

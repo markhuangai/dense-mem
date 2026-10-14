@@ -23,6 +23,7 @@ import {
 } from "./api";
 import { AuthShell, LoadingState, PortalShell, SecretBox, SectionHeading, writeClipboardText } from "../ui/components";
 import { SearchPanel } from "./SearchPanel";
+import { MemoryAccessSummary, memoryPermissionLabel } from "../credentialPermissions";
 
 const TeamManagementPanel = lazy(() => import("./TeamManagementPanel").then((module) => ({ default: module.TeamManagementPanel })));
 const GraphPanel = lazy(() => import("./GraphPanel").then((module) => ({ default: module.GraphPanel })));
@@ -547,7 +548,6 @@ function CredentialPanel({
   const [permission, setPermission] = useState<CredentialPermission>(() => (session.membership.grants.includes("write") ? "read_write" : "read"));
   const [rateLimit, setRateLimit] = useState("120");
   const [expiresAt, setExpiresAt] = useState("");
-  const [memoryBinding, setMemoryBinding] = useState<"shared_only" | "profile_private" | "credential_private">("profile_private");
   const [selectedCredentialID, setSelectedCredentialID] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -593,7 +593,6 @@ function CredentialPanel({
         scopes: permission === "read_write" && canCreateWrite ? ["read", "write"] : ["read"],
         rate_limit: parsedRateLimit,
         expires_at: expiresAt ? new Date(expiresAt).toISOString() : undefined,
-        memory_binding: memoryBinding,
       });
       setCreatedAPIKey(created.api_key);
       const nextCredentials = [...personalCredentials, created.credential];
@@ -652,7 +651,9 @@ function CredentialPanel({
 
   return (
     <section className="surface">
-      <SectionHeading title="My credentials" meta={personalCredential?.scopes.includes("write") || permission === "read_write" ? "write" : "read"} />
+      <SectionHeading title="My credentials" meta={memoryPermissionLabel((personalCredential?.memory_access ?? session.memory_access).team_shared, true)} />
+      <MemoryAccessSummary access={session.memory_access} />
+      <p>Each API key has separate private memory. Your SSO session uses its own private space. Choose private or team shared in each Remember request.</p>
       {createdAPIKey && <CreatedCredentialNotice apiKey={createdAPIKey} onDismiss={() => setCreatedAPIKey("")} />}
       {error && <div className="banner error" role="alert">{error}</div>}
       {isSSO && personalCredentials.length > 0 && (
@@ -668,7 +669,7 @@ function CredentialPanel({
                 onClick={() => setSelectedCredentialID(credential.id)}
               >
                 <span>{credential.name}</span>
-                <small>{displayKeySuffix(credential.key_suffix)} · {credential.memory_binding}</small>
+                <small>{displayKeySuffix(credential.key_suffix)}</small>
               </button>
             ))}
           </div>
@@ -682,8 +683,8 @@ function CredentialPanel({
             <div><dt>Role</dt><dd>{credentialRoleLabel(personalCredential.role)}</dd></div>
             <div><dt>Scopes</dt><dd>{personalCredential.scopes.join(", ") || "none"}</dd></div>
             <div><dt>Rate limit</dt><dd>{personalCredential.rate_limit}</dd></div>
-            <div><dt>Memory binding</dt><dd>{personalCredential.memory_binding}</dd></div>
-            <div><dt>Memory space</dt><dd>{personalCredential.memory_space_kind}</dd></div>
+            <div><dt>Private memory</dt><dd>{memoryPermissionLabel(personalCredential.memory_access.private)}</dd></div>
+            <div><dt>Team memory</dt><dd>{memoryPermissionLabel(personalCredential.memory_access.team_shared, true)}</dd></div>
             <div><dt>Created</dt><dd>{formatDate(personalCredential.created_at)}</dd></div>
             <div><dt>Last used</dt><dd>{personalCredential.last_used_at ? formatDate(personalCredential.last_used_at) : "Never"}</dd></div>
             <div><dt>Expires</dt><dd>{personalCredential.expires_at ? formatDate(personalCredential.expires_at) : "Never"}</dd></div>
@@ -714,17 +715,11 @@ function CredentialPanel({
             disabled={!canCreateWrite}
             onChange={(event) => setPermission(event.target.value as CredentialPermission)}
           >
-            {canCreateWrite && <option value="read_write">Read/write</option>}
-            <option value="read">Read only</option>
+            {canCreateWrite && <option value="read_write">Team read/write</option>}
+            <option value="read">Team-read-only</option>
           </select>
           <label htmlFor="sso-personal-credential-rate-limit">Rate limit</label>
           <input id="sso-personal-credential-rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
-          <label htmlFor="sso-personal-credential-binding">Memory binding</label>
-          <select id="sso-personal-credential-binding" value={memoryBinding} onChange={(event) => setMemoryBinding(event.target.value as typeof memoryBinding)}>
-            <option value="profile_private">Profile-private (shared by your SSO identity)</option>
-            <option value="credential_private">Credential-private (isolated to this key)</option>
-            <option value="shared_only">Team-shared only</option>
-          </select>
           <label htmlFor="sso-personal-credential-expires">Expires (optional)</label>
           <input id="sso-personal-credential-expires" type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} />
           <button className="primary-button span" type="submit" disabled={busy || !session.membership.grants.includes("read")}>

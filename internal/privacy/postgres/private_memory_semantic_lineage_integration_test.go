@@ -27,10 +27,8 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-semantic-lineage"))
 	identityID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	target := createOwnedCredential(t, credentialRepo, teamID, identityID, "semantic-lineage", domain.CredentialBindingCredentialPrivate)
+	target := createOwnedCredential(t, credentialRepo, teamID, identityID, "semantic-lineage")
 	ownerID := target.ID
-	sharedSpaceID, err := credentialRepo.GetTeamSharedSpaceID(ctx, teamID)
-	require.NoError(t, err)
 	invocationID := uuid.New()
 	invocationRepo := knowledgepostgres.NewStore(appDB, rls, knowledgecontract.ConflictRuntimeConfig{})
 	require.NoError(t, invocationRepo.RecordRememberInvocationDiagnostic(ctx, knowledgecontract.RememberInvocationDiagnosticInput{
@@ -72,12 +70,9 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 	semantic := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
 	traceRepo := newPrivacyTraceFixtureStore(appDB, rls)
 	semanticCtx := requestctx.WithActor(ctx, requestctx.Actor{
-		TeamID:  teamID,
-		OwnerID: ownerID,
-		AllowedSpaces: []domain.MemorySpaceAccess{
-			{ID: sharedSpaceID, Kind: domain.MemorySpaceTeamShared},
-			{ID: target.MemorySpaceID, Kind: domain.MemorySpaceCredentialPrivate},
-		},
+		TeamID: teamID, OwnerID: target.OwnerID, IdentityID: target.ActorIdentityID,
+		MembershipID: target.MembershipID, CredentialID: &target.ID, AuthMethod: "api_key",
+		Grants: target.Scopes, AllowedSpaces: target.MemorySpaces(),
 	})
 	decision, err := semantic.ApplyRelationshipDecision(semanticCtx, ApplyRelationshipDecisionInput{
 		TeamID:            teamID.String(),

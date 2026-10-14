@@ -544,7 +544,7 @@ func bindRecallFeedbackEventSpace(ctx context.Context, event domain.RecallFeedba
 func uniqueRecallFeedbackSpaces(spaces []domain.MemorySpaceAccess, private bool) ([]domain.MemorySpaceAccess, bool) {
 	unique := make(map[uuid.UUID]domain.MemorySpaceAccess)
 	for _, space := range spaces {
-		isPrivate := space.Kind == domain.MemorySpaceProfilePrivate || space.Kind == domain.MemorySpaceCredentialPrivate
+		isPrivate := space.Kind == domain.MemorySpacePrivate
 		if isPrivate != private || space.ID == uuid.Nil || space.Generation <= 0 {
 			continue
 		}

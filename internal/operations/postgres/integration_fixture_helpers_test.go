@@ -22,6 +22,7 @@ import (
 
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -252,4 +253,19 @@ func createLedgerProfile(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS, te
 		KeyHash: "hash-" + profileID, KeyPrefix: keyPrefix, KeySuffix: keyPrefix[:6], Scopes: []string{"read", "write"},
 	}))
 	return profileID
+}
+
+func privateMembershipForOwner(t testing.TB, db *gorm.DB, rls storagepostgres.RLSHelper, teamID, ownerID uuid.UUID) uuid.UUID {
+	t.Helper()
+	var member uuid.UUID
+	require.NoError(t, rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT membership.id FROM team_memberships membership JOIN ownership_aliases alias
+   ON alias.team_id=membership.team_id AND alias.canonical_identity_id=membership.actor_identity_id
+   WHERE alias.team_id=? AND alias.legacy_owner_id=?`, teamID, ownerID).Row().Scan(&member)
+	}))
+	return member
+}
+func ensurePrivateSpaceForOwner(t testing.TB, db *gorm.DB, rls storagepostgres.RLSHelper, ctx context.Context, teamID, ownerID uuid.UUID) (*domain.MemorySpace, error) {
+	t.Helper()
+	return privacypostgres.NewMemorySpaceRepository(db, rls).EnsurePrivate(ctx, teamID, privateMembershipForOwner(t, db, rls, teamID, ownerID))
 }

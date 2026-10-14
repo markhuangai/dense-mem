@@ -57,6 +57,7 @@ class TerminalResult(TypedDict):
 
 
 class RememberResult(TerminalResult):
+    space_kind: Literal["private", "team_shared"]
     evidence: list[EvidenceResult]
 
 
@@ -76,7 +77,7 @@ class SessionResult(TerminalResult):
 class RecallEvidence(TypedDict):
     evidence_id: str
     context: str
-    space_kind: Literal["team_shared", "profile_private", "credential_private"]
+    space_kind: Literal["private", "team_shared"]
     equivalent_evidence_ids: list[str]
     equivalents_truncated: bool
 

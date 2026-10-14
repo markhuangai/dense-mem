@@ -58,7 +58,7 @@ func TestStoreAppendInfersCredentialSpaceOnlyWithinTeam(t *testing.T) {
 	teamID := uuid.New()
 	credentialID := uuid.New()
 	spaceID := uuid.New()
-	mock.ExpectQuery("SELECT memory_space_id::text\\s+FROM credentials\\s+WHERE id = \\$1 AND team_id = \\$2").
+	mock.ExpectQuery(`SELECT space.id::text FROM credentials credential JOIN team_memberships membership .* JOIN memory_spaces space .* WHERE credential.id=\$1 AND credential.team_id=\$2 AND space.kind='private' AND NOT space.migration_archive`).
 		WithArgs(credentialID, teamID).
 		WillReturnRows(sqlmock.NewRows([]string{"memory_space_id"}).AddRow(spaceID.String()))
 

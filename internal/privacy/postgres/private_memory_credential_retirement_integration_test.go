@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
@@ -25,7 +27,7 @@ func TestPrivateMemoryCredentialRetirementUpgradesActiveErasure(t *testing.T) {
 	repo := NewPrivateMemoryRepository(appDB, rls)
 	require.NoError(t, repo.Prepare(ctx))
 
-	queuedTarget := createOwnedCredential(t, credentialRepo, teamID, ownerID, "active-queued", domain.CredentialBindingCredentialPrivate)
+	queuedTarget := createOwnedCredential(t, credentialRepo, teamID, ownerID, "active-queued")
 	seedPrivateMemoryIngest(t, adminDB, rls, teamID, queuedTarget.ID, queuedTarget.MemorySpaceID, "active queued private content")
 	queuedErase, created, err := repo.RequestCredentialErasure(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: queuedTarget.ID, CredentialID: queuedTarget.ID,
@@ -85,7 +87,7 @@ func TestPrivateMemoryCredentialRetirementUpgradesActiveErasure(t *testing.T) {
 	require.NoError(t, adminDB.Raw(`SELECT lifecycle_state FROM memory_spaces WHERE id = ?`, queuedTarget.MemorySpaceID).Row().Scan(&lifecycle))
 	require.Equal(t, domain.MemorySpaceRetired, lifecycle)
 
-	processingTarget := createOwnedCredential(t, credentialRepo, teamID, ownerID, "active-processing", domain.CredentialBindingCredentialPrivate)
+	processingTarget := createOwnedCredential(t, credentialRepo, teamID, ownerID, "active-processing")
 	seedPrivateMemoryIngest(t, adminDB, rls, teamID, processingTarget.ID, processingTarget.MemorySpaceID, "active processing private content")
 	processingErase, created, err := repo.RequestCredentialErasure(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: processingTarget.ID, CredentialID: processingTarget.ID,
@@ -133,4 +135,182 @@ func TestPrivateMemoryCredentialRetirementUpgradesActiveErasure(t *testing.T) {
 	require.Equal(t, domain.PrivateMemoryErasureCompleted, processingCompleted.Status)
 	require.NoError(t, adminDB.Raw(`SELECT lifecycle_state FROM memory_spaces WHERE id = ?`, processingTarget.MemorySpaceID).Row().Scan(&lifecycle))
 	require.Equal(t, domain.MemorySpaceRetired, lifecycle)
+}
+
+func TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "sso-credential-private-erasure"))
+	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "isolated")
+	profile := createOwnedCredential(t, credentialRepo, teamID, ownerID, "profile")
+	shared := createOwnedCredential(t, credentialRepo, teamID, ownerID, "shared")
+	sharedSpaceID, err := credentialRepo.GetTeamSharedSpaceID(ctx, teamID)
+	require.NoError(t, err)
+
+	targetIngest := seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, target.MemorySpaceID, "isolated content")
+	profileIngest := seedPrivateMemoryIngest(t, adminDB, rls, teamID, profile.ID, profile.MemorySpaceID, "profile content")
+	sharedIngest := seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, sharedSpaceID, "shared content")
+
+	repo := NewPrivateMemoryRepository(appDB, rls)
+	require.NoError(t, repo.Prepare(ctx))
+	_, createdHold, err := repo.PlaceLegalHold(ctx, target.MemorySpaceID, "credential_delete_hold")
+	require.NoError(t, err)
+	require.True(t, createdHold)
+	request := PrivateMemoryErasureRequest{
+		TeamID: teamID, OwnerID: ownerID, CredentialID: target.ID,
+		IdempotencyScopeHash: Hash("sso-delete", ownerID.String(), "isolated-key"),
+		RequestHash:          Hash("delete", target.ID.String()),
+		ReasonCode:           "credential_deleted",
+	}
+	operation, created, err := repo.DisableSSOCredential(ctx, request)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.Equal(t, domain.PrivateMemoryErasureQueued, operation.Status)
+	var disabledStatus string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT status FROM credentials WHERE id = ?`, target.ID).Row().Scan(&disabledStatus)
+	}))
+	require.Equal(t, "disabled", disabledStatus)
+	claimWhileHeld, err := repo.ClaimNext(ctx, "sso-delete-held-worker", time.Minute)
+	require.NoError(t, err)
+	require.Nil(t, claimWhileHeld)
+	_, releasedHold, err := repo.ReleaseLegalHold(ctx, target.MemorySpaceID)
+	require.NoError(t, err)
+	require.True(t, releasedHold)
+
+	lockAcquired := make(chan error, 1)
+	releaseLock := make(chan struct{})
+	lockDone := make(chan error, 1)
+	go func() {
+		lockErr := rls.WithSystemTx(context.Background(), appDB, func(tx *gorm.DB) error {
+			var lockedID uuid.UUID
+			if err := tx.Raw(`
+				SELECT id
+				FROM private_memory_erasure_operations
+				WHERE id = ?
+				FOR UPDATE
+			`, operation.ID).Row().Scan(&lockedID); err != nil {
+				return err
+			}
+			lockAcquired <- nil
+			<-releaseLock
+			return nil
+		})
+		if lockErr != nil {
+			select {
+			case lockAcquired <- lockErr:
+			default:
+			}
+		}
+		lockDone <- lockErr
+	}()
+	require.NoError(t, <-lockAcquired)
+	lockReleased := false
+	defer func() {
+		if !lockReleased {
+			close(releaseLock)
+			<-lockDone
+		}
+	}()
+
+	replayCtx, cancelReplay := context.WithTimeout(ctx, 2*time.Second)
+	defer cancelReplay()
+	replay, created, err := repo.DisableSSOCredential(replayCtx, request)
+	require.NoError(t, err)
+	require.False(t, created)
+	require.Equal(t, operation.ID, replay.ID)
+	close(releaseLock)
+	lockReleased = true
+	require.NoError(t, <-lockDone)
+	claim, err := repo.ClaimNext(ctx, "sso-delete-worker", time.Minute)
+	require.NoError(t, err)
+	completed, err := repo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
+	require.NoError(t, err)
+	require.Equal(t, domain.PrivateMemoryErasureCompleted, completed.Status)
+	var membershipStatus string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status
+			FROM team_memberships
+			WHERE actor_identity_id = ? AND team_id = ?
+		`, target.ID, teamID).Row().Scan(&membershipStatus)
+	}))
+	require.Equal(t, "revoked", membershipStatus)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		for _, fixture := range []struct {
+			id     uuid.UUID
+			exists bool
+		}{
+			{targetIngest, false},
+			{profileIngest, true},
+			{sharedIngest, true},
+		} {
+			var exists bool
+			if err := tx.Raw(`SELECT EXISTS (SELECT 1 FROM knowledge_ingests WHERE ingest_id = ?)`, fixture.id).Row().Scan(&exists); err != nil {
+				return err
+			}
+			require.Equal(t, fixture.exists, exists)
+		}
+		var lifecycle string
+		if err := tx.Raw(`SELECT lifecycle_state FROM memory_spaces WHERE id = ?`, target.MemorySpaceID).Row().Scan(&lifecycle); err != nil {
+			return err
+		}
+		require.Equal(t, "retired", lifecycle)
+		var profileLifecycle string
+		if err := tx.Raw(`SELECT lifecycle_state FROM memory_spaces WHERE id = ?`, profile.MemorySpaceID).Row().Scan(&profileLifecycle); err != nil {
+			return err
+		}
+		require.Equal(t, "active", profileLifecycle)
+		var activeCredentials int
+		if err := tx.Raw(`SELECT count(*) FROM credentials WHERE id = ANY(?) AND status='active'`, pq.Array([]uuid.UUID{profile.ID, shared.ID})).Row().Scan(&activeCredentials); err != nil {
+			return err
+		}
+		require.Equal(t, 2, activeCredentials)
+
+		if err := tx.Raw(`
+			SELECT status
+			FROM team_memberships
+			WHERE actor_identity_id = ? AND team_id = ?
+		`, target.ID, teamID).Row().Scan(&membershipStatus); err != nil {
+			return err
+		}
+		require.Equal(t, "revoked", membershipStatus)
+		return nil
+	}))
+
+	for _, credentialID := range []uuid.UUID{profile.ID, shared.ID} {
+		deleteRequest := PrivateMemoryErasureRequest{
+			TeamID: teamID, OwnerID: ownerID, CredentialID: credentialID,
+			IdempotencyScopeHash: Hash("sso-delete", ownerID.String(), credentialID.String()),
+			RequestHash:          Hash("delete", credentialID.String()),
+			ReasonCode:           "credential_deleted",
+		}
+		deletedOperation, wasCreated, err := repo.DisableSSOCredential(ctx, deleteRequest)
+		require.NoError(t, err)
+		require.True(t, wasCreated)
+		require.Equal(t, domain.PrivateMemoryErasureQueued, deletedOperation.Status)
+		require.NotNil(t, deletedOperation.SpaceID)
+		claim, err := repo.ClaimNext(ctx, "sso-delete-other-worker", time.Minute)
+		require.NoError(t, err)
+		require.NotNil(t, claim)
+		require.Equal(t, deletedOperation.ID, claim.ID)
+		completed, err := repo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
+		require.NoError(t, err)
+		require.Equal(t, domain.PrivateMemoryErasureCompleted, completed.Status)
+	}
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var privateExists, sharedExists bool
+		if err := tx.Raw(`SELECT EXISTS(SELECT 1 FROM knowledge_ingests WHERE ingest_id=?), EXISTS(SELECT 1 FROM knowledge_ingests WHERE ingest_id=?)`, profileIngest, sharedIngest).Row().Scan(&privateExists, &sharedExists); err != nil {
+			return err
+		}
+		require.False(t, privateExists)
+		require.True(t, sharedExists)
+		return nil
+	}))
 }

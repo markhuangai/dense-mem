@@ -4,7 +4,6 @@ package postgres
 
 import (
 	"context"
-	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	"testing"
 	"time"
 
@@ -618,7 +617,7 @@ func TestSearchReconciliationCanonicalSourceSetAndSpaceFence(t *testing.T) {
 	require.Len(t, loaded, 1)
 	selected[0] = loaded[0]
 
-	privateSpace, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureCredentialPrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
+	privateSpace, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
 	require.NoError(t, err)
 	var privateGeneration int64
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
@@ -848,7 +847,7 @@ func TestSearchReconciliationExcludesSealedSpaceEvidenceWithoutDocument(t *testi
 	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-sealed-space", 2, "exact", "")
 	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
 	repo := newSearchFixtureStore(appDB, rls)
-	space, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureCredentialPrivate(ctx, uuid.MustParse(teamID), uuid.New())
+	space, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
 	require.NoError(t, err)
 	var generation int64
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {

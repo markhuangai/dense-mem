@@ -20,7 +20,7 @@ func TestBuildActiveWiresExecutableRetractEvidence(t *testing.T) {
 	if !ok {
 		t.Fatal("BuildActive did not register retract_evidence")
 	}
-	out, err := retract.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
+	out, err := retract.Invoke(contractInvokeContext("read", "write"), "ignored-profile", map[string]any{
 		"evidence_ids":    []any{"evidence-canonical"},
 		"reason":          "entered in error",
 		"idempotency_key": "retract-1",
@@ -54,7 +54,7 @@ func TestBuildActiveRetractEvidenceReportsDependencyValidationAndServiceErrors(t
 	if !ok {
 		t.Fatal("BuildActive did not register retract_evidence")
 	}
-	_, err = unavailable.Invoke(contractInvokeContext("write"), "ignored-profile", input)
+	_, err = unavailable.Invoke(contractInvokeContext("read", "write"), "ignored-profile", input)
 	if !errors.Is(err, ErrToolUnavailable) {
 		t.Fatalf("unavailable retract error = %v", err)
 	}
@@ -67,7 +67,7 @@ func TestBuildActiveRetractEvidenceReportsDependencyValidationAndServiceErrors(t
 	if !ok {
 		t.Fatal("BuildActive did not register retract_evidence")
 	}
-	_, err = retract.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
+	_, err = retract.Invoke(contractInvokeContext("read", "write"), "ignored-profile", map[string]any{
 		"evidence_ids":    []any{"evidence-canonical"},
 		"idempotency_key": "retract-errors-1",
 	})
@@ -84,7 +84,7 @@ func TestBuildActiveRetractEvidenceReportsDependencyValidationAndServiceErrors(t
 	if !ok {
 		t.Fatal("BuildActive did not register retract_evidence")
 	}
-	_, err = retry.Invoke(contractInvokeContext("write"), "ignored-profile", input)
+	_, err = retry.Invoke(contractInvokeContext("read", "write"), "ignored-profile", input)
 	if !errors.Is(err, serviceErr) {
 		t.Fatalf("service retract error = %v", err)
 	}
@@ -103,7 +103,7 @@ func TestBuildActiveWiresExecutableCorrectRelationship(t *testing.T) {
 	if correct.Invoke == nil {
 		t.Fatal("BuildActive correct_relationship invoker is nil")
 	}
-	out, err := correct.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
+	out, err := correct.Invoke(contractInvokeContext("read", "write"), "ignored-profile", map[string]any{
 		"action":           "submit",
 		"relationship_id":  "00000000-0000-0000-0000-000000000621",
 		"expected_version": 2,
@@ -135,7 +135,7 @@ func TestBuildActiveCorrectRelationshipRejectsTenantOverride(t *testing.T) {
 	if !ok {
 		t.Fatal("BuildActive did not register correct_relationship")
 	}
-	_, err = correct.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
+	_, err = correct.Invoke(contractInvokeContext("read", "write"), "ignored-profile", map[string]any{
 		"team_id":          "attacker-team",
 		"action":           "submit",
 		"relationship_id":  "00000000-0000-0000-0000-000000000621",

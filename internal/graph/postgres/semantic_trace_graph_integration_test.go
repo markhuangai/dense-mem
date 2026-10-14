@@ -33,8 +33,7 @@ func TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams(t *testin
 	sharedC, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).GetTeamShared(ctx, uuid.MustParse(teamC))
 	require.NoError(t, err)
 
-	spaceA := uuid.New()
-	spaceB := uuid.New()
+	var spaceA, spaceB uuid.UUID
 	rootRelationshipID := uuid.New()
 	foreignRelationshipID := uuid.New()
 	rootObservationID := uuid.New()
@@ -51,13 +50,13 @@ func TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams(t *testin
 	sharedTargetObjectID := uuid.New()
 
 	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		if err := tx.Exec(`
-			INSERT INTO memory_spaces (id, team_id, kind, owner_profile_id)
-			VALUES
-			  (?::uuid, ?::uuid, 'profile_private', ?::uuid),
-			  (?::uuid, ?::uuid, 'profile_private', ?::uuid)
-		`, spaceA, teamA, ownerA, spaceB, teamA, ownerB).Error; err != nil {
-			return err
+		for _, entry := range []struct {
+			owner string
+			space *uuid.UUID
+		}{{ownerA, &spaceA}, {ownerB, &spaceB}} {
+			if err := tx.Raw(`SELECT space.id FROM memory_spaces space JOIN team_memberships membership ON membership.id=space.owner_membership_id JOIN ownership_aliases alias ON alias.team_id=membership.team_id AND alias.canonical_identity_id=membership.actor_identity_id WHERE space.team_id=? AND alias.legacy_owner_id=? AND space.kind='private' AND space.lifecycle_state='active'`, teamA, entry.owner).Row().Scan(entry.space); err != nil {
+				return err
+			}
 		}
 		if err := tx.Exec(`
 			INSERT INTO team_predicate_definitions (
@@ -180,7 +179,7 @@ func TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams(t *testin
 	actorContext := func(teamID, ownerID string, sharedID, privateID uuid.UUID) context.Context {
 		spaces := []domain.MemorySpaceAccess{{ID: sharedID, Kind: domain.MemorySpaceTeamShared}}
 		if privateID != uuid.Nil {
-			spaces = append(spaces, domain.MemorySpaceAccess{ID: privateID, Kind: domain.MemorySpaceProfilePrivate})
+			spaces = append(spaces, domain.MemorySpaceAccess{ID: privateID, Kind: domain.MemorySpacePrivate})
 		}
 		return requestctx.WithActor(ctx, requestctx.Actor{
 			TeamID:        uuid.MustParse(teamID),

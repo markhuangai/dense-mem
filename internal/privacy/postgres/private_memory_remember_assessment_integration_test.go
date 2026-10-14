@@ -24,7 +24,7 @@ func TestPrivateMemoryErasureCleansSynchronousAssessmentAfterAttemptOrder(t *tes
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-erasure-synchronous-assessment"))
 	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "synchronous-assessment", domain.CredentialBindingCredentialPrivate)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "synchronous-assessment")
 	ingestID := seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, target.MemorySpaceID, "private synchronous assessment")
 
 	ledger := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})

@@ -107,18 +107,15 @@ func (h *CredentialHandler) Create(c echo.Context) error {
 		}
 		req.ExpiresAt = &t
 	}
-	if body.MemoryBinding != nil {
-		req.MemoryBinding = *body.MemoryBinding
+	if err := dto.RejectMemoryBinding(body.MemoryBinding); err != nil {
+		return err
 	}
 	if principal != nil &&
 		principal.AuthMethod == "sso_session" &&
 		principal.Role == accessservice.CredentialRoleManager &&
 		principal.IdentityID != uuid.Nil {
-		binding := strings.TrimSpace(req.MemoryBinding)
-		if binding == "" || binding == accessservice.CredentialBindingProfilePrivate {
-			identityID := principal.IdentityID
-			req.OwnerIdentityID = &identityID
-		}
+		identityID := principal.IdentityID
+		req.OwnerIdentityID = &identityID
 	}
 
 	// Get actor metadata from principal
@@ -319,8 +316,8 @@ func (h *CredentialHandler) Rotate(c echo.Context) error {
 	if body.Scopes != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "scopes cannot be changed by rotating a credential")
 	}
-	if body.MemoryBinding != nil {
-		return httperr.New(httperr.VALIDATION_ERROR, "memory_binding cannot be changed by rotating a credential")
+	if err := dto.RejectMemoryBinding(body.MemoryBinding); err != nil {
+		return err
 	}
 
 	req := accessservice.CreateCredentialRequest{
@@ -449,23 +446,18 @@ func toCredentialResponse(k *domain.Credential) dto.CredentialResponse {
 		expiresAt = &formatted
 	}
 
-	binding := k.MemoryBinding
-	if !binding.Valid() {
-		binding = domain.CredentialBindingSharedOnly
-	}
 	return dto.CredentialResponse{
-		ID:              k.ID,
-		TeamID:          k.GetTeamID(),
-		Name:            k.Name,
-		KeySuffix:       k.KeySuffix,
-		Scopes:          append([]string{}, k.Scopes...),
-		Role:            k.GetRole(),
-		RateLimit:       k.RateLimit,
-		LastUsedAt:      lastUsedAt,
-		ExpiresAt:       expiresAt,
-		CreatedAt:       k.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		MemoryBinding:   string(binding),
-		MemorySpaceKind: string(binding.SpaceKind()),
+		ID:           k.ID,
+		TeamID:       k.GetTeamID(),
+		Name:         k.Name,
+		KeySuffix:    k.KeySuffix,
+		Scopes:       append([]string{}, k.Scopes...),
+		Role:         k.GetRole(),
+		RateLimit:    k.RateLimit,
+		LastUsedAt:   lastUsedAt,
+		ExpiresAt:    expiresAt,
+		CreatedAt:    k.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		MemoryAccess: k.MemoryCapabilities(),
 	}
 }
 
@@ -484,23 +476,18 @@ func toCredentialListItem(k *domain.Credential) dto.CredentialListItem {
 		expiresAt = &formatted
 	}
 
-	binding := k.MemoryBinding
-	if !binding.Valid() {
-		binding = domain.CredentialBindingSharedOnly
-	}
 	return dto.CredentialListItem{
-		ID:              k.ID,
-		TeamID:          k.GetTeamID(),
-		Name:            k.Name,
-		KeySuffix:       k.KeySuffix,
-		Scopes:          append([]string{}, k.Scopes...),
-		Role:            k.GetRole(),
-		RateLimit:       k.RateLimit,
-		LastUsedAt:      lastUsedAt,
-		ExpiresAt:       expiresAt,
-		CreatedAt:       k.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		MemoryBinding:   string(binding),
-		MemorySpaceKind: string(binding.SpaceKind()),
+		ID:           k.ID,
+		TeamID:       k.GetTeamID(),
+		Name:         k.Name,
+		KeySuffix:    k.KeySuffix,
+		Scopes:       append([]string{}, k.Scopes...),
+		Role:         k.GetRole(),
+		RateLimit:    k.RateLimit,
+		LastUsedAt:   lastUsedAt,
+		ExpiresAt:    expiresAt,
+		CreatedAt:    k.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		MemoryAccess: k.MemoryCapabilities(),
 	}
 }
 

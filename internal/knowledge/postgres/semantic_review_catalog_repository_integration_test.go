@@ -4,7 +4,6 @@ package postgres
 
 import (
 	"context"
-	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	"testing"
 
 	"github.com/google/uuid"
@@ -25,7 +24,7 @@ func TestSemanticCatalogsOmitSealedGenerationEntities(t *testing.T) {
 	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
 	catalog := NewStore(appDB, rls, ConflictRuntimeConfig{})
 	activeEntity := createSemanticEntity(t, ctx, repo, teamID, ownerID, "project", "Active Catalog Entity")
-	privateSpace, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureCredentialPrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
+	privateSpace, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
 	require.NoError(t, err)
 	var privateGeneration int64
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
@@ -55,7 +54,7 @@ func TestSemanticCatalogsOmitSealedGenerationEntities(t *testing.T) {
 			WHERE id = ?::uuid
 		`, privateSpace.ID).Error
 	}))
-	privateCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{{ID: privateSpace.ID, Kind: domain.MemorySpaceCredentialPrivate}})
+	privateCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{{ID: privateSpace.ID, Kind: domain.MemorySpacePrivate}})
 	entityCatalog, err := catalog.ListSubmissionAssessmentEntityCatalog(privateCtx, SubmissionAssessmentEntityCatalogInput{
 		TeamID: teamID, OwnerProfileID: ownerID, SpaceID: privateSpace.ID.String(),
 		Entities: []SubmissionAssessmentEntityCatalogTarget{{

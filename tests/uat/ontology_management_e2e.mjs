@@ -16,7 +16,7 @@ try {
   await control("/ontology/pause", { operation_key: randomUUID() });
   await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
   const shared = await credential(teamID, "manager", ["read", "write"]);
-  assert.equal(shared.credential.memory_binding, "shared_only");
+  assert.equal(shared.credential.memory_access.team_shared.write, true);
   manager = shared.api_key;
   const b = await credential(teamID, "manager", ["read", "write"]);
   const c = await credential(teamID, "member", ["read", "write"]);
@@ -25,11 +25,11 @@ try {
   assert.match(teamID, /^[0-9a-f-]{36}$/);
   // Manager creation grants write, so seed restricted scopes only in this disposable fixture.
   executeFixtureSQL(`BEGIN; SET LOCAL app.tx_mode='system'; UPDATE credentials SET scopes=ARRAY['read']::text[] WHERE id='${readonly.credential.id}'::uuid AND team_id='${teamID}'::uuid; COMMIT;`);
-  const privateKey = await credential(teamID, "manager", ["read", "write"], "credential_private");
+  const privateKey = await credential(teamID, "manager", ["read", "write"]);
   const foreignTeam = await control("/teams", { name: `ontology-management-foreign-${randomUUID()}` });
   const foreign = await credential(foreignTeam.id, "manager", ["read", "write"]);
   const ids = [await remember("Atlas stores PostgreSQL data.", manager), await remember("Atlas uses PostgreSQL for data storage.", b.api_key)];
-  const privateID = await remember("Atlas stores PostgreSQL data.", privateKey.api_key);
+  const privateID = await remember("Atlas stores PostgreSQL data.", privateKey.api_key, "private");
   const foreignID = await remember("Atlas stores PostgreSQL data.", foreign.api_key);
   const canonical = snapshot();
   await expectStatus("/status", undefined, c.api_key, 403);
@@ -96,13 +96,13 @@ async function data(response) { assert(response.ok, `request returned ${response
 async function control(path, body, method) { return data(await request(`${controlURL}/control/api`, path, controlToken, body, method)); }
 async function ui(path, body, key = manager, method) { return data(await request(`${userURL}/ui/api/ontology`, path, key, body, method)); }
 async function expectStatus(path, body, key, status) { assert.equal((await request(`${userURL}/ui/api/ontology`, path, key, body)).status, status); }
-async function credential(team, role, scopes, memory_binding = "shared_only") { return control(`/teams/${team}/credentials`, { name: `manager-e2e-${randomUUID()}`, role, scopes, memory_binding, rate_limit: 300 }); }
+async function credential(team, role, scopes) { return control(`/teams/${team}/credentials`, { name: `manager-e2e-${randomUUID()}`, role, scopes, rate_limit: 300 }); }
 async function mcp(name, args, key = manager) {
   const response = await request(userURL, "/mcp", key, { jsonrpc: "2.0", id: randomUUID(), method: "tools/call", params: { name, arguments: args } });
   assert.equal(response.status, 200); const rpc = await response.json(); assert(!rpc.error && !rpc.result?.isError, `${name}: ${JSON.stringify(rpc.error ?? rpc.result)}`); return JSON.parse(rpc.result.content[0].text);
 }
-async function remember(content, key) {
-  const result = await mcp("remember", { idempotency_key: randomUUID(), evidence: [{ content, source_type: "document", source: "ontology-manager-e2e", source_group: "ontology-manager-e2e", force_insert: true }], relationships: [{ ref: "storage", subject: { name: "Atlas", entity_kind: "project" }, predicate: { proposed_key: "uses" }, object: { entity: { name: "PostgreSQL", entity_kind: "product" } }, polarity: "+", evidence_indices: [0] }] }, key);
+async function remember(content, key, targetSpace = "team_shared") {
+  const result = await mcp("remember", { target_space: targetSpace, idempotency_key: randomUUID(), evidence: [{ content, source_type: "document", source: "ontology-manager-e2e", source_group: "ontology-manager-e2e", force_insert: true }], relationships: [{ ref: "storage", subject: { name: "Atlas", entity_kind: "project" }, predicate: { proposed_key: "uses" }, object: { entity: { name: "PostgreSQL", entity_kind: "product" } }, polarity: "+", evidence_indices: [0] }] }, key);
   assert.equal(result.processing_state, "completed"); const id = result.evidence.find((item) => item.disposition === "stored")?.evidence_id; assert(id); return id;
 }
 async function recall() {

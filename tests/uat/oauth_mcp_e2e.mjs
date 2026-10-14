@@ -151,9 +151,18 @@ const entraTeamA = await issueToken("entra", {
   claims: { dense_mem_team_id: seedTeamID, log_sentinel: logSentinel },
 });
 const entraTeamATools = await mcpTools(entraTeamA, "/mcp");
-assertMCPTools(entraTeamATools, { present: ["recall_memory"], absent: ["remember"] });
+assertMCPTools(entraTeamATools, { present: ["recall_memory", "remember", "correct_relationship", "retract_evidence"] });
 await assertMCPToolSuccess(entraTeamA, "/mcp", "recall_memory", { query: `${runID} OAuth profile private`, limit: 1 });
-await assertMCPToolScopeRejected(entraTeamA, "/mcp", "remember", {});
+const privateOAuthRequest = {
+  target_space: "private", idempotency_key: `${runID}:private-oauth`,
+  evidence: [{ content: "Dense-Mem stores durable memory in PostgreSQL.", source_type: "manual" }],
+  relationships: [{ ref: "durable-store", subject: { name: "Dense-Mem", entity_kind: "project" }, predicate: { proposed_key: "stores_memory_in" }, object: { value: { type: "string", value: "PostgreSQL" } }, polarity: "+", evidence_indices: [0] }],
+};
+const privateOAuth = await mcpRPC(entraTeamA, "/mcp", "tools/call", { name: "remember", arguments: privateOAuthRequest });
+assert(privateOAuth.payload.result?.isError !== true && privateOAuth.payload.result?.structuredContent?.processing_state === "completed", "team-read-only OAuth private Remember failed");
+assert(privateOAuth.payload.result.structuredContent.space_kind === "private", "OAuth private memory was misrouted");
+const sharedDenied = await mcpRPC(entraTeamA, "/mcp", "tools/call", { name: "remember", arguments: { ...privateOAuthRequest, target_space: "team_shared", idempotency_key: `${runID}:denied-shared` } });
+assert(sharedDenied.payload.result?.isError === true && sharedDenied.payload.result?.structuredContent?.reason_code === "memory_write_denied", "team-read-only OAuth shared write was not denied");
 
 const entraTeamB = await issueToken("entra", { claims: { dense_mem_team_id: secondTeam.id } });
 const entraTeamBTools = await mcpTools(entraTeamB, `/teams/${secondTeam.id}/mcp`);
@@ -247,7 +256,7 @@ writeFileSync(resultFile, JSON.stringify({
   provider_profiles: ["entra-rs256-discovery", "pingone-ps256-static", "generic-es256-discovery-trailing-slash"],
   metadata_and_challenges: true,
   team_selection_and_scope_intersection: true,
-  a_b_c_profile_private_authorization: true,
+  a_b_c_membership_private_authorization: true,
   mcp_tool_invocation_for_both_token_families: true,
   key_rotation_and_outage: true,
   api_key_compatibility: true,
@@ -317,9 +326,9 @@ function seedOAuthPrincipals(identityFixtures, membershipFixtures, initialMember
   for (const identity of identityFixtures) {
     statements.push(`
       INSERT INTO actor_identities (id, kind, team_id, provider, subject, display_name, active)
-      VALUES (${sqlLiteral(identity.id)}::uuid, 'human', NULL, ${sqlLiteral(identity.providerID)}, ${sqlLiteral(identity.subject)}, ${sqlLiteral(`E2E ${identity.subject}`)}, ${identity.active});
+      VALUES (${sqlLiteral(identity.id)}::uuid, 'human', NULL, ${sqlLiteral(identity.providerID)}, ${sqlLiteral(identity.subject)}, ${sqlLiteral(`E2E ${identity.subject}`)}, true);
       INSERT INTO sso_identities (id, provider_id, subject, external_id, email, display_name, active, last_login_at, last_entitlement_check_at)
-      VALUES (${sqlLiteral(identity.id)}::uuid, ${sqlLiteral(identity.providerID)}::uuid, ${sqlLiteral(identity.subject)}, ${sqlLiteral(identity.subject)}, ${sqlLiteral(`${identity.subject}@example.test`)}, ${sqlLiteral(`E2E ${identity.subject}`)}, ${identity.active}, now(), now());
+      VALUES (${sqlLiteral(identity.id)}::uuid, ${sqlLiteral(identity.providerID)}::uuid, ${sqlLiteral(identity.subject)}, ${sqlLiteral(identity.subject)}, ${sqlLiteral(`${identity.subject}@example.test`)}, ${sqlLiteral(`E2E ${identity.subject}`)}, true, now(), now());
     `);
   }
   for (const membership of membershipFixtures) {
@@ -340,6 +349,12 @@ function seedOAuthPrincipals(identityFixtures, membershipFixtures, initialMember
       INSERT INTO membership_grants (membership_id, grant_name, source)
       SELECT ${sqlLiteral(membership.id)}::uuid, grant_name, 'explicit'
       FROM unnest(ARRAY[${membership.grants.map(sqlLiteral).join(",")}]::text[]) AS grant_name;
+    `);
+  }
+  for (const identity of identityFixtures.filter((item) => !item.active)) {
+    statements.push(`
+      UPDATE actor_identities SET active=false WHERE id=${sqlLiteral(identity.id)}::uuid;
+      UPDATE sso_identities SET active=false WHERE id=${sqlLiteral(identity.id)}::uuid;
     `);
   }
   const entitlementGroups = new Map();
@@ -376,11 +391,10 @@ function seedOAuthPrincipals(identityFixtures, membershipFixtures, initialMember
 
 function assertProfilePrivateSpaces(identityID, allowedTeamIDs, deniedTeamID) {
   const result = postgresCommand(`
-    SELECT team_id::text
-    FROM memory_spaces
-    WHERE kind = 'profile_private'
-      AND owner_profile_id = ${sqlLiteral(identityID)}::uuid
-    ORDER BY team_id;
+    SELECT space.team_id::text
+    FROM memory_spaces space JOIN team_memberships membership ON membership.team_id=space.team_id AND membership.id=space.owner_membership_id
+    WHERE space.kind='private' AND membership.actor_identity_id=${sqlLiteral(identityID)}::uuid
+    ORDER BY space.team_id;
   `);
   if (result.status !== 0) throw new Error("could not verify OAuth profile-private memory spaces");
   const actual = new Set(result.stdout.trim().split(/\s+/).filter(Boolean));
@@ -469,11 +483,6 @@ async function mcpRequest(token, path, extraHeaders = {}) {
 async function assertMCPToolSuccess(token, path, name, args) {
   const response = await mcpRPC(token, path, "tools/call", { name, arguments: args });
   assert(response.status === 200 && response.payload.result !== undefined && !response.payload.error, `${name} was not invokable through ${path}`);
-}
-
-async function assertMCPToolScopeRejected(token, path, name, args) {
-  const response = await mcpRPC(token, path, "tools/call", { name, arguments: args });
-  assert(response.status === 200 && response.payload.error?.code === -32000 && response.payload.error?.message === "insufficient scope for tool" && response.payload.result === undefined, `hidden tool ${name} bypassed scope enforcement through ${path}`);
 }
 
 async function mcpRPC(token, path, method, params, extraHeaders = {}) {

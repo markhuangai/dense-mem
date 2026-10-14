@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,6 +22,7 @@ import (
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	"github.com/pressly/goose/v3"
 	goosedb "github.com/pressly/goose/v3/database"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -30,15 +34,16 @@ import (
 )
 
 type ontologyFixture struct {
-	admin      *gorm.DB
-	app        *gorm.DB
-	rls        *storage.RLS
-	store      *Store
-	knowledge  *knowledge.Store
-	team       string
-	owners     []string
-	space      string
-	generation int64
+	admin       *gorm.DB
+	app         *gorm.DB
+	rls         *storage.RLS
+	store       *Store
+	knowledge   *knowledge.Store
+	team        string
+	credentials []*domain.Credential
+	owners      []string
+	space       string
+	generation  int64
 }
 
 func newOntologyFixture(t *testing.T) *ontologyFixture {
@@ -115,6 +120,7 @@ func newOntologyFixtureWithMaintenance(t *testing.T, maintenance bool) *ontology
 		credential := &domain.Credential{ID: uuid.New(), TeamID: team.ID, Name: fmt.Sprintf("owner-%d", index), KeyHash: "synthetic-" + uuid.NewString(), KeyPrefix: strings.ReplaceAll(uuid.NewString(), "-", "")[:24], KeySuffix: "test", Scopes: []string{"read", "write"}}
 		require.NoError(t, access.NewCredentialRepository(admin, rls, nil).CreateCredential(context.Background(), credential))
 		fixture.owners = append(fixture.owners, credential.ID.String())
+		fixture.credentials = append(fixture.credentials, credential)
 	}
 	require.NoError(t, rls.WithSystemTx(context.Background(), admin, func(tx *gorm.DB) error {
 		return tx.Raw(`SELECT id::text,generation FROM memory_spaces WHERE team_id=?::uuid AND kind='team_shared'`, fixture.team).Row().Scan(&fixture.space, &fixture.generation)
@@ -122,35 +128,61 @@ func newOntologyFixtureWithMaintenance(t *testing.T, maintenance bool) *ontology
 	return fixture
 }
 
+// Exercise ontology rollback guards without crossing unrelated irreversible migration boundaries.
+func ontologyMigrationProvider(t *testing.T, db *gorm.DB) *goose.Provider {
+	t.Helper()
+	paths, err := filepath.Glob("../../../migrations/postgres/v2_6/*_ontology_*.sql")
+	require.NoError(t, err)
+	require.NotEmpty(t, paths)
+	files := fstest.MapFS{}
+	for _, path := range paths {
+		contents, err := os.ReadFile(path)
+		require.NoError(t, err)
+		files[filepath.Base(path)] = &fstest.MapFile{Data: contents}
+	}
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, files,
+		goose.WithDisableGlobalRegistry(true), goose.WithAllowOutofOrder(true))
+	require.NoError(t, err)
+	return provider
+}
+
 func rollbackOntologySchemaTo(t *testing.T, db *gorm.DB, target int64) error {
 	t.Helper()
 	ctx := context.Background()
-	migrator, err := storage.NewMigrator(db)
-	require.NoError(t, err)
+	provider := ontologyMigrationProvider(t, db)
 	versions, err := goosedb.NewStore(goosedb.DialectPostgres, "goose_db_version")
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
-	for {
-		current, err := versions.GetLatestVersion(ctx, sqlDB)
-		if err != nil {
-			return err
+	applied, err := versions.ListMigrations(ctx, sqlDB)
+	if err != nil {
+		return err
+	}
+	sources := provider.ListSources()
+	slices.Reverse(sources)
+	for _, source := range sources {
+		if source.Version <= target {
+			break
 		}
-		if current == target {
-			return nil
+		if !slices.ContainsFunc(applied, func(version *goosedb.ListMigrationsResult) bool { return version.Version == source.Version }) {
+			continue
 		}
-		if current < target {
-			return fmt.Errorf("ontology fixture migration target %d is unavailable at %d", target, current)
-		}
-		if err := migrator.RunDown(ctx); err != nil {
+		if _, err := provider.ApplyVersion(ctx, source.Version, false); err != nil {
 			return err
 		}
 	}
+	return nil
 }
 
 func (f *ontologyFixture) actor(owner int, role string) context.Context {
-	return requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: uuid.MustParse(f.team), OwnerID: uuid.MustParse(f.owners[owner]), Role: role, Grants: []string{"read", "write"},
-		AllowedSpaces: []domain.MemorySpaceAccess{{ID: uuid.MustParse(f.space), Kind: domain.MemorySpaceTeamShared, Generation: f.generation}}})
+	credential := f.credentials[owner]
+	return requestctx.WithActor(context.Background(), requestctx.Actor{
+		TeamID: credential.TeamID, OwnerID: credential.OwnerID, IdentityID: credential.ActorIdentityID,
+		MembershipID: credential.MembershipID, CredentialID: &credential.ID, AuthMethod: "api_key",
+		Role: role, Grants: credential.Scopes, AllowedSpaces: credential.MemorySpaces(),
+	})
 }
 
 func (f *ontologyFixture) evidence(t *testing.T, owner int, text string) knowledgecontract.EvidenceIngestResult {

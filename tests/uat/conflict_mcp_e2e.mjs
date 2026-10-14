@@ -479,6 +479,7 @@ async function submitRelationshipExpectValidationError(apiKey, input) {
 
 function rememberRequest(input, evidence) {
   return {
+    target_space: "team_shared",
     idempotency_key: `${runID}:${input.label}`,
     evidence: [{
       content: evidence,
@@ -801,7 +802,7 @@ async function createTeam(label) {
 async function createCredential(teamID, name) {
   const response = await controlJSON(`/teams/${teamID}/credentials`, {
     method: "POST",
-    body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300, memory_binding: "shared_only" }),
+    body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300 }),
   });
   const apiKey = String(response.data?.api_key ?? "");
   const profileID = String(response.data?.credential?.id ?? "");

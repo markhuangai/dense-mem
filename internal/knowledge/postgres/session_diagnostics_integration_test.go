@@ -18,7 +18,7 @@ func TestSessionDiagnosticsRetentionHonorsLegalHold(t *testing.T) {
 	defer cleanup()
 	team := createLedgerTeam(t, admin, rls, "session-diagnostic-hold")
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
-	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpaceProfilePrivate)
+	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	store := NewStore(app, rls, ConflictRuntimeConfig{})
 	staged, err := store.StageSession(ctx, intake)
 	require.NoError(t, err)

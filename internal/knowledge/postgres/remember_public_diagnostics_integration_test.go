@@ -12,7 +12,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/markhuangai/dense-mem/internal/remember/service/processor"
 	"github.com/stretchr/testify/require"
@@ -76,7 +75,7 @@ func TestRememberPublicDiagnosticsPersistReplayAndIsolateOwners(t *testing.T) {
 	otherOwnerID := createLedgerProfile(t, adminDB, rls, teamID, "owner-b")
 	otherTeamID := createLedgerTeam(t, adminDB, rls, "public-diagnostics-other-team")
 	foreignOwnerID := createLedgerProfile(t, adminDB, rls, otherTeamID, "owner-c")
-	space, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureProfilePrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
+	space, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
 	require.NoError(t, err)
 	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
 	p := processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: repo, Logger: observability.New(slog.LevelError)})

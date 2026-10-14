@@ -75,7 +75,7 @@ func TestOrganizationServiceWithPostgres(t *testing.T) {
 	require.NoError(t, rls.WithSystemTx(context.Background(), admin, func(tx *gorm.DB) error {
 		return tx.Raw(`SELECT id::text,generation FROM memory_spaces WHERE team_id=?::uuid AND kind='team_shared'`, team.ID).Row().Scan(&spaceID, &generation)
 	}))
-	actor := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: team.ID, OwnerID: credential.ID, Role: "member", Grants: []string{"read", "write"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: uuid.MustParse(spaceID), Kind: domain.MemorySpaceTeamShared, Generation: generation}}})
+	actor := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: team.ID, IdentityID: credential.ActorIdentityID, MembershipID: credential.MembershipID, CredentialID: &credential.ID, OwnerID: credential.OwnerID, Role: "member", Grants: []string{"read", "write"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: uuid.MustParse(spaceID), Kind: domain.MemorySpaceTeamShared, Generation: generation}}})
 	canonical := knowledge.NewStore(app, rls, knowledgecontract.ConflictRuntimeConfig{})
 	source := func(text string) contract.SourceHandle {
 		result, err := canonical.CreateIngestForTest(context.Background(), knowledgecontract.CreateIngestInput{TeamID: team.ID.String(), OwnerProfileID: credential.ID.String(), Evidence: []knowledgecontract.EvidenceInput{{FragmentID: uuid.NewString(), Content: text, ForceInsert: true}}})

@@ -46,7 +46,7 @@ async function tool(name, args, { allowError = false, key = apiKey, signal } = {
   return body.result.structuredContent;
 }
 function rememberArguments(label, fault = "") {
-  return { idempotency_key: `exports-${label}`, evidence: [{ content: `Dense-Mem stores durable memory in PostgreSQL. ${canary} ${fault}`, source_type: "manual", source_key: `exports:${label}`, source_revision: "1" }], relationships: [{ ref: "durable-store", subject: { name: "Dense-Mem", entity_kind: "project" }, predicate: { proposed_key: "stores_memory_in" }, object: { value: { type: "string", value: "PostgreSQL" } }, polarity: "+", evidence_indices: [0] }] };
+  return { target_space: "team_shared", idempotency_key: `exports-${label}`, evidence: [{ content: `Dense-Mem stores durable memory in PostgreSQL. ${canary} ${fault}`, source_type: "manual", source_key: `exports:${label}`, source_revision: "1" }], relationships: [{ ref: "durable-store", subject: { name: "Dense-Mem", entity_kind: "project" }, predicate: { proposed_key: "stores_memory_in" }, object: { value: { type: "string", value: "PostgreSQL" } }, polarity: "+", evidence_indices: [0] }] };
 }
 
 for (const endpoint of ["/audit/export", "/diagnostics/bundle"]) {

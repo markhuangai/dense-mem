@@ -130,6 +130,7 @@ func (e *RememberProcessError) Unwrap() error {
 }
 
 type RememberProcessRequest struct {
+	SpaceKind                domain.MemorySpaceKind
 	InvocationStartedAt      time.Time
 	TeamID                   string
 	OwnerProfileID           string
@@ -156,6 +157,7 @@ type RememberProcessRequest struct {
 }
 
 type TerminalRememberResult struct {
+	SpaceKind           domain.MemorySpaceKind         `json:"space_kind,omitempty"`
 	ContractVersion     string                         `json:"contract_version"`
 	SubmissionID        string                         `json:"submission_id"`
 	SubmissionKind      string                         `json:"submission_kind"`

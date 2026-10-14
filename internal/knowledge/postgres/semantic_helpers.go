@@ -826,22 +826,7 @@ func relationshipTransitionIdempotencyKey(verificationEventID string, supportDec
 }
 
 func semanticGroupKey(input ApplyRelationshipDecisionInput) string {
-	objectID := input.ObjectEntityID
-	if objectID == "" {
-		objectID = "value:" + input.ObjectValueID
-	} else {
-		objectID = "entity:" + objectID
-	}
-	parts := []string{
-		input.SubjectEntityID,
-		input.PredicateKey,
-		objectID,
-		input.Polarity,
-		input.ScopeKey,
-		timeKey(input.ValidFrom),
-		"",
-	}
-	return "sg:" + strings.TrimPrefix(sha256Hex(strings.Join(parts, "\x00")), "sha256:")
+	return knowledgecontract.RelationshipSemanticGroupKey(input.SubjectEntityID, input.PredicateKey, input.ObjectEntityID, input.ObjectValueID, input.Polarity, input.ScopeKey, input.ValidFrom)
 }
 
 func nullableTimesEqual(left *time.Time, right *time.Time) bool {

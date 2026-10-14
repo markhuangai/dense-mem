@@ -26,9 +26,7 @@ func TestLedgerEvidenceLifecyclePersistsTargetSpaceAndRejectsMixedSpaces(t *test
 	var privateSpaceID string
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
-			INSERT INTO memory_spaces (team_id, kind, owner_profile_id)
-			VALUES (?, 'profile_private', ?)
-			RETURNING id::text
+			SELECT space.id::text FROM memory_spaces space JOIN team_memberships membership ON membership.id=space.owner_membership_id JOIN ownership_aliases alias ON alias.team_id=membership.team_id AND alias.canonical_identity_id=membership.actor_identity_id WHERE space.team_id=? AND alias.legacy_owner_id=? AND space.kind='private' AND space.lifecycle_state='active'
 		`, teamID, ownerID).Row().Scan(&privateSpaceID); err != nil {
 			return err
 		}
@@ -96,9 +94,7 @@ func TestLedgerDirectEvidenceSupersessionRejectsCrossSpaceReplacement(t *testing
 	var privateSpaceID string
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
-			INSERT INTO memory_spaces (team_id, kind, owner_profile_id)
-			VALUES (?, 'profile_private', ?)
-			RETURNING id::text
+			SELECT space.id::text FROM memory_spaces space JOIN team_memberships membership ON membership.id=space.owner_membership_id JOIN ownership_aliases alias ON alias.team_id=membership.team_id AND alias.canonical_identity_id=membership.actor_identity_id WHERE space.team_id=? AND alias.legacy_owner_id=? AND space.kind='private' AND space.lifecycle_state='active'
 		`, teamID, ownerID).Row().Scan(&privateSpaceID); err != nil {
 			return err
 		}

@@ -278,7 +278,7 @@ func TestRecallReadPerformanceMetricsCountMultiSpaceStagesOnce(t *testing.T) {
 	credential := &domain.Credential{
 		ID: uuid.New(), TeamID: uuid.MustParse(teamID), Name: "read performance private space",
 		KeyHash: "hash-read-performance-multispace", KeyPrefix: "dm_" + uuid.NewString()[:20], KeySuffix: "suffix",
-		Scopes: []string{"read", "write"}, MemoryBinding: domain.CredentialBindingCredentialPrivate,
+		Scopes: []string{"read", "write"},
 	}
 	require.NoError(t, accesspostgres.NewCredentialRepository(adminDB, rls, nil).CreateCredential(ctx, credential))
 	sharedSpace, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).GetTeamShared(ctx, credential.TeamID)
@@ -290,7 +290,7 @@ func TestRecallReadPerformanceMetricsCountMultiSpaceStagesOnce(t *testing.T) {
 		CredentialID: &credential.ID, AuthMethod: "api_key",
 		AllowedSpaces: []domain.MemorySpaceAccess{
 			{ID: sharedSpace.ID, Kind: domain.MemorySpaceTeamShared},
-			{ID: credential.MemorySpaceID, Kind: domain.MemorySpaceCredentialPrivate},
+			{ID: credential.MemorySpaceID, Kind: domain.MemorySpacePrivate},
 		},
 	}
 	actorCtx := requestctx.WithActor(ctx, actor)
@@ -311,7 +311,7 @@ func TestRecallReadPerformanceMetricsCountMultiSpaceStagesOnce(t *testing.T) {
 		spaceKinds[item.SpaceKind]++
 	}
 	require.Equal(t, map[string]int{
-		string(domain.MemorySpaceTeamShared): 1, string(domain.MemorySpaceCredentialPrivate): 1,
+		string(domain.MemorySpaceTeamShared): 1, string(domain.MemorySpacePrivate): 1,
 	}, spaceKinds)
 
 	stageCounts := make(map[observability.ReadStage]int)

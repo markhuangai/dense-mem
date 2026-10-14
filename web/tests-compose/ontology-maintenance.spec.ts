@@ -38,12 +38,12 @@ test("loaded older retry actions follow successful work and server eligibility",
   try {
     await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
     await control("/ontology/pause", { operation_key: randomUUID() });
-    const credential = await control(`/teams/${process.env.DENSE_MEM_E2E_TEAM_ID}/credentials`, { name: `Ontology browser retry ${randomUUID()}`, scopes: ["read", "write"], rate_limit: 300, memory_binding: "shared_only" });
+    const credential = await control(`/teams/${process.env.DENSE_MEM_E2E_TEAM_ID}/credentials`, { name: `Ontology browser retry ${randomUUID()}`, scopes: ["read", "write"], rate_limit: 300 });
     await fixtureMode("fail-three-then-success");
     const submitted = await request.post(`${process.env.DENSE_MEM_USER_URL}/mcp`, {
       headers: { Authorization: `Bearer ${credential.api_key}`, Accept: "application/json" },
       data: { jsonrpc: "2.0", id: randomUUID(), method: "tools/call", params: { name: "remember", arguments: {
-        idempotency_key: randomUUID(), evidence: [{ content: `Atlas uses PostgreSQL for browser retry ${randomUUID()}.`, source_type: "document", source: "ontology-browser-followups", source_group: randomUUID() }],
+        target_space: "team_shared", idempotency_key: randomUUID(), evidence: [{ content: `Atlas uses PostgreSQL for browser retry ${randomUUID()}.`, source_type: "document", source: "ontology-browser-followups", source_group: randomUUID() }],
         relationships: [{ ref: "storage", subject: { name: "Atlas", entity_kind: "project" }, predicate: { proposed_key: "uses" }, object: { entity: { name: "PostgreSQL", entity_kind: "product" } }, polarity: "+", evidence_indices: [0] }],
       } } },
     });

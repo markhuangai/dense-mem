@@ -33,7 +33,7 @@ func TestSubmissionAssessmentKnownEvidenceCatalogEnforcesVisibilityAndEligibilit
 	shared := createSemanticIngest(t, ctx, ledger, teamA, ownerA, "known-shared", "shared known evidence")
 	otherTeam := createSemanticIngest(t, ctx, ledger, teamC, ownerC, "known-other-team", "other team known evidence")
 
-	privateSpace, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureProfilePrivate(ctx, uuid.MustParse(teamA), uuid.MustParse(ownerA))
+	privateSpace, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamA), uuid.MustParse(ownerA))
 	require.NoError(t, err)
 	var privateGeneration int64
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
@@ -41,7 +41,7 @@ func TestSubmissionAssessmentKnownEvidenceCatalogEnforcesVisibilityAndEligibilit
 	}))
 	privateCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{
 		{ID: sharedSpace.ID, Kind: domain.MemorySpaceTeamShared},
-		{ID: privateSpace.ID, Kind: domain.MemorySpaceProfilePrivate},
+		{ID: privateSpace.ID, Kind: domain.MemorySpacePrivate},
 	})
 	private, err := createTestIngest(privateCtx, ledger, CreateIngestInput{
 		TeamID: teamA, OwnerProfileID: ownerA, SpaceID: privateSpace.ID.String(), SpaceGeneration: privateGeneration,

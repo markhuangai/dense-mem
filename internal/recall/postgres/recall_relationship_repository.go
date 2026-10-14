@@ -22,6 +22,14 @@ func (r *Store) ReadRelationshipCandidates(ctx context.Context, input RecallRela
 	organizationCode := ""
 	err := r.withRecallTx(ctx, input.TeamID, input.OrganizationEnabled, func(tx *gorm.DB) error {
 		var err error
+		input.ExpandFromEntityIDs, err = storagepostgres.ResolveMemoryHandlesTx(ctx, tx, input.TeamID, "entity_records", input.ExpandFromEntityIDs, input.SpaceID)
+		if err != nil {
+			return err
+		}
+		input.KnownEvidenceIDs, err = storagepostgres.ResolveMemoryHandlesTx(ctx, tx, input.TeamID, "evidence_fragments", input.KnownEvidenceIDs, input.SpaceID)
+		if err != nil {
+			return err
+		}
 		vectorState, err = relationshipProjectionSearchState(ctx, tx, input, contract)
 		if err != nil {
 			return err
@@ -84,6 +92,14 @@ func (r *Store) HydrateRelationships(ctx context.Context, input RecallRelationsh
 	var hydrated map[string]RecallRelationshipHit
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
+		input.ExpandFromEntityIDs, err = storagepostgres.ResolveMemoryHandlesTx(ctx, tx, input.TeamID, "entity_records", input.ExpandFromEntityIDs, input.SpaceID)
+		if err != nil {
+			return err
+		}
+		input.KnownEvidenceIDs, err = storagepostgres.ResolveMemoryHandlesTx(ctx, tx, input.TeamID, "evidence_fragments", input.KnownEvidenceIDs, input.SpaceID)
+		if err != nil {
+			return err
+		}
 		hydrated, err = hydrateRecallRelationships(ctx, tx, input, contract, candidateIDs)
 		return err
 	})

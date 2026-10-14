@@ -26,8 +26,15 @@ func relationshipRow(id, group, state string, created time.Time) []driver.Value 
 	return []driver.Value{recallTeam, id, group, recallID3, "Subject", "uses", recallID2, "", "Object", "", "", "+", "", nil, state, 2, 1, created}
 }
 
+func expectUnchangedRecallHandle(mock sqlmock.Sqlmock, table, id string) {
+	mock.ExpectQuery("SELECT dense_mem_resolve_memory_handle").WithArgs(recallTeam, table, id, nil).
+		WillReturnRows(sqlmock.NewRows([]string{"resolved"}).AddRow(id))
+}
+
 func TestRecallEvidenceFusesBranchesSkipsUnhydratedAndKnownIDs(t *testing.T) {
 	db, mock := newRecallSQLMockDB(t)
+	expectUnchangedRecallHandle(mock, "entity_records", recallID3)
+	expectUnchangedRecallHandle(mock, "evidence_fragments", recallID3)
 	text := recallHitRows()
 	for _, id := range []string{recallSpace, recallID3, recallID1, recallID2} {
 		addRecallHit(text, "evidence", id, "current")
@@ -41,6 +48,8 @@ func TestRecallEvidenceFusesBranchesSkipsUnhydratedAndKnownIDs(t *testing.T) {
 	mock.ExpectQuery(`(?s)FROM search_documents.*embedding IS NOT NULL`).WillReturnRows(vector)
 	mock.ExpectQuery(`(?s)FROM relationship_records AS relationship.*JOIN search_documents`).WillReturnRows(expand)
 	mock.ExpectQuery("WITH eligible AS NOT MATERIALIZED").WillReturnRows(sqlmock.NewRows([]string{"state"}).AddRow("current"))
+	expectUnchangedRecallHandle(mock, "entity_records", recallID3)
+	expectUnchangedRecallHandle(mock, "evidence_fragments", recallID3)
 	mock.ExpectQuery(`(?s)WITH requested.*SELECT evidence_id`).WillReturnRows(evidenceRows().
 		AddRow(recallID1, " evidence A ", "source A", "document", recallTime, pq.StringArray{recallID3}, "current").
 		AddRow(recallID2, "evidence B", "source B", "manual", recallTime, pq.StringArray{}, "failed")).RowsWillBeClosed()
@@ -84,6 +93,9 @@ func TestRecallEvidenceRequiredReadFailuresReturnNoResult(t *testing.T) {
 			if stage == "contract" {
 				search.err = errRecallDB
 			} else {
+				if stage == "expansion" {
+					expectUnchangedRecallHandle(mock, "entity_records", recallID3)
+				}
 				q := mock.ExpectQuery("FROM search_documents")
 				if stage == "text" {
 					q.WillReturnError(errRecallDB)
@@ -132,6 +144,7 @@ func TestRecallEvidenceEmptyBranchAndHydrationFailures(t *testing.T) {
 	store := NewStore(db, recallQueryRLS{}, recallSearchContract{contract: recallTestContract()}, nil, nil)
 	_, err := recallservice.NewRetrieval(store).RecallEvidence(t.Context(), RecallEvidenceInput{})
 	require.ErrorContains(t, err, "team_id")
+	expectUnchangedRecallHandle(mock, "entity_records", recallID1)
 	mock.ExpectQuery("FROM relationship_records AS relationship").WillReturnRows(recallHitRows())
 	mock.ExpectQuery("WITH eligible AS NOT MATERIALIZED").WillReturnRows(sqlmock.NewRows([]string{"state"}).AddRow(""))
 	result, err := recallservice.NewRetrieval(store).RecallEvidence(t.Context(), RecallEvidenceInput{TeamID: recallTeam, ExpandFromEntityIDs: []string{recallID1}})
@@ -153,6 +166,7 @@ func TestRecallEvidenceEmptyBranchAndHydrationFailures(t *testing.T) {
 
 func TestRecallRelationshipsDeduplicatesGroupsAndSortsEqualScoresByAge(t *testing.T) {
 	db, mock := newRecallSQLMockDB(t)
+	expectUnchangedRecallHandle(mock, "entity_records", recallID3)
 	mock.ExpectQuery(`(?s)WITH.*COUNT\(eligible.relationship_id\)`).WillReturnRows(sqlmock.NewRows([]string{"state", "eligible", "current", "failed"}).AddRow("current", 4, 4, 0))
 	text := recallHitRows()
 	vector := recallHitRows()
@@ -165,6 +179,7 @@ func TestRecallRelationshipsDeduplicatesGroupsAndSortsEqualScoresByAge(t *testin
 	mock.ExpectQuery(`(?s)WITH.*plainto_tsquery`).WillReturnRows(text)
 	mock.ExpectQuery(`(?s)WITH generation_count.*ORDER BY document.embedding`).WillReturnRows(vector)
 	mock.ExpectQuery(`(?s)WITH.*ORDER BY relationship.updated_at DESC`).WillReturnRows(recallHitRows())
+	expectUnchangedRecallHandle(mock, "entity_records", recallID3)
 	mock.ExpectQuery("WITH requested").WillReturnRows(relationshipRows().
 		AddRow(relationshipRow(recallID1, "group1", "current", recallTime)...).
 		AddRow(relationshipRow(recallID2, "group2", "failed", recallTime.Add(-time.Hour))...).
@@ -203,6 +218,9 @@ func TestRecallRelationshipsReadFailuresAndVectorOmission(t *testing.T) {
 			case "contract":
 				search.err = errRecallDB
 			default:
+				if stage == "expansion" || stage == "omitted" {
+					expectUnchangedRecallHandle(mock, "entity_records", recallID1)
+				}
 				q := mock.ExpectQuery(`(?s)WITH.*COUNT\(eligible.relationship_id\)`)
 				if stage == "state" {
 					q.WillReturnError(errRecallDB)

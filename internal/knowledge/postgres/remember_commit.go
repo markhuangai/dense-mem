@@ -11,6 +11,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 // SynchronousRememberCommitResult is the terminal, replayable result produced by
@@ -87,6 +88,14 @@ func (r *Store) commitRememberInTx(ctx context.Context, tx *gorm.DB, input Synch
 	result := &SynchronousRememberCommitResult{IngestID: input.IngestID, AssessmentID: input.AssessmentID, Outcome: "completed"}
 	stage := "transaction_setup"
 	run := func() error {
+		stage = "memory_authorization"
+		if err := storagepostgres.AuthorizeMemoryMutationTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration); err != nil {
+			return err
+		}
+		if err := storagepostgres.CheckPrivateMemoryRetryTx(ctx, tx, input.TeamID, input.OwnerProfileID, "remember", input.IdempotencyKey); err != nil {
+			return err
+		}
+
 		stage = "idempotency_fence"
 		if err := lockRememberIdempotencyKeyInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey); err != nil {
 			return err

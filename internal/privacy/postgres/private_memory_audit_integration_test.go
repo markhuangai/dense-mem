@@ -5,14 +5,35 @@ package postgres
 import (
 	"context"
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
+	auditapp "github.com/markhuangai/dense-mem/internal/audit"
+	auditpostgres "github.com/markhuangai/dense-mem/internal/audit/postgres"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-
-	"github.com/markhuangai/dense-mem/internal/domain"
 )
+
+func TestCredentialAuditResolvesMembershipPrivateSpace(t *testing.T) {
+	admin, app, rls, cleanup := setupLedgerRepositoryDB(t)
+	t.Cleanup(cleanup)
+	ctx := context.Background()
+	team := uuid.MustParse(createLedgerTeam(t, admin, rls, "credential-audit-membership"))
+	owner := uuid.MustParse(createLedgerProfile(t, admin, rls, team.String(), "audited key"))
+	key, err := accesspostgres.NewCredentialRepository(app, rls, nil).GetByIDForTeam(ctx, team, owner)
+	require.NoError(t, err)
+	teamID := team.String()
+	audit := auditapp.New(auditpostgres.NewStore(app, rls))
+	require.NoError(t, audit.CredentialCreated(ctx, &teamID, key.ID.String(), map[string]interface{}{"name": key.Name}, nil, "control", "", "audit-membership"))
+	require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
+		var space uuid.UUID
+		if err := tx.Raw(`SELECT memory_space_id FROM audit_log WHERE team_id=? AND entity_type='api_key' AND entity_id=? AND operation='CREATE'`, team, key.ID.String()).Row().Scan(&space); err != nil {
+			return err
+		}
+		require.Equal(t, key.MemorySpaceID, space)
+		return nil
+	}))
+}
 
 func TestPrivateMemorySSOCredentialRevocationAuditFailureRollsBackDisable(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
@@ -22,7 +43,7 @@ func TestPrivateMemorySSOCredentialRevocationAuditFailureRollsBackDisable(t *tes
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "sso-delete-audit-rollback"))
 	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "audit-rollback", domain.CredentialBindingSharedOnly)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "audit-rollback")
 	repo := NewPrivateMemoryRepository(appDB, rls)
 
 	_, created, err := repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
@@ -67,7 +88,7 @@ func TestPrivateMemorySSOCredentialRevocationAuditStoresProfileAndCredentialActo
 	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	profileID := uuid.MustParse(createLedgerProfile(t, adminDB, rls, teamID.String(), "audit-actor-profile"))
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "audit-actors", domain.CredentialBindingSharedOnly)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "audit-actors")
 	repo := NewPrivateMemoryRepository(appDB, rls)
 	actorCredentialID := uuid.NewString()
 

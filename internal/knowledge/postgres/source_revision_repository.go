@@ -27,9 +27,9 @@ func loadEvidenceSourceForUpdate(ctx context.Context, tx *gorm.DB, input Advance
 		SELECT source_id::text, COALESCE(current_revision_id::text, ''), current_revision_token,
 		       space_id::text, space_generation
 		FROM evidence_sources
-		WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND source_key = ?
+		WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND source_key = ? AND space_id = ?::uuid
 		LIMIT 1 FOR UPDATE
-	`, input.TeamID, input.OwnerProfileID, input.SourceKey).Row().Scan(
+	`, input.TeamID, input.OwnerProfileID, input.SourceKey, input.SpaceID).Row().Scan(
 		&state.SourceID, &state.CurrentRevisionID, &state.CurrentToken, &state.SpaceID, &state.SpaceGeneration,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -165,10 +165,10 @@ func getOrCreateEvidenceSource(ctx context.Context, tx *gorm.DB, input AdvanceSo
 		FROM evidence_sources
 		WHERE team_id = ?::uuid
 		  AND owner_profile_id = ?::uuid
-		  AND source_key = ?
+		  AND source_key = ? AND space_id = ?::uuid
 		LIMIT 1
 		FOR UPDATE
-	`, input.TeamID, input.OwnerProfileID, input.SourceKey).Rows()
+	`, input.TeamID, input.OwnerProfileID, input.SourceKey, input.SpaceID).Rows()
 	if err != nil {
 		return "", "", "", err
 	}

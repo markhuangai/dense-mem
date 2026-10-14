@@ -64,6 +64,7 @@ func (s *stubRememberService) Remember(ctx context.Context, req rememberapp.Reme
 		return nil, s.err
 	}
 	return &rememberapp.RememberResult{
+		SpaceKind:           req.TargetSpace,
 		ContractVersion:     domain.ContractVersion,
 		SubmissionID:        "ingest-canonical",
 		SubmissionKind:      "remember",

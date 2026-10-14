@@ -1,40 +1,41 @@
-package domain
+package domain_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/validation"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestDreamStatusIsValid(t *testing.T) {
-	for _, status := range []DreamStatus{
-		DreamStatusProposed,
-		DreamStatusReinforced,
-		DreamStatusStale,
-		DreamStatusRejected,
-		DreamStatusSubmitted,
+	for _, status := range []domain.DreamStatus{
+		domain.DreamStatusProposed,
+		domain.DreamStatusReinforced,
+		domain.DreamStatusStale,
+		domain.DreamStatusRejected,
+		domain.DreamStatusSubmitted,
 	} {
 		if !status.IsValid() {
 			t.Fatalf("status %q should be valid", status)
 		}
 	}
-	if DreamStatus("unknown").IsValid() {
+	if domain.DreamStatus("unknown").IsValid() {
 		t.Fatal("unknown dream status should be invalid")
 	}
-	if DreamStatus("promoted").IsValid() {
+	if domain.DreamStatus("promoted").IsValid() {
 		t.Fatal("legacy promoted dream status should be invalid")
 	}
 }
 
 func TestDreamLaneIsValid(t *testing.T) {
-	if !DreamLaneGraph.IsValid() || !DreamLaneEvidenceDiscovery.IsValid() {
+	if !domain.DreamLaneGraph.IsValid() || !domain.DreamLaneEvidenceDiscovery.IsValid() {
 		t.Fatal("supported dream lanes should be valid")
 	}
-	if DreamLane("legacy").IsValid() {
+	if domain.DreamLane("legacy").IsValid() {
 		t.Fatal("unknown dream lane should be invalid")
 	}
 }
@@ -148,12 +149,12 @@ func TestNotBlankValidator(t *testing.T) {
 	}
 }
 
-// TestTeamInterface verifies Team implements TeamModel.
+// TestTeamInterface verifies domain.Team implements domain.TeamModel.
 func TestTeamInterface(t *testing.T) {
 	id := uuid.New()
 	now := time.Now()
 
-	team := &Team{
+	team := &domain.Team{
 		ID:          id,
 		Name:        "Test",
 		Description: "Test Description",
@@ -163,7 +164,7 @@ func TestTeamInterface(t *testing.T) {
 		UpdatedAt:   now,
 	}
 
-	var model TeamModel = team
+	var model domain.TeamModel = team
 
 	assert.Equal(t, id, model.GetID())
 	assert.Equal(t, "Test", model.GetName())
@@ -172,13 +173,13 @@ func TestTeamInterface(t *testing.T) {
 	assert.Equal(t, now, model.GetUpdatedAt())
 }
 
-// TestCredentialInterface verifies Credential implements CredentialModel.
+// TestCredentialInterface verifies domain.Credential implements domain.CredentialModel.
 func TestCredentialInterface(t *testing.T) {
 	id := uuid.New()
 	teamID := uuid.New()
 	now := time.Now()
 
-	credential := &Credential{
+	credential := &domain.Credential{
 		ID:        id,
 		TeamID:    teamID,
 		Name:      "Test Key",
@@ -188,7 +189,7 @@ func TestCredentialInterface(t *testing.T) {
 		CreatedAt: now,
 	}
 
-	var model CredentialModel = credential
+	var model domain.CredentialModel = credential
 
 	assert.Equal(t, id, model.GetID())
 	assert.Equal(t, teamID, model.GetTeamID())
@@ -198,7 +199,7 @@ func TestCredentialInterface(t *testing.T) {
 	assert.Equal(t, 100, model.GetRateLimit())
 }
 
-// TestAuditLogEntryInterface verifies AuditLogEntry implements AuditEntryModel
+// TestAuditLogEntryInterface verifies domain.AuditLogEntry implements domain.AuditEntryModel
 // with fields that match the audit_log DB schema 1:1.
 func TestAuditLogEntryInterface(t *testing.T) {
 	id := uuid.New()
@@ -206,7 +207,7 @@ func TestAuditLogEntryInterface(t *testing.T) {
 	actorKeyID := uuid.New()
 	now := time.Now()
 
-	entry := &AuditLogEntry{
+	entry := &domain.AuditLogEntry{
 		ID:            id,
 		ProfileID:     &profileID,
 		Timestamp:     now,
@@ -222,7 +223,7 @@ func TestAuditLogEntryInterface(t *testing.T) {
 		Metadata:      map[string]any{"note": "test"},
 	}
 
-	var model AuditEntryModel = entry
+	var model domain.AuditEntryModel = entry
 
 	assert.Equal(t, id, model.GetID())
 	assert.Equal(t, &profileID, model.GetProfileID())

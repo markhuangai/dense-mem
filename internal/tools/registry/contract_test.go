@@ -13,6 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 type contractFixture struct {
@@ -65,11 +66,11 @@ func TestContractRememberBoundaryContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := flatRelationshipForContent(strings.Repeat("a", memoryEntryMaxLength))
-	if err := ValidateContractInput(remember, input, []string{"write"}); err != nil {
+	if err := ValidateContractInput(remember, input, []string{"read", "write"}); err != nil {
 		t.Fatalf("boundary content rejected: %v", err)
 	}
 	oversized := flatRelationshipForContent(strings.Repeat("a", memoryEntryMaxLength+1))
-	err = ValidateContractInput(remember, oversized, []string{"write"})
+	err = ValidateContractInput(remember, oversized, []string{"read", "write"})
 	if err == nil || !strings.Contains(err.Error(), "maximum length") {
 		t.Fatalf("oversized content err = %v, want maximum length", err)
 	}
@@ -99,6 +100,7 @@ func TestTraceOutputSchemaAllowsOwnerPrefixedSourceGroupKeys(t *testing.T) {
 func flatRelationshipForContent(content string) map[string]any {
 	return map[string]any{
 		"idempotency_key": "remember-test-batch",
+		"target_space":    "team_shared",
 		"evidence": []any{
 			map[string]any{"content": content},
 		},
@@ -202,7 +204,8 @@ func TestToolVisibleExposesCutoverContractTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ToolVisible(context.Background(), remember, RuntimeToolPolicy{}) {
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{Grants: []string{"read", "write"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: uuid.New(), Kind: domain.MemorySpaceTeamShared, Generation: 1}}})
+	if !ToolVisible(ctx, remember, RuntimeToolPolicy{}) {
 		t.Fatal("cutover contract tool should be visible")
 	}
 }
@@ -226,7 +229,7 @@ func TestRememberRejectsMixedSourceRevisionBatch(t *testing.T) {
 				"source_revision": "rev-2",
 			},
 		},
-	}), []string{"write"})
+	}), []string{"read", "write"})
 	if err == nil || !strings.Contains(err.Error(), "revision fields must match") {
 		t.Fatalf("ValidateContractInput err = %v, want mixed source revision rejection", err)
 	}
@@ -257,7 +260,7 @@ func TestRememberRejectsMixedSourceRevisionProvenance(t *testing.T) {
 			evidence := []any{cloneMap(base[0].(map[string]any)), cloneMap(base[1].(map[string]any))}
 			test.mutate(evidence[1].(map[string]any))
 
-			err := ValidateContractInput(remember, withRequiredFlatRelationship(map[string]any{"evidence": evidence}), []string{"write"})
+			err := ValidateContractInput(remember, withRequiredFlatRelationship(map[string]any{"evidence": evidence}), []string{"read", "write"})
 
 			require.ErrorContains(t, err, "including source provenance")
 		})
@@ -292,7 +295,7 @@ func TestFlatRelationshipsRequireExactlyOneObject(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			input := validFlatRelationshipSubmission()
 			tc.mutate(input)
-			err := ValidateContractInput(remember, input, []string{"write"})
+			err := ValidateContractInput(remember, input, []string{"read", "write"})
 			if err == nil || !strings.Contains(err.Error(), "object requires exactly one entity or value") {
 				t.Fatalf("ValidateContractInput err = %v, want object choice error", err)
 			}
@@ -333,7 +336,7 @@ func TestFlatRelationshipCorrectionTargetRequiresCompleteShape(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			input := validFlatRelationshipSubmission()
 			relationship(input)["correction_target"] = tc.target
-			err := ValidateContractInput(remember, input, []string{"write"})
+			err := ValidateContractInput(remember, input, []string{"read", "write"})
 			if err == nil || !strings.Contains(err.Error(), "correction_target") {
 				t.Fatalf("ValidateContractInput err = %v, want correction_target error", err)
 			}
@@ -374,7 +377,7 @@ func TestFlatRelationshipConflictContextRequiresCompleteShape(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			input := validFlatRelationshipSubmission()
 			relationship(input)["conflict_context"] = tc.context
-			err := ValidateContractInput(remember, input, []string{"write"})
+			err := ValidateContractInput(remember, input, []string{"read", "write"})
 			if err == nil || !strings.Contains(err.Error(), "conflict_context") {
 				t.Fatalf("ValidateContractInput err = %v, want conflict_context error", err)
 			}
@@ -386,7 +389,7 @@ func TestFlatRelationshipConflictContextRequiresCompleteShape(t *testing.T) {
 		"conflict_id":      uuid.NewString(),
 		"expected_version": 1,
 	}
-	if err := ValidateContractInput(remember, validInput, []string{"write"}); err != nil {
+	if err := ValidateContractInput(remember, validInput, []string{"read", "write"}); err != nil {
 		t.Fatalf("ValidateContractInput valid conflict_context err = %v", err)
 	}
 }
@@ -401,7 +404,7 @@ func TestFlatRelationshipValidityFieldsBelongToRelationship(t *testing.T) {
 	baseRelationship["valid_from"] = "2026-07-01T00:00:00Z"
 	baseRelationship["valid_to"] = "2026-12-31T00:00:00Z"
 	baseRelationship["client_comment"] = "from release planning evidence"
-	if err := ValidateContractInput(remember, baseInput, []string{"write"}); err != nil {
+	if err := ValidateContractInput(remember, baseInput, []string{"read", "write"}); err != nil {
 		t.Fatalf("relationship-level validity fields rejected: %v", err)
 	}
 
@@ -409,7 +412,7 @@ func TestFlatRelationshipValidityFieldsBelongToRelationship(t *testing.T) {
 	invertedRelationship := relationship(invertedInput)
 	invertedRelationship["valid_from"] = "2026-12-31T00:00:00Z"
 	invertedRelationship["valid_to"] = "2026-07-01T00:00:00Z"
-	err = ValidateContractInput(remember, invertedInput, []string{"write"})
+	err = ValidateContractInput(remember, invertedInput, []string{"read", "write"})
 	if err == nil || !strings.Contains(err.Error(), "valid_to") {
 		t.Fatalf("ValidateContractInput err = %v, want inverted validity rejection", err)
 	}
@@ -421,7 +424,7 @@ func TestFlatRelationshipValidityFieldsBelongToRelationship(t *testing.T) {
 		"end":            26,
 		"valid_from":     "2026-07-01T00:00:00Z",
 	}}
-	err = ValidateContractInput(remember, badInput, []string{"write"})
+	err = ValidateContractInput(remember, badInput, []string{"read", "write"})
 	if err == nil {
 		t.Fatal("evidence-level valid_from accepted")
 	}
@@ -481,7 +484,7 @@ func TestRecallRelatedRelationshipSchemaIncludesSpaceKind(t *testing.T) {
 	itemProperties := schemaProperties(item)
 	spaceKind := itemProperties["space_kind"]
 	enum, ok := spaceKind["enum"].([]string)
-	if !ok || !slices.Contains(enum, string(domain.MemorySpaceCredentialPrivate)) {
+	if !ok || !slices.Contains(enum, string(domain.MemorySpacePrivate)) {
 		t.Fatalf("space_kind enum = %#v", spaceKind["enum"])
 	}
 	if !slices.Contains(schemaRequiredFields(item), "space_kind") {
@@ -541,7 +544,7 @@ func TestCorrectionRequiresSubmitOrConfirmFields(t *testing.T) {
 		"reason":           "predicate resolved incorrectly",
 		"idempotency_key":  "correction-submit-1",
 	}
-	if err := ValidateContractInput(tool, submit, []string{"write"}); err != nil {
+	if err := ValidateContractInput(tool, submit, []string{"read", "write"}); err != nil {
 		t.Fatalf("submit rejected: %v", err)
 	}
 	confirm := map[string]any{
@@ -551,7 +554,7 @@ func TestCorrectionRequiresSubmitOrConfirmFields(t *testing.T) {
 		"selection":          map[string]any{"subject_entity_id": "00000000-0000-0000-0000-000000000615"},
 		"idempotency_key":    "correction-confirm-1",
 	}
-	if err := ValidateContractInput(tool, confirm, []string{"write"}); err != nil {
+	if err := ValidateContractInput(tool, confirm, []string{"read", "write"}); err != nil {
 		t.Fatalf("confirm rejected: %v", err)
 	}
 
@@ -631,7 +634,7 @@ func TestCorrectionRequiresSubmitOrConfirmFields(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			err := ValidateContractInput(tool, test.input, []string{"write"})
+			err := ValidateContractInput(tool, test.input, []string{"read", "write"})
 			if test.wantError == "" {
 				if err != nil {
 					t.Fatalf("ValidateContractInput: %v", err)
@@ -705,11 +708,11 @@ func TestCorrectRelationshipRejectsMalformedUUIDsAtContractBoundary(t *testing.T
 		t.Run(test.name, func(t *testing.T) {
 			input := test.input()
 			test.mutate(input)
-			err := ValidateContractInput(tool, input, []string{"write"})
+			err := ValidateContractInput(tool, input, []string{"read", "write"})
 			if err == nil || !strings.Contains(err.Error(), test.wantPath+" must be a valid UUID") {
 				t.Fatalf("ValidateContractInput error = %v, want %s UUID error", err, test.wantPath)
 			}
-			issues := ValidateContractInputIssues(tool, input, []string{"write"})
+			issues := ValidateContractInputIssues(tool, input, []string{"read", "write"})
 			if len(issues.Issues) != 1 || issues.Issues[0].Code != "format" || !strings.Contains(issues.Issues[0].Message, test.wantPath) {
 				t.Fatalf("validation issues = %#v, want one format issue for %s", issues, test.wantPath)
 			}

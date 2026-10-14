@@ -25,6 +25,9 @@ func (r *Store) PlanRelationshipCorrectionEmbeddings(
 	}
 	plan := &RelationshipCorrectionEmbeddingPlan{Documents: []RelationshipCorrectionEmbeddingDocument{}}
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+		if err := authorizeRelationshipCorrection(ctx, tx, input); err != nil {
+			return err
+		}
 		effective := input
 		var pending *relationshipCorrectionSubmissionRow
 		if input.Action == "submit" {
@@ -60,6 +63,10 @@ func (r *Store) PlanRelationshipCorrectionEmbeddings(
 			effective.Selection = mergeRelationshipCorrectionSelection(row.Selection, input.Selection)
 		}
 
+		effective, err := resolveRelationshipCorrectionHandles(ctx, tx, effective)
+		if err != nil {
+			return err
+		}
 		source, err := loadRelationshipRecord(ctx, tx, input.TeamID, effective.RelationshipID)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil

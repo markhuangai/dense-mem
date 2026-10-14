@@ -24,6 +24,7 @@ func maintenanceOtherTeam(t *testing.T, parent *ontologyFixture) *ontologyFixtur
 	credential := &domain.Credential{ID: uuid.New(), TeamID: team.ID, Name: "actor-c", KeyHash: "synthetic-" + uuid.NewString(), KeyPrefix: uuid.NewString()[:24], KeySuffix: "test", Scopes: []string{"read", "write"}}
 	require.NoError(t, access.NewCredentialRepository(f.admin, f.rls, nil).CreateCredential(context.Background(), credential))
 	f.owners = []string{credential.ID.String()}
+	f.credentials = []*domain.Credential{credential}
 	require.NoError(t, f.admin.Raw(`SELECT id::text,generation FROM memory_spaces WHERE team_id=?::uuid AND kind='team_shared'`, f.team).Row().Scan(&f.space, &f.generation))
 	return f
 }

@@ -116,6 +116,7 @@ async function createConflictFixture(label, teamID) {
 async function submitRelationship(apiKey, teamID, input) {
   const evidence = `${input.subjectName} primary database is ${input.objectName}.`;
   const receipt = await mcpSuccess(apiKey, "remember", {
+    target_space: "team_shared",
     idempotency_key: `${runID}:${input.label}`,
     evidence: [{
       content: evidence,
@@ -242,7 +243,7 @@ async function createTeam(label) {
 }
 
 async function createCredential(teamID, name) {
-  const response = await controlJSON(`/teams/${teamID}/credentials`, { method: "POST", body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300, memory_binding: "shared_only" }) });
+  const response = await controlJSON(`/teams/${teamID}/credentials`, { method: "POST", body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300 }) });
   const apiKey = String(response.data?.api_key ?? "");
   const profileID = String(response.data?.credential?.id ?? "");
   assert(apiKey && profileID, `credential ${name} omitted key material or ID`);

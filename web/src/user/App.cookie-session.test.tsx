@@ -5,6 +5,7 @@ import { UserPortalApp } from "./App";
 import type { UserSession } from "./api";
 
 const baseSession: UserSession = {
+  memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: false } },
   mcp_public_base_url: "https://memory.example.test",
   team: {
     id: "11111111-1111-4111-8111-111111111111",
@@ -30,8 +31,7 @@ const baseSession: UserSession = {
     last_used_at: null,
     expires_at: null,
     created_at: "2026-05-01T12:00:00Z",
-    memory_binding: "shared_only",
-    memory_space_kind: "team_shared",
+    memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: false } },
   },
   teams: [],
   personal_credentials: [],

@@ -1,4 +1,6 @@
 import type { GeneralConfig, GeneralConfigInput, GeneralConfigItem, SSOConfigInput } from "./configuration-api-types";
+import type { MemoryAccess } from "./credentialPermissions";
+export type { MemoryAccess, MemoryPermission } from "./credentialPermissions";
 export type { GeneralConfig, GeneralConfigInput, GeneralConfigItem, SSOConfigInput } from "./configuration-api-types";
 import type { OntologyMaintenanceConfig, OntologyMaintenanceRun, OntologyMaintenanceStatus, OntologyMaintenanceRunPage } from "./ontology-maintenance-api-types";
 export type { OntologyMaintenanceConfig, OntologyMaintenanceRun, OntologyMaintenanceStatus, OntologyMaintenanceRunPage } from "./ontology-maintenance-api-types";
@@ -56,6 +58,7 @@ export type Credential = {
   team_id: string;
   name: string;
   key_suffix: string | null;
+  memory_access: MemoryAccess;
   scopes: string[] | null;
   role: CredentialRole;
   rate_limit: number;

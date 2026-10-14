@@ -60,7 +60,7 @@ var privateMemoryErasureManifest = []string{
 	"relationship_cross_references", "relationship_correction_submissions",
 	"relationship_correction_events", "verification_events", "review_tasks",
 	"hypotheses", "hypothesis_derivation_sources", "hypothesis_feedback_events",
-	"remember_attempts", "remember_attempt_events", "remember_attempt_diagnostics", "remember_invocation_diagnostics", "semantic_assessments", "relationship_conflict_cases",
+	"remember_attempts", "remember_attempt_events", "remember_attempt_diagnostics", "remember_failure_artifacts", "remember_invocation_diagnostics", "semantic_assessments", "relationship_conflict_cases",
 	"relationship_conflict_positions", "relationship_conflict_position_members",
 	"relationship_conflict_events", "relationship_conflict_review_runs",
 	"relationship_conflict_derived_evidence_tasks", "relationship_conflict_evidence_derivations",
@@ -332,6 +332,9 @@ func (r *PrivateMemoryRepositoryImpl) RequestProfileErasure(ctx context.Context,
 			return err
 		}
 		existing, err := existingPrivateMemoryOperationTx(ctx, tx, input.IdempotencyScopeHash, input.RequestHash)
+		if authErr := authorizePrivateErasure(ctx, tx, input, existing); authErr != nil {
+			return authErr
+		}
 		if err != nil || existing != nil {
 			operation = existing
 			return err
@@ -341,7 +344,7 @@ func (r *PrivateMemoryRepositoryImpl) RequestProfileErasure(ctx context.Context,
 			return err
 		}
 		operation, err = queuePrivateMemorySpaceTx(ctx, tx, space, queuePrivateMemoryInput{
-			Action:               domain.PrivateMemoryEraseProfilePrivate,
+			Action:               domain.PrivateMemoryErase,
 			ActorClass:           domain.PrivateMemoryActorOwnerSSO,
 			ReasonCode:           input.ReasonCode,
 			IdempotencyScopeHash: input.IdempotencyScopeHash,
@@ -367,6 +370,9 @@ func (r *PrivateMemoryRepositoryImpl) RequestCredentialErasure(ctx context.Conte
 			return err
 		}
 		existing, err := existingPrivateMemoryOperationTx(ctx, tx, input.IdempotencyScopeHash, input.RequestHash)
+		if authErr := authorizePrivateErasure(ctx, tx, input, existing); authErr != nil {
+			return authErr
+		}
 		if err != nil || existing != nil {
 			operation = existing
 			return err
@@ -377,7 +383,7 @@ func (r *PrivateMemoryRepositoryImpl) RequestCredentialErasure(ctx context.Conte
 		}
 		credentialID := input.CredentialID
 		operation, err = queuePrivateMemorySpaceTx(ctx, tx, space, queuePrivateMemoryInput{
-			Action:               domain.PrivateMemoryEraseCredentialPrivate,
+			Action:               domain.PrivateMemoryErase,
 			ActorClass:           domain.PrivateMemoryActorOwnerCredential,
 			ReasonCode:           input.ReasonCode,
 			TargetCredentialID:   &credentialID,
@@ -409,15 +415,9 @@ func (r *PrivateMemoryRepositoryImpl) RequestControlErasure(ctx context.Context,
 		if err != nil {
 			return err
 		}
-		action := domain.PrivateMemoryEraseProfilePrivate
-		var targetCredentialID *uuid.UUID
-		if space.Kind == domain.MemorySpaceCredentialPrivate {
-			action = domain.PrivateMemoryEraseCredentialPrivate
-			targetCredentialID = cloneUUIDPtr(space.OwnerCredentialID)
-		}
 		operation, err = queuePrivateMemorySpaceTx(ctx, tx, space, queuePrivateMemoryInput{
-			Action: action, ActorClass: domain.PrivateMemoryActorControl, ReasonCode: strings.TrimSpace(reasonCode),
-			TargetCredentialID: targetCredentialID, IdempotencyScopeHash: idempotencyScopeHash, RequestHash: requestHash,
+			Action: domain.PrivateMemoryErase, ActorClass: domain.PrivateMemoryActorControl, ReasonCode: strings.TrimSpace(reasonCode),
+			IdempotencyScopeHash: idempotencyScopeHash, RequestHash: requestHash,
 		})
 		created = err == nil
 		return err
@@ -445,11 +445,10 @@ func (r *PrivateMemoryRepositoryImpl) DisableSSOCredential(ctx context.Context, 
 			return err
 		}
 
-		var binding string
 		var memorySpaceID sql.NullString
 		var actorIdentityID uuid.UUID
 		err = tx.WithContext(ctx).Raw(`
-			SELECT memory_binding, memory_space_id::text, actor_identity_id
+			SELECT actor_identity_id
 			FROM credentials
 			WHERE id = $1
 			  AND team_id = $2
@@ -457,23 +456,12 @@ func (r *PrivateMemoryRepositoryImpl) DisableSSOCredential(ctx context.Context, 
 			  AND kind = 'api_key'
 			  AND status <> 'disabled'
 			FOR UPDATE
-		`, input.CredentialID, input.TeamID, input.OwnerID).Row().Scan(&binding, &memorySpaceID, &actorIdentityID)
+		`, input.CredentialID, input.TeamID, input.OwnerID).Row().Scan(&actorIdentityID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrPrivateMemoryNotFound
 		}
 		if err != nil {
 			return err
-		}
-
-		var space *domain.MemorySpace
-		if binding == string(domain.CredentialBindingCredentialPrivate) {
-			space, err = privateMemorySpaceForCredentialTx(ctx, tx, input.TeamID, input.CredentialID, false)
-			if err != nil {
-				return err
-			}
-			if !memorySpaceID.Valid || memorySpaceID.String != space.ID.String() {
-				return ErrPrivateMemoryNotFound
-			}
 		}
 
 		if err := tx.WithContext(ctx).Exec(`
@@ -509,6 +497,12 @@ func (r *PrivateMemoryRepositoryImpl) DisableSSOCredential(ctx context.Context, 
 		`, now, actorIdentityID).Error; err != nil {
 			return err
 		}
+		space, err := privateMemorySpaceForCredentialTx(ctx, tx, input.TeamID, input.CredentialID, false)
+		if err != nil {
+			return err
+		}
+		memorySpaceID = sql.NullString{String: space.ID.String(), Valid: true}
+
 		if err := appendPrivateMemoryCredentialRevocationAuditTx(ctx, tx, input, memorySpaceID, now); err != nil {
 			return err
 		}
@@ -772,10 +766,11 @@ func failedPrivateMemoryOperationForRecoveryTx(ctx context.Context, tx *gorm.DB,
 
 func privateMemorySpaceForProfileTx(ctx context.Context, tx *gorm.DB, teamID, ownerID uuid.UUID) (*domain.MemorySpace, error) {
 	row := tx.WithContext(ctx).Raw(`
-		SELECT id, team_id, kind, owner_profile_id, owner_credential_id,
+		SELECT id, team_id, kind, owner_membership_id,
 		       generation, lifecycle_state, private_content_at, sealed_at, retired_at, created_at, updated_at
 		FROM memory_spaces
-		WHERE team_id = $1 AND kind = 'profile_private' AND owner_profile_id = $2
+		WHERE team_id = $1 AND kind = 'private' AND lifecycle_state <> 'retired'
+          AND owner_membership_id = (SELECT id FROM team_memberships WHERE team_id = $1 AND actor_identity_id = $2)
 		FOR UPDATE
 	`, teamID, ownerID).Row()
 	space, err := scanPrivateMemorySpace(row)
@@ -788,22 +783,19 @@ func privateMemorySpaceForProfileTx(ctx context.Context, tx *gorm.DB, teamID, ow
 func privateMemorySpaceForCredentialTx(ctx context.Context, tx *gorm.DB, teamID, credentialID uuid.UUID, requireActiveCredential bool) (*domain.MemorySpace, error) {
 	statusPredicate := ""
 	if requireActiveCredential {
-		statusPredicate = "AND credential.status = 'active'"
+		statusPredicate = "AND credential.status = 'active' AND credential.revoked_at IS NULL AND (credential.expires_at IS NULL OR credential.expires_at > now()) AND membership.status = 'active'"
 	}
 	row := tx.WithContext(ctx).Raw(fmt.Sprintf(`
-		SELECT space.id, space.team_id, space.kind, space.owner_profile_id, space.owner_credential_id,
+		SELECT space.id, space.team_id, space.kind, space.owner_membership_id,
 		       space.generation, space.lifecycle_state, space.private_content_at, space.sealed_at, space.retired_at,
 		       space.created_at, space.updated_at
 		FROM credentials AS credential
-		JOIN memory_spaces AS space
-		  ON space.id = credential.memory_space_id
-		 AND space.team_id = credential.team_id
+        JOIN team_memberships AS membership ON membership.team_id = credential.team_id AND membership.actor_identity_id = credential.actor_identity_id
+        JOIN memory_spaces AS space ON space.owner_membership_id = membership.id AND space.team_id = membership.team_id
 		WHERE credential.id = $1
 		  AND credential.team_id = $2
 		  AND credential.kind = 'api_key'
-		  AND credential.memory_binding = 'credential_private'
-		  AND space.kind = 'credential_private'
-		  AND space.owner_credential_id = credential.id
+		  AND space.kind = 'private' AND space.lifecycle_state <> 'retired'
 		  %s
 		FOR UPDATE OF space
 	`, statusPredicate), credentialID, teamID).Row()
@@ -821,7 +813,7 @@ type rowScanner interface {
 func scanPrivateMemorySpace(row rowScanner) (*domain.MemorySpace, error) {
 	space := &domain.MemorySpace{}
 	err := row.Scan(
-		&space.ID, &space.TeamID, &space.Kind, &space.OwnerProfileID, &space.OwnerCredentialID,
+		&space.ID, &space.TeamID, &space.Kind, &space.OwnerMembershipID,
 		&space.Generation, &space.LifecycleState, &space.PrivateContentAt, &space.SealedAt, &space.RetiredAt,
 		&space.CreatedAt, &space.UpdatedAt,
 	)
@@ -836,7 +828,7 @@ const privateMemoryOperationSelect = `
 	       action, actor_class, reason_code, target_generation, retire_space,
 	       status, manifest_position, deleted_counts, attempt_count, fence,
 	       worker_id, lease_until, next_attempt_at, last_error_code, requested_at, started_at,
-	       completed_at, updated_at
+	       completed_at, updated_at, legacy_source_space_id
 	FROM private_memory_erasure_operations AS operation
 `
 
@@ -851,7 +843,7 @@ func scanPrivateMemoryOperation(row rowScanner) (*domain.PrivateMemoryErasureOpe
 		&operation.Action, &operation.ActorClass, &operation.ReasonCode, &targetGeneration, &operation.RetireSpace,
 		&operation.Status, &operation.ManifestPosition, &deletedCounts, &operation.AttemptCount, &operation.Fence,
 		&operation.WorkerID, &leaseUntil, &nextAttemptAt, &operation.LastErrorCode, &operation.RequestedAt, &startedAt,
-		&completedAt, &operation.UpdatedAt,
+		&completedAt, &operation.UpdatedAt, &operation.LegacySourceSpaceID,
 	)
 	if err != nil {
 		return nil, err

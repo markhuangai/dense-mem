@@ -78,8 +78,7 @@ type privateMemorySpaceResponse struct {
 	ID                string                           `json:"id"`
 	TeamID            string                           `json:"team_id"`
 	Kind              domain.MemorySpaceKind           `json:"kind"`
-	OwnerProfileID    string                           `json:"owner_profile_id,omitempty"`
-	OwnerCredentialID string                           `json:"owner_credential_id,omitempty"`
+	OwnerMembershipID string                           `json:"owner_membership_id,omitempty"`
 	Generation        int64                            `json:"generation"`
 	LifecycleState    domain.MemorySpaceLifecycleState `json:"lifecycle_state"`
 	PrivateContentAt  *string                          `json:"private_content_at,omitempty"`
@@ -399,6 +398,8 @@ func privateMemoryHTTPError(err error) error {
 		return apiErr
 	}
 	switch {
+	case errors.Is(err, domain.ErrMemoryWriteDenied):
+		return httperr.WithGuidance(httperr.New(httperr.FORBIDDEN, "private memory write access is unavailable"), "memory_write_denied", "obtain_authorization", "Refresh authentication and verify private memory access before retrying.", false, nil, "")
 	case errors.Is(err, privacyservice.ErrPrivateMemoryAcknowledgementRequired):
 		return httperr.New(httperr.VALIDATION_ERROR, "acknowledge_irreversible must be true")
 	case errors.Is(err, privacyservice.ErrPrivateMemoryIdempotencyKeyRequired):
@@ -449,7 +450,7 @@ func toPrivateMemoryOperation(operation *domain.PrivateMemoryErasureOperation, c
 		UpdatedAt:        operation.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if operation.SpaceKind != nil {
-		response.SpaceKind = *operation.SpaceKind
+		response.SpaceKind = domain.MemorySpacePrivate
 	}
 	if control {
 		response.TeamID = operation.TeamID.String()
@@ -495,11 +496,8 @@ func toPrivateMemorySpace(metadata domain.PrivateMemorySpaceMetadata) privateMem
 		CreatedAt:        space.CreatedAt.UTC().Format(time.RFC3339Nano),
 		UpdatedAt:        space.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
-	if space.OwnerProfileID != nil {
-		response.OwnerProfileID = space.OwnerProfileID.String()
-	}
-	if space.OwnerCredentialID != nil {
-		response.OwnerCredentialID = space.OwnerCredentialID.String()
+	if space.OwnerMembershipID != nil {
+		response.OwnerMembershipID = space.OwnerMembershipID.String()
 	}
 	if metadata.ActiveHold != nil {
 		hold := toPrivateMemoryLegalHold(metadata.ActiveHold)

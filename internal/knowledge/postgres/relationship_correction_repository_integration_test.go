@@ -19,7 +19,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	graphcontract "github.com/markhuangai/dense-mem/internal/graph/contract"
 	graphpostgres "github.com/markhuangai/dense-mem/internal/graph/postgres"
-	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *testing.T) {
@@ -380,21 +379,19 @@ func TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation(t *testing.
 func TestPrivateMemoryCorrectionStatusHidesSealedGeneration(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
+	insertSearchTestContract(t, adminDB, rls, "private-read-only-correction", 3, "exact", "")
 
 	ctx := context.Background()
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-correction-status-generation"))
 	identityID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	target := createOwnedCredential(t, credentialRepo, teamID, identityID, "private-correction-status", domain.CredentialBindingCredentialPrivate)
+	target := createOwnedCredential(t, credentialRepo, teamID, identityID, "private-correction-status")
 	semantic := NewStore(appDB, rls, ConflictRuntimeConfig{})
-	semanticCtx := requestctx.WithActor(ctx, requestctx.Actor{
-		TeamID:  teamID,
-		OwnerID: target.ID,
-		AllowedSpaces: []domain.MemorySpaceAccess{
-			{ID: target.TeamSharedSpaceID, Kind: domain.MemorySpaceTeamShared},
-			{ID: target.MemorySpaceID, Kind: domain.MemorySpaceCredentialPrivate},
-		},
-	})
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE credentials SET scopes=ARRAY['read'] WHERE id=?`, target.ID).Error
+	}))
+	target.Scopes = []string{"read"}
+	semanticCtx := privateCredentialContext(target)
 
 	subjectID, wrongObjectID := uuid.New(), uuid.New()
 	firstCandidateID, secondCandidateID := uuid.New(), uuid.New()
@@ -432,7 +429,7 @@ func TestPrivateMemoryCorrectionStatusHidesSealedGeneration(t *testing.T) {
 			INSERT INTO knowledge_ingests (
 			    team_id, ingest_id, owner_profile_id, idempotency_key, request_hash,
 			    source_summary, status, proposal, metadata, space_id, space_generation
-			) VALUES (?, ?, ?, ?, ?, ?, 'queued', '{}'::jsonb, '{}'::jsonb, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, 'completed', '{}'::jsonb, '{}'::jsonb, ?, ?)
 		`, teamID, ingestID, target.ID, "private-correction-status-"+ingestID.String(),
 			"hash-"+ingestID.String(), content, target.MemorySpaceID, target.MemorySpaceGeneration).Error; err != nil {
 			return err
@@ -495,6 +492,15 @@ func TestPrivateMemoryCorrectionStatusHidesSealedGeneration(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, submitted.Confirmation.Token, status.Confirmation.Token)
+	confirmed, err := correctRelationshipWithTestEmbeddings(semanticCtx, semantic, CorrectRelationshipInput{
+		TeamID: teamID.String(), OwnerProfileID: target.ID.String(), Action: "confirm",
+		SubmissionID: submitted.SubmissionID, ConfirmationToken: submitted.Confirmation.Token,
+		Selection: RelationshipCorrectionSelection{ObjectEntityID: firstCandidateID.String()}, IdempotencyKey: "private-read-only-confirm",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "completed", confirmed.ProcessingState)
+	require.Equal(t, "current", confirmed.SearchState)
+	require.Equal(t, firstCandidateID.String(), loadRelationshipObjectEntity(t, semanticCtx, appDB, rls, teamID.String(), target.ID.String(), confirmed.Correction.SuccessorRelationshipID))
 
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		result := tx.Exec(`

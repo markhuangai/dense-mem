@@ -148,6 +148,8 @@ func scanSSOTeamMembership(rows *sql.Rows) (*domain.SSOTeamMembership, error) {
 		&item.Membership.ID,
 		&item.Membership.MemorySpaceID,
 		&item.Membership.MemorySpaceGeneration,
+		&item.Membership.TeamSharedSpaceID,
+		&item.Membership.TeamSharedSpaceGeneration,
 		&item.Membership.ActorIdentityID,
 		&item.Membership.TeamID,
 		&item.Membership.OwnerID,

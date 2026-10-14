@@ -137,13 +137,13 @@ func (r *SSORepositoryImpl) UpsertIdentity(ctx context.Context, identity *domain
 			    external_id = $2,
 			    email = $3,
 			    display_name = $4,
-			    active = CASE WHEN $10 THEN active ELSE true END,
+			    active = active,
 			    last_login_at = $5,
 			    last_entitlement_check_at = $6,
 			    updated_at = $7
 			WHERE id = $8 AND provider_id = $9
 			RETURNING id, active, created_at, updated_at
-		`, identity.Subject, identity.ExternalID, identity.Email, identity.DisplayName, identity.LastLoginAt, identity.LastEntitlementCheckAt, now, identity.ID, identity.ProviderID, directoryAuthority).Row().Scan(&identity.ID, &identity.Active, &identity.CreatedAt, &identity.UpdatedAt); err != nil {
+		`, identity.Subject, identity.ExternalID, identity.Email, identity.DisplayName, identity.LastLoginAt, identity.LastEntitlementCheckAt, now, identity.ID, identity.ProviderID).Row().Scan(&identity.ID, &identity.Active, &identity.CreatedAt, &identity.UpdatedAt); err != nil {
 			return err
 		}
 		return upsertCanonicalSSOIdentityTx(tx, *identity)
@@ -170,7 +170,7 @@ func upsertCanonicalSSOIdentityTx(tx *gorm.DB, identity domain.SSOIdentity) erro
 			provider = EXCLUDED.provider,
 			subject = EXCLUDED.subject,
 			display_name = EXCLUDED.display_name,
-			active = EXCLUDED.active,
+			active = actor_identities.active AND EXCLUDED.active,
 			updated_at = EXCLUDED.updated_at
 	`, identity.ID, provider, identity.Subject, identity.DisplayName, identity.Active, identity.CreatedAt, identity.UpdatedAt).Error; err != nil {
 		return err

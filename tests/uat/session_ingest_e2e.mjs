@@ -6,17 +6,19 @@ const controlURL = required("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const controlToken = required("DENSE_MEM_CONTROL_TOKEN");
 const teamID = required("DENSE_MEM_E2E_TEAM_ID");
 const providerURL = process.env.DENSE_MEM_E2E_PROVIDER_URL || "http://synchronous-write-provider:8787";
-const a = await credential(teamID, "A", "credential_private");
-const b = await credential(teamID, "B", "credential_private");
-const shared = await credential(teamID, "shared", "shared_only");
-const readOnly = await credential(teamID, "read-only", "credential_private", ["read"]);
+const a = await credential(teamID, "A");
+const b = await credential(teamID, "B");
+const shared = await credential(teamID, "shared");
+const readOnly = await credential(teamID, "read-only", ["read"]);
 const foreignTeam = (await control("/teams", { name: `session-C-${randomUUID()}` })).data;
-const c = await credential(foreignTeam.id, "C", "credential_private");
+const c = await credential(foreignTeam.id, "C");
 assert((await list(a.api_key)).some((tool) => tool.name === "ingest_session"));
 for (const actor of [shared, readOnly]) {
-  assert(!(await list(actor.api_key)).some((tool) => tool.name === "ingest_session"));
-  assertFailed(await rpc("ingest_session", request([{ event_id: "one", text: "Ari uses Go." }]), actor.api_key));
+  assert((await list(actor.api_key)).some((tool) => tool.name === "ingest_session"));
+  const privateResult = await call("ingest_session", request([{ event_id: "one", text: "Ari uses Go." }]), actor.api_key);
+  assert.equal(privateResult.processing_state, "completed");
 }
+
 const timestamp = "2026-10-10T12:00:00Z";
 const firstEvent = { event_id: "one", text: "  Ari uses Go. café 🧭\n", occurred_at: timestamp };
 const firstRequest = request([firstEvent, firstEvent]);
@@ -97,7 +99,7 @@ async function control(path, body, method = body ? "POST" : "GET") {
  const response = await fetch(`${controlURL}/control/api${path}`, { method, headers: { Authorization: `Bearer ${controlToken}`, "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
  assert(response.ok, `control ${path}: ${response.status} ${(await response.clone().text()).slice(0, 500)}`); return response.json();
 }
-async function credential(team, name, binding, scopes = ["read", "write"]) { return (await control(`/teams/${team}/credentials`, { name, scopes, rate_limit: 1000, memory_binding: binding })).data; }
+async function credential(team, name, scopes = ["read", "write"]) { return (await control(`/teams/${team}/credentials`, { name, scopes, rate_limit: 1000 })).data; }
 async function wire(method, params, key) {
  const response = await fetch(`${userURL}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: randomUUID(), method, params }) });
  assert.equal(response.status, 200); return response.json();

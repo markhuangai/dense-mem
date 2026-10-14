@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 var evaluationToolNames = map[string]struct{}{
@@ -87,6 +88,14 @@ func WithRuntimeToolPolicy(ctx context.Context, policy RuntimeToolPolicy) contex
 
 // ToolVisible reports whether a registered tool should be visible for a request.
 func ToolVisible(ctx context.Context, tool Tool, policy RuntimeToolPolicy) bool {
+	if tool.Name == ToolRemember || tool.Name == ToolCorrectRelationship || tool.Name == ToolRetractEvidence {
+		actor, ok := requestctx.ActorFromContext(ctx)
+		if !ok {
+			return false
+		}
+		access := domain.MemoryCapabilities(actor.Grants, actor.AllowedSpaces)
+		return access.Private.Write || access.TeamShared.Write
+	}
 	if tool.Name == ToolIngestSession {
 		return tool.Available != nil && tool.Available(ctx)
 	}

@@ -26,7 +26,7 @@ try {
   let truePositive = 0, predicted = 0, expected = 0;
   for (const test of mode === "quality" ? cohort.quality_cases : cohort.remember_controls) {
    const team = (await control("/teams", { name: `session-eval-${repetition}-${test.id}-${randomUUID()}` })).data;
-   const actor = await credential(team.id, "owner-A", mode === "quality" ? "credential_private" : "shared_only");
+   const actor = await credential(team.id, "owner-A");
    const metricsBefore = await metrics();
    const started = performance.now();
    const ids = new Set();
@@ -41,7 +41,7 @@ try {
     if (mode === "quality") {
      for (const event of batch) events.set(event.event_id, event);
      args = { idempotency_key: randomUUID(), framework: "eval", app_name: "session_ingest_v1", user_id: "external-user", session_id: sessionID, events: batch };
-    } else args = { idempotency_key: randomUUID(), ...test.arguments };
+    } else args = { idempotency_key: randomUUID(), ...test.arguments, target_space: "team_shared" };
     if (mode === "remember" && test.operation === "invalid") {
      const response = await rpc("remember", args, actor.api_key);
      assert.equal(response.error?.code, test.error.rpc_code);
@@ -142,7 +142,7 @@ try {
 function required(name) { assert(process.env[name], `${name} is required`); return process.env[name]; }
 async function save() { await mkdir(dirname(outputPath), { recursive: true }); await writeFile(outputPath, JSON.stringify(report, null, 2) + "\n"); }
 async function control(path, body) { const response = await fetch(`${controlURL}/control/api${path}`, { method: "POST", headers: { Authorization: `Bearer ${controlToken}`, "Content-Type": "application/json" }, body: JSON.stringify(body) }); assert(response.ok, `control ${path}: ${response.status}`); return response.json(); }
-async function credential(team, name, binding = "credential_private") { return (await control(`/teams/${team}/credentials`, { name, scopes: ["read","write"], rate_limit: 10000, memory_binding: binding })).data; }
+async function credential(team, name) { return (await control(`/teams/${team}/credentials`, { name, scopes: ["read","write"], rate_limit: 10000 })).data; }
 async function rpc(name, args, key) { const response = await fetch(`${userURL}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: randomUUID(), method: "tools/call", params: { name, arguments: args } }), signal: AbortSignal.timeout(185000) }); assert.equal(response.status, 200); return response.json(); }
 async function call(name, args, key) { const response = await rpc(name,args,key); assert(!response.error && !response.result?.isError, `${name}: ${JSON.stringify(response.error || response.result).slice(0,2000)}`); return response.result.structuredContent || JSON.parse(response.result.content[0].text); }
 async function metrics() { const response = await fetch(`${proxyURL}/metrics`); assert(response.ok); return response.json(); }

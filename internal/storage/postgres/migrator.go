@@ -311,6 +311,15 @@ func (m *Migrator) RunUp(ctx context.Context) error {
 	return nil
 }
 
+func (m *Migrator) PreparePrivateMemoryMigration(ctx context.Context) error {
+	provider, err := newRuntimeMigrationProvider(m.dir, m.db, true)
+	if err != nil {
+		return err
+	}
+	_, err = provider.UpTo(ctx, 20261014010001)
+	return err
+}
+
 // RunMigrationControlRetirement runs the explicitly authorized destructive
 // migration. Ordinary startup deliberately excludes this maintenance boundary.
 func (m *Migrator) RunMigrationControlRetirement(ctx context.Context) error {

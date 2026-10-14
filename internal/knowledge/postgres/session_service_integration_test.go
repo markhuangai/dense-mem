@@ -75,7 +75,7 @@ func TestSessionServiceDurableFailureRecoveryNoFactsAndReplay(t *testing.T) {
 	defer cleanup()
 	team := createLedgerTeam(t, admin, rls, "session-service")
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
-	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpaceProfilePrivate)
+	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	intake.Request.Events[0].Text = "Thanks. Let's continue."
 	store := NewStore(app, rls, ConflictRuntimeConfig{})
 	outbound := &sessionOutbound{fail: true}
@@ -130,7 +130,7 @@ func TestSessionServiceCancellationAndTimeoutRetainIntakeWithoutKnowledge(t *tes
 	defer cleanup()
 	team := createLedgerTeam(t, admin, rls, "session-cancel")
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
-	base, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpaceProfilePrivate)
+	base, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	store := NewStore(app, rls, ConflictRuntimeConfig{})
 	for _, mode := range []string{"cancel", "timeout"} {
 		t.Run(mode, func(t *testing.T) {
@@ -173,7 +173,7 @@ func TestSessionServiceBudgetRejectionHasNoIntake(t *testing.T) {
 	defer cleanup()
 	team := createLedgerTeam(t, admin, rls, "session-budget")
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
-	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpaceProfilePrivate)
+	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	store := NewStore(app, rls, ConflictRuntimeConfig{})
 	outbound := &sessionOutbound{}
 	api := service.NewService(service.Dependencies{Enabled: true, Repository: store, Preparer: processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store}), Tokenizer: "o200k_base", Extractor: extraction.NewProvider(outbound, "fixture", assessor.DefaultSemanticAssessmentLimits())})
@@ -190,7 +190,7 @@ func TestSessionServiceResumesValidatedExtractionCheckpoint(t *testing.T) {
 	defer cleanup()
 	team := createLedgerTeam(t, admin, rls, "session-checkpoint-recovery")
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
-	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpaceProfilePrivate)
+	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	intake.Request.Events[0].Text = strings.Repeat("Okay. ", 6000)
 	var err error
 	intake.Windows, err = service.BuildWindows(intake.Request, "o200k_base")
@@ -222,7 +222,7 @@ func TestSessionHTTPProviderFailureReceiptsPreserveActualClassifications(t *test
 	defer cleanup()
 	team := createLedgerTeam(t, admin, rls, "session-http-failures")
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
-	base, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpaceProfilePrivate)
+	base, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	store := NewStore(app, rls, ConflictRuntimeConfig{})
 	for _, mode := range []string{"rate-limit", "provider-timeout", "caller-timeout", "caller-cancel"} {
 		t.Run(mode, func(t *testing.T) {
@@ -290,7 +290,7 @@ func TestSessionServiceFactsDiagnosticsAndCheckpointRecoveryThroughPostgres(t *t
 	team := createOwnerTeam(t, admin, rls, "session-facts")
 	owner := createOwnerProfile(t, admin, rls, team, "owner")
 	installOwnerSearchContract(t, admin, rls, "session-facts", 3, 1)
-	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpaceProfilePrivate)
+	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	var extractionCalls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var envelope struct {

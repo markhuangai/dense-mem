@@ -17,13 +17,13 @@ try {
   paused = true;
   await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
   assert.equal((await control("/ontology/status")).data.paused, true);
-  const shared = (await control(`/teams/${teamID}/credentials`, { name: "Ontology shared acceptance", scopes: ["read", "write"], rate_limit: 300, memory_binding: "shared_only" })).data;
-  assert.equal(shared.credential.memory_binding, "shared_only");
-  const second = (await control(`/teams/${teamID}/credentials`, { name: "Ontology owner B", scopes: ["read", "write"], rate_limit: 300, memory_binding: "shared_only" })).data;
-  const reader = (await control(`/teams/${teamID}/credentials`, { name: "Ontology reader C", scopes: ["read", "write"], rate_limit: 300, memory_binding: "shared_only" })).data;
-  const privateCredential = (await control(`/teams/${teamID}/credentials`, { name: "Ontology private source", scopes: ["read", "write"], rate_limit: 300, memory_binding: "credential_private" })).data;
+  const shared = (await control(`/teams/${teamID}/credentials`, { name: "Ontology shared acceptance", scopes: ["read", "write"], rate_limit: 300 })).data;
+  assert.equal(shared.credential.memory_access.team_shared.write, true);
+  const second = (await control(`/teams/${teamID}/credentials`, { name: "Ontology owner B", scopes: ["read", "write"], rate_limit: 300 })).data;
+  const reader = (await control(`/teams/${teamID}/credentials`, { name: "Ontology reader C", scopes: ["read", "write"], rate_limit: 300 })).data;
+  const privateCredential = (await control(`/teams/${teamID}/credentials`, { name: "Ontology private source", scopes: ["read", "write"], rate_limit: 300 })).data;
   const foreignTeam = (await control("/teams", { name: `ontology-foreign-${randomUUID()}` })).data;
-  const foreignCredential = (await control(`/teams/${foreignTeam.id}/credentials`, { name: "Ontology foreign source", scopes: ["read", "write"], rate_limit: 300, memory_binding: "shared_only" })).data;
+  const foreignCredential = (await control(`/teams/${foreignTeam.id}/credentials`, { name: "Ontology foreign source", scopes: ["read", "write"], rate_limit: 300 })).data;
   const texts = ["Atlas stores PostgreSQL data.", "Atlas uses PostgreSQL for data storage.", "Atlas stores PostgreSQL data and encrypts its backups."];
   const sourceIDs = [];
   const relationshipIDs = [];
@@ -31,7 +31,7 @@ try {
     sourceIDs.push(await remember(content, index === 1 ? second.api_key : shared.api_key, relationshipIDs));
   }
   assert.equal(new Set(sourceIDs).size, 3, "force-inserted paraphrases must retain distinct source handles");
-  const privateID = await remember(texts[0], privateCredential.api_key);
+  const privateID = await remember(texts[0], privateCredential.api_key, [], "private");
   const foreignID = await remember(texts[0], foreignCredential.api_key);
   const coordinationID = await remember("Atlas uses Redis for coordination.", shared.api_key);
   const coordinationAlternativeID = await remember("Atlas uses KeyDB for coordination.", shared.api_key);
@@ -256,10 +256,10 @@ async function mcp(name, args, key) {
   assert(!result.error && result.result?.isError !== true, `${name} failed: ${JSON.stringify(result.error ?? result.result)}`);
   return JSON.parse(result.result.content[0].text);
 }
-async function remember(content, key, relationshipIDs = []) {
+async function remember(content, key, relationshipIDs = [], targetSpace = "team_shared") {
   const relationships = [{ ref: "storage", subject: { name: "Atlas", entity_kind: "project" }, predicate: { proposed_key: "uses" }, object: { entity: { name: content.includes("Redis") ? "Redis" : content.includes("KeyDB") ? "KeyDB" : content.includes("SQLite") ? "SQLite" : "PostgreSQL", entity_kind: "product" } }, polarity: "+", evidence_indices: [0] }];
   if (content.includes("encrypts")) relationships.push({ ref: "backups", subject: { name: "Atlas", entity_kind: "project" }, predicate: { proposed_key: "encrypts" }, object: { entity: { name: "backups", entity_kind: "document" } }, polarity: "+", evidence_indices: [0] });
-  const result = await mcp("remember", { idempotency_key: randomUUID(), evidence: [{ content, source_type: "document", source: "ontology-e2e", source_group: "ontology-e2e", force_insert: true }], relationships }, key);
+  const result = await mcp("remember", { target_space: targetSpace, idempotency_key: randomUUID(), evidence: [{ content, source_type: "document", source: "ontology-e2e", source_group: "ontology-e2e", force_insert: true }], relationships }, key);
   assert.equal(result.processing_state, "completed");
   relationshipIDs.push(...result.relationship_results.flatMap((item) => item.splits.map((split) => split.relationship_id)));
   const evidence = result.evidence.find((item) => item.disposition === "stored");
@@ -286,7 +286,7 @@ async function fixtureMode(mode) {
   assert.equal(response.status, 200);
 }
 async function rememberFixture(key, content) {
-  const response = await fetch(`${userURL}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${key}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: randomUUID(), method: "tools/call", params: { name: "remember", arguments: { idempotency_key: randomUUID(), evidence: [{ content, source_type: "document", source: "ontology-followups", source_group: randomUUID() }], relationships: [{ ref: "storage", subject: { name: "Atlas", entity_kind: "project" }, predicate: { proposed_key: "uses" }, object: { entity: { name: "PostgreSQL", entity_kind: "product" } }, polarity: "+", evidence_indices: [0] }] } } }) });
+  const response = await fetch(`${userURL}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${key}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: randomUUID(), method: "tools/call", params: { name: "remember", arguments: { target_space: "team_shared", idempotency_key: randomUUID(), evidence: [{ content, source_type: "document", source: "ontology-followups", source_group: randomUUID() }], relationships: [{ ref: "storage", subject: { name: "Atlas", entity_kind: "project" }, predicate: { proposed_key: "uses" }, object: { entity: { name: "PostgreSQL", entity_kind: "product" } }, polarity: "+", evidence_indices: [0] }] } } }) });
   assert.equal(response.status, 200);
   const rpc = await response.json();
   assert.notEqual(rpc.result?.isError, true, JSON.stringify(rpc.error ?? rpc.result));

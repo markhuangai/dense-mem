@@ -48,14 +48,6 @@ type CredentialRepository interface {
 	TouchLastUsed(ctx context.Context, id uuid.UUID) error
 }
 
-// CredentialMemoryBindingRepository is an optional extension implemented by
-// the canonical repository. Keeping it separate preserves lightweight auth
-// fakes and the pre-space compatibility contract.
-type CredentialMemoryBindingRepository interface {
-	GetMemoryBinding(ctx context.Context, credentialID uuid.UUID) (domain.CredentialMemoryBinding, uuid.UUID, error)
-	GetTeamSharedSpaceID(ctx context.Context, teamID uuid.UUID) (uuid.UUID, error)
-}
-
 // LastUsedUpdate is shared with the Access application through its port.
 type LastUsedUpdate = accesscontract.LastUsedUpdate
 
@@ -77,7 +69,6 @@ type CredentialRepositoryImpl struct {
 
 // Ensure CredentialRepositoryImpl implements CredentialRepository
 var _ CredentialRepository = (*CredentialRepositoryImpl)(nil)
-var _ CredentialMemoryBindingRepository = (*CredentialRepositoryImpl)(nil)
 
 // NewCredentialRepository creates a new API credential repository instance.
 // rls is required; nil causes a panic at first use. Callers should pass
@@ -131,10 +122,6 @@ func (r *CredentialRepositoryImpl) CreateCredential(ctx context.Context, credent
 	}
 	keySuffix := credential.KeySuffix
 	var membershipID uuid.UUID
-	binding := credential.MemoryBinding
-	if !binding.Valid() {
-		binding = domain.CredentialBindingSharedOnly
-	}
 
 	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
 		if err := ensureActiveTeamForMutation(ctx, tx, teamID.String()); err != nil {
@@ -162,40 +149,22 @@ func (r *CredentialRepositoryImpl) CreateCredential(ctx context.Context, credent
 		}
 
 		var memorySpaceID uuid.UUID
-		switch binding {
-		case domain.CredentialBindingProfilePrivate:
-			if credential.OwnerIdentityID == nil || *credential.OwnerIdentityID == uuid.Nil {
-				return fmt.Errorf("profile-private credential requires an owner identity")
-			}
-			if err := tx.Raw(`
-				SELECT dense_mem_ensure_private_space($1, 'profile_private', $2)
-			`, teamID, *credential.OwnerIdentityID).Row().Scan(&memorySpaceID); err != nil {
-				return err
-			}
-		case domain.CredentialBindingCredentialPrivate:
-			if err := tx.Raw(`
-				SELECT dense_mem_ensure_private_space($1, 'credential_private', $2)
-			`, teamID, credential.ID).Row().Scan(&memorySpaceID); err != nil {
-				return err
-			}
-		default:
-			if err := tx.Raw(`SELECT id FROM memory_spaces WHERE team_id = $1 AND kind = 'team_shared' LIMIT 1`, teamID).Row().Scan(&memorySpaceID); err != nil {
-				return err
-			}
+		if err := tx.Raw(`SELECT dense_mem_ensure_private_space($1, $2)`, teamID, membershipID).Row().Scan(&memorySpaceID); err != nil {
+			return err
 		}
 		if err := tx.Exec(`
 			INSERT INTO credentials (
 				id, actor_identity_id, owner_identity_id, team_id, kind, key_hash, key_prefix,
-				key_suffix, name, scopes, rate_limit, status, expires_at, memory_binding, memory_space_id, created_at, updated_at
+				key_suffix, name, scopes, rate_limit, status, expires_at, created_at, updated_at
 			) VALUES (
 				$1, $1, $2, $3, 'api_key', $4, $5, NULLIF($6, ''), $7, $8, $9,
-				'active', $10, $11, $12, $13, $13
+				'active', $10, $11, $11
 			)
 		`, credential.ID, credential.OwnerIdentityID, teamID, credential.KeyHash, keyPrefix, keySuffix, name,
-			pq.Array(credential.Scopes), credential.RateLimit, credential.ExpiresAt, string(binding), memorySpaceID, now).Error; err != nil {
+			pq.Array(credential.Scopes), credential.RateLimit, credential.ExpiresAt, now).Error; err != nil {
 			return err
 		}
-		credential.MemoryBinding = binding
+		credential.EffectiveMemoryGrants = append([]string(nil), credential.Scopes...)
 		credential.MemorySpaceID = memorySpaceID
 		if err := withSystemModeInTx(ctx, tx, teamID.String(), credential.ID.String(), func(systemTx *gorm.DB) error {
 			return systemTx.Raw(`
@@ -324,25 +293,6 @@ func (r *CredentialRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix
 		return nil, fmt.Errorf("failed to get api credential by prefix: %w", err)
 	}
 	return canonicalKey, nil
-}
-
-func (r *CredentialRepositoryImpl) GetMemoryBinding(ctx context.Context, credentialID uuid.UUID) (domain.CredentialMemoryBinding, uuid.UUID, error) {
-	var binding string
-	var spaceID uuid.UUID
-	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
-		return tx.Raw(`SELECT COALESCE(memory_binding, 'shared_only'), memory_space_id FROM credentials WHERE id = $1 AND kind = 'api_key'`, credentialID).Row().Scan(&binding, &spaceID)
-	})
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return domain.CredentialBindingSharedOnly, uuid.Nil, nil
-		}
-		return domain.CredentialBindingSharedOnly, uuid.Nil, fmt.Errorf("failed to load credential memory binding: %w", err)
-	}
-	normalized, err := domain.NormalizeCredentialMemoryBinding(binding)
-	if err != nil {
-		return domain.CredentialBindingSharedOnly, uuid.Nil, err
-	}
-	return normalized, spaceID, nil
 }
 
 func (r *CredentialRepositoryImpl) GetTeamSharedSpaceID(ctx context.Context, teamID uuid.UUID) (uuid.UUID, error) {
@@ -599,9 +549,21 @@ func replaceLegacyMembershipGrants(tx *gorm.DB, membershipID uuid.UUID, scopes [
 	`, membershipID, pq.Array(scopes)).Error
 }
 
+const credentialMemoryGrantsSelect = `ARRAY(
+	SELECT DISTINCT scope FROM unnest(c.scopes) AS scope
+	WHERE c.status = 'active' AND c.revoked_at IS NULL
+	  AND (c.expires_at IS NULL OR c.expires_at > now())
+	  AND membership.status = 'active' AND scope = ANY(membership.maximum_grants)
+	  AND EXISTS (SELECT 1 FROM actor_identities WHERE id = c.actor_identity_id AND active)
+	  AND EXISTS (SELECT 1 FROM membership_grants WHERE membership_id = membership.id AND grant_name = scope)
+   AND (c.owner_identity_id IS NULL OR scope=ANY(dense_mem_sso_memory_grants(c.team_id,c.owner_identity_id)))
+	ORDER BY scope
+)`
+
 const credentialHydrationSelect = `
 		c.id, c.actor_identity_id, membership.id, alias.legacy_owner_id,
 		c.team_id, COALESCE(t.name, ''), COALESCE(c.key_suffix, ''), c.name, c.scopes,
+		` + credentialMemoryGrantsSelect + `,
 		CASE WHEN membership.team_admin THEN 'manager' ELSE 'member' END, c.rate_limit,
 		c.last_used_at, c.expires_at, c.created_at, c.revoked_at,
 		COALESCE(c.owner_identity_id::text, ''),
@@ -611,13 +573,12 @@ const credentialHydrationSelect = `
 		COALESCE(owner_membership.sso_entitlement_status, ''),
 		owner_membership.sso_last_entitlement_checked_at,
 		owner_membership.sso_last_login_at,
-			COALESCE(c.memory_binding, 'shared_only'),
-			COALESCE(c.memory_space_id::text, ''),
+			COALESCE((SELECT id::text FROM memory_spaces WHERE team_id = c.team_id AND owner_membership_id = membership.id AND kind = 'private' AND lifecycle_state = 'active'), ''),
 			COALESCE((
 				SELECT memory_space.generation
 				FROM memory_spaces AS memory_space
-				WHERE memory_space.id = c.memory_space_id
-				  AND memory_space.team_id = c.team_id
+				WHERE memory_space.owner_membership_id = membership.id
+				  AND memory_space.team_id = c.team_id AND memory_space.kind = 'private' AND memory_space.lifecycle_state = 'active'
 				LIMIT 1
 			), 0),
 			COALESCE((
@@ -639,7 +600,7 @@ const credentialHydrationSelect = `
 type credentialHydrationState struct {
 	credential                                       domain.Credential
 	ownerIdentityID, ssoProviderID                   string
-	memoryBinding, memorySpaceID, teamSharedSpaceID  string
+	memorySpaceID, teamSharedSpaceID                 string
 	memorySpaceGeneration, teamSharedSpaceGeneration int64
 }
 
@@ -654,6 +615,7 @@ func (s *credentialHydrationState) scan(rows *sql.Rows) error {
 		&s.credential.KeySuffix,
 		&s.credential.Name,
 		pq.Array(&s.credential.Scopes),
+		pq.Array(&s.credential.EffectiveMemoryGrants),
 		&s.credential.Role,
 		&s.credential.RateLimit,
 		&s.credential.LastUsedAt,
@@ -668,7 +630,6 @@ func (s *credentialHydrationState) scan(rows *sql.Rows) error {
 		&s.credential.SSOEntitlementStatus,
 		&s.credential.SSOLastEntitlementCheckedAt,
 		&s.credential.SSOLastLoginAt,
-		&s.memoryBinding,
 		&s.memorySpaceID,
 		&s.memorySpaceGeneration,
 		&s.teamSharedSpaceID,
@@ -679,7 +640,7 @@ func (s *credentialHydrationState) scan(rows *sql.Rows) error {
 func (s *credentialHydrationState) result() (*domain.Credential, error) {
 	s.credential.OwnerIdentityID = parseOptionalUUID(s.ownerIdentityID)
 	s.credential.SSOProviderID = parseOptionalUUID(s.ssoProviderID)
-	if err := applyCredentialMemoryFields(&s.credential, s.memoryBinding, s.memorySpaceID, s.memorySpaceGeneration, s.teamSharedSpaceID, s.teamSharedSpaceGeneration); err != nil {
+	if err := applyCredentialMemoryFields(&s.credential, s.memorySpaceID, s.memorySpaceGeneration, s.teamSharedSpaceID, s.teamSharedSpaceGeneration); err != nil {
 		return nil, err
 	}
 	return &s.credential, nil
@@ -825,11 +786,7 @@ func (r *CredentialRepositoryImpl) GetSSOOwnedCredential(ctx context.Context, te
 	return credentials[0], nil
 }
 
-func applyCredentialMemoryFields(credential *domain.Credential, bindingRaw, memorySpaceRaw string, memorySpaceGeneration int64, teamSharedSpaceRaw string, teamSharedSpaceGeneration int64) error {
-	binding, err := domain.NormalizeCredentialMemoryBinding(bindingRaw)
-	if err != nil {
-		return err
-	}
+func applyCredentialMemoryFields(credential *domain.Credential, memorySpaceRaw string, memorySpaceGeneration int64, teamSharedSpaceRaw string, teamSharedSpaceGeneration int64) error {
 	memorySpaceID, err := parseMemorySpaceUUID(memorySpaceRaw)
 	if err != nil {
 		return err
@@ -838,7 +795,6 @@ func applyCredentialMemoryFields(credential *domain.Credential, bindingRaw, memo
 	if err != nil {
 		return err
 	}
-	credential.MemoryBinding = binding
 	credential.MemorySpaceID = memorySpaceID
 	credential.MemorySpaceGeneration = memorySpaceGeneration
 	credential.TeamSharedSpaceID = teamSharedSpaceID

@@ -5,7 +5,6 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	"testing"
 
 	"github.com/google/uuid"
@@ -20,7 +19,7 @@ func TestActiveSpaceGenerationHelperHonorsLifecycleAndExecutionPrivilege(t *test
 
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "active-space-generation-helper")
-	space, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureCredentialPrivate(ctx, uuid.MustParse(teamID), uuid.New())
+	space, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamID), uuid.MustParse(createLedgerProfile(t, adminDB, rls, teamID, "generation-owner")))
 	require.NoError(t, err)
 
 	var forcedRLS, publicCanExecute, runtimeCanExecute bool

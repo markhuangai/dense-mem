@@ -25,14 +25,13 @@ def control(path, body=None, method=None):
     return response.json()["data"]
 
 
-def credential(team, binding="credential_private", scopes=None):
+def credential(team, scopes=None):
     result = control(
         f"/teams/{team}/credentials",
         {
             "name": "python-client-" + str(uuid4()),
             "scopes": scopes or ["read", "write"],
             "rate_limit": 1000,
-            "memory_binding": binding,
         },
     )
     SECRETS.append(result["api_key"])
@@ -140,7 +139,7 @@ def oauth_credentials():
         now()+interval '8 hours',now(),now());
     SELECT set_config('app.current_team_id','{TEAM}',true);
     SELECT set_config('app.tx_mode','team',true);
-    SELECT dense_mem_ensure_private_space('{TEAM}','profile_private','{identity}');
+    SELECT dense_mem_ensure_private_space('{TEAM}','{membership}');
     COMMIT;
     """)
     trust = ssl.create_default_context(cafile=os.environ["NODE_EXTRA_CA_CERTS"])
@@ -167,16 +166,15 @@ def oauth_credentials():
         cookies={"dense_mem_sso_session": session_token, "dense_mem_sso_csrf": csrf_token},
         headers={"X-Dense-Mem-CSRF": csrf_token},
         json={
-            "name": "Python profile-private " + str(uuid4()),
+            "name": "Python private " + str(uuid4()),
             "scopes": ["read", "write"],
             "rate_limit": 1000,
-            "memory_binding": "profile_private",
         },
         timeout=30,
     )
-    assert response.status_code == 201, "profile-bound API credential fixture failed"
+    assert response.status_code == 201, "SSO API credential fixture failed"
     personal = response.json()["data"]
-    assert personal["credential"]["memory_binding"] == "profile_private"
+    assert personal["credential"]["memory_access"]["private"]["write"]
     SECRETS.append(personal["api_key"])
     return token, personal["api_key"], owner, personal["credential"]["id"]
 

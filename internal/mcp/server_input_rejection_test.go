@@ -23,7 +23,7 @@ func TestServerClassifiesContractTenantOverrideRejection(t *testing.T) {
 	teamID := uuid.New()
 	server := NewServer(reg, teamID.String(), logger)
 
-	_, rpcErr := server.invokeTool(context.Background(), registry.ToolRemember, map[string]any{
+	_, rpcErr := server.invokeTool(testMemoryContext(context.Background(), nil), registry.ToolRemember, map[string]any{
 		"team_id": uuid.NewString(),
 	})
 

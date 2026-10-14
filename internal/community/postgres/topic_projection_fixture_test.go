@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	accesspg "github.com/markhuangai/dense-mem/internal/access/postgres"
 	communityapp "github.com/markhuangai/dense-mem/internal/community/service"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
@@ -24,13 +25,14 @@ import (
 
 type topicProjectionFixture struct {
 	*communityOwnershipFixture
-	ontology   *ontologypg.Store
-	service    communityapp.Service
-	topics     map[string]string
-	space      string
-	generation int64
-	reader     string
-	windowID   string
+	ontology    *ontologypg.Store
+	service     communityapp.Service
+	topics      map[string]string
+	space       string
+	generation  int64
+	reader      string
+	windowID    string
+	credentials map[string]*domain.Credential
 }
 
 type topicFixtureConfig struct{}
@@ -47,6 +49,13 @@ func newTopicProjectionFixture(t testing.TB) *topicProjectionFixture {
 		return tx.Raw(`SELECT id::text,generation FROM memory_spaces WHERE team_id=?::uuid AND kind='team_shared'`, f.teamID).Row().Scan(&f.space, &f.generation)
 	}))
 	f.reader = createLedgerProfile(t, f.adminDB, f.rls, f.teamID, "topic-reader-c")
+	f.credentials = make(map[string]*domain.Credential)
+	for _, owner := range []string{f.ownerA, f.ownerB, f.reader} {
+		credential, err := accesspg.NewCredentialRepository(f.adminDB, f.rls, nil).GetByIDForTeam(context.Background(), uuid.MustParse(f.teamID), uuid.MustParse(owner))
+		require.NoError(t, err)
+		require.NotNil(t, credential)
+		f.credentials[owner] = credential
+	}
 	f.store = NewStore(f.appDB, f.rls).WithTopics(f.ontology.NewTopicCatalogReader(), f.ontology.NewTopicMembershipReader(), f.ontology.NewTopicProjectionAdmission(), f.ontology.NewTopicProjectionRelease())
 	f.service = communityapp.New(communityapp.Dependencies{Store: f.store, AppConfig: topicFixtureConfig{}})
 	f.setMode(t, true)
@@ -73,8 +82,12 @@ func (f *topicProjectionFixture) setMode(t testing.TB, enabled bool) {
 }
 
 func (f *topicProjectionFixture) actor(owner string) context.Context {
-	return requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: uuid.MustParse(f.teamID), OwnerID: uuid.MustParse(owner), Role: "member", Grants: []string{"read", "write"},
-		AllowedSpaces: []domain.MemorySpaceAccess{{ID: uuid.MustParse(f.space), Kind: domain.MemorySpaceTeamShared, Generation: f.generation}}})
+	credential := f.credentials[owner]
+	return requestctx.WithActor(context.Background(), requestctx.Actor{
+		TeamID: credential.TeamID, OwnerID: credential.OwnerID, IdentityID: credential.ActorIdentityID,
+		MembershipID: credential.MembershipID, CredentialID: &credential.ID, AuthMethod: "api_key",
+		Role: "member", Grants: credential.Scopes, AllowedSpaces: credential.MemorySpaces(),
+	})
 }
 
 func (f *topicProjectionFixture) publish(t testing.TB, changes ...ontology.Change) {

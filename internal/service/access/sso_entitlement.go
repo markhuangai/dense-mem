@@ -49,6 +49,7 @@ func (s *SSOService) ValidateCredential(ctx context.Context, credential *domain.
 	if !hasCredentialScope(credential.Scopes, CredentialScopeRead) {
 		return nil, ErrSSOAccessDenied
 	}
+	credential.EffectiveMemoryGrants = append([]string(nil), credential.Scopes...)
 	credential.SSOEntitlementStatus = "active"
 	return credential, nil
 }

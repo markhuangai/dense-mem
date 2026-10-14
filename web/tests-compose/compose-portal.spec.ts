@@ -236,6 +236,7 @@ test("MCP supersedes and retracts caller-owned evidence against compose", async 
   const original = mcpToolPayload(await mcpCall(request, "tools/call", {
     name: "remember",
     arguments: {
+      target_space: "team_shared",
       idempotency_key: `${runID}:original`,
       evidence: [{
         content: originalContent,
@@ -252,6 +253,7 @@ test("MCP supersedes and retracts caller-owned evidence against compose", async 
   const replacement = mcpToolPayload(await mcpCall(request, "tools/call", {
     name: "remember",
     arguments: {
+      target_space: "team_shared",
       idempotency_key: `${runID}:replacement`,
       evidence: [{
         content: replacementContent,

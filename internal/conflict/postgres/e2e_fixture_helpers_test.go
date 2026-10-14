@@ -115,16 +115,22 @@ func createLedgerSSOIdentity(t *testing.T, db *gorm.DB, rls storagepostgres.RLSH
 		if err := tx.Exec(`INSERT INTO team_memberships (id, actor_identity_id, team_id, status, team_admin, maximum_grants, sso_provider_id, sso_group_id, sso_entitlement_status, created_at, updated_at) VALUES (?, ?, ?, 'active', false, ARRAY['read','write']::text[], ?, 'test-group', 'active', ?, ?)`, membershipID, identityID, teamID, providerID, now, now).Error; err != nil {
 			return err
 		}
+		if err := tx.Exec(`INSERT INTO sso_group_mappings(provider_id,team_id,group_id,scopes) VALUES(?,?,'test-group',ARRAY['read','write'])`, providerID, teamID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`INSERT INTO sso_entitlement_cache(provider_id,subject,groups,status,checked_at,expires_at) VALUES(?,?,ARRAY['test-group'],'active',now(),now()+interval '1 hour')`, providerID, "subject-"+identityID.String()).Error; err != nil {
+			return err
+		}
 		return tx.Exec(`INSERT INTO membership_grants (membership_id, grant_name, source) VALUES (?, 'read', 'explicit'), (?, 'write', 'explicit')`, membershipID, membershipID).Error
 	}))
 	return identityID
 }
 
-func createOwnedCredential(t *testing.T, repo *accesspostgres.CredentialRepositoryImpl, teamID, ownerID uuid.UUID, name string, binding domain.CredentialMemoryBinding) *domain.Credential {
+func createOwnedCredential(t *testing.T, repo *accesspostgres.CredentialRepositoryImpl, teamID, ownerID uuid.UUID, name string) *domain.Credential {
 	t.Helper()
 	id := uuid.New()
 	prefix := "dm_" + strings.ReplaceAll(id.String(), "-", "")[:20]
-	credential := &domain.Credential{ID: id, TeamID: teamID, Name: name, KeyHash: "hash-" + id.String(), KeyPrefix: prefix, KeySuffix: "suffix", Scopes: []string{"read", "write"}, RateLimit: 60, OwnerIdentityID: &ownerID, MemoryBinding: binding}
+	credential := &domain.Credential{ID: id, TeamID: teamID, Name: name, KeyHash: "hash-" + id.String(), KeyPrefix: prefix, KeySuffix: "suffix", Scopes: []string{"read", "write"}, RateLimit: 60, OwnerIdentityID: &ownerID}
 	require.NoError(t, repo.CreateCredential(context.Background(), credential))
 	return credential
 }

@@ -76,7 +76,7 @@ async def main():
     token_a, token_b = credential(TEAM), credential(TEAM)
     team_c = control("/teams", {"name": "Python C " + str(uuid4())})["id"]
     token_c = credential(team_c)
-    shared = credential(TEAM, "shared_only")
+    shared = credential(TEAM)
     readonly = credential(TEAM, scopes=["read"])
     client = DenseMemClient(USER_URL + "/mcp", token=token_a)
     assert (await client.initialize()).serverInfo.name
@@ -84,9 +84,12 @@ async def main():
     assert {"remember", "ingest_session", "recall_memory", "trace_memory"} <= tools
     assert "get_submission_status" not in tools
     for token in (shared, readonly):
-        hidden = DenseMemClient(USER_URL + "/mcp", token=token)
-        assert "ingest_session" not in {t.name for t in (await hidden.list_tools()).tools}
-        await rejected(hidden.ingest_session(example("session").make_request(str(uuid4()))))
+        private_client = DenseMemClient(USER_URL + "/mcp", token=token)
+        assert "ingest_session" in {t.name for t in (await private_client.list_tools()).tools}
+        session_result = await private_client.ingest_session(
+            example("session").make_request(str(uuid4()))
+        )
+        assert session_result["processing_state"] == "completed"
     await rejected(
         DenseMemClient(USER_URL + "/mcp", token="invalid-bearer").initialize(),
         DenseMemAuthenticationError,
@@ -223,6 +226,13 @@ async def main():
                     {"relationship_id": relationships(receipt)[0]}
                 )
             )
+    await rejected(signed.trace_memory({"relationship_id": relationships(profile_private)[0]}))
+    await rejected(profile.trace_memory({"relationship_id": relationships(oauth_private)[0]}))
+    assert sql(
+        "SELECT count(DISTINCT space_id) FROM session_submissions WHERE submission_id IN ("
+        + literal(oauth_private["submission_id"]) + "::uuid,"
+        + literal(profile_private["submission_id"]) + "::uuid);"
+    ) == "2"
     await rejected(
         DenseMemClient(USER_URL + "/mcp", token=oauth + ".bad").initialize(),
         DenseMemAuthenticationError,

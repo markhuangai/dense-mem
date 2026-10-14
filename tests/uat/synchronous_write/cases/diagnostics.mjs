@@ -151,8 +151,9 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     expect(Array.isArray(diagnostics.provider_exchanges), `${label} detail must expose provider exchange state`);
     if (label === "completed") {
       const publicResult = terminalDetail.data?.public_result || {};
-      const allowedKeys = new Set(["contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors", "warnings"]);
+      const allowedKeys = new Set(["contract_version", "space_kind", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors", "warnings"]);
       expect(Object.keys(publicResult).every((key) => allowedKeys.has(key)), "completed detail public result must use the terminal allowlist");
+      expect(publicResult.space_kind === "team_shared", "completed detail must preserve the requested destination");
       expect(!Object.hasOwn(publicResult, "secret"), "completed detail public result must not expose secret fields");
       expect(Array.isArray(terminalDetail.data?.events) && terminalDetail.data.events.length >= 1, "completed attempt detail must expose its event transcript");
     } else {
@@ -317,6 +318,7 @@ function rememberArguments(label, marker) {
   return {
     idempotencyKey,
     payload: {
+    target_space: "team_shared",
     evidence: [{ content: `Dense-Mem stores durable memory in PostgreSQL. [fixture:diagnostics-${label}] ${suffix} ${marker}${predicateContext}`, source_type: "manual" }],
     relationships: [{
       ref: "durable-store",

@@ -24,7 +24,7 @@ func TestSessionReceiptFailureRollsBackKnowledgeAndRecoversOriginalIntake(t *tes
 	team := createOwnerTeam(t, admin, rls, "session-atomic")
 	owner := createOwnerProfile(t, admin, rls, team, "session-owner")
 	installOwnerSearchContract(t, admin, rls, "session-atomic", 3, 1)
-	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpaceProfilePrivate)
+	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	input := ownerRememberInput(team, owner, "session-atomic")
 	intake.Request.Events[0].Text = input.Evidence[0].Content
 	var err error
@@ -96,7 +96,7 @@ func TestSessionCheckpointAndSuccessfulReceiptAreImmutable(t *testing.T) {
 	defer cleanup()
 	team := createLedgerTeam(t, admin, rls, "session-checkpoint")
 	owner := createLedgerProfile(t, admin, rls, team, "session-owner")
-	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpaceProfilePrivate)
+	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	store := NewStore(app, rls, ConflictRuntimeConfig{})
 	submission, err := store.StageSession(ctx, intake)
 	require.NoError(t, err)
@@ -124,7 +124,7 @@ func TestSessionPreparedCommitCannotReviveChangedOrErasedPrivateGeneration(t *te
 	admin, app, rls, cleanup := setupKnowledgeOwnerDB(t)
 	defer cleanup()
 	installOwnerSearchContract(t, admin, rls, "session-generation", 3, 1)
-	for _, kind := range []domain.MemorySpaceKind{domain.MemorySpaceProfilePrivate, domain.MemorySpaceCredentialPrivate} {
+	for _, kind := range []domain.MemorySpaceKind{domain.MemorySpacePrivate} {
 		for _, erase := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/erase=%t", kind, erase), func(t *testing.T) {
 				team := createOwnerTeam(t, admin, rls, fmt.Sprintf("session-generation-%s-%t", kind, erase))

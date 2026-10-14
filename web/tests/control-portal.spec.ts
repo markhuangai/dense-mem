@@ -15,6 +15,7 @@ type TestKey = {
   team_id: string;
   name: string;
   key_suffix: string;
+  memory_access: { private: { read: boolean; write: boolean }; team_shared: { read: boolean; write: boolean } };
   scopes: string[];
   role: "manager" | "member";
   rate_limit: number;
@@ -28,6 +29,7 @@ const key: TestKey = {
   team_id: team.id,
   name: "default credential",
   key_suffix: "abc123",
+  memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: true } },
   scopes: ["read", "write"],
   role: "manager",
   rate_limit: 120,
