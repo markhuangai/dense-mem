@@ -44,6 +44,7 @@ type ontologyFixture struct {
 	owners      []string
 	space       string
 	generation  int64
+	schema      map[string]string
 }
 
 func newOntologyFixture(t *testing.T) *ontologyFixture {
@@ -89,7 +90,9 @@ func newOntologyFixtureWithMaintenance(t *testing.T, maintenance bool) *ontology
 	migrator, err := storage.NewMigrator(admin)
 	require.NoError(t, err)
 	require.NoError(t, migrator.RunUp(context.Background()))
+	var schema map[string]string
 	if !maintenance {
+		schema = ontologySchemaSnapshot(t, admin)
 		require.NoError(t, rollbackOntologySchemaTo(t, admin, 20261004190000))
 	}
 	require.NoError(t, admin.Exec(`CREATE ROLE ontology_app LOGIN PASSWORD 'ontology_test' NOSUPERUSER NOBYPASSRLS;
@@ -112,7 +115,7 @@ func newOntologyFixtureWithMaintenance(t *testing.T, maintenance bool) *ontology
 		require.NoError(t, db.Close())
 	})
 	rls := storage.NewRLS()
-	fixture := &ontologyFixture{admin: admin, app: app, rls: rls, store: NewStore(app, rls), knowledge: knowledge.NewStore(app, rls, knowledgecontract.ConflictRuntimeConfig{})}
+	fixture := &ontologyFixture{admin: admin, app: app, rls: rls, store: NewStore(app, rls), knowledge: knowledge.NewStore(app, rls, knowledgecontract.ConflictRuntimeConfig{}), schema: schema}
 	team := &domain.Team{Name: "ontology-" + uuid.NewString()}
 	require.NoError(t, access.NewTeamRepository(admin, rls).Create(context.Background(), team))
 	fixture.team = team.ID.String()
@@ -126,6 +129,73 @@ func newOntologyFixtureWithMaintenance(t *testing.T, maintenance bool) *ontology
 		return tx.Raw(`SELECT id::text,generation FROM memory_spaces WHERE team_id=?::uuid AND kind='team_shared'`, fixture.team).Row().Scan(&fixture.space, &fixture.generation)
 	}))
 	return fixture
+}
+
+func ontologySchemaSnapshot(t *testing.T, db *gorm.DB) map[string]string {
+	t.Helper()
+	var objects []struct{ Key, Definition string }
+	require.NoError(t, db.Raw(`
+		SELECT format('function:%I.%I(%s)',namespace.nspname,routine.proname,pg_get_function_identity_arguments(routine.oid)) AS key,
+			pg_get_functiondef(routine.oid) AS definition
+		FROM pg_proc routine JOIN pg_namespace namespace ON namespace.oid=routine.pronamespace
+		WHERE namespace.nspname='public' AND routine.prorettype='trigger'::regtype
+		UNION ALL
+		SELECT 'trigger:'||namespace.nspname||'.'||relation.relname||'.'||trigger.tgname,
+			format('%s; ALTER TABLE %I.%I %s TRIGGER %I',
+				replace(pg_get_triggerdef(trigger.oid),'CREATE TRIGGER ','CREATE OR REPLACE TRIGGER '),
+				namespace.nspname,relation.relname,
+				CASE trigger.tgenabled WHEN 'O' THEN 'ENABLE' WHEN 'D' THEN 'DISABLE' WHEN 'R' THEN 'ENABLE REPLICA' WHEN 'A' THEN 'ENABLE ALWAYS' END,trigger.tgname)
+		FROM pg_trigger trigger JOIN pg_class relation ON relation.oid=trigger.tgrelid
+		JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
+		WHERE namespace.nspname='public' AND NOT trigger.tgisinternal
+		UNION ALL
+		SELECT 'policy:'||namespace.nspname||'.'||relation.relname||'.'||policy.polname,
+			format('DROP POLICY IF EXISTS %I ON %I.%I; CREATE POLICY %I ON %I.%I AS %s FOR %s TO %s%s%s',
+				policy.polname,namespace.nspname,relation.relname,policy.polname,namespace.nspname,relation.relname,
+				CASE WHEN policy.polpermissive THEN 'PERMISSIVE' ELSE 'RESTRICTIVE' END,
+				CASE policy.polcmd WHEN '*' THEN 'ALL' WHEN 'r' THEN 'SELECT' WHEN 'a' THEN 'INSERT' WHEN 'w' THEN 'UPDATE' WHEN 'd' THEN 'DELETE' END,
+				(SELECT string_agg(CASE WHEN role_id=0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(role_id)) END,',' ORDER BY role_id) FROM unnest(policy.polroles) role_id),
+				CASE WHEN policy.polqual IS NULL THEN '' ELSE ' USING ('||pg_get_expr(policy.polqual,policy.polrelid)||')' END,
+				CASE WHEN policy.polwithcheck IS NULL THEN '' ELSE ' WITH CHECK ('||pg_get_expr(policy.polwithcheck,policy.polrelid)||')' END)
+		FROM pg_policy policy JOIN pg_class relation ON relation.oid=policy.polrelid
+		JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
+		WHERE namespace.nspname='public'
+		UNION ALL
+		SELECT 'rls:'||namespace.nspname||'.'||relation.relname,
+			format('ALTER TABLE %I.%I %s ROW LEVEL SECURITY; ALTER TABLE %I.%I %s ROW LEVEL SECURITY',
+				namespace.nspname,relation.relname,CASE WHEN relation.relrowsecurity THEN 'ENABLE' ELSE 'DISABLE' END,
+				namespace.nspname,relation.relname,CASE WHEN relation.relforcerowsecurity THEN 'FORCE' ELSE 'NO FORCE' END)
+		FROM pg_class relation JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
+		WHERE namespace.nspname='public' AND relation.relkind IN ('r','p')`).Scan(&objects).Error)
+	snapshot := make(map[string]string, len(objects))
+	for _, object := range objects {
+		snapshot[object.Key] = object.Definition
+	}
+	return snapshot
+}
+
+func (f *ontologyFixture) restoreOntologySchema(t *testing.T) {
+	t.Helper()
+	require.NotEmpty(t, f.schema)
+	_, err := ontologyMigrationProvider(t, f.admin).Up(context.Background())
+	require.NoError(t, err)
+	current := ontologySchemaSnapshot(t, f.admin)
+	keys := make([]string, 0, len(f.schema))
+	for key := range f.schema {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	// Ontology rollback also removes later private-memory hooks; restore their exact migrated definitions.
+	for _, key := range keys {
+		if current[key] != f.schema[key] {
+			require.NoError(t, f.admin.Exec(f.schema[key]).Error, key)
+		}
+	}
+	current = ontologySchemaSnapshot(t, f.admin)
+	require.Len(t, current, len(f.schema))
+	for _, key := range keys {
+		require.Equal(t, f.schema[key], current[key], key)
+	}
 }
 
 // Exercise ontology rollback guards without crossing unrelated irreversible migration boundaries.
