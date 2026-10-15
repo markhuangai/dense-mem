@@ -176,7 +176,7 @@ function shapeQueueFixture(fixture, { overdue, lease, nextReviewAt }) {
     WHERE team_id = ${sqlLiteral(fixture.teamID)}::uuid
       AND conflict_id = ${sqlLiteral(fixture.conflictID)}::uuid
   `;
-  postgresMutation(sql);
+  postgresMutation(fixture.teamID, sql);
 }
 
 async function queueRequest(teamID, status = "") {
@@ -286,9 +286,16 @@ function postgresQuery(sql) {
   return postgresExec(sql, "conflict-queue-e2e").trim();
 }
 
-function postgresMutation(sql) {
+function postgresMutation(teamID, sql) {
   if (!/^UPDATE relationship_conflict_cases\b/i.test(sql.trim())) throw new Error("queue e2e mutation helper only permits conflict case shaping");
-  postgresExec(sql, "conflict-queue-e2e-mutation");
+  postgresExec(`
+    BEGIN;
+    SELECT set_config('app.tx_mode', 'system', true),
+           set_config('app.current_team_id', ${sqlLiteral(teamID)}, true),
+           set_config('app.current_profile_id', '', true);
+    ${sql};
+    COMMIT;
+  `, "conflict-queue-e2e-mutation");
 }
 
 function postgresExec(sql, label) {
