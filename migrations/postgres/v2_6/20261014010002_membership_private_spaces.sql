@@ -254,7 +254,7 @@ BEGIN
    AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=relation.relname AND column_name='space_generation')
    AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=relation.relname AND column_name='space_id') LOOP
   definition:=pg_get_functiondef(routine.oid);
-  definition:=regexp_replace(definition,'\mBEGIN\M',E'BEGIN\n IF TG_OP = ''UPDATE'' AND dense_mem_private_generation_rebase(to_jsonb(OLD),to_jsonb(NEW)) THEN RETURN NEW; END IF;');
+  definition:=regexp_replace(definition,'\mBEGIN\M',E'BEGIN\n IF TG_OP = ''UPDATE'' AND current_setting(''app.tx_mode'',true) = ''system'' THEN\n  IF dense_mem_private_generation_rebase(to_jsonb(OLD),to_jsonb(NEW)) THEN RETURN NEW; END IF;\n END IF;');
   EXECUTE definition;
  END LOOP;
 END $generation_guards$;
