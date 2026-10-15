@@ -73,6 +73,7 @@ func TestAccessCredentialAuditNeverCarriesBearerMaterial(t *testing.T) {
 		credential := args.Get(1).(*domain.Credential)
 		generatedHash = credential.KeyHash
 		credential.ID = uuid.New()
+		repo.On("GetByIDForTeam", ctx, teamID, credential.ID).Return(credential, nil).Once()
 	}).Return(nil).Once()
 	audit.On("CredentialCreated", ctx, mock.AnythingOfType("*string"), mock.AnythingOfType("string"), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) { captured = args.Get(3).(map[string]interface{}) }).Return(nil).Once()

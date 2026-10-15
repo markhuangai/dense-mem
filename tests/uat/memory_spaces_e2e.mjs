@@ -29,6 +29,19 @@ for (const item of created) {
 }
 
 if (scenario === "credential_memory_binding") {
+  const expired = await createCredential(teamID, "expired credential", {
+    role: "member", scopes: ["read", "write"], expires_at: new Date(Date.now() - 3600000).toISOString(),
+  });
+  assert(Object.values(expired.credential.memory_access).every((access) => !access.read && !access.write), "expired creation returned enabled access");
+  const renewed = await rotateCredential(teamID, expired.credential.id);
+  assert(renewed.credential.id === expired.credential.id, "expired rotation changed credential identity");
+  assert(Object.values(renewed.credential.memory_access).every((access) => access.read && access.write), "expired rotation returned disabled access");
+  const renewedCatalog = await httpJSON(`${userURL}/mcp`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${renewed.apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method: "tools/list", params: {} }),
+  });
+  assert(Array.isArray(renewedCatalog.result?.tools), "renewed credential could not authenticate");
   for (const [patch, sharedWritable] of [
     [{ scopes: ["read"] }, false],
     [{ scopes: ["read", "write"] }, true],

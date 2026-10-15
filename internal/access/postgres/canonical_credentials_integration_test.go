@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
@@ -367,8 +368,38 @@ func TestCanonicalCredentialScopesRespectMembershipGrants(t *testing.T) {
 	require.NotNil(t, key)
 	require.Equal(t, []string{"read", "write"}, key.Scopes)
 
-	service := accessservice.NewCredentialService(repo, nil, audit.New(auditpostgres.NewStore(appDB, rls)), nil)
+	auditService := audit.New(auditpostgres.NewStore(appDB, rls))
+	teamService := accessservice.NewTeamService(NewTeamRepository(appDB, rls), auditService, nil)
+	service := accessservice.NewCredentialService(repo, teamService, auditService, nil)
 	teamUUID, credentialID := uuid.MustParse(teamID), uuid.MustParse(profileID)
+	expiredAt := time.Now().Add(-time.Hour)
+	expired, raw, err := service.CreateCredential(ctx, teamUUID, accessservice.CreateCredentialRequest{
+		Name: "expired-grant-response", Role: "member", Scopes: []string{"read", "write"}, ExpiresAt: &expiredAt,
+	}, nil, "control", "127.0.0.1", "expired-create")
+	require.NoError(t, err)
+	require.NotEmpty(t, raw)
+	assert.False(t, expired.MemoryCapabilities().Private.Read)
+	assert.False(t, expired.MemoryCapabilities().Private.Write)
+	assert.False(t, expired.MemoryCapabilities().TeamShared.Read)
+	assert.False(t, expired.MemoryCapabilities().TeamShared.Write)
+	require.Empty(t, expired.KeyHash)
+	storedExpired, err := service.GetByIDForTeam(ctx, teamUUID, expired.ID)
+	require.NoError(t, err)
+	require.Empty(t, storedExpired.EffectiveMemoryGrants)
+	rotated, raw, err := service.RotateForTeam(ctx, teamUUID, expired.ID, accessservice.CreateCredentialRequest{}, nil, "control", "127.0.0.1", "expired-rotate")
+	require.NoError(t, err)
+	require.NotEmpty(t, raw)
+	assert.True(t, rotated.MemoryCapabilities().Private.Read)
+	assert.True(t, rotated.MemoryCapabilities().Private.Write)
+	assert.True(t, rotated.MemoryCapabilities().TeamShared.Read)
+	assert.True(t, rotated.MemoryCapabilities().TeamShared.Write)
+	require.Equal(t, expired.ID, rotated.ID)
+	require.Equal(t, expired.MembershipID, rotated.MembershipID)
+	require.Equal(t, expired.MemorySpaceID, rotated.MemorySpaceID)
+	require.Equal(t, expired.MemorySpaceGeneration, rotated.MemorySpaceGeneration)
+	require.Nil(t, rotated.ExpiresAt)
+	require.Empty(t, rotated.KeyHash)
+
 	updated, err := service.UpdateScopesForTeam(ctx, teamUUID, credentialID, []string{"read"}, nil, "control", "127.0.0.1", "scope-downgrade")
 	require.NoError(t, err)
 	require.True(t, updated.MemoryCapabilities().Private.Write)

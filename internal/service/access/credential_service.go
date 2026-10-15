@@ -340,6 +340,10 @@ func (s *CredentialServiceImpl) CreateCredential(ctx context.Context, teamID uui
 		}
 		return nil, "", fmt.Errorf("failed to create api credential: %w", err)
 	}
+	credential, err = s.GetByIDForTeam(ctx, teamID, credential.ID)
+	if err != nil {
+		return nil, "", err
+	}
 
 	// Audit the creation (without the raw credential or hash)
 	afterPayload := map[string]interface{}{
@@ -607,12 +611,11 @@ func (s *CredentialServiceImpl) RotateForTeam(ctx context.Context, teamID, id uu
 		}
 	}
 
+	credential, err = s.GetByIDForTeam(ctx, teamID, id)
+	if err != nil {
+		return nil, "", err
+	}
 	credential.KeyHash = ""
-	credential.KeyPrefix = crypto.GetKeyPrefix(rawKey)
-	credential.KeySuffix = crypto.GetKeySuffix(rawKey)
-	credential.ExpiresAt = req.ExpiresAt
-	credential.LastUsedAt = nil
-	credential.RevokedAt = nil
 
 	teamIDStr := teamID.String()
 	if err := s.auditService.Append(ctx, AuditLogEntry{

@@ -351,6 +351,7 @@ func TestCredentialServiceCreate(t *testing.T) {
 		assert.Equal(t, []string{"read", "write"}, key.Scopes)
 		assert.Equal(t, CredentialRoleManager, key.Role)
 		key.ID = uuid.New() // Simulate DB assigning ID
+		mockRepo.On("GetByIDForTeam", ctx, profileID, key.ID).Return(key, nil).Once()
 	}).Return(nil)
 	mockAuditService.On("CredentialCreated", ctx, mock.AnythingOfType("*string"), mock.AnythingOfType("string"), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
@@ -395,6 +396,7 @@ func TestCredentialServiceCreateReadOnlyKey(t *testing.T) {
 		assert.Equal(t, []string{"read"}, key.Scopes)
 		assert.Equal(t, CredentialRoleMember, key.Role)
 		key.ID = uuid.New()
+		mockRepo.On("GetByIDForTeam", ctx, profileID, key.ID).Return(key, nil).Once()
 	}).Return(nil)
 	mockAuditService.On("CredentialCreated", ctx, mock.AnythingOfType("*string"), mock.AnythingOfType("string"), mock.MatchedBy(func(payload map[string]interface{}) bool {
 		scopes, ok := payload["scopes"].([]string)
@@ -780,6 +782,7 @@ func TestCredentialServiceCreateCredentialErrorAndAuditBranches(t *testing.T) {
 			key.ID = uuid.New()
 			require.Equal(t, StandardCredentialScopes(), key.Scopes)
 			require.Equal(t, CredentialRoleManager, key.Role)
+			mockRepo.On("GetByIDForTeam", ctx, profileID, key.ID).Return(key, nil).Once()
 		}).Return(nil)
 		mockAuditService.On("CredentialCreated", ctx, mock.AnythingOfType("*string"), mock.AnythingOfType("string"), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
@@ -802,7 +805,9 @@ func TestCredentialServiceCreateCredentialErrorAndAuditBranches(t *testing.T) {
 		mockTeamService.On("Get", ctx, profileID).Return(&domain.Team{ID: profileID}, nil)
 		mockRepo.On("CountByTeam", ctx, profileID).Return(int64(1), nil)
 		mockRepo.On("CreateCredential", ctx, mock.AnythingOfType("*domain.Credential")).Run(func(args mock.Arguments) {
-			args.Get(1).(*domain.Credential).ID = uuid.New()
+			key := args.Get(1).(*domain.Credential)
+			key.ID = uuid.New()
+			mockRepo.On("GetByIDForTeam", ctx, profileID, key.ID).Return(key, nil).Once()
 		}).Return(nil)
 		mockAuditService.On("CredentialCreated", ctx, mock.AnythingOfType("*string"), mock.AnythingOfType("string"), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("audit failed"))
 
