@@ -100,6 +100,7 @@ type CredentialDeletionAuditStore interface {
 type CredentialDeletionAuditInput = privacycontract.CredentialDeletionAuditInput
 
 type SSOStore interface {
+	GetSSOOwnedCredentialByID(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.Credential, error)
 	ListProviders(context.Context) ([]*domain.SSOProvider, error)
 	ListEnabledProviders(context.Context) ([]*domain.SSOProvider, error)
 	GetProvider(context.Context, uuid.UUID) (*domain.SSOProvider, error)

@@ -17,6 +17,7 @@ import (
 )
 
 type SSORepository interface {
+	GetSSOOwnedCredentialByID(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.Credential, error)
 	ListProviders(ctx context.Context) ([]*domain.SSOProvider, error)
 	ListEnabledProviders(ctx context.Context) ([]*domain.SSOProvider, error)
 	GetProvider(ctx context.Context, id uuid.UUID) (*domain.SSOProvider, error)

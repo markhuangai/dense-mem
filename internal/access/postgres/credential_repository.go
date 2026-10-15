@@ -523,15 +523,20 @@ func replaceLegacyMembershipGrants(tx *gorm.DB, membershipID uuid.UUID, scopes [
 	`, membershipID, pq.Array(scopes)).Error
 }
 
-const credentialMemoryGrantsSelect = `ARRAY(
+const credentialAuthenticationGrantsSelect = `ARRAY(
 	SELECT DISTINCT scope FROM unnest(c.scopes) AS scope
 	WHERE c.status = 'active' AND c.revoked_at IS NULL
 	  AND (c.expires_at IS NULL OR c.expires_at > now())
 	  AND membership.status = 'active' AND scope = ANY(membership.maximum_grants)
 	  AND EXISTS (SELECT 1 FROM actor_identities WHERE id = c.actor_identity_id AND active)
 	  AND EXISTS (SELECT 1 FROM membership_grants WHERE membership_id = membership.id AND grant_name = scope)
-   AND (c.owner_identity_id IS NULL OR scope=ANY(dense_mem_sso_memory_grants(c.team_id,c.owner_identity_id)))
 	ORDER BY scope
+)`
+
+const credentialMemoryGrantsSelect = `ARRAY(
+ SELECT scope FROM unnest(` + credentialAuthenticationGrantsSelect + `) AS scope
+ WHERE c.owner_identity_id IS NULL OR scope=ANY(dense_mem_sso_memory_grants(c.team_id,c.owner_identity_id))
+ ORDER BY scope
 )`
 
 const credentialHydrationSelect = `

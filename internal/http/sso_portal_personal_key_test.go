@@ -530,3 +530,7 @@ func ssoOwnedCredential(teamID, identityID uuid.UUID, scopes []string) *domain.C
 		OwnerIdentityID: &identityID,
 	}
 }
+
+func (r *httpSSORepoStub) GetSSOOwnedCredentialByID(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.Credential, error) {
+	return nil, nil
+}

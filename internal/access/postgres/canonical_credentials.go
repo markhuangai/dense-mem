@@ -29,6 +29,7 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 			c.key_prefix,
 			COALESCE(c.key_suffix, ''),
 			c.name,
+			`+credentialAuthenticationGrantsSelect+`,
 			`+credentialMemoryGrantsSelect+`,
 			c.rate_limit,
 			CASE WHEN membership.team_admin THEN 'manager' ELSE 'member' END,
@@ -117,6 +118,7 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 		&key.KeySuffix,
 		&key.Name,
 		pq.Array(&key.Scopes),
+		pq.Array(&key.EffectiveMemoryGrants),
 		&key.RateLimit,
 		&key.Role,
 		&key.LastUsedAt,
@@ -138,7 +140,6 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 	); err != nil {
 		return nil, err
 	}
-	key.EffectiveMemoryGrants = append([]string(nil), key.Scopes...)
 	key.OwnerIdentityID = parseOptionalUUID(ownerIdentityID)
 	key.SSOProviderID = parseOptionalUUID(ssoProviderID)
 	if err := applyCredentialMemoryFields(&key, memorySpaceID, memorySpaceGeneration, teamSharedSpaceID, teamSharedSpaceGeneration); err != nil {

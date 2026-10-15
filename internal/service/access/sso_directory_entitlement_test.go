@@ -46,6 +46,9 @@ func TestSSOValidateCredentialRequiresDurableDirectoryEntitlement(t *testing.T) 
 	_, err = svc.ValidateCredential(ctx, key(&identityID))
 	require.ErrorIs(t, err, ErrSSOAccessDenied)
 
+	repo.ownedCredentials = map[uuid.UUID]*domain.Credential{
+		profileID: {ID: profileID, TeamID: teamID, OwnerIdentityID: &identityID, EffectiveMemoryGrants: []string{CredentialScopeRead}},
+	}
 	repo.directoryProfileEntitled[identityID] = true
 	validated, err = svc.ValidateCredential(ctx, key(&identityID))
 	require.NoError(t, err)

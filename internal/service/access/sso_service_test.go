@@ -93,6 +93,9 @@ func TestSSOValidateCredentialUsesFreshCacheMappings(t *testing.T) {
 			},
 		},
 	}
+	repo.ownedCredentials = map[uuid.UUID]*domain.Credential{
+		keyID: {ID: keyID, TeamID: teamID, OwnerIdentityID: &identityID, EffectiveMemoryGrants: []string{CredentialScopeRead, CredentialScopeWrite}},
+	}
 	resolver := &ssoGroupResolverStub{t: t, unexpected: true}
 	svc := NewSSOService(repo, SSOConfig{
 		GroupResolver: resolver,
@@ -284,6 +287,7 @@ func (r *ssoGroupResolverStub) ResolveGroups(ctx context.Context, provider domai
 }
 
 type ssoRepositoryStub struct {
+	ownedCredentials              map[uuid.UUID]*domain.Credential
 	t                             *testing.T
 	providers                     map[uuid.UUID]*domain.SSOProvider
 	providerList                  []*domain.SSOProvider
@@ -335,6 +339,15 @@ type ssoRepositoryStub struct {
 	deleteExpiredAt               time.Time
 	deleteExpiredErr              error
 	createdSession                *domain.SSOSession
+}
+
+func (r *ssoRepositoryStub) GetSSOOwnedCredentialByID(_ context.Context, teamID, ownerID, credentialID uuid.UUID) (*domain.Credential, error) {
+	credential := r.ownedCredentials[credentialID]
+	if credential == nil || credential.TeamID != teamID || credential.OwnerIdentityID == nil || *credential.OwnerIdentityID != ownerID {
+		return nil, nil
+	}
+	copy := *credential
+	return &copy, nil
 }
 
 func (r *ssoRepositoryStub) unexpected(name string) {

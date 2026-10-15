@@ -25,14 +25,14 @@ func TestLookupCanonicalCredentialScansRateLimitBeforeRole(t *testing.T) {
 	privateSpaceID := uuid.New()
 	rows := sqlmock.NewRows([]string{
 		"id", "actor_identity_id", "membership_id", "owner_id", "team_id", "team_name",
-		"key_hash", "key_prefix", "key_suffix", "name", "scopes", "rate_limit", "role",
+		"key_hash", "key_prefix", "key_suffix", "name", "scopes", "effective_memory_grants", "rate_limit", "role",
 		"last_used_at", "expires_at", "created_at", "revoked_at", "owner_identity_id",
 		"sso_provider_id", "sso_subject", "sso_email", "sso_group_id", "sso_entitlement_status",
 		"sso_last_entitlement_checked_at", "sso_last_login_at", "memory_space_id",
 		"memory_space_generation", "team_shared_space_id", "team_shared_space_generation",
 	}).AddRow(
 		id.String(), actorID.String(), membershipID.String(), ownerID.String(), teamID.String(), "Project",
-		"hash", "dm_test_key", "suffix", "key", "{read,write}", 23, "manager",
+		"hash", "dm_test_key", "suffix", "key", "{read,write}", "{read,write}", 23, "manager",
 		nil, nil, time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC), nil, "",
 		"", "", "", "", "", nil, nil, privateSpaceID.String(), int64(1), sharedSpaceID.String(), int64(1),
 	)

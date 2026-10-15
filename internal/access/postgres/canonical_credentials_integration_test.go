@@ -726,3 +726,126 @@ func TestCanonicalCredentialRevocationPreservesSharedActorAcrossTeams(t *testing
 	require.Equal(t, "active", teamBMembershipStatus)
 	require.Equal(t, "active", teamBCredentialStatus)
 }
+
+type canonicalSSORefreshGroups struct {
+	calls  int
+	groups []string
+	err    error
+}
+
+func (r *canonicalSSORefreshGroups) ResolveGroups(context.Context, domain.SSOProvider, string, string) ([]string, error) {
+	r.calls++
+	if r.err != nil {
+		return nil, r.err
+	}
+	if r.groups != nil {
+		return r.groups, nil
+	}
+	return []string{"test-group"}, nil
+}
+func TestCanonicalSSOCredentialRefreshPreservesAuthorizationCeilings(t *testing.T) {
+	admin, app, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	team := uuid.MustParse(createLedgerTeam(t, admin, rls, "cache-refresh-auth"))
+	owner := createLedgerSSOIdentity(t, admin, rls, team)
+	repo := NewCredentialRepository(app, rls, nil)
+	credential := createOwnedCredential(t, repo, team, owner, "cache-refresh-key")
+	ssoRepo := NewSSORepository(app, rls)
+	for _, lookup := range []string{"prefix", "portal_id"} {
+		t.Run(lookup, func(t *testing.T) {
+			require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
+				return tx.Exec(`UPDATE sso_entitlement_cache SET expires_at=now()-interval '1 second' WHERE subject=?`, "subject-"+owner.String()).Error
+			}))
+			metadata, err := repo.GetByIDForTeam(ctx, team, credential.ID)
+			require.NoError(t, err)
+			require.Empty(t, metadata.EffectiveMemoryGrants, "metadata remains conservative before entitlement refresh")
+			var loaded *domain.Credential
+			if lookup == "prefix" {
+				loaded, err = repo.GetActiveByPrefix(ctx, credential.KeyPrefix)
+			} else {
+				loaded, err = repo.GetActiveByID(ctx, credential.ID)
+			}
+			require.NoError(t, err)
+			require.NotNil(t, loaded)
+			resolver := &canonicalSSORefreshGroups{}
+			validator := accessservice.NewSSOService(ssoRepo, accessservice.SSOConfig{GroupResolver: resolver, EntitlementCacheTTL: time.Minute})
+			validated, err := validator.ValidateCredential(ctx, loaded)
+			assert.NoError(t, err, "a successful refresh must not intersect with expired-cache empty scopes")
+			if assert.NotNil(t, validated) {
+				assert.Equal(t, []string{"read", "write"}, validated.Scopes)
+				assert.True(t, validated.MemoryCapabilities().Private.Write)
+				assert.True(t, validated.MemoryCapabilities().TeamShared.Write)
+			}
+			assert.Equal(t, 1, resolver.calls)
+			cache, err := ssoRepo.GetEntitlementCache(ctx, *loaded.SSOProviderID, loaded.SSOSubject)
+			require.NoError(t, err)
+			require.NotNil(t, cache)
+			assert.Equal(t, "active", cache.Status)
+			assert.True(t, cache.ExpiresAt.After(time.Now()))
+		})
+	}
+	for _, failure := range []string{"provider_unavailable", "unmapped_group"} {
+		t.Run(failure, func(t *testing.T) {
+			require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
+				return tx.Exec(`UPDATE sso_entitlement_cache SET expires_at=now()-interval '1 second' WHERE subject=?`, "subject-"+owner.String()).Error
+			}))
+			loaded, err := repo.GetActiveByPrefix(ctx, credential.KeyPrefix)
+			require.NoError(t, err)
+			require.NotNil(t, loaded)
+			resolver := &canonicalSSORefreshGroups{groups: []string{"unmapped"}}
+			want := accessservice.ErrSSOAccessDenied
+			if failure == "provider_unavailable" {
+				resolver.err = accessservice.ErrSSOGroupRefreshUnavailable
+				want = accessservice.ErrSSOEntitlementRefreshStale
+			}
+			validator := accessservice.NewSSOService(ssoRepo, accessservice.SSOConfig{GroupResolver: resolver, EntitlementCacheTTL: time.Minute})
+			validated, err := validator.ValidateCredential(ctx, loaded)
+			require.ErrorIs(t, err, want)
+			require.Nil(t, validated)
+		})
+	}
+	require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE sso_entitlement_cache SET expires_at=now()-interval '1 second' WHERE subject=?`, "subject-"+owner.String()).Error
+	}))
+
+	t.Run("owner_ceiling", func(t *testing.T) {
+		require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
+			return tx.Exec(`UPDATE team_memberships SET maximum_grants=ARRAY['read']::text[] WHERE team_id=? AND actor_identity_id=?`, team, owner).Error
+		}))
+		loaded, err := repo.GetActiveByPrefix(ctx, credential.KeyPrefix)
+		require.NoError(t, err)
+		require.NotNil(t, loaded)
+		validator := accessservice.NewSSOService(ssoRepo, accessservice.SSOConfig{GroupResolver: &canonicalSSORefreshGroups{}, EntitlementCacheTTL: time.Minute})
+		validated, err := validator.ValidateCredential(ctx, loaded)
+		require.NoError(t, err)
+		require.NotNil(t, validated)
+		assert.Equal(t, []string{"read"}, validated.Scopes, "owner membership ceiling remains authoritative even when group mapping grants write")
+		assert.True(t, validated.MemoryCapabilities().Private.Write)
+		assert.False(t, validated.MemoryCapabilities().TeamShared.Write)
+	})
+
+	t.Run("fresh_projection_failure", func(t *testing.T) {
+		loaded, err := repo.GetActiveByPrefix(ctx, credential.KeyPrefix)
+		require.NoError(t, err)
+		require.NotNil(t, loaded)
+		require.NoError(t, admin.Exec("REVOKE SELECT ON credentials FROM "+ledgerTestRole).Error)
+		defer func() { require.NoError(t, admin.Exec("GRANT SELECT ON credentials TO "+ledgerTestRole).Error) }()
+		validator := accessservice.NewSSOService(ssoRepo, accessservice.SSOConfig{})
+		validated, err := validator.ValidateCredential(ctx, loaded)
+		require.ErrorContains(t, err, "permission denied for table credentials")
+		require.Nil(t, validated)
+	})
+	t.Run("key_revoked_after_lookup", func(t *testing.T) {
+		loaded, err := repo.GetActiveByPrefix(ctx, credential.KeyPrefix)
+		require.NoError(t, err)
+		require.NotNil(t, loaded)
+		require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
+			return tx.Exec(`UPDATE credentials SET status='revoked', revoked_at=now() WHERE id=?`, credential.ID).Error
+		}))
+		validator := accessservice.NewSSOService(ssoRepo, accessservice.SSOConfig{})
+		validated, err := validator.ValidateCredential(ctx, loaded)
+		require.ErrorIs(t, err, accessservice.ErrSSOAccessDenied)
+		require.Nil(t, validated)
+	})
+}

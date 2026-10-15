@@ -39,6 +39,21 @@ const server = createServer({ cert: certificate, key: privateKey }, async (reque
       if (profile.jwksOutage) return sendJSON(response, 503, { error: "temporarily_unavailable" });
       return sendJSON(response, 200, { keys: [publicJWK(profile.keys[profile.activeKey], profile.algorithm)] });
     }
+    if (request.method === "POST" && requestURL.pathname === "/generic/token") {
+      const input = new URLSearchParams(await readBody(request));
+      const basic = Buffer.from((request.headers.authorization ?? "").replace(/^Basic /, ""), "base64").toString();
+      const secret = basic.includes(":") ? basic.slice(basic.indexOf(":") + 1) : input.get("client_secret");
+      if (input.get("grant_type") !== "client_credentials" || secret !== fixtureToken) {
+        return sendJSON(response, 401, { error: "invalid_client" });
+      }
+      return sendJSON(response, 200, { access_token: fixtureToken, token_type: "Bearer", expires_in: 300 });
+    }
+    if (request.method === "GET" && requestURL.pathname === "/generic/groups") {
+      if (!fixtureAuthorized(request)) return sendJSON(response, 401, { error: "unauthorized" });
+      profiles.generic.groupRequests += 1;
+      if (profiles.generic.groupsOutage) return sendJSON(response, 503, { error: "temporarily_unavailable" });
+      return sendJSON(response, 200, { groups: profiles.generic.groups });
+    }
     if (request.method === "POST" && requestURL.pathname === "/fixture/token") {
       if (!fixtureAuthorized(request)) return sendJSON(response, 401, { error: "unauthorized" });
       const input = await readJSON(request);
@@ -57,6 +72,13 @@ const server = createServer({ cert: certificate, key: privateKey }, async (reque
         }
         profile.activeKey = input.active_key;
       }
+      if (input.groups !== undefined) {
+        if (!Array.isArray(input.groups) || input.groups.some((group) => typeof group !== "string")) {
+          return sendJSON(response, 400, { error: "invalid_groups" });
+        }
+        profile.groups = input.groups;
+      }
+      if (input.groups_outage !== undefined) profile.groupsOutage = input.groups_outage === true;
       if (input.jwks_outage !== undefined) profile.jwksOutage = input.jwks_outage === true;
       if (input.discovery_outage !== undefined) profile.discoveryOutage = input.discovery_outage === true;
       return sendJSON(response, 200, { status: "updated" });
@@ -69,6 +91,7 @@ const server = createServer({ cert: certificate, key: privateKey }, async (reque
       return sendJSON(response, 200, {
         discovery_requests: profile.discoveryRequests,
         jwks_requests: profile.jwksRequests,
+        group_requests: profile.groupRequests,
       });
     }
     return sendJSON(response, 404, { error: "not_found" });
@@ -88,6 +111,9 @@ function createProfile(algorithm, audience, extraClaims) {
     jwksOutage: false,
     discoveryOutage: false,
     discoveryRequests: 0,
+    groups: ["generic-team"],
+    groupsOutage: false,
+    groupRequests: 0,
     jwksRequests: 0,
     keys: {
       primary: generateSigningKey(algorithm, "primary"),
@@ -172,12 +198,17 @@ function fixtureAuthorized(request) {
   return request.headers.authorization === `Bearer ${fixtureToken}`;
 }
 
-async function readJSON(request) {
+async function readBody(request) {
   let body = "";
   for await (const chunk of request) {
     body += chunk;
     if (body.length > 64 * 1024) throw new Error("request too large");
   }
+  return body;
+}
+
+async function readJSON(request) {
+  const body = await readBody(request);
   return body ? JSON.parse(body) : {};
 }
 

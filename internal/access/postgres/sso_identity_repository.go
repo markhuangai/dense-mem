@@ -12,6 +12,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
+func (r *SSORepositoryImpl) GetSSOOwnedCredentialByID(ctx context.Context, teamID, ownerID, credentialID uuid.UUID) (*domain.Credential, error) {
+	return NewCredentialRepository(r.db, r.rls, nil).GetSSOOwnedCredentialByID(ctx, teamID, ownerID, credentialID)
+}
+
 func (r *SSORepositoryImpl) DirectoryAuthorityActive(ctx context.Context, providerID uuid.UUID) (bool, error) {
 	var active bool
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
