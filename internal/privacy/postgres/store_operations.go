@@ -415,20 +415,24 @@ func backfillPrivateContentAgeTx(ctx context.Context, tx *gorm.DB, batchSize int
 			FROM memory_spaces AS space
 			WHERE space.kind = 'private' AND NOT space.migration_archive
 			  AND space.private_content_at IS NULL
-			  AND EXISTS (
-				SELECT 1
-				FROM knowledge_ingests AS ingest
+			  AND (EXISTS (
+				SELECT 1 FROM knowledge_ingests AS ingest
 				WHERE ingest.team_id = space.team_id AND ingest.space_id = space.id
-			  )
+			  ) OR EXISTS (
+				SELECT 1 FROM session_events AS event
+				WHERE event.team_id = space.team_id AND event.space_id = space.id
+			  ))
 			ORDER BY space.id
 			LIMIT $1
 			FOR UPDATE OF space SKIP LOCKED
 		), latest AS (
-			SELECT candidate.id, MAX(ingest.created_at) AS private_content_at
+			SELECT candidate.id, GREATEST(
+				(SELECT MAX(ingest.created_at) FROM knowledge_ingests AS ingest
+				 WHERE ingest.team_id = candidate.team_id AND ingest.space_id = candidate.id),
+				(SELECT MAX(event.created_at) FROM session_events AS event
+				 WHERE event.team_id = candidate.team_id AND event.space_id = candidate.id)
+			) AS private_content_at
 			FROM candidate
-			JOIN knowledge_ingests AS ingest
-			  ON ingest.team_id = candidate.team_id AND ingest.space_id = candidate.id
-			GROUP BY candidate.id
 		)
 		UPDATE memory_spaces AS space
 		SET private_content_at = latest.private_content_at

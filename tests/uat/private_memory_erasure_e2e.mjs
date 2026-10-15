@@ -261,6 +261,7 @@ async function runScenario() {
   const heldOperationID = waitForSpaceOperationID(retentionHeldSpace.id, "retention");
   const heldCompleted = await waitControlOperation(heldOperationID, "completed");
   assertErasedSpace(retentionHeldSpace.id, heldCompleted, retentionHeldFixture, "active");
+  await assertSessionOnlyRetention();
 
   assertPreserved(sharedSpace.id, sharedFixture);
   await assertSharedRecallPreserved(sharedAPIKey, sharedFixture.sentinel);
@@ -273,6 +274,7 @@ async function runScenario() {
     scenario: "private_memory_erasure",
     tested_commit: requiredEnv("DENSE_MEM_E2E_COMMIT_SHA"),
     owner_control_retention_paths: true,
+    session_only_retention: true,
     sso_profile_and_credential_paths: true,
     legal_holds_and_idempotency: true,
     abc_non_enumeration: true,
@@ -283,6 +285,60 @@ async function runScenario() {
     terminal_failure_reauthorized: true,
     team_shared_preserved: true,
   }, null, 2));
+}
+
+async function assertSessionOnlyRetention() {
+  const fixtures = {};
+  for (const [label, days] of [["expired", 45], ["held", 45], ["fresh", 1]]) {
+    const credential = await createControlCredential(teamAID, `${runID} session-only ${label}`);
+    sensitiveValues.add(credential.apiKey);
+    const space = credentialSpace(await loadSpaces(), credential.credential.id);
+    const submissionID = randomUUID();
+    const sentinel = `${runID}-session-only-${label}`;
+    privateSentinels.add(sentinel);
+    postgresExec(`
+      BEGIN;
+      SELECT set_config('app.tx_mode', 'system', true);
+      INSERT INTO session_submissions (
+        team_id, owner_profile_id, space_id, space_generation, submission_id, idempotency_key,
+        request_hash, intake, prior_context, new_event_indices, accepted_event_count,
+        duplicate_event_count, result, created_at
+      ) VALUES (
+        ${sqlLiteral(teamAID)}::uuid, ${sqlLiteral(credential.credential.id)}::uuid,
+        ${sqlLiteral(space.id)}::uuid, 1, ${sqlLiteral(submissionID)}::uuid, ${sqlLiteral(submissionID)},
+        'sha256:' || repeat('a',64), '{}', '[]', '[0]', 1, 0, '{}', now() - interval '${days} days'
+      );
+      INSERT INTO session_events (
+        team_id, owner_profile_id, space_id, space_generation, identity_hash, submission_id,
+        event_index, framework, app_name, user_id, session_id, event_id, body, result, created_at
+      ) VALUES (
+        ${sqlLiteral(teamAID)}::uuid, ${sqlLiteral(credential.credential.id)}::uuid,
+        ${sqlLiteral(space.id)}::uuid, 1, 'sha256:' || repeat('b',64), ${sqlLiteral(submissionID)}::uuid,
+        0, 'generic', 'automation', 'session-only', ${sqlLiteral(submissionID)}, 'one',
+        jsonb_build_object('text', ${sqlLiteral(sentinel)}), '{}', now() - interval '${days} days'
+      );
+      UPDATE memory_spaces SET private_content_at = NULL WHERE id = ${sqlLiteral(space.id)}::uuid;
+      COMMIT;
+    `);
+    assert(postgresScalar(`SELECT count(*) FROM knowledge_ingests WHERE space_id = ${sqlLiteral(space.id)}::uuid`) === "0", "session-only retention fixture unexpectedly produced knowledge");
+    fixtures[label] = space;
+  }
+  await placeHold(fixtures.held.id, "session_only_retention");
+  const first = await runRetention("session-only-retention-1");
+  assert(first.status === 202 && first.payload.data?.queued_count === 1, "retention did not queue only the expired unheld session-only space");
+  await waitControlOperation(waitForSpaceOperationID(fixtures.expired.id, "retention"), "completed");
+  assert(postgresScalar(`SELECT count(*) FROM session_events WHERE space_id = ${sqlLiteral(fixtures.expired.id)}::uuid`) === "0", "retention preserved expired raw session history");
+  for (const label of ["held", "fresh"]) {
+    assert(postgresScalar(`SELECT count(*) FROM session_events WHERE space_id = ${sqlLiteral(fixtures[label].id)}::uuid`) === "1", `retention erased ${label} session-only history`);
+  }
+  assert(postgresScalar(`SELECT private_content_at IS NOT NULL AND private_content_at < now() - interval '30 days' FROM memory_spaces WHERE id = ${sqlLiteral(fixtures.held.id)}::uuid`) === "t", "session-only age backfill lost the original timestamp");
+  assert(postgresScalar(`SELECT private_content_at > now() - interval '30 days' FROM memory_spaces WHERE id = ${sqlLiteral(fixtures.fresh.id)}::uuid`) === "t", "session-only age backfill made fresh content expire");
+  await releaseHold(fixtures.held.id);
+  const released = await runRetention("session-only-retention-2");
+  assert(released.status === 202 && released.payload.data?.queued_count === 1, "released session-only hold did not become retention eligible");
+  await waitControlOperation(waitForSpaceOperationID(fixtures.held.id, "retention"), "completed");
+  assert(postgresScalar(`SELECT count(*) FROM session_events WHERE space_id = ${sqlLiteral(fixtures.held.id)}::uuid`) === "0", "released session-only history escaped retention");
+  assert(postgresScalar(`SELECT count(*) FROM session_events WHERE space_id = ${sqlLiteral(fixtures.fresh.id)}::uuid`) === "1", "fresh session-only history was not preserved");
 }
 
 async function createTeam(name) {

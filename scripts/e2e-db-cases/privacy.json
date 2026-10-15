@@ -253,6 +253,13 @@
       "run": "^TestPrivateMemoryPreflightCommandBoundsLegacyReportAndReturnsBlockers$",
       "phase": "precheck",
       "source": "cmd/internal/serverapp/private_memory_commands_integration_test.go"
+    },
+    {
+      "id": "repository/TestPrivateMigrationSessionOnlyRetentionPreservesAge",
+      "package": "./internal/privacy/postgres",
+      "run": "^TestPrivateMigrationSessionOnlyRetentionPreservesAge$",
+      "phase": "precheck",
+      "source": "internal/privacy/postgres/private_memory_repository_integration_test.go"
     }
   ]
 }
