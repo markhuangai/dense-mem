@@ -77,7 +77,7 @@ type CredentialStore interface {
 	UpdateNameForTeam(context.Context, uuid.UUID, uuid.UUID, string) (int64, error)
 	UpdateRoleForTeam(context.Context, uuid.UUID, uuid.UUID, string, []string) (int64, error)
 	UpdateScopesForTeam(context.Context, uuid.UUID, uuid.UUID, []string) (int64, error)
-	RotateForTeam(context.Context, uuid.UUID, uuid.UUID, string, string, string, *time.Time) (int64, error)
+	RotateForTeam(context.Context, uuid.UUID, uuid.UUID, string, string, string, *time.Time) (*domain.Credential, error)
 	TouchLastUsed(context.Context, uuid.UUID) error
 }
 

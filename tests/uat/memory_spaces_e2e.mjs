@@ -69,9 +69,15 @@ if (scenario === "credential_memory_binding") {
   assert(remembered.space_kind === "private", "explicit private target was not honored");
   const conflict = await mcpCall("remember", { ...beforeRotation, target_space: "team_shared" }, privateWrite.apiKey);
   assert(conflict.error || conflict.result?.isError, "changed target reused an idempotency key");
-  const rotated = await rotateCredential(teamID, privateWrite.credential.id);
+  const rotated = await rotateCurrentCredential(privateWrite.apiKey);
   assert(rotated.credential.id === privateWrite.credential.id, "rotation changed credential identity");
   assert(rotated.credential.memory_access.private.write, "rotation lost private access");
+  const oldCredentialAccess = await fetch(`${userURL}/mcp`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${privateWrite.apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method: "tools/list", params: {} }),
+  });
+  assert(oldCredentialAccess.status >= 401 && oldCredentialAccess.status < 500, "old secret remained valid after current-key rotation");
   await waitForRecall("workflow detail", beforeRotation.evidence[0].content, rotated.apiKey);
   await revokeCredential(teamID, privateWrite.credential.id);
   const listedAfterRevoke = await controlJSON(`/teams/${teamID}/credentials?limit=100&offset=0`);
@@ -175,6 +181,15 @@ async function createCredential(team, name, extra) {
 
 async function rotateCredential(team, id) {
   const body = await controlJSON(`/teams/${team}/credentials/${id}/rotate`, { method: "POST", body: JSON.stringify({}) });
+  return { apiKey: body.data.api_key, credential: body.data.credential };
+}
+
+async function rotateCurrentCredential(key) {
+  const body = await httpJSON(`${userURL}/ui/api/credential/rotate`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
   return { apiKey: body.data.api_key, credential: body.data.credential };
 }
 

@@ -62,16 +62,17 @@ func TestCanonicalSSOOwnedCredentialCollectionAndSpaces(t *testing.T) {
 	require.Equal(t, 1, privateSharedCount)
 
 	rotatedPrefix := "dm_" + strings.ReplaceAll(credentialA.ID.String(), "-", "")[:20]
-	rows, err := repo.RotateForTeam(ctx, teamID, credentialA.ID, "rotated-hash", rotatedPrefix, "rot8ed", nil)
+	rotation, err := repo.RotateForTeam(ctx, teamID, credentialA.ID, "rotated-hash", rotatedPrefix, "rot8ed", nil)
 	require.NoError(t, err)
-	require.Equal(t, int64(1), rows)
+	require.NotNil(t, rotation)
+	require.Equal(t, credentialA.MemorySpaceID, rotation.MemorySpaceID)
 	rotated, err := repo.GetByIDForTeam(ctx, teamID, credentialA.ID)
 	require.NoError(t, err)
 	require.Equal(t, credentialA.ID, rotated.ID)
 	require.Equal(t, credentialA.MembershipID, rotated.MembershipID)
 	require.Equal(t, credentialA.MemorySpaceID, rotated.MemorySpaceID)
 
-	rows, err = repo.RevokeForTeam(ctx, teamID, profileB.ID)
+	rows, err := repo.RevokeForTeam(ctx, teamID, profileB.ID)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows)
 	owned, err = repo.ListSSOOwnedCredentials(ctx, teamID, ownerID)
@@ -458,6 +459,88 @@ func TestCanonicalCredentialScopesRespectMembershipGrants(t *testing.T) {
 	require.Nil(t, key)
 }
 
+func TestCanonicalCredentialSecretMutationHydrationFailureRollsBack(t *testing.T) {
+	for _, operation := range []string{"create", "rotate"} {
+		t.Run(operation, func(t *testing.T) {
+			adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+			defer cleanup()
+			ctx := context.Background()
+			teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "secret-projection-failure"))
+			repo := NewCredentialRepository(appDB, rls, privacypostgres.NewCredentialDeletionRepository(appDB, rls))
+			auditService := audit.New(auditpostgres.NewStore(appDB, rls))
+			service := accessservice.NewCredentialService(repo, accessservice.NewTeamService(NewTeamRepository(appDB, rls), auditService, nil), auditService, nil)
+			req := accessservice.CreateCredentialRequest{Name: "projection-failure", Role: "member", Scopes: []string{"read", "write"}}
+			var existing *domain.Credential
+			var oldHash, oldPrefix string
+			if operation == "rotate" {
+				var err error
+				existing, _, err = service.CreateCredential(ctx, teamID, req, nil, "control", "127.0.0.1", "before-projection-failure")
+				require.NoError(t, err)
+				require.NoError(t, adminDB.Raw(`SELECT key_hash,key_prefix FROM credentials WHERE id=?`, existing.ID).Row().Scan(&oldHash, &oldPrefix))
+			}
+
+			// Ordinary API-client writes do not read SSO metadata, so this isolates the required projection read.
+			require.NoError(t, adminDB.Exec(`
+				CREATE FUNCTION test_credential_projection_failure() RETURNS trigger
+				LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+				BEGIN
+					EXECUTE format('REVOKE SELECT ON TABLE public.sso_identities FROM %I',session_user);
+					RETURN NEW;
+				END $$;
+				CREATE TRIGGER test_credential_projection_failure AFTER INSERT OR UPDATE ON credentials
+				FOR EACH ROW WHEN (NEW.name='projection-failure') EXECUTE FUNCTION test_credential_projection_failure();
+			`).Error)
+			defer func() {
+				require.NoError(t, adminDB.Exec(`
+					DROP TRIGGER test_credential_projection_failure ON credentials;
+					DROP FUNCTION test_credential_projection_failure();
+					GRANT SELECT ON sso_identities TO densemem_rls_test;
+				`).Error)
+			}()
+
+			var result *domain.Credential
+			var raw string
+			var err error
+			if operation == "create" {
+				result, raw, err = service.CreateCredential(ctx, teamID, req, nil, "control", "127.0.0.1", "create-projection-failure")
+			} else {
+				result, raw, err = service.RotateForTeam(ctx, teamID, existing.ID, accessservice.CreateCredentialRequest{}, nil, "control", "127.0.0.1", "rotate-projection-failure")
+			}
+			require.ErrorContains(t, err, "permission denied")
+			require.True(t, result == nil, "failed mutation returned a credential")
+			require.True(t, raw == "", "failed mutation returned bearer material")
+
+			if operation == "create" {
+				var credentials, identities, spaces int
+				require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+					return tx.Raw(`SELECT
+						(SELECT count(*) FROM credentials WHERE team_id=? AND name=?),
+						(SELECT count(*) FROM actor_identities WHERE team_id=? AND display_name=?),
+						(SELECT count(*) FROM memory_spaces s JOIN team_memberships m ON m.id=s.owner_membership_id
+						 JOIN actor_identities a ON a.id=m.actor_identity_id WHERE s.team_id=? AND a.display_name=? AND s.kind='private')
+					`, teamID, req.Name, teamID, req.Name, teamID, req.Name).Row().Scan(&credentials, &identities, &spaces)
+				}))
+				assert.Zero(t, credentials, "failed creation committed an undisclosed credential")
+				assert.Zero(t, identities, "failed creation committed an identity")
+				assert.Zero(t, spaces, "failed creation committed a private space")
+			} else {
+				var currentHash, currentPrefix string
+				require.NoError(t, adminDB.Raw(`SELECT key_hash,key_prefix FROM credentials WHERE id=?`, existing.ID).Row().Scan(&currentHash, &currentPrefix))
+				assert.True(t, currentHash == oldHash && currentPrefix == oldPrefix, "failed rotation invalidated the existing secret")
+			}
+			var canRead bool
+			require.NoError(t, adminDB.Raw(`SELECT has_table_privilege(?, 'public.sso_identities', 'SELECT')`, ledgerTestRole).Row().Scan(&canRead))
+			assert.True(t, canRead, "projection failure did not roll back the write transaction")
+			require.NoError(t, adminDB.Exec(`GRANT SELECT ON sso_identities TO densemem_rls_test`).Error)
+			if operation == "rotate" {
+				active, err := repo.GetActiveByPrefix(ctx, oldPrefix)
+				require.NoError(t, err)
+				assert.True(t, active != nil, "existing credential no longer authenticates after failed rotation")
+			}
+		})
+	}
+}
+
 func TestCanonicalCredentialLifecycleRetainsDisabledIdentity(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -500,9 +583,9 @@ func TestCanonicalCredentialLifecycleRetainsDisabledIdentity(t *testing.T) {
 	require.Equal(t, active.TeamSharedSpaceID, listed[0].TeamSharedSpaceID)
 
 	rotatedPrefix := "dm_rotated_" + keyID.String()[:13]
-	rows, err = repo.RotateForTeam(ctx, teamID, keyID, "rotated-hash", rotatedPrefix, "rotate", nil)
+	rotation, err := repo.RotateForTeam(ctx, teamID, keyID, "rotated-hash", rotatedPrefix, "rotate", nil)
 	require.NoError(t, err)
-	require.Equal(t, int64(1), rows)
+	require.NotNil(t, rotation)
 	require.NoError(t, repo.TouchLastUsedBatch(ctx, []LastUsedUpdate{{ID: keyID, At: time.Now().UTC()}}))
 	active, err = repo.GetActiveByPrefix(ctx, rotatedPrefix)
 	require.NoError(t, err)
@@ -516,9 +599,9 @@ func TestCanonicalCredentialLifecycleRetainsDisabledIdentity(t *testing.T) {
 	active, err = repo.GetActiveByPrefix(ctx, rotatedPrefix)
 	require.NoError(t, err)
 	require.Nil(t, active)
-	rows, err = repo.RotateForTeam(ctx, teamID, keyID, "restored-hash", rotatedPrefix, "stored", nil)
+	rotation, err = repo.RotateForTeam(ctx, teamID, keyID, "restored-hash", rotatedPrefix, "stored", nil)
 	require.NoError(t, err)
-	require.Equal(t, int64(0), rows)
+	require.Nil(t, rotation)
 
 	rows, err = repo.DeleteForTeam(ctx, teamID, keyID)
 	require.NoError(t, err)
@@ -619,9 +702,9 @@ func TestCanonicalCredentialRevocationPreservesSharedActorAcrossTeams(t *testing
 	require.NoError(t, err)
 	require.NotNil(t, activeB)
 
-	rows, err = repo.RotateForTeam(ctx, teamA, keyA, "shared-actor-hash-a-restored", "dm_"+keyA.String()[:20], "restor", nil)
+	rotation, err := repo.RotateForTeam(ctx, teamA, keyA, "shared-actor-hash-a-restored", "dm_"+keyA.String()[:20], "restor", nil)
 	require.NoError(t, err)
-	require.Equal(t, int64(0), rows)
+	require.Nil(t, rotation)
 	rows, err = repo.DeleteForTeam(ctx, teamA, keyA)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows)

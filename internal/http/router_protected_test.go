@@ -118,8 +118,8 @@ func (r *routerCredentialRepo) UpdateScopesForTeam(context.Context, uuid.UUID, u
 	return 0, nil
 }
 
-func (r *routerCredentialRepo) RotateForTeam(context.Context, uuid.UUID, uuid.UUID, string, string, string, *time.Time) (int64, error) {
-	return 0, nil
+func (r *routerCredentialRepo) RotateForTeam(context.Context, uuid.UUID, uuid.UUID, string, string, string, *time.Time) (*domain.Credential, error) {
+	return nil, nil
 }
 
 func (r *routerCredentialRepo) TouchLastUsed(_ context.Context, id uuid.UUID) error {

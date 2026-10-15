@@ -340,10 +340,6 @@ func (s *CredentialServiceImpl) CreateCredential(ctx context.Context, teamID uui
 		}
 		return nil, "", fmt.Errorf("failed to create api credential: %w", err)
 	}
-	credential, err = s.GetByIDForTeam(ctx, teamID, credential.ID)
-	if err != nil {
-		return nil, "", err
-	}
 
 	// Audit the creation (without the raw credential or hash)
 	afterPayload := map[string]interface{}{
@@ -598,11 +594,11 @@ func (s *CredentialServiceImpl) RotateForTeam(ctx context.Context, teamID, id uu
 		return nil, "", fmt.Errorf("failed to hash credential: %w", err)
 	}
 
-	rows, err := s.repo.RotateForTeam(ctx, teamID, id, keyHash, crypto.GetKeyPrefix(rawKey), crypto.GetKeySuffix(rawKey), req.ExpiresAt)
+	credential, err = s.repo.RotateForTeam(ctx, teamID, id, keyHash, crypto.GetKeyPrefix(rawKey), crypto.GetKeySuffix(rawKey), req.ExpiresAt)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to rotate credential credential: %w", err)
 	}
-	if rows == 0 {
+	if credential == nil {
 		return nil, "", httperr.New(httperr.NOT_FOUND, fmt.Sprintf("credential with id '%s' not found", id.String()))
 	}
 	if s.sessionInvalidator != nil {
@@ -611,10 +607,6 @@ func (s *CredentialServiceImpl) RotateForTeam(ctx context.Context, teamID, id uu
 		}
 	}
 
-	credential, err = s.GetByIDForTeam(ctx, teamID, id)
-	if err != nil {
-		return nil, "", err
-	}
 	credential.KeyHash = ""
 
 	teamIDStr := teamID.String()

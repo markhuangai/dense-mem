@@ -47,8 +47,8 @@ func (m *mockCredentialRepository) RevokeForTeam(ctx context.Context, profileID,
 	return 0, nil
 }
 
-func (m *mockCredentialRepository) RotateForTeam(ctx context.Context, profileID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (int64, error) {
-	return 0, nil
+func (m *mockCredentialRepository) RotateForTeam(ctx context.Context, profileID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (*domain.Credential, error) {
+	return nil, nil
 }
 
 func (m *mockCredentialRepository) UpdateNameForTeam(ctx context.Context, profileID, id uuid.UUID, name string) (int64, error) {

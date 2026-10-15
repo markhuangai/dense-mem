@@ -34,7 +34,6 @@ func TestCreateCredentialManagerPreservesExplicitFeedbackReadScope(t *testing.T)
 		key.ID = uuid.New()
 		require.Equal(t, []string{CredentialScopeRead, CredentialScopeWrite, CredentialScopeFeedbackRead}, key.Scopes)
 		require.Equal(t, CredentialRoleManager, key.Role)
-		mockRepo.On("GetByIDForTeam", ctx, profileID, key.ID).Return(key, nil).Once()
 	}).Return(nil)
 	mockAuditService.On("CredentialCreated", ctx, mock.AnythingOfType("*string"), mock.AnythingOfType("string"), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 

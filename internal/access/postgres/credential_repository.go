@@ -44,7 +44,7 @@ type CredentialRepository interface {
 	// UpdateScopesForTeam changes a credential scope set only when it belongs to teamID.
 	UpdateScopesForTeam(ctx context.Context, teamID, id uuid.UUID, scopes []string) (int64, error)
 	// RotateForTeam replaces credential material for one credential in place.
-	RotateForTeam(ctx context.Context, teamID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (int64, error)
+	RotateForTeam(ctx context.Context, teamID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (*domain.Credential, error)
 	TouchLastUsed(ctx context.Context, id uuid.UUID) error
 }
 
@@ -77,34 +77,6 @@ func NewCredentialRepository(db *gorm.DB, rls storagepostgres.RLSHelper, deletio
 	return &CredentialRepositoryImpl{db: db, rls: rls, deletion: deletion}
 }
 
-func withSystemModeInTx(ctx context.Context, tx *gorm.DB, teamID, profileID string, fn func(systemTx *gorm.DB) error) error {
-	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_team_id', '', true)").Error; err != nil {
-		return err
-	}
-	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_profile_id', '', true)").Error; err != nil {
-		return err
-	}
-	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.tx_mode', 'system', true)").Error; err != nil {
-		return err
-	}
-	fnErr := fn(tx)
-	resetErr := resetProfileModeInTx(ctx, tx, teamID, profileID)
-	if fnErr != nil {
-		return fnErr
-	}
-	return resetErr
-}
-
-func resetProfileModeInTx(ctx context.Context, tx *gorm.DB, teamID, profileID string) error {
-	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_team_id', ?, true)", teamID).Error; err != nil {
-		return err
-	}
-	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_profile_id', ?, true)", profileID).Error; err != nil {
-		return err
-	}
-	return tx.WithContext(ctx).Exec("SELECT set_config('app.tx_mode', 'profile', true)").Error
-}
-
 // CreateCredential creates one API-client identity, membership, credential, and ownership alias.
 func (r *CredentialRepositoryImpl) CreateCredential(ctx context.Context, credential *domain.Credential) error {
 	if credential.ID == uuid.Nil {
@@ -122,6 +94,7 @@ func (r *CredentialRepositoryImpl) CreateCredential(ctx context.Context, credent
 	}
 	keySuffix := credential.KeySuffix
 	var membershipID uuid.UUID
+	var created *domain.Credential
 
 	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
 		if err := ensureActiveTeamForMutation(ctx, tx, teamID.String()); err != nil {
@@ -164,35 +137,29 @@ func (r *CredentialRepositoryImpl) CreateCredential(ctx context.Context, credent
 			pq.Array(credential.Scopes), credential.RateLimit, credential.ExpiresAt, now).Error; err != nil {
 			return err
 		}
-		credential.EffectiveMemoryGrants = append([]string(nil), credential.Scopes...)
-		credential.MemorySpaceID = memorySpaceID
-		if err := withSystemModeInTx(ctx, tx, teamID.String(), credential.ID.String(), func(systemTx *gorm.DB) error {
-			return systemTx.Raw(`
-				SELECT
-					(SELECT generation FROM memory_spaces WHERE id = ?::uuid),
-					(SELECT id FROM memory_spaces WHERE team_id = ?::uuid AND kind = 'team_shared' LIMIT 1),
-					(SELECT generation FROM memory_spaces WHERE team_id = ?::uuid AND kind = 'team_shared' LIMIT 1)
-			`, memorySpaceID, teamID, teamID).Row().Scan(
-				&credential.MemorySpaceGeneration,
-				&credential.TeamSharedSpaceID,
-				&credential.TeamSharedSpaceGeneration,
-			)
-		}); err != nil {
-			return err
-		}
-		return tx.Exec(`
+		if err := tx.Exec(`
 			INSERT INTO ownership_aliases (
 				team_id, legacy_owner_id, canonical_identity_id, credential_id, reason
 			) VALUES ($1, $2, $2, $2, 'credential')
-		`, teamID, credential.ID).Error
+		`, teamID, credential.ID).Error; err != nil {
+			return err
+		}
+		var err error
+		created, err = queryHydratedCredential(tx, credentialByIDForTeamQuery, credential.ID, teamID)
+		if err != nil {
+			return err
+		}
+		if created == nil {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
 	})
 
 	if err != nil {
 		return fmt.Errorf("failed to create standard api credential: %w", err)
 	}
-	credential.ActorIdentityID = credential.ID
-	credential.MembershipID = membershipID
-	credential.OwnerID = credential.ID
+	created.KeyHash, created.KeyPrefix = credential.KeyHash, credential.KeyPrefix
+	*credential = *created
 
 	return nil
 }
@@ -500,9 +467,9 @@ func (r *CredentialRepositoryImpl) UpdateScopesForTeam(ctx context.Context, team
 }
 
 // RotateForTeam replaces one credential's bearer secret without changing its identity.
-func (r *CredentialRepositoryImpl) RotateForTeam(ctx context.Context, teamID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (int64, error) {
+func (r *CredentialRepositoryImpl) RotateForTeam(ctx context.Context, teamID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (*domain.Credential, error) {
 	now := time.Now().UTC()
-	var rowsAffected int64
+	var credential *domain.Credential
 	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
 		if err := ensureActiveTeamForMutation(ctx, tx, teamID.String()); err != nil {
 			return err
@@ -521,16 +488,23 @@ func (r *CredentialRepositoryImpl) RotateForTeam(ctx context.Context, teamID, id
 		if res.Error != nil {
 			return res.Error
 		}
-		rowsAffected = res.RowsAffected
-		if rowsAffected == 0 {
+		if res.RowsAffected == 0 {
 			return nil
+		}
+		var err error
+		credential, err = queryHydratedCredential(tx, credentialByIDForTeamQuery, id, teamID)
+		if err != nil {
+			return err
+		}
+		if credential == nil {
+			return gorm.ErrRecordNotFound
 		}
 		return nil
 	})
 	if err != nil {
-		return 0, fmt.Errorf("failed to rotate credential for credential: %w", err)
+		return nil, fmt.Errorf("failed to rotate credential for credential: %w", err)
 	}
-	return rowsAffected, nil
+	return credential, nil
 }
 
 func replaceLegacyMembershipGrants(tx *gorm.DB, membershipID uuid.UUID, scopes []string) error {
@@ -646,36 +620,40 @@ func (s *credentialHydrationState) result() (*domain.Credential, error) {
 	return &s.credential, nil
 }
 
-func (r *CredentialRepositoryImpl) getOneHydratedCredential(ctx context.Context, teamID uuid.UUID, query string, args ...any) (*domain.Credential, error) {
-	state := &credentialHydrationState{}
-	found := false
-	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
-		rows, err := tx.Raw(query, args...).Rows()
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		if rows.Next() {
-			found = true
-			if err := state.scan(rows); err != nil {
-				return err
-			}
-		}
-		return rows.Err()
-	})
+func queryHydratedCredential(tx *gorm.DB, query string, args ...any) (*domain.Credential, error) {
+	rows, err := tx.Raw(query, args...).Rows()
 	if err != nil {
 		return nil, err
 	}
-	if !found {
-		return nil, nil
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	state := &credentialHydrationState{}
+	if err := state.scan(rows); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return state.result()
 }
 
-// GetByIDForTeam retrieves an API credential by ID only when it belongs to teamID.
-func (r *CredentialRepositoryImpl) GetByIDForTeam(ctx context.Context, teamID, id uuid.UUID) (*domain.Credential, error) {
-	credential, err := r.getOneHydratedCredential(ctx, teamID, `
-		SELECT `+credentialHydrationSelect+`
+func (r *CredentialRepositoryImpl) getOneHydratedCredential(ctx context.Context, teamID uuid.UUID, query string, args ...any) (*domain.Credential, error) {
+	var credential *domain.Credential
+	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
+		var err error
+		credential, err = queryHydratedCredential(tx, query, args...)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return credential, nil
+}
+
+const credentialByIDForTeamQuery = `
+		SELECT ` + credentialHydrationSelect + `
 		FROM credentials c
 		JOIN team_memberships membership
 		  ON membership.actor_identity_id = c.actor_identity_id AND membership.team_id = c.team_id
@@ -691,7 +669,11 @@ func (r *CredentialRepositoryImpl) GetByIDForTeam(ctx context.Context, teamID, i
 		LEFT JOIN sso_identities owner_sso ON owner_sso.id = c.owner_identity_id
 		WHERE c.id = $1 AND c.team_id = $2 AND c.kind = 'api_key' AND c.status <> 'disabled'
 		  AND t.status = 'active' AND t.deleted_at IS NULL
-	`, id, teamID)
+	`
+
+// GetByIDForTeam retrieves an API credential by ID only when it belongs to teamID.
+func (r *CredentialRepositoryImpl) GetByIDForTeam(ctx context.Context, teamID, id uuid.UUID) (*domain.Credential, error) {
+	credential, err := r.getOneHydratedCredential(ctx, teamID, credentialByIDForTeamQuery, id, teamID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get api credential for team: %w", err)
 	}
