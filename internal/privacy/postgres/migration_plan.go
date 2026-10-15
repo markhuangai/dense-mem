@@ -570,6 +570,36 @@ func (p *privateMigrationPlan) linkPrivateMigrationProjections() error {
 }
 
 func (p *privateMigrationPlan) attributePrivateMigrationNodes() {
+	type nodeKey struct{ space, kind, id, createdAt string }
+	type nodeWriter struct {
+		membership string
+		ambiguous  bool
+	}
+	writers := map[nodeKey]nodeWriter{}
+	for _, candidate := range p.Records {
+		if candidate.Membership == "" || len(p.Spaces[candidate.SourceSpace].Writers) <= 1 {
+			continue
+		}
+		var kind, id string
+		switch candidate.Table.Name {
+		case "entity_resolution_events":
+			if migrationString(candidate.Fields["action"]) != "create" {
+				continue
+			}
+			kind, id = "entity_records", string(candidate.Fields["entity_id"])
+		case "relationship_observations":
+			kind, id = "value_records", string(candidate.Fields["object_value_id"])
+		default:
+			continue
+		}
+		key := nodeKey{candidate.SourceSpace, kind, id, string(candidate.Fields["created_at"])}
+		writer := writers[key]
+		if writer.membership != "" && writer.membership != candidate.Membership {
+			writer.ambiguous = true
+		}
+		writer.membership = candidate.Membership
+		writers[key] = writer
+	}
 	for _, record := range p.Records {
 		if record.Table.Name != "entity_records" && record.Table.Name != "value_records" {
 			continue
@@ -581,29 +611,16 @@ func (p *privateMigrationPlan) attributePrivateMigrationNodes() {
 			}
 			continue
 		}
-		owners := map[string]bool{}
-		for _, candidate := range p.Records {
-			if candidate.SourceSpace != record.SourceSpace || candidate.Membership == "" || string(candidate.Fields["created_at"]) != string(record.Fields["created_at"]) {
-				continue
-			}
-			switch record.Table.Name {
-			case "entity_records":
-				if candidate.Table.Name == "entity_resolution_events" && migrationString(candidate.Fields["action"]) == "create" && string(candidate.Fields["entity_id"]) == string(record.Fields["entity_id"]) {
-					owners[candidate.Membership] = true
-				}
-			case "value_records":
-				if candidate.Table.Name == "relationship_observations" && string(candidate.Fields["object_value_id"]) == string(record.Fields["value_id"]) {
-					owners[candidate.Membership] = true
-				}
-			}
+		id := record.Fields["entity_id"]
+		if record.Table.Name == "value_records" {
+			id = record.Fields["value_id"]
 		}
-		if len(owners) != 1 {
+		writer := writers[nodeKey{record.SourceSpace, record.Table.Name, string(id), string(record.Fields["created_at"])}]
+		if writer.membership == "" || writer.ambiguous {
 			p.Report.Blockers = append(p.Report.Blockers, "ambiguous_node_writer:"+record.Table.Name+":"+record.Key)
 			continue
 		}
-		for member := range owners {
-			record.Membership = member
-		}
+		record.Membership = writer.membership
 	}
 }
 
