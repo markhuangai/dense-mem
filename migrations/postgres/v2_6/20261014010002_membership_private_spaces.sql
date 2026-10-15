@@ -1,7 +1,16 @@
 -- +goose Up
 -- +goose StatementBegin
--- Lock/rewrite: the maintenance executor completes bounded row moves before
--- these catalog constraints and provisioning functions become authoritative.
+-- Lock/rewrite impact: maintenance-only ALTERs take DDL locks; CHECK validation
+-- and the handle index scan whole tables, while ownership/kind updates rewrite
+-- affected rows. Lock acquisition is limited to 30s.
+-- RLS impact: install team-visible catalog and owner-scoped session/erasure
+-- policies with internal system/migration modes; preserve forced RLS.
+-- Backfill: require the preflighted ready executor; finalize membership ownership,
+-- private kinds, provisioning, queued-erasure provenance and sealed retry tombstones.
+-- Backward compatibility: old binaries/workers must stay stopped because binding
+-- and owner columns and the credential/profile-private kinds are removed.
+-- Rollback: Down raises; before new writes restore the verified stopped-state
+-- backup with its matching binary, and after new writes use forward recovery.
 SELECT set_config('app.tx_mode','migration',true);
 SET LOCAL lock_timeout = '30s';
 DO $$ BEGIN

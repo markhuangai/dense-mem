@@ -1,8 +1,17 @@
 -- +goose Up
 -- +goose StatementBegin
--- This metadata boundary blocks serving and ordinary writes until the
--- fingerprint-bound maintenance command finishes; row work commits in batches.
--- Rollback requires the stopped deployment's verified backup, never a Down purge.
+-- Lock/rewrite impact: maintenance-only ALTERs take DDL locks; uniqueness/FK
+-- validation and replacement indexes scan affected tables. Added nullable scope
+-- columns and the constant archive default do not require a heap rewrite;
+-- lock acquisition is limited to 30s.
+-- RLS impact: force RLS on migration metadata and add restrictive archive-read
+-- policies; non-migration writes stay blocked until maintenance is complete.
+-- Backfill: this boundary records pending/ready state; the fingerprint-bound
+-- executor moves private rows in bounded transactions before final cutover.
+-- Backward compatibility: transitional kinds remain for maintenance input only;
+-- old binaries/workers must stay stopped and runtime waits for complete state.
+-- Rollback: Down raises; restore the verified stopped-state backup with its
+-- matching binary before new writes, otherwise use forward recovery.
 SELECT set_config('app.tx_mode', 'migration', true);
 SET LOCAL lock_timeout = '30s';
 
