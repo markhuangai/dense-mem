@@ -1,16 +1,24 @@
 //go:build staging_rehearsal
 
-package migrationapp
+package migrationapp_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/markhuangai/dense-mem/cmd/internal/migrationapp"
+	"github.com/markhuangai/dense-mem/cmd/internal/serverapp"
+	privacy "github.com/markhuangai/dense-mem/internal/privacy/contract"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -77,13 +85,37 @@ func TestStagingMigrationRehearsal(t *testing.T) {
 		t.Fatal("staging migration rehearsal requires a writable single-primary PostgreSQL database")
 	}
 
-	if err := RunUp(
-		context.Background(),
-		db,
-		30*time.Minute,
-		stagingRehearsalLogger{t: t},
-	); err != nil {
-		t.Fatal("staging migration rehearsal failed while applying migrations; database details suppressed")
+	migrationCtx, migrationCancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer migrationCancel()
+	homeDirectory, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal("staging migration rehearsal could not resolve the staging directory")
+	}
+	stopCtx, stopCancel := context.WithTimeout(migrationCtx, time.Minute)
+	defer stopCancel()
+	// The trusted workflow can predate this revision, so stop old workers in the checked-out rehearsal.
+	if err := exec.CommandContext(stopCtx, "docker", "compose", "--project-directory",
+		filepath.Join(homeDirectory, "dense-mem-stage"), "stop", "--timeout", "30", "server").Run(); err != nil {
+		t.Fatal("staging migration rehearsal could not stop the staging server; details suppressed")
+	}
+	t.Setenv("POSTGRES_DSN", dsn)
+	t.Setenv("POSTGRES_MIGRATION_TIMEOUT_SECONDS", "1800")
+	var preflight bytes.Buffer
+	if err := serverapp.RunPrivateMemoryPreflight(migrationCtx, &preflight); err != nil {
+		t.Fatal("staging migration rehearsal failed private memory preflight; database details suppressed")
+	}
+	var report privacy.PrivateMemoryMigrationReport
+	if err := json.Unmarshal(preflight.Bytes(), &report); err != nil {
+		t.Fatal("staging migration rehearsal received an invalid private memory preflight report")
+	}
+	if report.Status == "complete" {
+		if err := migrationapp.RunUp(migrationCtx, db, 30*time.Minute, stagingRehearsalLogger{t: t}); err != nil {
+			t.Fatal("staging migration rehearsal failed while applying migrations; database details suppressed")
+		}
+	} else if err := serverapp.RunPrivateMemoryMigration(migrationCtx, []string{
+		"--maintenance-confirmed", "--source-fingerprint", report.SourceFingerprint,
+	}, io.Discard); err != nil {
+		t.Fatal("staging migration rehearsal failed private memory migration; database details suppressed")
 	}
 
 	validationCtx, validationCancel := context.WithTimeout(context.Background(), 5*time.Minute)
