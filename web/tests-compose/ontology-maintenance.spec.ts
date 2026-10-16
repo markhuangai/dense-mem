@@ -37,6 +37,17 @@ test("operators add allowance to the active window without resetting its policy"
     const before = status.window;
     expect(before).toBeTruthy();
     expect(Date.parse(before.ends_at)).toBeGreaterThan(Date.parse(status.observed_at));
+    await control("/ontology/pause", { operation_key: randomUUID() });
+    const rejected = await request.post(`${controlURL}/control/api/ontology/allowances`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { operation_key: randomUUID(), window_id: before.id, input_tokens: 1234, output_tokens: 5678 },
+    });
+    expect(rejected.status()).toBe(409);
+    const paused = (await control("/ontology/status")).window;
+    expect(paused.id).toBe(before.id);
+    expect(paused.additional_input_tokens).toBe(before.additional_input_tokens);
+    expect(paused.additional_output_tokens).toBe(before.additional_output_tokens);
+    await control("/ontology/resume", { operation_key: randomUUID() });
     await page.goto(controlURL);
     await page.getByLabel("Control token").fill(token);
     await page.getByRole("button", { name: "Unlock" }).click();
