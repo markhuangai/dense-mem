@@ -213,7 +213,7 @@ func TestSessionContextIndexMigrationRetainsIntakeAndRepairsInterruptedBuild(t *
 	before := snapshot()
 	require.NoError(t, admin.Exec(fmt.Sprintf(`GRANT CREATE ON SCHEMA public TO %s`, ledgerTestRole)).Error)
 	require.NoError(t, admin.Exec(fmt.Sprintf(`ALTER TABLE session_events OWNER TO %s`, ledgerTestRole)).Error)
-	const migration = "20261013020000_session_context_index.sql"
+	const migration = "20261016020000_session_context_index.sql"
 	contents, err := os.ReadFile(filepath.Join("../../../migrations/postgres/v2_6", migration))
 	require.NoError(t, err)
 	sqlDB, err := app.DB()
@@ -221,7 +221,7 @@ func TestSessionContextIndexMigrationRetainsIntakeAndRepairsInterruptedBuild(t *
 	migrator, err := goose.NewProvider(goose.DialectPostgres, sqlDB, fstest.MapFS{migration: &fstest.MapFile{Data: contents}},
 		goose.WithDisableGlobalRegistry(true), goose.WithAllowOutofOrder(true))
 	require.NoError(t, err)
-	_, err = migrator.ApplyVersion(context.Background(), 20261013020000, false)
+	_, err = migrator.ApplyVersion(context.Background(), 20261016020000, false)
 	require.NoError(t, err)
 	require.Equal(t, before, snapshot())
 	require.Error(t, app.Exec(`CREATE INDEX CONCURRENTLY session_events_session_context_idx ON session_events ((1/event_index))`).Error)

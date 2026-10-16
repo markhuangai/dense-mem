@@ -5,13 +5,17 @@ package postgres
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -62,6 +66,157 @@ func TestOntologyMaintenanceGlobalAccounting(t *testing.T) {
 	require.True(t, status.Window.Overrun)
 	require.ErrorIs(t, second.ReserveMaintenanceAttempt(ctx, *claim, uuid.NewString(), 1, 1, 1, time.Now().UTC()), ontology.ErrBudgetDeferred)
 	require.NoError(t, second.ReleaseMaintenanceTurn(ctx, *turn))
+}
+
+func TestOntologyMaintenanceAllowancePreservesAccountingAndWindowFences(t *testing.T) {
+	f := newOrganizationFixture(t)
+	f.organizationEvidence(t, 0, "Atlas stores PostgreSQL data.", nil)
+	ctx := context.Background()
+	config := maintenanceSettings(t, f)
+	_, err := config.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyInputTokens: "100", domain.AppConfigOntologyOutputTokens: "100"}, "control", "", "")
+	require.NoError(t, err)
+	window := maintenanceWindow(t, f, config)
+	turn, claim := maintenanceClaim(t, f, window)
+	assessment := uuid.NewString()
+	require.NoError(t, f.store.ReserveMaintenanceAttempt(ctx, *claim, assessment, 1, 80, 80, time.Now().UTC()))
+	require.ErrorIs(t, f.store.ReserveMaintenanceAttempt(ctx, *claim, uuid.NewString(), 1, 30, 30, time.Now().UTC()), ontology.ErrBudgetDeferred)
+	command := domain.OntologyMaintenanceCommand{Action: "allowance", OperationKey: "same-grant", WindowID: window.ID, InputTokens: 50, OutputTokens: 50}
+	errs := make(chan error, 8)
+	var workers sync.WaitGroup
+	for range 8 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			_, err := NewStore(f.app, f.rls).MaintenanceCommand(ctx, command, time.Now().UTC(), nil)
+			errs <- err
+		}()
+	}
+	workers.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	status, err := f.store.MaintenanceStatus(ctx, time.Now().UTC())
+	require.NoError(t, err)
+	require.Equal(t, window.Policy, status.Window.Policy)
+	require.True(t, window.EndsAt.Equal(status.Window.EndsAt))
+	require.EqualValues(t, 50, status.Window.AdditionalInput)
+	require.EqualValues(t, 50, status.Window.AdditionalOutput)
+	require.EqualValues(t, 80, status.Window.ChargedInput)
+	require.EqualValues(t, 80, status.Window.ReservedOutput)
+	grant, err := f.store.MaintenanceCommand(ctx, command, time.Now().UTC(), nil)
+	require.NoError(t, err)
+	require.Equal(t, "completed", grant.Status)
+	require.EqualValues(t, 50, grant.OutputTokens)
+	changed := command
+	changed.OutputTokens++
+	_, err = f.store.MaintenanceCommand(ctx, changed, time.Now().UTC(), nil)
+	require.ErrorIs(t, err, ontology.ErrConflict)
+	changed = command
+	changed.OperationKey, changed.InputTokens, changed.OutputTokens = "aggregate-bound", ontology.MaxAdditionalTokens, 0
+	_, err = f.store.MaintenanceCommand(ctx, changed, time.Now().UTC(), nil)
+	require.ErrorIs(t, err, ontology.ErrInvalid)
+	changed = command
+	changed.OperationKey, changed.WindowID = "stale-window", uuid.NewString()
+	_, err = f.store.MaintenanceCommand(ctx, changed, time.Now().UTC(), nil)
+	require.ErrorIs(t, err, ontology.ErrConflict)
+	_, err = f.store.MaintenanceCommand(f.actor(0, "manager"), command, time.Now().UTC(), nil)
+	require.ErrorIs(t, err, ontology.ErrUnauthorized)
+	errs = make(chan error, 2)
+	for range 2 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			errs <- NewStore(f.app, f.rls).ReserveMaintenanceAttempt(ctx, *claim, uuid.NewString(), 1, 40, 40, time.Now().UTC())
+		}()
+	}
+	workers.Wait()
+	close(errs)
+	accepted, deferred := 0, 0
+	for err := range errs {
+		if err == nil {
+			accepted++
+		} else {
+			require.ErrorIs(t, err, ontology.ErrBudgetDeferred)
+			deferred++
+		}
+	}
+	require.Equal(t, 1, accepted)
+	require.Equal(t, 1, deferred)
+	for _, query := range []string{`UPDATE ontology_maintenance_runs SET max_batches=1 WHERE run_id=?::uuid`, `DELETE FROM ontology_maintenance_runs WHERE run_id=?::uuid`} {
+		err := f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error { return tx.Exec(query, grant.ID).Error })
+		require.ErrorContains(t, err, "ontology allowance history is immutable")
+	}
+	require.NoError(t, f.store.ReconcileMaintenanceAttempt(ctx, *claim, assessment, ontology.AssessmentAttempt{Number: 1, ReportedInputTokens: 81, ReportedOutputTokens: 80}))
+	changed = command
+	changed.OperationKey = "cannot-clear-overrun"
+	_, err = f.store.MaintenanceCommand(ctx, changed, time.Now().UTC(), nil)
+	require.ErrorIs(t, err, ontology.ErrBudgetDeferred)
+	require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
+	policy, err := config.OntologyMaintenanceRuntimeConfig(ctx)
+	require.NoError(t, err)
+	next, err := f.store.EnsureMaintenanceWindow(ctx, policy, window.EndsAt)
+	require.NoError(t, err)
+	require.Zero(t, next.AdditionalInput)
+	require.Zero(t, next.AdditionalOutput)
+	_, err = f.store.MaintenanceCommand(ctx, changed, window.EndsAt, nil)
+	require.ErrorIs(t, err, ontology.ErrConflict)
+	replayed, err := f.store.MaintenanceCommand(ctx, command, window.EndsAt, nil)
+	require.NoError(t, err)
+	require.Equal(t, grant, replayed)
+}
+
+func TestOntologyMaintenanceAllowanceMigrationRetainsGrantHistory(t *testing.T) {
+	f := newOrganizationFixture(t)
+	ctx := context.Background()
+	const filename = "20261016020100_ontology_maintenance_allowances.sql"
+	contents, err := os.ReadFile(filepath.Join("../../../migrations/postgres/v2_6", filename))
+	require.NoError(t, err)
+	db, err := f.admin.DB()
+	require.NoError(t, err)
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, fstest.MapFS{filename: &fstest.MapFile{Data: contents}}, goose.WithDisableGlobalRegistry(true), goose.WithAllowOutofOrder(true))
+	require.NoError(t, err)
+	_, err = provider.ApplyVersion(ctx, 20261016020100, false)
+	require.NoError(t, err)
+	require.NoError(t, f.admin.Exec(`GRANT CREATE ON SCHEMA public TO ontology_app;
+	 ALTER TABLE ontology_maintenance_windows OWNER TO ontology_app;
+	 ALTER TABLE ontology_maintenance_runs OWNER TO ontology_app`).Error)
+	db, err = f.app.DB()
+	require.NoError(t, err)
+	provider, err = goose.NewProvider(goose.DialectPostgres, db, fstest.MapFS{filename: &fstest.MapFile{Data: contents}}, goose.WithDisableGlobalRegistry(true), goose.WithAllowOutofOrder(true))
+	require.NoError(t, err)
+	_, err = provider.Up(ctx)
+	require.NoError(t, err)
+	window := maintenanceWindow(t, f, maintenanceSettings(t, f))
+	_, err = f.store.MaintenanceCommand(ctx, domain.OntologyMaintenanceCommand{Action: "allowance", OperationKey: "retained-grant", WindowID: window.ID, OutputTokens: 100}, time.Now().UTC(), nil)
+	require.NoError(t, err)
+	_, err = provider.ApplyVersion(ctx, 20261016020100, false)
+	require.ErrorContains(t, err, "ontology allowance history is populated")
+	status, err := f.store.MaintenanceStatus(ctx, time.Now().UTC())
+	require.NoError(t, err)
+	require.EqualValues(t, 100, status.Window.AdditionalOutput)
+}
+
+func TestOntologyMaintenanceAllowanceRacesDeferredCompletion(t *testing.T) {
+	f := newOrganizationFixture(t)
+	f.organizationEvidence(t, 0, "Atlas stores PostgreSQL data.", nil)
+	ctx := context.Background()
+	window := maintenanceWindow(t, f, maintenanceSettings(t, f))
+	turn, claim := maintenanceClaim(t, f, window)
+	_, err := f.store.MaintenanceCommand(ctx, domain.OntologyMaintenanceCommand{Action: "allowance", OperationKey: "grant-before-completion", WindowID: window.ID, OutputTokens: 100}, time.Now().UTC(), nil)
+	require.NoError(t, err)
+	require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, ontology.OrganizationResult{}, "budget_deferred", time.Now().UTC()))
+	require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
+	status, err := f.store.MaintenanceStatus(ctx, time.Now().UTC())
+	require.NoError(t, err)
+	require.EqualValues(t, 1, status.Counts.Pending)
+	turn, claim = maintenanceClaim(t, f, status.Window)
+	require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, ontology.OrganizationResult{}, "budget_deferred", time.Now().UTC()))
+	require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
+	status, err = f.store.MaintenanceStatus(ctx, time.Now().UTC())
+	require.NoError(t, err)
+	require.EqualValues(t, 1, status.Counts.BudgetDeferred)
+	require.Zero(t, status.Counts.Pending)
 }
 
 func TestOntologyMaintenanceEnrollsActiveTeamsDespiteRetiredOptouts(t *testing.T) {

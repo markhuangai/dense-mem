@@ -528,6 +528,14 @@ Temporal requests omit current-only organization and report that degradation.
 Disabling ontology maintenance restores ordinary retrieval; pausing it retains
 current published organization.
 
+Operators can use **Config → Ontology → Add allowance now** to authorize extra
+input/output tokens for the active maintenance window. The additions are shared
+across teams and expire at the window's original end. Original policy, charged
+usage and outstanding reservations remain visible; each grant has an immutable
+receipt and audit. Budget-deferred work resumes through normal automatic
+maintenance on its next minute tick. Pause, disable and provider-overrun stops
+still apply. Schedule and model settings continue to apply at the next window.
+
 When recall feedback is enabled and a snapshot is stored, clients may voluntarily
 call `submit_recall_session_feedback` with `recall_id`; Recall does not prompt for
 session feedback. General feedback does not overwrite historical Dream-feedback

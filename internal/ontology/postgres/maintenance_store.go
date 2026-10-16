@@ -34,15 +34,15 @@ func (s *Store) readMaintenanceSystem(ctx context.Context, fn func(*gorm.DB) err
 	return s.rls.WithSystemReadOnlyRepeatableTx(ctx, s.db, fn)
 }
 
-const maintenanceWindowColumns = `window_id::text,starts_at,ends_at,policy,charged_input,charged_output,reported_input,reported_output,reserved_input,reserved_output,overrun`
-const maintenanceRunColumns = `run_id::text,COALESCE(window_id::text,''),kind,status,operation_key,max_batches,completed_batches,failure_code,created_at,updated_at`
+const maintenanceWindowColumns = `window_id::text,starts_at,ends_at,policy,charged_input,charged_output,reported_input,reported_output,reserved_input,reserved_output,overrun,additional_input,additional_output`
+const maintenanceRunColumns = `run_id::text,COALESCE(window_id::text,''),kind,status,operation_key,max_batches,completed_batches,failure_code,created_at,updated_at,COALESCE((command->>'input_tokens')::bigint,0),COALESCE((command->>'output_tokens')::bigint,0)`
 
 type maintenanceScanner interface{ Scan(...any) error }
 
 func scanMaintenanceWindow(row maintenanceScanner) (*ontology.MaintenanceWindow, error) {
 	result := &ontology.MaintenanceWindow{}
 	var policy []byte
-	err := row.Scan(&result.ID, &result.StartsAt, &result.EndsAt, &policy, &result.ChargedInput, &result.ChargedOutput, &result.ReportedInput, &result.ReportedOutput, &result.ReservedInput, &result.ReservedOutput, &result.Overrun)
+	err := row.Scan(&result.ID, &result.StartsAt, &result.EndsAt, &policy, &result.ChargedInput, &result.ChargedOutput, &result.ReportedInput, &result.ReportedOutput, &result.ReservedInput, &result.ReservedOutput, &result.Overrun, &result.AdditionalInput, &result.AdditionalOutput)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -57,7 +57,7 @@ func scanMaintenanceWindow(row maintenanceScanner) (*ontology.MaintenanceWindow,
 
 func scanMaintenanceRun(row maintenanceScanner) (ontology.MaintenanceRun, error) {
 	var value ontology.MaintenanceRun
-	err := row.Scan(&value.ID, &value.WindowID, &value.Kind, &value.Status, &value.OperationKey, &value.MaxBatches, &value.CompletedBatches, &value.FailureCode, &value.CreatedAt, &value.UpdatedAt)
+	err := row.Scan(&value.ID, &value.WindowID, &value.Kind, &value.Status, &value.OperationKey, &value.MaxBatches, &value.CompletedBatches, &value.FailureCode, &value.CreatedAt, &value.UpdatedAt, &value.InputTokens, &value.OutputTokens)
 	return value, err
 }
 

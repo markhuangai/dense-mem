@@ -21,6 +21,49 @@ test("operators inspect ontology coverage and pause or resume durable admission"
   await expect(page.getByRole("button", { name: "Run bounded maintenance" })).toBeDisabled();
 });
 
+test("operators add allowance to the active window without resetting its policy", async ({ page, request }) => {
+  async function control(path: string, body?: unknown, method = body ? "POST" : "GET") {
+    const response = await request.fetch(`${controlURL}/control/api${path}`, { method, headers: { Authorization: `Bearer ${token}` }, ...(body ? { data: body } : {}) });
+    expect(response.ok()).toBeTruthy();
+    return (await response.json()).data;
+  }
+  const originalConfig = await control("/config/ontology-maintenance");
+  const originalStatus = await control("/ontology/status");
+  const originalEnabled = originalConfig.items.find((item: { key: string }) => item.key === "ONTOLOGY_MAINTENANCE_ENABLED").value;
+  try {
+    await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
+    await control("/ontology/resume", { operation_key: randomUUID() });
+    const status = await control("/ontology/status");
+    const before = status.window;
+    expect(before).toBeTruthy();
+    expect(Date.parse(before.ends_at)).toBeGreaterThan(Date.parse(status.observed_at));
+    await page.goto(controlURL);
+    await page.getByLabel("Control token").fill(token);
+    await page.getByRole("button", { name: "Unlock" }).click();
+    await page.getByRole("button", { name: "Config", exact: true }).click();
+    await page.getByRole("tab", { name: "Ontology", exact: true }).click();
+    await page.getByLabel("Additional input tokens").fill("1234");
+    await page.getByLabel("Additional output tokens").fill("5678");
+    await page.getByRole("button", { name: "Add allowance now", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("Allowance added to this window");
+    const after = (await control("/ontology/status")).window;
+    expect(after.id).toBe(before.id);
+    expect(after.ends_at).toBe(before.ends_at);
+    expect(after.policy).toEqual(before.policy);
+    expect(after.additional_input_tokens).toBe(before.additional_input_tokens + 1234);
+    expect(after.additional_output_tokens).toBe(before.additional_output_tokens + 5678);
+    expect(after.charged_input_tokens).toBeGreaterThanOrEqual(before.charged_input_tokens);
+    await expect(page.getByLabel("Additional input tokens")).toHaveValue("0");
+    await expect(page.getByRole("button", { name: "Add allowance now", exact: true })).toBeDisabled();
+  } finally {
+    const restored = await Promise.allSettled([
+      control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: originalEnabled }] }, "PATCH"),
+      control(originalStatus.paused ? "/ontology/pause" : "/ontology/resume", { operation_key: randomUUID() }),
+    ]);
+    for (const result of restored) expect(result.status).toBe("fulfilled");
+  }
+});
+
 
 test("loaded older retry actions follow successful work and server eligibility", async ({ page, request }) => {
   test.setTimeout(180000);

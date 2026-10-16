@@ -28,6 +28,8 @@ export type OntologyMaintenanceRun = {
   failure_code?: string;
   created_at: string;
   updated_at: string;
+  input_tokens?: number;
+  output_tokens?: number;
 };
 export type OntologyMaintenanceStatus = {
   observed_at: string;
@@ -51,6 +53,8 @@ export type OntologyMaintenanceStatus = {
     reserved_input_tokens: number;
     reserved_output_tokens: number;
     overrun: boolean;
+    additional_input_tokens?: number;
+    additional_output_tokens?: number;
   };
   latest_run?: OntologyMaintenanceRun;
 };

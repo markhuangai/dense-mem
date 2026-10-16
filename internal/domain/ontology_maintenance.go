@@ -42,4 +42,7 @@ type OntologyMaintenanceCommand struct {
 	Action       string `json:"action"`
 	MaxBatches   int    `json:"max_batches"`
 	RetryRunID   string `json:"retry_run_id,omitempty"`
+	WindowID     string `json:"window_id,omitempty"`
+	InputTokens  int64  `json:"input_tokens,omitempty"`
+	OutputTokens int64  `json:"output_tokens,omitempty"`
 }

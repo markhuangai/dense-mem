@@ -11,6 +11,7 @@ import (
 
 const MaintenancePageSize = 100
 const MaxManualBatches = 100
+const MaxAdditionalTokens int64 = 1000000000
 
 var (
 	ErrMaintenancePaused   = errors.New("ontology maintenance paused")
@@ -22,18 +23,23 @@ var (
 )
 
 type MaintenanceWindow struct {
-	ID             string                           `json:"id"`
-	StartsAt       time.Time                        `json:"starts_at"`
-	EndsAt         time.Time                        `json:"ends_at"`
-	Policy         domain.OntologyMaintenanceConfig `json:"policy"`
-	ChargedInput   int64                            `json:"charged_input_tokens"`
-	ChargedOutput  int64                            `json:"charged_output_tokens"`
-	ReportedInput  int64                            `json:"reported_input_tokens"`
-	ReportedOutput int64                            `json:"reported_output_tokens"`
-	ReservedInput  int64                            `json:"reserved_input_tokens"`
-	ReservedOutput int64                            `json:"reserved_output_tokens"`
-	Overrun        bool                             `json:"overrun"`
+	ID               string                           `json:"id"`
+	StartsAt         time.Time                        `json:"starts_at"`
+	EndsAt           time.Time                        `json:"ends_at"`
+	Policy           domain.OntologyMaintenanceConfig `json:"policy"`
+	ChargedInput     int64                            `json:"charged_input_tokens"`
+	ChargedOutput    int64                            `json:"charged_output_tokens"`
+	ReportedInput    int64                            `json:"reported_input_tokens"`
+	ReportedOutput   int64                            `json:"reported_output_tokens"`
+	ReservedInput    int64                            `json:"reserved_input_tokens"`
+	ReservedOutput   int64                            `json:"reserved_output_tokens"`
+	Overrun          bool                             `json:"overrun"`
+	AdditionalInput  int64                            `json:"additional_input_tokens"`
+	AdditionalOutput int64                            `json:"additional_output_tokens"`
 }
+
+func (w MaintenanceWindow) InputAllowance() int64  { return w.Policy.InputTokens + w.AdditionalInput }
+func (w MaintenanceWindow) OutputAllowance() int64 { return w.Policy.OutputTokens + w.AdditionalOutput }
 
 type MaintenanceRun struct {
 	ID               string    `json:"id"`
@@ -47,22 +53,26 @@ type MaintenanceRun struct {
 	FailureCode      string    `json:"failure_code,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
+	InputTokens      int64     `json:"input_tokens,omitempty"`
+	OutputTokens     int64     `json:"output_tokens,omitempty"`
 }
 
 // MaintenanceAudit prepares an entry without storage or provider I/O.
 type MaintenanceAudit func(MaintenanceRun) (audit.Entry, error)
 
 type MaintenanceClaim struct {
-	ID         string
-	RunID      string
-	WindowID   string
-	TeamID     string
-	SpaceID    string
-	Generation int64
-	LeaseToken string
-	LeaseUntil time.Time
-	Sources    []SourceHandle
-	Revisions  map[string]int64
+	ID               string
+	RunID            string
+	WindowID         string
+	TeamID           string
+	SpaceID          string
+	Generation       int64
+	LeaseToken       string
+	LeaseUntil       time.Time
+	Sources          []SourceHandle
+	Revisions        map[string]int64
+	AdditionalInput  int64
+	AdditionalOutput int64
 }
 
 type MaintenanceTurn struct {
@@ -149,8 +159,11 @@ func MaintenanceFailureCode(err error) string {
 	return ""
 }
 
-func MaintenanceOutcomeState(outcome OrganizationOutcome, result OrganizationResult, failure string) string {
+func MaintenanceOutcomeState(outcome OrganizationOutcome, result OrganizationResult, failure string, allowanceChanged bool) string {
 	if failure == "maintenance_paused" || failure == "maintenance_disabled" {
+		return "pending"
+	}
+	if failure == "budget_deferred" && allowanceChanged {
 		return "pending"
 	}
 	if failure == "budget_deferred" || failure == "lease_lost" {

@@ -27,12 +27,28 @@
     "measurements": 200,
     "maximum_median_paired_p95_regression": 0.1,
     "median_paired_p95_regression": {
-      "grouping": -0.008711988783454472,
-      "discovery": 0.029610493398257498,
-      "ordinary_fallback": -0.038071367453927696
+      "grouping": 0.11481814003881441,
+      "discovery": 0.14696982654243929,
+      "ordinary_fallback": -0.06667906434127269
     },
-    "verified": true,
-    "output_sha256": "sha256:10da6febefe95539e82bfb7e883df96408640fa7589122e6448fb636fec33184"
+    "verified": false,
+    "output_sha256": "sha256:c2caedafcd41c56051e1b947c4c7df304c0ef22380719254640fd6b6349b9211",
+    "comparison_sha256": "sha256:cf25098fcf50da4c1d7d5f7b8f374b066ebfbd46fa1a8c643e7ebb7cf751a4a3",
+    "acceptance_exception": {
+      "approved": true,
+      "approval_record": "https://github.com/markhuangai/dense-mem/issues/240#issuecomment-6226504744",
+      "pull_request": 571,
+      "scope": "These measured local results only; benchmark and future gates unchanged",
+      "required_replacement": [
+        "complete repository checks",
+        "three configured-model cohort repetitions",
+        "frozen Recall/community/manager cohorts",
+        "six local production scenarios",
+        "real PostgreSQL regression inventory",
+        "final-head review and full CI/E2E",
+        "paired Codex/Claude staging OFF/ON/OFF with restoration"
+      ]
+    }
   },
   "session_context": {
     "unrelated_events": 200000,
@@ -65,20 +81,57 @@
     "internal/community/postgres/types.go": "2d8effb476c5117daca55ce17920c0a9c4c740cd2b2c68130e9f84b90b11eb05",
     "internal/community/service/service.go": "1698323898315a13f1c0cbd0be50ee1b05a9e7419ffd40dc9e58ee616f31b310",
     "internal/community/service/topic_projection.go": "4821b99ba13a3f10567321fa15d30282d634b5b77a2f83bb9842994ee7d90672",
-    "internal/evalharness/client.go": "d3a1aad6f1e201c4226818c6be5dc4c4fee01a252ecac13d4a11f7c2dff59702",
+    "internal/evalharness/client.go": "696822785c5a8a325524cc796fb10f719ff2289b24a14b806eb9c0bdbdfd0ebe",
     "internal/evalharness/score.go": "9674bbd183e18fb4346cee6416b35f64a6775d985e48017802155ab2cb63d8db",
     "internal/evalharness/types.go": "4acd2a52632ea057b329cf73aec76f83e762e19d2266545e4551a53cf8ee812e",
-    "internal/knowledge/postgres/session_intake.go": "c8c35bebbf4b1d249f0b78d56a74a03286c97cf3fda83e644194048e22e2d600",
+    "internal/knowledge/postgres/session_intake.go": "5fb86b5522ef68fe5fa25f3f72bac0a2ade9fc06e34d03649bffade32d39cb06",
     "internal/ontology/contract/topics.go": "ae02df7164805fb5a8b9d15c50648e6d0cbf4b09b87d95cf2d9b74a41a2cb72c",
     "internal/ontology/postgres/topic_coordination.go": "fb4978554e1aff825b793045aa7e2c3cd7ab5cb7b95673d51ed6d553fe5074da",
     "internal/ontology/scheduler.go": "aaa8a11a32c2778c3548a1ad9eaf1e870e977278b0dfc26be1101a502e9825cd",
     "internal/recall/quality/metrics.go": "d045f53801d85d2a1f7e3ebd1f8e537496ab490d61246b35756c2d09f98716e9",
     "internal/session/service/diagnostics.go": "21bd6ae163f9537fef50b6265ca755ae8e5df3dd3534dec8be82b14dd4bcdffd",
-    "migrations/postgres/v2_6/20261013020000_session_context_index.sql": "ce028d1427d509d6a1f04c18beb797c2b9ab69adb90a2475ca5ec0ed95747027",
+    "migrations/postgres/v2_6/20261016020000_session_context_index.sql": "ce028d1427d509d6a1f04c18beb797c2b9ab69adb90a2475ca5ec0ed95747027",
     "packages/python/scripts/release.py": "c9e230385cbf687d3b132c4e0cdbb1ed264b0283d979b3259dd9bbf524b85489",
     "tests/eval/scripts/session_provider_proxy.mjs": "0aaa73026d62478cd546421fa2890bc2277232bc0fcfaf6a927bf3b6f71c82df",
-    "tests/uat/enterprise_exports_e2e.mjs": "b992c5f1c3bb4ee73163e9316e0d881833d955502bd07bbcc0f4e48673ec1860",
-    "tests/uat/ontology_organization_e2e.mjs": "a5e7efbed936080359d42d56582f74ae825814d4a3def838e5bc04517b67917f",
-    "tests/uat/session_ingest_e2e.mjs": "a299a961da25239eb80cad3fa6080f8fe0773a9afa10a27ff41f652a8d0c23a1"
-  }
+    "tests/uat/enterprise_exports_e2e.mjs": "08f6ef0752e1cb2ca8707c7e01515b2d4cbd5a93179f245739785d462533b693",
+    "tests/uat/ontology_organization_e2e.mjs": "4076c7378a29c07a1b4b5c2919e7b570e1347663cd870085b2bd543e83d24024",
+    "tests/uat/session_ingest_e2e.mjs": "b85072fb5609e3cbe47a5296ea24d32022cdbcce41fc7324a16ad876bde7f115",
+    "adr/0012-operator-maintenance-allowance.md": "1cfcdf1846edfeccb0201b8380527045456366eefd3c0eefe1cfc3730cf402f0",
+    "internal/domain/ontology_maintenance.go": "ccde54d94bfc2838d146a9e5f295fdd4e332cb5d6e77e35bdd266ff7cf71865a",
+    "internal/http/control_portal_ontology.go": "6ad6c1d323fcaacbcfaef7ef86d9b1b896987cca7c646622d61b71f8f47ec4ed",
+    "internal/ontology/contract/maintenance.go": "73c900e62f5497dc7c3f98502c816a037a1c04b474d6ea16cdbfb87cd1e50f5e",
+    "internal/ontology/contract/maintenance_policy.go": "d4fa08731cdd9bc1f9951aaec9d3272e2a190fc16f30fcc1a15bd5dc6c95be1e",
+    "internal/ontology/maintenance.go": "c38c408a380114a2c076cac815d820a4f00521d95f6265b58f1ffcea7cc2b775",
+    "internal/ontology/postgres/maintenance_accounting.go": "c9215045fab56c0e1d016f17162f6d613f93372dd79d2ef9116cd3377a577511",
+    "internal/ontology/postgres/maintenance_batch.go": "eb940a627c969fb55f62010b81ad78cdb323ed073b96276bb5c4783e3e677892",
+    "internal/ontology/postgres/maintenance_operations.go": "8d29ca066b6a82b5f279098f941816ea06671b24271e556cd8085f393af0e4d8",
+    "internal/ontology/postgres/maintenance_store.go": "3faf1ba3364ac78e863190fbd30a44305665683ffd6ac6125bf9000380192337",
+    "migrations/postgres/v2_6/20261016020100_ontology_maintenance_allowances.sql": "d05af93ff1f77fa31f17859abd8a44d199d7fa57ce113709f188ab973f8adb8c",
+    "web/src/api.ts": "ede90433692b3dc3ec30f8452dffc5a5557797173ab3cb9e30770c5a327b1332",
+    "web/src/control/OntologyMaintenancePanel.tsx": "24e2eb26c1e170a67547f1217524c4d0de37ef33c9c32c49adf2e294e1395c4c",
+    "web/src/ontology-maintenance-api-types.ts": "e08f7537fc87b337ed042cd0cf7956613e717d5bec1d4c4455568336d6a78ae7"
+  },
+  "historical_latency": {
+    "pairs": 5,
+    "warmups": 20,
+    "measurements": 200,
+    "maximum_median_paired_p95_regression": 0.1,
+    "median_paired_p95_regression": {
+      "grouping": -0.008711988783454472,
+      "discovery": 0.029610493398257498,
+      "ordinary_fallback": -0.038071367453927696
+    },
+    "verified": true,
+    "output_sha256": "sha256:10da6febefe95539e82bfb7e883df96408640fa7589122e6448fb636fec33184",
+    "published_with_head": "cda1876e1799889a560730b45d62e6556569548c",
+    "current_source_acceptance": false
+  },
+  "validation_state": "local correctness passed; measured local latency exception approved; final-head review/full CI and fresh paired staging pending",
+  "validation_source": {
+    "local_head": "ca60f611e81b455587699dbf27af21be9ac14d17",
+    "merged_main": "0573fae0416909bf08b26baef28a0d80ddf3e191",
+    "allowance_changes": "uncommitted",
+    "production_source_audit_manifest_sha256": "761706ef18da9865f3584a2f99e56d8ed83d7746f53586f2f72a7a7ed07950ce"
+  },
+  "quality_proof_sha256": "sha256:1231f0adca400db244f8c3150136561caa0cb9173fdcdfd66470ccd083326d38"
 }

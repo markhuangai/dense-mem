@@ -636,6 +636,34 @@
       "run": "^TestOntologySchedulerStatusFailurePreservesRealOrganizationTurns$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/scheduler_status_failure_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceAllowancePreservesAccountingAndWindowFences",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceAllowancePreservesAccountingAndWindowFences$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceAllowanceMigrationRetainsGrantHistory",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceAllowanceMigrationRetainsGrantHistory$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceAllowanceRacesDeferredCompletion",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceAllowanceRacesDeferredCompletion$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceAllowanceResumesAutomaticWork",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceAllowanceResumesAutomaticWork$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_service_integration_test.go"
     }
   ]
 }

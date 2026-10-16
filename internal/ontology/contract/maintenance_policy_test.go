@@ -56,9 +56,33 @@ func TestMaintenanceCommandsAndOutcomes(t *testing.T) {
 	}
 	source := SourceHandle{Kind: EvidenceSource, ID: "source", Version: 1}
 	result := OrganizationResult{AmbiguousComparisons: []AmbiguousComparison{{Left: source}}}
-	require.Equal(t, "ambiguous", MaintenanceOutcomeState(OrganizationOutcome{Source: source, Status: "organized"}, result, ""))
-	require.Equal(t, "budget_deferred", MaintenanceOutcomeState(OrganizationOutcome{}, OrganizationResult{}, "budget_deferred"))
-	require.Equal(t, "failed", MaintenanceOutcomeState(OrganizationOutcome{}, OrganizationResult{}, "accounting_unavailable"))
+	require.Equal(t, "ambiguous", MaintenanceOutcomeState(OrganizationOutcome{Source: source, Status: "organized"}, result, "", false))
+	require.Equal(t, "budget_deferred", MaintenanceOutcomeState(OrganizationOutcome{}, OrganizationResult{}, "budget_deferred", false))
+	require.Equal(t, "pending", MaintenanceOutcomeState(OrganizationOutcome{}, OrganizationResult{}, "budget_deferred", true))
+	require.Equal(t, "failed", MaintenanceOutcomeState(OrganizationOutcome{}, OrganizationResult{}, "accounting_unavailable", true))
+}
+
+func TestMaintenanceAllowanceValidationAndHistoricalHash(t *testing.T) {
+	grant := domain.OntologyMaintenanceCommand{OperationKey: "grant", Action: "allowance", WindowID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", OutputTokens: 50000}
+	_, err := PrepareMaintenanceCommand(grant)
+	require.NoError(t, err)
+	for _, change := range []func(*domain.OntologyMaintenanceCommand){
+		func(c *domain.OntologyMaintenanceCommand) { c.WindowID = "" },
+		func(c *domain.OntologyMaintenanceCommand) { c.OutputTokens = 0 },
+		func(c *domain.OntologyMaintenanceCommand) { c.InputTokens = -1 },
+		func(c *domain.OntologyMaintenanceCommand) { c.OutputTokens = MaxAdditionalTokens + 1 },
+		func(c *domain.OntologyMaintenanceCommand) { c.MaxBatches = 1 },
+		func(c *domain.OntologyMaintenanceCommand) { c.RetryRunID = c.WindowID },
+		func(c *domain.OntologyMaintenanceCommand) { c.Action = "run" },
+	} {
+		invalid := grant
+		change(&invalid)
+		_, err := PrepareMaintenanceCommand(invalid)
+		require.ErrorIs(t, err, ErrInvalid)
+	}
+	hash, err := MaintenanceCommandHash(domain.OntologyMaintenanceCommand{OperationKey: "legacy-run", Action: "run", MaxBatches: 1})
+	require.NoError(t, err)
+	require.Equal(t, "sha256:1ea5e21f36698df9a0be8a879cfb26b2f5826703fa02b8dd7288b0051f10016d", hash)
 }
 
 func TestMaintenanceCompletionRetainsOnlyUnresolvedFailureReasons(t *testing.T) {

@@ -218,7 +218,7 @@ func TestCommunityTopicMigrationUsesNonSuperuserWithForcedRLS(t *testing.T) {
 		if err := tx.Exec(fmt.Sprintf(`GRANT REFERENCES,TRIGGER ON ALL TABLES IN SCHEMA public TO %s`, ledgerTestRole)).Error; err != nil {
 			return err
 		}
-		for _, table := range []string{"app_config", "community_records", "session_events"} {
+		for _, table := range []string{"app_config", "community_records", "session_events", "ontology_maintenance_windows", "ontology_maintenance_runs"} {
 			if err := tx.Exec(fmt.Sprintf(`ALTER TABLE %s OWNER TO %s`, table, ledgerTestRole)).Error; err != nil {
 				return err
 			}

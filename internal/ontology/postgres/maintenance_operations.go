@@ -88,7 +88,24 @@ func (s *Store) MaintenanceCommand(ctx context.Context, input domain.OntologyMai
 				return ontology.ErrBudgetDeferred
 			}
 			result.WindowID = window.ID
-			result.Status = "pending"
+			if input.Action == "allowance" {
+				if input.WindowID != window.ID {
+					return ontology.ErrConflict
+				}
+				if window.AdditionalInput+input.InputTokens > ontology.MaxAdditionalTokens || window.AdditionalOutput+input.OutputTokens > ontology.MaxAdditionalTokens {
+					return ontology.ErrInvalid
+				}
+				if err := tx.Exec(`UPDATE ontology_maintenance_windows SET additional_input=additional_input+?,additional_output=additional_output+? WHERE window_id=?::uuid`, input.InputTokens, input.OutputTokens, window.ID).Error; err != nil {
+					return err
+				}
+				if err := tx.Exec(`UPDATE ontology_maintenance_sources AS source SET status='pending',updated_at=?
+				 WHERE source.eligible AND source.status='budget_deferred' AND EXISTS(
+				 SELECT 1 FROM ontology_maintenance_runs AS run WHERE run.run_id=source.last_run_id AND run.window_id=?::uuid)`, now, window.ID).Error; err != nil {
+					return err
+				}
+			} else {
+				result.Status = "pending"
+			}
 			if input.Action == "retry" {
 				var exists bool
 				if err := tx.Raw(`SELECT EXISTS(SELECT 1 FROM ontology_maintenance_runs WHERE run_id=?::uuid AND kind IN ('scheduled','run','retry'))`, input.RetryRunID).Row().Scan(&exists); err != nil {
@@ -200,7 +217,7 @@ func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (ontology.
 		if err != nil {
 			return err
 		}
-		if result.Window != nil && (result.Window.Overrun || result.Window.ChargedInput >= result.Window.Policy.InputTokens || result.Window.ChargedOutput >= result.Window.Policy.OutputTokens) {
+		if result.Window != nil && (result.Window.Overrun || result.Window.ChargedInput >= result.Window.InputAllowance() || result.Window.ChargedOutput >= result.Window.OutputAllowance()) {
 			result.CoverageComplete = false
 		}
 		run, err := scanMaintenanceRun(tx.Raw(`SELECT ` + maintenanceRunColumns + ` FROM ontology_maintenance_runs ORDER BY created_at DESC,run_id DESC LIMIT 1`).Row())

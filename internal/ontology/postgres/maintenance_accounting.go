@@ -51,7 +51,7 @@ func (s *Store) ReserveMaintenanceAttempt(ctx context.Context, claim ontology.Ma
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if int64(input) > window.Policy.InputTokens-window.ChargedInput || int64(output) > window.Policy.OutputTokens-window.ChargedOutput {
+		if int64(input) > window.InputAllowance()-window.ChargedInput || int64(output) > window.OutputAllowance()-window.ChargedOutput {
 			return ontology.ErrBudgetDeferred
 		}
 		if err := tx.Exec(`INSERT INTO ontology_maintenance_attempts(batch_id,assessment_id,attempt,window_id,reserved_input,reserved_output,admitted_at) VALUES(?::uuid,?::uuid,?,?::uuid,?,?,?)`, claim.ID, assessmentID, number, claim.WindowID, input, output, now).Error; err != nil {
@@ -102,7 +102,7 @@ func (s *Store) ReconcileMaintenanceAttempt(ctx context.Context, claim ontology.
 		if total := int64(attempt.ReportedTotalTokens); total > chargedInput+chargedOutput {
 			chargedOutput = total - chargedInput
 		}
-		overrun := chargedInput > input || chargedOutput > output || window.ChargedInput-input+chargedInput > window.Policy.InputTokens || window.ChargedOutput-output+chargedOutput > window.Policy.OutputTokens
+		overrun := chargedInput > input || chargedOutput > output || window.ChargedInput-input+chargedInput > window.InputAllowance() || window.ChargedOutput-output+chargedOutput > window.OutputAllowance()
 		if err := tx.Exec(`UPDATE ontology_maintenance_attempts SET reported_input=?,reported_output=?,reported_total=?,reconciled_at=clock_timestamp() WHERE batch_id=?::uuid AND assessment_id=?::uuid AND attempt=?`, attempt.ReportedInputTokens, attempt.ReportedOutputTokens, attempt.ReportedTotalTokens, claim.ID, assessmentID, attempt.Number).Error; err != nil {
 			return err
 		}

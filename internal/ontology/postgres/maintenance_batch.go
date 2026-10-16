@@ -106,6 +106,9 @@ func (s *Store) ClaimMaintenanceBatch(ctx context.Context, turn ontology.Mainten
 			return err
 		}
 		claim.RunID = runID
+		if err := tx.Raw(`SELECT additional_input,additional_output FROM ontology_maintenance_windows WHERE window_id=?::uuid`, windowID).Row().Scan(&claim.AdditionalInput, &claim.AdditionalOutput); err != nil {
+			return err
+		}
 		sources, err := json.Marshal(claim.Sources)
 		if err != nil {
 			return err
@@ -222,6 +225,12 @@ func (s *Store) CompleteMaintenanceBatch(ctx context.Context, claim ontology.Mai
 		if status != "running" || !now.Before(claim.LeaseUntil) {
 			return ontology.ErrLeaseLost
 		}
+		allowanceChanged := false
+		if failure == "budget_deferred" {
+			if err := tx.Raw(`SELECT additional_input>? OR additional_output>? FROM ontology_maintenance_windows WHERE window_id=?::uuid`, claim.AdditionalInput, claim.AdditionalOutput, claim.WindowID).Row().Scan(&allowanceChanged); err != nil {
+				return err
+			}
+		}
 		progress := false
 		outcomes := map[string]ontology.OrganizationOutcome{}
 		for _, outcome := range result.Outcomes {
@@ -232,7 +241,7 @@ func (s *Store) CompleteMaintenanceBatch(ctx context.Context, claim ontology.Mai
 			if !exists {
 				outcome = ontology.OrganizationOutcome{Source: source, Status: "failed", Reason: failure}
 			}
-			state := ontology.MaintenanceOutcomeState(outcome, result, failure)
+			state := ontology.MaintenanceOutcomeState(outcome, result, failure, allowanceChanged)
 			reason := outcome.Reason
 			if failure != "" {
 				reason = failure

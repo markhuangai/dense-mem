@@ -104,6 +104,15 @@ func TestOntologyMaintenanceOperatorHTTPAndScheduler(t *testing.T) {
 	var replay ontology.MaintenanceRun
 	decode(request(http.MethodPost, "/ontology/runs", `{"operation_key":"http-run","max_batches":1}`), &replay)
 	require.Equal(t, command, replay)
+	decode(request(http.MethodGet, "/ontology/status", ""), &status)
+	body := `{"operation_key":"http-allowance","window_id":"` + status.Window.ID + `","input_tokens":100,"output_tokens":200}`
+	decode(request(http.MethodPost, "/ontology/allowances", body), &command)
+	require.Equal(t, "allowance", command.Kind)
+	require.EqualValues(t, 200, command.OutputTokens)
+	decode(request(http.MethodPost, "/ontology/allowances", body), &replay)
+	require.Equal(t, command, replay)
+	require.Equal(t, http.StatusUnprocessableEntity, request(http.MethodPost, "/ontology/allowances", `{"operation_key":"unknown-grant-field","window_id":"`+status.Window.ID+`","output_tokens":1,"team_id":"untrusted"}`).Code)
+	require.Equal(t, http.StatusUnprocessableEntity, request(http.MethodPost, "/ontology/allowances", `{"operation_key":"empty-grant","window_id":"`+status.Window.ID+`"}`).Code)
 	require.Equal(t, http.StatusNotFound, request(http.MethodPost, "/ontology/runs/"+uuid.NewString()+"/retry", `{"operation_key":"missing-run"}`).Code)
 	var runs ontology.MaintenanceRunPage
 	decode(request(http.MethodGet, "/ontology/runs?limit=1", ""), &runs)
@@ -166,16 +175,25 @@ func TestOntologyMaintenanceCommandAuditIsAtomic(t *testing.T) {
 		defer func() {
 			require.NoError(t, f.admin.Exec(`DROP TRIGGER reject_maintenance_audit ON audit_log; DROP FUNCTION reject_maintenance_audit()`).Error)
 		}()
-		for _, action := range []string{"pause", "resume", "run"} {
+		window := maintenanceWindow(t, f, config)
+		for _, action := range []string{"pause", "resume", "run", "allowance"} {
 			paused := action == "resume"
 			require.NoError(t, f.admin.Exec(`UPDATE ontology_maintenance_state SET paused=? WHERE singleton`, paused).Error)
 			key := "audit-failure-" + action
-			_, err := service.Command(ctx, domain.OntologyMaintenanceCommand{Action: action, OperationKey: key}, "192.0.2.20", "atomic-audit")
+			command := domain.OntologyMaintenanceCommand{Action: action, OperationKey: key}
+			if action == "allowance" {
+				command.WindowID, command.InputTokens, command.OutputTokens = window.ID, 100, 100
+			}
+			_, err := service.Command(ctx, command, "192.0.2.20", "atomic-audit")
 			require.Error(t, err)
 			var auditFailure *organization.OrganizationError
 			require.ErrorAs(t, err, &auditFailure)
 			require.Equal(t, "audit_unavailable", auditFailure.Code)
 			assertRolledBack(t, key, paused)
+			status, err := service.Status(ctx)
+			require.NoError(t, err)
+			require.Zero(t, status.Window.AdditionalInput)
+			require.Zero(t, status.Window.AdditionalOutput)
 		}
 	})
 	t.Run("cancellation_during_audit", func(t *testing.T) {
@@ -415,4 +433,35 @@ func TestOntologyMaintenanceBudgetDeferralAndManualReuse(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.Zero(t, calls())
+}
+
+func TestOntologyMaintenanceAllowanceResumesAutomaticWork(t *testing.T) {
+	f := newOrganizationFixture(t)
+	f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
+	config := maintenanceSettings(t, f)
+	ctx := context.Background()
+	_, err := config.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyOutputTokens: "1"}, "control", "", "")
+	require.NoError(t, err)
+	window := maintenanceWindow(t, f, config)
+	service, calls := maintenanceServiceFixture(t, f, config, nil, auditapp.New(auditpostgres.NewStore(f.app, f.rls)))
+	for range 10 {
+		_, err = service.RunTurn(ctx)
+		if err != nil {
+			require.ErrorIs(t, err, ontology.ErrBudgetDeferred)
+			break
+		}
+	}
+	require.Zero(t, calls())
+	grant, err := service.Command(ctx, domain.OntologyMaintenanceCommand{OperationKey: "fund-automatic", Action: "allowance", WindowID: window.ID, OutputTokens: 100000}, "192.0.2.20", "automatic")
+	require.NoError(t, err)
+	drainMaintenance(t, service)
+	status, err := service.Status(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, status.Counts.Organized)
+	require.Positive(t, calls())
+	require.Equal(t, window.Policy, status.Window.Policy)
+	require.False(t, status.Window.Overrun)
+	var auditCount int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM audit_log WHERE entity_id=? AND metadata->>'output_tokens'='100000'`, grant.ID).Row().Scan(&auditCount))
+	require.Equal(t, 1, auditCount)
 }

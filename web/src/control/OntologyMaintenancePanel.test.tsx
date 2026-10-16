@@ -19,6 +19,48 @@ function fixture() {
 }
 
 describe("Ontology maintenance controls", () => {
+  it("funds the displayed window with a stable retry key and clears a successful grant", async () => {
+    const grants: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/ontology/status")) return jsonResponse({ data: status });
+      if (url.includes("/ontology/runs?")) return jsonResponse({ data: { runs: [run] } });
+      if (url.endsWith("/ontology/allowances")) {
+        grants.push(JSON.parse(String(init?.body)));
+        if (grants.length === 1) return jsonResponse({ message: "audit unavailable" }, 503);
+        return jsonResponse({ data: { ...run, kind: "allowance", status: "completed", retryable: false, input_tokens: 1000, output_tokens: 2000 } });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<OntologyMaintenancePanel api={new ControlApi("http://localhost", "synthetic-control")} />);
+    const button = await screen.findByRole("button", { name: "Add allowance now" });
+    expect(button).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Additional input tokens"), { target: { value: "1000" } });
+    fireEvent.change(screen.getByLabelText("Additional output tokens"), { target: { value: "2000" } });
+    fireEvent.click(button);
+    expect(await screen.findByRole("alert")).toHaveTextContent("audit unavailable");
+    fireEvent.click(button);
+    expect(await screen.findByRole("status")).toHaveTextContent("Allowance added to this window");
+    expect(grants).toHaveLength(2);
+    expect(grants[1]).toEqual(grants[0]);
+    expect(grants[0]).toMatchObject({ window_id: status.window!.id, input_tokens: 1000, output_tokens: 2000 });
+    expect(screen.getByLabelText("Additional input tokens")).toHaveValue(0);
+    expect(button).toBeDisabled();
+  });
+
+  it.each(["paused", "overrun", "expired", "disabled"])("does not offer extra spending while %s", async (condition) => {
+    const api = fixture();
+    vi.mocked(api.getOntologyMaintenanceStatus).mockResolvedValue({ ...status,
+      paused: condition === "paused", enabled: condition !== "disabled",
+      window: { ...status.window!, overrun: condition === "overrun", ...(condition === "expired" ? { ends_at: status.observed_at } : {}) },
+    });
+    render(<OntologyMaintenancePanel api={api} />);
+    const button = await screen.findByRole("button", { name: "Add allowance now" });
+    fireEvent.change(screen.getByLabelText("Additional output tokens"), { target: { value: "50000" } });
+    expect(button).toBeDisabled();
+  });
+
   it("shows incomplete coverage, active policy, pending policy, and retained reservations", async () => {
     render(<OntologyMaintenancePanel api={fixture()} />);
     expect(await screen.findByText(/Coverage incomplete/)).toBeVisible();

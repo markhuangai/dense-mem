@@ -783,6 +783,10 @@ export class ControlApi {
 
   pauseOntologyMaintenance(operationKey: string, paused: boolean): Promise<OntologyMaintenanceRun> { return this.requestEnvelope<OntologyMaintenanceRun>(`/ontology/${paused ? "pause" : "resume"}`, { method: "POST", body: { operation_key: operationKey } }); }
 
+  addOntologyMaintenanceAllowance(operationKey: string, windowId: string, inputTokens: number, outputTokens: number): Promise<OntologyMaintenanceRun> {
+    return this.requestEnvelope<OntologyMaintenanceRun>("/ontology/allowances", { method: "POST", body: { operation_key: operationKey, window_id: windowId, input_tokens: inputTokens, output_tokens: outputTokens } });
+  }
+
   updateGeneralConfig(input: GeneralConfigInput): Promise<GeneralConfig> {
     return this.requestEnvelope<GeneralConfig>("/config/general", { method: "PATCH", body: input });
   }

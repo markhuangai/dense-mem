@@ -123,7 +123,7 @@ func (s *MaintenanceService) Command(ctx context.Context, input domain.OntologyM
 		}
 	}
 	result, err := s.deps.Repository.MaintenanceCommand(ctx, input, s.deps.Now(), func(result contract.MaintenanceRun) (audit.Entry, error) {
-		return s.deps.Audit.Prepare(ctx, access.AuditLogEntry{Operation: "ONTOLOGY_MAINTENANCE_COMMAND", EntityType: "ontology_maintenance", EntityID: result.ID, ActorRole: "control", ClientIP: clientIP, CorrelationID: correlationID, Metadata: map[string]any{"action": input.Action, "operation_key": input.OperationKey, "window_id": result.WindowID, "max_batches": result.MaxBatches}})
+		return s.deps.Audit.Prepare(ctx, access.AuditLogEntry{Operation: "ONTOLOGY_MAINTENANCE_COMMAND", EntityType: "ontology_maintenance", EntityID: result.ID, ActorRole: "control", ClientIP: clientIP, CorrelationID: correlationID, Metadata: map[string]any{"action": input.Action, "operation_key": input.OperationKey, "window_id": result.WindowID, "max_batches": result.MaxBatches, "input_tokens": input.InputTokens, "output_tokens": input.OutputTokens}})
 	})
 	if errors.Is(err, contract.ErrAuditUnavailable) {
 		return result, &OrganizationError{Code: "audit_unavailable", Cause: err}

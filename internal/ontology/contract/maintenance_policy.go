@@ -61,7 +61,15 @@ func PrepareMaintenanceCommand(input domain.OntologyMaintenanceCommand) (domain.
 	if !boundedText(input.OperationKey, 128) {
 		return input, fmt.Errorf("%w: operation key required", ErrInvalid)
 	}
+	if input.Action != "allowance" && (input.WindowID != "" || input.InputTokens != 0 || input.OutputTokens != 0) {
+		return input, ErrInvalid
+	}
 	switch input.Action {
+	case "allowance":
+		if !validID(input.WindowID) || input.MaxBatches != 0 || input.RetryRunID != "" || input.InputTokens < 0 || input.OutputTokens < 0 ||
+			input.InputTokens > MaxAdditionalTokens || input.OutputTokens > MaxAdditionalTokens || (input.InputTokens == 0 && input.OutputTokens == 0) {
+			return input, ErrInvalid
+		}
 	case "run", "retry":
 		if input.MaxBatches == 0 {
 			input.MaxBatches = 1
