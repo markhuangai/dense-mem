@@ -58,7 +58,7 @@ func legacyPrivateMigrationFixture(t *testing.T) *privateMigrationFixture {
 	files, err := filepath.Glob(filepath.Join(source, "*", "*.sql"))
 	require.NoError(t, err)
 	for _, file := range files {
-		if strings.HasPrefix(filepath.Base(file), "2026101401000") {
+		if strings.SplitN(filepath.Base(file), "_", 2)[0] >= "20261014010001" {
 			continue
 		}
 		relative, err := filepath.Rel(source, file)
