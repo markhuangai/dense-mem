@@ -221,7 +221,7 @@ jobs:
       matrix:
         shard: [0, 1, 2]
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
     steps:

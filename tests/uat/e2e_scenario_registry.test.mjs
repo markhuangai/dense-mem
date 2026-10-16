@@ -72,7 +72,7 @@ function assertWorkflowOrchestration(workflow) {
   const report = workflowJob(workflow, "report");
   assert.ok(databasePrechecks.includes("shard: [0, 1, 2]"));
   assert.ok(databasePrechecks.includes("max-parallel: 3"));
-  assert.ok(databasePrechecks.includes("timeout-minutes: 45"));
+  assert.ok(databasePrechecks.includes("timeout-minutes: 60"));
   assert.ok(databasePrechecks.includes("runs-on: ubuntu-latest"));
   assert.ok(scenarios.includes("needs: [authorize, prechecks, database-prechecks]"));
   assert.ok(scenarios.includes("needs.database-prechecks.result == 'success'"));
