@@ -12,6 +12,7 @@ import (
 )
 
 const migrationControlRetirementCommand = "migration-control-retirement"
+const privateMemoryPreflightCommand = "private-memory-preflight"
 
 func main() {
 	processCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -22,8 +23,12 @@ func main() {
 		err = serverapp.RunFromEnvironment(processCtx, serverapp.RuntimeOptions{})
 	case len(os.Args) == 2 && os.Args[1] == migrationControlRetirementCommand:
 		err = serverapp.RunMigrationControlRetirement(processCtx)
+	case len(os.Args) == 2 && os.Args[1] == privateMemoryPreflightCommand:
+		err = serverapp.RunPrivateMemoryPreflight(processCtx, os.Stdout)
+	case len(os.Args) > 1 && os.Args[1] == "private-memory-migrate":
+		err = serverapp.RunPrivateMemoryMigration(processCtx, os.Args[2:], os.Stdout)
 	default:
-		err = fmt.Errorf("usage: %s [%s]", os.Args[0], migrationControlRetirementCommand)
+		err = fmt.Errorf("usage: %s [%s|%s]", os.Args[0], migrationControlRetirementCommand, privateMemoryPreflightCommand)
 	}
 	if err != nil {
 		log.Fatalf("server runtime failed: %v", err)

@@ -22,7 +22,7 @@ const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
 const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 const runID = `oauth-mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const logSentinel = `oauth-private-token-sentinel-${randomUUID()}`;
-const issuedTokens = [];
+const issuedTokens = [oauthFixtureToken];
 let rpcID = 0;
 
 if (scenario !== "mcp_oauth") {
@@ -151,9 +151,18 @@ const entraTeamA = await issueToken("entra", {
   claims: { dense_mem_team_id: seedTeamID, log_sentinel: logSentinel },
 });
 const entraTeamATools = await mcpTools(entraTeamA, "/mcp");
-assertMCPTools(entraTeamATools, { present: ["recall_memory"], absent: ["remember"] });
+assertMCPTools(entraTeamATools, { present: ["recall_memory", "remember", "correct_relationship", "retract_evidence"] });
 await assertMCPToolSuccess(entraTeamA, "/mcp", "recall_memory", { query: `${runID} OAuth profile private`, limit: 1 });
-await assertMCPToolScopeRejected(entraTeamA, "/mcp", "remember", {});
+const privateOAuthRequest = {
+  target_space: "private", idempotency_key: `${runID}:private-oauth`,
+  evidence: [{ content: "Dense-Mem stores durable memory in PostgreSQL.", source_type: "manual" }],
+  relationships: [{ ref: "durable-store", subject: { name: "Dense-Mem", entity_kind: "project" }, predicate: { proposed_key: "stores_memory_in" }, object: { value: { type: "string", value: "PostgreSQL" } }, polarity: "+", evidence_indices: [0] }],
+};
+const privateOAuth = await mcpRPC(entraTeamA, "/mcp", "tools/call", { name: "remember", arguments: privateOAuthRequest });
+assert(privateOAuth.payload.result?.isError !== true && privateOAuth.payload.result?.structuredContent?.processing_state === "completed", "team-read-only OAuth private Remember failed");
+assert(privateOAuth.payload.result.structuredContent.space_kind === "private", "OAuth private memory was misrouted");
+const sharedDenied = await mcpRPC(entraTeamA, "/mcp", "tools/call", { name: "remember", arguments: { ...privateOAuthRequest, target_space: "team_shared", idempotency_key: `${runID}:denied-shared` } });
+assert(sharedDenied.payload.result?.isError === true && sharedDenied.payload.result?.structuredContent?.reason_code === "memory_write_denied", "team-read-only OAuth shared write was not denied");
 
 const entraTeamB = await issueToken("entra", { claims: { dense_mem_team_id: secondTeam.id } });
 const entraTeamBTools = await mcpTools(entraTeamB, `/teams/${secondTeam.id}/mcp`);
@@ -236,6 +245,8 @@ const statsAfterRepeat = await mockJSON("/fixture/stats", { profile: "generic" }
 assert(statsAfterRepeat.jwks_requests === statsAfterFailure.jwks_requests, "provider outage caused an unbounded repeat refresh");
 await setMockState("generic", { jwks_outage: false });
 
+await assertCredentialEntitlementRefresh();
+
 assertNoOAuthSecretsPersisted();
 assertNoOAuthSecretsInLogs();
 
@@ -247,10 +258,12 @@ writeFileSync(resultFile, JSON.stringify({
   provider_profiles: ["entra-rs256-discovery", "pingone-ps256-static", "generic-es256-discovery-trailing-slash"],
   metadata_and_challenges: true,
   team_selection_and_scope_intersection: true,
-  a_b_c_profile_private_authorization: true,
+  a_b_c_membership_private_authorization: true,
   mcp_tool_invocation_for_both_token_families: true,
   key_rotation_and_outage: true,
   api_key_compatibility: true,
+  sso_owned_credential_cache_refresh_and_owner_ceiling: true,
+  sso_refresh_outage_and_unmapped_group_denied: true,
   browser_cookie_rejected: true,
   token_persistence_and_log_scan: true,
 }, null, 2));
@@ -263,6 +276,79 @@ console.log(JSON.stringify({
   second_team_id: secondTeam.id,
 }, null, 2));
 
+async function assertCredentialEntitlementRefresh() {
+  const membership = memberships.find((item) => item.identity === identities.generic);
+  const session = randomUUID();
+  const csrf = randomUUID();
+  issuedTokens.push(session, csrf);
+  const seed = postgresCommand(`
+    BEGIN;
+    SELECT set_config('app.tx_mode', 'system', true);
+    INSERT INTO sso_sessions (session_hash, identity_id, provider_id, membership_id, team_id, csrf_hash, expires_at, created_at, last_seen_at)
+    VALUES (${sqlLiteral(sha256(session))}, ${sqlLiteral(identities.generic.id)}::uuid,
+      ${sqlLiteral(providers.generic.id)}::uuid, ${sqlLiteral(membership.id)}::uuid,
+      ${sqlLiteral(seedTeamID)}::uuid, ${sqlLiteral(sha256(csrf))}, now()+interval '1 hour', now(), now());
+    COMMIT;
+  `);
+  assert(seed.status === 0, "could not seed the generic SSO browser session");
+  const created = await publicJSON("/ui/api/sso/credentials", {
+    method: "POST",
+    headers: { Cookie: `dense_mem_sso_session=${session}; dense_mem_sso_csrf=${csrf}`, "X-Dense-Mem-CSRF": csrf },
+    body: { name: `${runID} Refresh`, scopes: ["read", "write"], rate_limit: 600 },
+  });
+  assert(created.status === 201, `SSO-owned credential creation returned HTTP ${created.status}`);
+  const key = created.payload.data?.api_key;
+  assert(typeof key === "string" && key.startsWith("dm_"), "SSO credential creation omitted its key");
+  issuedTokens.push(key);
+  const expire = () => {
+    const result = postgresCommand(`BEGIN; SELECT set_config('app.tx_mode', 'system', true);
+      UPDATE sso_entitlement_cache SET expires_at=now()-interval '1 second'
+      WHERE provider_id=${sqlLiteral(providers.generic.id)}::uuid AND subject='generic-user'; COMMIT;`);
+    assert(result.status === 0, "could not expire the SSO entitlement cache");
+  };
+  const before = await mockJSON("/fixture/stats", { profile: "generic" });
+  expire();
+  assertMCPTools(await mcpTools(key, "/mcp"), { present: ["remember", "recall_memory"] });
+  const signedIn = await publicJSON("/ui/api/session", {
+    method: "POST", headers: { Authorization: `Bearer ${key}` }, body: { remember: false },
+  });
+  assert(signedIn.status === 200, "SSO-owned key could not create a portal session");
+  const cookie = signedIn.headers.getSetCookie().find((item) => item.startsWith("dense_mem_ui_session="))?.split(";")[0];
+  assert(cookie, "key-backed portal session cookie was missing");
+  for (const item of signedIn.headers.getSetCookie()) {
+    if (item.startsWith("dense_mem_ui_session=") || item.startsWith("dense_mem_ui_csrf=")) {
+      issuedTokens.push(item.split(";")[0].slice(item.indexOf("=") + 1));
+    }
+  }
+  expire();
+  const portal = await publicJSON("/ui/api/session", { headers: { Cookie: cookie } });
+  assert(portal.status === 200, "first portal request after SSO cache expiry was denied");
+  assert(portal.payload.data?.credential?.memory_access?.team_shared?.write === true, "refreshed write entitlement was missing");
+  const refreshed = await mockJSON("/fixture/stats", { profile: "generic" });
+  assert(refreshed.group_requests === before.group_requests + 2, "API and portal requests did not each refresh the expired cache");
+  const limit = postgresCommand(`BEGIN; SELECT set_config('app.tx_mode', 'system', true);
+    UPDATE team_memberships SET maximum_grants=ARRAY['read']::text[] WHERE id=${sqlLiteral(membership.id)}::uuid; COMMIT;`);
+  assert(limit.status === 0, "could not restrict the SSO owner membership");
+  expire();
+  const limited = await publicJSON("/ui/api/session", { headers: { Cookie: cookie } });
+  assert(limited.status === 200, "read-only owner lost private credential access after refresh");
+  const access = limited.payload.data?.credential?.memory_access;
+  assert(access?.private?.write === true && access?.team_shared?.write === false, "SSO refresh bypassed the owner grant ceiling");
+  const shared = await mcpRPC(key, "/mcp", "tools/call", { name: "remember", arguments: {
+    ...privateOAuthRequest, target_space: "team_shared", idempotency_key: `${runID}:refresh-owner-shared-denied`,
+  } });
+  assert(shared.payload.result?.isError === true && shared.payload.result?.structuredContent?.reason_code === "memory_write_denied", "refreshed key bypassed its owner's shared-write ceiling");
+  await setMockState("generic", { groups_outage: true });
+  expire();
+  await expectMCPError(key, "/mcp", 403, "FORBIDDEN", "SSO refresh provider outage");
+  await setMockState("generic", { groups_outage: false, groups: ["unmapped"] });
+  expire();
+  await expectMCPError(key, "/mcp", 403, "FORBIDDEN", "SSO refresh unmapped group");
+  await setMockState("generic", { groups: ["generic-team"] });
+  expire();
+  assertMCPTools(await mcpTools(key, "/mcp"), { present: ["remember", "recall_memory"] });
+}
+
 function providerInput({ name, kind, tenantID = "", identityClaim, audience, algorithm, scopeClaim, teamClaim = "", jwksSource = "discovery", mappings }) {
   const profile = kind === "azure_ad" ? "entra" : kind === "pingone" ? "pingone" : "generic";
   return {
@@ -272,11 +358,11 @@ function providerInput({ name, kind, tenantID = "", identityClaim, audience, alg
     tenant_id: tenantID,
     identity_claim: identityClaim,
     client_id: `${runID}-${profile}-browser-client`,
-    client_secret_env: "",
+    client_secret_env: profile === "generic" ? "DENSE_MEM_E2E_SSO_CLIENT_SECRET" : "",
     scopes: ["openid", "profile", "email"],
     group_claims: ["groups"],
-    groups_endpoint: "",
-    groups_scopes: [],
+    groups_endpoint: profile === "generic" ? `${oauthInternalURL}/generic/groups` : "",
+    groups_scopes: profile === "generic" ? ["groups.read"] : [],
     protected_resource: {
       enabled: true,
       audiences: [audience],
@@ -317,9 +403,9 @@ function seedOAuthPrincipals(identityFixtures, membershipFixtures, initialMember
   for (const identity of identityFixtures) {
     statements.push(`
       INSERT INTO actor_identities (id, kind, team_id, provider, subject, display_name, active)
-      VALUES (${sqlLiteral(identity.id)}::uuid, 'human', NULL, ${sqlLiteral(identity.providerID)}, ${sqlLiteral(identity.subject)}, ${sqlLiteral(`E2E ${identity.subject}`)}, ${identity.active});
+      VALUES (${sqlLiteral(identity.id)}::uuid, 'human', NULL, ${sqlLiteral(identity.providerID)}, ${sqlLiteral(identity.subject)}, ${sqlLiteral(`E2E ${identity.subject}`)}, true);
       INSERT INTO sso_identities (id, provider_id, subject, external_id, email, display_name, active, last_login_at, last_entitlement_check_at)
-      VALUES (${sqlLiteral(identity.id)}::uuid, ${sqlLiteral(identity.providerID)}::uuid, ${sqlLiteral(identity.subject)}, ${sqlLiteral(identity.subject)}, ${sqlLiteral(`${identity.subject}@example.test`)}, ${sqlLiteral(`E2E ${identity.subject}`)}, ${identity.active}, now(), now());
+      VALUES (${sqlLiteral(identity.id)}::uuid, ${sqlLiteral(identity.providerID)}::uuid, ${sqlLiteral(identity.subject)}, ${sqlLiteral(identity.subject)}, ${sqlLiteral(`${identity.subject}@example.test`)}, ${sqlLiteral(`E2E ${identity.subject}`)}, true, now(), now());
     `);
   }
   for (const membership of membershipFixtures) {
@@ -340,6 +426,12 @@ function seedOAuthPrincipals(identityFixtures, membershipFixtures, initialMember
       INSERT INTO membership_grants (membership_id, grant_name, source)
       SELECT ${sqlLiteral(membership.id)}::uuid, grant_name, 'explicit'
       FROM unnest(ARRAY[${membership.grants.map(sqlLiteral).join(",")}]::text[]) AS grant_name;
+    `);
+  }
+  for (const identity of identityFixtures.filter((item) => !item.active)) {
+    statements.push(`
+      UPDATE actor_identities SET active=false WHERE id=${sqlLiteral(identity.id)}::uuid;
+      UPDATE sso_identities SET active=false WHERE id=${sqlLiteral(identity.id)}::uuid;
     `);
   }
   const entitlementGroups = new Map();
@@ -376,11 +468,10 @@ function seedOAuthPrincipals(identityFixtures, membershipFixtures, initialMember
 
 function assertProfilePrivateSpaces(identityID, allowedTeamIDs, deniedTeamID) {
   const result = postgresCommand(`
-    SELECT team_id::text
-    FROM memory_spaces
-    WHERE kind = 'profile_private'
-      AND owner_profile_id = ${sqlLiteral(identityID)}::uuid
-    ORDER BY team_id;
+    SELECT space.team_id::text
+    FROM memory_spaces space JOIN team_memberships membership ON membership.team_id=space.team_id AND membership.id=space.owner_membership_id
+    WHERE space.kind='private' AND membership.actor_identity_id=${sqlLiteral(identityID)}::uuid
+    ORDER BY space.team_id;
   `);
   if (result.status !== 0) throw new Error("could not verify OAuth profile-private memory spaces");
   const actual = new Set(result.stdout.trim().split(/\s+/).filter(Boolean));
@@ -471,11 +562,6 @@ async function assertMCPToolSuccess(token, path, name, args) {
   assert(response.status === 200 && response.payload.result !== undefined && !response.payload.error, `${name} was not invokable through ${path}`);
 }
 
-async function assertMCPToolScopeRejected(token, path, name, args) {
-  const response = await mcpRPC(token, path, "tools/call", { name, arguments: args });
-  assert(response.status === 200 && response.payload.error?.code === -32000 && response.payload.error?.message === "insufficient scope for tool" && response.payload.result === undefined, `hidden tool ${name} bypassed scope enforcement through ${path}`);
-}
-
 async function mcpRPC(token, path, method, params, extraHeaders = {}) {
   const headers = { Accept: "application/json", "Content-Type": "application/json", ...extraHeaders };
   if (token !== undefined) headers.Authorization = `Bearer ${token}`;
@@ -494,8 +580,12 @@ async function mcpRPC(token, path, method, params, extraHeaders = {}) {
   return { status: response.status, headers: response.headers, payload };
 }
 
-async function publicJSON(path) {
-  const response = await fetch(`${userURL}${path}`, { headers: { Accept: "application/json" } });
+async function publicJSON(path, options = {}) {
+  const response = await fetch(`${userURL}${path}`, {
+    method: options.method ?? "GET",
+    headers: { Accept: "application/json", "Content-Type": "application/json", ...options.headers },
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+  });
   const text = await response.text();
   let payload = {};
   try {
@@ -503,7 +593,7 @@ async function publicJSON(path) {
   } catch {
     throw new Error(`public ${path} returned non-JSON HTTP ${response.status}`);
   }
-  return { status: response.status, payload };
+  return { status: response.status, headers: response.headers, payload };
 }
 
 async function controlJSON(path, options = {}) {

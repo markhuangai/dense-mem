@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
 	nethttp "net/http"
@@ -423,8 +424,8 @@ func (h *controlPortalHandler) createCredential(c echo.Context) error {
 		RateLimit: body.RateLimit,
 		Role:      body.Role,
 	}
-	if body.MemoryBinding != nil {
-		req.MemoryBinding = *body.MemoryBinding
+	if err := dto.RejectMemoryBinding(body.MemoryBinding); err != nil {
+		return err
 	}
 	if body.Scopes != nil {
 		if len(*body.Scopes) == 0 {
@@ -667,12 +668,12 @@ func (h *controlPortalHandler) deleteSecurityBan(c echo.Context) error {
 }
 
 type controlCreateCredentialRequest struct {
-	Name          string    `json:"name"`
-	Scopes        *[]string `json:"scopes"`
-	Role          string    `json:"role"`
-	RateLimit     int       `json:"rate_limit"`
-	ExpiresAt     *string   `json:"expires_at"`
-	MemoryBinding *string   `json:"memory_binding"`
+	Name          string          `json:"name"`
+	Scopes        *[]string       `json:"scopes"`
+	Role          string          `json:"role"`
+	RateLimit     int             `json:"rate_limit"`
+	ExpiresAt     *string         `json:"expires_at"`
+	MemoryBinding json.RawMessage `json:"memory_binding"`
 }
 
 type controlUpdateCredentialRequest struct {
@@ -915,38 +916,32 @@ func (h *controlPortalHandler) toControlTeam(ctx context.Context, team *domain.T
 }
 
 type controlCredentialResponse struct {
-	ID              uuid.UUID `json:"id"`
-	TeamID          uuid.UUID `json:"team_id"`
-	Name            string    `json:"name"`
-	KeySuffix       string    `json:"key_suffix"`
-	Scopes          []string  `json:"scopes"`
-	Role            string    `json:"role"`
-	RateLimit       int       `json:"rate_limit"`
-	LastUsedAt      *string   `json:"last_used_at"`
-	ExpiresAt       *string   `json:"expires_at"`
-	CreatedAt       string    `json:"created_at"`
-	MemoryBinding   string    `json:"memory_binding"`
-	MemorySpaceKind string    `json:"memory_space_kind"`
+	ID           uuid.UUID           `json:"id"`
+	TeamID       uuid.UUID           `json:"team_id"`
+	Name         string              `json:"name"`
+	KeySuffix    string              `json:"key_suffix"`
+	Scopes       []string            `json:"scopes"`
+	Role         string              `json:"role"`
+	RateLimit    int                 `json:"rate_limit"`
+	LastUsedAt   *string             `json:"last_used_at"`
+	ExpiresAt    *string             `json:"expires_at"`
+	CreatedAt    string              `json:"created_at"`
+	MemoryAccess domain.MemoryAccess `json:"memory_access"`
 }
 
 func toControlCredential(credential *domain.Credential) controlCredentialResponse {
-	binding := credential.MemoryBinding
-	if !binding.Valid() {
-		binding = domain.CredentialBindingSharedOnly
-	}
 	return controlCredentialResponse{
-		ID:              credential.ID,
-		TeamID:          credential.GetTeamID(),
-		Name:            credential.GetName(),
-		KeySuffix:       credential.KeySuffix,
-		Scopes:          append([]string{}, credential.Scopes...),
-		Role:            credential.GetRole(),
-		RateLimit:       credential.RateLimit,
-		LastUsedAt:      controlTimePtr(credential.LastUsedAt),
-		ExpiresAt:       controlTimePtr(credential.ExpiresAt),
-		CreatedAt:       credential.CreatedAt.Format(time.RFC3339),
-		MemoryBinding:   string(binding),
-		MemorySpaceKind: string(binding.SpaceKind()),
+		ID:           credential.ID,
+		TeamID:       credential.GetTeamID(),
+		Name:         credential.GetName(),
+		KeySuffix:    credential.KeySuffix,
+		Scopes:       append([]string{}, credential.Scopes...),
+		Role:         credential.GetRole(),
+		RateLimit:    credential.RateLimit,
+		LastUsedAt:   controlTimePtr(credential.LastUsedAt),
+		ExpiresAt:    controlTimePtr(credential.ExpiresAt),
+		CreatedAt:    credential.CreatedAt.Format(time.RFC3339),
+		MemoryAccess: credential.MemoryCapabilities(),
 	}
 }
 func controlTimePtr(t *time.Time) *string {

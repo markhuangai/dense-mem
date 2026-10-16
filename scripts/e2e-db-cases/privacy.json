@@ -126,7 +126,7 @@
       "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace$",
       "phase": "precheck",
-      "source": "internal/privacy/postgres/private_memory_repository_integration_test.go"
+      "source": "internal/privacy/postgres/private_memory_credential_retirement_integration_test.go"
     },
     {
       "id": "repository/TestPrivateMemorySSOCredentialRevocationAuditFailureRollsBackDisable",
@@ -155,6 +155,111 @@
       "run": "^TestPrivateMemoryCredentialRetirementOperationHashesStayStable$",
       "phase": "precheck",
       "source": "internal/privacy/postgres/private_memory_ownership_integration_test.go"
+    },
+    {
+      "id": "repository/TestPrivateMigrationFingerprintResumeHandlesAndCopiedErasure",
+      "package": "./internal/privacy/postgres",
+      "run": "^TestPrivateMigrationFingerprintResumeHandlesAndCopiedErasure$",
+      "phase": "precheck",
+      "source": "internal/privacy/postgres/private_memory_migration_integration_test.go"
+    },
+    {
+      "id": "repository/TestPrivateMigrationRestoresForeignConflictAndScopesRelationshipHandles",
+      "package": "./internal/privacy/postgres",
+      "run": "^TestPrivateMigrationRestoresForeignConflictAndScopesRelationshipHandles$",
+      "phase": "precheck",
+      "source": "internal/privacy/postgres/private_memory_migration_integration_test.go"
+    },
+    {
+      "id": "repository/TestPrivateMigrationDetectsStoppedStateDrift",
+      "package": "./internal/privacy/postgres",
+      "run": "^TestPrivateMigrationDetectsStoppedStateDrift$",
+      "phase": "precheck",
+      "source": "internal/privacy/postgres/private_memory_migration_integration_test.go"
+    },
+    {
+      "id": "repository/TestPrivateMigrationResumesEachCommittedPhase",
+      "package": "./internal/privacy/postgres",
+      "run": "^TestPrivateMigrationResumesEachCommittedPhase$",
+      "phase": "precheck",
+      "source": "internal/privacy/postgres/private_memory_migration_integration_test.go"
+    },
+    {
+      "id": "repository/TestPrivateMigrationRejectsAmbiguousNodeWriter",
+      "package": "./internal/privacy/postgres",
+      "run": "^TestPrivateMigrationRejectsAmbiguousNodeWriter$",
+      "phase": "precheck",
+      "source": "internal/privacy/postgres/private_memory_migration_integration_test.go"
+    },
+    {
+      "id": "repository/TestPrivateMigrationPreservesSessionIdentityAndRecomputesMixedCheckpoints",
+      "package": "./internal/privacy/postgres",
+      "run": "^TestPrivateMigrationPreservesSessionIdentityAndRecomputesMixedCheckpoints$",
+      "phase": "precheck",
+      "source": "internal/privacy/postgres/private_memory_migration_integration_test.go"
+    },
+    {
+      "id": "repository/TestPrivateMigrationCarriesLegacyHoldAndPreservesSharedHistory",
+      "package": "./internal/privacy/postgres",
+      "run": "^TestPrivateMigrationCarriesLegacyHoldAndPreservesSharedHistory$",
+      "phase": "precheck",
+      "source": "internal/privacy/postgres/private_memory_migration_integration_test.go"
+    },
+    {
+      "id": "repository/TestPrivateMigrationArchiveHoldBlocksLineageErasure",
+      "package": "./internal/privacy/postgres",
+      "run": "^TestPrivateMigrationArchiveHoldBlocksLineageErasure$",
+      "phase": "precheck",
+      "source": "internal/privacy/postgres/private_memory_migration_integration_test.go"
+    },
+    {
+      "id": "repository/TestCredentialAuditResolvesMembershipPrivateSpace",
+      "package": "./internal/privacy/postgres",
+      "run": "^TestCredentialAuditResolvesMembershipPrivateSpace$",
+      "phase": "precheck",
+      "source": "internal/privacy/postgres/private_memory_audit_integration_test.go"
+    },
+    {
+      "id": "repository/TestPrivateMemoryReadOnlyCommitRetractionAndLiveSharedRevocation",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestPrivateMemoryReadOnlyCommitRetractionAndLiveSharedRevocation$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/private_memory_access_integration_test.go"
+    },
+    {
+      "id": "repository/TestPrivateMemorySSOKeySpacesAndMappingRevocation",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestPrivateMemorySSOKeySpacesAndMappingRevocation$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/private_memory_access_integration_test.go"
+    },
+    {
+      "id": "repository/TestSharedLifecycleRequiresLiveWritePermissionForOwnedRecords",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSharedLifecycleRequiresLiveWritePermissionForOwnedRecords$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/private_memory_access_integration_test.go"
+    },
+    {
+      "id": "server/TestPrivateMemoryCommandsInspectFreshDatabaseWithoutStartingOrMigrating",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestPrivateMemoryCommandsInspectFreshDatabaseWithoutStartingOrMigrating$",
+      "phase": "precheck",
+      "source": "cmd/internal/serverapp/private_memory_commands_integration_test.go"
+    },
+    {
+      "id": "server/TestPrivateMemoryPreflightCommandBoundsLegacyReportAndReturnsBlockers",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestPrivateMemoryPreflightCommandBoundsLegacyReportAndReturnsBlockers$",
+      "phase": "precheck",
+      "source": "cmd/internal/serverapp/private_memory_commands_integration_test.go"
+    },
+    {
+      "id": "repository/TestPrivateMigrationSessionOnlyRetentionPreservesAge",
+      "package": "./internal/privacy/postgres",
+      "run": "^TestPrivateMigrationSessionOnlyRetentionPreservesAge$",
+      "phase": "precheck",
+      "source": "internal/privacy/postgres/private_memory_repository_integration_test.go"
     }
   ]
 }

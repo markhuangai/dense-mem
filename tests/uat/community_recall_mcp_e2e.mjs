@@ -8,10 +8,11 @@ const teamID = required("DENSE_MEM_E2E_TEAM_ID");
 const key = required("DENSE_MEM_E2E_API_KEY");
 await control("/ontology/pause", { operation_key: randomUUID() });
 await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
-const shared = await control(`/teams/${teamID}/credentials`, { name: "Community browser fixture", scopes: ["read", "write"], rate_limit: 300, memory_binding: "shared_only" });
-assert.equal(shared.credential.memory_binding, "shared_only");
+const shared = await control(`/teams/${teamID}/credentials`, { name: "Community browser fixture", scopes: ["read", "write"], rate_limit: 300 });
+assert.equal(shared.credential.memory_access.team_shared.write, true);
 const subjects = Array.from({ length: 16 }, (_, index) => `Atlas coordination shard ${index + 1}`);
 const stored = await mcp("remember", {
+  target_space: "team_shared",
   idempotency_key: randomUUID(),
   evidence: subjects.map((subject) => ({ content: `${subject} uses Redis for coordination.`, source_type: "document", source: "community-browser-e2e", force_insert: true })),
   relationships: subjects.map((subject, index) => ({ ref: `coordination-${index}`, subject: { name: subject, entity_kind: "project" }, predicate: { proposed_key: "uses" }, object: { entity: { name: "Redis", entity_kind: "product" } }, polarity: "+", evidence_indices: [index] })),

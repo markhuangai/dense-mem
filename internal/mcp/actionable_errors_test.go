@@ -21,9 +21,9 @@ func TestSDKContractToolFailureIsStructuredActionableError(t *testing.T) {
 	require.NoError(t, reg.Register(tool))
 	server := NewServer(reg, "profile-a", nil)
 
-	result, err := server.sdkToolHandler(tool.Name)(context.Background(), &sdkmcp.CallToolRequest{
+	result, err := server.sdkToolHandler(tool.Name)(testMemoryContext(context.Background(), nil), &sdkmcp.CallToolRequest{
 		Params: &sdkmcp.CallToolParamsRaw{Arguments: json.RawMessage(`{
-			"idempotency_key":"key","evidence":[{"content":"Dense-Mem stores knowledge in PostgreSQL."}],
+			"target_space":"team_shared","idempotency_key":"key","evidence":[{"content":"Dense-Mem stores knowledge in PostgreSQL."}],
 			"relationships":[{"ref":"stores","subject":{"name":"Dense-Mem","entity_kind":"project"},
 			"predicate":{"proposed_key":"stores_in"},"object":{"entity":{"name":"PostgreSQL","entity_kind":"product"}},
 			"polarity":"+","evidence_indices":[0]}]
@@ -62,7 +62,7 @@ func TestSDKActionableErrorsPreserveCapabilityRecoveryAndOutputSchema(t *testing
 			name:     "mutation timeout",
 			toolName: registry.ToolRemember,
 			arguments: `{
-				"idempotency_key":"key","evidence":[{"content":"Dense-Mem stores knowledge in PostgreSQL."}],
+				"target_space":"team_shared","idempotency_key":"key","evidence":[{"content":"Dense-Mem stores knowledge in PostgreSQL."}],
 				"relationships":[{"ref":"stores","subject":{"name":"Dense-Mem","entity_kind":"project"},
 				"predicate":{"proposed_key":"stores_in"},"object":{"entity":{"name":"PostgreSQL","entity_kind":"product"}},
 				"polarity":"+","evidence_indices":[0]}]
@@ -78,7 +78,7 @@ func TestSDKActionableErrorsPreserveCapabilityRecoveryAndOutputSchema(t *testing
 			reg := registry.New()
 			require.NoError(t, reg.Register(tool))
 			server := NewServer(reg, "profile-a", nil)
-			result, err := server.sdkToolHandler(tool.Name)(context.Background(), &sdkmcp.CallToolRequest{
+			result, err := server.sdkToolHandler(tool.Name)(testMemoryContext(context.Background(), nil), &sdkmcp.CallToolRequest{
 				Params: &sdkmcp.CallToolParamsRaw{Arguments: json.RawMessage(test.arguments)},
 			})
 			require.NoError(t, err)
@@ -119,7 +119,7 @@ func TestSDKUnavailableAndSerializationFailuresAreActionable(t *testing.T) {
 			reg := registry.New()
 			require.NoError(t, reg.Register(tool))
 			server := NewServer(reg, "profile-a", nil)
-			result, err := server.sdkToolHandler(tool.Name)(context.Background(), &sdkmcp.CallToolRequest{
+			result, err := server.sdkToolHandler(tool.Name)(testMemoryContext(context.Background(), nil), &sdkmcp.CallToolRequest{
 				Params: &sdkmcp.CallToolParamsRaw{Arguments: json.RawMessage(`{"query":"hello"}`)},
 			})
 			require.NoError(t, err)

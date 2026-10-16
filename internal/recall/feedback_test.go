@@ -103,7 +103,7 @@ func TestRecallFeedbackEventServiceRecordsSnapshotWithActorContext(t *testing.T)
 		AuthMethod: "api_key", Role: "manager",
 		AllowedSpaces: []domain.MemorySpaceAccess{
 			{ID: sharedSpaceID, Kind: domain.MemorySpaceTeamShared, Generation: 1},
-			{ID: spaceID, Kind: domain.MemorySpaceCredentialPrivate, Generation: 3},
+			{ID: spaceID, Kind: domain.MemorySpacePrivate, Generation: 3},
 		},
 	})
 
@@ -433,7 +433,7 @@ func recallFeedbackActorContext(teamID, ownerID, spaceID uuid.UUID, generation i
 		TeamID:  teamID,
 		OwnerID: ownerID,
 		AllowedSpaces: []domain.MemorySpaceAccess{{
-			ID: spaceID, Kind: domain.MemorySpaceCredentialPrivate, Generation: generation,
+			ID: spaceID, Kind: domain.MemorySpacePrivate, Generation: generation,
 		}},
 	})
 }

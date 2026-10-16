@@ -105,6 +105,8 @@ type SSOSession struct {
 }
 
 type Membership struct {
+	TeamSharedSpaceID           uuid.UUID
+	TeamSharedSpaceGeneration   int64
 	ID                          uuid.UUID
 	MemorySpaceID               uuid.UUID
 	MemorySpaceGeneration       int64

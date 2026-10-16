@@ -352,7 +352,7 @@ func TestCredentialHandlerCreateListGetRotateDelete(t *testing.T) {
 	})
 }
 
-func TestCredentialHandlerCreateDerivesSSOOwnerForProfilePrivateBinding(t *testing.T) {
+func TestCredentialHandlerCreateDerivesSSOOwnerForManager(t *testing.T) {
 	teamID, identityID := uuid.New(), uuid.New()
 	svc := &apiKeyHandlerService{
 		key: &domain.Credential{ID: uuid.New(), TeamID: teamID},
@@ -360,7 +360,7 @@ func TestCredentialHandlerCreateDerivesSSOOwnerForProfilePrivateBinding(t *testi
 	}
 	h := NewCredentialHandler(svc)
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodPost, "/ui/api/team/credentials", strings.NewReader(`{"memory_binding":"profile_private"}`))
+	req := httptest.NewRequest(http.MethodPost, "/ui/api/team/credentials", strings.NewReader(`{}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	req = req.WithContext(middleware.SetPrincipalForTest(req.Context(), &middleware.Principal{
 		TeamID:     teamID,
@@ -385,7 +385,7 @@ func TestCredentialHandlerCreateDoesNotDeriveSSOOwnerForNonManager(t *testing.T)
 	svc := &apiKeyHandlerService{key: &domain.Credential{ID: uuid.New(), TeamID: teamID}, raw: "dm_member_plaintext"}
 	h := NewCredentialHandler(svc)
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodPost, "/ui/api/team/credentials", strings.NewReader(`{"memory_binding":"profile_private"}`))
+	req := httptest.NewRequest(http.MethodPost, "/ui/api/team/credentials", strings.NewReader(`{}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	req = req.WithContext(middleware.SetPrincipalForTest(req.Context(), &middleware.Principal{
 		TeamID:     teamID,

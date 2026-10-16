@@ -180,7 +180,7 @@ func TestActionableErrorHelpersExposeBoundedRecoveryActions(t *testing.T) {
 
 func TestRememberToolResultErrorProjectsTerminalAndFailureResults(t *testing.T) {
 	ctx := correlation.WithID(context.Background(), "request-correlation")
-	require.Nil(t, rememberToolResultError(ctx, nil))
+	require.Nil(t, rememberToolResultError(ctx, domain.MemorySpacePrivate, nil))
 
 	terminal := &rememberapp.TerminalRememberResult{
 		ContractVersion: domain.ContractVersion, SubmissionID: "terminal-submission",
@@ -193,11 +193,11 @@ func TestRememberToolResultErrorProjectsTerminalAndFailureResults(t *testing.T) 
 		Result: terminal,
 		Err:    rememberapp.ErrRememberPersistence,
 	}
-	result := structuredToolResult(t, rememberToolResultError(ctx, processErr))
+	result := structuredToolResult(t, rememberToolResultError(ctx, domain.MemorySpacePrivate, processErr))
 	require.Equal(t, "terminal-submission", result["submission_id"])
 	require.Equal(t, "failed", result["processing_state"])
 
-	security := structuredToolResult(t, rememberToolResultError(ctx, rememberapp.ErrEvidenceSecurityRejected))
+	security := structuredToolResult(t, rememberToolResultError(ctx, domain.MemorySpacePrivate, rememberapp.ErrEvidenceSecurityRejected))
 	require.Equal(t, "failed", security["processing_state"])
 	require.Equal(t, "request-correlation", security["correlation_id"])
 	securityErrors := security["errors"].([]any)
@@ -211,7 +211,7 @@ func TestRememberToolResultErrorProjectsTerminalAndFailureResults(t *testing.T) 
 		},
 		Err: errors.New("provider failed"),
 	}
-	failure := structuredToolResult(t, rememberToolResultError(ctx, statusFailure))
+	failure := structuredToolResult(t, rememberToolResultError(ctx, domain.MemorySpacePrivate, statusFailure))
 	require.Equal(t, "status-submission", failure["submission_id"])
 	require.Equal(t, "durable-correlation", failure["correlation_id"])
 	failureErrors := failure["errors"].([]any)
@@ -224,7 +224,7 @@ func TestRememberToolResultErrorProjectsTerminalAndFailureResults(t *testing.T) 
 		},
 		Err: rememberapp.ErrRememberStaleInput,
 	}
-	rejection := structuredToolResult(t, rememberToolResultError(ctx, statusRejection))
+	rejection := structuredToolResult(t, rememberToolResultError(ctx, domain.MemorySpacePrivate, statusRejection))
 	require.Equal(t, "failed", rejection["processing_state"])
 	rejectionErrors := rejection["errors"].([]any)
 	require.Equal(t, string(rememberapp.SubmissionErrorStaleInput), rejectionErrors[0].(map[string]any)["code"])

@@ -137,9 +137,9 @@ func TestRecallOntologyPrivateForeignAndOldGenerationSources(t *testing.T) {
 	producer, _ := f.organizer(t, map[string]string{texts[0]: "same", texts[1]: "same"})
 	_, err := producer.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
 	require.NoError(t, err)
-	private := &domain.Credential{ID: uuid.New(), TeamID: uuid.MustParse(f.team), Name: "private source", KeyHash: "synthetic-" + uuid.NewString(), KeyPrefix: uuid.NewString()[:24], KeySuffix: "test", Scopes: []string{"read", "write"}, MemoryBinding: domain.CredentialBindingCredentialPrivate}
+	private := &domain.Credential{ID: uuid.New(), TeamID: uuid.MustParse(f.team), Name: "private source", KeyHash: "synthetic-" + uuid.NewString(), KeyPrefix: uuid.NewString()[:24], KeySuffix: "test", Scopes: []string{"read", "write"}}
 	require.NoError(t, access.NewCredentialRepository(f.admin, f.rls, nil).CreateCredential(context.Background(), private))
-	privateCtx := requestctx.WithAllowedSpaces(context.Background(), []domain.MemorySpaceAccess{{ID: private.MemorySpaceID, Kind: domain.MemorySpaceCredentialPrivate, Generation: private.MemorySpaceGeneration}})
+	privateCtx := requestctx.WithAllowedSpaces(context.Background(), []domain.MemorySpaceAccess{{ID: private.MemorySpaceID, Kind: domain.MemorySpacePrivate, Generation: private.MemorySpaceGeneration}})
 	privateIngest, err := f.knowledge.CreateIngestForTest(privateCtx, knowledge.CreateIngestInput{TeamID: f.team, OwnerProfileID: private.OwnerID.String(), SpaceID: private.MemorySpaceID.String(), SpaceGeneration: private.MemorySpaceGeneration, IdempotencyKey: uuid.NewString(), RequestHash: sha256Hex("private"), Evidence: []knowledge.EvidenceInput{{Content: texts[0], ForceInsert: true}}})
 	require.NoError(t, err)
 	privateID := privateIngest.Evidence[0].FragmentID
@@ -157,7 +157,7 @@ func TestRecallOntologyPrivateForeignAndOldGenerationSources(t *testing.T) {
 		require.NotContains(t, result.Results[0].EquivalentEvidenceIDs, known)
 		require.Len(t, result.Results[0].EquivalentEvidenceIDs, 1)
 	}
-	privateResult, err := f.search.RecallEvidence(privateCtx, RecallEvidenceInput{TeamID: f.team, SpaceID: private.MemorySpaceID.String(), SpaceKind: "credential_private", Query: "PostgreSQL", Limit: 10, OrganizationEnabled: true})
+	privateResult, err := f.search.RecallEvidence(privateCtx, RecallEvidenceInput{TeamID: f.team, SpaceID: private.MemorySpaceID.String(), SpaceKind: "private", Query: "PostgreSQL", Limit: 10, OrganizationEnabled: true})
 	require.NoError(t, err)
 	require.Len(t, privateResult.Results, 1)
 	require.Equal(t, privateID, privateResult.Results[0].EvidenceID)

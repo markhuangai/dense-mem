@@ -81,6 +81,7 @@ func NewService(deps Dependencies) *service {
 }
 
 type RememberRequest struct {
+	TargetSpace       domain.MemorySpaceKind  `json:"target_space"`
 	Evidence          []RememberEvidenceInput `json:"evidence"`
 	EntityHints       []map[string]any        `json:"entity_hints,omitempty"`
 	RelationshipHints []map[string]any        `json:"relationship_hints,omitempty"`
@@ -103,6 +104,7 @@ type RememberEvidenceInput struct {
 }
 
 type RememberResult struct {
+	SpaceKind            domain.MemorySpaceKind          `json:"space_kind,omitempty"`
 	ContractVersion      string                          `json:"contract_version"`
 	IngestID             string                          `json:"-"`
 	SubmissionID         string                          `json:"submission_id"`
@@ -121,6 +123,7 @@ type RememberResult struct {
 }
 
 type SubmissionStatusResult struct {
+	SpaceKind            domain.MemorySpaceKind          `json:"space_kind,omitempty"`
 	ContractVersion      string                          `json:"contract_version"`
 	SubmissionID         string                          `json:"submission_id"`
 	SubmissionKind       string                          `json:"submission_kind"`
@@ -186,10 +189,9 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
 		return nil, ErrRememberAuthContext
 	}
-	space := rememberSpace(actor)
-	if space.Kind != domain.MemorySpaceTeamShared && space.Kind != "" &&
-		(space.ID == uuid.Nil || space.Generation < 1) {
-		return nil, ErrRememberAuthContext
+	space, err := domain.ResolveMemoryWriteSpace(req.TargetSpace, actor.Grants, actor.AllowedSpaces)
+	if err != nil {
+		return nil, err
 	}
 	if len(req.Evidence) == 0 {
 		return nil, errors.New("remember: evidence is required")
@@ -246,7 +248,7 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if actor.CredentialID != nil {
 		actorMetadata["credential_id"] = actor.CredentialID.String()
 	}
-	metadata := map[string]any{"contract_version": domain.ContractVersion, "actor": actorMetadata}
+	metadata := map[string]any{"contract_version": domain.ContractVersion, "actor": actorMetadata, "target_space": string(space.Kind)}
 	originalRequest, marshalErr := json.Marshal(req)
 	if marshalErr != nil {
 		return nil, fmt.Errorf("remember: encode diagnostic request: %w", marshalErr)
@@ -257,6 +259,7 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 		}
 	}
 	processInput := RememberProcessRequest{
+		SpaceKind:           space.Kind,
 		InvocationStartedAt: started,
 		TeamID:              actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), SpaceID: rememberSpaceID(space),
 		SpaceGeneration: space.Generation, IdempotencyKey: strings.TrimSpace(req.IdempotencyKey), RequestHash: requestHash,
@@ -295,6 +298,7 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 
 func rememberSecurityAuditPersistenceError(req RememberRequest, correlationID string) *RememberProcessError {
 	status := &SubmissionStatusResult{
+		SpaceKind:           req.TargetSpace,
 		ContractVersion:     domain.ContractVersion,
 		SubmissionID:        uuid.NewString(),
 		SubmissionKind:      "remember",
@@ -359,18 +363,6 @@ func rememberSpaceID(space domain.MemorySpaceAccess) string {
 	return space.ID.String()
 }
 
-func rememberSpace(actor requestctx.Actor) domain.MemorySpaceAccess {
-	var shared domain.MemorySpaceAccess
-	for _, space := range actor.AllowedSpaces {
-		if space.Kind == domain.MemorySpaceTeamShared || space.Kind == "" {
-			shared = space
-			continue
-		}
-		return space
-	}
-	return shared
-}
-
 func sourceRevisionContentHashes(evidence []RememberEvidenceInput) map[string]string {
 	groups := make(map[string][]string)
 	for _, item := range evidence {
@@ -404,11 +396,18 @@ func sourceRevisionBatchHash(contents []string) string {
 }
 
 func canonicalRequestHash(req RememberRequest) (string, error) {
-	hash, err := CanonicalRequestBodyHash(req.Evidence, req.EntityHints, req.RelationshipHints)
+	if req.TargetSpace == "" {
+		return "", domain.ErrMemoryTargetRequired
+	}
+	if !req.TargetSpace.Valid() {
+		return "", domain.ErrMemoryTargetInvalid
+	}
+	bodyHash, err := CanonicalRequestBodyHash(req.Evidence, req.EntityHints, req.RelationshipHints)
 	if err != nil {
 		return "", fmt.Errorf("remember: canonical request hash: %w", err)
 	}
-	return hash, nil
+	digest := sha256.Sum256([]byte("remember.target-space.v1\n" + string(req.TargetSpace) + "\n" + bodyHash))
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
 func rememberResultFromStatus(status *SubmissionStatusResult, ingestID string) *RememberResult {
@@ -436,6 +435,7 @@ func rememberResultFromStatus(status *SubmissionStatusResult, ingestID string) *
 		}
 	}
 	result := &RememberResult{
+		SpaceKind:            copyStatus.SpaceKind,
 		ContractVersion:      copyStatus.ContractVersion,
 		IngestID:             ingestID,
 		SubmissionID:         copyStatus.SubmissionID,
@@ -478,6 +478,7 @@ func rememberResultFromStatus(status *SubmissionStatusResult, ingestID string) *
 		}
 	}
 	terminal := &TerminalRememberResult{
+		SpaceKind:           result.SpaceKind,
 		ContractVersion:     result.ContractVersion,
 		SubmissionID:        result.SubmissionID,
 		SubmissionKind:      result.SubmissionKind,

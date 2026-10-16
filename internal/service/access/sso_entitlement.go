@@ -46,9 +46,18 @@ func (s *SSOService) ValidateCredential(ctx context.Context, credential *domain.
 		credential.Role = restrictedSSORole(credential.Role, entitlement.Role)
 		credential.SSOGroupID = entitlement.GroupID
 	}
+	current, err := s.repo.GetSSOOwnedCredentialByID(ctx, credential.TeamID, *credential.OwnerIdentityID, credential.ID)
+	if err != nil {
+		return nil, err
+	}
+	if current == nil {
+		return nil, ErrSSOAccessDenied
+	}
+	credential.Scopes = intersectSSOGrants(credential.Scopes, current.EffectiveMemoryGrants)
 	if !hasCredentialScope(credential.Scopes, CredentialScopeRead) {
 		return nil, ErrSSOAccessDenied
 	}
+	credential.EffectiveMemoryGrants = append([]string(nil), credential.Scopes...)
 	credential.SSOEntitlementStatus = "active"
 	return credential, nil
 }

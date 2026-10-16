@@ -248,7 +248,7 @@ func TestRetrievalBoundsAndRequiredReadFailures(t *testing.T) {
 	}
 	fixture := &retrievalReadFixture{}
 	_, err := NewRetrieval(fixture).RecallEvidence(t.Context(), recallcontract.RecallEvidenceInput{
-		TeamID: team, Query: "query", SpaceKind: string(domain.MemorySpaceCredentialPrivate),
+		TeamID: team, Query: "query", SpaceKind: string(domain.MemorySpacePrivate),
 	})
 	require.ErrorContains(t, err, "space_id is required")
 	require.Zero(t, fixture.evidenceReads)

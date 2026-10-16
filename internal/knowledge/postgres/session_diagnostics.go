@@ -24,30 +24,7 @@ func (r *Store) RecordSessionDiagnostic(ctx context.Context, scope session.Scope
 }
 
 func (r *Store) purgeExpiredSessionDiagnostics(ctx context.Context) (int, error) {
-	var deleted int64
-	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		if err := tx.Exec("SELECT set_config('app.session_diagnostic_purge', 'true', true)").Error; err != nil {
-			return err
-		}
-		var ids []string
-		if err := tx.WithContext(ctx).Raw(`SELECT diagnostic.diagnostic_id::text
-          FROM session_submission_diagnostics AS diagnostic
-          JOIN memory_spaces AS space ON space.team_id = diagnostic.team_id AND space.id = diagnostic.space_id
-          WHERE diagnostic.expires_at <= clock_timestamp()
-          AND NOT EXISTS (SELECT 1 FROM private_memory_legal_holds AS hold WHERE hold.space_id = diagnostic.space_id AND hold.released_at IS NULL)
-			ORDER BY diagnostic.expires_at, diagnostic.diagnostic_id LIMIT ? FOR KEY SHARE OF space`, rememberDiagnosticPurgeBatchSize).Scan(&ids).Error; err != nil {
-			return err
-		}
-		if len(ids) == 0 {
-			return nil
-		}
-		result := tx.WithContext(ctx).Exec(`DELETE FROM session_submission_diagnostics
-          WHERE diagnostic_id IN ? AND expires_at <= clock_timestamp()
-          AND NOT EXISTS (SELECT 1 FROM private_memory_legal_holds AS hold WHERE hold.space_id = session_submission_diagnostics.space_id AND hold.released_at IS NULL)`, ids)
-		deleted = result.RowsAffected
-		return result.Error
-	})
-	return int(deleted), err
+	return r.purgeExpiredPrivateDiagnostics(ctx, "session_submission_diagnostics", rememberDiagnosticPurgeBatchSize)
 }
 
 func (r *Store) drainExpiredSessionDiagnostics(ctx context.Context) (int, error) {

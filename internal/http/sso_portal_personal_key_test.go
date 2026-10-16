@@ -41,7 +41,7 @@ func TestUserPortalSSOPersonalKeyLifecycle(t *testing.T) {
 	require.Empty(t, session.PersonalCredentials)
 	require.Equal(t, []string{accessservice.CredentialScopeRead, accessservice.CredentialScopeWrite}, session.Membership.Grants)
 
-	c, rec := userSSOContext(nethttp.MethodPost, "/ui/api/sso/credentials", `{"name":"Owned","scopes":["read","write"],"rate_limit":90,"memory_binding":"profile_private"}`, fixture.sessionToken)
+	c, rec := userSSOContext(nethttp.MethodPost, "/ui/api/sso/credentials", `{"name":"Owned","scopes":["read","write"],"rate_limit":90}`, fixture.sessionToken)
 	setUserSSOPrincipal(c, fixture.profileID, fixture.teamID)
 	require.NoError(t, fixture.handler.createSSOCredential(c))
 	require.Equal(t, nethttp.StatusCreated, rec.Code)
@@ -67,13 +67,13 @@ func TestUserPortalSSOPersonalKeyLifecycle(t *testing.T) {
 	require.Equal(t, fixture.teamID, fixture.keySvc.rotateProfileID)
 	require.Equal(t, credentialID, fixture.keySvc.rotateKeyID)
 
-	c, rec = userSSOContext(nethttp.MethodPost, "/ui/api/sso/credentials", `{"name":"Second","scopes":["read"],"rate_limit":90,"memory_binding":"credential_private"}`, fixture.sessionToken)
+	c, rec = userSSOContext(nethttp.MethodPost, "/ui/api/sso/credentials", `{"name":"Second","scopes":["read"],"rate_limit":90}`, fixture.sessionToken)
 	setUserSSOPrincipal(c, fixture.profileID, fixture.teamID)
 	require.NoError(t, fixture.handler.createSSOCredential(c))
 	require.Equal(t, nethttp.StatusCreated, rec.Code)
 	require.Len(t, fixture.keySvc.keys, 2)
 
-	c, rec = userSSOContext(nethttp.MethodPost, "/ui/api/sso/credentials", `{"name":"Third","scopes":["read"],"rate_limit":90,"memory_binding":"shared_only"}`, fixture.sessionToken)
+	c, rec = userSSOContext(nethttp.MethodPost, "/ui/api/sso/credentials", `{"name":"Third","scopes":["read"],"rate_limit":90}`, fixture.sessionToken)
 	setUserSSOPrincipal(c, fixture.profileID, fixture.teamID)
 	require.NoError(t, fixture.handler.createSSOCredential(c))
 	require.Equal(t, nethttp.StatusCreated, rec.Code)
@@ -209,7 +209,7 @@ func TestUserPortalSSOPersonalKeyDeniedBranches(t *testing.T) {
 		require.Equal(t, nethttp.StatusCreated, rec.Code)
 		require.Len(t, fixture.keySvc.keys, 2)
 
-		c, rec = userSSOContext(nethttp.MethodPost, "/ui/api/sso/credentials", `{"rate_limit":30,"memory_binding":"credential_private"}`, fixture.sessionToken)
+		c, rec = userSSOContext(nethttp.MethodPost, "/ui/api/sso/credentials", `{"rate_limit":30}`, fixture.sessionToken)
 		setUserSSOPrincipal(c, fixture.profileID, fixture.teamID)
 		require.NoError(t, fixture.handler.createSSOCredential(c))
 		require.Equal(t, nethttp.StatusCreated, rec.Code)
@@ -529,4 +529,8 @@ func ssoOwnedCredential(teamID, identityID uuid.UUID, scopes []string) *domain.C
 		CreatedAt:       time.Now().UTC().Truncate(time.Second),
 		OwnerIdentityID: &identityID,
 	}
+}
+
+func (r *httpSSORepoStub) GetSSOOwnedCredentialByID(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.Credential, error) {
+	return nil, nil
 }

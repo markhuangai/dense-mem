@@ -24,7 +24,7 @@ func TestPrivateMemoryStaleReleaseCannotRequeueReclaimedLease(t *testing.T) {
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-erasure-stale-release"))
 	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "stale-release", domain.CredentialBindingCredentialPrivate)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "stale-release")
 	repo := NewPrivateMemoryRepository(appDB, rls)
 	operation, created, err := repo.RequestCredentialErasure(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: target.ID, CredentialID: target.ID,
@@ -77,7 +77,7 @@ func TestPrivateMemoryCredentialRetirementOperationHashesStayStable(t *testing.T
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-credential-delete-hashes"))
 	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, NewCredentialDeletionRepository(appDB, rls))
-	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "delete-hashes", domain.CredentialBindingCredentialPrivate)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "delete-hashes")
 
 	rows, err := credentialRepo.DeleteForTeam(ctx, teamID, target.ID)
 	require.NoError(t, err)

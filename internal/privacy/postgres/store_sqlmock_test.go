@@ -59,13 +59,13 @@ func privateMemoryOperationRows(operationID, teamID, spaceID, credentialID uuid.
 		"action", "actor_class", "reason_code", "target_generation", "retire_space",
 		"status", "manifest_position", "deleted_counts", "attempt_count", "fence",
 		"worker_id", "lease_until", "next_attempt_at", "last_error_code", "requested_at", "started_at",
-		"completed_at", "updated_at",
+		"completed_at", "updated_at", "legacy_source_space_id",
 	}).AddRow(
-		operationID, teamID, spaceID.String(), string(domain.MemorySpaceCredentialPrivate), credentialID.String(),
-		string(domain.PrivateMemoryEraseCredentialPrivate), string(domain.PrivateMemoryActorOwnerCredential), "credential_deleted", int64(4), true,
+		operationID, teamID, spaceID.String(), string(domain.MemorySpacePrivate), credentialID.String(),
+		string(domain.PrivateMemoryErase), string(domain.PrivateMemoryActorOwnerCredential), "credential_deleted", int64(4), true,
 		string(domain.PrivateMemoryErasureQueued), 2, []byte(`{"evidence_fragments":3}`), 1, int64(7),
 		"worker-a", requestedAt.Add(time.Minute), nil, "", requestedAt, requestedAt.Add(10*time.Second),
-		nil, requestedAt.Add(20*time.Second),
+		nil, requestedAt.Add(20*time.Second), nil,
 	)
 }
 
@@ -84,7 +84,7 @@ func TestStoreGetOperationBindsIDAndScansResult(t *testing.T) {
 	require.Equal(t, operationID, operation.ID)
 	require.Equal(t, teamID, operation.TeamID)
 	require.Equal(t, spaceID, *operation.SpaceID)
-	require.Equal(t, domain.MemorySpaceCredentialPrivate, *operation.SpaceKind)
+	require.Equal(t, domain.MemorySpacePrivate, *operation.SpaceKind)
 	require.Equal(t, credentialID, *operation.TargetCredentialID)
 	require.Equal(t, int64(4), *operation.TargetGeneration)
 	require.Equal(t, map[string]int64{"evidence_fragments": 3}, operation.DeletedCounts)
@@ -115,14 +115,14 @@ func TestStoreListSpacesScansNullableOwnersAndActiveHold(t *testing.T) {
 	spaceID, teamID, ownerID, holdID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	createdAt := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
 	privateContentAt := createdAt.Add(-time.Hour)
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT space.id, space.team_id, space.kind, space.owner_profile_id, space.owner_credential_id")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT space.id, space.team_id, space.kind, space.owner_membership_id")).
 		WithArgs(10, 2).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "team_id", "kind", "owner_profile_id", "owner_credential_id",
+			"id", "team_id", "kind", "owner_membership_id",
 			"generation", "lifecycle_state", "private_content_at", "sealed_at", "retired_at", "created_at", "updated_at",
 			"hold_id", "hold_reason", "hold_actor", "hold_placed",
 		}).AddRow(
-			spaceID, teamID, string(domain.MemorySpaceProfilePrivate), ownerID, nil,
+			spaceID, teamID, string(domain.MemorySpacePrivate), ownerID,
 			int64(3), string(domain.MemorySpaceActive), privateContentAt, nil, nil, createdAt, createdAt.Add(time.Minute),
 			holdID.String(), "retention_review", "control", createdAt.Add(2*time.Minute),
 		))
@@ -134,8 +134,7 @@ func TestStoreListSpacesScansNullableOwnersAndActiveHold(t *testing.T) {
 	require.Len(t, spaces, 1)
 	require.Equal(t, spaceID, spaces[0].Space.ID)
 	require.Equal(t, teamID, spaces[0].Space.TeamID)
-	require.Equal(t, ownerID, *spaces[0].Space.OwnerProfileID)
-	require.Nil(t, spaces[0].Space.OwnerCredentialID)
+	require.Equal(t, ownerID, *spaces[0].Space.OwnerMembershipID)
 	require.NotNil(t, spaces[0].ActiveHold)
 	require.Equal(t, holdID, spaces[0].ActiveHold.ID)
 	require.Equal(t, "retention_review", spaces[0].ActiveHold.ReasonCode)

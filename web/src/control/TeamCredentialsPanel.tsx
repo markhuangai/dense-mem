@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { KeyRound, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { ControlApi, CreatedCredential, Credential, CredentialRole, Team } from "../api";
-import { CredentialPermissionCheckboxes, normalizeCredentialScopes } from "../credentialPermissions";
+import { CredentialPermissionCheckboxes, MemoryAccessSummary, normalizeCredentialScopes } from "../credentialPermissions";
 import { LoadingState, SecretBox, SectionHeading } from "../ui/components";
 import { credentialRoleLabel, displayKeySuffix, formatDate, readError } from "./utils";
 
@@ -287,6 +287,7 @@ function CredentialRow({
           className="compact"
           onChange={(scopes) => onScopesChange(credential.id, normalizeCredentialScopes(scopes, { forceWrite: credential.role === "manager" }))}
         />
+        <MemoryAccessSummary access={credential.memory_access} />
       </td>
       <td>
         <select
@@ -387,6 +388,7 @@ function CredentialCreateForm({
 
   return (
     <form className="key-form" onSubmit={submit}>
+      <p className="span">Each key has its own private memory, including team-read-only keys. The calling agent chooses private or team shared for each Remember submission.</p>
       <label htmlFor="team-credential-name">Credential name</label>
       <input id="team-credential-name" value={name} onChange={(event) => setName(event.target.value)} />
       <label htmlFor="team-credential-role">Role</label>

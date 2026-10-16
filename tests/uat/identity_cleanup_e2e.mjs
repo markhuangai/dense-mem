@@ -300,6 +300,7 @@ function rememberInput() {
   const predicate = "uses";
   const object = "canonical credentials";
   return {
+    target_space: "team_shared",
     idempotency_key: `${runID}:batch`,
     evidence: [{ content, source_type: "document", source: `${runID}:source`, source_group: runID }],
     relationships: [{

@@ -13,13 +13,14 @@ func TestRememberContractDirectEvidenceSupersessionRules(t *testing.T) {
 
 	targetA := uuid.NewString()
 	valid := map[string]any{
+		"target_space":    "team_shared",
 		"idempotency_key": "replacement-batch",
 		"evidence":        validFlatRelationshipSubmission()["evidence"],
 	}
 	evidence := valid["evidence"].([]any)
 	evidence[0].(map[string]any)["supersedes_evidence_ids"] = []any{targetA}
 	valid["relationships"] = validFlatRelationshipSubmission()["relationships"]
-	require.NoError(t, ValidateContractInput(remember, valid, []string{"write"}))
+	require.NoError(t, ValidateContractInput(remember, valid, []string{"read", "write"}))
 
 	tests := []struct {
 		name  string
@@ -56,7 +57,7 @@ func TestRememberContractDirectEvidenceSupersessionRules(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateContractInput(remember, withRequiredFlatRelationship(tc.input), []string{"write"})
+			err := ValidateContractInput(remember, withRequiredFlatRelationship(tc.input), []string{"read", "write"})
 			require.ErrorContains(t, err, tc.want)
 		})
 	}
@@ -70,6 +71,6 @@ func TestRetractEvidenceContractRejectsDuplicateEvidenceIDs(t *testing.T) {
 		"evidence_ids":    []any{evidenceID, evidenceID},
 		"reason":          "entered in error",
 		"idempotency_key": "retract-duplicate-1",
-	}, []string{"write"})
+	}, []string{"read", "write"})
 	require.ErrorContains(t, err, "evidence_ids[1]: duplicate value")
 }

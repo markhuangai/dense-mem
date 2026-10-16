@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	privacy "github.com/markhuangai/dense-mem/internal/privacy/postgres"
-	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -34,11 +33,11 @@ func TestOntologyMigrationRLSAndHistory(t *testing.T) {
 	require.NoError(t, f.app.Raw(`SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user`).Row().Scan(&super, &bypass))
 	require.False(t, super)
 	require.False(t, bypass)
-	migrator, err := storage.NewMigrator(f.admin)
+	migrator := ontologyMigrationProvider(t, f.admin)
+	_, err := migrator.ApplyVersion(context.Background(), 20261004190000, false)
 	require.NoError(t, err)
-	require.NoError(t, migrator.RunDown(context.Background()))
 	require.Equal(t, before, f.canonicalSnapshot(t))
-	require.NoError(t, migrator.RunUp(context.Background()))
+	f.restoreOntologySchema(t)
 	require.NoError(t, f.admin.Exec(`GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ontology_app`).Error)
 	require.NoError(t, privacy.NewPrivateMemoryRepository(f.app, f.rls).Prepare(context.Background()))
 	require.NoError(t, rollbackOntologySchemaTo(t, f.admin, 20261004190000))
@@ -62,9 +61,11 @@ func TestOntologyMigrationRLSAndHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, history, 1)
 	require.Equal(t, "seed", history[0].Origin)
-	require.NoError(t, migrator.RunDown(context.Background()))
-	require.ErrorContains(t, migrator.RunDown(context.Background()), "cannot roll back populated ontology history")
-	require.NoError(t, migrator.RunUp(context.Background()))
+	_, err = migrator.ApplyVersion(context.Background(), 20261004190000, false)
+	require.NoError(t, err)
+	_, err = migrator.ApplyVersion(context.Background(), 20261004113210, false)
+	require.ErrorContains(t, err, "cannot roll back populated ontology history")
+	f.restoreOntologySchema(t)
 	require.Error(t, f.admin.Exec(`UPDATE ontology_record_revisions SET body='{}'::jsonb`).Error)
 	require.Error(t, f.admin.Exec(`DELETE FROM ontology_publications`).Error)
 	require.Equal(t, before, f.canonicalSnapshot(t))

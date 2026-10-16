@@ -37,28 +37,8 @@ func PrivateScope(ctx context.Context) (session.Scope, error) {
 	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
 		return session.Scope{}, session.ErrUnauthorized
 	}
-	write := false
-	for _, grant := range actor.Grants {
-		if grant == "write" {
-			write = true
-			break
-		}
-	}
-	if !write {
-		return session.Scope{}, session.ErrUnauthorized
-	}
-	var selected *domain.MemorySpaceAccess
-	for _, space := range actor.AllowedSpaces {
-		if space.Kind != domain.MemorySpaceProfilePrivate && space.Kind != domain.MemorySpaceCredentialPrivate {
-			continue
-		}
-		if space.ID == uuid.Nil || space.Generation < 1 || selected != nil {
-			return session.Scope{}, session.ErrUnauthorized
-		}
-		copy := space
-		selected = &copy
-	}
-	if selected == nil {
+	selected, err := domain.ResolveMemoryWriteSpace(domain.MemorySpacePrivate, actor.Grants, actor.AllowedSpaces)
+	if err != nil {
 		return session.Scope{}, session.ErrUnauthorized
 	}
 	return session.Scope{TeamID: actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), SpaceID: selected.ID.String(), SpaceGeneration: selected.Generation}, nil
@@ -190,7 +170,7 @@ func (s *Service) process(ctx context.Context, submission *session.Submission) (
 				return fail(err)
 			}
 			actor, _ := requestctx.ActorFromContext(ctx)
-			metadata := map[string]any{"contract_version": domain.ContractVersion, "actor": map[string]any{
+			metadata := map[string]any{"target_space": string(domain.MemorySpacePrivate), "contract_version": domain.ContractVersion, "actor": map[string]any{
 				"team_id": actor.TeamID.String(), "owner_id": actor.OwnerID.String(), "correlation_id": correlation.FromContext(ctx), "role": actor.Role, "auth_method": actor.AuthMethod,
 			}, "session_submission_id": submission.ID, "extraction_version": session.ExtractionVersion}
 			prepared, err = s.deps.Preparer.PrepareSession(ctx, session.PrepareInput{

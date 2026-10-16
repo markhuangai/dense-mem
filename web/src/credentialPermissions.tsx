@@ -1,3 +1,6 @@
+export type MemoryPermission = { read: boolean; write: boolean };
+export type MemoryAccess = { private: MemoryPermission; team_shared: MemoryPermission };
+
 export const CREDENTIAL_SCOPE_READ = "read";
 export const CREDENTIAL_SCOPE_WRITE = "write";
 export const CREDENTIAL_SCOPE_FEEDBACK_READ = "feedback:read";
@@ -68,4 +71,15 @@ export function CredentialPermissionCheckboxes({
       </label>
     </div>
   );
+}
+
+export function memoryPermissionLabel(permission: MemoryPermission, team = false): string {
+  if (!permission.read) return "No access";
+  if (permission.write) return team ? "Team read/write" : "Read/write";
+  return team ? "Team-read-only" : "Read only";
+}
+
+export function MemoryAccessSummary({ access }: { access: MemoryAccess }) {
+  if (!access) return <small>Memory access unavailable</small>;
+  return <small className="table-subline">Private: {memoryPermissionLabel(access.private)} · {memoryPermissionLabel(access.team_shared, true)}</small>;
 }

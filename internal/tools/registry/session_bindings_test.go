@@ -11,17 +11,17 @@ import (
 	"testing"
 )
 
-func TestSessionPrivateScopeRejectsMissingSharedAndReadOnlyActors(t *testing.T) {
+func TestSessionPrivateScopeAllowsTeamReadOnlyAndRejectsSharedOrMissingRead(t *testing.T) {
 	team, owner, space := uuid.New(), uuid.New(), uuid.New()
 	for _, test := range []struct {
 		kind    domain.MemorySpaceKind
 		grants  []string
 		allowed bool
 	}{
-		{domain.MemorySpaceProfilePrivate, []string{"read", "write"}, true},
-		{domain.MemorySpaceCredentialPrivate, []string{"write"}, true},
+		{domain.MemorySpacePrivate, []string{"read", "write"}, true},
+		{domain.MemorySpacePrivate, []string{"write"}, false},
 		{domain.MemorySpaceTeamShared, []string{"read", "write"}, false},
-		{domain.MemorySpaceProfilePrivate, []string{"read"}, false},
+		{domain.MemorySpacePrivate, []string{"read"}, true},
 	} {
 		ctx := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: team, OwnerID: owner, Grants: test.grants, AllowedSpaces: []domain.MemorySpaceAccess{{ID: space, Kind: test.kind, Generation: 1}}})
 		scope, err := service.PrivateScope(ctx)

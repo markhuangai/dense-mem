@@ -236,6 +236,7 @@ async function assertCancelledTransportOutcome(markerFrom) {
     params: {
       name: "remember",
       arguments: {
+        target_space: "team_shared",
         evidence: [{
           content: `Dense-Mem stores durable memory in PostgreSQL. [fixture:transport-cancel] [fixture-fault:embedding-cancel] ${suffix}`,
           source_type: "manual",

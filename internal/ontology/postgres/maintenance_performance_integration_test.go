@@ -15,7 +15,6 @@ import (
 	"time"
 
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -28,9 +27,7 @@ type maintenanceLatency struct {
 func TestOntologyMaintenanceCommunityDependencyCounters(t *testing.T) {
 	f := newOntologyFixtureWithMaintenance(t, false)
 	source := maintenanceEntity(t, f, "Pre-migration counter source")
-	migrator, err := storage.NewMigrator(f.admin)
-	require.NoError(t, err)
-	require.NoError(t, migrator.RunUp(context.Background()))
+	f.restoreOntologySchema(t)
 	require.NoError(t, f.admin.Exec(`GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ontology_app; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ontology_app`).Error)
 	write := func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE entity_records SET version=version+1 WHERE team_id=?::uuid AND entity_id=?::uuid`, f.team, source.ID).Error
@@ -123,14 +120,12 @@ func TestOntologyMaintenanceWriteLatency(t *testing.T) {
 			return maintenanceLatency{MedianMS: samples[len(samples)/2], P95MS: samples[(len(samples)*95-1)/100]}
 		}
 		before := map[int]maintenanceLatency{1: measure(1), 8: measure(8)}
-		migrator, err := storage.NewMigrator(f.admin)
-		require.NoError(t, err)
-		require.NoError(t, migrator.RunUp(context.Background()))
+		f.restoreOntologySchema(t)
 		require.NoError(t, f.admin.Exec(`GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ontology_app; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ontology_app`).Error)
 		for _, writers := range []int{1, 8} {
 			pairs = append(pairs, pair{Writers: writers, Before: before[writers], After: measure(writers)})
 		}
-		_, err = f.store.ReadSources(context.Background(), f.team, []ontology.SourceHandle{source})
+		_, err := f.store.ReadSources(context.Background(), f.team, []ontology.SourceHandle{source})
 		require.NoError(t, err)
 	}
 	if directory := os.Getenv("DENSE_MEM_ORGANIZATION_REPORT_DIR"); directory != "" {

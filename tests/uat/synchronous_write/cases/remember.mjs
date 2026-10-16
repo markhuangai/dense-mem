@@ -142,12 +142,13 @@ async function assertRememberSessionModelRouting(expect, providerRequestOffset) 
 
 async function runBudgetContextCase({ expect }) {
   const teamID = await createKnownEvidenceTeam(`assessor-budget-${Date.now()}`);
-  const actor = await createKnownEvidenceCredential(teamID, `assessor-budget-${Date.now()}`, "shared_only");
+  const actor = await createKnownEvidenceCredential(teamID, `assessor-budget-${Date.now()}`);
   const candidateContents = [];
   for (let index = 0; index < 10; index += 1) {
     const content = `Large stored candidate ${index} ${"candidate context material ".repeat(35)} [fixture-fault:no-supported]`;
     candidateContents.push(content);
     const seeded = await rememberWithKey(actor.apiKey, {
+      target_space: "team_shared",
       evidence: [{ content, source_type: "manual", force_insert: true }],
       relationships: [relationship("budget-seed", `Large stored candidate ${index}`, "document", { value: { type: "string", value: "candidate context material" } }, [0], "contains_text")],
       idempotency_key: `assessor-budget-seed-${index}-${Date.now()}-${Math.random()}`,
@@ -157,6 +158,7 @@ async function runBudgetContextCase({ expect }) {
   }
 
   const shortRequest = {
+    target_space: "team_shared",
     evidence: [{ content: "Short note for bounded server-selected context.", source_type: "manual" }],
     relationships: [relationship("budget-note", "Short note", "document", { value: { type: "string", value: "bounded server-selected context" } }, [0], "has_purpose")],
     idempotency_key: `assessor-budget-short-${Date.now()}-${Math.random()}`,
@@ -190,7 +192,7 @@ async function runBudgetContextCase({ expect }) {
 
 async function runEvidenceConflictCase({ rpc, expect }) {
   const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
-  const actor = await createKnownEvidenceCredential(teamID, `evidence-conflict-${Date.now()}`, "shared_only");
+  const actor = await createKnownEvidenceCredential(teamID, `evidence-conflict-${Date.now()}`);
   const firstArgs = singleItemArguments("cited-evidence-conflict", "[fixture:cited-evidence-conflict]");
   firstArgs.evidence.push({ content: "The same change was rejected by the reviewer. [fixture:cited-evidence-conflict]", source_type: "manual" });
   firstArgs.relationships[0].evidence_indices = [0, 1];
@@ -309,12 +311,12 @@ async function runEvidenceConflictCase({ rpc, expect }) {
 
 async function runKnownEvidenceCase({ expect }) {
   const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
-  const actorA = await createKnownEvidenceCredential(teamID, `known-evidence-${Date.now()}-A`, "shared_only");
+  const actorA = await createKnownEvidenceCredential(teamID, `known-evidence-${Date.now()}-A`);
   const actorAKey = actorA.apiKey;
-  const actorB = await createKnownEvidenceCredential(teamID, `known-evidence-${Date.now()}-B`, "shared_only");
-  const privateActor = await createKnownEvidenceCredential(teamID, `known-evidence-${Date.now()}-private`, "credential_private");
+  const actorB = await createKnownEvidenceCredential(teamID, `known-evidence-${Date.now()}-B`);
+  const privateActor = await createKnownEvidenceCredential(teamID, `known-evidence-${Date.now()}-private`);
   const teamC = await createKnownEvidenceTeam(`known-evidence-${Date.now()}-C`);
-  const actorC = await createKnownEvidenceCredential(teamC, `known-evidence-${Date.now()}-C`, "shared_only");
+  const actorC = await createKnownEvidenceCredential(teamC, `known-evidence-${Date.now()}-C`);
 
   const source = await rememberWithKey(actorAKey, singleItemArguments("known-evidence-source", "[fixture:known-evidence-source]"));
   assertStrictTerminalRemember(source, expect);
@@ -398,7 +400,7 @@ async function runKnownEvidenceCase({ expect }) {
   }
 
   const randomUnavailable = await assertUnavailableKnownEvidence(actorB.apiKey, "known-evidence-random-unavailable", randomUUID(), expect);
-  const privateSource = await rememberWithKey(privateActor.apiKey, singleItemArguments("known-evidence-private-source", "[fixture:known-evidence-private-source]"));
+  const privateSource = await rememberWithKey(privateActor.apiKey, singleItemArguments("known-evidence-private-source", "[fixture:known-evidence-private-source]", "private"));
   assertStrictTerminalRemember(privateSource, expect);
   const privateEvidenceID = privateSource.evidence.find((item) => item.disposition === "stored")?.evidence_id;
   expect(privateEvidenceID, "private known evidence source must return a stored evidence id");
@@ -425,6 +427,7 @@ async function runKnownEvidenceCase({ expect }) {
   expect(twentyOneIssues.some((issue) => issue.path.includes("known_evidence_ids")), "21-ID validation must identify the known_evidence_ids bound");
 
   const unreferencedArgs = {
+    target_space: "team_shared",
     evidence: [{
       content: "Dense-Mem stores durable memory in PostgreSQL. Unreferenced Candidate stores durable memory in PostgreSQL. [fixture-fault:unreferenced-known]",
       source_type: "manual",
@@ -473,8 +476,8 @@ async function runKnownEvidenceCase({ expect }) {
 
 async function runSemanticDuplicateCase({ expect }) {
   const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
-  const actor = await createKnownEvidenceCredential(teamID, `semantic-duplicate-${Date.now()}`, "credential_private");
-  const canonicalArgs = singleItemArguments("semantic-duplicate-canonical", "");
+  const actor = await createKnownEvidenceCredential(teamID, `semantic-duplicate-${Date.now()}`);
+  const canonicalArgs = singleItemArguments("semantic-duplicate-canonical", "", "private");
   canonicalArgs.evidence[0].content = "Dense-Mem stores durable memory in PostgreSQL. [fixture:semantic-duplicate-canonical]";
   const canonical = await rememberWithKey(actor.apiKey, canonicalArgs);
   assertStrictTerminalRemember(canonical, expect);
@@ -482,7 +485,7 @@ async function runSemanticDuplicateCase({ expect }) {
   const canonicalID = canonical.evidence[0]?.evidence_id;
   expect(canonicalID, "semantic duplicate canonical write must return an evidence id");
 
-  const forcedArgs = singleItemArguments("semantic-duplicate-force", "[fixture-fault:semantic-reuse]");
+  const forcedArgs = singleItemArguments("semantic-duplicate-force", "[fixture-fault:semantic-reuse]", "private");
   forcedArgs.evidence[0].content = "Dense-Mem retains durable memory in PostgreSQL. [fixture:semantic-duplicate-force] [fixture-fault:semantic-reuse]";
   forcedArgs.evidence[0].force_insert = true;
   const forced = await rememberWithKey(actor.apiKey, forcedArgs);
@@ -503,7 +506,7 @@ async function runSemanticDuplicateCase({ expect }) {
       AND ingest_id IN ('${sqlLiteral(canonical.submission_id)}'::uuid, '${sqlLiteral(forced.submission_id)}'::uuid);
   `)) === 2, "force_insert semantic duplicate must preserve both occurrences");
 
-  const exactForcedArgs = singleItemArguments("semantic-duplicate-force-exact", "");
+  const exactForcedArgs = singleItemArguments("semantic-duplicate-force-exact", "", "private");
   exactForcedArgs.evidence[0].content = canonicalArgs.evidence[0].content;
   exactForcedArgs.evidence[0].force_insert = true;
   const exactForced = await rememberWithKey(actor.apiKey, exactForcedArgs);
@@ -524,7 +527,7 @@ async function runSemanticDuplicateCase({ expect }) {
       AND ingest_id IN ('${sqlLiteral(canonical.submission_id)}'::uuid, '${sqlLiteral(exactForced.submission_id)}'::uuid);
   `)) === 2, "force_insert exact duplicate must append an occurrence");
 
-  const reusedArgs = singleItemArguments("semantic-duplicate-reuse", "[fixture-fault:semantic-reuse]");
+  const reusedArgs = singleItemArguments("semantic-duplicate-reuse", "[fixture-fault:semantic-reuse]", "private");
   reusedArgs.evidence[0].content = "Dense-Mem retains durable memory in PostgreSQL. [fixture:semantic-duplicate-canonical] [fixture-fault:semantic-reuse]";
   const reused = await rememberWithKey(actor.apiKey, reusedArgs);
   assertStrictTerminalRemember(reused, expect);
@@ -559,7 +562,7 @@ async function runSemanticDuplicateCase({ expect }) {
   expect(traceEvidence.evidence_id === canonicalID && traceEvidence.content.includes("retains durable memory"), `semantic duplicate trace must pair canonical identity with occurrence content: ${JSON.stringify({ support, traceEvidence })}`);
   expect(support.quote === traceEvidence.content, `semantic duplicate trace quote must match occurrence content: ${JSON.stringify({ support, traceEvidence })}`);
 
-  const unauthorizedArgs = singleItemArguments("semantic-duplicate-unauthorized", "[fixture-fault:semantic-reuse-unauthorized]");
+  const unauthorizedArgs = singleItemArguments("semantic-duplicate-unauthorized", "[fixture-fault:semantic-reuse-unauthorized]", "private");
   unauthorizedArgs.evidence[0].content = "Dense-Mem keeps durable memory in PostgreSQL. [fixture:semantic-duplicate-canonical] [fixture-fault:semantic-reuse-unauthorized]";
   const unauthorizedRaw = await rawRPCWithKey(actor.apiKey, "tools/call", { name: "remember", arguments: unauthorizedArgs });
   const unauthorized = terminalPayload(unauthorizedRaw.result);
@@ -624,10 +627,10 @@ async function createKnownEvidenceTeam(label) {
   return teamID;
 }
 
-async function createKnownEvidenceCredential(teamID, name, memoryBinding) {
+async function createKnownEvidenceCredential(teamID, name) {
   const response = await controlJSON(`/teams/${teamID}/credentials`, {
     method: "POST",
-    body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300, memory_binding: memoryBinding }),
+    body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300 }),
   });
   const apiKey = String(response.data?.api_key || "");
   const profileID = String(response.data?.credential?.id || "");
@@ -673,6 +676,7 @@ async function runMultiItemCase({ rpc, expect }) {
   const protocol = `MCP Multi ${suffix}`;
   const predicate = `stores_memory_in_multi_${suffix}`;
   const args = {
+    target_space: "team_shared",
     evidence: [
       { content: `${subject} stores its durable memory in ${database}. [fixture:multi-a]`, source_type: "manual" },
       { content: `${subject} exposes a stable ${protocol} contract. [fixture:multi-b]`, source_type: "manual" },
@@ -707,7 +711,7 @@ async function runMixedObjectCase({ expect }) {
   const subject = `Dense-Mem Mixed Objects ${suffix}`;
   const database = `PostgreSQL Mixed Objects ${suffix}`;
   const teamID = await createKnownEvidenceTeam(`mixed-objects-${suffix}`);
-  const actor = await createKnownEvidenceCredential(teamID, `mixed-objects-${suffix}`, "shared_only");
+  const actor = await createKnownEvidenceCredential(teamID, `mixed-objects-${suffix}`);
   const entityPredicate = `stores_memory_in_mixed_objects_entity_${suffix}`;
   const values = [
     { type: "string", value: "stable", display: "Stable contract" },
@@ -717,6 +721,7 @@ async function runMixedObjectCase({ expect }) {
     { type: "date_time", value: "2026-09-13T10:45:28Z", display: "13 September 2026 at 10:45:28 UTC" },
   ];
   const args = {
+    target_space: "team_shared",
     evidence: [
       { content: `${subject} stores its durable memory in ${database}. [fixture:mixed-objects-entity]`, source_type: "manual" },
       ...values.map((value) => ({
@@ -780,6 +785,7 @@ async function runMixedDispositionCase({ rpc, expect }) {
   const annotation = `annotation Mixed ${suffix}`;
   const predicate = `stores_memory_in_mixed_${suffix}`;
   const args = {
+    target_space: "team_shared",
     evidence: [
       { content: `${subject} stores its durable memory in ${database}. [fixture:mixed-a]`, source_type: "manual" },
       { content: `The unsupported ${annotation} is not a durable claim by ${subject}. [fixture:mixed-b]`, source_type: "manual" },
@@ -832,7 +838,7 @@ async function runRepairCase({ rpc, expect, fault }) {
 
 async function runPredicateRegistrationCases({ expect, selectedFault = "none" }) {
   const teamID = await createKnownEvidenceTeam(`predicate-registration-${Date.now()}`);
-  const actor = await createKnownEvidenceCredential(teamID, `predicate-registration-${Date.now()}`, "shared_only");
+  const actor = await createKnownEvidenceCredential(teamID, `predicate-registration-${Date.now()}`);
   postgresExec(`
     INSERT INTO team_predicate_definitions (
       team_id, predicate_key, version, aliases, allowed_subject_kinds,
@@ -931,7 +937,7 @@ async function runPredicateRegistrationCases({ expect, selectedFault = "none" })
 
 async function runPredicateRegistrationDriftCase({ expect }) {
   const teamID = await createKnownEvidenceTeam(`predicate-drift-${Date.now()}`);
-  const actor = await createKnownEvidenceCredential(teamID, `predicate-drift-${Date.now()}`, "shared_only");
+  const actor = await createKnownEvidenceCredential(teamID, `predicate-drift-${Date.now()}`);
   const predicateKey = `stores_durable_memory_in_drift_${Date.now()}`;
   const insertVersion = (version, state) => postgresExec(`
     INSERT INTO team_predicate_definitions (
@@ -1171,9 +1177,10 @@ async function runSupersessionFenceCase({ rpc, expect }) {
   return { fault: "supersession-stale", processing_state: stale.processing_state };
 }
 
-function singleItemArguments(label, marker) {
+function singleItemArguments(label, marker, targetSpace = "team_shared") {
   const content = `Dense-Mem stores durable memory in PostgreSQL. [fixture:${label}]${marker ? ` ${marker}` : ""}`;
   return {
+    target_space: targetSpace,
     evidence: [{ content, source_type: "manual" }],
     relationships: [relationship("durable-store", "Dense-Mem", "project", { value: { type: "string", value: "PostgreSQL" } }, [0])],
     idempotency_key: `synchronous-write-remember-${label}-${Date.now()}-${Math.random()}`,

@@ -495,7 +495,7 @@ func TestPrivateMemoryServiceWorkerAndAutomaticRetentionPolicy(t *testing.T) {
 	repo.claimErr = nil
 	require.False(t, svc.processOne(ctx))
 
-	kind := domain.MemorySpaceCredentialPrivate
+	kind := domain.MemorySpacePrivate
 	claimed := &domain.PrivateMemoryErasureOperation{
 		ID: uuid.New(), WorkerID: "worker-a", Fence: 7, SpaceKind: &kind,
 	}

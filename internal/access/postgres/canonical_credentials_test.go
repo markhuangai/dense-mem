@@ -22,18 +22,19 @@ func TestLookupCanonicalCredentialScansRateLimitBeforeRole(t *testing.T) {
 	ownerID := uuid.New()
 	teamID := uuid.New()
 	sharedSpaceID := uuid.New()
+	privateSpaceID := uuid.New()
 	rows := sqlmock.NewRows([]string{
 		"id", "actor_identity_id", "membership_id", "owner_id", "team_id", "team_name",
-		"key_hash", "key_prefix", "key_suffix", "name", "scopes", "rate_limit", "role",
+		"key_hash", "key_prefix", "key_suffix", "name", "scopes", "effective_memory_grants", "rate_limit", "role",
 		"last_used_at", "expires_at", "created_at", "revoked_at", "owner_identity_id",
 		"sso_provider_id", "sso_subject", "sso_email", "sso_group_id", "sso_entitlement_status",
-		"sso_last_entitlement_checked_at", "sso_last_login_at", "memory_binding", "memory_space_id",
+		"sso_last_entitlement_checked_at", "sso_last_login_at", "memory_space_id",
 		"memory_space_generation", "team_shared_space_id", "team_shared_space_generation",
 	}).AddRow(
 		id.String(), actorID.String(), membershipID.String(), ownerID.String(), teamID.String(), "Project",
-		"hash", "dm_test_key", "suffix", "key", "{read,write}", 23, "manager",
+		"hash", "dm_test_key", "suffix", "key", "{read,write}", "{read,write}", 23, "manager",
 		nil, nil, time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC), nil, "",
-		"", "", "", "", "", nil, nil, "shared_only", sharedSpaceID.String(), int64(1), sharedSpaceID.String(), int64(1),
+		"", "", "", "", "", nil, nil, privateSpaceID.String(), int64(1), sharedSpaceID.String(), int64(1),
 	)
 	mock.ExpectQuery("SELECT").WithArgs("dm_test_key").WillReturnRows(rows)
 
@@ -48,8 +49,8 @@ func TestLookupCanonicalCredentialScansRateLimitBeforeRole(t *testing.T) {
 	require.Equal(t, "manager", key.Role)
 	require.Equal(t, 23, key.RateLimit)
 	require.Equal(t, []string{"read", "write"}, key.Scopes)
-	require.Equal(t, domain.CredentialBindingSharedOnly, key.MemoryBinding)
-	require.Equal(t, sharedSpaceID, key.MemorySpaceID)
+	require.Equal(t, privateSpaceID, key.MemorySpaceID)
+	require.Equal(t, domain.MemoryAccess{Private: domain.MemoryPermission{Read: true, Write: true}, TeamShared: domain.MemoryPermission{Read: true, Write: true}}, key.MemoryCapabilities())
 	require.Equal(t, sharedSpaceID, key.TeamSharedSpaceID)
 	require.EqualValues(t, 1, key.MemorySpaceGeneration)
 	require.EqualValues(t, 1, key.TeamSharedSpaceGeneration)

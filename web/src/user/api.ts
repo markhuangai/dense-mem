@@ -1,3 +1,4 @@
+import type { MemoryAccess } from "../credentialPermissions";
 import { ApiError, requestJson } from "../http";
 import type { OntologyCoverage, OntologyDraft, OntologyDraftCommand, OntologyDraftPage, OntologyKind, OntologyPreview, OntologyPublication, OntologyPublicationPage, OntologyRecord, OntologyRecordPage, OntologySourcePage, SaveOntologyDraft, SourceKind } from "./ontology-types";
 export { ApiError } from "../http";
@@ -22,11 +23,11 @@ export type UserCredential = {
   last_used_at: string | null;
   expires_at: string | null;
   created_at: string;
-  memory_binding: "shared_only" | "profile_private" | "credential_private" | string;
-  memory_space_kind: "team_shared" | "profile_private" | "credential_private" | string;
+  memory_access: MemoryAccess;
 };
 
 export type UserSession = {
+  memory_access: MemoryAccess;
   team: UserTeam;
   membership: UserMembership;
   credential: UserCredential | null;
@@ -80,7 +81,6 @@ export type CreateCredentialInput = {
   scopes?: string[];
   rate_limit: number;
   expires_at?: string;
-  memory_binding?: "shared_only" | "profile_private" | "credential_private";
 };
 
 export type UpdateCredentialInput =

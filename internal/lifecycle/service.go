@@ -274,6 +274,9 @@ func correctionEmbeddingContextOwnsDeadline(callerCtx, embeddingCtx context.Cont
 }
 
 func translateRelationshipCorrectionError(err error) error {
+	if errors.Is(err, domain.ErrMemoryWriteDenied) {
+		return err
+	}
 	if errors.Is(err, ErrLifecycleEmbeddingUnavailable) {
 		return httperr.New(httperr.ErrEmbeddingUnavailable, "embedding provider unavailable")
 	}

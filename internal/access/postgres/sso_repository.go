@@ -17,6 +17,7 @@ import (
 )
 
 type SSORepository interface {
+	GetSSOOwnedCredentialByID(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.Credential, error)
 	ListProviders(ctx context.Context) ([]*domain.SSOProvider, error)
 	ListEnabledProviders(ctx context.Context) ([]*domain.SSOProvider, error)
 	GetProvider(ctx context.Context, id uuid.UUID) (*domain.SSOProvider, error)
@@ -636,6 +637,7 @@ func upsertCanonicalSSOMembershipTx(tx *gorm.DB, input canonicalSSOMembershipInp
 			sso_last_entitlement_checked_at = EXCLUDED.sso_last_entitlement_checked_at,
 			sso_last_login_at = COALESCE(EXCLUDED.sso_last_login_at, team_memberships.sso_last_login_at),
 			updated_at = EXCLUDED.updated_at
+		WHERE team_memberships.status <> 'revoked'
 		RETURNING id, created_at
 	`, input.IdentityID, input.TeamID, input.Role == "manager", pq.Array(input.Scopes),
 		input.ProviderID, input.GroupID, input.MembershipName, input.LastEntitlementCheckedAt, input.LastLoginAt, input.Now).Row().Scan(&membershipID, &createdAt); err != nil {
@@ -682,8 +684,10 @@ func (r *SSORepositoryImpl) ListTeamMembershipsForIdentity(ctx context.Context, 
 			SELECT
 				t.id, t.name, t.description, t.created_at, t.updated_at,
 					membership.id,
-					COALESCE((SELECT id FROM memory_spaces WHERE team_id = membership.team_id AND kind = 'profile_private' AND owner_profile_id = membership.actor_identity_id LIMIT 1), '00000000-0000-0000-0000-000000000000'::uuid),
-					COALESCE((SELECT generation FROM memory_spaces WHERE team_id = membership.team_id AND kind = 'profile_private' AND owner_profile_id = membership.actor_identity_id LIMIT 1), 0),
+					COALESCE((SELECT id FROM memory_spaces WHERE team_id = membership.team_id AND kind = 'private' AND owner_membership_id = membership.id AND lifecycle_state = 'active' LIMIT 1), '00000000-0000-0000-0000-000000000000'::uuid),
+					COALESCE((SELECT generation FROM memory_spaces WHERE team_id = membership.team_id AND kind = 'private' AND owner_membership_id = membership.id AND lifecycle_state = 'active' LIMIT 1), 0),
+					COALESCE((SELECT id FROM memory_spaces WHERE team_id = membership.team_id AND kind = 'team_shared' LIMIT 1), '00000000-0000-0000-0000-000000000000'::uuid),
+					COALESCE((SELECT generation FROM memory_spaces WHERE team_id = membership.team_id AND kind = 'team_shared' LIMIT 1), 0),
 					membership.actor_identity_id, membership.team_id,
 				alias.legacy_owner_id, COALESCE(NULLIF(membership.sso_profile_name, ''), actor.display_name, ''),
 				membership.maximum_grants, CASE WHEN membership.team_admin THEN 'manager' ELSE 'member' END,
@@ -737,8 +741,10 @@ func (r *SSORepositoryImpl) GetTeamMembershipByOwnerID(ctx context.Context, id u
 			SELECT
 				t.id, t.name, t.description, t.created_at, t.updated_at,
 					membership.id,
-					COALESCE((SELECT id FROM memory_spaces WHERE team_id = membership.team_id AND kind = 'profile_private' AND owner_profile_id = membership.actor_identity_id LIMIT 1), '00000000-0000-0000-0000-000000000000'::uuid),
-					COALESCE((SELECT generation FROM memory_spaces WHERE team_id = membership.team_id AND kind = 'profile_private' AND owner_profile_id = membership.actor_identity_id LIMIT 1), 0),
+					COALESCE((SELECT id FROM memory_spaces WHERE team_id = membership.team_id AND kind = 'private' AND owner_membership_id = membership.id AND lifecycle_state = 'active' LIMIT 1), '00000000-0000-0000-0000-000000000000'::uuid),
+					COALESCE((SELECT generation FROM memory_spaces WHERE team_id = membership.team_id AND kind = 'private' AND owner_membership_id = membership.id AND lifecycle_state = 'active' LIMIT 1), 0),
+					COALESCE((SELECT id FROM memory_spaces WHERE team_id = membership.team_id AND kind = 'team_shared' LIMIT 1), '00000000-0000-0000-0000-000000000000'::uuid),
+					COALESCE((SELECT generation FROM memory_spaces WHERE team_id = membership.team_id AND kind = 'team_shared' LIMIT 1), 0),
 					membership.actor_identity_id, membership.team_id,
 				alias.legacy_owner_id, COALESCE(NULLIF(membership.sso_profile_name, ''), actor.display_name, ''),
 				membership.maximum_grants, CASE WHEN membership.team_admin THEN 'manager' ELSE 'member' END,

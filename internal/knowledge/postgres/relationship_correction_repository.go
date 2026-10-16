@@ -130,6 +130,9 @@ func (r *Store) correctRelationship(
 	var result *CorrectRelationshipResult
 	var committedErr error
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+		if err := authorizeRelationshipCorrection(ctx, tx, input); err != nil {
+			return err
+		}
 		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
@@ -209,6 +212,11 @@ func (r *Store) submitRelationshipCorrection(
 		}
 		return relationshipCorrectionResultFromRow(existing), nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	input, err = resolveRelationshipCorrectionHandles(ctx, tx, input)
+	if err != nil {
 		return nil, err
 	}
 
@@ -323,6 +331,13 @@ func (r *Store) confirmRelationshipCorrection(
 			return nil, ErrSemanticIdempotencyConflict
 		}
 	}
+	effective := input
+	effective.RelationshipID = row.RelationshipID
+	effective, err = resolveRelationshipCorrectionHandles(ctx, tx, effective)
+	if err != nil {
+		return nil, err
+	}
+	input.Selection = effective.Selection
 	if row.ProcessingState != "awaiting_confirmation" || row.ConfirmationRound != 0 {
 		return nil, ErrRelationshipCorrectionConfirmation
 	}

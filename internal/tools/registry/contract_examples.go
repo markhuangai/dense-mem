@@ -71,7 +71,7 @@ func contractExampleJSON(request map[string]any) string {
 func contractToolExamples() map[string]contractToolExample {
 	return map[string]contractToolExample{
 		ToolIngestSession: {
-			WhenToUse:     "Save incremental user-authored session events in the authenticated private binding. Send original events; Dense-Mem owns chunking, extraction, grounding, and atomic completion.",
+			WhenToUse:     "Save incremental user-authored session events in the authenticated private space. Send original events; Dense-Mem owns chunking, extraction, grounding, and atomic completion.",
 			Prerequisites: "The tool must appear in tools/list for an authorized private write credential. Create a fresh operation key and retain the complete request before sending it.",
 			Request: map[string]any{
 				"idempotency_key": newOperationKey, "framework": "generic", "app_name": "notes", "user_id": "external-user", "session_id": "external-session",
@@ -82,8 +82,9 @@ func contractToolExamples() map[string]contractToolExample {
 		},
 		ToolRemember: {
 			WhenToUse:     "Store exact evidence with required client Relationship proposals in one synchronous terminal operation. Every evidence item must be cited by a proposal through evidence_indices; the server owns grounding and acceptance. Use exactly one object shape: {\"object\":{\"entity\":{\"name\":\"PostgreSQL\",\"entity_kind\":\"product\"}}} or {\"object\":{\"value\":{\"type\":\"string\",\"value\":\"PostgreSQL\"}}}.",
-			Prerequisites: "Create a fresh operation key and retain this complete request before sending it.",
+			Prerequisites: "Choose target_space from the user intent: private for personal or automation memory, team_shared for shared team knowledge. Team-read-only callers can write only private memory. Create a fresh operation key and retain the complete request. Refresh tools/list after upgrading; requests without target_space are invalid, including historical retries.",
 			Request: map[string]any{
+				"target_space":    "private",
 				"idempotency_key": newOperationKey,
 				"evidence": []any{map[string]any{
 					"content":         "Dense-Mem stores durable knowledge in PostgreSQL.",
@@ -102,8 +103,8 @@ func contractToolExamples() map[string]contractToolExample {
 					"evidence_indices": []any{0},
 				}},
 			},
-			Result:     "The terminal result reports completed or failed processing. Stored evidence has an evidence_id; stored Relationship splits have relationship_id values.",
-			NextAction: "On retry_same_request, resend the unchanged entire original request, including metadata and idempotency_key. A deliberate changed operation is distinct from a retry: use a fresh key and never rotate a key to bypass a conflict.",
+			Result:     "The terminal result reports the selected space_kind and completed or failed processing. Stored evidence has an evidence_id; stored Relationship splits have relationship_id values.",
+			NextAction: "On retry_same_request, resend the unchanged entire original request, including target_space, metadata, and idempotency_key. A deliberate changed operation is distinct from a retry: use a fresh key and never rotate a key to bypass a conflict.",
 		},
 		ToolRetractEvidence: {
 			WhenToUse:     "Retract caller-owned evidence while preserving append-only provenance.",

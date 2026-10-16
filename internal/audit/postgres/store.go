@@ -44,9 +44,12 @@ func (s *Store) Append(ctx context.Context, entry contract.Entry) error {
 			lookup := entry.CredentialMemorySpaceLookup
 			var candidate sql.NullString
 			lookupErr := tx.WithContext(ctx).Raw(`
-					SELECT memory_space_id::text
-					FROM credentials
-					WHERE id = $1 AND team_id = $2
+					SELECT space.id::text
+					FROM credentials credential
+					JOIN team_memberships membership ON membership.team_id=credential.team_id AND membership.actor_identity_id=credential.actor_identity_id
+					JOIN memory_spaces space ON space.team_id=membership.team_id AND space.owner_membership_id=membership.id
+					WHERE credential.id=$1 AND credential.team_id=$2 AND space.kind='private' AND NOT space.migration_archive
+					ORDER BY space.created_at DESC,space.id LIMIT 1
 				`, lookup.CredentialID, lookup.TeamID).Row().Scan(&candidate)
 			if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
 				return lookupErr

@@ -125,7 +125,7 @@ func (r *Store) UpsertValue(ctx context.Context, input UpsertValueInput) (*Value
 			SELECT team_id::text, value_id::text, value_type, canonical_value,
 			       COALESCE(unit, ''), display, normalization_version, true AS existing
 			FROM value_records
-			WHERE team_id = ?::uuid
+			WHERE space_id = dense_mem_team_shared_space(team_id) AND team_id = ?::uuid
 			  AND value_type = ?
 			  AND canonical_value = ?
 			  AND unit IS NOT DISTINCT FROM NULLIF(?, '')
@@ -178,7 +178,7 @@ func selectValueByKey(ctx context.Context, tx *gorm.DB, input UpsertValueInput) 
 		SELECT team_id::text, value_id::text, value_type, canonical_value,
 		       COALESCE(unit, ''), display, normalization_version, true AS existing
 		FROM value_records
-		WHERE team_id = ?::uuid
+		WHERE space_id = dense_mem_team_shared_space(team_id) AND team_id = ?::uuid
 		  AND value_type = ?
 		  AND canonical_value = ?
 		  AND unit IS NOT DISTINCT FROM NULLIF(?, '')

@@ -99,7 +99,7 @@ func (r *Store) PlanRememberEmbeddings(
 			}
 			valueType, value, unit := "", "", ""
 			if observation.ObjectValue != nil {
-				projected, err := loadInlineEmbeddingValueProjection(ctx, tx, input.TeamID, *observation.ObjectValue)
+				projected, err := loadInlineEmbeddingValueProjection(ctx, tx, input.TeamID, input.SpaceID, *observation.ObjectValue)
 				if err != nil {
 					return err
 				}

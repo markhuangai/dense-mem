@@ -35,7 +35,7 @@ func TestBuildActiveWiresExecutableRemember(t *testing.T) {
 		"relationship_id":  correctionTargetID,
 		"expected_version": 2,
 	}
-	out, err := remember.Invoke(contractInvokeContext("write"), "ignored-profile", input)
+	out, err := remember.Invoke(contractInvokeContext("read", "write"), "ignored-profile", input)
 	if err != nil {
 		t.Fatalf("remember.Invoke: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestBuildActiveRememberCapturesCallerEnvelope(t *testing.T) {
 	require.True(t, ok)
 	input := validFlatRelationshipSubmission()
 	input["idempotency_key"] = "diagnostic-capture"
-	_, err = remember.Invoke(contractInvokeContext("write"), "ignored-profile", input)
+	_, err = remember.Invoke(contractInvokeContext("read", "write"), "ignored-profile", input)
 	require.NoError(t, err)
 	require.Contains(t, string(requestBody), `"name":"remember"`)
 	require.Contains(t, string(callerResponse), `"isError":true`)
@@ -110,7 +110,7 @@ func TestBuildActiveRememberRejectsTenantOverride(t *testing.T) {
 	if !ok {
 		t.Fatal("BuildActive did not register remember")
 	}
-	_, err = remember.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
+	_, err = remember.Invoke(contractInvokeContext("read", "write"), "ignored-profile", map[string]any{
 		"team_id": "attacker-team",
 		"evidence": []any{
 			map[string]any{"content": "remember this exact evidence"},
@@ -131,7 +131,7 @@ func TestBuildActiveRememberReturnsTypedDynamicValidation(t *testing.T) {
 	require.NoError(t, err)
 	remember, ok := reg.Get(ToolRemember)
 	require.True(t, ok)
-	_, err = remember.Invoke(contractInvokeContext("write"), "ignored-profile", validFlatRelationshipSubmission())
+	_, err = remember.Invoke(contractInvokeContext("read", "write"), "ignored-profile", validFlatRelationshipSubmission())
 	result, ok := ContractValidationResultFromError(err)
 	require.True(t, ok)
 	require.Equal(t, []ContractValidationIssue{{
@@ -139,27 +139,18 @@ func TestBuildActiveRememberReturnsTypedDynamicValidation(t *testing.T) {
 	}}, result.Issues)
 }
 
-func TestBuildActiveRememberRejectsReadOnlyCredential(t *testing.T) {
+func TestBuildActiveRememberAllowsTeamReadOnlyPrivateSubmission(t *testing.T) {
 	stub := &stubRememberService{}
 	reg, err := BuildActive(Dependencies{RememberBindings: RememberBindings{Service: stub}})
-	if err != nil {
-		t.Fatalf("BuildActive: %v", err)
-	}
-	remember, ok := reg.Get(ToolRemember)
-	if !ok {
-		t.Fatal("BuildActive did not register remember")
-	}
-	_, err = remember.Invoke(contractInvokeContext("read"), "ignored-profile", map[string]any{
-		"evidence": []any{
-			map[string]any{"content": "remember this exact evidence"},
-		},
-	})
-	if err == nil || !strings.Contains(err.Error(), "missing required scope") {
-		t.Fatalf("remember.Invoke err = %v, want missing scope rejection", err)
-	}
-	if len(stub.req.Evidence) != 0 {
-		t.Fatalf("remember service was called with read-only scopes: %#v", stub.req)
-	}
+	require.NoError(t, err)
+	tool, ok := reg.Get(ToolRemember)
+	require.True(t, ok)
+	input := validFlatRelationshipSubmission()
+	input["target_space"] = "private"
+	_, err = tool.Invoke(contractInvokeContext("read"), "ignored-profile", input)
+	require.NoError(t, err)
+	require.Equal(t, domain.MemorySpacePrivate, stub.req.TargetSpace)
+	require.Len(t, stub.req.Evidence, 1)
 }
 
 func TestBuildActiveWiresExecutableRecallMemory(t *testing.T) {

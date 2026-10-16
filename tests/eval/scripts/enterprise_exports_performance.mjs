@@ -54,7 +54,7 @@ export async function measure() {
       throw new Error(`performance request failed: tool=${name} phase=${phase} id=${id} correlation=${correlation} elapsed_ms=${Math.round(performance.now() - started)} status=${status ?? "unavailable"} kind=${kind}`);
     }
   }
-  const seed = { idempotency_key: "enterprise-export-perf-frozen-seed", evidence: [{ content: fixture.content, source_type: "manual" }], relationships: [{ ref: "durable-store", evidence_indices: [0], subject: { name: fixture.subject, entity_kind: "project" }, predicate: { proposed_key: fixture.predicate }, object: { value: { type: "string", value: fixture.value } }, polarity: "+" }] };
+  const seed = { target_space: "team_shared", idempotency_key: "enterprise-export-perf-frozen-seed", evidence: [{ content: fixture.content, source_type: "manual" }], relationships: [{ ref: "durable-store", evidence_indices: [0], subject: { name: fixture.subject, entity_kind: "project" }, predicate: { proposed_key: fixture.predicate }, object: { value: { type: "string", value: fixture.value } }, polarity: "+" }] };
   const remembered = await tool("remember", seed); assert.equal(remembered.processing_state, "completed");
   const relationshipID = remembered.relationship_results[0].splits[0].relationship_id;
   const actions = [(index) => tool("remember", seed), (index) => tool("recall_memory", { query: fixture.query }), async (index) => { const result = await tool("trace_memory", { relationship_id: relationshipID }); assert.equal(result.relationship.relationship_id, relationshipID); return result; }];

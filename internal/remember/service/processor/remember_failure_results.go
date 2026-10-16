@@ -37,6 +37,7 @@ func rememberConflictProcessError(
 	}
 	evidence, relationshipResults := rememberFailureResults(input, rememberapp.TerminalNotStoredReasonForError(rememberapp.TerminalErrorIdempotencyConflict))
 	status := &rememberapp.SubmissionStatusResult{
+		SpaceKind:       input.SpaceKind,
 		ContractVersion: domain.ContractVersion, SubmissionID: submissionID, SubmissionKind: "remember",
 		ProcessingState: "failed", SearchState: "not_required", CorrelationID: rememberProcessCorrelationID(input.Metadata),
 		Evidence: evidence, RelationshipResults: relationshipResults,

@@ -191,12 +191,13 @@ func (r *RLS) WithSystemReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, f
 
 func setAllowedSpaceIDs(tx *gorm.DB, ctx context.Context) error {
 	actor, ok := requestctx.ActorFromContext(ctx)
+	ownerID := ""
+	if ok && actor.OwnerID != uuid.Nil {
+		ownerID = actor.OwnerID.String()
+	}
 	spaces := requestctx.AllowedSpacesFromContext(ctx)
 	if ok {
 		spaces = append(spaces, actor.AllowedSpaces...)
-	}
-	if len(spaces) == 0 {
-		return tx.Exec("SELECT set_config('app.allowed_space_ids', '', true)").Error
 	}
 	ids := make([]string, 0, len(spaces))
 	seen := make(map[uuid.UUID]struct{}, len(spaces))
@@ -209,7 +210,7 @@ func setAllowedSpaceIDs(tx *gorm.DB, ctx context.Context) error {
 			ids = append(ids, space.ID.String())
 		}
 	}
-	return tx.Exec("SELECT set_config('app.allowed_space_ids', ?, true)", strings.Join(ids, ",")).Error
+	return tx.Exec("SELECT set_config('app.allowed_space_ids', ?, true), set_config('app.memory_owner_id', ?, true)", strings.Join(ids, ","), ownerID).Error
 }
 
 func (r *RLS) withReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) error {

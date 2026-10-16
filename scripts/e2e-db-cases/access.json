@@ -38,6 +38,20 @@
       "source": "internal/access/postgres/canonical_credentials_integration_test.go"
     },
     {
+      "id": "repository/TestCanonicalCredentialSecretMutationHydrationFailureRollsBack",
+      "package": "./internal/access/postgres",
+      "run": "^TestCanonicalCredentialSecretMutationHydrationFailureRollsBack$",
+      "phase": "precheck",
+      "source": "internal/access/postgres/canonical_credentials_integration_test.go"
+    },
+    {
+      "id": "repository/TestCanonicalSSOCredentialRefreshPreservesAuthorizationCeilings",
+      "package": "./internal/access/postgres",
+      "run": "^TestCanonicalSSOCredentialRefreshPreservesAuthorizationCeilings$",
+      "phase": "precheck",
+      "source": "internal/access/postgres/canonical_credentials_integration_test.go"
+    },
+    {
       "id": "repository/TestCanonicalSSOOwnedCredentialCollectionAndSpaces",
       "package": "./internal/access/postgres",
       "run": "^TestCanonicalSSOOwnedCredentialCollectionAndSpaces$",

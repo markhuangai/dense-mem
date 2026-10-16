@@ -269,6 +269,7 @@ func TestAuthMiddlewareOAuthBearerSetsImmutablePrincipal(t *testing.T) {
 	providerID := uuid.New()
 	actor := testSSOActor(teamID, identityID, membershipID, ownerID, &providerID, []string{"read"})
 	actor.Membership.MemorySpaceID = uuid.New()
+	actor.Membership.TeamSharedSpaceID = uuid.New()
 	authenticator := &stubOAuthBearerAuthenticator{actor: actor}
 	rawToken := "header.payload.signature"
 	e := newTestEcho()
@@ -286,8 +287,8 @@ func TestAuthMiddlewareOAuthBearerSetsImmutablePrincipal(t *testing.T) {
 		assert.Nil(t, principal.CredentialID)
 		assert.Equal(t, []string{"read"}, principal.Grants)
 		assert.Equal(t, []domain.MemorySpaceAccess{
-			{ID: uuid.Nil, Kind: domain.MemorySpaceTeamShared},
-			{ID: actor.Membership.MemorySpaceID, Kind: domain.MemorySpaceProfilePrivate},
+			{ID: actor.Membership.TeamSharedSpaceID, Kind: domain.MemorySpaceTeamShared},
+			{ID: actor.Membership.MemorySpaceID, Kind: domain.MemorySpacePrivate},
 		}, principal.AllowedSpaces)
 		assert.Empty(t, c.Request().Header.Get("Authorization"))
 		assert.Equal(t, []string{rawToken}, requestctx.AuthenticationSecretsFromContext(c.Request().Context()))

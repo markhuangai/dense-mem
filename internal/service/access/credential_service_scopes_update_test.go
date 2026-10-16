@@ -30,7 +30,7 @@ func TestCredentialServiceUpdateScopesForTeam(t *testing.T) {
 			Role:    CredentialRoleMember,
 		}
 		wantScopes := []string{CredentialScopeRead, CredentialScopeFeedbackRead}
-		mockRepo.On("GetByIDForTeam", ctx, profileID, keyID).Return(key, nil).Once()
+		mockRepo.On("GetByIDForTeam", ctx, profileID, keyID).Return(key, nil).Twice()
 		mockRepo.On("UpdateScopesForTeam", ctx, profileID, keyID, wantScopes).Return(int64(1), nil).Once()
 		mockAuditService.On("Append", ctx, mock.MatchedBy(func(entry AuditLogEntry) bool {
 			scopes, ok := entry.AfterPayload["scopes"].([]string)
@@ -64,7 +64,7 @@ func TestCredentialServiceUpdateScopesForTeam(t *testing.T) {
 			Role:    CredentialRoleManager,
 		}
 		wantScopes := []string{CredentialScopeRead, CredentialScopeWrite, CredentialScopeFeedbackRead}
-		mockRepo.On("GetByIDForTeam", ctx, profileID, keyID).Return(key, nil).Once()
+		mockRepo.On("GetByIDForTeam", ctx, profileID, keyID).Return(key, nil).Twice()
 		mockRepo.On("UpdateScopesForTeam", ctx, profileID, keyID, wantScopes).Return(int64(1), nil).Once()
 		mockAuditService.On("Append", ctx, mock.AnythingOfType("access.AuditLogEntry")).Return(nil).Once()
 

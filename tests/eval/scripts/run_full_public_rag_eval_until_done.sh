@@ -197,10 +197,26 @@ psql_eval() {
 
 count_fragments() {
   psql_eval "
-    SELECT count(DISTINCT metadata ->> 'source_doc_id')
-    FROM evidence_fragments
-    WHERE team_id = :'team_id'::uuid
-      AND COALESCE(metadata ->> 'source_doc_id', '') <> '';
+    SELECT count(DISTINCT source_doc_id) FROM (
+      SELECT fragment.metadata->>'source_doc_id' AS source_doc_id
+      FROM evidence_fragments fragment
+      WHERE fragment.team_id=:'team_id'::uuid
+        AND COALESCE(fragment.metadata->>'source_doc_id','')<>''
+        AND fragment.space_generation=dense_mem_active_space_generation(fragment.team_id,fragment.space_id)
+      UNION ALL
+      SELECT substring(attempt.idempotency_key FROM 6)
+      FROM remember_attempts attempt
+      WHERE attempt.team_id=:'team_id'::uuid AND attempt.submission_kind='remember'
+        AND attempt.idempotency_key LIKE 'eval:%' AND attempt.idempotency_key<>'eval:'
+        AND attempt.outcome='completed'
+        AND EXISTS (
+          SELECT 1 FROM jsonb_array_elements(attempt.public_result->'evidence') receipt
+          JOIN evidence_fragments fragment
+            ON fragment.team_id=attempt.team_id
+           AND fragment.fragment_id=NULLIF(receipt->>'evidence_id','')::uuid
+           AND fragment.space_generation=dense_mem_active_space_generation(fragment.team_id,fragment.space_id)
+        )
+    ) live_sources;
   "
 }
 

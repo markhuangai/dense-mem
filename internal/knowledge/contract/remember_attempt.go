@@ -64,6 +64,8 @@ type RememberAttempt struct {
 
 type RememberAttemptLookupInput struct {
 	TeamID, OwnerProfileID, IdempotencyKey string
+	SpaceID                                string
+	SpaceGeneration                        int64
 }
 
 type RememberAttemptLookup interface {

@@ -4,6 +4,15 @@
   "source_ownership": [
     {
       "path": "cmd/internal/serverapp/private_memory.go"
+    },
+    {
+      "path": "cmd/internal/serverapp/private_memory_preflight.go"
+    },
+    {
+      "path": "cmd/internal/serverapp/private_memory_migration.go"
+    },
+    {
+      "path": "cmd/internal/serverapp/private_memory_commands_integration_test.go"
     }
   ],
   "go": {

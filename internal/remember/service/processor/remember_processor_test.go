@@ -931,3 +931,14 @@ func rememberMetricsText(t testing.TB, metrics *observability.PrometheusMetrics)
 	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
 	return recorder.Body.String()
 }
+
+func (*rememberFailureLedgerStub) ResolveMemoryHandles(_ context.Context, _, _, _ string, handles map[string][]string) (map[string]map[string]string, error) {
+	result := map[string]map[string]string{}
+	for kind, ids := range handles {
+		result[kind] = map[string]string{}
+		for _, id := range ids {
+			result[kind][id] = id
+		}
+	}
+	return result, nil
+}

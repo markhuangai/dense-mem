@@ -70,6 +70,7 @@ class Evidence(TypedDict):
 
 
 class RememberRequest(TypedDict):
+    target_space: Literal["private", "team_shared"]
     idempotency_key: str
     evidence: list[Evidence]
     relationships: list[RelationshipProposal]

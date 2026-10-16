@@ -50,8 +50,8 @@ func TestRecallFeedbackAdditionalValidationBranches(t *testing.T) {
 
 	teamID, profileID, spaceID := uuid.New(), uuid.New(), uuid.New()
 	actor := requestctx.Actor{TeamID: teamID, OwnerID: profileID, AllowedSpaces: []domain.MemorySpaceAccess{
-		{ID: spaceID, Kind: domain.MemorySpaceProfilePrivate, Generation: 1},
-		{ID: spaceID, Kind: domain.MemorySpaceProfilePrivate, Generation: 2},
+		{ID: spaceID, Kind: domain.MemorySpacePrivate, Generation: 1},
+		{ID: spaceID, Kind: domain.MemorySpacePrivate, Generation: 2},
 	}}
 	ctx := requestctx.WithActor(context.Background(), actor)
 	if err := NewRecallFeedbackEventService(&recallFeedbackEventRepoStub{}, nil, nil).RecordRecallSnapshot(context.Background(), domain.RecallFeedbackEvent{RecallID: "no-space"}); err == nil {

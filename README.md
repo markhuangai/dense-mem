@@ -233,6 +233,75 @@ startup validation requires a complete provider configuration.
   synchronously within the request deadline; use the idempotency key to retry
   after a client timeout or transient provider failure.
 
+## Private and Team Memory
+
+Every API key has its own private space, including keys issued by an SSO user.
+An SSO user's browser sessions and OAuth tokens share that user's private space
+within the selected team. Keys and SSO sessions have separate private memory.
+
+The calling LLM must supply `target_space: "private"` or
+`target_space: "team_shared"` on every `remember` request. The target applies to
+the entire submission and participates in its idempotency hash. There is no
+default or redirection after a denied shared write. Authentication determines
+the actual space, team, and owner; clients cannot supply a destination ID.
+
+Team-read-only keys can remember, correct, retract, and erase their own private
+memory and use feature-gated private `ingest_session`. Shared mutations require
+current write permission and ownership of the affected records. Both portals
+show effective `memory_access.private.{read,write}` and
+`memory_access.team_shared.{read,write}`. Supplied `memory_binding` fields are
+rejected, including null and empty values.
+
+The contract remains `dense-mem.v2.7.0`. Existing prerelease clients must refresh
+`tools/list`. Targetless requests fail validation even on retries, including
+historical requests already labeled v2.7.0; stored payloads, hashes, and receipts
+are preserved.
+
+### Upgrade Existing Private History
+
+Use the matching binary and existing environment configuration. Preflight is
+read-only: it starts no server and applies no migrations.
+
+```bash
+go run ./cmd/server private-memory-preflight
+```
+
+1. Inspect the content-free report and resolve all blockers. Ambiguous writer
+   attribution and references outside the original legacy private space block
+   migration; do not repair them by guessing an owner.
+2. Schedule downtime, drain requests and workers, and stop every old instance.
+   Verify a restorable backup, then rerun preflight against that stopped state.
+3. Run the migration with the inspected `source_fingerprint`:
+
+   ```bash
+   go run ./cmd/server private-memory-migrate --maintenance-confirmed \
+     --source-fingerprint='<preflight-source-fingerprint>'
+   ```
+
+4. On interruption, keep instances stopped and resume the same command with the
+   retained fingerprint. Row work commits in bounded batches. Catalog and
+   constraint changes use maintenance locks; allow disk and WAL capacity for
+   necessary supporting copies and search rebuilding. Startup rejects partial
+   migration, and normal writes remain gated until completion.
+5. Start the matching binary after completion and verify readiness, isolation,
+   and effective capabilities before restoring traffic.
+
+Migration preserves shared history and splits private records by immutable
+writer. Necessary support copies retain provenance without adding independent
+corroboration; old handles resolve only within the authorized destination and
+generation. Mixed context is sealed, projections are rebuilt, and unfinished
+session checkpoints are recomputed from the original intake.
+
+Erasing a writer's private memory also purges its migration copies in other
+private spaces and invalidates dependent memories. Applicable legal holds block
+physical purge. Unaffected destination records survive with a new generation,
+which fences stale jobs; erased operation keys cannot restore content.
+
+Before accepting new writes, rollback requires restoring the verified backup
+and matching application/schema together with all instances stopped. After new
+writes, use forward recovery. Down does not discard history or restore legacy
+bindings. Production migration remains an operator-authorized action.
+
 ## Evidence Lifecycle
 
 `remember` durably stages exact evidence, completes provider validation and the
@@ -261,7 +330,7 @@ evidence content in one request is bounded to 20,000 Unicode code points before
 assessor boundary expansion; larger requests return `input_budget_exceeded`. The
 current public contract is `dense-mem.v2.7.0`; v2.6.8, v2.6.7, v2.6.6, v2.6.3, and
 v2.6.2 remain accepted for compatible terminal Remember replays. Historical
-requests lacking proposals or complete citations fail current validation even
+requests lacking an explicit target, proposals, or complete citations fail current validation even
 with their original keys; stored history is preserved.
 
 Dream generation, client hypothesis reads, confirmation, and legacy community

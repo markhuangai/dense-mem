@@ -24,7 +24,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"github.com/markhuangai/dense-mem/internal/storage/inmem"
-	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -172,10 +171,10 @@ func TestOntologyManagementDraftIsolationReplayAndRLS(t *testing.T) {
 	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM pg_class WHERE relname IN ('ontology_draft_heads','ontology_draft_revisions') AND relforcerowsecurity AND relrowsecurity`).Row().Scan(&forced))
 	require.Equal(t, 2, forced)
 	require.Error(t, f.admin.Exec(`UPDATE ontology_draft_revisions SET version=version+1`).Error)
-	migrator, err := storage.NewMigrator(f.admin)
-	require.NoError(t, err)
+	migrator := ontologyMigrationProvider(t, f.admin)
 	require.NoError(t, rollbackOntologySchemaTo(t, f.admin, 20261011220000))
-	require.ErrorContains(t, migrator.RunDown(context.Background()), "populated ontology draft history")
+	_, err = migrator.ApplyVersion(context.Background(), 20261011220000, false)
+	require.ErrorContains(t, err, "populated ontology draft history")
 	preview, err := service.Preview(ctx, draft.ID, draft.Version)
 	require.NoError(t, err)
 	require.Equal(t, 2, preview.ChangedRecords)
@@ -264,9 +263,9 @@ func TestOntologyManagementPrivateForeignAndStaleSources(t *testing.T) {
 	f := newOntologyFixture(t)
 	service := managementService(f)
 	ctx := f.actor(0, "manager")
-	private := &domain.Credential{ID: uuid.New(), TeamID: uuid.MustParse(f.team), Name: "private", KeyHash: "synthetic-private", KeyPrefix: strings.ReplaceAll(uuid.NewString(), "-", "")[:24], KeySuffix: "privat", Scopes: []string{"read", "write"}, MemoryBinding: domain.CredentialBindingCredentialPrivate}
+	private := &domain.Credential{ID: uuid.New(), TeamID: uuid.MustParse(f.team), Name: "private", KeyHash: "synthetic-private", KeyPrefix: strings.ReplaceAll(uuid.NewString(), "-", "")[:24], KeySuffix: "privat", Scopes: []string{"read", "write"}}
 	require.NoError(t, access.NewCredentialRepository(f.admin, f.rls, nil).CreateCredential(context.Background(), private))
-	privateContext := requestctx.WithAllowedSpaces(context.Background(), []domain.MemorySpaceAccess{{ID: private.MemorySpaceID, Kind: domain.MemorySpaceCredentialPrivate, Generation: private.MemorySpaceGeneration}})
+	privateContext := requestctx.WithAllowedSpaces(context.Background(), []domain.MemorySpaceAccess{{ID: private.MemorySpaceID, Kind: domain.MemorySpacePrivate, Generation: private.MemorySpaceGeneration}})
 	privateEvidence, err := f.knowledge.CreateIngestForTest(privateContext, knowledge.CreateIngestInput{TeamID: f.team, OwnerProfileID: private.ID.String(), SpaceID: private.MemorySpaceID.String(), SpaceGeneration: private.MemorySpaceGeneration, Evidence: []knowledge.EvidenceInput{{Content: "Private canary"}}})
 	require.NoError(t, err)
 	foreign := maintenanceOtherTeam(t, f)

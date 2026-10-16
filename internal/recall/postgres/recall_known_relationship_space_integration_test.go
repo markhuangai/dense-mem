@@ -5,7 +5,6 @@ package postgres
 import (
 	"context"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
-	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	"testing"
 
 	"github.com/google/uuid"
@@ -70,7 +69,7 @@ func TestRecallRelationshipsScopesKnownRelationshipGroupsToActiveSpace(t *testin
 	require.NotNil(t, second.Relationship)
 	require.Equal(t, first.Relationship.SemanticGroupKey, second.Relationship.SemanticGroupKey)
 
-	privateSpace, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureCredentialPrivate(ctx, teamID, uuid.New())
+	privateSpace, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, teamID, uuid.MustParse(ownerID))
 	require.NoError(t, err)
 	require.NotNil(t, privateSpace)
 	firstDoc, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
@@ -112,7 +111,7 @@ func TestRecallRelationshipsScopesKnownRelationshipGroupsToActiveSpace(t *testin
 	actorCtx := requestctx.WithActor(ctx, requestctx.Actor{
 		TeamID: teamID,
 		AllowedSpaces: []domain.MemorySpaceAccess{
-			{ID: privateSpace.ID, Kind: domain.MemorySpaceCredentialPrivate},
+			{ID: privateSpace.ID, Kind: domain.MemorySpacePrivate},
 		},
 	})
 
@@ -123,12 +122,12 @@ func TestRecallRelationshipsScopesKnownRelationshipGroupsToActiveSpace(t *testin
 		KnownRelationshipIDs: []string{first.Relationship.RelationshipID},
 		Limit:                5,
 		SpaceID:              privateSpace.ID.String(),
-		SpaceKind:            string(domain.MemorySpaceCredentialPrivate),
+		SpaceKind:            string(domain.MemorySpacePrivate),
 	})
 	require.NoError(t, err)
 	require.Len(t, recalled.Results, 1)
 	assert.Equal(t, second.Relationship.RelationshipID, recalled.Results[0].RelationshipID)
-	assert.Equal(t, string(domain.MemorySpaceCredentialPrivate), recalled.Results[0].SpaceKind)
+	assert.Equal(t, string(domain.MemorySpacePrivate), recalled.Results[0].SpaceKind)
 
 	sharedRecalled, err := searchRepo.RecallRelationships(actorCtx, RecallRelationshipsInput{
 		TeamID:               teamID.String(),

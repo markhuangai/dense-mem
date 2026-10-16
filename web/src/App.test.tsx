@@ -183,6 +183,24 @@ describe("App", () => {
     await waitFor(() => expect(screen.queryByText("******abc123")).not.toBeInTheDocument());
   });
 
+  it("shows effective private and team access independently of credential scopes", async () => {
+    const credential = {
+      ...keyA(),
+      memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: false } },
+    };
+    mockPortalFetch({ teams: [profileA], keys: [credential] });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    render(<App />);
+    await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("button", { name: /team credentials/i }));
+
+    const row = (await screen.findByText("******abc123")).closest("tr")!;
+    expect(within(row).getByText("Private: Read/write · Team-read-only")).toBeInTheDocument();
+    expect(within(row).queryByText("Team read/write")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Memory binding")).not.toBeInTheDocument();
+  });
+
   it("shows IP ban attempts and clears a ban with strikes reset", async () => {
     const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()], bans: [securityBan] });
     sessionStorage.setItem("denseMem.controlToken", "secret");

@@ -436,13 +436,14 @@ func upsertSemanticValue(
 		  AND canonical_value = ?
 		  AND unit IS NOT DISTINCT FROM NULLIF(?, '')
 		  AND normalization_version = ?
+          AND space_id = (SELECT space_id FROM knowledge_ingests WHERE team_id = ?::uuid AND ingest_id = ?::uuid AND owner_profile_id = ?::uuid)
 		LIMIT 1
 	`, commit.TeamID, input.ValueType, input.CanonicalValue, input.Unit, input.Display,
 		input.NormalizationVersion, string(metadata),
 		commit.TeamID, commit.IngestID, commit.OwnerProfileID,
 		commit.TeamID, commit.IngestID, commit.OwnerProfileID,
 		commit.TeamID, input.ValueType, input.CanonicalValue, input.Unit,
-		input.NormalizationVersion).Rows()
+		input.NormalizationVersion, commit.TeamID, commit.IngestID, commit.OwnerProfileID).Rows()
 	if err != nil {
 		return nil, err
 	}

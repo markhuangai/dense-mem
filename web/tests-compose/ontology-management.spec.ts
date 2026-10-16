@@ -8,7 +8,7 @@ const teamID = process.env.DENSE_MEM_E2E_TEAM_ID!;
 
 test("manager saves a cookie-authenticated draft across sign-out, handles a real conflict, previews and publishes", async ({ page, request }) => {
   async function credential(role: string) {
-    const response = await request.post(`${controlURL}/control/api/teams/${teamID}/credentials`, { headers: { Authorization: `Bearer ${controlToken}` }, data: { name: `ontology-browser-${randomUUID()}`, role, scopes: ["read", "write"], rate_limit: 300, memory_binding: "shared_only" } });
+    const response = await request.post(`${controlURL}/control/api/teams/${teamID}/credentials`, { headers: { Authorization: `Bearer ${controlToken}` }, data: { name: `ontology-browser-${randomUUID()}`, role, scopes: ["read", "write"], rate_limit: 300 } });
     expect(response.ok()).toBeTruthy(); return (await response.json()).data;
   }
   const manager = await credential("manager");
@@ -89,7 +89,7 @@ test("manager saves a cookie-authenticated draft across sign-out, handles a real
 });
 
 test("manager inspects sources, corrects grouping and classification, reverses history, and pins or unpins", async ({ page, request }) => {
-  const created = await request.post(`${controlURL}/control/api/teams/${teamID}/credentials`, { headers: { Authorization: `Bearer ${controlToken}` }, data: { name: `ontology-controls-${randomUUID()}`, role: "manager", scopes: ["read", "write"], rate_limit: 300, memory_binding: "shared_only" } });
+  const created = await request.post(`${controlURL}/control/api/teams/${teamID}/credentials`, { headers: { Authorization: `Bearer ${controlToken}` }, data: { name: `ontology-controls-${randomUUID()}`, role: "manager", scopes: ["read", "write"], rate_limit: 300 } });
   expect(created.status()).toBe(201);const manager=(await created.json()).data;
   const headers={Authorization:`Bearer ${manager.api_key}`};
   const topics=(await (await request.get(`${userURL}/ui/api/ontology/records?kind=topic&limit=200`,{headers})).json()).data.records;

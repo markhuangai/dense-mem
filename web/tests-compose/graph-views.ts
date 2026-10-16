@@ -237,9 +237,9 @@ async function assertGraphIsolation(
   seedAnchorID: string,
 ) {
   const fixtureID = `graph-isolation-${testInfo.project.name}-${testInfo.workerIndex}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const privateCredential = await createCredential(request, seedTeamID, `${fixtureID}-private`, "credential_private");
+  const privateCredential = await createCredential(request, seedTeamID, `${fixtureID}-private`);
   const foreignTeamID = await createTeam(request, `${fixtureID}-foreign`);
-  const foreignCredential = await createCredential(request, foreignTeamID, `${fixtureID}-foreign`, "credential_private");
+  const foreignCredential = await createCredential(request, foreignTeamID, `${fixtureID}-foreign`);
   const privateEntityName = `${fixtureID}-private-entity`;
   const foreignEntityName = `${fixtureID}-foreign-entity`;
 
@@ -288,11 +288,10 @@ async function createCredential(
   request: APIRequestContext,
   teamID: string,
   name: string,
-  memoryBinding: "credential_private",
 ): Promise<{ apiKey: string }> {
   const response = await request.post(`${controlUrl}/control/api/teams/${teamID}/credentials`, {
     headers: bearer(controlToken),
-    data: { name, scopes: ["read", "write"], rate_limit: 300, memory_binding: memoryBinding },
+    data: { name, scopes: ["read", "write"], rate_limit: 300 },
   });
   expect(response.status()).toBe(201);
   const body = await response.json() as { data?: { api_key?: string } };
@@ -307,6 +306,7 @@ async function rememberGraphEntity(
 ) {
   const objectName = `${entityName}-target`;
   const payload = await mcpToolPayload(request, apiKey, "remember", {
+    target_space: "private",
     idempotency_key: idempotencyKey,
     evidence: [{
       content: `${entityName} mentions ${objectName}.`,

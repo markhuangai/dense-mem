@@ -18,7 +18,8 @@ func contractInput(required []string, properties map[string]any) map[string]any 
 func rememberInputSchema() map[string]any {
 	relationships := relationshipSubmissionArraySchema()
 	relationships["minItems"] = 1
-	return contractInput([]string{"evidence", "relationships", "idempotency_key"}, map[string]any{
+	return contractInput([]string{"target_space", "evidence", "relationships", "idempotency_key"}, map[string]any{
+		"target_space":    schemaEnum([]string{"private", "team_shared"}),
 		"evidence":        evidenceArraySchema(),
 		"relationships":   relationships,
 		"idempotency_key": nonEmptyStringSchema("One batch retry key scoped to team and profile.", 128),
@@ -313,6 +314,7 @@ func exportMemoryPackInputSchema() map[string]any {
 
 func rememberOutputSchema() map[string]any {
 	properties := map[string]any{
+		"space_kind":           schemaEnum([]string{"private", "team_shared"}),
 		"contract_version":     schemaEnum(domain.AcceptedContractVersions()),
 		"submission_id":        schemaString("Submission ID.", 128),
 		"submission_kind":      schemaEnum([]string{"remember"}),
@@ -325,7 +327,7 @@ func rememberOutputSchema() map[string]any {
 		"warnings":             stringArraySchema("Bounded server diagnostics about optional assessor context.", 20, 512),
 	}
 	return closedObject(
-		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors"},
+		[]string{"contract_version", "space_kind", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors"},
 		properties,
 	)
 }
@@ -459,7 +461,7 @@ func relatedRelationshipSchema() map[string]any {
 			"polarity":                    schemaEnum([]string{"+", "-"}),
 			"evidence_ids":                stringArraySchema("Evidence ID supporting this Relationship.", 50, 128),
 			"search_state":                schemaEnum(domain.SearchProjectionStates()),
-			"space_kind":                  schemaEnum([]string{"team_shared", "profile_private", "credential_private"}),
+			"space_kind":                  schemaEnum([]string{"team_shared", "private"}),
 		},
 	)
 }
@@ -495,7 +497,7 @@ func recallResultSchema() map[string]any {
 			"equivalent_evidence_ids": stringArraySchema("Authorized alternate evidence source ID with equivalent complete content.", 20, 128),
 			"equivalents_truncated":   map[string]any{"type": "boolean"},
 			"context":                 schemaString("Bounded evidence context.", 2000),
-			"space_kind":              schemaEnum([]string{"team_shared", "profile_private", "credential_private"}),
+			"space_kind":              schemaEnum([]string{"team_shared", "private"}),
 		},
 	)
 }

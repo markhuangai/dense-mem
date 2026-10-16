@@ -25,14 +25,14 @@ func TestRecallFusesAuthorizedSpacesWithLabelsAndStablePrivateTieBreak(t *testin
 		TeamID: teamID, IdentityID: ownerID, MembershipID: ownerID, OwnerID: ownerID,
 		AllowedSpaces: []domain.MemorySpaceAccess{
 			{ID: sharedID, Kind: domain.MemorySpaceTeamShared},
-			{ID: privateID, Kind: domain.MemorySpaceCredentialPrivate},
+			{ID: privateID, Kind: domain.MemorySpacePrivate},
 		},
 	})
 
 	result, err := svc.Recall(ctx, RecallRequest{Query: "space query", RelationshipLimit: intPtr(0)})
 	require.NoError(t, err)
 	require.Len(t, result.Results, 2)
-	require.Equal(t, string(domain.MemorySpaceCredentialPrivate), result.Results[0].SpaceKind)
+	require.Equal(t, string(domain.MemorySpacePrivate), result.Results[0].SpaceKind)
 	require.Equal(t, string(domain.MemorySpaceTeamShared), result.Results[1].SpaceKind)
 	require.Equal(t, string(domain.SearchProjectionNotRequired), result.SearchStates.Relationships)
 	require.Equal(t, privateID.String(), search.inputs[0].SpaceID)
@@ -49,7 +49,7 @@ func TestRecallAcrossSpacesEmbedsQueryOnceAndReusesVector(t *testing.T) {
 		TeamID: teamID, IdentityID: ownerID, MembershipID: ownerID, OwnerID: ownerID,
 		AllowedSpaces: []domain.MemorySpaceAccess{
 			{ID: sharedID, Kind: domain.MemorySpaceTeamShared},
-			{ID: privateID, Kind: domain.MemorySpaceCredentialPrivate},
+			{ID: privateID, Kind: domain.MemorySpacePrivate},
 		},
 	})
 
@@ -73,7 +73,7 @@ func TestRecallAcrossSpacesReportsEmbeddingDegradationOnce(t *testing.T) {
 		TeamID: teamID, IdentityID: ownerID, MembershipID: ownerID, OwnerID: ownerID,
 		AllowedSpaces: []domain.MemorySpaceAccess{
 			{ID: sharedID, Kind: domain.MemorySpaceTeamShared},
-			{ID: privateID, Kind: domain.MemorySpaceCredentialPrivate},
+			{ID: privateID, Kind: domain.MemorySpacePrivate},
 		},
 	})
 
@@ -103,7 +103,7 @@ func TestFuseRecallResultsSumsRRFAndHonorsGlobalLimits(t *testing.T) {
 	private := &RecallResult{
 		SearchStates: RecallSearchStates{Evidence: string(domain.SearchProjectionFailed), Relationships: string(domain.SearchProjectionPending)},
 		Results: []RecallResultItem{
-			{EvidenceID: "private-1", Rank: 1, SpaceKind: string(domain.MemorySpaceCredentialPrivate)},
+			{EvidenceID: "private-1", Rank: 1, SpaceKind: string(domain.MemorySpacePrivate)},
 			{EvidenceID: "shared-1", Rank: 1, SpaceKind: string(domain.MemorySpaceTeamShared)},
 		},
 		RelatedRelationships: []RelatedRelationshipSummary{{RelationshipID: "rel-1", SpaceKind: string(domain.MemorySpaceTeamShared)}},
@@ -139,8 +139,8 @@ func TestFuseRecallResultsUsesBestRelationshipSummary(t *testing.T) {
 func TestFuseRecallResultsOrdersEqualScoresWithStrictSpaceTieBreak(t *testing.T) {
 	fused := fuseRecallResults([]*RecallResult{
 		{Results: []RecallResultItem{{EvidenceID: "shared", Rank: 1, SpaceKind: string(domain.MemorySpaceTeamShared)}}},
-		{Results: []RecallResultItem{{EvidenceID: "profile", Rank: 1, SpaceKind: string(domain.MemorySpaceProfilePrivate)}}},
-		{Results: []RecallResultItem{{EvidenceID: "credential", Rank: 1, SpaceKind: string(domain.MemorySpaceCredentialPrivate)}}},
+		{Results: []RecallResultItem{{EvidenceID: "profile", Rank: 1, SpaceKind: string(domain.MemorySpacePrivate)}}},
+		{Results: []RecallResultItem{{EvidenceID: "credential", Rank: 1, SpaceKind: string(domain.MemorySpacePrivate)}}},
 	}, 3, 0)
 
 	require.Equal(t, []string{"credential", "profile", "shared"}, []string{
@@ -188,7 +188,7 @@ func TestRecallPrivateBranchDoesNotExpandTeamGraph(t *testing.T) {
 		TeamID: teamID, IdentityID: ownerID, MembershipID: ownerID, OwnerID: ownerID,
 		AllowedSpaces: []domain.MemorySpaceAccess{
 			{ID: sharedID, Kind: domain.MemorySpaceTeamShared},
-			{ID: privateID, Kind: domain.MemorySpaceCredentialPrivate},
+			{ID: privateID, Kind: domain.MemorySpacePrivate},
 		},
 	})
 
@@ -233,7 +233,7 @@ func TestRecallPrivateBranchFailureIsBounded(t *testing.T) {
 		TeamID: teamID, IdentityID: ownerID, MembershipID: ownerID, OwnerID: ownerID,
 		AllowedSpaces: []domain.MemorySpaceAccess{
 			{ID: sharedID, Kind: domain.MemorySpaceTeamShared},
-			{ID: privateID, Kind: domain.MemorySpaceCredentialPrivate},
+			{ID: privateID, Kind: domain.MemorySpacePrivate},
 		},
 	})
 
@@ -260,7 +260,7 @@ func TestRecallSharedBranchFailureRemainsRequired(t *testing.T) {
 		TeamID: teamID, IdentityID: ownerID, MembershipID: ownerID, OwnerID: ownerID,
 		AllowedSpaces: []domain.MemorySpaceAccess{
 			{ID: sharedID, Kind: domain.MemorySpaceTeamShared},
-			{ID: privateID, Kind: domain.MemorySpaceCredentialPrivate},
+			{ID: privateID, Kind: domain.MemorySpacePrivate},
 		},
 	})
 

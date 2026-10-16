@@ -50,9 +50,12 @@ func (m *MockCredentialRepository) RevokeForTeam(ctx context.Context, profileID,
 	return args.Get(0).(int64), args.Error(1)
 }
 
-func (m *MockCredentialRepository) RotateForTeam(ctx context.Context, profileID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (int64, error) {
+func (m *MockCredentialRepository) RotateForTeam(ctx context.Context, profileID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (*domain.Credential, error) {
 	args := m.Called(ctx, profileID, id, keyHash, keyPrefix, keySuffix, expiresAt)
-	return args.Get(0).(int64), args.Error(1)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.Credential), args.Error(1)
 }
 
 func (m *MockCredentialRepository) UpdateNameForTeam(ctx context.Context, profileID, id uuid.UUID, name string) (int64, error) {
@@ -802,7 +805,8 @@ func TestCredentialServiceCreateCredentialErrorAndAuditBranches(t *testing.T) {
 		mockTeamService.On("Get", ctx, profileID).Return(&domain.Team{ID: profileID}, nil)
 		mockRepo.On("CountByTeam", ctx, profileID).Return(int64(1), nil)
 		mockRepo.On("CreateCredential", ctx, mock.AnythingOfType("*domain.Credential")).Run(func(args mock.Arguments) {
-			args.Get(1).(*domain.Credential).ID = uuid.New()
+			key := args.Get(1).(*domain.Credential)
+			key.ID = uuid.New()
 		}).Return(nil)
 		mockAuditService.On("CredentialCreated", ctx, mock.AnythingOfType("*string"), mock.AnythingOfType("string"), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("audit failed"))
 
@@ -893,7 +897,7 @@ func TestCredentialServiceRotateRevokeDeleteBranches(t *testing.T) {
 		svc := NewCredentialService(mockRepo, new(MockTeamService), mockAuditService, mockSessionInvalidator)
 		key := &domain.Credential{ID: keyID, TeamID: profileID, Name: "research", KeyHash: "old"}
 		mockRepo.On("GetByIDForTeam", ctx, profileID, keyID).Return(key, nil)
-		mockRepo.On("RotateForTeam", ctx, profileID, keyID, mock.AnythingOfType("string"), mock.AnythingOfType("string"), mock.AnythingOfType("string"), (*time.Time)(nil)).Return(int64(1), nil)
+		mockRepo.On("RotateForTeam", ctx, profileID, keyID, mock.AnythingOfType("string"), mock.AnythingOfType("string"), mock.AnythingOfType("string"), (*time.Time)(nil)).Return(key, nil)
 		mockSessionInvalidator.On("InvalidateCredentialSessions", ctx, profileID.String(), keyID.String()).Return(errors.New("redis failed"))
 		mockAuditService.On("Append", ctx, mock.MatchedBy(func(entry AuditLogEntry) bool {
 			return entry.Operation == "ROTATE_KEY" && entry.EntityType == "api_key"
@@ -922,7 +926,7 @@ func TestCredentialServiceRotateRevokeDeleteBranches(t *testing.T) {
 
 		key := &domain.Credential{ID: keyID, TeamID: profileID, Name: "research"}
 		mockRepo.On("GetByIDForTeam", ctx, profileID, keyID).Return(key, nil).Once()
-		mockRepo.On("RotateForTeam", ctx, profileID, keyID, mock.AnythingOfType("string"), mock.AnythingOfType("string"), mock.AnythingOfType("string"), (*time.Time)(nil)).Return(int64(0), nil).Once()
+		mockRepo.On("RotateForTeam", ctx, profileID, keyID, mock.AnythingOfType("string"), mock.AnythingOfType("string"), mock.AnythingOfType("string"), (*time.Time)(nil)).Return(nil, nil).Once()
 		updated, raw, err = svc.RotateForTeam(ctx, profileID, keyID, CreateCredentialRequest{}, nil, "system", "127.0.0.1", "corr")
 		require.Error(t, err)
 		require.Nil(t, updated)

@@ -19,7 +19,6 @@ import (
 	graphcontract "github.com/markhuangai/dense-mem/internal/graph/contract"
 	graphpostgres "github.com/markhuangai/dense-mem/internal/graph/postgres"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	rememberservice "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
@@ -195,7 +194,7 @@ func TestRememberIdentityCharacterizationRejectsPrivateAndInaccessibleReferences
 	knownPine := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "project", "Pine")
 	crossTeamEntity := createSemanticEntity(t, ctx, semantic, otherTeam, otherOwner, "product", "Harbor")
 
-	privateSpace, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureCredentialPrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerA))
+	privateSpace, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamID), uuid.MustParse(ownerA))
 	require.NoError(t, err)
 	var privateGeneration int64
 	privateEntityID, privateNameID := uuid.New(), uuid.New()

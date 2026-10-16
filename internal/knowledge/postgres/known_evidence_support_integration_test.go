@@ -151,9 +151,9 @@ func TestKnownEvidenceSupportPreservesABCOwnershipAndIsolation(t *testing.T) {
 		require.Error(t, err, actor.label)
 	}
 
-	privateSpace, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureProfilePrivate(ctx, uuid.MustParse(teamA), uuid.MustParse(ownerA))
+	privateSpace, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamA), uuid.MustParse(ownerA))
 	require.NoError(t, err)
-	privateCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{{ID: privateSpace.ID, Kind: domain.MemorySpaceProfilePrivate}})
+	privateCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{{ID: privateSpace.ID, Kind: domain.MemorySpacePrivate}})
 	private, err := createTestIngest(privateCtx, ledger, CreateIngestInput{
 		TeamID: teamA, OwnerProfileID: ownerA, SpaceID: privateSpace.ID.String(), SpaceGeneration: privateSpaceGeneration(t, ctx, adminDB, rls, privateSpace.ID),
 		IdempotencyKey: "known-support-private", RequestHash: "known-support-private-hash",
@@ -267,11 +267,11 @@ func TestKnownEvidenceSupportRejectsCrossSpacePrivateRelationship(t *testing.T) 
 	sharedSpace, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).GetTeamShared(ctx, uuid.MustParse(teamID))
 	require.NoError(t, err)
 	require.NotNil(t, sharedSpace)
-	privateSpace, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureProfilePrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerB))
+	privateSpace, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamID), uuid.MustParse(ownerB))
 	require.NoError(t, err)
 	privateCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{
 		{ID: sharedSpace.ID, Kind: domain.MemorySpaceTeamShared},
-		{ID: privateSpace.ID, Kind: domain.MemorySpaceProfilePrivate},
+		{ID: privateSpace.ID, Kind: domain.MemorySpacePrivate},
 	})
 	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerB, "project", "Cross-space Subject")
 	object := createSemanticEntity(t, ctx, semantic, teamID, ownerB, "product", "Cross-space Object")
@@ -613,10 +613,10 @@ func TestKnownEvidenceFenceFailsClosedWhenPrivateSpaceSeals(t *testing.T) {
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "known-support-space-lock-owner")
 	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
 	semantic := NewStore(appDB, rls, ConflictRuntimeConfig{})
-	privateSpace, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureProfilePrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
+	privateSpace, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
 	require.NoError(t, err)
 	generation := privateSpaceGeneration(t, ctx, adminDB, rls, privateSpace.ID)
-	privateCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{{ID: privateSpace.ID, Kind: domain.MemorySpaceProfilePrivate}})
+	privateCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{{ID: privateSpace.ID, Kind: domain.MemorySpacePrivate}})
 	known, err := createTestIngest(privateCtx, ledger, CreateIngestInput{
 		TeamID: teamID, OwnerProfileID: ownerID, SpaceID: privateSpace.ID.String(), SpaceGeneration: generation,
 		IdempotencyKey: "known-space-lock", RequestHash: "known-space-lock-hash",

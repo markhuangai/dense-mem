@@ -10,11 +10,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/markhuangai/dense-mem/internal/audit"
+	auditpostgres "github.com/markhuangai/dense-mem/internal/audit/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	privacycontract "github.com/markhuangai/dense-mem/internal/privacy/contract"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -30,44 +34,45 @@ func TestCanonicalSSOOwnedCredentialCollectionAndSpaces(t *testing.T) {
 	otherTeamOwnerID := createLedgerSSOIdentity(t, adminDB, rls, otherTeamID)
 
 	repo := NewCredentialRepository(appDB, rls, privacypostgres.NewCredentialDeletionRepository(appDB, rls))
-	profileA := createOwnedCredential(t, repo, teamID, ownerID, "profile-a", domain.CredentialBindingProfilePrivate)
-	profileB := createOwnedCredential(t, repo, teamID, ownerID, "profile-b", domain.CredentialBindingProfilePrivate)
-	credentialA := createOwnedCredential(t, repo, teamID, ownerID, "credential-a", domain.CredentialBindingCredentialPrivate)
-	credentialB := createOwnedCredential(t, repo, teamID, ownerID, "credential-b", domain.CredentialBindingCredentialPrivate)
-	shared := createOwnedCredential(t, repo, teamID, ownerID, "shared", domain.CredentialBindingSharedOnly)
+	profileA := createOwnedCredential(t, repo, teamID, ownerID, "profile-a")
+	profileB := createOwnedCredential(t, repo, teamID, ownerID, "profile-b")
+	credentialA := createOwnedCredential(t, repo, teamID, ownerID, "credential-a")
+	credentialB := createOwnedCredential(t, repo, teamID, ownerID, "credential-b")
+	shared := createOwnedCredential(t, repo, teamID, ownerID, "shared")
 
 	owned, err := repo.ListSSOOwnedCredentials(ctx, teamID, ownerID)
 	require.NoError(t, err)
 	require.Len(t, owned, 5)
 	_, err = repo.GetSSOOwnedCredential(ctx, teamID, ownerID)
 	require.ErrorContains(t, err, "multiple sso-owned api credentials")
-	require.Equal(t, profileA.MemorySpaceID, profileB.MemorySpaceID)
+	require.NotEqual(t, profileA.MemorySpaceID, profileB.MemorySpaceID)
 	require.NotEqual(t, credentialA.MemorySpaceID, credentialB.MemorySpaceID)
 	sharedLoaded := findCredentialByID(owned, shared.ID)
 	require.NotNil(t, sharedLoaded)
-	require.Equal(t, sharedLoaded.TeamSharedSpaceID, sharedLoaded.MemorySpaceID)
+	require.NotEqual(t, sharedLoaded.TeamSharedSpaceID, sharedLoaded.MemorySpaceID)
 
 	var privateSharedCount int
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Raw(`
 			SELECT count(*)
 			FROM memory_spaces
-			WHERE team_id = ? AND owner_credential_id = ?
-		`, teamID, shared.ID).Scan(&privateSharedCount).Error
+			WHERE team_id = ? AND owner_membership_id = ?
+		`, teamID, shared.MembershipID).Scan(&privateSharedCount).Error
 	}))
-	require.Zero(t, privateSharedCount)
+	require.Equal(t, 1, privateSharedCount)
 
 	rotatedPrefix := "dm_" + strings.ReplaceAll(credentialA.ID.String(), "-", "")[:20]
-	rows, err := repo.RotateForTeam(ctx, teamID, credentialA.ID, "rotated-hash", rotatedPrefix, "rot8ed", nil)
+	rotation, err := repo.RotateForTeam(ctx, teamID, credentialA.ID, "rotated-hash", rotatedPrefix, "rot8ed", nil)
 	require.NoError(t, err)
-	require.Equal(t, int64(1), rows)
+	require.NotNil(t, rotation)
+	require.Equal(t, credentialA.MemorySpaceID, rotation.MemorySpaceID)
 	rotated, err := repo.GetByIDForTeam(ctx, teamID, credentialA.ID)
 	require.NoError(t, err)
 	require.Equal(t, credentialA.ID, rotated.ID)
-	require.Equal(t, credentialA.MemoryBinding, rotated.MemoryBinding)
+	require.Equal(t, credentialA.MembershipID, rotated.MembershipID)
 	require.Equal(t, credentialA.MemorySpaceID, rotated.MemorySpaceID)
 
-	rows, err = repo.RevokeForTeam(ctx, teamID, profileB.ID)
+	rows, err := repo.RevokeForTeam(ctx, teamID, profileB.ID)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows)
 	owned, err = repo.ListSSOOwnedCredentials(ctx, teamID, ownerID)
@@ -102,7 +107,7 @@ func TestDeleteForTeamRetiresPromotedSSOCredentialPrivateSpace(t *testing.T) {
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "canonical-promoted-sso-delete"))
 	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credentialRepo := NewCredentialRepository(appDB, rls, privacypostgres.NewCredentialDeletionRepository(appDB, rls))
-	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "promoted", domain.CredentialBindingCredentialPrivate)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "promoted")
 	ingestID := seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, target.MemorySpaceID, "promoted private content")
 
 	rows, err := credentialRepo.UpdateRoleForTeam(ctx, teamID, target.ID, "manager", []string{"read", "write"})
@@ -157,8 +162,8 @@ func TestDeleteForTeamWithAuditCommitsBeforePrivateErasureQueue(t *testing.T) {
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "canonical-delete-audit-order"))
 	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credentialRepo := NewCredentialRepository(appDB, rls, privacypostgres.NewCredentialDeletionRepository(appDB, rls))
-	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "audit-order", domain.CredentialBindingCredentialPrivate)
-	rollbackTarget := createOwnedCredential(t, credentialRepo, teamID, ownerID, "audit-rollback", domain.CredentialBindingSharedOnly)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "audit-order")
+	rollbackTarget := createOwnedCredential(t, credentialRepo, teamID, ownerID, "audit-rollback")
 	seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, target.MemorySpaceID, "audit-order private content")
 
 	rows, err := credentialRepo.DeleteForTeamWithAudit(ctx, teamID, target.ID, privacycontract.CredentialDeletionAuditInput{
@@ -219,13 +224,13 @@ func TestDeleteForTeamWithAuditCommitsBeforePrivateErasureQueue(t *testing.T) {
 	require.Equal(t, "active", status)
 
 	t.Run("credential-private queue failure rolls back credential membership audit and queue", func(t *testing.T) {
-		queueFailureTarget := createOwnedCredential(t, credentialRepo, teamID, ownerID, "audit-queue-rollback", domain.CredentialBindingCredentialPrivate)
+		queueFailureTarget := createOwnedCredential(t, credentialRepo, teamID, ownerID, "audit-queue-rollback")
 		require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 			return tx.Exec(`
 				UPDATE memory_spaces
 				SET lifecycle_state = 'retired', retired_at = NOW()
-				WHERE id = ? AND team_id = ? AND owner_credential_id = ?
-			`, queueFailureTarget.MemorySpaceID, teamID, queueFailureTarget.ID).Error
+				WHERE id = ? AND team_id = ? AND owner_membership_id = ?
+			`, queueFailureTarget.MemorySpaceID, teamID, queueFailureTarget.MembershipID).Error
 		}))
 
 		_, err := credentialRepo.DeleteForTeamWithAudit(ctx, teamID, queueFailureTarget.ID, privacycontract.CredentialDeletionAuditInput{
@@ -301,6 +306,12 @@ func createLedgerSSOIdentity(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS
 		`, membershipID, identityID, teamID, providerID, now, now).Error; err != nil {
 			return err
 		}
+		if err := tx.Exec(`INSERT INTO sso_group_mappings(provider_id,team_id,group_id,scopes) VALUES(?,?,'test-group',ARRAY['read','write'])`, providerID, teamID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`INSERT INTO sso_entitlement_cache(provider_id,subject,groups,status,checked_at,expires_at) VALUES(?,?,ARRAY['test-group'],'active',now(),now()+interval '1 hour')`, providerID, "subject-"+identityID.String()).Error; err != nil {
+			return err
+		}
 		return tx.Exec(`
 			INSERT INTO membership_grants (membership_id, grant_name, source)
 			VALUES (?, 'read', 'explicit'), (?, 'write', 'explicit')
@@ -309,7 +320,7 @@ func createLedgerSSOIdentity(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS
 	return identityID
 }
 
-func createOwnedCredential(t *testing.T, repo *CredentialRepositoryImpl, teamID, ownerID uuid.UUID, name string, binding domain.CredentialMemoryBinding) *domain.Credential {
+func createOwnedCredential(t *testing.T, repo *CredentialRepositoryImpl, teamID, ownerID uuid.UUID, name string) *domain.Credential {
 	t.Helper()
 	id := uuid.New()
 	prefix := "dm_" + strings.ReplaceAll(id.String(), "-", "")[:20]
@@ -323,7 +334,6 @@ func createOwnedCredential(t *testing.T, repo *CredentialRepositoryImpl, teamID,
 		Scopes:          []string{"read", "write"},
 		RateLimit:       60,
 		OwnerIdentityID: &ownerID,
-		MemoryBinding:   binding,
 	}
 	require.NoError(t, repo.CreateCredential(context.Background(), credential))
 	return credential
@@ -359,6 +369,69 @@ func TestCanonicalCredentialScopesRespectMembershipGrants(t *testing.T) {
 	require.NotNil(t, key)
 	require.Equal(t, []string{"read", "write"}, key.Scopes)
 
+	auditService := audit.New(auditpostgres.NewStore(appDB, rls))
+	teamService := accessservice.NewTeamService(NewTeamRepository(appDB, rls), auditService, nil)
+	service := accessservice.NewCredentialService(repo, teamService, auditService, nil)
+	teamUUID, credentialID := uuid.MustParse(teamID), uuid.MustParse(profileID)
+	expiredAt := time.Now().Add(-time.Hour)
+	expired, raw, err := service.CreateCredential(ctx, teamUUID, accessservice.CreateCredentialRequest{
+		Name: "expired-grant-response", Role: "member", Scopes: []string{"read", "write"}, ExpiresAt: &expiredAt,
+	}, nil, "control", "127.0.0.1", "expired-create")
+	require.NoError(t, err)
+	require.NotEmpty(t, raw)
+	assert.False(t, expired.MemoryCapabilities().Private.Read)
+	assert.False(t, expired.MemoryCapabilities().Private.Write)
+	assert.False(t, expired.MemoryCapabilities().TeamShared.Read)
+	assert.False(t, expired.MemoryCapabilities().TeamShared.Write)
+	require.Empty(t, expired.KeyHash)
+	storedExpired, err := service.GetByIDForTeam(ctx, teamUUID, expired.ID)
+	require.NoError(t, err)
+	require.Empty(t, storedExpired.EffectiveMemoryGrants)
+	rotated, raw, err := service.RotateForTeam(ctx, teamUUID, expired.ID, accessservice.CreateCredentialRequest{}, nil, "control", "127.0.0.1", "expired-rotate")
+	require.NoError(t, err)
+	require.NotEmpty(t, raw)
+	assert.True(t, rotated.MemoryCapabilities().Private.Read)
+	assert.True(t, rotated.MemoryCapabilities().Private.Write)
+	assert.True(t, rotated.MemoryCapabilities().TeamShared.Read)
+	assert.True(t, rotated.MemoryCapabilities().TeamShared.Write)
+	require.Equal(t, expired.ID, rotated.ID)
+	require.Equal(t, expired.MembershipID, rotated.MembershipID)
+	require.Equal(t, expired.MemorySpaceID, rotated.MemorySpaceID)
+	require.Equal(t, expired.MemorySpaceGeneration, rotated.MemorySpaceGeneration)
+	require.Nil(t, rotated.ExpiresAt)
+	require.Empty(t, rotated.KeyHash)
+
+	updated, err := service.UpdateScopesForTeam(ctx, teamUUID, credentialID, []string{"read"}, nil, "control", "127.0.0.1", "scope-downgrade")
+	require.NoError(t, err)
+	require.True(t, updated.MemoryCapabilities().Private.Write)
+	require.False(t, updated.MemoryCapabilities().TeamShared.Write)
+	require.Empty(t, updated.KeyHash)
+
+	updated, err = service.UpdateRoleForTeam(ctx, teamUUID, credentialID, "manager", nil, "control", "127.0.0.1", "role-promotion")
+	require.NoError(t, err)
+	require.True(t, updated.MemoryCapabilities().Private.Write)
+	require.True(t, updated.MemoryCapabilities().TeamShared.Write)
+	require.Equal(t, "manager", updated.Role)
+	require.Empty(t, updated.KeyHash)
+
+	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamUUID)
+	owned := createOwnedCredential(t, repo, teamUUID, ownerID, "read-only-owner-key")
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE team_memberships SET maximum_grants = ARRAY['read']::text[] WHERE team_id = ? AND actor_identity_id = ?`, teamUUID, ownerID).Error
+	}))
+	updated, err = service.UpdateScopesForTeam(ctx, teamUUID, owned.ID, []string{"read"}, nil, "control", "127.0.0.1", "owned-scope-downgrade")
+	require.NoError(t, err)
+	updated, err = service.UpdateScopesForTeam(ctx, teamUUID, owned.ID, []string{"read", "write"}, nil, "control", "127.0.0.1", "owned-scope-upgrade")
+	require.NoError(t, err)
+	require.True(t, updated.MemoryCapabilities().Private.Write)
+	require.False(t, updated.MemoryCapabilities().TeamShared.Write)
+	updated, err = service.UpdateRoleForTeam(ctx, teamUUID, owned.ID, "manager", nil, "control", "127.0.0.1", "owned-role-promotion")
+	require.NoError(t, err)
+	require.True(t, updated.MemoryCapabilities().Private.Write)
+	require.False(t, updated.MemoryCapabilities().TeamShared.Write)
+	require.Equal(t, []string{"read", "write"}, updated.Scopes)
+	require.Equal(t, []string{"read"}, updated.EffectiveMemoryGrants)
+
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			DELETE FROM membership_grants
@@ -386,6 +459,88 @@ func TestCanonicalCredentialScopesRespectMembershipGrants(t *testing.T) {
 	require.Nil(t, key)
 }
 
+func TestCanonicalCredentialSecretMutationHydrationFailureRollsBack(t *testing.T) {
+	for _, operation := range []string{"create", "rotate"} {
+		t.Run(operation, func(t *testing.T) {
+			adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+			defer cleanup()
+			ctx := context.Background()
+			teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "secret-projection-failure"))
+			repo := NewCredentialRepository(appDB, rls, privacypostgres.NewCredentialDeletionRepository(appDB, rls))
+			auditService := audit.New(auditpostgres.NewStore(appDB, rls))
+			service := accessservice.NewCredentialService(repo, accessservice.NewTeamService(NewTeamRepository(appDB, rls), auditService, nil), auditService, nil)
+			req := accessservice.CreateCredentialRequest{Name: "projection-failure", Role: "member", Scopes: []string{"read", "write"}}
+			var existing *domain.Credential
+			var oldHash, oldPrefix string
+			if operation == "rotate" {
+				var err error
+				existing, _, err = service.CreateCredential(ctx, teamID, req, nil, "control", "127.0.0.1", "before-projection-failure")
+				require.NoError(t, err)
+				require.NoError(t, adminDB.Raw(`SELECT key_hash,key_prefix FROM credentials WHERE id=?`, existing.ID).Row().Scan(&oldHash, &oldPrefix))
+			}
+
+			// Ordinary API-client writes do not read SSO metadata, so this isolates the required projection read.
+			require.NoError(t, adminDB.Exec(`
+				CREATE FUNCTION test_credential_projection_failure() RETURNS trigger
+				LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+				BEGIN
+					EXECUTE format('REVOKE SELECT ON TABLE public.sso_identities FROM %I',session_user);
+					RETURN NEW;
+				END $$;
+				CREATE TRIGGER test_credential_projection_failure AFTER INSERT OR UPDATE ON credentials
+				FOR EACH ROW WHEN (NEW.name='projection-failure') EXECUTE FUNCTION test_credential_projection_failure();
+			`).Error)
+			defer func() {
+				require.NoError(t, adminDB.Exec(`
+					DROP TRIGGER test_credential_projection_failure ON credentials;
+					DROP FUNCTION test_credential_projection_failure();
+					GRANT SELECT ON sso_identities TO densemem_rls_test;
+				`).Error)
+			}()
+
+			var result *domain.Credential
+			var raw string
+			var err error
+			if operation == "create" {
+				result, raw, err = service.CreateCredential(ctx, teamID, req, nil, "control", "127.0.0.1", "create-projection-failure")
+			} else {
+				result, raw, err = service.RotateForTeam(ctx, teamID, existing.ID, accessservice.CreateCredentialRequest{}, nil, "control", "127.0.0.1", "rotate-projection-failure")
+			}
+			require.ErrorContains(t, err, "permission denied")
+			require.True(t, result == nil, "failed mutation returned a credential")
+			require.True(t, raw == "", "failed mutation returned bearer material")
+
+			if operation == "create" {
+				var credentials, identities, spaces int
+				require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+					return tx.Raw(`SELECT
+						(SELECT count(*) FROM credentials WHERE team_id=? AND name=?),
+						(SELECT count(*) FROM actor_identities WHERE team_id=? AND display_name=?),
+						(SELECT count(*) FROM memory_spaces s JOIN team_memberships m ON m.id=s.owner_membership_id
+						 JOIN actor_identities a ON a.id=m.actor_identity_id WHERE s.team_id=? AND a.display_name=? AND s.kind='private')
+					`, teamID, req.Name, teamID, req.Name, teamID, req.Name).Row().Scan(&credentials, &identities, &spaces)
+				}))
+				assert.Zero(t, credentials, "failed creation committed an undisclosed credential")
+				assert.Zero(t, identities, "failed creation committed an identity")
+				assert.Zero(t, spaces, "failed creation committed a private space")
+			} else {
+				var currentHash, currentPrefix string
+				require.NoError(t, adminDB.Raw(`SELECT key_hash,key_prefix FROM credentials WHERE id=?`, existing.ID).Row().Scan(&currentHash, &currentPrefix))
+				assert.True(t, currentHash == oldHash && currentPrefix == oldPrefix, "failed rotation invalidated the existing secret")
+			}
+			var canRead bool
+			require.NoError(t, adminDB.Raw(`SELECT has_table_privilege(?, 'public.sso_identities', 'SELECT')`, ledgerTestRole).Row().Scan(&canRead))
+			assert.True(t, canRead, "projection failure did not roll back the write transaction")
+			require.NoError(t, adminDB.Exec(`GRANT SELECT ON sso_identities TO densemem_rls_test`).Error)
+			if operation == "rotate" {
+				active, err := repo.GetActiveByPrefix(ctx, oldPrefix)
+				require.NoError(t, err)
+				assert.True(t, active != nil, "existing credential no longer authenticates after failed rotation")
+			}
+		})
+	}
+}
+
 func TestCanonicalCredentialLifecycleRetainsDisabledIdentity(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -404,9 +559,8 @@ func TestCanonicalCredentialLifecycleRetainsDisabledIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, active)
 	require.Equal(t, []string{"read", "write"}, active.Scopes)
-	require.Equal(t, domain.CredentialBindingSharedOnly, active.MemoryBinding)
 	require.NotEqual(t, uuid.Nil, active.MemorySpaceID)
-	require.Equal(t, active.MemorySpaceID, active.TeamSharedSpaceID)
+	require.NotEqual(t, active.MemorySpaceID, active.TeamSharedSpaceID)
 
 	rows, err := repo.UpdateNameForTeam(ctx, teamID, keyID, "renamed-key")
 	require.NoError(t, err)
@@ -419,21 +573,19 @@ func TestCanonicalCredentialLifecycleRetainsDisabledIdentity(t *testing.T) {
 	require.Equal(t, "renamed-key", loaded.Name)
 	require.Equal(t, "manager", loaded.Role)
 	require.Equal(t, []string{"read", "feedback:read"}, loaded.Scopes)
-	require.Equal(t, domain.CredentialBindingSharedOnly, loaded.MemoryBinding)
 	require.Equal(t, active.MemorySpaceID, loaded.MemorySpaceID)
 	require.Equal(t, active.TeamSharedSpaceID, loaded.TeamSharedSpaceID)
 
 	listed, err := repo.ListByTeam(ctx, teamID, 100, 0)
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
-	require.Equal(t, domain.CredentialBindingSharedOnly, listed[0].MemoryBinding)
 	require.Equal(t, active.MemorySpaceID, listed[0].MemorySpaceID)
 	require.Equal(t, active.TeamSharedSpaceID, listed[0].TeamSharedSpaceID)
 
 	rotatedPrefix := "dm_rotated_" + keyID.String()[:13]
-	rows, err = repo.RotateForTeam(ctx, teamID, keyID, "rotated-hash", rotatedPrefix, "rotate", nil)
+	rotation, err := repo.RotateForTeam(ctx, teamID, keyID, "rotated-hash", rotatedPrefix, "rotate", nil)
 	require.NoError(t, err)
-	require.Equal(t, int64(1), rows)
+	require.NotNil(t, rotation)
 	require.NoError(t, repo.TouchLastUsedBatch(ctx, []LastUsedUpdate{{ID: keyID, At: time.Now().UTC()}}))
 	active, err = repo.GetActiveByPrefix(ctx, rotatedPrefix)
 	require.NoError(t, err)
@@ -447,9 +599,9 @@ func TestCanonicalCredentialLifecycleRetainsDisabledIdentity(t *testing.T) {
 	active, err = repo.GetActiveByPrefix(ctx, rotatedPrefix)
 	require.NoError(t, err)
 	require.Nil(t, active)
-	rows, err = repo.RotateForTeam(ctx, teamID, keyID, "restored-hash", rotatedPrefix, "stored", nil)
+	rotation, err = repo.RotateForTeam(ctx, teamID, keyID, "restored-hash", rotatedPrefix, "stored", nil)
 	require.NoError(t, err)
-	require.Equal(t, int64(0), rows)
+	require.Nil(t, rotation)
 
 	rows, err = repo.DeleteForTeam(ctx, teamID, keyID)
 	require.NoError(t, err)
@@ -550,9 +702,9 @@ func TestCanonicalCredentialRevocationPreservesSharedActorAcrossTeams(t *testing
 	require.NoError(t, err)
 	require.NotNil(t, activeB)
 
-	rows, err = repo.RotateForTeam(ctx, teamA, keyA, "shared-actor-hash-a-restored", "dm_"+keyA.String()[:20], "restor", nil)
+	rotation, err := repo.RotateForTeam(ctx, teamA, keyA, "shared-actor-hash-a-restored", "dm_"+keyA.String()[:20], "restor", nil)
 	require.NoError(t, err)
-	require.Equal(t, int64(0), rows)
+	require.Nil(t, rotation)
 	rows, err = repo.DeleteForTeam(ctx, teamA, keyA)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows)
@@ -573,4 +725,127 @@ func TestCanonicalCredentialRevocationPreservesSharedActorAcrossTeams(t *testing
 	require.True(t, actorActive)
 	require.Equal(t, "active", teamBMembershipStatus)
 	require.Equal(t, "active", teamBCredentialStatus)
+}
+
+type canonicalSSORefreshGroups struct {
+	calls  int
+	groups []string
+	err    error
+}
+
+func (r *canonicalSSORefreshGroups) ResolveGroups(context.Context, domain.SSOProvider, string, string) ([]string, error) {
+	r.calls++
+	if r.err != nil {
+		return nil, r.err
+	}
+	if r.groups != nil {
+		return r.groups, nil
+	}
+	return []string{"test-group"}, nil
+}
+func TestCanonicalSSOCredentialRefreshPreservesAuthorizationCeilings(t *testing.T) {
+	admin, app, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	team := uuid.MustParse(createLedgerTeam(t, admin, rls, "cache-refresh-auth"))
+	owner := createLedgerSSOIdentity(t, admin, rls, team)
+	repo := NewCredentialRepository(app, rls, nil)
+	credential := createOwnedCredential(t, repo, team, owner, "cache-refresh-key")
+	ssoRepo := NewSSORepository(app, rls)
+	for _, lookup := range []string{"prefix", "portal_id"} {
+		t.Run(lookup, func(t *testing.T) {
+			require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
+				return tx.Exec(`UPDATE sso_entitlement_cache SET expires_at=now()-interval '1 second' WHERE subject=?`, "subject-"+owner.String()).Error
+			}))
+			metadata, err := repo.GetByIDForTeam(ctx, team, credential.ID)
+			require.NoError(t, err)
+			require.Empty(t, metadata.EffectiveMemoryGrants, "metadata remains conservative before entitlement refresh")
+			var loaded *domain.Credential
+			if lookup == "prefix" {
+				loaded, err = repo.GetActiveByPrefix(ctx, credential.KeyPrefix)
+			} else {
+				loaded, err = repo.GetActiveByID(ctx, credential.ID)
+			}
+			require.NoError(t, err)
+			require.NotNil(t, loaded)
+			resolver := &canonicalSSORefreshGroups{}
+			validator := accessservice.NewSSOService(ssoRepo, accessservice.SSOConfig{GroupResolver: resolver, EntitlementCacheTTL: time.Minute})
+			validated, err := validator.ValidateCredential(ctx, loaded)
+			assert.NoError(t, err, "a successful refresh must not intersect with expired-cache empty scopes")
+			if assert.NotNil(t, validated) {
+				assert.Equal(t, []string{"read", "write"}, validated.Scopes)
+				assert.True(t, validated.MemoryCapabilities().Private.Write)
+				assert.True(t, validated.MemoryCapabilities().TeamShared.Write)
+			}
+			assert.Equal(t, 1, resolver.calls)
+			cache, err := ssoRepo.GetEntitlementCache(ctx, *loaded.SSOProviderID, loaded.SSOSubject)
+			require.NoError(t, err)
+			require.NotNil(t, cache)
+			assert.Equal(t, "active", cache.Status)
+			assert.True(t, cache.ExpiresAt.After(time.Now()))
+		})
+	}
+	for _, failure := range []string{"provider_unavailable", "unmapped_group"} {
+		t.Run(failure, func(t *testing.T) {
+			require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
+				return tx.Exec(`UPDATE sso_entitlement_cache SET expires_at=now()-interval '1 second' WHERE subject=?`, "subject-"+owner.String()).Error
+			}))
+			loaded, err := repo.GetActiveByPrefix(ctx, credential.KeyPrefix)
+			require.NoError(t, err)
+			require.NotNil(t, loaded)
+			resolver := &canonicalSSORefreshGroups{groups: []string{"unmapped"}}
+			want := accessservice.ErrSSOAccessDenied
+			if failure == "provider_unavailable" {
+				resolver.err = accessservice.ErrSSOGroupRefreshUnavailable
+				want = accessservice.ErrSSOEntitlementRefreshStale
+			}
+			validator := accessservice.NewSSOService(ssoRepo, accessservice.SSOConfig{GroupResolver: resolver, EntitlementCacheTTL: time.Minute})
+			validated, err := validator.ValidateCredential(ctx, loaded)
+			require.ErrorIs(t, err, want)
+			require.Nil(t, validated)
+		})
+	}
+	require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE sso_entitlement_cache SET expires_at=now()-interval '1 second' WHERE subject=?`, "subject-"+owner.String()).Error
+	}))
+
+	t.Run("owner_ceiling", func(t *testing.T) {
+		require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
+			return tx.Exec(`UPDATE team_memberships SET maximum_grants=ARRAY['read']::text[] WHERE team_id=? AND actor_identity_id=?`, team, owner).Error
+		}))
+		loaded, err := repo.GetActiveByPrefix(ctx, credential.KeyPrefix)
+		require.NoError(t, err)
+		require.NotNil(t, loaded)
+		validator := accessservice.NewSSOService(ssoRepo, accessservice.SSOConfig{GroupResolver: &canonicalSSORefreshGroups{}, EntitlementCacheTTL: time.Minute})
+		validated, err := validator.ValidateCredential(ctx, loaded)
+		require.NoError(t, err)
+		require.NotNil(t, validated)
+		assert.Equal(t, []string{"read"}, validated.Scopes, "owner membership ceiling remains authoritative even when group mapping grants write")
+		assert.True(t, validated.MemoryCapabilities().Private.Write)
+		assert.False(t, validated.MemoryCapabilities().TeamShared.Write)
+	})
+
+	t.Run("fresh_projection_failure", func(t *testing.T) {
+		loaded, err := repo.GetActiveByPrefix(ctx, credential.KeyPrefix)
+		require.NoError(t, err)
+		require.NotNil(t, loaded)
+		require.NoError(t, admin.Exec("REVOKE SELECT ON credentials FROM "+ledgerTestRole).Error)
+		defer func() { require.NoError(t, admin.Exec("GRANT SELECT ON credentials TO "+ledgerTestRole).Error) }()
+		validator := accessservice.NewSSOService(ssoRepo, accessservice.SSOConfig{})
+		validated, err := validator.ValidateCredential(ctx, loaded)
+		require.ErrorContains(t, err, "permission denied for table credentials")
+		require.Nil(t, validated)
+	})
+	t.Run("key_revoked_after_lookup", func(t *testing.T) {
+		loaded, err := repo.GetActiveByPrefix(ctx, credential.KeyPrefix)
+		require.NoError(t, err)
+		require.NotNil(t, loaded)
+		require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
+			return tx.Exec(`UPDATE credentials SET status='revoked', revoked_at=now() WHERE id=?`, credential.ID).Error
+		}))
+		validator := accessservice.NewSSOService(ssoRepo, accessservice.SSOConfig{})
+		validated, err := validator.ValidateCredential(ctx, loaded)
+		require.ErrorIs(t, err, accessservice.ErrSSOAccessDenied)
+		require.Nil(t, validated)
+	})
 }

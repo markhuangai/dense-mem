@@ -97,17 +97,9 @@ func duplicateTeamSharedSpace(t *testing.T, db *gorm.DB, rls rLSHelper, teamID s
 
 func duplicatePrivateSpace(t *testing.T, db *gorm.DB, rls rLSHelper, teamID, ownerID string) (string, int64) {
 	t.Helper()
-	spaceID := uuid.NewString()
-	require.NoError(t, rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
-		return tx.Exec(`
-			INSERT INTO memory_spaces (id, team_id, kind, owner_profile_id)
-			VALUES (?::uuid, ?::uuid, 'profile_private', ?::uuid)
-		`, spaceID, teamID, ownerID).Error
-	}))
-	var generation int64
-	require.NoError(t, rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
-		return tx.Raw(`SELECT generation FROM memory_spaces WHERE team_id = ?::uuid AND id = ?::uuid`, teamID, spaceID).Row().Scan(&generation)
-	}))
+	space, err := ensurePrivateSpaceForOwner(t, db, rls, context.Background(), uuid.MustParse(teamID), uuid.MustParse(ownerID))
+	require.NoError(t, err)
+	spaceID, generation := space.ID.String(), space.Generation
 	return spaceID, generation
 }
 
@@ -846,7 +838,7 @@ func TestRememberDuplicateExactReuseRejectsConcurrentPrivateSpaceSeal(t *testing
 	teamID := createLedgerTeam(t, adminDB, rls, "duplicate-private-space-race-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-private-space-race-owner")
 	spaceID, generation := duplicatePrivateSpace(t, adminDB, rls, teamID, ownerID)
-	privateCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{{ID: uuid.MustParse(spaceID), Kind: domain.MemorySpaceProfilePrivate}})
+	privateCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{{ID: uuid.MustParse(spaceID), Kind: domain.MemorySpacePrivate}})
 	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
 
 	content := "private-space exact candidate"

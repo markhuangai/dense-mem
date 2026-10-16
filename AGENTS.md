@@ -92,9 +92,12 @@
   correlation context before application services run. Request payloads,
   headers, provider output, and tool arguments cannot choose or replace the
   authenticated team.
-- Team is the read-visibility boundary. Same-team visibility does not grant
-  mutation authority: normal lifecycle, support, identity, correction, and
-  forget operations require the caller to own the target profile record.
+- Team and authenticated allowed spaces bound read visibility. Every credential
+  and SSO user/team membership has its own private space. Remember requires an
+  explicit private or team_shared target; authentication selects its actual ID.
+  Team-read-only callers may mutate their own private memory. Shared mutations
+  require current write permission and semantic ownership. Normal lifecycle,
+  support, identity, correction, and forget operations retain owner checks.
 - PostgreSQL work crosses trust boundaries through explicit transactions with
   transaction-local team/profile RLS context. System and migration modes are
   separate, audited, and never request-selectable.

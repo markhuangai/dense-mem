@@ -17,6 +17,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 const (
@@ -31,6 +32,14 @@ func (r *Store) ReadEvidenceCandidates(ctx context.Context, input RecallEvidence
 	organizationCode := ""
 	err := r.withRecallTx(ctx, input.TeamID, input.OrganizationEnabled, func(tx *gorm.DB) error {
 		var err error
+		input.ExpandFromEntityIDs, err = storagepostgres.ResolveMemoryHandlesTx(ctx, tx, input.TeamID, "entity_records", input.ExpandFromEntityIDs, input.SpaceID)
+		if err != nil {
+			return err
+		}
+		input.KnownEvidenceIDs, err = storagepostgres.ResolveMemoryHandlesTx(ctx, tx, input.TeamID, "evidence_fragments", input.KnownEvidenceIDs, input.SpaceID)
+		if err != nil {
+			return err
+		}
 		if input.Query != "" {
 			stageCtx, stage := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageFullText)
 			textHits, err = searchRecallFullText(stageCtx, tx, input, contract, candidateLimit)
@@ -103,6 +112,14 @@ func (r *Store) HydrateEvidence(ctx context.Context, input RecallEvidenceInput, 
 	var hydrated map[string]RecallEvidenceHit
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
+		input.ExpandFromEntityIDs, err = storagepostgres.ResolveMemoryHandlesTx(ctx, tx, input.TeamID, "entity_records", input.ExpandFromEntityIDs, input.SpaceID)
+		if err != nil {
+			return err
+		}
+		input.KnownEvidenceIDs, err = storagepostgres.ResolveMemoryHandlesTx(ctx, tx, input.TeamID, "evidence_fragments", input.KnownEvidenceIDs, input.SpaceID)
+		if err != nil {
+			return err
+		}
 		hydrated, err = hydrateRecallEvidence(ctx, tx, input, contract, candidateIDs)
 		return err
 	})

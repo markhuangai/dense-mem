@@ -38,7 +38,7 @@ func TestValidateContractInputIssuesAggregatesRememberProblems(t *testing.T) {
 		},
 	}
 
-	result := ValidateContractInputIssues(remember, args, []string{"write"})
+	result := ValidateContractInputIssues(remember, args, []string{"read", "write"})
 	require.NotEmpty(t, result.Issues)
 	require.True(t, result.IssuesTruncated)
 	for index := 1; index < len(result.Issues); index++ {
@@ -65,7 +65,7 @@ func TestValidateContractInputIssuesHonorsEarlyScopeAndTenantGuards(t *testing.T
 
 	withTenant := validFlatRelationshipSubmission()
 	withTenant["team_id"] = "caller-selected-team"
-	tenant := ValidateContractInputIssues(remember, withTenant, []string{"write"})
+	tenant := ValidateContractInputIssues(remember, withTenant, []string{"read", "write"})
 	require.Len(t, tenant.Issues, 1)
 	require.Equal(t, "tenant_override", tenant.Issues[0].Code)
 }
@@ -114,21 +114,21 @@ func TestValidateContractInputIssuesRejectsMalformedRecallUUIDFilters(t *testing
 func TestValidateContractInputIssuesRememberValidAndMalformedShapes(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	require.NoError(t, err)
-	valid := ValidateContractInputIssues(remember, validFlatRelationshipSubmission(), []string{"write"})
+	valid := ValidateContractInputIssues(remember, validFlatRelationshipSubmission(), []string{"read", "write"})
 	require.Empty(t, valid.Issues)
 
 	wrongEvidenceType := map[string]any{
 		"evidence":      "not-an-array",
 		"relationships": []any{},
 	}
-	result := ValidateContractInputIssues(remember, wrongEvidenceType, []string{"write"})
+	result := ValidateContractInputIssues(remember, wrongEvidenceType, []string{"read", "write"})
 	require.Contains(t, issueMessages(result), "evidence must be an array")
 
 	wrongRelationshipsType := map[string]any{
 		"evidence":      []any{map[string]any{"content": "evidence"}},
 		"relationships": "not-an-array",
 	}
-	result = ValidateContractInputIssues(remember, wrongRelationshipsType, []string{"write"})
+	result = ValidateContractInputIssues(remember, wrongRelationshipsType, []string{"read", "write"})
 	require.Contains(t, issueMessages(result), "relationships must be an array")
 }
 
@@ -153,7 +153,7 @@ func TestValidateContractInputIssuesEscapesJSONPointerTokens(t *testing.T) {
 	args["source/name"] = true
 	args["tilde~field"] = true
 
-	result := ValidateContractInputIssues(remember, args, []string{"write"})
+	result := ValidateContractInputIssues(remember, args, []string{"read", "write"})
 	require.Contains(t, result.Issues, ContractValidationIssue{
 		Path: "/source~1name", Code: "unknown_field", Message: "unknown field: source/name",
 	})
@@ -166,7 +166,7 @@ func TestValidateContractInputIssuesBoundsUnknownFieldOutput(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	require.NoError(t, err)
 	longKey := strings.Repeat("x", maxContractValidationPathRunes*4)
-	result := ValidateContractInputIssues(remember, map[string]any{longKey: true}, []string{"write"})
+	result := ValidateContractInputIssues(remember, map[string]any{longKey: true}, []string{"read", "write"})
 	var unknownField *ContractValidationIssue
 	for index := range result.Issues {
 		if result.Issues[index].Code == "unknown_field" {
@@ -235,7 +235,7 @@ func TestValidateContractInputIssuesBoundsOversizedTraversal(t *testing.T) {
 	for index := range relationships {
 		relationships[index] = map[string]any{"ref": "r", "evidence_indices": []any{0}}
 	}
-	result := ValidateContractInputIssues(remember, map[string]any{"evidence": evidence, "relationships": relationships}, []string{"write"})
+	result := ValidateContractInputIssues(remember, map[string]any{"evidence": evidence, "relationships": relationships}, []string{"read", "write"})
 	require.Contains(t, issueMessages(result), "evidence exceeds maximum item count of 20")
 	require.Contains(t, issueMessages(result), "relationships exceeds maximum item count of 200")
 }
@@ -246,14 +246,14 @@ func TestValidateContractInputIssuesCoversRememberShapeBranches(t *testing.T) {
 
 	missingRelationships := ValidateContractInputIssues(remember, map[string]any{
 		"evidence": []any{map[string]any{}},
-	}, []string{"write"})
+	}, []string{"read", "write"})
 	require.Contains(t, issueMessages(missingRelationships), "relationships must contain at least one proposal citing submitted evidence")
 	require.Contains(t, issueMessages(missingRelationships), "evidence.content is required")
 
 	nonStringContent := ValidateContractInputIssues(remember, map[string]any{
 		"evidence":      []any{map[string]any{"content": 42}},
 		"relationships": []any{map[string]any{"ref": ""}},
-	}, []string{"write"})
+	}, []string{"read", "write"})
 	require.Contains(t, issueMessages(nonStringContent), "evidence.content must be a string")
 	require.Contains(t, issueMessages(nonStringContent), "relationship.ref must not be blank")
 
@@ -263,14 +263,14 @@ func TestValidateContractInputIssuesCoversRememberShapeBranches(t *testing.T) {
 			map[string]any{"content": "second", "source_key": "source", "source_revision": "two", "previous_source_revision": "one", "supersedes_evidence_ids": []any{"old"}},
 		},
 		"relationships": []any{map[string]any{"ref": "r", "evidence_indices": []any{0, "bad"}}},
-	}, []string{"write"})
+	}, []string{"read", "write"})
 	require.Contains(t, strings.Join(issueMessages(sourceBatch), "; "), "revision fields must match")
 	require.Contains(t, strings.Join(issueMessages(sourceBatch), "; "), "idempotency_key is required")
 
 	wrongRelationship := ValidateContractInputIssues(remember, map[string]any{
 		"evidence":      []any{map[string]any{"content": "evidence"}},
 		"relationships": []any{"not-an-object"},
-	}, []string{"write"})
+	}, []string{"read", "write"})
 	require.Contains(t, issueMessages(wrongRelationship), "relationship must be an object")
 
 	tooManyEvidence := make([]any, 21)
@@ -279,7 +279,7 @@ func TestValidateContractInputIssuesCoversRememberShapeBranches(t *testing.T) {
 	}
 	result := ValidateContractInputIssues(remember, map[string]any{
 		"evidence": tooManyEvidence, "relationships": []any{map[string]any{"ref": "r", "evidence_indices": []any{0}}},
-	}, []string{"write"})
+	}, []string{"read", "write"})
 	require.Contains(t, strings.Join(issueMessages(result), "; "), "evidence exceeds maximum item count")
 
 	unknownTool := Tool{Name: "custom", InputSchema: map[string]any{"type": "object", "required": []any{"required"}}}
@@ -318,7 +318,7 @@ func TestValidateContractInputIssuesUsesExactNestedJSONPointers(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			input := validFlatRelationshipSubmission()
 			test.mutate(input)
-			result := ValidateContractInputIssues(remember, input, []string{"write"})
+			result := ValidateContractInputIssues(remember, input, []string{"read", "write"})
 			paths := make([]string, 0, len(result.Issues))
 			for _, issue := range result.Issues {
 				paths = append(paths, issue.Path)

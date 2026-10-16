@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,6 +22,7 @@ import (
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	"github.com/pressly/goose/v3"
 	goosedb "github.com/pressly/goose/v3/database"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -30,15 +34,17 @@ import (
 )
 
 type ontologyFixture struct {
-	admin      *gorm.DB
-	app        *gorm.DB
-	rls        *storage.RLS
-	store      *Store
-	knowledge  *knowledge.Store
-	team       string
-	owners     []string
-	space      string
-	generation int64
+	admin       *gorm.DB
+	app         *gorm.DB
+	rls         *storage.RLS
+	store       *Store
+	knowledge   *knowledge.Store
+	team        string
+	credentials []*domain.Credential
+	owners      []string
+	space       string
+	generation  int64
+	schema      map[string]string
 }
 
 func newOntologyFixture(t *testing.T) *ontologyFixture {
@@ -84,7 +90,9 @@ func newOntologyFixtureWithMaintenance(t *testing.T, maintenance bool) *ontology
 	migrator, err := storage.NewMigrator(admin)
 	require.NoError(t, err)
 	require.NoError(t, migrator.RunUp(context.Background()))
+	var schema map[string]string
 	if !maintenance {
+		schema = ontologySchemaSnapshot(t, admin)
 		require.NoError(t, rollbackOntologySchemaTo(t, admin, 20261004190000))
 	}
 	require.NoError(t, admin.Exec(`CREATE ROLE ontology_app LOGIN PASSWORD 'ontology_test' NOSUPERUSER NOBYPASSRLS;
@@ -107,7 +115,7 @@ func newOntologyFixtureWithMaintenance(t *testing.T, maintenance bool) *ontology
 		require.NoError(t, db.Close())
 	})
 	rls := storage.NewRLS()
-	fixture := &ontologyFixture{admin: admin, app: app, rls: rls, store: NewStore(app, rls), knowledge: knowledge.NewStore(app, rls, knowledgecontract.ConflictRuntimeConfig{})}
+	fixture := &ontologyFixture{admin: admin, app: app, rls: rls, store: NewStore(app, rls), knowledge: knowledge.NewStore(app, rls, knowledgecontract.ConflictRuntimeConfig{}), schema: schema}
 	team := &domain.Team{Name: "ontology-" + uuid.NewString()}
 	require.NoError(t, access.NewTeamRepository(admin, rls).Create(context.Background(), team))
 	fixture.team = team.ID.String()
@@ -115,6 +123,7 @@ func newOntologyFixtureWithMaintenance(t *testing.T, maintenance bool) *ontology
 		credential := &domain.Credential{ID: uuid.New(), TeamID: team.ID, Name: fmt.Sprintf("owner-%d", index), KeyHash: "synthetic-" + uuid.NewString(), KeyPrefix: strings.ReplaceAll(uuid.NewString(), "-", "")[:24], KeySuffix: "test", Scopes: []string{"read", "write"}}
 		require.NoError(t, access.NewCredentialRepository(admin, rls, nil).CreateCredential(context.Background(), credential))
 		fixture.owners = append(fixture.owners, credential.ID.String())
+		fixture.credentials = append(fixture.credentials, credential)
 	}
 	require.NoError(t, rls.WithSystemTx(context.Background(), admin, func(tx *gorm.DB) error {
 		return tx.Raw(`SELECT id::text,generation FROM memory_spaces WHERE team_id=?::uuid AND kind='team_shared'`, fixture.team).Row().Scan(&fixture.space, &fixture.generation)
@@ -122,35 +131,128 @@ func newOntologyFixtureWithMaintenance(t *testing.T, maintenance bool) *ontology
 	return fixture
 }
 
+func ontologySchemaSnapshot(t *testing.T, db *gorm.DB) map[string]string {
+	t.Helper()
+	var objects []struct{ Key, Definition string }
+	require.NoError(t, db.Raw(`
+		SELECT format('function:%I.%I(%s)',namespace.nspname,routine.proname,pg_get_function_identity_arguments(routine.oid)) AS key,
+			pg_get_functiondef(routine.oid) AS definition
+		FROM pg_proc routine JOIN pg_namespace namespace ON namespace.oid=routine.pronamespace
+		WHERE namespace.nspname='public' AND routine.prorettype='trigger'::regtype
+		UNION ALL
+		SELECT 'trigger:'||namespace.nspname||'.'||relation.relname||'.'||trigger.tgname,
+			format('%s; ALTER TABLE %I.%I %s TRIGGER %I',
+				replace(pg_get_triggerdef(trigger.oid),'CREATE TRIGGER ','CREATE OR REPLACE TRIGGER '),
+				namespace.nspname,relation.relname,
+				CASE trigger.tgenabled WHEN 'O' THEN 'ENABLE' WHEN 'D' THEN 'DISABLE' WHEN 'R' THEN 'ENABLE REPLICA' WHEN 'A' THEN 'ENABLE ALWAYS' END,trigger.tgname)
+		FROM pg_trigger trigger JOIN pg_class relation ON relation.oid=trigger.tgrelid
+		JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
+		WHERE namespace.nspname='public' AND NOT trigger.tgisinternal
+		UNION ALL
+		SELECT 'policy:'||namespace.nspname||'.'||relation.relname||'.'||policy.polname,
+			format('DROP POLICY IF EXISTS %I ON %I.%I; CREATE POLICY %I ON %I.%I AS %s FOR %s TO %s%s%s',
+				policy.polname,namespace.nspname,relation.relname,policy.polname,namespace.nspname,relation.relname,
+				CASE WHEN policy.polpermissive THEN 'PERMISSIVE' ELSE 'RESTRICTIVE' END,
+				CASE policy.polcmd WHEN '*' THEN 'ALL' WHEN 'r' THEN 'SELECT' WHEN 'a' THEN 'INSERT' WHEN 'w' THEN 'UPDATE' WHEN 'd' THEN 'DELETE' END,
+				(SELECT string_agg(CASE WHEN role_id=0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(role_id)) END,',' ORDER BY role_id) FROM unnest(policy.polroles) role_id),
+				CASE WHEN policy.polqual IS NULL THEN '' ELSE ' USING ('||pg_get_expr(policy.polqual,policy.polrelid)||')' END,
+				CASE WHEN policy.polwithcheck IS NULL THEN '' ELSE ' WITH CHECK ('||pg_get_expr(policy.polwithcheck,policy.polrelid)||')' END)
+		FROM pg_policy policy JOIN pg_class relation ON relation.oid=policy.polrelid
+		JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
+		WHERE namespace.nspname='public'
+		UNION ALL
+		SELECT 'rls:'||namespace.nspname||'.'||relation.relname,
+			format('ALTER TABLE %I.%I %s ROW LEVEL SECURITY; ALTER TABLE %I.%I %s ROW LEVEL SECURITY',
+				namespace.nspname,relation.relname,CASE WHEN relation.relrowsecurity THEN 'ENABLE' ELSE 'DISABLE' END,
+				namespace.nspname,relation.relname,CASE WHEN relation.relforcerowsecurity THEN 'FORCE' ELSE 'NO FORCE' END)
+		FROM pg_class relation JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
+		WHERE namespace.nspname='public' AND relation.relkind IN ('r','p')`).Scan(&objects).Error)
+	snapshot := make(map[string]string, len(objects))
+	for _, object := range objects {
+		snapshot[object.Key] = object.Definition
+	}
+	return snapshot
+}
+
+func (f *ontologyFixture) restoreOntologySchema(t *testing.T) {
+	t.Helper()
+	require.NotEmpty(t, f.schema)
+	_, err := ontologyMigrationProvider(t, f.admin).Up(context.Background())
+	require.NoError(t, err)
+	current := ontologySchemaSnapshot(t, f.admin)
+	keys := make([]string, 0, len(f.schema))
+	for key := range f.schema {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	// Ontology rollback also removes later private-memory hooks; restore their exact migrated definitions.
+	for _, key := range keys {
+		if current[key] != f.schema[key] {
+			require.NoError(t, f.admin.Exec(f.schema[key]).Error, key)
+		}
+	}
+	current = ontologySchemaSnapshot(t, f.admin)
+	require.Len(t, current, len(f.schema))
+	for _, key := range keys {
+		require.Equal(t, f.schema[key], current[key], key)
+	}
+}
+
+// Exercise ontology rollback guards without crossing unrelated irreversible migration boundaries.
+func ontologyMigrationProvider(t *testing.T, db *gorm.DB) *goose.Provider {
+	t.Helper()
+	paths, err := filepath.Glob("../../../migrations/postgres/v2_6/*_ontology_*.sql")
+	require.NoError(t, err)
+	require.NotEmpty(t, paths)
+	files := fstest.MapFS{}
+	for _, path := range paths {
+		contents, err := os.ReadFile(path)
+		require.NoError(t, err)
+		files[filepath.Base(path)] = &fstest.MapFile{Data: contents}
+	}
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, files,
+		goose.WithDisableGlobalRegistry(true), goose.WithAllowOutofOrder(true))
+	require.NoError(t, err)
+	return provider
+}
+
 func rollbackOntologySchemaTo(t *testing.T, db *gorm.DB, target int64) error {
 	t.Helper()
 	ctx := context.Background()
-	migrator, err := storage.NewMigrator(db)
-	require.NoError(t, err)
+	provider := ontologyMigrationProvider(t, db)
 	versions, err := goosedb.NewStore(goosedb.DialectPostgres, "goose_db_version")
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
-	for {
-		current, err := versions.GetLatestVersion(ctx, sqlDB)
-		if err != nil {
-			return err
+	applied, err := versions.ListMigrations(ctx, sqlDB)
+	if err != nil {
+		return err
+	}
+	sources := provider.ListSources()
+	slices.Reverse(sources)
+	for _, source := range sources {
+		if source.Version <= target {
+			break
 		}
-		if current == target {
-			return nil
+		if !slices.ContainsFunc(applied, func(version *goosedb.ListMigrationsResult) bool { return version.Version == source.Version }) {
+			continue
 		}
-		if current < target {
-			return fmt.Errorf("ontology fixture migration target %d is unavailable at %d", target, current)
-		}
-		if err := migrator.RunDown(ctx); err != nil {
+		if _, err := provider.ApplyVersion(ctx, source.Version, false); err != nil {
 			return err
 		}
 	}
+	return nil
 }
 
 func (f *ontologyFixture) actor(owner int, role string) context.Context {
-	return requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: uuid.MustParse(f.team), OwnerID: uuid.MustParse(f.owners[owner]), Role: role, Grants: []string{"read", "write"},
-		AllowedSpaces: []domain.MemorySpaceAccess{{ID: uuid.MustParse(f.space), Kind: domain.MemorySpaceTeamShared, Generation: f.generation}}})
+	credential := f.credentials[owner]
+	return requestctx.WithActor(context.Background(), requestctx.Actor{
+		TeamID: credential.TeamID, OwnerID: credential.OwnerID, IdentityID: credential.ActorIdentityID,
+		MembershipID: credential.MembershipID, CredentialID: &credential.ID, AuthMethod: "api_key",
+		Role: role, Grants: credential.Scopes, AllowedSpaces: credential.MemorySpaces(),
+	})
 }
 
 func (f *ontologyFixture) evidence(t *testing.T, owner int, text string) knowledgecontract.EvidenceIngestResult {

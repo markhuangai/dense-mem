@@ -116,6 +116,7 @@ async function createConflictFixture(label, teamID) {
 async function submitRelationship(apiKey, teamID, input) {
   const evidence = `${input.subjectName} primary database is ${input.objectName}.`;
   const receipt = await mcpSuccess(apiKey, "remember", {
+    target_space: "team_shared",
     idempotency_key: `${runID}:${input.label}`,
     evidence: [{
       content: evidence,
@@ -175,7 +176,7 @@ function shapeQueueFixture(fixture, { overdue, lease, nextReviewAt }) {
     WHERE team_id = ${sqlLiteral(fixture.teamID)}::uuid
       AND conflict_id = ${sqlLiteral(fixture.conflictID)}::uuid
   `;
-  postgresMutation(sql);
+  postgresMutation(fixture.teamID, sql);
 }
 
 async function queueRequest(teamID, status = "") {
@@ -242,7 +243,7 @@ async function createTeam(label) {
 }
 
 async function createCredential(teamID, name) {
-  const response = await controlJSON(`/teams/${teamID}/credentials`, { method: "POST", body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300, memory_binding: "shared_only" }) });
+  const response = await controlJSON(`/teams/${teamID}/credentials`, { method: "POST", body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300 }) });
   const apiKey = String(response.data?.api_key ?? "");
   const profileID = String(response.data?.credential?.id ?? "");
   assert(apiKey && profileID, `credential ${name} omitted key material or ID`);
@@ -285,9 +286,16 @@ function postgresQuery(sql) {
   return postgresExec(sql, "conflict-queue-e2e").trim();
 }
 
-function postgresMutation(sql) {
+function postgresMutation(teamID, sql) {
   if (!/^UPDATE relationship_conflict_cases\b/i.test(sql.trim())) throw new Error("queue e2e mutation helper only permits conflict case shaping");
-  postgresExec(sql, "conflict-queue-e2e-mutation");
+  postgresExec(`
+    BEGIN;
+    SELECT set_config('app.tx_mode', 'system', true),
+           set_config('app.current_team_id', ${sqlLiteral(teamID)}, true),
+           set_config('app.current_profile_id', '', true);
+    ${sql};
+    COMMIT;
+  `, "conflict-queue-e2e-mutation");
 }
 
 function postgresExec(sql, label) {

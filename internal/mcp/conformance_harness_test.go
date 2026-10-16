@@ -121,6 +121,7 @@ func TestConformanceHarness(t *testing.T) {
 func conformanceRPC(t *testing.T, server *Server, payload string) rpcResp {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(payload))
+	req = req.WithContext(testMemoryContext(req.Context(), server.scopes))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("MCP-Protocol-Version", ProtocolVersion)

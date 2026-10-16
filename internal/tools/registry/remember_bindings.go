@@ -38,7 +38,7 @@ func bindRememberTool(tool Tool, deps Dependencies) Tool {
 			if _, ok := ContractValidationResultFromError(validation); ok {
 				return nil, validation
 			}
-			mapped := rememberToolResultError(ctx, err)
+			mapped := rememberToolResultError(ctx, req.TargetSpace, err)
 			return nil, mapped
 		}
 		result, err := structToMap(res)

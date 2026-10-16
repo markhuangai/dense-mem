@@ -18,6 +18,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/graph"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
+	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
@@ -72,6 +73,7 @@ type userPortalSSOCredentialService interface {
 }
 
 type userPortalSessionResponse struct {
+	MemoryAccess        domain.MemoryAccess            `json:"memory_access"`
 	Team                userPortalTeamResponse         `json:"team"`
 	Membership          userPortalMembershipResponse   `json:"membership"`
 	Credential          *userPortalCredentialResponse  `json:"credential"`
@@ -103,18 +105,17 @@ type userPortalMembershipResponse struct {
 }
 
 type userPortalCredentialResponse struct {
-	ID              uuid.UUID `json:"id"`
-	TeamID          uuid.UUID `json:"team_id"`
-	Name            string    `json:"name"`
-	KeySuffix       string    `json:"key_suffix"`
-	Scopes          []string  `json:"scopes"`
-	Role            string    `json:"role"`
-	RateLimit       int       `json:"rate_limit"`
-	LastUsedAt      *string   `json:"last_used_at"`
-	ExpiresAt       *string   `json:"expires_at"`
-	CreatedAt       string    `json:"created_at"`
-	MemoryBinding   string    `json:"memory_binding"`
-	MemorySpaceKind string    `json:"memory_space_kind"`
+	ID           uuid.UUID           `json:"id"`
+	TeamID       uuid.UUID           `json:"team_id"`
+	Name         string              `json:"name"`
+	KeySuffix    string              `json:"key_suffix"`
+	Scopes       []string            `json:"scopes"`
+	Role         string              `json:"role"`
+	RateLimit    int                 `json:"rate_limit"`
+	LastUsedAt   *string             `json:"last_used_at"`
+	ExpiresAt    *string             `json:"expires_at"`
+	CreatedAt    string              `json:"created_at"`
+	MemoryAccess domain.MemoryAccess `json:"memory_access"`
 }
 
 type userPortalRotateResponse struct {
@@ -133,11 +134,11 @@ type userPortalSwitchSSOTeamRequest struct {
 }
 
 type userPortalCreateSSOCredentialRequest struct {
-	Name          string   `json:"name"`
-	Scopes        []string `json:"scopes"`
-	RateLimit     int      `json:"rate_limit"`
-	ExpiresAt     *string  `json:"expires_at"`
-	MemoryBinding string   `json:"memory_binding"`
+	Name          string          `json:"name"`
+	Scopes        []string        `json:"scopes"`
+	RateLimit     int             `json:"rate_limit"`
+	ExpiresAt     *string         `json:"expires_at"`
+	MemoryBinding json.RawMessage `json:"memory_binding"`
 }
 
 func (h *userPortalHandler) session(c echo.Context) error {
@@ -327,6 +328,7 @@ func (h *userPortalHandler) currentSession(c echo.Context) (userPortalSessionRes
 		return userPortalSessionResponse{}, err
 	}
 	return userPortalSessionResponse{
+		MemoryAccess:        domain.MemoryCapabilities(principal.Grants, principal.AllowedSpaces),
 		Team:                teamResponse,
 		Membership:          userPortalMembershipFromPrincipal(principal),
 		Credential:          &credentialResponse,
@@ -366,6 +368,7 @@ func (h *userPortalHandler) currentSSOSession(c echo.Context) (userPortalSession
 		return userPortalSessionResponse{}, err
 	}
 	response := userPortalSessionResponse{
+		MemoryAccess:        domain.MemoryCapabilities(info.Selected.Membership.Grants, info.Selected.Membership.MemorySpaces()),
 		Team:                selected.Team,
 		Membership:          selected.Membership,
 		Credential:          nil,
@@ -694,6 +697,9 @@ func userPortalCredentialParam(c echo.Context) (uuid.UUID, error) {
 }
 
 func userPortalSSOCreateCredentialRequest(body userPortalCreateSSOCredentialRequest, identity domain.SSOIdentity, maxGrants []string) (accessservice.CreateCredentialRequest, error) {
+	if err := dto.RejectMemoryBinding(body.MemoryBinding); err != nil {
+		return accessservice.CreateCredentialRequest{}, err
+	}
 	if !userPortalHasGrant(maxGrants, accessservice.CredentialScopeRead) {
 		return accessservice.CreateCredentialRequest{}, httperr.New(httperr.FORBIDDEN, "sso access denied")
 	}
@@ -729,12 +735,11 @@ func userPortalSSOCreateCredentialRequest(body userPortalCreateSSOCredentialRequ
 		name = ssoOwnedKeyDefaultName(identity)
 	}
 	return accessservice.CreateCredentialRequest{
-		Name:          name,
-		RateLimit:     body.RateLimit,
-		ExpiresAt:     expiresAt,
-		Scopes:        normalizedScopes,
-		Role:          accessservice.CredentialRoleMember,
-		MemoryBinding: strings.TrimSpace(body.MemoryBinding),
+		Name:      name,
+		RateLimit: body.RateLimit,
+		ExpiresAt: expiresAt,
+		Scopes:    normalizedScopes,
+		Role:      accessservice.CredentialRoleMember,
 	}, nil
 }
 

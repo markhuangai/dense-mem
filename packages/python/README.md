@@ -35,8 +35,9 @@ use inside an active event loop.
 Methods are initialize, list_tools, remember, ingest_session, recall_memory and
 trace_memory. Requests/results are typed dictionaries with py.typed. Server
 validation and authenticated discovery remain authoritative. Current-server
-compatibility is dense-mem.v2.7.0, including server-supported historical terminal
-replay versions; this does not promise compatibility with older deployments.
+compatibility is dense-mem.v2.7.0. Refresh tool discovery when upgrading: Remember
+now requires target_space even when the previous prerelease used this version string.
+Historical requests without a target fail validation, including retries.
 
 ## Complete Remember request and safe replay
 
@@ -44,6 +45,7 @@ replay versions; this does not promise compatibility with older deployments.
 from densemem import RememberRequest
 
 request: RememberRequest = {
+    "target_space": "team_shared",
     "idempotency_key": retained_operation_key,
     "evidence": [
         {
@@ -69,9 +71,15 @@ result = await client.remember(request)
 
 Create the operation key once for a deliberate new operation, and retain this
 entire request before sending it. For a replay, resend this unchanged request,
-including metadata and key. Never rotate a key to bypass a conflict. The client
+including target_space, metadata, and key. Never rotate a key to bypass a conflict. The client
 never retries automatically or fills in keys/defaults. Remember requires at least
 one proposal citing every evidence item. The client does not infer Relationships.
+
+Choose private for personal preferences or automation experience and team_shared
+for team knowledge. Every credential has separate private memory, including
+SSO-issued keys. Team-read-only credentials may remember privately; team_shared
+requires team write permission. The server never redirects a denied shared write.
+The response's space_kind confirms the selected destination.
 
 Inspect evidence and relationship_results: completed processing can include
 not_stored proposals and remediation. Returned warnings remain visible. Recall
@@ -104,8 +112,10 @@ result = await client.ingest_session(request)
 Send only exact user-authored events. Event IDs/text/timestamps are immutable;
 the server owns chunking and extraction. External identifiers are provenance,
 never authorization or private-space selection. The server must enable session
-ingestion and the credential must have a writable private binding; discovery
-hides unavailable tools. Remember retains its separate proposal requirements.
+ingestion and the caller must have effective private write access. Every active
+credential has its own private space, including team-read-only credentials;
+SSO sessions use their user/team membership's separate private space. Discovery
+hides unavailable tools. Remember requires its explicit target and proposals.
 Session semantic acceptance is atomic across the request. A no-fact completed
 result with search_state not_required is valid.
 

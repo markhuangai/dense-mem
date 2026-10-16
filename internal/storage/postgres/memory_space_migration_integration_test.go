@@ -19,12 +19,19 @@ func TestMemorySpacePrivateInitializerCanUpsertUnderForceRLS(t *testing.T) {
 
 	require.NoError(t, NewMigratorWithDB(sqlDB).RunUp(ctx))
 	teamID := uuid.New()
-	ownerID := uuid.New()
+	ownerID, membershipID := uuid.New(), uuid.New()
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO teams (id, name, description, metadata, config)
 			VALUES ($1, $2, '', '{}'::jsonb, '{}'::jsonb)
 		`, teamID, "memory-space-policy-test")
+		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO actor_identities(id,kind,team_id,display_name) VALUES ($1,'api_client',$2,'initializer owner')`, ownerID, teamID); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO team_memberships(id,team_id,actor_identity_id,maximum_grants) VALUES ($1,$2,$3,ARRAY['read','write'])`, membershipID, teamID, ownerID)
 		return err
 	}))
 
@@ -33,10 +40,10 @@ func TestMemorySpacePrivateInitializerCanUpsertUnderForceRLS(t *testing.T) {
 		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_team_id', $1, true)`, teamID.String()); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT dense_mem_ensure_private_space($1, 'credential_private', $2)`, teamID, ownerID).Scan(&firstID); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT dense_mem_ensure_private_space($1, $2)`, teamID, membershipID).Scan(&firstID); err != nil {
 			return err
 		}
-		return tx.QueryRowContext(ctx, `SELECT dense_mem_ensure_private_space($1, 'credential_private', $2)`, teamID, ownerID).Scan(&secondID)
+		return tx.QueryRowContext(ctx, `SELECT dense_mem_ensure_private_space($1, $2)`, teamID, membershipID).Scan(&secondID)
 	}))
 	assert.Equal(t, firstID, secondID, "private-space initialization should be idempotent")
 }

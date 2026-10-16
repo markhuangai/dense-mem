@@ -77,6 +77,12 @@ func createLedgerSSOIdentity(t testing.TB, db *gorm.DB, rls storagepostgres.RLSH
 		`, membershipID, identityID, teamID, providerID, now, now).Error; err != nil {
 			return err
 		}
+		if err := tx.Exec(`INSERT INTO sso_group_mappings(provider_id,team_id,group_id,scopes) VALUES(?,?,'test-group',ARRAY['read','write'])`, providerID, teamID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`INSERT INTO sso_entitlement_cache(provider_id,subject,groups,status,checked_at,expires_at) VALUES(?,?,ARRAY['test-group'],'active',now(),now()+interval '1 hour')`, providerID, "subject-"+identityID.String()).Error; err != nil {
+			return err
+		}
 		return tx.Exec(`
 			INSERT INTO membership_grants (membership_id, grant_name, source)
 			VALUES (?, 'read', 'explicit'), (?, 'write', 'explicit')
@@ -85,7 +91,7 @@ func createLedgerSSOIdentity(t testing.TB, db *gorm.DB, rls storagepostgres.RLSH
 	return identityID
 }
 
-func createOwnedCredential(t testing.TB, repo *accesspostgres.CredentialRepositoryImpl, teamID, ownerID uuid.UUID, name string, binding domain.CredentialMemoryBinding) *domain.Credential {
+func createOwnedCredential(t testing.TB, repo *accesspostgres.CredentialRepositoryImpl, teamID, ownerID uuid.UUID, name string) *domain.Credential {
 	t.Helper()
 	id := uuid.New()
 	prefix := "dm_" + strings.ReplaceAll(id.String(), "-", "")[:20]
@@ -99,7 +105,6 @@ func createOwnedCredential(t testing.TB, repo *accesspostgres.CredentialReposito
 		Scopes:          []string{"read", "write"},
 		RateLimit:       60,
 		OwnerIdentityID: &ownerID,
-		MemoryBinding:   binding,
 	}
 	require.NoError(t, repo.CreateCredential(context.Background(), credential))
 	return credential

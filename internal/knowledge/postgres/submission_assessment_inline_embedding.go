@@ -45,16 +45,16 @@ func loadInlineEmbeddingEntityNames(ctx context.Context, tx *gorm.DB, teamID str
 	return names, nil
 }
 
-func loadInlineEmbeddingValueProjection(ctx context.Context, tx *gorm.DB, teamID string, input SemanticValueInput) (SemanticValueInput, error) {
+func loadInlineEmbeddingValueProjection(ctx context.Context, tx *gorm.DB, teamID, spaceID string, input SemanticValueInput) (SemanticValueInput, error) {
 	input = normalizeSemanticValueInput(input)
 	var persisted SemanticValueInput
 	err := tx.WithContext(ctx).Raw(`
 		SELECT value_type, canonical_value, COALESCE(unit, ''), COALESCE(display, '')
 		FROM value_records
-		WHERE team_id = ?::uuid AND value_type = ? AND canonical_value = ?
+		WHERE team_id = ?::uuid AND space_id = ?::uuid AND value_type = ? AND canonical_value = ?
 		  AND unit IS NOT DISTINCT FROM NULLIF(?, '') AND normalization_version = ?
 		ORDER BY value_id LIMIT 1
-	`, teamID, input.ValueType, input.CanonicalValue, input.Unit, input.NormalizationVersion).Row().Scan(&persisted.ValueType, &persisted.CanonicalValue, &persisted.Unit, &persisted.Display)
+	`, teamID, spaceID, input.ValueType, input.CanonicalValue, input.Unit, input.NormalizationVersion).Row().Scan(&persisted.ValueType, &persisted.CanonicalValue, &persisted.Unit, &persisted.Display)
 	if errors.Is(err, sql.ErrNoRows) {
 		return input, nil
 	}

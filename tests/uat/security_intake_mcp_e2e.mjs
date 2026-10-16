@@ -260,6 +260,7 @@ function relationshipRememberInput(payload, idempotencyKey, source, clientCommen
     relationship.client_comment = clientComment;
   }
   return {
+    target_space: "team_shared",
     idempotency_key: idempotencyKey,
     evidence: [{
       content,

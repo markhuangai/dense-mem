@@ -47,6 +47,12 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 		err = errors.New("unknown tool failure")
 	}
 	switch {
+	case errors.Is(err, domain.ErrMemoryTargetRequired), errors.Is(err, domain.ErrMemoryTargetInvalid):
+		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "memory_target_required", "Remember requires an explicit private or team_shared destination.", actionCorrectInput, "Set target_space to private or team_shared and resubmit the complete request."
+	case errors.Is(err, domain.ErrMemoryWriteDenied):
+		code, reasonCode, message, nextAction, remediation = domain.ErrorUnauthorizedScope, "memory_write_denied", "The authenticated caller cannot mutate the requested memory destination.", actionAuthorization, "Use your own private memory or obtain team write permission for a shared mutation. A denied write is never redirected."
+	case errors.Is(err, domain.ErrMemoryOperationErased):
+		code, reasonCode, message, nextAction, remediation = domain.ErrorConflict, "operation_erased", "This operation was erased and cannot be replayed.", actionStop, "Stop retrying this erased operation."
 	case errors.Is(err, context.Canceled):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorConflict, "request_cancelled", "The "+tool+" operation was cancelled before completion.", actionStop, "Stop this operation; retry only if the caller still needs it."
 	case errors.Is(err, context.DeadlineExceeded):
@@ -257,9 +263,12 @@ func actionableToolIsRead(tool string) bool {
 	}
 }
 
-func rememberToolResultError(ctx context.Context, err error) error {
+func rememberToolResultError(ctx context.Context, spaceKind domain.MemorySpaceKind, err error) error {
 	if err == nil {
 		return nil
+	}
+	if isMemoryAccessError(err) {
+		return NewToolResultError(ActionableErrorData(ctx, ToolRemember, err))
 	}
 	submissionID := uuid.NewString()
 	correlationID := correlation.FromContext(ctx)
@@ -295,6 +304,7 @@ func rememberToolResultError(ctx context.Context, err error) error {
 		"reason_code": value.ReasonCode, "details": value.Details,
 	}
 	return NewToolResultError(map[string]any{
+		"space_kind":           spaceKind,
 		"contract_version":     domainContractVersion(),
 		"submission_id":        submissionID,
 		"submission_kind":      "remember",
@@ -339,6 +349,9 @@ func rememberErrorCode(err error) rememberapp.SubmissionErrorCode {
 }
 
 func correctionToolResultError(ctx context.Context, submissionID string, err error) error {
+	if isMemoryAccessError(err) {
+		return NewToolResultError(ActionableErrorData(ctx, ToolCorrectRelationship, err))
+	}
 	submissionID = strings.TrimSpace(submissionID)
 	if submissionID == "" {
 		submissionID = uuid.NewString()
@@ -413,6 +426,11 @@ func correctionToolResultError(ctx context.Context, submissionID string, err err
 		"correlation_id":   rememberapp.NormalizeTerminalCorrelationID(correlation.FromContext(ctx)),
 		"errors":           []any{errorPayload},
 	})
+}
+
+func isMemoryAccessError(err error) bool {
+	return errors.Is(err, domain.ErrMemoryTargetRequired) || errors.Is(err, domain.ErrMemoryTargetInvalid) ||
+		errors.Is(err, domain.ErrMemoryWriteDenied) || errors.Is(err, domain.ErrMemoryOperationErased)
 }
 
 func correctionErrorClientControlled(code rememberapp.SubmissionErrorCode) bool {

@@ -4,6 +4,7 @@ import "github.com/markhuangai/dense-mem/internal/domain"
 
 func rememberPublicResult(input SynchronousRememberCommitInput, evidence []EvidenceFragment, semantic *submissionSemanticCommitState, appliedSplits []submissionRelationshipAppliedSplit) map[string]any {
 	result := map[string]any{
+		"space_kind":       input.Metadata["target_space"],
 		"contract_version": domain.ContractVersion, "submission_id": input.IngestID,
 		"submission_kind": "remember", "processing_state": "completed",
 		"search_state": "not_required", "correlation_id": rememberCorrelationID(input.Metadata),

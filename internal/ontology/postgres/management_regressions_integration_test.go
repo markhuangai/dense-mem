@@ -205,15 +205,14 @@ func TestOntologyManagementExcludesManagersOwnPrivateSpaces(t *testing.T) {
 	topic := testTopic("private-denial")
 	_, err := f.store.PublishAutomatic(context.Background(), f.team, testPublication("topic", 0, ontology.Change{Record: topic}))
 	require.NoError(t, err)
-	for _, kind := range []domain.MemorySpaceKind{domain.MemorySpaceProfilePrivate, domain.MemorySpaceCredentialPrivate} {
+	for _, kind := range []domain.MemorySpaceKind{domain.MemorySpacePrivate} {
 		var id string
 		var generation int64
-		column := "owner_profile_id"
-		if kind == domain.MemorySpaceCredentialPrivate {
-			column = "owner_credential_id"
-		}
 		require.NoError(t, f.rls.WithSystemTx(context.Background(), f.admin, func(tx *gorm.DB) error {
-			return tx.Raw(`INSERT INTO memory_spaces(team_id,kind,`+column+`) VALUES(?::uuid,?,?::uuid) RETURNING id::text,generation`, f.team, string(kind), f.owners[0]).Row().Scan(&id, &generation)
+			return tx.Raw(`SELECT space.id::text,space.generation FROM memory_spaces space
+            JOIN team_memberships member ON member.id=space.owner_membership_id AND member.team_id=space.team_id
+            JOIN ownership_aliases alias ON alias.canonical_identity_id=member.actor_identity_id AND alias.team_id=member.team_id
+            WHERE space.team_id=?::uuid AND alias.legacy_owner_id=?::uuid AND space.kind='private'`, f.team, f.owners[0]).Row().Scan(&id, &generation)
 		}))
 		space := domain.MemorySpaceAccess{ID: uuid.MustParse(id), Kind: kind, Generation: generation}
 		privateContext := requestctx.WithAllowedSpaces(context.Background(), []domain.MemorySpaceAccess{space})

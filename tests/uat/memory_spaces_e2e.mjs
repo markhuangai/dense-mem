@@ -10,10 +10,10 @@ const scenario = process.env.DENSE_MEM_E2E_MEMORY_SCENARIO || "credential_memory
 let rpcID = 0;
 
 const created = [];
-const privateRead = await createCredential(teamID, "E2E private read", { scopes: ["read"], memory_binding: "credential_private" });
-const sharedRead = await createCredential(teamID, "E2E shared read", { scopes: ["read"], memory_binding: "shared_only" });
-const sharedWrite = await createCredential(teamID, "E2E shared write", { scopes: ["read", "write"], memory_binding: "shared_only" });
-const privateWrite = await createCredential(teamID, "E2E private write", { scopes: ["read", "write"], memory_binding: "credential_private" });
+const privateRead = await createCredential(teamID, "E2E private read", { scopes: ["read"] });
+const sharedRead = await createCredential(teamID, "E2E shared read", { scopes: ["read"] });
+const sharedWrite = await createCredential(teamID, "E2E shared write", { scopes: ["read", "write"] });
+const privateWrite = await createCredential(teamID, "E2E private write", { scopes: ["read", "write"] });
 created.push(privateRead, sharedRead, sharedWrite, privateWrite);
 
 const listedBeforeLifecycle = await controlJSON(`/teams/${teamID}/credentials?limit=100&offset=0`);
@@ -23,16 +23,62 @@ for (const item of [privateRead, sharedRead, privateWrite]) {
 }
 assert(new Set([privateRead.credential.id, sharedRead.credential.id, privateWrite.credential.id]).size === 3, "multiple credentials did not retain distinct IDs");
 
-assert(privateRead.credential.memory_binding === "credential_private", "credential-private binding was not persisted");
-assert(sharedRead.credential.memory_binding === "shared_only", "shared-only binding was not persisted");
-assert(privateWrite.credential.memory_binding === "credential_private", "writable credential did not retain private binding");
-assert(privateRead.credential.memory_space_kind === "credential_private", "private credential did not report its space kind");
+for (const item of created) {
+  assert(item.credential.memory_access.private.read && item.credential.memory_access.private.write, "credential lacks inherent private access");
+  assert(item.credential.memory_access.team_shared.write === item.credential.scopes.includes("write"), "shared capability differs from current scopes");
+}
 
 if (scenario === "credential_memory_binding") {
-  await assertReadOnlyCannotWrite(privateRead.apiKey);
-  const rotated = await rotateCredential(teamID, privateWrite.credential.id);
+  const expired = await createCredential(teamID, "expired credential", {
+    role: "member", scopes: ["read", "write"], expires_at: new Date(Date.now() - 3600000).toISOString(),
+  });
+  assert(Object.values(expired.credential.memory_access).every((access) => !access.read && !access.write), "expired creation returned enabled access");
+  const renewed = await rotateCredential(teamID, expired.credential.id);
+  assert(renewed.credential.id === expired.credential.id, "expired rotation changed credential identity");
+  assert(Object.values(renewed.credential.memory_access).every((access) => access.read && access.write), "expired rotation returned disabled access");
+  const renewedCatalog = await httpJSON(`${userURL}/mcp`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${renewed.apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method: "tools/list", params: {} }),
+  });
+  assert(Array.isArray(renewedCatalog.result?.tools), "renewed credential could not authenticate");
+  for (const [patch, sharedWritable] of [
+    [{ scopes: ["read"] }, false],
+    [{ scopes: ["read", "write"] }, true],
+    [{ scopes: ["read"] }, false],
+    [{ role: "manager" }, true],
+    [{ role: "member" }, true],
+  ]) {
+    const updated = await controlJSON(`/teams/${teamID}/credentials/${sharedWrite.credential.id}`, {
+      method: "PATCH", body: JSON.stringify(patch),
+    });
+    assert(updated.data.memory_access.private.write, "scope/role update lost private access");
+    assert(updated.data.memory_access.team_shared.write === sharedWritable, "scope/role PATCH returned stale shared-write access");
+  }
+  await assertTeamReadOnlyPrivateWrite(privateRead.apiKey, sharedRead.apiKey);
+  for (const binding of [null, "", "credential_private", "profile_private", "shared_only"]) {
+    const rejected = await fetch(`${controlURL}/control/api/teams/${teamID}/credentials`, {
+      method: "POST", headers: { Authorization: `Bearer ${controlToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "obsolete-binding", scopes: ["read"], memory_binding: binding }),
+    });
+    assert(rejected.status >= 400 && rejected.status < 500, "obsolete memory_binding was accepted");
+    assert((await rejected.text()).includes("memory_binding"), "obsolete binding error was not actionable");
+  }
+  const beforeRotation = rememberInput("Writable key privately remembers a workflow detail.", "writable key", "remembers", "workflow detail", "private");
+  const remembered = await mcpSuccess("remember", beforeRotation, privateWrite.apiKey);
+  assert(remembered.space_kind === "private", "explicit private target was not honored");
+  const conflict = await mcpCall("remember", { ...beforeRotation, target_space: "team_shared" }, privateWrite.apiKey);
+  assert(conflict.error || conflict.result?.isError, "changed target reused an idempotency key");
+  const rotated = await rotateCurrentCredential(privateWrite.apiKey);
   assert(rotated.credential.id === privateWrite.credential.id, "rotation changed credential identity");
-  assert(rotated.credential.memory_binding === "credential_private", "rotation changed immutable binding");
+  assert(rotated.credential.memory_access.private.write, "rotation lost private access");
+  const oldCredentialAccess = await fetch(`${userURL}/mcp`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${privateWrite.apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method: "tools/list", params: {} }),
+  });
+  assert(oldCredentialAccess.status >= 401 && oldCredentialAccess.status < 500, "old secret remained valid after current-key rotation");
+  await waitForRecall("workflow detail", beforeRotation.evidence[0].content, rotated.apiKey);
   await revokeCredential(teamID, privateWrite.credential.id);
   const listedAfterRevoke = await controlJSON(`/teams/${teamID}/credentials?limit=100&offset=0`);
   const afterRevokeIDs = new Set((listedAfterRevoke.data ?? []).map((item) => item.id));
@@ -72,10 +118,10 @@ if (scenario === "credential_memory_binding") {
   assert(JSON.stringify(privateRecall.results ?? []) === JSON.stringify(repeat.results ?? []), "space-aware recall was not deterministic");
 } else if (scenario === "memory_space_isolation") {
   const otherTeam = await createTeam("E2E isolated team");
-  const other = await createCredential(otherTeam.id, "isolated key", { scopes: ["read", "write"], memory_binding: "credential_private" });
+  const other = await createCredential(otherTeam.id, "isolated key", { scopes: ["read", "write"] });
   created.push(other);
   const isolatedNeedle = "isolated team mentions sentinel";
-  const isolatedSubmission = await mcpSuccess("remember", rememberInput(isolatedNeedle, "isolated team", "mentions", "sentinel"), other.apiKey);
+  const isolatedSubmission = await mcpSuccess("remember", rememberInput(isolatedNeedle, "isolated team", "mentions", "sentinel", "private"), other.apiKey);
   assert(isolatedSubmission.processing_state === "completed", `isolated Remember did not complete: ${JSON.stringify(isolatedSubmission)}`);
   await waitForRecall("isolated team sentinel", isolatedNeedle, other.apiKey);
   const recall = await mcpSuccess("recall_memory", { query: "isolated team sentinel", limit: 20 }, apiKey);
@@ -84,16 +130,26 @@ if (scenario === "credential_memory_binding") {
   const readiness = await fetch(`${userURL}/ready`);
   assert(readiness.ok, "memory-space migration did not leave the server ready");
   const listed = await controlJSON(`/teams/${teamID}/credentials?limit=100&offset=0`);
-  assert((listed.data ?? []).every((item) => item.memory_binding), "credential binding metadata was missing after migration");
+  assert((listed.data ?? []).every((item) => item.memory_access?.private?.write), "private capabilities were missing after migration");
 } else {
   throw new Error(`unknown memory-space scenario ${scenario}`);
 }
 
-console.log(JSON.stringify({ status: "ok", scenario, immutable_bindings: true, labels_and_isolation: true }, null, 2));
+console.log(JSON.stringify({ status: "ok", scenario, explicit_destinations: true, labels_and_isolation: true }, null, 2));
 
-async function assertReadOnlyCannotWrite(key) {
-  const result = await mcpCall("remember", rememberInput("read-only must not write", "read-only", "mentions", "write"), key, { allowStatus: true });
-  assert(result.result?.isError === true || result.error, "read-only credential wrote memory");
+async function assertTeamReadOnlyPrivateWrite(key, otherKey) {
+  const request = rememberInput("Automation privately remembers an encountered workflow failure.", "automation", "remembers", "workflow failure", "private");
+  const result = await mcpSuccess("remember", request, key);
+  assert(result.processing_state === "completed" && result.space_kind === "private", "team-read-only key could not remember privately");
+  await waitForRecall("workflow failure", request.evidence[0].content, key);
+  const foreign = await mcpSuccess("recall_memory", { query: "workflow failure", limit: 20 }, otherKey);
+  assert(!(foreign.results ?? []).some((item) => item.context?.includes(request.evidence[0].content)), "private automation memory leaked to another credential");
+  const denied = await mcpCall("remember", { ...request, idempotency_key: "denied-shared:" + Date.now(), target_space: "team_shared" }, key);
+  assert(denied.result?.isError || denied.error, "team-read-only key wrote shared memory");
+  const missing = { ...request, idempotency_key: "missing-target:" + Date.now() };
+  delete missing.target_space;
+  const missingResult = await mcpCall("remember", missing, key);
+  assert(missingResult.result?.isError || missingResult.error, "missing destination was silently selected");
 }
 
 async function readPrometheusMetrics() {
@@ -125,6 +181,15 @@ async function createCredential(team, name, extra) {
 
 async function rotateCredential(team, id) {
   const body = await controlJSON(`/teams/${team}/credentials/${id}/rotate`, { method: "POST", body: JSON.stringify({}) });
+  return { apiKey: body.data.api_key, credential: body.data.credential };
+}
+
+async function rotateCurrentCredential(key) {
+  const body = await httpJSON(`${userURL}/ui/api/credential/rotate`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
   return { apiKey: body.data.api_key, credential: body.data.credential };
 }
 
@@ -178,8 +243,9 @@ async function waitForRecall(query, needle, key, attempts = 30, delayMs = 1000) 
 function requiredEnv(name) { const value = process.env[name]; if (!value) throw new Error(`${name} is required`); return value; }
 function assert(condition, message) { if (!condition) throw new Error(message); }
 
-function rememberInput(content, subject, predicate, object) {
+function rememberInput(content, subject, predicate, object, targetSpace = "team_shared") {
   return {
+    target_space: targetSpace,
     idempotency_key: `memory-space-e2e:${Date.now()}:${Math.random()}`,
     evidence: [{ content, source_type: "document", source: "memory-space-e2e", source_group: "memory-space-e2e" }],
     relationships: [{

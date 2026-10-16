@@ -49,6 +49,7 @@ async function createSource(rpc, expect, label) {
   const object = `${label} original project`;
   const evidence = `${subject} uses ${object}.`;
   const receipt = await toolSuccess(rpc, "remember", {
+    target_space: "team_shared",
     idempotency_key: `${label}-remember`,
     evidence: [{ content: evidence, source_type: "manual", source: label, source_group: label }],
     relationships: [{

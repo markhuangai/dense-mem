@@ -344,6 +344,7 @@ if (has("conflict_provider")) {
 }
 if (has("oauth") || has("oauth_compatibility")) {
   serverEnvironment.set("SSL_CERT_FILE", "/e2e/oauth-files/ca.pem");
+  serverEnvironment.set("DENSE_MEM_E2E_SSO_CLIENT_SECRET", oauthToken);
   serverVolumes.push("oauth-provider-files:/e2e/oauth-files:ro");
   helperServices.push(["oauth-provider-mock", [
     "    command: [\"sh\", \"-c\", \"sleep infinity\"]",

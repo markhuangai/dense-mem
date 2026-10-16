@@ -187,7 +187,7 @@ func TestRememberPolicyDiagnosticLegalHoldReleaseAndErasure(t *testing.T) {
 	teamUUID := uuid.MustParse(teamID)
 	ownerIdentityID := createLedgerSSOIdentity(t, adminDB, rls, teamUUID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	credential := createOwnedCredential(t, credentialRepo, teamUUID, ownerIdentityID, "remember-primitives-held", domain.CredentialBindingCredentialPrivate)
+	credential := createOwnedCredential(t, credentialRepo, teamUUID, ownerIdentityID, "remember-primitives-held")
 	privateRepo := privacypostgres.NewPrivateMemoryRepository(appDB, rls)
 	require.NoError(t, privateRepo.Prepare(ctx))
 
@@ -290,7 +290,7 @@ func TestRememberAttemptDiagnosticHoldSkipsNoopUpdates(t *testing.T) {
 	teamUUID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "remember-primitives-diagnostic-hold-noop"))
 	ownerIdentityID := createLedgerSSOIdentity(t, adminDB, rls, teamUUID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	credential := createOwnedCredential(t, credentialRepo, teamUUID, ownerIdentityID, "remember-primitives-diagnostic-hold-noop", domain.CredentialBindingCredentialPrivate)
+	credential := createOwnedCredential(t, credentialRepo, teamUUID, ownerIdentityID, "remember-primitives-diagnostic-hold-noop")
 	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
 	privateRepo := privacypostgres.NewPrivateMemoryRepository(appDB, rls)
 	require.NoError(t, privateRepo.Prepare(ctx))
@@ -353,7 +353,7 @@ func TestRememberAttemptDiagnosticHoldAndPurgeSerializeOnPrivateSpace(t *testing
 	teamUUID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "remember-primitives-diagnostic-hold-purge-race"))
 	ownerIdentityID := createLedgerSSOIdentity(t, adminDB, rls, teamUUID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	credential := createOwnedCredential(t, credentialRepo, teamUUID, ownerIdentityID, "remember-primitives-diagnostic-hold-purge-race", domain.CredentialBindingCredentialPrivate)
+	credential := createOwnedCredential(t, credentialRepo, teamUUID, ownerIdentityID, "remember-primitives-diagnostic-hold-purge-race")
 	privateRepo := privacypostgres.NewPrivateMemoryRepository(appDB, rls)
 	require.NoError(t, privateRepo.Prepare(ctx))
 

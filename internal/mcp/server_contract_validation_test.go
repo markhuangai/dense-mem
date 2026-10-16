@@ -173,7 +173,7 @@ func TestServerLogsContractInputRejectionWithoutArgumentsOrValidationText(t *tes
 	ctx = requestctx.WithActor(ctx, requestctx.Actor{TeamID: teamID, OwnerID: ownerID})
 	server := NewServer(reg, teamID.String(), logger)
 
-	_, rpcErr := server.invokeTool(ctx, registry.ToolRemember, map[string]any{
+	_, rpcErr := server.invokeTool(testMemoryContext(ctx, nil), registry.ToolRemember, map[string]any{
 		"evidence": []any{map[string]any{"content": "must-never-appear-in-logs"}},
 	})
 	require.NotNil(t, rpcErr)
@@ -210,7 +210,7 @@ func TestServerInputRejectionPreservesSecretRedactionContext(t *testing.T) {
 	ctx = observability.WithAuthenticationSecrets(ctx, authenticationSecret)
 	server := NewServer(reg, teamID.String(), testLoggerAdapter{delegate: root})
 
-	_, rpcErr := server.invokeTool(ctx, registry.ToolRemember, map[string]any{
+	_, rpcErr := server.invokeTool(testMemoryContext(ctx, nil), registry.ToolRemember, map[string]any{
 		"team_id": uuid.NewString(),
 	})
 	require.NotNil(t, rpcErr)
@@ -245,7 +245,8 @@ func TestServerProjectsDynamicRememberPreflightAsInvalidParams(t *testing.T) {
 	ctx = requestctx.WithActor(ctx, requestctx.Actor{TeamID: teamID, OwnerID: ownerID})
 	server := NewServer(reg, teamID.String(), logger)
 
-	_, rpcErr := server.invokeTool(ctx, registry.ToolRemember, map[string]any{
+	_, rpcErr := server.invokeTool(testMemoryContext(ctx, nil), registry.ToolRemember, map[string]any{
+		"target_space":    "team_shared",
 		"idempotency_key": "dynamic-preflight",
 		"evidence":        []any{map[string]any{"content": "Dense-Mem uses PostgreSQL."}},
 		"relationships": []any{map[string]any{

@@ -24,7 +24,7 @@ func TestClaimedPrivateConflictDerivedEvidenceCannotStageAfterErasureReopensSpac
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "conflict-derived-private-generation"))
 	identityID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	credential := createOwnedCredential(t, credentialRepo, teamID, identityID, "conflict-derived-private-generation", domain.CredentialBindingCredentialPrivate)
+	credential := createOwnedCredential(t, credentialRepo, teamID, identityID, "conflict-derived-private-generation")
 	ledgerRepo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
 	privateRepo := privacypostgres.NewPrivateMemoryRepository(appDB, rls)
 	require.NoError(t, privateRepo.Prepare(ctx))

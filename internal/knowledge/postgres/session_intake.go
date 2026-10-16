@@ -7,8 +7,10 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/ownership"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"gorm.io/gorm"
 )
 
@@ -20,6 +22,10 @@ func (r *Store) LookupSession(ctx context.Context, scope session.Scope, key stri
 		if err := sessionSpaceFence(ctx, tx, scope); err != nil {
 			return err
 		}
+		if err := storagepostgres.CheckPrivateMemoryRetryTx(ctx, tx, scope.TeamID, scope.OwnerProfileID, "session", key); err != nil {
+			return err
+		}
+
 		var err error
 		submission, err = loadSessionByKey(ctx, tx, scope, key)
 		if err != nil {
@@ -48,6 +54,12 @@ func sessionSpaceFence(ctx context.Context, tx *gorm.DB, scope session.Scope) er
 			return session.ErrUnauthorized
 		}
 	}
+	if err := storagepostgres.AuthorizeMemoryMutationTx(ctx, tx, scope.TeamID, scope.OwnerProfileID, scope.SpaceID, scope.SpaceGeneration); err != nil {
+		if errors.Is(err, domain.ErrMemoryWriteDenied) {
+			return session.ErrStale
+		}
+		return err
+	}
 	if err := lockKnownEvidenceSpace(ctx, tx, scope.TeamID, scope.SpaceID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) || isPostgresLockNotAvailable(err) {
 			return session.ErrStale
@@ -59,7 +71,7 @@ func sessionSpaceFence(ctx context.Context, tx *gorm.DB, scope session.Scope) er
 	err := tx.WithContext(ctx).Raw(`
 		SELECT id::text FROM memory_spaces
 		WHERE team_id = ?::uuid AND id = ?::uuid AND generation = ?
-		  AND lifecycle_state = 'active' AND kind IN ('profile_private', 'credential_private')
+		  AND lifecycle_state = 'active' AND kind = 'private'
 		  AND dense_mem_space_allowed(id)
 	`, scope.TeamID, scope.SpaceID, scope.SpaceGeneration).Row().Scan(&spaceID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -78,6 +90,10 @@ func (r *Store) StageSession(ctx context.Context, intake session.Intake) (*sessi
 		if err := tx.WithContext(ctx).Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?, 319))`, scope.SpaceID+":"+req.IdempotencyKey).Error; err != nil {
 			return err
 		}
+		if err := storagepostgres.CheckPrivateMemoryRetryTx(ctx, tx, scope.TeamID, scope.OwnerProfileID, "session", req.IdempotencyKey); err != nil {
+			return err
+		}
+
 		existing, err := loadSessionByKey(ctx, tx, scope, req.IdempotencyKey)
 		if err == nil {
 			if existing.Intake.RequestHash != intake.RequestHash || existing.Intake.Scope != scope {
@@ -240,6 +256,8 @@ func loadSessionByKey(ctx context.Context, tx *gorm.DB, scope session.Scope, key
 			return nil, err
 		}
 	}
+	// Placement can change during migration or erasure fencing; the exact intake remains historical evidence.
+	submission.Intake.Scope = scope
 	if result.Valid {
 		submission.Result = &session.Result{}
 		if err := json.Unmarshal([]byte(result.String), submission.Result); err != nil {

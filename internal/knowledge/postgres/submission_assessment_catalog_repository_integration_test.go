@@ -31,7 +31,7 @@ func TestSubmissionAssessmentCatalogIsTeamScopedAndUsesBoundedPredicateResolutio
 	sharedSpace, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).GetTeamShared(ctx, uuid.MustParse(teamA))
 	require.NoError(t, err)
 	require.NotNil(t, sharedSpace)
-	privateSpace, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureCredentialPrivate(ctx, uuid.MustParse(teamA), uuid.MustParse(ownerA))
+	privateSpace, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamA), uuid.MustParse(ownerA))
 	require.NoError(t, err)
 	var privateGeneration int64
 	privateEntityID := uuid.New()

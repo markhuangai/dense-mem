@@ -321,19 +321,19 @@ func TestAuditServiceListHidesSealedPrivateSpaceRows(t *testing.T) {
 	require.NoError(t, m.RunUp(ctx))
 	rlss := postgres.NewRLS()
 	teamID := uuid.New()
-	privateSpaceID := uuid.New()
-	ownerCredentialID := uuid.New()
+	var privateSpaceID uuid.UUID
+	ownerIdentityID, ownerMembershipID := uuid.New(), uuid.New()
 	require.NoError(t, rlss.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
-		if err := tx.Exec(`
-			INSERT INTO teams (id, name)
-			VALUES (?, ?)
-		`, teamID, "audit-private-"+teamID.String()).Error; err != nil {
+		if err := tx.Exec(`INSERT INTO teams (id, name) VALUES (?, ?)`, teamID, "audit-private-"+teamID.String()).Error; err != nil {
 			return err
 		}
-		return tx.Exec(`
-			INSERT INTO memory_spaces (id, team_id, kind, owner_credential_id)
-			VALUES (?, ?, 'credential_private', ?)
-		`, privateSpaceID, teamID, ownerCredentialID).Error
+		if err := tx.Exec(`INSERT INTO actor_identities(id,kind,team_id,display_name) VALUES (?,'api_client',?,'audit owner')`, ownerIdentityID, teamID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`INSERT INTO team_memberships(id,team_id,actor_identity_id,maximum_grants) VALUES (?,?,?,ARRAY['read','write'])`, ownerMembershipID, teamID, ownerIdentityID).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`SELECT id FROM memory_spaces WHERE team_id=? AND owner_membership_id=? AND kind='private'`, teamID, ownerMembershipID).Row().Scan(&privateSpaceID)
 	}))
 
 	auditService := newAuditService(db)
@@ -361,7 +361,7 @@ func TestAuditServiceListHidesSealedPrivateSpaceRows(t *testing.T) {
 		TeamID: teamID,
 		AllowedSpaces: []domain.MemorySpaceAccess{{
 			ID:         privateSpaceID,
-			Kind:       domain.MemorySpaceCredentialPrivate,
+			Kind:       domain.MemorySpacePrivate,
 			Generation: 1,
 		}},
 	})

@@ -13,6 +13,7 @@ type TestKey = {
   team_id: string;
   name: string;
   key_suffix: string;
+  memory_access: { private: { read: boolean; write: boolean }; team_shared: { read: boolean; write: boolean } };
   scopes: string[];
   role: "manager" | "member";
   rate_limit: number;
@@ -21,10 +22,7 @@ type TestKey = {
   created_at: string;
 };
 
-type SSOTestCredential = TestKey & {
-  memory_binding: "shared_only" | "profile_private" | "credential_private";
-  memory_space_kind: "team_shared" | "profile_private" | "credential_private";
-};
+type SSOTestCredential = TestKey;
 
 const readKey: TestKey = {
   id: "22222222-2222-4222-8222-222222222222",
@@ -32,6 +30,7 @@ const readKey: TestKey = {
   name: "Mine",
   key_suffix: "abc123",
   scopes: ["read"],
+  memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: false } },
   role: "member",
   rate_limit: 120,
   last_used_at: null,
@@ -42,6 +41,7 @@ const readKey: TestKey = {
 const writeKey: TestKey = {
   ...readKey,
   scopes: ["read", "write"],
+  memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: true } },
 };
 
 const managerKey: TestKey = {
@@ -336,8 +336,6 @@ test("SSO member can create and operate on a selected second credential", async 
     id: "55555555-5555-4555-8555-555555555555",
     name: "Profile key",
     key_suffix: "profile1",
-    memory_binding: "profile_private",
-    memory_space_kind: "profile_private",
   };
   const calls = await mockSSOUserApi(page, [firstCredential]);
   await page.goto("/ui/");
@@ -347,7 +345,7 @@ test("SSO member can create and operate on a selected second credential", async 
   await expect(page.getByRole("heading", { name: "My credentials" })).toBeVisible();
 
   await page.getByLabel("Credential name", { selector: "#sso-personal-credential-name" }).fill("Second key");
-  await page.getByLabel("Memory binding", { selector: "#sso-personal-credential-binding" }).selectOption("credential_private");
+  await expect(page.getByLabel("Memory binding")).toHaveCount(0);
   await page.getByRole("button", { name: "Create API key" }).click();
 
   await expect(page.getByLabel("Generated API key")).toHaveValue("dm_sso_second_plaintext");
@@ -355,7 +353,6 @@ test("SSO member can create and operate on a selected second credential", async 
   expect(calls.createBodies).toEqual([expect.objectContaining({
     name: "Second key",
     scopes: ["read", "write"],
-    memory_binding: "credential_private",
   })]);
 
   const secondCredentialID = "66666666-6666-4666-8666-666666666666";
@@ -609,6 +606,7 @@ async function mockUserApi(
               team: currentTeam,
               membership: { team_id: currentTeam.id, name: currentKey.name, grants: currentKey.scopes, role: currentKey.role },
               credential: currentKey,
+              memory_access: currentKey.memory_access,
               teams: [],
               personal_credentials: [],
               mcp_public_base_url: "",
@@ -633,6 +631,7 @@ async function mockUserApi(
           team: currentTeam,
           membership: { team_id: currentTeam.id, name: currentKey.name, grants: currentKey.scopes, role: currentKey.role },
           credential: currentKey,
+              memory_access: currentKey.memory_access,
           teams: [],
           personal_credentials: [],
           mcp_public_base_url: "",
@@ -736,6 +735,7 @@ async function mockSSOUserApi(page: Page, credentials: SSOTestCredential[]) {
           credential: null,
           teams: [{ team, membership: { team_id: team.id, name: "SSO member", grants: ["read", "write"], role: "member" } }],
           personal_credentials: currentCredentials,
+          memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: true } },
           mcp_public_base_url: "",
         },
       }),
@@ -762,12 +762,7 @@ async function mockSSOUserApi(page: Page, credentials: SSOTestCredential[]) {
       scopes: Array.isArray(body.scopes) ? body.scopes.map(String) : ["read"],
       rate_limit: Number(body.rate_limit ?? 120),
       expires_at: typeof body.expires_at === "string" ? body.expires_at : null,
-      memory_binding: body.memory_binding === "shared_only" || body.memory_binding === "credential_private"
-        ? body.memory_binding
-        : "profile_private",
-      memory_space_kind: body.memory_binding === "shared_only"
-        ? "team_shared"
-        : body.memory_binding === "credential_private" ? "credential_private" : "profile_private",
+      memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: Array.isArray(body.scopes) && body.scopes.includes("write") } },
     };
     currentCredentials = [...currentCredentials, created];
     await route.fulfill({

@@ -152,7 +152,7 @@ function overflowFixture() {
   for (let index = 0; index < 101; index += 1) {
     relationships.push(relationship(content, 0, `${runID}:${index}`, "A", predicateKey(index), "B"));
   }
-  return { evidence, relationships, idempotency_key: `${runID}:batch` };
+  return { target_space: "team_shared", evidence, relationships, idempotency_key: `${runID}:batch` };
 }
 
 function clientControlledBudgetFixture() {
@@ -170,6 +170,7 @@ function clientControlledBudgetFixture() {
     });
   }
   return {
+    target_space: "team_shared",
     evidence: [{ content: "Client-controlled assessor budget input.", source_type: "manual", source: `${runID}:client-budget`, source_group: runID }],
     relationships,
     idempotency_key: `${runID}:client-budget`,

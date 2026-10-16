@@ -15,6 +15,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 const evidenceLifecycleCompleted = "completed"
@@ -58,6 +59,14 @@ func (r *Store) RetractEvidence(ctx context.Context, input RetractEvidenceInput)
 	}
 	var result *EvidenceLifecycleResult
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+		resolved, err := storagepostgres.ResolveMemoryHandlesTx(ctx, tx, input.TeamID, "evidence_fragments", input.EvidenceIDs, "")
+		if err != nil {
+			return err
+		}
+		input.EvidenceIDs = normalizeUUIDStrings(resolved)
+		if err := authorizeEvidenceRetraction(ctx, tx, input); err != nil {
+			return err
+		}
 		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}

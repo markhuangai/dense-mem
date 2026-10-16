@@ -35,7 +35,7 @@ func (r *PrivateMemoryRepositoryImpl) GetOwnerOperation(ctx context.Context, tea
 						SELECT 1 FROM memory_spaces AS space
 						WHERE space.id = operation.space_id
 						  AND space.team_id = operation.team_id
-						  AND space.owner_profile_id = $3
+						  AND space.owner_membership_id IN (SELECT id FROM team_memberships WHERE team_id = operation.team_id AND actor_identity_id = $3)
 					)
 					OR EXISTS (
 						SELECT 1 FROM credentials AS credential
@@ -56,7 +56,7 @@ func (r *PrivateMemoryRepositoryImpl) GetOwnerOperation(ctx context.Context, tea
 						SELECT 1 FROM memory_spaces AS space
 						WHERE space.id = operation.space_id
 						  AND space.team_id = operation.team_id
-						  AND space.owner_credential_id = $3
+						  AND space.owner_membership_id IN (SELECT membership.id FROM team_memberships AS membership JOIN credentials AS credential ON credential.team_id = membership.team_id AND credential.actor_identity_id = membership.actor_identity_id WHERE credential.id = $3 AND credential.team_id = operation.team_id)
 					)
 				  )
 			`
@@ -116,14 +116,14 @@ func (r *PrivateMemoryRepositoryImpl) ListSpaces(ctx context.Context, limit, off
 	items := make([]domain.PrivateMemorySpaceMetadata, 0)
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
-			SELECT space.id, space.team_id, space.kind, space.owner_profile_id, space.owner_credential_id,
+			SELECT space.id, space.team_id, space.kind, space.owner_membership_id,
 			       space.generation, space.lifecycle_state, space.private_content_at, space.sealed_at,
 			       space.retired_at, space.created_at, space.updated_at,
 			       hold.id, hold.reason_code, hold.actor_class, hold.placed_at
 			FROM memory_spaces AS space
 			LEFT JOIN private_memory_legal_holds AS hold
 			  ON hold.space_id = space.id AND hold.released_at IS NULL
-			WHERE space.kind IN ('profile_private', 'credential_private')
+			WHERE space.kind = 'private'
 			ORDER BY space.updated_at DESC, space.id DESC
 			LIMIT $1 OFFSET $2
 		`, limit, offset).Rows()
@@ -136,7 +136,7 @@ func (r *PrivateMemoryRepositoryImpl) ListSpaces(ctx context.Context, limit, off
 			var holdID, holdReason, holdActor sql.NullString
 			var holdPlaced sql.NullTime
 			if err := rows.Scan(
-				&space.ID, &space.TeamID, &space.Kind, &space.OwnerProfileID, &space.OwnerCredentialID,
+				&space.ID, &space.TeamID, &space.Kind, &space.OwnerMembershipID,
 				&space.Generation, &space.LifecycleState, &space.PrivateContentAt, &space.SealedAt,
 				&space.RetiredAt, &space.CreatedAt, &space.UpdatedAt,
 				&holdID, &holdReason, &holdActor, &holdPlaced,
@@ -242,10 +242,10 @@ func (r *PrivateMemoryRepositoryImpl) ReleaseLegalHold(ctx context.Context, spac
 
 func privateMemorySpaceByIDTx(ctx context.Context, tx *gorm.DB, spaceID uuid.UUID) (*domain.MemorySpace, error) {
 	space, err := scanPrivateMemorySpace(tx.WithContext(ctx).Raw(`
-		SELECT id, team_id, kind, owner_profile_id, owner_credential_id,
+		SELECT id, team_id, kind, owner_membership_id,
 		       generation, lifecycle_state, private_content_at, sealed_at, retired_at, created_at, updated_at
 		FROM memory_spaces
-		WHERE id = $1 AND kind IN ('profile_private', 'credential_private')
+		WHERE id = $1 AND kind = 'private'
 		FOR UPDATE
 	`, spaceID).Row())
 	if errors.Is(err, sql.ErrNoRows) {
@@ -273,12 +273,16 @@ func activePrivateMemoryLegalHoldTx(ctx context.Context, tx *gorm.DB, spaceID uu
 	return hold, err
 }
 
-func ensureNoPrivateMemoryLegalHoldTx(ctx context.Context, tx *gorm.DB, spaceID uuid.UUID) error {
-	hold, err := activePrivateMemoryLegalHoldTx(ctx, tx, spaceID, false)
-	if err != nil {
+func ensureNoPrivateMemoryLegalHoldTx(ctx context.Context, tx *gorm.DB, spaceID uuid.UUID, legacy ...*uuid.UUID) error {
+	var source any
+	if len(legacy) > 0 {
+		source = legacy[0]
+	}
+	var held bool
+	if err := tx.WithContext(ctx).Raw(`SELECT dense_mem_private_space_held(?,?)`, spaceID, source).Row().Scan(&held); err != nil {
 		return err
 	}
-	if hold != nil {
+	if held {
 		return ErrPrivateMemoryLegalHold
 	}
 	return nil
@@ -335,18 +339,15 @@ func (r *PrivateMemoryRepositoryImpl) RunRetention(ctx context.Context, input Pr
 		}
 
 		rows, err := tx.WithContext(ctx).Raw(`
-			SELECT space.id, space.team_id, space.kind, space.owner_profile_id, space.owner_credential_id,
+			SELECT space.id, space.team_id, space.kind, space.owner_membership_id,
 			       space.generation, space.lifecycle_state, space.private_content_at, space.sealed_at,
 			       space.retired_at, space.created_at, space.updated_at
 			FROM memory_spaces AS space
-			WHERE space.kind IN ('profile_private', 'credential_private')
+			WHERE space.kind = 'private' AND NOT space.migration_archive
 			  AND space.lifecycle_state = 'active'
 			  AND space.private_content_at IS NOT NULL
 			  AND space.private_content_at < $1
-			  AND NOT EXISTS (
-				SELECT 1 FROM private_memory_legal_holds AS hold
-				WHERE hold.space_id = space.id AND hold.released_at IS NULL
-			  )
+			  AND NOT dense_mem_private_space_held(space.id)
 			  AND NOT EXISTS (
 				SELECT 1 FROM private_memory_erasure_operations AS operation
 				WHERE operation.space_id = space.id AND operation.status IN ('queued', 'processing')
@@ -412,22 +413,26 @@ func backfillPrivateContentAgeTx(ctx context.Context, tx *gorm.DB, batchSize int
 		WITH candidate AS (
 			SELECT space.id, space.team_id
 			FROM memory_spaces AS space
-			WHERE space.kind IN ('profile_private', 'credential_private')
+			WHERE space.kind = 'private' AND NOT space.migration_archive
 			  AND space.private_content_at IS NULL
-			  AND EXISTS (
-				SELECT 1
-				FROM knowledge_ingests AS ingest
+			  AND (EXISTS (
+				SELECT 1 FROM knowledge_ingests AS ingest
 				WHERE ingest.team_id = space.team_id AND ingest.space_id = space.id
-			  )
+			  ) OR EXISTS (
+				SELECT 1 FROM session_events AS event
+				WHERE event.team_id = space.team_id AND event.space_id = space.id
+			  ))
 			ORDER BY space.id
 			LIMIT $1
 			FOR UPDATE OF space SKIP LOCKED
 		), latest AS (
-			SELECT candidate.id, MAX(ingest.created_at) AS private_content_at
+			SELECT candidate.id, GREATEST(
+				(SELECT MAX(ingest.created_at) FROM knowledge_ingests AS ingest
+				 WHERE ingest.team_id = candidate.team_id AND ingest.space_id = candidate.id),
+				(SELECT MAX(event.created_at) FROM session_events AS event
+				 WHERE event.team_id = candidate.team_id AND event.space_id = candidate.id)
+			) AS private_content_at
 			FROM candidate
-			JOIN knowledge_ingests AS ingest
-			  ON ingest.team_id = candidate.team_id AND ingest.space_id = candidate.id
-			GROUP BY candidate.id
 		)
 		UPDATE memory_spaces AS space
 		SET private_content_at = latest.private_content_at
@@ -489,11 +494,7 @@ func (r *PrivateMemoryRepositoryImpl) ClaimNext(ctx context.Context, workerID st
 				WHERE ((status = 'queued' AND (next_attempt_at IS NULL OR next_attempt_at <= $1))
 				   OR (status = 'processing' AND lease_until < $1))
 				  AND attempt_count < $4
-				  AND NOT EXISTS (
-					SELECT 1 FROM private_memory_legal_holds AS hold
-					WHERE hold.space_id = private_memory_erasure_operations.space_id
-					  AND hold.released_at IS NULL
-				  )
+				  AND NOT dense_mem_private_space_held(space_id,legacy_source_space_id)
 				ORDER BY requested_at, id
 				LIMIT 1
 				FOR UPDATE SKIP LOCKED
@@ -516,7 +517,7 @@ func (r *PrivateMemoryRepositoryImpl) ClaimNext(ctx context.Context, workerID st
 			       action, actor_class, reason_code, target_generation, retire_space,
 			       status, manifest_position, deleted_counts, attempt_count, fence,
 			       worker_id, lease_until, next_attempt_at, last_error_code, requested_at, started_at,
-			       completed_at, updated_at
+			       completed_at, updated_at, legacy_source_space_id
 			FROM claimed
 		`, now, workerID, leaseUntil, privacycontract.MaximumAttempts).Row()
 		var err error
@@ -553,6 +554,10 @@ func (r *PrivateMemoryRepositoryImpl) ExecuteClaim(ctx context.Context, operatio
 			return ErrPrivateMemoryManifest
 		}
 
+		destinations, err := lockPrivateMemoryLineageTx(ctx, tx, operation.TeamID, *operation.SpaceID, operation.LegacySourceSpaceID)
+		if err != nil {
+			return err
+		}
 		// Match queuePrivateMemorySpaceTx's space-before-operation order to avoid a worker/retirement deadlock.
 		space, err := privateMemorySpaceByIDTx(ctx, tx, *operation.SpaceID)
 		if err != nil {
@@ -578,7 +583,7 @@ func (r *PrivateMemoryRepositoryImpl) ExecuteClaim(ctx context.Context, operatio
 			space.LifecycleState != domain.MemorySpaceSealed || space.Generation != *operation.TargetGeneration+1 {
 			return ErrPrivateMemoryClaimLost
 		}
-		if err := ensureNoPrivateMemoryLegalHoldTx(ctx, tx, space.ID); err != nil {
+		if err := ensureNoPrivateMemoryLegalHoldTx(ctx, tx, space.ID, operation.LegacySourceSpaceID); err != nil {
 			return err
 		}
 		if operation.RetireSpace {
@@ -607,8 +612,11 @@ func (r *PrivateMemoryRepositoryImpl) ExecuteClaim(ctx context.Context, operatio
 		if err := tx.WithContext(ctx).Exec(`SET CONSTRAINTS ALL DEFERRED`).Error; err != nil {
 			return err
 		}
-		counts := make(map[string]int64, len(ordered)+2)
 		inboundCrossReferencesDeleted, err := deletePrivateMemoryInboundCrossReferencesTx(ctx, tx, space.ID)
+		if err != nil {
+			return err
+		}
+		counts, err := purgePrivateMemoryLineageTx(ctx, tx, space, operation.ID, operation.LegacySourceSpaceID, destinations, ordered)
 		if err != nil {
 			return err
 		}
@@ -622,21 +630,8 @@ func (r *PrivateMemoryRepositoryImpl) ExecuteClaim(ctx context.Context, operatio
 			if result.Error != nil {
 				return fmt.Errorf("delete %s: %w", table, result.Error)
 			}
-			counts[table] = result.RowsAffected
+			counts[table] += result.RowsAffected
 		}
-		auditResult := tx.WithContext(ctx).Exec(`
-			UPDATE audit_log
-			SET before_payload = NULL,
-			    after_payload = NULL,
-			    metadata = $1::jsonb
-			WHERE memory_space_id = $2
-			  AND (before_payload IS NOT NULL OR after_payload IS NOT NULL OR metadata IS DISTINCT FROM $1::jsonb)
-		`, privateMemoryAuditMetadataJSON, space.ID)
-		if auditResult.Error != nil {
-			return fmt.Errorf("scrub audit log: %w", auditResult.Error)
-		}
-		counts["audit_log"] = auditResult.RowsAffected
-
 		for _, table := range ordered {
 			query, err := privateMemoryManifestCountQuery(table)
 			if err != nil {
@@ -720,7 +715,7 @@ func privateMemoryManifestDeleteQuery(table string) (string, error) {
 			WHERE row.team_id = attempt.team_id
 			  AND row.attempt_id = attempt.attempt_id
 			  AND row.owner_profile_id = attempt.owner_profile_id
-			  AND attempt.space_id = $1`, quoted), nil
+			  AND COALESCE(row.space_id,attempt.space_id) = $1`, quoted), nil
 	case "semantic_assessments":
 		return fmt.Sprintf(`
 			DELETE FROM %s AS row
@@ -728,7 +723,7 @@ func privateMemoryManifestDeleteQuery(table string) (string, error) {
 			WHERE row.team_id = ingest.team_id
 			  AND row.attempt_id = ingest.ingest_id
 			  AND row.owner_profile_id = ingest.owner_profile_id
-			  AND ingest.space_id = $1`, quoted), nil
+			  AND COALESCE(row.space_id,ingest.space_id) = $1`, quoted), nil
 	default:
 		return fmt.Sprintf("DELETE FROM %s WHERE space_id = $1", quoted), nil
 	}
@@ -745,7 +740,7 @@ func privateMemoryManifestCountQuery(table string) (string, error) {
 			  ON row.team_id = attempt.team_id
 			 AND row.attempt_id = attempt.attempt_id
 			 AND row.owner_profile_id = attempt.owner_profile_id
-			WHERE attempt.space_id = $1`, quoted), nil
+			WHERE COALESCE(row.space_id,attempt.space_id) = $1`, quoted), nil
 	case "semantic_assessments":
 		return fmt.Sprintf(`
 			SELECT COUNT(*)
@@ -754,7 +749,7 @@ func privateMemoryManifestCountQuery(table string) (string, error) {
 			  ON row.team_id = ingest.team_id
 			 AND row.attempt_id = ingest.ingest_id
 			 AND row.owner_profile_id = ingest.owner_profile_id
-			WHERE ingest.space_id = $1`, quoted), nil
+			WHERE COALESCE(row.space_id,ingest.space_id) = $1`, quoted), nil
 	default:
 		return fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE space_id = $1", quoted), nil
 	}
@@ -865,7 +860,7 @@ func validatePrivateMemoryErasureInput(input PrivateMemoryErasureRequest) error 
 }
 
 func isPrivateMemorySpaceKind(kind domain.MemorySpaceKind) bool {
-	return kind == domain.MemorySpaceProfilePrivate || kind == domain.MemorySpaceCredentialPrivate
+	return kind == domain.MemorySpacePrivate
 }
 
 func privateMemoryPage(limit, offset int) (int, int) {
@@ -923,6 +918,7 @@ func wrapPrivateMemoryError(operation string, err error) error {
 
 func isPrivateMemoryBoundedError(err error) bool {
 	for _, known := range []error{
+		domain.ErrMemoryWriteDenied,
 		ErrPrivateMemoryNotFound,
 		ErrPrivateMemoryLegalHold,
 		ErrPrivateMemoryIdempotency,

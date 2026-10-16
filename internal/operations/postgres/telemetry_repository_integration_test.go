@@ -11,7 +11,6 @@ import (
 
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
-	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -78,7 +77,7 @@ func TestReadTelemetryLifecycleOmitsSealedGenerationRows(t *testing.T) {
 	createTelemetryRelationship(t, ctx, semantic, ledger, teamID, ownerID, "telemetry-sealed-shared")
 	reader := NewTelemetryLifecycleRepository(appDB, rls)
 
-	privateSpace, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureCredentialPrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
+	privateSpace, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
 	require.NoError(t, err)
 	var privateGeneration int64
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {

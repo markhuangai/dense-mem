@@ -21,7 +21,7 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 		SELECT
 			c.id,
 			c.actor_identity_id,
-			m.id,
+			membership.id,
 			alias.legacy_owner_id,
 			c.team_id,
 			COALESCE(t.name, ''),
@@ -29,20 +29,10 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 			c.key_prefix,
 			COALESCE(c.key_suffix, ''),
 			c.name,
-			ARRAY(
-				SELECT DISTINCT scope
-				FROM unnest(c.scopes) AS scope
-				WHERE scope = ANY(m.maximum_grants)
-				  AND EXISTS (
-					SELECT 1
-					FROM membership_grants g
-					WHERE g.membership_id = m.id
-					  AND g.grant_name = scope
-				  )
-				ORDER BY scope
-			),
+			`+credentialAuthenticationGrantsSelect+`,
+			`+credentialMemoryGrantsSelect+`,
 			c.rate_limit,
-			CASE WHEN m.team_admin THEN 'manager' ELSE 'member' END,
+			CASE WHEN membership.team_admin THEN 'manager' ELSE 'member' END,
 			c.last_used_at,
 			c.expires_at,
 			c.created_at,
@@ -55,13 +45,12 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 			COALESCE(owner_membership.sso_entitlement_status, ''),
 			owner_membership.sso_last_entitlement_checked_at,
 			owner_membership.sso_last_login_at,
-				COALESCE(c.memory_binding, 'shared_only'),
-				COALESCE(c.memory_space_id::text, ''),
+				COALESCE((SELECT id::text FROM memory_spaces WHERE team_id = c.team_id AND owner_membership_id = membership.id AND kind = 'private' AND lifecycle_state = 'active'), ''),
 				COALESCE((
 					SELECT memory_space.generation
 					FROM memory_spaces AS memory_space
-					WHERE memory_space.id = c.memory_space_id
-					  AND memory_space.team_id = c.team_id
+					WHERE memory_space.owner_membership_id = membership.id
+					  AND memory_space.team_id = c.team_id AND memory_space.kind = 'private' AND memory_space.lifecycle_state = 'active'
 					LIMIT 1
 				), 0),
 				COALESCE((
@@ -81,9 +70,9 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 		FROM credentials c
 		JOIN actor_identities a
 		  ON a.id = c.actor_identity_id
-		JOIN team_memberships m
-		  ON m.team_id = c.team_id
-			 AND m.actor_identity_id = c.actor_identity_id
+		JOIN team_memberships membership
+		  ON membership.team_id = c.team_id
+			 AND membership.actor_identity_id = c.actor_identity_id
 		JOIN ownership_aliases alias
 		  ON alias.team_id = c.team_id
 		 AND alias.canonical_identity_id = c.actor_identity_id
@@ -101,7 +90,7 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 		  AND c.revoked_at IS NULL
 		  AND (c.expires_at IS NULL OR c.expires_at > NOW())
 		  AND a.active = true
-		  AND m.status = 'active'
+		  AND membership.status = 'active'
 		  AND t.status = 'active'
 		  AND t.deleted_at IS NULL
 		LIMIT 1
@@ -115,7 +104,7 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 	}
 	var key domain.Credential
 	var ownerIdentityID, ssoProviderID string
-	var memoryBinding, memorySpaceID, teamSharedSpaceID string
+	var memorySpaceID, teamSharedSpaceID string
 	var memorySpaceGeneration, teamSharedSpaceGeneration int64
 	if err := rows.Scan(
 		&key.ID,
@@ -129,6 +118,7 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 		&key.KeySuffix,
 		&key.Name,
 		pq.Array(&key.Scopes),
+		pq.Array(&key.EffectiveMemoryGrants),
 		&key.RateLimit,
 		&key.Role,
 		&key.LastUsedAt,
@@ -143,7 +133,6 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 		&key.SSOEntitlementStatus,
 		&key.SSOLastEntitlementCheckedAt,
 		&key.SSOLastLoginAt,
-		&memoryBinding,
 		&memorySpaceID,
 		&memorySpaceGeneration,
 		&teamSharedSpaceID,
@@ -153,7 +142,7 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 	}
 	key.OwnerIdentityID = parseOptionalUUID(ownerIdentityID)
 	key.SSOProviderID = parseOptionalUUID(ssoProviderID)
-	if err := applyCredentialMemoryFields(&key, memoryBinding, memorySpaceID, memorySpaceGeneration, teamSharedSpaceID, teamSharedSpaceGeneration); err != nil {
+	if err := applyCredentialMemoryFields(&key, memorySpaceID, memorySpaceGeneration, teamSharedSpaceID, teamSharedSpaceGeneration); err != nil {
 		return nil, err
 	}
 	return &key, nil

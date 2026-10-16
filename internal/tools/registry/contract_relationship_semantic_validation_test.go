@@ -119,7 +119,7 @@ func TestRememberValidatesSpanlessRelationshipSemanticInvariants(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := ValidateContractInput(remember, test.input(), []string{"write"})
+			err := ValidateContractInput(remember, test.input(), []string{"read", "write"})
 			if test.want == "" {
 				if err != nil {
 					t.Fatalf("ValidateContractInput: %v", err)
@@ -135,6 +135,7 @@ func TestRememberValidatesSpanlessRelationshipSemanticInvariants(t *testing.T) {
 
 func validFlatValueRelationshipSubmission() map[string]any {
 	return map[string]any{
+		"target_space":    "team_shared",
 		"idempotency_key": "remember-test-value-batch",
 		"evidence":        []any{map[string]any{"content": "Widget costs 20 USD."}},
 		"relationships": []any{map[string]any{

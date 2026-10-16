@@ -231,7 +231,7 @@ async function createTeam(name) {
 async function createCredential(targetTeamID, name) {
   const response = await controlJSON(`/teams/${targetTeamID}/credentials`, {
     method: "POST",
-    body: { name, scopes: ["read", "write"], rate_limit: 300, memory_binding: "credential_private" },
+    body: { name, scopes: ["read", "write"], rate_limit: 300 },
   });
   const apiKey = requiredString(response.data?.api_key, "created API key");
   const credential = requiredObject(response.data?.credential, "created credential");
@@ -245,7 +245,10 @@ async function loadSpaces() {
 }
 
 function credentialSpace(spaces, credentialID) {
-  const space = spaces.find((item) => item.kind === "credential_private" && item.owner_credential_id === credentialID);
+  const result = postgresCommand(`BEGIN; SET LOCAL app.tx_mode='system'; SELECT member.id FROM team_memberships member JOIN credentials credential ON credential.actor_identity_id=member.actor_identity_id AND credential.team_id=member.team_id WHERE credential.id=${sqlLiteral(credentialID)}::uuid; COMMIT;`);
+  if (result.status !== 0) throw new Error("could not resolve credential membership");
+  const membership = result.stdout.split(/\s+/).find((value) => /^[0-9a-f-]{36}$/.test(value));
+  const space = spaces.find((item) => item.kind === "private" && item.owner_membership_id === membership);
   if (!space) throw new Error(`credential private space was not created for ${credentialID}`);
   return space;
 }

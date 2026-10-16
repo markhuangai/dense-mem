@@ -28,17 +28,13 @@ import (
 
 func sessionIntakeFixture(t *testing.T, admin, app *gorm.DB, rls *storage.RLS, team, owner string, kind domain.MemorySpaceKind) (context.Context, session.Intake) {
 	t.Helper()
-	spaces := privacypostgres.NewMemorySpaceRepository(app, rls)
-	var space *domain.MemorySpace
-	var err error
-	if kind == domain.MemorySpaceCredentialPrivate {
-		space, err = spaces.EnsureCredentialPrivate(context.Background(), uuid.MustParse(team), uuid.New())
-	} else {
-		space, err = spaces.EnsureProfilePrivate(context.Background(), uuid.MustParse(team), uuid.MustParse(owner))
-	}
+	space, err := ensurePrivateSpaceForOwner(t, app, rls, context.Background(), uuid.MustParse(team), uuid.MustParse(owner))
 	require.NoError(t, err)
-	generation := privateSpaceGeneration(t, context.Background(), admin, rls, space.ID)
-	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: uuid.MustParse(team), OwnerID: uuid.MustParse(owner), Grants: []string{"read", "write"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: space.ID, Kind: kind, Generation: generation}}})
+	generation := space.Generation
+	credential, err := accesspostgres.NewCredentialRepository(app, rls, nil).GetByIDForTeam(context.Background(), uuid.MustParse(team), uuid.MustParse(owner))
+	require.NoError(t, err)
+	require.NotNil(t, credential)
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: credential.TeamID, OwnerID: credential.OwnerID, IdentityID: credential.ActorIdentityID, MembershipID: credential.MembershipID, CredentialID: &credential.ID, Grants: credential.Scopes, AllowedSpaces: credential.MemorySpaces()})
 	req := session.Request{IdempotencyKey: "original-key", Framework: "generic", AppName: "notes", UserID: "external-user", SessionID: "external-session", Events: []session.Event{{EventID: "one", Text: "  Ari uses Go. café 🧭\n"}}}
 	windows, err := sessionservice.BuildWindows(req, "o200k_base")
 	require.NoError(t, err)
@@ -52,7 +48,7 @@ func TestSessionIntakeExactReplayAndMixedConflictAreAtomic(t *testing.T) {
 	defer cleanup()
 	team := createLedgerTeam(t, admin, rls, "session-intake")
 	owner := createLedgerProfile(t, admin, rls, team, "session-owner")
-	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpaceProfilePrivate)
+	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	store := NewStore(app, rls, ConflictRuntimeConfig{})
 	first, err := store.StageSession(ctx, intake)
 	require.NoError(t, err)
@@ -140,7 +136,7 @@ func TestSessionPrivateRLSAndGenerationFence(t *testing.T) {
 	teamC := createLedgerTeam(t, admin, rls, "session-isolation-c")
 	ownerC := createLedgerProfile(t, admin, rls, teamC, "actor-c")
 	store := NewStore(app, rls, ConflictRuntimeConfig{})
-	for _, kind := range []domain.MemorySpaceKind{domain.MemorySpaceProfilePrivate, domain.MemorySpaceCredentialPrivate} {
+	for _, kind := range []domain.MemorySpaceKind{domain.MemorySpacePrivate} {
 		t.Run(string(kind), func(t *testing.T) {
 			ctxA, intakeA := sessionIntakeFixture(t, admin, app, rls, team, ownerA, kind)
 			ctxB, intakeB := sessionIntakeFixture(t, admin, app, rls, team, ownerB, kind)
@@ -195,7 +191,7 @@ func TestSessionProfilePrivateOwnerAliasesAndIsolation(t *testing.T) {
 			return tx.Exec(`INSERT INTO ownership_aliases (team_id, legacy_owner_id, canonical_identity_id, reason)
 				VALUES (?::uuid, ?, ?, 'session-alias-regression')`, team, owner, identity).Error
 		}))
-		space, err := spaces.EnsureProfilePrivate(context.Background(), uuid.MustParse(team), identity)
+		space, err := spaces.EnsurePrivate(context.Background(), uuid.MustParse(team), membership)
 		require.NoError(t, err)
 		generation := privateSpaceGeneration(t, context.Background(), admin, rls, space.ID)
 		ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
@@ -209,16 +205,16 @@ func TestSessionProfilePrivateOwnerAliasesAndIsolation(t *testing.T) {
 		return actorScope{ctx: ctx, scope: scope, identity: identity}
 	}
 	a, b, c := newOAuth(team, false), newOAuth(team, true), newOAuth(foreignTeam, true)
-	key := createOwnedCredential(t, accesspostgres.NewCredentialRepository(app, rls, nil), uuid.MustParse(team), a.identity, "profile-session-key", domain.CredentialBindingProfilePrivate)
+	key := createOwnedCredential(t, accesspostgres.NewCredentialRepository(app, rls, nil), uuid.MustParse(team), a.identity, "profile-session-key")
 	require.NotEqual(t, a.identity, key.OwnerID)
 	keyCtx := requestctx.WithActor(context.Background(), requestctx.Actor{
 		TeamID: key.TeamID, IdentityID: key.ActorIdentityID, MembershipID: key.MembershipID, OwnerID: key.OwnerID,
 		CredentialID: &key.ID, AuthMethod: "api_key", Grants: key.Scopes,
-		AllowedSpaces: []domain.MemorySpaceAccess{{ID: key.MemorySpaceID, Kind: domain.MemorySpaceProfilePrivate, Generation: key.MemorySpaceGeneration}},
+		AllowedSpaces: []domain.MemorySpaceAccess{{ID: key.MemorySpaceID, Kind: domain.MemorySpacePrivate, Generation: key.MemorySpaceGeneration}},
 	})
 	keyScope, err := sessionservice.PrivateScope(keyCtx)
 	require.NoError(t, err)
-	require.Equal(t, a.scope.SpaceID, keyScope.SpaceID)
+	require.NotEqual(t, a.scope.SpaceID, keyScope.SpaceID)
 	require.NotEqual(t, a.scope.OwnerProfileID, keyScope.OwnerProfileID)
 	store := NewStore(app, rls, ConflictRuntimeConfig{})
 	api := sessionservice.NewService(sessionservice.Dependencies{
@@ -265,8 +261,9 @@ func TestSessionProfilePrivateOwnerAliasesAndIsolation(t *testing.T) {
 	actor, ok := requestctx.ActorFromContext(a.ctx)
 	require.True(t, ok)
 	actor.Grants = []string{"read"}
-	_, err = api.Ingest(requestctx.WithActor(context.Background(), actor), req)
-	require.ErrorIs(t, err, session.ErrUnauthorized)
+	privateResult, err := api.Ingest(requestctx.WithActor(context.Background(), actor), req)
+	require.NoError(t, err)
+	require.Equal(t, "completed", privateResult.ProcessingState)
 	actor.Grants = []string{"read", "write"}
 	actor.AllowedSpaces[0].Kind = domain.MemorySpaceTeamShared
 	_, err = api.Ingest(requestctx.WithActor(context.Background(), actor), req)
@@ -274,10 +271,11 @@ func TestSessionProfilePrivateOwnerAliasesAndIsolation(t *testing.T) {
 	require.NoError(t, rls.WithSystemTx(context.Background(), admin, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE memory_spaces SET generation = generation + 1 WHERE id = ?::uuid`, a.scope.SpaceID).Error
 	}))
-	for _, actor := range []actorScope{a, {ctx: keyCtx, scope: keyScope}} {
-		_, err = store.LookupSession(actor.ctx, actor.scope, keys[actor.scope.OwnerProfileID])
-		require.ErrorIs(t, err, session.ErrStale)
-	}
+	_, err = store.LookupSession(a.ctx, a.scope, keys[a.scope.OwnerProfileID])
+	require.ErrorIs(t, err, session.ErrStale)
+	keyReceipt, err := store.LookupSession(keyCtx, keyScope, keys[keyScope.OwnerProfileID])
+	require.NoError(t, err)
+	require.True(t, ids[keyReceipt.ID], "the separate API credential's session survives the SSO generation change")
 }
 
 func TestSessionLockSerializesConcurrentSameKeyIntake(t *testing.T) {
@@ -285,7 +283,7 @@ func TestSessionLockSerializesConcurrentSameKeyIntake(t *testing.T) {
 	defer cleanup()
 	team := createLedgerTeam(t, admin, rls, "session-concurrent")
 	owner := createLedgerProfile(t, admin, rls, team, "session-owner")
-	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpaceProfilePrivate)
+	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	store := NewStore(app, rls, ConflictRuntimeConfig{})
@@ -329,7 +327,7 @@ func TestSessionLockSerializesDifferentKeysAcrossStoreInstances(t *testing.T) {
 	defer cleanup()
 	team := createLedgerTeam(t, admin, rls, "session-distinct-keys")
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
-	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpaceProfilePrivate)
+	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	first, second := NewStore(app, rls, ConflictRuntimeConfig{}), NewStore(app, rls, ConflictRuntimeConfig{})
@@ -358,7 +356,7 @@ func TestSessionLockSerializesDifferentKeysAcrossStoreInstances(t *testing.T) {
 func TestSessionConcurrentMixedConflictsStageOnlyTheWinningBatch(t *testing.T) {
 	admin, app, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
-	for _, kind := range []domain.MemorySpaceKind{domain.MemorySpaceProfilePrivate, domain.MemorySpaceCredentialPrivate} {
+	for _, kind := range []domain.MemorySpaceKind{domain.MemorySpacePrivate} {
 		t.Run(string(kind), func(t *testing.T) {
 			team := createLedgerTeam(t, admin, rls, "session-concurrent-conflict-"+string(kind))
 			owner := createLedgerProfile(t, admin, rls, team, "owner")
@@ -413,7 +411,7 @@ func TestSessionDuplicatePreparationSupportsOneHundredPrivateExcerpts(t *testing
 	defer cleanup()
 	team := createLedgerTeam(t, admin, rls, "session-many-excerpts")
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
-	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpaceProfilePrivate)
+	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	insertSearchTestContract(t, admin, rls, "session-many-excerpts", 2, "exact", "")
 	store := NewStore(app, rls, ConflictRuntimeConfig{})
 	for _, size := range []int{21, 100} {

@@ -28,7 +28,7 @@ func TestSessionCancelledDiagnosticsCannotReviveSealedOrErasedGeneration(t *test
 			t.Cleanup(cleanup)
 			team := createLedgerTeam(t, admin, rls, "cancelled-diagnostic")
 			owner := createLedgerProfile(t, admin, rls, team, "owner")
-			base, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpaceProfilePrivate)
+			base, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 			store := NewStore(app, rls, ConflictRuntimeConfig{})
 			outbound := &sessionOutbound{block: true, entered: make(chan struct{}, 1)}
 			var logs bytes.Buffer

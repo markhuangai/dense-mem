@@ -4,18 +4,22 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 func TestPrivateMemoryManifestMatchesCatalog(t *testing.T) {
@@ -106,9 +110,9 @@ func TestPrivateMemoryRetentionSelectsExpiredSpacesAndExcludesLegalHolds(t *test
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-retention"))
 	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	eligible := createOwnedCredential(t, credentialRepo, teamID, ownerID, "eligible", domain.CredentialBindingCredentialPrivate)
-	held := createOwnedCredential(t, credentialRepo, teamID, ownerID, "held", domain.CredentialBindingCredentialPrivate)
-	fresh := createOwnedCredential(t, credentialRepo, teamID, ownerID, "fresh", domain.CredentialBindingCredentialPrivate)
+	eligible := createOwnedCredential(t, credentialRepo, teamID, ownerID, "eligible")
+	held := createOwnedCredential(t, credentialRepo, teamID, ownerID, "held")
+	fresh := createOwnedCredential(t, credentialRepo, teamID, ownerID, "fresh")
 	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 	seedPrivateMemoryIngestAt(t, adminDB, rls, teamID, eligible.ID, eligible.MemorySpaceID, "expired private content", now.AddDate(0, 0, -60))
 	seedPrivateMemoryIngestAt(t, adminDB, rls, teamID, held.ID, held.MemorySpaceID, "held private content", now.AddDate(0, 0, -60))
@@ -182,7 +186,7 @@ func TestPrivateMemoryExpiredLeaseIsReclaimedWithNewFence(t *testing.T) {
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-erasure-fence"))
 	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "fenced", domain.CredentialBindingCredentialPrivate)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "fenced")
 	seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, target.MemorySpaceID, "fenced private content")
 
 	repo := NewPrivateMemoryRepository(appDB, rls)
@@ -224,7 +228,7 @@ func TestPrivateMemoryFailureRetriesAreBackedOffAndBounded(t *testing.T) {
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-erasure-retries"))
 	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "retry-target", domain.CredentialBindingCredentialPrivate)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "retry-target")
 	seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, target.MemorySpaceID, "retry private content")
 
 	repo := NewPrivateMemoryRepository(appDB, rls)
@@ -309,7 +313,7 @@ func TestPrivateMemoryFailureRetriesAreBackedOffAndBounded(t *testing.T) {
 	require.Equal(t, *operation.TargetGeneration+1, generation)
 
 	retireOwnerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
-	retireTarget := createOwnedCredential(t, credentialRepo, teamID, retireOwnerID, "retry-retire-target", domain.CredentialBindingCredentialPrivate)
+	retireTarget := createOwnedCredential(t, credentialRepo, teamID, retireOwnerID, "retry-retire-target")
 	seedPrivateMemoryIngest(t, adminDB, rls, teamID, retireTarget.ID, retireTarget.MemorySpaceID, "retry retire private content")
 	retirement, created, err := repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: retireOwnerID, CredentialID: retireTarget.ID,
@@ -372,7 +376,7 @@ func TestPrivateMemoryMissingRetiredCredentialLosesClaim(t *testing.T) {
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-erasure-missing-credential"))
 	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "missing-target", domain.CredentialBindingCredentialPrivate)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "missing-target")
 	seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, target.MemorySpaceID, "missing target content")
 
 	repo := NewPrivateMemoryRepository(appDB, rls)
@@ -407,8 +411,8 @@ func TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact(t *testing.T) {
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-erasure"))
 	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "target", domain.CredentialBindingCredentialPrivate)
-	other := createOwnedCredential(t, credentialRepo, teamID, ownerID, "other", domain.CredentialBindingCredentialPrivate)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "target")
+	other := createOwnedCredential(t, credentialRepo, teamID, ownerID, "other")
 	sharedSpaceID, err := credentialRepo.GetTeamSharedSpaceID(ctx, teamID)
 	require.NoError(t, err)
 
@@ -567,7 +571,7 @@ func TestPrivateMemoryErasureRemovesInboundCrossSpaceReferences(t *testing.T) {
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-erasure-inbound-cross-reference"))
 	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "inbound-target", domain.CredentialBindingCredentialPrivate)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "inbound-target")
 	sharedSpaceID, err := credentialRepo.GetTeamSharedSpaceID(ctx, teamID)
 	require.NoError(t, err)
 	privateIngestID := seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, target.MemorySpaceID, "private relationship target")
@@ -700,7 +704,7 @@ func TestPrivateMemoryIdempotencyConcurrentReplay(t *testing.T) {
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-erasure-concurrent-idempotency"))
 	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "concurrent", domain.CredentialBindingCredentialPrivate)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "concurrent")
 	repo := NewPrivateMemoryRepository(appDB, rls)
 	require.NoError(t, repo.Prepare(ctx))
 	request := PrivateMemoryErasureRequest{
@@ -750,169 +754,6 @@ func TestPrivateMemoryIdempotencyConcurrentReplay(t *testing.T) {
 	require.Equal(t, 1, createdCount)
 }
 
-func TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace(t *testing.T) {
-	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "sso-credential-private-erasure"))
-	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
-	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "isolated", domain.CredentialBindingCredentialPrivate)
-	profile := createOwnedCredential(t, credentialRepo, teamID, ownerID, "profile", domain.CredentialBindingProfilePrivate)
-	shared := createOwnedCredential(t, credentialRepo, teamID, ownerID, "shared", domain.CredentialBindingSharedOnly)
-	sharedSpaceID, err := credentialRepo.GetTeamSharedSpaceID(ctx, teamID)
-	require.NoError(t, err)
-
-	targetIngest := seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, target.MemorySpaceID, "isolated content")
-	profileIngest := seedPrivateMemoryIngest(t, adminDB, rls, teamID, profile.ID, profile.MemorySpaceID, "profile content")
-	sharedIngest := seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, sharedSpaceID, "shared content")
-
-	repo := NewPrivateMemoryRepository(appDB, rls)
-	require.NoError(t, repo.Prepare(ctx))
-	_, createdHold, err := repo.PlaceLegalHold(ctx, target.MemorySpaceID, "credential_delete_hold")
-	require.NoError(t, err)
-	require.True(t, createdHold)
-	request := PrivateMemoryErasureRequest{
-		TeamID: teamID, OwnerID: ownerID, CredentialID: target.ID,
-		IdempotencyScopeHash: Hash("sso-delete", ownerID.String(), "isolated-key"),
-		RequestHash:          Hash("delete", target.ID.String()),
-		ReasonCode:           "credential_deleted",
-	}
-	operation, created, err := repo.DisableSSOCredential(ctx, request)
-	require.NoError(t, err)
-	require.True(t, created)
-	require.Equal(t, domain.PrivateMemoryErasureQueued, operation.Status)
-	var disabledStatus string
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Raw(`SELECT status FROM credentials WHERE id = ?`, target.ID).Row().Scan(&disabledStatus)
-	}))
-	require.Equal(t, "disabled", disabledStatus)
-	claimWhileHeld, err := repo.ClaimNext(ctx, "sso-delete-held-worker", time.Minute)
-	require.NoError(t, err)
-	require.Nil(t, claimWhileHeld)
-	_, releasedHold, err := repo.ReleaseLegalHold(ctx, target.MemorySpaceID)
-	require.NoError(t, err)
-	require.True(t, releasedHold)
-
-	lockAcquired := make(chan error, 1)
-	releaseLock := make(chan struct{})
-	lockDone := make(chan error, 1)
-	go func() {
-		lockErr := rls.WithSystemTx(context.Background(), appDB, func(tx *gorm.DB) error {
-			var lockedID uuid.UUID
-			if err := tx.Raw(`
-				SELECT id
-				FROM private_memory_erasure_operations
-				WHERE id = ?
-				FOR UPDATE
-			`, operation.ID).Row().Scan(&lockedID); err != nil {
-				return err
-			}
-			lockAcquired <- nil
-			<-releaseLock
-			return nil
-		})
-		if lockErr != nil {
-			select {
-			case lockAcquired <- lockErr:
-			default:
-			}
-		}
-		lockDone <- lockErr
-	}()
-	require.NoError(t, <-lockAcquired)
-	lockReleased := false
-	defer func() {
-		if !lockReleased {
-			close(releaseLock)
-			<-lockDone
-		}
-	}()
-
-	replayCtx, cancelReplay := context.WithTimeout(ctx, 2*time.Second)
-	defer cancelReplay()
-	replay, created, err := repo.DisableSSOCredential(replayCtx, request)
-	require.NoError(t, err)
-	require.False(t, created)
-	require.Equal(t, operation.ID, replay.ID)
-	close(releaseLock)
-	lockReleased = true
-	require.NoError(t, <-lockDone)
-	claim, err := repo.ClaimNext(ctx, "sso-delete-worker", time.Minute)
-	require.NoError(t, err)
-	completed, err := repo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
-	require.NoError(t, err)
-	require.Equal(t, domain.PrivateMemoryErasureCompleted, completed.Status)
-	var membershipStatus string
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Raw(`
-			SELECT status
-			FROM team_memberships
-			WHERE actor_identity_id = ? AND team_id = ?
-		`, target.ID, teamID).Row().Scan(&membershipStatus)
-	}))
-	require.Equal(t, "revoked", membershipStatus)
-
-	for _, credentialID := range []uuid.UUID{profile.ID, shared.ID} {
-		preserveRequest := PrivateMemoryErasureRequest{
-			TeamID: teamID, OwnerID: ownerID, CredentialID: credentialID,
-			IdempotencyScopeHash: Hash("sso-delete", ownerID.String(), credentialID.String()),
-			RequestHash:          Hash("delete", credentialID.String()),
-			ReasonCode:           "credential_deleted",
-		}
-		preservedOperation, wasCreated, err := repo.DisableSSOCredential(ctx, preserveRequest)
-		require.NoError(t, err)
-		require.True(t, wasCreated)
-		require.Equal(t, domain.PrivateMemoryErasureCompleted, preservedOperation.Status)
-		require.Nil(t, preservedOperation.SpaceID)
-	}
-
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		for _, fixture := range []struct {
-			id     uuid.UUID
-			exists bool
-		}{
-			{targetIngest, false},
-			{profileIngest, true},
-			{sharedIngest, true},
-		} {
-			var exists bool
-			if err := tx.Raw(`SELECT EXISTS (SELECT 1 FROM knowledge_ingests WHERE ingest_id = ?)`, fixture.id).Row().Scan(&exists); err != nil {
-				return err
-			}
-			require.Equal(t, fixture.exists, exists)
-		}
-		var lifecycle string
-		if err := tx.Raw(`SELECT lifecycle_state FROM memory_spaces WHERE id = ?`, target.MemorySpaceID).Row().Scan(&lifecycle); err != nil {
-			return err
-		}
-		require.Equal(t, "retired", lifecycle)
-		var profileLifecycle string
-		if err := tx.Raw(`SELECT lifecycle_state FROM memory_spaces WHERE id = ?`, profile.MemorySpaceID).Row().Scan(&profileLifecycle); err != nil {
-			return err
-		}
-		require.Equal(t, "active", profileLifecycle)
-		var statuses []string
-		if err := tx.Raw(`SELECT status FROM credentials WHERE id = ANY(?) ORDER BY id`, pq.Array([]uuid.UUID{target.ID, profile.ID, shared.ID})).Scan(&statuses).Error; err != nil {
-			return err
-		}
-		require.Len(t, statuses, 3)
-		for _, status := range statuses {
-			require.Equal(t, "disabled", status)
-		}
-		if err := tx.Raw(`
-			SELECT status
-			FROM team_memberships
-			WHERE actor_identity_id = ? AND team_id = ?
-		`, target.ID, teamID).Row().Scan(&membershipStatus); err != nil {
-			return err
-		}
-		require.Equal(t, "revoked", membershipStatus)
-		return nil
-	}))
-}
-
 func TestPrivateMemorySSOCredentialDeletePreservesSharedActorMembership(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -921,21 +762,10 @@ func TestPrivateMemorySSOCredentialDeletePreservesSharedActorMembership(t *testi
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "sso-delete-shared-actor"))
 	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "shared-actor-target", domain.CredentialBindingSharedOnly)
-	siblingID := uuid.New()
-	siblingPrefix := "dm_" + siblingID.String()[:20]
-	now := time.Now().UTC()
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Exec(`
-			INSERT INTO credentials (
-				id, actor_identity_id, owner_identity_id, team_id, kind, key_hash, key_prefix,
-				key_suffix, name, scopes, rate_limit, status, memory_binding, memory_space_id,
-				created_at, updated_at
-			) VALUES (?, ?, ?, ?, 'api_key', ?, ?, 'suffix', 'shared-actor-sibling',
-				ARRAY['read','write']::text[], 60, 'active', 'shared_only',
-				(SELECT id FROM memory_spaces WHERE team_id = ? AND kind = 'team_shared'), ?, ?)
-		`, siblingID, target.ActorIdentityID, ownerID, teamID, "hash-"+siblingID.String(), siblingPrefix, teamID, now, now).Error
-	}))
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "shared-actor-target")
+	sibling := createOwnedCredential(t, credentialRepo, teamID, ownerID, "sibling")
+	siblingID := sibling.ID
+	require.NotEqual(t, target.MembershipID, sibling.MembershipID)
 
 	repo := NewPrivateMemoryRepository(appDB, rls)
 	_, created, err := repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
@@ -952,7 +782,7 @@ func TestPrivateMemorySSOCredentialDeletePreservesSharedActorMembership(t *testi
 			SELECT status
 			FROM team_memberships
 			WHERE actor_identity_id = ? AND team_id = ?
-		`, target.ActorIdentityID, teamID).Row().Scan(&membershipStatus)
+		`, sibling.ActorIdentityID, teamID).Row().Scan(&membershipStatus)
 	}))
 	require.Equal(t, "active", membershipStatus)
 
@@ -969,9 +799,13 @@ func TestPrivateMemorySSOCredentialDeletePreservesSharedActorMembership(t *testi
 			SELECT status
 			FROM team_memberships
 			WHERE actor_identity_id = ? AND team_id = ?
-		`, target.ActorIdentityID, teamID).Row().Scan(&membershipStatus)
+		`, sibling.ActorIdentityID, teamID).Row().Scan(&membershipStatus)
 	}))
 	require.Equal(t, "revoked", membershipStatus)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT status FROM team_memberships WHERE actor_identity_id=? AND team_id=?`, ownerID, teamID).Row().Scan(&membershipStatus)
+	}))
+	require.Equal(t, "active", membershipStatus, "deleting both issued keys preserves their SSO user's membership")
 }
 
 func seedPrivateMemoryIngest(t *testing.T, db *gorm.DB, rls interface {
@@ -996,4 +830,88 @@ func seedPrivateMemoryIngestAt(t *testing.T, db *gorm.DB, rls interface {
 	})
 	require.NoError(t, err)
 	return ingestID
+}
+
+func TestPrivateMigrationSessionOnlyRetentionPreservesAge(t *testing.T) {
+	f := legacyPrivateMigrationFixture(t)
+	ctx := context.Background()
+	owner, member, submission := uuid.New(), uuid.New(), uuid.New()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	latest := now.AddDate(0, 0, -45)
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.db, func(tx *gorm.DB) error {
+		for _, statement := range []struct {
+			query string
+			args  []any
+		}{
+			{`INSERT INTO actor_identities(id,kind,team_id,active) VALUES(?,'api_client',?,true)`, []any{owner, f.team}},
+			{`INSERT INTO team_memberships(id,team_id,actor_identity_id,status,maximum_grants,sso_entitlement_status) VALUES(?,?,?,'active',ARRAY['read','write'],'active')`, []any{member, f.team, owner}},
+			{`INSERT INTO membership_grants(membership_id,grant_name,source) VALUES(?,'read','explicit'),(?,'write','explicit')`, []any{member, member}},
+			{`INSERT INTO credentials(id,team_id,actor_identity_id,owner_identity_id,key_hash,key_prefix,key_suffix,name,scopes,memory_binding,memory_space_id) VALUES(?,?,?,?,'synthetic-test-hash',?,'test01','session-only writer',ARRAY['read','write'],'profile_private',?)`, []any{owner, f.team, owner, f.user, owner.String()[:24], f.legacy}},
+			{`INSERT INTO ownership_aliases(team_id,legacy_owner_id,canonical_identity_id,credential_id) VALUES(?,?,?,?)`, []any{f.team, owner, owner, owner}},
+			{`INSERT INTO session_submissions(team_id,owner_profile_id,space_id,space_generation,submission_id,idempotency_key,request_hash,intake,prior_context,new_event_indices,accepted_event_count,duplicate_event_count,result,created_at) VALUES(?,?,?,1,?,'session-only-retention',?,'{}','[]','[0,1]',2,0,'{"processing_state":"completed"}',?)`, []any{f.team, owner, f.legacy, submission, "sha256:" + strings.Repeat("a", 64), latest}},
+		} {
+			if err := tx.Exec(statement.query, statement.args...).Error; err != nil {
+				return err
+			}
+		}
+		for index, age := range []time.Time{now.AddDate(0, 0, -60), latest} {
+			if err := tx.Exec(`INSERT INTO session_events(team_id,owner_profile_id,space_id,space_generation,identity_hash,submission_id,event_index,framework,app_name,user_id,session_id,event_id,body,result,created_at) VALUES(?,?,?,1,?,?,?,'generic','automation','session-only','retention',?,'{"text":"private automation history"}','{}',?)`, f.team, owner, f.legacy, "sha256:"+strings.Repeat(string(rune('b'+index)), 64), submission, index, uuid.NewString(), age).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+	report, err := f.repo.InspectPrivateMemoryMigration(ctx)
+	require.NoError(t, err)
+	migrator, err := storage.NewMigrator(f.db)
+	require.NoError(t, err)
+	require.NoError(t, migrator.PreparePrivateMemoryMigration(ctx))
+	require.NoError(t, f.repo.MigratePrivateMemory(ctx, report.SourceFingerprint))
+	require.NoError(t, migrator.RunUp(ctx))
+	repo := NewPrivateMemoryRepository(f.applicationDB(t), f.rls)
+	var destination uuid.UUID
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.db, func(tx *gorm.DB) error {
+		if err := tx.Raw(`SELECT id FROM memory_spaces WHERE team_id=? AND owner_membership_id=? AND NOT migration_archive`, f.team, member).Row().Scan(&destination); err != nil {
+			return err
+		}
+		var ingests, events int
+		if err := tx.Raw(`SELECT count(*) FROM knowledge_ingests WHERE team_id=? AND space_id=?`, f.team, destination).Row().Scan(&ingests); err != nil {
+			return err
+		}
+		require.Zero(t, ingests)
+		if err := tx.Raw(`SELECT count(*) FROM session_events WHERE team_id=? AND space_id=?`, f.team, destination).Row().Scan(&events); err != nil {
+			return err
+		}
+		require.Equal(t, 2, events)
+		return nil
+	}))
+	_, _, err = repo.PlaceLegalHold(ctx, destination, "session-retention-hold")
+	require.NoError(t, err)
+	run, created, err := repo.RunRetention(ctx, PrivateMemoryRetentionRequest{ActorClass: domain.PrivateMemoryActorControl, IdempotencyScopeHash: Hash("session-only", "held"), RequestHash: Hash("session-only-request", "held"), RetentionDays: 30, Now: now})
+	require.NoError(t, err)
+	require.True(t, created)
+	assert.Zero(t, run.QueuedCount)
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.db, func(tx *gorm.DB) error {
+		var age sql.NullTime
+		if err := tx.Raw(`SELECT private_content_at FROM memory_spaces WHERE id=?`, destination).Row().Scan(&age); err != nil {
+			return err
+		}
+		assert.True(t, age.Valid, "session-only migration must participate in retention age backfill")
+		if age.Valid {
+			assert.WithinDuration(t, latest, age.Time, time.Microsecond, "retention uses the newest original session event, not migration time or other writers")
+		}
+		return nil
+	}))
+	_, _, err = repo.ReleaseLegalHold(ctx, destination)
+	require.NoError(t, err)
+	run, created, err = repo.RunRetention(ctx, PrivateMemoryRetentionRequest{ActorClass: domain.PrivateMemoryActorControl, IdempotencyScopeHash: Hash("session-only", "released"), RequestHash: Hash("session-only-request", "released"), RetentionDays: 30, Now: now})
+	require.NoError(t, err)
+	require.True(t, created)
+	assert.Equal(t, 1, run.QueuedCount, "expired session-only private history must be queued without another write")
+	operations, err := repo.ListOperations(ctx, 100, 0)
+	require.NoError(t, err)
+	if assert.Len(t, operations, 1) {
+		require.NotNil(t, operations[0].SpaceID)
+		assert.Equal(t, destination, *operations[0].SpaceID)
+	}
 }

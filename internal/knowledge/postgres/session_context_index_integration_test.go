@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/assessor"
@@ -19,6 +20,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/session/extraction"
 	service "github.com/markhuangai/dense-mem/internal/session/service"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -28,7 +30,7 @@ func TestSessionContextIndexBoundsPrivateLookupAcrossUnrelatedHistory(t *testing
 	t.Cleanup(cleanup)
 	team := createLedgerTeam(t, admin, rls, "session-context-index")
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
-	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpaceProfilePrivate)
+	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	intake.Request.Framework = strings.Repeat("🧭", 256)
 	intake.Request.AppName = strings.Repeat("🎼", 256)
 	intake.Request.UserID = strings.Repeat("🦉", 256)
@@ -68,7 +70,7 @@ func TestSessionContextIndexBoundsPrivateLookupAcrossUnrelatedHistory(t *testing
 			req.SessionID = "new-session"
 		case "other_owner":
 			other := createLedgerProfile(t, admin, rls, team, "different-owner")
-			otherActor, otherIntake := sessionIntakeFixture(t, admin, app, rls, team, other, domain.MemorySpaceProfilePrivate)
+			otherActor, otherIntake := sessionIntakeFixture(t, admin, app, rls, team, other, domain.MemorySpacePrivate)
 			actor, scope = otherActor, otherIntake.Scope
 		case "other_generation":
 			scope.SpaceGeneration++
@@ -198,7 +200,7 @@ func TestSessionContextIndexMigrationRetainsIntakeAndRepairsInterruptedBuild(t *
 	t.Cleanup(cleanup)
 	team := createLedgerTeam(t, admin, rls, "session-context-migration")
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
-	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpaceProfilePrivate)
+	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	store := NewStore(app, rls, ConflictRuntimeConfig{})
 	completeSessionContextFixture(t, ctx, store, intake.Request)
 	snapshot := func() string {
@@ -211,15 +213,23 @@ func TestSessionContextIndexMigrationRetainsIntakeAndRepairsInterruptedBuild(t *
 	before := snapshot()
 	require.NoError(t, admin.Exec(fmt.Sprintf(`GRANT CREATE ON SCHEMA public TO %s`, ledgerTestRole)).Error)
 	require.NoError(t, admin.Exec(fmt.Sprintf(`ALTER TABLE session_events OWNER TO %s`, ledgerTestRole)).Error)
-	migrator, err := storage.NewMigrator(app)
+	const migration = "20261013020000_session_context_index.sql"
+	contents, err := os.ReadFile(filepath.Join("../../../migrations/postgres/v2_6", migration))
 	require.NoError(t, err)
-	require.NoError(t, migrator.RunDown(context.Background()))
+	sqlDB, err := app.DB()
+	require.NoError(t, err)
+	migrator, err := goose.NewProvider(goose.DialectPostgres, sqlDB, fstest.MapFS{migration: &fstest.MapFile{Data: contents}},
+		goose.WithDisableGlobalRegistry(true), goose.WithAllowOutofOrder(true))
+	require.NoError(t, err)
+	_, err = migrator.ApplyVersion(context.Background(), 20261013020000, false)
+	require.NoError(t, err)
 	require.Equal(t, before, snapshot())
 	require.Error(t, app.Exec(`CREATE INDEX CONCURRENTLY session_events_session_context_idx ON session_events ((1/event_index))`).Error)
 	var valid bool
 	require.NoError(t, app.Raw(`SELECT indisvalid FROM pg_index WHERE indexrelid='session_events_session_context_idx'::regclass`).Row().Scan(&valid))
 	require.False(t, valid)
-	require.NoError(t, migrator.RunUp(context.Background()))
+	_, err = migrator.Up(context.Background())
+	require.NoError(t, err)
 	require.Equal(t, before, snapshot())
 	require.NoError(t, app.Raw(`SELECT indisvalid FROM pg_index WHERE indexrelid='session_events_session_context_idx'::regclass`).Row().Scan(&valid))
 	require.True(t, valid)
@@ -228,6 +238,7 @@ func TestSessionContextIndexMigrationRetainsIntakeAndRepairsInterruptedBuild(t *
 	for _, field := range []string{"framework", "app_name", "user_id", "session_id"} {
 		require.Contains(t, definition, "md5("+field+")")
 	}
-	require.NoError(t, migrator.RunUp(context.Background()))
+	_, err = migrator.Up(context.Background())
+	require.NoError(t, err)
 	require.Equal(t, before, snapshot())
 }

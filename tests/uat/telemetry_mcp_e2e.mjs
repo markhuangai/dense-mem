@@ -65,6 +65,7 @@ assert(pricingAfterRejection.data?.effective?.model_prices?.some((price) => pric
 
 const telemetryContent = `Telemetry E2E ${runID}: Dense-Mem uses exact evidence before semantic processing.`;
 const remember = await mcpTool("remember", {
+  target_space: "team_shared",
   idempotency_key: `${runID}:batch`,
   evidence: [{
     content: telemetryContent,

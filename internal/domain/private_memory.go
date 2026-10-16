@@ -18,10 +18,9 @@ const (
 type PrivateMemoryErasureAction string
 
 const (
-	PrivateMemoryEraseProfilePrivate    PrivateMemoryErasureAction = "erase_profile_private"
-	PrivateMemoryEraseCredentialPrivate PrivateMemoryErasureAction = "erase_credential_private"
-	PrivateMemoryRetireCredential       PrivateMemoryErasureAction = "retire_credential"
-	PrivateMemoryRetentionPurge         PrivateMemoryErasureAction = "retention_purge"
+	PrivateMemoryErase            PrivateMemoryErasureAction = "erase_private"
+	PrivateMemoryRetireCredential PrivateMemoryErasureAction = "retire_credential"
+	PrivateMemoryRetentionPurge   PrivateMemoryErasureAction = "retention_purge"
 )
 
 type PrivateMemoryActorClass string
@@ -34,29 +33,30 @@ const (
 )
 
 type PrivateMemoryErasureOperation struct {
-	ID                 uuid.UUID
-	TeamID             uuid.UUID
-	SpaceID            *uuid.UUID
-	SpaceKind          *MemorySpaceKind
-	TargetCredentialID *uuid.UUID
-	Action             PrivateMemoryErasureAction
-	ActorClass         PrivateMemoryActorClass
-	ReasonCode         string
-	TargetGeneration   *int64
-	RetireSpace        bool
-	Status             PrivateMemoryErasureStatus
-	ManifestPosition   int
-	DeletedCounts      map[string]int64
-	AttemptCount       int
-	Fence              int64
-	WorkerID           string
-	LeaseUntil         *time.Time
-	NextAttemptAt      *time.Time
-	LastErrorCode      string
-	RequestedAt        time.Time
-	StartedAt          *time.Time
-	CompletedAt        *time.Time
-	UpdatedAt          time.Time
+	ID                  uuid.UUID
+	TeamID              uuid.UUID
+	SpaceID             *uuid.UUID
+	SpaceKind           *MemorySpaceKind
+	TargetCredentialID  *uuid.UUID
+	LegacySourceSpaceID *uuid.UUID
+	Action              PrivateMemoryErasureAction
+	ActorClass          PrivateMemoryActorClass
+	ReasonCode          string
+	TargetGeneration    *int64
+	RetireSpace         bool
+	Status              PrivateMemoryErasureStatus
+	ManifestPosition    int
+	DeletedCounts       map[string]int64
+	AttemptCount        int
+	Fence               int64
+	WorkerID            string
+	LeaseUntil          *time.Time
+	NextAttemptAt       *time.Time
+	LastErrorCode       string
+	RequestedAt         time.Time
+	StartedAt           *time.Time
+	CompletedAt         *time.Time
+	UpdatedAt           time.Time
 }
 
 type PrivateMemoryLegalHold struct {

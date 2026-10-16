@@ -435,7 +435,7 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (Kno
 		"labels":   item.Labels,
 		"metadata": seedMetadata(item),
 	}
-	input := map[string]any{"idempotency_key": "eval:" + item.SourceDocID, "evidence": []map[string]any{evidence}}
+	input := map[string]any{"target_space": "team_shared", "idempotency_key": "eval:" + item.SourceDocID, "evidence": []map[string]any{evidence}}
 	if len(item.Relationships) > 0 {
 		input["relationships"] = item.Relationships
 	}

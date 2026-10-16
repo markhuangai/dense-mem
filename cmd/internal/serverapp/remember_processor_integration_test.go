@@ -67,12 +67,9 @@ func TestRememberServiceRejectsHistoricalOutcomesThroughPostgres(t *testing.T) {
 		Metrics: observability.NoopDiscoverabilityMetrics(),
 	})
 	service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
-	actorCtx := requestctx.WithActor(ctx, requestctx.Actor{
-		TeamID: teamID, OwnerID: ownerID, Role: "member", AuthMethod: "api_key",
-		Grants: []string{"read", "write"},
-	})
+	actorCtx := rememberProcessorActorContext(t, ctx, adminDB, rls, teamID, ownerID)
 
-	for _, version := range []string{"dense-mem.v2.6.8", "dense-mem.v2.6.7", "dense-mem.v2.6.6", "dense-mem.v2.6.3", "dense-mem.v2.6.2"} {
+	for _, version := range []string{"dense-mem.v2.7.0", "dense-mem.v2.6.8", "dense-mem.v2.6.7", "dense-mem.v2.6.6", "dense-mem.v2.6.3", "dense-mem.v2.6.2"} {
 		for _, covered := range []bool{false, true} {
 			t.Run(fmt.Sprintf("terminal %s covered=%t", version, covered), func(t *testing.T) {
 				key, attemptID := "legacy-coverage-"+uuid.NewString(), uuid.NewString()
@@ -93,25 +90,11 @@ func TestRememberServiceRejectsHistoricalOutcomesThroughPostgres(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, hash, before.RequestHash)
 				result, err := service.Remember(actorCtx, rememberapp.RememberRequest{Evidence: evidence, IdempotencyKey: key, RelationshipHints: proposals})
-				if covered {
-					require.NoError(t, err)
-					require.Equal(t, version, result.ContractVersion)
-					require.Equal(t, attemptID, result.SubmissionID)
-					require.NoError(t, rememberapp.ValidateTerminalRememberResult(result.Terminal, 1, []string{"legacy"}))
-					encoded, err := json.Marshal(result.Terminal)
-					require.NoError(t, err)
-					expected, err := json.Marshal(public)
-					require.NoError(t, err)
-					require.JSONEq(t, string(expected), string(encoded))
-				} else {
-					require.Nil(t, result)
-					var validation *rememberapp.RememberValidationError
-					require.ErrorAs(t, err, &validation)
-					require.Equal(t, "/relationships", validation.Issues[0].Path)
-				}
+				require.Nil(t, result)
+				require.ErrorIs(t, err, domain.ErrMemoryTargetRequired)
 				after, err := ledger.LoadRememberAttempt(ctx, knowledgecontract.RememberAttemptLookupInput{TeamID: teamID.String(), OwnerProfileID: ownerID.String(), IdempotencyKey: key})
 				require.NoError(t, err)
-				require.Equal(t, before, after, "strict rejection and replay must preserve stored history")
+				require.Equal(t, before, after, "strict target rejection must preserve stored history")
 			})
 		}
 	}
@@ -128,12 +111,7 @@ func TestRememberServiceRejectsHistoricalOutcomesThroughPostgres(t *testing.T) {
 
 			result, err := service.Remember(actorCtx, req)
 			require.Nil(t, result)
-			var processErr *rememberapp.RememberProcessError
-			require.ErrorAs(t, err, &processErr)
-			require.ErrorIs(t, err, rememberapp.ErrRememberConflict)
-			require.NotNil(t, processErr.Status)
-			require.Equal(t, string(rememberapp.SubmissionErrorIdempotencyConflict), processErr.Status.Errors[0].Code)
-			require.Equal(t, "failed", processErr.Status.ProcessingState)
+			require.ErrorIs(t, err, domain.ErrMemoryTargetRequired)
 		})
 	}
 }
@@ -184,12 +162,9 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 		Metrics: observability.NoopDiscoverabilityMetrics(),
 	})
 	service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
-	actorCtx := requestctx.WithActor(ctx, requestctx.Actor{
-		TeamID: teamID, OwnerID: ownerID, Role: "member", AuthMethod: "api_key",
-		Grants: []string{"read", "write"},
-	})
+	actorCtx := rememberProcessorActorContext(t, ctx, adminDB, rls, teamID, ownerID)
 
-	result, err := service.Remember(actorCtx, rememberapp.RememberRequest{Evidence: evidence, IdempotencyKey: key, RelationshipHints: proposals})
+	result, err := service.Remember(actorCtx, rememberapp.RememberRequest{TargetSpace: domain.MemorySpaceTeamShared, Evidence: evidence, IdempotencyKey: key, RelationshipHints: proposals})
 	require.Nil(t, result)
 	var processErr *rememberapp.RememberProcessError
 	require.ErrorAs(t, err, &processErr)
@@ -227,6 +202,7 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 			service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
 			evidence := []rememberapp.RememberEvidenceInput{{Content: "A stale Remember commit must be replayable."}}
 			request := rememberapp.RememberRequest{
+				TargetSpace:       domain.MemorySpaceTeamShared,
 				RelationshipHints: []map[string]any{{"ref": "stale", "subject": map[string]any{"name": "A stale Remember commit", "entity_kind": "document"}, "predicate": map[string]any{"proposed_key": "has_state"}, "object": map[string]any{"value": map[string]any{"type": "string", "value": "replayable"}}, "polarity": "+", "evidence_indices": []any{0}}},
 				Evidence:          evidence, IdempotencyKey: "stale-commit-" + testCase.name + "-" + uuid.NewString(),
 			}
@@ -305,11 +281,9 @@ func TestRememberPredicateRegistrationCatalogDriftThroughPostgres(t *testing.T) 
 		Limits:   assessor.DefaultSemanticAssessmentLimits(), Metrics: observability.NoopDiscoverabilityMetrics(),
 	})
 	service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
-	actorCtx := requestctx.WithActor(ctx, requestctx.Actor{
-		TeamID: teamID, OwnerID: ownerID, Role: "member", AuthMethod: "api_key",
-		Grants: []string{"read", "write"},
-	})
+	actorCtx := rememberProcessorActorContext(t, ctx, adminDB, rls, teamID, ownerID)
 	request := rememberapp.RememberRequest{
+		TargetSpace: domain.MemorySpaceTeamShared,
 		Evidence: []rememberapp.RememberEvidenceInput{{
 			Content: "Dense-Mem stores durable memory in PostgreSQL.", SourceType: "manual", ForceInsert: true,
 		}},
@@ -886,6 +860,13 @@ func insertHistoricalRememberOutcome(
 	}))
 }
 
+func rememberProcessorActorContext(t *testing.T, ctx context.Context, db *gorm.DB, rls *storagepostgres.RLS, teamID, ownerID uuid.UUID) context.Context {
+	t.Helper()
+	key, err := accesspostgres.NewCredentialRepository(db, rls, nil).GetByIDForTeam(ctx, teamID, ownerID)
+	require.NoError(t, err)
+	return requestctx.WithActor(ctx, requestctx.Actor{TeamID: teamID, OwnerID: key.OwnerID, IdentityID: key.ActorIdentityID, MembershipID: key.MembershipID, CredentialID: &key.ID, AuthMethod: "api_key", Role: key.Role, Grants: key.Scopes, AllowedSpaces: key.MemorySpaces()})
+}
+
 func setupRememberProcessorIntegrationDB(t *testing.T) (*gorm.DB, *gorm.DB, *storagepostgres.RLS, func()) {
 	t.Helper()
 	dsn := strings.TrimSpace(storagepostgres.GetTestDSN())
@@ -916,7 +897,7 @@ func setupRememberProcessorIntegrationDB(t *testing.T) (*gorm.DB, *gorm.DB, *sto
 			GRANT USAGE ON SCHEMA public TO %[1]s;
 			GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %[1]s;
 			GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %[1]s;
-			GRANT EXECUTE ON FUNCTION dense_mem_active_space_generation(UUID, UUID) TO %[1]s;
+			GRANT EXECUTE ON FUNCTION dense_mem_active_space_generation(UUID, UUID), dense_mem_lock_memory_space(UUID, UUID) TO %[1]s;
 		`, rememberProcessorIntegrationRole, rememberProcessorIntegrationPassword)).Error
 	}))
 	parsed, err := url.Parse(dsn)

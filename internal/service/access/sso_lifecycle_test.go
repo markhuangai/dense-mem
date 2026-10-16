@@ -833,6 +833,9 @@ func TestSSOValidateCredentialRefreshesCache(t *testing.T) {
 	})
 	key := &domain.Credential{ID: uuid.New(), TeamID: teamID, Scopes: []string{CredentialScopeRead, CredentialScopeWrite}, Role: CredentialRoleManager, OwnerIdentityID: &identityID, SSOProviderID: &providerID, SSOSubject: "subject"}
 
+	repo.ownedCredentials = map[uuid.UUID]*domain.Credential{
+		key.ID: {ID: key.ID, TeamID: teamID, OwnerIdentityID: &identityID, EffectiveMemoryGrants: []string{CredentialScopeRead, CredentialScopeWrite}},
+	}
 	validated, err := svc.ValidateCredential(context.Background(), key)
 
 	require.NoError(t, err)

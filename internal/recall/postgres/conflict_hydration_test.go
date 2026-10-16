@@ -37,7 +37,7 @@ func expectConflictCase(mock sqlmock.Sqlmock, id, status string, at time.Time) {
 
 func TestRecallConflictHydrationPreservesOrderLimitsAndSkipsIneligibleCases(t *testing.T) {
 	db, mock := newRecallSQLMockDB(t)
-	input := RecallEvidenceInput{TeamID: recallTeam, SpaceID: recallSpace, SpaceKind: "profile_private"}
+	input := RecallEvidenceInput{TeamID: recallTeam, SpaceID: recallSpace, SpaceKind: "private"}
 	got, err := LoadRecallEvidenceConflictRecords(t.Context(), db, input, []RecallEvidenceHit{{EvidenceID: " "}})
 	require.NoError(t, err)
 	require.Empty(t, got)

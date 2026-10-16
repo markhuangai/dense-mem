@@ -206,7 +206,7 @@ func TestRelationshipConflictProjectionFencesRetiredPrivateGeneration(t *testing
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-conflict-projection"))
 	identityID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
 	credential := createOwnedCredential(t, accesspostgres.NewCredentialRepository(appDB, rls, nil),
-		teamID, identityID, "private-conflict-projection", domain.CredentialBindingCredentialPrivate)
+		teamID, identityID, "private-conflict-projection")
 	require.NoError(t, privacypostgres.NewPrivateMemoryRepository(appDB, rls).Prepare(ctx))
 	subjectID, objectID, conflictID, positionID, relationshipID, ingestID, fragmentID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {

@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	"github.com/markhuangai/dense-mem/internal/domain"
 	privacycontract "github.com/markhuangai/dense-mem/internal/privacy/contract"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
@@ -39,23 +38,22 @@ func (r *CredentialDeletionRepository) RetireCredential(ctx context.Context, tea
 		if err := storagepostgres.EnsureActiveTeamForMutation(ctx, tx, teamID.String()); err != nil {
 			return err
 		}
-		var memoryBinding string
 		var actorIdentityID uuid.UUID
 		var rateLimit int
 		var lastUsedAt, expiresAt, revokedAt sql.NullTime
 		var createdAt time.Time
 		var memorySpaceID sql.NullString
 		if err := tx.WithContext(ctx).Raw(`
-			SELECT COALESCE(credential.memory_binding, 'shared_only'), credential.actor_identity_id,
+			SELECT credential.actor_identity_id,
 			       credential.rate_limit, credential.last_used_at, credential.expires_at,
 			       credential.created_at, credential.revoked_at,
-			       COALESCE(credential.memory_space_id::text, '')
+			       COALESCE((SELECT space.id::text FROM memory_spaces AS space JOIN team_memberships AS membership ON membership.id = space.owner_membership_id AND membership.team_id = space.team_id WHERE membership.actor_identity_id = credential.actor_identity_id AND membership.team_id = credential.team_id AND space.kind = 'private' AND space.lifecycle_state <> 'retired'), '')
 			FROM credentials AS credential
 			WHERE credential.id = $1 AND credential.team_id = $2 AND credential.kind = 'api_key'
 			  AND credential.status <> 'disabled'
 			FOR UPDATE
 		`, id, teamID).Row().Scan(
-			&memoryBinding, &actorIdentityID, &rateLimit, &lastUsedAt, &expiresAt,
+			&actorIdentityID, &rateLimit, &lastUsedAt, &expiresAt,
 			&createdAt, &revokedAt, &memorySpaceID,
 		); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -89,10 +87,7 @@ func (r *CredentialDeletionRepository) RetireCredential(ctx context.Context, tea
 				return err
 			}
 		}
-		if memoryBinding == string(domain.CredentialBindingCredentialPrivate) {
-			return QueueCredentialPrivateErasureTx(ctx, tx, teamID, id)
-		}
-		return nil
+		return QueueCredentialPrivateErasureTx(ctx, tx, teamID, id)
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to delete api credential for team: %w", err)

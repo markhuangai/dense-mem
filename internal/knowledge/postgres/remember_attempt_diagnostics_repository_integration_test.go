@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	"sort"
 	"strings"
 	"sync"
@@ -28,7 +27,7 @@ func TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes(t 
 	teamA := createLedgerTeam(t, adminDB, rls, "remember-attempt-diagnostics-a")
 	teamB := createLedgerTeam(t, adminDB, rls, "remember-attempt-diagnostics-b")
 	ownerA := createLedgerProfile(t, adminDB, rls, teamA, "remember-attempt-diagnostics-owner-a")
-	privateSpace, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureProfilePrivate(ctx, uuid.MustParse(teamA), uuid.MustParse(ownerA))
+	privateSpace, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamA), uuid.MustParse(ownerA))
 	require.NoError(t, err)
 	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
 	attemptID := "00000000-0000-4000-8000-000000000301"
@@ -213,9 +212,9 @@ func TestRememberAttemptDiagnosticsDrainRotatesPrivateSpaces(t *testing.T) {
 	teamID := createLedgerTeam(t, adminDB, rls, "remember-attempt-diagnostics-drain-rotation")
 	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "remember-attempt-diagnostics-drain-owner-a")
 	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "remember-attempt-diagnostics-drain-owner-b")
-	spaceA, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureProfilePrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerA))
+	spaceA, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamID), uuid.MustParse(ownerA))
 	require.NoError(t, err)
-	spaceB, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).EnsureProfilePrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerB))
+	spaceB, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamID), uuid.MustParse(ownerB))
 	require.NoError(t, err)
 	spaces := []*domain.MemorySpace{spaceA, spaceB}
 	spaceOwners := map[string]string{spaceA.ID.String(): ownerA, spaceB.ID.String(): ownerB}

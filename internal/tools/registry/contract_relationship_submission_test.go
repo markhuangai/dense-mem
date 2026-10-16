@@ -14,26 +14,26 @@ func TestRememberRequiresRelationships(t *testing.T) {
 	}
 
 	input := validFlatRelationshipSubmission()
-	if err := ValidateContractInput(remember, input, []string{"write"}); err != nil {
+	if err := ValidateContractInput(remember, input, []string{"read", "write"}); err != nil {
 		t.Fatalf("ValidateContractInput valid submission: %v", err)
 	}
 
 	missing := cloneMap(input)
 	delete(missing, "relationships")
-	if err := ValidateContractInput(remember, missing, []string{"write"}); err == nil {
+	if err := ValidateContractInput(remember, missing, []string{"read", "write"}); err == nil {
 		t.Fatal("omitted relationships accepted")
 	}
 
 	legacy := cloneMap(input)
 	legacy["proposal"] = map[string]any{}
-	err = ValidateContractInput(remember, legacy, []string{"write"})
+	err = ValidateContractInput(remember, legacy, []string{"read", "write"})
 	if err == nil || !strings.Contains(err.Error(), "proposal") {
 		t.Fatalf("legacy proposal error = %v, want unknown field", err)
 	}
 
 	empty := cloneMap(input)
 	empty["relationships"] = []any{}
-	if err := ValidateContractInput(remember, empty, []string{"write"}); err == nil {
+	if err := ValidateContractInput(remember, empty, []string{"read", "write"}); err == nil {
 		t.Fatal("empty relationships accepted")
 	}
 }
@@ -45,13 +45,13 @@ func TestRememberRequiresRelationshipCoverageForEveryEvidenceItem(t *testing.T) 
 	}
 	input := validFlatRelationshipSubmission()
 	input["evidence"] = append(input["evidence"].([]any), map[string]any{"content": "A second source."})
-	err = ValidateContractInput(remember, input, []string{"write"})
+	err = ValidateContractInput(remember, input, []string{"read", "write"})
 	validation, ok := ContractValidationResultFromError(err)
 	if !ok || len(validation.Issues) != 1 || validation.Issues[0].Path != "/evidence/1" || validation.Issues[0].Code != "coverage" {
 		t.Fatalf("incomplete coverage result = %#v, error = %v", validation, err)
 	}
 	relationship(input)["evidence_indices"] = []any{0, 1}
-	if err := ValidateContractInput(remember, input, []string{"write"}); err != nil {
+	if err := ValidateContractInput(remember, input, []string{"read", "write"}); err != nil {
 		t.Fatalf("complete coverage rejected: %v", err)
 	}
 }
@@ -88,7 +88,7 @@ func TestRememberRejectsFormerPublicGroundingFields(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			input := validFlatRelationshipSubmission()
 			test.mutate(relationship(input))
-			err := ValidateContractInput(remember, input, []string{"write"})
+			err := ValidateContractInput(remember, input, []string{"read", "write"})
 			if err == nil || !strings.Contains(err.Error(), test.field) {
 				t.Fatalf("error = %v, want rejected field %q", err, test.field)
 			}
@@ -106,7 +106,7 @@ func TestRememberAllowsAssessorToGroundLogicalEndpoints(t *testing.T) {
 	item["subject"].(map[string]any)["name"] = "It"
 	item["predicate"].(map[string]any)["proposed_key"] = "depends_on"
 	item["object"].(map[string]any)["entity"].(map[string]any)["name"] = "the primary database"
-	if err := ValidateContractInput(remember, input, []string{"write"}); err != nil {
+	if err := ValidateContractInput(remember, input, []string{"read", "write"}); err != nil {
 		t.Fatalf("logical endpoint proposal rejected: %v", err)
 	}
 }
@@ -118,7 +118,7 @@ func TestRememberKnownEvidenceIDsAreBoundedUUIDs(t *testing.T) {
 	}
 	valid := validFlatRelationshipSubmission()
 	relationship(valid)["known_evidence_ids"] = []any{uuid.NewString(), "  " + uuid.NewString() + "  "}
-	if err := ValidateContractInput(remember, valid, []string{"write"}); err != nil {
+	if err := ValidateContractInput(remember, valid, []string{"read", "write"}); err != nil {
 		t.Fatalf("known evidence submission rejected: %v", err)
 	}
 
@@ -145,7 +145,7 @@ func TestRememberKnownEvidenceIDsAreBoundedUUIDs(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			input := validFlatRelationshipSubmission()
 			test.mutate(relationship(input))
-			err := ValidateContractInput(remember, input, []string{"write"})
+			err := ValidateContractInput(remember, input, []string{"read", "write"})
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("validation error = %v, want %q", err, test.want)
 			}
@@ -155,6 +155,7 @@ func TestRememberKnownEvidenceIDsAreBoundedUUIDs(t *testing.T) {
 
 func validFlatRelationshipSubmission() map[string]any {
 	return map[string]any{
+		"target_space":    "team_shared",
 		"idempotency_key": "remember-test-batch",
 		"evidence":        []any{map[string]any{"content": "Dense-Mem uses PostgreSQL."}},
 		"relationships": []any{map[string]any{
@@ -174,6 +175,7 @@ func relationship(input map[string]any) map[string]any {
 
 func withRequiredFlatRelationship(input map[string]any) map[string]any {
 	output := cloneMap(input)
+	output["target_space"] = "team_shared"
 	if _, exists := output["idempotency_key"]; !exists {
 		output["idempotency_key"] = "remember-test-batch"
 	}

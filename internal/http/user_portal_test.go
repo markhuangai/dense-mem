@@ -71,8 +71,8 @@ func (r *userPortalAuthRepo) UpdateRoleForTeam(context.Context, uuid.UUID, uuid.
 func (r *userPortalAuthRepo) UpdateScopesForTeam(context.Context, uuid.UUID, uuid.UUID, []string) (int64, error) {
 	return 0, nil
 }
-func (r *userPortalAuthRepo) RotateForTeam(context.Context, uuid.UUID, uuid.UUID, string, string, string, *time.Time) (int64, error) {
-	return 0, nil
+func (r *userPortalAuthRepo) RotateForTeam(context.Context, uuid.UUID, uuid.UUID, string, string, string, *time.Time) (*domain.Credential, error) {
+	return nil, nil
 }
 func (r *userPortalAuthRepo) TouchLastUsed(context.Context, uuid.UUID) error { return nil }
 
@@ -108,7 +108,6 @@ func (s *userPortalKeySvc) CreateCredential(_ context.Context, profileID uuid.UU
 		CreatedAt:       time.Now().UTC().Truncate(time.Second),
 		ExpiresAt:       req.ExpiresAt,
 		OwnerIdentityID: req.OwnerIdentityID,
-		MemoryBinding:   domain.CredentialMemoryBinding(req.MemoryBinding),
 	}
 	s.keys = append(s.keys, key)
 	return key, s.rawCreatedKey, nil

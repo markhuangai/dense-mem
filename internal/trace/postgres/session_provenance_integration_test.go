@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
-	privacy "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 	sessionservice "github.com/markhuangai/dense-mem/internal/session/service"
@@ -21,24 +20,17 @@ import (
 func TestTraceSessionProvenanceRequiresAuthenticatedPrivateOwner(t *testing.T) {
 	admin, app, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
-	for _, kind := range []domain.MemorySpaceKind{domain.MemorySpaceProfilePrivate, domain.MemorySpaceCredentialPrivate} {
+	for _, kind := range []domain.MemorySpaceKind{domain.MemorySpacePrivate} {
 		t.Run(string(kind), func(t *testing.T) {
 			team := createLedgerTeam(t, admin, rls, "trace-session-"+string(kind))
 			owner := createLedgerProfile(t, admin, rls, team, "owner-A")
-			spaces := privacy.NewMemorySpaceRepository(app, rls)
-			var space *domain.MemorySpace
-			var err error
-			if kind == domain.MemorySpaceProfilePrivate {
-				space, err = spaces.EnsureProfilePrivate(context.Background(), uuid.MustParse(team), uuid.MustParse(owner))
-			} else {
-				space, err = spaces.EnsureCredentialPrivate(context.Background(), uuid.MustParse(team), uuid.New())
-			}
+			space, err := ensurePrivateSpaceForOwner(t, app, rls, context.Background(), uuid.MustParse(team), uuid.MustParse(owner))
 			require.NoError(t, err)
 			var generation int64
 			require.NoError(t, rls.WithSystemTx(context.Background(), admin, func(tx *gorm.DB) error {
 				return tx.Raw(`SELECT generation FROM memory_spaces WHERE id = ?`, space.ID).Row().Scan(&generation)
 			}))
-			actor := requestctx.Actor{TeamID: uuid.MustParse(team), OwnerID: uuid.MustParse(owner), Grants: []string{"read", "write"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: space.ID, Kind: kind, Generation: generation}}}
+			actor := requestctx.Actor{IdentityID: uuid.MustParse(owner), MembershipID: privateMembershipForOwner(t, app, rls, uuid.MustParse(team), uuid.MustParse(owner)), TeamID: uuid.MustParse(team), OwnerID: uuid.MustParse(owner), Grants: []string{"read", "write"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: space.ID, Kind: kind, Generation: generation}}}
 			ctx := requestctx.WithActor(context.Background(), actor)
 			request := session.Request{IdempotencyKey: "trace-session", Framework: "generic", AppName: "notes", UserID: "external-user", SessionID: "conversation", Events: []session.Event{{EventID: "one", Text: "Ari uses Go. café 🧭"}}}
 			hash, err := sessionservice.RequestHash(request)

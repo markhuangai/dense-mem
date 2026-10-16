@@ -77,7 +77,7 @@ type CredentialStore interface {
 	UpdateNameForTeam(context.Context, uuid.UUID, uuid.UUID, string) (int64, error)
 	UpdateRoleForTeam(context.Context, uuid.UUID, uuid.UUID, string, []string) (int64, error)
 	UpdateScopesForTeam(context.Context, uuid.UUID, uuid.UUID, []string) (int64, error)
-	RotateForTeam(context.Context, uuid.UUID, uuid.UUID, string, string, string, *time.Time) (int64, error)
+	RotateForTeam(context.Context, uuid.UUID, uuid.UUID, string, string, string, *time.Time) (*domain.Credential, error)
 	TouchLastUsed(context.Context, uuid.UUID) error
 }
 
@@ -100,6 +100,7 @@ type CredentialDeletionAuditStore interface {
 type CredentialDeletionAuditInput = privacycontract.CredentialDeletionAuditInput
 
 type SSOStore interface {
+	GetSSOOwnedCredentialByID(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.Credential, error)
 	ListProviders(context.Context) ([]*domain.SSOProvider, error)
 	ListEnabledProviders(context.Context) ([]*domain.SSOProvider, error)
 	GetProvider(context.Context, uuid.UUID) (*domain.SSOProvider, error)

@@ -30,20 +30,14 @@ type CreateCredentialRequest struct {
 	Scopes          []string   `json:"scopes"`
 	Role            string     `json:"role"`
 	OwnerIdentityID *uuid.UUID `json:"-"`
-	// MemoryBinding is immutable credential placement. Empty uses the
-	// compatibility default derived from SSO ownership and write access.
-	MemoryBinding string `json:"memory_binding,omitempty"`
 }
 
 const (
-	CredentialScopeRead                = "read"
-	CredentialScopeWrite               = "write"
-	CredentialScopeFeedbackRead        = "feedback:read"
-	CredentialRoleManager              = "manager"
-	CredentialRoleMember               = "member"
-	CredentialBindingSharedOnly        = string(domain.CredentialBindingSharedOnly)
-	CredentialBindingProfilePrivate    = string(domain.CredentialBindingProfilePrivate)
-	CredentialBindingCredentialPrivate = string(domain.CredentialBindingCredentialPrivate)
+	CredentialScopeRead         = "read"
+	CredentialScopeWrite        = "write"
+	CredentialScopeFeedbackRead = "feedback:read"
+	CredentialRoleManager       = "manager"
+	CredentialRoleMember        = "member"
 )
 
 var standardCredentialScopes = []string{CredentialScopeRead, CredentialScopeWrite}
@@ -111,26 +105,6 @@ func hasCredentialScope(scopes []string, target string) bool {
 		}
 	}
 	return false
-}
-
-func normalizeCredentialMemoryBinding(raw string, ownerIdentityID *uuid.UUID, scopes []string) (domain.CredentialMemoryBinding, error) {
-	if strings.TrimSpace(raw) == "" {
-		if ownerIdentityID != nil && *ownerIdentityID != uuid.Nil {
-			return domain.CredentialBindingProfilePrivate, nil
-		}
-		if hasCredentialScope(scopes, CredentialScopeWrite) {
-			return domain.CredentialBindingCredentialPrivate, nil
-		}
-		return domain.CredentialBindingSharedOnly, nil
-	}
-	binding, err := domain.NormalizeCredentialMemoryBinding(strings.ToLower(strings.TrimSpace(raw)))
-	if err != nil {
-		return "", httperr.New(httperr.VALIDATION_ERROR, "memory_binding must be shared_only, profile_private, or credential_private")
-	}
-	if binding == domain.CredentialBindingProfilePrivate && (ownerIdentityID == nil || *ownerIdentityID == uuid.Nil) {
-		return "", httperr.New(httperr.VALIDATION_ERROR, "profile_private memory binding requires an SSO identity")
-	}
-	return binding, nil
 }
 
 func NormalizeCredentialRole(role string) (string, error) {
@@ -325,10 +299,6 @@ func (s *CredentialServiceImpl) CreateCredential(ctx context.Context, teamID uui
 	if role == CredentialRoleManager {
 		scopes = managerCredentialScopes(scopes)
 	}
-	binding, err := normalizeCredentialMemoryBinding(req.MemoryBinding, req.OwnerIdentityID, scopes)
-	if err != nil {
-		return nil, "", err
-	}
 
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
@@ -359,7 +329,6 @@ func (s *CredentialServiceImpl) CreateCredential(ctx context.Context, teamID uui
 		RateLimit:       req.RateLimit,
 		ExpiresAt:       req.ExpiresAt,
 		OwnerIdentityID: req.OwnerIdentityID,
-		MemoryBinding:   binding,
 	}
 
 	if err := s.repo.CreateCredential(ctx, credential); err != nil {
@@ -380,7 +349,7 @@ func (s *CredentialServiceImpl) CreateCredential(ctx context.Context, teamID uui
 		"scopes":          credential.Scopes,
 		"rate_limit":      credential.RateLimit,
 		"role":            credential.GetRole(),
-		"memory_binding":  string(credential.MemoryBinding),
+		"memory_access":   credential.MemoryCapabilities(),
 	}
 	if credential.ExpiresAt != nil {
 		afterPayload["expires_at"] = credential.ExpiresAt.Format(time.RFC3339)
@@ -467,7 +436,7 @@ func (s *CredentialServiceImpl) UpdateRoleForTeam(ctx context.Context, teamID, i
 		s.logAuditError(err, "UPDATE_ROLE", credential.ID.String(), correlationID)
 	}
 
-	return credential, nil
+	return s.GetByIDForTeam(ctx, teamID, id)
 }
 
 // UpdateScopesForTeam changes a credential's data scopes without rotating
@@ -534,7 +503,7 @@ func (s *CredentialServiceImpl) UpdateScopesForTeam(ctx context.Context, teamID,
 		s.logAuditError(err, "UPDATE_SCOPES", credential.ID.String(), correlationID)
 	}
 
-	return credential, nil
+	return s.GetByIDForTeam(ctx, teamID, id)
 }
 
 // UpdateNameForTeam renames a credential without rotating its credential.
@@ -625,11 +594,11 @@ func (s *CredentialServiceImpl) RotateForTeam(ctx context.Context, teamID, id uu
 		return nil, "", fmt.Errorf("failed to hash credential: %w", err)
 	}
 
-	rows, err := s.repo.RotateForTeam(ctx, teamID, id, keyHash, crypto.GetKeyPrefix(rawKey), crypto.GetKeySuffix(rawKey), req.ExpiresAt)
+	credential, err = s.repo.RotateForTeam(ctx, teamID, id, keyHash, crypto.GetKeyPrefix(rawKey), crypto.GetKeySuffix(rawKey), req.ExpiresAt)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to rotate credential credential: %w", err)
 	}
-	if rows == 0 {
+	if credential == nil {
 		return nil, "", httperr.New(httperr.NOT_FOUND, fmt.Sprintf("credential with id '%s' not found", id.String()))
 	}
 	if s.sessionInvalidator != nil {
@@ -639,11 +608,6 @@ func (s *CredentialServiceImpl) RotateForTeam(ctx context.Context, teamID, id uu
 	}
 
 	credential.KeyHash = ""
-	credential.KeyPrefix = crypto.GetKeyPrefix(rawKey)
-	credential.KeySuffix = crypto.GetKeySuffix(rawKey)
-	credential.ExpiresAt = req.ExpiresAt
-	credential.LastUsedAt = nil
-	credential.RevokedAt = nil
 
 	teamIDStr := teamID.String()
 	if err := s.auditService.Append(ctx, AuditLogEntry{

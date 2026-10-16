@@ -27,9 +27,9 @@ func TestOntologySharedSourceIsolationAndFreshness(t *testing.T) {
 	read, err := f.store.ReadSources(f.actor(0, "manager"), f.team, []ontology.SourceHandle{handle})
 	require.NoError(t, err)
 	require.Equal(t, f.owners[1], read[0].OwnerID)
-	private := &domain.Credential{ID: uuid.New(), TeamID: uuid.MustParse(f.team), Name: "private", KeyHash: "synthetic-private", KeyPrefix: strings.ReplaceAll(uuid.NewString(), "-", "")[:24], KeySuffix: "privat", Scopes: []string{"read", "write"}, MemoryBinding: domain.CredentialBindingCredentialPrivate}
+	private := &domain.Credential{ID: uuid.New(), TeamID: uuid.MustParse(f.team), Name: "private", KeyHash: "synthetic-private", KeyPrefix: strings.ReplaceAll(uuid.NewString(), "-", "")[:24], KeySuffix: "privat", Scopes: []string{"read", "write"}}
 	require.NoError(t, access.NewCredentialRepository(f.admin, f.rls, nil).CreateCredential(context.Background(), private))
-	privateContext := requestctx.WithAllowedSpaces(context.Background(), []domain.MemorySpaceAccess{{ID: private.MemorySpaceID, Kind: domain.MemorySpaceCredentialPrivate, Generation: private.MemorySpaceGeneration}})
+	privateContext := requestctx.WithAllowedSpaces(context.Background(), []domain.MemorySpaceAccess{{ID: private.MemorySpaceID, Kind: domain.MemorySpacePrivate, Generation: private.MemorySpaceGeneration}})
 	privateEvidence, err := f.knowledge.CreateIngestForTest(privateContext, knowledge.CreateIngestInput{TeamID: f.team, OwnerProfileID: private.ID.String(), SpaceID: private.MemorySpaceID.String(), SpaceGeneration: private.MemorySpaceGeneration, Evidence: []knowledge.EvidenceInput{{Content: "Private material must remain excluded."}}})
 	require.NoError(t, err)
 	_, err = f.store.ReadSources(context.Background(), f.team, []ontology.SourceHandle{{Kind: ontology.EvidenceSource, ID: privateEvidence.Evidence[0].FragmentID, Version: 1}})

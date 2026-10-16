@@ -109,7 +109,7 @@ func BenchmarkRecallReadPipeline(b *testing.B) {
 				privateCtx := requestctx.WithActor(ctx, fixture.privateActor)
 				return fixture.store.RecallEvidence(privateCtx, RecallEvidenceInput{
 					TeamID: fixture.privateTeam, Query: "private benchmark marker", Limit: 5,
-					SpaceID: fixture.privateID, SpaceKind: string(domain.MemorySpaceCredentialPrivate),
+					SpaceID: fixture.privateID, SpaceKind: string(domain.MemorySpacePrivate),
 				})
 			},
 		},
@@ -321,10 +321,10 @@ func newReadPerformanceFixture(b testing.TB, fixed bool) *readPerformanceBenchma
 	privateCredential := &domain.Credential{
 		ID: privateCredentialID, TeamID: uuid.MustParse(privateTeam), Name: "read performance private fixture",
 		KeyHash: "hash-read-performance-private", KeyPrefix: "read-performance-private", KeySuffix: "suffix",
-		Scopes: []string{"read", "write"}, MemoryBinding: domain.CredentialBindingCredentialPrivate,
+		Scopes: []string{"read", "write"},
 	}
 	require.NoError(b, accesspostgres.NewCredentialRepository(adminDB, rls, nil).CreateCredential(baseCtx, privateCredential))
-	privateAccess := []domain.MemorySpaceAccess{{ID: privateCredential.MemorySpaceID, Kind: domain.MemorySpaceCredentialPrivate}}
+	privateAccess := []domain.MemorySpaceAccess{{ID: privateCredential.MemorySpaceID, Kind: domain.MemorySpacePrivate}}
 	privateActor := requestctx.Actor{
 		TeamID: privateCredential.TeamID, IdentityID: privateCredential.ActorIdentityID,
 		MembershipID: privateCredential.MembershipID, OwnerID: privateCredential.OwnerID,

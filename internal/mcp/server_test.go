@@ -11,12 +11,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/promptcatalog"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
@@ -146,9 +148,23 @@ func runRPC(t *testing.T, s *Server, request string) string {
 	return runRPCResponse(t, s, request).Body.String()
 }
 
+func testMemoryContext(ctx context.Context, grants []string) context.Context {
+	actor, _ := requestctx.ActorFromContext(ctx)
+	if grants == nil {
+		grants = []string{"read", "write"}
+	}
+	actor.Grants = grants
+	actor.AllowedSpaces = []domain.MemorySpaceAccess{
+		{ID: uuid.New(), Kind: domain.MemorySpacePrivate, Generation: 1},
+		{ID: uuid.New(), Kind: domain.MemorySpaceTeamShared, Generation: 1},
+	}
+	return requestctx.WithActor(ctx, actor)
+}
+
 func runRPCResponse(t *testing.T, s *Server, request string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(request))
+	req = req.WithContext(testMemoryContext(req.Context(), s.scopes))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("MCP-Protocol-Version", ProtocolVersion)
