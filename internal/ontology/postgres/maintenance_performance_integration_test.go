@@ -15,6 +15,7 @@ import (
 	"time"
 
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -142,7 +143,7 @@ func TestOntologyMaintenanceWriteLatency(t *testing.T) {
 	}
 	for repeat := range 5 {
 		t.Run(fmt.Sprintf("pair-%d", repeat+1), func(t *testing.T) {
-			f := newOntologyFixtureWithMaintenance(t, false)
+			f := newMaintenanceLatencyFixture(t)
 			source := maintenanceEntity(t, f, "Write latency entity")
 			measure := func(writers int) maintenanceLatency {
 				sources := make([]ontology.SourceHandle, writers)
@@ -187,12 +188,14 @@ func TestOntologyMaintenanceWriteLatency(t *testing.T) {
 				return maintenanceLatency{MedianMS: samples[len(samples)/2], P95MS: samples[(len(samples)*95-1)/100]}
 			}
 			before := map[int]maintenanceLatency{1: measure(1), 8: measure(8)}
-			f.restoreOntologySchema(t)
+			migrator, err := storage.NewMigrator(f.admin)
+			require.NoError(t, err)
+			require.NoError(t, migrator.RunUp(context.Background()))
 			require.NoError(t, f.admin.Exec(`GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ontology_app; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ontology_app`).Error)
 			for _, writers := range []int{1, 8} {
 				pairs = append(pairs, pair{Writers: writers, Before: before[writers], After: measure(writers)})
 			}
-			_, err := f.store.ReadSources(context.Background(), f.team, []ontology.SourceHandle{source})
+			_, err = f.store.ReadSources(context.Background(), f.team, []ontology.SourceHandle{source})
 			require.NoError(t, err)
 		})
 	}
