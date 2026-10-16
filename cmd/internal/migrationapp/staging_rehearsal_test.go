@@ -20,6 +20,7 @@ import (
 	"github.com/markhuangai/dense-mem/cmd/internal/serverapp"
 	privacy "github.com/markhuangai/dense-mem/internal/privacy/contract"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	"github.com/stretchr/testify/require"
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
@@ -94,8 +95,7 @@ func TestStagingMigrationRehearsal(t *testing.T) {
 	stopCtx, stopCancel := context.WithTimeout(migrationCtx, time.Minute)
 	defer stopCancel()
 	// The trusted workflow can predate this revision, so stop old workers in the checked-out rehearsal.
-	if err := exec.CommandContext(stopCtx, "docker", "compose", "--project-directory",
-		filepath.Join(homeDirectory, "dense-mem-stage"), "stop", "--timeout", "30", "server").Run(); err != nil {
+	if err := stopStagingServer(stopCtx, filepath.Join(homeDirectory, "dense-mem-stage")); err != nil {
 		t.Fatal("staging migration rehearsal could not stop the staging server; details suppressed")
 	}
 	t.Setenv("POSTGRES_DSN", dsn)
@@ -132,6 +132,79 @@ func TestStagingMigrationRehearsal(t *testing.T) {
 	}
 
 	t.Log("staging migrations and startup migration state validation completed")
+}
+
+func stopStagingServer(ctx context.Context, directory string) error {
+	// Existing Compose identity avoids requiring the image selected for a later deployment.
+	output, err := exec.CommandContext(ctx, "docker", "ps", "--no-trunc",
+		"--filter", "label=com.docker.compose.project.working_dir="+directory,
+		"--filter", "label=com.docker.compose.service=server", "--format", "{{.ID}}").Output()
+	if err != nil {
+		return err
+	}
+	containerIDs := strings.Fields(string(output))
+	if len(containerIDs) == 0 {
+		return nil
+	}
+	return exec.CommandContext(ctx, "docker", append([]string{"stop", "-t", "30"}, containerIDs...)...).Run()
+}
+
+func TestStopStagingServerWithoutImageSelection(t *testing.T) {
+	t.Setenv("DENSE_MEM_IMAGE", "")
+	compose := func(directory string, args ...string) string {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		command := exec.CommandContext(ctx, "docker", append([]string{"compose", "--project-directory",
+			directory, "--file", filepath.Join(directory, "compose.yaml"),
+			"--project-name", filepath.Base(directory)}, args...)...)
+		command.Env = append(os.Environ(), "DENSE_MEM_IMAGE=alpine:3.24")
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		return strings.TrimSpace(string(output))
+	}
+	newFixture := func() string {
+		t.Helper()
+		directory, err := os.MkdirTemp(t.TempDir(), "staging-stop-")
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(directory, "compose.yaml"), []byte(`services:
+  server:
+    image: ${DENSE_MEM_IMAGE:?DENSE_MEM_IMAGE must be set}
+    command: ["sh", "-c", "trap 'exit 0' TERM INT; while :; do sleep 1; done"]
+    network_mode: none
+  keeper:
+    image: ${DENSE_MEM_IMAGE:?DENSE_MEM_IMAGE must be set}
+    command: ["sh", "-c", "trap 'exit 0' TERM INT; while :; do sleep 1; done"]
+    network_mode: none
+`), 0o600))
+		t.Cleanup(func() { compose(directory, "down", "--remove-orphans") })
+		compose(directory, "up", "-d", "--scale", "server=2")
+		return directory
+	}
+	stagingDirectory, otherDirectory := newFixture(), newFixture()
+	stagingServers := strings.Fields(compose(stagingDirectory, "ps", "--all", "--quiet", "server"))
+	require.Len(t, stagingServers, 2)
+	protected := strings.Fields(compose(stagingDirectory, "ps", "--quiet", "keeper") + "\n" +
+		compose(otherDirectory, "ps", "--quiet"))
+	require.Len(t, protected, 4)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	assertRunning := func(ids []string, expected string) {
+		t.Helper()
+		for _, id := range ids {
+			output, err := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.State.Running}}", id).Output()
+			require.NoError(t, err)
+			require.Equal(t, expected, strings.TrimSpace(string(output)))
+		}
+	}
+	cancelled, cancelStop := context.WithCancel(ctx)
+	cancelStop()
+	require.Error(t, stopStagingServer(cancelled, stagingDirectory))
+	assertRunning(stagingServers, "true")
+	require.NoError(t, stopStagingServer(ctx, stagingDirectory))
+	assertRunning(stagingServers, "false")
+	assertRunning(protected, "true")
+	require.NoError(t, stopStagingServer(ctx, stagingDirectory))
 }
 
 func validateStagingDSN(connectionConfig *pgconn.Config) error {
