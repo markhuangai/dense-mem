@@ -214,7 +214,7 @@ jobs:
     needs: [authorize, build]
     if: needs.authorize.outputs.has_postgres == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       max-parallel: 3

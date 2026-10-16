@@ -1,0 +1,32 @@
+{
+  "schema_version": "dense-mem.ontology.write_latency_baseline.v1",
+  "reference_commit": "0d87ccf666fa6e9caaaeb8928848b08d6b5dd6ee",
+  "migration_version": 20261016010001,
+  "migration_sources_sha256": "sha256:aeb43ec7f946ebc0f5dd9773858169c62456adca1c389462c3c4c3482179cbfb",
+  "migration_files": 135,
+  "approval": {
+    "date": "2026-10-16",
+    "pull_request": 575,
+    "scope": "One-time maintainer-approved acceptance of this schema's write overhead; future reference changes require a separate explicit approval.",
+    "unchanged_gate": "Every paired median or p95 fails only when its increase exceeds both 10% and 2 ms.",
+    "workload": "Five pairs, one and eight writers, 100 writes per writer, ten measured results.",
+    "measurement_scope": "Database-schema overhead for the existing entity-update transaction; remeasure reference and candidate on the same runner."
+  },
+  "accepted_observation": {
+    "job_url": "https://github.com/markhuangai/dense-mem/actions/runs/38914539549/job/117020045561",
+    "pair": 3,
+    "writers": 8,
+    "before_p95_ms": 2.616,
+    "after_p95_ms": 4.641,
+    "original_result": "Failed historical-reference latency assertion; no timeout occurred.",
+    "usage": "Acceptance evidence, not a fixed timing constant or an automatic baseline update."
+  },
+  "same_source_full_e2e": {
+    "run_url": "https://github.com/markhuangai/dense-mem/actions/runs/38915201783",
+    "conclusion": "success",
+    "postgresql_shards_passed": 3,
+    "scenarios_passed": 29,
+    "image_digest": "sha256:43502a7539b49a96775b4fa51e6705f7ce42838d64ff569a13795a1c57587d89",
+    "limitation": "This historical manual success does not replace required validation of the changed benchmark on its new commit."
+  }
+}

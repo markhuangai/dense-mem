@@ -45,8 +45,11 @@ func (r *Store) synchronizeRememberAttemptDiagnosticHold(ctx context.Context, ra
 
 func (r *Store) purgeExpiredPrivateDiagnostics(ctx context.Context, table string, batchSize int) (int, error) {
 	idColumn := "diagnostic_id"
+	rowLockClause := ""
 	switch table {
-	case "remember_attempt_diagnostics", "session_submission_diagnostics":
+	case "remember_attempt_diagnostics":
+		rowLockClause = " FOR UPDATE SKIP LOCKED"
+	case "session_submission_diagnostics":
 	case "remember_invocation_diagnostics":
 		idColumn = "invocation_id"
 	case "remember_failure_artifacts":
@@ -81,7 +84,7 @@ func (r *Store) purgeExpiredPrivateDiagnostics(ctx context.Context, table string
 		result := tx.Exec(`WITH candidates AS (
     SELECT team_id,space_id,`+pq.QuoteIdentifier(idColumn)+` AS id FROM `+pq.QuoteIdentifier(table)+`
     WHERE (space_id IS NULL OR space_id=ANY(?::uuid[])) AND expires_at<=clock_timestamp() AND NOT dense_mem_private_space_held(space_id)
-    ORDER BY expires_at,team_id,`+pq.QuoteIdentifier(idColumn)+` LIMIT ?
+    ORDER BY expires_at,team_id,`+pq.QuoteIdentifier(idColumn)+` LIMIT ?`+rowLockClause+`
   ) DELETE FROM `+pq.QuoteIdentifier(table)+` diagnostic USING candidates
    WHERE diagnostic.team_id=candidates.team_id AND diagnostic.space_id IS NOT DISTINCT FROM candidates.space_id AND diagnostic.`+pq.QuoteIdentifier(idColumn)+`=candidates.id`, pq.Array(spaces), batchSize)
 		deleted = result.RowsAffected

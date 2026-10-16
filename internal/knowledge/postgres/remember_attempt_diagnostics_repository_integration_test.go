@@ -165,7 +165,7 @@ func TestRememberAttemptDiagnosticsPurgeClaimsConcurrentBatches(t *testing.T) {
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-attempt-diagnostics-concurrent-owner")
 	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
 	old := time.Now().UTC().Add(-8 * 24 * time.Hour)
-	for index := 0; index < 4; index++ {
+	for index := 0; index < 6; index++ {
 		attemptID := uuidForDiagnostics(310 + index)
 		capturedAt := old.Add(time.Duration(index) * time.Millisecond)
 		require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
@@ -180,6 +180,25 @@ func TestRememberAttemptDiagnosticsPurgeClaimsConcurrentBatches(t *testing.T) {
 			}},
 		}))
 	}
+	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT set_config('app.remember_attempt_diagnostic_purge', 'true', true)").Error; err != nil {
+			return err
+		}
+		var claimed []string
+		if err := tx.Raw(`SELECT diagnostic_id FROM remember_attempt_diagnostics
+			WHERE team_id = ?::uuid ORDER BY expires_at, diagnostic_id LIMIT 2 FOR UPDATE`, teamID).Scan(&claimed).Error; err != nil {
+			return err
+		}
+		require.Len(t, claimed, 2)
+		purgeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		deleted, err := repo.PurgeExpiredRememberAttemptDiagnostics(purgeCtx, 2)
+		if err != nil {
+			return err
+		}
+		require.Equal(t, 2, deleted, "purge must skip rows claimed by another transaction")
+		return nil
+	}))
 	results := make(chan int, 2)
 	errors := make(chan error, 2)
 	var group sync.WaitGroup
