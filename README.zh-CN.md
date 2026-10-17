@@ -117,9 +117,11 @@ migration 容器。共享同一个可写 primary 的多个 server replica 会串
 管理操作通过私有控制门户/API 完成；ontology maintenance 和自动 conflict review 由 server 后台
 worker 执行。
 
-镜像 healthcheck 为默认的 30 分钟 migration 窗口保留启动宽限期，并在首次检查成功后
-进入正常检测。若将 `POSTGRES_MIGRATION_TIMEOUT_SECONDS` 设为大于 1800，应把部署的
-healthcheck start period 同步调整到至少相同时间。
+migration 默认没有总体超时限制（`POSTGRES_MIGRATION_TIMEOUT_SECONDS=0`）；可设置
+不超过 86400 的正整数秒数来限制单次执行时间。进程关闭仍会取消迁移，每 10 秒记录进度。
+迁移完成前 server 不会进入就绪状态。镜像 healthcheck 保留 30 分钟启动宽限期，并在首次
+检查成功后进入正常检测。大型迁移应延长部署的启动、healthcheck 宽限期和 rollout deadline，
+避免编排器在迁移尚未完成时重启 server 或放弃部署。
 
 RC 标签为 `vX.Y.Z-rc.N` 和 `demo-vX.Y.Z-rc.N`。稳定版标签为 `vX.Y.Z`、
 `latest` 和 `demo-vX.Y.Z`；不提供滚动 demo 标签。

@@ -59,7 +59,7 @@ func RunMigrationControlRetirement(processCtx context.Context) error {
 		return fmt.Errorf("configure root logger: %w", err)
 	}
 	retirementTimeout := time.Duration(cfg.GetPostgresMigrationTimeoutSeconds()) * time.Second
-	retirementCtx, cancel := context.WithTimeout(processCtx, retirementTimeout)
+	retirementCtx, cancel := migrationapp.WithTimeout(processCtx, retirementTimeout)
 	defer cancel()
 	pgDB, err := postgres.OpenWithClientAndLogger(retirementCtx, &cfg, logger)
 	if err != nil {
@@ -78,7 +78,7 @@ func RunMigrationControlRetirement(processCtx context.Context) error {
 
 // RunFromEnvironment performs the common release bootstrap and starts the
 // active server. The command owns process cancellation; this function owns
-// bounded startup and database cleanup.
+// initialization and database cleanup.
 func RunFromEnvironment(processCtx context.Context, options RuntimeOptions) error {
 	if processCtx == nil {
 		processCtx = context.Background()
@@ -118,13 +118,10 @@ func RunFromEnvironment(processCtx context.Context, options RuntimeOptions) erro
 	}
 
 	migrationTimeout := time.Duration(cfg.GetPostgresMigrationTimeoutSeconds()) * time.Second
-	migrationCtx, migrationCancel := context.WithTimeout(processCtx, migrationTimeout)
-	if err := migrationapp.RunUp(migrationCtx, pgDB.GetDB(), migrationTimeout, logger.Slog()); err != nil {
-		logMigrationFailure(migrationCtx, logger, "up", err)
-		migrationCancel()
+	if err := migrationapp.RunUp(processCtx, pgDB.GetDB(), migrationTimeout, logger.Slog()); err != nil {
+		logMigrationFailure(processCtx, logger, "up", err)
 		return fmt.Errorf("run postgres migrations: %w", err)
 	}
-	migrationCancel()
 	postMigrationCtx, postMigrationCancel := context.WithTimeout(processCtx, DefaultStartupTimeout)
 	defer postMigrationCancel()
 	sqlDB, err := pgDB.GetDB().DB()

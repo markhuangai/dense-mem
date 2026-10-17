@@ -42,12 +42,29 @@ Remember requests without a target fail validation even on retries. Preserve
 their exact requests, hashes, receipts, evidence, and history without inventing
 a target or bypassing idempotency.
 
-Migration runs in a maintenance window with old instances and workers stopped.
-A read-only preflight reports a versioned source fingerprint, ownership mappings,
-support-copy and handle requirements, table coverage, and blockers without memory
-text or credentials. Missing or ambiguous immutable writer attribution blocks
-migration. New ordered migrations use bounded resumable processing, preserve
-deployed migration history, and prevent serving any incomplete result.
+The maintainer's 2026-10-17 correction replaces the original manual activation
+requirement: server startup automatically performs the private-memory migration
+before starting HTTP listeners or workers. No external preflight, supplied
+fingerprint, or maintenance-confirmation flag is required. Startup prepares the
+existing ordered SQL boundary, inspects immutable writer attribution, retains
+the source fingerprint, executes or resumes the bounded data migration, and
+finishes SQL cutover. Database locks serialize concurrent starters, and the
+existing write gate prevents normal writes until completion. Older binaries must
+not run across the incompatible cutover.
+
+Migrations have no aggregate deadline by default; an explicitly configured
+positive timeout remains supported. Process cancellation still stops work, the
+server reports migration heartbeats, and listeners and workers remain stopped
+until completion. Deployment startup and rollout grace must accommodate the data
+volume.
+
+Read-only preflight and an explicit migration command remain optional diagnostic
+and recovery tools; both use the same ownership rules and executor as startup.
+Preflight reports a versioned source fingerprint, ownership mappings, support-copy
+and handle requirements, table coverage, and blockers without memory text or
+credentials. Missing or ambiguous immutable writer attribution still blocks
+migration. Deployed SQL files remain immutable, and incomplete migration cannot
+be served.
 
 Split legacy private history by original writer. Keep existing isolated space
 IDs where possible and leave shared history shared. Copy only the supporting
@@ -81,8 +98,9 @@ read or mutation access to another private space.
   and include every copy and recoverable source in the privacy lifecycle.
 - Private-write capability can grant shared mutation accidentally; require current
   shared write permission plus ownership and verify revocation at commit.
-- Partial migration or old workers can restore mixed context; stop old processes,
-  resume bounded migration steps, and block startup until reconciliation passes.
+- Concurrent starters or old workers can restore mixed context; serialize the
+  data executor, retain the database write gate, resume bounded migration steps,
+  and block runtime startup until reconciliation passes.
 
 ## Verification and Recovery
 
@@ -100,4 +118,5 @@ merge. This waiver does not claim retrieval-quality equivalence.
 Before new writes, rollback restores the verified backup and matching binary with
 instances stopped. After new writes, recovery rolls forward unless the maintainer
 explicitly authorizes the destructive restore boundary. Down cannot discard
-history or resurrect legacy bindings. Production migration is separately authorized.
+history or resurrect legacy bindings. Deploying the new server authorizes its
+automatic migration path.

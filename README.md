@@ -153,10 +153,14 @@ must each be migrated by a server connected to that database. Administration
 stays on the private control portal/API, while ontology maintenance and automatic conflict
 review run as server background workers.
 
-The image healthcheck allows the default 30-minute migration window and becomes
-active after its first success. If `POSTGRES_MIGRATION_TIMEOUT_SECONDS` is set
-above 1800, override the deployment healthcheck start period to at least the
-same duration.
+Migrations have no overall deadline by default
+(`POSTGRES_MIGRATION_TIMEOUT_SECONDS=0`). Set positive seconds, up to 86400, to
+choose a limit. Process shutdown still cancels migration, and progress is logged
+every 10 seconds. The server remains unready until migration completes. The image
+healthcheck has a 30-minute start period and becomes active after its first
+success; for larger migrations, extend the deployment's startup/healthcheck grace
+and rollout deadlines so the orchestrator does not restart or abandon the server
+while it is still migrating.
 
 Release candidates use `vX.Y.Z-rc.N` and `demo-vX.Y.Z-rc.N`. Stable releases use
 `vX.Y.Z`, `latest`, and `demo-vX.Y.Z`; there is no rolling demo tag.
@@ -259,32 +263,36 @@ are preserved.
 
 ### Upgrade Existing Private History
 
-Use the matching binary and existing environment configuration. Preflight is
-read-only: it starts no server and applies no migrations.
+Server startup automatically upgrades existing private history before starting
+HTTP listeners or workers. No separate migration command, preflight approval, or
+maintenance-confirmation flag is required. Use the matching binary and existing
+environment configuration; keep a verified restorable backup before upgrading.
+Do not run an older binary across this incompatible schema cutover.
+
+Startup installs the migration boundary, validates immutable writer attribution,
+captures the source fingerprint, moves private rows in bounded resumable batches,
+and finishes the schema migration. Concurrent starters serialize the data move;
+ordinary writes stay gated until completion. An interrupted upgrade resumes on
+the next startup using its retained fingerprint and progress.
+
+Ambiguous ownership or invalid cross-space references still block startup with
+an error; automation never guesses an owner. Inspect those blockers with the
+optional read-only preflight, which starts no server and applies no migrations:
 
 ```bash
 go run ./cmd/server private-memory-preflight
 ```
 
-1. Inspect the content-free report and resolve all blockers. Ambiguous writer
-   attribution and references outside the original legacy private space block
-   migration; do not repair them by guessing an owner.
-2. Schedule downtime, drain requests and workers, and stop every old instance.
-   Verify a restorable backup, then rerun preflight against that stopped state.
-3. Run the migration with the inspected `source_fingerprint`:
+The content-free report includes `source_fingerprint`, ownership mappings, and
+blockers. Resolve attribution problems without guessing ownership, then restart
+the matching server. An optional `private-memory-migrate` command uses the same
+automatic migration path without starting the server; `--source-fingerprint`
+can constrain it to an inspected snapshot. Historical `--maintenance-confirmed`
+arguments remain accepted for compatibility but are not required.
 
-   ```bash
-   go run ./cmd/server private-memory-migrate --maintenance-confirmed \
-     --source-fingerprint='<preflight-source-fingerprint>'
-   ```
-
-4. On interruption, keep instances stopped and resume the same command with the
-   retained fingerprint. Row work commits in bounded batches. Catalog and
-   constraint changes use maintenance locks; allow disk and WAL capacity for
-   necessary supporting copies and search rebuilding. Startup rejects partial
-   migration, and normal writes remain gated until completion.
-5. Start the matching binary after completion and verify readiness, isolation,
-   and effective capabilities before restoring traffic.
+Catalog and constraint changes use maintenance locks; allow disk and WAL
+capacity for necessary supporting copies and search rebuilding. Verify readiness,
+isolation, and effective capabilities before restoring traffic.
 
 Migration preserves shared history and splits private records by immutable
 writer. Necessary support copies retain provenance without adding independent
@@ -300,7 +308,7 @@ which fences stale jobs; erased operation keys cannot restore content.
 Before accepting new writes, rollback requires restoring the verified backup
 and matching application/schema together with all instances stopped. After new
 writes, use forward recovery. Down does not discard history or restore legacy
-bindings. Production migration remains an operator-authorized action.
+bindings. Deploying the new server also runs its required data migrations.
 
 ## Evidence Lifecycle
 

@@ -51,18 +51,23 @@ func TestPrivateMemoryCommandsInspectFreshDatabaseWithoutStartingOrMigrating(t *
 	var count int
 	require.NoError(t, db.Raw(`SELECT count(*) FROM pg_tables WHERE schemaname='public'`).Row().Scan(&count))
 	require.Zero(t, count, "preflight must not install even migration metadata")
-	for _, args := range [][]string{{}, {"--maintenance-confirmed"}, {"--source-fingerprint", report.SourceFingerprint}, {"--maintenance-confirmed", "--source-fingerprint", report.SourceFingerprint, "unexpected"}} {
+	for _, args := range [][]string{{"unexpected"}, {"--source-fingerprint", "invalid"}, {"--maintenance-confirmed", "--source-fingerprint", report.SourceFingerprint, "unexpected"}} {
 		require.Error(t, RunPrivateMemoryMigration(ctx, args, &bytes.Buffer{}))
 	}
 	require.NoError(t, db.Raw(`SELECT count(*) FROM pg_tables WHERE schemaname='public'`).Row().Scan(&count))
 	require.Zero(t, count, "invalid maintenance requests must not prepare schema")
 	output.Reset()
-	require.NoError(t, RunPrivateMemoryMigration(ctx, []string{"--maintenance-confirmed", "--source-fingerprint", report.SourceFingerprint}, &output))
+	require.NoError(t, RunPrivateMemoryMigration(ctx, nil, &output))
 	require.JSONEq(t, `{"planner_version":"private-memory.v2.7.0.1","status":"complete"}`, output.String())
 	output.Reset()
 	require.NoError(t, RunPrivateMemoryPreflight(ctx, &output))
 	require.NoError(t, json.Unmarshal(output.Bytes(), &report))
 	require.Equal(t, "complete", report.Status)
+	output.Reset()
+	require.NoError(t, RunPrivateMemoryMigration(ctx, []string{"--maintenance-confirmed", "--source-fingerprint", report.SourceFingerprint}, &output))
+	require.JSONEq(t, `{"planner_version":"private-memory.v2.7.0.1","status":"complete"}`, output.String())
+	require.ErrorIs(t, RunPrivateMemoryMigration(ctx, []string{"--source-fingerprint", "sha256:" + strings.Repeat("0", 64)}, &bytes.Buffer{}), privacy.ErrPrivateMemoryMigrationBlocked)
+	require.NoError(t, RunPrivateMemoryMigration(ctx, []string{"--source-fingerprint", report.SourceFingerprint}, &bytes.Buffer{}))
 }
 
 func TestPrivateMemoryPreflightCommandBoundsLegacyReportAndReturnsBlockers(t *testing.T) {

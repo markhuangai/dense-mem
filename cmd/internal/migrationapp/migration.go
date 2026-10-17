@@ -18,8 +18,16 @@ type infoLogger interface {
 
 type migrationFunc func(context.Context, *gorm.DB) error
 
+// WithTimeout leaves migrations without an added deadline when timeout is zero, while retaining parent cancellation.
+func WithTimeout(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout == 0 {
+		return context.WithCancel(parent)
+	}
+	return context.WithTimeout(parent, timeout)
+}
+
 func RunUp(parent context.Context, db *gorm.DB, timeout time.Duration, logger infoLogger) error {
-	return run(parent, db, timeout, "up", logger, postgres.RunUp)
+	return run(parent, db, timeout, "up", logger, runUpMigrations)
 }
 
 func RunMigrationControlRetirement(parent context.Context, db *gorm.DB, timeout time.Duration, logger infoLogger) error {
@@ -35,8 +43,8 @@ func run(parent context.Context, db *gorm.DB, timeout time.Duration, direction s
 }
 
 func runWithInterval(parent context.Context, db *gorm.DB, timeout time.Duration, direction string, logger infoLogger, interval time.Duration, migrate migrationFunc) (err error) {
-	if timeout <= 0 {
-		return fmt.Errorf("migration timeout must be greater than zero")
+	if timeout < 0 {
+		return fmt.Errorf("migration timeout must not be negative")
 	}
 	if interval <= 0 {
 		return fmt.Errorf("migration heartbeat interval must be greater than zero")
@@ -45,7 +53,7 @@ func runWithInterval(parent context.Context, db *gorm.DB, timeout time.Duration,
 		return fmt.Errorf("migration logger is required")
 	}
 
-	ctx, cancel := context.WithTimeout(parent, timeout)
+	ctx, cancel := WithTimeout(parent, timeout)
 	defer cancel()
 
 	startedAt := time.Now()

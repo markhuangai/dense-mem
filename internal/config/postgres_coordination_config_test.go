@@ -26,8 +26,8 @@ func TestLoadPostgresAndCoordinationDefaults(t *testing.T) {
 	if cfg.PostgresConnMaxLifetimeSeconds != 1800 {
 		t.Errorf("PostgresConnMaxLifetimeSeconds default = %d, want %d", cfg.PostgresConnMaxLifetimeSeconds, 1800)
 	}
-	if cfg.PostgresMigrationTimeoutSeconds != DefaultPostgresMigrationTimeoutSeconds {
-		t.Errorf("PostgresMigrationTimeoutSeconds default = %d, want %d", cfg.PostgresMigrationTimeoutSeconds, DefaultPostgresMigrationTimeoutSeconds)
+	if cfg.PostgresMigrationTimeoutSeconds != 0 {
+		t.Errorf("PostgresMigrationTimeoutSeconds default = %d, want no deadline", cfg.PostgresMigrationTimeoutSeconds)
 	}
 	if cfg.RedisTLSEnabled {
 		t.Error("RedisTLSEnabled default = true, want false")
