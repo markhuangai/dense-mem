@@ -1,3 +1,14 @@
+:where(.portal-content, .auth-shell, .knowledge-results-panel, .segmented-control,
+  [data-slot="dialog-content"], [data-slot="alert-dialog-content"], [data-slot="sheet-content"]) {
+  --muted: var(--muted-on-tint);
+  --subtle: var(--muted);
+}
+:where(.surface, .team-directory-card, .auth-panel, .table-wrap, .knowledge-explorer,
+  .graph-panel, .knowledge-commandbar, .knowledge-results-toolbar, .knowledge-item,
+  .search-input-wrap, .mobile-navigation) {
+  --muted: var(--secondary-text);
+  --subtle: var(--muted);
+}
 .app-shell {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
