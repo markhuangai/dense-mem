@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserPortalApp } from "./App";
-import { authorizationHeader, expectCurrentWorkspace, isRecallSequence, jsonResponse, optionValue, recallPayloadForHits } from "./App.test-helpers";
+import { authorizationHeader, expectCurrentWorkspace, isRecallSequence, jsonResponse, optionValue, recallPayloadForHits, ssoSessions } from "./App.test-helpers";
 import { GraphNode, GraphSnapshot, RecallHit, UserCredential, UserSession } from "./api";
 
 vi.mock("react-force-graph-2d", async () => {
@@ -199,13 +199,14 @@ describe("UserPortalApp", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("API key is required.");
     expect(fetchMock.mock.calls.some(([url, init]) => String(url) === "/ui/api/session" && init?.method === "POST")).toBe(false);
 
-    await userEvent.click(screen.getByRole("button", { name: "Switch to dark theme" }));
+    await userEvent.click(screen.getByRole("button", { name: "Choose theme" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Dark" }));
     expect(localStorage.getItem("denseMem.userTheme")).toBe("dark");
     await userEvent.type(screen.getByLabelText("API key"), "dm_key");
     await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
 
     await expectCurrentWorkspace("Research Team");
-    expect(screen.queryByRole("button", { name: /^Usage$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Usage" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /sign out/i }));
 
     expect(await screen.findByRole("button", { name: /sign in/i })).toBeInTheDocument();
@@ -221,8 +222,8 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
 
     await expectCurrentWorkspace("Research Team");
-    expect(screen.getByLabelText("Knowledge navigation")).toHaveClass("top-nav-bar");
-    expect(screen.getByLabelText("Knowledge sections")).toHaveClass("top-nav-tabs");
+    expect(screen.getByLabelText("Knowledge navigation")).toHaveClass("primary-rail");
+    expect(screen.getByLabelText("Knowledge sections")).toHaveClass("rail-tabs");
     expect(screen.getByLabelText("Current workspace")).not.toHaveTextContent("Mine");
 	 expect(screen.queryByRole("button", { name: "Communities" })).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/credentials"))).toBe(false);
@@ -233,9 +234,9 @@ describe("UserPortalApp", () => {
     sessionStorage.setItem("denseMem.userApiKey", "dm_read");
 
     render(<UserPortalApp />);
-    await screen.findByText("Research Team");
+    await expectCurrentWorkspace("Research Team");
     expect(sessionStorage.getItem("denseMem.userApiKey")).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: /my credential/i }));
+    await userEvent.click(screen.getByRole("link", { name: "My credentials" }));
 
     expect(await screen.findByRole("button", { name: /regenerate key/i })).toBeDisabled();
   });
@@ -245,9 +246,9 @@ describe("UserPortalApp", () => {
     sessionStorage.setItem("denseMem.userApiKey", "dm_read");
 
     render(<UserPortalApp />);
-    await screen.findByText("Research Team");
+    await expectCurrentWorkspace("Research Team");
 
-    expect(screen.queryByRole("button", { name: /usage/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Usage" })).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/ui/api/telemetry"))).toBe(false);
   });
 
@@ -256,7 +257,7 @@ describe("UserPortalApp", () => {
     sessionStorage.setItem("denseMem.userApiKey", "dm_read");
 
     render(<UserPortalApp />);
-    await screen.findByText("Research Team");
+    await expectCurrentWorkspace("Research Team");
     await userEvent.type(screen.getByLabelText("Keyword"), "project");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
 
@@ -266,7 +267,9 @@ describe("UserPortalApp", () => {
     expect(screen.queryByRole("button", { name: /more actions/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add to collection" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create claim" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Open details" }));
     expect(screen.getByLabelText("Inspector")).toHaveTextContent("Evidence");
+    await userEvent.click(screen.getByRole("button", { name: "Close details panel" }));
 
     const claimResult = within(resultList).getAllByText("Alice uses: Dense-Mem")[0]?.closest("[role='option']");
     expect(claimResult).not.toBeNull();
@@ -274,18 +277,22 @@ describe("UserPortalApp", () => {
     expect(screen.getByLabelText("Inspector")).toHaveTextContent("Evidence");
     expect(screen.getByLabelText("Inspector")).toHaveTextContent("Alice uses: Dense-Mem");
 
+    await userEvent.click(screen.getByRole("button", { name: "Close details panel" }));
+    await userEvent.click(screen.getByRole("button", { name: "Filters" }));
     await userEvent.click(screen.getByRole("checkbox", { name: /evidence/i }));
     expect(screen.getByText("No recall results")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("checkbox", { name: /evidence/i }));
     expect(screen.getByRole("listbox", { name: "Recall result list" })).toHaveTextContent("Alice uses: Dense-Mem");
 
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Open details" }));
     await userEvent.click(screen.getByRole("tab", { name: "Recall" }));
     expect(screen.getByLabelText("Inspector")).toHaveTextContent("Final score");
+    await userEvent.click(screen.getByRole("button", { name: "Close details panel" }));
     await userEvent.click(screen.getByRole("button", { name: "Sort by date" }));
     expect(screen.getByRole("button", { name: "Sort by relevance" })).toHaveTextContent("Sort: Date");
     await userEvent.click(screen.getByRole("button", { name: "Use compact density" }));
     expect(screen.getByRole("button", { name: "Use comfortable density" })).toHaveAttribute("aria-pressed", "true");
-    await userEvent.click(screen.getByRole("button", { name: "Close details panel" }));
     expect(screen.queryByLabelText("Inspector")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Open details" }));
     expect(screen.getByLabelText("Inspector")).toBeInTheDocument();
@@ -296,15 +303,19 @@ describe("UserPortalApp", () => {
     sessionStorage.setItem("denseMem.userApiKey", "dm_read");
 
     render(<UserPortalApp />);
-    await screen.findByText("Research Team");
-    await userEvent.click(screen.getByRole("button", { name: /graph/i }));
+    await expectCurrentWorkspace("Research Team");
+    await userEvent.click(screen.getByRole("link", { name: "Graph" }));
 
     expect(await screen.findByLabelText("Knowledge graph")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Graph controls" }));
     const controls = screen.getByLabelText("Graph controls");
     expect(within(controls).getByLabelText("Relationship limit")).toHaveValue(80);
     expect((await screen.findAllByText("Alice")).length).toBeGreaterThanOrEqual(1);
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Open details" }));
     expect(screen.getByLabelText("Graph totals")).toHaveTextContent("2");
     expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("Select a node");
+    await userEvent.click(screen.getByRole("button", { name: "Close details panel" }));
     await userEvent.click(within(screen.getByTestId("force-graph")).getByRole("button", { name: "Alice" }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith("/ui/api/node-detail?type=entity&id=entity-alice", expect.any(Object));
@@ -317,7 +328,9 @@ describe("UserPortalApp", () => {
         expect.any(Object),
       );
     });
-    await userEvent.click(within(controls).getByRole("button", { name: "Refresh" }));
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Graph controls" }));
+    await userEvent.click(within(screen.getByLabelText("Graph controls")).getByRole("button", { name: "Refresh" }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/ui/api/graph?scope=overview&types=entity%2Cvalue&depth=2&limit=80",
@@ -340,8 +353,9 @@ describe("UserPortalApp", () => {
     sessionStorage.setItem("denseMem.userApiKey", "dm_read");
 
     render(<UserPortalApp />);
-    await screen.findByText("Research Team");
-    await userEvent.click(screen.getByRole("button", { name: /graph/i }));
+    await expectCurrentWorkspace("Research Team");
+    await userEvent.click(screen.getByRole("link", { name: "Graph" }));
+    await userEvent.click(screen.getByRole("button", { name: "Graph controls" }));
     const controls = await screen.findByLabelText("Graph controls");
 
     await userEvent.click(within(screen.getByTestId("force-graph")).getByRole("button", { name: "Alice" }));
@@ -349,11 +363,15 @@ describe("UserPortalApp", () => {
       expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("0.940");
     });
 
-    await userEvent.click(within(controls).getByRole("button", { name: "Refresh" }));
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Graph controls" }));
+    await userEvent.click(within(screen.getByLabelText("Graph controls")).getByRole("button", { name: "Refresh" }));
 
     await waitFor(() => {
       expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/ui/api/node-detail?type=entity&id=entity-alice"))).toHaveLength(2);
     });
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Open details" }));
     expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("community-2");
     expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("0.670");
   });
@@ -363,8 +381,9 @@ describe("UserPortalApp", () => {
     sessionStorage.setItem("denseMem.userApiKey", "dm_read");
 
     render(<UserPortalApp />);
-    await screen.findByText("Research Team");
-    await userEvent.click(screen.getByRole("button", { name: /graph/i }));
+    await expectCurrentWorkspace("Research Team");
+    await userEvent.click(screen.getByRole("link", { name: "Graph" }));
+    await userEvent.click(screen.getByRole("button", { name: "Graph controls" }));
     const controls = await screen.findByLabelText("Graph controls");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -390,10 +409,11 @@ describe("UserPortalApp", () => {
     sessionStorage.setItem("denseMem.userApiKey", "dm_read");
 
     render(<UserPortalApp />);
-    await screen.findByText("Research Team");
+    await expectCurrentWorkspace("Research Team");
     await userEvent.type(screen.getByLabelText("Keyword"), "project");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
     await screen.findByRole("listbox", { name: "Recall result list" });
+    await userEvent.click(screen.getByRole("button", { name: "Open details" }));
     await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
 
     expect(await screen.findByTestId("force-graph")).toHaveTextContent("Alice");
@@ -410,18 +430,21 @@ describe("UserPortalApp", () => {
     sessionStorage.setItem("denseMem.userApiKey", "dm_read");
 
     render(<UserPortalApp />);
-    await screen.findByText("Research Team");
+    await expectCurrentWorkspace("Research Team");
     await userEvent.type(screen.getByLabelText("Keyword"), "project");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
 
+    await userEvent.click(screen.getByRole("button", { name: "Filters" }));
     await userEvent.selectOptions(await screen.findByLabelText("Source"), "notes");
     expect(screen.getByRole("listbox", { name: "Recall result list" })).toHaveTextContent("Alice is working on project-x with Dense-Mem.");
     expect(screen.getByRole("listbox", { name: "Recall result list" })).not.toHaveTextContent("Alice uses: Dense-Mem");
 
+    await userEvent.keyboard("{Escape}");
     await userEvent.clear(screen.getByLabelText("Keyword"));
     await userEvent.type(screen.getByLabelText("Keyword"), "alice");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
 
+    await userEvent.click(screen.getByRole("button", { name: "Filters" }));
     expect(await screen.findByLabelText("Source")).toHaveValue("all");
     expect(screen.getByRole("listbox", { name: "Recall result list" })).toHaveTextContent("Alice is working on project-x with Dense-Mem.");
   });
@@ -436,8 +459,8 @@ describe("UserPortalApp", () => {
     sessionStorage.setItem("denseMem.userApiKey", "dm_write");
 
     render(<UserPortalApp />);
-    await screen.findByText("Research Team");
-    expect(screen.queryByRole("button", { name: /^usage$/i })).not.toBeInTheDocument();
+    await expectCurrentWorkspace("Research Team");
+    expect(screen.queryByRole("link", { name: "Usage" })).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/ui/api/telemetry"))).toBe(false);
   });
 
@@ -449,12 +472,12 @@ describe("UserPortalApp", () => {
     };
     const fetchMock = mockUserFetch(writeSession);
     sessionStorage.setItem("denseMem.userApiKey", "dm_old");
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     render(<UserPortalApp />);
-    await screen.findByText("Research Team");
-    await userEvent.click(screen.getByRole("button", { name: /my credential/i }));
+    await expectCurrentWorkspace("Research Team");
+    await userEvent.click(screen.getByRole("link", { name: "My credentials" }));
     await userEvent.click(await screen.findByRole("button", { name: /regenerate key/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Regenerate key" }));
 
     expect(await screen.findByDisplayValue("dm_new_plaintext")).toHaveAccessibleName("Generated API key");
     await userEvent.click(screen.getByRole("button", { name: /copy api key/i }));
@@ -484,11 +507,10 @@ describe("UserPortalApp", () => {
     const managerCredential: UserCredential = { ...managerSession.credential! };
     const fetchMock = mockUserFetch(managerSession, [managerCredential, memberCredential]);
     sessionStorage.setItem("denseMem.userApiKey", "dm_manager");
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     render(<UserPortalApp />);
-    await screen.findByText("Research Team");
-    await userEvent.click(screen.getByRole("button", { name: /^team$/i }));
+    await expectCurrentWorkspace("Research Team");
+    await userEvent.click(screen.getByRole("link", { name: "Team" }));
 
     expect(await screen.findByLabelText("Credential name Manager")).toBeDisabled();
     expect(screen.getByRole("button", { name: /regenerate api key for credential Manager/i })).toBeDisabled();
@@ -497,7 +519,7 @@ describe("UserPortalApp", () => {
     await userEvent.clear(teamName);
     await userEvent.type(teamName, "Renamed Team");
     await userEvent.click(screen.getByRole("button", { name: /save team/i }));
-    expect(await screen.findByText("Renamed Team")).toBeInTheDocument();
+    await expectCurrentWorkspace("Renamed Team");
 
     const newCredentialName = screen.getByLabelText("Credential name", { selector: "#managed-credential-name" });
     await userEvent.clear(newCredentialName);
@@ -536,6 +558,7 @@ describe("UserPortalApp", () => {
     ));
 
     await userEvent.click(screen.getByRole("button", { name: /regenerate api key for credential Reader Updated/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Regenerate API key" }));
     expect(await screen.findByDisplayValue("dm_member_rotated")).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -545,6 +568,7 @@ describe("UserPortalApp", () => {
     });
 
     await userEvent.click(screen.getByRole("button", { name: /delete credential Reader Updated/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining(`/ui/api/team/credentials/${memberCredential.id}`),
@@ -574,31 +598,91 @@ describe("UserPortalApp", () => {
     sessionStorage.setItem("denseMem.userApiKey", "dm_manager");
 
     render(<UserPortalApp />);
-    await screen.findByText("Research Team");
-    expect(screen.getByRole("button", { name: /^team$/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^usage$/i })).not.toBeInTheDocument();
+    await expectCurrentWorkspace("Research Team");
+    expect(screen.getByRole("link", { name: "Team" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Usage" })).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/ui/api/telemetry"))).toBe(false);
   });
 
+  it("drops a late recall response after switching authenticated teams", async () => {
+    const { initial, switched, secondTeam } = ssoSessions(baseSession);
+    const fetcher = mockSSOUserFetch(initial, switched);
+    const original = fetcher.getMockImplementation()!;
+    let release: ((value: Response) => void) | undefined;
+    fetcher.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => String(input).startsWith("/ui/api/recall") ? new Promise<Response>((resolve) => { release = resolve; }) : original(input, init));
+    render(<UserPortalApp />);
+    await expectCurrentWorkspace(initial.team.name);
+    await userEvent.type(screen.getByLabelText("Keyword"), "team-a private draft");
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => expect(release).toBeDefined());
+    await userEvent.click(screen.getByRole("button", { name: "Choose team" }));
+    await userEvent.click(screen.getByRole("button", { name: secondTeam.name }));
+    await expectCurrentWorkspace(secondTeam.name);
+    release!(jsonResponse({ data: recallPayloadForHits([{ evidence: { evidence_id: "old", context: "Old team result" } }] as RecallHit[]) }));
+    await waitFor(() => expect(screen.queryByText("Old team result")).not.toBeInTheDocument());
+    expect(screen.getByLabelText("Keyword")).toHaveValue("");
+    expect(window.location.href).not.toContain("private");
+    expect(screen.queryByRole("link", { name: "My credentials" })).not.toBeInTheDocument();
+  });
+
+  it.each(["success", "failure"] as const)("prevents overlapping SSO team switches and recovers after %s", async (outcome) => {
+    const { initial, switched, secondTeam } = ssoSessions(baseSession);
+    const fetchMock = mockSSOUserFetch(initial, switched);
+    const original = fetchMock.getMockImplementation()!;
+    let finishSwitch!: () => void;
+    const pending = new Promise<void>((resolve) => { finishSwitch = resolve; });
+    fetchMock.mockImplementation((input, init) => String(input) === "/ui/api/sso/team" && init?.method === "POST"
+      ? pending.then(() => outcome === "success" ? original(input, init) : jsonResponse({ error: { message: "Team switch unavailable" } }, 503))
+      : original(input, init));
+    render(<UserPortalApp />);
+    await expectCurrentWorkspace(initial.team.name);
+    const picker = screen.getByRole("button", { name: "Choose team" });
+    await userEvent.click(picker);
+    await userEvent.click(screen.getByRole("button", { name: secondTeam.name }));
+    try {
+      await screen.findByText("Switching team");
+      const currentTeam = within(screen.getByLabelText("Available teams")).getByRole("button", { name: new RegExp(initial.team.name) });
+      await userEvent.click(currentTeam);
+      expect(fetchMock.mock.calls.filter(([input, init]) => String(input) === "/ui/api/sso/team" && init?.method === "POST")).toHaveLength(1);
+      expect(currentTeam).toBeDisabled();
+      expect(screen.getByRole("button", { name: secondTeam.name })).toBeDisabled();
+    } finally {
+      finishSwitch();
+    }
+    await waitFor(() => expect(picker).toBeEnabled());
+    await expectCurrentWorkspace(outcome === "success" ? secondTeam.name : initial.team.name);
+    if (outcome === "success") {
+      expect(screen.queryByRole("textbox", { name: "Find a team" })).not.toBeInTheDocument();
+    } else {
+      expect(await screen.findByRole("alert")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: secondTeam.name })).toBeEnabled();
+    }
+  });
+
   it("derives SSO cookie auth from the credential-free session and switches teams", async () => {
-    const { initial, switched, secondTeam } = ssoSessions();
+    const { initial, switched, secondTeam } = ssoSessions(baseSession);
     const fetchMock = mockSSOUserFetch(initial, switched);
 
     render(<UserPortalApp />);
 
     await expectCurrentWorkspace("Research Team");
-    expect(screen.getByRole("button", { name: /my credential/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^team$/i })).not.toBeInTheDocument();
-    const teamSelect = await screen.findByLabelText("Active team");
-    expect(teamSelect).toHaveValue(initial.team.id);
+    expect(screen.getByRole("link", { name: "My credentials" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Team" })).not.toBeInTheDocument();
+    const teamSelect = await screen.findByRole("button", { name: "Choose team" });
+    expect(teamSelect).toHaveTextContent(initial.team.name);
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
     expect(screen.getByText(`https://memory.example.test/teams/${initial.team.id}/mcp`)).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
 
-    await userEvent.selectOptions(teamSelect, secondTeam.id);
+    await userEvent.click(teamSelect);
+    await userEvent.click(screen.getByRole("button", { name: secondTeam.name }));
 
     await expectCurrentWorkspace("Analytics Team");
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
     expect(screen.getByText(`https://memory.example.test/teams/${secondTeam.id}/mcp`)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /my credential/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^team$/i })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("link", { name: "My credentials" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Team" })).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/ui/api/sso/team",
@@ -613,7 +697,7 @@ describe("UserPortalApp", () => {
   });
 
   it("shows effective SSO and API-key capabilities independently of declared grants", async () => {
-    const { initial, switched } = ssoSessions();
+    const { initial, switched } = ssoSessions(baseSession);
     const session: UserSession = {
       ...initial,
       membership: { ...initial.membership, grants: ["read", "write"] },
@@ -628,9 +712,10 @@ describe("UserPortalApp", () => {
 
     render(<UserPortalApp />);
     await expectCurrentWorkspace("Research Team");
-    await userEvent.click(screen.getByRole("button", { name: /my credential/i }));
+    await userEvent.click(screen.getByRole("link", { name: "My credentials" }));
 
     expect(screen.getByText("Private: Read/write · Team-read-only")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
     expect(screen.getByText("Private memory").parentElement).toHaveTextContent("Read/write");
     expect(screen.getByText("Team memory").parentElement).toHaveTextContent("Team-read-only");
     expect(screen.getByText("Team memory").parentElement).not.toHaveTextContent("Team read/write");
@@ -638,7 +723,7 @@ describe("UserPortalApp", () => {
   });
 
   it("keeps the SSO portal open when logout fails", async () => {
-    const { initial, switched } = ssoSessions();
+    const { initial, switched } = ssoSessions(baseSession);
     mockSSOUserFetch(initial, switched, { logoutStatus: 500 });
 
     render(<UserPortalApp />);
@@ -652,7 +737,7 @@ describe("UserPortalApp", () => {
   });
 
   it("lets an SSO read/write member create and rotate their owned API key", async () => {
-    const { initial, switched } = ssoSessions();
+    const { initial, switched } = ssoSessions(baseSession);
     const membership = { ...initial.membership, grants: ["read", "write"] };
     const readWriteSession: UserSession = {
       ...initial,
@@ -660,12 +745,11 @@ describe("UserPortalApp", () => {
       teams: initial.teams.map((item, index) => index === 0 ? { ...item, membership } : item),
     };
     const fetchMock = mockSSOUserFetch(readWriteSession, switched);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     render(<UserPortalApp />);
 
     await expectCurrentWorkspace("Research Team");
-    await userEvent.click(screen.getByRole("button", { name: /my credential/i }));
+    await userEvent.click(screen.getByRole("link", { name: "My credentials" }));
     await userEvent.click(screen.getByRole("button", { name: /create api key/i }));
 
     expect(await screen.findByDisplayValue("dm_sso_personal_plaintext")).toBeInTheDocument();
@@ -690,6 +774,7 @@ describe("UserPortalApp", () => {
     await userEvent.click(secondCredential);
 
     await userEvent.click(screen.getByRole("button", { name: /regenerate key/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Regenerate key" }));
     expect(await screen.findByDisplayValue("dm_sso_personal_rotated")).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -698,6 +783,7 @@ describe("UserPortalApp", () => {
       );
     });
     await userEvent.click(screen.getByRole("button", { name: /revoke key/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Revoke key" }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/ui/api/sso/credentials/88888888-8888-4888-8888-888888888888",
@@ -710,13 +796,13 @@ describe("UserPortalApp", () => {
   });
 
   it("keeps SSO read-only owned API key rotation disabled", async () => {
-    const { initial, switched } = ssoSessions();
+    const { initial, switched } = ssoSessions(baseSession);
     mockSSOUserFetch(initial, switched);
 
     render(<UserPortalApp />);
 
     await expectCurrentWorkspace("Research Team");
-    await userEvent.click(screen.getByRole("button", { name: /my credential/i }));
+    await userEvent.click(screen.getByRole("link", { name: "My credentials" }));
     await userEvent.click(screen.getByRole("button", { name: /create api key/i }));
 
     expect(await screen.findByDisplayValue("dm_sso_personal_plaintext")).toBeInTheDocument();
@@ -825,38 +911,6 @@ function mockUserFetch(session: UserSession, credentials: UserCredential[] = [],
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
-}
-
-function ssoSessions() {
-  const secondTeam = {
-    ...baseSession.team,
-    id: "55555555-5555-4555-8555-555555555555",
-    name: "Analytics Team",
-  };
-  const firstMembership = { ...baseSession.membership };
-  const secondMembership = {
-    ...baseSession.membership,
-    team_id: secondTeam.id,
-    name: "Analytics SSO",
-    grants: ["read", "write"],
-    role: "manager" as const,
-  };
-  const initial: UserSession = {
-    ...baseSession,
-    credential: null,
-    membership: firstMembership,
-    personal_credentials: [],
-    teams: [
-      { team: baseSession.team, membership: firstMembership },
-      { team: secondTeam, membership: secondMembership },
-    ],
-  };
-  const switched: UserSession = {
-    ...initial,
-    team: secondTeam,
-    membership: secondMembership,
-  };
-  return { initial, switched, secondTeam, secondMembership };
 }
 
 function mockSSOUserFetch(initial: UserSession, switched: UserSession, options: { logoutStatus?: number } = {}) {

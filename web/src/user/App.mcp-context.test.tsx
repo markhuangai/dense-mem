@@ -52,6 +52,7 @@ describe("UserPortalApp MCP context", () => {
     render(<UserPortalApp />);
 
     await expectCurrentWorkspace("Research Team");
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
     expect(screen.getByText(baseSession.team.id)).toBeInTheDocument();
     const expectedURL = `https://memory.example.test/teams/${baseSession.team.id}/mcp`;
     expect(screen.getByText(expectedURL)).toBeInTheDocument();
@@ -66,6 +67,7 @@ describe("UserPortalApp MCP context", () => {
     render(<UserPortalApp />);
 
     await expectCurrentWorkspace("Research Team");
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
     expect(screen.getByText(`${window.location.origin}/teams/${baseSession.team.id}/mcp`)).toBeInTheDocument();
     expect(screen.getByText("Using this browser origin because MCP_PUBLIC_BASE_URL is not configured.")).toBeInTheDocument();
   });
@@ -76,6 +78,7 @@ describe("UserPortalApp MCP context", () => {
     render(<UserPortalApp />);
 
     await expectCurrentWorkspace("Research Team");
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
     const expectedURL = `https://memory.example.test/teams/${baseSession.team.id}/mcp`;
     expect(screen.getByText(expectedURL)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Copy MCP URL" }));

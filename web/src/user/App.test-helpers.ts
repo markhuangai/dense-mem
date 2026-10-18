@@ -1,6 +1,6 @@
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import { expect } from "vitest";
-import { RecallHit, RecallPayload } from "./api";
+import { RecallHit, RecallPayload, UserSession } from "./api";
 
 export function optionValue<T>(value: T | T[], index: number): T {
   return Array.isArray(value) ? value[Math.min(index, value.length - 1)] : value;
@@ -33,7 +33,39 @@ export function jsonResponse(payload: unknown, status = 200) {
 
 export async function expectCurrentWorkspace(teamName: string) {
   const workspace = await screen.findByLabelText("Current workspace");
-  expect(workspace).toHaveTextContent(teamName);
+  await waitFor(() => expect(workspace).toHaveTextContent(teamName));
+}
+
+export function ssoSessions(baseSession: UserSession) {
+  const secondTeam = {
+    ...baseSession.team,
+    id: "55555555-5555-4555-8555-555555555555",
+    name: "Analytics Team",
+  };
+  const firstMembership = { ...baseSession.membership };
+  const secondMembership = {
+    ...baseSession.membership,
+    team_id: secondTeam.id,
+    name: "Analytics SSO",
+    grants: ["read", "write"],
+    role: "manager" as const,
+  };
+  const initial: UserSession = {
+    ...baseSession,
+    credential: null,
+    membership: firstMembership,
+    personal_credentials: [],
+    teams: [
+      { team: baseSession.team, membership: firstMembership },
+      { team: secondTeam, membership: secondMembership },
+    ],
+  };
+  const switched: UserSession = {
+    ...initial,
+    team: secondTeam,
+    membership: secondMembership,
+  };
+  return { initial, switched, secondTeam, secondMembership };
 }
 
 export function recallPayloadForHits(hits: RecallHit[]): RecallPayload {

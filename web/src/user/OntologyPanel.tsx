@@ -1,3 +1,13 @@
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/primitives/tabs";
+import { useConfirmation } from "../ui/confirmation";
+import { useUnsavedChanges } from "../ui/navigation";
+import { Button } from "../ui/primitives/button";
+import { Label } from "../ui/primitives/label";
+import { NativeSelect, NativeSelectOption } from "../ui/primitives/native-select";
+import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "../ui/primitives/table";
+import { Input } from "../ui/primitives/input";
+import { Checkbox } from "../ui/primitives/checkbox";
+import { Textarea } from "../ui/primitives/textarea";
 import { useEffect, useRef, useState } from "react";
 import { LoadingState, SectionHeading } from "../ui/components";
 import { ApiError, newIdempotencyKey, UserApi, UserSession } from "./api";
@@ -8,6 +18,10 @@ const sourceKey = (source: SourceHandle) => `${source.kind}:${source.id}`;
 const recordLabel = (record: OntologyRecord) => record.definition?.label ?? (record.group ? `${record.group.members.length} ${record.kind === "evidence_group" ? "evidence" : "relationship"} sources` : record.override?.action.replaceAll("_", " ") ?? record.kind.replaceAll("_", " "));
 
 export function OntologyPanel({ api, session }: { api: UserApi; session: UserSession }) {
+  const confirm = useConfirmation();
+  const [activeTab, setActiveTab] = useState("catalog");
+  const [editorDirty, setEditorDirty] = useState(false);
+  const [editorEpoch, setEditorEpoch] = useState(0);
   const [records, setRecords] = useState<OntologyRecord[]>([]);
   const [recordKind, setRecordKind] = useState<OntologyKind | "">("");
   const [recordCursor, setRecordCursor] = useState("");
@@ -34,6 +48,7 @@ export function OntologyPanel({ api, session }: { api: UserApi; session: UserSes
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [fresh, setFresh] = useState(false);
+  useUnsavedChanges(dirty || editorDirty || Boolean(rollbackReason));
   const operationKeys = useRef(new Map<string, string>());
   const canWrite = session.membership.grants.includes("write");
   const open = !draft || draft.state === "open";
@@ -70,11 +85,16 @@ export function OntologyPanel({ api, session }: { api: UserApi; session: UserSes
     try { await work(); } catch (err) { if (err instanceof ApiError && err.status === 409) { setFresh(false); setPreview(null); } setError(readError(err)); } finally { setBusy(false); }
   }
 
-  function add(edit: OntologyEdit) { setEdits((current) => [...current, edit]); setDirty(true); setPreview(null); setMessage("Correction added. Save the draft to validate it."); }
-  function startDraft() { operationKeys.current.clear(); setDraft(null); setEdits([]); setReason(""); setDirty(false); setPreview(null); setTarget(null); setSelected([]); setMessage(""); }
+  function add(edit: OntologyEdit) { setActiveTab("drafts"); setEdits((current) => [...current, edit]); setDirty(true); setPreview(null); setMessage("Correction added. Save the draft to validate it."); }
+  async function canReplaceDraft() {
+    return !(dirty || editorDirty) || await confirm({ title: "Discard unsaved draft edits?", description: "Saved drafts remain available. Unsaved corrections and editor fields will be lost.", confirmLabel: "Discard edits", destructive: true });
+  }
+
+  async function startDraft() { if (!await canReplaceDraft()) return; setEditorEpoch((value) => value + 1); setEditorDirty(false); operationKeys.current.clear(); setDraft(null); setEdits([]); setReason(""); setDirty(false); setPreview(null); setTarget(null); setSelected([]); setMessage(""); }
 
   async function openDraft(id: string) {
-    const next = await api.ontologyDraft(id); setDraft(next); setEdits(next.edits); setReason(next.reason); setDirty(false); setPreview(null); setTarget(null); setSelected([]);
+    if (!await canReplaceDraft()) return;
+    const next = await api.ontologyDraft(id); setEditorEpoch((value) => value + 1); setEditorDirty(false); setDraft(next); setEdits(next.edits); setReason(next.reason); setDirty(false); setPreview(null); setTarget(null); setSelected([]);
   }
 
   async function save() {
@@ -102,6 +122,7 @@ export function OntologyPanel({ api, session }: { api: UserApi; session: UserSes
   }
 
   async function command(action: "publish" | "discard") {
+    if (!await confirm({ title: action === "publish" ? "Publish correction?" : "Discard saved draft?", description: action === "publish" ? "This publishes the reviewed impact and queues affected organization for reassessment." : "This closes the draft and retains its history.", confirmLabel: action === "publish" ? "Publish correction" : "Discard draft", destructive: action === "discard" })) return;
     const body = { expected_version: draft!.version, expected_revision: draft!.base_revision, reason };
     const next = await api.commandOntologyDraft(draft!.id, action, { ...body, operation_key: operationKey(action, body) });
     setDraft(next); setDirty(false); setPreview(null);
@@ -120,6 +141,7 @@ export function OntologyPanel({ api, session }: { api: UserApi; session: UserSes
   }
 
   async function rollback() {
+    if (!await confirm({ title: "Publish rollback?", description: "This creates a new ontology revision. The server will verify that the records and sources are still eligible.", confirmLabel: "Publish rollback", destructive: true })) return;
     const body = { expected_revision: coverage!.revision, reason: rollbackReason };
     const signature = JSON.stringify(["rollback", publication!.id, body]);
     let key = operationKeys.current.get(signature); if (!key) { key = newIdempotencyKey("ontology"); operationKeys.current.set(signature, key); }
@@ -129,54 +151,57 @@ export function OntologyPanel({ api, session }: { api: UserApi; session: UserSes
 
   if (loading) return <LoadingState label="Loading ontology" />;
   return <div className="stack">
-    <SectionHeading title="Ontology" subtitle="Inspect shared organization and publish reversible corrections." actions={<button className="ghost-button" disabled={busy} onClick={() => void perform(load)}>Refresh ontology</button>} />
+    <SectionHeading title="Ontology" subtitle="Inspect shared organization and publish reversible corrections." actions={<Button variant="outline" className="ghost-button" disabled={busy} onClick={() => void perform(load)}>Refresh ontology</Button>} />
     {error && <p className="field-error" role="alert">{error}</p>}{message && <p role="status">{message}</p>}
     {coverage && <section className="surface-section" aria-label="Team ontology coverage"><h3>Team processing coverage</h3><p>Revision {coverage.revision}. {coverage.coverage_complete ? "Current" : "Reassessment pending"}. {coverage.counts.organized} organized; {coverage.counts.pending} pending; {coverage.counts.ambiguous} ambiguous; {coverage.counts.failed} failed; {coverage.counts.budget_deferred} deferred.</p><p>Processing runs under the operator’s maintenance schedule. Refresh to check progress.</p></section>}
-    <section className="surface-section" aria-label="Ontology catalog"><h3>Catalog and groups</h3>
-      <label>Catalog type<select aria-label="Catalog type" value={recordKind} disabled={busy} onChange={(event) => void perform(() => catalog(event.target.value as OntologyKind | ""))}><option value="">All records</option>{["topic", "entity_class", "predicate_concept", "assignment", "evidence_group", "relationship_group", "override"].map((kind) => <option key={kind} value={kind}>{kind.replaceAll("_", " ")}</option>)}</select></label>
-      <div className="table-wrap"><table className="data-table"><thead><tr><th>Organization</th><th>Status</th><th>Sources or classification</th><th>Actions</th></tr></thead><tbody>{records.map((record) => <tr key={record.id}>
-        <td><strong>{recordLabel(record)}</strong>{record.definition && <p>{record.definition.description}</p>}<small title={record.id}>{record.id.slice(0, 8)} · revision {record.version}</small></td>
-        <td>{record.retired ? "Retired" : record.current ? "Current" : "Needs reassessment"}</td>
-        <td><RecordDetails record={record} records={records} /></td>
-        <td>{!record.retired && record.definition && <button disabled={busy || !canWrite} onClick={() => { setTarget(record); setMessage("Definition selected. Edit its fields below."); }}>Edit {record.definition.label}</button>}
-          {!record.retired && record.group && <button disabled={busy || !canWrite} onClick={() => { setTarget(record); setSelected(record.group!.members); }}>Correct grouping</button>}
-          {!record.retired && record.override && <button disabled={busy || !canWrite} onClick={() => add({ action: "remove_override", record_id: record.id, expected_version: record.version })}>{record.override.action === "pin_definition" ? "Unpin definition" : "Remove correction"}</button>}
-        </td></tr>)}</tbody></table></div>
-      {!records.length && <p>No catalog records yet.</p>}{recordCursor && <button disabled={busy} onClick={() => void perform(() => catalog(recordKind, true))}>Load more catalog records</button>}
-    </section>
-    <section className="surface-section"><h3>Shared sources</h3>
-      <label>Source type<select aria-label="Source type" value={sourceKind} disabled={busy} onChange={(event) => { setSourceKind(event.target.value as SourceKind); setSources([]); setSourceCursor(""); }}>{["evidence", "relationship", "entity", "predicate"].map((kind) => <option key={kind}>{kind}</option>)}</select></label>
-      <label>Source text or ID<input aria-label="Source text or ID" value={sourceQuery} maxLength={128} onChange={(event) => setSourceQuery(event.target.value)} /></label><button disabled={busy} onClick={() => void perform(() => sourcePage())}>Inspect sources</button>
-      {sources.map((source) => <label className="checkbox-row" key={sourceKey(source)}><input type="checkbox" aria-label={`Select source ${source.id}`} disabled={busy || !canWrite || !open} checked={selected.some((item) => sourceKey(item) === sourceKey(source))} onChange={(event) => setSelected((current) => event.target.checked ? [...current, { kind: source.kind, id: source.id, version: source.version }] : current.filter((item) => sourceKey(item) !== sourceKey(source)))} /><span>{source.text}{source.truncated && " … (excerpt)"}</span></label>)}
-      {sourceCursor && <button disabled={busy} onClick={() => void perform(() => sourcePage(true))}>Load more sources</button>}<p>Text filtering applies to each inspected page. Load more sources to continue searching. A source ID looks up that shared source directly.</p><p>{selected.length} selected sources.</p>
-      {!!selected.length && <button disabled={busy} onClick={() => setSelected([])}>Clear selected sources</button>}
-    </section>
-    <section className="surface-section"><SectionHeading title="Saved drafts" subtitle="Only your drafts are listed." actions={<button disabled={busy || !canWrite} onClick={startDraft}>New draft</button>} />
-      {drafts.map((item) => <button key={item.id} disabled={busy} onClick={() => void perform(() => openDraft(item.id))}>{item.reason} · {item.state} · revision {item.version}</button>)}
-      {draftCursor && <button disabled={busy} onClick={() => void perform(async () => { const page = await api.ontologyDrafts(draftCursor); setDrafts((current) => [...current, ...page.drafts]); setDraftCursor(page.next_cursor ?? ""); })}>Load more drafts</button>}
+    <Tabs className="panel-tabs ontology-tabs" value={activeTab} onValueChange={setActiveTab}>
+      <TabsList aria-label="Ontology sections"><TabsTrigger value="catalog">Catalog</TabsTrigger><TabsTrigger value="sources">Sources</TabsTrigger><TabsTrigger value="drafts">Drafts</TabsTrigger><TabsTrigger value="history">History</TabsTrigger></TabsList>
+    <TabsContent value="catalog"><section className="surface" aria-label="Ontology catalog"><h3>Catalog and groups</h3>
+      <Label>Catalog type<NativeSelect aria-label="Catalog type" value={recordKind} disabled={busy} onChange={(event) => void perform(() => catalog(event.target.value as OntologyKind | ""))}><NativeSelectOption value="">All records</NativeSelectOption>{["topic", "entity_class", "predicate_concept", "assignment", "evidence_group", "relationship_group", "override"].map((kind) => <NativeSelectOption key={kind} value={kind}>{kind.replaceAll("_", " ")}</NativeSelectOption>)}</NativeSelect></Label>
+      <div className="table-wrap"><Table className="data-table"><TableHeader><TableRow><TableHead>Organization</TableHead><TableHead>Status</TableHead><TableHead>Sources or classification</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader><TableBody>{records.map((record) => <TableRow key={record.id}>
+        <TableCell><strong>{recordLabel(record)}</strong>{record.definition && <p>{record.definition.description}</p>}<small title={record.id}>{record.id.slice(0, 8)} · revision {record.version}</small></TableCell>
+        <TableCell>{record.retired ? "Retired" : record.current ? "Current" : "Needs reassessment"}</TableCell>
+        <TableCell><RecordDetails record={record} records={records} /></TableCell>
+        <TableCell>{!record.retired && record.definition && <Button variant="outline" disabled={busy || !canWrite} onClick={() => { setTarget(record); setActiveTab("drafts"); setMessage("Definition selected. Edit its fields in this draft."); }}>Edit {record.definition.label}</Button>}
+          {!record.retired && record.group && <Button variant="outline" disabled={busy || !canWrite} onClick={() => { setTarget(record); setSelected(record.group!.members); setActiveTab("drafts"); }}>Correct grouping</Button>}
+          {!record.retired && record.override && <Button variant="outline" disabled={busy || !canWrite} onClick={() => add({ action: "remove_override", record_id: record.id, expected_version: record.version })}>{record.override.action === "pin_definition" ? "Unpin definition" : "Remove correction"}</Button>}
+        </TableCell></TableRow>)}</TableBody></Table></div>
+      {!records.length && <p>No catalog records yet.</p>}{recordCursor && <Button variant="outline" disabled={busy} onClick={() => void perform(() => catalog(recordKind, true))}>Load more catalog records</Button>}
+    </section></TabsContent>
+    <TabsContent value="sources"><section className="surface"><h3>Shared sources</h3>
+      <Label>Source type<NativeSelect aria-label="Source type" value={sourceKind} disabled={busy} onChange={(event) => { setSourceKind(event.target.value as SourceKind); setSources([]); setSourceCursor(""); }}>{["evidence", "relationship", "entity", "predicate"].map((kind) => <NativeSelectOption key={kind}>{kind}</NativeSelectOption>)}</NativeSelect></Label>
+      <Label>Source text or ID<Input aria-label="Source text or ID" value={sourceQuery} maxLength={128} onChange={(event) => setSourceQuery(event.target.value)} /></Label><Button variant="outline" disabled={busy} onClick={() => void perform(() => sourcePage())}>Inspect sources</Button>
+      {sources.map((source) => <Label className="checkbox-row" key={sourceKey(source)}><Checkbox aria-label={`Select source ${source.id}`} disabled={busy || !canWrite || !open} checked={selected.some((item) => sourceKey(item) === sourceKey(source))} onCheckedChange={(event) => setSelected((current) => (event === true) ? [...current, { kind: source.kind, id: source.id, version: source.version }] : current.filter((item) => sourceKey(item) !== sourceKey(source)))} /><span>{source.text}{source.truncated && " … (excerpt)"}</span></Label>)}
+      {sourceCursor && <Button variant="outline" disabled={busy} onClick={() => void perform(() => sourcePage(true))}>Load more sources</Button>}<p>Text filtering applies to each inspected page. Load more sources to continue searching. A source ID looks up that shared source directly.</p><p>{selected.length} selected sources.</p>
+      {!!selected.length && <Button variant="outline" disabled={busy} onClick={() => setSelected([])}>Clear selected sources</Button>}
+    </section></TabsContent>
+    <TabsContent value="drafts" forceMount hidden={activeTab !== "drafts"}><section className="surface"><SectionHeading title="Saved drafts" subtitle="Only your drafts are listed." actions={<Button variant="outline" disabled={busy || !canWrite} onClick={startDraft}>New draft</Button>} />
+      {drafts.map((item) => <Button variant="outline" key={item.id} disabled={busy} onClick={() => void perform(() => openDraft(item.id))}>{item.reason} · {item.state} · revision {item.version}</Button>)}
+      {draftCursor && <Button variant="outline" disabled={busy} onClick={() => void perform(async () => { const page = await api.ontologyDrafts(draftCursor); setDrafts((current) => [...current, ...page.drafts]); setDraftCursor(page.next_cursor ?? ""); })}>Load more drafts</Button>}
       <h3>{draft ? `Draft ${draft.id.slice(0, 8)} · ${draft.state}` : "New correction draft"}</h3>
       {stale && <p role="alert">This draft uses an older catalog revision. Refresh it before publishing.</p>}
-      <label>Audit reason<textarea aria-label="Audit reason" value={reason} maxLength={512} disabled={busy || !canWrite || !open} onChange={(event) => { setReason(event.target.value); setDirty(true); setPreview(null); }} /></label>
-      <OntologyEditor records={records} selected={selected} target={target} disabled={busy || !canWrite || !open || edits.length >= 64} onAdd={add} />
-      <ol>{edits.map((edit, index) => <li key={index}><EditDetails edit={edit} records={records} />{open && <button aria-label={`Remove correction ${index + 1}`} disabled={busy || !canWrite} onClick={() => { setEdits((current) => current.filter((_, position) => position !== index)); setDirty(true); setPreview(null); }}>Remove</button>}</li>)}</ol>
-      <button className="primary-button" disabled={busy || !canWrite || !open || !fresh || !reason.trim() || !edits.length || Boolean(draft && !dirty)} onClick={() => void perform(save)}>Save draft</button>
+      <Label>Audit reason<Textarea aria-label="Audit reason" value={reason} maxLength={512} disabled={busy || !canWrite || !open} onChange={(event) => { setReason(event.target.value); setDirty(true); setPreview(null); }} /></Label>
+      <OntologyEditor key={`${draft?.id ?? "new"}:${target?.id ?? ""}:${editorEpoch}`} onDirtyChange={setEditorDirty} records={records} selected={selected} target={target} disabled={busy || !canWrite || !open || edits.length >= 64} onAdd={add} />
+      <ol>{edits.map((edit, index) => <li key={index}><EditDetails edit={edit} records={records} />{open && <Button variant="outline" aria-label={`Remove correction ${index + 1}`} disabled={busy || !canWrite} onClick={() => { setEdits((current) => current.filter((_, position) => position !== index)); setDirty(true); setPreview(null); }}>Remove</Button>}</li>)}</ol>
+      <Button variant="default" className="primary-button" disabled={busy || !canWrite || !open || !fresh || !reason.trim() || !edits.length || Boolean(draft && !dirty)} onClick={() => void perform(save)}>Save draft</Button>
       {draft?.state === "open" && <>
-        <button disabled={busy || dirty || stale || !fresh} onClick={() => void perform(async () => { setPreview(await api.previewOntologyDraft(draft.id, draft.version)); })}>Preview impact</button>
-        <button disabled={busy || !canWrite} onClick={() => void perform(refreshDraft)}>Refresh draft before resubmitting</button>
-        <button disabled={busy || !canWrite || dirty || !reason.trim()} onClick={() => void perform(() => command("discard"))}>Discard draft</button>
+        <Button variant="outline" disabled={busy || dirty || stale || !fresh} onClick={() => void perform(async () => { setPreview(await api.previewOntologyDraft(draft.id, draft.version)); })}>Preview impact</Button>
+        <Button variant="outline" disabled={busy || !canWrite} onClick={() => void perform(refreshDraft)}>Refresh draft before resubmitting</Button>
+        <Button variant="outline" disabled={busy || !canWrite || dirty || !reason.trim()} onClick={() => void perform(() => command("discard"))}>Discard draft</Button>
       </>}
       {preview && <div aria-label="Impact preview"><h3>Impact preview</h3><p>{preview.changed_records} changes; {preview.affected_records} affected existing records; {preview.affected_sources} currently available sources.</p>
         <ul>{preview.examples.map((source) => <li key={sourceKey(source)}>{source.text}{source.truncated && " … (excerpt)"}</li>)}</ul>{preview.examples_truncated && <p>Examples are truncated; counts cover the stored dependency set.</p>}
         {preview.requires_reassessment && <p>Publication invalidates affected organization immediately. Automatic reassessment may classify additional related sources later.</p>}
-        <button className="primary-button" disabled={busy || !canWrite || !preview.complete || dirty || stale || !fresh} onClick={() => void perform(() => command("publish"))}>Publish correction</button>
+        <Button variant="default" className="primary-button" disabled={busy || !canWrite || !preview.complete || dirty || stale || !fresh} onClick={() => void perform(() => command("publish"))}>Publish correction</Button>
       </div>}
-    </section>
-    <section className="surface-section"><h3>Publication history</h3>{publications.map((item) => <button key={item.id} disabled={busy} onClick={() => void perform(async () => { setPublication(await api.ontologyPublication(item.id)); setRollbackReason(""); })}>Revision {item.revision} · {item.origin} · {item.reason}</button>)}
-      {historyCursor > 0 && <button disabled={busy} onClick={() => void perform(async () => { const page = await api.ontologyPublications(historyCursor); setPublications((current) => [...current, ...page.publications]); setHistoryCursor(page.next_revision ?? 0); })}>Load more publications</button>}
+    </section></TabsContent>
+    <TabsContent value="history" forceMount hidden={activeTab !== "history"}><section className="surface"><h3>Publication history</h3>{publications.map((item) => <Button variant="outline" key={item.id} disabled={busy} onClick={() => void perform(async () => { setPublication(await api.ontologyPublication(item.id)); setRollbackReason(""); })}>Revision {item.revision} · {item.origin} · {item.reason}</Button>)}
+      {historyCursor > 0 && <Button variant="outline" disabled={busy} onClick={() => void perform(async () => { const page = await api.ontologyPublications(historyCursor); setPublications((current) => [...current, ...page.publications]); setHistoryCursor(page.next_revision ?? 0); })}>Load more publications</Button>}
       {publication && <div aria-label="Publication detail"><h3>Publication revision {publication.revision}</h3><p>{publication.reason}</p><ul>{publication.record_views?.map((record) => <li key={record.id}>{recordLabel(record)} · revision {record.version} · {record.current ? "Current" : "Historical or awaiting reassessment"}<RecordDetails record={record} records={publication.record_views ?? []} /></li>)}</ul>
-        {(publication.origin === "manager" || publication.origin === "rollback") && <><label>Rollback reason<textarea aria-label="Rollback reason" value={rollbackReason} maxLength={512} disabled={busy || !canWrite} onChange={(event) => setRollbackReason(event.target.value)} /></label><button disabled={busy || !canWrite || !fresh || !rollbackReason.trim()} onClick={() => void perform(rollback)}>Publish rollback</button><p>Rollback creates a new revision and is rejected if the changed records or their sources are no longer eligible.</p></>}
+        {(publication.origin === "manager" || publication.origin === "rollback") && <><Label>Rollback reason<Textarea aria-label="Rollback reason" value={rollbackReason} maxLength={512} disabled={busy || !canWrite} onChange={(event) => setRollbackReason(event.target.value)} /></Label><Button variant="outline" disabled={busy || !canWrite || !fresh || !rollbackReason.trim()} onClick={() => void perform(rollback)}>Publish rollback</Button><p>Rollback creates a new revision and is rejected if the changed records or their sources are no longer eligible.</p></>}
       </div>}
-    </section>
+    </section></TabsContent>
+    </Tabs>
   </div>;
 }
 

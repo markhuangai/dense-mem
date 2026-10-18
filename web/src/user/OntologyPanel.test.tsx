@@ -1,3 +1,4 @@
+import userEvent from "@testing-library/user-event";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserApi, type UserSession } from "./api";
@@ -25,11 +26,12 @@ function install(saved: OntologyDraft[] = [], mutation?: (url: string, body: Rec
 }
 
 describe("OntologyPanel", () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(() => { vi.restoreAllMocks(); vi.spyOn(window, "confirm").mockReturnValue(true); });
 
   it("keeps corrections on a conflict and requires explicit refresh", async () => {
     install([draft], () => new Response(JSON.stringify({ message: "refresh the draft before resubmitting" }), { status: 409 }));
     render(<OntologyPanel api={new UserApi("key")} session={session} />);
+    await selectTab("Drafts");
     fireEvent.click(await screen.findByRole("button", { name: /Storage correction/ }));
     await screen.findByRole("heading", { name: /Draft draft-a/ });
     fireEvent.change(screen.getByLabelText("Audit reason"), { target: { value: "Retained manager edits" } });
@@ -48,6 +50,7 @@ describe("OntologyPanel", () => {
     let count = 0;
     const fetcher = install([draft], () => ++count === 1 ? new Response(JSON.stringify({ message: "temporary failure" }), { status: 503 }) : new Response(JSON.stringify({ data: { ...draft, version: 2 } }), { status: 200 }));
     render(<OntologyPanel api={new UserApi("", "api_key_session")} session={session} />);
+    await selectTab("Drafts");
     fireEvent.click(await screen.findByRole("button", { name: /Storage correction/ }));
     await screen.findByRole("heading", { name: /Draft draft-a/ });
     fireEvent.change(screen.getByLabelText("Audit reason"), { target: { value: "Unchanged retry" } });
@@ -64,6 +67,7 @@ describe("OntologyPanel", () => {
   it("allows a read-only manager to inspect and preview a saved draft", async () => {
     const fetcher = install([draft], () => new Response(JSON.stringify({ data: { changed_records: 2, affected_records: 0, affected_sources: 0, examples: [], complete: true, requires_reassessment: true } }), { status: 200 }));
     render(<OntologyPanel api={new UserApi("key")} session={{ ...session, membership: { ...session.membership, grants: ["read"] } }} />);
+    await selectTab("Drafts");
     fireEvent.click(await screen.findByRole("button", { name: /Storage correction/ }));
     await screen.findByRole("heading", { name: /Draft draft-a/ });
     fireEvent.click(screen.getByRole("button", { name: "Preview impact" }));
@@ -76,6 +80,7 @@ describe("OntologyPanel", () => {
   it("builds a definition correction using the editor", async () => {
     const fetcher = install();
     render(<OntologyPanel api={new UserApi("key")} session={session} />);
+    await selectTab("Drafts");
     await screen.findByRole("heading", { name: "New correction draft" });
     for (const [label, value] of [["Definition key", "storage"], ["Definition label", "Storage"], ["Definition description", "Durable storage"], ["Audit reason", "Manager correction"]]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
     fireEvent.click(screen.getByRole("button", { name: "Add correction to draft" }));
@@ -91,6 +96,7 @@ describe("OntologyPanel", () => {
       ? new Response(JSON.stringify({ message: "temporary failure" }), { status: 503 })
       : new Response(JSON.stringify({ data: draft }), { status: 200 }));
     render(<OntologyPanel api={new UserApi("key")} session={session} />);
+    await selectTab("Drafts");
     await screen.findByRole("heading", { name: "New correction draft" });
     const fillDraft = () => {
       for (const [label, value] of [["Definition key", "storage"], ["Definition label", "Storage"], ["Definition description", "Durable storage"], ["Audit reason", "Identical new intent"]]) {
@@ -103,7 +109,8 @@ describe("OntologyPanel", () => {
     await screen.findByRole("alert");
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
     await screen.findByText("Draft saved. Preview its impact before publishing.");
-    fireEvent.click(screen.getByRole("button", { name: "New draft" }));
+    await userEvent.click(screen.getByRole("button", { name: "New draft" }));
+    await screen.findByRole("heading", { name: "New correction draft" });
     fillDraft();
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
     await screen.findByText("Draft saved. Preview its impact before publishing.");
@@ -136,8 +143,9 @@ describe("OntologyPanel", () => {
 	await screen.findByText("Classification: First classification (definition-a)");
 	expect(screen.getByText("Target: Second classification (definition-b)")).toBeVisible();
 	expect(screen.getAllByText(/source-a/)).toHaveLength(2);expect(screen.getByText(/source-b/)).toBeVisible();
+	await selectTab("History");
 	fireEvent.click(screen.getByRole("button",{name:/Inspection history/}));
-	await waitFor(()=>expect(screen.getAllByText("Classification: First classification (definition-a)")).toHaveLength(2));
+	await waitFor(()=>expect(screen.getAllByText("Classification: First classification (definition-a)")).toHaveLength(1));
   });
 
   it("inspects and pages shared sources, publishes a group correction, and reverses its history", async () => {
@@ -163,21 +171,26 @@ describe("OntologyPanel", () => {
     render(<OntologyPanel api={new UserApi("key")} session={session}/>);
     fireEvent.click(await screen.findByRole("button",{name:"Correct grouping"}));
     expect(screen.getByLabelText("Correction",{exact:true})).toHaveValue("keep_separate");
+    await selectTab("Sources");
     fireEvent.click(screen.getByRole("button",{name:"Clear selected sources"}));
     fireEvent.change(screen.getByLabelText("Source type"),{target:{value:"evidence"}});fireEvent.change(screen.getByLabelText("Source text or ID"),{target:{value:"Atlas"}});
     fireEvent.click(screen.getByRole("button",{name:"Inspect sources"}));await waitFor(()=>expect(screen.getByRole("button",{name:"Inspect sources"})).toBeEnabled());
     fireEvent.click(screen.getByRole("button",{name:"Load more sources"}));await screen.findByText("Additional shared source");
     fireEvent.click(screen.getByLabelText("Select source source-a"));fireEvent.click(screen.getByLabelText("Select source source-b"));
+    await selectTab("Drafts");
     fireEvent.click(screen.getByRole("button",{name:"Add correction to draft"}));fireEvent.change(screen.getByLabelText("Audit reason"),{target:{value:"Separate source grouping"}});
     fireEvent.click(screen.getByRole("button",{name:"Save draft"}));await screen.findByText("Draft saved. Preview its impact before publishing.");
     fireEvent.click(screen.getByRole("button",{name:"Preview impact"}));await screen.findByText("Examples are truncated; counts cover the stored dependency set.");
     fireEvent.click(screen.getByRole("button",{name:"Publish correction"}));await screen.findByText("Correction published. Affected organization is waiting for reassessment.");
+    await selectTab("History");
     fireEvent.click(screen.getByRole("button",{name:/Revision 2 · manager/}));await screen.findByRole("heading",{name:"Publication revision 2"});
     expect(within(screen.getByLabelText("Publication detail")).getByText(/source-a/)).toBeVisible();
     fireEvent.change(screen.getByLabelText("Rollback reason"),{target:{value:"Reverse selected correction"}});fireEvent.click(screen.getByRole("button",{name:"Publish rollback"}));await screen.findByText(/Rollback published as a new revision/);
     const rollbackCall=fetcher.mock.calls.find(([url])=>url.endsWith("/rollback"));expect(JSON.parse(rollbackCall![1]!.body as string)).toMatchObject({expected_revision:2,reason:"Reverse selected correction"});
     fireEvent.click(screen.getByRole("button",{name:"Load more publications"}));await waitFor(()=>expect(fetcher.mock.calls.some(([url])=>url.includes("after=1"))).toBe(true));
+    await selectTab("Drafts");
     fireEvent.click(screen.getByRole("button",{name:"Load more drafts"}));await waitFor(()=>expect(fetcher.mock.calls.some(([url])=>url.includes("cursor=draft-cursor"))).toBe(true));
+    await selectTab("Catalog");
     fireEvent.click(screen.getByRole("button",{name:"Load more catalog records"}));await waitFor(()=>expect(fetcher.mock.calls.some(([url])=>url.includes("cursor=group-a"))).toBe(true));
     fireEvent.change(screen.getByLabelText("Catalog type"),{target:{value:"evidence_group"}});await waitFor(()=>expect(fetcher.mock.calls.some(([url])=>url.includes("kind=evidence_group"))).toBe(true));
   });
@@ -195,12 +208,12 @@ describe("OntologyPanel", () => {
     for(const [label,value] of [["Definition key","people-revised"],["Definition label","People revised"],["Definition description","Corrected people class"],["Definition aliases","humans, people"],["Definition parent","parent-a"]])fireEvent.change(screen.getByLabelText(label),{target:{value}});
     fireEvent.change(screen.getByLabelText("Class entity kind"),{target:{value:"person"}});fireEvent.click(screen.getByRole("button",{name:"Add correction to draft"}));
     fireEvent.click(screen.getByRole("button",{name:"Remove correction 1"}));expect(screen.queryByRole("button",{name:"Remove correction 1"})).toBeNull();
-    fireEvent.click(screen.getByRole("button",{name:"Add correction to draft"}));fireEvent.click(screen.getByRole("button",{name:"Unpin definition"}));fireEvent.change(screen.getByLabelText("Audit reason"),{target:{value:"Edit and unpin definition"}});
+    fireEvent.click(screen.getByRole("button",{name:"Add correction to draft"}));await selectTab("Catalog");fireEvent.click(screen.getByRole("button",{name:"Unpin definition"}));fireEvent.change(screen.getByLabelText("Audit reason"),{target:{value:"Edit and unpin definition"}});
     fireEvent.click(screen.getByRole("button",{name:"Save draft"}));await screen.findByText("Draft saved. Preview its impact before publishing.");
     const body=JSON.parse(fetcher.mock.calls.find(([,options])=>options?.method==="POST")![1]!.body as string);
     expect(body.edits).toEqual([{action:"define",record_id:"class-a",expected_version:3,kind:"entity_class",definition:{key:"people-revised",label:"People revised",description:"Corrected people class",aliases:["humans","people"],parent_id:"parent-a",base_entity_kind:"person"}},{action:"remove_override",record_id:"pin-a",expected_version:4}]);
     fireEvent.click(screen.getByRole("button",{name:"Discard draft"}));await screen.findByText("Draft discarded. Its history is retained.");expect(screen.queryByRole("button",{name:"Preview impact"})).toBeNull();
-    fireEvent.click(screen.getByRole("button",{name:"New draft"}));fireEvent.change(screen.getByLabelText("Definition type"),{target:{value:"topic"}});expect(screen.getByLabelText("Definition parent")).toHaveValue("");
+    await userEvent.click(screen.getByRole("button",{name:"New draft"}));fireEvent.change(screen.getByLabelText("Definition type"),{target:{value:"topic"}});expect(screen.getByLabelText("Definition parent")).toHaveValue("");
   });
 
   it("refreshes current record and source versions while preserving the manager's unsaved reason",async()=>{
@@ -212,9 +225,12 @@ describe("OntologyPanel", () => {
       if(options?.method==="PUT"){refreshedBody=JSON.parse(options.body as string);return response({...saved,version:5,base_revision:1,reason:refreshedBody!.reason,edits:refreshedBody!.edits});}
       if(path.endsWith("/records/override-a"))return response({version:3});if(path.endsWith("/records"))return response({records:[],revision:1});if(path.endsWith("/status"))return response({revision:1,counts:{}});if(path.endsWith("/sources"))return response({sources:[{kind:"relationship",id:"relationship-a",version:2,text:"Updated source",truncated:false}]});if(path.endsWith("/publications"))return response({publications:[]});if(path.endsWith("/drafts"))return response({drafts:[saved]});return response({...saved,version:4});
     }));render(<OntologyPanel api={new UserApi("key")} session={session}/>);
+    await selectTab("Drafts");
     fireEvent.click(await screen.findByRole("button",{name:/Storage correction/}));await screen.findByText("This draft uses an older catalog revision. Refresh it before publishing.");
     fireEvent.change(screen.getByLabelText("Audit reason"),{target:{value:"Keep my unsaved reason"}});fireEvent.click(screen.getByRole("button",{name:"Refresh draft before resubmitting"}));await screen.findByText("Draft refreshed. Review the corrections, save, and preview again.");
     fireEvent.click(screen.getByRole("button",{name:"Save draft"}));await screen.findByText("Draft saved. Preview its impact before publishing.");
     expect(refreshedBody).toMatchObject({expected_version:4,expected_revision:1,reason:"Keep my unsaved reason",edits:[{expected_version:3,source:{kind:"relationship",id:"relationship-a",version:2}}]});
   });
 });
+
+async function selectTab(name: string) { await userEvent.click(await screen.findByRole("tab", { name })); }

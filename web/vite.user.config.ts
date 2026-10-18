@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import type { Plugin } from "vite";
 
 function serveUserPortalAtUi(): Plugin {
@@ -44,7 +45,7 @@ function manualVendorChunks(id: string) {
 
 export default defineConfig({
   base: "/ui/",
-  plugins: [serveUserPortalAtUi(), react()],
+  plugins: [serveUserPortalAtUi(), react(), tailwindcss()],
   build: {
     outDir: "user-dist",
     emptyOutDir: true,

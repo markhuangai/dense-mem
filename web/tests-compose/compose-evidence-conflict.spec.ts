@@ -1,3 +1,4 @@
+import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
 import { expect, test, type Page } from "@playwright/test";
 
 const controlUrl = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -8,7 +9,7 @@ const seedTeamName = requiredEnv("DENSE_MEM_E2E_TEAM_NAME");
 test("Evidence view resolves a case, handles stale review, and stays keyboard-safe without mobile overflow", async ({ page }) => {
   await openControlPanel(page);
   await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
-  await page.getByRole("button", { name: /team conflicts/i }).click();
+  await navigate(page, "Conflicts");
 
   const evidenceTab = page.getByRole("tab", { name: "Evidence" });
   await evidenceTab.focus();

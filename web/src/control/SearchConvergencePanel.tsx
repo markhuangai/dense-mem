@@ -1,3 +1,4 @@
+import { Button } from "../ui/primitives/button";
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, Search } from "lucide-react";
 import { ControlApi, SearchConvergence } from "../api";
@@ -46,7 +47,7 @@ export function SearchConvergencePanel({ api }: { api: ControlApi }) {
                 Observed {formatDate(snapshot.observed_at)}
               </span>
             )}
-            <button
+            <Button variant="ghost" size="icon"
               className="icon-button"
               type="button"
               aria-label="Refresh search convergence"
@@ -54,7 +55,7 @@ export function SearchConvergencePanel({ api }: { api: ControlApi }) {
               disabled={loading}
             >
               <RefreshCw size={16} aria-hidden="true" />
-            </button>
+            </Button>
           </div>
         }
       />

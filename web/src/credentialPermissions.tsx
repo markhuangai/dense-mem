@@ -1,3 +1,5 @@
+import { Label } from "./ui/primitives/label";
+import { Checkbox } from "./ui/primitives/checkbox";
 export type MemoryPermission = { read: boolean; write: boolean };
 export type MemoryAccess = { private: MemoryPermission; team_shared: MemoryPermission };
 
@@ -45,30 +47,28 @@ export function CredentialPermissionCheckboxes({
 
   return (
     <div className={rootClassName} role="group" aria-label={ariaLabel}>
-      <label className="permission-checkbox">
-        <input type="checkbox" checked disabled readOnly aria-label="Read" />
+      <Label className="permission-checkbox">
+        <Checkbox checked disabled aria-label="Read" />
         <span>Read</span>
-      </label>
-      <label className="permission-checkbox">
-        <input
-          type="checkbox"
+      </Label>
+      <Label className="permission-checkbox">
+        <Checkbox
           checked={write}
           disabled={disabled || forceWrite}
           aria-label="Write"
-          onChange={(event) => onChange(credentialScopesFromFlags(forceWrite || event.target.checked, feedback))}
+          onCheckedChange={(event) => onChange(credentialScopesFromFlags(forceWrite || (event === true), feedback))}
         />
         <span>Write</span>
-      </label>
-      <label className="permission-checkbox">
-        <input
-          type="checkbox"
+      </Label>
+      <Label className="permission-checkbox">
+        <Checkbox
           checked={feedback}
           disabled={disabled}
           aria-label="Recall feedback"
-          onChange={(event) => onChange(credentialScopesFromFlags(write, event.target.checked))}
+          onCheckedChange={(event) => onChange(credentialScopesFromFlags(write, (event === true)))}
         />
         <span>Recall feedback</span>
-      </label>
+      </Label>
     </div>
   );
 }

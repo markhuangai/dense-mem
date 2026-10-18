@@ -1,3 +1,10 @@
+import { ResponsiveInspector, useCompactWorkspace } from "../ui/inspector";
+import { Button } from "../ui/primitives/button";
+import { Label } from "../ui/primitives/label";
+import { NativeSelect, NativeSelectOption } from "../ui/primitives/native-select";
+import { Checkbox } from "../ui/primitives/checkbox";
+import { Input } from "../ui/primitives/input";
+import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "../ui/primitives/table";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Braces, RefreshCw } from "lucide-react";
 import { ControlApi, RecallFeedbackEvent, RecallFeedbackEventQuery, RecallFeedbackJudgedResultRef, RecallFeedbackResolvedResult, RecallFeedbackResultRef, Team } from "../api";
@@ -8,6 +15,7 @@ const PAGE_SIZES = [25, 50, 100, 250, 500];
 const QUALITIES = ["", "high", "medium", "low"];
 
 export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
+  const { ref, compact } = useCompactWorkspace(760);
   const [events, setEvents] = useState<RecallFeedbackEvent[]>([]);
   const [total, setTotal] = useState(0);
   const [query, setQuery] = useState<RecallFeedbackEventQuery>({ limit: 100, offset: 0, include_pending: false });
@@ -75,21 +83,21 @@ export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Te
   const rangeEnd = Math.min(offset + events.length, total);
 
   return (
-    <section className="surface">
+    <section className="surface" ref={ref}>
       <SectionHeading
         title="Recall Feedback"
         meta={total}
         actions={(
-          <button className="icon-button" type="button" aria-label="Refresh recall feedback" onClick={() => void loadEvents()}>
+          <Button variant="ghost" size="icon" className="icon-button" type="button" aria-label="Refresh recall feedback" onClick={() => void loadEvents()}>
             <RefreshCw size={16} aria-hidden="true" />
-          </button>
+          </Button>
         )}
       />
       {error && <div className="banner error" role="alert">{error}</div>}
       <div className="metrics-toolbar">
-        <label>
+        <Label>
           Team
-          <select
+          <NativeSelect
             value={query.team_id ?? ""}
             onChange={(event) => {
               const next = { ...query, team_id: event.target.value, offset: 0 };
@@ -97,13 +105,13 @@ export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Te
               void loadEvents(next);
             }}
           >
-            <option value="">All</option>
-            {teams.map((team) => <option value={team.id} key={team.id}>{team.name}</option>)}
-          </select>
-        </label>
-        <label>
+            <NativeSelectOption value="">All</NativeSelectOption>
+            {teams.map((team) => <NativeSelectOption value={team.id} key={team.id}>{team.name}</NativeSelectOption>)}
+          </NativeSelect>
+        </Label>
+        <Label>
           Quality
-          <select
+          <NativeSelect
             value={query.quality ?? ""}
             onChange={(event) => {
               const next = { ...query, quality: event.target.value as RecallFeedbackEventQuery["quality"], offset: 0 };
@@ -111,12 +119,12 @@ export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Te
               void loadEvents(next);
             }}
           >
-            {QUALITIES.map((quality) => <option value={quality} key={quality}>{quality || "All"}</option>)}
-          </select>
-        </label>
-        <label>
+            {QUALITIES.map((quality) => <NativeSelectOption value={quality} key={quality}>{quality || "All"}</NativeSelectOption>)}
+          </NativeSelect>
+        </Label>
+        <Label>
           Missing context
-          <select
+          <NativeSelect
             value={query.missing_context === "" || query.missing_context === undefined ? "" : String(query.missing_context)}
             onChange={(event) => {
               const next = { ...query, missing_context: boolFilter(event.target.value), offset: 0 };
@@ -124,26 +132,25 @@ export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Te
               void loadEvents(next);
             }}
           >
-            <option value="">All</option>
-            <option value="true">Yes</option>
-            <option value="false">No</option>
-          </select>
-        </label>
-        <label className="check-row">
-          <input
-            type="checkbox"
+            <NativeSelectOption value="">All</NativeSelectOption>
+            <NativeSelectOption value="true">Yes</NativeSelectOption>
+            <NativeSelectOption value="false">No</NativeSelectOption>
+          </NativeSelect>
+        </Label>
+        <Label className="check-row">
+          <Checkbox
             checked={query.include_pending === true}
-            onChange={(event) => {
-              const next = { ...query, include_pending: event.currentTarget.checked, offset: 0 };
+            onCheckedChange={(event) => {
+              const next = { ...query, include_pending: (event === true), offset: 0 };
               setQuery(next);
               void loadEvents(next);
             }}
           />
           Include pending
-        </label>
-        <label>
+        </Label>
+        <Label>
           Irrelevant
-          <select
+          <NativeSelect
             value={query.irrelevant === "" || query.irrelevant === undefined ? "" : String(query.irrelevant)}
             onChange={(event) => {
               const next = { ...query, irrelevant: boolFilter(event.target.value), offset: 0 };
@@ -151,14 +158,14 @@ export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Te
               void loadEvents(next);
             }}
           >
-            <option value="">All</option>
-            <option value="true">Yes</option>
-            <option value="false">No</option>
-          </select>
-        </label>
-        <label>
+            <NativeSelectOption value="">All</NativeSelectOption>
+            <NativeSelectOption value="true">Yes</NativeSelectOption>
+            <NativeSelectOption value="false">No</NativeSelectOption>
+          </NativeSelect>
+        </Label>
+        <Label>
           From
-          <input
+          <Input
             type="datetime-local"
             value={rfc3339ToLocalInput(query.from)}
             onChange={(event) => {
@@ -167,10 +174,10 @@ export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Te
               void loadEvents(next);
             }}
           />
-        </label>
-        <label>
+        </Label>
+        <Label>
           To
-          <input
+          <Input
             type="datetime-local"
             value={rfc3339ToLocalInput(query.to)}
             onChange={(event) => {
@@ -179,7 +186,7 @@ export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Te
               void loadEvents(next);
             }}
           />
-        </label>
+        </Label>
       </div>
       {loading && events.length === 0 ? (
         <LoadingState label="Loading recall feedback" />
@@ -187,33 +194,33 @@ export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Te
         <div className="table-placeholder">No recall feedback</div>
       ) : (
         <div className="table-wrap">
-          <table className="data-table logs-table">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Quality</th>
-                <th>Flags</th>
-                <th>Query</th>
-                <th>Results</th>
-                <th>Team</th>
-                <th>Details</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table className="data-table logs-table">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Time</TableHead>
+                <TableHead>Quality</TableHead>
+                <TableHead>Flags</TableHead>
+                <TableHead>Query</TableHead>
+                <TableHead>Results</TableHead>
+                <TableHead>Team</TableHead>
+                <TableHead>Details</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {events.map((event) => {
                 const expanded = expandedRecallId === event.recall_id;
                 const detail = details[event.recall_id];
                 return (
                   <Fragment key={event.recall_id}>
-                    <tr>
-                      <td>{formatDate(event.created_at)}</td>
-                      <td><span className={qualityClass(event.quality)}>{event.quality || "pending"}</span></td>
-                      <td>
+                    <TableRow>
+                      <TableCell>{formatDate(event.created_at)}</TableCell>
+                      <TableCell><span className={qualityClass(event.quality)}>{event.quality || "pending"}</span></TableCell>
+                      <TableCell>
                         <div className="log-detail-list" aria-label="Feedback flags">
                           {feedbackFlagChips(event)}
                         </div>
-                      </td>
-                      <td>
+                      </TableCell>
+                      <TableCell>
                         <div className="log-message-cell">
                           <strong>{event.query || "No query snapshot"}</strong>
                           <div className="log-detail-list" aria-label="Recall metadata">
@@ -221,11 +228,11 @@ export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Te
                             <span className="log-detail-chip">{shortId(event.recall_id)}</span>
                           </div>
                         </div>
-                      </td>
-                      <td>{event.result_count}</td>
-                      <td>{event.team_id ? (teamNames.get(event.team_id) ?? shortId(event.team_id)) : "Unknown"}</td>
-                      <td className="actions-cell">
-                        <button
+                      </TableCell>
+                      <TableCell>{event.result_count}</TableCell>
+                      <TableCell>{event.team_id ? (teamNames.get(event.team_id) ?? shortId(event.team_id)) : "Unknown"}</TableCell>
+                      <TableCell className="actions-cell">
+                        <Button variant="ghost" size="icon"
                           className="icon-button"
                           type="button"
                           aria-label={`${expanded ? "Hide" : "View"} recall feedback ${event.recall_id}`}
@@ -233,32 +240,32 @@ export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Te
                           onClick={() => void toggleDetail(event.recall_id)}
                         >
                           <Braces size={16} aria-hidden="true" />
-                        </button>
-                      </td>
-                    </tr>
-                    {expanded && (
-                      <tr className="log-raw-row">
-                        <td colSpan={7}>
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                    {expanded && !compact && (
+                      <TableRow className="log-raw-row">
+                        <TableCell colSpan={7}>
                           {detailLoading === event.recall_id && !detail ? (
                             <LoadingState label="Loading details" compact />
                           ) : (
                             <RecallFeedbackDetail event={detail ?? event} />
                           )}
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     )}
                   </Fragment>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
       <div className="table-actions">
         <span className="form-meta">{rangeStart}-{rangeEnd} of {total}</span>
-        <label className="table-page-size">
+        <Label className="table-page-size">
           Rows
-          <select
+          <NativeSelect
             value={limit}
             disabled={loading}
             onChange={(event) => {
@@ -267,10 +274,10 @@ export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Te
               void loadEvents(next);
             }}
           >
-            {PAGE_SIZES.map((pageSize) => <option value={pageSize} key={pageSize}>{pageSize}</option>)}
-          </select>
-        </label>
-        <button
+            {PAGE_SIZES.map((pageSize) => <NativeSelectOption value={pageSize} key={pageSize}>{pageSize}</NativeSelectOption>)}
+          </NativeSelect>
+        </Label>
+        <Button variant="outline"
           className="ghost-button"
           type="button"
           disabled={loading || offset === 0}
@@ -281,8 +288,8 @@ export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Te
           }}
         >
           Previous
-        </button>
-        <button
+        </Button>
+        <Button variant="outline"
           className="ghost-button"
           type="button"
           disabled={loading || offset + limit >= total}
@@ -293,8 +300,11 @@ export function RecallFeedbackPanel({ api, teams }: { api: ControlApi; teams: Te
           }}
         >
           Next
-        </button>
+        </Button>
       </div>
+      <ResponsiveInspector compact open={compact && Boolean(expandedRecallId)} onOpenChange={(open) => { if (!open) setExpandedRecallId(""); }} title="Recall feedback details">
+        {events.filter((event) => event.recall_id === expandedRecallId).map((event) => detailLoading === event.recall_id && !details[event.recall_id] ? <LoadingState key={event.recall_id} label="Loading details" compact /> : <RecallFeedbackDetail key={event.recall_id} event={details[event.recall_id] ?? event} />)}
+      </ResponsiveInspector>
     </section>
   );
 }
@@ -327,22 +337,22 @@ function FeedbackCommentDetails({ event }: { event: RecallFeedbackEvent }) {
     return null;
   }
   return (
-    <table className="data-table" aria-label="Recall feedback comment details">
-      <thead>
-        <tr>
-          <th>Signal</th>
-          <th>Value</th>
-        </tr>
-      </thead>
-      <tbody>
+    <Table className="data-table" aria-label="Recall feedback comment details">
+      <TableHeader>
+        <TableRow>
+          <TableHead>Signal</TableHead>
+          <TableHead>Value</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
         {rows.map(([label, value]) => (
-          <tr key={label}>
-            <td>{label}</td>
-            <td>{value}</td>
-          </tr>
+          <TableRow key={label}>
+            <TableCell>{label}</TableCell>
+            <TableCell>{value}</TableCell>
+          </TableRow>
         ))}
-      </tbody>
-    </table>
+      </TableBody>
+    </Table>
   );
 }
 
@@ -357,31 +367,31 @@ function ResultRefTable({ refs, resolved }: { refs: RecallFeedbackResultRef[]; r
     return <div className="table-placeholder compact">No result refs</div>;
   }
   return (
-    <table className="data-table" aria-label="Recall feedback result refs">
-      <thead>
-        <tr>
-          <th>Rank</th>
-          <th>Type</th>
-          <th>ID</th>
-          <th>Status</th>
-          <th>Current</th>
-        </tr>
-      </thead>
-      <tbody>
+    <Table className="data-table" aria-label="Recall feedback result refs">
+      <TableHeader>
+        <TableRow>
+          <TableHead>Rank</TableHead>
+          <TableHead>Type</TableHead>
+          <TableHead>ID</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead>Current</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
         {refs.map((ref) => {
           const current = resolvedByKey.get(`${ref.type}:${ref.id}:${ref.rank}`);
           return (
-            <tr key={`${ref.type}:${ref.id}:${ref.rank}`}>
-              <td>{ref.rank}</td>
-              <td>{ref.type}</td>
-              <td><code>{ref.id}</code></td>
-              <td>{current ? currentStatus(current) : (ref.status_at_recall || "unknown")}</td>
-              <td>{current ? currentSummary(current) : "Not resolved"}</td>
-            </tr>
+            <TableRow key={`${ref.type}:${ref.id}:${ref.rank}`}>
+              <TableCell>{ref.rank}</TableCell>
+              <TableCell>{ref.type}</TableCell>
+              <TableCell><code>{ref.id}</code></TableCell>
+              <TableCell>{current ? currentStatus(current) : (ref.status_at_recall || "unknown")}</TableCell>
+              <TableCell>{current ? currentSummary(current) : "Not resolved"}</TableCell>
+            </TableRow>
           );
         })}
-      </tbody>
-    </table>
+      </TableBody>
+    </Table>
   );
 }
 

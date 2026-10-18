@@ -1,3 +1,4 @@
+import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
@@ -8,8 +9,7 @@ test("operators inspect ontology coverage and pause or resume durable admission"
   await page.goto(controlURL);
   await page.getByLabel("Control token").fill(token);
   await page.getByRole("button", { name: "Unlock" }).click();
-  await page.getByRole("button", { name: "Config", exact: true }).click();
-  await page.getByRole("tab", { name: "Ontology", exact: true }).click();
+  await navigate(page, "Ontology maintenance");
   await expect(page.getByRole("heading", { name: "Ontology coverage" })).toBeVisible();
   await expect(page.getByLabel("Enable ontology maintenance")).toBeVisible();
   await expect(page.getByText(/Pending policy:/)).toBeVisible();
@@ -51,8 +51,7 @@ test("operators add allowance to the active window without resetting its policy"
     await page.goto(controlURL);
     await page.getByLabel("Control token").fill(token);
     await page.getByRole("button", { name: "Unlock" }).click();
-    await page.getByRole("button", { name: "Config", exact: true }).click();
-    await page.getByRole("tab", { name: "Ontology", exact: true }).click();
+    await navigate(page, "Ontology maintenance");
     await page.getByLabel("Additional input tokens").fill("1234");
     await page.getByLabel("Additional output tokens").fill("5678");
     await page.getByRole("button", { name: "Add allowance now", exact: true }).click();
@@ -123,8 +122,7 @@ test("loaded older retry actions follow successful work and server eligibility",
     await page.goto(controlURL);
     await page.getByLabel("Control token").fill(token);
     await page.getByRole("button", { name: "Unlock" }).click();
-    await page.getByRole("button", { name: "Config", exact: true }).click();
-    await page.getByRole("tab", { name: "Ontology", exact: true }).click();
+    await navigate(page, "Ontology maintenance");
     const row = page.locator("tr").filter({ has: page.locator(`td[title="${failed.id}"]`) });
     await expect(page.getByRole("button", { name: "Load older runs" })).toBeVisible();
     await expect(row).toHaveCount(0);

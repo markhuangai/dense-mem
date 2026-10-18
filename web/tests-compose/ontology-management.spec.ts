@@ -1,3 +1,4 @@
+import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
@@ -19,10 +20,12 @@ test("manager saves a cookie-authenticated draft across sign-out, handles a real
   async function login(key: string) {
     await page.goto(`${userURL}/ui/`); await page.getByLabel("API key").fill(key);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Knowledge", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Current workspace")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Refresh session" })).toBeEnabled();
   }
   await login(manager.api_key);
-  await page.getByRole("button", { name: "Ontology", exact: true }).click();
+  await navigate(page, "Ontology");
+  await page.getByRole("tab", { name: "Drafts", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Ontology", exact: true })).toBeVisible();
   await page.getByLabel("Definition key").fill(definitionKey);
   await page.getByLabel("Definition label").fill(label);
@@ -32,11 +35,13 @@ test("manager saves a cookie-authenticated draft across sign-out, handles a real
   const firstCreation = page.waitForResponse((res) => res.request().method() === "POST" && res.url().endsWith("/drafts"));
   await page.getByRole("button", { name: "Save draft", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("Draft saved");
+  await expectPageContained(page);
   const firstResponse = await firstCreation;
   expect(firstResponse.status()).toBe(200);
   const firstDraft = (await firstResponse.json()).data;
   const firstPayload = firstResponse.request().postDataJSON();
   await page.getByRole("button", { name: "Discard draft", exact: true }).click();
+  await confirmAction(page, "Discard draft");
   await expect(page.getByRole("status")).toContainText("Draft discarded");
   await page.getByRole("button", { name: "New draft", exact: true }).click();
   await page.getByLabel("Definition key").fill(definitionKey);
@@ -57,8 +62,10 @@ test("manager saves a cookie-authenticated draft across sign-out, handles a real
   const noCSRF = await page.evaluate(async () => (await fetch("/ui/api/ontology/drafts", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).status);
   expect(noCSRF).toBe(403);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page.getByLabel("API key")).toBeVisible();
   await login(manager.api_key);
-  await page.getByRole("button", { name: "Ontology", exact: true }).click();
+  await navigate(page, "Ontology");
+  await page.getByRole("tab", { name: "Drafts", exact: true }).click();
   await page.getByRole("button", { name: new RegExp(`${reason} · open`) }).click();
   await expect(page.getByLabel("Audit reason")).toHaveValue(reason);
   expect(await page.evaluate(() => sessionStorage.getItem("denseMem.userApiKey"))).toBeNull();
@@ -80,11 +87,14 @@ test("manager saves a cookie-authenticated draft across sign-out, handles a real
   await page.getByRole("button", { name: "Preview impact" }).click();
   await expect(page.getByRole("heading", { name: "Impact preview", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Publish correction", exact: true }).click();
+  await confirmAction(page, "Publish correction");
   await expect(page.getByRole("status")).toContainText("Correction published");
+  await page.getByRole("tab", { name: "Catalog", exact: true }).click();
   await expect(page.getByRole("region", { name: "Ontology catalog" }).getByText(label, { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page.getByLabel("API key")).toBeVisible();
   await login(member.api_key);
-  await expect(page.getByRole("button", { name: "Ontology", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Ontology", exact: true })).toHaveCount(0);
   const denied = await request.get(`${userURL}/ui/api/ontology/status`, { headers: { Authorization: `Bearer ${member.api_key}` } }); expect(denied.status()).toBe(403);
 });
 
@@ -95,32 +105,44 @@ test("manager inspects sources, corrects grouping and classification, reverses h
   const topics=(await (await request.get(`${userURL}/ui/api/ontology/records?kind=topic&limit=200`,{headers})).json()).data.records;
   const topic=topics.find((record:{retired:boolean;definition:{label:string}})=>!record.retired && record.definition.label==="Manager storage vocabulary");expect(topic).toBeTruthy();
   await page.goto(`${userURL}/ui/`);await page.getByLabel("API key").fill(manager.api_key);await page.getByRole("button",{name:"Sign in",exact:true}).click();
-  await page.getByRole("button",{name:"Ontology",exact:true}).click();
+  await expect(page.getByRole("button", { name: "Refresh session" })).toBeEnabled();
+  await navigate(page, "Ontology");
+  await page.getByRole("tab", { name: "Sources", exact: true }).click();
   await expect(page.getByRole("heading",{name:"Shared sources",exact:true})).toBeVisible();
   const sources=page.getByRole("checkbox",{name:/Select source/});await expect(sources).toHaveCount(2);
+  async function tab(name: string) { await page.getByRole("tab", { name, exact: true }).click(); }
   async function publish(reason:string){
-    await page.getByLabel("Audit reason").fill(reason);await page.getByRole("button",{name:"Save draft",exact:true}).click();await expect(page.getByRole("status")).toContainText("Draft saved");
+    await tab("Drafts");
+    await page.getByLabel("Audit reason").fill(reason);await page.getByRole("button",{name:"Save draft",exact:true}).click();await expect(page.getByRole("status")).toContainText("Draft saved");await expectPageContained(page);
     await page.getByRole("button",{name:"Preview impact",exact:true}).click();await expect(page.getByRole("heading",{name:"Impact preview",exact:true})).toBeVisible();
-    const response=page.waitForResponse((res)=>res.request().method()==="POST" && res.url().endsWith("/publish"));await page.getByRole("button",{name:"Publish correction",exact:true}).click();
+    const response=page.waitForResponse((res)=>res.request().method()==="POST" && res.url().endsWith("/publish"));await page.getByRole("button",{name:"Publish correction",exact:true}).click();await confirmAction(page, "Publish correction");
     const accepted=await response;expect(accepted.status()).toBe(200);await expect(page.getByRole("status")).toContainText("Correction published");return (await accepted.json()).data;
   }
-  await sources.nth(0).check();await sources.nth(1).check();await page.getByLabel("Correction",{exact:true}).selectOption("keep_separate");await page.getByRole("button",{name:"Add correction to draft"}).click();
+  await sources.nth(0).check();await sources.nth(1).check();await tab("Drafts");await page.getByLabel("Correction",{exact:true}).selectOption("keep_separate");await page.getByRole("button",{name:"Add correction to draft"}).click();
   const reason=`Browser separation ${randomUUID()}`;const separation=await publish(reason);
+  await tab("History");
   await page.getByRole("button",{name:new RegExp(`Revision.*${reason}$`)}).click();
   await expect(page.getByRole("heading",{name:`Publication revision ${separation.publication.revision}`,exact:true})).toBeVisible();
-  await page.getByLabel("Rollback reason").fill("Browser reverses separation");await page.getByRole("button",{name:"Publish rollback",exact:true}).click();await expect(page.getByRole("status")).toContainText("Rollback published");
-  await page.getByRole("button",{name:new RegExp(`Revision.*${reason}$`)}).click();await page.getByLabel("Rollback reason").fill("Stale rollback must conflict");await page.getByRole("button",{name:"Publish rollback",exact:true}).click();await expect(page.getByRole("alert").filter({hasText:"ontology state changed;"})).toContainText("refresh the draft");
+  await expectPageContained(page);
+  await page.getByLabel("Rollback reason").fill("Browser reverses separation");await page.getByRole("button",{name:"Publish rollback",exact:true}).click();await confirmAction(page, "Publish rollback");await expect(page.getByRole("status")).toContainText("Rollback published");
+  await tab("History");
+  await page.getByRole("button",{name:new RegExp(`Revision.*${reason}$`)}).click();await page.getByLabel("Rollback reason").fill("Stale rollback must conflict");await page.getByRole("button",{name:"Publish rollback",exact:true}).click();await confirmAction(page, "Publish rollback");await expect(page.getByRole("alert").filter({hasText:"ontology state changed;"})).toContainText("refresh the draft");
   await page.getByRole("button",{name:"Refresh ontology",exact:true}).click();await expect(page.getByRole("button",{name:"Refresh ontology",exact:true})).toBeEnabled();
+  await tab("Sources");
   const classifiedSource=(await sources.nth(0).getAttribute("aria-label"))!.replace("Select source ","");
-  await page.getByRole("button",{name:"New draft",exact:true}).click();await sources.nth(0).check();await page.getByLabel("Correction",{exact:true}).selectOption("classify");await page.getByLabel("Target definition").fill(topic.id);await page.getByRole("button",{name:"Add correction to draft"}).click();
-  const classified=await publish(`Browser classification ${randomUUID()}`);await page.getByRole("button",{name:new RegExp(`Revision ${classified.publication.revision} · manager`)}).click();
+  await tab("Drafts");await page.getByRole("button",{name:"New draft",exact:true}).click();await tab("Sources");await sources.nth(0).check();await tab("Drafts");await page.getByLabel("Correction",{exact:true}).selectOption("classify");await page.getByLabel("Target definition").fill(topic.id);await page.getByRole("button",{name:"Add correction to draft"}).click();
+  const classified=await publish(`Browser classification ${randomUUID()}`);await tab("History");await page.getByRole("button",{name:new RegExp(`Revision ${classified.publication.revision} · manager`)}).click();
+  await tab("Catalog");
   const classificationRow=page.getByRole("region",{name:"Ontology catalog"}).locator("tr").filter({has:page.locator(`small[title="${classified.publication.records[0].id}"]`)});
   await expect(classificationRow.getByText(`Classification: ${topic.definition.label} (${topic.id})`)).toBeVisible();await expect(classificationRow.getByRole("button",{name:"Remove correction",exact:true})).toBeVisible();
+  await tab("History");
   const detail=page.getByLabel("Publication detail",{exact:true});await expect(detail.getByText(`Classification: ${topic.id}`,{exact:true})).toBeVisible();await expect(detail.getByText(`evidence ${classifiedSource} · version 1`,{exact:true})).toBeVisible();
-  await page.getByLabel("Rollback reason").fill("Reverse browser classification before the next project");await page.getByRole("button",{name:"Publish rollback",exact:true}).click();await expect(page.getByRole("status")).toContainText("Rollback published");
-  await page.getByRole("button",{name:"New draft",exact:true}).click();await page.getByLabel("Correction",{exact:true}).selectOption("pin_definition");await page.getByLabel("Target definition").fill(topic.id);await page.getByRole("button",{name:"Add correction to draft"}).click();await publish(`Browser pin ${randomUUID()}`);
-  await page.getByRole("button",{name:"New draft",exact:true}).click();
+  await page.getByLabel("Rollback reason").fill("Reverse browser classification before the next project");await page.getByRole("button",{name:"Publish rollback",exact:true}).click();await confirmAction(page, "Publish rollback");await expect(page.getByRole("status")).toContainText("Rollback published");
+  await tab("Drafts");await page.getByRole("button",{name:"New draft",exact:true}).click();await page.getByLabel("Correction",{exact:true}).selectOption("pin_definition");await page.getByLabel("Target definition").fill(topic.id);await page.getByRole("button",{name:"Add correction to draft"}).click();await publish(`Browser pin ${randomUUID()}`);
+  await tab("Drafts");await page.getByRole("button",{name:"New draft",exact:true}).click();
+  await tab("Catalog");
   const pinRow=page.locator("tr").filter({hasText:`Target: ${topic.definition.label} (${topic.id})`}).filter({has:page.getByRole("button",{name:"Unpin definition",exact:true})});
   await expect(pinRow).toHaveCount(1);await pinRow.getByRole("button",{name:"Unpin definition",exact:true}).click();await publish(`Browser unpin ${randomUUID()}`);
+  await tab("Catalog");
   await expect(pinRow).toHaveCount(0);
 });

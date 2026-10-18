@@ -1,3 +1,10 @@
+import { useConfirmation } from "../ui/confirmation";
+import { useUnsavedChanges } from "../ui/navigation";
+import { Button } from "../ui/primitives/button";
+import { Label } from "../ui/primitives/label";
+import { Input } from "../ui/primitives/input";
+import { Checkbox } from "../ui/primitives/checkbox";
+import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "../ui/primitives/table";
 import { FormEvent, useEffect, useState } from "react";
 import { Ban, RefreshCw, Trash2 } from "lucide-react";
 import { ControlApi, SecurityBan, SecuritySettings } from "../api";
@@ -5,6 +12,7 @@ import { LoadingState, SectionHeading, SummaryCard } from "../ui/components";
 import { formatDate, readError } from "./utils";
 
 export function SecurityPanel({ api }: { api: ControlApi }) {
+  const confirm = useConfirmation();
   const [settings, setSettings] = useState<SecuritySettings | null>(null);
   const [bans, setBans] = useState<SecurityBan[]>([]);
   const [includeExpired, setIncludeExpired] = useState(false);
@@ -13,6 +21,8 @@ export function SecurityPanel({ api }: { api: ControlApi }) {
   const [expiresAt, setExpiresAt] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  useUnsavedChanges(Boolean(ip || reason || expiresAt));
 
   async function loadSecurity(nextIncludeExpired = includeExpired) {
     setBusy(true);
@@ -61,7 +71,7 @@ export function SecurityPanel({ api }: { api: ControlApi }) {
   }
 
   async function deleteBan(ipAddress: string) {
-    if (!window.confirm(`Clear IP ban for ${ipAddress} and reset its strikes?`)) {
+    if (!await confirm({ title: "Clear IP ban?", description: `Clear IP ban for ${ipAddress} and reset its strikes?`, confirmLabel: "Clear IP ban", destructive: true })) {
       return;
     }
     setBusy(true);
@@ -82,9 +92,9 @@ export function SecurityPanel({ api }: { api: ControlApi }) {
         title="IP Bans"
         subtitle="Review failed-auth bans, add manual bans, and clear strikes."
         actions={(
-          <button className="icon-button" type="button" aria-label="Refresh security" onClick={() => void loadSecurity()} disabled={busy}>
+          <Button variant="ghost" size="icon" className="icon-button" type="button" aria-label="Refresh security" onClick={() => void loadSecurity()} disabled={busy}>
             <RefreshCw size={16} aria-hidden="true" />
-          </button>
+          </Button>
         )}
       />
       {error && <div className="banner error" role="alert">{error}</div>}
@@ -103,16 +113,16 @@ export function SecurityPanel({ api }: { api: ControlApi }) {
       </div>
 
       <form className="security-grid security-ban-form" onSubmit={createBan}>
-        <label htmlFor="ban-ip">IP address</label>
-        <input id="ban-ip" value={ip} onChange={(event) => setIp(event.target.value)} />
-        <label htmlFor="ban-reason">Reason</label>
-        <input id="ban-reason" value={reason} onChange={(event) => setReason(event.target.value)} />
-        <label htmlFor="ban-expires">Expires</label>
-        <input id="ban-expires" type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} />
-        <button className="danger-button span" type="submit" disabled={busy}>
+        <Label htmlFor="ban-ip">IP address</Label>
+        <Input id="ban-ip" value={ip} onChange={(event) => setIp(event.target.value)} />
+        <Label htmlFor="ban-reason">Reason</Label>
+        <Input id="ban-reason" value={reason} onChange={(event) => setReason(event.target.value)} />
+        <Label htmlFor="ban-expires">Expires</Label>
+        <Input id="ban-expires" type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} />
+        <Button variant="destructive" className="danger-button span" type="submit" disabled={busy}>
           <Ban size={16} aria-hidden="true" />
           Add ban
-        </button>
+        </Button>
       </form>
 
       <div className="list-toolbar">
@@ -120,18 +130,17 @@ export function SecurityPanel({ api }: { api: ControlApi }) {
           <h3>Ban list</h3>
           <span>{bans.length} IPs</span>
         </div>
-        <label className="check-row include-row" htmlFor="include-expired">
-          <input
+        <Label className="check-row include-row" htmlFor="include-expired">
+          <Checkbox
             id="include-expired"
-            type="checkbox"
             checked={includeExpired}
-            onChange={(event) => {
-              setIncludeExpired(event.target.checked);
-              void loadSecurity(event.target.checked);
+            onCheckedChange={(event) => {
+              setIncludeExpired((event === true));
+              void loadSecurity((event === true));
             }}
           />
           Include expired
-        </label>
+        </Label>
       </div>
       <SecurityBanTable bans={bans} busy={busy} onDelete={(ipAddress) => void deleteBan(ipAddress)} />
     </section>
@@ -153,29 +162,29 @@ function SecurityBanTable({
 
   return (
     <div className="table-wrap">
-      <table className="data-table security-table">
-        <thead>
-          <tr>
-            <th>IP</th>
-            <th>Failed attempts</th>
-            <th>Source</th>
-            <th>Reason</th>
-            <th>Last failed</th>
-            <th>Expires</th>
-            <th className="actions-cell">Clear</th>
-          </tr>
-        </thead>
-        <tbody>
+      <Table className="data-table security-table">
+        <TableHeader>
+          <TableRow>
+            <TableHead>IP</TableHead>
+            <TableHead>Failed attempts</TableHead>
+            <TableHead>Source</TableHead>
+            <TableHead>Reason</TableHead>
+            <TableHead>Last failed</TableHead>
+            <TableHead>Expires</TableHead>
+            <TableHead className="actions-cell">Clear</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {bans.map((ban) => (
-            <tr key={ban.ip}>
-              <td><code>{ban.ip}</code></td>
-              <td>{ban.failure_count}</td>
-              <td><span className={ban.source === "auto" ? "status-pill warning" : "status-pill neutral"}>{ban.source}</span></td>
-              <td>{ban.reason}</td>
-              <td>{ban.last_failed_at ? formatDate(ban.last_failed_at) : "Never"}</td>
-              <td>{ban.expires_at ? formatDate(ban.expires_at) : "Never"}</td>
-              <td className="actions-cell">
-                <button
+            <TableRow key={ban.ip}>
+              <TableCell><code>{ban.ip}</code></TableCell>
+              <TableCell>{ban.failure_count}</TableCell>
+              <TableCell><span className={ban.source === "auto" ? "status-pill warning" : "status-pill neutral"}>{ban.source}</span></TableCell>
+              <TableCell>{ban.reason}</TableCell>
+              <TableCell>{ban.last_failed_at ? formatDate(ban.last_failed_at) : "Never"}</TableCell>
+              <TableCell>{ban.expires_at ? formatDate(ban.expires_at) : "Never"}</TableCell>
+              <TableCell className="actions-cell">
+                <Button variant="ghost" size="icon"
                   className="icon-button danger"
                   type="button"
                   aria-label={`Clear IP ban and reset strikes for ${ban.ip}`}
@@ -184,12 +193,12 @@ function SecurityBanTable({
                   onClick={() => onDelete(ban.ip)}
                 >
                   <Trash2 size={16} aria-hidden="true" />
-                </button>
-              </td>
-            </tr>
+                </Button>
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }

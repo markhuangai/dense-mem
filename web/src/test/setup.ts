@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { vi } from "vitest";
+import { beforeEach, vi } from "vitest";
 
 Object.defineProperty(window.navigator, "clipboard", {
   value: {
@@ -30,9 +30,9 @@ class TestResizeObserver implements ResizeObserver {
           left: 0,
           toJSON: () => ({}),
         },
-        borderBoxSize: [],
-        contentBoxSize: [],
-        devicePixelContentBoxSize: [],
+        borderBoxSize: [{ inlineSize: 640, blockSize: 240 }],
+        contentBoxSize: [{ inlineSize: 640, blockSize: 240 }],
+        devicePixelContentBoxSize: [{ inlineSize: 640, blockSize: 240 }],
       },
     ], this);
   }
@@ -46,3 +46,5 @@ Object.defineProperty(window, "ResizeObserver", {
   value: TestResizeObserver,
   configurable: true,
 });
+
+beforeEach(() => window.history.replaceState(null, "", window.location.pathname));

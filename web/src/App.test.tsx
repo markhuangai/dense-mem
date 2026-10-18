@@ -32,7 +32,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: "New Team" }));
+    await userEvent.click(screen.getByRole("button", { name: "New team" }));
     await userEvent.type(screen.getByLabelText("Name", { selector: "input#new-team-name" }), "ab");
     await userEvent.click(screen.getByRole("button", { name: /^create$/i }));
 
@@ -51,12 +51,12 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: "New Team" }));
+    await userEvent.click(screen.getByRole("button", { name: "New team" }));
     await userEvent.type(screen.getByLabelText("Name", { selector: "input#new-team-name" }), "Work Team");
     await userEvent.type(screen.getByLabelText("Description", { selector: "input#new-team-description" }), "for work");
     await userEvent.click(screen.getByRole("button", { name: /^create$/i }));
 
-    expect(await screen.findByRole("heading", { name: "Work Team" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Current workspace")).toHaveTextContent("Work Team"));
   });
 
   it("creates an API key and shows plaintext once", async () => {
@@ -65,7 +65,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /team credentials/i }));
+    await userEvent.click(screen.getByRole("link", { name: "Credentials" }));
     await userEvent.click(screen.getByLabelText("Recall feedback"));
     await userEvent.click(screen.getByRole("button", { name: /create credential/i }));
 
@@ -95,19 +95,18 @@ describe("App", () => {
   it("updates team and credential names and regenerates a key", async () => {
     const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /team settings/i }));
+    await userEvent.click(screen.getByRole("link", { name: "Team settings" }));
 
     const teamName = screen.getByLabelText("Name", { selector: "#team-name" });
     await userEvent.clear(teamName);
     await userEvent.type(teamName, "Renamed Team");
     await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
-    expect(await screen.findByRole("heading", { name: "Renamed Team" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Current workspace")).toHaveTextContent("Renamed Team"));
 
-    await userEvent.click(screen.getByRole("button", { name: /team credentials/i }));
+    await userEvent.click(screen.getByRole("link", { name: "Credentials" }));
     const credentialName = await screen.findByLabelText("Credential name default credential");
     await userEvent.clear(credentialName);
     await userEvent.type(credentialName, "Research credential");
@@ -146,6 +145,7 @@ describe("App", () => {
     });
 
     await userEvent.click(screen.getByRole("button", { name: /regenerate api key for credential Research credential/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Regenerate API key" }));
     expect(await screen.findByDisplayValue("dm_rotated_once")).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -162,7 +162,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /team credentials/i }));
+    await userEvent.click(screen.getByRole("link", { name: "Credentials" }));
 
     expect(await screen.findByText("******abc123")).toBeInTheDocument();
     const keyRow = screen.getByText("******abc123").closest("tr");
@@ -171,8 +171,8 @@ describe("App", () => {
     expect(within(keyRow as HTMLElement).getByLabelText("Write")).toBeChecked();
     expect(within(keyRow as HTMLElement).getByLabelText("Credential role default credential")).toHaveValue("manager");
     expect(within(keyRow as HTMLElement).getByText(/May/i)).toBeInTheDocument();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     await userEvent.click(screen.getByRole("button", { name: /delete credential default credential/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -193,7 +193,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /team credentials/i }));
+    await userEvent.click(screen.getByRole("link", { name: "Credentials" }));
 
     const row = (await screen.findByText("******abc123")).closest("tr")!;
     expect(within(row).getByText("Private: Read/write · Team-read-only")).toBeInTheDocument();
@@ -204,16 +204,16 @@ describe("App", () => {
   it("shows IP ban attempts and clears a ban with strikes reset", async () => {
     const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()], bans: [securityBan] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /ip bans/i }));
+    await userEvent.click(screen.getByRole("link", { name: "IP bans" }));
 
     expect(await screen.findByText("203.0.113.10")).toBeInTheDocument();
     expect(screen.getByText("11")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /clear ip ban and reset strikes for 203.0.113.10/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Clear IP ban" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -230,6 +230,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("link", { name: "Overview" }));
     expect(screen.queryByRole("button", { name: /^metrics$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open Metrics" })).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Team activity")).toHaveTextContent("42"));
@@ -249,6 +250,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("link", { name: "Overview" }));
 
     await waitFor(() => expect(screen.getByLabelText("Team overview")).toHaveTextContent("Metrics unavailable"));
     expect(screen.getByLabelText("Team activity")).toHaveTextContent("unavailable");
@@ -269,6 +271,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("link", { name: "Overview" }));
 
     const topSignals = screen.getByLabelText("Top signals");
     const dependencyDetails = await within(topSignals).findByText(/search_readiness/);
@@ -286,7 +289,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /^logs$/i }));
+    await userEvent.click(screen.getByRole("link", { name: "Logs" }));
 
     expect(await screen.findByText("GET /control/api/logs status 200")).toBeInTheDocument();
     expect(screen.getByText("event=control_http_request")).toBeInTheDocument();
@@ -328,14 +331,14 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /^Remember Attempts$/ }));
-    await userEvent.click(await screen.findByRole("button", { name: /^Calls \(/ }));
+    await userEvent.click(screen.getByRole("link", { name: "Remember history" }));
+    await userEvent.click(await screen.findByRole("tab", { name: /^Calls \(/ }));
     await userEvent.click(await screen.findByRole("button", { name: "Inspect Remember call invocation-app" }));
     await userEvent.click(await screen.findByRole("button", { name: "View related logs" }));
     expect(await screen.findByRole("heading", { name: "Operation Logs" })).toBeInTheDocument();
     expect(screen.getByLabelText("Correlation ID")).toHaveValue("stale-correlation");
-    await userEvent.click(screen.getByRole("button", { name: /^Teams$/i }));
-    await userEvent.click(screen.getByRole("button", { name: /^Logs$/i }));
+    await userEvent.click(screen.getByRole("link", { name: "All teams" }));
+    await userEvent.click(screen.getByRole("link", { name: "Logs" }));
     expect(await screen.findByRole("heading", { name: "Operation Logs" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Correlation ID")).toHaveValue(""));
   });
@@ -358,8 +361,8 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "Remember Calls" })).toBeInTheDocument();
     expect(await screen.findByRole("region", { name: "Remember call details" })).toHaveTextContent("linked-call");
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`/teams/${profileA.id}/remember-invocations/linked-call`))).toBe(true);
-    await userEvent.click(screen.getByRole("button", { name: "Teams" }));
-    await userEvent.click(screen.getByRole("button", { name: /^Remember Attempts$/ }));
+    await userEvent.click(screen.getByRole("link", { name: "All teams" }));
+    await userEvent.click(screen.getByRole("link", { name: "Remember history" }));
     expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Remember call details" })).not.toBeInTheDocument();
     expect(window.location.search).not.toContain("invocation_id");
@@ -400,7 +403,7 @@ describe("App", () => {
 
     const { unmount } = render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /^Remember Attempts$/ }));
+    await userEvent.click(screen.getByRole("link", { name: "Remember history" }));
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/remember-attempts/attempt-a"))).toBe(false);
     await userEvent.click(await screen.findByRole("button", { name: "Inspect Remember attempt attempt-a" }));
     await waitFor(() => expect(new URLSearchParams(window.location.search).get("attempt_id")).toBe("attempt-a"));
@@ -414,11 +417,11 @@ describe("App", () => {
     expect(await screen.findByRole("region", { name: "Remember attempt details" })).toHaveTextContent("attempt-b");
     expect(new URLSearchParams(window.location.search).get("attempt_id")).toBe("attempt-b");
 
-    await userEvent.click(screen.getByRole("button", { name: /^Calls \(/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^Calls \(/ }));
     await userEvent.click(await screen.findByRole("button", { name: "Inspect Remember call call-a" }));
     await waitFor(() => expect(new URLSearchParams(window.location.search).get("invocation_id")).toBe("call-a"));
     expect(new URLSearchParams(window.location.search).get("attempt_id")).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: /^Attempts \(/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^Attempts \(/ }));
     await waitFor(() => expect(new URLSearchParams(window.location.search).get("invocation_id")).toBeNull());
     expect(new URLSearchParams(window.location.search).get("attempt_id")).toBe("attempt-b");
     await userEvent.selectOptions(screen.getByLabelText("Remember attempt outcome"), "failed");
@@ -432,9 +435,9 @@ describe("App", () => {
 
     const { unmount } = render(<App />);
     expect(await screen.findByRole("heading", { name: "Operation Logs" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /^Remember Attempts$/ }));
+    await userEvent.click(screen.getByRole("link", { name: "Remember history" }));
     expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
-    expect(new URLSearchParams(window.location.search).get("section")).toBeNull();
+    expect(new URLSearchParams(window.location.search).get("section")).toBe("teams");
     expect(new URLSearchParams(window.location.search).get("remember_view")).toBe("attempts");
 
     unmount();
@@ -468,10 +471,10 @@ describe("App", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/teams?limit=100&offset=120"))).toBe(true);
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`remember-attempts?team_id=${linkedTeam.id}`))).toBe(true));
     expect(screen.queryByText("Linked team is unavailable or you do not have access.")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /team overview/i }));
+    await userEvent.click(screen.getByRole("link", { name: "Overview" }));
     await userEvent.click(screen.getByRole("button", { name: "Refresh teams" }));
     await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/teams?limit=100&offset=120"))).toHaveLength(2));
-    expect(screen.getByRole("heading", { name: "Linked Team" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Current workspace")).toHaveTextContent("Linked Team"));
   });
 
   it("does not open another team's history when the linked team is unavailable", async () => {
@@ -487,7 +490,8 @@ describe("App", () => {
     expect(screen.queryByRole("heading", { name: "Remember Attempts" })).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/teams?limit=100&offset=20"))).toBe(true);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("remember-attempts"))).toBe(false);
-    await userEvent.click(screen.getByRole("button", { name: /Default/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Choose team" }));
+    await userEvent.click(screen.getByRole("button", { name: "Default" }));
     expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
     expect(window.location.search).not.toContain("missing-attempt");
   });
@@ -498,14 +502,13 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /team dream history/i }));
+    await userEvent.click(screen.getByRole("link", { name: "Dream history" }));
 
     expect(await screen.findByText("A may affect B.")).toBeInTheDocument();
     expect(screen.getByLabelText("Dream history status")).toHaveTextContent("Retired");
-    const rationale = screen.getByText(dreamRationale);
-    expect(rationale.closest("small")).toBeNull();
-    expect(rationale.closest(".info-tooltip")).not.toBeNull();
-    expect(screen.getByRole("button", { name: /why this hypothesis: A may affect B\./i })).toBeInTheDocument();
+    const trigger = screen.getByRole("button", { name: /why this hypothesis: A may affect B\./i });
+    await userEvent.hover(trigger);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(dreamRationale);
   });
 
   it("edits SSO runtime config", async () => {
@@ -514,10 +517,10 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /^Config$/i }));
-    await userEvent.click(within(await screen.findByRole("tablist", { name: /config sections/i })).getByRole("tab", { name: /^sso$/i }));
+    await userEvent.click(screen.getByRole("link", { name: "Settings" }));
+    await userEvent.click(within(await screen.findByRole("tablist", { name: /Settings sections/i })).getByRole("tab", { name: /^SSO runtime$/i }));
 
-    expect((await screen.findByRole("tablist", { name: /config sections/i })).closest(".surface")).toBeNull();
+    expect((await screen.findByRole("tablist", { name: /Settings sections/i })).closest(".surface")).toBeNull();
     expect(await screen.findByRole("heading", { name: "SSO" })).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("Public base URL"), "https://portal.example.com");
     await userEvent.click(screen.getByRole("button", { name: /save config/i }));
@@ -531,7 +534,7 @@ describe("App", () => {
         }),
       );
     });
-    expect(await screen.findByText("Saved")).toBeInTheDocument();
+    expect(await screen.findByText("Changes saved")).toBeInTheDocument();
   });
 
   it("edits global timezone config", async () => {
@@ -540,7 +543,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /^Config$/i }));
+    await userEvent.click(screen.getByRole("link", { name: "Settings" }));
 
     expect(await screen.findByRole("heading", { name: "General" })).toBeInTheDocument();
     await userEvent.selectOptions(screen.getByLabelText("Timezone", { selector: "select" }), "America/New_York");
@@ -567,8 +570,8 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /^Config$/i }));
-    await userEvent.click(within(await screen.findByRole("tablist", { name: /config sections/i })).getByRole("tab", { name: /^logs$/i }));
+    await userEvent.click(screen.getByRole("link", { name: "Settings" }));
+    await userEvent.click(within(await screen.findByRole("tablist", { name: /Settings sections/i })).getByRole("tab", { name: /^Operation logs$/i }));
 
     expect(await screen.findByRole("heading", { name: "Operation Logs" })).toBeInTheDocument();
     const retention = screen.getByLabelText("Retention days");
@@ -592,12 +595,12 @@ describe("App", () => {
   it("deletes a team", async () => {
     const deleteMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
     sessionStorage.setItem("denseMem.controlToken", "secret");
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: /team settings/i }));
+    await userEvent.click(screen.getByRole("link", { name: "Team settings" }));
     await userEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete team" }));
 
     await waitFor(() => {
       expect(deleteMock).toHaveBeenCalledWith(expect.stringContaining(`/teams/${profileA.id}`), expect.objectContaining({ method: "DELETE" }));

@@ -113,6 +113,7 @@ describe("SSOPanel", () => {
     await waitFor(() => expect(api.listSSOGroupMappings).toHaveBeenCalledWith(providerA.id));
     await userEvent.click(screen.getByRole("button", { name: "Edit Provider B" }));
 
+    await userEvent.click(screen.getByRole("tab", { name: "Mappings" }));
     expect(await screen.findByText("group-b")).toBeInTheDocument();
     await act(async () => {
       providerAMappings.resolve([ssoMapping(providerA, "group-a")]);

@@ -330,7 +330,11 @@ export function mockPortalFetch({
       return jsonResponse({ data: [rememberInvocation.summary], pagination: { limit: 50, offset: 0, total: 1 } });
     }
     if (rememberAttempts && parsedUrl.pathname.endsWith("/control/api/remember-attempts") && method === "GET") {
-      return jsonResponse({ data: rememberAttempts.map((attempt) => attempt.summary), pagination: { limit: 50, offset: 0, total: rememberAttempts.length } });
+      const limit = Number(parsedUrl.searchParams.get("limit") ?? "50");
+      const offset = Number(parsedUrl.searchParams.get("offset") ?? "0");
+      const outcome = parsedUrl.searchParams.get("outcome");
+      const summaries = rememberAttempts.map((attempt) => attempt.summary).filter((summary) => !outcome || summary.outcome === outcome);
+      return jsonResponse({ data: summaries.slice(offset, offset + limit), pagination: { limit, offset, total: summaries.length } });
     }
     if (rememberAttempts && parsedUrl.pathname.includes("/control/api/teams/") && parsedUrl.pathname.includes("/remember-attempts/") && method === "GET") {
       const attempt = rememberAttempts.find(({ summary }) => parsedUrl.pathname.endsWith(`/remember-attempts/${summary.attempt_id}`) && parsedUrl.pathname.includes(`/teams/${summary.team_id}/`));

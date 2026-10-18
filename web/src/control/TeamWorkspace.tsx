@@ -7,75 +7,12 @@ import { credentialPermissionLabel, credentialRoleLabel, formatDate, shortId } f
 
 export type TeamWorkspaceTab = "overview" | "remember-attempts" | "credentials" | "dreams" | "conflicts" | "settings";
 
-export function TeamWorkspaceShell({
-  team,
-  activeTab,
-  onSelectTab,
-  children,
-}: {
-  team: Team;
-  activeTab: TeamWorkspaceTab;
-  onSelectTab: (tab: TeamWorkspaceTab) => void;
-  children: ReactNode;
-}) {
-  return (
-    <section className="surface team-workspace">
-      <TeamWorkspaceHeader team={team} activeTab={activeTab} onSelectTab={onSelectTab} />
-      <div className="team-workspace-body">
-        {children}
-      </div>
-    </section>
-  );
-}
-
-function TeamWorkspaceHeader({
-  team,
-  activeTab,
-  onSelectTab,
-}: {
-  team: Team;
-  activeTab: TeamWorkspaceTab;
-  onSelectTab: (tab: TeamWorkspaceTab) => void;
-}) {
-  const tabs: Array<{ id: TeamWorkspaceTab; label: string }> = [
-    { id: "overview", label: "Overview" },
-    { id: "remember-attempts", label: "Remember Attempts" },
-    { id: "credentials", label: "Credentials" },
-    { id: "dreams", label: "Dream history" },
-    { id: "conflicts", label: "Conflicts" },
-    { id: "settings", label: "Settings" },
-  ];
-
-  return (
-    <header className="team-workspace-header">
-      <div className="team-detail-header compact">
-        <span className="team-mark" aria-hidden="true">
-          <Users size={24} />
-        </span>
-        <div>
-          <div className="team-title-row">
-            <h2>{team.name}</h2>
-            <span className="status-pill neutral">Active</span>
-          </div>
-          <p>Created {formatDate(team.created_at)} · Team ID {shortId(team.id)}</p>
-        </div>
-      </div>
-      <nav className="team-workspace-tabs" aria-label={`${team.name} sections`}>
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            className={tab.id === activeTab ? "team-workspace-tab active" : "team-workspace-tab"}
-            type="button"
-            aria-label={`Team ${tab.label}`}
-            aria-current={tab.id === activeTab ? "page" : undefined}
-            onClick={() => onSelectTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </nav>
-    </header>
-  );
+export function TeamWorkspaceShell({ team, activeTab, children }: { team: Team; activeTab: TeamWorkspaceTab; children: ReactNode }) {
+  const labels: Record<TeamWorkspaceTab, string> = { overview: "Overview", credentials: "Credentials", "remember-attempts": "Remember history", conflicts: "Conflicts", dreams: "Dream history", settings: "Team settings" };
+  return <section className="team-workspace">
+    <header className="team-workspace-header"><SectionHeading title={team.name} subtitle={labels[activeTab]} meta={<span className="status-pill neutral">Active team</span>} /></header>
+    <div className="team-workspace-body">{children}</div>
+  </section>;
 }
 
 export function TeamOverviewPanel({

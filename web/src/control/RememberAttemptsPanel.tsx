@@ -1,3 +1,9 @@
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/primitives/tabs";
+import { Button } from "../ui/primitives/button";
+import { Label } from "../ui/primitives/label";
+import { NativeSelect, NativeSelectOption } from "../ui/primitives/native-select";
+import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "../ui/primitives/table";
+import { Input } from "../ui/primitives/input";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { AlertTriangle, ArrowRight, Clock3, RefreshCw } from "lucide-react";
 import {
@@ -40,6 +46,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState("");
   const [view, setView] = useState<"calls" | "attempts">(initialView);
+  const currentView = useRef(initialView);
   const [invocations, setInvocations] = useState<RememberInvocationDiagnosticSummary[]>([]);
   const [invocationTotal, setInvocationTotal] = useState(0);
   const [callCount, setCallCount] = useState<number | null>(null);
@@ -81,6 +88,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
 
   async function loadInvocations(nextOffset = invocationOffset, preferredID = selectedInvocationID, allowOutsidePage = false) {
     if (typeof api.listRememberInvocationDiagnostics !== "function") {
+      currentView.current = "attempts";
       setView("attempts");
       onSelectionChange?.("attempts", selectedIDRef.current);
       if (!attemptsLoadedRef.current) void loadAttempts("", 0);
@@ -123,7 +131,11 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
   }
 
   function selectView(nextView: "calls" | "attempts", preferredAttemptID?: string) {
-    if (nextView !== view) {
+    const previousView = currentView.current;
+    // Radix focus and mouse-down can request the same tab before React commits.
+    if (nextView === previousView && !preferredAttemptID) return;
+    currentView.current = nextView;
+    if (nextView !== previousView) {
       if (nextView === "calls") {
         listRequestRef.current += 1;
         detailRequestRef.current += 1;
@@ -139,7 +151,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
     }
     setView(nextView);
     onSelectionChange?.(nextView, nextView === "calls" ? selectedInvocationID : preferredAttemptID ?? selectedIDRef.current);
-    if (nextView === "calls" && view !== nextView && typeof api.listRememberInvocationDiagnostics === "function") {
+    if (nextView === "calls" && previousView !== nextView && typeof api.listRememberInvocationDiagnostics === "function") {
       void loadInvocations(invocationOffset, selectedInvocationID);
     } else if (nextView === "attempts" && !attemptsLoadedRef.current) {
       void loadAttempts(outcome, offset, preferredAttemptID);
@@ -210,6 +222,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
     invocationListRequestRef.current += 1;
     invocationDetailRequestRef.current += 1;
     attemptsLoadedRef.current = false;
+    currentView.current = initialView;
     setView(initialView);
     setInvocations([]);
     setInvocationTotal(0);
@@ -256,8 +269,13 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
     };
   }, [api, team.id, initialView, initialAttemptID, initialInvocationID]);
 
-  if (view === "calls") {
-    return (
+  const rangeStart = total === 0 ? 0 : offset + 1;
+  const rangeEnd = Math.min(offset + items.length, total);
+
+  return (
+    <Tabs className="team-embedded-panel remember-attempts" value={view} onValueChange={(value) => selectView(value as "calls" | "attempts")}>
+      <TabsList aria-label="Remember history"><TabsTrigger value="calls">Calls ({view === "calls" ? invocationTotal : callCountUnavailable ? "unavailable" : callCount ?? "…"})</TabsTrigger><TabsTrigger value="attempts">Attempts ({view === "attempts" ? total : attemptCountUnavailable ? "unavailable" : attemptCount ?? "…"})</TabsTrigger></TabsList>
+      <TabsContent value="calls">
       <RememberCallsView
         items={invocations}
         total={invocationTotal}
@@ -267,9 +285,6 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
         detail={invocationDetail}
         detailLoading={invocationDetailLoading}
         selectedID={selectedInvocationID}
-        attemptCount={attemptCount}
-        attemptCountUnavailable={attemptCountUnavailable}
-        onSelectView={selectView}
         onRefresh={() => void loadInvocations(invocationOffset)}
         onSelect={(id) => {
           setSelectedInvocationID(id);
@@ -284,33 +299,26 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
         onPrevious={() => void loadInvocations(Math.max(0, invocationOffset - PAGE_SIZE))}
         onNext={() => void loadInvocations(invocationOffset + PAGE_SIZE)}
       />
-    );
-  }
-
-  const rangeStart = total === 0 ? 0 : offset + 1;
-  const rangeEnd = Math.min(offset + items.length, total);
-
-  return (
-    <div className="team-embedded-panel remember-attempts">
+      </TabsContent>
+      <TabsContent value="attempts">
       <section className="overview-panel">
         <SectionHeading
           title="Remember Attempts"
           meta={total}
           actions={(
             <div className="button-row">
-              <button className="ghost-button" type="button" onClick={() => selectView("calls")}>Calls ({callCountUnavailable ? "unavailable" : callCount ?? "…"})</button>
-              <button className="icon-button" type="button" aria-label="Refresh Remember attempts" onClick={() => void loadAttempts()}>
+              <Button variant="ghost" size="icon" className="icon-button" type="button" aria-label="Refresh Remember attempts" onClick={() => void loadAttempts()}>
                 <RefreshCw size={16} aria-hidden="true" />
-              </button>
+              </Button>
             </div>
           )}
         />
         <p className="panel-intro">Durable processing history. A call can replay an existing attempt or end without creating one. Captured diagnostic bodies are retained for up to seven days unless placed under legal hold.</p>
         {error && <div className="banner error" role="alert">{error}</div>}
         <div className="metrics-toolbar submission-toolbar">
-          <label>
+          <Label>
             Outcome
-            <select
+            <NativeSelect
               aria-label="Remember attempt outcome"
               value={outcome}
               onChange={(event) => {
@@ -323,9 +331,9 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
                 void loadAttempts(next, 0);
               }}
             >
-              {OUTCOMES.map((value) => <option value={value} key={value}>{value ? outcomeLabel(value) : "All outcomes"}</option>)}
-            </select>
-          </label>
+              {OUTCOMES.map((value) => <NativeSelectOption value={value} key={value}>{value ? outcomeLabel(value) : "All outcomes"}</NativeSelectOption>)}
+            </NativeSelect>
+          </Label>
         </div>
         {loading && items.length === 0 ? (
           <LoadingState label="Loading Remember attempts" />
@@ -333,34 +341,35 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
           <div className="table-placeholder">No Remember attempts match this outcome.</div>
         ) : (
           <div className="table-wrap">
-            <table className="data-table remember-attempts-table">
-              <thead>
-                <tr><th>Created</th><th>Attempt</th><th>Outcome</th><th>Phase / error</th><th>Counts</th><th>Action</th></tr>
-              </thead>
-              <tbody>
+            <Table className="data-table remember-attempts-table">
+              <TableHeader>
+                <TableRow><TableHead>Created</TableHead><TableHead>Attempt</TableHead><TableHead>Outcome</TableHead><TableHead>Phase / error</TableHead><TableHead>Counts</TableHead><TableHead>Action</TableHead></TableRow>
+              </TableHeader>
+              <TableBody>
                 {items.map((item) => (
-                  <tr key={item.attempt_id} className={item.attempt_id === selectedID ? "selected-row" : undefined}>
-                    <td><strong>{formatDate(item.created_at)}</strong><small className="table-subline">{shortId(item.attempt_id)}</small></td>
-                    <td><span>{item.submission_kind}</span><small className="table-subline">{item.owner_profile_id ? `Owner ${shortId(item.owner_profile_id)}` : "Owner not recorded"}</small></td>
-                    <td><span className={attemptOutcomeClass(item.outcome)}>{outcomeLabel(item.outcome)}</span></td>
-                    <td><span>{item.failed_phase ? outcomeLabel(item.failed_phase) : "—"}</span>{item.error_code && <small className="table-subline">{outcomeLabel(item.error_code)}</small>}</td>
-                    <td><span>{item.evidence_count} evidence · {item.relationship_count} relationships</span><small className="table-subline">{item.duration_ms} ms</small></td>
-                    <td><button className="text-button" type="button" aria-label={`Inspect Remember attempt ${item.attempt_id}`} onClick={() => { selectAttempt(item.attempt_id); void loadDetail(item.attempt_id); }}>Inspect <ArrowRight size={14} aria-hidden="true" /></button></td>
-                  </tr>
+                  <TableRow key={item.attempt_id} className={item.attempt_id === selectedID ? "selected-row" : undefined}>
+                    <TableCell><strong>{formatDate(item.created_at)}</strong><small className="table-subline">{shortId(item.attempt_id)}</small></TableCell>
+                    <TableCell><span>{item.submission_kind}</span><small className="table-subline">{item.owner_profile_id ? `Owner ${shortId(item.owner_profile_id)}` : "Owner not recorded"}</small></TableCell>
+                    <TableCell><span className={attemptOutcomeClass(item.outcome)}>{outcomeLabel(item.outcome)}</span></TableCell>
+                    <TableCell><span>{item.failed_phase ? outcomeLabel(item.failed_phase) : "—"}</span>{item.error_code && <small className="table-subline">{outcomeLabel(item.error_code)}</small>}</TableCell>
+                    <TableCell><span>{item.evidence_count} evidence · {item.relationship_count} relationships</span><small className="table-subline">{item.duration_ms} ms</small></TableCell>
+                    <TableCell><Button variant="ghost" className="text-button" type="button" aria-label={`Inspect Remember attempt ${item.attempt_id}`} onClick={() => { selectAttempt(item.attempt_id); void loadDetail(item.attempt_id); }}>Inspect <ArrowRight size={14} aria-hidden="true" /></Button></TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         )}
         <div className="table-actions">
           <span className="form-meta">{rangeStart}-{rangeEnd} of {total}</span>
-          <button className="ghost-button" type="button" disabled={loading || offset === 0} onClick={() => void loadAttempts(outcome, Math.max(0, offset - PAGE_SIZE))}>Previous</button>
-          <button className="ghost-button" type="button" disabled={loading || offset + PAGE_SIZE >= total} onClick={() => void loadAttempts(outcome, offset + PAGE_SIZE)}>Next</button>
+          <Button variant="outline" className="ghost-button" type="button" disabled={loading || offset === 0} onClick={() => void loadAttempts(outcome, Math.max(0, offset - PAGE_SIZE))}>Previous</Button>
+          <Button variant="outline" className="ghost-button" type="button" disabled={loading || offset + PAGE_SIZE >= total} onClick={() => void loadAttempts(outcome, offset + PAGE_SIZE)}>Next</Button>
         </div>
       </section>
 
       {detailLoading && !detail ? <LoadingState label="Loading Remember attempt details" /> : detail && <RememberAttemptDetailView detail={detail} />}
-    </div>
+      </TabsContent>
+    </Tabs>
   );
 }
 
@@ -373,9 +382,6 @@ function RememberCallsView({
   detail,
   detailLoading,
   selectedID,
-  attemptCount,
-  attemptCountUnavailable,
-  onSelectView,
   onRefresh,
   onSelect,
   onOpenLogs,
@@ -391,9 +397,6 @@ function RememberCallsView({
   detail: RememberInvocationDiagnosticDetail | null;
   detailLoading: boolean;
   selectedID: string;
-  attemptCount: number | null;
-  attemptCountUnavailable: boolean;
-  onSelectView: (view: "calls" | "attempts") => void;
   onRefresh: () => void;
   onSelect: (id: string) => void;
   onOpenLogs?: (query: OperationLogQuery) => void;
@@ -404,17 +407,16 @@ function RememberCallsView({
   const rangeStart = total === 0 ? 0 : offset + 1;
   const rangeEnd = Math.min(offset + items.length, total);
   return (
-    <div className="team-embedded-panel remember-attempts">
+    <>
       <section className="overview-panel">
         <SectionHeading
           title="Remember Calls"
           meta={total}
           actions={(
             <div className="button-row">
-              <button className="ghost-button" type="button" onClick={() => onSelectView("attempts")}>Attempts ({attemptCountUnavailable ? "unavailable" : attemptCount ?? "…"})</button>
-              <button className="icon-button" type="button" aria-label="Refresh Remember calls" onClick={onRefresh}>
+              <Button variant="ghost" size="icon" className="icon-button" type="button" aria-label="Refresh Remember calls" onClick={onRefresh}>
                 <RefreshCw size={16} aria-hidden="true" />
-              </button>
+              </Button>
             </div>
           )}
         />
@@ -422,29 +424,29 @@ function RememberCallsView({
         {error && <div className="banner error" role="alert">{error}</div>}
         {loading && items.length === 0 ? <LoadingState label="Loading Remember calls" /> : items.length === 0 ? <div className="table-placeholder">No Remember calls</div> : (
           <div className="table-wrap">
-            <table className="data-table remember-attempts-table">
-              <thead><tr><th>Created</th><th>Classification</th><th>Outcome</th><th>Phase / error</th><th>Identity</th><th>Action</th></tr></thead>
-              <tbody>{items.map((item) => (
-                <tr key={item.invocation_id} className={item.invocation_id === selectedID ? "selected-row" : undefined}>
-                  <td><strong>{formatDate(item.created_at)}</strong><small className="table-subline">{shortId(item.invocation_id)}</small></td>
-                  <td><span>{item.classification}</span><small className="table-subline">{item.retryable ? "Retryable" : "Not retryable"}</small></td>
-                  <td><span className={attemptOutcomeClass(item.outcome)}>{outcomeLabel(item.outcome)}</span></td>
-                  <td><span>{item.failed_phase ? outcomeLabel(item.failed_phase) : "Completed"}</span>{item.error_code && <small className="table-subline">{outcomeLabel(item.error_code)}</small>}</td>
-                  <td><code>{item.correlation_id || "No correlation"}</code><small className="table-subline">{item.canonical_attempt_id ? <button className="text-button" type="button" onClick={() => onOpenAttempt(item.canonical_attempt_id as string)}>Attempt {shortId(item.canonical_attempt_id)}</button> : "No canonical attempt"}</small></td>
-                  <td><button className="text-button" type="button" disabled={loading} aria-label={`Inspect Remember call ${item.invocation_id}`} onClick={() => onSelect(item.invocation_id)}>Inspect <ArrowRight size={14} aria-hidden="true" /></button></td>
-                </tr>
-              ))}</tbody>
-            </table>
+            <Table className="data-table remember-attempts-table">
+              <TableHeader><TableRow><TableHead>Created</TableHead><TableHead>Classification</TableHead><TableHead>Outcome</TableHead><TableHead>Phase / error</TableHead><TableHead>Identity</TableHead><TableHead>Action</TableHead></TableRow></TableHeader>
+              <TableBody>{items.map((item) => (
+                <TableRow key={item.invocation_id} className={item.invocation_id === selectedID ? "selected-row" : undefined}>
+                  <TableCell><strong>{formatDate(item.created_at)}</strong><small className="table-subline">{shortId(item.invocation_id)}</small></TableCell>
+                  <TableCell><span>{item.classification}</span><small className="table-subline">{item.retryable ? "Retryable" : "Not retryable"}</small></TableCell>
+                  <TableCell><span className={attemptOutcomeClass(item.outcome)}>{outcomeLabel(item.outcome)}</span></TableCell>
+                  <TableCell><span>{item.failed_phase ? outcomeLabel(item.failed_phase) : "Completed"}</span>{item.error_code && <small className="table-subline">{outcomeLabel(item.error_code)}</small>}</TableCell>
+                  <TableCell><code>{item.correlation_id || "No correlation"}</code><small className="table-subline">{item.canonical_attempt_id ? <Button variant="ghost" className="text-button" type="button" onClick={() => onOpenAttempt(item.canonical_attempt_id as string)}>Attempt {shortId(item.canonical_attempt_id)}</Button> : "No canonical attempt"}</small></TableCell>
+                  <TableCell><Button variant="ghost" className="text-button" type="button" disabled={loading} aria-label={`Inspect Remember call ${item.invocation_id}`} onClick={() => onSelect(item.invocation_id)}>Inspect <ArrowRight size={14} aria-hidden="true" /></Button></TableCell>
+                </TableRow>
+              ))}</TableBody>
+            </Table>
           </div>
         )}
         <div className="table-actions">
           <span className="form-meta">{rangeStart}-{rangeEnd} of {total}</span>
-          <button className="ghost-button" type="button" disabled={loading || offset === 0} onClick={onPrevious}>Previous</button>
-          <button className="ghost-button" type="button" disabled={loading || offset + items.length >= total} onClick={onNext}>Next</button>
+          <Button variant="outline" className="ghost-button" type="button" disabled={loading || offset === 0} onClick={onPrevious}>Previous</Button>
+          <Button variant="outline" className="ghost-button" type="button" disabled={loading || offset + items.length >= total} onClick={onNext}>Next</Button>
         </div>
       </section>
       {detailLoading && !detail ? <LoadingState label="Loading Remember call details" /> : detail && <RememberInvocationDetailView detail={detail} onOpenLogs={onOpenLogs} />}
-    </div>
+    </>
   );
 }
 
@@ -467,7 +469,7 @@ function RememberInvocationDetailView({ detail, onOpenLogs }: { detail: Remember
       <section className="remember-diagnostics" aria-label="Remember call captures">
         {detail.enrichment_unavailable && <div className="banner warning" role="status">Related operation-log context is unavailable; cause and delivery details may be incomplete.</div>}
         {onOpenLogs && <div className="button-row">
-          <button className="ghost-button" type="button" onClick={() => onOpenLogs({ team_id: detail.team_id, correlation_id: detail.correlation_id, invocation_id: detail.invocation_id })}>View related logs</button>
+          <Button variant="outline" className="ghost-button" type="button" onClick={() => onOpenLogs({ team_id: detail.team_id, correlation_id: detail.correlation_id, invocation_id: detail.invocation_id })}>View related logs</Button>
         </div>}
         <h3>Original request</h3>
         {detail.request_capture_state === "expired" ? <DiagnosticUnavailable message="This request capture expired and its body is no longer available." /> : detail.request_body ? <><DiagnosticBody label="Request body" content={detail.request_body} />{detail.request_capture_state === "truncated" && <DiagnosticUnavailable message={TRUNCATED_CAPTURE_MESSAGE} />}</> : <DiagnosticUnavailable message={`Request capture is ${detail.request_capture_state || "unavailable"}.`} />}
@@ -545,18 +547,18 @@ function AssessorValidationSection({ events }: { events: RememberAttemptDiagnost
       <p className="form-meta">Failure class: <strong>{outcomeLabel(failureClass)}</strong></p>
       {turns.length === 0 ? <div className="table-placeholder compact">No rejected turns were retained.</div> : (
         <div className="table-wrap">
-          <table className="data-table metrics-table">
-            <thead><tr><th>Turn</th><th>Stage</th><th>Fields</th><th>Families</th><th>Errors</th></tr></thead>
-            <tbody>{turns.map((turn, index) => (
-              <tr key={`${String(turn.attempt)}:${index}`}>
-                <td>{typeof turn.attempt === "number" ? turn.attempt : index + 1}</td>
-                <td>{typeof turn.stage === "string" ? outcomeLabel(turn.stage) : "Unknown"}</td>
-                <td>{safeStringList(turn.fields)}</td>
-                <td>{safeStringList(turn.field_families)}</td>
-                <td>{typeof turn.error_count === "number" ? formatCount(turn.error_count) : "n/a"}{turn.truncated === true ? " · truncated" : ""}</td>
-              </tr>
-            ))}</tbody>
-          </table>
+          <Table className="data-table metrics-table">
+            <TableHeader><TableRow><TableHead>Turn</TableHead><TableHead>Stage</TableHead><TableHead>Fields</TableHead><TableHead>Families</TableHead><TableHead>Errors</TableHead></TableRow></TableHeader>
+            <TableBody>{turns.map((turn, index) => (
+              <TableRow key={`${String(turn.attempt)}:${index}`}>
+                <TableCell>{typeof turn.attempt === "number" ? turn.attempt : index + 1}</TableCell>
+                <TableCell>{typeof turn.stage === "string" ? outcomeLabel(turn.stage) : "Unknown"}</TableCell>
+                <TableCell>{safeStringList(turn.fields)}</TableCell>
+                <TableCell>{safeStringList(turn.field_families)}</TableCell>
+                <TableCell>{typeof turn.error_count === "number" ? formatCount(turn.error_count) : "n/a"}{turn.truncated === true ? " · truncated" : ""}</TableCell>
+              </TableRow>
+            ))}</TableBody>
+          </Table>
         </div>
       )}
     </section>
@@ -626,7 +628,7 @@ function DiagnosticBody({ label, content }: { label: string; content: string }) 
   async function copyBody() {
     setCopyState(await writeClipboardText(content, copyFallbackRef.current) ? "copied" : "failed");
   }
-  return <div className="remember-diagnostic-body"><div className="remember-diagnostic-body-heading"><strong>{label}</strong><button className="ghost-button" type="button" onClick={() => void copyBody()} disabled={!content}>{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy"}</button></div><input ref={copyFallbackRef} className="sr-only" value={content} readOnly tabIndex={-1} aria-hidden="true" /><pre>{content || "(empty body)"}</pre></div>;
+  return <div className="remember-diagnostic-body"><div className="remember-diagnostic-body-heading"><strong>{label}</strong><Button variant="outline" className="ghost-button" type="button" onClick={() => void copyBody()} disabled={!content}>{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy"}</Button></div><Input ref={copyFallbackRef} className="sr-only" value={content} readOnly tabIndex={-1} aria-hidden="true" /><pre>{content || "(empty body)"}</pre></div>;
 }
 
 function DiagnosticUnavailable({ message }: { message: string }) {

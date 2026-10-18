@@ -1,3 +1,4 @@
+import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
 import { expect, test, type Page } from "@playwright/test";
 
 const controlUrl = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -5,7 +6,7 @@ const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
 
 test("control panel renders document-authoritative search convergence", async ({ page }) => {
   await openControlPanel(page);
-  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await navigate(page, "Search readiness");
 
   const panel = page.getByRole("region", { name: "Search convergence" });
   await expect(panel).toBeVisible();
@@ -31,7 +32,7 @@ test("control panel surfaces a bounded convergence error", async ({ page }) => {
   });
 
   await openControlPanel(page);
-  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await navigate(page, "Search readiness");
 
   const panel = page.getByRole("region", { name: "Search convergence" });
   await expect(panel).toBeVisible();
@@ -50,7 +51,7 @@ test("control panel renders converged empty document drift", async ({ page }) =>
   });
 
   await openControlPanel(page);
-  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await navigate(page, "Search readiness");
 
   const panel = page.getByRole("region", { name: "Search convergence" });
   await expect(panel).toBeVisible();
@@ -70,7 +71,7 @@ async function openControlPanel(page: Page) {
 
 async function expectNoShellOverlap(page: Page) {
   const boxes = await page.locator(".topbar, .primary-rail, .resource-rail, .detail-pane").evaluateAll((elements) => (
-    elements.map((element) => {
+    elements.filter((element) => element.getBoundingClientRect().width > 0).map((element) => {
       const rect = element.getBoundingClientRect();
       return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
     })

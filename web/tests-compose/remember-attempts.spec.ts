@@ -1,3 +1,4 @@
+import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
 import { expect, test } from "@playwright/test";
 
 const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -19,15 +20,22 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
   await page.getByLabel("Control token").fill(controlToken);
   await page.getByRole("button", { name: "Unlock" }).click();
   await expect(page.getByRole("heading", { name: "Remember Attempts" })).toBeVisible();
-  await expect(page.getByRole("button", { name: new RegExp(escapeRegExp(teamName)) })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Calls \(\d+\)$/ })).toBeVisible();
+  const workspace = page.getByLabel("Current workspace");
+  await expect(workspace).toBeVisible();
+  await expect(workspace).toHaveText(teamName);
+  await expect(page.getByRole("tab", { name: /^Calls \(\d+\)$/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Attempt Detail" })).toHaveCount(0);
-  await page.getByRole("button", { name: /^Calls \(/ }).click();
+  await page.getByRole("tab", { name: /^Attempts \(/ }).focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.getByRole("tab", { name: /^Calls \(/ })).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: /^Attempts \(/ })).toBeFocused();
+  await page.getByRole("tab", { name: /^Calls \(/ }).click();
   await expect(page.getByRole("heading", { name: "Remember Calls" })).toBeVisible();
   const canonicalAttemptRow = page.locator(".remember-attempts-table tbody tr").filter({ has: page.getByRole("button", { name: /Attempt / }) }).first();
   await canonicalAttemptRow.getByRole("button", { name: /Attempt / }).click();
   await expect(page.getByRole("heading", { name: "Remember Attempts" })).toBeVisible();
-  await page.getByRole("button", { name: /^Calls \(/ }).click();
+  await page.getByRole("tab", { name: /^Calls \(/ }).click();
   await expect(page.getByRole("heading", { name: "Remember Calls" })).toBeVisible();
   await page.getByRole("button", { name: `Inspect Remember call ${expiredInvocationID}` }).click();
   await expect(page.getByRole("heading", { name: "Call Detail" })).toBeVisible();
@@ -40,8 +48,8 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
   await page.getByRole("button", { name: "View related logs" }).click();
   await expect(page.getByRole("heading", { name: "Operation Logs" })).toBeVisible();
   await expect(page.getByLabel("Correlation ID")).toHaveValue("expired-invocation-correlation");
-  await page.getByRole("button", { name: "Teams", exact: true }).click();
-  await page.getByRole("button", { name: /team remember attempts/i }).click();
+  await navigate(page, "All teams");
+  await navigate(page, "Remember history");
   await expect(page.getByRole("heading", { name: "Remember Attempts" })).toBeVisible();
   await page.getByLabel("Remember attempt outcome").selectOption("failed");
   await expect(page.locator(".remember-attempts-table")).toContainText("Provider Unavailable");
@@ -101,7 +109,7 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
     await page.goto(`${controlURL}/?team_id=${teamID}&remember_view=calls&invocation_id=${expiredInvocationID}`);
     await expect(page.getByRole("heading", { name: "Call Detail" })).toBeVisible();
     await expect(page.getByRole("region", { name: "Remember call details" })).toContainText(expiredInvocationID);
-    await page.getByRole("button", { name: /team overview/i }).click();
+    await navigate(page, "Overview");
     const laterPage = page.waitForResponse((response) => response.url().includes("/control/api/teams?limit=100&offset=") && response.status() === 200);
     await page.getByRole("button", { name: "Refresh teams" }).click();
     await laterPage;
@@ -142,8 +150,4 @@ function requiredEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required`);
   return value;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -1,3 +1,10 @@
+import { useConfirmation } from "../ui/confirmation";
+import { useUnsavedChanges } from "../ui/navigation";
+import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "../ui/primitives/table";
+import { Input } from "../ui/primitives/input";
+import { Button } from "../ui/primitives/button";
+import { NativeSelect, NativeSelectOption } from "../ui/primitives/native-select";
+import { Label } from "../ui/primitives/label";
 import { FormEvent, useEffect, useState } from "react";
 import { KeyRound, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { ControlApi, CreatedCredential, Credential, CredentialRole, Team } from "../api";
@@ -6,6 +13,7 @@ import { LoadingState, SecretBox, SectionHeading } from "../ui/components";
 import { credentialRoleLabel, displayKeySuffix, formatDate, readError } from "./utils";
 
 export function TeamCredentialsPanel({ api, team, embedded = false }: { api: ControlApi; team: Team; embedded?: boolean }) {
+  const confirm = useConfirmation();
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [createdCredential, setCreatedCredential] = useState<CreatedCredential | null>(null);
   const [error, setError] = useState("");
@@ -83,7 +91,7 @@ export function TeamCredentialsPanel({ api, team, embedded = false }: { api: Con
     if (!credential) {
       return;
     }
-    if (!window.confirm(`Regenerate the API key for credential "${credential.name}"? The current key will stop working.`)) {
+    if (!await confirm({ title: "Regenerate API key?", description: `Regenerate the API key for credential "${credential.name}"? The current key will stop working.`, confirmLabel: "Regenerate API key", destructive: true })) {
       return;
     }
     setRotatingCredentialId(credentialId);
@@ -106,7 +114,7 @@ export function TeamCredentialsPanel({ api, team, embedded = false }: { api: Con
   async function deleteCredential(credentialId: string) {
     const credential = credentials.find((item) => item.id === credentialId);
     const label = credential ? credential.name : "this credential";
-    if (!window.confirm(`Delete credential "${label}"?`)) {
+    if (!await confirm({ title: "Delete?", description: `Delete credential "${label}"?`, confirmLabel: "Delete", destructive: true })) {
       return;
     }
     setDeletingCredentialId(credentialId);
@@ -187,19 +195,19 @@ function CredentialTable({
 
   return (
     <div className="table-wrap">
-      <table className="data-table key-table">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Key</th>
-            <th>Permission</th>
-            <th>Role</th>
-            <th>Created</th>
-            <th>Last used</th>
-            <th className="actions-cell">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
+      <Table className="data-table key-table">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Name</TableHead>
+            <TableHead>Key</TableHead>
+            <TableHead>Permission</TableHead>
+            <TableHead>Role</TableHead>
+            <TableHead>Created</TableHead>
+            <TableHead>Last used</TableHead>
+            <TableHead className="actions-cell">Actions</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {credentials.map((credential) => (
             <CredentialRow
               key={credential.id}
@@ -216,8 +224,8 @@ function CredentialTable({
               onDelete={onDelete}
             />
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }
@@ -248,6 +256,7 @@ function CredentialRow({
   onDelete: (credentialId: string) => void;
 }) {
   const [draftName, setDraftName] = useState(credential.name);
+  useUnsavedChanges(draftName !== credential.name);
   const trimmedDraft = draftName.trim();
   const unchanged = trimmedDraft === credential.name;
   const busy = saving || updatingRole || updatingScopes || rotating || deleting;
@@ -257,15 +266,15 @@ function CredentialRow({
   }, [credential.id, credential.name]);
 
   return (
-    <tr>
-      <td>
+    <TableRow>
+      <TableCell>
         <div className="credential-name-cell">
-          <input
+          <Input
             aria-label={`Credential name ${credential.name}`}
             value={draftName}
             onChange={(event) => setDraftName(event.target.value)}
           />
-          <button
+          <Button variant="ghost" size="icon"
             className="icon-button"
             type="button"
             aria-label={`Save credential ${credential.name}`}
@@ -274,11 +283,11 @@ function CredentialRow({
             onClick={() => onRename(credential.id, draftName)}
           >
             <Pencil size={16} aria-hidden="true" />
-          </button>
+          </Button>
         </div>
-      </td>
-      <td><code>{displayKeySuffix(credential)}</code></td>
-      <td>
+      </TableCell>
+      <TableCell><code>{displayKeySuffix(credential)}</code></TableCell>
+      <TableCell>
         <CredentialPermissionCheckboxes
           scopes={credential.scopes}
           forceWrite={credential.role === "manager"}
@@ -288,23 +297,23 @@ function CredentialRow({
           onChange={(scopes) => onScopesChange(credential.id, normalizeCredentialScopes(scopes, { forceWrite: credential.role === "manager" }))}
         />
         <MemoryAccessSummary access={credential.memory_access} />
-      </td>
-      <td>
-        <select
+      </TableCell>
+      <TableCell>
+        <NativeSelect
           aria-label={`Credential role ${credential.name}`}
           value={credential.role}
           disabled={busy}
           onChange={(event) => onRoleChange(credential.id, event.target.value as CredentialRole)}
         >
-          <option value="manager">{credentialRoleLabel("manager")}</option>
-          <option value="member">{credentialRoleLabel("member")}</option>
-        </select>
-      </td>
-      <td>{formatDate(credential.created_at)}</td>
-      <td>{credential.last_used_at ? formatDate(credential.last_used_at) : "Never"}</td>
-      <td className="actions-cell">
+          <NativeSelectOption value="manager">{credentialRoleLabel("manager")}</NativeSelectOption>
+          <NativeSelectOption value="member">{credentialRoleLabel("member")}</NativeSelectOption>
+        </NativeSelect>
+      </TableCell>
+      <TableCell>{formatDate(credential.created_at)}</TableCell>
+      <TableCell>{credential.last_used_at ? formatDate(credential.last_used_at) : "Never"}</TableCell>
+      <TableCell className="actions-cell">
         <div className="table-actions">
-          <button
+          <Button variant="ghost" size="icon"
             className="icon-button"
             type="button"
             aria-label={`Regenerate API key for credential ${credential.name}`}
@@ -313,8 +322,8 @@ function CredentialRow({
             onClick={() => onRotate(credential.id)}
           >
             <RefreshCw size={16} aria-hidden="true" />
-          </button>
-          <button
+          </Button>
+          <Button variant="ghost" size="icon"
             className="icon-button danger"
             type="button"
             aria-label={`Delete credential ${credential.name}`}
@@ -323,10 +332,10 @@ function CredentialRow({
             onClick={() => onDelete(credential.id)}
           >
             <Trash2 size={16} aria-hidden="true" />
-          </button>
+          </Button>
         </div>
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -349,6 +358,8 @@ function CredentialCreateForm({
   const [rateLimit, setRateLimit] = useState("120");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  useUnsavedChanges(name !== "default credential" || role !== defaultRole || rateLimit !== "120" || scopes.join(",") !== "read,write");
 
   useEffect(() => {
     setRole(defaultRole);
@@ -378,6 +389,7 @@ function CredentialCreateForm({
         role,
         rate_limit: parsedRateLimit,
       });
+      setName("default credential"); setRole(defaultRole); setScopes(["read", "write"]); setRateLimit("120");
       onCreated(created);
     } catch (err) {
       setError(readError(err));
@@ -389,18 +401,18 @@ function CredentialCreateForm({
   return (
     <form className="key-form" onSubmit={submit}>
       <p className="span">Each key has its own private memory, including team-read-only keys. The calling agent chooses private or team shared for each Remember submission.</p>
-      <label htmlFor="team-credential-name">Credential name</label>
-      <input id="team-credential-name" value={name} onChange={(event) => setName(event.target.value)} />
-      <label htmlFor="team-credential-role">Role</label>
-      <select
+      <Label htmlFor="team-credential-name">Credential name</Label>
+      <Input id="team-credential-name" value={name} onChange={(event) => setName(event.target.value)} />
+      <Label htmlFor="team-credential-role">Role</Label>
+      <NativeSelect
         id="team-credential-role"
         value={role}
         onChange={(event) => setRole(event.target.value as CredentialRole)}
       >
-        <option value="manager">{credentialRoleLabel("manager")}</option>
-        <option value="member">{credentialRoleLabel("member")}</option>
-      </select>
-      <label>Permission</label>
+        <NativeSelectOption value="manager">{credentialRoleLabel("manager")}</NativeSelectOption>
+        <NativeSelectOption value="member">{credentialRoleLabel("member")}</NativeSelectOption>
+      </NativeSelect>
+      <Label>Permission</Label>
       <CredentialPermissionCheckboxes
         scopes={scopes}
         forceWrite={role === "manager"}
@@ -408,13 +420,13 @@ function CredentialCreateForm({
         ariaLabel="New credential permissions"
         onChange={(nextScopes) => setScopes(normalizeCredentialScopes(nextScopes, { forceWrite: role === "manager" }))}
       />
-      <label htmlFor="rate-limit">Rate limit</label>
-      <input id="rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
+      <Label htmlFor="rate-limit">Rate limit</Label>
+      <Input id="rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
       {error && <p className="field-error span" role="alert">{error}</p>}
-      <button className="primary-button span" type="submit" disabled={busy || disabled}>
+      <Button variant="default" className="primary-button span" type="submit" disabled={busy || disabled}>
         <KeyRound size={16} aria-hidden="true" />
         Create credential
-      </button>
+      </Button>
     </form>
   );
 }

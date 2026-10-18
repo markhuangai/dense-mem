@@ -1,3 +1,8 @@
+import { Button } from "../ui/primitives/button";
+import { Label } from "../ui/primitives/label";
+import { Input } from "../ui/primitives/input";
+import { Checkbox } from "../ui/primitives/checkbox";
+import { NativeSelect, NativeSelectOption } from "../ui/primitives/native-select";
 import { Component, FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
@@ -5,12 +10,10 @@ import {
   Copy,
   KeyRound,
   LogOut,
-  Moon,
   Network,
   RefreshCw,
   Search,
   ShieldCheck,
-  Sun,
   Trash2,
   Users,
 } from "lucide-react";
@@ -24,6 +27,12 @@ import {
 import { AuthShell, LoadingState, PortalShell, SecretBox, SectionHeading, writeClipboardText } from "../ui/components";
 import { SearchPanel } from "./SearchPanel";
 import { MemoryAccessSummary, memoryPermissionLabel } from "../credentialPermissions";
+import { PortalEnvironment, portalHref, usePortalNavigation, useUnsavedChanges } from "../ui/navigation";
+import { ThemeControl, usePortalTheme } from "../ui/theme";
+import type { ThemeName } from "../ui/theme";
+import { WorkspacePicker } from "../ui/workspace-picker";
+import { useConfirmation } from "../ui/confirmation";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "../ui/primitives/dialog";
 
 const TeamManagementPanel = lazy(() => import("./TeamManagementPanel").then((module) => ({ default: module.TeamManagementPanel })));
 const GraphPanel = lazy(() => import("./GraphPanel").then((module) => ({ default: module.GraphPanel })));
@@ -32,7 +41,7 @@ const OntologyPanel = lazy(() => import("./OntologyPanel").then((module) => ({ d
 const TOKEN_STORAGE_KEY = "denseMem.userApiKey";
 const THEME_STORAGE_KEY = "denseMem.userTheme";
 
-type Theme = "light" | "dark";
+type Theme = ThemeName;
 type AuthMode = "none" | "api_key" | "api_key_session" | "sso";
 type UserTab = "search" | "graph" | "team" | "credential" | "ontology";
 type CredentialPermission = "read" | "read_write";
@@ -58,14 +67,17 @@ function canShowMyCredential(session: UserSession | null): boolean {
   return !canManageTeam(session) && session.membership.grants.includes("read");
 }
 
-export function UserPortalApp() {
+export function UserPortalApp() { return <PortalEnvironment><UserAuth /></PortalEnvironment>; }
+
+function UserAuth() {
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "");
   const [draftToken, setDraftToken] = useState(token);
   const [authMode, setAuthMode] = useState<AuthMode>(() => token ? "api_key" : "none");
   const [rememberSession, setRememberSession] = useState(false);
   const [ssoProviders, setSSOProviders] = useState<SSOProvider[]>([]);
   const [authError, setAuthError] = useState("");
-  const [theme, setTheme] = useState<Theme>(() => readTheme());
+  const { theme, preference, setPreference } = usePortalTheme(THEME_STORAGE_KEY);
+  const themeMenu = <ThemeControl preference={preference} onChange={setPreference} />;
 
   useEffect(() => {
     sessionStorage.removeItem(TOKEN_STORAGE_KEY);
@@ -117,14 +129,6 @@ export function UserPortalApp() {
       active = false;
     };
   }, [authMode, token]);
-
-  function toggleTheme() {
-    setTheme((current) => {
-      const next = current === "dark" ? "light" : "dark";
-      localStorage.setItem(THEME_STORAGE_KEY, next);
-      return next;
-    });
-  }
 
   async function submitToken(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -179,43 +183,33 @@ export function UserPortalApp() {
         title="Dense-Mem Knowledge"
         icon={<span className="brand-initials" aria-hidden="true">DM</span>}
         onSubmit={submitToken}
-        actions={(
-          <button
-            className="icon-button theme-toggle"
-            type="button"
-            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-            onClick={toggleTheme}
-          >
-            {theme === "dark" ? <Sun size={17} aria-hidden="true" /> : <Moon size={17} aria-hidden="true" />}
-          </button>
-        )}
+        actions={themeMenu}
       >
-        <label htmlFor="user-api-key">API key</label>
-        <input
+        <Label htmlFor="user-api-key">API key</Label>
+        <Input
           id="user-api-key"
           type="password"
           value={draftToken}
           onChange={(event) => setDraftToken(event.target.value)}
           autoComplete="current-password"
         />
-        <label className="checkbox-row" htmlFor="remember-user-session">
-          <input
+        <Label className="checkbox-row" htmlFor="remember-user-session">
+          <Checkbox
             id="remember-user-session"
-            type="checkbox"
             checked={rememberSession}
-            onChange={(event) => setRememberSession(event.target.checked)}
+            onCheckedChange={(event) => setRememberSession((event === true))}
           />
           Keep me signed in for 7 days
-        </label>
+        </Label>
         {authError && <p className="field-error" role="alert">{authError}</p>}
-        <button className="primary-button" type="submit">
+        <Button variant="default" className="primary-button" type="submit">
           <KeyRound size={17} aria-hidden="true" />
           Sign in
-        </button>
+        </Button>
         {ssoProviders.length > 0 && (
           <div className="sso-provider-list">
             {ssoProviders.map((provider) => (
-              <button
+              <Button variant="outline"
                 className="ghost-button"
                 type="button"
                 key={provider.id}
@@ -225,7 +219,7 @@ export function UserPortalApp() {
               >
                 <ShieldCheck size={17} aria-hidden="true" />
                 {provider.name}
-              </button>
+              </Button>
             ))}
           </div>
         )}
@@ -243,7 +237,7 @@ export function UserPortalApp() {
         setAuthMode(nextToken ? "api_key" : "none");
       }}
       onAuthModeChange={setAuthMode}
-      onToggleTheme={toggleTheme}
+      themeMenu={themeMenu}
       onSignOut={signOut}
     />
   );
@@ -255,7 +249,7 @@ function UserPortal({
   theme,
   onTokenChange,
   onAuthModeChange,
-  onToggleTheme,
+  themeMenu,
   onSignOut,
 }: {
   token: string;
@@ -263,28 +257,34 @@ function UserPortal({
   theme: Theme;
   onTokenChange: (token: string) => void;
   onAuthModeChange: (mode: AuthMode) => void;
-  onToggleTheme: () => void;
+  themeMenu: ReactNode;
   onSignOut: () => Promise<void>;
 }) {
   const api = useMemo(() => new UserApi(token, authMode === "none" ? "anonymous" : authMode), [token, authMode]);
   const [session, setSession] = useState<UserSession | null>(null);
-  const [activeTab, setActiveTab] = useState<UserTab>("search");
+  const { parameters, navigate, transition } = usePortalNavigation();
+  const requestedTab = parameters.get("section");
+  const allowedTabs: UserTab[] = ["search", "graph", ...(canManageTeam(session) ? ["ontology", "team"] as const : []), ...(canShowMyCredential(session) ? ["credential"] as const : [])];
+  const activeTab: UserTab = allowedTabs.includes(requestedTab as UserTab) ? requestedTab as UserTab : "search";
+  function setActiveTab(section: UserTab) { return navigate({ section, tab: null, team_id: null, team_tab: null, remember_view: null, attempt_id: null, invocation_id: null }); }
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [switchingTeam, setSwitchingTeam] = useState(false);
   const switchRequestId = useRef(0);
 
   async function loadSession() {
+    const requestId = ++switchRequestId.current;
     setLoading(true);
     setError("");
     try {
       const next = await api.session();
+      if (requestId !== switchRequestId.current) return;
       setSession(next);
       onAuthModeChange(sessionAuthMode(next, token));
     } catch (err) {
-      setError(readError(err));
+      if (requestId === switchRequestId.current) setError(readError(err));
     } finally {
-      setLoading(false);
+      if (requestId === switchRequestId.current) setLoading(false);
     }
   }
 
@@ -298,11 +298,14 @@ function UserPortal({
       if (switchRequestId.current === requestId) {
         setSession(next);
         onAuthModeChange(sessionAuthMode(next, token));
+        return true;
       }
+      return false;
     } catch (err) {
       if (switchRequestId.current === requestId) {
         setError(readError(err));
       }
+      return false;
     } finally {
       if (switchRequestId.current === requestId) {
         setSwitchingTeam(false);
@@ -312,29 +315,18 @@ function UserPortal({
 
   useEffect(() => {
     void loadSession();
+    return () => { switchRequestId.current += 1; };
   }, [api]);
 
-  useEffect(() => {
-    if (session && !canManageTeam(session) && (activeTab === "team" || activeTab === "ontology")) {
-      setActiveTab("search");
-    }
-  }, [activeTab, session]);
-
-  useEffect(() => {
-    if (!canShowMyCredential(session) && activeTab === "credential") {
-      setActiveTab("search");
-    }
-  }, [activeTab, session]);
-
   const navItems = [
-    { id: "search", label: "Recall", icon: <Search size={17} aria-hidden="true" />, active: activeTab === "search", onClick: () => setActiveTab("search") },
-    { id: "graph", label: "Graph", icon: <Network size={17} aria-hidden="true" />, active: activeTab === "graph", onClick: () => setActiveTab("graph") },
+    { id: "search", label: "Search memory", group: "Explore", icon: <Search size={17} aria-hidden="true" />, active: activeTab === "search", href: portalHref({ section: "search", tab: null }), disabled: !session || switchingTeam, onClick: () => setActiveTab("search") },
+    { id: "graph", label: "Graph", group: "Explore", icon: <Network size={17} aria-hidden="true" />, active: activeTab === "graph", href: portalHref({ section: "graph", tab: null }), disabled: !session || switchingTeam, onClick: () => setActiveTab("graph") },
     ...(canManageTeam(session) ? [
-      { id: "ontology", label: "Ontology", icon: <Network size={17} aria-hidden="true" />, active: activeTab === "ontology", onClick: () => setActiveTab("ontology") },
-      { id: "team", label: "Team", icon: <Users size={17} aria-hidden="true" />, active: activeTab === "team", onClick: () => setActiveTab("team") },
+      { id: "ontology", label: "Ontology", group: "Manage", icon: <Network size={17} aria-hidden="true" />, active: activeTab === "ontology", href: portalHref({ section: "ontology", tab: null }), disabled: !session || switchingTeam, onClick: () => setActiveTab("ontology") },
+      { id: "team", label: "Team", group: "Manage", icon: <Users size={17} aria-hidden="true" />, active: activeTab === "team", href: portalHref({ section: "team", tab: null }), disabled: !session || switchingTeam, onClick: () => setActiveTab("team") },
     ] : []),
     ...(canShowMyCredential(session) ? [
-      { id: "credential", label: "My credential", icon: <KeyRound size={17} aria-hidden="true" />, active: activeTab === "credential", onClick: () => setActiveTab("credential") },
+      { id: "credential", label: "My credentials", group: "Account", icon: <KeyRound size={17} aria-hidden="true" />, active: activeTab === "credential", href: portalHref({ section: "credential", tab: null }), disabled: !session || switchingTeam, onClick: () => setActiveTab("credential") },
     ] : []),
   ];
   const ssoTeamOptions = session?.teams ?? [];
@@ -344,47 +336,19 @@ function UserPortal({
       theme={theme}
       title="Knowledge"
       icon={<span className="brand-initials" aria-hidden="true">DM</span>}
-      topbarActions={(
-        <>
-          <button
-            className="icon-button"
-            type="button"
-            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-            title={theme === "dark" ? "Light theme" : "Dark theme"}
-            onClick={onToggleTheme}
-          >
-            {theme === "dark" ? <Sun size={17} aria-hidden="true" /> : <Moon size={17} aria-hidden="true" />}
-          </button>
-          <button className="icon-button" type="button" aria-label="Refresh session" onClick={() => void loadSession()}>
-            <RefreshCw size={18} aria-hidden="true" />
-          </button>
-          <button
-            className="ghost-button"
-            type="button"
-            onClick={() => void onSignOut().catch((err) => setError(readError(err)))}
-          >
-            <LogOut size={17} aria-hidden="true" />
-            Sign out
-          </button>
-        </>
-      )}
+      topbarActions={<>{session && <UserContextBar session={session} />}{themeMenu}
+        <Button variant="ghost" size="icon" className="icon-button" type="button" aria-label="Refresh session" disabled={switchingTeam || loading} onClick={() => void transition(loadSession)}><RefreshCw size={17} aria-hidden="true" /></Button>
+        <Button variant="ghost" className="ghost-button" type="button" aria-label="Sign out" onClick={() => void transition(async () => { try { await onSignOut(); return true; } catch (err) { setError(readError(err)); return false; } })}><LogOut size={17} aria-hidden="true" /><span className="sign-out-label">Sign out</span></Button>
+      </>}
       navLabel="Knowledge navigation"
       navItemsLabel="Knowledge sections"
       navItems={navItems}
-      navPlacement="top"
-      contextBar={session && (
-        <UserContextBar
-          session={session}
-          authMode={authMode}
-          switchingTeam={switchingTeam}
-          ssoTeamOptions={ssoTeamOptions}
-          onSwitchTeam={switchSSOTeam}
-        />
-      )}
+      workspacePicker={session && <WorkspacePicker options={authMode === "sso" ? ssoTeamOptions.map((item) => item.team) : [session.team]} selectedID={session.team.id} disabled={authMode !== "sso" || ssoTeamOptions.length <= 1} loading={switchingTeam} onSelect={async (id) => { const changed = await transition(() => switchSSOTeam(id)); if (changed) await navigate({ section: "search", tab: null }); return changed; }} />}
+      contextBar={<span className="current-team" aria-label="Current workspace">{session?.team.name ?? "Knowledge"}</span>}
       detailLabel="Knowledge details"
-      error={error}
+      error={error || (session && requestedTab && !allowedTabs.includes(requestedTab as UserTab) ? "This section is unavailable for your current access." : "")}
     >
-      <LazyPanelErrorBoundary key={activeTab}>
+      {(!session || switchingTeam) ? <LoadingState label={switchingTeam ? "Switching team" : loading ? "Loading workspace" : "Workspace unavailable. Refresh your session to retry."} /> : <LazyPanelErrorBoundary key={session.team.id + ":" + activeTab}>
         <Suspense fallback={<LazyPanelFallback />}>
           {activeTab === "search" && <SearchPanel api={api} />}
           {activeTab === "graph" && <GraphPanel api={api} />}
@@ -418,82 +382,35 @@ function UserPortal({
             />
           )}
         </Suspense>
-      </LazyPanelErrorBoundary>
+      </LazyPanelErrorBoundary>}
     </PortalShell>
   );
 }
 
-function UserContextBar({
-  session,
-  authMode,
-  switchingTeam,
-  ssoTeamOptions,
-  onSwitchTeam,
-}: {
-  session: UserSession;
-  authMode: AuthMode;
-  switchingTeam: boolean;
-  ssoTeamOptions: UserSession["teams"];
-  onSwitchTeam: (teamId: string) => Promise<void>;
-}) {
+function UserContextBar({ session }: { session: UserSession }) {
   const [copied, setCopied] = useState(false);
   const copyFallbackRef = useRef<HTMLInputElement>(null);
   const configuredBase = session.mcp_public_base_url.trim().replace(/\/+$/, "");
   const browserBase = window.location.origin.replace(/\/+$/, "");
-  const mcpURL = `${configuredBase || browserBase}/teams/${session.team.id}/mcp`;
-
+  const mcpURL = (configuredBase || browserBase) + "/teams/" + session.team.id + "/mcp";
+  useEffect(() => { setCopied(false); }, [mcpURL]);
   useEffect(() => {
-    setCopied(false);
-  }, [mcpURL]);
-
-  useEffect(() => {
-    if (!copied) {
-      return;
-    }
+    if (!copied) return;
     const timeout = window.setTimeout(() => setCopied(false), 2000);
     return () => window.clearTimeout(timeout);
   }, [copied]);
-
-  async function copyMCPURL() {
-    setCopied(await writeClipboardText(mcpURL, copyFallbackRef.current));
-  }
-
-  return (
-    <div className="session-context compact mcp-context" aria-label="Current workspace">
-      <div className="mcp-context-team">
-        <span className="context-label">Team</span>
-        {authMode === "sso" ? (
-          <select
-            aria-label="Active team"
-            value={session.team.id}
-            disabled={switchingTeam || (ssoTeamOptions?.length ?? 0) <= 1}
-            onChange={(event) => void onSwitchTeam(event.target.value)}
-          >
-            {(ssoTeamOptions ?? []).map((item) => (
-              <option value={item.team.id} key={item.team.id}>{item.team.name}</option>
-            ))}
-          </select>
-        ) : (
-          <strong className="team-select-chip">{session.team.name}</strong>
-        )}
+  return <Dialog><DialogTrigger asChild><Button variant="outline" size="sm"><Network size={16} aria-hidden="true" /><span>Connect</span></Button></DialogTrigger>
+    <DialogContent><DialogHeader><DialogTitle>Connect to Dense-Mem</DialogTitle><DialogDescription>Use this team-scoped MCP endpoint in your client.</DialogDescription></DialogHeader>
+      <div className="connection-details">
+        <div><h3>Team</h3><strong>{session.team.name}</strong><code aria-label="Team ID">{session.team.id}</code></div>
+        <div><h3>MCP URL</h3><code aria-label="MCP URL">{mcpURL}</code><Input ref={copyFallbackRef} className="sr-only" value={mcpURL} readOnly tabIndex={-1} aria-hidden="true" />
+          <Button variant="outline" size="sm" className="mt-3" aria-label={copied ? "MCP URL copied" : "Copy MCP URL"} onClick={async () => setCopied(await writeClipboardText(mcpURL, copyFallbackRef.current))}>{copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}{copied ? "Copied" : "Copy MCP URL"}</Button>
+          {!configuredBase && <p className="form-meta">Using this browser origin because MCP_PUBLIC_BASE_URL is not configured.</p>}
+        </div>
+        <div><h3>Your memory access</h3><MemoryAccessSummary access={session.memory_access} /></div>
       </div>
-      <div className="mcp-context-value">
-        <span className="context-label">Team ID</span>
-        <code>{session.team.id}</code>
-      </div>
-      <div className="mcp-context-value mcp-context-endpoint">
-        <span className="context-label">MCP URL</span>
-        <code>{mcpURL}</code>
-        <input ref={copyFallbackRef} className="sr-only" value={mcpURL} readOnly tabIndex={-1} aria-hidden="true" />
-        <button className="icon-button compact" type="button" aria-label={copied ? "MCP URL copied" : "Copy MCP URL"} onClick={() => void copyMCPURL()}>
-          {copied ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
-        </button>
-      </div>
-      {!configuredBase && (
-        <small className="mcp-origin-fallback">Using this browser origin because MCP_PUBLIC_BASE_URL is not configured.</small>
-      )}
-    </div>
-  );
+    </DialogContent>
+  </Dialog>;
 }
 
 type LazyPanelErrorBoundaryProps = {
@@ -517,10 +434,10 @@ class LazyPanelErrorBoundary extends Component<LazyPanelErrorBoundaryProps, Lazy
         <section className="surface">
           <SectionHeading title="Panel unavailable" />
           <p className="field-error" role="alert">This panel could not load.</p>
-          <button className="ghost-button" type="button" onClick={() => window.location.reload()}>
+          <Button variant="outline" className="ghost-button" type="button" onClick={() => window.location.reload()}>
             <RefreshCw size={17} aria-hidden="true" />
             Reload
-          </button>
+          </Button>
         </section>
       );
     }
@@ -551,6 +468,7 @@ function CredentialPanel({
   const [selectedCredentialID, setSelectedCredentialID] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const confirm = useConfirmation();
   const isSSO = session.credential === null;
   const personalCredentials = isSSO ? (session.personal_credentials ?? []) : [];
   const selectedPersonalCredential = personalCredentials.find((credential) => credential.id === selectedCredentialID) ?? personalCredentials[0] ?? null;
@@ -559,6 +477,7 @@ function CredentialPanel({
   const canCreateWrite = maxScopes.includes("write");
   const canRotate = Boolean(personalCredential?.scopes.includes("write") && maxScopes.includes("write"));
   const canRevoke = Boolean(personalCredential);
+  const clearDirty = useUnsavedChanges(isSSO && Boolean(name || expiresAt || rateLimit !== "120" || permission !== (canCreateWrite ? "read_write" : "read")));
 
   useEffect(() => {
     if (!isSSO) {
@@ -600,6 +519,9 @@ function CredentialPanel({
       onSSOCredentialsChanged(nextCredentials);
       setName("");
       setExpiresAt("");
+      setRateLimit("120");
+      setPermission(canCreateWrite ? "read_write" : "read");
+      clearDirty();
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -608,7 +530,7 @@ function CredentialPanel({
   }
 
   async function rotate() {
-    if (!window.confirm("Regenerate this API key? The current key will stop working.")) {
+    if (!await confirm({ title: "Regenerate API key?", description: "The current key will stop working. Copy the replacement key before closing it.", confirmLabel: "Regenerate key", destructive: true })) {
       return;
     }
     setBusy(true);
@@ -631,7 +553,7 @@ function CredentialPanel({
   }
 
   async function revoke() {
-    if (!personalCredential || !window.confirm(`Revoke ${personalCredential.name}? This key will stop working.`)) {
+    if (!personalCredential || !await confirm({ title: "Revoke API key?", description: "Revoke " + personalCredential.name + "? This key will stop working.", confirmLabel: "Revoke key", destructive: true })) {
       return;
     }
     setBusy(true);
@@ -661,7 +583,7 @@ function CredentialPanel({
           <h3>Owned API keys</h3>
           <div className="credential-list-items">
             {personalCredentials.map((credential) => (
-              <button
+              <Button variant="ghost"
                 className={`credential-list-item${credential.id === personalCredential?.id ? " selected" : ""}`}
                 type="button"
                 key={credential.id}
@@ -670,7 +592,7 @@ function CredentialPanel({
               >
                 <span>{credential.name}</span>
                 <small>{displayKeySuffix(credential.key_suffix)}</small>
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -690,15 +612,15 @@ function CredentialPanel({
             <div><dt>Expires</dt><dd>{personalCredential.expires_at ? formatDate(personalCredential.expires_at) : "Never"}</dd></div>
           </dl>
           <div className="button-row">
-            <button className="primary-button" type="button" disabled={!canRotate || busy} onClick={() => void rotate()}>
+            <Button variant="default" className="primary-button" type="button" disabled={!canRotate || busy} onClick={() => void rotate()}>
               <RefreshCw size={16} aria-hidden="true" />
               Regenerate key
-            </button>
+            </Button>
             {isSSO && (
-              <button className="ghost-button" type="button" disabled={!canRevoke || busy} onClick={() => void revoke()}>
+              <Button variant="outline" className="ghost-button" type="button" disabled={!canRevoke || busy} onClick={() => void revoke()}>
                 <Trash2 size={16} aria-hidden="true" />
                 Revoke key
-              </button>
+              </Button>
             )}
           </div>
         </>
@@ -706,26 +628,26 @@ function CredentialPanel({
       {isSSO && (
         <form className={`key-form${personalCredential ? " credential-create-form" : ""}`} onSubmit={createSSOCredential}>
           {personalCredential && <h3>Create another API key</h3>}
-          <label htmlFor="sso-personal-credential-name">Credential name</label>
-          <input id="sso-personal-credential-name" value={name} onChange={(event) => setName(event.target.value)} />
-          <label htmlFor="sso-personal-credential-permission">Permission</label>
-          <select
+          <Label htmlFor="sso-personal-credential-name">Credential name</Label>
+          <Input id="sso-personal-credential-name" value={name} onChange={(event) => setName(event.target.value)} />
+          <Label htmlFor="sso-personal-credential-permission">Permission</Label>
+          <NativeSelect
             id="sso-personal-credential-permission"
             value={permission}
             disabled={!canCreateWrite}
             onChange={(event) => setPermission(event.target.value as CredentialPermission)}
           >
-            {canCreateWrite && <option value="read_write">Team read/write</option>}
-            <option value="read">Team-read-only</option>
-          </select>
-          <label htmlFor="sso-personal-credential-rate-limit">Rate limit</label>
-          <input id="sso-personal-credential-rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
-          <label htmlFor="sso-personal-credential-expires">Expires (optional)</label>
-          <input id="sso-personal-credential-expires" type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} />
-          <button className="primary-button span" type="submit" disabled={busy || !session.membership.grants.includes("read")}>
+            {canCreateWrite && <NativeSelectOption value="read_write">Team read/write</NativeSelectOption>}
+            <NativeSelectOption value="read">Team-read-only</NativeSelectOption>
+          </NativeSelect>
+          <Label htmlFor="sso-personal-credential-rate-limit">Rate limit</Label>
+          <Input id="sso-personal-credential-rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
+          <Label htmlFor="sso-personal-credential-expires">Expires (optional)</Label>
+          <Input id="sso-personal-credential-expires" type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} />
+          <Button variant="default" className="primary-button span" type="submit" disabled={busy || !session.membership.grants.includes("read")}>
             <KeyRound size={16} aria-hidden="true" />
             Create API key
-          </button>
+          </Button>
         </form>
       )}
     </section>
@@ -742,10 +664,6 @@ function CreatedCredentialNotice({ apiKey, onDismiss }: { apiKey: string; onDism
       onDismiss={onDismiss}
     />
   );
-}
-
-function readTheme(): Theme {
-  return localStorage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
 }
 
 function readError(error: unknown): string {

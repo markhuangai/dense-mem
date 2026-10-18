@@ -1,3 +1,4 @@
+import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
 import { expect, test, type Page } from "@playwright/test";
 
 const controlUrl = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -8,7 +9,7 @@ const seedTeamName = requiredEnv("DENSE_MEM_E2E_TEAM_NAME");
 test("control panel shows the read-only conflict queue workspace", async ({ page }) => {
   await openControlPanel(page);
   await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
-  await page.getByRole("button", { name: /team conflicts/i }).click();
+  await navigate(page, "Conflicts");
 
   await expect(page.getByRole("heading", { name: "Conflict queue" })).toBeVisible();
   await expect(page.getByLabel("Conflict queue summary")).toContainText(/Open|Overdue/);
@@ -35,7 +36,7 @@ async function openControlPanel(page: Page) {
 
 async function expectNoShellOverlap(page: Page) {
   const boxes = await page.locator(".topbar, .primary-rail, .resource-rail, .detail-pane").evaluateAll((elements) => (
-    elements.map((element) => {
+    elements.filter((element) => element.getBoundingClientRect().width > 0).map((element) => {
       const rect = element.getBoundingClientRect();
       return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
     })

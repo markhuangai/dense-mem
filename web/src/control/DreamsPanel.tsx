@@ -1,3 +1,7 @@
+import { Label } from "../ui/primitives/label";
+import { NativeSelect, NativeSelectOption } from "../ui/primitives/native-select";
+import { Button } from "../ui/primitives/button";
+import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "../ui/primitives/table";
 import { useEffect, useRef, useState } from "react";
 import { ControlApi, Dream, DreamDiagnostic, DreamQuery, DreamRun, DreamSort, DreamStatus, Team } from "../api";
 import { InfoTooltip, LoadingState, SectionHeading } from "../ui/components";
@@ -198,44 +202,44 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
       <section className={panelClassName}>
         <SectionHeading title="Dream Outputs" meta={`Page ${pageNumber}`} />
         <div className="metrics-toolbar dream-list-toolbar">
-          <label>
+          <Label>
             Status
-            <select
+            <NativeSelect
               value={dreamQuery.status ?? ""}
               onChange={(event) => {
                 void loadData({ ...dreamQuery, status: event.target.value, cursor: "" }, []);
               }}
             >
               {DREAM_STATUSES.map((statusOption) => (
-                <option value={statusOption} key={statusOption}>{statusOption || "All"}</option>
+                <NativeSelectOption value={statusOption} key={statusOption}>{statusOption || "All"}</NativeSelectOption>
               ))}
-            </select>
-          </label>
-          <label>
+            </NativeSelect>
+          </Label>
+          <Label>
             Sort
-            <select
+            <NativeSelect
               value={dreamSort}
               onChange={(event) => {
                 void loadData({ ...dreamQuery, sort: event.target.value as DreamSort, cursor: "" }, []);
               }}
             >
               {DREAM_SORTS.map((sortOption) => (
-                <option value={sortOption.value} key={sortOption.value}>{sortOption.label}</option>
+                <NativeSelectOption value={sortOption.value} key={sortOption.value}>{sortOption.label}</NativeSelectOption>
               ))}
-            </select>
-          </label>
-          <label>
+            </NativeSelect>
+          </Label>
+          <Label>
             Direction
-            <select
+            <NativeSelect
               value={dreamDirection}
               onChange={(event) => {
                 void loadData({ ...dreamQuery, direction: event.target.value as DreamQuery["direction"], cursor: "" }, []);
               }}
             >
-              <option value="desc">Desc</option>
-              <option value="asc">Asc</option>
-            </select>
-          </label>
+              <NativeSelectOption value="desc">Desc</NativeSelectOption>
+              <NativeSelectOption value="asc">Asc</NativeSelectOption>
+            </NativeSelect>
+          </Label>
         </div>
         {loading && dreams.length === 0 ? (
           <LoadingState label="Loading dreams" />
@@ -246,9 +250,9 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
         )}
         <div className="table-actions">
           <span className="form-meta">Page {pageNumber} · {dreams.length} rows</span>
-          <label className="table-page-size">
+          <Label className="table-page-size">
             Rows
-            <select
+            <NativeSelect
               value={dreamLimit}
               disabled={loading}
               onChange={(event) => {
@@ -256,11 +260,11 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
               }}
             >
               {DREAM_PAGE_SIZES.map((pageSize) => (
-                <option value={pageSize} key={pageSize}>{pageSize}</option>
+                <NativeSelectOption value={pageSize} key={pageSize}>{pageSize}</NativeSelectOption>
               ))}
-            </select>
-          </label>
-          <button
+            </NativeSelect>
+          </Label>
+          <Button variant="outline"
             className="ghost-button"
             type="button"
             disabled={loading || cursorStack.length === 0}
@@ -270,8 +274,8 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
             }}
           >
             Previous
-          </button>
-          <button
+          </Button>
+          <Button variant="outline"
             className="ghost-button"
             type="button"
             disabled={loading || !nextCursor}
@@ -280,7 +284,7 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
             }}
           >
             Next
-          </button>
+          </Button>
         </div>
       </section>
 
@@ -304,22 +308,22 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
             <div className="table-placeholder">No diagnostic capture was retained for this selection.</div>
           ) : (
             <div className="table-wrap">
-              <table className="data-table dream-diagnostics-table">
-                <thead><tr><th>Phase</th><th>Hypothesis</th><th>Outcome</th><th>Cause</th><th>Capture</th><th>Details</th><th>Payload</th></tr></thead>
-                <tbody>
+              <Table className="data-table dream-diagnostics-table">
+                <TableHeader><TableRow><TableHead>Phase</TableHead><TableHead>Hypothesis</TableHead><TableHead>Outcome</TableHead><TableHead>Cause</TableHead><TableHead>Capture</TableHead><TableHead>Details</TableHead><TableHead>Payload</TableHead></TableRow></TableHeader>
+                <TableBody>
                   {diagnostics.map((diagnostic) => (
-                    <tr key={diagnostic.capture_id}>
-                      <td>{diagnostic.phase}</td>
-                      <td><code>{diagnostic.hypothesis_id?.slice(0, 8) || "-"}</code></td>
-                      <td>{diagnostic.outcome}</td>
-                      <td>{diagnostic.cause || "-"}</td>
-                      <td>{diagnostic.capture_state}{diagnostic.capture_reason ? ` · ${diagnostic.capture_reason}` : ""}</td>
-                      <td><code>{diagnostic.details ? JSON.stringify(diagnostic.details) : "Unavailable"}</code></td>
-                      <td><button className="ghost-button" type="button" onClick={() => void loadDiagnostic(diagnostic)}>View capture</button></td>
-                    </tr>
+                    <TableRow key={diagnostic.capture_id}>
+                      <TableCell>{diagnostic.phase}</TableCell>
+                      <TableCell><code>{diagnostic.hypothesis_id?.slice(0, 8) || "-"}</code></TableCell>
+                      <TableCell>{diagnostic.outcome}</TableCell>
+                      <TableCell>{diagnostic.cause || "-"}</TableCell>
+                      <TableCell>{diagnostic.capture_state}{diagnostic.capture_reason ? ` · ${diagnostic.capture_reason}` : ""}</TableCell>
+                      <TableCell><code>{diagnostic.details ? JSON.stringify(diagnostic.details) : "Unavailable"}</code></TableCell>
+                      <TableCell><Button variant="outline" className="ghost-button" type="button" onClick={() => void loadDiagnostic(diagnostic)}>View capture</Button></TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
           )}
           {selectedDiagnostic && (
@@ -332,13 +336,13 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
           )}
           {diagnosticCursor && (
             <div className="table-actions">
-              <button className="ghost-button" type="button" disabled={diagnosticsLoading} onClick={() => {
+              <Button variant="outline" className="ghost-button" type="button" disabled={diagnosticsLoading} onClick={() => {
                 if (diagnosticRun) {
                   void inspectRun(diagnosticRun, diagnosticCursor);
                 } else if (diagnosticHypothesis) {
                   void inspectHypothesisByID(diagnosticHypothesis, diagnosticCursor);
                 }
-              }}>Load more</button>
+              }}>Load more</Button>
             </div>
           )}
         </section>
@@ -359,24 +363,24 @@ function StatusItem({ label, value }: { label: string; value: string | number })
 function DreamTable({ dreams, sort, onInspectHypothesis }: { dreams: Dream[]; sort: DreamSort; onInspectHypothesis: (dream: Dream) => void }) {
   return (
     <div className="table-wrap dream-table-wrap">
-      <table className="data-table dreams-table">
-        <thead>
-          <tr>
-            <th>{dreamDateHeader(sort)}</th>
-            <th>Status</th>
-            <th>Hypothesis</th>
-            <th>Evidence</th>
-            <th>Confidence</th>
-            <th>Run</th>
-            <th>Investigation</th>
-          </tr>
-        </thead>
-        <tbody>
+      <Table className="data-table dreams-table">
+        <TableHeader>
+          <TableRow>
+            <TableHead>{dreamDateHeader(sort)}</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Hypothesis</TableHead>
+            <TableHead>Evidence</TableHead>
+            <TableHead>Confidence</TableHead>
+            <TableHead>Run</TableHead>
+            <TableHead>Investigation</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {dreams.map((dream) => (
-            <tr key={dream.dream_id}>
-              <td>{formatDreamDate(dream, sort)}</td>
-              <td><span className={dreamStatusClass(dream.status)}>{dream.status}</span></td>
-              <td>
+            <TableRow key={dream.dream_id}>
+              <TableCell>{formatDreamDate(dream, sort)}</TableCell>
+              <TableCell><span className={dreamStatusClass(dream.status)}>{dream.status}</span></TableCell>
+              <TableCell>
                 <div className="dream-hypothesis-cell">
                   <strong>{dream.hypothesis}</strong>
                   {dream.rationale && (
@@ -385,15 +389,15 @@ function DreamTable({ dreams, sort, onInspectHypothesis }: { dreams: Dream[]; so
                     </InfoTooltip>
                   )}
                 </div>
-              </td>
-              <td><DreamEvidenceSummary dream={dream} /></td>
-              <td>{Math.round(dream.confidence * 100)}%</td>
-              <td><code>{dream.cycle_run_id?.slice(0, 8) || "-"}</code></td>
-              <td><button className="ghost-button" type="button" onClick={() => onInspectHypothesis(dream)}>Inspect</button></td>
-            </tr>
+              </TableCell>
+              <TableCell><DreamEvidenceSummary dream={dream} /></TableCell>
+              <TableCell>{Math.round(dream.confidence * 100)}%</TableCell>
+              <TableCell><code>{dream.cycle_run_id?.slice(0, 8) || "-"}</code></TableCell>
+              <TableCell><Button variant="outline" className="ghost-button" type="button" onClick={() => onInspectHypothesis(dream)}>Inspect</Button></TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }
@@ -410,38 +414,38 @@ function formatDreamDate(dream: Dream, sort: DreamSort): string {
 function RunTable({ runs, onInspect }: { runs: DreamRun[]; onInspect: (run: DreamRun) => void }) {
   return (
     <div className="table-wrap">
-      <table className="data-table dream-runs-table">
-        <thead>
-          <tr>
-            <th>Started</th>
-            <th>Lane</th>
-            <th>Status</th>
-            <th><MetricLabel label="Eligible" detail="Graph relationships or evidence targets selected for this Dream lane." /></th>
-            <th><MetricLabel label="Paths" detail="Direct A → B → C paths for graph dreaming; evidence target passes for discovery." /></th>
-            <th><MetricLabel label="AI" detail="Valid possible-relationship proposals returned by the provider." /></th>
-            <th>Created</th>
-            <th><MetricLabel label="Rejected" detail="Provider proposals rejected by current target or source policy after validation." /></th>
-            <th>Outcome</th>
-            <th>Investigation</th>
-          </tr>
-        </thead>
-        <tbody>
+      <Table className="data-table dream-runs-table">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Started</TableHead>
+            <TableHead>Lane</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead><MetricLabel label="Eligible" detail="Graph relationships or evidence targets selected for this Dream lane." /></TableHead>
+            <TableHead><MetricLabel label="Paths" detail="Direct A → B → C paths for graph dreaming; evidence target passes for discovery." /></TableHead>
+            <TableHead><MetricLabel label="AI" detail="Valid possible-relationship proposals returned by the provider." /></TableHead>
+            <TableHead>Created</TableHead>
+            <TableHead><MetricLabel label="Rejected" detail="Provider proposals rejected by current target or source policy after validation." /></TableHead>
+            <TableHead>Outcome</TableHead>
+            <TableHead>Investigation</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {runs.map((run) => (
-            <tr key={run.run_id}>
-              <td>{formatDate(run.started_at)}</td>
-              <td>{run.lane === "evidence_discovery" ? "Evidence discovery" : "Graph"}</td>
-              <td><span className={runStatusClass(run.status)}>{run.status}</span></td>
-              <td>{run.lane === "evidence_discovery" ? run.evidence_targets ?? 0 : run.input_relationships}</td>
-              <td>{run.lane === "evidence_discovery" ? run.evaluated_evidence_targets ?? 0 : run.attempted_paths ?? 0}</td>
-              <td>{run.provider_proposals ?? 0}</td>
-              <td>{run.created_dreams}</td>
-              <td>{run.rejected_dreams}</td>
-              <td>{runOutcome(run)}</td>
-              <td><button className="ghost-button" type="button" onClick={() => onInspect(run)}>Inspect</button></td>
-            </tr>
+            <TableRow key={run.run_id}>
+              <TableCell>{formatDate(run.started_at)}</TableCell>
+              <TableCell>{run.lane === "evidence_discovery" ? "Evidence discovery" : "Graph"}</TableCell>
+              <TableCell><span className={runStatusClass(run.status)}>{run.status}</span></TableCell>
+              <TableCell>{run.lane === "evidence_discovery" ? run.evidence_targets ?? 0 : run.input_relationships}</TableCell>
+              <TableCell>{run.lane === "evidence_discovery" ? run.evaluated_evidence_targets ?? 0 : run.attempted_paths ?? 0}</TableCell>
+              <TableCell>{run.provider_proposals ?? 0}</TableCell>
+              <TableCell>{run.created_dreams}</TableCell>
+              <TableCell>{run.rejected_dreams}</TableCell>
+              <TableCell>{runOutcome(run)}</TableCell>
+              <TableCell><Button variant="outline" className="ghost-button" type="button" onClick={() => onInspect(run)}>Inspect</Button></TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }

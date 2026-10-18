@@ -1,4 +1,8 @@
-import { FormEvent, lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { Label } from "./ui/primitives/label";
+import { Input } from "./ui/primitives/input";
+import { Button } from "./ui/primitives/button";
+import { Textarea } from "./ui/primitives/textarea";
+import { FormEvent, lazy, ReactNode, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -14,7 +18,6 @@ import {
   Search,
   Settings,
   ShieldCheck,
-  Sun,
   Trash2,
   Users,
 } from "lucide-react";
@@ -28,12 +31,20 @@ import type { OperationLogQuery } from "./api";
 import { TeamCredentialsPanel } from "./control/TeamCredentialsPanel";
 import { TeamOverviewPanel, TeamWorkspaceShell } from "./control/TeamWorkspace";
 import type { TeamWorkspaceTab } from "./control/TeamWorkspace";
-import { formatDate, readError, shortId } from "./control/utils";
+import { readError } from "./control/utils";
+import { TeamDirectory } from "./control/TeamDirectory";
+import { WorkspacePicker } from "./ui/workspace-picker";
+import { PortalEnvironment, portalHref, usePortalNavigation, useUnsavedChanges } from "./ui/navigation";
+import { useConfirmation } from "./ui/confirmation";
+import { ThemeControl, usePortalTheme } from "./ui/theme";
+import type { ThemeName } from "./ui/theme";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/primitives/dialog";
 import { AuthShell, LoadingState, PortalShell, SectionHeading } from "./ui/components";
 
 const SecurityPanel = lazy(() => import("./control/SecurityPanel").then((module) => ({ default: module.SecurityPanel })));
 const SSOPanel = lazy(() => import("./control/SSOPanel").then((module) => ({ default: module.SSOPanel })));
 const ConfigPanel = lazy(() => import("./control/ConfigPanel").then((module) => ({ default: module.ConfigPanel })));
+const OntologyConfigPanel = lazy(() => import("./control/ConfigPanel").then((module) => ({ default: module.OntologyConfigPanel })));
 const ControlDreamsPanel = lazy(() => import("./control/DreamsPanel").then((module) => ({ default: module.ControlDreamsPanel })));
 const LogsPanel = lazy(() => import("./control/LogsPanel").then((module) => ({ default: module.LogsPanel })));
 const RecallFeedbackPanel = lazy(() => import("./control/RecallFeedbackPanel").then((module) => ({ default: module.RecallFeedbackPanel })));
@@ -45,15 +56,17 @@ const TOKEN_STORAGE_KEY = "denseMem.controlToken";
 const THEME_STORAGE_KEY = "denseMem.controlTheme";
 
 type LoadState = "idle" | "loading" | "error";
-type Theme = "light" | "dark";
+type Theme = ThemeName;
 type AuthMode = "none" | "token" | "sso";
-type PortalTab = "teams" | "recall-feedback" | "search" | "logs" | "security" | "sso" | "config";
+type PortalTab = "all-teams" | "teams" | "recall-feedback" | "search" | "logs" | "security" | "sso" | "config" | "maintenance";
 type RememberLink = { teamID: string; view: "calls" | "attempts"; attemptID: string; invocationID: string };
 
-function readRememberLink(): RememberLink {
-  const params = new URLSearchParams(window.location.search);
-  const rawTeamID = params.get("team_id") ?? "";
-  const teamID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawTeamID) ? rawTeamID.toLowerCase() : "";
+function normalizedTeamID(value: string | null) {
+  return value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value.toLowerCase() : "";
+}
+
+function readRememberLink(params = new URLSearchParams(window.location.search)): RememberLink {
+  const teamID = normalizedTeamID(params.get("team_id"));
   const view = params.get("remember_view") === "calls" || (!params.has("remember_view") && params.has("invocation_id")) ? "calls" : "attempts";
   return {
     teamID,
@@ -63,33 +76,17 @@ function readRememberLink(): RememberLink {
   };
 }
 
-function updateRememberLink(teamID: string, view: "calls" | "attempts", detailID = "") {
-  const url = new URL(window.location.href);
-  url.searchParams.set("team_id", teamID);
-  url.searchParams.set("remember_view", view);
-  url.searchParams.delete("section");
-  url.searchParams.delete("attempt_id");
-  url.searchParams.delete("invocation_id");
-  if (detailID) url.searchParams.set(view === "calls" ? "invocation_id" : "attempt_id", detailID);
-  window.history.replaceState(null, "", url);
-}
+export function App() { return <PortalEnvironment><ControlApp /></PortalEnvironment>; }
 
-function clearRememberLink() {
-  const url = new URL(window.location.href);
-  if (!url.searchParams.has("remember_view") && !url.searchParams.has("attempt_id") && !url.searchParams.has("invocation_id")) return;
-  url.searchParams.delete("remember_view");
-  url.searchParams.delete("attempt_id");
-  url.searchParams.delete("invocation_id");
-  window.history.replaceState(null, "", url);
-}
-
-export function App() {
+function ControlApp() {
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "");
   const [draftToken, setDraftToken] = useState(token);
   const [authMode, setAuthMode] = useState<AuthMode>(() => token ? "token" : "none");
   const [ssoProviders, setSSOProviders] = useState<ControlIdentityProvider[]>([]);
   const [authError, setAuthError] = useState("");
-  const [theme, setTheme] = useState<Theme>(() => readTheme());
+  const { theme, preference, setPreference } = usePortalTheme(THEME_STORAGE_KEY);
+  const { transition } = usePortalNavigation();
+  const themeMenu = <ThemeControl preference={preference} onChange={setPreference} />;
 
   const api = useMemo(() => {
     if (authMode === "token" && token) {
@@ -127,14 +124,6 @@ export function App() {
       cancelled = true;
     };
   }, [token]);
-
-  function toggleTheme() {
-    setTheme((current) => {
-      const next = current === "dark" ? "light" : "dark";
-      localStorage.setItem(THEME_STORAGE_KEY, next);
-      return next;
-    });
-  }
 
   async function submitToken(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -176,19 +165,10 @@ export function App() {
         title="Dense-Mem Control"
         icon={<span className="brand-initials" aria-hidden="true">DM</span>}
         onSubmit={submitToken}
-        actions={(
-          <button
-            className="icon-button theme-toggle"
-            type="button"
-            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-            onClick={toggleTheme}
-          >
-            {theme === "dark" ? <Sun size={17} aria-hidden="true" /> : <Moon size={17} aria-hidden="true" />}
-          </button>
-        )}
+        actions={themeMenu}
       >
-        <label htmlFor="portal-token">Control token</label>
-        <input
+        <Label htmlFor="portal-token">Control token</Label>
+        <Input
           id="portal-token"
           type="password"
           value={draftToken}
@@ -196,14 +176,14 @@ export function App() {
           autoComplete="current-password"
         />
         {authError && <p className="field-error" role="alert">{authError}</p>}
-        <button className="primary-button" type="submit">
+        <Button variant="default" className="primary-button" type="submit">
           <ShieldCheck size={17} aria-hidden="true" />
           Unlock
-        </button>
+        </Button>
         {ssoProviders.length > 0 && (
           <div className="button-row">
             {ssoProviders.map((provider) => (
-              <button
+              <Button variant="outline"
                 className="ghost-button"
                 key={provider.id}
                 type="button"
@@ -211,7 +191,7 @@ export function App() {
               >
                 <ShieldCheck size={17} aria-hidden="true" />
                 Sign in with {provider.name}
-              </button>
+              </Button>
             ))}
           </div>
         )}
@@ -219,303 +199,143 @@ export function App() {
     );
   }
 
-  return <Portal api={api} theme={theme} onToggleTheme={toggleTheme} onSignOut={() => void signOut()} />;
+  return <Portal api={api} theme={theme} themeMenu={themeMenu} onSignOut={() => void transition(signOut)} />;
 }
 
-function Portal({
-  api,
-  theme,
-  onToggleTheme,
-  onSignOut,
-}: {
-  api: ControlApi;
-  theme: Theme;
-  onToggleTheme: () => void;
-  onSignOut: () => void;
-}) {
-  const [rememberLink, setRememberLink] = useState<RememberLink | null>(readRememberLink);
+function Portal({ api, theme, themeMenu, onSignOut }: { api: ControlApi; theme: Theme; themeMenu: ReactNode; onSignOut: () => void }) {
+  const { parameters, entryIndex, navigate, transition } = usePortalNavigation();
+  const sections: PortalTab[] = ["all-teams", "teams", "recall-feedback", "search", "logs", "security", "sso", "config", "maintenance"];
+  const requestedSection = parameters.get("section");
+  const legacyRemember = parameters.has("remember_view") || parameters.has("attempt_id") || parameters.has("invocation_id");
+  const activeTab: PortalTab = sections.includes(requestedSection as PortalTab) ? requestedSection as PortalTab : legacyRemember ? "teams" : "all-teams";
+  const workspaceTabs: TeamWorkspaceTab[] = ["overview", "credentials", "remember-attempts", "conflicts", "dreams", "settings"];
+  const requestedWorkspace = parameters.get("team_tab");
+  const teamWorkspaceTab = workspaceTabs.includes(requestedWorkspace as TeamWorkspaceTab) ? requestedWorkspace as TeamWorkspaceTab : legacyRemember ? "remember-attempts" : "overview";
   const [teams, setTeams] = useState<Team[]>([]);
-  const [selectedTeamId, setSelectedTeamId] = useState(rememberLink?.teamID ?? "");
-  const [activeTab, setActiveTab] = useState<PortalTab>(new URLSearchParams(window.location.search).get("section") === "logs" ? "logs" : "teams");
-  const [teamWorkspaceTab, setTeamWorkspaceTab] = useState<TeamWorkspaceTab>(() => {
-    const params = new URLSearchParams(window.location.search);
-    return rememberLink?.teamID && (params.has("remember_view") || params.has("attempt_id") || params.has("invocation_id"))
-      ? "remember-attempts" : "overview";
-  });
+  const [totalTeams, setTotalTeams] = useState(0);
+  const [nextOffset, setNextOffset] = useState(0);
+  const linkedTeamID = normalizedTeamID(parameters.get("team_id"));
+  const selectedTeamId = parameters.has("team_id") ? linkedTeamID : teams[0]?.id ?? "";
+  const selectedTeam = teams.find((team) => team.id === selectedTeamId) ?? null;
   const [creatingTeam, setCreatingTeam] = useState(false);
-  const [loadState, setLoadState] = useState<LoadState>("idle");
+  const [loadState, setLoadState] = useState<LoadState>("loading");
   const [error, setError] = useState("");
-  const [logsInitialQuery, setLogsInitialQuery] = useState<OperationLogQuery>(rememberLink?.teamID ? { team_id: rememberLink.teamID } : {});
+  const [logsInitialQuery, setLogsInitialQuery] = useState<OperationLogQuery>({});
+  const logsScope = parameters.get("logs_scope");
+  const logsQuery = useMemo(() => ({ ...logsInitialQuery, team_id: logsScope === "all" ? undefined : linkedTeamID || undefined }), [logsInitialQuery, logsScope, linkedTeamID]);
+  const loadRequest = useRef(0);
+  const teamIDs = useRef(new Set<string>());
+  teamIDs.current = new Set(teams.map((team) => team.id));
 
-  async function loadTeams(nextSelectedId?: string) {
-    setLoadState("loading");
-    setError("");
+  async function loadTeams() {
+    const request = ++loadRequest.current;
+    setLoadState("loading"); setError("");
     try {
       const page = await api.listTeams();
-      const selected = nextSelectedId || selectedTeamId || rememberLink?.teamID;
-      let visibleTeams = page.data;
-      if (selected && !visibleTeams.some((team) => team.id === selected)) {
+      let visible = page.data;
+      const linkedID = linkedTeamID;
+      if (linkedID && /^[0-9a-f-]{36}$/i.test(linkedID) && !visible.some((team) => team.id === linkedID)) {
         for (let offset = page.pagination.offset + page.data.length; offset < page.pagination.total; offset += 100) {
-          const nextPage = await api.listTeams(100, offset);
-          const linkedTeam = nextPage.data.find((team) => team.id === selected);
-          if (linkedTeam) {
-            visibleTeams = [...visibleTeams, linkedTeam];
-            break;
-          }
-          if (nextPage.data.length === 0) break;
+          const next = await api.listTeams(100, offset);
+          const linked = next.data.find((team) => team.id === linkedID);
+          if (linked) { visible = [...visible, linked]; break; }
+          if (!next.data.length) break;
         }
       }
-      setTeams(visibleTeams);
-      if (selected && visibleTeams.some((team) => team.id === selected)) {
-        setSelectedTeamId(selected);
-      } else if (!nextSelectedId && selected === rememberLink?.teamID && teamWorkspaceTab === "remember-attempts") {
-        setSelectedTeamId("");
-        setError("Linked team is unavailable or you do not have access.");
-      } else {
-        setSelectedTeamId(page.data[0]?.id ?? "");
-      }
-      setLoadState("idle");
+      if (request !== loadRequest.current) return;
+      setTeams(visible); setTotalTeams(page.pagination.total); setNextOffset(page.pagination.offset + page.data.length); setLoadState("idle");
     } catch (err) {
-      setLoadState("error");
-      setError(readError(err));
+      if (request === loadRequest.current) { setLoadState("error"); setError(readError(err)); }
+    }
+  }
+
+  async function loadMoreTeams() {
+    if (loadState === "loading") return;
+    const request = ++loadRequest.current;
+    setLoadState("loading");
+    try {
+      const page = await api.listTeams(100, nextOffset);
+      if (request !== loadRequest.current) return;
+      setTeams((current) => [...new Map([...current, ...page.data].map((team) => [team.id, team])).values()]);
+      setNextOffset(page.pagination.offset + page.data.length); setTotalTeams(page.pagination.total); setLoadState("idle");
+    } catch (err) {
+      if (request === loadRequest.current) { setLoadState("error"); setError(readError(err)); }
     }
   }
 
   useEffect(() => {
-    void loadTeams();
-  }, []);
+    if (!teamIDs.current.size || (linkedTeamID && !teamIDs.current.has(linkedTeamID))) void loadTeams();
+    else setLoadState("idle");
+    return () => { loadRequest.current += 1; };
+  }, [api, linkedTeamID]);
 
-  useEffect(() => {
-    if (activeTab !== "teams" || teamWorkspaceTab !== "remember-attempts") {
-      setRememberLink(null);
-      clearRememberLink();
-    }
-  }, [activeTab, teamWorkspaceTab]);
-
-  useEffect(() => {
-    if (activeTab === "logs") return;
-    const url = new URL(window.location.href);
-    if (!url.searchParams.has("section")) return;
-    url.searchParams.delete("section");
-    window.history.replaceState(null, "", url);
-  }, [activeTab]);
-
-  const selectedTeam = teams.find((team) => team.id === selectedTeamId) ?? null;
-  const teamScopedTab = activeTab === "teams";
-
-  function openTeamWorkspace(nextTab: TeamWorkspaceTab) {
-    if (nextTab === "remember-attempts" && (activeTab !== "teams" || teamWorkspaceTab !== "remember-attempts") && selectedTeamId) {
-      setRememberLink(null);
-      updateRememberLink(selectedTeamId, "attempts");
-    }
-    setCreatingTeam(false);
-    setTeamWorkspaceTab(nextTab);
-    setActiveTab("teams");
+  function openSection(section: PortalTab) {
+    return navigate({ section, logs_scope: section === "logs" ? "all" : null, team_tab: null, tab: null, remember_view: null, attempt_id: null, invocation_id: null });
+  }
+  function openTeamWorkspace(tab: TeamWorkspaceTab, teamID = selectedTeamId) {
+    return navigate({ section: "teams", logs_scope: null, team_id: teamID, team_tab: tab, tab: null, remember_view: tab === "remember-attempts" ? "attempts" : null, attempt_id: null, invocation_id: null });
   }
 
-  return (
-    <PortalShell
-      theme={theme}
-      title="Dense-Mem Control"
-      icon={<span className="brand-initials" aria-hidden="true">DM</span>}
-      topbarActions={(
-        <>
-          <button
-            className="icon-button"
-            type="button"
-            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-            title={theme === "dark" ? "Light theme" : "Dark theme"}
-            onClick={onToggleTheme}
-          >
-            {theme === "dark" ? <Sun size={17} aria-hidden="true" /> : <Moon size={17} aria-hidden="true" />}
-          </button>
-          <button className="icon-button" type="button" aria-label="Refresh teams" onClick={() => void loadTeams()}>
-            <RefreshCw size={18} aria-hidden="true" />
-          </button>
-          <button className="ghost-button" type="button" onClick={onSignOut}>
-            <LogOut size={17} aria-hidden="true" />
-            Sign out
-          </button>
-        </>
-      )}
-      navLabel="Control navigation"
-      navItemsLabel="Control sections"
-      navItems={[
-        {
-          id: "teams",
-          label: "Teams",
-          icon: <Users size={17} aria-hidden="true" />,
-          active: activeTab === "teams" && (teamWorkspaceTab === "overview" || teamWorkspaceTab === "settings"),
-          onClick: () => openTeamWorkspace("overview"),
-        },
-        {
-          id: "remember-attempts",
-          label: "Remember Attempts",
-          icon: <Activity size={17} aria-hidden="true" />,
-          active: activeTab === "teams" && teamWorkspaceTab === "remember-attempts",
-          disabled: !selectedTeam,
-          onClick: () => openTeamWorkspace("remember-attempts"),
-        },
-        {
-          id: "search",
-          label: "Search",
-          icon: <Search size={17} aria-hidden="true" />,
-          active: activeTab === "search",
-          onClick: () => setActiveTab("search"),
-        },
-        {
-          id: "recall-feedback",
-          label: "Feedback",
-          icon: <MessageSquare size={17} aria-hidden="true" />,
-          active: activeTab === "recall-feedback",
-          onClick: () => setActiveTab("recall-feedback"),
-        },
-        {
-          id: "dreams",
-          label: "Dreams",
-          icon: <Moon size={17} aria-hidden="true" />,
-          active: activeTab === "teams" && teamWorkspaceTab === "dreams",
-          disabled: !selectedTeam,
-          onClick: () => openTeamWorkspace("dreams"),
-        },
-        {
-          id: "conflicts",
-          label: "Conflicts",
-          icon: <AlertTriangle size={17} aria-hidden="true" />,
-          active: activeTab === "teams" && teamWorkspaceTab === "conflicts",
-          disabled: !selectedTeam,
-          onClick: () => openTeamWorkspace("conflicts"),
-        },
-        {
-          id: "logs",
-          label: "Logs",
-          icon: <ListFilter size={17} aria-hidden="true" />,
-          active: activeTab === "logs",
-          onClick: () => {
-            setLogsInitialQuery({});
-            setActiveTab("logs");
-          },
-        },
-        {
-          id: "credentials",
-          label: "Credentials",
-          icon: <KeyRound size={17} aria-hidden="true" />,
-          active: activeTab === "teams" && teamWorkspaceTab === "credentials",
-          disabled: !selectedTeam,
-          onClick: () => openTeamWorkspace("credentials"),
-        },
-        {
-          id: "security",
-          label: "IP Bans",
-          icon: <Ban size={17} aria-hidden="true" />,
-          active: activeTab === "security",
-          onClick: () => setActiveTab("security"),
-        },
-        {
-          id: "sso",
-          label: "SSO",
-          icon: <ShieldCheck size={17} aria-hidden="true" />,
-          active: activeTab === "sso",
-          onClick: () => setActiveTab("sso"),
-        },
-        {
-          id: "config",
-          label: "Config",
-          icon: <Settings size={17} aria-hidden="true" />,
-          active: activeTab === "config",
-          onClick: () => setActiveTab("config"),
-        },
-      ]}
-      resourceRailLabel="Teams"
-      resourceRail={teamScopedTab ? (
-        <TeamResourceRail
-          teams={teams}
-          selectedTeamId={selectedTeamId}
-          loading={loadState === "loading"}
-          onCreate={() => {
-            setActiveTab("teams");
-            setTeamWorkspaceTab("overview");
-            setCreatingTeam(true);
-            window.requestAnimationFrame(() => document.getElementById("new-team-name")?.focus());
-          }}
-          onSelect={(teamId) => {
-            setSelectedTeamId(teamId);
-            setError("");
-            if (teamWorkspaceTab === "remember-attempts") {
-              setRememberLink(null);
-              updateRememberLink(teamId, "attempts");
-            }
-          }}
-        />
-      ) : undefined}
-      detailLabel="Control details"
-      error={error}
-    >
-      <Suspense fallback={<LazyPanelFallback />}>
-        {teamScopedTab && (
-          <>
-            {creatingTeam && (
-              <section className="surface">
-                <SectionHeading
-                  title="Create team"
-                  actions={(
-                    <button className="text-button" type="button" onClick={() => setCreatingTeam(false)}>
-                      Cancel
-                    </button>
-                  )}
-                />
-                <TeamCreateForm
-                  api={api}
-                  onCreated={(team) => {
-                    setCreatingTeam(false);
-                    void loadTeams(team.id);
-                  }}
-                />
-              </section>
-            )}
-            {selectedTeam ? (
-              <TeamWorkspace
-                api={api}
-                team={selectedTeam}
-                activeTab={teamWorkspaceTab}
-                onSelectTab={openTeamWorkspace}
-                onOpenLogs={(query) => {
-                  setLogsInitialQuery(query ?? {});
-                  setActiveTab("logs");
-                }}
-                onUpdated={(team) => {
-                  setTeams((current) => current.map((item) => (item.id === team.id ? team : item)));
-                }}
-                onDeleted={() => void loadTeams()}
-                rememberLink={rememberLink?.teamID === selectedTeam.id ? rememberLink : undefined}
-              />
-            ) : (
-              loadState === "loading" ? <LoadingState label="Loading teams" /> : <div className="empty-state">{teams.length > 0 ? "Select a team to continue." : "No teams"}</div>
-            )}
-          </>
-        )}
-        {activeTab === "search" && <SearchConvergencePanel api={api} />}
-        {activeTab === "recall-feedback" && <RecallFeedbackPanel api={api} teams={teams} />}
-        {activeTab === "logs" && <LogsPanel api={api} teams={teams} initialQuery={logsInitialQuery} />}
-        {activeTab === "security" && <SecurityPanel api={api} />}
-        {activeTab === "sso" && <SSOPanel api={api} teams={teams} />}
-        {activeTab === "config" && <ConfigPanel api={api} />}
-      </Suspense>
-    </PortalShell>
-  );
+  const navItems = [
+    { id: "all-teams", label: "All teams", group: "Workspace", icon: <Users size={17} aria-hidden="true" />, active: activeTab === "all-teams", href: portalHref({ section: "all-teams", team_tab: null }), onClick: () => openSection("all-teams") },
+    ...([
+      ["overview", "Overview", <Activity size={17} aria-hidden="true" />],
+      ["credentials", "Credentials", <KeyRound size={17} aria-hidden="true" />],
+      ["remember-attempts", "Remember history", <Activity size={17} aria-hidden="true" />],
+      ["conflicts", "Conflicts", <AlertTriangle size={17} aria-hidden="true" />],
+      ["dreams", "Dream history", <Moon size={17} aria-hidden="true" />],
+      ["settings", "Team settings", <Settings size={17} aria-hidden="true" />],
+    ] as const).map(([id, label, icon]) => ({ id, label, icon, group: "Team", active: activeTab === "teams" && teamWorkspaceTab === id, disabled: !selectedTeam, href: portalHref({ section: "teams", team_id: selectedTeamId, team_tab: id }), onClick: () => openTeamWorkspace(id) })),
+    ...([
+      ["search", "Search readiness", <Search size={17} aria-hidden="true" />],
+      ["recall-feedback", "Recall feedback", <MessageSquare size={17} aria-hidden="true" />],
+      ["logs", "Logs", <ListFilter size={17} aria-hidden="true" />],
+      ["maintenance", "Ontology maintenance", <Activity size={17} aria-hidden="true" />],
+      ["sso", "Identity & access", <ShieldCheck size={17} aria-hidden="true" />],
+      ["security", "IP bans", <Ban size={17} aria-hidden="true" />],
+      ["config", "Settings", <Settings size={17} aria-hidden="true" />],
+    ] as const).map(([id, label, icon]) => ({ id, label, icon, group: ["sso", "security", "config"].includes(id) ? "Administration" : "Operations", active: activeTab === id, href: portalHref({ section: id, team_tab: null, logs_scope: id === "logs" ? "all" : null }), onClick: () => { if (id === "logs") setLogsInitialQuery({}); return openSection(id); } })),
+  ];
+  const rememberLink = readRememberLink(parameters);
+  const unavailableTeam = activeTab === "teams" && !selectedTeam && loadState !== "loading";
+  return <PortalShell theme={theme} title="Dense-Mem Control" icon={<span className="brand-initials" aria-hidden="true">DM</span>}
+    navLabel="Control navigation" navItemsLabel="Control sections" navItems={navItems}
+    workspacePicker={<WorkspacePicker options={teams} selectedID={selectedTeamId} loading={loadState === "loading" && !teams.length} onSelect={(id) => openTeamWorkspace(activeTab === "teams" ? teamWorkspaceTab : "overview", id)} onLoadMore={nextOffset < totalTeams ? () => void loadMoreTeams() : undefined} />}
+    contextBar={<span className="current-team" aria-label="Current workspace">{selectedTeam?.name ?? "Service"}</span>}
+    topbarActions={<>{themeMenu}<Button variant="ghost" size="icon" className="icon-button" type="button" aria-label="Refresh teams" onClick={() => void transition(() => loadTeams())}><RefreshCw size={17} aria-hidden="true" /></Button><Button variant="outline" className="ghost-button" type="button" aria-label="Sign out" onClick={onSignOut}><LogOut size={17} aria-hidden="true" /><span className="sign-out-label">Sign out</span></Button></>}
+    detailLabel="Control details" error={error || (unavailableTeam ? "Linked team is unavailable or you do not have access." : requestedSection && !sections.includes(requestedSection as PortalTab) ? "This section is unavailable. Choose a destination from navigation." : "")}>
+    <Suspense fallback={<LazyPanelFallback />}>
+      {activeTab === "all-teams" && <TeamDirectory teams={teams} loading={loadState === "loading"} total={totalTeams} onCreate={() => setCreatingTeam(true)} onSelect={(id) => void openTeamWorkspace("overview", id)} onLoadMore={() => void loadMoreTeams()} />}
+      {activeTab === "teams" && (selectedTeam ? <TeamWorkspace key={selectedTeam.id + ":" + teamWorkspaceTab + ":" + entryIndex} api={api} team={selectedTeam} activeTab={teamWorkspaceTab}
+        onOpenLogs={(query) => { setLogsInitialQuery(query ?? {}); void navigate({ section: "logs", logs_scope: query?.team_id ? "team" : "all", team_id: query?.team_id ?? selectedTeamId, team_tab: null, tab: null, remember_view: null, attempt_id: null, invocation_id: null }); }}
+        onUpdated={(team) => setTeams((current) => current.map((item) => item.id === team.id ? team : item))}
+        onDeleted={() => { setTeams((current) => current.filter((team) => team.id !== selectedTeam.id)); void navigate({ section: "all-teams", team_id: null, team_tab: null }); void loadTeams(); }}
+        rememberLink={rememberLink.teamID === selectedTeam.id ? rememberLink : undefined}
+        onRememberSelection={(view, id) => void navigate({ remember_view: view, attempt_id: view === "attempts" ? id : null, invocation_id: view === "calls" ? id : null }, true)}
+      /> : loadState === "loading" ? <LoadingState label="Loading teams" /> : <div className="empty-state">Choose an available team from All teams.</div>)}
+      {activeTab === "search" && <SearchConvergencePanel api={api} />}
+      {activeTab === "recall-feedback" && <RecallFeedbackPanel api={api} teams={teams} />}
+      {activeTab === "logs" && <LogsPanel api={api} teams={teams} initialQuery={logsQuery} />}
+      {activeTab === "security" && <SecurityPanel api={api} />}
+      {activeTab === "sso" && <SSOPanel api={api} teams={teams} />}
+      {activeTab === "config" && <ConfigPanel api={api} tab={parameters.get("tab") ?? undefined} onTabChange={(tab) => void navigate({ tab })} />}
+      {activeTab === "maintenance" && <OntologyConfigPanel api={api} />}
+    </Suspense>
+    <Dialog open={creatingTeam} onOpenChange={(open) => { if (open) setCreatingTeam(true); else void transition(() => setCreatingTeam(false)); }}>
+      <DialogContent><DialogHeader><DialogTitle>Create team</DialogTitle><DialogDescription>Give the team a name and an optional description.</DialogDescription></DialogHeader><TeamCreateForm api={api} onCreated={(team) => { setCreatingTeam(false); setTeams((current) => [...current, team]); setTotalTeams((current) => current + 1); void openTeamWorkspace("overview", team.id); }} /></DialogContent>
+    </Dialog>
+  </PortalShell>;
 }
 
 function LazyPanelFallback() {
   return <LoadingState label="Loading panel" />;
-}
-function readTheme(): Theme {
-  return localStorage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
 }
 function TeamCreateForm({ api, onCreated }: { api: ControlApi; onCreated: (team: Team) => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const clearDirty = useUnsavedChanges(Boolean(name || description));
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -529,6 +349,7 @@ function TeamCreateForm({ api, onCreated }: { api: ControlApi; onCreated: (team:
       const team = await api.createTeam({ name: name.trim(), description: description.trim() });
       setName("");
       setDescription("");
+      clearDirty();
       onCreated(team);
     } catch (err) {
       setError(readError(err));
@@ -539,98 +360,16 @@ function TeamCreateForm({ api, onCreated }: { api: ControlApi; onCreated: (team:
 
   return (
     <form className="inline-form" onSubmit={submit}>
-      <label htmlFor="new-team-name">Name</label>
-      <input id="new-team-name" value={name} onChange={(event) => setName(event.target.value)} />
-      <label htmlFor="new-team-description">Description</label>
-      <input id="new-team-description" value={description} onChange={(event) => setDescription(event.target.value)} />
+      <Label htmlFor="new-team-name">Name</Label>
+      <Input id="new-team-name" value={name} onChange={(event) => setName(event.target.value)} />
+      <Label htmlFor="new-team-description">Description</Label>
+      <Input id="new-team-description" value={description} onChange={(event) => setDescription(event.target.value)} />
       {error && <p className="field-error" role="alert">{error}</p>}
-      <button className="primary-button compact" type="submit" disabled={busy}>
+      <Button variant="default" className="primary-button compact" type="submit" disabled={busy}>
         <Plus size={16} aria-hidden="true" />
         Create
-      </button>
+      </Button>
     </form>
-  );
-}
-
-function TeamResourceRail({
-  teams,
-  selectedTeamId,
-  loading,
-  onCreate,
-  onSelect,
-}: {
-  teams: Team[];
-  selectedTeamId: string;
-  loading: boolean;
-  onCreate: () => void;
-  onSelect: (teamId: string) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  const visibleTeams = normalizedQuery
-    ? teams.filter((team) => (
-      team.name.toLocaleLowerCase().includes(normalizedQuery)
-        || team.id.toLocaleLowerCase().includes(normalizedQuery)
-    ))
-    : teams;
-
-  const listContent = (() => {
-    if (loading && teams.length === 0) {
-      return <LoadingState label="Loading teams" compact />;
-    }
-
-    if (teams.length === 0) {
-      return <div className="table-placeholder compact">No teams</div>;
-    }
-
-    if (visibleTeams.length === 0) {
-      return <div className="table-placeholder compact">No matching teams</div>;
-    }
-
-    return (
-      <div className="team-list">
-        {visibleTeams.map((team) => (
-          <button
-            key={team.id}
-            className={team.id === selectedTeamId ? "team-list-item selected" : "team-list-item"}
-            type="button"
-            onClick={() => onSelect(team.id)}
-          >
-            <span className="team-list-primary">
-              <span className="status-dot" aria-hidden="true" />
-              <span>{team.name}</span>
-            </span>
-            <small>{formatDate(team.updated_at)}</small>
-          </button>
-        ))}
-      </div>
-    );
-  })();
-
-  return (
-    <div className="resource-panel team-resource-panel">
-      <SectionHeading
-        title="Teams"
-        meta={teams.length}
-        actions={(
-          <button className="primary-button compact" type="button" onClick={onCreate}>
-            <Plus size={16} aria-hidden="true" />
-            New Team
-          </button>
-        )}
-      />
-      <label className="resource-search">
-        <Search size={16} aria-hidden="true" />
-        <span className="sr-only">Search teams</span>
-        <input
-          aria-label="Search teams"
-          placeholder="Search teams..."
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-      </label>
-      {listContent}
-    </div>
   );
 }
 
@@ -638,33 +377,35 @@ function TeamWorkspace({
   api,
   team,
   activeTab,
-  onSelectTab,
   onOpenLogs,
   onUpdated,
   onDeleted,
   rememberLink,
+  onRememberSelection,
 }: {
   api: ControlApi;
   team: Team;
   activeTab: TeamWorkspaceTab;
-  onSelectTab: (tab: TeamWorkspaceTab) => void;
   onOpenLogs: (query?: OperationLogQuery) => void;
   onUpdated: (team: Team) => void;
   onDeleted: () => void;
   rememberLink?: RememberLink;
+  onRememberSelection: (view: "calls" | "attempts", id: string) => void;
 }) {
+  // Selection replaces the current URL; only a new history entry reinitializes the list.
+  const initialRememberLink = useRef(rememberLink).current;
   return (
-    <TeamWorkspaceShell team={team} activeTab={activeTab} onSelectTab={onSelectTab}>
+    <TeamWorkspaceShell team={team} activeTab={activeTab}>
       {activeTab === "overview" && <TeamOverviewPanel api={api} team={team} />}
       {activeTab === "credentials" && <TeamCredentialsPanel api={api} team={team} embedded />}
       {activeTab === "remember-attempts" && (
         <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading Remember attempts" /></div>}>
           <RememberAttemptsPanel
             api={api} team={team} onOpenLogs={onOpenLogs}
-            initialView={rememberLink?.view ?? "attempts"}
-            initialAttemptID={rememberLink?.attemptID}
-            initialInvocationID={rememberLink?.invocationID}
-            onSelectionChange={(view, id) => updateRememberLink(team.id, view, id)}
+            initialView={initialRememberLink?.view ?? "attempts"}
+            initialAttemptID={initialRememberLink?.attemptID}
+            initialInvocationID={initialRememberLink?.invocationID}
+            onSelectionChange={onRememberSelection}
           />
         </Suspense>
       )}
@@ -712,6 +453,9 @@ function TeamEditor({
     setError("");
   }, [team.id, team.name, team.description]);
 
+  const clearDirty = useUnsavedChanges(name !== team.name || description !== (team.description ?? ""));
+  const confirm = useConfirmation();
+
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (name.trim().length < 3) {
@@ -730,13 +474,14 @@ function TeamEditor({
   }
 
   async function remove() {
-    if (!window.confirm(`Delete team "${team.name}"? This disables access and hides the team. Knowledge and audit history are preserved.`)) {
+    if (!await confirm({ title: "Delete team?", confirmLabel: "Delete team", destructive: true, description: `Delete team "${team.name}"? This disables access and hides the team. Knowledge and audit history are preserved.` })) {
       return;
     }
     setBusy(true);
     setError("");
     try {
       await api.deleteTeam(team.id);
+      clearDirty();
       onDeleted();
     } catch (err) {
       setError(readError(err));
@@ -749,20 +494,20 @@ function TeamEditor({
     <section className="team-detail-surface">
       <SectionHeading title="Team settings" />
       <form className="edit-grid" onSubmit={save}>
-        <label htmlFor="team-name">Name</label>
-        <input id="team-name" value={name} onChange={(event) => setName(event.target.value)} />
-        <label htmlFor="team-description">Description</label>
-        <textarea id="team-description" value={description} onChange={(event) => setDescription(event.target.value)} />
+        <Label htmlFor="team-name">Name</Label>
+        <Input id="team-name" value={name} onChange={(event) => setName(event.target.value)} />
+        <Label htmlFor="team-description">Description</Label>
+        <Textarea id="team-description" value={description} onChange={(event) => setDescription(event.target.value)} />
         {error && <p className="field-error span" role="alert">{error}</p>}
         <div className="button-row span">
-          <button className="primary-button" type="submit" disabled={busy}>
+          <Button variant="default" className="primary-button" type="submit" disabled={busy}>
             <Pencil size={16} aria-hidden="true" />
             Save
-          </button>
-          <button className="danger-button" type="button" disabled={busy} onClick={remove}>
+          </Button>
+          <Button variant="destructive" className="danger-button" type="button" disabled={busy} onClick={remove}>
             <Trash2 size={16} aria-hidden="true" />
             Delete
-          </button>
+          </Button>
         </div>
       </form>
     </section>

@@ -6,9 +6,7 @@ import "./control/oauth-provider.css";
 import "./resource-explorer.css";
 import "./knowledge-explorer.css";
 import "./observability.css";
-import "./responsive.css";
-import "./admin-system.css";
-import "./admin-dashboard-components.css";
+import "./shell.css";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

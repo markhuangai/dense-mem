@@ -30,6 +30,7 @@ describe("GraphPanel", () => {
   it("offers semantic graph types as local anchors", async () => {
     render(<GraphPanel api={graphApi().api} />);
 
+    await userEvent.click(screen.getByRole("button", { name: "Graph controls" }));
     const controls = await screen.findByLabelText("Graph controls");
     await userEvent.click(within(controls).getByRole("button", { name: "Local" }));
 
@@ -44,6 +45,7 @@ describe("GraphPanel", () => {
     const harness = graphApi();
     render(<GraphPanel api={harness.api} />);
 
+    await userEvent.click(screen.getByRole("button", { name: "Graph controls" }));
     const controls = await screen.findByLabelText("Graph controls");
     expect(within(controls).getByLabelText("Relationship limit")).toHaveValue(80);
     expect(within(controls).getByLabelText("Depth")).toHaveAttribute("max", "5");
@@ -65,6 +67,7 @@ describe("GraphPanel", () => {
     const harness = graphApi();
     render(<GraphPanel api={harness.api} />);
 
+    await userEvent.click(screen.getByRole("button", { name: "Graph controls" }));
     const controls = await screen.findByLabelText("Graph controls");
     await waitFor(() => expect(harness.graph).toHaveBeenCalledTimes(1));
     fireEvent.change(within(controls).getByLabelText("Relationship limit"), { target: { value: "1.5" } });
@@ -80,10 +83,11 @@ describe("GraphPanel", () => {
     const harness = graphApi([before, after]);
     render(<GraphPanel api={harness.api} />);
 
-    expect(await screen.findByText("Wrong Project")).toBeInTheDocument();
+    expect(await screen.findByTestId("force-graph")).toHaveTextContent("Wrong Project");
+    await userEvent.click(screen.getByRole("button", { name: "Graph controls" }));
     await userEvent.click(within(screen.getByLabelText("Graph controls")).getByRole("button", { name: "Refresh" }));
 
-    expect(await screen.findByText("Dense-Mem")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("force-graph")).toHaveTextContent("Dense-Mem"));
     expect(screen.queryByText("Wrong Project")).not.toBeInTheDocument();
   });
 });

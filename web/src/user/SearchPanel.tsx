@@ -1,4 +1,9 @@
-import { CSSProperties, FormEvent, lazy, Suspense, useMemo, useState } from "react";
+import { Button } from "../ui/primitives/button";
+import { Label } from "../ui/primitives/label";
+import { Checkbox } from "../ui/primitives/checkbox";
+import { NativeSelect, NativeSelectOption } from "../ui/primitives/native-select";
+import { Input } from "../ui/primitives/input";
+import { CSSProperties, FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ExternalLink,
@@ -6,8 +11,11 @@ import {
   GitBranch,
   Network,
   Search,
-  X,
+  SlidersHorizontal,
 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/primitives/popover";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/primitives/tabs";
+import { ResponsiveInspector, useCompactWorkspace } from "../ui/inspector";
 import { LoadingState, SectionHeading } from "../ui/components";
 import { GraphNodeType, RecallCommunity, RecallEvidenceContext, RecallHit, RecallRelationship, UserApi } from "./api";
 
@@ -27,6 +35,8 @@ type IndexedRecallResult = {
 };
 
 export function SearchPanel({ api }: { api: UserApi }) {
+  const requestSequence = useRef(0);
+  useEffect(() => () => { requestSequence.current += 1; }, [api]);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<RecallHit[]>([]);
   const [selectedKey, setSelectedKey] = useState("");
@@ -47,7 +57,8 @@ export function SearchPanel({ api }: { api: UserApi }) {
   const [sourceFilter, setSourceFilter] = useState("all");
   const [sortMode, setSortMode] = useState<RecallSortMode>("relevance");
   const [density, setDensity] = useState<ResultDensity>("comfortable");
-  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const { ref, compact } = useCompactWorkspace();
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("evidence");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -59,19 +70,21 @@ export function SearchPanel({ api }: { api: UserApi }) {
       setError("Query is required.");
       return;
     }
+    const request = ++requestSequence.current;
     setLoading(true);
     setError("");
     try {
       const nextHits = await api.recall(trimmed, 10);
+      if (request !== requestSequence.current) return;
       setHits(nextHits);
       setSourceFilter("all");
-      setInspectorOpen(true);
+      setInspectorOpen(!compact);
       setInspectorTab("evidence");
       setSelectedKey(nextHits[0] ? recallKey(nextHits[0], 0) : "");
     } catch (err) {
-      setError(readError(err));
+      if (request === requestSequence.current) setError(readError(err));
     } finally {
-      setLoading(false);
+      if (request === requestSequence.current) setLoading(false);
     }
   }
 
@@ -141,63 +154,89 @@ export function SearchPanel({ api }: { api: UserApi }) {
   }
 
   return (
-    <section className={inspectorOpen ? "knowledge-explorer" : "knowledge-explorer inspector-closed"} aria-label="Knowledge explorer">
-      <aside className="knowledge-filter-panel" aria-label="Knowledge filters">
+    <section ref={ref} className={inspectorOpen && !compact ? "knowledge-explorer has-inspector" : "knowledge-explorer"} aria-label="Knowledge explorer">
+
+
+      <section className="knowledge-results-panel" aria-label="Recall results">
+        <form className="knowledge-commandbar" onSubmit={submit}>
+          <Label className="sr-only" htmlFor="recall-query">Keyword</Label>
+          <div className="search-input-wrap large">
+            <Search size={17} aria-hidden="true" />
+            <Input
+              id="recall-query"
+              aria-label="Keyword"
+              placeholder="Search knowledge..."
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </div>
+          <Button variant="default" className="primary-button compact" type="submit" disabled={loading}>
+            <Search size={16} aria-hidden="true" />
+            Search
+          </Button>
+        </form>
+        <div className="knowledge-results-toolbar">
+          <div>
+            <h2>{filteredHits.length.toLocaleString()} results</h2>
+            <span>{query.trim() ? `for "${query.trim()}"` : "Search across evidence and relationships"}</span>
+          </div>
+          <div className="toolbar-actions">
+            <Popover><PopoverTrigger asChild><Button variant="outline"><SlidersHorizontal size={15} aria-hidden="true" />Filters</Button></PopoverTrigger>
+      <PopoverContent className="explorer-filter-popover" align="start" aria-label="Knowledge filters">
         <SectionHeading
           title="Filters"
           actions={(
-            <button
+            <Button variant="ghost"
               className="text-button"
               type="button"
               onClick={clearFilters}
             >
               Clear all
-            </button>
+            </Button>
           )}
         />
         <fieldset className="filter-stack">
           <legend>Type</legend>
           {(["evidence", "relationship", "community"] as RecallResultKind[]).map((kind) => (
-            <label className="filter-row" key={kind}>
-              <input
-                type="checkbox"
+            <Label className="filter-row" key={kind}>
+              <Checkbox
                 checked={enabledTypes[kind]}
-                onChange={() => toggleType(kind)}
+                onCheckedChange={() => toggleType(kind)}
               />
               <span>{recallResultKindLabel(kind)}</span>
               <small>{typeCounts[kind]}</small>
-            </label>
+            </Label>
           ))}
         </fieldset>
         <fieldset className="filter-stack">
           <legend>Status</legend>
           {(["verified", "provisional", "disputed", "deprecated"] as RecallResultStatus[]).map((status) => (
-            <label className="filter-row" key={status}>
-              <input type="checkbox" checked={enabledStatuses[status]} onChange={() => toggleStatus(status)} />
+            <Label className="filter-row" key={status}>
+              <Checkbox checked={enabledStatuses[status]} onCheckedChange={() => toggleStatus(status)} />
               <span>{recallResultStatusLabel(status)}</span>
               <small>{statusCounts[status]}</small>
-            </label>
+            </Label>
           ))}
         </fieldset>
         <div className="filter-stack">
           <strong>Date</strong>
-          <select aria-label="Date range" value={dateMode} onChange={(event) => setDateMode(event.target.value as "all" | "custom")}>
-            <option value="all">All time</option>
-            <option value="custom">Custom</option>
-          </select>
+          <NativeSelect aria-label="Date range" value={dateMode} onChange={(event) => setDateMode(event.target.value as "all" | "custom")}>
+            <NativeSelectOption value="all">All time</NativeSelectOption>
+            <NativeSelectOption value="custom">Custom</NativeSelectOption>
+          </NativeSelect>
           {dateMode === "custom" && (
             <>
-              <input aria-label="Start date" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
-              <input aria-label="End date" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+              <Input aria-label="Start date" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+              <Input aria-label="End date" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
             </>
           )}
         </div>
         <div className="filter-stack">
           <strong>Source</strong>
-          <select aria-label="Source" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}>
-            <option value="all">All sources</option>
-            {sourceOptions.map((source) => <option key={source} value={source}>{source}</option>)}
-          </select>
+          <NativeSelect aria-label="Source" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}>
+            <NativeSelectOption value="all">All sources</NativeSelectOption>
+            {sourceOptions.map((source) => <NativeSelectOption key={source} value={source}>{source}</NativeSelectOption>)}
+          </NativeSelect>
         </div>
         {entities.length > 0 && (
           <div className="filter-stack" aria-label="Related entities">
@@ -207,41 +246,17 @@ export function SearchPanel({ api }: { api: UserApi }) {
             </div>
           </div>
         )}
-      </aside>
-
-      <section className="knowledge-results-panel" aria-label="Recall results">
-        <form className="knowledge-commandbar" onSubmit={submit}>
-          <label className="sr-only" htmlFor="recall-query">Keyword</label>
-          <div className="search-input-wrap large">
-            <Search size={17} aria-hidden="true" />
-            <input
-              id="recall-query"
-              aria-label="Keyword"
-              placeholder="Search knowledge..."
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-          </div>
-          <button className="primary-button compact" type="submit" disabled={loading}>
-            <Search size={16} aria-hidden="true" />
-            Search
-          </button>
-        </form>
-        <div className="knowledge-results-toolbar">
-          <div>
-            <h2>{filteredHits.length.toLocaleString()} results</h2>
-            <span>{query.trim() ? `for "${query.trim()}"` : "Search across evidence and relationships"}</span>
-          </div>
-          <div className="toolbar-actions">
-            <button
+      </PopoverContent>
+            </Popover>
+            <Button variant="outline"
               className="select-like compact"
               type="button"
               aria-label={`Sort by ${sortMode === "relevance" ? "date" : "relevance"}`}
               onClick={() => setSortMode((current) => (current === "relevance" ? "date" : "relevance"))}
             >
               Sort: {sortMode === "relevance" ? "Relevance" : "Date"} <ChevronDown size={14} aria-hidden="true" />
-            </button>
-            <button
+            </Button>
+            <Button variant="ghost" size="icon"
               className={density === "compact" ? "icon-button active" : "icon-button"}
               type="button"
               aria-label={density === "compact" ? "Use comfortable density" : "Use compact density"}
@@ -249,12 +264,12 @@ export function SearchPanel({ api }: { api: UserApi }) {
               onClick={() => setDensity((current) => (current === "comfortable" ? "compact" : "comfortable"))}
             >
               <FileText size={16} aria-hidden="true" />
-            </button>
+            </Button>
             {!inspectorOpen && (
-              <button className="ghost-button compact" type="button" onClick={() => setInspectorOpen(true)}>
+              <Button variant="outline" className="ghost-button compact explorer-details-trigger" type="button" disabled={!selectedResult} onClick={() => setInspectorOpen(true)}>
                 <FileText size={15} aria-hidden="true" />
                 Open details
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -264,21 +279,15 @@ export function SearchPanel({ api }: { api: UserApi }) {
           <RecallResults
             items={sortedHits}
             selectedKey={selectedResult?.key ?? ""}
-            onSelect={setSelectedKey}
+            onSelect={(key) => { setSelectedKey(key); setInspectorOpen(true); }}
             density={density}
           />
         )}
       </section>
 
-      {inspectorOpen && (
-        <aside className="knowledge-inspector" aria-label="Inspector">
-          <div className="inspector-head">
-            <h2>Inspector</h2>
-            <button className="icon-button" type="button" aria-label="Close details panel" onClick={() => setInspectorOpen(false)}><X size={16} aria-hidden="true" /></button>
-          </div>
-          <KnowledgeInspector api={api} result={selectedResult} activeTab={inspectorTab} onSelectTab={setInspectorTab} />
-        </aside>
-      )}
+      <ResponsiveInspector compact={compact} open={inspectorOpen} onOpenChange={setInspectorOpen} title="Inspector">
+        <KnowledgeInspector api={api} result={selectedResult} activeTab={inspectorTab} onSelectTab={setInspectorTab} />
+      </ResponsiveInspector>
     </section>
   );
 }
@@ -366,28 +375,16 @@ function KnowledgeInspector({
     { id: "graph", label: "Graph" },
   ];
   return (
-    <article className="inspector-card">
-      <div className="inspector-tabs" role="tablist" aria-label="Result sections">
-        {tabs.map((tab) => (
-          <button
-            className={tab.id === activeTab ? "inspector-tab active" : "inspector-tab"}
-            type="button"
-            role="tab"
-            aria-selected={tab.id === activeTab}
-            key={tab.id}
-            onClick={() => onSelectTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+    <Tabs className="inspector-card" value={activeTab} onValueChange={(value) => onSelectTab(value as InspectorTab)}>
+      <TabsList aria-label="Result sections">
+        {tabs.map((tab) => <TabsTrigger key={tab.id} value={tab.id}>{tab.label}</TabsTrigger>)}
+      </TabsList>
       <div className="inspector-status-row">
         <span className="status-pill neutral">{recallResultKindLabel(result.kind)}</span>
         {status && <span className={statusPillClass(status)}>{recallResultStatusLabel(status)}</span>}
       </div>
       <h3>{itemTitle(item)}</h3>
-      {activeTab === "evidence" && (
-        <div className="inspector-section" role="tabpanel">
+      <TabsContent value="evidence" className="inspector-section">
           <h4>Evidence</h4>
           <p>{itemBody(item)}</p>
           {evidenceContexts.length > 0 && (
@@ -420,10 +417,8 @@ function KnowledgeInspector({
               </dd>
             </div>
           </dl>
-        </div>
-      )}
-      {activeTab === "lineage" && (
-        <div className="inspector-section" role="tabpanel">
+        </TabsContent>
+      <TabsContent value="lineage" className="inspector-section">
           <h4>Lineage</h4>
           <dl className="evidence-list">
             <div>
@@ -439,10 +434,8 @@ function KnowledgeInspector({
               <dd>{status ? recallResultStatusLabel(status) : "n/a"}</dd>
             </div>
           </dl>
-        </div>
-      )}
-      {activeTab === "recall" && (
-        <div className="inspector-section" role="tabpanel">
+        </TabsContent>
+      <TabsContent value="recall" className="inspector-section">
           <h4>Recall</h4>
           <dl className="evidence-list">
             <div>
@@ -458,16 +451,13 @@ function KnowledgeInspector({
               <dd>{rankLabel(result.hit.keyword_rank)}</dd>
             </div>
           </dl>
-        </div>
-      )}
-      {activeTab === "graph" && (
-        <div className="inspector-section" role="tabpanel">
+        </TabsContent>
+      <TabsContent value="graph" className="inspector-section">
           <h4>Graph</h4>
           <Suspense fallback={<LoadingState label="Loading graph" compact />}>
             <ResultGraphPreview api={api} anchor={recallGraphAnchor(result)} />
           </Suspense>
-        </div>
-      )}
+        </TabsContent>
       <dl className="inspector-details">
         <div>
           <dt>Tier</dt>
@@ -478,7 +468,7 @@ function KnowledgeInspector({
           <dd>{recallResultKindLabel(result.kind)}</dd>
         </div>
       </dl>
-    </article>
+    </Tabs>
   );
 }
 

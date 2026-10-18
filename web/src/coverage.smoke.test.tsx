@@ -180,13 +180,35 @@ describe("coverage contracts", () => {
       <DreamEvidenceSummary dream={{ hypothesis: "No evidence" }} />
       <DreamEvidenceSummary dream={{ hypothesis: "Evidence", derivations: [{ premise_position: 1, relationship_id: "r", relationship_version: 1, quote: "quote", authority: "owner" }], evidence_derivations: [{ evidence_id: "e", source_group_key: "g", span_start: 0, span_end: 5, quote: "excerpt", authority: "owner" }] }} />
       <MetricLabel label="Metric" detail="Meaning" />
-      <PortalShell theme="dark" title="Portal" icon={<span>icon</span>} topbarActions={<span>actions</span>} navLabel="Navigation" navItemsLabel="Sections" navPlacement="top" contextBar={<span>context</span>} resourceRail={<span>resources</span>} detailLabel="Details" error="portal error" navItems={[{ id: "one", label: "One", icon: <span>one</span>, active: true, onClick: vi.fn() }, { id: "two", label: "Two", icon: <span>two</span>, active: false, disabled: true, onClick: vi.fn() }]}><span>content</span></PortalShell>
+      <PortalShell theme="dark" title="Portal" icon={<span>icon</span>} topbarActions={<span>actions</span>} navLabel="Navigation" navItemsLabel="Sections" contextBar={<span>context</span>} workspacePicker={<span>resources</span>} detailLabel="Details" error="portal error" navItems={[{ id: "one", label: "One", icon: <span>one</span>, active: true, onClick: vi.fn() }, { id: "two", label: "Two", icon: <span>two</span>, active: false, disabled: true, onClick: vi.fn() }]}><span>content</span></PortalShell>
     </>);
     expect(screen.getByRole("alert")).toHaveTextContent("portal error");
-    expect(screen.getAllByRole("tooltip").some((tooltip) => tooltip.textContent === "Details")).toBe(true);
+    const meaning = screen.getByRole("button", { name: "Meaning" });
+    await user.click(meaning);
+    expect(await screen.findByRole("tooltip", { name: "Details" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("tooltip", { name: "Details" })).not.toBeInTheDocument());
+    await user.unhover(meaning);
+    await user.tab();
+    await user.hover(meaning);
+    expect(await screen.findByRole("tooltip", { name: "Details" })).toBeInTheDocument();
     expect(screen.getByText("No cited excerpts")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Copy secret" }));
     expect(await screen.findByRole("button", { name: "Copy secret" })).toBeInTheDocument();
+  });
+
+  it("keeps workspace errors accessible while mobile navigation is open", async () => {
+    const shell = (error = "") => <PortalShell theme="light" title="Knowledge" icon={null} topbarActions={null} navLabel="Navigation" navItemsLabel="Sections" navItems={[]} detailLabel="Details" error={error}>Workspace</PortalShell>;
+    const user = userEvent.setup();
+    const view = render(shell());
+    await user.click(screen.getByRole("button", { name: "Open navigation" }));
+    view.rerender(shell("Team switch unavailable"));
+    const navigation = screen.getByRole("dialog", { name: "Navigation" });
+    expect(within(navigation).getByRole("alert")).toHaveTextContent("Team switch unavailable");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("alert")).toHaveTextContent("Team switch unavailable");
   });
 
   it("covers security loading, filtering, creation, refresh, and deletion", async () => {
@@ -413,7 +435,8 @@ describe("coverage contracts", () => {
     const user = userEvent.setup();
     render(<App />);
     expect(await screen.findByRole("button", { name: "Sign in with Smoke OIDC" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Switch to dark theme" }));
+    await user.click(screen.getByRole("button", { name: "Choose theme" }));
+    await user.click(screen.getByRole("menuitem", { name: "Dark" }));
     expect(localStorage.getItem("denseMem.controlTheme")).toBe("dark");
     await user.click(screen.getByRole("button", { name: "Unlock" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Token is required");
@@ -441,12 +464,14 @@ describe("coverage contracts", () => {
     await user.click(screen.getByRole("button", { name: "Save provider" }));
     await waitFor(() => expect(api.createSSOProvider).toHaveBeenCalled());
     await user.click(screen.getByRole("button", { name: "Edit Smoke OIDC" }));
+    await user.click(screen.getByRole("tab", { name: "Mappings" }));
     await user.selectOptions(screen.getByLabelText("Role"), "manager");
     await user.click(screen.getByLabelText("Recall feedback access"));
     await user.click(screen.getByRole("button", { name: "Add" }));
     await waitFor(() => expect(api.createSSOGroupMapping).toHaveBeenCalled());
     await user.click(screen.getByRole("button", { name: "Delete group mapping" }));
     await waitFor(() => expect(api.deleteSSOGroupMapping).toHaveBeenCalledWith(provider.id, mapping.id));
+    await user.click(screen.getByRole("tab", { name: "Providers" }));
     await user.click(screen.getByRole("button", { name: "Refresh SSO providers" }));
     await user.click(screen.getByRole("button", { name: "Delete Smoke OIDC" }));
     await waitFor(() => expect(api.deleteSSOProvider).toHaveBeenCalledWith(provider.id));
@@ -482,6 +507,9 @@ describe("coverage contracts", () => {
     render(<GraphPanel api={api} />);
     expect(await screen.findByText("Entity")).toBeInTheDocument();
     await user.click(within(screen.getByTestId("force-graph")).getByRole("button", { name: "Entity" }));
+    await waitFor(() => expect(api.nodeDetail).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "Close details panel" }));
+    await user.click(screen.getByRole("button", { name: "Graph controls" }));
     await user.click(screen.getByLabelText("Value"));
     await user.click(screen.getByLabelText("Entity"));
     await user.click(screen.getByLabelText("Value"));
@@ -528,6 +556,7 @@ describe("coverage contracts", () => {
     await user.type(screen.getByLabelText("Keyword"), "knowledge");
     await user.click(screen.getByRole("button", { name: "Search" }));
     expect((await screen.findAllByText("Evidence context")).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "Filters" }));
     const filters = screen.getByLabelText("Knowledge filters");
     const typeFilters = within(filters).getByRole("group", { name: "Type" });
     await user.click(within(typeFilters).getAllByRole("checkbox")[2]);
@@ -535,18 +564,21 @@ describe("coverage contracts", () => {
     await user.selectOptions(screen.getByLabelText("Date range"), "custom");
     await user.type(screen.getByLabelText("Start date"), "2026-01-01");
     await user.type(screen.getByLabelText("End date"), "2026-12-31");
+    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: /Sort by date/ }));
     await user.click(screen.getByRole("button", { name: "Use compact density" }));
     const list = screen.getByRole("listbox", { name: "Recall result list" });
     const option = within(list).getAllByRole("option")[0];
     option.focus();
-    fireEvent.keyDown(option, { key: "Enter" });
+    await user.keyboard("{Enter}");
     await user.click(screen.getByRole("tab", { name: "Lineage" }));
     await user.click(screen.getByRole("tab", { name: "Recall" }));
     await user.click(screen.getByRole("tab", { name: "Graph" }));
     await user.click(screen.getByRole("button", { name: "Close details panel" }));
     await user.click(screen.getByRole("button", { name: "Open details" }));
-    const statusFilters = within(filters).getByRole("group", { name: "Status" });
+    await user.click(screen.getByRole("button", { name: "Close details panel" }));
+    await user.click(screen.getByRole("button", { name: "Filters" }));
+    const statusFilters = within(screen.getByLabelText("Knowledge filters")).getByRole("group", { name: "Status" });
     await user.click(within(statusFilters).getAllByRole("checkbox")[1]);
     await user.click(within(statusFilters).getAllByRole("checkbox")[2]);
     await user.selectOptions(screen.getByLabelText("Source"), "manual");
@@ -556,6 +588,7 @@ describe("coverage contracts", () => {
     await user.type(screen.getByLabelText("Start date"), "2027-01-01");
     expect(screen.getByText("No recall results")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Clear all" }));
+    await user.keyboard("{Escape}");
     recall.mockRejectedValueOnce(new Error("recall failed"));
     await user.clear(screen.getByLabelText("Keyword"));
     await user.type(screen.getByLabelText("Keyword"), "failed");
@@ -615,15 +648,15 @@ describe("coverage contracts", () => {
     await user.click(screen.getByRole("button", { name: /View recall feedback rec-1/ }));
     expect(await screen.findByText("comment")).toBeInTheDocument();
     expect(screen.getByText("current")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Hide recall feedback rec-1/ }));
+    await user.click(screen.getByRole("button", { name: "Close details panel" }));
     await user.click(screen.getByRole("button", { name: /View recall feedback rec-2/ }));
     expect(await screen.findByText("No result refs")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Hide recall feedback rec-2/ }));
+    await user.click(screen.getByRole("button", { name: "Close details panel" }));
     await user.click(screen.getByRole("button", { name: /View recall feedback rec-3/ }));
     expect(await screen.findByText("Missing from graph")).toBeInTheDocument();
     expect(screen.getByText("Subject uses Value")).toBeInTheDocument();
     expect(screen.getByText("Resolved")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Hide recall feedback rec-3/ }));
+    await user.click(screen.getByRole("button", { name: "Close details panel" }));
     await user.selectOptions(screen.getByLabelText("Rows"), "50");
     await user.click(screen.getByRole("button", { name: "Next" }));
     await user.click(screen.getByRole("button", { name: "Previous" }));

@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ControlApi, type OntologyMaintenanceStatus } from "../api";
 import { generalConfigSnapshot, jsonResponse } from "../App.test-helpers";
-import { ConfigPanel } from "./ConfigPanel";
+import { OntologyConfigPanel } from "./ConfigPanel";
 import { OntologyMaintenancePanel } from "./OntologyMaintenancePanel";
 
 const policy = { enabled: true, cadence_hours: 12 as const, start_time_local: "03:00", timezone: "UTC", model: "configured-model", max_concurrency: 1, input_tokens: 250000, output_tokens: 100000, settings_version: "version" };
@@ -228,15 +228,14 @@ describe("Ontology maintenance controls", () => {
       throw new Error(`Unexpected request ${url}`);
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<ConfigPanel api={new ControlApi("synthetic-control", "/control/api")} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Ontology" }));
+    render(<OntologyConfigPanel api={new ControlApi("synthetic-control", "/control/api")} />);
     const enabled = await screen.findByLabelText("Enable ontology maintenance");
     expect(enabled).not.toBeChecked();
     fireEvent.click(enabled);
     fireEvent.change(screen.getByLabelText("Cadence (hours)"), { target: { value: "24" } });
     fireEvent.change(screen.getByLabelText("Maintenance model"), { target: { value: "operator-model" } });
     fireEvent.click(screen.getByRole("button", { name: "Save config" }));
-    await screen.findByText("Saved");
+    await screen.findByText("Changes saved");
     expect(enabled).toBeChecked();
     expect(screen.getByLabelText("Cadence (hours)")).toHaveValue("24");
     expect(screen.getByLabelText("Maintenance model")).toHaveValue("operator-model");

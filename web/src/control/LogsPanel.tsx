@@ -1,3 +1,9 @@
+import { ResponsiveInspector, useCompactWorkspace } from "../ui/inspector";
+import { Button } from "../ui/primitives/button";
+import { Label } from "../ui/primitives/label";
+import { NativeSelect, NativeSelectOption } from "../ui/primitives/native-select";
+import { Input } from "../ui/primitives/input";
+import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "../ui/primitives/table";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Braces, RefreshCw } from "lucide-react";
 import { ControlApi, OperationLog, OperationLogQuery, Team } from "../api";
@@ -45,6 +51,7 @@ const EMPTY_LOG_QUERY: OperationLogQuery = {};
 const FREE_TEXT_FILTER_DEBOUNCE_MS = 300;
 
 export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api: ControlApi; teams: Team[]; initialQuery?: OperationLogQuery }) {
+  const { ref, compact } = useCompactWorkspace(760);
   const [logs, setLogs] = useState<OperationLog[]>([]);
   const [total, setTotal] = useState(0);
   const [query, setQuery] = useState<OperationLogQuery>({ limit: 100, offset: 0, sort: "timestamp", direction: "desc", ...initialQuery });
@@ -109,21 +116,21 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
   const rangeEnd = Math.min(offset + logs.length, total);
 
   return (
-    <section className="surface">
+    <section className="surface" ref={ref}>
       <SectionHeading
         title="Operation Logs"
         meta={total}
         actions={(
-          <button className="icon-button" type="button" aria-label="Refresh logs" onClick={() => void loadLogs()}>
+          <Button variant="ghost" size="icon" className="icon-button" type="button" aria-label="Refresh logs" onClick={() => void loadLogs()}>
             <RefreshCw size={16} aria-hidden="true" />
-          </button>
+          </Button>
         )}
       />
       {error && <div className="banner error" role="alert">{error}</div>}
       <div className="metrics-toolbar">
-        <label>
+        <Label>
           Severity
-          <select
+          <NativeSelect
             value={query.severity ?? ""}
             onChange={(event) => {
               const next = { ...query, severity: event.target.value, offset: 0 };
@@ -132,13 +139,13 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
             }}
           >
             {SEVERITIES.map((severity) => (
-              <option value={severity} key={severity}>{severity || "All"}</option>
+              <NativeSelectOption value={severity} key={severity}>{severity || "All"}</NativeSelectOption>
             ))}
-          </select>
-        </label>
-        <label>
+          </NativeSelect>
+        </Label>
+        <Label>
           Sort
-          <select
+          <NativeSelect
             value={query.sort ?? "timestamp"}
             onChange={(event) => {
               const next = { ...query, sort: event.target.value as OperationLogQuery["sort"], offset: 0 };
@@ -146,13 +153,13 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
               void loadLogs(next);
             }}
           >
-            <option value="timestamp">Time</option>
-            <option value="severity">Severity</option>
-          </select>
-        </label>
-        <label>
+            <NativeSelectOption value="timestamp">Time</NativeSelectOption>
+            <NativeSelectOption value="severity">Severity</NativeSelectOption>
+          </NativeSelect>
+        </Label>
+        <Label>
           Direction
-          <select
+          <NativeSelect
             value={query.direction ?? "desc"}
             onChange={(event) => {
               const next = { ...query, direction: event.target.value as OperationLogQuery["direction"], offset: 0 };
@@ -160,13 +167,13 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
               void loadLogs(next);
             }}
           >
-            <option value="desc">Desc</option>
-            <option value="asc">Asc</option>
-          </select>
-        </label>
-        <label>
+            <NativeSelectOption value="desc">Desc</NativeSelectOption>
+            <NativeSelectOption value="asc">Asc</NativeSelectOption>
+          </NativeSelect>
+        </Label>
+        <Label>
           Correlation
-          <input
+          <Input
             aria-label="Correlation ID"
             value={query.correlation_id ?? ""}
             onChange={(event) => {
@@ -175,10 +182,10 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
               scheduleFreeTextLoad(next);
             }}
           />
-        </label>
-        <label>
+        </Label>
+        <Label>
           Request hash
-          <input
+          <Input
             aria-label="Request hash"
             value={query.request_hash ?? ""}
             onChange={(event) => {
@@ -187,10 +194,10 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
               scheduleFreeTextLoad(next);
             }}
           />
-        </label>
-        <label>
+        </Label>
+        <Label>
           Invocation
-          <input
+          <Input
             aria-label="Invocation ID"
             value={query.invocation_id ?? ""}
             onChange={(event) => {
@@ -199,10 +206,10 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
               scheduleFreeTextLoad(next);
             }}
           />
-        </label>
-        <label>
+        </Label>
+        <Label>
           Attempt
-          <input
+          <Input
             aria-label="Attempt ID"
             value={query.attempt_id ?? ""}
             onChange={(event) => {
@@ -211,10 +218,10 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
               scheduleFreeTextLoad(next);
             }}
           />
-        </label>
-        <label>
+        </Label>
+        <Label>
           Call kind
-          <select
+          <NativeSelect
             aria-label="Call classification"
             value={query.classification ?? ""}
             onChange={(event) => {
@@ -223,15 +230,15 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
               void loadLogs(next);
             }}
           >
-            <option value="">All calls</option>
-            <option value="execution">Execution</option>
-            <option value="replay">Replay</option>
-            <option value="conflict">Conflict</option>
-          </select>
-        </label>
-        <label>
+            <NativeSelectOption value="">All calls</NativeSelectOption>
+            <NativeSelectOption value="execution">Execution</NativeSelectOption>
+            <NativeSelectOption value="replay">Replay</NativeSelectOption>
+            <NativeSelectOption value="conflict">Conflict</NativeSelectOption>
+          </NativeSelect>
+        </Label>
+        <Label>
           Retryable
-          <select
+          <NativeSelect
             aria-label="Retryable"
             value={query.retryable === "" || query.retryable === undefined ? "" : String(query.retryable)}
             onChange={(event) => {
@@ -242,11 +249,11 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
               void loadLogs(next);
             }}
           >
-            <option value="">Any</option>
-            <option value="true">Yes</option>
-            <option value="false">No</option>
-          </select>
-        </label>
+            <NativeSelectOption value="">Any</NativeSelectOption>
+            <NativeSelectOption value="true">Yes</NativeSelectOption>
+            <NativeSelectOption value="false">No</NativeSelectOption>
+          </NativeSelect>
+        </Label>
       </div>
       {loading && logs.length === 0 ? (
         <LoadingState label="Loading logs" />
@@ -254,27 +261,27 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
         <div className="table-placeholder">No logs</div>
       ) : (
         <div className="table-wrap">
-          <table className="data-table logs-table">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Severity</th>
-	                <th>Message</th>
-	                <th>Source</th>
-	                <th>Team</th>
-	                <th>Raw</th>
-	              </tr>
-            </thead>
-            <tbody>
+          <Table className="data-table logs-table">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Time</TableHead>
+                <TableHead>Severity</TableHead>
+	                <TableHead>Message</TableHead>
+	                <TableHead>Source</TableHead>
+	                <TableHead>Team</TableHead>
+	                <TableHead>Raw</TableHead>
+	              </TableRow>
+            </TableHeader>
+            <TableBody>
               {logs.map((log) => {
                 const summary = logSummary(log);
                 const expanded = expandedLogId === log.id;
                 return (
                   <Fragment key={log.id}>
-                    <tr>
-                      <td>{formatDate(log.timestamp)}</td>
-                      <td><span className={severityClass(log.severity)}>{log.severity}</span></td>
-                      <td>
+                    <TableRow>
+                      <TableCell>{formatDate(log.timestamp)}</TableCell>
+                      <TableCell><span className={severityClass(log.severity)}>{log.severity}</span></TableCell>
+                      <TableCell>
                         <div className="log-message-cell">
                           <strong>{summary.title}</strong>
                           {summary.details.length > 0 && (
@@ -285,11 +292,11 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
                             </div>
                           )}
                         </div>
-                      </td>
-                      <td><code>{compactSource(log.source)}</code></td>
-                      <td>{log.team_id ? (teamNames.get(log.team_id) ?? shortId(log.team_id)) : "System"}</td>
-                      <td className="actions-cell">
-                        <button
+                      </TableCell>
+                      <TableCell><code>{compactSource(log.source)}</code></TableCell>
+                      <TableCell>{log.team_id ? (teamNames.get(log.team_id) ?? shortId(log.team_id)) : "System"}</TableCell>
+                      <TableCell className="actions-cell">
+                        <Button variant="ghost" size="icon"
                           className="icon-button"
                           type="button"
                           aria-label={`${expanded ? "Hide" : "View"} raw log ${summary.title}`}
@@ -297,28 +304,28 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
                           onClick={() => setExpandedLogId(expanded ? "" : log.id)}
                         >
                           <Braces size={16} aria-hidden="true" />
-                        </button>
-                      </td>
-                    </tr>
-	                    {expanded && (
-	                      <tr className="log-raw-row">
-	                        <td colSpan={6}>
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+	                    {expanded && !compact && (
+	                      <TableRow className="log-raw-row">
+	                        <TableCell colSpan={6}>
 	                          <pre aria-label={`Raw log body ${summary.title}`}>{JSON.stringify(rawLogRecord(log), null, 2)}</pre>
-	                        </td>
-	                      </tr>
+	                        </TableCell>
+	                      </TableRow>
 	                    )}
                   </Fragment>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
       <div className="table-actions">
         <span className="form-meta">{rangeStart}-{rangeEnd} of {total}</span>
-        <label className="table-page-size">
+        <Label className="table-page-size">
           Rows
-          <select
+          <NativeSelect
             value={limit}
             disabled={loading}
             onChange={(event) => {
@@ -328,11 +335,11 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
             }}
           >
             {PAGE_SIZES.map((pageSize) => (
-              <option value={pageSize} key={pageSize}>{pageSize}</option>
+              <NativeSelectOption value={pageSize} key={pageSize}>{pageSize}</NativeSelectOption>
             ))}
-          </select>
-        </label>
-        <button
+          </NativeSelect>
+        </Label>
+        <Button variant="outline"
           className="ghost-button"
           type="button"
           disabled={loading || offset === 0}
@@ -343,8 +350,8 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
           }}
         >
           Previous
-        </button>
-        <button
+        </Button>
+        <Button variant="outline"
           className="ghost-button"
           type="button"
           disabled={loading || offset + limit >= total}
@@ -355,8 +362,11 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
           }}
         >
           Next
-        </button>
+        </Button>
       </div>
+      <ResponsiveInspector compact open={compact && Boolean(expandedLogId)} onOpenChange={(open) => { if (!open) setExpandedLogId(""); }} title="Raw log">
+        {logs.filter((log) => log.id === expandedLogId).map((log) => <pre key={log.id} aria-label={`Raw log body ${logSummary(log).title}`}>{JSON.stringify(rawLogRecord(log), null, 2)}</pre>)}
+      </ResponsiveInspector>
     </section>
   );
 }

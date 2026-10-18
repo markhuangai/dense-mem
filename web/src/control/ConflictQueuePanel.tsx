@@ -1,3 +1,10 @@
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/primitives/tabs";
+import { useUnsavedChanges, useViewTransition } from "../ui/navigation";
+import { Button } from "../ui/primitives/button";
+import { Label } from "../ui/primitives/label";
+import { NativeSelect, NativeSelectOption } from "../ui/primitives/native-select";
+import { Textarea } from "../ui/primitives/textarea";
+import { Table, TableCaption, TableHeader, TableRow, TableHead, TableBody, TableCell } from "../ui/primitives/table";
 import { AlertTriangle, Clock3, RefreshCw, ShieldAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, ConflictQueueItem, ConflictQueuePage, ControlApi, Team } from "../api";
@@ -9,6 +16,7 @@ import "./ConflictQueuePanel.css";
 type QueueFilter = "" | "open" | "overdue";
 
 export function ConflictQueuePanel({ api, team }: { api: ControlApi; team: Team }) {
+  const transition = useViewTransition();
   const [view, setView] = useState<"relationships" | "evidence">("relationships");
   const [filter, setFilter] = useState<QueueFilter>("");
   const [pageSize, setPageSize] = useState(25);
@@ -103,7 +111,7 @@ export function ConflictQueuePanel({ api, team }: { api: ControlApi; team: Team 
         title="Conflict queue"
         subtitle={summary ? `Snapshot ${formatDate(summary.collected_at)}` : "Read-only review workspace"}
         actions={(
-          <button
+          <Button variant="ghost" size="icon"
             className="icon-button"
             type="button"
             aria-label="Refresh conflict queue"
@@ -111,17 +119,14 @@ export function ConflictQueuePanel({ api, team }: { api: ControlApi; team: Team 
             disabled={loading}
           >
             <RefreshCw size={16} aria-hidden="true" />
-          </button>
+          </Button>
         )}
       />
 
-      <div className="conflict-view-tabs" role="tablist" aria-label="Conflict type">
-        <button type="button" role="tab" aria-selected={view === "relationships"} className={view === "relationships" ? "active" : ""} onClick={() => setView("relationships")}>Relationships</button>
-        <button type="button" role="tab" aria-selected={view === "evidence"} className={view === "evidence" ? "active" : ""} onClick={() => setView("evidence")}>Evidence</button>
-      </div>
-
-      {view === "evidence" ? <EvidenceConflictView api={api} team={team} refreshNonce={refreshNonce} /> : <>
-
+      <Tabs className="panel-tabs" value={view} onValueChange={(value) => void transition(() => setView(value as "relationships" | "evidence"))}>
+        <TabsList aria-label="Conflict type"><TabsTrigger value="relationships">Relationships</TabsTrigger><TabsTrigger value="evidence">Evidence</TabsTrigger></TabsList>
+        <TabsContent value="evidence"><EvidenceConflictView api={api} team={team} refreshNonce={refreshNonce} /></TabsContent>
+        <TabsContent value="relationships">
       {Boolean(telemetryError) && <div className="banner warning" role="status">Queue telemetry is unavailable; queue data may still be current.</div>}
       {telemetryDegraded && <div className="banner warning" role="status"><ShieldAlert size={15} aria-hidden="true" /> Queue collector is degraded. Gauge values are suppressed until the next successful scrape.</div>}
 
@@ -137,18 +142,18 @@ export function ConflictQueuePanel({ api, team }: { api: ControlApi; team: Team 
       )}
 
       <div className="conflict-queue-toolbar" aria-label="Conflict queue controls">
-        <label htmlFor="conflict-queue-filter">Show</label>
-        <select id="conflict-queue-filter" value={filter} onChange={(event) => changeFilter(event.target.value as QueueFilter)}>
-          <option value="">All active</option>
-          <option value="open">Open</option>
-          <option value="overdue">Overdue</option>
-        </select>
-        <label htmlFor="conflict-queue-page-size">Rows</label>
-        <select id="conflict-queue-page-size" value={pageSize} onChange={(event) => changePageSize(Number(event.target.value))}>
-          <option value={25}>25</option>
-          <option value={50}>50</option>
-          <option value={100}>100</option>
-        </select>
+        <Label htmlFor="conflict-queue-filter">Show</Label>
+        <NativeSelect id="conflict-queue-filter" value={filter} onChange={(event) => changeFilter(event.target.value as QueueFilter)}>
+          <NativeSelectOption value="">All active</NativeSelectOption>
+          <NativeSelectOption value="open">Open</NativeSelectOption>
+          <NativeSelectOption value="overdue">Overdue</NativeSelectOption>
+        </NativeSelect>
+        <Label htmlFor="conflict-queue-page-size">Rows</Label>
+        <NativeSelect id="conflict-queue-page-size" value={pageSize} onChange={(event) => changePageSize(Number(event.target.value))}>
+          <NativeSelectOption value={25}>25</NativeSelectOption>
+          <NativeSelectOption value={50}>50</NativeSelectOption>
+          <NativeSelectOption value={100}>100</NativeSelectOption>
+        </NativeSelect>
         <span className="conflict-queue-order"><Clock3 size={14} aria-hidden="true" /> Overdue first, then next review</span>
       </div>
 
@@ -159,17 +164,18 @@ export function ConflictQueuePanel({ api, team }: { api: ControlApi; team: Team 
 
       {!loading && !queueError && visiblePage && (
         <div className="conflict-queue-pagination" aria-label="Conflict queue pagination">
-          <button className="ghost-button" type="button" disabled={cursorHistory.length === 0} onClick={() => setCursorHistory((current) => current.slice(0, -1))}>Previous</button>
+          <Button variant="outline" className="ghost-button" type="button" disabled={cursorHistory.length === 0} onClick={() => setCursorHistory((current) => current.slice(0, -1))}>Previous</Button>
           <span>Page {cursorHistory.length + 1}</span>
-          <button className="ghost-button" type="button" disabled={!visiblePage.next_cursor} onClick={() => visiblePage.next_cursor && setCursorHistory((current) => [...current, visiblePage.next_cursor as string])}>Next</button>
+          <Button variant="outline" className="ghost-button" type="button" disabled={!visiblePage.next_cursor} onClick={() => visiblePage.next_cursor && setCursorHistory((current) => [...current, visiblePage.next_cursor as string])}>Next</Button>
         </div>
       )}
-      </>}
+      </TabsContent></Tabs>
     </section>
   );
 }
 
 function EvidenceConflictView({ api, team, refreshNonce }: { api: ControlApi; team: Team; refreshNonce: number }) {
+  const transition = useViewTransition();
   const [items, setItems] = useState<EvidenceConflict[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selected, setSelected] = useState<EvidenceConflictDetail | null>(null);
@@ -180,6 +186,7 @@ function EvidenceConflictView({ api, team, refreshNonce }: { api: ControlApi; te
   const [eventError, setEventError] = useState<unknown>(null);
   const [eventLoading, setEventLoading] = useState(false);
   const [reason, setReason] = useState("");
+  useUnsavedChanges(Boolean(reason));
   const [preferred, setPreferred] = useState("");
   const [saving, setSaving] = useState(false);
   const [stale, setStale] = useState(false);
@@ -307,6 +314,7 @@ function EvidenceConflictView({ api, team, refreshNonce }: { api: ControlApi; te
       });
       if (requestEpoch !== teamEpoch.current || requestID !== detailRequestSequence.current) return;
       setStale(false);
+      setReason("");
       setSelected(null);
       setSelectedTeamID(null);
       setCursorHistory([]);
@@ -335,38 +343,38 @@ function EvidenceConflictView({ api, team, refreshNonce }: { api: ControlApi; te
 
   return <div className="evidence-conflict-view" aria-label="Evidence conflicts">
     <div className="conflict-queue-toolbar">
-      <label htmlFor="evidence-conflict-status">Show</label>
-      <select id="evidence-conflict-status" value={status} onChange={(event) => { detailRequestSequence.current++; setStale(false); setStatus(event.target.value as typeof status); setCursorHistory([]); setSelected(null); setSelectedTeamID(null); setNextCursor(null); }}>
-        <option value="open">Open</option><option value="resolved">Resolved</option><option value="dismissed">Dismissed</option>
-      </select>
+      <Label htmlFor="evidence-conflict-status">Show</Label>
+      <NativeSelect id="evidence-conflict-status" value={status} onChange={(event) => { detailRequestSequence.current++; setStale(false); setStatus(event.target.value as typeof status); setCursorHistory([]); setSelected(null); setSelectedTeamID(null); setNextCursor(null); }}>
+        <NativeSelectOption value="open">Open</NativeSelectOption><NativeSelectOption value="resolved">Resolved</NativeSelectOption><NativeSelectOption value="dismissed">Dismissed</NativeSelectOption>
+      </NativeSelect>
     </div>
     {stale && <div className="banner warning" role="status">This conflict changed in another review. The latest version is loaded; your reason remains.</div>}
     {loading && <LoadingState label="Loading evidence conflicts" />}
     {!loading && Boolean(error) && <QueueErrorState status={error instanceof ApiError ? error.status : 0} message={readError(error)} />}
     {!loading && !error && visibleItems.length === 0 && <div className="table-placeholder" role="status">No evidence conflicts match this view.</div>}
     {!loading && visibleItems.length > 0 && <div className="evidence-conflict-list">
-      {visibleItems.map((item) => <button type="button" className={`evidence-conflict-card ${visibleSelected?.conflict.conflict_id === item.conflict_id ? "selected" : ""}`} key={item.conflict_id} onClick={() => openConflict(item)}>
+      {visibleItems.map((item) => <Button variant="outline" type="button" className={`evidence-conflict-card ${visibleSelected?.conflict.conflict_id === item.conflict_id ? "selected" : ""}`} key={item.conflict_id} onClick={() => void transition(() => openConflict(item))}>
         <span className="status-pill neutral">{item.status} · v{item.version}</span>
         <strong>{item.positions.length} cited positions</strong>
         <small>{formatDate(item.updated_at)} · {shortId(item.conflict_id)}</small>
-      </button>)}
+      </Button>)}
     </div>}
     {!loading && !error && <div className="conflict-queue-pagination" aria-label="Evidence conflict page navigation">
-      <button className="ghost-button" type="button" disabled={cursorHistory.length === 0} onClick={() => setCursorHistory((current) => current.slice(0, -1))}>Previous</button>
+      <Button variant="outline" className="ghost-button" type="button" disabled={cursorHistory.length === 0} onClick={() => setCursorHistory((current) => current.slice(0, -1))}>Previous</Button>
       <span>Page {cursorHistory.length + 1}</span>
-      <button className="ghost-button" type="button" disabled={!nextCursor} onClick={() => nextCursor && setCursorHistory((current) => [...current, nextCursor])}>Next</button>
+      <Button variant="outline" className="ghost-button" type="button" disabled={!nextCursor} onClick={() => nextCursor && setCursorHistory((current) => [...current, nextCursor])}>Next</Button>
     </div>}
     {visibleSelected && <div className="evidence-conflict-detail">
-      <div className="evidence-conflict-detail-heading"><div><span className="status-pill neutral">{visibleSelected.conflict.status} · v{visibleSelected.conflict.version}</span><h3>Cited evidence conflict</h3></div><button className="ghost-button" type="button" onClick={() => { detailRequestSequence.current++; setStale(false); setSelected(null); setSelectedTeamID(null); }}>Close</button></div>
+      <div className="evidence-conflict-detail-heading"><div><span className="status-pill neutral">{visibleSelected.conflict.status} · v{visibleSelected.conflict.version}</span><h3>Cited evidence conflict</h3></div><Button variant="outline" className="ghost-button" type="button" onClick={() => void transition(() => { detailRequestSequence.current++; setStale(false); setSelected(null); setSelectedTeamID(null); setReason(""); })}>Close</Button></div>
       <div className="evidence-position-grid">{visibleSelected.conflict.positions.map((position) => <article className="evidence-position-card" key={position.position_id}><span className="status-pill neutral">{position.authority}{position.submitted ? " · submitted" : " · existing"}</span><p>{position.quote}</p><code>{position.evidence_id} · {position.occurrence_id}</code><small>Runes {position.span_start}–{position.span_end}</small></article>)}</div>
-      <label htmlFor="evidence-conflict-reason">Review reason</label>
-      <textarea id="evidence-conflict-reason" value={reason} maxLength={512} onChange={(event) => setReason(event.target.value)} placeholder="Explain the review decision" />
+      <Label htmlFor="evidence-conflict-reason">Review reason</Label>
+      <Textarea id="evidence-conflict-reason" value={reason} maxLength={512} onChange={(event) => setReason(event.target.value)} placeholder="Explain the review decision" />
       {visibleSelected.conflict.status === "open" && <>
-        <label htmlFor="evidence-conflict-preferred">Preferred position (optional)</label>
-        <select id="evidence-conflict-preferred" value={preferred} onChange={(event) => setPreferred(event.target.value)}><option value="">No preferred position</option>{visibleSelected.conflict.positions.map((position) => <option key={position.position_id} value={position.position_id}>{position.quote}</option>)}</select>
-        <div className="evidence-conflict-actions"><button className="primary-button" type="button" disabled={saving || reason.trim() === ""} onClick={() => resolve("resolve")}>Resolve</button><button className="ghost-button" type="button" disabled={saving || reason.trim() === "" || preferred !== ""} onClick={() => resolve("dismiss")}>Dismiss</button></div>
+        <Label htmlFor="evidence-conflict-preferred">Preferred position (optional)</Label>
+        <NativeSelect id="evidence-conflict-preferred" value={preferred} onChange={(event) => setPreferred(event.target.value)}><NativeSelectOption value="">No preferred position</NativeSelectOption>{visibleSelected.conflict.positions.map((position) => <NativeSelectOption key={position.position_id} value={position.position_id}>{position.quote}</NativeSelectOption>)}</NativeSelect>
+        <div className="evidence-conflict-actions"><Button variant="default" className="primary-button" type="button" disabled={saving || reason.trim() === ""} onClick={() => resolve("resolve")}>Resolve</Button><Button variant="outline" className="ghost-button" type="button" disabled={saving || reason.trim() === "" || preferred !== ""} onClick={() => resolve("dismiss")}>Dismiss</Button></div>
       </>}
-      {visibleSelected.conflict.events && visibleSelected.conflict.events.length > 0 && <details><summary>Review history ({visibleSelected.conflict.events.length})</summary><div className="evidence-conflict-history">{visibleSelected.conflict.events.map((event) => <div key={event.event_id}><strong>{event.action} · v{event.case_version}</strong><small>{formatDate(event.created_at)}{event.reason ? ` · ${event.reason}` : ""}</small></div>)}{Boolean(eventError) && <div className="banner warning" role="status">{readError(eventError)}</div>}{visibleSelected.next_event_cursor && <button className="ghost-button" type="button" disabled={eventLoading} onClick={() => void loadMoreEvents()}>{eventLoading ? "Loading history…" : "Load older history"}</button>}</div></details>}
+      {visibleSelected.conflict.events && visibleSelected.conflict.events.length > 0 && <details><summary>Review history ({visibleSelected.conflict.events.length})</summary><div className="evidence-conflict-history">{visibleSelected.conflict.events.map((event) => <div key={event.event_id}><strong>{event.action} · v{event.case_version}</strong><small>{formatDate(event.created_at)}{event.reason ? ` · ${event.reason}` : ""}</small></div>)}{Boolean(eventError) && <div className="banner warning" role="status">{readError(eventError)}</div>}{visibleSelected.next_event_cursor && <Button variant="outline" className="ghost-button" type="button" disabled={eventLoading} onClick={() => void loadMoreEvents()}>{eventLoading ? "Loading history…" : "Load older history"}</Button>}</div></details>}
     </div>}
   </div>;
 }
@@ -374,43 +382,43 @@ function EvidenceConflictView({ api, team, refreshNonce }: { api: ControlApi; te
 function ConflictQueueTable({ items }: { items: ConflictQueueItem[] }) {
   return (
     <div className="conflict-queue-table-wrap">
-      <table className="conflict-queue-table">
-        <caption className="visually-hidden">Active relationship conflicts</caption>
-        <thead>
-          <tr>
-            <th scope="col">Status</th>
-            <th scope="col">Question / predicate</th>
-            <th scope="col">Positions and supporters</th>
-            <th scope="col">Attempts</th>
-            <th scope="col">Lease</th>
-            <th scope="col">Failure</th>
-            <th scope="col">Timestamps</th>
-          </tr>
-        </thead>
-        <tbody>
+      <Table className="conflict-queue-table">
+        <TableCaption className="visually-hidden">Active relationship conflicts</TableCaption>
+        <TableHeader>
+          <TableRow>
+            <TableHead scope="col">Status</TableHead>
+            <TableHead scope="col">Question / predicate</TableHead>
+            <TableHead scope="col">Positions and supporters</TableHead>
+            <TableHead scope="col">Attempts</TableHead>
+            <TableHead scope="col">Lease</TableHead>
+            <TableHead scope="col">Failure</TableHead>
+            <TableHead scope="col">Timestamps</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {items.map((item) => <ConflictQueueRow key={item.conflict_id} item={item} />)}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }
 
 function ConflictQueueRow({ item }: { item: ConflictQueueItem }) {
   return (
-    <tr>
-      <td data-label="Status">
+    <TableRow>
+      <TableCell data-label="Status">
         <div className={`conflict-status-cell ${item.status}`}>
           <span className="conflict-urgency-spine" aria-hidden="true" />
           <strong>{item.status === "overdue" ? "Overdue" : "Open"}</strong>
           <span>{formatDue(item.next_review_at)}</span>
           <small>v{item.version} · {shortId(item.conflict_id)}</small>
         </div>
-      </td>
-      <td data-label="Question / predicate">
+      </TableCell>
+      <TableCell data-label="Question / predicate">
         <div className="conflict-question">{item.question || "Unspecified conflict question"}{item.question_truncated && <small className="conflict-truncation">Question truncated.</small>}</div>
         <code>{item.predicate_key}</code>{item.predicate_key_truncated && <small className="conflict-truncation">Predicate truncated.</small>}
-      </td>
-      <td data-label="Positions and supporters">
+      </TableCell>
+      <TableCell data-label="Positions and supporters">
         <div className="conflict-position-list">
           {item.positions.map((position) => (
             <div className="conflict-position" key={position.position_id}>
@@ -430,12 +438,12 @@ function ConflictQueueRow({ item }: { item: ConflictQueueItem }) {
           ))}
           {item.positions_truncated && <small className="conflict-truncation">Some positions are not shown.</small>}
         </div>
-      </td>
-      <td data-label="Attempts"><strong>{item.attempt_count}</strong></td>
-      <td data-label="Lease"><span className={`status-pill ${item.lease_state === "active" ? "warning" : "neutral"}`}>{item.lease_state}</span>{item.lease_until && <small>{formatDate(item.lease_until)}</small>}</td>
-      <td data-label="Failure"><span className={item.last_failure_class === "none" ? "muted-text" : "status-pill warning"}>{item.last_failure_class}</span></td>
-      <td data-label="Timestamps"><small>Created {formatDate(item.created_at)}</small><small>Updated {formatDate(item.updated_at)}</small><small>Due {formatDate(item.review_due_at)}</small></td>
-    </tr>
+      </TableCell>
+      <TableCell data-label="Attempts"><strong>{item.attempt_count}</strong></TableCell>
+      <TableCell data-label="Lease"><span className={`status-pill ${item.lease_state === "active" ? "warning" : "neutral"}`}>{item.lease_state}</span>{item.lease_until && <small>{formatDate(item.lease_until)}</small>}</TableCell>
+      <TableCell data-label="Failure"><span className={item.last_failure_class === "none" ? "muted-text" : "status-pill warning"}>{item.last_failure_class}</span></TableCell>
+      <TableCell data-label="Timestamps"><small>Created {formatDate(item.created_at)}</small><small>Updated {formatDate(item.updated_at)}</small><small>Due {formatDate(item.review_due_at)}</small></TableCell>
+    </TableRow>
   );
 }
 

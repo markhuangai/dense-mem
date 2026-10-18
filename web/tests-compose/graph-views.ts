@@ -1,3 +1,4 @@
+import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
 const userUrl = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
@@ -41,7 +42,7 @@ export function registerGraphViewTests() {
     }], next_cursor: "" }));
     await openControlPanel(page);
     await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
-    await page.getByRole("button", { name: /team dream history/i }).click();
+    await navigate(page, "Dream history");
     await page.locator(".dream-runs-table tbody tr").first().getByRole("button", { name: "Inspect" }).click();
     const diagnostics = page.getByRole("region", { name: "Dream diagnostics" });
     try {
@@ -58,7 +59,7 @@ export function registerGraphViewTests() {
     const releaseDiagnostics = await stubDreamDiagnostics(page, () => ({ items: [], next_cursor: "" }));
     await openControlPanel(page);
     await page.getByRole("button", { name: new RegExp(escapeRegExp(evidenceFailureTeamName)) }).click();
-    await page.getByRole("button", { name: /team dream history/i }).click();
+    await navigate(page, "Dream history");
     const failedRun = page.locator(".dream-runs-table tbody tr").filter({ hasText: "Evidence discovery" }).filter({ hasText: "failed" });
     await expect(failedRun).toHaveCount(1);
     await failedRun.getByRole("button", { name: "Inspect" }).click();
@@ -208,7 +209,7 @@ function escapeRegExp(value: string): string {
 }
 
 async function expectNoShellOverlap(page: Page) {
-  const boxes = await page.locator(".topbar, .primary-rail, .resource-rail, .detail-pane").evaluateAll((elements) => elements.map((element) => {
+  const boxes = await page.locator(".topbar, .primary-rail, .resource-rail, .detail-pane").evaluateAll((elements) => elements.filter((element) => element.getBoundingClientRect().width > 0).map((element) => {
     const rect = element.getBoundingClientRect();
     return { className: element.className, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
   }));

@@ -1,224 +1,104 @@
-import { Check, Copy, Info, X } from "lucide-react";
-import { FormEventHandler, ReactNode, useEffect, useId, useRef, useState } from "react";
+import { Check, Copy, Info, Menu, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
+import { FormEventHandler, ReactNode, useEffect, useRef, useState } from "react";
+import { Button } from "./primitives/button";
+import { Input } from "./primitives/input";
+import { Badge } from "./primitives/badge";
+import { Label } from "./primitives/label";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "./primitives/sheet";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./primitives/tooltip";
+import { portalHref } from "./navigation";
+import type { ThemeName } from "./theme";
+export type { ThemeName } from "./theme";
 
-export type ThemeName = "light" | "dark";
-
-type BrandProps = {
-  title: string;
-  icon: ReactNode;
-};
-
+type BrandProps = { title: string; icon: ReactNode };
 export type PortalNavItem = {
   id: string;
   label: string;
   icon: ReactNode;
+  group?: string;
   active: boolean;
   disabled?: boolean;
-  onClick: () => void;
+  href?: string;
+  onClick: () => void | Promise<unknown>;
 };
-
-type AuthShellProps = BrandProps & {
-  theme: ThemeName;
-  onSubmit: FormEventHandler<HTMLFormElement>;
-  actions?: ReactNode;
-  children: ReactNode;
-};
-
+type AuthShellProps = BrandProps & { theme: ThemeName; onSubmit: FormEventHandler<HTMLFormElement>; actions?: ReactNode; children: ReactNode };
 type PortalShellProps = BrandProps & {
   theme: ThemeName;
   topbarActions: ReactNode;
   navLabel: string;
   navItemsLabel: string;
   navItems: PortalNavItem[];
-  navPlacement?: "rail" | "top";
+  workspacePicker?: ReactNode;
   contextBar?: ReactNode;
-  resourceRail?: ReactNode;
-  resourceRailLabel?: string;
   detailLabel: string;
   error?: string;
   children: ReactNode;
 };
-
-type SectionHeadingProps = {
-  title: ReactNode;
-  subtitle?: ReactNode;
-  meta?: ReactNode;
-  actions?: ReactNode;
-};
-
-type SummaryCardProps = {
-  label: ReactNode;
-  value: ReactNode;
-  detail?: ReactNode;
-  tone?: "neutral" | "warning" | "danger";
-};
-
-type FieldRowProps = {
-  label: ReactNode;
-  htmlFor?: string;
-  children: ReactNode;
-};
-
-type SecretBoxProps = {
-  value: string;
-  valueLabel: string;
-  copyLabel: string;
-  dismissLabel: string;
-  onDismiss: () => void;
-};
-
-type InfoTooltipProps = {
-  label: string;
-  children: ReactNode;
-};
-
-type LoadingStateProps = {
-  label?: string;
-  compact?: boolean;
-};
+type SectionHeadingProps = { title: ReactNode; subtitle?: ReactNode; meta?: ReactNode; actions?: ReactNode };
+type SummaryCardProps = { label: ReactNode; value: ReactNode; detail?: ReactNode; tone?: "neutral" | "warning" | "danger" };
+type FieldRowProps = { label: ReactNode; htmlFor?: string; children: ReactNode };
+type SecretBoxProps = { value: string; valueLabel: string; copyLabel: string; dismissLabel: string; onDismiss: () => void };
+type InfoTooltipProps = { label: string; children: ReactNode };
+type LoadingStateProps = { label?: string; compact?: boolean };
 
 export function Brand({ title, icon }: BrandProps) {
-  return (
-    <div className="brand-row">
-      <span className="brand-mark">{icon}</span>
-      <h1>{title}</h1>
-    </div>
-  );
+  return <div className="brand-row"><span className="brand-mark">{icon}</span><div className="brand-title"><strong>Dense-Mem</strong><span>{title.includes("Control") ? "Control" : "Knowledge"}</span></div></div>;
 }
 
 export function AuthShell({ theme, title, icon, actions, children, onSubmit }: AuthShellProps) {
-  return (
-    <main className="auth-shell" data-theme={theme}>
-      <form className="auth-panel" onSubmit={onSubmit}>
-        <div className="brand-row">
-          <span className="brand-mark">{icon}</span>
-          <h1>{title}</h1>
-          {actions}
-        </div>
-        {children}
-      </form>
-    </main>
-  );
-}
-
-export function PortalShell({
-  theme,
-  title,
-  icon,
-  topbarActions,
-  navLabel,
-  navItemsLabel,
-  navItems,
-  navPlacement = "rail",
-  contextBar,
-  resourceRail,
-  resourceRailLabel,
-  detailLabel,
-  error,
-  children,
-}: PortalShellProps) {
-  const topNav = navPlacement === "top";
-  const workspaceClassName = [
-    "workspace",
-    resourceRail ? "has-resource-rail" : "",
-    topNav ? "top-nav-workspace" : "",
-  ].filter(Boolean).join(" ");
-  const portalContentClassName = [
-    "portal-content",
-    resourceRail ? "has-resource-rail" : "",
-    topNav ? "has-top-nav" : "",
-  ].filter(Boolean).join(" ");
-  const brand = <Brand title={title} icon={icon} />;
-
-  return (
-    <main className="app-shell" data-theme={theme}>
-      <section className={workspaceClassName}>
-        {topNav ? (
-          null
-        ) : (
-          <aside className="primary-rail" aria-label={navLabel}>
-            <div className="rail-brand">{brand}</div>
-            <nav className="rail-tabs" aria-label={navItemsLabel}>
-              {navItems.map((item) => (
-                <TabButton
-                  key={item.id}
-                  active={item.active}
-                  disabled={item.disabled}
-                  icon={item.icon}
-                  label={item.label}
-                  onClick={item.onClick}
-                />
-              ))}
-            </nav>
-          </aside>
-        )}
-        <div className="portal-main">
-          <header className="topbar">
-            {topNav && brand}
-            {contextBar && <div className="topbar-context">{contextBar}</div>}
-            <div className="topbar-actions">{topbarActions}</div>
-          </header>
-
-          {error && <div className="banner error" role="alert">{error}</div>}
-
-          <div className={portalContentClassName}>
-            {topNav && (
-              <div className="top-nav-bar" aria-label={navLabel}>
-                <nav className="top-nav-tabs" aria-label={navItemsLabel}>
-                  {navItems.map((item) => (
-                    <TabButton
-                      key={item.id}
-                      active={item.active}
-                      disabled={item.disabled}
-                      icon={item.icon}
-                      label={item.label}
-                      onClick={item.onClick}
-                    />
-                  ))}
-                </nav>
-              </div>
-            )}
-            {resourceRail && (
-              <aside className="resource-rail" aria-label={resourceRailLabel ?? "Resources"}>
-                {resourceRail}
-              </aside>
-            )}
-
-            <section className="detail-pane" aria-label={detailLabel}>
-              {children}
-            </section>
-          </div>
-        </div>
+  const control = title.includes("Control");
+  return <main className="auth-shell" data-theme={theme}>
+    <div className="auth-brand"><Brand title={title} icon={icon} />{actions}</div>
+    <div className="auth-layout">
+      <section className="auth-introduction" aria-label="Welcome">
+        <Badge variant="outline">{control ? "Service administration" : "Your memory workspace"}</Badge>
+        <h1>{control ? "A clear view of your memory service." : "Find the context that matters."}</h1>
+        <p>{control ? "Manage teams, access, and memory operations in one workspace." : "Explore evidence, follow connections, and understand what your team knows."}</p>
+        <div className="auth-provenance" aria-hidden="true"><span>Evidence</span><i /><span>Relationships</span><i /><span>Context</span></div>
       </section>
-    </main>
-  );
+      <section className="auth-panel" aria-label={title}>
+        <div><h2>{control ? "Sign in to Control" : "Sign in to Knowledge"}</h2><p className="section-subtitle">{control ? "Use your control token or an available identity provider." : "Use an API key or your organization’s sign-in."}</p></div>
+        <form onSubmit={onSubmit}>{children}</form>
+      </section>
+    </div>
+    <p className="auth-footer">Dense-Mem · Evidence with context</p>
+  </main>;
 }
 
-export function TabButton({
-  active,
-  disabled,
-  icon,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  disabled?: boolean;
-  icon: ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      className={active ? "rail-tab-button active" : "rail-tab-button"}
-      type="button"
-      aria-current={active ? "page" : undefined}
-      disabled={disabled}
-      onClick={onClick}
-    >
-      {icon}
-      <span>{label}</span>
-    </button>
-  );
+export function PortalShell({ theme, title, icon, topbarActions, navLabel, navItemsLabel, navItems, workspacePicker, contextBar, detailLabel, error, children }: PortalShellProps) {
+  const storageKey = title.includes("Control") ? "denseMem.controlSidebar" : "denseMem.userSidebar";
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(storageKey) === "collapsed");
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const active = navItems.find((item) => item.active);
+  const groups = [...new Set(navItems.map((item) => item.group ?? "Workspace"))];
+  function toggleSidebar() { setCollapsed((current) => { localStorage.setItem(storageKey, current ? "expanded" : "collapsed"); return !current; }); }
+  const navigation = <nav className="rail-tabs" aria-label={navItemsLabel}>{groups.map((group) => <div className="nav-group" key={group}><p className="nav-group-label">{group}</p>{navItems.filter((item) => (item.group ?? "Workspace") === group).map((item) => <TabButton key={item.id} {...item} onClick={async () => { const result = await item.onClick(); if (result !== false) setMobileOpen(false); }} />)}</div>)}</nav>;
+  const brand = <Brand title={title} icon={icon} />;
+  return <TooltipProvider delayDuration={250}><main className="app-shell" data-theme={theme} data-sidebar-collapsed={collapsed}>
+    <a className="skip-link" href="#portal-content">Skip to content</a>
+    <aside className="primary-rail" aria-label={navLabel}>
+      <div className="rail-brand">{brand}</div>
+      {workspacePicker && <div className="sidebar-workspace">{workspacePicker}</div>}
+      {navigation}
+      <div className="sidebar-footer"><span>{title.includes("Control") ? "Service workspace" : "Memory workspace"}</span><Button variant="ghost" size="icon" onClick={toggleSidebar} aria-label={collapsed ? "Expand navigation" : "Collapse navigation"} aria-expanded={!collapsed}>{collapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}</Button></div>
+    </aside>
+    <div className="portal-main">
+      <header className="topbar">
+        <Button className="mobile-nav-trigger" variant="ghost" size="icon" aria-label="Open navigation" onClick={() => setMobileOpen(true)}><Menu aria-hidden="true" /></Button>
+        <div className="topbar-context">{contextBar}<span className="breadcrumb-separator" aria-hidden="true">/</span><strong>{active?.label ?? "Workspace"}</strong></div>
+        <div className="topbar-actions">{topbarActions}</div>
+      </header>
+      <div className="portal-content" id="portal-content" tabIndex={-1}>
+        {error && <div className="banner error" role="alert">{error}</div>}
+        <section className="detail-pane" aria-label={detailLabel}>{children}</section>
+      </div>
+    </div>
+    <Sheet open={mobileOpen} onOpenChange={setMobileOpen}><SheetContent className="mobile-navigation" side="left"><SheetHeader className="sr-only"><SheetTitle>{navLabel}</SheetTitle><SheetDescription>Choose a section of your workspace.</SheetDescription></SheetHeader><div className="rail-brand">{brand}</div>{error && <div className="banner error" role="alert">{error}</div>}{workspacePicker && <div className="sidebar-workspace">{workspacePicker}</div>}{navigation}</SheetContent></Sheet>
+  </main></TooltipProvider>;
+}
+
+export function TabButton({ active, disabled, icon, label, href, onClick }: { active: boolean; disabled?: boolean; icon: ReactNode; label: string; href?: string; onClick: () => void | Promise<unknown> }) {
+  return <a className={active ? "rail-tab-button active" : "rail-tab-button"} href={disabled ? undefined : href ?? portalHref({ section: label.toLowerCase().replaceAll(" ", "-") })} aria-current={active ? "page" : undefined} aria-disabled={disabled || undefined} tabIndex={disabled ? -1 : undefined} title={label} onClick={(event) => { if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && event.button === 0) { event.preventDefault(); if (!disabled) void onClick(); } }}>{icon}<span>{label}</span></a>;
 }
 
 export function SectionHeading({ title, subtitle, meta, actions }: SectionHeadingProps) {
@@ -280,7 +160,7 @@ export function SecretBox({ value, valueLabel, copyLabel, dismissLabel, onDismis
 
   return (
     <div className="secret-box" role="status">
-      <input
+      <Input
         ref={inputRef}
         className="secret-value"
         value={secret}
@@ -290,35 +170,27 @@ export function SecretBox({ value, valueLabel, copyLabel, dismissLabel, onDismis
         onFocus={(event) => event.currentTarget.select()}
       />
       <div className="secret-actions">
-        <button className="icon-button" type="button" aria-label={copyLabel} onClick={() => void copySecret()}>
+        <Button variant="ghost" size="icon" className="icon-button" type="button" aria-label={copyLabel} onClick={() => void copySecret()}>
           {copied ? <Check size={17} aria-hidden="true" /> : <Copy size={17} aria-hidden="true" />}
-        </button>
-        <button className="icon-button" type="button" aria-label={dismissLabel} onClick={onDismiss}>
+        </Button>
+        <Button variant="ghost" size="icon" className="icon-button" type="button" aria-label={dismissLabel} onClick={onDismiss}>
           <X size={17} aria-hidden="true" />
-        </button>
+        </Button>
       </div>
     </div>
   );
 }
 
 export function InfoTooltip({ label, children }: InfoTooltipProps) {
-  const tooltipId = useId();
-
-  return (
-    <span className="info-tooltip">
-      <button
-        className="info-tooltip-trigger"
-        type="button"
-        aria-label={label}
-        aria-describedby={tooltipId}
-      >
-        <Info size={14} aria-hidden="true" />
-      </button>
-      <span className="info-tooltip-content" id={tooltipId} role="tooltip">
-        {children}
-      </span>
-    </span>
-  );
+  const [open, setOpen] = useState(false);
+  return <TooltipProvider delayDuration={150}><Tooltip open={open} onOpenChange={setOpen}>
+    <TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="info-tooltip-trigger" aria-label={label} onClick={(event) => {
+      // Radix dismisses tooltips on click, but info buttons must also open on touch.
+      event.preventDefault();
+      setOpen(true);
+    }}><Info size={14} aria-hidden="true" /></Button></TooltipTrigger>
+    <TooltipContent className="info-tooltip-content" sideOffset={6}>{children}</TooltipContent>
+  </Tooltip></TooltipProvider>;
 }
 
 export async function writeClipboardText(text: string, fallbackInput: HTMLInputElement | null): Promise<boolean> {
@@ -347,7 +219,7 @@ export async function writeClipboardText(text: string, fallbackInput: HTMLInputE
 export function FieldRow({ label, htmlFor, children }: FieldRowProps) {
   return (
     <>
-      <label htmlFor={htmlFor}>{label}</label>
+      <Label htmlFor={htmlFor}>{label}</Label>
       <div className="field-control">{children}</div>
     </>
   );

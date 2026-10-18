@@ -1,11 +1,19 @@
+import { Button } from "../ui/primitives/button";
+import { Label } from "../ui/primitives/label";
+import { NativeSelect, NativeSelectOption } from "../ui/primitives/native-select";
+import { Switch } from "../ui/primitives/switch";
+import { Textarea } from "../ui/primitives/textarea";
+import { Input } from "../ui/primitives/input";
 import { FormEvent, ReactNode, useCallback, useEffect, useState } from "react";
 import { Check, Clock, ListFilter, MessageSquare, Network, RefreshCw, Settings, X } from "lucide-react";
 import { ControlApi, GeneralConfig, GeneralConfigItem, OperationLogConfig, OperationLogConfigItem, RecallFeedbackConfig, RecallFeedbackConfigItem, SSOConfig, SSOConfigItem, TelemetryPricingConfig, TelemetryPricingConfigItem } from "../api";
 import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError } from "./utils";
 import { OntologyMaintenancePanel } from "./OntologyMaintenancePanel";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/primitives/tabs";
+import { useUnsavedChanges, useViewTransition } from "../ui/navigation";
 
-type ConfigTab = "ontology" | "general" | "sso" | "operation-logs" | "recall-feedback" | "telemetry-pricing";
+export type ConfigTab = "general" | "sso" | "operation-logs" | "recall-feedback" | "telemetry-pricing";
 
 const CONFIG_LABELS: Record<string, string> = {
   APP_TIMEZONE: "Timezone",
@@ -79,72 +87,27 @@ const FALLBACK_TIMEZONES = [
 
 const SUPPORTED_TIMEZONES = getSupportedTimezones();
 
-export function ConfigPanel({ api }: { api: ControlApi }) {
-  const [activeTab, setActiveTab] = useState<ConfigTab>("general");
-
-  return (
-    <>
-      <div className="config-tabs" role="tablist" aria-label="Config sections">
-        <button
-          className={activeTab === "general" ? "tab-button active" : "tab-button"}
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "general"}
-          onClick={() => setActiveTab("general")}
-        >
-          <Clock size={16} aria-hidden="true" />
-          <span>General</span>
-        </button>
-        <button
-          className={activeTab === "sso" ? "tab-button active" : "tab-button"}
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "sso"}
-          onClick={() => setActiveTab("sso")}
-        >
-          <Settings size={16} aria-hidden="true" />
-          <span>SSO</span>
-        </button>
-        <button
-          className={activeTab === "recall-feedback" ? "tab-button active" : "tab-button"}
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "recall-feedback"}
-          onClick={() => setActiveTab("recall-feedback")}
-        >
-          <MessageSquare size={16} aria-hidden="true" />
-          <span>Recall</span>
-        </button>
-        <button
-          className={activeTab === "telemetry-pricing" ? "tab-button active" : "tab-button"}
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "telemetry-pricing"}
-          onClick={() => setActiveTab("telemetry-pricing")}
-        >
-          <Settings size={16} aria-hidden="true" />
-          <span>Telemetry</span>
-        </button>
-        <button
-          className={activeTab === "operation-logs" ? "tab-button active" : "tab-button"}
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "operation-logs"}
-          onClick={() => setActiveTab("operation-logs")}
-        >
-          <ListFilter size={16} aria-hidden="true" />
-          <span>Logs</span>
-        </button>
-        <button className={activeTab === "ontology" ? "tab-button active" : "tab-button"} type="button" role="tab" aria-selected={activeTab === "ontology"} onClick={() => setActiveTab("ontology")}><Network size={16} aria-hidden="true" /><span>Ontology</span></button>
-      </div>
-      {activeTab === "ontology" && <OntologyConfigPanel api={api} />}
-      {activeTab === "general" && <GeneralConfigPanel api={api} />}
-      {activeTab === "sso" && <SSOConfigPanel api={api} />}
-      {activeTab === "recall-feedback" && <RecallFeedbackConfigPanel api={api} />}
-      {activeTab === "telemetry-pricing" && <TelemetryPricingConfigPanel api={api} />}
-      {activeTab === "operation-logs" && <OperationLogConfigPanel api={api} />}
-    </>
-  );
+export function ConfigPanel({ api, tab, onTabChange }: { api: ControlApi; tab?: string; onTabChange?: (tab: ConfigTab) => void }) {
+  const transition = useViewTransition();
+  const [localTab, setLocalTab] = useState<ConfigTab>("general");
+  const tabs = [
+    { id: "general", label: "General", icon: Clock },
+    { id: "sso", label: "SSO runtime", icon: Settings },
+    { id: "operation-logs", label: "Operation logs", icon: ListFilter },
+    { id: "recall-feedback", label: "Recall feedback", icon: MessageSquare },
+    { id: "telemetry-pricing", label: "Pricing", icon: Settings },
+  ] as const;
+  const activeTab = tab && tabs.some((item) => item.id === tab) ? tab : localTab;
+  return <div className="stack"><SectionHeading title="Settings" subtitle="Configure service behavior, retention, and model pricing." />
+    <Tabs className="panel-tabs" value={activeTab} onValueChange={(next) => { if (onTabChange) onTabChange(next as ConfigTab); else void transition(() => setLocalTab(next as ConfigTab)); }}>
+      <TabsList aria-label="Settings sections">{tabs.map((item) => <TabsTrigger value={item.id} key={item.id}><item.icon size={16} aria-hidden="true" />{item.label}</TabsTrigger>)}</TabsList>
+      <TabsContent value="general"><GeneralConfigPanel api={api} /></TabsContent>
+      <TabsContent value="sso"><SSOConfigPanel api={api} /></TabsContent>
+      <TabsContent value="operation-logs"><OperationLogConfigPanel api={api} /></TabsContent>
+      <TabsContent value="recall-feedback"><RecallFeedbackConfigPanel api={api} /></TabsContent>
+      <TabsContent value="telemetry-pricing"><TelemetryPricingConfigPanel api={api} /></TabsContent>
+    </Tabs>
+  </div>;
 }
 
 type ConfigItem = GeneralConfigItem | SSOConfigItem | OperationLogConfigItem | RecallFeedbackConfigItem | TelemetryPricingConfigItem;
@@ -159,63 +122,69 @@ type RuntimeConfigInput = {
   }>;
 };
 
-function OntologyConfigPanel({ api }: { api: ControlApi }) {
+export function OntologyConfigPanel({ api }: { api: ControlApi }) {
+  const load = useCallback(() => api.getOntologyMaintenanceConfig(), [api]);
   return <>
-    <RuntimeConfigPanel title="Ontology maintenance" refreshLabel="Refresh ontology config" load={() => api.getOntologyMaintenanceConfig()} save={(input) => api.updateOntologyMaintenanceConfig(input)} detail={() => <p>Policy changes apply at the next window. Disabling stops new work immediately.</p>} />
+    <RuntimeConfigPanel title="Ontology maintenance" refreshLabel="Refresh ontology config" load={load} save={(input) => api.updateOntologyMaintenanceConfig(input)} detail={() => <p>Policy changes apply at the next window. Disabling stops new work immediately.</p>} />
     <OntologyMaintenancePanel api={api} />
   </>;
 }
 
 function GeneralConfigPanel({ api }: { api: ControlApi }) {
+  const load = useCallback(() => api.getGeneralConfig(), [api]);
   return (
     <RuntimeConfigPanel
       title="General"
       refreshLabel="Refresh general config"
-      load={() => api.getGeneralConfig()}
+      load={load}
       save={(input) => api.updateGeneralConfig(input)}
     />
   );
 }
 
 function SSOConfigPanel({ api }: { api: ControlApi }) {
+  const load = useCallback(() => api.getSSOConfig(), [api]);
   return (
     <RuntimeConfigPanel
       title="SSO"
       refreshLabel="Refresh SSO config"
-      load={() => api.getSSOConfig()}
+      load={load}
       save={(input) => api.updateSSOConfig(input)}
     />
   );
 }
 
 function OperationLogConfigPanel({ api }: { api: ControlApi }) {
+  const load = useCallback(() => api.getOperationLogConfig(), [api]);
   return (
     <RuntimeConfigPanel
       title="Operation Logs"
       refreshLabel="Refresh operation log config"
-      load={() => api.getOperationLogConfig()}
+      load={load}
       save={(input) => api.updateOperationLogConfig(input)}
     />
   );
 }
 
 function RecallFeedbackConfigPanel({ api }: { api: ControlApi }) {
+  const load = useCallback(() => api.getRecallFeedbackConfig(), [api]);
   return (
     <RuntimeConfigPanel
       title="Recall Feedback"
       refreshLabel="Refresh recall feedback config"
-      load={() => api.getRecallFeedbackConfig()}
+      load={load}
       save={(input) => api.updateRecallFeedbackConfig(input)}
     />
   );
 }
 
 function TelemetryPricingConfigPanel({ api }: { api: ControlApi }) {
+  const load = useCallback(() => api.getTelemetryPricingConfig(), [api]);
   return (
     <RuntimeConfigPanel
       title="Telemetry pricing"
       refreshLabel="Refresh telemetry pricing config"
-      load={() => api.getTelemetryPricingConfig()}
+      load={load}
       save={(input) => api.updateTelemetryPricingConfig(input)}
       detail={(config: TelemetryPricingConfig) => (
         <p className="form-meta">
@@ -239,11 +208,13 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
   save: (input: RuntimeConfigInput) => Promise<T>;
   detail?: (config: T) => ReactNode;
 }) {
+  const transition = useViewTransition();
   const [config, setConfig] = useState<T | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const clearDirty = useUnsavedChanges(Boolean(config && config.items.some((item) => (draft[item.key] ?? "") !== item.value)));
 
   const loadConfig = useCallback(async () => {
     setLoading(true);
@@ -275,7 +246,8 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
       });
       setConfig(next);
       setDraft(Object.fromEntries(next.items.map((item) => [item.key, item.value])));
-      setMessage("Saved");
+      clearDirty();
+      setMessage("Changes saved");
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -290,15 +262,15 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
         actions={(
           <div className="button-row">
             {config?.update_time && <span className="form-meta">{formatDate(config.update_time)}</span>}
-            <button className="icon-button" type="button" aria-label={refreshLabel} onClick={() => void loadConfig()}>
+            <Button variant="ghost" size="icon" className="icon-button" type="button" aria-label={refreshLabel} onClick={() => void transition(loadConfig)}>
               <RefreshCw size={16} aria-hidden="true" />
-            </button>
+            </Button>
           </div>
         )}
       />
       {config && detail?.(config)}
       {error && <div className="banner error" role="alert">{error}</div>}
-      {message && <div className="banner neutral">{message}</div>}
+      {message && <div className="banner neutral" role="status">{message}</div>}
       {loading && !config ? (
         <LoadingState label="Loading config" compact />
       ) : (
@@ -312,10 +284,10 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
             />
           ))}
           <div className="button-row span">
-            <button className="primary-button" type="submit" disabled={loading || !config}>
+            <Button variant="default" className="primary-button" type="submit" disabled={loading || !config}>
               <Check size={16} aria-hidden="true" />
               Save config
-            </button>
+            </Button>
           </div>
         </form>
       )}
@@ -337,12 +309,12 @@ function ConfigField({
   if (item.key === "SSO_COOKIE_SECURE") {
     return (
       <>
-        <label htmlFor={item.key}>{label}</label>
-        <select id={item.key} value={value} onChange={(event) => onChange(event.target.value)}>
-          <option value="">Auto from SSO public URL</option>
-          <option value="true">Enabled</option>
-          <option value="false">Disabled</option>
-        </select>
+        <Label htmlFor={item.key}>{label}</Label>
+        <NativeSelect id={item.key} value={value} onChange={(event) => onChange(event.target.value)}>
+          <NativeSelectOption value="">Auto from SSO public URL</NativeSelectOption>
+          <NativeSelectOption value="true">Enabled</NativeSelectOption>
+          <NativeSelectOption value="false">Disabled</NativeSelectOption>
+        </NativeSelect>
       </>
     );
   }
@@ -351,17 +323,16 @@ function ConfigField({
     const checked = (value || item.effective_value) === "true";
     return (
       <>
-        <label htmlFor={item.key}>{label}</label>
+        <Label htmlFor={item.key}>{label}</Label>
         <div className="button-row">
-          <label className="toggle-row config-toggle" htmlFor={item.key}>
+          <Label className="toggle-row config-toggle" htmlFor={item.key}>
             <span>{checked ? "Enabled" : "Disabled"}</span>
-            <input
+            <Switch
               id={item.key}
-              type="checkbox"
               checked={checked}
-              onChange={(event) => onChange(event.target.checked ? "true" : "false")}
+              onCheckedChange={(event) => onChange((event === true) ? "true" : "false")}
             />
-          </label>
+          </Label>
         </div>
       </>
     );
@@ -371,17 +342,17 @@ function ConfigField({
     const timezone = value || item.effective_value || "Local";
     return (
       <>
-        <label htmlFor={item.key}>{label}</label>
+        <Label htmlFor={item.key}>{label}</Label>
         <div className="button-row">
-          <select id={item.key} value={timezone} onChange={(event) => onChange(event.target.value)}>
+          <NativeSelect id={item.key} value={timezone} onChange={(event) => onChange(event.target.value)}>
             {timezoneOptions(timezone).map((option) => (
-              <option value={option} key={option}>{option}</option>
+              <NativeSelectOption value={option} key={option}>{option}</NativeSelectOption>
             ))}
-          </select>
+          </NativeSelect>
           {value !== "" && (
-            <button className="icon-button" type="button" aria-label={`Clear ${label} override`} title={`Clear ${label} override`} onClick={() => onChange("")}>
+            <Button variant="ghost" size="icon" className="icon-button" type="button" aria-label={`Clear ${label} override`} title={`Clear ${label} override`} onClick={() => onChange("")}>
               <X size={16} aria-hidden="true" />
-            </button>
+            </Button>
           )}
         </div>
       </>
@@ -391,8 +362,8 @@ function ConfigField({
   if (item.key === "TELEMETRY_COST_MODEL_PRICES_JSON") {
     return (
       <>
-        <label htmlFor={item.key}>{label}</label>
-        <textarea
+        <Label htmlFor={item.key}>{label}</Label>
+        <Textarea
           id={item.key}
           value={value}
           onChange={(event) => onChange(event.target.value)}
@@ -411,8 +382,8 @@ function ConfigField({
   const min = item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 0 : numeric && !pricing ? 1 : undefined;
   return (
     <>
-      <label htmlFor={item.key}>{label}</label>
-      <input
+      <Label htmlFor={item.key}>{label}</Label>
+      <Input
         id={item.key}
         type={time ? "time" : pricing ? "text" : numeric ? "number" : "text"}
         inputMode={pricing ? "decimal" : undefined}

@@ -1,3 +1,4 @@
+import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
 import { expect, test, type Page } from "@playwright/test";
 
 const controlUrl = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -46,7 +47,7 @@ test("user recall renders a community result and the exact nested contract", asy
   await page.goto(`${userUrl}/ui/`);
   await page.getByLabel("API key").fill(apiKey);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Dense-Mem Knowledge" })).toBeVisible();
+  await expect(page.getByLabel("Current workspace")).toBeVisible();
   await page.getByLabel("Keyword").fill("Atlas Redis");
   const recallResponsePromise = page.waitForResponse((response) => {
     const url = new URL(response.url());
@@ -61,6 +62,21 @@ test("user recall renders a community result and the exact nested contract", asy
   const communityResults = page.getByRole("listbox", { name: "Recall result list" }).getByText("Community", { exact: true });
   await expect(communityResults).toHaveCount(searchBody.data.related_communities.length);
   await expect(communityResults.first()).toBeVisible();
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await page.getByRole("checkbox", { name: /Community/ }).uncheck();
+  await page.keyboard.press("Escape");
+  await expect(communityResults).toHaveCount(0);
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await page.getByRole("checkbox", { name: /Community/ }).check();
+  await page.keyboard.press("Escape");
+  await expect(communityResults).toHaveCount(searchBody.data.related_communities.length);
+  await page.getByRole("option").first().focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("tab", { name: "Evidence", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "Lineage", exact: true })).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("button", { name: "Close details panel", exact: true }).click();
+  await expectPageContained(page);
 });
 
 async function openControlPanel(page: Page) {

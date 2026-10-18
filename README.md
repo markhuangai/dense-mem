@@ -103,8 +103,14 @@ User portal:    http://127.0.0.1:8080/ui
 Control portal: http://127.0.0.1:8090/
 ```
 
-Open the control portal with `CONTROL_PORTAL_TOKEN`, then create a team and its
-first credential/API key. For control-plane automation, use the same private
+Open the control portal with `CONTROL_PORTAL_TOKEN`, create a team from **All teams**,
+then open **Credentials** for its first API key. The sidebar groups team work,
+operations, and administration; its team picker changes the active workspace.
+The user portal offers **Search memory**, **Graph**, and the management pages
+allowed by the session. **Connect** shows the team ID, MCP endpoint, and memory
+access. Both portals support System, Light, and Dark appearance, collapsible
+navigation, and section links that survive refresh and browser history.
+For control-plane automation, use the same private
 API:
 
 ```bash
@@ -528,7 +534,7 @@ Temporal requests omit current-only organization and report that degradation.
 Disabling ontology maintenance restores ordinary retrieval; pausing it retains
 current published organization.
 
-Operators can use **Config → Ontology → Add allowance now** to authorize extra
+Operators can use **Operations → Ontology maintenance → Add allowance now** to authorize extra
 input/output tokens for the active maintenance window. The additions are shared
 across teams and expire at the window's original end. Original policy, charged
 usage and outstanding reservations remain visible; each grant has an immutable

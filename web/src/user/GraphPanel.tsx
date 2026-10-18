@@ -1,3 +1,9 @@
+import { Label } from "../ui/primitives/label";
+import { Input } from "../ui/primitives/input";
+import { Button } from "../ui/primitives/button";
+import { NativeSelect, NativeSelectOption } from "../ui/primitives/native-select";
+import { Checkbox } from "../ui/primitives/checkbox";
+import { Switch } from "../ui/primitives/switch";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D, { ForceGraphMethods, LinkObject, NodeObject } from "react-force-graph-2d";
 import {
@@ -8,6 +14,8 @@ import {
   Search,
   SlidersHorizontal,
 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/primitives/popover";
+import { ResponsiveInspector, useCompactWorkspace } from "../ui/inspector";
 import { LoadingState, SectionHeading } from "../ui/components";
 import { GraphEdge, GraphNode, GraphNodeType, GraphQuery, GraphSnapshot, UserApi } from "./api";
 
@@ -29,6 +37,9 @@ const defaultTypes: TypeFilter = {
 };
 
 export function GraphPanel({ api }: { api: UserApi }) {
+  const { ref, compact } = useCompactWorkspace();
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const requestSequence = useRef(0);
   const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
   const [selectedKey, setSelectedKey] = useState("");
   const [searchText, setSearchText] = useState("");
@@ -59,10 +70,12 @@ export function GraphPanel({ api }: { api: UserApi }) {
       setError("Anchor ID is required for local graph.");
       return;
     }
+    const request = ++requestSequence.current;
     setLoading(true);
     setError("");
     try {
       const next = await api.graph(query);
+      if (request !== requestSequence.current) return;
       setSnapshot(next);
       setSelectedDetail(null);
       setDetailKey("");
@@ -71,14 +84,15 @@ export function GraphPanel({ api }: { api: UserApi }) {
       setGraphRevision((current) => current + 1);
       setSelectedKey((current) => next.nodes.some((node) => node.key === current) ? current : "");
     } catch (err) {
-      setError(readError(err));
+      if (request === requestSequence.current) setError(readError(err));
     } finally {
-      setLoading(false);
+      if (request === requestSequence.current) setLoading(false);
     }
   }
 
   useEffect(() => {
     void loadGraph(buildQuery({ searchText: "", scope: "overview", anchorType, anchorId: "", types, depth: 2, limit: defaultGraphLimit }));
+    return () => { requestSequence.current += 1; };
   }, [api]);
 
   const selectedNode = selectedKey ? snapshot?.nodes.find((node) => node.key === selectedKey) ?? null : null;
@@ -137,17 +151,25 @@ export function GraphPanel({ api }: { api: UserApi }) {
   }
 
   return (
-    <section className="graph-panel" aria-label="Knowledge graph">
-      <aside className="graph-controls" aria-label="Graph controls">
+    <section ref={ref} className={inspectorOpen && !compact ? "graph-panel has-inspector" : "graph-panel"} aria-label="Knowledge graph">
+
+
+      <section className="graph-canvas-panel" aria-label="Graph canvas">
+        <div className="graph-toolbar">
+          <div><h2>Knowledge graph</h2><span className="muted">{snapshot ? `${snapshot.nodes.length} nodes · ${snapshot.edges.length} edges` : "Explore connected knowledge"}</span></div>
+          <div className="toolbar-actions">
+            {snapshot && snapshot.nodes.length > 0 && <NativeSelect aria-label="Inspect graph node" value={selectedKey} onChange={(event) => { setSelectedKey(event.target.value); setInspectorOpen(Boolean(event.target.value)); }}><NativeSelectOption value="">Inspect a node…</NativeSelectOption>{snapshot.nodes.map((node) => <NativeSelectOption key={node.key} value={node.key}>{node.title} · {nodeTypeLabel(node.type)}</NativeSelectOption>)}</NativeSelect>}
+            <Popover><PopoverTrigger asChild><Button variant="outline"><SlidersHorizontal size={16} aria-hidden="true" />Graph controls</Button></PopoverTrigger>
+      <PopoverContent className="explorer-filter-popover graph-controls" align="start" aria-label="Graph controls">
         <SectionHeading
           title="Graph"
           meta={snapshot ? `${snapshot.nodes.length} nodes / ${snapshot.edges.length} edges` : undefined}
         />
         <form className="graph-control-form" noValidate onSubmit={submit}>
-          <label htmlFor="graph-query">Search</label>
+          <Label htmlFor="graph-query">Search</Label>
           <div className="search-input-wrap">
             <Search size={16} aria-hidden="true" />
-            <input
+            <Input
               id="graph-query"
               value={searchText}
               onChange={(event) => setSearchText(event.target.value)}
@@ -156,47 +178,47 @@ export function GraphPanel({ api }: { api: UserApi }) {
           </div>
 
           <div className="segmented-control" aria-label="Graph scope">
-            <button className={scope === "overview" ? "active" : ""} type="button" onClick={() => setScope("overview")}>
+            <Button variant="outline" className={scope === "overview" ? "active" : ""} type="button" onClick={() => setScope("overview")}>
               <Network size={15} aria-hidden="true" />
               Overview
-            </button>
-            <button className={scope === "local" ? "active" : ""} type="button" onClick={() => setScope("local")}>
+            </Button>
+            <Button variant="outline" className={scope === "local" ? "active" : ""} type="button" onClick={() => setScope("local")}>
               <Focus size={15} aria-hidden="true" />
               Local
-            </button>
+            </Button>
           </div>
 
           {scope === "local" && (
             <div className="graph-anchor-grid">
-              <label htmlFor="graph-anchor-type">Anchor type</label>
-              <select id="graph-anchor-type" value={anchorType} onChange={(event) => setAnchorType(event.target.value as GraphNodeType)}>
+              <Label htmlFor="graph-anchor-type">Anchor type</Label>
+              <NativeSelect id="graph-anchor-type" value={anchorType} onChange={(event) => setAnchorType(event.target.value as GraphNodeType)}>
                 {graphNodeTypes.map((type) => (
-                  <option key={type} value={type}>{nodeTypeLabel(type)}</option>
+                  <NativeSelectOption key={type} value={type}>{nodeTypeLabel(type)}</NativeSelectOption>
                 ))}
-              </select>
-              <label htmlFor="graph-anchor-id">Anchor ID</label>
-              <input id="graph-anchor-id" value={anchorId} onChange={(event) => setAnchorId(event.target.value)} />
+              </NativeSelect>
+              <Label htmlFor="graph-anchor-id">Anchor ID</Label>
+              <Input id="graph-anchor-id" value={anchorId} onChange={(event) => setAnchorId(event.target.value)} />
             </div>
           )}
 
           <fieldset className="graph-type-filter">
             <legend>Types</legend>
             {graphNodeTypes.map((type) => (
-              <label className="filter-row" key={type}>
-                <input type="checkbox" checked={types[type]} onChange={() => toggleType(type)} />
+              <Label className="filter-row" key={type}>
+                <Checkbox checked={types[type]} onCheckedChange={() => toggleType(type)} />
                 <span>{nodeTypeLabel(type)}</span>
-              </label>
+              </Label>
             ))}
           </fieldset>
 
           <div className="graph-slider-row">
-            <label htmlFor="graph-depth">Depth</label>
-            <input id="graph-depth" type="range" min={1} max={5} step={1} value={depth} disabled={scope !== "local"} onChange={(event) => setDepth(Number(event.target.value))} />
+            <Label htmlFor="graph-depth">Depth</Label>
+            <Input id="graph-depth" type="range" min={1} max={5} step={1} value={depth} disabled={scope !== "local"} onChange={(event) => setDepth(Number(event.target.value))} />
             <span>{depth}</span>
           </div>
           <div className="graph-limit-row">
-            <label htmlFor="graph-relationship-limit">Relationship limit</label>
-            <input
+            <Label htmlFor="graph-relationship-limit">Relationship limit</Label>
+            <Input
               id="graph-relationship-limit"
               type="number"
               min={1}
@@ -207,41 +229,43 @@ export function GraphPanel({ api }: { api: UserApi }) {
             />
           </div>
           <div className="graph-slider-row">
-            <label htmlFor="graph-node-size">Node size</label>
-            <input id="graph-node-size" type="range" min={3} max={9} step={1} value={nodeSize} onChange={(event) => setNodeSize(Number(event.target.value))} />
+            <Label htmlFor="graph-node-size">Node size</Label>
+            <Input id="graph-node-size" type="range" min={3} max={9} step={1} value={nodeSize} onChange={(event) => setNodeSize(Number(event.target.value))} />
             <span>{nodeSize}</span>
           </div>
           <div className="graph-slider-row">
-            <label htmlFor="graph-link-distance">Link distance</label>
-            <input id="graph-link-distance" type="range" min={44} max={180} step={4} value={linkDistance} onChange={(event) => setLinkDistance(Number(event.target.value))} />
+            <Label htmlFor="graph-link-distance">Link distance</Label>
+            <Input id="graph-link-distance" type="range" min={44} max={180} step={4} value={linkDistance} onChange={(event) => setLinkDistance(Number(event.target.value))} />
             <span>{linkDistance}</span>
           </div>
 
-          <label className="toggle-row compact-toggle">
+          <Label className="toggle-row compact-toggle">
             <span>Arrows</span>
-            <input type="checkbox" checked={showArrows} onChange={(event) => setShowArrows(event.target.checked)} />
-          </label>
-          <label className="toggle-row compact-toggle">
+            <Switch checked={showArrows} onCheckedChange={(event) => setShowArrows((event === true))} />
+          </Label>
+          <Label className="toggle-row compact-toggle">
             <span>Labels</span>
-            <input type="checkbox" checked={showLabels} onChange={(event) => setShowLabels(event.target.checked)} />
-          </label>
+            <Switch checked={showLabels} onCheckedChange={(event) => setShowLabels((event === true))} />
+          </Label>
           <div className="button-row">
-            <button className="primary-button compact" type="submit" disabled={loading || !hasSelectedTypes}>
+            <Button variant="default" className="primary-button compact" type="submit" disabled={loading || !hasSelectedTypes}>
               <RefreshCw size={16} aria-hidden="true" />
               Refresh
-            </button>
+            </Button>
           </div>
         </form>
-      </aside>
-
-      <section className="graph-canvas-panel" aria-label="Graph canvas">
+      </PopoverContent>
+            </Popover>
+            {!inspectorOpen && <Button className="explorer-details-trigger" variant="outline" onClick={() => setInspectorOpen(true)}>Open details</Button>}
+          </div>
+        </div>
         {error && <div className="banner error" role="alert">{error}</div>}
         {loading && !snapshot && <LoadingState label="Loading graph" />}
         {snapshot && (
           <GraphCanvas
             snapshot={snapshot}
             selectedKey={selectedKey}
-            onSelect={setSelectedKey}
+            onSelect={(key) => { setSelectedKey(key); setInspectorOpen(true); }}
             nodeSize={nodeSize}
             linkDistance={linkDistance}
             showArrows={showArrows}
@@ -251,10 +275,10 @@ export function GraphPanel({ api }: { api: UserApi }) {
         {!loading && snapshot && snapshot.nodes.length === 0 && <div className="table-placeholder">No graph nodes</div>}
       </section>
 
-      <aside className="graph-inspector" aria-label="Graph inspector">
+      <ResponsiveInspector compact={compact} open={inspectorOpen} onOpenChange={setInspectorOpen} title="Graph inspector">
         <GraphStats snapshot={snapshot} />
         <NodeInspector summary={selectedNode} detail={activeDetail} loading={activeDetailLoading} error={activeDetailError} />
-      </aside>
+      </ResponsiveInspector>
     </section>
   );
 }

@@ -5,6 +5,25 @@ import { ControlApi, RememberAttemptDiagnosticDetail, RememberAttemptDiagnosticS
 import { RememberAttemptsPanel } from "./RememberAttemptsPanel";
 
 describe("RememberAttemptsPanel", () => {
+  it("keeps tab focus through consecutive keyboard switches in both directions", async () => {
+    const api = {
+      listRememberAttemptDiagnostics: vi.fn().mockResolvedValue({ data: [summary("attempt-1")], pagination: { limit: 50, offset: 0, total: 1 } }),
+      listRememberInvocationDiagnostics: vi.fn().mockResolvedValue({ data: [], pagination: { limit: 50, offset: 0, total: 0 } }),
+    } as unknown as ControlApi;
+    const user = userEvent.setup();
+    render(<RememberAttemptsPanel api={api} team={team()} />);
+    await screen.findByRole("heading", { name: "Remember Attempts" });
+    act(() => screen.getByRole("tab", { name: /^Attempts \(/ }).focus());
+    await user.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("tab", { name: /^Calls \(/ })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: /^Calls \(/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "Remember Calls" })).toBeInTheDocument();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("tab", { name: /^Attempts \(/ })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: /^Attempts \(/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
+  });
+
   it("opens durable attempts with the call count visible and details on demand", async () => {
     const listRememberAttemptDiagnostics = vi.fn().mockResolvedValue({
       data: [summary("attempt-1")], pagination: { limit: 50, offset: 0, total: 1 },
@@ -18,7 +37,7 @@ describe("RememberAttemptsPanel", () => {
 
     render(<RememberAttemptsPanel api={api} team={team()} />);
     expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "Calls (0)" })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "Calls (0)" })).toBeInTheDocument();
     expect(getRememberAttemptDiagnostic).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Inspect Remember attempt attempt-1" }));
     expect(await screen.findByRole("region", { name: "Remember attempt details" })).toBeInTheDocument();
@@ -39,7 +58,7 @@ describe("RememberAttemptsPanel", () => {
 
     render(<RememberAttemptsPanel api={api} team={team()} />);
     expect(await screen.findByText(/Captured diagnostic bodies are retained for up to seven days unless placed under legal hold\./)).toBeInTheDocument();
-    await userEvent.click(await screen.findByRole("button", { name: "Calls (1)" }));
+    await userEvent.click(await screen.findByRole("tab", { name: "Calls (1)" }));
     expect(screen.getByText(/Call diagnostics expire after seven days unless placed under legal hold; durable attempts remain in the Attempts view\./)).toBeInTheDocument();
     await userEvent.click(await screen.findByRole("button", { name: "Inspect Remember call held-call" }));
     const detail = await screen.findByRole("region", { name: "Remember call details" });
@@ -132,7 +151,7 @@ describe("RememberAttemptsPanel", () => {
 
     expect(await screen.findByRole("heading", { name: "Remember Calls" })).toBeInTheDocument();
     await waitFor(() => expect(listRememberAttemptDiagnostics).toHaveBeenCalledWith({ team_id: "team-1", outcome: "", limit: 1, offset: 0 }));
-    await userEvent.click(screen.getByRole("button", { name: /^Attempts \(/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^Attempts \(/ }));
     await waitFor(() => expect(listRememberAttemptDiagnostics).toHaveBeenCalledWith({ team_id: "team-1", outcome: "", limit: 50, offset: 0 }));
   });
 
@@ -181,10 +200,10 @@ describe("RememberAttemptsPanel", () => {
 
     render(<RememberAttemptsPanel initialView="calls" api={api} team={team()} />);
     await screen.findByRole("heading", { name: "Remember Calls" });
-    await userEvent.click(screen.getByRole("button", { name: /^Attempts \(/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^Attempts \(/ }));
     expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
     await userEvent.click(await screen.findByRole("button", { name: "Inspect Remember attempt attempt-1" }));
-    await userEvent.click(screen.getByRole("button", { name: /^Calls \(/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^Calls \(/ }));
     expect(await screen.findByRole("heading", { name: "Remember Calls" })).toBeInTheDocument();
     await act(async () => rejectAttempt(new Error("hidden attempt failed")));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -210,8 +229,8 @@ describe("RememberAttemptsPanel", () => {
 
     render(<RememberAttemptsPanel initialView="calls" api={api} team={team()} />);
     await screen.findByRole("heading", { name: "Remember Calls" });
-    await userEvent.click(screen.getByRole("button", { name: /^Attempts \(/ }));
-    await userEvent.click(screen.getByRole("button", { name: /^Calls \(/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^Attempts \(/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^Calls \(/ }));
     await waitFor(() => expect(listRememberInvocationDiagnostics).toHaveBeenCalledTimes(2));
     expect(await screen.findByRole("button", { name: "Inspect Remember call call-1" })).toBeInTheDocument();
     await act(async () => resolveInitial({ data: [], pagination: { limit: 50, offset: 0, total: 0 } }));
@@ -238,7 +257,7 @@ describe("RememberAttemptsPanel", () => {
 
     const { rerender } = render(<RememberAttemptsPanel initialView="calls" api={api} team={team()} />);
     await screen.findByRole("heading", { name: "Remember Calls" });
-    await userEvent.click(screen.getByRole("button", { name: /^Attempts \(/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^Attempts \(/ }));
     expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
     rerender(<RememberAttemptsPanel initialView="calls" api={api} team={{ ...team(), id: "team-2" }} />);
     expect(await screen.findByRole("heading", { name: "Remember Calls" })).toBeInTheDocument();

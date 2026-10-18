@@ -133,7 +133,7 @@ it("shows recall feedback query, params, result ids, and resolved state", async 
 
   render(<App />);
   await screen.findByRole("button", { name: /Default/ });
-  await userEvent.click(screen.getByRole("button", { name: /^feedback$/i }));
+  await userEvent.click(screen.getByRole("link", { name: "Recall feedback" }));
 
   expect(await screen.findByText("Why was recall bad?")).toBeInTheDocument();
   expect(screen.queryByText("Pending recall waiting")).not.toBeInTheDocument();
@@ -171,8 +171,8 @@ it("edits recall feedback retention config", async () => {
 
   render(<App />);
   await screen.findByRole("button", { name: /Default/ });
-  await userEvent.click(screen.getByRole("button", { name: /^Config$/i }));
-  await userEvent.click(within(await screen.findByRole("tablist", { name: /config sections/i })).getByRole("tab", { name: /^recall$/i }));
+  await userEvent.click(screen.getByRole("link", { name: "Settings" }));
+  await userEvent.click(within(await screen.findByRole("tablist", { name: /Settings sections/i })).getByRole("tab", { name: /^Recall feedback$/i }));
 
   expect(await screen.findByRole("heading", { name: "Recall Feedback" })).toBeInTheDocument();
   await userEvent.clear(screen.getByLabelText("Investigation retention days"));
@@ -188,7 +188,7 @@ it("edits recall feedback retention config", async () => {
       }),
     );
   });
-  expect(await screen.findByText("Saved")).toBeInTheDocument();
+  expect(await screen.findByText("Changes saved")).toBeInTheDocument();
 });
 
 function mockPortalFetch() {

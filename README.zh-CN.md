@@ -91,7 +91,8 @@ MCP:            http://127.0.0.1:8080/mcp
 控制门户:       http://127.0.0.1:8090/
 ```
 
-使用 `CONTROL_PORTAL_TOKEN` 打开控制门户，然后创建团队及其第一个 credential/API key。
+使用 `CONTROL_PORTAL_TOKEN` 打开控制门户，从 **All teams** 创建团队，再进入 **Credentials** 创建第一个 API key。
+侧边栏按团队、运维和管理分组，团队选择器用于切换工作区。用户门户提供 **Search memory**、**Graph** 以及当前权限允许的管理页面；**Connect** 显示团队 ID、MCP 地址和内存访问权限。两个门户均支持跟随系统、浅色和深色主题，导航可折叠，页面链接支持刷新和浏览器前进/后退。
 控制面自动化使用同一个私有 API：
 
 ```bash

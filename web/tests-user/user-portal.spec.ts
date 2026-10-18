@@ -1,4 +1,7 @@
+import AxeBuilder from "@axe-core/playwright";
+import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
 import { expect, type Page, test } from "@playwright/test";
+import type { OntologyDraft } from "../src/user/ontology-types";
 
 const team = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -170,11 +173,123 @@ const graphNodeDetails = {
   },
 };
 
+for (const width of [1440, 900, 390]) for (const theme of ["light", "dark"] as const) {
+  test(`redesign knowledge ${width}px ${theme}: search, graph, ontology and connection`, async ({ page }, testInfo) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    await page.setViewportSize({ width, height: 1000 });
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+    await mockUserApi(page, { key: managerKey, canManageTeam: true, credentials: [memberCredential] });
+    await page.route("**/ui/api/ontology/**", async (route) => {
+      const url = new URL(route.request().url());
+      const data = url.pathname.endsWith("/status") ? { revision: 1, coverage_complete: true, counts: { organized: 0, pending: 0, ambiguous: 0, failed: 0, budget_deferred: 0 } } : { records: [], sources: [], drafts: [], publications: [] };
+      await route.fulfill({ json: { data } });
+    });
+    await page.goto("/ui/");
+    await page.screenshot({ path: testInfo.outputPath("knowledge-auth.png"), fullPage: true });
+    await page.getByLabel("API key").fill("dm_manager");
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(page.getByLabel("Current workspace")).toContainText("Research Team");
+    await page.getByLabel("Keyword").fill("project");
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await expect(page.getByRole("listbox", { name: "Recall result list" }).getByRole("option")).toHaveCount(3);
+    await page.getByRole("button", { name: "Filters", exact: true }).click();
+    await page.getByRole("checkbox", { name: /Relationship/ }).uncheck();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("listbox")).not.toContainText("uses: Dense-Mem");
+    await expectPageContained(page);
+    expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze()).violations).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath("knowledge-search.png"), fullPage: true });
+    await page.getByRole("option").first().focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("tab", { name: "Lineage", exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: "Evidence", exact: true }).focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByRole("tab", { name: "Lineage", exact: true })).toHaveAttribute("aria-selected", "true");
+    if (await page.getByRole("dialog").isVisible()) await page.keyboard.press("Escape");
+    await navigate(page, "Graph");
+    await expect(page.locator(".graph-canvas canvas").first()).toBeVisible();
+    await page.getByLabel("Inspect graph node").selectOption("entity:entity-alice");
+    await expect(page.getByRole("heading", { name: "Alice", exact: true })).toBeVisible();
+    if (await page.getByRole("dialog").isVisible()) await page.keyboard.press("Escape");
+    await expectPageContained(page);
+    await page.screenshot({ path: testInfo.outputPath("knowledge-graph.png"), fullPage: true });
+    await navigate(page, "My credentials");
+    await expectPageContained(page);
+    await page.screenshot({ path: testInfo.outputPath("knowledge-credentials.png"), fullPage: true });
+    await navigate(page, "Ontology");
+    await page.getByRole("tab", { name: "Drafts", exact: true }).click();
+    await expect(page.getByLabel("Audit reason")).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("knowledge-ontology.png"), fullPage: true });
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await expect(page.getByRole("dialog")).toContainText(team.id);
+    await expect(page.getByRole("dialog")).toContainText("Private: Read/write");
+    expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze()).violations).toEqual([]);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("button", { name: "Connect", exact: true })).toBeFocused();
+    expect(pageErrors).toEqual([]);
+  });
+}
+
+for (const theme of ["light", "dark"] as const) {
+  test(`ontology long draft and history labels stay usable in ${theme} mode`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: theme });
+    await mockUserApi(page, { key: managerKey, canManageTeam: true });
+    const reason = "Browser correction ".padEnd(512, "x");
+    const publication = { id: "publication-long", revision: 1, origin: "manager", reason, records: [], record_views: [] };
+    let draft: OntologyDraft | null = null;
+    await page.route("**/ui/api/ontology/**", async (route) => {
+      const request = route.request();
+      const path = new URL(request.url()).pathname;
+      if (request.method() === "POST" && path.endsWith("/drafts")) {
+        draft = { ...request.postDataJSON(), id: "draft-long", version: 1, state: "open", base_revision: 1, updated_at: "2026-10-18T00:00:00Z" };
+        await route.fulfill({ json: { data: draft } });
+        return;
+      }
+      if (request.method() === "POST" && path.endsWith("/discard")) {
+        draft = { ...draft!, version: 2, state: "discarded" };
+        await route.fulfill({ json: { data: draft } });
+        return;
+      }
+      const data = path.endsWith("/status") ? { revision: 1, coverage_complete: true, counts: {} }
+        : path.endsWith("/publications/publication-long") ? publication
+          : { records: [], sources: [], drafts: draft ? [draft] : [], publications: [publication] };
+      await route.fulfill({ json: { data } });
+    });
+    await openUserPortal(page, "dm_manager");
+    await navigate(page, "Ontology");
+    await page.getByRole("tab", { name: "Drafts", exact: true }).click();
+    await page.getByLabel("Definition key").fill("browser-long");
+    await page.getByLabel("Definition label").fill("Vocabulary ".padEnd(256, "y"));
+    await page.getByLabel("Definition description").fill("Review a saved correction on a narrow screen.");
+    await page.getByLabel("Audit reason").fill(reason);
+    await page.getByRole("button", { name: "Add correction to draft" }).click();
+    await page.getByRole("button", { name: "Save draft", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("Draft saved");
+    await expectPageContained(page);
+    await expect(page.getByRole("button", { name: `${reason} · open · revision 1`, exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Discard draft", exact: true }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.getByRole("alertdialog")).toBeHidden();
+    await expect(page.getByRole("button", { name: "Discard draft", exact: true })).toBeEnabled();
+    await page.getByRole("button", { name: "Discard draft", exact: true }).click();
+    await confirmAction(page, "Discard draft");
+    await expect(page.getByRole("status")).toContainText("Draft discarded");
+    await expectPageContained(page);
+    await page.getByRole("tab", { name: "History", exact: true }).click();
+    await expectPageContained(page);
+    await page.getByRole("button", { name: `Revision 1 · manager · ${reason}`, exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Publication revision 1", exact: true })).toBeVisible();
+    await expectPageContained(page);
+    expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze()).violations).toEqual([]);
+  });
+}
+
 test("API key login, recall, and read-only navigation", async ({ page }) => {
   const calls = await mockUserApi(page, { key: readKey });
   await openUserPortal(page, "dm_read");
 
-  await expect(page.getByText("Research Team")).toBeVisible();
+  await expect(page.getByLabel("Current workspace")).toBeVisible();
   await expect(page.getByLabel("Current workspace")).not.toContainText("Mine");
   await expect(page.getByText("Other credential")).toBeHidden();
 
@@ -182,20 +297,30 @@ test("API key login, recall, and read-only navigation", async ({ page }) => {
   await page.getByRole("button", { name: "Search" }).click();
   await expect(page.getByRole("heading", { name: "Alice uses Dense-Mem for project-x." }).first()).toBeVisible();
   await expect(page.getByText("project-x").first()).toBeVisible();
-  await expect(page.getByText("Dense-Mem").first()).toBeVisible();
-  await expect(page.getByLabel("Knowledge filters")).toBeVisible();
-  await expect(page.getByLabel("Inspector")).toContainText("Evidence");
+  await expect(page.getByRole("listbox", { name: "Recall result list" })).toContainText("Dense-Mem");
   await expect(page.getByRole("listbox", { name: "Recall result list" }).getByRole("option")).toHaveCount(3);
+  await page.getByRole("option").first().click();
+  await expect(page.getByLabel("Inspector", { exact: true })).toContainText("Evidence");
+  await page.getByRole("button", { name: "Close details panel" }).click();
   await page.getByRole("option").filter({ hasText: "uses: Dense-Mem" }).click();
-  await expect(page.getByLabel("Inspector")).toContainText("Relationship");
-  await expect(page.getByLabel("Inspector")).toContainText("Tier verified");
+  await expect(page.getByLabel("Inspector", { exact: true })).toContainText("Relationship");
+  await expect(page.getByLabel("Inspector", { exact: true })).toContainText("Tier verified");
+  await page.getByRole("button", { name: "Close details panel" }).click();
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await expect(page.getByLabel("Knowledge filters")).toBeVisible();
   await page.getByRole("checkbox", { name: /Relationship/ }).click();
+  await page.keyboard.press("Escape");
   await expect(page.getByRole("listbox", { name: "Recall result list" })).not.toContainText("uses: Dense-Mem");
-  await expect(page.getByLabel("Inspector")).toContainText("Evidence");
+  await page.getByRole("button", { name: "Open details", exact: true }).click();
+  await expect(page.getByLabel("Inspector", { exact: true })).toContainText("Evidence");
+  await page.getByRole("button", { name: "Close details panel" }).click();
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
   await page.getByRole("checkbox", { name: /Evidence/ }).click();
-  await expect(page.getByLabel("Inspector")).toContainText("Select a result");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("option")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Open details", exact: true })).toBeDisabled();
 
-  await expect(page.getByRole("button", { name: "Usage" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Usage" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Evidence" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Relationships" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Communities" })).toHaveCount(0);
@@ -207,9 +332,11 @@ test("graph tab renders a nonblank memory graph", async ({ page }) => {
   const calls = await mockUserApi(page, { key: readKey });
   await openUserPortal(page, "dm_read");
 
-  await page.getByRole("button", { name: "Graph" }).click();
+  await navigate(page, "Graph");
   await expect(page.getByLabel("Knowledge graph")).toBeVisible();
-  await expect(page.getByLabel("Graph inspector")).toContainText("Select a node");
+  await page.getByRole("button", { name: "Open details", exact: true }).click();
+  await expect(page.getByLabel("Graph inspector", { exact: true })).toContainText("Select a node");
+  await page.getByRole("button", { name: "Close details panel" }).click();
   const canvas = page.locator(".graph-canvas canvas").first();
   await expect(canvas).toBeVisible();
   await expect.poll(async () => canvas.evaluate((element) => {
@@ -229,7 +356,8 @@ test("graph tab renders a nonblank memory graph", async ({ page }) => {
   })).toBeGreaterThan(0);
   expect(calls.graphRequests.some((url) => url.includes("/ui/api/graph?scope=overview"))).toBe(true);
 
-  const controls = page.getByLabel("Graph controls");
+  await page.getByRole("button", { name: "Graph controls", exact: true }).click();
+  const controls = page.getByLabel("Graph controls", { exact: true });
   await controls.getByRole("button", { name: "Local" }).click();
   await controls.getByLabel("Anchor ID").fill("entity-alice");
   await controls.getByLabel("Depth").focus();
@@ -292,12 +420,13 @@ test("graph refresh replaces a corrected endpoint while the graph stays open", a
   });
   await openUserPortal(page, "dm_read");
 
-  await page.getByRole("button", { name: "Graph" }).click();
+  await navigate(page, "Graph");
   await expect.poll(() => graphCanvasLabels(page)).toContain("Wrong Project");
   const requestsBeforeRefresh = harness.graphRequests.length;
 
   harness.correctRelationship();
-  await page.getByLabel("Graph controls").getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.getByRole("button", { name: "Graph controls", exact: true }).click();
+  await page.getByLabel("Graph controls", { exact: true }).getByRole("button", { name: "Refresh", exact: true }).click();
   await expect.poll(() => harness.graphRequests.length).toBeGreaterThan(requestsBeforeRefresh);
   await expect.poll(() => graphCanvasLabels(page)).toContain("Corrected Project");
   await page.waitForTimeout(300);
@@ -310,7 +439,7 @@ test("read-only key cannot regenerate itself", async ({ page }) => {
   await mockUserApi(page, { key: readKey });
   await openUserPortal(page, "dm_read");
 
-  await page.getByRole("button", { name: /My credential/i }).click();
+  await navigate(page, "My credentials");
   await expect(page.getByRole("button", { name: /Regenerate key/i })).toBeDisabled();
 });
 
@@ -318,9 +447,9 @@ test("write key regenerates only through the self-rotate endpoint", async ({ pag
   const calls = await mockUserApi(page, { key: writeKey });
   await openUserPortal(page, "dm_write");
 
-  await page.getByRole("button", { name: /My credential/i }).click();
-  page.once("dialog", (dialog) => dialog.accept());
+  await navigate(page, "My credentials");
   await page.getByRole("button", { name: /Regenerate key/i }).click();
+  await confirmAction(page, "Regenerate key");
 
   const details = page.getByLabel("Knowledge details");
   await expect(details.getByLabel("Generated API key")).toHaveValue("dm_new_plaintext");
@@ -328,6 +457,21 @@ test("write key regenerates only through the self-rotate endpoint", async ({ pag
   await expect.poll(() => page.evaluate(() => sessionStorage.getItem("denseMem.userApiKey"))).toBeNull();
   expect(calls.rotateBodies).toEqual(["{}"]);
   expect(calls.disallowedCredentialCalls).toEqual([]);
+});
+
+test("SSO manager sees the same team management destinations and explicit memory access", async ({ page }) => {
+  await mockUserApi(page, { key: managerKey, canManageTeam: true, credentials: [memberCredential] });
+  await mockSSOUserApi(page, [], "manager");
+  await page.goto("/ui/");
+  await expect(page.getByLabel("Current workspace")).toContainText(team.name);
+  await navigate(page, "Team");
+  await expect(page.getByLabel("Name", { exact: true })).toHaveValue(team.name);
+  await openNavigation(page);
+  await expect(page.getByRole("link", { name: "Ontology", exact: true })).toBeVisible();
+  if (await page.getByRole("dialog").isVisible()) await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText("Private: Read/write");
+  await expect(page.getByRole("dialog")).toContainText("Team read/write");
 });
 
 test("SSO member can create and operate on a selected second credential", async ({ page }) => {
@@ -340,8 +484,8 @@ test("SSO member can create and operate on a selected second credential", async 
   const calls = await mockSSOUserApi(page, [firstCredential]);
   await page.goto("/ui/");
 
-  await expect(page.getByLabel("Active team")).toHaveValue(team.id);
-  await page.getByRole("button", { name: /My credential/i }).click();
+  await expect(page.getByLabel("Current workspace")).toContainText(team.name);
+  await navigate(page, "My credentials");
   await expect(page.getByRole("heading", { name: "My credentials" })).toBeVisible();
 
   await page.getByLabel("Credential name", { selector: "#sso-personal-credential-name" }).fill("Second key");
@@ -357,13 +501,13 @@ test("SSO member can create and operate on a selected second credential", async 
 
   const secondCredentialID = "66666666-6666-4666-8666-666666666666";
   await page.getByRole("button", { name: /Second key/ }).click();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: /Regenerate key/i }).click();
+  await confirmAction(page, "Regenerate key");
   await expect(page.getByLabel("Generated API key")).toHaveValue("dm_sso_second_rotated");
   expect(calls.rotatePaths).toEqual([`/ui/api/sso/credentials/${secondCredentialID}/rotate`]);
 
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: /Revoke key/i }).click();
+  await confirmAction(page, "Revoke key");
   await expect(page.getByRole("button", { name: /Profile key/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Second key/ })).toBeHidden();
   expect(calls.revokePaths).toEqual([`/ui/api/sso/credentials/${secondCredentialID}`]);
@@ -373,7 +517,7 @@ test("write member key has no Usage dashboard", async ({ page }) => {
   const calls = await mockUserApi(page, { key: writeKey });
   await openUserPortal(page, "dm_write");
 
-  await expect(page.getByRole("button", { name: "Usage" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Usage" })).toHaveCount(0);
   expect(calls.telemetryRequests).toEqual([]);
   expect(calls.disallowedCredentialCalls).toEqual([]);
 });
@@ -386,8 +530,9 @@ test("manager key retains Team navigation without a Usage dashboard", async ({ p
   });
   await openUserPortal(page, "dm_manager");
 
-  await expect(page.getByRole("button", { name: "Team" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Usage" })).toHaveCount(0);
+  await openNavigation(page);
+  await expect(page.getByRole("link", { name: "Team" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Usage" })).toHaveCount(0);
   expect(calls.telemetryRequests).toEqual([]);
 });
 
@@ -411,19 +556,22 @@ test("responsive user portal layout", async ({ page }) => {
   await mockUserApi(page, { key: readKey });
   await openUserPortal(page, "dm_read");
 
-  await expect(page.getByRole("heading", { name: "Knowledge" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Recall" })).toBeVisible();
+  await expect(page.getByLabel("Current workspace")).toBeVisible();
+  await openNavigation(page);
+  await expect(page.getByRole("link", { name: "Search memory" })).toBeVisible();
+  if (await page.locator(".mobile-navigation").isVisible()) await page.keyboard.press("Escape");
   const shellMinHeight = await page.locator(".app-shell").evaluate((element) => Number.parseFloat(getComputedStyle(element).minHeight));
   expect(shellMinHeight).toBeGreaterThanOrEqual((page.viewportSize()?.height ?? 0) - 1);
-  await expect(page.locator(".top-nav-bar")).toBeVisible();
-  await expect(page.locator(".primary-rail")).toHaveCount(0);
+  if ((page.viewportSize()?.width ?? 0) >= 768) {
+    await expect(page.locator(".primary-rail")).toBeVisible();
+  } else {
+    await expect(page.getByRole("button", { name: "Open navigation" })).toBeVisible();
+  }
   await expect(page.locator(".resource-rail")).toHaveCount(0);
-  await expect(page.locator(".knowledge-results-panel")).toHaveCSS("border-radius", "0px");
+  await expect(page.locator(".knowledge-results-panel")).toHaveCSS("border-radius", "10px");
   await expectNoShellOverlap(page);
 
-  if ((page.viewportSize()?.width ?? 1000) < 700) {
-    await expect(page.locator(".workspace")).toHaveCSS("grid-template-columns", /[0-9.]+px/);
-  }
+  await expectPageContained(page);
 });
 
 test("manager team page separates team editing from credential management", async ({ page }) => {
@@ -434,7 +582,7 @@ test("manager team page separates team editing from credential management", asyn
   });
   await openUserPortal(page, "dm_manager");
 
-  await page.getByRole("button", { name: /^Team$/ }).click();
+  await navigate(page, "Team");
   const surface = page.locator(".team-management-surface");
   await expect(surface.getByRole("heading", { name: "Team" })).toBeVisible();
   await expect(surface.getByRole("heading", { name: "Credentials" })).toBeVisible();
@@ -463,7 +611,7 @@ async function openUserPortal(page: Page, apiKey: string) {
   await page.goto("/ui/");
   await page.getByLabel("API key").fill(apiKey);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByText("Research Team")).toBeVisible();
+  await expect(page.getByLabel("Current workspace")).toBeVisible();
 }
 
 async function expectNoShellOverlap(page: Page) {
@@ -477,12 +625,10 @@ async function expectNoShellOverlap(page: Page) {
     })),
   }));
   expect(overflow.documentWidth).toBeLessThanOrEqual(overflow.viewportWidth + 1);
-  for (const tableWrap of overflow.tableWraps) {
-    expect(tableWrap.scrollWidth, `${tableWrap.className} overflowed horizontally`).toBeLessThanOrEqual(tableWrap.clientWidth + 1);
-  }
+  await expectPageContained(page);
 
   const boxes = await page.locator(".topbar, .primary-rail, .top-nav-bar, .resource-rail, .detail-pane").evaluateAll((elements) => (
-    elements.map((element) => {
+    elements.filter((element) => element.getBoundingClientRect().width > 0).map((element) => {
       const rect = element.getBoundingClientRect();
       return {
         className: element.className,
@@ -704,7 +850,7 @@ async function mockUserApi(
   };
 }
 
-async function mockSSOUserApi(page: Page, credentials: SSOTestCredential[]) {
+async function mockSSOUserApi(page: Page, credentials: SSOTestCredential[], role: "member" | "manager" = "member") {
   const calls = {
     createBodies: [] as Array<Record<string, unknown>>,
     rotatePaths: [] as string[],
@@ -731,9 +877,9 @@ async function mockSSOUserApi(page: Page, credentials: SSOTestCredential[]) {
       body: JSON.stringify({
         data: {
           team,
-          membership: { team_id: team.id, name: "SSO member", grants: ["read", "write"], role: "member" },
+          membership: { team_id: team.id, name: "SSO member", grants: ["read", "write"], role },
           credential: null,
-          teams: [{ team, membership: { team_id: team.id, name: "SSO member", grants: ["read", "write"], role: "member" } }],
+          teams: [{ team, membership: { team_id: team.id, name: "SSO member", grants: ["read", "write"], role } }],
           personal_credentials: currentCredentials,
           memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: true } },
           mcp_public_base_url: "",

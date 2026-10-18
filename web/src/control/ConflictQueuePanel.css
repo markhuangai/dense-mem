@@ -47,7 +47,7 @@
 
 .evidence-conflict-card:hover,
 .evidence-conflict-card.selected {
-  border-color: var(--accent);
+  border-color: var(--primary);
 }
 
 .evidence-conflict-card small {
@@ -225,7 +225,7 @@
   inset: 0 auto 0 0;
   width: 4px;
   border-radius: 4px;
-  background: var(--accent);
+  background: var(--primary);
 }
 
 .conflict-status-cell.overdue .conflict-urgency-spine {

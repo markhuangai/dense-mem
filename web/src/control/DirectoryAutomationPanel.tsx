@@ -1,3 +1,10 @@
+import { useConfirmation } from "../ui/confirmation";
+import { useUnsavedChanges } from "../ui/navigation";
+import { Label } from "../ui/primitives/label";
+import { Input } from "../ui/primitives/input";
+import { Textarea } from "../ui/primitives/textarea";
+import { Button } from "../ui/primitives/button";
+import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "../ui/primitives/table";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Check, Eye, KeyRound, Play, Power, RefreshCw, Trash2 } from "lucide-react";
 import {
@@ -28,6 +35,7 @@ type ConnectorDraft = {
 };
 
 export function DirectoryAutomationPanel({ api, provider, teams }: { api: ControlApi; provider: SSOProvider; teams: Team[] }) {
+  const confirm = useConfirmation();
   const [connector, setConnector] = useState<DirectoryConnector | null>(null);
   const [draft, setDraft] = useState<ConnectorDraft>(() => emptyConnectorDraft());
   const [preview, setPreview] = useState<DirectoryPreview | null>(null);
@@ -39,6 +47,7 @@ export function DirectoryAutomationPanel({ api, provider, teams }: { api: Contro
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const requestID = useRef(0);
+  useUnsavedChanges(JSON.stringify(draft) !== JSON.stringify(connector ? connectorToDraft(connector) : emptyConnectorDraft()) || Boolean(adminGroupID || adminGroupName));
 
   useEffect(() => {
     const activeRequest = requestID.current + 1;
@@ -134,7 +143,7 @@ export function DirectoryAutomationPanel({ api, provider, teams }: { api: Contro
       setError("Refresh the directory preview before activating the connector.");
       return;
     }
-	    if (status === "disabled" && !window.confirm("Disable directory automation? Existing directory-created teams remain, while directory grants are revoked until a later activation.")) {
+	    if (status === "disabled" && !await confirm({ title: "Disable directory automation?", description: "Disable directory automation? Existing directory-created teams remain, while directory grants are revoked until a later activation.", confirmLabel: "Disable directory automation", destructive: true })) {
       return;
     }
     setLoading(true);
@@ -153,7 +162,7 @@ export function DirectoryAutomationPanel({ api, provider, teams }: { api: Contro
   }
 
   async function rotateCredentials() {
-    if (!connector || !window.confirm("Rotate the directory credentials? Existing bearer and OAuth credentials stop working immediately.")) {
+    if (!connector || !await confirm({ title: "Rotate credentials?", description: "Rotate the directory credentials? Existing bearer and OAuth credentials stop working immediately.", confirmLabel: "Rotate credentials", destructive: true })) {
       return;
     }
     setLoading(true);
@@ -197,7 +206,7 @@ export function DirectoryAutomationPanel({ api, provider, teams }: { api: Contro
   }
 
   async function retireAdminGroup(group: ControlAdminGroup) {
-    if (!window.confirm(`Remove ${group.group_name || group.group_id} from control access?`)) {
+    if (!await confirm({ title: "Remove control access?", description: `Remove ${group.group_name || group.group_id} from control access?`, confirmLabel: "Remove control access", destructive: true })) {
       return;
     }
     setLoading(true);
@@ -223,7 +232,7 @@ export function DirectoryAutomationPanel({ api, provider, teams }: { api: Contro
       setError("The directory-created team is not available in this control session.");
       return;
     }
-    if (!window.confirm(`Adopt ${team.name}? It remains available but future directory removal will not archive it.`)) {
+    if (!await confirm({ title: "Adopt team?", description: `Adopt ${team.name}? It remains available but future directory removal will not archive it.`, confirmLabel: "Adopt team", destructive: true })) {
       return;
     }
     setLoading(true);
@@ -250,45 +259,45 @@ export function DirectoryAutomationPanel({ api, provider, teams }: { api: Contro
         {error && <div className="banner error" role="alert">{error}</div>}
         {message && <div className="banner neutral">{message}</div>}
         <form className="edit-grid" onSubmit={saveConnector}>
-          <label htmlFor="directory-group-pattern">Group pattern</label>
-          <input id="directory-group-pattern" value={draft.group_pattern} onChange={(event) => setDraft((current) => ({ ...current, group_pattern: event.target.value }))} spellCheck={false} />
-          <label htmlFor="directory-role-entitlements">Role entitlements (JSON)</label>
-          <textarea id="directory-role-entitlements" value={draft.role_entitlements} onChange={(event) => setDraft((current) => ({ ...current, role_entitlements: event.target.value }))} spellCheck={false} />
-          <label htmlFor="directory-max-auto-teams">Maximum auto-created teams</label>
-          <input id="directory-max-auto-teams" type="number" min="1" max="1000" value={draft.max_auto_teams} onChange={(event) => setDraft((current) => ({ ...current, max_auto_teams: event.target.value }))} />
+          <Label htmlFor="directory-group-pattern">Group pattern</Label>
+          <Input id="directory-group-pattern" value={draft.group_pattern} onChange={(event) => setDraft((current) => ({ ...current, group_pattern: event.target.value }))} spellCheck={false} />
+          <Label htmlFor="directory-role-entitlements">Role entitlements (JSON)</Label>
+          <Textarea id="directory-role-entitlements" value={draft.role_entitlements} onChange={(event) => setDraft((current) => ({ ...current, role_entitlements: event.target.value }))} spellCheck={false} />
+          <Label htmlFor="directory-max-auto-teams">Maximum auto-created teams</Label>
+          <Input id="directory-max-auto-teams" type="number" min="1" max="1000" value={draft.max_auto_teams} onChange={(event) => setDraft((current) => ({ ...current, max_auto_teams: event.target.value }))} />
           <div className="button-row span">
-            <button className="primary-button" type="submit" disabled={loading}>
+            <Button variant="default" className="primary-button" type="submit" disabled={loading}>
               <Check size={16} aria-hidden="true" />
               {connector ? "Save directory policy" : "Create connector"}
-            </button>
+            </Button>
             {connector && (
               <>
-                <button className="ghost-button" type="button" disabled={loading || connector.status === "disabled"} onClick={() => void refreshPreview()}>
+                <Button variant="outline" className="ghost-button" type="button" disabled={loading || connector.status === "disabled"} onClick={() => void refreshPreview()}>
                   <Eye size={16} aria-hidden="true" />
                   Preview
-                </button>
+                </Button>
                 {connector.status === "disabled" && (
-                  <button className="ghost-button" type="button" disabled={loading} onClick={() => void setStatus("observe")}>
+                  <Button variant="outline" className="ghost-button" type="button" disabled={loading} onClick={() => void setStatus("observe")}>
                     <Play size={16} aria-hidden="true" />
                     Start observe
-                  </button>
+                  </Button>
                 )}
                 {connector.status === "observe" && (
-                  <button className="primary-button" type="button" disabled={loading || !preview} onClick={() => void setStatus("active")}>
+                  <Button variant="default" className="primary-button" type="button" disabled={loading || !preview} onClick={() => void setStatus("active")}>
                     <Power size={16} aria-hidden="true" />
                     Activate preview
-                  </button>
+                  </Button>
                 )}
                 {connector.status !== "disabled" && (
-                  <button className="danger-button" type="button" disabled={loading} onClick={() => void setStatus("disabled")}>
+                  <Button variant="destructive" className="danger-button" type="button" disabled={loading} onClick={() => void setStatus("disabled")}>
                     <Power size={16} aria-hidden="true" />
                     Disable
-                  </button>
+                  </Button>
                 )}
-                <button className="ghost-button" type="button" disabled={loading} onClick={() => void rotateCredentials()}>
+                <Button variant="outline" className="ghost-button" type="button" disabled={loading} onClick={() => void rotateCredentials()}>
                   <KeyRound size={16} aria-hidden="true" />
                   Rotate credentials
-                </button>
+                </Button>
               </>
             )}
           </div>
@@ -303,14 +312,14 @@ export function DirectoryAutomationPanel({ api, provider, teams }: { api: Contro
 
       {preview && connector && (
         <section className="surface">
-          <SectionHeading title="Directory preview" subtitle={`Version ${preview.version}`} actions={<button className="icon-button" type="button" aria-label="Refresh directory preview" onClick={() => void refreshPreview()}><RefreshCw size={16} aria-hidden="true" /></button>} />
+          <SectionHeading title="Directory preview" subtitle={`Version ${preview.version}`} actions={<Button variant="ghost" size="icon" className="icon-button" type="button" aria-label="Refresh directory preview" onClick={() => void refreshPreview()}><RefreshCw size={16} aria-hidden="true" /></Button>} />
           <DirectoryPreviewTable candidates={preview.candidates} teams={teams} onAdopt={(candidate) => void adoptCandidate(candidate)} />
           {preview.issues.length > 0 && (
             <div className="table-wrap">
-              <table className="data-table">
-                <thead><tr><th>Issue</th><th>Detail</th><th>Status</th></tr></thead>
-                <tbody>{preview.issues.map((issue) => <tr key={`${issue.kind}-${issue.detail}`}><td>{issue.kind}</td><td>{issue.detail}</td><td>{issue.active ? "active" : "resolved"}</td></tr>)}</tbody>
-              </table>
+              <Table className="data-table">
+                <TableHeader><TableRow><TableHead>Issue</TableHead><TableHead>Detail</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
+                <TableBody>{preview.issues.map((issue) => <TableRow key={`${issue.kind}-${issue.detail}`}><TableCell>{issue.kind}</TableCell><TableCell>{issue.detail}</TableCell><TableCell>{issue.active ? "active" : "resolved"}</TableCell></TableRow>)}</TableBody>
+              </Table>
             </div>
           )}
         </section>
@@ -319,32 +328,32 @@ export function DirectoryAutomationPanel({ api, provider, teams }: { api: Contro
       <section className="surface">
         <SectionHeading title="Control SSO administrators" subtitle="Members of any enabled group can use this provider to enter the control portal; the break-glass token remains available." meta={adminGroups.length} />
         <form className="inline-form" onSubmit={addAdminGroup}>
-          <label htmlFor="control-admin-group-id">Entra group ID</label>
-          <input id="control-admin-group-id" value={adminGroupID} onChange={(event) => setAdminGroupID(event.target.value)} />
-          <label htmlFor="control-admin-group-name">Display name</label>
-          <input id="control-admin-group-name" value={adminGroupName} onChange={(event) => setAdminGroupName(event.target.value)} />
+          <Label htmlFor="control-admin-group-id">Entra group ID</Label>
+          <Input id="control-admin-group-id" value={adminGroupID} onChange={(event) => setAdminGroupID(event.target.value)} />
+          <Label htmlFor="control-admin-group-name">Display name</Label>
+          <Input id="control-admin-group-name" value={adminGroupName} onChange={(event) => setAdminGroupName(event.target.value)} />
           <div className="button-row">
-            <button className="primary-button compact" type="submit" disabled={loading}>
+            <Button variant="default" className="primary-button compact" type="submit" disabled={loading}>
               <Check size={16} aria-hidden="true" />
               Add control admin group
-            </button>
+            </Button>
           </div>
         </form>
         {adminGroups.length === 0 ? (
           <div className="table-placeholder">No control-admin groups configured</div>
         ) : (
           <div className="table-wrap">
-            <table className="data-table">
-              <thead><tr><th>Name</th><th>Group ID</th><th>Status</th><th className="actions-cell">Actions</th></tr></thead>
-              <tbody>{adminGroups.map((group) => (
-                <tr key={group.id}>
-                  <td>{group.group_name || "Unnamed group"}</td>
-                  <td><code>{group.group_id}</code></td>
-                  <td><span className={group.enabled ? "status-pill neutral" : "status-pill warning"}>{group.enabled ? "enabled" : "disabled"}</span></td>
-                  <td className="actions-cell"><button className="icon-button danger-icon" type="button" aria-label={`Remove ${group.group_name || group.group_id} from control access`} disabled={loading} onClick={() => void retireAdminGroup(group)}><Trash2 size={16} aria-hidden="true" /></button></td>
-                </tr>
-              ))}</tbody>
-            </table>
+            <Table className="data-table">
+              <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Group ID</TableHead><TableHead>Status</TableHead><TableHead className="actions-cell">Actions</TableHead></TableRow></TableHeader>
+              <TableBody>{adminGroups.map((group) => (
+                <TableRow key={group.id}>
+                  <TableCell>{group.group_name || "Unnamed group"}</TableCell>
+                  <TableCell><code>{group.group_id}</code></TableCell>
+                  <TableCell><span className={group.enabled ? "status-pill neutral" : "status-pill warning"}>{group.enabled ? "enabled" : "disabled"}</span></TableCell>
+                  <TableCell className="actions-cell"><Button variant="ghost" size="icon" className="icon-button danger-icon" type="button" aria-label={`Remove ${group.group_name || group.group_id} from control access`} disabled={loading} onClick={() => void retireAdminGroup(group)}><Trash2 size={16} aria-hidden="true" /></Button></TableCell>
+                </TableRow>
+              ))}</TableBody>
+            </Table>
           </div>
         )}
       </section>
@@ -404,11 +413,11 @@ function DirectoryCredentialNotice({ credential, onDismiss }: { credential: Dire
   return (
     <div className="banner warning">
       <p>Copy one authentication method now. Dense-Mem stores only hashes and will not show these values again.</p>
-      <label>Bearer token</label>
+      <Label>Bearer token</Label>
       <SecretBox value={credential.bearer_token} valueLabel="Directory bearer token" copyLabel="Copy directory bearer token" dismissLabel="Dismiss directory credentials" onDismiss={onDismiss} />
-      <label>OAuth client ID</label>
+      <Label>OAuth client ID</Label>
       <SecretBox value={credential.oauth_client_id} valueLabel="Directory OAuth client ID" copyLabel="Copy directory OAuth client ID" dismissLabel="Dismiss directory credentials" onDismiss={onDismiss} />
-      <label>OAuth client secret</label>
+      <Label>OAuth client secret</Label>
       <SecretBox value={credential.oauth_client_secret} valueLabel="Directory OAuth client secret" copyLabel="Copy directory OAuth client secret" dismissLabel="Dismiss directory credentials" onDismiss={onDismiss} />
     </div>
   );
@@ -420,22 +429,22 @@ function DirectoryPreviewTable({ candidates, teams, onAdopt }: { candidates: Dir
   }
   return (
     <div className="table-wrap">
-      <table className="data-table">
-        <thead><tr><th>Group</th><th>Team</th><th>Access</th><th>Binding</th><th className="actions-cell">Actions</th></tr></thead>
-        <tbody>{candidates.map((candidate) => {
+      <Table className="data-table">
+        <TableHeader><TableRow><TableHead>Group</TableHead><TableHead>Team</TableHead><TableHead>Access</TableHead><TableHead>Binding</TableHead><TableHead className="actions-cell">Actions</TableHead></TableRow></TableHeader>
+        <TableBody>{candidates.map((candidate) => {
           const team = teams.find((item) => item.name === candidate.team_name);
           const canAdopt = candidate.binding_origin === "directory_created" && Boolean(team);
           return (
-            <tr key={candidate.group_id}>
-              <td>{candidate.display_name}</td>
-              <td>{candidate.team_name}</td>
-              <td>{candidate.entitlement.role}: {candidate.entitlement.scopes.join(", ")}</td>
-              <td>{candidate.binding_origin}</td>
-              <td className="actions-cell">{canAdopt && <button className="ghost-button compact" type="button" onClick={() => onAdopt(candidate)}>Adopt team</button>}</td>
-            </tr>
+            <TableRow key={candidate.group_id}>
+              <TableCell>{candidate.display_name}</TableCell>
+              <TableCell>{candidate.team_name}</TableCell>
+              <TableCell>{candidate.entitlement.role}: {candidate.entitlement.scopes.join(", ")}</TableCell>
+              <TableCell>{candidate.binding_origin}</TableCell>
+              <TableCell className="actions-cell">{canAdopt && <Button variant="outline" className="ghost-button compact" type="button" onClick={() => onAdopt(candidate)}>Adopt team</Button>}</TableCell>
+            </TableRow>
           );
-        })}</tbody>
-      </table>
+        })}</TableBody>
+      </Table>
     </div>
   );
 }

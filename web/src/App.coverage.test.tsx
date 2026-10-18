@@ -29,7 +29,7 @@ describe("App coverage additions", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<App />);
-    expect(await screen.findByText("No teams", { selector: ".empty-state" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Create your first team" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
     expect(await screen.findByLabelText("Control token")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/control/auth/logout", expect.objectContaining({ method: "POST" }));
@@ -47,32 +47,32 @@ describe("App coverage additions", () => {
     expect(screen.getByText("No matching teams")).toBeInTheDocument();
     await userEvent.clear(teamSearch);
 
-    await userEvent.click(screen.getByRole("button", { name: /^Feedback$/i }));
+    await userEvent.click(screen.getByRole("link", { name: "Recall feedback" }));
     expect(await screen.findByRole("heading", { name: "Recall Feedback" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /^SSO$/i }));
+    await userEvent.click(screen.getByRole("link", { name: "Identity & access" }));
     expect(await screen.findByRole("heading", { name: /SSO providers/i })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Teams" }));
-    await userEvent.click(screen.getByRole("button", { name: "Dreams" }));
+    await userEvent.click(screen.getByRole("link", { name: "All teams" }));
+    await userEvent.click(screen.getByRole("link", { name: "Dream history" }));
     expect(await screen.findByRole("heading", { name: "Dream history" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Teams" }));
-    await userEvent.click(screen.getByRole("button", { name: "Conflicts" }));
+    await userEvent.click(screen.getByRole("link", { name: "All teams" }));
+    await userEvent.click(screen.getByRole("link", { name: "Conflicts" }));
     expect(await screen.findByRole("heading", { name: "Conflict queue" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Teams" }));
-    await userEvent.click(screen.getByRole("button", { name: "Remember Attempts" }));
+    await userEvent.click(screen.getByRole("link", { name: "All teams" }));
+    await userEvent.click(screen.getByRole("link", { name: "Remember history" }));
     expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+    await userEvent.click(screen.getByRole("link", { name: "Search readiness" }));
     expect(await screen.findByRole("heading", { name: /Search convergence/i })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /^Config$/i }));
+    await userEvent.click(screen.getByRole("link", { name: "Settings" }));
     expect(await screen.findByRole("heading", { name: "General" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Teams" }));
-    await userEvent.click(screen.getByRole("button", { name: /team settings/i }));
+    await userEvent.click(screen.getByRole("link", { name: "All teams" }));
+    await userEvent.click(screen.getByRole("link", { name: "Team settings" }));
     const teamName = screen.getByLabelText("Name", { selector: "#team-name" });
     await userEvent.clear(teamName);
     await userEvent.type(teamName, "ab");
     await userEvent.click(screen.getByRole("button", { name: /^Save$/i }));
     expect(await screen.findByRole("alert")).toHaveTextContent("at least 3");
-    vi.spyOn(window, "confirm").mockReturnValue(false);
     await userEvent.click(screen.getByRole("button", { name: /^Delete$/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
   }, 15000);
 
   it("reports team editor save and delete failures", async () => {
@@ -92,17 +92,17 @@ describe("App coverage additions", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     sessionStorage.setItem("denseMem.controlToken", "secret");
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("button", { name: "New Team" }));
+    await userEvent.click(screen.getByRole("button", { name: "New team" }));
     await userEvent.type(screen.getByLabelText("Name", { selector: "#new-team-name" }), "Created");
     await userEvent.click(screen.getByRole("button", { name: /^Create$/i }));
     expect(await screen.findByText("team create failed")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    await userEvent.click(screen.getByRole("button", { name: "Discard changes" }));
     await userEvent.click(screen.getByRole("button", { name: /Default/ }));
-    await userEvent.click(screen.getByRole("button", { name: /team settings/i }));
+    await userEvent.click(screen.getByRole("link", { name: "Team settings" }));
     const teamName = screen.getByLabelText("Name", { selector: "#team-name" });
     await userEvent.clear(teamName);
     await userEvent.type(teamName, "ab");
@@ -115,6 +115,7 @@ describe("App coverage additions", () => {
     expect(await screen.findByText("team update failed")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: /^Delete$/i })).toBeEnabled(), { timeout: 5000 });
     await userEvent.click(screen.getByRole("button", { name: /^Delete$/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete team" }));
     expect(await screen.findByText("team delete failed")).toBeInTheDocument();
   }, 15000);
 });

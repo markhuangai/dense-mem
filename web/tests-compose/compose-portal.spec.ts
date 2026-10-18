@@ -1,3 +1,4 @@
+import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
 import { expect, type APIRequestContext, type Locator, type Page, test } from "@playwright/test";
 import "./graph-views";
 
@@ -88,7 +89,7 @@ test("control panel logs in against compose and creates a team", async ({ page }
   await expect(page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) })).toBeVisible();
 
   const teamName = uniqueName("Compose Team", testInfo);
-  await page.getByRole("button", { name: "New Team" }).click();
+  await page.getByRole("button", { name: "New team" }).click();
   await page.getByLabel("Name").first().fill(teamName);
   await page.getByLabel("Description").first().fill("created by compose e2e");
   await page.getByRole("button", { name: /^Create$/ }).click();
@@ -133,7 +134,7 @@ test("control overview contains every Top Signals diagnostic", async ({ page }) 
 test("control panel keeps security settings display-only against compose", async ({ page }) => {
   await openControlPanel(page);
 
-  await page.getByRole("button", { name: /IP Bans/ }).click();
+  await navigate(page, "IP bans");
 
   await expect(page.getByRole("heading", { name: "IP Bans" })).toBeVisible();
   await expect(page.getByLabel("IP ban rules")).toContainText("Protection");
@@ -152,7 +153,7 @@ test("control panel loads team Dreams without re-evaluation", async ({ page }) =
 
   await openControlPanel(page);
   await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
-  await page.getByRole("button", { name: /team dream history/i }).click();
+  await navigate(page, "Dream history");
 
   await expect(page.getByRole("heading", { name: "Dream Outputs" })).toBeVisible();
   await expect(page.getByText(dreamStatement, { exact: true })).toBeVisible();
@@ -172,7 +173,7 @@ test("control panel loads team Dreams without re-evaluation", async ({ page }) =
 test("control panel renders historical discovery citations and lane output", async ({ page }) => {
   await openControlPanel(page);
   await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
-  await page.getByRole("button", { name: /team dream history/i }).click();
+  await navigate(page, "Dream history");
 
   const dreamRow = page.locator(".dreams-table tbody tr").filter({ hasText: evidenceDreamStatement });
   await expect(dreamRow).toBeVisible();
@@ -188,7 +189,7 @@ test("control panel renders historical discovery citations and lane output", asy
 test("control panel surfaces a historical failed discovery run", async ({ page }) => {
   await openControlPanel(page);
   await page.getByRole("button", { name: new RegExp(escapeRegExp(evidenceFailureTeamName)) }).click();
-  await page.getByRole("button", { name: /team dream history/i }).click();
+  await navigate(page, "Dream history");
 
   const failedRun = page.locator(".dream-runs-table tbody tr").filter({ hasText: "Evidence discovery" }).filter({ hasText: "failed" });
   await expect(failedRun).toHaveCount(1);
@@ -214,11 +215,12 @@ test("Prometheus telemetry remains available without portal dashboards", async (
 
   await openControlPanel(page);
   await expect(page.getByRole("button", { name: /^Metrics$/ })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Logs" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Remember Attempts", exact: true })).toBeVisible();
+  await openNavigation(page);
+  await expect(page.getByRole("link", { name: "Logs" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Remember history", exact: true })).toBeVisible();
   await openUserPortal(page, seedApiKey);
   await expect(page.getByRole("button", { name: "Usage" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Dreams" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Dream history" })).toHaveCount(0);
   await expectNoShellOverlap(page);
 
   const retired = await request.get(`${userUrl}/ui/api/telemetry?window=15m`, { headers: bearer(seedApiKey) });
@@ -395,30 +397,67 @@ test("user portal logs in with a real API key and shows only that credential", a
 
   await openUserPortal(page, seedApiKey);
 
-  await expect(page.getByText(seedTeamName)).toBeVisible();
+  await expect(page.getByLabel("Current workspace")).toHaveText(seedTeamName);
   await expect(page.getByLabel("Current workspace")).not.toContainText(seedCredentialName);
-  await page.getByRole("button", { name: /My credential/i }).click();
+  await navigate(page, "My credentials");
   await expect(page.getByText(seedCredentialName, { exact: true })).toBeVisible();
   await expect(page.getByText(otherCredential.credential.name)).toBeHidden();
 
-  await page.getByRole("button", { name: "Recall" }).click();
+  await navigate(page, "Search memory");
   await expect(page.getByLabel("Knowledge explorer")).toBeVisible();
   await expect(page.getByText("No recall results")).toBeVisible();
 
-  await page.getByRole("button", { name: "Graph" }).click();
+  await navigate(page, "Graph");
   await expect(page.getByLabel("Knowledge graph")).toBeVisible();
+  await page.getByRole("button", { name: "Open details", exact: true }).click();
   await expect(page.getByLabel("Graph totals")).toContainText(/Nodes\s*[1-9]/);
 
-  await expect(page.getByRole("button", { name: "Dreams" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Dream history" })).toHaveCount(0);
+});
+
+test("control navigation retains theme, guards unsaved settings, and restores global Logs scope", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await openControlPanel(page);
+  await navigate(page, "Credentials");
+  expect(new URL(page.url()).searchParams.get("team_id")).toBeTruthy();
+  await navigate(page, "Settings");
+  await page.getByRole("tab", { name: "General", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "SSO runtime", exact: true })).toHaveAttribute("aria-selected", "true");
+  const publicURL = page.getByLabel("Public base URL", { exact: true });
+  await publicURL.fill("https://unsaved.example.com");
+  await page.getByRole("button", { name: "Choose theme", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Dark", exact: true }).click();
+  await expect(publicURL).toHaveValue("https://unsaved.example.com");
+  await navigate(page, "Logs");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Cancel", exact: true }).click();
+  if (await page.locator(".mobile-navigation").isVisible()) await page.keyboard.press("Escape");
+  await expect(publicURL).toHaveValue("https://unsaved.example.com");
+  const logsRequest = page.waitForRequest((request) => new URL(request.url()).pathname === "/control/api/logs");
+  await navigate(page, "Logs");
+  await confirmAction(page, "Discard changes");
+  expect(new URL((await logsRequest).url()).searchParams.has("team_id")).toBe(false);
+  await expect(page.getByRole("heading", { name: "Operation Logs", exact: true })).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole("tab", { name: "SSO runtime", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(publicURL).not.toHaveValue("https://unsaved.example.com");
+  await page.goForward();
+  await expect(page.getByRole("heading", { name: "Operation Logs", exact: true })).toBeVisible();
+  const refreshedLogs = page.waitForRequest((request) => new URL(request.url()).pathname === "/control/api/logs");
+  await page.reload();
+  expect(new URL((await refreshedLogs).url()).searchParams.has("team_id")).toBe(false);
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expectPageContained(page);
 });
 
 if (graphAnchorEntityId && graphOriginalObjectEntityId && graphCorrectedObjectEntityId && graphOriginalRelationshipId && graphSuccessorRelationshipId) {
 test("user portal renders the corrected live graph with depth five and an uncapped limit", async ({ page }) => {
   test.skip(!graphAnchorEntityId || !graphOriginalObjectEntityId || !graphCorrectedObjectEntityId || !graphOriginalRelationshipId || !graphSuccessorRelationshipId, "terminal graph fixture is not seeded for this scenario");
   await openUserPortal(page, seedApiKey);
-  await page.getByRole("button", { name: "Graph" }).click();
+  await navigate(page, "Graph");
 
-  const controls = page.getByLabel("Graph controls");
+  await page.getByRole("button", { name: "Graph controls", exact: true }).click();
+  const controls = page.getByLabel("Graph controls", { exact: true });
   await expect(controls.getByLabel("Relationship limit")).toHaveValue("80");
   await expect(controls.getByLabel("Depth")).toHaveValue("2");
   await expect(controls.getByLabel("Depth")).toHaveAttribute("max", "5");
@@ -451,6 +490,8 @@ test("user portal renders the corrected live graph with depth five and an uncapp
   expect(graph.nodes.map((node) => node.id)).not.toContain(graphOriginalObjectEntityId);
   expect(graph.edges.map((edge) => edge.id)).toContain(graphSuccessorRelationshipId);
   expect(graph.edges.map((edge) => edge.id)).not.toContain(graphOriginalRelationshipId);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Open details", exact: true }).click();
   await expect(page.getByLabel("Graph totals")).toContainText(new RegExp(`Nodes\\s*${graph.nodes.length}`));
   await expect(page.getByLabel("Graph totals")).toContainText(new RegExp(`Edges\\s*${graph.edges.length}`));
 	await expect(page.locator(".graph-canvas canvas").first()).toBeVisible();
@@ -462,7 +503,7 @@ test("read-only user key cannot regenerate itself", async ({ page, request }, te
 
   await openUserPortal(page, readOnly.api_key);
   await expect(page.getByRole("button", { name: "Usage" })).toHaveCount(0);
-  await page.getByRole("button", { name: /My credential/i }).click();
+  await navigate(page, "My credentials");
 
   await expect(page.getByRole("button", { name: /Regenerate key/i })).toBeDisabled();
 
@@ -474,9 +515,9 @@ test("write user key regenerates itself and invalidates the old key", async ({ p
   const writable = await createTeamCredential(request, uniqueName("Writable", testInfo), ["read", "write"]);
 
   await openUserPortal(page, writable.api_key);
-  await page.getByRole("button", { name: /My credential/i }).click();
-  page.once("dialog", (dialog) => dialog.accept());
+  await navigate(page, "My credentials");
   await page.getByRole("button", { name: /Regenerate key/i }).click();
+  await confirmAction(page, "Regenerate key");
 
   const rotatedKey = page.getByLabel("Generated API key");
   await expect(rotatedKey).toHaveValue(/^dm_/);
@@ -501,7 +542,7 @@ test("remembered API-key login uses a seven-day server session", async ({ page, 
   await page.getByLabel("API key").fill(writable.api_key);
   await page.getByRole("checkbox", { name: /7 days/i }).check();
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Knowledge", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Current workspace")).toBeVisible();
 
   const cookies = await page.context().cookies(`${userUrl}/ui/`);
   const sessionCookie = cookies.find((cookie) => cookie.name === "dense_mem_ui_session");
@@ -521,7 +562,7 @@ test("remembered API-key login uses a seven-day server session", async ({ page, 
   const freshPage = await freshContext.newPage();
   try {
     await freshPage.goto(`${userUrl}/ui/`);
-    await expect(freshPage.getByRole("heading", { name: "Knowledge", exact: true })).toBeVisible();
+    await expect(freshPage.getByLabel("Current workspace")).toBeVisible();
     expect(await freshPage.evaluate(() => sessionStorage.getItem("denseMem.userApiKey"))).toBeNull();
   } finally {
     await freshContext.close();
@@ -538,9 +579,9 @@ test("remembered API-key login uses a seven-day server session", async ({ page, 
   });
   expect(missingCsrfStatus).toBe(403);
 
-  await page.getByRole("button", { name: /My credential/i }).click();
-  page.once("dialog", (dialog) => dialog.accept());
+  await navigate(page, "My credentials");
   await page.getByRole("button", { name: /Regenerate key/i }).click();
+  await confirmAction(page, "Regenerate key");
   const rotatedKey = page.getByLabel("Generated API key");
   const newApiKey = await rotatedKey.inputValue();
   expect(newApiKey).not.toBe(writable.api_key);
@@ -598,7 +639,7 @@ async function openUserPortal(page: Page, apiKey: string) {
   await page.goto(`${userUrl}/ui/`);
   await page.getByLabel("API key").fill(apiKey);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Dense-Mem Knowledge" })).toBeVisible();
+  await expect(page.getByLabel("Current workspace")).toBeVisible();
 }
 
 async function createTeamCredential(request: APIRequestContext, name: string, scopes: string[]): Promise<CreatedCredential> {
@@ -811,7 +852,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 async function expectNoShellOverlap(page: Page) {
   const boxes = await page.locator(".topbar, .primary-rail, .resource-rail, .detail-pane").evaluateAll((elements) => (
-    elements.map((element) => {
+    elements.filter((element) => element.getBoundingClientRect().width > 0).map((element) => {
       const rect = element.getBoundingClientRect();
       return {
         className: element.className,

@@ -172,6 +172,121 @@
         "id": "web/src/configuration-api-types.ts",
         "role": "transport",
         "visibility": "private"
+      },
+      {
+        "id": "web/src/control/TeamDirectory.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/ui/workspace-picker.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/confirmation.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/navigation.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/theme.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/inspector.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/classnames.ts",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/primitives/switch.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/primitives/badge.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/primitives/native-select.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/primitives/dropdown-menu.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/primitives/alert-dialog.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/primitives/textarea.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/primitives/checkbox.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/primitives/table.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/primitives/sheet.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/primitives/popover.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/primitives/button.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/primitives/label.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/primitives/dialog.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/primitives/tooltip.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/primitives/input.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/primitives/tabs.tsx",
+        "role": "transport",
+        "visibility": "public"
       }
     ]
   }
