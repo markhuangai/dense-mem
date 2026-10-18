@@ -120,18 +120,21 @@ function createRedactor(values, write, minimumLength = 4) {
   };
 
   const processPending = (final = false) => {
+    let output = "";
     for (;;) {
       const match = findMatch();
       const deferred = match.index !== -1 && !final && hasOverlappingPartial(match);
       if (match.index !== -1 && !deferred) {
-        write(`${pending.slice(0, match.index)}${REDACTION}`);
+        output += `${pending.slice(0, match.index)}${REDACTION}`;
         pending = pending.slice(match.index + match.length);
         continue;
       }
-      if (pending.length < maxPatternLength) return;
-      write(pending[0]);
-      pending = pending.slice(1);
+      if (pending.length < maxPatternLength) break;
+      const length = match.index === -1 ? pending.length - maxPatternLength + 1 : 1;
+      output += pending.slice(0, length);
+      pending = pending.slice(length);
     }
+    if (output) write(output);
   };
 
   return {
@@ -168,7 +171,10 @@ function run() {
     ...valuesFromEnvFile(process.env.DENSE_MEM_CI_REDACT_ENV_FILE || "", "", minimumLength),
     ...(process.env.DENSE_MEM_CI_REDACT_EXTRA_VALUES || "").split("\n"),
   ].filter((value) => typeof value === "string" && value.length >= minimumLength && !/[\r\n]/.test(value));
-  const redactor = createRedactor(values, (chunk) => process.stdout.write(chunk), minimumLength);
+  const redactor = createRedactor(values, (chunk) => {
+    if (!process.stdout.write(chunk)) process.stdin.pause();
+  }, minimumLength);
+  process.stdout.on("drain", () => process.stdin.resume());
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (chunk) => redactor.write(chunk));
   process.stdin.on("end", () => redactor.end());

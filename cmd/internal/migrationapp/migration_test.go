@@ -142,8 +142,8 @@ func TestRunForwardsMigrationContextToRootLogger(t *testing.T) {
 }
 
 func TestRunMigrationControlRetirementRejectsInvalidTimeout(t *testing.T) {
-	err := RunMigrationControlRetirement(context.Background(), nil, 0, newRecordingLogger())
-	if err == nil || !strings.Contains(err.Error(), "migration timeout must be greater than zero") {
+	err := RunMigrationControlRetirement(context.Background(), nil, -time.Second, newRecordingLogger())
+	if err == nil || !strings.Contains(err.Error(), "migration timeout must not be negative") {
 		t.Fatalf("RunMigrationControlRetirement() error = %v, want invalid timeout error", err)
 	}
 }
@@ -166,10 +166,10 @@ func TestRunPropagatesMigrationError(t *testing.T) {
 }
 
 func TestRunRejectsInvalidTimeout(t *testing.T) {
-	err := runWithInterval(context.Background(), nil, 0, "up", newRecordingLogger(), time.Millisecond, func(context.Context, *gorm.DB) error {
+	err := runWithInterval(context.Background(), nil, -time.Second, "up", newRecordingLogger(), time.Millisecond, func(context.Context, *gorm.DB) error {
 		return nil
 	})
-	if err == nil || !strings.Contains(err.Error(), "migration timeout must be greater than zero") {
+	if err == nil || !strings.Contains(err.Error(), "migration timeout must not be negative") {
 		t.Fatalf("runWithInterval() error = %v, want invalid timeout error", err)
 	}
 }
@@ -182,6 +182,25 @@ func TestRunEnforcesMigrationTimeout(t *testing.T) {
 	})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("runWithInterval() error = %v, want context deadline exceeded", err)
+	}
+}
+
+func TestRunWithoutTimeoutPreservesProcessCancellation(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	err := runWithInterval(parent, nil, 0, "up", newRecordingLogger(), time.Hour, func(ctx context.Context, _ *gorm.DB) error {
+		if deadline, ok := ctx.Deadline(); ok {
+			t.Fatalf("default migration context has deadline %v", deadline)
+		}
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("default migration context already canceled: %v", err)
+		}
+		cancel()
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("migration error = %v, want process cancellation", err)
 	}
 }
 

@@ -20,7 +20,7 @@ import (
 const (
 	DefaultHTTPPort                            = "8080"
 	DefaultHTTPAddr                            = ":" + DefaultHTTPPort
-	DefaultPostgresMigrationTimeoutSeconds     = 1800
+	DefaultPostgresMigrationTimeoutSeconds     = 0
 	MaxPostgresMigrationTimeoutSeconds         = 86400
 	DefaultPostgresSlowQueryThresholdMS        = 200
 	DefaultAIEmbeddingMaxConcurrency           = 8
@@ -671,7 +671,6 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		{"POSTGRES_MAX_OPEN_CONNS", cfg.PostgresMaxOpenConns},
 		{"POSTGRES_MAX_IDLE_CONNS", cfg.PostgresMaxIdleConns},
 		{"POSTGRES_CONN_MAX_LIFETIME_SECONDS", cfg.PostgresConnMaxLifetimeSeconds},
-		{"POSTGRES_MIGRATION_TIMEOUT_SECONDS", cfg.PostgresMigrationTimeoutSeconds},
 		{"POSTGRES_SLOW_QUERY_THRESHOLD_MS", cfg.PostgresSlowQueryThresholdMS},
 		{"HTTP_MAX_BODY_BYTES", cfg.HTTPMaxBodyBytes},
 		{"AUTH_VERIFY_MAX_CONCURRENCY", cfg.AuthVerifyMaxConcurrency},
@@ -803,10 +802,10 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 			Message: fmt.Sprintf("must be less than or equal to POSTGRES_MAX_OPEN_CONNS, got %d > %d", cfg.PostgresMaxIdleConns, cfg.PostgresMaxOpenConns),
 		}
 	}
-	if cfg.PostgresMigrationTimeoutSeconds > MaxPostgresMigrationTimeoutSeconds {
+	if cfg.PostgresMigrationTimeoutSeconds < 0 || cfg.PostgresMigrationTimeoutSeconds > MaxPostgresMigrationTimeoutSeconds {
 		return cfg, &ValidationError{
 			Field:   "POSTGRES_MIGRATION_TIMEOUT_SECONDS",
-			Message: fmt.Sprintf("must be less than or equal to %d, got %d", MaxPostgresMigrationTimeoutSeconds, cfg.PostgresMigrationTimeoutSeconds),
+			Message: fmt.Sprintf("must be between 0 (no deadline) and %d, got %d", MaxPostgresMigrationTimeoutSeconds, cfg.PostgresMigrationTimeoutSeconds),
 		}
 	}
 	if cfg.PostgresSlowQueryThresholdMS <= 0 {

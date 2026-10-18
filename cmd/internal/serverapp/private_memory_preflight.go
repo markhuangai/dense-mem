@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/markhuangai/dense-mem/cmd/internal/migrationapp"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	privacy "github.com/markhuangai/dense-mem/internal/privacy/contract"
@@ -21,7 +22,7 @@ func RunPrivateMemoryPreflight(ctx context.Context, output io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(cfg.GetPostgresMigrationTimeoutSeconds())*time.Second)
+	ctx, cancel := migrationapp.WithTimeout(ctx, time.Duration(cfg.GetPostgresMigrationTimeoutSeconds())*time.Second)
 	defer cancel()
 	logger := observability.NewConsoleWithHandler(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	db, err := postgres.OpenWithClientAndLogger(ctx, &cfg, logger)

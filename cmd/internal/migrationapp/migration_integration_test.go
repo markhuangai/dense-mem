@@ -33,38 +33,42 @@ const (
 )
 
 func TestRunUpTimeoutRollsBackBlockedMigrationAndReleasesLock(t *testing.T) {
-	db := openMigrationIntegrationDB(t)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
+	for _, timeout := range []time.Duration{0, migrationTestOperationTimeout} {
+		t.Run(timeout.String(), func(t *testing.T) {
+			db := openMigrationIntegrationDB(t)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
 
-	useBlockedMigrationDirectory(t)
-	_, err = sqlDB.Exec(`CREATE TABLE migration_timeout_blocker (id integer PRIMARY KEY)`)
-	require.NoError(t, err)
+			useBlockedMigrationDirectory(t)
+			_, err = sqlDB.Exec(`CREATE TABLE migration_timeout_blocker (id integer PRIMARY KEY)`)
+			require.NoError(t, err)
 
-	blockerConn, err := sqlDB.Conn(context.Background())
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = blockerConn.Close()
-	})
-	blockerTx, err := blockerConn.BeginTx(context.Background(), nil)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = blockerTx.Rollback()
-	})
-	_, err = blockerTx.Exec(`LOCK TABLE migration_timeout_blocker IN ACCESS SHARE MODE`)
-	require.NoError(t, err)
+			blockerConn, err := sqlDB.Conn(context.Background())
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				_ = blockerConn.Close()
+			})
+			blockerTx, err := blockerConn.BeginTx(context.Background(), nil)
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				_ = blockerTx.Rollback()
+			})
+			_, err = blockerTx.Exec(`LOCK TABLE migration_timeout_blocker IN ACCESS SHARE MODE`)
+			require.NoError(t, err)
 
-	err = runBlockedMigrationUntilDeadline(t, sqlDB, func(parent context.Context) error {
-		return RunUp(parent, db, migrationTestOperationTimeout, newRecordingLogger())
-	})
-	require.Error(t, err)
-	require.True(t, errors.Is(err, context.DeadlineExceeded), "migration error = %v, want context deadline exceeded", err)
-	require.False(t, migrationTimeoutProbeExists(t, sqlDB), "timed-out migration must roll back its probe table")
+			err = runBlockedMigrationUntilDeadline(t, sqlDB, func(parent context.Context) error {
+				return RunUp(parent, db, timeout, newRecordingLogger())
+			})
+			require.Error(t, err)
+			require.True(t, errors.Is(err, context.DeadlineExceeded), "migration error = %v, want context deadline exceeded", err)
+			require.False(t, migrationTimeoutProbeExists(t, sqlDB), "timed-out migration must roll back its probe table")
 
-	require.NoError(t, blockerTx.Rollback())
-	require.NoError(t, blockerConn.Close())
-	require.NoError(t, RunUp(context.Background(), db, migrationTestSetupTimeout, newRecordingLogger()))
-	require.True(t, migrationTimeoutProbeExists(t, sqlDB), "retry must acquire the migration lock and apply the migration")
+			require.NoError(t, blockerTx.Rollback())
+			require.NoError(t, blockerConn.Close())
+			require.NoError(t, RunUp(context.Background(), db, timeout, newRecordingLogger()))
+			require.True(t, migrationTimeoutProbeExists(t, sqlDB), "retry must acquire the migration lock and apply the migration")
+		})
+	}
 }
 
 func TestRunDownTimeoutRollsBackBlockedMigration(t *testing.T) {

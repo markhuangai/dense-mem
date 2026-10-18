@@ -10,6 +10,27 @@
       "source": "cmd/internal/migrationapp/migration_integration_test.go"
     },
     {
+      "id": "migration/TestRunUpAutomaticallyMigratesLegacyPrivateHistory",
+      "package": "./cmd/internal/migrationapp",
+      "run": "^TestRunUpAutomaticallyMigratesLegacyPrivateHistory$",
+      "phase": "precheck",
+      "source": "cmd/internal/migrationapp/private_memory_integration_test.go"
+    },
+    {
+      "id": "migration/TestRunUpBlocksAmbiguousPrivateWriter",
+      "package": "./cmd/internal/migrationapp",
+      "run": "^TestRunUpBlocksAmbiguousPrivateWriter$",
+      "phase": "precheck",
+      "source": "cmd/internal/migrationapp/private_memory_integration_test.go"
+    },
+    {
+      "id": "migration/TestRunUpSerializesPrivateMigrationAndCancelsWaitingStarter",
+      "package": "./cmd/internal/migrationapp",
+      "run": "^TestRunUpSerializesPrivateMigrationAndCancelsWaitingStarter$",
+      "phase": "precheck",
+      "source": "cmd/internal/migrationapp/private_memory_integration_test.go"
+    },
+    {
       "id": "migration/TestRunUpTimeoutRollsBackBlockedMigrationAndReleasesLock",
       "package": "./cmd/internal/migrationapp",
       "run": "^TestRunUpTimeoutRollsBackBlockedMigrationAndReleasesLock$",

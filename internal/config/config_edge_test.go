@@ -13,7 +13,7 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 	}{
 		{"invalid redis db", func() { os.Setenv("REDIS_DB", "bad") }, "REDIS_DB"},
 		{"invalid postgres migration timeout", func() { os.Setenv("POSTGRES_MIGRATION_TIMEOUT_SECONDS", "bad") }, "POSTGRES_MIGRATION_TIMEOUT_SECONDS"},
-		{"zero postgres migration timeout", func() { os.Setenv("POSTGRES_MIGRATION_TIMEOUT_SECONDS", "0") }, "POSTGRES_MIGRATION_TIMEOUT_SECONDS"},
+		{"negative postgres migration timeout", func() { os.Setenv("POSTGRES_MIGRATION_TIMEOUT_SECONDS", "-1") }, "POSTGRES_MIGRATION_TIMEOUT_SECONDS"},
 		{"invalid postgres slow query threshold", func() { os.Setenv("POSTGRES_SLOW_QUERY_THRESHOLD_MS", "bad") }, "POSTGRES_SLOW_QUERY_THRESHOLD_MS"},
 		{"zero postgres slow query threshold", func() { os.Setenv("POSTGRES_SLOW_QUERY_THRESHOLD_MS", "0") }, "POSTGRES_SLOW_QUERY_THRESHOLD_MS"},
 		{"postgres slow query threshold duration overflow", func() { os.Setenv("POSTGRES_SLOW_QUERY_THRESHOLD_MS", "9223372036854775807") }, "POSTGRES_SLOW_QUERY_THRESHOLD_MS"},
