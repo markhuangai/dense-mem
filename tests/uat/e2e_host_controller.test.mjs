@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { devNull, tmpdir } from "node:os";
+import { createRedactor, redactChunks } from "../../scripts/e2e-redact-diagnostics.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -935,6 +936,52 @@ ${runtime.slice(diagnosticsStart, diagnosticsEnd)}`;
   } finally {
     await rm(fixture, { recursive: true, force: true });
   }
+});
+
+test("diagnostics retain exact redaction across split and overlapping secrets", () => {
+  const values = ["secret", "secret-extended", "token:fixture", "🔑private-key"];
+  const input = "Ω plain secret-extended / secret / token:fixture / 🔑private-key end";
+  const expected = "Ω plain [REDACTED] / [REDACTED] / [REDACTED] / [REDACTED] end";
+  for (let index = 0; index <= input.length; index += 1) {
+    assert.equal(redactChunks([input.slice(0, index), input.slice(index)], values), expected);
+  }
+  assert.equal(redactChunks(Array.from(input), values), expected);
+  assert.equal(redactChunks(["ab", "cd", "ef"], []), "abcdef");
+  let output = "";
+  const short = createRedactor(["ab"], (chunk) => { output += chunk; }, 2);
+  for (const chunk of ["xx", "ab", "yy"]) short.write(chunk);
+  short.end();
+  assert.equal(output, "xx[REDACTED]yy");
+});
+
+test("diagnostics complete large output with a delayed reader", { timeout: 15000 }, async () => {
+  const values = ["alpha", "alpha-long", "pha-longer", "token:value", "secret-secret"];
+  const input = `${"synthetic SQL output ".repeat(100000)}\nsecret-secret Ω\n`;
+  const child = spawn(process.execPath, [join(scripts, "e2e-redact-diagnostics.mjs")], {
+    env: { ...process.env, DENSE_MEM_CI_REDACT_ENV_FILE: "", DENSE_MEM_CI_REDACT_EXTRA_VALUES: values.join("\n") },
+  });
+  let output = "", stderr = "", inputError;
+  child.stdin.on("error", (error) => { inputError = error; });
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { output += chunk; });
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  child.stdout.pause();
+  const reader = setTimeout(() => child.stdout.resume(), 250);
+  const deadline = setTimeout(() => child.kill("SIGKILL"), 10000);
+  let code, signal;
+  try {
+    child.stdin.end(input);
+    [code, signal] = await once(child, "close");
+  } finally {
+    clearTimeout(reader);
+    clearTimeout(deadline);
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  }
+  assert.equal(code, 0, stderr);
+  assert.equal(signal, null);
+  assert.equal(inputError, undefined);
+  assert.equal(output, input.replaceAll("secret-secret", "[REDACTED]"));
 });
 
 test("OAuth compatibility harness keeps root logs in the Compose stream", () => {
