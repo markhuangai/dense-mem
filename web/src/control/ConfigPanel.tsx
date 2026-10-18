@@ -42,6 +42,19 @@ const CONFIG_LABELS: Record<string, string> = {
   TELEMETRY_COST_MODEL_PRICES_JSON: "Additional model prices (JSON)",
 };
 
+const CONFIG_DESCRIPTIONS: Record<string, string> = {
+  ONTOLOGY_MAINTENANCE_ENABLED: "Admit new work on the maintenance schedule.",
+  ONTOLOGY_MAINTENANCE_CADENCE_HOURS: "Hours between maintenance windows.",
+  ONTOLOGY_MAINTENANCE_START_TIME_LOCAL: "Start time in the service timezone.",
+  ONTOLOGY_MAINTENANCE_MODEL: "Leave blank to use the semantic assessor model.",
+  ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "Assessments that can run at the same time.",
+  ONTOLOGY_MAINTENANCE_INPUT_TOKENS: "Input allowance for each window.",
+  ONTOLOGY_MAINTENANCE_OUTPUT_TOKENS: "Output allowance for each window.",
+  APP_TIMEZONE: "Timezone used to display service activity.",
+  OPERATION_LOG_RETENTION_DAYS: "Days to retain operational records.",
+  RECALL_FEEDBACK_RETENTION_DAYS: "Days to retain recall investigations.",
+};
+
 const CONFIG_PLACEHOLDERS: Record<string, string> = {
   APP_TIMEZONE: "Local",
   ONTOLOGY_MAINTENANCE_CADENCE_HOURS: "12",
@@ -124,9 +137,9 @@ type RuntimeConfigInput = {
 
 export function OntologyConfigPanel({ api }: { api: ControlApi }) {
   const load = useCallback(() => api.getOntologyMaintenanceConfig(), [api]);
-  return <>
-    <RuntimeConfigPanel title="Ontology maintenance" refreshLabel="Refresh ontology config" load={load} save={(input) => api.updateOntologyMaintenanceConfig(input)} detail={() => <p>Policy changes apply at the next window. Disabling stops new work immediately.</p>} />
-    <OntologyMaintenancePanel api={api} />
+  return <><div className="page-intro"><h1>Ontology maintenance</h1><p>Organize shared knowledge and keep processing within its allowance.</p></div><div className="ontology-maintenance-layout"><div className="ontology-policy">
+    <RuntimeConfigPanel title="Maintenance policy" refreshLabel="Refresh ontology config" load={load} save={(input) => api.updateOntologyMaintenanceConfig(input)} detail={() => <p>Policy changes apply at the next window. Disabling stops new work immediately.</p>} />
+    </div><OntologyMaintenancePanel api={api} /></div>
   </>;
 }
 
@@ -255,6 +268,11 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
     }
   }
 
+  const groups = new Map<string, ConfigItem[]>();
+  for (const item of config?.items ?? []) {
+    const group = configGroup(item.key);
+    groups.set(group, [...(groups.get(group) ?? []), item]);
+  }
   return (
     <section className="surface">
       <SectionHeading
@@ -275,14 +293,10 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
         <LoadingState label="Loading config" compact />
       ) : (
         <form className="edit-grid" onSubmit={saveConfig}>
-          {(config?.items ?? []).map((item) => (
-            <ConfigField
-              key={item.key}
-              item={item}
-              value={draft[item.key] ?? ""}
-              onChange={(value) => setDraft((current) => ({ ...current, [item.key]: value }))}
-            />
-          ))}
+          {[...groups].map(([group, items]) => <fieldset className="setting-group" key={group}>
+            <legend>{group}</legend>
+            {items.map((item) => <ConfigField key={item.key} item={item} value={draft[item.key] ?? ""} onChange={(value) => setDraft((current) => ({ ...current, [item.key]: value }))} />)}
+          </fieldset>)}
           <div className="button-row span">
             <Button variant="default" className="primary-button" type="submit" disabled={loading || !config}>
               <Check size={16} aria-hidden="true" />
@@ -295,6 +309,19 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
   );
 }
 
+function configGroup(key: string): string {
+  if (key.startsWith("ONTOLOGY_MAINTENANCE_")) {
+    if (key.endsWith("_TOKENS")) return "Allowance per window";
+    return key.endsWith("_MODEL") || key.endsWith("_CONCURRENCY") ? "Processing" : "Schedule";
+  }
+  if (key.endsWith("BASE_URL")) return "Public endpoints";
+  if (key.startsWith("SSO_")) return "Sessions and security";
+  if (key.startsWith("TELEMETRY_COST_")) return key.endsWith("_JSON") ? "Additional models" : "Model pricing";
+  if (key.endsWith("RETENTION_DAYS")) return "Retention";
+  if (key.endsWith("_ENABLED")) return "Availability";
+  return "General";
+}
+
 function ConfigField({
   item,
   value,
@@ -305,16 +332,20 @@ function ConfigField({
   onChange: (value: string) => void;
 }) {
   const label = CONFIG_LABELS[item.key] ?? item.key;
+  const description = CONFIG_DESCRIPTIONS[item.key];
+  const fieldLabel = <div className="setting-label"><Label htmlFor={item.key}>{label}</Label>{description && <p id={`${item.key}-help`}>{description}</p>}</div>;
 
   if (item.key === "SSO_COOKIE_SECURE") {
     return (
       <>
-        <Label htmlFor={item.key}>{label}</Label>
-        <NativeSelect id={item.key} value={value} onChange={(event) => onChange(event.target.value)}>
+        <div className="setting-row">
+          {fieldLabel}
+        <NativeSelect id={item.key} aria-describedby={description ? `${item.key}-help` : undefined} value={value} onChange={(event) => onChange(event.target.value)}>
           <NativeSelectOption value="">Auto from SSO public URL</NativeSelectOption>
           <NativeSelectOption value="true">Enabled</NativeSelectOption>
           <NativeSelectOption value="false">Disabled</NativeSelectOption>
         </NativeSelect>
+        </div>
       </>
     );
   }
@@ -323,16 +354,18 @@ function ConfigField({
     const checked = (value || item.effective_value) === "true";
     return (
       <>
-        <Label htmlFor={item.key}>{label}</Label>
+        <div className="setting-row">
+          {fieldLabel}
         <div className="button-row">
           <Label className="toggle-row config-toggle" htmlFor={item.key}>
             <span>{checked ? "Enabled" : "Disabled"}</span>
             <Switch
-              id={item.key}
+              id={item.key} aria-describedby={description ? `${item.key}-help` : undefined}
               checked={checked}
               onCheckedChange={(event) => onChange((event === true) ? "true" : "false")}
             />
           </Label>
+        </div>
         </div>
       </>
     );
@@ -342,9 +375,10 @@ function ConfigField({
     const timezone = value || item.effective_value || "Local";
     return (
       <>
-        <Label htmlFor={item.key}>{label}</Label>
+        <div className="setting-row">
+          {fieldLabel}
         <div className="button-row">
-          <NativeSelect id={item.key} value={timezone} onChange={(event) => onChange(event.target.value)}>
+          <NativeSelect id={item.key} aria-describedby={description ? `${item.key}-help` : undefined} value={timezone} onChange={(event) => onChange(event.target.value)}>
             {timezoneOptions(timezone).map((option) => (
               <NativeSelectOption value={option} key={option}>{option}</NativeSelectOption>
             ))}
@@ -355,6 +389,7 @@ function ConfigField({
             </Button>
           )}
         </div>
+        </div>
       </>
     );
   }
@@ -362,31 +397,36 @@ function ConfigField({
   if (item.key === "TELEMETRY_COST_MODEL_PRICES_JSON") {
     return (
       <>
-        <Label htmlFor={item.key}>{label}</Label>
+        <div className="setting-row">
+          {fieldLabel}
         <Textarea
-          id={item.key}
+          id={item.key} aria-describedby={description ? `${item.key}-help` : undefined}
           value={value}
           onChange={(event) => onChange(event.target.value)}
           placeholder={CONFIG_PLACEHOLDERS[item.key]}
           aria-invalid={item.validation_error ? true : undefined}
           rows={5}
         />
+        </div>
         {item.validation_error && <p className="field-error span" role="alert">{item.validation_error}</p>}
       </>
     );
   }
 
   const pricing = item.key.startsWith("TELEMETRY_COST_");
+  const ontologyNumber = ["ONTOLOGY_MAINTENANCE_CADENCE_HOURS", "ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY", "ONTOLOGY_MAINTENANCE_INPUT_TOKENS", "ONTOLOGY_MAINTENANCE_OUTPUT_TOKENS"].includes(item.key);
   const numeric = pricing || item.key.endsWith("_SECONDS") || item.key === "DREAMING_MAX_OUTPUTS" || item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" || item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS";
   const time = item.key === "DREAMING_START_TIME_LOCAL" || item.key === "COMMUNITY_DETECTION_START_TIME_LOCAL";
   const min = item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 0 : numeric && !pricing ? 1 : undefined;
   return (
     <>
-      <Label htmlFor={item.key}>{label}</Label>
+      <div className="setting-row">
+        {fieldLabel}
       <Input
-        id={item.key}
+        id={item.key} aria-describedby={description ? `${item.key}-help` : undefined}
         type={time ? "time" : pricing ? "text" : numeric ? "number" : "text"}
-        inputMode={pricing ? "decimal" : undefined}
+        inputMode={pricing ? "decimal" : ontologyNumber ? "numeric" : undefined}
+        className={item.key === "ONTOLOGY_MAINTENANCE_START_TIME_LOCAL" ? "input-time" : undefined}
         min={min}
         max={item.key === "DREAMING_MAX_OUTPUTS" ? 50 : item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" ? 8 : item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 3600 : item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS" ? 365 : undefined}
         placeholder={CONFIG_PLACEHOLDERS[item.key] ?? ""}
@@ -394,6 +434,7 @@ function ConfigField({
         onChange={(event) => onChange(event.target.value)}
         aria-invalid={item.validation_error ? true : undefined}
       />
+      </div>
       {item.validation_error && <p className="field-error span" role="alert">{item.validation_error}</p>}
     </>
   );

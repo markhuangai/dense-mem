@@ -82,7 +82,11 @@
 .surface-section + .surface-section { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border); }
 .data-table { font-size: 14px; }
 .data-table th { height: 40px; font-size: 12px; font-weight: 600; text-transform: none; }
-.data-table td { height: 44px; padding-block: 10px; }
+.data-table td { height: 48px; padding: 12px 16px; }
+.data-table thead th { padding-inline: 16px; background: var(--panel-strong); border-bottom: 1px solid var(--border); }
+.data-table td > small, .data-table td > p { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
+.data-table td > p { max-width: 44ch; white-space: normal; }
+.data-table td:has(> .status-pill) { white-space: nowrap; }
 .data-table tbody tr:hover { background: var(--panel-strong); }
 .table-wrap, [data-slot="table-container"] { max-width: 100%; overflow-x: auto; }
 .table-wrap .data-table { min-width: 580px; }
@@ -92,7 +96,7 @@
 .metrics-toolbar { gap: 12px; margin-bottom: 18px; }
 .metrics-toolbar > label { min-width: 0; }
 .metrics-toolbar [data-slot="native-select-wrapper"] { width: 100%; }
-.edit-grid, .key-form, .security-grid { gap: 14px 20px; }
+.edit-grid, .key-form, .security-grid, .inline-form { grid-template-columns: minmax(0, 1fr); gap: 0; }
 .edit-grid > label, .key-form > label, .security-grid > label { align-self: start; padding-top: 8px; }
 .field-control { display: grid; gap: 6px; }
 .form-meta { color: var(--muted); font-size: 13px; }
@@ -179,8 +183,8 @@
 
 [hidden] { display: none !important; }
 .stack { display: grid; gap: 20px; min-width: 0; }
-.ontology-editor fieldset { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; width: 100%; }
-.ontology-editor label, .ontology-tabs .surface > label { display: grid; gap: 7px; }
+.ontology-editor fieldset { display: grid; grid-template-columns: minmax(0,1fr); gap: 0; width: 100%; }
+.ontology-tabs .surface > label { display: grid; gap: 7px; }
 .ontology-editor fieldset > p, .ontology-editor fieldset > button { grid-column: 1 / -1; }
 .ontology-tabs .surface { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; overflow-wrap: anywhere; }
 .ontology-tabs .surface > button { min-width: 0; min-height: 36px; height: auto; white-space: normal; }
@@ -205,3 +209,111 @@ label[data-slot=label]:has(> [data-slot=input], > [data-slot=textarea], > [data-
 @media(max-width:1100px) { .summary-strip { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 
 .contextual-sheet pre { margin: 0; padding: 14px; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 7px; background: var(--panel-strong); font-size: 12px; }
+
+.setting-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(0, 1.25fr); grid-column: 1 / -1; align-items: center; gap: 18px; min-width: 0; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.setting-row:last-child { border-bottom: 0; }
+.setting-row > label, .setting-label > label { align-self: center; padding: 0; font-size: 14px; font-weight: 600; line-height: 1.5; }
+.setting-label { min-width: 0; }
+.setting-label p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.setting-row > [data-slot="input"], .setting-row > [data-slot="textarea"], .setting-row > [data-slot="native-select-wrapper"], .setting-row > .field-control { width: min(26rem, 100%); justify-self: end; }
+.setting-row > .field-control:has([data-field-size="number"]) { width: 8rem; }
+.setting-row > .field-control:has([role="switch"]) { width: auto; }
+.setting-row > .button-row { justify-self: end; justify-content: flex-end; }
+.setting-row > .button-row:has(> [data-slot="native-select-wrapper"]) { width: min(26rem, 100%); flex-wrap: nowrap; }
+.setting-row > .button-row > [data-slot="native-select-wrapper"] { flex: 1; min-width: 0; }
+.setting-row .permission-checkbox-group { justify-content: flex-end; }
+.setting-row > .toggle-row { justify-self: end; width: auto; }
+.setting-row > .checkbox-row { justify-self: end; }
+.setting-row .config-toggle { width: auto; gap: 12px; }
+.setting-row [data-field-size="number"], .setting-row > [data-field-size="number"], [data-slot="input"][data-field-size="number"] { width: min(8rem, 100%); }
+.setting-row [data-field-size="time"], .setting-row .input-time { width: min(7.5rem, 100%); }
+.setting-row [data-field-size="date"] { width: min(17rem, 100%); }
+.setting-group { display: grid; grid-column: 1 / -1; min-width: 0; margin: 18px 0 0; padding: 0; border: 0; border-radius: 0; }
+.setting-group:first-child { margin-top: 0; }
+.setting-group > legend { width: 100%; padding: 10px 0 2px; color: var(--muted); font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .07em; }
+.edit-grid > .button-row, .key-form > .button-row, .security-grid > .button-row, .inline-form > .button-row { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); justify-content: flex-end; }
+.edit-grid > .primary-button, .key-form > .primary-button, .security-grid > .danger-button, .inline-form > .primary-button { justify-self: end; width: auto; margin-top: 18px; }
+.surface > .section-heading h2, .surface-section > .section-heading h2 { font-size: 17px; }
+.status-pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 5px; padding: 5px 8px; font-size: 12px; font-weight: 600; line-height: 1.2; text-transform: none; }
+.status-pill::before { content: ""; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+.summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 20px 16px; margin: 20px 0; }
+.summary-grid > div { min-width: 0; }
+.summary-grid dt { color: var(--muted); font-size: 12px; font-weight: 500; }
+.summary-grid dd { margin: 5px 0 0; color: var(--text); font-family: "Manrope Variable", sans-serif; font-size: 24px; font-weight: 750; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.summary-item { border-radius: 8px; box-shadow: none; }
+.summary-item > span { display: flex; align-items: center; gap: 7px; text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 500; }
+.summary-item > span::before { content: ""; width: 5px; height: 5px; background: var(--primary); border-radius: 50%; flex: 0 0 auto; }
+.summary-item.warning > span::before { background: var(--warning); }
+.summary-item.danger > span::before { background: var(--danger); }
+.summary-item strong { font-size: 26px; font-weight: 750; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.usage-meter { display: grid; gap: 8px; min-width: 0; }
+.usage-meter + .usage-meter { margin-top: 22px; }
+.usage-meter-heading { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; font-size: 13px; }
+.usage-meter-heading > span { font-weight: 600; }
+.usage-meter-heading strong { font-variant-numeric: tabular-nums; }
+.usage-meter-heading strong > span { color: var(--muted); font-weight: 500; }
+.usage-meter-track { width: 100%; height: 6px; border-radius: 5px; background: var(--border); overflow: hidden; }
+.usage-meter-track > span { display: block; height: 100%; border-radius: inherit; background: var(--primary); }
+.usage-meter .form-meta { margin: 0; font-size: 12px; }
+.ontology-maintenance-layout { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.1fr); grid-template-areas: "coverage policy" "window policy" "manual manual" "history history"; gap: 20px; align-items: start; }
+.ontology-policy { grid-area: policy; min-width: 0; }
+.ontology-operations { display: grid; gap: 20px; min-width: 0; }
+.ontology-maintenance-layout > .ontology-operations { display: contents; }
+.ontology-coverage { grid-area: coverage; }
+.ontology-window { grid-area: window; }
+.ontology-manual { grid-area: manual; }
+.ontology-history { grid-area: history; }
+.ontology-operations > .surface > .form-meta { margin: 16px 0 0; }
+.ontology-coverage .usage-meter-heading { align-items: end; }
+.ontology-coverage .usage-meter-heading strong { font-family: "Manrope Variable", sans-serif; font-size: 34px; letter-spacing: -.05em; }
+.ontology-coverage .usage-meter-heading strong > span { font-size: 18px; }
+.ontology-coverage .summary-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
+.ontology-window .section-heading { align-items: start; }
+.ontology-window .window-policy { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 20px; }
+.ontology-window .window-policy > span { padding: 5px 8px; border-radius: 5px; background: var(--panel-strong); color: var(--muted); font-size: 12px; }
+.ontology-window .allowance-form { margin-top: 20px; padding-top: 6px; border-top: 1px solid var(--border); }
+.ontology-window .allowance-form > .button-row { margin-top: 14px; justify-content: flex-end; }
+.ontology-manual { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 18px; }
+.ontology-manual .section-heading { margin: 0; }
+.ontology-manual .button-row { gap: 12px; }
+.ontology-manual [data-slot="input"] { width: 80px; }
+.ontology-history .data-table td:first-child { font-family: ui-monospace, monospace; font-size: 12px; }
+.ontology-team-coverage { padding: 22px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+.ontology-team-coverage > .section-heading { margin-bottom: 10px; }
+.ontology-editor fieldset > p { margin: 14px 0; color: var(--muted); font-size: 13px; }
+.ontology-editor fieldset > button { justify-self: end; margin-top: 10px; }
+.ontology-tabs .surface > label { max-width: 38rem; }
+.ontology-tabs .surface > label:has([data-slot="textarea"]) { max-width: none; }
+@media(max-width:1150px) { .ontology-maintenance-layout { grid-template-columns: minmax(0,1fr); grid-template-areas: "coverage" "policy" "window" "manual" "history"; } }
+@media(max-width:767px) {
+  .setting-row { grid-template-columns: minmax(0,1fr); gap: 8px; padding: 14px 0; }
+  .setting-row:has(> [data-field-size="number"], > .field-control > [data-field-size="number"], > [data-field-size="time"], > .field-control > [data-field-size="time"], > .input-time, > .button-row > .config-toggle, > .toggle-row) { grid-template-columns: minmax(0,1fr) auto; gap: 14px; }
+  .setting-row > [data-slot="input"], .setting-row > [data-slot="textarea"], .setting-row > [data-slot="native-select-wrapper"], .setting-row > .field-control { justify-self: stretch; width: 100%; }
+  .setting-row .permission-checkbox-group { justify-content: flex-start; }
+  .setting-row > [data-field-size="number"], .setting-row > .field-control:has([data-field-size="number"]), .setting-row > [data-field-size="time"], .setting-row > .field-control:has([data-field-size="time"]), .setting-row > .input-time { width: 7.5rem; justify-self: end; }
+  .summary-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .ontology-manual { align-items: start; }
+  .ontology-manual .button-row { width: 100%; }
+}
+
+.summary-grid dd.summary-date { font: 600 13px/1.5 "Source Sans 3 Variable", sans-serif; letter-spacing: 0; overflow-wrap: anywhere; }
+.usage-accounting-label { margin: 0 0 14px; font-size: 12px; }
+.pending-policy { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+.pending-policy h3 { margin: 0 0 10px; font-size: 13px; }
+.pending-policy dl { display: grid; gap: 10px; margin: 0; }
+.pending-policy dl > div { display: grid; grid-template-columns: 80px minmax(0,1fr); gap: 12px; font-size: 12px; }
+.pending-policy dt { color: var(--muted); }
+.pending-policy dd { margin: 0; overflow-wrap: anywhere; }
+.ontology-team-coverage .summary-grid { grid-template-columns: repeat(4,minmax(0,1fr)); }
+@media(max-width:767px) { .ontology-team-coverage .summary-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+
+.setting-row > .field-control > [data-slot="native-select-wrapper"] { width: 100%; }
+.setting-row > .field-control:has(.checkbox-row), .setting-row > .field-control:has(.toggle-row) { width: auto; }
+.auth-panel .setting-row { grid-template-columns: minmax(0,1fr); gap: 8px; padding: 0; border: 0; }
+.auth-panel .setting-row > .field-control { justify-self: stretch; width: 100%; }
+.oauth-provider-config { grid-template-columns: minmax(0,1fr); gap: 0; }
+.oauth-scope-mapping { grid-template-columns: minmax(0,1fr) auto; }
+.oauth-scope-mapping > .setting-row { padding-top: 0; border: 0; }
+.ontology-history .data-table td { vertical-align: middle; }
+.ontology-team-coverage .usage-meter-heading strong { font-family: "Manrope Variable", sans-serif; font-size: 28px; letter-spacing: -.04em; }
+.ontology-team-coverage .usage-meter-heading strong > span { font-size: 18px; }

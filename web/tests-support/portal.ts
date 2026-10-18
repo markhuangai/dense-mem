@@ -28,3 +28,41 @@ export async function expectPageContained(page: Page) {
     expect(await table.evaluate((element) => getComputedStyle(element).overflowX)).toBe("auto");
   }
 }
+
+export async function expectCompactNumberField(page: Page, name: string) {
+  const field = page.getByLabel(name, { exact: true });
+  await expect(field).toBeVisible();
+  const geometry = await field.evaluate((element) => {
+    const input = element.getBoundingClientRect();
+    const row = element.closest(".setting-row")!.getBoundingClientRect();
+    return { width: input.width, left: input.left, right: input.right, rowLeft: row.left, rowRight: row.right };
+  });
+  expect(geometry.width).toBeGreaterThanOrEqual(80);
+  expect(geometry.width).toBeLessThanOrEqual(136);
+  expect(geometry.left).toBeGreaterThanOrEqual(geometry.rowLeft);
+  expect(geometry.right).toBeLessThanOrEqual(geometry.rowRight + 1);
+}
+
+export async function expectConflictCardsContained(page: Page) {
+  const cards = page.locator(".evidence-conflict-card");
+  expect(await cards.count()).toBeGreaterThanOrEqual(2);
+  const boxes = await cards.evaluateAll((elements) => elements.map((element) => {
+    const card = element.getBoundingClientRect();
+    return { left: card.left, right: card.right, top: card.top, bottom: card.bottom,
+      containsContent: Array.from(element.children).every((child) => {
+        const content = child.getBoundingClientRect();
+        return content.top >= card.top && content.bottom <= card.bottom + 1 && content.left >= card.left && content.right <= card.right + 1;
+      }),
+    };
+  }));
+  for (const [index, box] of boxes.entries()) {
+    expect(box.containsContent).toBe(true);
+    for (const other of boxes.slice(index + 1)) {
+      expect(Math.min(box.right, other.right) <= Math.max(box.left, other.left) || Math.min(box.bottom, other.bottom) <= Math.max(box.top, other.top)).toBe(true);
+    }
+  }
+  const pagination = await page.getByLabel("Evidence conflict page navigation").boundingBox();
+  expect(pagination!.y).toBeGreaterThanOrEqual(Math.max(...boxes.map((box) => box.bottom)));
+  await cards.first().focus();
+  await expect(cards.first()).toBeFocused();
+}

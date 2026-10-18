@@ -19,7 +19,7 @@ import {
   SSOProviderInput,
   Team,
 } from "../api";
-import { SectionHeading } from "../ui/components";
+import { FieldRow, SectionHeading } from "../ui/components";
 import { DirectoryAutomationPanel } from "./DirectoryAutomationPanel";
 import { membershipGrantLabel, membershipRoleLabel, readError, shortId } from "./utils";
 
@@ -300,63 +300,83 @@ function SSOProviderForm({
 
 	return (
     <form className="edit-grid" onSubmit={onSubmit}>
-      <Label htmlFor="sso-provider-name">Name</Label>
-      <Input id="sso-provider-name" value={draft.name} onChange={(event) => onChange({ ...draft, name: event.target.value })} />
-      <Label htmlFor="sso-provider-kind">Kind</Label>
-      <NativeSelect
-        id="sso-provider-kind"
-        value={draft.kind}
-	        onChange={(event) => {
-	          const kind = event.target.value as SSOProviderInput["kind"];
-	          const previousDefault = draft.kind === "azure_ad" ? "oid" : "sub";
-	          const nextDefault = kind === "azure_ad" ? "oid" : "sub";
-	          onChange({ ...draft, kind, identity_claim: draft.identity_claim === previousDefault ? nextDefault : draft.identity_claim });
-	        }}
-      >
-        <NativeSelectOption value="azure_ad">Azure AD</NativeSelectOption>
-        <NativeSelectOption value="pingone">PingOne</NativeSelectOption>
-        <NativeSelectOption value="generic_oidc">OIDC</NativeSelectOption>
-      </NativeSelect>
-      <Label htmlFor="sso-issuer-url">Issuer URL</Label>
-      <Input id="sso-issuer-url" value={draft.issuer_url} onChange={(event) => onChange({ ...draft, issuer_url: event.target.value })} />
-      <Label htmlFor="sso-tenant-id">Tenant ID</Label>
-      <Input id="sso-tenant-id" value={draft.tenant_id} onChange={(event) => onChange({ ...draft, tenant_id: event.target.value })} placeholder="Azure Entra tenant GUID" />
-      <Label htmlFor="sso-identity-claim">Stable identity claim</Label>
-      <Input id="sso-identity-claim" value={draft.identity_claim} onChange={(event) => onChange({ ...draft, identity_claim: event.target.value })} placeholder={draft.kind === "azure_ad" ? "oid" : "sub"} />
-      <Label htmlFor="sso-client-id">Client ID</Label>
-      <Input id="sso-client-id" value={draft.client_id} onChange={(event) => onChange({ ...draft, client_id: event.target.value })} />
-      <Label htmlFor="sso-client-secret-env">Client secret env</Label>
-      <Input id="sso-client-secret-env" value={draft.client_secret_env} onChange={(event) => onChange({ ...draft, client_secret_env: event.target.value })} />
-      <Label htmlFor="sso-scopes">Scopes</Label>
-      <Input id="sso-scopes" value={draft.scopes.join(", ")} onChange={(event) => onChange({ ...draft, scopes: splitList(event.target.value) })} />
-      <Label htmlFor="sso-group-claims">Group claims</Label>
-      <Input id="sso-group-claims" value={draft.group_claims.join(", ")} onChange={(event) => onChange({ ...draft, group_claims: splitList(event.target.value) })} />
-      <Label htmlFor="sso-groups-endpoint">Groups endpoint</Label>
-      <Input id="sso-groups-endpoint" value={draft.groups_endpoint} onChange={(event) => onChange({ ...draft, groups_endpoint: event.target.value })} />
-		<Label htmlFor="sso-groups-scopes">Groups scopes</Label>
-		<Input id="sso-groups-scopes" value={draft.groups_scopes.join(", ")} onChange={(event) => onChange({ ...draft, groups_scopes: splitList(event.target.value) })} />
-		<Label>OAuth protected resource</Label>
-		<fieldset className="oauth-provider-config">
+      <fieldset className="setting-group"><legend>Connection and identity</legend>
+      <FieldRow label="Name" htmlFor="sso-provider-name">
+        <Input id="sso-provider-name" value={draft.name} onChange={(event) => onChange({ ...draft, name: event.target.value })} />
+      </FieldRow>
+      <FieldRow label="Kind" htmlFor="sso-provider-kind">
+        <NativeSelect
+          id="sso-provider-kind"
+          value={draft.kind}
+                  onChange={(event) => {
+                    const kind = event.target.value as SSOProviderInput["kind"];
+                    const previousDefault = draft.kind === "azure_ad" ? "oid" : "sub";
+                    const nextDefault = kind === "azure_ad" ? "oid" : "sub";
+                    onChange({ ...draft, kind, identity_claim: draft.identity_claim === previousDefault ? nextDefault : draft.identity_claim });
+                  }}
+        >
+          <NativeSelectOption value="azure_ad">Azure AD</NativeSelectOption>
+          <NativeSelectOption value="pingone">PingOne</NativeSelectOption>
+          <NativeSelectOption value="generic_oidc">OIDC</NativeSelectOption>
+        </NativeSelect>
+      </FieldRow>
+      <FieldRow label="Issuer URL" htmlFor="sso-issuer-url">
+        <Input id="sso-issuer-url" value={draft.issuer_url} onChange={(event) => onChange({ ...draft, issuer_url: event.target.value })} />
+      </FieldRow>
+      <FieldRow label="Tenant ID" htmlFor="sso-tenant-id">
+        <Input id="sso-tenant-id" value={draft.tenant_id} onChange={(event) => onChange({ ...draft, tenant_id: event.target.value })} placeholder="Azure Entra tenant GUID" />
+      </FieldRow>
+      <FieldRow label="Stable identity claim" htmlFor="sso-identity-claim">
+        <Input id="sso-identity-claim" value={draft.identity_claim} onChange={(event) => onChange({ ...draft, identity_claim: event.target.value })} placeholder={draft.kind === "azure_ad" ? "oid" : "sub"} />
+      </FieldRow>
+      <FieldRow label="Client ID" htmlFor="sso-client-id">
+        <Input id="sso-client-id" value={draft.client_id} onChange={(event) => onChange({ ...draft, client_id: event.target.value })} />
+      </FieldRow>
+      <FieldRow label="Client secret env" htmlFor="sso-client-secret-env">
+        <Input id="sso-client-secret-env" value={draft.client_secret_env} onChange={(event) => onChange({ ...draft, client_secret_env: event.target.value })} />
+      </FieldRow>
+      </fieldset>
+      <fieldset className="setting-group"><legend>Claims and groups</legend>
+      <FieldRow label="Scopes" htmlFor="sso-scopes">
+        <Input id="sso-scopes" value={draft.scopes.join(", ")} onChange={(event) => onChange({ ...draft, scopes: splitList(event.target.value) })} />
+      </FieldRow>
+      <FieldRow label="Group claims" htmlFor="sso-group-claims">
+        <Input id="sso-group-claims" value={draft.group_claims.join(", ")} onChange={(event) => onChange({ ...draft, group_claims: splitList(event.target.value) })} />
+      </FieldRow>
+      <FieldRow label="Groups endpoint" htmlFor="sso-groups-endpoint">
+        <Input id="sso-groups-endpoint" value={draft.groups_endpoint} onChange={(event) => onChange({ ...draft, groups_endpoint: event.target.value })} />
+      </FieldRow>
+		<FieldRow label="Groups scopes" htmlFor="sso-groups-scopes">
+    <Input id="sso-groups-scopes" value={draft.groups_scopes.join(", ")} onChange={(event) => onChange({ ...draft, groups_scopes: splitList(event.target.value) })} />
+  </FieldRow>
+		</fieldset>
+		<fieldset className="oauth-provider-config setting-group">
 			<legend>MCP access tokens</legend>
 			<Label className="toggle-row span" htmlFor="sso-oauth-enabled">
 				<span>Accept OAuth JWTs on MCP</span>
 				<Switch id="sso-oauth-enabled" checked={protectedResource.enabled} onCheckedChange={(event) => updateProtectedResource({ enabled: (event === true) })} />
 			</Label>
-			<Label htmlFor="sso-oauth-audiences">Allowed audiences</Label>
-			<Input id="sso-oauth-audiences" value={protectedResource.audiences.join(", ")} onChange={(event) => updateProtectedResource({ audiences: splitList(event.target.value) })} placeholder="api://dense-mem" />
-			<Label htmlFor="sso-oauth-jwks-source">JWKS source</Label>
-			<NativeSelect id="sso-oauth-jwks-source" value={protectedResource.jwks_source} onChange={(event) => updateProtectedResource({ jwks_source: event.target.value as "discovery" | "static", jwks_uri: event.target.value === "discovery" ? "" : protectedResource.jwks_uri })}>
-				<NativeSelectOption value="discovery">OIDC discovery</NativeSelectOption>
-				<NativeSelectOption value="static">Static JWKS URL</NativeSelectOption>
-			</NativeSelect>
-			<Label htmlFor="sso-oauth-jwks-uri">JWKS URL</Label>
-			<Input id="sso-oauth-jwks-uri" value={protectedResource.jwks_uri} disabled={protectedResource.jwks_source === "discovery"} onChange={(event) => updateProtectedResource({ jwks_uri: event.target.value })} placeholder="https://idp.example.com/.well-known/jwks.json" />
-			<Label htmlFor="sso-oauth-algorithms">Signature algorithms</Label>
-			<Input id="sso-oauth-algorithms" value={protectedResource.algorithms.join(", ")} onChange={(event) => updateProtectedResource({ algorithms: splitList(event.target.value) })} />
-			<Label htmlFor="sso-oauth-scope-claim">Scope claim</Label>
-			<Input id="sso-oauth-scope-claim" value={protectedResource.scope_claim} onChange={(event) => updateProtectedResource({ scope_claim: event.target.value })} placeholder="scope or scp" />
-			<Label htmlFor="sso-oauth-team-claim">Team claim</Label>
-			<Input id="sso-oauth-team-claim" value={protectedResource.team_claim} onChange={(event) => updateProtectedResource({ team_claim: event.target.value })} placeholder="Optional UUID claim" />
+			<FieldRow label="Allowed audiences" htmlFor="sso-oauth-audiences">
+     <Input id="sso-oauth-audiences" value={protectedResource.audiences.join(", ")} onChange={(event) => updateProtectedResource({ audiences: splitList(event.target.value) })} placeholder="api://dense-mem" />
+   </FieldRow>
+			<FieldRow label="JWKS source" htmlFor="sso-oauth-jwks-source">
+     <NativeSelect id="sso-oauth-jwks-source" value={protectedResource.jwks_source} onChange={(event) => updateProtectedResource({ jwks_source: event.target.value as "discovery" | "static", jwks_uri: event.target.value === "discovery" ? "" : protectedResource.jwks_uri })}>
+            <NativeSelectOption value="discovery">OIDC discovery</NativeSelectOption>
+            <NativeSelectOption value="static">Static JWKS URL</NativeSelectOption>
+          </NativeSelect>
+   </FieldRow>
+			<FieldRow label="JWKS URL" htmlFor="sso-oauth-jwks-uri">
+     <Input id="sso-oauth-jwks-uri" value={protectedResource.jwks_uri} disabled={protectedResource.jwks_source === "discovery"} onChange={(event) => updateProtectedResource({ jwks_uri: event.target.value })} placeholder="https://idp.example.com/.well-known/jwks.json" />
+   </FieldRow>
+			<FieldRow label="Signature algorithms" htmlFor="sso-oauth-algorithms">
+     <Input id="sso-oauth-algorithms" value={protectedResource.algorithms.join(", ")} onChange={(event) => updateProtectedResource({ algorithms: splitList(event.target.value) })} />
+   </FieldRow>
+			<FieldRow label="Scope claim" htmlFor="sso-oauth-scope-claim">
+     <Input id="sso-oauth-scope-claim" value={protectedResource.scope_claim} onChange={(event) => updateProtectedResource({ scope_claim: event.target.value })} placeholder="scope or scp" />
+   </FieldRow>
+			<FieldRow label="Team claim" htmlFor="sso-oauth-team-claim">
+     <Input id="sso-oauth-team-claim" value={protectedResource.team_claim} onChange={(event) => updateProtectedResource({ team_claim: event.target.value })} placeholder="Optional UUID claim" />
+   </FieldRow>
 			<div className="oauth-mapping-heading span">
 				<strong>Scope mappings</strong>
 				<Button variant="outline" className="ghost-button compact" type="button" onClick={addScopeMapping}>
@@ -368,8 +388,9 @@ function SSOProviderForm({
 				const mappingID = scopeMappingIDs.current[index];
 				return (
 					<div className="oauth-scope-mapping span" key={mappingID}>
-						<Label htmlFor={`${mappingID}-external-scope`}>External scope</Label>
-						<Input id={`${mappingID}-external-scope`} value={mapping.external_scope} onChange={(event) => updateScopeMapping(index, { external_scope: event.target.value })} />
+						<FieldRow label="External scope" htmlFor={`${mappingID}-external-scope`}>
+        <Input id={`${mappingID}-external-scope`} value={mapping.external_scope} onChange={(event) => updateScopeMapping(index, { external_scope: event.target.value })} />
+      </FieldRow>
 						<div className="permission-checkbox-group" aria-label={`Internal scopes for ${mapping.external_scope || `mapping ${index + 1}`}`}>
 							{(["read", "write", "feedback:read"] as const).map((scope) => (
 								<Label className="permission-checkbox" key={scope}>
@@ -388,11 +409,12 @@ function SSOProviderForm({
 				);
 			})}
 		</fieldset>
-		<Label htmlFor="sso-enabled">Enabled</Label>
-      <Label className="checkbox-row" htmlFor="sso-enabled">
-        <Checkbox id="sso-enabled" checked={draft.enabled} onCheckedChange={(event) => onChange({ ...draft, enabled: (event === true) })} />
-        <span>{draft.enabled ? "enabled" : "disabled"}</span>
-      </Label>
+		<FieldRow label="Enabled" htmlFor="sso-enabled">
+    <Label className="checkbox-row" htmlFor="sso-enabled">
+          <Checkbox id="sso-enabled" checked={draft.enabled} onCheckedChange={(event) => onChange({ ...draft, enabled: (event === true) })} />
+          <span>{draft.enabled ? "enabled" : "disabled"}</span>
+        </Label>
+  </FieldRow>
       <div className="button-row span">
         <Button variant="default" className="primary-button" type="submit" disabled={busy}>
           <Check size={16} aria-hidden="true" />
@@ -423,28 +445,32 @@ function SSOMappingForm({
 
   return (
     <form className="inline-form sso-mapping-form" onSubmit={onSubmit}>
-      <Label htmlFor="sso-map-team">Team</Label>
-      <NativeSelect id="sso-map-team" value={draft.team_id} onChange={(event) => onChange({ ...draft, team_id: event.target.value })}>
-        {teams.map((team) => <NativeSelectOption value={team.id} key={team.id}>{team.name}</NativeSelectOption>)}
-      </NativeSelect>
-      <Label htmlFor="sso-map-group-id">Group ID</Label>
-      <Input id="sso-map-group-id" value={draft.group_id} onChange={(event) => onChange({ ...draft, group_id: event.target.value })} />
-      <Label htmlFor="sso-map-role">Role</Label>
-      <NativeSelect id="sso-map-role" value={draft.role} onChange={(event) => updateRole(event.target.value as MembershipRole)}>
-        <NativeSelectOption value="member">Member</NativeSelectOption>
-        <NativeSelectOption value="manager">Manager</NativeSelectOption>
-      </NativeSelect>
+      <FieldRow label="Team" htmlFor="sso-map-team">
+        <NativeSelect id="sso-map-team" value={draft.team_id} onChange={(event) => onChange({ ...draft, team_id: event.target.value })}>
+          {teams.map((team) => <NativeSelectOption value={team.id} key={team.id}>{team.name}</NativeSelectOption>)}
+        </NativeSelect>
+      </FieldRow>
+      <FieldRow label="Group ID" htmlFor="sso-map-group-id">
+        <Input id="sso-map-group-id" value={draft.group_id} onChange={(event) => onChange({ ...draft, group_id: event.target.value })} />
+      </FieldRow>
+      <FieldRow label="Role" htmlFor="sso-map-role">
+        <NativeSelect id="sso-map-role" value={draft.role} onChange={(event) => updateRole(event.target.value as MembershipRole)}>
+          <NativeSelectOption value="member">Member</NativeSelectOption>
+          <NativeSelectOption value="manager">Manager</NativeSelectOption>
+        </NativeSelect>
+      </FieldRow>
       {draft.role === "member" && (
         <>
-          <Label htmlFor="sso-map-permission">Permission</Label>
-          <NativeSelect
-            id="sso-map-permission"
-            value={draft.scopes.includes("write") ? "read_write" : "read"}
-            onChange={(event) => onChange({ ...draft, scopes: [...(event.target.value === "read_write" ? ["read", "write"] : ["read"]), ...(feedbackAccess ? ["feedback:read"] : [])] })}
-          >
-            <NativeSelectOption value="read">Read</NativeSelectOption>
-            <NativeSelectOption value="read_write">Read/write</NativeSelectOption>
-          </NativeSelect>
+          <FieldRow label="Permission" htmlFor="sso-map-permission">
+            <NativeSelect
+              id="sso-map-permission"
+              value={draft.scopes.includes("write") ? "read_write" : "read"}
+              onChange={(event) => onChange({ ...draft, scopes: [...(event.target.value === "read_write" ? ["read", "write"] : ["read"]), ...(feedbackAccess ? ["feedback:read"] : [])] })}
+            >
+              <NativeSelectOption value="read">Read</NativeSelectOption>
+              <NativeSelectOption value="read_write">Read/write</NativeSelectOption>
+            </NativeSelect>
+          </FieldRow>
         </>
       )}
       <Label className="toggle-row span" htmlFor="sso-map-feedback-access">

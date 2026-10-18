@@ -36,7 +36,7 @@ type PortalShellProps = BrandProps & {
 };
 type SectionHeadingProps = { title: ReactNode; subtitle?: ReactNode; meta?: ReactNode; actions?: ReactNode };
 type SummaryCardProps = { label: ReactNode; value: ReactNode; detail?: ReactNode; tone?: "neutral" | "warning" | "danger" };
-type FieldRowProps = { label: ReactNode; htmlFor?: string; children: ReactNode };
+type FieldRowProps = { label: ReactNode; htmlFor?: string; description?: ReactNode; children: ReactNode };
 type SecretBoxProps = { value: string; valueLabel: string; copyLabel: string; dismissLabel: string; onDismiss: () => void };
 type InfoTooltipProps = { label: string; children: ReactNode };
 type LoadingStateProps = { label?: string; compact?: boolean };
@@ -216,11 +216,20 @@ export async function writeClipboardText(text: string, fallbackInput: HTMLInputE
   }
 }
 
-export function FieldRow({ label, htmlFor, children }: FieldRowProps) {
+export function FieldRow({ label, htmlFor, description, children }: FieldRowProps) {
   return (
-    <>
-      <Label htmlFor={htmlFor}>{label}</Label>
+    <div className="setting-row">
+      <div className="setting-label"><Label htmlFor={htmlFor}>{label}</Label>{description && <p id={htmlFor ? `${htmlFor}-help` : undefined}>{description}</p>}</div>
       <div className="field-control">{children}</div>
-    </>
+    </div>
   );
+}
+
+export function UsageMeter({ label, value, limit, detail }: { label: string; value: number; limit: number; detail?: ReactNode }) {
+  const percent = limit > 0 ? Math.max(0, Math.min(100, value / limit * 100)) : null;
+  return <div className="usage-meter">
+    <div className="usage-meter-heading"><span>{label}</span><strong>{value.toLocaleString()} <span>/ {limit.toLocaleString()}</span></strong></div>
+    {percent !== null && <div className="usage-meter-track" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={`${value.toLocaleString()} of ${limit.toLocaleString()}`}><span style={{ width: `${percent}%` }} /></div>}
+    {detail && <p className="form-meta">{detail}</p>}
+  </div>;
 }

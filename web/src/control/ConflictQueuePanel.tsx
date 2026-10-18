@@ -9,7 +9,7 @@ import { AlertTriangle, Clock3, RefreshCw, ShieldAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, ConflictQueueItem, ConflictQueuePage, ControlApi, Team } from "../api";
 import type { EvidenceConflict, EvidenceConflictDetail } from "../evidence-conflict-api-types";
-import { LoadingState, SectionHeading, SummaryCard } from "../ui/components";
+import { FieldRow, LoadingState, SectionHeading, SummaryCard } from "../ui/components";
 import { formatDate, formatCount, readError, shortId } from "./utils";
 import "./ConflictQueuePanel.css";
 
@@ -370,8 +370,9 @@ function EvidenceConflictView({ api, team, refreshNonce }: { api: ControlApi; te
       <Label htmlFor="evidence-conflict-reason">Review reason</Label>
       <Textarea id="evidence-conflict-reason" value={reason} maxLength={512} onChange={(event) => setReason(event.target.value)} placeholder="Explain the review decision" />
       {visibleSelected.conflict.status === "open" && <>
-        <Label htmlFor="evidence-conflict-preferred">Preferred position (optional)</Label>
-        <NativeSelect id="evidence-conflict-preferred" value={preferred} onChange={(event) => setPreferred(event.target.value)}><NativeSelectOption value="">No preferred position</NativeSelectOption>{visibleSelected.conflict.positions.map((position) => <NativeSelectOption key={position.position_id} value={position.position_id}>{position.quote}</NativeSelectOption>)}</NativeSelect>
+        <FieldRow label="Preferred position (optional)" htmlFor="evidence-conflict-preferred">
+          <NativeSelect id="evidence-conflict-preferred" value={preferred} onChange={(event) => setPreferred(event.target.value)}><NativeSelectOption value="">No preferred position</NativeSelectOption>{visibleSelected.conflict.positions.map((position) => <NativeSelectOption key={position.position_id} value={position.position_id}>{position.quote}</NativeSelectOption>)}</NativeSelect>
+        </FieldRow>
         <div className="evidence-conflict-actions"><Button variant="default" className="primary-button" type="button" disabled={saving || reason.trim() === ""} onClick={() => resolve("resolve")}>Resolve</Button><Button variant="outline" className="ghost-button" type="button" disabled={saving || reason.trim() === "" || preferred !== ""} onClick={() => resolve("dismiss")}>Dismiss</Button></div>
       </>}
       {visibleSelected.conflict.events && visibleSelected.conflict.events.length > 0 && <details><summary>Review history ({visibleSelected.conflict.events.length})</summary><div className="evidence-conflict-history">{visibleSelected.conflict.events.map((event) => <div key={event.event_id}><strong>{event.action} · v{event.case_version}</strong><small>{formatDate(event.created_at)}{event.reason ? ` · ${event.reason}` : ""}</small></div>)}{Boolean(eventError) && <div className="banner warning" role="status">{readError(eventError)}</div>}{visibleSelected.next_event_cursor && <Button variant="outline" className="ghost-button" type="button" disabled={eventLoading} onClick={() => void loadMoreEvents()}>{eventLoading ? "Loading history…" : "Load older history"}</Button>}</div></details>}

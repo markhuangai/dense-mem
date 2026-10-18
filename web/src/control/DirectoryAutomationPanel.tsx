@@ -18,7 +18,7 @@ import {
   SSOProvider,
   Team,
 } from "../api";
-import { SecretBox, SectionHeading } from "../ui/components";
+import { FieldRow, SecretBox, SectionHeading } from "../ui/components";
 import { readError } from "./utils";
 
 const defaultGroupPattern = "^gAD7485(?P<team>.+?)(?P<role>Readonly|Member|Manager)Permission$";
@@ -259,12 +259,15 @@ export function DirectoryAutomationPanel({ api, provider, teams }: { api: Contro
         {error && <div className="banner error" role="alert">{error}</div>}
         {message && <div className="banner neutral">{message}</div>}
         <form className="edit-grid" onSubmit={saveConnector}>
-          <Label htmlFor="directory-group-pattern">Group pattern</Label>
-          <Input id="directory-group-pattern" value={draft.group_pattern} onChange={(event) => setDraft((current) => ({ ...current, group_pattern: event.target.value }))} spellCheck={false} />
-          <Label htmlFor="directory-role-entitlements">Role entitlements (JSON)</Label>
-          <Textarea id="directory-role-entitlements" value={draft.role_entitlements} onChange={(event) => setDraft((current) => ({ ...current, role_entitlements: event.target.value }))} spellCheck={false} />
-          <Label htmlFor="directory-max-auto-teams">Maximum auto-created teams</Label>
-          <Input id="directory-max-auto-teams" type="number" min="1" max="1000" value={draft.max_auto_teams} onChange={(event) => setDraft((current) => ({ ...current, max_auto_teams: event.target.value }))} />
+          <FieldRow label="Group pattern" htmlFor="directory-group-pattern">
+            <Input id="directory-group-pattern" value={draft.group_pattern} onChange={(event) => setDraft((current) => ({ ...current, group_pattern: event.target.value }))} spellCheck={false} />
+          </FieldRow>
+          <FieldRow label="Role entitlements (JSON)" htmlFor="directory-role-entitlements">
+            <Textarea id="directory-role-entitlements" value={draft.role_entitlements} onChange={(event) => setDraft((current) => ({ ...current, role_entitlements: event.target.value }))} spellCheck={false} />
+          </FieldRow>
+          <FieldRow label="Maximum auto-created teams" htmlFor="directory-max-auto-teams">
+            <Input id="directory-max-auto-teams" type="number" min="1" max="1000" value={draft.max_auto_teams} onChange={(event) => setDraft((current) => ({ ...current, max_auto_teams: event.target.value }))} />
+          </FieldRow>
           <div className="button-row span">
             <Button variant="default" className="primary-button" type="submit" disabled={loading}>
               <Check size={16} aria-hidden="true" />
@@ -328,10 +331,12 @@ export function DirectoryAutomationPanel({ api, provider, teams }: { api: Contro
       <section className="surface">
         <SectionHeading title="Control SSO administrators" subtitle="Members of any enabled group can use this provider to enter the control portal; the break-glass token remains available." meta={adminGroups.length} />
         <form className="inline-form" onSubmit={addAdminGroup}>
-          <Label htmlFor="control-admin-group-id">Entra group ID</Label>
-          <Input id="control-admin-group-id" value={adminGroupID} onChange={(event) => setAdminGroupID(event.target.value)} />
-          <Label htmlFor="control-admin-group-name">Display name</Label>
-          <Input id="control-admin-group-name" value={adminGroupName} onChange={(event) => setAdminGroupName(event.target.value)} />
+          <FieldRow label="Entra group ID" htmlFor="control-admin-group-id">
+            <Input id="control-admin-group-id" value={adminGroupID} onChange={(event) => setAdminGroupID(event.target.value)} />
+          </FieldRow>
+          <FieldRow label="Display name" htmlFor="control-admin-group-name">
+            <Input id="control-admin-group-name" value={adminGroupName} onChange={(event) => setAdminGroupName(event.target.value)} />
+          </FieldRow>
           <div className="button-row">
             <Button variant="default" className="primary-button compact" type="submit" disabled={loading}>
               <Check size={16} aria-hidden="true" />

@@ -1,6 +1,5 @@
 import { useConfirmation } from "../ui/confirmation";
 import { useUnsavedChanges } from "../ui/navigation";
-import { Label } from "../ui/primitives/label";
 import { Input } from "../ui/primitives/input";
 import { Textarea } from "../ui/primitives/textarea";
 import { Button } from "../ui/primitives/button";
@@ -8,7 +7,7 @@ import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from ".
 import { FormEvent, useEffect, useState } from "react";
 import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { CreatedCredential, UserApi, UserCredential, UserSession, UserTeam } from "./api";
-import { LoadingState, SecretBox, SectionHeading } from "../ui/components";
+import { FieldRow, LoadingState, SecretBox, SectionHeading } from "../ui/components";
 import { CredentialPermissionCheckboxes, normalizeCredentialScopes } from "../credentialPermissions";
 
 export function TeamManagementPanel({
@@ -167,10 +166,12 @@ export function TeamManagementPanel({
         {createdCredential && <CreatedCredentialNotice apiKey={createdCredential.api_key} onDismiss={() => setCreatedCredential(null)} />}
         {error && <div className="banner error" role="alert">{error}</div>}
         <form className="edit-grid" onSubmit={saveTeam}>
-          <Label htmlFor="user-team-name">Name</Label>
-          <Input id="user-team-name" value={teamName} onChange={(event) => setTeamName(event.target.value)} />
-          <Label htmlFor="user-team-description">Description</Label>
-          <Textarea id="user-team-description" value={teamDescription} onChange={(event) => setTeamDescription(event.target.value)} />
+          <FieldRow label="Name" htmlFor="user-team-name">
+            <Input id="user-team-name" value={teamName} onChange={(event) => setTeamName(event.target.value)} />
+          </FieldRow>
+          <FieldRow label="Description" htmlFor="user-team-description">
+            <Textarea id="user-team-description" value={teamDescription} onChange={(event) => setTeamDescription(event.target.value)} />
+          </FieldRow>
           <div className="button-row span">
             <Button variant="default" className="primary-button" type="submit" disabled={teamBusy}>
               <Pencil size={16} aria-hidden="true" />
@@ -202,7 +203,7 @@ export function TeamManagementPanel({
           }}
         />
         {loading && <LoadingState label="Loading credentials" />}
-        {!loading && (
+        <div className="min-w-0" aria-busy={loading} inert={loading} hidden={loading && credentials.length === 0}>
           <ManagedCredentialTable
             credentials={credentials}
             savingCredentialId={savingCredentialId}
@@ -214,7 +215,7 @@ export function TeamManagementPanel({
             onRotate={(credentialId) => void rotateCredential(credentialId)}
             onDelete={(credentialId) => void deleteCredential(credentialId)}
           />
-        )}
+        </div>
       </div>
     </section>
   );
@@ -265,17 +266,20 @@ function ManagedCredentialCreateForm({
 
   return (
     <form className="key-form" onSubmit={submit}>
-      <Label htmlFor="managed-credential-name">Credential name</Label>
-      <Input id="managed-credential-name" value={name} onChange={(event) => setName(event.target.value)} />
-      <Label>Permission</Label>
-      <CredentialPermissionCheckboxes
-        scopes={scopes}
-        disabled={busy || disabled}
-        ariaLabel="New member credential permissions"
-        onChange={(nextScopes) => setScopes(normalizeCredentialScopes(nextScopes))}
-      />
-      <Label htmlFor="managed-credential-rate-limit">Rate limit</Label>
-      <Input id="managed-credential-rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
+      <FieldRow label="Credential name" htmlFor="managed-credential-name">
+        <Input id="managed-credential-name" value={name} onChange={(event) => setName(event.target.value)} />
+      </FieldRow>
+      <FieldRow label="Permission">
+        <CredentialPermissionCheckboxes
+          scopes={scopes}
+          disabled={busy || disabled}
+          ariaLabel="New member credential permissions"
+          onChange={(nextScopes) => setScopes(normalizeCredentialScopes(nextScopes))}
+        />
+      </FieldRow>
+      <FieldRow label="Rate limit" htmlFor="managed-credential-rate-limit">
+        <Input id="managed-credential-rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
+      </FieldRow>
       {error && <p className="field-error span" role="alert">{error}</p>}
       <Button variant="default" className="primary-button span" type="submit" disabled={busy || disabled}>
         <Plus size={16} aria-hidden="true" />

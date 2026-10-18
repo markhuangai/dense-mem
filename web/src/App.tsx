@@ -39,7 +39,7 @@ import { useConfirmation } from "./ui/confirmation";
 import { ThemeControl, usePortalTheme } from "./ui/theme";
 import type { ThemeName } from "./ui/theme";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/primitives/dialog";
-import { AuthShell, LoadingState, PortalShell, SectionHeading } from "./ui/components";
+import { FieldRow, AuthShell, LoadingState, PortalShell, SectionHeading } from "./ui/components";
 
 const SecurityPanel = lazy(() => import("./control/SecurityPanel").then((module) => ({ default: module.SecurityPanel })));
 const SSOPanel = lazy(() => import("./control/SSOPanel").then((module) => ({ default: module.SSOPanel })));
@@ -360,10 +360,12 @@ function TeamCreateForm({ api, onCreated }: { api: ControlApi; onCreated: (team:
 
   return (
     <form className="inline-form" onSubmit={submit}>
-      <Label htmlFor="new-team-name">Name</Label>
-      <Input id="new-team-name" value={name} onChange={(event) => setName(event.target.value)} />
-      <Label htmlFor="new-team-description">Description</Label>
-      <Input id="new-team-description" value={description} onChange={(event) => setDescription(event.target.value)} />
+      <FieldRow label="Name" htmlFor="new-team-name">
+        <Input id="new-team-name" value={name} onChange={(event) => setName(event.target.value)} />
+      </FieldRow>
+      <FieldRow label="Description" htmlFor="new-team-description">
+        <Input id="new-team-description" value={description} onChange={(event) => setDescription(event.target.value)} />
+      </FieldRow>
       {error && <p className="field-error" role="alert">{error}</p>}
       <Button variant="default" className="primary-button compact" type="submit" disabled={busy}>
         <Plus size={16} aria-hidden="true" />
@@ -494,10 +496,12 @@ function TeamEditor({
     <section className="team-detail-surface">
       <SectionHeading title="Team settings" />
       <form className="edit-grid" onSubmit={save}>
-        <Label htmlFor="team-name">Name</Label>
-        <Input id="team-name" value={name} onChange={(event) => setName(event.target.value)} />
-        <Label htmlFor="team-description">Description</Label>
-        <Textarea id="team-description" value={description} onChange={(event) => setDescription(event.target.value)} />
+        <FieldRow label="Name" htmlFor="team-name">
+          <Input id="team-name" value={name} onChange={(event) => setName(event.target.value)} />
+        </FieldRow>
+        <FieldRow label="Description" htmlFor="team-description">
+          <Textarea id="team-description" value={description} onChange={(event) => setDescription(event.target.value)} />
+        </FieldRow>
         {error && <p className="field-error span" role="alert">{error}</p>}
         <div className="button-row span">
           <Button variant="default" className="primary-button" type="submit" disabled={busy}>

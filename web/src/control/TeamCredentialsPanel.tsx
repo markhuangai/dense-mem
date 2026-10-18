@@ -4,12 +4,11 @@ import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from ".
 import { Input } from "../ui/primitives/input";
 import { Button } from "../ui/primitives/button";
 import { NativeSelect, NativeSelectOption } from "../ui/primitives/native-select";
-import { Label } from "../ui/primitives/label";
 import { FormEvent, useEffect, useState } from "react";
 import { KeyRound, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { ControlApi, CreatedCredential, Credential, CredentialRole, Team } from "../api";
 import { CredentialPermissionCheckboxes, MemoryAccessSummary, normalizeCredentialScopes } from "../credentialPermissions";
-import { LoadingState, SecretBox, SectionHeading } from "../ui/components";
+import { FieldRow, LoadingState, SecretBox, SectionHeading } from "../ui/components";
 import { credentialRoleLabel, displayKeySuffix, formatDate, readError } from "./utils";
 
 export function TeamCredentialsPanel({ api, team, embedded = false }: { api: ControlApi; team: Team; embedded?: boolean }) {
@@ -145,7 +144,7 @@ export function TeamCredentialsPanel({ api, team, embedded = false }: { api: Con
         }}
       />
       {loading && <LoadingState label="Loading credentials" />}
-      {!loading && (
+      <div className="min-w-0" aria-busy={loading} inert={loading} hidden={loading && credentials.length === 0}>
         <CredentialTable
           credentials={credentials}
           savingCredentialId={savingCredentialId}
@@ -159,7 +158,7 @@ export function TeamCredentialsPanel({ api, team, embedded = false }: { api: Con
           onRotate={(credentialId) => void rotateCredential(credentialId)}
           onDelete={(credentialId) => void deleteCredential(credentialId)}
         />
-      )}
+      </div>
     </section>
   );
 }
@@ -401,27 +400,31 @@ function CredentialCreateForm({
   return (
     <form className="key-form" onSubmit={submit}>
       <p className="span">Each key has its own private memory, including team-read-only keys. The calling agent chooses private or team shared for each Remember submission.</p>
-      <Label htmlFor="team-credential-name">Credential name</Label>
-      <Input id="team-credential-name" value={name} onChange={(event) => setName(event.target.value)} />
-      <Label htmlFor="team-credential-role">Role</Label>
-      <NativeSelect
-        id="team-credential-role"
-        value={role}
-        onChange={(event) => setRole(event.target.value as CredentialRole)}
-      >
-        <NativeSelectOption value="manager">{credentialRoleLabel("manager")}</NativeSelectOption>
-        <NativeSelectOption value="member">{credentialRoleLabel("member")}</NativeSelectOption>
-      </NativeSelect>
-      <Label>Permission</Label>
-      <CredentialPermissionCheckboxes
-        scopes={scopes}
-        forceWrite={role === "manager"}
-        disabled={busy || disabled}
-        ariaLabel="New credential permissions"
-        onChange={(nextScopes) => setScopes(normalizeCredentialScopes(nextScopes, { forceWrite: role === "manager" }))}
-      />
-      <Label htmlFor="rate-limit">Rate limit</Label>
-      <Input id="rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
+      <FieldRow label="Credential name" htmlFor="team-credential-name">
+        <Input id="team-credential-name" value={name} onChange={(event) => setName(event.target.value)} />
+      </FieldRow>
+      <FieldRow label="Role" htmlFor="team-credential-role">
+        <NativeSelect
+          id="team-credential-role"
+          value={role}
+          onChange={(event) => setRole(event.target.value as CredentialRole)}
+        >
+          <NativeSelectOption value="manager">{credentialRoleLabel("manager")}</NativeSelectOption>
+          <NativeSelectOption value="member">{credentialRoleLabel("member")}</NativeSelectOption>
+        </NativeSelect>
+      </FieldRow>
+      <FieldRow label="Permission">
+        <CredentialPermissionCheckboxes
+          scopes={scopes}
+          forceWrite={role === "manager"}
+          disabled={busy || disabled}
+          ariaLabel="New credential permissions"
+          onChange={(nextScopes) => setScopes(normalizeCredentialScopes(nextScopes, { forceWrite: role === "manager" }))}
+        />
+      </FieldRow>
+      <FieldRow label="Rate limit" htmlFor="rate-limit">
+        <Input id="rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
+      </FieldRow>
       {error && <p className="field-error span" role="alert">{error}</p>}
       <Button variant="default" className="primary-button span" type="submit" disabled={busy || disabled}>
         <KeyRound size={16} aria-hidden="true" />

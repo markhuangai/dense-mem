@@ -1,4 +1,4 @@
-import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
+import { navigate, openNavigation, confirmAction, expectPageContained, expectConflictCardsContained } from "../tests-support/portal";
 import { expect, test, type Page } from "@playwright/test";
 
 const controlUrl = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -6,7 +6,7 @@ const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
 const seedTeamId = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const seedTeamName = requiredEnv("DENSE_MEM_E2E_TEAM_NAME");
 
-test("Evidence view resolves a case, handles stale review, and stays keyboard-safe without mobile overflow", async ({ page }) => {
+test("Evidence view resolves a case, handles stale review, and stays keyboard-safe without mobile overflow", async ({ page }, testInfo) => {
   await openControlPanel(page);
   await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
   await navigate(page, "Conflicts");
@@ -20,6 +20,14 @@ test("Evidence view resolves a case, handles stale review, and stays keyboard-sa
 
   const initial = await listOpenConflicts(page);
   expect(initial.length).toBeGreaterThanOrEqual(2);
+  for (const width of [1440, 390]) for (const theme of ["Light", "Dark"]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.getByRole("button", { name: "Choose theme", exact: true }).click();
+    await page.getByRole("menuitem", { name: theme, exact: true }).click();
+    await expectConflictCardsContained(page);
+    await expectPageContained(page);
+    await page.screenshot({ path: testInfo.outputPath(`evidence-conflicts-${width}-${theme.toLowerCase()}.png`), fullPage: true });
+  }
   const successCase = initial[0];
   const staleCase = initial[1];
 

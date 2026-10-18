@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ControlApi, type OntologyMaintenanceStatus } from "../api";
 import { generalConfigSnapshot, jsonResponse } from "../App.test-helpers";
@@ -19,6 +19,40 @@ function fixture() {
 }
 
 describe("Ontology maintenance controls", () => {
+  it("keeps empty discovery distinct from completed coverage", async () => {
+    const api = fixture();
+    vi.mocked(api.getOntologyMaintenanceStatus).mockResolvedValue({ ...status, window: undefined, counts: { eligible: 0, organized: 0, pending: 0, failed: 0, ambiguous: 0, budget_deferred: 0 } });
+    render(<OntologyMaintenancePanel api={api} />);
+    const coverage = await screen.findByRole("region", { name: "Ontology coverage" });
+    expect(within(coverage).getByText("Discovery in progress")).toBeVisible();
+    expect(within(coverage).getByText("No eligible records discovered")).toBeVisible();
+    expect(within(coverage).queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.getByText("No maintenance window has opened.")).toBeVisible();
+  });
+
+  it("counts added allowance and retains charged, reported and reserved usage", async () => {
+    const api = fixture();
+    vi.mocked(api.getOntologyMaintenanceStatus).mockResolvedValue({ ...status, window: { ...status.window!, policy: { ...policy, input_tokens: 100, output_tokens: 200 }, additional_input_tokens: 50, additional_output_tokens: 100 } });
+    render(<OntologyMaintenancePanel api={api} />);
+    const input = await screen.findByRole("progressbar", { name: "Input tokens" });
+    expect(input).toHaveAttribute("aria-valuetext", "100 of 150");
+    expect(screen.getByRole("progressbar", { name: "Output tokens" })).toHaveAttribute("aria-valuetext", "200 of 300");
+    expect(screen.getByText("60 reported · 40 reserved")).toBeVisible();
+    expect(screen.queryByText(/Current window allowance is exhausted/)).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])("keeps exhausted allowance distinct from provider overrun (%s)", async (overrun) => {
+    const api = fixture();
+    vi.mocked(api.getOntologyMaintenanceStatus).mockResolvedValue({ ...status, window: { ...status.window!, policy: { ...policy, input_tokens: 50 }, overrun } });
+    render(<OntologyMaintenancePanel api={api} />);
+    expect(await screen.findByRole("progressbar", { name: "Input tokens" })).toHaveAttribute("aria-valuetext", "100 of 50");
+    expect(screen.getByRole("progressbar", { name: "Input tokens" })).toHaveAttribute("aria-valuenow", "100");
+    if (overrun) {
+      expect(screen.getByRole("alert")).toHaveTextContent("Provider usage exceeded a reservation");
+      expect(screen.queryByText(/Current window allowance is exhausted/)).not.toBeInTheDocument();
+    } else expect(screen.getByText(/Current window allowance is exhausted/)).toBeVisible();
+  });
+
   it("funds the displayed window with a stable retry key and clears a successful grant", async () => {
     const grants: Array<Record<string, unknown>> = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -66,7 +100,7 @@ describe("Ontology maintenance controls", () => {
     expect(await screen.findByText(/Coverage incomplete/)).toBeVisible();
     expect(screen.getByText(/Eligible counts cover discovered records/)).toBeVisible();
     expect(screen.getByText(/configured-model/)).toBeVisible();
-    expect(screen.getByText(/Unreported reservation/)).toBeVisible();
+    expect(screen.getByText(/Charged totals include reported usage and unreported reservations/)).toBeVisible();
     expect(screen.getByText(/250,000 input/)).toBeVisible();
     expect(screen.getByText("provider_unavailable")).toBeVisible();
   });

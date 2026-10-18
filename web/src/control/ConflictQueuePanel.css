@@ -35,6 +35,12 @@
 
 .evidence-conflict-card {
   display: grid;
+  height: auto;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  justify-content: stretch;
+  justify-items: start;
   gap: 8px;
   padding: 14px;
   border: 1px solid var(--border);

@@ -9,7 +9,7 @@ import { Input } from "../ui/primitives/input";
 import { Checkbox } from "../ui/primitives/checkbox";
 import { Textarea } from "../ui/primitives/textarea";
 import { useEffect, useRef, useState } from "react";
-import { LoadingState, SectionHeading } from "../ui/components";
+import { FieldRow, LoadingState, SectionHeading, UsageMeter } from "../ui/components";
 import { ApiError, newIdempotencyKey, UserApi, UserSession } from "./api";
 import { OntologyEditor } from "./OntologyEditor";
 import type { OntologyCoverage, OntologyDraft, OntologyEdit, OntologyKind, OntologyPreview, OntologyPublication, OntologyRecord, OntologySource, SourceHandle, SourceKind } from "./ontology-types";
@@ -90,6 +90,13 @@ export function OntologyPanel({ api, session }: { api: UserApi; session: UserSes
     return !(dirty || editorDirty) || await confirm({ title: "Discard unsaved draft edits?", description: "Saved drafts remain available. Unsaved corrections and editor fields will be lost.", confirmLabel: "Discard edits", destructive: true });
   }
 
+  async function selectTarget(record: OntologyRecord) {
+    if (editorDirty && !await confirm({ title: "Discard editor changes?", description: "Unsaved editor fields will be lost. Queued corrections and the audit reason will be retained.", confirmLabel: "Discard edits", destructive: true })) return;
+    setEditorDirty(false); setEditorEpoch((value) => value + 1); setTarget(record); setActiveTab("drafts");
+    if (record.group) setSelected(record.group.members);
+    if (record.definition) setMessage("Definition selected. Edit its fields in this draft.");
+  }
+
   async function startDraft() { if (!await canReplaceDraft()) return; setEditorEpoch((value) => value + 1); setEditorDirty(false); operationKeys.current.clear(); setDraft(null); setEdits([]); setReason(""); setDirty(false); setPreview(null); setTarget(null); setSelected([]); setMessage(""); }
 
   async function openDraft(id: string) {
@@ -149,21 +156,33 @@ export function OntologyPanel({ api, session }: { api: UserApi; session: UserSes
     setPublication(null); setRollbackReason(""); setMessage("Rollback published as a new revision. Affected organization is waiting for reassessment."); await load();
   }
 
+  async function selectPublication(id: string) {
+    if (rollbackReason && !await confirm({ title: "Discard rollback reason?", description: "Opening this publication will clear your unsaved rollback reason.", confirmLabel: "Discard reason", destructive: true })) return;
+    setPublication(await api.ontologyPublication(id));
+    setRollbackReason("");
+  }
+
   if (loading) return <LoadingState label="Loading ontology" />;
   return <div className="stack">
     <SectionHeading title="Ontology" subtitle="Inspect shared organization and publish reversible corrections." actions={<Button variant="outline" className="ghost-button" disabled={busy} onClick={() => void perform(load)}>Refresh ontology</Button>} />
     {error && <p className="field-error" role="alert">{error}</p>}{message && <p role="status">{message}</p>}
-    {coverage && <section className="surface-section" aria-label="Team ontology coverage"><h3>Team processing coverage</h3><p>Revision {coverage.revision}. {coverage.coverage_complete ? "Current" : "Reassessment pending"}. {coverage.counts.organized} organized; {coverage.counts.pending} pending; {coverage.counts.ambiguous} ambiguous; {coverage.counts.failed} failed; {coverage.counts.budget_deferred} deferred.</p><p>Processing runs under the operator’s maintenance schedule. Refresh to check progress.</p></section>}
+    {coverage && <section className="ontology-team-coverage" aria-label="Team ontology coverage">
+      <SectionHeading title="Team processing coverage" actions={<span className={`status-pill ${coverage.coverage_complete ? "success" : "warning"}`}>{coverage.coverage_complete ? "Current" : "Reassessment pending"}</span>} />
+      <UsageMeter label="Organized / eligible" value={coverage.counts.organized} limit={coverage.counts.eligible} detail={`Revision ${coverage.revision} · ${coverage.counts.eligible ? "discovered shared records" : "no eligible shared records discovered"}`} />
+      <dl className="summary-grid"><div><dt>Pending</dt><dd>{coverage.counts.pending.toLocaleString()}</dd></div><div><dt>Failed</dt><dd>{coverage.counts.failed.toLocaleString()}</dd></div><div><dt>Ambiguous</dt><dd>{coverage.counts.ambiguous.toLocaleString()}</dd></div><div><dt>Budget deferred</dt><dd>{coverage.counts.budget_deferred.toLocaleString()}</dd></div></dl>
+      {!coverage.discovery_complete && <p className="banner warning">Discovery is in progress. Counts cover discovered shared records.</p>}
+      <p className="form-meta">Processing runs under the operator’s maintenance schedule. Refresh to check progress.</p>
+    </section>}
     <Tabs className="panel-tabs ontology-tabs" value={activeTab} onValueChange={setActiveTab}>
       <TabsList aria-label="Ontology sections"><TabsTrigger value="catalog">Catalog</TabsTrigger><TabsTrigger value="sources">Sources</TabsTrigger><TabsTrigger value="drafts">Drafts</TabsTrigger><TabsTrigger value="history">History</TabsTrigger></TabsList>
     <TabsContent value="catalog"><section className="surface" aria-label="Ontology catalog"><h3>Catalog and groups</h3>
       <Label>Catalog type<NativeSelect aria-label="Catalog type" value={recordKind} disabled={busy} onChange={(event) => void perform(() => catalog(event.target.value as OntologyKind | ""))}><NativeSelectOption value="">All records</NativeSelectOption>{["topic", "entity_class", "predicate_concept", "assignment", "evidence_group", "relationship_group", "override"].map((kind) => <NativeSelectOption key={kind} value={kind}>{kind.replaceAll("_", " ")}</NativeSelectOption>)}</NativeSelect></Label>
       <div className="table-wrap"><Table className="data-table"><TableHeader><TableRow><TableHead>Organization</TableHead><TableHead>Status</TableHead><TableHead>Sources or classification</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader><TableBody>{records.map((record) => <TableRow key={record.id}>
         <TableCell><strong>{recordLabel(record)}</strong>{record.definition && <p>{record.definition.description}</p>}<small title={record.id}>{record.id.slice(0, 8)} · revision {record.version}</small></TableCell>
-        <TableCell>{record.retired ? "Retired" : record.current ? "Current" : "Needs reassessment"}</TableCell>
+        <TableCell><span className={`status-pill ${record.retired ? "neutral" : record.current ? "success" : "warning"}`}>{record.retired ? "Retired" : record.current ? "Current" : "Needs reassessment"}</span></TableCell>
         <TableCell><RecordDetails record={record} records={records} /></TableCell>
-        <TableCell>{!record.retired && record.definition && <Button variant="outline" disabled={busy || !canWrite} onClick={() => { setTarget(record); setActiveTab("drafts"); setMessage("Definition selected. Edit its fields in this draft."); }}>Edit {record.definition.label}</Button>}
-          {!record.retired && record.group && <Button variant="outline" disabled={busy || !canWrite} onClick={() => { setTarget(record); setSelected(record.group!.members); setActiveTab("drafts"); }}>Correct grouping</Button>}
+        <TableCell>{!record.retired && record.definition && <Button variant="outline" disabled={busy || !canWrite} onClick={() => void selectTarget(record)}>Edit {record.definition.label}</Button>}
+          {!record.retired && record.group && <Button variant="outline" disabled={busy || !canWrite} onClick={() => void selectTarget(record)}>Correct grouping</Button>}
           {!record.retired && record.override && <Button variant="outline" disabled={busy || !canWrite} onClick={() => add({ action: "remove_override", record_id: record.id, expected_version: record.version })}>{record.override.action === "pin_definition" ? "Unpin definition" : "Remove correction"}</Button>}
         </TableCell></TableRow>)}</TableBody></Table></div>
       {!records.length && <p>No catalog records yet.</p>}{recordCursor && <Button variant="outline" disabled={busy} onClick={() => void perform(() => catalog(recordKind, true))}>Load more catalog records</Button>}
@@ -180,8 +199,8 @@ export function OntologyPanel({ api, session }: { api: UserApi; session: UserSes
       {draftCursor && <Button variant="outline" disabled={busy} onClick={() => void perform(async () => { const page = await api.ontologyDrafts(draftCursor); setDrafts((current) => [...current, ...page.drafts]); setDraftCursor(page.next_cursor ?? ""); })}>Load more drafts</Button>}
       <h3>{draft ? `Draft ${draft.id.slice(0, 8)} · ${draft.state}` : "New correction draft"}</h3>
       {stale && <p role="alert">This draft uses an older catalog revision. Refresh it before publishing.</p>}
-      <Label>Audit reason<Textarea aria-label="Audit reason" value={reason} maxLength={512} disabled={busy || !canWrite || !open} onChange={(event) => { setReason(event.target.value); setDirty(true); setPreview(null); }} /></Label>
-      <OntologyEditor key={`${draft?.id ?? "new"}:${target?.id ?? ""}:${editorEpoch}`} onDirtyChange={setEditorDirty} records={records} selected={selected} target={target} disabled={busy || !canWrite || !open || edits.length >= 64} onAdd={add} />
+      <FieldRow label="Audit reason" htmlFor="ontology-audit-reason"><Textarea id="ontology-audit-reason" value={reason} maxLength={512} disabled={busy || !canWrite || !open} onChange={(event) => { setReason(event.target.value); setDirty(true); setPreview(null); }} /></FieldRow>
+      <OntologyEditor key={editorEpoch} onDirtyChange={setEditorDirty} records={records} selected={selected} target={target} disabled={busy || !canWrite || !open || edits.length >= 64} onAdd={add} />
       <ol>{edits.map((edit, index) => <li key={index}><EditDetails edit={edit} records={records} />{open && <Button variant="outline" aria-label={`Remove correction ${index + 1}`} disabled={busy || !canWrite} onClick={() => { setEdits((current) => current.filter((_, position) => position !== index)); setDirty(true); setPreview(null); }}>Remove</Button>}</li>)}</ol>
       <Button variant="default" className="primary-button" disabled={busy || !canWrite || !open || !fresh || !reason.trim() || !edits.length || Boolean(draft && !dirty)} onClick={() => void perform(save)}>Save draft</Button>
       {draft?.state === "open" && <>
@@ -195,10 +214,10 @@ export function OntologyPanel({ api, session }: { api: UserApi; session: UserSes
         <Button variant="default" className="primary-button" disabled={busy || !canWrite || !preview.complete || dirty || stale || !fresh} onClick={() => void perform(() => command("publish"))}>Publish correction</Button>
       </div>}
     </section></TabsContent>
-    <TabsContent value="history" forceMount hidden={activeTab !== "history"}><section className="surface"><h3>Publication history</h3>{publications.map((item) => <Button variant="outline" key={item.id} disabled={busy} onClick={() => void perform(async () => { setPublication(await api.ontologyPublication(item.id)); setRollbackReason(""); })}>Revision {item.revision} · {item.origin} · {item.reason}</Button>)}
+    <TabsContent value="history" forceMount hidden={activeTab !== "history"}><section className="surface"><h3>Publication history</h3>{publications.map((item) => <Button variant="outline" key={item.id} disabled={busy} onClick={() => void perform(() => selectPublication(item.id))}>Revision {item.revision} · {item.origin} · {item.reason}</Button>)}
       {historyCursor > 0 && <Button variant="outline" disabled={busy} onClick={() => void perform(async () => { const page = await api.ontologyPublications(historyCursor); setPublications((current) => [...current, ...page.publications]); setHistoryCursor(page.next_revision ?? 0); })}>Load more publications</Button>}
       {publication && <div aria-label="Publication detail"><h3>Publication revision {publication.revision}</h3><p>{publication.reason}</p><ul>{publication.record_views?.map((record) => <li key={record.id}>{recordLabel(record)} · revision {record.version} · {record.current ? "Current" : "Historical or awaiting reassessment"}<RecordDetails record={record} records={publication.record_views ?? []} /></li>)}</ul>
-        {(publication.origin === "manager" || publication.origin === "rollback") && <><Label>Rollback reason<Textarea aria-label="Rollback reason" value={rollbackReason} maxLength={512} disabled={busy || !canWrite} onChange={(event) => setRollbackReason(event.target.value)} /></Label><Button variant="outline" disabled={busy || !canWrite || !fresh || !rollbackReason.trim()} onClick={() => void perform(rollback)}>Publish rollback</Button><p>Rollback creates a new revision and is rejected if the changed records or their sources are no longer eligible.</p></>}
+        {(publication.origin === "manager" || publication.origin === "rollback") && <><FieldRow label="Rollback reason" htmlFor="ontology-rollback-reason"><Textarea id="ontology-rollback-reason" value={rollbackReason} maxLength={512} disabled={busy || !canWrite} onChange={(event) => setRollbackReason(event.target.value)} /></FieldRow><Button variant="outline" disabled={busy || !canWrite || !fresh || !rollbackReason.trim()} onClick={() => void perform(rollback)}>Publish rollback</Button><p>Rollback creates a new revision and is rejected if the changed records or their sources are no longer eligible.</p></>}
       </div>}
     </section></TabsContent>
     </Tabs>

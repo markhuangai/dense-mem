@@ -8,7 +8,7 @@ import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from ".
 import { FormEvent, useEffect, useState } from "react";
 import { Ban, RefreshCw, Trash2 } from "lucide-react";
 import { ControlApi, SecurityBan, SecuritySettings } from "../api";
-import { LoadingState, SectionHeading, SummaryCard } from "../ui/components";
+import { FieldRow, LoadingState, SectionHeading, SummaryCard } from "../ui/components";
 import { formatDate, readError } from "./utils";
 
 export function SecurityPanel({ api }: { api: ControlApi }) {
@@ -113,12 +113,15 @@ export function SecurityPanel({ api }: { api: ControlApi }) {
       </div>
 
       <form className="security-grid security-ban-form" onSubmit={createBan}>
-        <Label htmlFor="ban-ip">IP address</Label>
-        <Input id="ban-ip" value={ip} onChange={(event) => setIp(event.target.value)} />
-        <Label htmlFor="ban-reason">Reason</Label>
-        <Input id="ban-reason" value={reason} onChange={(event) => setReason(event.target.value)} />
-        <Label htmlFor="ban-expires">Expires</Label>
-        <Input id="ban-expires" type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} />
+        <FieldRow label="IP address" htmlFor="ban-ip">
+          <Input id="ban-ip" value={ip} onChange={(event) => setIp(event.target.value)} />
+        </FieldRow>
+        <FieldRow label="Reason" htmlFor="ban-reason">
+          <Input id="ban-reason" value={reason} onChange={(event) => setReason(event.target.value)} />
+        </FieldRow>
+        <FieldRow label="Expires" htmlFor="ban-expires">
+          <Input id="ban-expires" type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} />
+        </FieldRow>
         <Button variant="destructive" className="danger-button span" type="submit" disabled={busy}>
           <Ban size={16} aria-hidden="true" />
           Add ban

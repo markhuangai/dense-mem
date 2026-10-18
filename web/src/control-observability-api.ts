@@ -4,7 +4,7 @@ export type OperationLog = {
   severity: "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR" | "FATAL" | string;
   severity_rank: number;
   message: string;
-  source: string;
+  source?: string;
   team_id: string | null;
   profile_id: string | null;
   correlation_id: string;

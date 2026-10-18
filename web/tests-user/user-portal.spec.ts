@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
+import { navigate, openNavigation, confirmAction, expectPageContained, expectCompactNumberField } from "../tests-support/portal";
 import { expect, type Page, test } from "@playwright/test";
 import type { OntologyDraft } from "../src/user/ontology-types";
 
@@ -182,7 +182,7 @@ for (const width of [1440, 900, 390]) for (const theme of ["light", "dark"] as c
     await mockUserApi(page, { key: managerKey, canManageTeam: true, credentials: [memberCredential] });
     await page.route("**/ui/api/ontology/**", async (route) => {
       const url = new URL(route.request().url());
-      const data = url.pathname.endsWith("/status") ? { revision: 1, coverage_complete: true, counts: { organized: 0, pending: 0, ambiguous: 0, failed: 0, budget_deferred: 0 } } : { records: [], sources: [], drafts: [], publications: [] };
+      const data = url.pathname.endsWith("/status") ? { observed_at: "2026-10-18T12:00:00Z", revision: 1, coverage_complete: true, discovery_complete: true, pending_markers: 0, counts: { eligible: 0, organized: 0, pending: 0, ambiguous: 0, failed: 0, budget_deferred: 0 } } : { records: [], sources: [], drafts: [], publications: [] };
       await route.fulfill({ json: { data } });
     });
     await page.goto("/ui/");
@@ -217,7 +217,17 @@ for (const width of [1440, 900, 390]) for (const theme of ["light", "dark"] as c
     await navigate(page, "My credentials");
     await expectPageContained(page);
     await page.screenshot({ path: testInfo.outputPath("knowledge-credentials.png"), fullPage: true });
+    await navigate(page, "Team");
+    await expectCompactNumberField(page, "Rate limit");
+    const nameWidth = (await page.getByLabel("Credential name", { exact: true }).boundingBox())!.width;
+    const rateWidth = (await page.getByLabel("Rate limit", { exact: true }).boundingBox())!.width;
+    expect(nameWidth).toBeGreaterThan(rateWidth);
+    await expectPageContained(page);
+    await page.screenshot({ path: testInfo.outputPath("knowledge-team.png"), fullPage: true });
     await navigate(page, "Ontology");
+    const coverage = page.getByRole("region", { name: "Team ontology coverage" });
+    await expect(coverage).toContainText("no eligible shared records discovered");
+    await expect(coverage.getByRole("progressbar")).toHaveCount(0);
     await page.getByRole("tab", { name: "Drafts", exact: true }).click();
     await expect(page.getByLabel("Audit reason")).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("knowledge-ontology.png"), fullPage: true });
@@ -237,6 +247,7 @@ for (const theme of ["light", "dark"] as const) {
     await mockUserApi(page, { key: managerKey, canManageTeam: true });
     const reason = "Browser correction ".padEnd(512, "x");
     const publication = { id: "publication-long", revision: 1, origin: "manager", reason, records: [], record_views: [] };
+    const otherPublication = { ...publication, id: "publication-other", revision: 2, reason: "Another reviewed publication" };
     let draft: OntologyDraft | null = null;
     await page.route("**/ui/api/ontology/**", async (route) => {
       const request = route.request();
@@ -251,9 +262,10 @@ for (const theme of ["light", "dark"] as const) {
         await route.fulfill({ json: { data: draft } });
         return;
       }
-      const data = path.endsWith("/status") ? { revision: 1, coverage_complete: true, counts: {} }
+      const data = path.endsWith("/status") ? { observed_at: "2026-10-18T12:00:00Z", revision: 1, coverage_complete: true, discovery_complete: true, pending_markers: 0, counts: { eligible: 0, organized: 0, pending: 0, ambiguous: 0, failed: 0, budget_deferred: 0 } }
         : path.endsWith("/publications/publication-long") ? publication
-          : { records: [], sources: [], drafts: draft ? [draft] : [], publications: [publication] };
+          : path.endsWith("/publications/publication-other") ? otherPublication
+          : { records: [], sources: [], drafts: draft ? [draft] : [], publications: [publication, otherPublication] };
       await route.fulfill({ json: { data } });
     });
     await openUserPortal(page, "dm_manager");
@@ -280,6 +292,16 @@ for (const theme of ["light", "dark"] as const) {
     await expectPageContained(page);
     await page.getByRole("button", { name: `Revision 1 · manager · ${reason}`, exact: true }).click();
     await expect(page.getByRole("heading", { name: "Publication revision 1", exact: true })).toBeVisible();
+    await page.getByLabel("Rollback reason", { exact: true }).fill("Keep this unsaved reason");
+    const other = page.getByRole("button", { name: "Revision 2 · manager · Another reviewed publication", exact: true });
+    await other.click();
+    await confirmAction(page, "Cancel");
+    await expect(page.getByRole("heading", { name: "Publication revision 1", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Rollback reason", { exact: true })).toHaveValue("Keep this unsaved reason");
+    await other.click();
+    await confirmAction(page, "Discard reason");
+    await expect(page.getByRole("heading", { name: "Publication revision 2", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Rollback reason", { exact: true })).toHaveValue("");
     await expectPageContained(page);
     expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze()).violations).toEqual([]);
   });
@@ -604,6 +626,14 @@ test("manager team page separates team editing from credential management", asyn
   expect(spacing.marginGap).toBeGreaterThanOrEqual(18);
   expect(spacing.paddingTop).toBeGreaterThanOrEqual(18);
   expect(spacing.borderTopWidth).toBeGreaterThanOrEqual(1);
+  const rename = page.getByLabel(`Credential name ${memberCredential.name}`, { exact: true });
+  await rename.fill("Keep unfinished credential name");
+  const refresh = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/ui/api/team/credentials");
+  await page.getByRole("button", { name: "Refresh credentials", exact: true }).click();
+  await refresh;
+  await expect(rename).toHaveValue("Keep unfinished credential name");
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
   await expectNoShellOverlap(page);
 });
 

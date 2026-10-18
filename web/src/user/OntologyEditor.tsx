@@ -1,4 +1,4 @@
-import { Label } from "../ui/primitives/label";
+import { FieldRow } from "../ui/components";
 import { NativeSelect, NativeSelectOption } from "../ui/primitives/native-select";
 import { Input } from "../ui/primitives/input";
 import { Textarea } from "../ui/primitives/textarea";
@@ -55,19 +55,19 @@ export function OntologyEditor({ records, selected, target, disabled, onAdd, onD
 
   return <form className="ontology-editor" onChange={() => onDirtyChange?.(true)} onSubmit={submit}>
     <fieldset disabled={disabled}>
-      <Label>Correction<NativeSelect aria-label="Correction" value={action} onChange={(event) => setAction(event.target.value as OntologyEdit["action"])}>
+      <FieldRow label="Correction" htmlFor="ontology-correction"><NativeSelect id="ontology-correction" aria-label="Correction" value={action} onChange={(event) => setAction(event.target.value as OntologyEdit["action"])}>
         <NativeSelectOption value="define">Edit or add a definition</NativeSelectOption><NativeSelectOption value="classify">Classify one source</NativeSelectOption><NativeSelectOption value="group_together">Group sources together</NativeSelectOption><NativeSelectOption value="keep_separate">Keep sources separate</NativeSelectOption><NativeSelectOption value="pin_definition">Pin a definition</NativeSelectOption>
-      </NativeSelect></Label>
+      </NativeSelect></FieldRow>
       {action === "define" ? <>
-        <Label>Definition type<NativeSelect aria-label="Definition type" value={kind} onChange={(event) => { setKind(event.target.value as OntologyKind); setParent(""); }}><NativeSelectOption value="topic">Topic</NativeSelectOption><NativeSelectOption value="entity_class">Entity class</NativeSelectOption><NativeSelectOption value="predicate_concept">Predicate concept</NativeSelectOption></NativeSelect></Label>
-        <Label>Key<Input aria-label="Definition key" value={key} maxLength={128} onChange={(event) => setKey(event.target.value)} /></Label>
-        <Label>Label<Input aria-label="Definition label" value={label} maxLength={128} onChange={(event) => setLabel(event.target.value)} /></Label>
-        <Label>Description<Textarea aria-label="Definition description" value={description} maxLength={512} onChange={(event) => setDescription(event.target.value)} /></Label>
-        <Label>Aliases, separated by commas<Input aria-label="Definition aliases" value={aliases} onChange={(event) => setAliases(event.target.value)} /></Label>
-        <Label>Parent definition ID<Input aria-label="Definition parent" list="ontology-parents" value={parent} onChange={(event) => setParent(event.target.value)} /><datalist id="ontology-parents">{definitions.filter((record) => record.kind === kind && record.id !== target?.id).map((record) => <NativeSelectOption key={record.id} value={record.id}>{record.definition!.label}</NativeSelectOption>)}</datalist></Label>
-        {kind === "entity_class" && <Label>Entity kind<NativeSelect aria-label="Class entity kind" value={entityKind} onChange={(event) => setEntityKind(event.target.value)}>{["person", "organization", "project", "product", "place", "document", "concept", "other"].map((value) => <NativeSelectOption key={value}>{value}</NativeSelectOption>)}</NativeSelect></Label>}
+        <FieldRow label="Definition type" htmlFor="ontology-definition-type"><NativeSelect id="ontology-definition-type" aria-label="Definition type" value={kind} onChange={(event) => { setKind(event.target.value as OntologyKind); setParent(""); }}><NativeSelectOption value="topic">Topic</NativeSelectOption><NativeSelectOption value="entity_class">Entity class</NativeSelectOption><NativeSelectOption value="predicate_concept">Predicate concept</NativeSelectOption></NativeSelect></FieldRow>
+        <FieldRow label="Key" htmlFor="ontology-definition-key"><Input id="ontology-definition-key" aria-label="Definition key" value={key} maxLength={128} onChange={(event) => setKey(event.target.value)} /></FieldRow>
+        <FieldRow label="Label" htmlFor="ontology-definition-label"><Input id="ontology-definition-label" aria-label="Definition label" value={label} maxLength={128} onChange={(event) => setLabel(event.target.value)} /></FieldRow>
+        <FieldRow label="Description" htmlFor="ontology-definition-description"><Textarea id="ontology-definition-description" aria-label="Definition description" value={description} maxLength={512} onChange={(event) => setDescription(event.target.value)} /></FieldRow>
+        <FieldRow label="Aliases, separated by commas" htmlFor="ontology-definition-aliases"><Input id="ontology-definition-aliases" aria-label="Definition aliases" value={aliases} onChange={(event) => setAliases(event.target.value)} /></FieldRow>
+        <FieldRow label="Parent definition ID" htmlFor="ontology-definition-parent"><Input id="ontology-definition-parent" aria-label="Definition parent" list="ontology-parents" value={parent} onChange={(event) => setParent(event.target.value)} /><datalist id="ontology-parents">{definitions.filter((record) => record.kind === kind && record.id !== target?.id).map((record) => <NativeSelectOption key={record.id} value={record.id}>{record.definition!.label}</NativeSelectOption>)}</datalist></FieldRow>
+        {kind === "entity_class" && <FieldRow label="Entity kind" htmlFor="ontology-class-entity-kind"><NativeSelect id="ontology-class-entity-kind" aria-label="Class entity kind" value={entityKind} onChange={(event) => setEntityKind(event.target.value)}>{["person", "organization", "project", "product", "place", "document", "concept", "other"].map((value) => <NativeSelectOption key={value}>{value}</NativeSelectOption>)}</NativeSelect></FieldRow>}
         <p>Definition edits stay pinned until you explicitly unpin them.</p>
-      </> : action === "classify" || action === "pin_definition" ? <Label>Definition ID<Input aria-label="Target definition" list="ontology-definitions" value={definitionId} onChange={(event) => setDefinitionId(event.target.value)} /><datalist id="ontology-definitions">{compatible.map((record) => <NativeSelectOption key={record.id} value={record.id}>{record.definition!.label}</NativeSelectOption>)}</datalist></Label> : <p>Selected sources must satisfy the existing grouping rules. Keeping sources separate applies to each selected pair.</p>}
+      </> : action === "classify" || action === "pin_definition" ? <FieldRow label="Definition ID" htmlFor="ontology-target-definition"><Input id="ontology-target-definition" aria-label="Target definition" list="ontology-definitions" value={definitionId} onChange={(event) => setDefinitionId(event.target.value)} /><datalist id="ontology-definitions">{compatible.map((record) => <NativeSelectOption key={record.id} value={record.id}>{record.definition!.label}</NativeSelectOption>)}</datalist></FieldRow> : <p>Selected sources must satisfy the existing grouping rules. Keeping sources separate applies to each selected pair.</p>}
       <Button variant="default" className="primary-button" type="submit" disabled={!valid}>Add correction to draft</Button>
     </fieldset>
   </form>;

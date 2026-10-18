@@ -415,11 +415,33 @@ test("user portal logs in with a real API key and shows only that credential", a
   await expect(page.getByRole("link", { name: "Dream history" })).toHaveCount(0);
 });
 
-test("control navigation retains theme, guards unsaved settings, and restores global Logs scope", async ({ page }) => {
+test("control navigation retains theme, guards unsaved settings, and restores global Logs scope", async ({ page, request }) => {
+  async function createCredential(role: "manager" | "member") {
+    const response = await request.post(`${controlUrl}/control/api/teams/${seedTeamId}/credentials`, {
+      headers: bearer(controlToken), data: { name: `Unsaved ${role} ${Date.now()}`, role, scopes: ["read", "write"], rate_limit: 300 },
+    });
+    expect(response.status()).toBe(201);
+    return (await response.json()).data as CreatedCredential;
+  }
+  const manager = await createCredential("manager");
+  const member = await createCredential("member");
   await page.emulateMedia({ colorScheme: "light" });
   await openControlPanel(page);
+  await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
   await navigate(page, "Credentials");
   expect(new URL(page.url()).searchParams.get("team_id")).toBeTruthy();
+  const rename = page.getByLabel(`Credential name ${manager.credential.name}`, { exact: true });
+  await rename.fill("Keep unfinished Control rename");
+  const rotate = page.getByRole("button", { name: `Regenerate API key for credential ${member.credential.name}`, exact: true });
+  await rotate.click();
+  await confirmAction(page, "Cancel");
+  await expect(rename).toHaveValue("Keep unfinished Control rename");
+  const reloaded = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === `/control/api/teams/${seedTeamId}/credentials`);
+  await rotate.click();
+  await confirmAction(page, "Regenerate API key");
+  await reloaded;
+  await expect(rename).toHaveValue("Keep unfinished Control rename");
+  await rename.fill(manager.credential.name);
   await navigate(page, "Settings");
   await page.getByRole("tab", { name: "General", exact: true }).focus();
   await page.keyboard.press("ArrowRight");
@@ -447,6 +469,44 @@ test("control navigation retains theme, guards unsaved settings, and restores gl
   await page.reload();
   expect(new URL((await refreshedLogs).url()).searchParams.has("team_id")).toBe(false);
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expectPageContained(page);
+  await openUserPortal(page, manager.api_key);
+  await navigate(page, "Team");
+  const memberName = page.getByLabel(`Credential name ${member.credential.name}`, { exact: true });
+  await memberName.fill("Keep unfinished Knowledge rename");
+  const refreshed = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/ui/api/team/credentials");
+  await page.getByRole("button", { name: "Refresh credentials", exact: true }).click();
+  await refreshed;
+  await expect(memberName).toHaveValue("Keep unfinished Knowledge rename");
+  await expectPageContained(page);
+});
+
+test("control Logs renders and inspects the source-less readiness record", async ({ page }) => {
+  await openControlPanel(page);
+  const initialLogs = page.waitForResponse((response) => new URL(response.url()).pathname === "/control/api/logs");
+  await navigate(page, "Logs");
+  await initialLogs;
+  const [response] = await Promise.all([
+    page.waitForResponse((response) => new URL(response.url()).pathname === "/control/api/logs" && new URL(response.url()).searchParams.get("direction") === "asc"),
+    page.getByRole("combobox", { name: /^Direction/ }).selectOption("asc"),
+  ]);
+  expect(response.status()).toBe(200);
+  const data = (await response.json()).data as Array<{ id: string; message: string; source?: string }>;
+  const probes = data.filter((record) => record.message === "operation log sink readiness probe" && record.source === undefined);
+  expect(probes.length).toBeGreaterThan(0);
+  const rows = page.getByRole("row").filter({ hasText: "operation log sink readiness probe", has: page.getByText("Not recorded", { exact: true }) });
+  await expect(rows).toHaveCount(probes.length);
+  const row = rows.first();
+  await expect(row.getByText("Not recorded", { exact: true })).toBeVisible();
+  await row.getByRole("button", { name: "View raw log operation log sink readiness probe", exact: true }).click();
+  const raw = page.getByLabel("Raw log body operation log sink readiness probe", { exact: true });
+  await expect(raw).toBeVisible();
+  const record = JSON.parse((await raw.textContent())!);
+  expect(record.id).toBe(probes[0].id);
+  expect(record).not.toHaveProperty("source");
+  if (await page.locator(".contextual-sheet").isVisible()) await page.keyboard.press("Escape");
+  await expect(page.locator(".contextual-sheet")).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Operation Logs", exact: true })).toBeVisible();
   await expectPageContained(page);
 });
 

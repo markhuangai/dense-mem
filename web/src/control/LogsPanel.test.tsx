@@ -5,6 +5,30 @@ import { ControlApi } from "../api";
 import { LogsPanel } from "./LogsPanel";
 
 describe("LogsPanel", () => {
+  it("renders omitted and empty sources from the API without changing raw records", async () => {
+    const common = { timestamp: "2026-08-18T01:05:00Z", severity: "INFO", severity_rank: 20, attrs: {} };
+    const rows = [
+      { ...common, id: "missing-source", message: "source omitted" },
+      { ...common, id: "empty-source", message: "source empty", source: "" },
+      { ...common, id: "recorded-source", message: "source recorded", source: "/app/dense-mem/internal/worker.go:42" },
+    ];
+    const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      data: rows, pagination: { limit: 100, offset: 0, total: rows.length },
+    }), { status: 200 }));
+    try {
+      render(<LogsPanel api={new ControlApi("test-token")} teams={[]} />);
+      await screen.findByText("source omitted");
+      expect(screen.getAllByText("Not recorded")).toHaveLength(2);
+      expect(screen.getByText("internal/worker.go:42")).toBeVisible();
+      await userEvent.click(screen.getByRole("button", { name: "View raw log source omitted" }));
+      const raw = JSON.parse(screen.getByLabelText("Raw log body source omitted").textContent!);
+      expect(raw).toMatchObject({ id: "missing-source", msg: "source omitted" });
+      expect(raw).not.toHaveProperty("source");
+    } finally {
+      fetcher.mockRestore();
+    }
+  });
+
   it("offers every supported operation-log severity", async () => {
     const api = {
       listOperationLogs: vi.fn().mockResolvedValue({

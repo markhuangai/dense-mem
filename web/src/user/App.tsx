@@ -24,7 +24,7 @@ import {
   UserCredential,
   UserSession,
 } from "./api";
-import { AuthShell, LoadingState, PortalShell, SecretBox, SectionHeading, writeClipboardText } from "../ui/components";
+import { FieldRow, AuthShell, LoadingState, PortalShell, SecretBox, SectionHeading, writeClipboardText } from "../ui/components";
 import { SearchPanel } from "./SearchPanel";
 import { MemoryAccessSummary, memoryPermissionLabel } from "../credentialPermissions";
 import { PortalEnvironment, portalHref, usePortalNavigation, useUnsavedChanges } from "../ui/navigation";
@@ -628,22 +628,26 @@ function CredentialPanel({
       {isSSO && (
         <form className={`key-form${personalCredential ? " credential-create-form" : ""}`} onSubmit={createSSOCredential}>
           {personalCredential && <h3>Create another API key</h3>}
-          <Label htmlFor="sso-personal-credential-name">Credential name</Label>
-          <Input id="sso-personal-credential-name" value={name} onChange={(event) => setName(event.target.value)} />
-          <Label htmlFor="sso-personal-credential-permission">Permission</Label>
-          <NativeSelect
-            id="sso-personal-credential-permission"
-            value={permission}
-            disabled={!canCreateWrite}
-            onChange={(event) => setPermission(event.target.value as CredentialPermission)}
-          >
-            {canCreateWrite && <NativeSelectOption value="read_write">Team read/write</NativeSelectOption>}
-            <NativeSelectOption value="read">Team-read-only</NativeSelectOption>
-          </NativeSelect>
-          <Label htmlFor="sso-personal-credential-rate-limit">Rate limit</Label>
-          <Input id="sso-personal-credential-rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
-          <Label htmlFor="sso-personal-credential-expires">Expires (optional)</Label>
-          <Input id="sso-personal-credential-expires" type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} />
+          <FieldRow label="Credential name" htmlFor="sso-personal-credential-name">
+            <Input id="sso-personal-credential-name" value={name} onChange={(event) => setName(event.target.value)} />
+          </FieldRow>
+          <FieldRow label="Permission" htmlFor="sso-personal-credential-permission">
+            <NativeSelect
+              id="sso-personal-credential-permission"
+              value={permission}
+              disabled={!canCreateWrite}
+              onChange={(event) => setPermission(event.target.value as CredentialPermission)}
+            >
+              {canCreateWrite && <NativeSelectOption value="read_write">Team read/write</NativeSelectOption>}
+              <NativeSelectOption value="read">Team-read-only</NativeSelectOption>
+            </NativeSelect>
+          </FieldRow>
+          <FieldRow label="Rate limit" htmlFor="sso-personal-credential-rate-limit">
+            <Input id="sso-personal-credential-rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
+          </FieldRow>
+          <FieldRow label="Expires (optional)" htmlFor="sso-personal-credential-expires">
+            <Input id="sso-personal-credential-expires" type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} />
+          </FieldRow>
           <Button variant="default" className="primary-button span" type="submit" disabled={busy || !session.membership.grants.includes("read")}>
             <KeyRound size={16} aria-hidden="true" />
             Create API key

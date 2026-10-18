@@ -386,8 +386,8 @@ function severityClass(severity: string): string {
   }
 }
 
-function compactSource(source: string): string {
-  return source.replace(/^.*\/dense-mem\//, "");
+function compactSource(source?: string): string {
+  return source ? source.replace(/^.*\/dense-mem\//, "") : "Not recorded";
 }
 
 type LogSummary = {
