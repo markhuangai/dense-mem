@@ -124,7 +124,7 @@ export function TeamOverviewPanel({
           <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="HTTP requests" value={requestValue} trend={metricsReady ? requests > 0 ? "+ active" : "idle" : "unavailable"} tone={metricsFailed ? "warning" : "neutral"} />
           <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="Errors" value={errorValue} trend={metricsReady ? errors > 0 ? "review" : "clear" : "unavailable"} tone={errors > 0 ? "danger" : metricsFailed ? "warning" : "neutral"} />
           <MetricRow icon={<Users size={15} aria-hidden="true" />} label="Writable credentials" value={readWriteCount} trend={`${credentials.length} total`} />
-          <MetricRow icon={<Network size={15} aria-hidden="true" />} label={communityEnabled ? "Topic projections" : "Community history"} value={communityStatus?.current_community_count ?? "n/a"} trend={communityTrend} tone={communityWarning ? "warning" : "neutral"} />
+          <MetricRow icon={<Network size={15} aria-hidden="true" />} label={communityEnabled ? "Topic projections" : "Community history"} value={(communityEnabled ? communityStatus?.current_community_count : communityStatus?.latest_run?.community_count) ?? "n/a"} trend={communityTrend} tone={communityWarning ? "warning" : "neutral"} />
         </section>
 
         <section className="overview-panel" aria-label="Top signals">

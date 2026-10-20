@@ -27,6 +27,7 @@ test("team overview distinguishes live topic projections, disabled history and u
       const status = (await (await response).json()).data as CommunityStatus;
       const row = page.locator(".metric-row").filter({ has: page.getByText(enabled ? "Topic projections" : "Community history", { exact: true }) });
       await expect(row).not.toContainText("not run");
+      await expect(row.locator("strong")).toHaveText(String((enabled ? status.current_community_count : status.latest_run?.community_count) ?? "n/a"));
       if (enabled) {
         expect(status.latest_run).toBeUndefined();
         expect(status.projection_coverage).toBeTruthy();
@@ -45,6 +46,7 @@ test("team overview distinguishes live topic projections, disabled history and u
     await page.reload();
     const row = page.locator(".metric-row").filter({ has: page.getByText("Community history", { exact: true }) });
     await expect(row).toContainText("Status unavailable");
+    await expect(row.locator("strong")).toHaveText("n/a");
     await expect(row).toHaveClass(/warning/);
   } finally {
     await page.unroute(`**${statusPath}`);
