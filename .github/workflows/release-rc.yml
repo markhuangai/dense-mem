@@ -575,7 +575,7 @@ jobs:
       contents: read
       packages: read
     runs-on: [home-server, bash, non-root]
-    timeout-minutes: 60
+    timeout-minutes: 75
     environment: staging
     env:
       IMAGE_TAG: ${{ needs.prepare-prerelease.outputs.tag }}

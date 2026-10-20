@@ -769,6 +769,18 @@ test("staging deployment shares source verification and pinned healthy startup",
   assert.doesNotMatch(helper, /docker compose logs/);
 });
 
+test("staging deployment job budgets leave time for image transfer and failure cleanup", async () => {
+  const helper = await readFile(new URL("../../.github/scripts/deploy-staging-image.sh", import.meta.url), "utf8");
+  const lockWait = Number(helper.match(/flock --wait (\d+) 9/)[1]);
+  const startupWait = Number(helper.match(/--wait-timeout (\d+) server/)[1]);
+  const cleanupWait = Number(helper.match(/docker compose stop --timeout (\d+) server/)[1]);
+  for (const [file, job] of [["deploy-stage", "deploy-staging"], ["release-rc", "recover-staging"]]) {
+    const workflow = await readFile(new URL(`../../.github/workflows/${file}.yml`, import.meta.url), "utf8");
+    const jobSeconds = Number(workflowJob(workflow, job).match(/^    timeout-minutes: (\d+)$/m)[1]) * 60;
+    assert.ok(jobSeconds > lockWait + startupWait + cleanupWait, `${job} must leave time for image transfer and verification after lock, startup and cleanup waits`);
+  }
+});
+
 test("owner-admin PR pushes run automatically without an approval label", () => {
   assert.deepEqual(
     decidePreviewEvent({
