@@ -19,4 +19,12 @@ export type CommunityStatus = {
     completed_at?: string;
   } | null;
   current_community_count: number;
+  projection_coverage?: {
+    total_topics: number;
+    current_topics: number;
+    pending_topics: number;
+    stale_topics: number;
+    failed_topics: number;
+    coverage_complete: boolean;
+  };
 };

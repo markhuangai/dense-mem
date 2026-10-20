@@ -1,6 +1,7 @@
 import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
 import { expect, type APIRequestContext, type Locator, type Page, test } from "@playwright/test";
 import "./graph-views";
+import "./portal-state";
 
 const controlUrl = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const userUrl = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");

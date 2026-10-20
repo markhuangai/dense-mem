@@ -76,6 +76,14 @@ export function TeamOverviewPanel({
   const metricsFailed = metricsUnavailable && !metricsLoading;
   const communityUnavailable = communityStatus === null && !loading;
   const communityEnabled = communityStatus?.effective_config.enabled === true;
+  const projection = communityStatus?.projection_coverage;
+  const communityTrend = loading ? "Loading" : !communityStatus ? "Status unavailable"
+    : !communityEnabled ? communityStatus.latest_run ? `Historical run: ${communityStatus.latest_run.status}` : "No historical runs"
+    : !projection ? "Projection status unavailable"
+    : projection.coverage_complete && projection.current_topics === 0 ? "No current topics"
+    : !projection.coverage_complete && projection.total_topics === 0 ? "Pending discovery"
+    : `${projection.current_topics} current · ${projection.pending_topics} pending · ${projection.stale_topics} stale · ${projection.failed_topics} failed${!projection.coverage_complete && projection.pending_topics + projection.stale_topics + projection.failed_topics === 0 ? " · discovery pending" : ""}`;
+  const communityWarning = communityUnavailable || (communityEnabled ? !projection || projection.failed_topics > 0 : communityStatus?.latest_run?.status === "failed");
   const teamMetrics = metricsReady ? metrics.teams.find((item) => item.team_id === team.id) : undefined;
   const requests = metricsReady ? teamMetrics?.requests ?? metrics.system.requests : 0;
   const errors = metricsReady ? teamMetrics?.errors ?? metrics.system.errors : 0;
@@ -116,7 +124,7 @@ export function TeamOverviewPanel({
           <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="HTTP requests" value={requestValue} trend={metricsReady ? requests > 0 ? "+ active" : "idle" : "unavailable"} tone={metricsFailed ? "warning" : "neutral"} />
           <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="Errors" value={errorValue} trend={metricsReady ? errors > 0 ? "review" : "clear" : "unavailable"} tone={errors > 0 ? "danger" : metricsFailed ? "warning" : "neutral"} />
           <MetricRow icon={<Users size={15} aria-hidden="true" />} label="Writable credentials" value={readWriteCount} trend={`${credentials.length} total`} />
-          <MetricRow icon={<Network size={15} aria-hidden="true" />} label="Community snapshot" value={communityStatus?.current_community_count ?? "n/a"} trend={communityStatus?.latest_run?.status ?? "not run"} tone={communityStatus?.latest_run?.status === "failed" ? "warning" : "neutral"} />
+          <MetricRow icon={<Network size={15} aria-hidden="true" />} label={communityEnabled ? "Topic projections" : "Community history"} value={communityStatus?.current_community_count ?? "n/a"} trend={communityTrend} tone={communityWarning ? "warning" : "neutral"} />
         </section>
 
         <section className="overview-panel" aria-label="Top signals">

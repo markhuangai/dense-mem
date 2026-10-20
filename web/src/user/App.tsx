@@ -270,6 +270,7 @@ function UserPortal({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [switchingTeam, setSwitchingTeam] = useState(false);
+  const [teamEditorResetVersion, setTeamEditorResetVersion] = useState(0);
   const switchRequestId = useRef(0);
 
   async function loadSession() {
@@ -337,7 +338,7 @@ function UserPortal({
       title="Knowledge"
       icon={<span className="brand-initials" aria-hidden="true">DM</span>}
       topbarActions={<>{session && <UserContextBar session={session} />}{themeMenu}
-        <Button variant="ghost" size="icon" className="icon-button" type="button" aria-label="Refresh session" disabled={switchingTeam || loading} onClick={() => void transition(loadSession)}><RefreshCw size={17} aria-hidden="true" /></Button>
+        <Button variant="ghost" size="icon" className="icon-button" type="button" aria-label="Refresh session" disabled={switchingTeam || loading} onClick={() => void transition(() => { setTeamEditorResetVersion((version) => version + 1); return loadSession(); })}><RefreshCw size={17} aria-hidden="true" /></Button>
         <Button variant="ghost" className="ghost-button" type="button" aria-label="Sign out" onClick={() => void transition(async () => { try { await onSignOut(); return true; } catch (err) { setError(readError(err)); return false; } })}><LogOut size={17} aria-hidden="true" /><span className="sign-out-label">Sign out</span></Button>
       </>}
       navLabel="Knowledge navigation"
@@ -357,6 +358,8 @@ function UserPortal({
             <TeamManagementPanel
               api={api}
               session={session}
+              resetVersion={teamEditorResetVersion}
+              refreshing={loading}
               onTeamUpdated={(team) => setSession((current) => current ? { ...current, team } : current)}
             />
           )}

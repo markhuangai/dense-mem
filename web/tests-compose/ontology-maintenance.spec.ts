@@ -1,9 +1,57 @@
 import { navigate, openNavigation, confirmAction, expectPageContained, expectCompactNumberField } from "../tests-support/portal";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
+import type { CommunityStatus } from "../src/community-api-types";
 
 const controlURL = process.env.DENSE_MEM_CONTROL_URL!;
 const token = process.env.DENSE_MEM_CONTROL_TOKEN!;
+
+test("team overview distinguishes live topic projections, disabled history and unavailable status", async ({ page, request }) => {
+  const headers = { Authorization: `Bearer ${token}` };
+  const configResponse = await request.get(`${controlURL}/control/api/config/ontology-maintenance`, { headers });
+  expect(configResponse.ok()).toBeTruthy();
+  const original = (await configResponse.json()).data;
+  const teamsResponse = await request.get(`${controlURL}/control/api/teams`, { headers });
+  expect(teamsResponse.ok()).toBeTruthy();
+  const team = (await teamsResponse.json()).data[0];
+  const statusPath = `/control/api/teams/${team.id}/community/status`;
+  try {
+    await page.goto(controlURL);
+    await page.getByLabel("Control token").fill(token);
+    await page.getByRole("button", { name: "Unlock" }).click();
+    for (const enabled of [true, false]) {
+      const configured = await request.patch(`${controlURL}/control/api/config/ontology-maintenance`, { headers, data: { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: String(enabled) }] } });
+      expect(configured.ok()).toBeTruthy();
+      const response = page.waitForResponse((response) => new URL(response.url()).pathname === statusPath);
+      await page.goto(`${controlURL}/?section=teams&team_id=${team.id}&team_tab=overview`);
+      const status = (await (await response).json()).data as CommunityStatus;
+      const row = page.locator(".metric-row").filter({ has: page.getByText(enabled ? "Topic projections" : "Community history", { exact: true }) });
+      await expect(row).not.toContainText("not run");
+      if (enabled) {
+        expect(status.latest_run).toBeUndefined();
+        expect(status.projection_coverage).toBeTruthy();
+        const coverage = status.projection_coverage!;
+        if (coverage.coverage_complete && coverage.current_topics === 0) await expect(row).toContainText("No current topics");
+        else if (!coverage.coverage_complete && coverage.total_topics === 0) await expect(row).toContainText("Pending discovery");
+        else {
+          for (const [count, label] of [[coverage.current_topics, "current"], [coverage.pending_topics, "pending"], [coverage.stale_topics, "stale"], [coverage.failed_topics, "failed"]]) await expect(row).toContainText(`${count} ${label}`);
+        }
+        if (coverage.failed_topics > 0) await expect(row).toHaveClass(/warning/);
+      } else {
+        await expect(row).toContainText(status.latest_run ? `Historical run: ${status.latest_run.status}` : "No historical runs");
+      }
+    }
+    await page.route(`**${statusPath}`, (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ message: "status unavailable" }) }));
+    await page.reload();
+    const row = page.locator(".metric-row").filter({ has: page.getByText("Community history", { exact: true }) });
+    await expect(row).toContainText("Status unavailable");
+    await expect(row).toHaveClass(/warning/);
+  } finally {
+    await page.unroute(`**${statusPath}`);
+    const restored = await request.patch(`${controlURL}/control/api/config/ontology-maintenance`, { headers, data: { items: original.items.map(({ key, value }: { key: string; value: string }) => ({ key, value })) } });
+    expect(restored.ok()).toBeTruthy();
+  }
+});
 
 test("operators inspect ontology coverage and pause or resume durable admission", async ({ page }) => {
   await page.goto(controlURL);

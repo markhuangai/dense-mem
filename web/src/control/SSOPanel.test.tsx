@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, ControlApi, SSOGroupMapping, SSOProvider, Team } from "../api";
 import { SSOPanel } from "./SSOPanel";
+import { PortalEnvironment, usePortalNavigation } from "../ui/navigation";
 
 const team: Team = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -16,12 +17,46 @@ const team: Team = {
 
 const providerA = ssoProvider("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "Provider A");
 const providerB = ssoProvider("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "Provider B");
+const secondTeam = { ...team, id: "22222222-2222-4222-8222-222222222222", name: "Research" };
 
 beforeEach(() => {
   vi.restoreAllMocks();
 });
 
 describe("SSOPanel", () => {
+  it.each([false, true])("keeps a non-first team mapping clean after selection or save (save=%s)", async (save) => {
+    const api = await renderMappingWorkspace();
+    await userEvent.click(screen.getByRole("tab", { name: "Mappings" }));
+    await userEvent.selectOptions(screen.getByLabelText("Team", { exact: true }), secondTeam.id);
+    if (save) {
+      await userEvent.type(screen.getByLabelText("Group ID"), "saved-group");
+      await userEvent.click(screen.getByRole("button", { name: "Add" }));
+      await waitFor(() => expect(screen.getByLabelText("Group ID")).toHaveValue(""));
+      expect(api.createSSOGroupMapping).toHaveBeenCalledWith(providerA.id, expect.objectContaining({ team_id: secondTeam.id, group_id: "saved-group" }));
+    }
+    expect(screen.getByLabelText("Team", { exact: true })).toHaveValue(secondTeam.id);
+    await userEvent.click(screen.getByRole("button", { name: "Leave mappings" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])("guards a provider switch with unsaved mapping fields (discard=%s)", async (discard) => {
+    await renderMappingWorkspace();
+    await userEvent.click(screen.getByRole("tab", { name: "Mappings" }));
+    await userEvent.type(screen.getByLabelText("Group ID"), "unsaved-group");
+    await userEvent.click(screen.getByRole("tab", { name: "Providers" }));
+    await userEvent.click(screen.getByRole("button", { name: "Edit Provider B" }));
+    await userEvent.click(await screen.findByRole("button", { name: discard ? "Discard changes" : "Cancel" }));
+    await waitFor(() => expect(screen.getByLabelText("Name", { exact: true })).toHaveValue(discard ? providerB.name : providerA.name));
+    await userEvent.click(screen.getByRole("tab", { name: "Mappings" }));
+    expect(screen.getByLabelText("Group ID")).toHaveValue(discard ? "" : "unsaved-group");
+  });
+
+  it("still guards navigation when provider fields are dirty", async () => {
+    await renderMappingWorkspace();
+    await userEvent.type(screen.getByLabelText("Name", { exact: true }), " edited");
+    await userEvent.click(screen.getByRole("button", { name: "Leave mappings" }));
+    expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+  });
 	it("renders and saves the protected-resource contract", async () => {
 		const oauthProvider: SSOProvider = {
 			...providerA,
@@ -124,6 +159,23 @@ describe("SSOPanel", () => {
     expect(screen.queryByText("group-a")).not.toBeInTheDocument();
   });
 });
+
+async function renderMappingWorkspace() {
+  const api = {
+    listSSOProviders: vi.fn(async () => [providerA, providerB]),
+    listSSOGroupMappings: vi.fn(async () => []),
+    createSSOGroupMapping: vi.fn(async () => ({ ...ssoMapping(providerA, "saved-group"), team_id: secondTeam.id })),
+    getDirectoryConnector: vi.fn(async () => { throw new ApiError(404, "not found"); }),
+    listControlAdminGroups: vi.fn(async () => []),
+  } as unknown as ControlApi;
+  function Workspace() {
+    const { navigate, parameters } = usePortalNavigation();
+    return <><button onClick={() => void navigate({ section: parameters.get("section") === "logs" ? "config" : "logs" })}>Leave mappings</button><SSOPanel api={api} teams={[team, secondTeam]} /></>;
+  }
+  render(<PortalEnvironment><Workspace /></PortalEnvironment>);
+  await waitFor(() => expect(screen.getByLabelText("Name", { exact: true })).toHaveValue(providerA.name));
+  return api;
+}
 
 function ssoProvider(id: string, name: string): SSOProvider {
   return {

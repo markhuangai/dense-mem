@@ -1,7 +1,7 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ConfirmationProvider, useConfirmation } from "./confirmation";
 
-const parameterNames = ["section", "team_id", "team_tab", "tab", "logs_scope", "remember_view", "attempt_id", "invocation_id"] as const;
+const parameterNames = ["section", "team_id", "team_tab", "tab", "logs_scope", "remember_view", "attempt_id", "invocation_id", "correlation_id"] as const;
 export type NavigationPatch = Partial<Record<typeof parameterNames[number], string | null>>;
 type Navigation = {
   parameters: URLSearchParams;

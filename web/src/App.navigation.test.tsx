@@ -169,3 +169,79 @@ it("loads the next team page from the workspace picker before selecting an unloa
     return parsed.pathname === "/control/api/teams" && parsed.searchParams.get("offset") === "20";
   })).toBe(true);
 });
+
+it.each(["unchanged", "changed", "failed"])("discards a confirmed Control team draft before a %s refresh", async (outcome) => {
+  const fetchMock = mockPortalFetch({ teams: [profileA], keys: [] });
+  const initialFetch = fetchMock.getMockImplementation()!;
+  let finish!: (response: Response) => void;
+  const refreshed = new Promise<Response>((resolve) => { finish = resolve; });
+  let refreshing = false;
+  fetchMock.mockImplementation((input, init) => refreshing && new URL(String(input), location.origin).pathname === "/control/api/teams"
+    ? refreshed : initialFetch(input, init));
+  render(<App />);
+  await screen.findByRole("button", { name: /Default/ });
+  await userEvent.click(screen.getByRole("link", { name: "Team settings" }));
+  const name = await screen.findByLabelText("Name", { exact: true });
+  await userEvent.type(name, " edited");
+  await userEvent.type(screen.getByLabelText("Description", { exact: true }), "discard this");
+  const count = fetchMock.mock.calls.length;
+  await userEvent.click(screen.getByRole("button", { name: "Refresh teams" }));
+  await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+  expect(name).toHaveValue("Default edited");
+  expect(fetchMock.mock.calls.length).toBe(count);
+  refreshing = true;
+  await userEvent.click(screen.getByRole("button", { name: "Refresh teams" }));
+  await userEvent.click(await screen.findByRole("button", { name: "Discard changes" }));
+  await waitFor(() => expect(name).toHaveValue("Default"));
+  expect(screen.getByLabelText("Description", { exact: true })).toHaveValue("");
+  expect(name).toBeDisabled();
+  const team = outcome === "changed" ? { ...profileA, name: "Updated on server", description: "New description" } : profileA;
+  finish(new Response(JSON.stringify(outcome === "failed" ? { message: "refresh unavailable" } : { data: [team], pagination: { limit: 20, offset: 0, total: 1 } }), { status: outcome === "failed" ? 503 : 200, headers: { "Content-Type": "application/json" } }));
+  await waitFor(() => expect(name).toBeEnabled());
+  await waitFor(() => expect(name).toHaveValue(team.name));
+  if (outcome === "failed") expect(await screen.findByRole("alert")).toHaveTextContent("refresh unavailable");
+  await userEvent.click(screen.getByRole("link", { name: "Logs" }));
+  expect(await screen.findByRole("heading", { name: "Operation Logs" })).toBeInTheDocument();
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+});
+
+it("restores each Logs entry's initial query through Back, Forward and reload", async () => {
+  const invocation = {
+    team_id: profileA.id, owner_profile_id: "owner-1", invocation_id: "history-call", canonical_attempt_id: "",
+    request_hash: "hash", correlation_id: "history-correlation", classification: "execution", outcome: "completed",
+    phase: "", protected_cause: "", delivery_stage: "unknown_receipt", retryable: false,
+    duration_ms: 1, created_at: "2026-08-18T01:00:00Z", expires_at: "2026-08-25T01:00:00Z", retained_by_legal_hold: false,
+  };
+  const fetchMock = mockPortalFetch({ teams: [profileA], keys: [], rememberInvocation: {
+    summary: invocation, detail: { ...invocation, request_capture_state: "captured", provider_exchanges: [], caller_response_capture_state: "captured" },
+  } });
+  const queries = () => fetchMock.mock.calls.map(([input]) => new URL(String(input), location.origin)).filter((url) => url.pathname === "/control/api/logs");
+  const view = render(<App />);
+  await screen.findByRole("button", { name: /Default/ });
+  await userEvent.click(screen.getByRole("link", { name: "Logs" }));
+  await screen.findByRole("heading", { name: "Operation Logs" });
+  const globalURL = location.href;
+  await userEvent.click(screen.getByRole("link", { name: "Remember history" }));
+  await userEvent.click(await screen.findByRole("tab", { name: /^Calls \(/ }));
+  await userEvent.click(await screen.findByRole("button", { name: "Inspect Remember call history-call" }));
+  await userEvent.click(await screen.findByRole("button", { name: "View related logs" }));
+  await waitFor(() => expect(queries().at(-1)?.searchParams.get("invocation_id")).toBe("history-call"));
+  expect(screen.getByLabelText("Correlation ID")).toHaveValue("history-correlation");
+  act(() => window.history.back());
+  await screen.findByRole("tab", { name: /^Calls \(/ });
+  act(() => window.history.back());
+  await waitFor(() => expect(location.href).toBe(globalURL));
+  await waitFor(() => expect(queries().at(-1)?.searchParams.has("correlation_id")).toBe(false));
+  expect(screen.getByLabelText("Correlation ID")).toHaveValue("");
+  expect(queries().at(-1)?.searchParams.has("invocation_id")).toBe(false);
+  act(() => window.history.forward());
+  await screen.findByRole("tab", { name: /^Calls \(/ });
+  act(() => window.history.forward());
+  await waitFor(() => expect(queries().at(-1)?.searchParams.get("invocation_id")).toBe("history-call"));
+  expect(queries().at(-1)?.searchParams.get("team_id")).toBe(profileA.id);
+  view.unmount();
+  render(<App />);
+  expect(await screen.findByLabelText("Correlation ID")).toHaveValue("history-correlation");
+  await userEvent.click(screen.getByRole("link", { name: "Logs" }));
+  await waitFor(() => expect(queries().at(-1)?.searchParams.has("invocation_id")).toBe(false));
+});

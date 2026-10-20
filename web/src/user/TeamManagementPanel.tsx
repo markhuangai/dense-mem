@@ -14,10 +14,14 @@ export function TeamManagementPanel({
   api,
   session,
   onTeamUpdated,
+  resetVersion = 0,
+  refreshing = false,
 }: {
   api: UserApi;
   session: UserSession;
   onTeamUpdated: (team: UserTeam) => void;
+  resetVersion?: number;
+  refreshing?: boolean;
 }) {
   const confirm = useConfirmation();
   const [teamName, setTeamName] = useState(session.team.name);
@@ -50,7 +54,7 @@ export function TeamManagementPanel({
   useEffect(() => {
     setTeamName(session.team.name);
     setTeamDescription(session.team.description ?? "");
-  }, [session.team.id, session.team.name, session.team.description]);
+  }, [session.team.id, session.team.name, session.team.description, resetVersion]);
 
   useEffect(() => {
     setCreatedCredential(null);
@@ -167,13 +171,13 @@ export function TeamManagementPanel({
         {error && <div className="banner error" role="alert">{error}</div>}
         <form className="edit-grid" onSubmit={saveTeam}>
           <FieldRow label="Name" htmlFor="user-team-name">
-            <Input id="user-team-name" value={teamName} onChange={(event) => setTeamName(event.target.value)} />
+            <Input id="user-team-name" value={teamName} disabled={teamBusy || refreshing} onChange={(event) => setTeamName(event.target.value)} />
           </FieldRow>
           <FieldRow label="Description" htmlFor="user-team-description">
-            <Textarea id="user-team-description" value={teamDescription} onChange={(event) => setTeamDescription(event.target.value)} />
+            <Textarea id="user-team-description" value={teamDescription} disabled={teamBusy || refreshing} onChange={(event) => setTeamDescription(event.target.value)} />
           </FieldRow>
           <div className="button-row span">
-            <Button variant="default" className="primary-button" type="submit" disabled={teamBusy}>
+            <Button variant="default" className="primary-button" type="submit" disabled={teamBusy || refreshing}>
               <Pencil size={16} aria-hidden="true" />
               Save team
             </Button>

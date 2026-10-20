@@ -38,7 +38,7 @@ export function SSOPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
   const mappingsRequestId = useRef(0);
   const selectedProvider = providers.find((provider) => provider.id === selectedProviderId) ?? null;
 
-  useUnsavedChanges(JSON.stringify(providerDraft) !== JSON.stringify(selectedProvider ? providerToInput(selectedProvider) : emptyProviderInput()) || JSON.stringify(mappingDraft) !== JSON.stringify(emptyMappingInput(teams[0]?.id ?? "")));
+  useUnsavedChanges(JSON.stringify(providerDraft) !== JSON.stringify(selectedProvider ? providerToInput(selectedProvider) : emptyProviderInput()) || JSON.stringify(mappingDraft) !== JSON.stringify(emptyMappingInput(mappingDraft.team_id)));
 
   function selectProvider(providerId: string) {
     if (providerId !== selectedProviderIdRef.current) setMappingDraft(emptyMappingInput(teams[0]?.id ?? ""));
