@@ -1,5 +1,6 @@
 import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
 import { expect, test, type Page } from "@playwright/test";
+import type { CommunityStatus } from "../src/community-api-types";
 
 const controlUrl = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const userUrl = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
@@ -8,13 +9,17 @@ const teamId = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const teamName = requiredEnv("DENSE_MEM_E2E_TEAM_NAME");
 const apiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
 
-test("control workspace exposes the current community snapshot", async ({ page }) => {
+test("control workspace exposes community status for its ontology mode", async ({ page }) => {
   await openControlPanel(page);
+  const statusRequest = page.waitForResponse((response) => new URL(response.url()).pathname === `/control/api/teams/${teamId}/community/status`);
   await page.getByRole("button", { name: new RegExp(escapeRegExp(teamName)) }).click();
+  const statusResponse = await statusRequest;
+  expect(statusResponse.status()).toBe(200);
+  const status = (await statusResponse.json()).data as CommunityStatus;
 
   await expect(page.getByText("Communities", { exact: true })).toBeVisible();
-  await expect(page.getByText("Community snapshot", { exact: true })).toBeVisible();
-  await expect(page.getByText(/Ontology enabled|Ontology disabled/)).toBeVisible();
+  await expect(page.getByText(status.effective_config.enabled ? "Topic projections" : "Community history", { exact: true })).toBeVisible();
+  await expect(page.getByText(status.effective_config.enabled ? "Ontology enabled" : "Ontology disabled", { exact: true })).toBeVisible();
 });
 
 test("user recall renders a community result and the exact nested contract", async ({ page, request }) => {
