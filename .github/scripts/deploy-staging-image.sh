@@ -17,9 +17,11 @@ fail() {
 
 finish() {
   local status=$?
-  trap - EXIT INT TERM
+  # The bounded cleanup process group must survive the wrapper's first termination signal.
+  trap '' INT TERM
+  trap - EXIT
   if [[ "$startup_attempted" == true && "$healthy" != true ]]; then
-    if ! docker compose stop --timeout 30 server; then
+    if ! timeout --signal=TERM --kill-after=5s 40s docker compose stop --timeout 30 server; then
       failure_reason="Candidate startup failed and stopping its server also failed; inspect staging before recovery."
       printf '::error::%s\n' "$failure_reason" >&2
       status=1

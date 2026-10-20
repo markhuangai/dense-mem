@@ -109,10 +109,12 @@ test("real Compose deploys only a verified pinned image and leaves failed candid
 ARG REVISION
 ARG VARIANT=production
 ARG HEALTHY=true
+ARG SLOW_STOP=false
 LABEL org.opencontainers.image.revision=$REVISION org.opencontainers.image.variant=$VARIANT
 RUN if [ "$HEALTHY" = true ]; then touch /healthy; fi
+RUN if [ "$SLOW_STOP" = true ]; then touch /slow-stop; fi
 HEALTHCHECK --interval=1s --timeout=1s --retries=1 CMD test -f /healthy
-CMD ["sh", "-c", "trap 'exit 0' TERM INT; while :; do sleep 1; done"]
+CMD ["sh", "-c", "if [ -f /slow-stop ]; then trap '' TERM INT; else trap 'exit 0' TERM INT; fi; while :; do sleep 1; done"]
 `);
   await writeFile(join(directory, "compose.yaml"), `name: ${project}
 services:
@@ -121,10 +123,10 @@ services:
   keeper:
     image: ${repository}:good
 `);
-  for (const [tag, source, variant, healthy] of [["good", revision, "production", "true"], ["wrong", otherRevision, "production", "true"], ["demo", revision, "demo", "true"], ["unhealthy", revision, "production", "false"]]) {
+  for (const [tag, source, variant, healthy, slowStop = "false"] of [["good", revision, "production", "true"], ["wrong", otherRevision, "production", "true"], ["demo", revision, "demo", "true"], ["unhealthy", revision, "production", "false"], ["slow-stop", revision, "production", "false", "true"]]) {
     const name = `${repository}:${tag}`;
     ownedTags.push(name);
-    await docker("build", "--quiet", "--build-arg", `REVISION=${source}`, "--build-arg", `VARIANT=${variant}`, "--build-arg", `HEALTHY=${healthy}`, "--tag", name, directory);
+    await docker("build", "--quiet", "--build-arg", `REVISION=${source}`, "--build-arg", `VARIANT=${variant}`, "--build-arg", `HEALTHY=${healthy}`, "--build-arg", `SLOW_STOP=${slowStop}`, "--tag", name, directory);
     await docker("push", name);
   }
   const deploy = (tag, source = revision) => execute("bash", [helper, directory, tag, source], { env: env(), maxBuffer: 4 * 1024 * 1024 });
@@ -200,5 +202,15 @@ services:
       await pending;
     }
     assert.equal(await running(await serverID()), "true");
+  });
+  await t.test("a deadline arriving during failed-candidate cleanup preserves stop and summary", async () => {
+    const summary = join(directory, "cleanup-deadline-summary");
+    await assert.rejects(execute("timeout", ["--signal=TERM", "--kill-after=60s", "--verbose", "25s", "bash", helper, directory, "slow-stop", revision], {
+      env: { ...env(), GITHUB_STEP_SUMMARY: summary },
+      maxBuffer: 4 * 1024 * 1024,
+    }), (error) => error.code === 124 && /The verified candidate did not become healthy/.test(error.stderr));
+    assert.equal(await running(await serverID()), "false");
+    assert.equal(await running(keeper), "true");
+    assert.match(await readFile(summary, "utf8"), /Healthy: `false`[\s\S]*Failure: The verified candidate did not become healthy/);
   });
 });

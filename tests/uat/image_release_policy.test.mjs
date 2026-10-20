@@ -774,6 +774,11 @@ test("staging deployment job budgets leave time for image transfer and failure c
   const lockWait = Number(helper.match(/flock --wait (\d+) 9/)[1]);
   const startupWait = Number(helper.match(/--wait-timeout (\d+) server/)[1]);
   const cleanupWait = Number(helper.match(/docker compose stop --timeout (\d+) server/)[1]);
+  const cleanupDeadline = helper.match(/timeout --signal=TERM --kill-after=(\d+)s (\d+)s docker compose stop --timeout \d+ server/);
+  assert.ok(cleanupDeadline, "cleanup must have its own bounded process group");
+  const cleanupGraceSeconds = Number(cleanupDeadline[1]);
+  const cleanupSeconds = Number(cleanupDeadline[2]);
+  assert.ok(cleanupSeconds > cleanupWait, "cleanup must retain the configured container stop wait");
   for (const [file, job] of [["deploy-stage", "deploy-staging"], ["release-rc", "recover-staging"]]) {
     const workflow = await readFile(new URL(`../../.github/workflows/${file}.yml`, import.meta.url), "utf8");
     const source = workflowJob(workflow, job);
@@ -785,7 +790,7 @@ test("staging deployment job budgets leave time for image transfer and failure c
     const checkoutSeconds = Number(checkout.match(/^        timeout-minutes: (\d+)$/m)[1]) * 60;
     const jobSeconds = Number(source.match(/^    timeout-minutes: (\d+)$/m)[1]) * 60;
     assert.ok(operationSeconds > lockWait + startupWait, `${job} must retain its configured lock and startup waits`);
-    assert.ok(graceSeconds > cleanupWait, `${job} must allow candidate cleanup before forced termination`);
+    assert.ok(graceSeconds > cleanupSeconds + cleanupGraceSeconds, `${job} must allow bounded candidate cleanup before forced termination`);
     assert.ok(jobSeconds > checkoutSeconds + operationSeconds + graceSeconds, `${job} must reserve time outside the bounded deployment operation`);
     assert.ok(source.indexOf(deadline[0]) < source.indexOf("docker login"));
     assert.ok(source.indexOf("docker login") < source.indexOf("exec .github/scripts/deploy-staging-image.sh"));
