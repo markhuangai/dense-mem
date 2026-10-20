@@ -602,6 +602,7 @@ jobs:
 
       - name: Checkout trusted staging deployment helper
         uses: actions/checkout@v7
+        timeout-minutes: 2
         with:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
@@ -613,14 +614,16 @@ jobs:
           GHCR_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          timeout --signal=TERM --kill-after=60s --verbose 70m bash -euo pipefail <<'DEPLOY'
           docker_config="${RUNNER_TEMP}/dense-mem-staging-docker"
           mkdir -p "${docker_config}"
           export DOCKER_CONFIG="${docker_config}"
           printf '%s' "${GHCR_TOKEN}" |
             docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
           unset GHCR_TOKEN
-          .github/scripts/deploy-staging-image.sh \
+          exec .github/scripts/deploy-staging-image.sh \
             "${HOME}/dense-mem-stage" "${IMAGE_TAG}" "${EXPECTED_REVISION}"
+          DEPLOY
 
   publish-demo-image:
     name: Publish demo image

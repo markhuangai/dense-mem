@@ -169,6 +169,22 @@ services:
     assert.equal(await running(keeper), "true");
     assert.match(await readFile(join(directory, "summary"), "utf8"), /Healthy: `false`[\s\S]*No previous image was restarted/);
   });
+  await t.test("the deployment deadline stops a starting candidate and completes cleanup", async () => {
+    const previousServer = await serverID();
+    const override = join(directory, "deadline.yaml");
+    const summary = join(directory, "deadline-summary");
+    await writeFile(override, "services:\n  server:\n    healthcheck:\n      start_period: 1m\n");
+    await assert.rejects(execute("timeout", ["--signal=TERM", "--kill-after=60s", "--verbose", "15s", "bash", helper, directory, "unhealthy", revision], {
+      env: { ...env(), COMPOSE_FILE: `${join(directory, "compose.yaml")}:${override}`, GITHUB_STEP_SUMMARY: summary },
+      maxBuffer: 4 * 1024 * 1024,
+    }), (error) => error.code === 124);
+    const candidate = await serverID();
+    assert.notEqual(candidate, previousServer);
+    assert.ok(Date.parse(await docker("inspect", "--format", "{{.State.StartedAt}}", candidate)) > 0);
+    assert.equal(await running(candidate), "false");
+    assert.equal(await running(keeper), "true");
+    assert.match(await readFile(summary, "utf8"), /Healthy: `false`[\s\S]*No previous image was restarted/);
+  });
   await t.test("the real migration lock fences deployment until the holder releases it", async () => {
     holder = spawn("bash", ["-c", 'exec 9>"$1"; flock 9; printf ready; read -r release', "staging-lock", join(directory, "migration-rehearsal.lock")], { stdio: ["pipe", "pipe", "pipe"] });
     await once(holder.stdout, "data");

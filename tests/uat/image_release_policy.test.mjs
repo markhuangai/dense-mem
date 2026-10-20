@@ -776,8 +776,21 @@ test("staging deployment job budgets leave time for image transfer and failure c
   const cleanupWait = Number(helper.match(/docker compose stop --timeout (\d+) server/)[1]);
   for (const [file, job] of [["deploy-stage", "deploy-staging"], ["release-rc", "recover-staging"]]) {
     const workflow = await readFile(new URL(`../../.github/workflows/${file}.yml`, import.meta.url), "utf8");
-    const jobSeconds = Number(workflowJob(workflow, job).match(/^    timeout-minutes: (\d+)$/m)[1]) * 60;
-    assert.ok(jobSeconds > lockWait + startupWait + cleanupWait, `${job} must leave time for image transfer and verification after lock, startup and cleanup waits`);
+    const source = workflowJob(workflow, job);
+    const deadline = source.match(/timeout --signal=TERM --kill-after=(\d+)s --verbose (\d+)m bash -euo pipefail <<'DEPLOY'/);
+    assert.ok(deadline, `${job} must bound the entire login and deployment operation`);
+    const graceSeconds = Number(deadline[1]);
+    const operationSeconds = Number(deadline[2]) * 60;
+    const checkout = source.split("      - name: Checkout trusted staging deployment helper\n")[1].split("\n      - name:")[0];
+    const checkoutSeconds = Number(checkout.match(/^        timeout-minutes: (\d+)$/m)[1]) * 60;
+    const jobSeconds = Number(source.match(/^    timeout-minutes: (\d+)$/m)[1]) * 60;
+    assert.ok(operationSeconds > lockWait + startupWait, `${job} must retain its configured lock and startup waits`);
+    assert.ok(graceSeconds > cleanupWait, `${job} must allow candidate cleanup before forced termination`);
+    assert.ok(jobSeconds > checkoutSeconds + operationSeconds + graceSeconds, `${job} must reserve time outside the bounded deployment operation`);
+    assert.ok(source.indexOf(deadline[0]) < source.indexOf("docker login"));
+    assert.ok(source.indexOf("docker login") < source.indexOf("exec .github/scripts/deploy-staging-image.sh"));
+    const script = source.split("        run: |\n").at(-1).split("\n").map((line) => line.slice(10)).join("\n");
+    await execFileAsync("bash", ["-n", "-c", script]);
   }
 });
 
