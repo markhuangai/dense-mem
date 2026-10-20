@@ -10,9 +10,18 @@ on:
         description: "Commit, branch, or tag to rehearse."
         required: true
         type: string
+    outputs:
+      revision:
+        description: "Exact source revision of the successful rehearsal."
+        value: ${{ jobs.staging-migration-rehearsal.outputs.revision }}
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow == 'Staging migration rehearsal' && 'release-version-tags' || format('staging-rehearsal-{0}', github.run_id) }}
+  cancel-in-progress: false
+  queue: max
 
 jobs:
   staging-migration-rehearsal:
@@ -22,6 +31,8 @@ jobs:
     runs-on: [home-server, bash, non-root]
     timeout-minutes: 75
     environment: staging-migration
+    outputs:
+      revision: ${{ steps.rehearsal.outputs.revision }}
 
     steps:
       - name: Checkout selected revision
@@ -37,6 +48,7 @@ jobs:
           cache: true
 
       - name: Restore production copy and rehearse migrations
+        id: rehearsal
         shell: bash
         env:
           DENSE_MEM_STAGE_POSTGRES_DSN: ${{ secrets.PGVECTOR_STAGE_DSN }}
@@ -76,3 +88,6 @@ jobs:
             -count=1 \
             -timeout=40m
           echo "- Migration rehearsal completed (UTC): $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "${GITHUB_STEP_SUMMARY}"
+          revision="$(git rev-parse HEAD)"
+          echo "revision=${revision}" >> "${GITHUB_OUTPUT}"
+          echo "- Rehearsed source: ${revision}" >> "${GITHUB_STEP_SUMMARY}"

@@ -17,6 +17,7 @@ node --test tests/uat/embedding_upstream.test.mjs
 node --test tests/uat/ontology_organization_cleanup.test.mjs tests/eval/scripts/session_provider_proxy.test.mjs
 scripts/static-analysis.sh
 node --test tests/uat/team_dreaming_schedule.test.mjs
+node --test tests/uat/staging_deployment.test.mjs
 node --test tests/uat/image_release_policy.test.mjs tests/uat/preview_receipt.test.mjs tests/uat/fork_e2e_policy.test.mjs tests/uat/fork_e2e_workspace.test.mjs
 node --test tests/uat/fork_attestation_crypto.test.mjs
 node --test tests/uat/pr_image_cleanup.test.mjs

@@ -8,6 +8,12 @@ self-hosted-runner:
 
 # GitHub supports concurrency.queue: max, but actionlint does not parse it yet.
 paths:
+  .github/workflows/deploy-stage.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'
+  .github/workflows/staging-migration-rehearsal.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'
   .github/workflows/development-e2e-cleanup.yml:
     ignore:
       - 'unexpected key "queue" for "concurrency" section'
