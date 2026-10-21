@@ -378,6 +378,7 @@ if (scenario === "full") {
     "      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana-admin-password",
     "      GF_AUTH_ANONYMOUS_ENABLED: \"false\"",
     "      GF_USERS_ALLOW_SIGN_UP: \"false\"",
+    "      GF_PLUGINS_PREINSTALL_DISABLED: \"true\"",
     "    volumes:",
     "      - grafana-provisioning:/etc/grafana/provisioning:ro",
     "      - grafana-dashboards:/opt/dense-mem/grafana/dashboards:ro",
