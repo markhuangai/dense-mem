@@ -1,6 +1,6 @@
 -- Lock/rewrite impact: replaces a small partial operational index; no canonical rewrite or backfill.
 -- RLS impact: unchanged; existing forced shared-space policies govern every batch.
--- Upgrade and rollback require paused admission, drained work, and old workers stopped.
+-- Backward compatibility: upgrade and rollback require paused admission, drained work, and old workers stopped.
 -- History and immutable window policies are retained; missing per-team settings mean one.
 
 -- +goose Up
