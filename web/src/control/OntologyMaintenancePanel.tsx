@@ -8,7 +8,7 @@ import type { ControlApi, OntologyMaintenanceRunPage, OntologyMaintenanceStatus 
 import { FieldRow, LoadingState, SectionHeading, UsageMeter } from "../ui/components";
 import { formatDate, readError } from "./utils";
 
-export function OntologyMaintenancePanel({ api }: { api: ControlApi }) {
+export function OntologyMaintenancePanel({ api, onStatus }: { api: ControlApi; onStatus?: (status: OntologyMaintenanceStatus) => void }) {
   const [status, setStatus] = useState<OntologyMaintenanceStatus | null>(null);
   const [runs, setRuns] = useState<OntologyMaintenanceRunPage>({ runs: [] });
   const [batches, setBatches] = useState(1);
@@ -44,6 +44,7 @@ export function OntologyMaintenancePanel({ api }: { api: ControlApi }) {
             nextRuns = { runs: [...nextRuns.runs, ...older.runs], next_cursor: older.next_cursor };
           }
           setStatus(nextStatus);
+          onStatus?.(nextStatus);
         }
         nextRuns = { ...nextRuns, runs: [...new Map(nextRuns.runs.map((run) => [run.id, run])).values()] };
         currentRuns.current = nextRuns;
@@ -58,7 +59,7 @@ export function OntologyMaintenancePanel({ api }: { api: ControlApi }) {
     });
     historyLoad.current = request;
     return request;
-  }, [api]);
+  }, [api, onStatus]);
   const refresh = useCallback(() => loadHistory(), [loadHistory]);
 
   useEffect(() => {
@@ -141,6 +142,7 @@ export function OntologyMaintenancePanel({ api }: { api: ControlApi }) {
         <SectionHeading title="Current window" subtitle={windowState ? `${formatDate(windowState.starts_at)} – ${formatDate(windowState.ends_at)}` : "No maintenance window has opened."} />
         {windowState && <>
           <div className="window-policy"><span>{windowState.policy.model}</span><span>{windowState.policy.cadence_hours} hours</span><span>{windowState.policy.max_concurrency} concurrent assessment{windowState.policy.max_concurrency === 1 ? "" : "s"}</span></div>
+          <p className="form-meta">Current per-team default: {windowState.policy.team_max_concurrency ?? 1} · Effective ceiling: {Math.min(windowState.policy.team_max_concurrency ?? 1, windowState.policy.max_concurrency)} · Team overrides: {windowState.policy.team_concurrency_overrides?.length ?? 0}. Projection turns share these work slots.</p>
           <p className="form-meta usage-accounting-label">Charged totals include reported usage and unreported reservations.</p>
           <UsageMeter label="Input tokens" value={windowState.charged_input_tokens} limit={inputAllowance} detail={`${windowState.reported_input_tokens.toLocaleString()} reported · ${windowState.reserved_input_tokens.toLocaleString()} reserved`} />
           <UsageMeter label="Output tokens" value={windowState.charged_output_tokens} limit={outputAllowance} detail={`${windowState.reported_output_tokens.toLocaleString()} reported · ${windowState.reserved_output_tokens.toLocaleString()} reserved`} />
@@ -157,6 +159,7 @@ export function OntologyMaintenancePanel({ api }: { api: ControlApi }) {
         <div className="pending-policy"><h3>Pending policy</h3><dl>
           <div><dt>Schedule</dt><dd>{status.pending_policy.cadence_hours} hours from {status.pending_policy.start_time_local} ({status.pending_policy.timezone})</dd></div>
           <div><dt>Processing</dt><dd>{status.pending_policy.model} · {status.pending_policy.max_concurrency} concurrent assessment{status.pending_policy.max_concurrency === 1 ? "" : "s"}</dd></div>
+          <div><dt>Team concurrency</dt><dd>Default {status.pending_policy.team_max_concurrency ?? 1} · {status.pending_policy.team_concurrency_overrides?.length ?? 0} overrides · effective ceiling {Math.min(status.pending_policy.team_max_concurrency ?? 1, status.pending_policy.max_concurrency)} at the next window</dd></div>
           <div><dt>Allowance</dt><dd>{status.pending_policy.input_tokens.toLocaleString()} input / {status.pending_policy.output_tokens.toLocaleString()} output tokens per window</dd></div>
         </dl></div>
       </section>

@@ -19,10 +19,10 @@ const ontologyPauseBodyKey = "ontologyPause"
 
 type controlOntologyConfigItem struct {
 	Key   string `json:"key" validate:"required,max=64"`
-	Value string `json:"value" validate:"max=256"`
+	Value string `json:"value" validate:"max=16384"`
 }
 type controlOntologyConfigRequest struct {
-	Items []controlOntologyConfigItem `json:"items" validate:"required,min=1,max=7,dive"`
+	Items []controlOntologyConfigItem `json:"items" validate:"required,min=1,max=9,dive"`
 }
 type controlOntologyRunRequest struct {
 	OperationKey string `json:"operation_key" validate:"required,max=128"`

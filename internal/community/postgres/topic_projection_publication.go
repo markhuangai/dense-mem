@@ -18,15 +18,15 @@ func (r *Store) AppendTopicProjection(ctx context.Context, batch community.Topic
 		return ontology.ErrInvalid
 	}
 	return r.withProjectionTx(ctx, func(tx *gorm.DB) error {
-		if err := lockTopicProjection(tx, work, now); err != nil {
-			return err
-		}
 		admitted, err := projectionAdmission(tx)
 		if err != nil {
 			return err
 		}
 		if !admitted {
 			return ontology.ErrMaintenanceDisabled
+		}
+		if err := lockTopicProjection(tx, work, now); err != nil {
+			return err
 		}
 		fence, err := loadTeamSharedSpaceFence(ctx, tx, work.TeamID)
 		if err != nil {

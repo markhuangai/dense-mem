@@ -6,6 +6,51 @@ import type { CommunityStatus } from "../src/community-api-types";
 const controlURL = process.env.DENSE_MEM_CONTROL_URL!;
 const token = process.env.DENSE_MEM_CONTROL_TOKEN!;
 
+test("operators save per-team concurrency for the next window and retain rejected drafts", async ({ page, request }) => {
+  const headers = { Authorization: `Bearer ${token}` };
+  async function control(path: string, body?: unknown, method = body ? "PATCH" : "GET") {
+    const response = await request.fetch(`${controlURL}/control/api${path}`, { method, headers, ...(body ? { data: body } : {}) });
+    expect(response.ok()).toBeTruthy();
+    return (await response.json()).data;
+  }
+  const original = await control("/config/ontology-maintenance");
+  const before = await control("/ontology/status");
+  const teams = await control("/teams?limit=10&offset=0");
+  const team = teams[0];
+  expect(team).toBeTruthy();
+  try {
+    await page.goto(controlURL);
+    await page.getByLabel("Control token").fill(token);
+    await page.getByRole("button", { name: "Unlock" }).click();
+    await navigate(page, "Ontology maintenance");
+    await page.getByLabel("Team for override").selectOption(team.id);
+    await page.getByLabel("Concurrency override").fill("9");
+    await expect(page.getByRole("button", { name: "Stage team override" })).toBeDisabled();
+    await page.getByLabel("Concurrency override").fill("3");
+    await page.getByRole("button", { name: "Stage team override" }).click();
+    await page.getByLabel("Default concurrency per team").fill("9");
+    await page.getByRole("button", { name: "Save config", exact: true }).click();
+    await expect(page.getByRole("alert")).toContainText("invalid ontology maintenance input");
+    await expect(page.getByLabel("Default concurrency per team")).toHaveValue("9");
+    await expect(page.getByText(/Staged: 3/)).toBeVisible();
+    await page.getByLabel("Default concurrency per team").fill("2");
+    await page.getByRole("button", { name: "Save config", exact: true }).click();
+    await expect(page.getByText("Changes saved", { exact: true })).toBeVisible();
+    const saved = await control("/config/ontology-maintenance");
+    expect(saved.effective.team_max_concurrency).toBe(2);
+    expect(saved.effective.team_concurrency_overrides).toContainEqual({ team_id: team.id, max_concurrency: 3 });
+    await page.getByRole("button", { name: "Refresh ontology coverage" }).click();
+    await expect(page.getByText(/Staged: 3.*Saved: 3.*Current effective:/)).toBeVisible();
+    expect((await control("/ontology/status")).window.policy).toEqual(before.window.policy);
+    await expectPageContained(page);
+    await page.getByRole("button", { name: `Use default for ${team.name}`, exact: true }).click();
+    await page.getByRole("button", { name: "Save config", exact: true }).click();
+    await expect.poll(async () => (await control("/config/ontology-maintenance")).effective.team_concurrency_overrides.some((item: { team_id: string }) => item.team_id === team.id)).toBe(false);
+  } finally {
+    await control("/config/ontology-maintenance", { items: original.items.map(({ key, value }: { key: string; value: string }) => ({ key, value })) });
+  }
+});
+
 test("team overview distinguishes live topic projections, disabled history and unavailable status", async ({ page, request }) => {
   const headers = { Authorization: `Bearer ${token}` };
   const configResponse = await request.get(`${controlURL}/control/api/config/ontology-maintenance`, { headers });

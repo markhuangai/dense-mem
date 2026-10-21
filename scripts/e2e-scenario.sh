@@ -171,7 +171,9 @@ run_playwright() {
 case "$SCENARIO" in
   ontology_management) run_node_case tests/uat/ontology_management_e2e.mjs ;;
   python_client) bash "${ROOT_DIR}/packages/python/scripts/e2e.sh" ;;
-  ontology_organization) run_node_case tests/uat/ontology_organization_e2e.mjs ;;
+  ontology_organization)
+    run_node_case tests/uat/ontology_concurrency_e2e.mjs
+    run_node_case tests/uat/ontology_organization_e2e.mjs ;;
   session_ingest) run_node_case tests/uat/session_ingest_e2e.mjs ;;
   mcp_boundaries|mcp_transport_cancellation) run_node_case tests/uat/mcp_boundaries_e2e.mjs ;;
   oauth_provider_compatibility)

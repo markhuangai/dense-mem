@@ -319,4 +319,56 @@ describe("Ontology maintenance controls", () => {
     expect(bodies[2]).toEqual({ operation_key: expect.any(String), max_batches: 3 });
     expect(new Set(bodies.map((body) => body.operation_key)).size).toBe(3);
   });
+  it("edits team limits with pagination, preserves failed drafts, and separates active from saved policy", async () => {
+    const team = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const other = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    let saved = { ...policy, max_concurrency: 3, team_max_concurrency: 2, team_concurrency_overrides: [] as Array<{team_id:string;max_concurrency:number}> };
+    const active = { ...policy, max_concurrency: 3, team_max_concurrency: 1, team_concurrency_overrides: [] };
+    let attempts = 0;
+    const items = () => [
+      { key: "ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY", value: String(saved.team_max_concurrency), effective_value: String(saved.team_max_concurrency), updated_at: status.observed_at },
+      { key: "ONTOLOGY_MAINTENANCE_TEAM_OVERRIDES_JSON", value: JSON.stringify(saved.team_concurrency_overrides), effective_value: JSON.stringify(saved.team_concurrency_overrides), updated_at: status.observed_at },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/config/ontology-maintenance")) {
+        if (init?.method === "PATCH") {
+          if (++attempts === 1) return jsonResponse({ message: "save unavailable" }, 503);
+          const values = JSON.parse(String(init.body)).items;
+          saved = { ...saved, team_max_concurrency: Number(values.find((item:{key:string}) => item.key.endsWith("TEAM_MAX_CONCURRENCY")).value), team_concurrency_overrides: JSON.parse(values.find((item:{key:string}) => item.key.endsWith("OVERRIDES_JSON")).value) };
+        }
+        return jsonResponse({ data: { update_time: status.observed_at, items: items(), effective: saved } });
+      }
+      if (url.includes("/teams?")) {
+        const offset = Number(new URL(url, "http://local").searchParams.get("offset"));
+        return jsonResponse({ data: [{ id: offset ? other : team, name: offset ? "Other team" : "Parallel team" }], pagination: { offset, limit: 10, total: 11 } });
+      }
+      if (url.endsWith("/ontology/status")) return jsonResponse({ data: { ...status, pending_policy: saved, window: { ...status.window, policy: active } } });
+      if (url.includes("/ontology/runs?")) return jsonResponse({ data: { runs: [] } });
+      throw new Error(`Unexpected request ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<OntologyConfigPanel api={new ControlApi("synthetic", "/control/api")} />);
+    await screen.findByRole("option", { name: "Parallel team" });
+    fireEvent.change(screen.getByLabelText("Team for override"), { target: { value: team } });
+    expect(screen.getByText(/Current window limit: 1.*Saved next-window limit: 2/)).toBeVisible();
+    fireEvent.change(screen.getByLabelText("Concurrency override"), { target: { value: "9" } });
+    expect(screen.getByRole("button", { name: "Stage team override" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Concurrency override"), { target: { value: "8" } });
+    fireEvent.click(screen.getByRole("button", { name: "Stage team override" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save config" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("save unavailable");
+    expect(screen.getByText(/Staged: 8/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Save config" }));
+    await screen.findByText("Changes saved");
+    fireEvent.click(screen.getByRole("button", { name: "Refresh ontology coverage" }));
+    await waitFor(() => expect(screen.getByText(/Staged: 8.*Saved: 8.*Current effective: 1.*Pending effective: 3/)).toBeVisible());
+    fireEvent.click(screen.getByRole("button", { name: "Next teams" }));
+    await screen.findByRole("option", { name: "Other team" });
+    fireEvent.click(screen.getByRole("button", { name: "Use default for Parallel team" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save config" }));
+    await waitFor(() => expect(attempts).toBe(3));
+    expect(saved.team_concurrency_overrides).toEqual([]);
+  });
+
 });

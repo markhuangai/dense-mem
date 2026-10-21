@@ -2,8 +2,6 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"time"
 
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
@@ -19,24 +17,30 @@ func (s *Store) NewTopicProjectionAdmission() func(context.Context, *gorm.DB, on
 		if err != nil || paused {
 			return ontology.TopicProjectionUnavailable, err
 		}
-		var concurrency int
-		err = tx.Raw(`SELECT (policy->>'max_concurrency')::int FROM ontology_maintenance_windows
-			WHERE starts_at<=? AND ends_at>? ORDER BY starts_at DESC LIMIT 1`, now, now).Row().Scan(&concurrency)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ontology.TopicProjectionUnavailable, nil
-		}
+		window, err := scanMaintenanceWindow(tx.Raw(`SELECT `+maintenanceWindowColumns+` FROM ontology_maintenance_windows
+			WHERE starts_at<=? AND ends_at>? ORDER BY starts_at DESC LIMIT 1`, now, now).Row())
 		if err != nil {
 			return ontology.TopicProjectionUnavailable, err
+		}
+		if window == nil {
+			return ontology.TopicProjectionUnavailable, nil
 		}
 		if err := seedMaintenanceTeams(tx); err != nil {
 			return ontology.TopicProjectionUnavailable, err
 		}
-		var active int
-		if err := tx.Raw(`SELECT count(*) FROM ontology_maintenance_teams WHERE lease_until>?`, now).Row().Scan(&active); err != nil {
+		active, err := activeMaintenanceWork(tx, now)
+		if err != nil {
 			return ontology.TopicProjectionUnavailable, err
 		}
-		if active >= concurrency {
+		if active >= window.Policy.MaxConcurrency {
 			return ontology.TopicProjectionUnavailable, nil
+		}
+		var batches int
+		if err := tx.Raw(`SELECT count(*) FROM ontology_maintenance_batches WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND status='running' AND lease_until>?`, turn.TeamID, turn.SpaceID, turn.Generation, now).Row().Scan(&batches); err != nil {
+			return ontology.TopicProjectionUnavailable, err
+		}
+		if batches >= window.Policy.TeamConcurrency(turn.TeamID) {
+			return ontology.TopicProjectionTeamBusy, nil
 		}
 		if err := tx.Exec(`UPDATE ontology_maintenance_state SET turn_sequence=turn_sequence+1 WHERE singleton`).Error; err != nil {
 			return ontology.TopicProjectionUnavailable, err

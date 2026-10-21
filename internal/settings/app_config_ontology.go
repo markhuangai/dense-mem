@@ -2,12 +2,16 @@ package settings
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 )
 
 const DefaultOntologyCadenceHours = 12
@@ -62,7 +66,7 @@ func (s *AppConfigServiceImpl) UpdateOntologyMaintenanceSettings(ctx context.Con
 }
 
 func editableOntologyConfigKeys() []string {
-	return []string{domain.AppConfigOntologyEnabled, domain.AppConfigOntologyCadenceHours, domain.AppConfigOntologyStartTime, domain.AppConfigOntologyModel, domain.AppConfigOntologyConcurrency, domain.AppConfigOntologyInputTokens, domain.AppConfigOntologyOutputTokens}
+	return []string{domain.AppConfigOntologyEnabled, domain.AppConfigOntologyCadenceHours, domain.AppConfigOntologyStartTime, domain.AppConfigOntologyModel, domain.AppConfigOntologyConcurrency, domain.AppConfigOntologyTeamConcurrency, domain.AppConfigOntologyTeamOverrides, domain.AppConfigOntologyInputTokens, domain.AppConfigOntologyOutputTokens}
 }
 
 func normalizeOntologyConfigValues(values map[string]string) (map[string]string, error) {
@@ -77,6 +81,16 @@ func normalizeOntologyConfigValues(values map[string]string) (map[string]string,
 		}
 		value := strings.TrimSpace(raw)
 		switch key {
+		case domain.AppConfigOntologyTeamOverrides:
+			overrides, err := parseOntologyTeamOverrides(value)
+			if err != nil {
+				return nil, err
+			}
+			encoded, err := json.Marshal(overrides)
+			if err != nil {
+				return nil, err
+			}
+			value = string(encoded)
 		case domain.AppConfigOntologyEnabled:
 			if value == "" {
 				value = "false"
@@ -102,6 +116,8 @@ func normalizeOntologyConfigValues(values map[string]string) (map[string]string,
 		default:
 			fallback, maximum := int64(1), int64(8)
 			switch key {
+			case domain.AppConfigOntologyTeamConcurrency:
+				fallback = domain.DefaultOntologyTeamConcurrency
 			case domain.AppConfigOntologyCadenceHours:
 				fallback, maximum = DefaultOntologyCadenceHours, 24
 			case domain.AppConfigOntologyInputTokens:
@@ -135,12 +151,37 @@ func ontologyRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry, 
 	integer := func(key string) int { n, _ := strconv.Atoi(values[key]); return n }
 	enabled, _ := strconv.ParseBool(values[domain.AppConfigOntologyEnabled])
 	policy := domain.OntologyMaintenanceConfig{Enabled: enabled, CadenceHours: integer(domain.AppConfigOntologyCadenceHours), StartTimeLocal: values[domain.AppConfigOntologyStartTime], Timezone: timezone, Model: values[domain.AppConfigOntologyModel], MaxConcurrency: integer(domain.AppConfigOntologyConcurrency), InputTokens: int64(integer(domain.AppConfigOntologyInputTokens)), OutputTokens: int64(integer(domain.AppConfigOntologyOutputTokens)), SettingsVersion: entries[domain.AppConfigUpdateTimeKey].Value}
+	policy.TeamMaxConcurrency = integer(domain.AppConfigOntologyTeamConcurrency)
+	policy.TeamConcurrencyOverrides, err = parseOntologyTeamOverrides(values[domain.AppConfigOntologyTeamOverrides])
+	if err != nil {
+		return domain.OntologyMaintenanceSettings{}, err
+	}
 	items := []domain.OntologyMaintenanceConfigItem{}
 	for _, key := range editableOntologyConfigKeys() {
 		entry := entries[key]
 		items = append(items, domain.OntologyMaintenanceConfigItem{Key: key, Value: strings.TrimSpace(entry.Value), EffectiveValue: values[key], UpdatedAt: entry.UpdatedAt})
 	}
 	return domain.OntologyMaintenanceSettings{UpdateTime: policy.SettingsVersion, Items: items, Effective: policy}, nil
+}
+
+func parseOntologyTeamOverrides(raw string) ([]domain.OntologyTeamConcurrencyOverride, error) {
+	if raw == "" {
+		return []domain.OntologyTeamConcurrencyOverride{}, nil
+	}
+	var overrides []domain.OntologyTeamConcurrencyOverride
+	if err := jsonstrict.Decode(strings.NewReader(raw), &overrides, 16384); err != nil || overrides == nil || len(overrides) > 128 {
+		return nil, fmt.Errorf("%w: team overrides require an array of at most 128 entries and 16384 bytes", ErrInvalidAppConfig)
+	}
+	seen := map[string]bool{}
+	for _, override := range overrides {
+		id, err := uuid.Parse(override.TeamID)
+		if err != nil || id == uuid.Nil || id.String() != override.TeamID || seen[override.TeamID] || override.MaxConcurrency < 1 || override.MaxConcurrency > 8 {
+			return nil, fmt.Errorf("%w: team overrides require unique canonical team UUIDs and limits 1..8", ErrInvalidAppConfig)
+		}
+		seen[override.TeamID] = true
+	}
+	sort.Slice(overrides, func(i, j int) bool { return overrides[i].TeamID < overrides[j].TeamID })
+	return overrides, nil
 }
 
 func ontologySettingsPayload(settings *domain.OntologyMaintenanceSettings) map[string]any {

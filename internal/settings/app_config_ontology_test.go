@@ -2,6 +2,8 @@ package settings
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +29,34 @@ func TestOntologySettingsNumericProjectionPreservesBounds(t *testing.T) {
 		require.ErrorIs(t, err, ErrInvalidAppConfig)
 		entries[key] = before
 	}
+}
+
+func TestOntologyTeamConcurrencySettings(t *testing.T) {
+	const team = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	entries := map[string]domain.AppConfigEntry{}
+	settings, err := ontologyRuntimeConfigFromEntries(entries, "UTC")
+	require.NoError(t, err)
+	require.Equal(t, domain.DefaultOntologyTeamConcurrency, settings.Effective.TeamMaxConcurrency)
+	require.Empty(t, settings.Effective.TeamConcurrencyOverrides)
+	entries[domain.AppConfigOntologyConcurrency] = domain.AppConfigEntry{Value: "4"}
+	entries[domain.AppConfigOntologyTeamConcurrency] = domain.AppConfigEntry{Value: "2"}
+	entries[domain.AppConfigOntologyTeamOverrides] = domain.AppConfigEntry{Value: `[{"team_id":"` + team + `","max_concurrency":8}]`}
+	settings, err = ontologyRuntimeConfigFromEntries(entries, "UTC")
+	require.NoError(t, err)
+	require.Equal(t, 4, settings.Effective.TeamConcurrency(team))
+	require.Equal(t, 2, settings.Effective.TeamConcurrency("other"))
+	for _, raw := range []string{"null", "{}", "[] []", strings.Repeat(" ", 16385) + "[]", `[{"team_id":"unknown","max_concurrency":2}]`, `[{"team_id":"` + team + `","max_concurrency":0}]`, `[{"team_id":"` + team + `","max_concurrency":9}]`, `[{"team_id":"` + team + `","max_concurrency":1.5}]`, `[{"team_id":"` + team + `","max_concurrency":2,"unknown":1}]`, `[{"team_id":"` + team + `","team_id":"` + team + `","max_concurrency":2}]`, fmt.Sprintf(`[{"team_id":%q,"max_concurrency":2},{"team_id":%q,"max_concurrency":3}]`, team, team)} {
+		_, err := parseOntologyTeamOverrides(raw)
+		require.ErrorIs(t, err, ErrInvalidAppConfig, raw)
+	}
+	_, err = normalizeOntologyConfigValues(map[string]string{domain.AppConfigOntologyTeamConcurrency: "9"})
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+	values, err := normalizeOntologyConfigValues(map[string]string{domain.AppConfigOntologyTeamOverrides: "[]"})
+	require.NoError(t, err)
+	require.Equal(t, "[]", values[domain.AppConfigOntologyTeamOverrides])
+	settings.Effective.TeamConcurrencyOverrides = nil
+	settings.Effective.TeamMaxConcurrency = 0
+	require.Equal(t, 1, settings.Effective.TeamConcurrency(team), "historical windows retain serial behavior")
 }
 
 func TestOntologySettingsDefaultsValidationAndFreshReads(t *testing.T) {

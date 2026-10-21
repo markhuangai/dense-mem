@@ -3,6 +3,13 @@
   "capability": "community",
   "cases": [
     {
+      "id": "repository/TestCommunityTopicPublicationUsesAdmissionLockOrder",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicPublicationUsesAdmissionLockOrder$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/topic_projection_races_integration_test.go"
+    },
+    {
       "id": "repository/TestCommunityTopicPublicationAndQuality",
       "package": "./internal/community/postgres",
       "run": "^TestCommunityTopicPublicationAndQuality$",

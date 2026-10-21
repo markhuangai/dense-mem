@@ -49,37 +49,26 @@ func (s *MaintenanceScheduler) run(ctx context.Context) {
 	if window == nil {
 		return
 	}
-	var workers sync.WaitGroup
+	var projections sync.WaitGroup
 	for range window.Policy.MaxConcurrency {
-		workers.Add(1)
+		projections.Add(1)
 		go func() {
-			defer workers.Done()
-			if s.service.deps.Projections != nil {
-				status, err := s.service.deps.Repository.MaintenanceStatus(ctx, s.service.deps.Now())
-				if err != nil {
-					s.logFailure("projection_status_unavailable")
-				} else if status.Paused {
-					return
-				} else {
-					for range 20 {
-						progress, err := s.service.deps.Projections.RunProjectionTurn(ctx)
-						if err != nil {
-							s.logFailure("topic_projection_failed")
-							break
-						}
-						if !progress {
-							break
-						}
-					}
-				}
+			defer projections.Done()
+			if s.service.deps.Projections == nil {
+				return
+			}
+			status, err := s.service.deps.Repository.MaintenanceStatus(ctx, s.service.deps.Now())
+			if err != nil {
+				s.logFailure("projection_status_unavailable")
+				return
+			}
+			if status.Paused {
+				return
 			}
 			for range 20 {
-				progress, err := s.service.RunTurn(ctx)
+				progress, err := s.service.deps.Projections.RunProjectionTurn(ctx)
 				if err != nil {
-					if errors.Is(err, context.Canceled) || errors.Is(err, contract.ErrMaintenanceDisabled) || errors.Is(err, contract.ErrMaintenancePaused) || errors.Is(err, contract.ErrBudgetDeferred) {
-						return
-					}
-					s.logFailure("maintenance_turn_failed")
+					s.logFailure("topic_projection_failed")
 					return
 				}
 				if !progress {
@@ -88,7 +77,46 @@ func (s *MaintenanceScheduler) run(ctx context.Context) {
 			}
 		}()
 	}
-	workers.Wait()
+	projections.Wait()
+	completed := make(chan error, window.Policy.MaxConcurrency)
+	active := 0
+	finish := func() {
+		s.logTurnFailure(<-completed)
+		active--
+	}
+	for range 20 * window.Policy.MaxConcurrency {
+		if ctx.Err() != nil {
+			break
+		}
+		if active == window.Policy.MaxConcurrency {
+			finish()
+		}
+		work, progress, err := s.service.prepareTurn(ctx)
+		if err != nil {
+			s.logTurnFailure(err)
+			break
+		}
+		if work != nil {
+			active++
+			go func() { completed <- s.service.executeBatch(ctx, *work) }()
+		}
+		if !progress {
+			if active == 0 {
+				break
+			}
+			finish()
+		}
+	}
+	for active > 0 {
+		finish()
+	}
+}
+
+func (s *MaintenanceScheduler) logTurnFailure(err error) {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, contract.ErrMaintenanceDisabled) || errors.Is(err, contract.ErrMaintenancePaused) || errors.Is(err, contract.ErrBudgetDeferred) {
+		return
+	}
+	s.logFailure("maintenance_turn_failed")
 }
 
 func (s *MaintenanceScheduler) logFailure(code string) {

@@ -7,6 +7,8 @@ export type OntologyMaintenancePolicy = {
   timezone: string;
   model: string;
   max_concurrency: number;
+  team_max_concurrency?: number;
+  team_concurrency_overrides?: Array<{ team_id: string; max_concurrency: number }>;
   input_tokens: number;
   output_tokens: number;
   settings_version: string;

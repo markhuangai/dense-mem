@@ -52,7 +52,18 @@ func scanMaintenanceWindow(row maintenanceScanner) (*ontology.MaintenanceWindow,
 	if err = json.Unmarshal(policy, &result.Policy); err != nil {
 		return nil, err
 	}
+	result.Policy = maintenanceWindowPolicy(result.Policy)
 	return result, nil
+}
+
+func maintenanceWindowPolicy(policy domain.OntologyMaintenanceConfig) domain.OntologyMaintenanceConfig {
+	if policy.TeamMaxConcurrency == 0 {
+		policy.TeamMaxConcurrency = domain.DefaultOntologyTeamConcurrency
+	}
+	if policy.TeamConcurrencyOverrides == nil {
+		policy.TeamConcurrencyOverrides = []domain.OntologyTeamConcurrencyOverride{}
+	}
+	return policy
 }
 
 func scanMaintenanceRun(row maintenanceScanner) (ontology.MaintenanceRun, error) {
@@ -77,6 +88,7 @@ func maintenanceState(tx *gorm.DB) (bool, error) {
 }
 
 func (s *Store) EnsureMaintenanceWindow(ctx context.Context, policy domain.OntologyMaintenanceConfig, now time.Time) (*ontology.MaintenanceWindow, error) {
+	policy = maintenanceWindowPolicy(policy)
 	var result *ontology.MaintenanceWindow
 	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
 		if _, err := maintenanceState(tx); err != nil {
@@ -169,8 +181,8 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 		if err = tx.Exec(`UPDATE ontology_maintenance_batches SET status='lost',failure_code='lease_lost' WHERE status='running' AND lease_until<=?`, now).Error; err != nil {
 			return err
 		}
-		var active int
-		if err = tx.Raw(`SELECT count(*) FROM ontology_maintenance_teams WHERE lease_until>?`, now).Row().Scan(&active); err != nil {
+		active, err := activeMaintenanceWork(tx, now)
+		if err != nil {
 			return err
 		}
 		if active >= window.Policy.MaxConcurrency {
@@ -193,16 +205,22 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 		if err != nil {
 			return err
 		}
+		limits, err := maintenanceTeamLimits(window.Policy)
+		if err != nil {
+			return err
+		}
 		err = tx.Raw(`SELECT state.team_id::text,state.shared_space_id::text,state.space_generation FROM ontology_maintenance_teams AS state
 		 JOIN teams AS team ON team.id=state.team_id AND team.status='active' AND team.deleted_at IS NULL
 		 JOIN memory_spaces AS space ON space.team_id=state.team_id AND space.id=state.shared_space_id AND space.generation=state.space_generation AND space.lifecycle_state='active'
-		 WHERE (state.lease_until IS NULL OR state.lease_until<=?) AND (?='' OR EXISTS(SELECT 1 FROM ontology_maintenance_sources AS retry_source
+		 WHERE (state.lease_until IS NULL OR state.lease_until<=?)
+		 AND (SELECT count(*) FROM ontology_maintenance_batches AS active_batch WHERE active_batch.team_id=state.team_id AND active_batch.shared_space_id=state.shared_space_id AND active_batch.space_generation=state.space_generation AND active_batch.status='running' AND active_batch.lease_until>?) < COALESCE((?::jsonb->>state.team_id::text)::int,?)
+		 AND (?='' OR EXISTS(SELECT 1 FROM ontology_maintenance_sources AS retry_source
 		 WHERE retry_source.team_id=state.team_id AND retry_source.shared_space_id=state.shared_space_id AND retry_source.space_generation=state.space_generation AND retry_source.last_run_id=NULLIF(?,'')::uuid AND retry_source.eligible AND retry_source.status='failed'))
 		 AND (?<>'' OR state.discovery_kind<4 OR EXISTS(
 		 SELECT 1 FROM ontology_maintenance_markers AS marker WHERE marker.team_id=state.team_id AND marker.shared_space_id=state.shared_space_id AND marker.space_generation=state.space_generation)
 		 OR EXISTS(SELECT 1 FROM ontology_maintenance_sources AS source WHERE source.team_id=state.team_id AND source.shared_space_id=state.shared_space_id AND source.space_generation=state.space_generation AND source.eligible AND
 		 (source.status='pending' OR (source.status='budget_deferred' AND NOT EXISTS(SELECT 1 FROM ontology_maintenance_runs AS run WHERE run.run_id=source.last_run_id AND run.window_id=?::uuid)))))
-		 ORDER BY state.last_turn,state.team_id LIMIT 1 FOR UPDATE OF state SKIP LOCKED`, now, candidate.RetryRunID, candidate.RetryRunID, candidate.RetryRunID, windowID).Row().Scan(&candidate.TeamID, &candidate.SpaceID, &candidate.Generation)
+		 ORDER BY state.last_turn,state.team_id LIMIT 1 FOR UPDATE OF state SKIP LOCKED`, now, now, limits, window.Policy.TeamConcurrency(""), candidate.RetryRunID, candidate.RetryRunID, candidate.RetryRunID, windowID).Row().Scan(&candidate.TeamID, &candidate.SpaceID, &candidate.Generation)
 		if errors.Is(err, sql.ErrNoRows) {
 			if active > 0 {
 				return nil
@@ -222,6 +240,22 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 		return nil
 	})
 	return result, err
+}
+
+func activeMaintenanceWork(tx *gorm.DB, now time.Time) (int, error) {
+	var active int
+	err := tx.Raw(`SELECT (SELECT count(*) FROM ontology_maintenance_teams WHERE lease_until>?)
+	 + (SELECT count(*) FROM ontology_maintenance_batches WHERE status='running' AND lease_until>?)`, now, now).Row().Scan(&active)
+	return active, err
+}
+
+func maintenanceTeamLimits(policy domain.OntologyMaintenanceConfig) (string, error) {
+	limits := map[string]int{}
+	for _, override := range policy.TeamConcurrencyOverrides {
+		limits[override.TeamID] = policy.TeamConcurrency(override.TeamID)
+	}
+	encoded, err := json.Marshal(limits)
+	return string(encoded), err
 }
 
 func (s *Store) ReleaseMaintenanceTurn(ctx context.Context, turn ontology.MaintenanceTurn) error {

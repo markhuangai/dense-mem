@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"gorm.io/gorm"
 )
@@ -22,56 +23,87 @@ func (s *Store) ClaimMaintenanceBatch(ctx context.Context, turn ontology.Mainten
 		if err := checkMaintenanceTurn(tx, turn); err != nil {
 			return err
 		}
-		var seed ontology.SourceHandle
-		err := tx.Raw(`SELECT source_kind,source_id,source_version FROM ontology_maintenance_sources AS source WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND eligible AND
-		 ((?<>'' AND source.last_run_id=NULLIF(?,'')::uuid AND status='failed') OR
-		 (?='' AND (status='pending' OR (status='budget_deferred' AND NOT EXISTS(SELECT 1 FROM ontology_maintenance_batches AS batch WHERE batch.run_id=source.last_run_id AND batch.window_id=?::uuid)))))
-		 ORDER BY pending_at,source_kind,source_id LIMIT 1`, fence.TeamID, fence.SpaceID, fence.Generation, turn.RetryRunID, turn.RetryRunID, turn.RetryRunID, windowID).Row().Scan(&seed.Kind, &seed.ID, &seed.Version)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
+		busy, err := maintenanceBusySources(tx, fence)
 		if err != nil {
 			return err
 		}
-		contextData, err := s.organizationContext(tx, fence, []ontology.SourceHandle{seed})
-		if err != nil && !errors.Is(err, ontology.ErrContextBound) {
-			return err
+		keys := make([]string, 0, len(busy))
+		for key := range busy {
+			keys = append(keys, key)
 		}
-		if errors.Is(err, ontology.ErrContextBound) {
-			claim.Sources = []ontology.SourceHandle{seed}
-			return collectMaintenanceRevisions(tx, fence, claim)
-		}
-		if len(contextData.Sources) != 1 || !contextData.Sources[0].Eligible {
-			return refreshMaintenanceSource(tx, fence, seed, false)
-		}
-		handles, overflow, err := s.maintenanceGroupClosure(tx, fence, []ontology.SourceHandle{seed})
+		var seeds []ontology.SourceHandle
+		rows, err := tx.Raw(`SELECT source_kind,source_id,source_version FROM ontology_maintenance_sources AS source WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND eligible AND
+         NOT (source_kind || ':' || source_id=ANY(?::text[])) AND
+         ((?<>'' AND source.last_run_id=NULLIF(?,'')::uuid AND status='failed') OR
+         (?='' AND (status='pending' OR (status='budget_deferred' AND NOT EXISTS(SELECT 1 FROM ontology_maintenance_batches AS batch WHERE batch.run_id=source.last_run_id AND batch.window_id=?::uuid)))))
+         ORDER BY pending_at,source_kind,source_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(keys), turn.RetryRunID, turn.RetryRunID, turn.RetryRunID, windowID, ontology.MaintenancePageSize).Rows()
 		if err != nil {
 			return err
 		}
-		if overflow {
-			return tx.Exec(`UPDATE ontology_maintenance_sources SET status='ambiguous',reason='group_exceeds_batch_limit',updated_at=? WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind=? AND source_id=?`, now, fence.TeamID, fence.SpaceID, fence.Generation, seed.Kind, seed.ID).Error
-		}
-		peers, err := maintenanceRelatedSources(tx, fence, contextData.Sources[0], turn.RetryRunID)
-		if err != nil {
-			return err
-		}
-		for _, peer := range peers {
-			if len(handles) == ontology.MaxOrganizationSources {
-				break
+		for rows.Next() {
+			var seed ontology.SourceHandle
+			if err := rows.Scan(&seed.Kind, &seed.ID, &seed.Version); err != nil {
+				_ = rows.Close()
+				return err
 			}
-			if hasMaintenanceSource(handles, peer) {
+			seeds = append(seeds, seed)
+		}
+		readErr := rows.Err()
+		closeErr := rows.Close()
+		if readErr != nil {
+			return readErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		for _, seed := range seeds {
+			contextData, err := s.organizationContext(tx, fence, []ontology.SourceHandle{seed})
+			if err != nil && !errors.Is(err, ontology.ErrContextBound) {
+				return err
+			}
+			if errors.Is(err, ontology.ErrContextBound) {
+				claim.Sources = []ontology.SourceHandle{seed}
+				return collectMaintenanceRevisions(tx, fence, claim)
+			}
+			if len(contextData.Sources) != 1 || !contextData.Sources[0].Eligible {
+				if err := refreshMaintenanceSource(tx, fence, seed, false); err != nil {
+					return err
+				}
 				continue
 			}
-			candidate, tooLarge, err := s.maintenanceGroupClosure(tx, fence, append(append([]ontology.SourceHandle{}, handles...), peer))
+			handles, overflow, err := s.maintenanceGroupClosure(tx, fence, []ontology.SourceHandle{seed})
 			if err != nil {
 				return err
 			}
-			if !tooLarge {
-				handles = candidate
+			if overflow {
+				return tx.Exec(`UPDATE ontology_maintenance_sources SET status='ambiguous',reason='group_exceeds_batch_limit',updated_at=? WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind=? AND source_id=?`, now, fence.TeamID, fence.SpaceID, fence.Generation, seed.Kind, seed.ID).Error
 			}
+			if maintenanceClosureBusy(handles, busy) {
+				continue
+			}
+			peers, err := maintenanceRelatedSources(tx, fence, contextData.Sources[0], turn.RetryRunID)
+			if err != nil {
+				return err
+			}
+			for _, peer := range peers {
+				if len(handles) == ontology.MaxOrganizationSources {
+					break
+				}
+				if hasMaintenanceSource(handles, peer) || busy[ontology.SourceKey(peer)] {
+					continue
+				}
+				candidate, tooLarge, err := s.maintenanceGroupClosure(tx, fence, append(append([]ontology.SourceHandle{}, handles...), peer))
+				if err != nil {
+					return err
+				}
+				if !tooLarge && !maintenanceClosureBusy(candidate, busy) {
+					handles = candidate
+				}
+			}
+			claim.Sources = handles
+			return collectMaintenanceRevisions(tx, fence, claim)
 		}
-		claim.Sources = handles
-		return collectMaintenanceRevisions(tx, fence, claim)
+		return nil
 	})
 	if err != nil || len(claim.Sources) == 0 {
 		return nil, err
@@ -120,9 +152,44 @@ func (s *Store) ClaimMaintenanceBatch(ctx context.Context, turn ontology.Mainten
 		if err := tx.Exec(`INSERT INTO ontology_maintenance_batches(batch_id,run_id,window_id,team_id,shared_space_id,space_generation,lease_token,lease_until,sources,revisions,created_at) VALUES(?::uuid,?::uuid,?::uuid,?::uuid,?::uuid,?,?::uuid,?,?::jsonb,?::jsonb,?)`, claim.ID, runID, windowID, claim.TeamID, claim.SpaceID, claim.Generation, claim.LeaseToken, claim.LeaseUntil, string(sources), string(revisions), now).Error; err != nil {
 			return err
 		}
-		return tx.Exec(`UPDATE ontology_maintenance_runs SET status='running',updated_at=? WHERE run_id=?::uuid`, now, runID).Error
+		if err := tx.Exec(`UPDATE ontology_maintenance_runs SET status='running',updated_at=? WHERE run_id=?::uuid`, now, runID).Error; err != nil {
+			return err
+		}
+		return releaseMaintenanceTurnTx(tx, turn)
 	})
 	return claim, err
+}
+
+func maintenanceBusySources(tx *gorm.DB, fence scope) (map[string]bool, error) {
+	rows, err := tx.Raw(`SELECT sources FROM ontology_maintenance_batches WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND status='running' AND lease_until>clock_timestamp()`, fence.TeamID, fence.SpaceID, fence.Generation).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	busy := map[string]bool{}
+	for rows.Next() {
+		var body []byte
+		if err := rows.Scan(&body); err != nil {
+			return nil, err
+		}
+		var sources []ontology.SourceHandle
+		if err := json.Unmarshal(body, &sources); err != nil {
+			return nil, err
+		}
+		for _, source := range sources {
+			busy[ontology.SourceKey(source)] = true
+		}
+	}
+	return busy, rows.Err()
+}
+
+func maintenanceClosureBusy(sources []ontology.SourceHandle, busy map[string]bool) bool {
+	for _, source := range sources {
+		if busy[ontology.SourceKey(source)] {
+			return true
+		}
+	}
+	return false
 }
 
 func hasMaintenanceSource(sources []ontology.SourceHandle, source ontology.SourceHandle) bool {

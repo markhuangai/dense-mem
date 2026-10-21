@@ -228,6 +228,55 @@ func TestCommunityTopicRecallCoverageTracksSelectionSnapshot(t *testing.T) {
 	require.Contains(t, empty.Degradations, partial, "empty selection still needs its coverage metadata")
 }
 
+func TestCommunityTopicPublicationUsesAdmissionLockOrder(t *testing.T) {
+	f := newTopicProjectionFixture(t)
+	f.topic(t, "lock-order", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	work, _, err := f.store.ClaimTopicProjection(ctx, time.Now())
+	require.NoError(t, err)
+	require.NotNil(t, work)
+	require.Empty(t, work.Inputs)
+	before := f.canonicalSnapshot(t)
+	completed := make(chan struct{})
+	var publicationErr error
+	err = f.rls.WithSystemTx(ctx, f.adminDB, func(tx *gorm.DB) error {
+		var paused bool
+		if err := tx.Raw(`SELECT paused FROM ontology_maintenance_state WHERE singleton FOR UPDATE`).Row().Scan(&paused); err != nil {
+			return err
+		}
+		go func() {
+			defer close(completed)
+			publicationErr = f.store.AppendTopicProjection(ctx, community.TopicProjectionBatch{Work: *work}, time.Now())
+		}()
+		t.Cleanup(func() {
+			cancel()
+			select {
+			case <-completed:
+			case <-time.After(5 * time.Second):
+				t.Error("projection publication did not stop")
+			}
+		})
+		require.Eventually(t, func() bool {
+			var waiting bool
+			err := f.adminDB.Raw(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database()
+				AND wait_event_type='Lock' AND query='SELECT paused FROM ontology_maintenance_state WHERE singleton FOR UPDATE')`).Row().Scan(&waiting)
+			return err == nil && waiting
+		}, 5*time.Second, 10*time.Millisecond)
+		var topic string
+		return tx.Raw(`SELECT topic_id::text FROM community_topic_work WHERE team_id=?::uuid AND topic_id=?::uuid FOR UPDATE NOWAIT`,
+			work.TeamID, work.TopicID).Row().Scan(&topic)
+	})
+	require.NoError(t, err, "publication held topic work while waiting for admission, reversing discovery's lock order")
+	select {
+	case <-completed:
+		require.NoError(t, publicationErr)
+	case <-ctx.Done():
+		t.Fatal("projection publication did not finish")
+	}
+	require.Equal(t, before, f.canonicalSnapshot(t))
+}
+
 func TestCommunityTopicCapacityIsSharedWithMaintenance(t *testing.T) {
 	f := newTopicProjectionFixture(t)
 	f.seedCohort(t)

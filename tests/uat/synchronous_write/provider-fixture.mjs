@@ -14,6 +14,9 @@ const assessmentAttempts = new Map();
 const embeddingCallsByFault = new Map();
 let ontologyMode = "normal";
 let ontologyFailuresRemaining = 0;
+let activeOntologyRequests = 0;
+let maxActiveOntologyRequests = 0;
+const heldOntologyRequests = new Set();
 let assessmentCalls = 0;
 let embeddingCalls = 0;
 const chatRequests = [];
@@ -26,7 +29,7 @@ function sendJSON(response, status, payload) {
 
 const server = createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
-    sendJSON(response, 200, { status: "ok", fault, assessment_calls: assessmentCalls, embedding_calls: embeddingCalls, chat_requests: chatRequests });
+    sendJSON(response, 200, { status: "ok", fault, assessment_calls: assessmentCalls, embedding_calls: embeddingCalls, chat_requests: chatRequests, active_ontology_requests: activeOntologyRequests, max_active_ontology_requests: maxActiveOntologyRequests });
     return;
   }
   let body = "";
@@ -40,11 +43,13 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === "POST" && request.url === "/ontology-fixture") {
-    if (!["normal", "ambiguous", "fail-three-then-success"].includes(payload.mode)) {
+    if (!["normal", "ambiguous", "fail-three-then-success", "hold"].includes(payload.mode)) {
       sendJSON(response, 400, { error: "invalid ontology fixture mode" });
       return;
     }
     ontologyMode = payload.mode;
+    if (payload.mode !== "hold") for (const release of heldOntologyRequests) release();
+    if (payload.mode === "hold") maxActiveOntologyRequests = activeOntologyRequests;
     ontologyFailuresRemaining = payload.mode === "fail-three-then-success" ? 3 : 0;
     sendJSON(response, 200, { mode: ontologyMode });
     return;
@@ -128,7 +133,19 @@ const server = createServer(async (request, response) => {
       sendJSON(response, 200, { choices: [{ message: { content: "not-json" } }] });
       return;
     }
-    const assessment = fixtureChatResponse(payload, assessmentFault, attempt);
+    let assessment;
+    if (payload.response_format?.json_schema?.name === "ontology_organization_v1") {
+      activeOntologyRequests += 1;
+      maxActiveOntologyRequests = Math.max(maxActiveOntologyRequests, activeOntologyRequests);
+      try {
+        if (ontologyMode === "hold") await new Promise((resolve) => {
+          const release = () => { clearTimeout(timer); heldOntologyRequests.delete(release); resolve(); };
+          const timer = setTimeout(release, 30000);
+          heldOntologyRequests.add(release);
+        });
+        assessment = fixtureChatResponse(payload, assessmentFault, attempt);
+      } finally { activeOntologyRequests -= 1; }
+    } else assessment = fixtureChatResponse(payload, assessmentFault, attempt);
     sendJSON(response, 200, {
       choices: [{ message: { content: JSON.stringify(assessment) } }],
       usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
