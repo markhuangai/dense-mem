@@ -5,7 +5,10 @@ import copy
 import hashlib
 import json
 import math
+import threading
+from collections import deque
 from collections.abc import AsyncIterator, Mapping, Sequence
+from concurrent.futures import Future
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from functools import partial
@@ -90,7 +93,36 @@ class DenseMemMemoryService(BaseMemoryService):
         self._static_client = (
             DenseMemClient(endpoint, token=token, timeout=timeout) if token is not None else None
         )
-        self._slots = asyncio.Semaphore(max_concurrency)
+        self._available_slots = max_concurrency
+        self._slot_waiters: deque[Future[None]] = deque()
+        self._slots_lock = threading.Lock()
+
+    async def _acquire_slot(self) -> None:
+        with self._slots_lock:
+            if self._available_slots:
+                self._available_slots -= 1
+                return
+            waiter: Future[None] = Future()
+            self._slot_waiters.append(waiter)
+        try:
+            await asyncio.wrap_future(waiter)
+        except asyncio.CancelledError:
+            with self._slots_lock:
+                cancelled = waiter.cancel()
+                if cancelled and waiter in self._slot_waiters:
+                    self._slot_waiters.remove(waiter)
+            if not cancelled:
+                self._release_slot()
+            raise
+
+    def _release_slot(self) -> None:
+        with self._slots_lock:
+            while self._slot_waiters:
+                waiter = self._slot_waiters.popleft()
+                if waiter.set_running_or_notify_cancel():
+                    waiter.set_result(None)
+                    return
+            self._available_slots += 1
 
     def _client(self, app_name: str, user_id: str) -> DenseMemClient:
         if self._static_client is not None:
@@ -114,8 +146,12 @@ class DenseMemMemoryService(BaseMemoryService):
     async def _operation(self) -> AsyncIterator[None]:
         deadline = asyncio.timeout(self._timeout)
         try:
-            async with deadline, self._slots:
-                yield
+            async with deadline:
+                await self._acquire_slot()
+                try:
+                    yield
+                finally:
+                    self._release_slot()
         except DenseMemCancelledError as error:
             if deadline.expired():
                 raise DenseMemTimeoutError(

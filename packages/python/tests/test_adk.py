@@ -1,6 +1,8 @@
 import asyncio
 import copy
 import logging
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 
 import pytest
 
@@ -168,6 +170,26 @@ async def test_unknown_part_rejects_before_first_batch(wire_server):
     assert not state["calls"]
 
 
+@pytest.mark.parametrize(
+    "part",
+    [
+        types.Part(text="x", inline_data=types.Blob(data=b"binary", mime_type="image/png")),
+        types.Part(
+            text="x", function_response=types.FunctionResponse(name="tool", response={"x": 1})
+        ),
+    ],
+)
+async def test_multi_kind_part_rejects_before_first_batch(wire_server, part):
+    endpoint, state = wire_server
+    invalid = event(20)
+    invalid.content.parts = [part]
+    with pytest.raises(ValueError, match="one content kind"):
+        await service(endpoint).add_session_to_memory(
+            session([event(i) for i in range(20)] + [invalid])
+        )
+    assert not state["requests"] and not state["calls"]
+
+
 async def test_snapshot_precedes_provider_await_and_users_do_not_mix(wire_server):
     endpoint, state = wire_server
     state["result"] = terminal()
@@ -313,6 +335,97 @@ async def test_deadline_and_cancellation_release_slots(wire_server):
 
     memory._provider = working
     await memory.add_session_to_memory(session([event()]))
+
+
+@pytest.mark.parametrize("max_concurrency", [1, 2])
+def test_concurrency_limit_is_shared_across_event_loops(wire_server, max_concurrency):
+    endpoint, state = wire_server
+    state["result"] = terminal()
+    entered, queued, other_queued = threading.Event(), threading.Event(), threading.Event()
+    release = Future()
+    lock = threading.Lock()
+    active, maximum = 0, 0
+
+    async def provider(app_name, user_id):
+        nonlocal active, maximum
+        with lock:
+            active += 1
+            maximum = max(maximum, active)
+            if active == max_concurrency:
+                entered.set()
+        try:
+            await asyncio.wrap_future(release)
+        finally:
+            with lock:
+                active -= 1
+        return "token"
+
+    memory = adk.DenseMemMemoryService(
+        endpoint, credential_provider=provider, max_concurrency=max_concurrency, timeout=10
+    )
+
+    async def first_loop():
+        holders = [
+            asyncio.create_task(memory.add_session_to_memory(session([event()])))
+            for _ in range(max_concurrency)
+        ]
+        assert await asyncio.to_thread(entered.wait, 3)
+        waiting = asyncio.create_task(memory.add_session_to_memory(session([event()])))
+        asyncio.get_running_loop().call_soon(queued.set)
+        await asyncio.gather(*holders, waiting)
+
+    async def other_loop():
+        asyncio.get_running_loop().call_soon(other_queued.set)
+        await memory.add_session_to_memory(session([event()]))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(asyncio.run, first_loop())
+        try:
+            assert queued.wait(3)
+            other = executor.submit(asyncio.run, other_loop())
+            assert other_queued.wait(3)
+            with lock:
+                assert maximum == max_concurrency
+        finally:
+            release.set_result(None)
+        first.result(timeout=15)
+        other.result(timeout=15)
+    asyncio.run(memory.add_session_to_memory(session([event()])))
+    assert len(state["calls"]) == max_concurrency + 3
+    assert active == 0 and maximum == max_concurrency
+
+
+@pytest.mark.parametrize("before_release", [True, False])
+async def test_cancellation_at_slot_handoff_preserves_capacity(wire_server, before_release):
+    endpoint, state = wire_server
+    state["result"] = terminal()
+    memory = service(endpoint, max_concurrency=1, timeout=3)
+    async with memory._operation():
+        waiting = asyncio.create_task(memory.add_session_to_memory(session([event()])))
+        await asyncio.sleep(0)
+        if before_release:
+            waiting.cancel()
+            with pytest.raises(DenseMemCancelledError) as raised:
+                await waiting
+    if not before_release:
+        waiting.cancel()
+        with pytest.raises(DenseMemCancelledError) as raised:
+            await waiting
+    assert raised.value.failed_request is None and not state["requests"]
+    entered = asyncio.Event()
+
+    async def probe():
+        async with memory._operation():
+            entered.set()
+
+    async with memory._operation():
+        pending = asyncio.create_task(probe())
+        await asyncio.sleep(0)
+        assert not entered.is_set()
+    await pending
+    assert entered.is_set()
+    await memory.add_session_to_memory(session([event()]))
+    assert len(state["calls"]) == 1
 
 
 async def test_processing_cancellation_has_no_invented_receipt(wire_server):

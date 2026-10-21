@@ -4,6 +4,8 @@ import importlib.metadata
 import json
 import logging
 import os
+import threading
+from concurrent.futures import Future
 from pathlib import Path
 from uuid import uuid4
 
@@ -177,6 +179,8 @@ async def main():
     )
     assert not foreign_ids & {entry.id for entry in alice.memories}
     assert {user for _, user in resolutions} == {"alice", "bob", "carol"}
+    await reject_multi_kind_parts(memory)
+    await cross_loop_memory(endpoint, keys["alice"], evidence_ids)
     await batching(memory)
     await timeout_and_cancellation(memory, keys["alice"])
     assert_no_credentials_in_logs()
@@ -192,6 +196,8 @@ async def main():
         "duplicate_noop_and_changed_conflict": True,
         "sequential_batches_and_partial_recovery": True,
         "direct_terminal_timeout_and_cancellation": True,
+        "multi_kind_preflight_rejection": True,
+        "cross_loop_concurrency_and_waiter_cancellation": True,
         "credential_redaction": True,
         "mapping": json.loads(await asyncio.to_thread(
             Path(os.environ["DENSEMEM_ADK_MAPPING_REPORT"]).read_text
@@ -199,6 +205,77 @@ async def main():
     }
     write_result(receipt)
     print(json.dumps(receipt))
+
+
+async def reject_multi_kind_parts(memory):
+    for part in (
+        types.Part(text="x", inline_data=types.Blob(data=b"binary", mime_type="image/png")),
+        types.Part(
+            text="x", function_response=types.FunctionResponse(name="tool", response={"x": 1})
+        ),
+    ):
+        invalid = event("invalid")
+        invalid.content.parts = [part]
+        snapshot = session([event(str(i)) for i in range(20)] + [invalid])
+        before = await provider_health()
+        try:
+            await memory.add_session_to_memory(snapshot)
+        except ValueError as error:
+            assert "one content kind" in str(error)
+        else:
+            raise AssertionError("multi-kind ADK part must be rejected before ingestion")
+        assert count_events(snapshot.id) == 0 and await provider_health() == before
+
+
+async def cross_loop_memory(endpoint, token, evidence_ids):
+    entered, queued = threading.Event(), threading.Event()
+    release = Future()
+    lock = threading.Lock()
+    active, maximum = 0, 0
+
+    async def provider(app_name, user_id):
+        nonlocal active, maximum
+        with lock:
+            active += 1
+            maximum = max(maximum, active)
+            entered.set()
+        try:
+            await asyncio.wrap_future(release)
+        finally:
+            with lock:
+                active -= 1
+        return token
+
+    memory = DenseMemMemoryService(endpoint, credential_provider=provider, max_concurrency=1)
+
+    async def search():
+        return await memory.search_memory(app_name="adk-e2e", user_id="alice", query="Ari Go")
+
+    async def first_loop():
+        first = asyncio.create_task(search())
+        assert await asyncio.to_thread(entered.wait, 5)
+        second = asyncio.create_task(search())
+        asyncio.get_running_loop().call_soon(queued.set)
+        return await asyncio.gather(first, second)
+
+    calls = [asyncio.create_task(asyncio.to_thread(asyncio.run, first_loop()))]
+    try:
+        assert await asyncio.to_thread(queued.wait, 5)
+        waiting = asyncio.create_task(search())
+        await asyncio.sleep(0)
+        waiting.cancel()
+        error = await rejected(waiting, DenseMemCancelledError)
+        assert error.submission_id is None
+        calls.append(asyncio.create_task(search()))
+        await asyncio.sleep(0)
+        with lock:
+            assert maximum == 1
+    finally:
+        release.set_result(None)
+        results = await asyncio.gather(*calls)
+    assert active == 0 and maximum == 1
+    for response in [*results[0], results[1]]:
+        assert evidence_ids <= {entry.id for entry in response.memories}
 
 
 async def batching(memory):
