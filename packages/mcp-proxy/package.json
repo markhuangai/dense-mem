@@ -35,7 +35,7 @@
     "access": "public"
   },
   "dependencies": {
-    "supergateway": "4.1.0"
+    "supergateway": "4.2.0"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",

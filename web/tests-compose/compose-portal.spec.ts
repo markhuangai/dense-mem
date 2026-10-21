@@ -266,7 +266,7 @@ test("MCP supersedes and retracts caller-owned evidence against compose", async 
       relationships: [securityRelationship(replacementContent, `${runID}:replacement-relationship`)],
     },
   }));
-	expect(replacement.processing_state).toBe("completed");
+	expect(replacement.processing_state, JSON.stringify(replacement)).toBe("completed");
 	const replacementItem = submissionEvidence(replacement);
   const replacementEvidenceID = requiredString(replacementItem, "evidence_id");
   expect(replacementItem.superseded_evidence_ids).toEqual([originalEvidenceID]);
