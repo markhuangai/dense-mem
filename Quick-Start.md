@@ -128,3 +128,39 @@ and inspect terminal outcomes and degradations.
 Continue with [Using Dense-Mem](Using-Dense-Mem),
 [Public HTTPS And Redis](Public-HTTPS-And-Redis), and
 [Operations Runbook](Operations-Runbook).
+
+## Google ADK Memory Service
+
+The #220 delivery branch adds Google ADK 2.7.0 support; use its verified wheel
+until the matching package is published. Install the wheel with [adk] and enable
+SESSION_INGEST_ENABLED on the server. Import DenseMemMemoryService from densemem.adk.
+
+~~~python
+from densemem.adk import DenseMemMemoryService
+
+memory = DenseMemMemoryService(endpoint, token=alice_token, bound_user_id="alice")
+snapshot = session.model_copy(deep=True)
+await memory.add_session_to_memory(snapshot)
+result = await memory.search_memory(app_name=session.app_name, user_id="alice", query="Ari Go")
+~~~
+
+For multiple users, resolve their distinct credentials through your existing
+credential manager. The adapter does not implement token refresh:
+
+~~~python
+async def credential_provider(app_name: str, user_id: str) -> str:
+    return await credentials.access_token(app_name, user_id)
+
+memory = DenseMemMemoryService(endpoint, credential_provider=credential_provider)
+await memory.add_events_to_memory(
+    app_name=session.app_name, user_id=session.user_id,
+    session_id=session.id, events=session.events,
+)
+~~~
+
+Retain the original Session/Event snapshot for retries. Calls split automatically
+into sequential batches of up to 20 user-text events; earlier batches can commit
+before a later failure. Error completed_results and failed_request preserve recovery
+context. Supply session_id for event deltas; nonempty custom_metadata and direct
+add_memory are unsupported. See [Framework Integrations](Framework-Integrations)
+for terminal outcomes, provenance metadata, bounds, isolation and exact replay.

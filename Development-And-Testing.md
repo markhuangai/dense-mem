@@ -225,3 +225,33 @@ publication remain separate maintainer steps. The client code is merged through
 documentation is published. Keep #219 open until PyPI publication and
 `python_client` validation against the exact merged-main SHA are complete.
 See [Framework Integrations](Framework-Integrations).
+
+## Google ADK Adapter Verification
+
+The #220 delivery branch registers google_adk_memory as an exclusive production
+scenario with the synchronous-write provider helper. Run scripts/e2e.sh google_adk_memory.
+It installs the built wheel[adk] with google-adk==2.7.0 in a fresh environment and
+uses real ADK sessions, MCP/HTTP, PostgreSQL/pgvector and Redis. Only outbound model
+transport uses a fixture; server validation, lifecycle and persistence remain real.
+
+Positive/adverse assertions cover user-only text, exact provenance, static binding,
+A/B/C credentials, search metadata, replay/conflicts, 21/40/41-event batches,
+growing sessions, partial-failure recovery, server/local timeout and cancellation.
+The frozen session_ingest_v1 generator/source lock supplies the 32-case mapping
+slice; do not change its corpus or scorer. On 2026-10-21 the maintainer waived
+evaluation for #220. The deterministic 1k comparison is waived; replacement
+verification is the frozen mapping slice, package/version matrix, five production
+scenarios below, and full local/current-head PR CI. Other gates remain required.
+
+Run packages/python/scripts/check.sh, packages/python/scripts/matrix.sh with a new
+output directory, the E2E registry/controller tests and ./scripts/ci-check.sh.
+Package checks separately install core and wheel[adk], verify reproducible artifacts,
+run lint/types/async tests, audit dependencies and produce SBOMs. The matrix covers
+Python 3.11–3.14 with ADK 2.7.0 and the existing MCP minimum/latest cases.
+Also run python_client, session_ingest, mcp_transport_cancellation and mcp_oauth.
+
+Require conformant independent plan audit before implementation testing and
+current-head full Repository CI, CodeQL, CodeQL analysis and Production image E2E
+before human merge. Keep #220 open through live wiki publication and a passing
+google_adk_memory run against the exact merged main commit. No branch result proves
+that later commit; package release and live documentation publication are separate.
