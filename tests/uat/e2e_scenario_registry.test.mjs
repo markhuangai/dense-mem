@@ -16,6 +16,16 @@ import {
 
 const registry = readRegistry();
 
+test("ADK memory is an exclusive production scenario with the real intake fixture", () => {
+  const scenario = classifyScenario(registry, "google_adk_memory");
+  assert.equal(scenario.audited, true);
+  assert.equal(scenario.runtime, "production");
+  assert.equal(scenario.isolation, "exclusive");
+  assert.deepEqual(scenario.helper_profiles, ["synchronous_write"]);
+  assert.ok(matrixFor(registry, "all").include.some(({ name }) => name === "google_adk_memory"));
+  assert.equal(scenario.timeout_minutes, 60);
+});
+
 function workflowJob(workflow, name) {
   const marker = new RegExp(`^  ${name.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}:\\n`, "m");
   const match = workflow.match(marker);
@@ -178,7 +188,7 @@ test("production E2E runs the complete exact-source registry on hosted isolated 
     readFile(new URL("../../.github/workflows/pr-test-image.yml", import.meta.url), "utf8"),
     readFile(new URL("../../scripts/e2e-ci-bootstrap.sh", import.meta.url), "utf8"),
   ]);
-  assert.equal(matrixFor(registry, "all").include.length, 29);
+  assert.equal(matrixFor(registry, "all").include.length, 30);
   assertWorkflowOrchestration(workflow);
   const authorize = workflowJob(workflow, "authorize");
   const prechecks = workflowJob(workflow, "prechecks");

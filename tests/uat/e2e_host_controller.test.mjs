@@ -44,6 +44,11 @@ async function executable(path, contents) {
   await chmod(path, 0o700);
 }
 
+test("ADK scenario enables private intake and dispatches its installed-wheel harness", () => {
+  assert.match(stack, /scenario === "google_adk_memory"[^\n]*serverEnvironment.set\("SESSION_INGEST_ENABLED", "true"\)/);
+  assert.match(scenario, /google_adk_memory\) bash "\$\{ROOT_DIR\}\/packages\/python\/scripts\/e2e.sh" google_adk_memory ;;/);
+});
+
 async function run(command, args, options = {}) {
   const { env: overrides, ...commandOptions } = options;
   const env = { ...process.env, ...overrides };

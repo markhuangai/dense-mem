@@ -43,6 +43,8 @@ def wire_server():
         if state.get("delay"):
             await asyncio.sleep(state["delay"])
         result = state["result"]
+        if state.get("handler"):
+            result = await state["handler"](name, arguments)
         return CallToolResult(
             structuredContent=result,
             content=[TextContent(type="text", text=json.dumps(result))],

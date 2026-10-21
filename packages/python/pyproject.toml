@@ -25,6 +25,9 @@ Repository = "https://github.com/markhuangai/dense-mem"
 Documentation = "https://github.com/markhuangai/dense-mem/wiki/Framework-Integrations"
 Issues = "https://github.com/markhuangai/dense-mem/issues"
 
+[project.optional-dependencies]
+adk = ["google-adk==2.7.0"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/densemem"]
 

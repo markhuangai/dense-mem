@@ -8,8 +8,8 @@ prepared for release; PyPI publication is pending. Install a verified wheel:
 python -m pip install /path/to/densemem-VERSION-py3-none-any.whl
 ~~~
 
-ADK and LangChain adapters/extras will arrive with issues #220 and #221.
-The core installs neither framework.
+The optional adk extra provides the Google ADK 2.7.0 memory service.
+LangChain remains planned in #221. The core installs neither framework.
 
 ## Authentication and operations
 
@@ -138,6 +138,81 @@ SDK 1.30 negotiates protocol 2025-11-25. Local cancellation closes the client's
 resources; the server can continue processing under this older protocol and may
 commit or reach its bounded deadline. Cancellation does not prove that a write
 was prevented. Retain the unchanged request/key for recovery.
+
+
+## Google ADK 2.7.0
+
+Install the verified wheel with its optional extra:
+
+~~~bash
+python -m pip install '/path/to/densemem-VERSION-py3-none-any.whl[adk]'
+~~~
+
+~~~python
+from densemem.adk import DenseMemMemoryService
+
+memory = DenseMemMemoryService(endpoint, token=alice_token, bound_user_id="alice")
+snapshot = session.model_copy(deep=True)
+await memory.add_session_to_memory(snapshot)
+response = await memory.search_memory(app_name=snapshot.app_name, user_id="alice", query="Ari Go")
+~~~
+
+Use the actual ADK Session and Event types. The runnable adk_memory.py example
+retains a fixed session ID, event ID and timestamp. Both add_session_to_memory
+and add_events_to_memory return None only after every batch completes. Direct
+add_memory raises NotImplementedError. Event deltas require a nonempty session_id;
+nonempty custom_metadata is rejected. Events retain their exact visible user
+text, IDs, order and UTC timestamps. Assistant, system, tool, state, transcription,
+binary and thought content are excluded. Unknown part shapes fail before ingestion.
+
+For multiple users, supply a caller-owned async provider instead of a static token:
+
+~~~python
+async def credential_provider(app_name: str, user_id: str) -> str:
+    return await credentials.access_token(app_name, user_id)
+
+memory = DenseMemMemoryService(endpoint, credential_provider=credential_provider)
+await memory.add_events_to_memory(
+    app_name=session.app_name, user_id=session.user_id,
+    session_id=session.id, events=session.events,
+)
+~~~
+
+Return the correct Dense-Mem credential for each application/user pair. The
+adapter resolves it once per server request, supports caller-managed rotation,
+and never owns OAuth refresh or caches user credentials. Static credentials
+require bound_user_id and reject every other user, including empty ingestion.
+External application/user/session IDs are provenance; credentials determine
+private-space isolation and authorized shared reads. Different application IDs
+using one credential do not create separate authorization boundaries.
+
+Calls automatically send sequential batches of at most 20 eligible events.
+The default 190-second deadline includes slot waiting, credential resolution,
+and every batch; timeout is configurable. max_concurrency defaults to four
+public operations. Server token and payload limits still apply, and an individual
+event is never truncated or split by the adapter.
+
+Each batch has a deterministic google-adk-v1 key derived from application, user,
+session and ordered event identities. Keep the original snapshot until completion.
+An earlier batch can commit before a later batch fails. Existing Dense-Mem error
+classes retain result and available submission/correlation IDs; completed_results
+contains earlier terminal receipts and failed_request contains the exact attempted
+request, when a request was attempted. A timeout while waiting has no failed_request.
+The batch with an unknown receipt may have committed. Replay only the unchanged
+original snapshot, or send the complete unchanged failed_request through the core
+client. Do not change text, timestamps, ordering or metadata to recover. Completed
+batches replay safely; there is no automatic retry, key rotation or readiness polling.
+A completed no-fact result is valid and does not promise a searchable memory.
+
+Search preserves server order, evidence IDs, equivalent IDs and space kind in
+MemoryEntry.custom_metadata["densemem"]. The compatible response subclass retains
+the entire bounded recall result in response.custom_metadata["densemem"], including
+conflicts and degradations on an empty result. Missing author/timestamps remain
+unset. The adapter does not add trace calls or post-filter authorized shared memory.
+
+The extra is pinned to google-adk==2.7.0. Core and extra installed-wheel checks,
+Python 3.11–3.14 and MCP SDK minimum/latest matrices, and google_adk_memory E2E
+are release gates. Package publication and live wiki publication remain separate.
 
 ## Development and release
 

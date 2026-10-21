@@ -80,5 +80,7 @@ func seedStaleVocabulary(t *testing.T, f *ontologyFixture, staleCount, currentCo
 	}
 	_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{support.ID}, Reason: "withdraw historical vocabulary support", IdempotencyKey: uuid.NewString(), RequestHash: testHash("withdraw vocabulary")})
 	require.NoError(t, err)
+	// Bulk fixtures need current planner statistics before exercising bounded reads.
+	require.NoError(t, f.admin.Exec("ANALYZE ontology_record_heads, ontology_record_revisions, ontology_source_dependencies").Error)
 	return current
 }

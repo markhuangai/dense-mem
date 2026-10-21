@@ -1,6 +1,9 @@
 import asyncio
 from typing import Any
 
+from .requests import SessionRequest
+from .results import SessionResult
+
 
 class DenseMemError(Exception):
     """A bounded client failure; result retains any server-returned receipt."""
@@ -15,6 +18,8 @@ class DenseMemError(Exception):
     ) -> None:
         super().__init__(message)
         self.result = result
+        self.completed_results: list[SessionResult] = []
+        self.failed_request: SessionRequest | None = None
         self.status_code = status_code
         self.rpc_code = rpc_code
         fields = result or {}
@@ -64,5 +69,7 @@ class DenseMemCancelledError(asyncio.CancelledError):
     def __init__(self, message: str, *, result: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.result = result
+        self.completed_results: list[SessionResult] = []
+        self.failed_request: SessionRequest | None = None
         self.submission_id = DenseMemError._identifier(result or {}, "submission_id")
         self.correlation_id = DenseMemError._identifier(result or {}, "correlation_id")

@@ -63,7 +63,7 @@ import densemem
 assert '/site-packages/' in densemem.__file__, densemem.__file__
 assert pathlib.Path(densemem.__file__).with_name('py.typed').is_file()
 metadata = md.metadata('densemem')
-assert not metadata.get_all('Provides-Extra')
+assert metadata.get_all('Provides-Extra') == ['adk']
 for name in ('google-adk', 'langchain', 'langchain-core'):
     try: md.version(name)
     except md.PackageNotFoundError: continue
@@ -81,7 +81,7 @@ PY
 "$BUILD" -m pip_audit -r "$OUTPUT/runtime-dependencies.txt" --no-deps --disable-pip --strict --format json --output "$OUTPUT/audit.json"
 "$BUILD" -m cyclonedx_py environment "$INSTALLED" --of JSON -o "$OUTPUT/sbom.json"
 "$INSTALLED" -m pip install 'pytest==9.1.1' 'pytest-asyncio==1.4.0'
-"$BUILD" -m pip install "$OUTPUT"/dist/*.whl
+"$BUILD" -m pip install "$(find "$OUTPUT/dist" -name '*.whl' -print -quit)[adk]"
 cd "$PACKAGE_ROOT"
 "$BUILD" -m ruff check .
 "$BUILD" -m mypy
@@ -89,4 +89,29 @@ cp -a tests "$WORK/tests"
 cp -a scripts "$WORK/scripts"
 cd "$WORK"
 "$INSTALLED" -m pytest -c "$PACKAGE_ROOT/pyproject.toml" "$WORK/tests" -p no:cacheprovider
+"$PYTHON" -m venv "$WORK/adk"
+ADK="$WORK/adk/bin/python"
+"$ADK" -m pip install 'pip==26.2.1' 'setuptools==84.0.0'
+"$ADK" -m pip install "$(find "$OUTPUT/dist" -name '*.whl' -print -quit)[adk]"
+if [[ "$SDK" == minimum ]]; then "$ADK" -m pip install 'mcp==1.30.0'; fi
+"$ADK" -m pip check
+"$ADK" - "$OUTPUT" <<'PY'
+import importlib.metadata as md, json, pathlib, sys
+from densemem.adk import DenseMemMemoryService
+from google.adk.memory.base_memory_service import BaseMemoryService
+assert md.version('google-adk') == '2.7.0'
+assert issubclass(DenseMemMemoryService, BaseMemoryService)
+assert '/site-packages/' in __import__('densemem.adk').__file__
+pathlib.Path(sys.argv[1], 'adk-installed.json').write_text(json.dumps({
+    'python': sys.version, 'adk': md.version('google-adk'), 'mcp': md.version('mcp'),
+}, indent=2) + '\n')
+pathlib.Path(sys.argv[1], 'adk-dependencies.txt').write_text(''.join(
+    f'{dist.metadata["Name"]}=={dist.version}\n' for dist in md.distributions()
+    if dist.metadata['Name'].lower() != 'densemem'
+))
+PY
+"$BUILD" -m pip_audit -r "$OUTPUT/adk-dependencies.txt" --no-deps --disable-pip --strict --format json --output "$OUTPUT/adk-audit.json"
+"$BUILD" -m cyclonedx_py environment "$ADK" --of JSON -o "$OUTPUT/adk-sbom.json"
+"$ADK" -m pip install 'pytest==9.1.1' 'pytest-asyncio==1.4.0'
+"$ADK" -m pytest -c "$PACKAGE_ROOT/pyproject.toml" "$WORK/tests" -p no:cacheprovider
 printf 'densemem package checks passed: SDK=%s\n' "$SDK"

@@ -199,7 +199,9 @@ func ledgerAppDSN(t testing.TB, dsn string) string {
 func truncateLedgerFixtures(tx *gorm.DB) error {
 	return tx.Exec(`
 		DO $$
-		DECLARE table_name text;
+		DECLARE
+			table_name text;
+			table_names text[] := ARRAY[]::text[];
 		BEGIN
 			FOREACH table_name IN ARRAY ARRAY[
 				'private_memory_retention_runs', 'private_memory_erasure_operations',
@@ -223,11 +225,38 @@ func truncateLedgerFixtures(tx *gorm.DB) error {
 				'identity_external_links', 'actor_identities', 'teams'
 			] LOOP
 				IF to_regclass(table_name) IS NOT NULL THEN
-					EXECUTE format('TRUNCATE TABLE %I CASCADE', table_name);
+					table_names := array_append(table_names, format('%I', table_name));
 				END IF;
 			END LOOP;
+			IF cardinality(table_names) > 0 THEN
+				EXECUTE 'TRUNCATE TABLE ' || array_to_string(table_names, ', ') || ' CASCADE';
+			END IF;
 		END $$;
 	`).Error
+}
+
+func TestCommunityTopicFixtureResetClearsParentsAndCascadingChildren(t *testing.T) {
+	f := newTopicProjectionFixture(t)
+	f.seedCohort(t)
+	f.drain(t, 10)
+
+	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
+		tables := []string{"teams", "evidence_fragments", "community_records", "ontology_record_heads", "memory_spaces"}
+		for _, table := range tables {
+			var count int64
+			require.NoError(t, tx.Table(table).Count(&count).Error)
+			require.Positive(t, count, table)
+		}
+		if err := truncateLedgerFixtures(tx); err != nil {
+			return err
+		}
+		for _, table := range tables {
+			var count int64
+			require.NoError(t, tx.Table(table).Count(&count).Error)
+			require.Zero(t, count, table)
+		}
+		return nil
+	}))
 }
 
 func createLedgerTeam(t testing.TB, db *gorm.DB, rls *storagepostgres.RLS, teamName string) string {

@@ -3,6 +3,14 @@
   "runtime": "production",
   "scenarios": [
     {
+      "name": "google_adk_memory",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": ["synchronous_write"],
+      "timeout_minutes": 60,
+      "playwright": false
+    },
+    {
       "name": "python_client",
       "isolation": "exclusive",
       "runtime": "production",
