@@ -14,7 +14,7 @@ on:
         default: ""
         type: string
       postgres_shards:
-        description: "PostgreSQL shards 0,1,2, all, or blank"
+        description: "PostgreSQL shards 0,1,2,3,4,5, all, or blank"
         required: false
         default: ""
         type: string
@@ -92,7 +92,7 @@ jobs:
     name: Build development production image
     needs: authorize
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -190,7 +190,7 @@ jobs:
     if: needs.authorize.outputs.has_scenarios == 'true'
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 8
       matrix: ${{ fromJSON(needs.authorize.outputs.scenario_matrix) }}
     permissions:
       contents: read
@@ -214,14 +214,17 @@ jobs:
     needs: [authorize, build]
     if: needs.authorize.outputs.has_postgres == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     strategy:
       fail-fast: false
-      max-parallel: 3
+      max-parallel: 6
       matrix: ${{ fromJSON(needs.authorize.outputs.postgres_matrix) }}
     env:
       DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
     steps:
+      - name: Set PostgreSQL execution deadline
+        shell: bash
+        run: printf 'POSTGRES_DEADLINE=%s\n' "$(( $(date +%s) + 27 * 60 ))" >> "${GITHUB_ENV}"
       - name: Checkout trusted execution policy
         uses: actions/checkout@v7
         with:
@@ -275,8 +278,10 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
-          scripts/e2e-host-controller.sh precheck \
-            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${IMAGE}" "${GITHUB_WORKSPACE}" "shard:${SHARD}"
+          remaining="$((POSTGRES_DEADLINE - $(date +%s)))"
+          ((remaining > 0)) || exit 124
+          timeout --signal=TERM --kill-after=30s "${remaining}s" scripts/e2e-host-controller.sh precheck \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${IMAGE}" "${GITHUB_WORKSPACE}" "shard:${SHARD}/6"
 
   report:
     name: Aggregate development test results

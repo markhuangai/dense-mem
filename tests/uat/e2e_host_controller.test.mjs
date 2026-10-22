@@ -171,7 +171,7 @@ test("precheck shards select each complete capability group", async () => {
     await assert.rejects(run("bash", [scriptPath, "shard:3"]), /invalid precheck shard/);
     const incompletePath = join(fixture, "incomplete-shard-test.sh");
     await executable(incompletePath, script.replace("alpha,beta\\ngamma,delta\\nepsilon\\n", "alpha,beta\\ngamma,delta\\n"));
-    await assert.rejects(run("bash", [incompletePath, "shard:2"]), /requires three populated shards/);
+    await assert.rejects(run("bash", [incompletePath, "shard:2"]), /requires 3 populated shards/);
   } finally {
     await rm(fixture, { recursive: true, force: true });
   }
@@ -1031,7 +1031,7 @@ test("OAuth compatibility harness keeps root logs in the Compose stream", () => 
 
 test("production workflows give each hosted scenario its own stack", () => {
   assert.match(productionWorkflow, /--matrix all/);
-  assert.match(productionWorkflow, /max-parallel: 4/);
+  assert.match(productionWorkflow, /max-parallel: 8/);
   assert.match(productionWorkflow, /docker\/setup-docker-action@v5/);
   assert.match(productionWorkflow, /rootless: true/);
   assert.match(productionWorkflow, /set-host: true/);
@@ -1041,7 +1041,7 @@ test("production workflows give each hosted scenario its own stack", () => {
   assert.match(productionWorkflow, /scripts\/e2e-host-controller\.sh precheck/);
   assert.doesNotMatch(productionWorkflow, /runs-on: rootless-docker|shared-start:|shared-stop:|exclusive-cleanup:/);
   assert.match(scenarioWorkflow, /runs-on: ubuntu-latest/);
-  assert.match(scenarioWorkflow, /timeout-minutes: \$\{\{ inputs\.timeout_minutes \}\}/);
+  assert.match(scenarioWorkflow, /timeout-minutes: \$\{\{ inputs\.timeout_minutes > 30 && 30 \|\| inputs\.timeout_minutes \}\}/);
   assert.match(scenarioWorkflow, /scripts\/e2e-host-controller\.sh start/);
   assert.match(scenarioWorkflow, /scripts\/e2e-host-controller\.sh run/);
   assert.match(scenarioWorkflow, /scripts\/e2e-host-controller\.sh stop/);
@@ -1118,4 +1118,34 @@ test("ontology retains a complete dedicated precheck shard", async () => {
   assert.deepEqual(groups[0], ["ontology"]);
   const { stdout: expected } = await run("bash", ["-c", `${helper}\ndatabase_case_capabilities "$1" precheck`, "precheck-test", root]);
   assert.deepEqual(groups.flat().sort(), expected.trim().split(/\r?\n/).sort());
+});
+
+test("six precheck shards preserve every real runner selection exactly once", async () => {
+  const start = controller.indexOf("\npartition_precheck_capabilities()") + 1;
+  const helper = controller.slice(start, controller.indexOf("\nprecheck() {", start));
+  const command = `${helper}\npartition_precheck_capabilities "$1" 6`;
+  const { stdout } = await run("bash", ["-c", command, "six-shards", root]);
+  const selections = stdout.trim().split(/\r?\n/);
+  assert.equal(selections.length, 6);
+  assert.equal(selections[0], "cases:repository/TestOntologyMaintenanceLargeBacklogAndFairTurns");
+  const inventory = [];
+  const directory = join(root, "scripts/e2e-db-cases");
+  for (const file of await readdir(directory)) {
+    const fragment = JSON.parse(await readFile(join(directory, file), "utf8"));
+    inventory.push(...fragment.cases.filter((item) => item.phase === "precheck").map((item) => item.id));
+  }
+  const actual = [];
+  for (const selection of selections) {
+    const args = selection.startsWith("cases:") ? ["--case", selection.slice(6)] : ["--capability", selection];
+    const selected = await run("go", ["-C", join(root, "cmd/e2e"), "run", ".", "--root", root, "--phase", "precheck", ...args, "--list"]);
+    const ids = selected.stdout.trim().split(/\r?\n/);
+    assert.ok(ids.length > 0);
+    if (selection === selections[1]) assert.ok(!ids.includes("repository/TestOntologyMaintenanceLargeBacklogAndFairTurns"));
+    actual.push(...ids);
+  }
+  assert.equal(new Set(actual).size, actual.length);
+  assert.deepEqual(actual.sort(), inventory.sort());
+  assert.ok(actual.length >= 606);
+  assert.equal((await run("bash", ["-c", command, "six-shards", root])).stdout, stdout);
+  await assert.rejects(run("bash", ["-c", `${helper}\npartition_precheck_capabilities "$1" 4`, "bad-shards", root]), /three or six shards/);
 });

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -290,6 +290,7 @@ describe("App", () => {
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
     await userEvent.click(screen.getByRole("link", { name: "Logs" }));
+    await act(() => vi.dynamicImportSettled());
 
     expect(await screen.findByText("GET /control/api/logs status 200")).toBeInTheDocument();
     expect(screen.getByText("event=control_http_request")).toBeInTheDocument();

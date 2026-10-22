@@ -74,11 +74,11 @@ async function selectDevelopmentTests(registry, scenarios, postgresShards) {
   const shards = selection(postgresShards);
   const unknown = names.filter((name) => name !== "all" && !available.some((row) => row.name === name));
   if (unknown.length) throw new Error(`unknown development scenarios: ${unknown.join(", ")}`);
-  if (shards.some((shard) => !["all", "0", "1", "2"].includes(shard))) throw new Error("PostgreSQL shards must be 0, 1, 2, or all");
+  if (shards.some((shard) => !["all", "0", "1", "2", "3", "4", "5"].includes(shard))) throw new Error("PostgreSQL shards must be 0 through 5, or all");
   if (names.length === 0 && shards.length === 0) throw new Error("select at least one E2E scenario or PostgreSQL shard");
   return {
     scenario_matrix: { include: available.filter((row) => names.includes("all") || names.includes(row.name)) },
-    postgres_matrix: { shard: shards.includes("all") ? [0, 1, 2] : shards.map(Number).sort() },
+    postgres_matrix: { shard: shards.includes("all") ? [0, 1, 2, 3, 4, 5] : shards.map(Number).sort() },
     has_scenarios: names.length > 0,
     has_postgres: shards.length > 0,
   };

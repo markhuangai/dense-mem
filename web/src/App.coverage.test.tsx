@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -48,8 +48,10 @@ describe("App coverage additions", () => {
     await userEvent.clear(teamSearch);
 
     await userEvent.click(screen.getByRole("link", { name: "Recall feedback" }));
+    await act(() => vi.dynamicImportSettled());
     expect(await screen.findByRole("heading", { name: "Recall Feedback" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("link", { name: "Identity & access" }));
+    await act(() => vi.dynamicImportSettled());
     expect(await screen.findByRole("heading", { name: /SSO providers/i })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("link", { name: "All teams" }));
     await userEvent.click(screen.getByRole("link", { name: "Dream history" }));

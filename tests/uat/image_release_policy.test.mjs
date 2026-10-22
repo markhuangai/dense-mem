@@ -185,10 +185,13 @@ test("shared CI partitions slow gates into independent hosted jobs", async () =>
     readFile(new URL("../../.github/workflows/ci-push.yml", import.meta.url), "utf8"),
   ]);
   const jobIds = [...shared.matchAll(/^  ([a-z0-9-]+):$/gm)].map(([, id]) => id);
-  assert.deepEqual(jobIds, ["npm-audit", "postgres-migrations", "quality", "python", "result"]);
+  assert.deepEqual(jobIds, ["npm-audit", "postgres-migrations", "quality", "go-tests", "coverage", "coverage-merge", "python", "result"]);
   const audit = workflowJob(shared, "npm-audit");
   const migrations = workflowJob(shared, "postgres-migrations");
   const quality = workflowJob(shared, "quality");
+  const goTests = workflowJob(shared, "go-tests");
+  const coverage = workflowJob(shared, "coverage");
+  const coverageMerge = workflowJob(shared, "coverage-merge");
   assert.match(shared, /^  COVERAGE_THRESHOLD: "90\.0"$/m);
   assert.equal((shared.match(/COVERAGE_THRESHOLD: "90\.0"/g) || []).length, 1);
 
@@ -196,6 +199,8 @@ test("shared CI partitions slow gates into independent hosted jobs", async () =>
     ["npm-audit", audit],
     ["postgres-migrations", migrations],
     ["quality", quality],
+    ["go-tests", goTests],
+    ["coverage", coverage],
   ]) {
     assert.match(job, /^    runs-on: ubuntu-latest$/m, `${name} must use a hosted runner`);
     assert.doesNotMatch(job, /^    needs:/m, `${name} must not depend on another CI job`);
@@ -239,18 +244,19 @@ test("shared CI partitions slow gates into independent hosted jobs", async () =>
     "Run Go vulnerability scan policy tests",
     "Run AI PR review policy tests",
     "Run evaluation monitor shell test",
-    "Run Go tests",
-    "Run pinned Go static analysis",
-    "Run Go vulnerability scan",
-    "Run unit coverage gate",
   ]) {
     assert.equal((quality.match(new RegExp(`^      - name: ${step.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "gm")) || []).length, 1, `${step} must run exactly once`);
   }
+  for (const step of ["Run Go tests", "Run pinned Go static analysis", "Run Go vulnerability scan"]) {
+    assert.equal((goTests.match(new RegExp(`^      - name: ${step}$`, "gm")) || []).length, 1, `${step} must run exactly once`);
+  }
+  assert.equal((coverageMerge.match(/^      - name: Run unit coverage gate$/gm) || []).length, 1);
+  assert.match(coverageMerge, /^    runs-on: ubuntu-latest$/m);
+  assert.match(coverageMerge, /^    needs: coverage$/m);
   assert.match(migrations, /Validate PostgreSQL migration history/);
   assert.doesNotMatch(migrations, /go test -tags=integration \.\/internal\/storage\/postgres/);
   assert.doesNotMatch(migrations, /Run Go tests|Run unit coverage gate/);
-  assert.match(quality, /Run Go tests/);
-  assert.match(quality, /Run unit coverage gate/);
+  assert.doesNotMatch(quality, /Run Go tests|Run unit coverage gate/);
   assert.doesNotMatch(quality, /Run npm vulnerability audits|Run PostgreSQL migration integration suite|Validate PostgreSQL migration history/);
   assert.match(shared, /^  workflow_call:\n    inputs:/m);
   assert.match(shared, /^      migration-base-ref:\n        description:/m);

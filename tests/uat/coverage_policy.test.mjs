@@ -135,6 +135,11 @@ test("Go coverage discovery keeps external tests, testless packages, and working
 test("complete Go coverage deduplicates profiles and rejects exact thresholds", (t) => {
   const fixture = mkdtempSync(join(tmpdir(), "dense-mem-coverage-runner-"));
   t.after(() => rmSync(fixture, { recursive: true, force: true }));
+  writeFixture(fixture, "scripts/coverage-report.sh", readFixture(coverageScript));
+  writeFixture(fixture, "scripts/go-packages.sh", readFixture(packageScript));
+  chmodSync(join(fixture, "scripts/go-packages.sh"), 0o755);
+  writeFixture(fixture, "fixture.go", "package fixture\n");
+  mkdirSync(join(fixture, "cmd/e2e"), { recursive: true });
   const fakeGo = join(fixture, "go");
   writeFileSync(fakeGo, fakeGoScript());
   chmodSync(fakeGo, 0o755);
@@ -208,13 +213,27 @@ function run(command, args, options = {}) {
 }
 
 function runCoverage(fakeGo, outputDir, mode, extraEnv = {}) {
-  return run("bash", [coverageScript, mode], {
+  const fixture = join(fakeGo, "..");
+  return run("bash", [join(fixture, "scripts/coverage-report.sh"), mode], {
+    cwd: fixture,
     env: {
+      ...fixtureGitEnvironment(fixture),
       PATH: `${join(fakeGo, "..")}:${process.env.PATH}`,
       COVERAGE_OUTPUT_DIR: outputDir,
       ...extraEnv,
     },
   });
+}
+
+function fixtureGitEnvironment(fixture) {
+  const gitDir = execFileSync("git", ["rev-parse", "--absolute-git-dir"], { cwd: repositoryRoot, encoding: "utf8" }).trim();
+  const index = join(gitDir, "index");
+  const savedIndex = readFileSync(index);
+  const env = { GIT_DIR: gitDir, GIT_WORK_TREE: fixture, GIT_INDEX_FILE: join(fixture, ".coverage-fixture-index"), GIT_OPTIONAL_LOCKS: "0" };
+  const result = run("git", ["read-tree", "--empty"], { cwd: fixture, env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(readFileSync(index), savedIndex);
+  return env;
 }
 
 function writeFixture(rootPath, relativePath, contents) {
@@ -310,3 +329,79 @@ function fakeGoScript() {
     "} > \"${profile}\"",
   ].join("\n") + "\n";
 }
+
+test("real Go coverage parts retain cross-package and testless execution and reject stale artifacts", { timeout: 120000 }, (t) => {
+  const fixture = mkdtempSync(join(tmpdir(), "dense-mem-real-coverage-"));
+  t.after(() => rmSync(fixture, { recursive: true, force: true }));
+  writeFixture(fixture, "scripts/coverage-report.sh", readFixture(coverageScript));
+  writeFixture(fixture, "scripts/go-packages.sh", readFixture(packageScript));
+  chmodSync(join(fixture, "scripts/go-packages.sh"), 0o755);
+  writeFixture(fixture, "go.mod", "module example.com/fixture\n\ngo 1.26\n");
+  writeFixture(fixture, "internal/example/value.go", "package example\nfunc Choose(value bool) int { if value { return 1 }; return 2 }\n");
+  writeFixture(fixture, "internal/example/value_test.go", 'package example\nimport "testing"\nfunc TestCore(t *testing.T) { if Choose(false) != 2 { t.Fatal("wrong branch") } }\n');
+  writeFixture(fixture, "internal/example/evaluation.go", "//go:build evaluation\n\npackage example\nfunc Evaluation() int { return 99 }\n");
+  writeFixture(fixture, "internal/example/evaluation_test.go", '//go:build evaluation\n\npackage example\nimport "testing"\nfunc TestEvaluation(t *testing.T) { if Evaluation() != 99 { t.Fatal("evaluation") } }\n');
+  writeFixture(fixture, "internal/testless/value.go", "package testless\nfunc Value() int { return 7 }\n");
+  const targets = {
+    "internal/ontology/postgres": ["TestOntologyMaintenanceCohort"],
+    "internal/community/postgres": ["TestCommunityTopicOrdinary", "TestCommunityTopicLargeFanoutResumesAndRotates"],
+    "internal/dream/postgres": ["TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention"],
+    "cmd/internal/serverapp": ["TestServerLifecycleCore"],
+    "internal/service": ["TestAuditFixture"],
+    "internal/knowledge/postgres": ["TestSessionFixture"],
+  };
+  for (const [directory, names] of Object.entries(targets)) {
+    writeFixture(fixture, `${directory}/value.go`, '//go:build integration\n\npackage fixture\nimport ("example.com/fixture/internal/example"; "example.com/fixture/internal/testless")\nfunc Value() int { return example.Choose(true) + testless.Value() }\n');
+    writeFixture(fixture, `${directory}/value_test.go`, '//go:build integration\n\npackage fixture\nimport "testing"\n' + names.map((name) => `func ${name}(t *testing.T) { if Value() != 8 { t.Fatal("cross-package execution") } }`).join("\n") + "\n");
+  }
+  writeFixture(fixture, "cmd/e2e/go.mod", "module example.com/fixture/cmd/e2e\n\ngo 1.26\n");
+  writeFixture(fixture, "cmd/e2e/value.go", "package e2e\nfunc Value() int { return 3 }\n");
+  writeFixture(fixture, "cmd/e2e/value_test.go", 'package e2e\nimport "testing"\nfunc TestNested(t *testing.T) { if Value() != 3 { t.Fatal("nested") } }\n');
+  const outputDir = join(fixture, "coverage");
+  const env = { ...fixtureGitEnvironment(fixture), COVERAGE_OUTPUT_DIR: outputDir, GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "1" };
+  const script = join(fixture, "scripts/coverage-report.sh");
+  const coverage = (...args) => run("bash", [script, ...args], { cwd: fixture, env });
+  const requirePass = (result) => assert.equal(result.status, 0, result.stdout + result.stderr);
+  requirePass(coverage("--complete-part", "core"));
+  const core = readFixture(join(outputDir, "core/go-root-complete.raw"));
+  assert.match(core, /fixture\/internal\/testless\/value.go:[^\n]+ 0/m);
+  assert.notEqual(coverage("--merge-complete").status, 0);
+  requirePass(coverage("--complete-part", "postgres"));
+  assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), /fixture\/internal\/testless\/value.go:[^\n]+ [1-9]/m);
+  requirePass(coverage("--merge-complete"));
+  assert.match(readFixture(join(outputDir, "go-complete.txt")), /100\.0%/);
+  const profile = join(outputDir, "postgres/go-audit-complete.raw");
+  const savedProfile = readFixture(profile);
+  writeFileSync(profile, "mode: atomic\n");
+  assert.notEqual(coverage("--merge-complete").status, 0);
+  writeFileSync(profile, savedProfile);
+  const identity = join(outputDir, "postgres/identity.txt");
+  const savedIdentity = readFixture(identity);
+  for (const replacement of [savedIdentity.replace(/^[^\n]+/, "0".repeat(40)), savedIdentity.replace("\n123\n1\n", "\n123\n2\n")]) {
+    writeFileSync(identity, replacement);
+    assert.notEqual(coverage("--merge-complete").status, 0);
+  }
+  writeFileSync(identity, savedIdentity);
+  const manifest = join(outputDir, "postgres/profiles.sha256");
+  const savedManifest = readFixture(manifest);
+  writeFileSync(manifest, savedManifest.split("\n").filter((line) => !line.includes("go-audit-complete.raw")).join("\n"));
+  assert.notEqual(coverage("--merge-complete").status, 0);
+  writeFileSync(manifest, savedManifest);
+  requirePass(coverage("--merge-complete"));
+  writeFileSync(profile, "");
+  assert.notEqual(coverage("--merge-complete").status, 0);
+  rmSync(profile);
+  assert.notEqual(coverage("--merge-complete").status, 0);
+
+  const threshold = join(fixture, "threshold");
+  writeFixture(threshold, "go.mod", "module example.com/threshold\n\ngo 1.26\n");
+  writeFixture(threshold, "value.go", "package threshold\n" + Array.from({ length: 10 }, (_, i) => `func Value${i}() int { return ${i} }`).join("\n") + "\n");
+  writeFixture(threshold, "value_test.go", 'package threshold\nimport "testing"\nfunc TestNine(t *testing.T) { ' + Array.from({ length: 9 }, (_, i) => `if Value${i}() != ${i} { t.Fatal("value") };`).join(" ") + " }\n");
+  const exactProfile = join(threshold, "exact.out");
+  requirePass(run("go", ["test", "-covermode=atomic", `-coverprofile=${exactProfile}`, "./..."], { cwd: threshold }));
+  const source = readFixture(coverageScript);
+  const helpers = source.slice(source.indexOf("profile_totals() {"), source.indexOf("merge_profiles() {"));
+  const exact = run("bash", ["-c", `${helpers}\nenforce_profile_threshold "$1" fixture`, "threshold", exactProfile]);
+  assert.notEqual(exact.status, 0);
+  assert.match(exact.stdout + exact.stderr, /9\/10 does not exceed 90%/);
+});

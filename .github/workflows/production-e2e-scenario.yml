@@ -48,7 +48,7 @@ jobs:
   scenario:
     name: ${{ inputs.receipt_job_prefix }}${{ inputs.scenario == 'full' && 'dreaming_telemetry_portal' || inputs.scenario }}
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.timeout_minutes }}
+    timeout-minutes: ${{ inputs.timeout_minutes > 30 && 30 || inputs.timeout_minutes }}
     env:
       DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
       PHASE: ${{ inputs.isolation == 'shared_team' && 'shared' || 'exclusive' }}
@@ -56,6 +56,9 @@ jobs:
       ISOLATION: ${{ inputs.isolation }}
       DENSE_MEM_CI_LOCAL: ${{ inputs.trusted_harness_revision != '' && '1' || '0' }}
     steps:
+      - name: Set scenario execution deadline
+        shell: bash
+        run: printf 'SCENARIO_DEADLINE=%s\n' "$(( $(date +%s) + 27 * 60 ))" >> "${GITHUB_ENV}"
       - name: Checkout trusted development execution policy
         if: inputs.development
         uses: actions/checkout@v7
@@ -162,6 +165,7 @@ jobs:
           printf 'playwright=%s\n' "${playwright}" >> "${GITHUB_OUTPUT}"
 
       - name: Start scenario stack
+        timeout-minutes: 7
         id: stack
         shell: bash
         env:
@@ -169,12 +173,15 @@ jobs:
         run: |
           set -euo pipefail
           [[ "${IMAGE}" =~ ^(.+)@(sha256:[0-9a-f]{64})$ ]]
-          project="$(scripts/e2e-host-controller.sh start \
+          remaining="$((SCENARIO_DEADLINE - $(date +%s)))"
+          ((remaining > 0)) || exit 124
+          project="$(timeout --signal=TERM --kill-after=30s "${remaining}s" scripts/e2e-host-controller.sh start \
             "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${PHASE}" "${SCENARIO}" \
             "${IMAGE}" "${GITHUB_WORKSPACE}")"
           printf 'project=%s\n' "${project}" >> "${GITHUB_OUTPUT}"
 
       - name: Run scenario
+        timeout-minutes: 27
         if: always()
         shell: bash
         env:
@@ -195,7 +202,9 @@ jobs:
             }
             trap restore_workflow_commands EXIT
             printf '::stop-commands::%s\n' "${stop_marker}"
-            scripts/e2e-host-controller.sh run \
+            remaining="$((SCENARIO_DEADLINE - $(date +%s)))"
+            ((remaining > 0)) || exit 124
+            timeout --signal=TERM --kill-after=30s "${remaining}s" scripts/e2e-host-controller.sh run \
               "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${PHASE}" "${SCENARIO}" \
               "${SCENARIO}" "${IMAGE}" "${GITHUB_WORKSPACE}" 2>&1
             status=$?
@@ -208,6 +217,7 @@ jobs:
           exit "${status}"
 
       - name: Stop scenario stack
+        timeout-minutes: 2
         if: always() && steps.stack.outputs.project != ''
         shell: bash
         env:

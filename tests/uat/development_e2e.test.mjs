@@ -90,9 +90,10 @@ test("development selections support E2E-only, PostgreSQL-only, subsets, and all
   const postgres = await policy.selectDevelopmentTests(registry, "", "2,0");
   assert.equal(postgres.has_scenarios, false);
   assert.deepEqual(postgres.postgres_matrix.shard, [0, 2]);
+  assert.deepEqual((await policy.selectDevelopmentTests(registry, "", "5,3,4")).postgres_matrix.shard, [3, 4, 5]);
   const all = await policy.selectDevelopmentTests(registry, "all", "all");
   assert.equal(all.scenario_matrix.include.length, registry.scenarios.length);
-  assert.deepEqual(all.postgres_matrix.shard, [0, 1, 2]);
+  assert.deepEqual(all.postgres_matrix.shard, [0, 1, 2, 3, 4, 5]);
   assert.deepEqual((await policy.selectDevelopmentTests(registry, "full", "")).scenario_matrix.include.map(({ name }) => name), ["full"]);
   const extended = structuredClone(registry);
   extended.scenarios.push({ ...extended.scenarios[0], name: "new_branch_scenario" });
@@ -100,7 +101,7 @@ test("development selections support E2E-only, PostgreSQL-only, subsets, and all
 });
 
 test("development selections reject empty, malformed, unknown, and duplicate lists", async () => {
-  for (const [scenarios, postgres] of [["", ""], ["unknown", ""], ["conflict,,mcp_oauth", ""], ["all,conflict", ""], ["conflict,conflict", ""], ["", "3"], ["", "all,0"], ["", "0,0"]]) {
+  for (const [scenarios, postgres] of [["", ""], ["unknown", ""], ["conflict,,mcp_oauth", ""], ["all,conflict", ""], ["conflict,conflict", ""], ["", "6"], ["", "all,0"], ["", "0,0"]]) {
     await assert.rejects(policy.selectDevelopmentTests(readRegistry(), scenarios, postgres));
   }
 });
@@ -125,8 +126,8 @@ test("development workflow runs selected groups independently with one pinned GH
   assert.doesNotMatch(workflow, /upload-artifact|build-push-action|statuses: write|secrets:\s*inherit/);
   assert.match(workflow, /uses: \.\/\.github\/workflows\/production-e2e-scenario\.yml/);
   assert.equal((workflow.match(/needs: \[authorize, build\]/g) || []).length, 2);
-  assert.match(workflow, /max-parallel: 4/);
-  assert.match(workflow, /max-parallel: 3/);
+  assert.match(workflow, /max-parallel: 8/);
+  assert.match(workflow, /max-parallel: 6/);
   assert.match(workflow, /source_revision: \$\{\{ needs.authorize.outputs.source_revision \}\}/);
   assert.match(workflow, /scripts\/e2e-host-controller\.sh precheck/);
   assert.match(workflow, /if: always\(\)/);

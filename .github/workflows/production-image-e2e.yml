@@ -44,6 +44,7 @@ jobs:
       source_repository: ${{ steps.resolve.outputs.source_repository }}
       source_revision: ${{ steps.resolve.outputs.source_revision }}
       scenario_matrix: ${{ steps.matrix.outputs.scenario_matrix }}
+      migration_base_ref: ${{ steps.resolve.outputs.migration_base_ref }}
     steps:
       - name: Checkout trusted policy and registry
         uses: actions/checkout@v7
@@ -90,6 +91,7 @@ jobs:
                   context.ref !== `refs/heads/${pull.head.ref}` || context.sha !== pull.head.sha) {
                 throw new Error("manual trial must target the actor's own current same-repository PR head");
               }
+              core.setOutput("migration_base_ref", pull.base.sha);
               const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, {
                 owner, repo, ref: pull.head.sha, per_page: 100,
               });
@@ -168,11 +170,23 @@ jobs:
           matrix="$(node .ci-policy/scripts/e2e-scenario-registry.mjs --matrix all)"
           printf 'scenario_matrix=%s\n' "${matrix}" >> "${GITHUB_OUTPUT}"
 
+  ci-trial:
+    name: Candidate repository CI
+    needs: authorize
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci-shared.yml
+    with:
+      source-repository: ${{ needs.authorize.outputs.source_repository }}
+      source-revision: ${{ needs.authorize.outputs.source_revision }}
+      migration-base-ref: ${{ needs.authorize.outputs.migration_base_ref }}
+
   prechecks:
     name: Rootless controller precheck
     needs: authorize
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     env:
       DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
     steps:
@@ -217,14 +231,17 @@ jobs:
     needs: authorize
     strategy:
       fail-fast: false
-      max-parallel: 3
+      max-parallel: 6
       matrix:
-        shard: [0, 1, 2]
+        shard: [0, 1, 2, 3, 4, 5]
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     env:
       DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
     steps:
+      - name: Set PostgreSQL execution deadline
+        shell: bash
+        run: printf 'POSTGRES_DEADLINE=%s\n' "$(( $(date +%s) + 27 * 60 ))" >> "${GITHUB_ENV}"
       - name: Checkout exact pull request source
         uses: actions/checkout@v7
         with:
@@ -258,17 +275,19 @@ jobs:
           IMAGE: ${{ needs.authorize.outputs.image }}
         run: |
           set -euo pipefail
-          scripts/e2e-host-controller.sh precheck \
+          remaining="$((POSTGRES_DEADLINE - $(date +%s)))"
+          ((remaining > 0)) || exit 124
+          timeout --signal=TERM --kill-after=30s "${remaining}s" scripts/e2e-host-controller.sh precheck \
             "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${IMAGE}" "${GITHUB_WORKSPACE}" \
-            "shard:${{ matrix.shard }}"
+            "shard:${{ matrix.shard }}/6"
 
   scenarios:
     name: ${{ matrix.name == 'full' && 'dreaming_telemetry_portal' || matrix.name }}
-    needs: [authorize, prechecks, database-prechecks]
-    if: needs.prechecks.result == 'success' && needs.database-prechecks.result == 'success'
+    needs: [authorize, prechecks]
+    if: needs.prechecks.result == 'success'
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 8
       matrix: ${{ fromJSON(needs.authorize.outputs.scenario_matrix) }}
     uses: ./.github/workflows/production-e2e-scenario.yml
     with:
@@ -284,7 +303,7 @@ jobs:
 
   report:
     name: Aggregate production E2E results
-    needs: [authorize, prechecks, database-prechecks, scenarios]
+    needs: [authorize, prechecks, database-prechecks, scenarios, ci-trial]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -296,6 +315,8 @@ jobs:
           PRECHECK_RESULT: ${{ needs.prechecks.result }}
           DATABASE_PRECHECK_RESULT: ${{ needs.database-prechecks.result }}
           SCENARIO_RESULT: ${{ needs.scenarios.result }}
+          CI_TRIAL_RESULT: ${{ needs.ci-trial.result }}
+          EVENT_NAME: ${{ github.event_name }}
           IMAGE: ${{ needs.authorize.outputs.image }}
           SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
         run: |
@@ -312,7 +333,11 @@ jobs:
             echo "| Rootless controller precheck | ${PRECHECK_RESULT} |"
             echo "| PostgreSQL precheck shards | ${DATABASE_PRECHECK_RESULT} |"
             echo "| Scenario matrix | ${SCENARIO_RESULT} |"
+            echo "| Candidate repository CI (manual trials) | ${CI_TRIAL_RESULT} |"
           } >> "${GITHUB_STEP_SUMMARY}"
           for result in "${AUTH_RESULT}" "${PRECHECK_RESULT}" "${DATABASE_PRECHECK_RESULT}" "${SCENARIO_RESULT}"; do
             [[ "${result}" == "success" ]] || exit 1
           done
+          if [[ "${EVENT_NAME}" == workflow_dispatch ]]; then
+            [[ "${CI_TRIAL_RESULT}" == success ]] || exit 1
+          fi

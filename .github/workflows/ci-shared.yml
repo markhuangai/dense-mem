@@ -33,6 +33,7 @@ jobs:
   npm-audit:
     name: NPM vulnerability audits
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -95,6 +96,7 @@ jobs:
   postgres-migrations:
     name: PostgreSQL migration history
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -119,8 +121,9 @@ jobs:
         run: scripts/check-postgres-migrations.sh "${{ inputs.migration-base-ref }}"
 
   quality:
-    name: Quality and unit tests
+    name: Repository and browser checks
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -217,6 +220,25 @@ jobs:
       - name: Run evaluation monitor shell test
         run: bash tests/eval/scripts/run_full_public_rag_eval_until_done_test.sh
 
+  go-tests:
+    name: Go tests and analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          repository: ${{ inputs.source-repository || github.repository }}
+          ref: ${{ inputs.source-revision }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.9"
+          cache: false
+
       - name: Run Go tests
         shell: bash
         run: |
@@ -234,8 +256,71 @@ jobs:
       - name: Run Go vulnerability scan
         run: scripts/go-vulnerability-scan.sh
 
+  coverage:
+    name: Go coverage ${{ matrix.part }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [core, postgres]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          repository: ${{ inputs.source-repository || github.repository }}
+          ref: ${{ inputs.source-revision }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.9"
+          cache: false
+
+      - name: Produce complete coverage part
+        run: scripts/coverage-report.sh --complete-part '${{ matrix.part }}'
+      - name: Upload source-bound coverage profiles
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-coverage-${{ matrix.part }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage/${{ matrix.part }}/
+          if-no-files-found: error
+          retention-days: 7
+
+  coverage-merge:
+    name: Complete Go coverage gate
+    needs: coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          repository: ${{ inputs.source-repository || github.repository }}
+          ref: ${{ inputs.source-revision }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.9"
+          cache: false
+
+      - name: Download core coverage profiles
+        uses: actions/download-artifact@v8
+        with:
+          name: go-coverage-core-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage/core
+      - name: Download PostgreSQL coverage profiles
+        uses: actions/download-artifact@v8
+        with:
+          name: go-coverage-postgres-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage/postgres
       - name: Run unit coverage gate
-        run: scripts/coverage-report.sh --complete
+        run: scripts/coverage-report.sh --merge-complete
 
   python:
     name: Python ${{ matrix.python }} (${{ matrix.sdk }})
@@ -263,7 +348,7 @@ jobs:
 
   result:
     name: Aggregate repository CI
-    needs: [npm-audit, postgres-migrations, quality, python]
+    needs: [npm-audit, postgres-migrations, quality, go-tests, coverage, coverage-merge, python]
     if: always()
     runs-on: ubuntu-latest
     permissions: {}
@@ -276,6 +361,9 @@ jobs:
           NPM_RESULT: ${{ needs.npm-audit.result }}
           MIGRATIONS_RESULT: ${{ needs.postgres-migrations.result }}
           QUALITY_RESULT: ${{ needs.quality.result }}
+          GO_RESULT: ${{ needs.go-tests.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+          COVERAGE_MERGE_RESULT: ${{ needs.coverage-merge.result }}
           PYTHON_RESULT: ${{ needs.python.result }}
         shell: bash
         run: |
@@ -283,5 +371,8 @@ jobs:
           test "${NPM_RESULT}" = success
           test "${MIGRATIONS_RESULT}" = success
           test "${QUALITY_RESULT}" = success
+          test "${GO_RESULT}" = success
+          test "${COVERAGE_RESULT}" = success
+          test "${COVERAGE_MERGE_RESULT}" = success
           test "${PYTHON_RESULT}" = success
           echo 'passed=true' >> "${GITHUB_OUTPUT}"

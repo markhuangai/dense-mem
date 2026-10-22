@@ -77,7 +77,7 @@ function successReceipt(approved, run, scenarios) {
     pr_number: approved.pr_number, source_sha: approved.source_sha, image: approved.image,
     preview_run_id: String(approved.run_id), preview_run_attempt: String(approved.run_attempt),
     trusted_revision: approved.trusted_revision, fork_run_id: String(run.id), fork_run_attempt: String(run.run_attempt),
-    rootless_controller: "success", postgres_prechecks: ["success", "success", "success"],
+    rootless_controller: "success", postgres_prechecks: Array(6).fill("success"),
     scenarios: scenarios.map((name) => ({ name, result: "success", cleanup: "success" })),
   };
 }
@@ -85,7 +85,7 @@ function successReceipt(approved, run, scenarios) {
 function receiptBytes(receipt) { return `${JSON.stringify(receipt)}\n`; }
 
 function requiredForkJobs(scenarios) {
-  return ["Fork rootless controller precheck", ...[0, 1, 2].map((shard) => `Fork PostgreSQL precheck shard ${shard}`),
+  return ["Fork rootless controller precheck", ...[0, 1, 2, 3, 4, 5].map((shard) => `Fork PostgreSQL precheck shard ${shard}`),
     ...scenarios.map((name) => `Fork scenario ${name === "full" ? "dreaming_telemetry_portal" : name}`),
     "Sign fork E2E receipt"];
 }

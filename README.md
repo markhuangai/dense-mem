@@ -707,7 +707,7 @@ before a pull request exists.
 
 Enter registered scenario names in `scenarios`, separated by commas, or `all`
 for the entire scenario registry. Leave it blank for PostgreSQL-only testing.
-For `postgres_shards`, enter `0`, `1`, `2`, a comma-separated subset, or `all`;
+For `postgres_shards`, enter `0` through `5`, a comma-separated subset, or `all`;
 leave it blank for E2E-only testing. Select at least one group. The scenario
 named `full` runs Dream retirement, historical inspection, telemetry, and portal coverage; `all` runs
 every registered scenario. Available names live in
@@ -723,7 +723,12 @@ gh workflow run development-e2e.yml --ref main \
 The workflow resolves one commit, builds one native production image in the
 dedicated `dense-mem-e2e` GHCR package, and gives every selected job the same
 image digest and source SHA. E2E and PostgreSQL groups run independently, with
-four concurrent scenarios and three PostgreSQL shards per run. The Actions
+eight concurrent scenarios and six PostgreSQL shards per run. The backlog
+regression has a dedicated shard; shard selections cover every registered case
+exactly once. Execution jobs are capped at 30 minutes, with bounded test time
+before cleanup. Production validation starts scenarios after the rootless
+controller check while PostgreSQL shards continue independently, and its final
+gate requires every group to pass. The Actions
 summary records the exact SHA, digest, selections, and results. Inspect the
 matching **Clean development E2E images** run as well: it removes the owned
 image after completion, including failures and cancellations. An hourly sweep
@@ -740,6 +745,22 @@ full production-image E2E gate through the ordinary validation route.
 New manual workflows become dispatchable after their workflow files reach the
 default branch. Live rollout must verify E2E-only, PostgreSQL-only, combined,
 failed, and cancelled runs together with GHCR cleanup.
+
+Shared CI runs repository/browser checks, Go tests and analysis, and core and
+PostgreSQL coverage producers independently. Its required merge gate verifies
+that all seven raw Go profiles belong to the same source commit and workflow
+attempt, then applies the unchanged deduplicated coverage threshold above 90%.
+The local `scripts/coverage-report.sh --complete` command still runs both parts
+and the merge. PR validation and post-merge CI use the same shared workflow.
+
+Repository admins can benchmark changes to CI/E2E workflows before merge using
+`production-image-e2e.yml` on their own current PR branch with `pr_number`.
+The manual trial requires the trusted preview receipt and runs candidate shared
+CI alongside every database shard and registered scenario. It does not replace
+the normal required PR checks. Record the exact source SHA, image digest,
+workflow attempt, preview-build duration, queue and execution times, and cleanup
+results; accept the latency change only when all execution jobs finish below
+30 minutes and the trial plus preview-build allowance finishes within 60 minutes.
 
 ## Fork pull-request validation
 

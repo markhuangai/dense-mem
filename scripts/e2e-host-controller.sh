@@ -29,7 +29,7 @@ usage() {
     '  e2e-host-controller.sh run RUN_ID ATTEMPT PHASE STACK_SCENARIO SCENARIO IMAGE_REF SOURCE_DIR' \
     '  e2e-host-controller.sh stop PROJECT' \
     '  e2e-host-controller.sh stale-cleanup [MAX_AGE_SECONDS] [RUN_ID ATTEMPT PHASE]' \
-    '  e2e-host-controller.sh precheck RUN_ID ATTEMPT IMAGE_REF SOURCE_DIR [CAPABILITIES|shard:0..2]' >&2
+    '  e2e-host-controller.sh precheck RUN_ID ATTEMPT IMAGE_REF SOURCE_DIR [CAPABILITIES|shard:0..2|shard:0..5/6]' >&2
   exit 2
 }
 
@@ -361,14 +361,19 @@ source "${CONTROLLER_DIR}/e2e-host-controller-stack.sh"
 source "${CONTROLLER_DIR}/e2e-host-controller-postgres.sh"
 
 precheck_capability() {
-  local run_id="$1" attempt="$2" image_ref="$3" source_dir="$4" capabilities="${5:-}"
+  local run_id="$1" attempt="$2" image_ref="$3" source_dir="$4" capabilities="${5:-}" bounded="${6:-0}"
   validate_decimal "$run_id"
   validate_decimal "$attempt"
   validate_image_ref "$image_ref"
   local image_digest="${image_ref##*@}"
   validate_digest "$image_digest"
   [[ -d "$source_dir" && "$source_dir" == /* ]] || fail "precheck source directory must be absolute"
-  if [[ -n "$capabilities" ]]; then
+  local case_ids="" selection_key="$capabilities"
+  if [[ "$capabilities" == cases:* ]]; then
+    case_ids="${capabilities#cases:}"
+    [[ "$case_ids" =~ ^[A-Za-z0-9_/-]+(,[A-Za-z0-9_/-]+)*$ ]] || fail "invalid precheck case selection"
+    selection_key="cases-$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(process.argv[1]).digest("hex").slice(0,16))' "$case_ids")"
+  elif [[ -n "$capabilities" ]]; then
     [[ "$capabilities" =~ ^[a-z0-9_-]+(,[a-z0-9_-]+)*$ ]] || fail "invalid precheck capability selection"
   fi
   validate_bundle
@@ -377,7 +382,7 @@ precheck_capability() {
   local docker_socket
   docker_socket="$(docker_socket_path)"
   local project
-  project="$(managed_project_name "$run_id" "$attempt" precheck "$capabilities")"
+  project="$(managed_project_name "$run_id" "$attempt" precheck "$selection_key")"
   local precheck_network="$project"
   cleanup_precheck_resources() {
     remove_network_containers "$precheck_network"
@@ -411,7 +416,12 @@ precheck_capability() {
   [[ "$test_image" =~ ^[A-Za-z0-9._/:@-]+$ ]] || fail "invalid precheck Go test image"
   local test_status=0
   local -a runner_command=(go -C cmd/e2e run . --root /workspace --phase precheck --timeout 40m --total-timeout 58m)
-  if [[ -n "$capabilities" ]]; then
+  if [[ "$bounded" == 1 ]]; then
+    runner_command=(go -C cmd/e2e run . --root /workspace --phase precheck --timeout 27m --total-timeout 27m)
+  fi
+  if [[ -n "$case_ids" ]]; then
+    runner_command+=(--case "$case_ids")
+  elif [[ -n "$capabilities" ]]; then
     runner_command+=(--capability "$capabilities")
   fi
   if run_go_source_container \
@@ -463,14 +473,16 @@ NODE
 }
 
 partition_precheck_capabilities() {
-  local source_dir="$1"
-  node - "$source_dir/scripts/e2e-db-cases" <<'NODE'
+  local source_dir="$1" shard_count="${2:-3}"
+  node - "$source_dir/scripts/e2e-db-cases" "$shard_count" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 
 const directory = process.argv[2];
+const shardCount = Number(process.argv[3]);
+if (![3, 6].includes(shardCount)) throw new Error("precheck requires three or six shards");
 const batchSize = 40;
-const groups = Array.from({ length: 3 }, () => ({
+const groups = Array.from({ length: shardCount }, () => ({
   cases: 0,
   packageCounts: new Map(),
   capabilities: [],
@@ -491,21 +503,32 @@ for (const entry of fs.readdirSync(directory).filter((item) => item.endsWith(".j
   if (packageCounts.size === 0) continue;
   const cases = [...packageCounts.values()].reduce((total, count) => total + count, 0);
   const weight = [...packageCounts.values()].reduce((total, count) => total + Math.ceil(count / batchSize), 0);
-  records.push({ capability, cases, packageCounts, weight });
+  const caseIds = fragment.cases.filter((item) => item.phase === "precheck").map((item) => item.id);
+  records.push({ capability, cases, packageCounts, weight, caseIds });
 }
 
 if (records.length === 0) throw new Error("no populated precheck database capability fragments");
 
 const ontologyIndex = records.findIndex((record) => record.capability === "ontology");
 const isolateOntology = ontologyIndex >= 0 && records.length >= 3;
+const caseSelections = [];
+if (shardCount === 6) {
+  const backlog = "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns";
+  const ontology = records[ontologyIndex];
+  if (!ontology?.caseIds.includes(backlog) || ontology.caseIds.length < 2 || records.length < 5) {
+    throw new Error("six precheck shards require the backlog case, remaining ontology, and four populated capability groups");
+  }
+  caseSelections.push(backlog, ontology.caseIds.filter((id) => id !== backlog).sort().join(","));
+  groups.splice(0, 2);
+}
 if (isolateOntology) {
-  // Ontology backlog fixtures need a dedicated shard within the phase deadline.
+  // The large corpus remains intact; six-shard execution gives it a runner of its own.
   records.splice(ontologyIndex, 1);
-  groups.pop();
+  if (shardCount === 3) groups.pop();
 }
 
 records.sort((left, right) =>
-  right.weight - left.weight ||
+  (shardCount === 6 ? right.cases - left.cases : right.weight - left.weight) ||
   right.cases - left.cases ||
   (left.capability < right.capability ? -1 : left.capability > right.capability ? 1 : 0),
 );
@@ -536,7 +559,11 @@ for (const record of records) {
   }
 }
 
-if (isolateOntology) process.stdout.write("ontology\n");
+if (shardCount === 6 && groups.some((group) => group.capabilities.length === 0)) {
+  throw new Error("six precheck shards require six populated selections");
+}
+for (const ids of caseSelections) process.stdout.write(`cases:${ids}\n`);
+if (isolateOntology && shardCount === 3) process.stdout.write("ontology\n");
 for (const group of groups) {
   if (group.capabilities.length > 0) process.stdout.write(`${group.capabilities.join(",")}\n`);
 }
@@ -546,9 +573,21 @@ NODE
 precheck() {
   local run_id="$1" attempt="$2" image_ref="$3" source_dir="$4" capabilities="${5:-}"
   local -a selections=()
+  local shard_count=3 shard_index="" bounded=0
+  if [[ "$capabilities" == shard:* ]]; then
+    if [[ "$capabilities" =~ ^shard:([0-5])/6$ ]]; then
+      shard_index="${BASH_REMATCH[1]}"
+      shard_count=6
+      bounded=1
+    elif [[ "$capabilities" =~ ^shard:([0-2])$ ]]; then
+      shard_index="${BASH_REMATCH[1]}"
+    else
+      fail "invalid precheck shard: $capabilities"
+    fi
+  fi
   if [[ -z "$capabilities" || "$capabilities" == shard:* ]]; then
     local capability_output
-    if ! capability_output="$(partition_precheck_capabilities "$source_dir")"; then
+    if ! capability_output="$(partition_precheck_capabilities "$source_dir" "$shard_count")"; then
       fail "unable to discover precheck database capabilities"
     fi
     if [[ -n "$capability_output" ]]; then
@@ -556,13 +595,11 @@ precheck() {
     fi
   fi
   if [[ "$capabilities" == shard:* ]]; then
-    [[ "$capabilities" =~ ^shard:([0-2])$ ]] || fail "invalid precheck shard: $capabilities"
-    local shard_index="${BASH_REMATCH[1]}"
-    [[ "${#selections[@]}" -eq 3 ]] || fail "precheck requires three populated shards"
+    [[ "${#selections[@]}" -eq "$shard_count" ]] || fail "precheck requires ${shard_count} populated shards"
     capabilities="${selections[shard_index]}"
   fi
   if [[ -n "$capabilities" ]]; then
-    precheck_capability "$run_id" "$attempt" "$image_ref" "$source_dir" "$capabilities"
+    precheck_capability "$run_id" "$attempt" "$image_ref" "$source_dir" "$capabilities" "$bounded"
     return
   fi
 

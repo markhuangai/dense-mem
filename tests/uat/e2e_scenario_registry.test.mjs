@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import "./development_e2e.test.mjs";
@@ -93,16 +94,16 @@ function assertWorkflowOrchestration(workflow) {
   const databasePrechecks = workflowJob(workflow, "database-prechecks");
   const scenarios = workflowJob(workflow, "scenarios");
   const report = workflowJob(workflow, "report");
-  assert.ok(databasePrechecks.includes("shard: [0, 1, 2]"));
-  assert.ok(databasePrechecks.includes("max-parallel: 3"));
-  assert.ok(databasePrechecks.includes("timeout-minutes: 60"));
+  assert.ok(databasePrechecks.includes("shard: [0, 1, 2, 3, 4, 5]"));
+  assert.ok(databasePrechecks.includes("max-parallel: 6"));
+  assert.ok(databasePrechecks.includes("timeout-minutes: 30"));
   assert.ok(databasePrechecks.includes("runs-on: ubuntu-latest"));
-  assert.ok(scenarios.includes("needs: [authorize, prechecks, database-prechecks]"));
-  assert.ok(scenarios.includes("needs.database-prechecks.result == 'success'"));
-  assert.ok(scenarios.includes("max-parallel: 4"));
+  assert.ok(scenarios.includes("needs: [authorize, prechecks]"));
+  assert.ok(!scenarios.includes("needs.database-prechecks"));
+  assert.ok(scenarios.includes("max-parallel: 8"));
   assert.ok(scenarios.includes("matrix: ${{ fromJSON(needs.authorize.outputs.scenario_matrix) }}"));
   assert.ok(scenarios.includes("source_revision: ${{ needs.authorize.outputs.source_revision }}"));
-  assert.ok(report.includes("needs: [authorize, prechecks, database-prechecks, scenarios]"));
+  assert.ok(report.includes("needs: [authorize, prechecks, database-prechecks, scenarios, ci-trial]"));
   assert.ok(report.includes("SCENARIO_RESULT: ${{ needs.scenarios.result }}"));
   assert.ok(report.includes("if: always()"));
 }
@@ -233,7 +234,7 @@ test("production E2E runs the complete exact-source registry on hosted isolated 
   assert.ok(bootstrap.includes("RUNNER_TEMP"));
   assert.ok(bootstrap.includes("::add-mask::"));
   assert.ok(bootstrap.includes("AI_API_EMBEDDING_MAX_BATCH_ITEMS: \"100\""));
-  assert.ok(scenario.includes("timeout-minutes: ${{ inputs.timeout_minutes }}"));
+  assert.ok(scenario.includes("timeout-minutes: ${{ inputs.timeout_minutes > 30 && 30 || inputs.timeout_minutes }}"));
   assert.ok(scenario.includes("scripts/e2e-host-controller.sh start"));
   assert.ok(scenario.includes("scripts/e2e-host-controller.sh run"));
   assert.ok(scenario.includes("scripts/e2e-host-controller.sh stop"));
@@ -248,9 +249,49 @@ test("production orchestration assertions detect a missing precheck dependency",
   const workflow = await readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8");
   assert.doesNotThrow(() => assertWorkflowOrchestration(workflow));
   const mutated = workflow.replace(
-    "needs: [authorize, prechecks, database-prechecks]",
     "needs: [authorize, prechecks]",
+    "needs: [authorize]",
   );
   assert.notEqual(mutated, workflow);
   assert.throws(() => assertWorkflowOrchestration(mutated));
+});
+
+test("the production aggregate requires every independent phase and manual CI trial", async () => {
+  const workflow = await readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8");
+  const report = workflowJob(workflow, "report");
+  const command = report.split("        run: |\n")[1].split("\n").map((line) => line.slice(10)).join("\n");
+  const passing = { AUTH_RESULT: "success", PRECHECK_RESULT: "success", DATABASE_PRECHECK_RESULT: "success", SCENARIO_RESULT: "success",
+    CI_TRIAL_RESULT: "success", EVENT_NAME: "workflow_dispatch", IMAGE: "fixture-image", SOURCE_REVISION: "a".repeat(40), GITHUB_STEP_SUMMARY: "/dev/null" };
+  const execute = (env) => spawnSync("bash", ["-c", command], { encoding: "utf8", env: { ...process.env, ...env } });
+  assert.equal(execute(passing).status, 0);
+  for (const field of ["AUTH_RESULT", "PRECHECK_RESULT", "DATABASE_PRECHECK_RESULT", "SCENARIO_RESULT", "CI_TRIAL_RESULT"]) {
+    for (const result of ["failure", "cancelled", "skipped", ""]) {
+      assert.notEqual(execute({ ...passing, [field]: result }).status, 0, `${field}=${result}`);
+    }
+  }
+  assert.equal(execute({ ...passing, EVENT_NAME: "pull_request_target", CI_TRIAL_RESULT: "skipped" }).status, 0);
+  const trial = workflowJob(workflow, "ci-trial");
+  assert.match(trial, /needs: authorize/);
+  assert.match(trial, /if: github.event_name == 'workflow_dispatch'/);
+  assert.match(trial, /uses: \.\/\.github\/workflows\/ci-shared\.yml/);
+  assert.match(trial, /source-revision: \$\{\{ needs.authorize.outputs.source_revision \}\}/);
+});
+
+test("PostgreSQL deadlines include setup and leave cleanup time in every workflow", async () => {
+  for (const [file, job] of [["production-image-e2e.yml", "database-prechecks"], ["development-e2e.yml", "postgres"], ["fork-e2e.yml", "database"]]) {
+    const workflow = await readFile(new URL(`../../.github/workflows/${file}`, import.meta.url), "utf8");
+    const definition = workflowJob(workflow, job);
+    const deadline = definition.indexOf("- name: Set PostgreSQL execution deadline");
+    assert.ok(deadline >= 0 && deadline < definition.indexOf("uses: actions/checkout"));
+    assert.match(definition, /27 \* 60/);
+    assert.match(definition, /timeout-minutes: 30/);
+    const blocks = definition.split("        run: |\n");
+    const execution = blocks.find((block) => block.includes("scripts/e2e-host-controller.sh precheck"));
+    assert.ok(execution);
+    assert.match(execution, /timeout --signal=TERM --kill-after=30s "\$\{remaining\}s" scripts\/e2e-host-controller\.sh precheck/);
+    const prefix = execution.split("          timeout --signal=TERM")[0].split("\n").map((line) => line.slice(10)).join("\n");
+    const invoke = (seconds) => spawnSync("bash", ["-c", prefix], { env: { ...process.env, POSTGRES_DEADLINE: String(Math.floor(Date.now() / 1000) + seconds) } });
+    assert.equal(invoke(60).status, 0, file);
+    assert.equal(invoke(-1).status, 124, file);
+  }
 });

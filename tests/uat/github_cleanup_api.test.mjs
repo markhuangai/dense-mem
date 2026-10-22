@@ -87,9 +87,8 @@ test("cleanup API bounds stalled requests and does not retry caller cancellation
   }, { requestTimeoutMilliseconds: 30 });
   assert.equal(requests, 3);
   requests = 0;
-  await fixture(() => { requests += 1; }, async (api) => {
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), 30);
+  const controller = new AbortController();
+  await fixture(() => { requests += 1; controller.abort(); }, async (api) => {
     await assert.rejects(api.request("/cancelled", { signal: controller.signal }), (error) => error.transport_code === "ABORTED" && error.attempts === 1);
   });
   assert.equal(requests, 1);

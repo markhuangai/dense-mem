@@ -26,7 +26,7 @@ test("fork receipt binds approved source, image, preview attempt, workflow revis
   assert.equal(receipt.preview_run_attempt, "2");
   assert.equal(receipt.fork_run_id, "200");
   assert.equal(receipt.trusted_revision, approved.trusted_revision);
-  assert.deepEqual(receipt.postgres_prechecks, ["success", "success", "success"]);
+  assert.deepEqual(receipt.postgres_prechecks, Array(6).fill("success"));
   assert.equal(receipt.scenarios.length, 31);
   assert.ok(receipt.scenarios.every((entry) => entry.result === "success" && entry.cleanup === "success"));
 });
