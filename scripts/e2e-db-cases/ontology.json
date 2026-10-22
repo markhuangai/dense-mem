@@ -664,6 +664,62 @@
       "run": "^TestOntologyMaintenanceAllowanceResumesAutomaticWork$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/maintenance_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceParallelClaimsAndLimits",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceParallelClaimsAndLimits$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_concurrency_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceParallelWindowPolicy",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceParallelWindowPolicy$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_concurrency_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceParallelIndependentPublication",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceParallelIndependentPublication$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_concurrency_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceParallelDefaultAndManualBound",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceParallelDefaultAndManualBound$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_concurrency_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceParallelClosureAndLeaseRecovery",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceParallelClosureAndLeaseRecovery$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_concurrency_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceParallelTokenAdmissionAndDrain",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceParallelTokenAdmissionAndDrain$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_concurrency_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceParallelSchedulerExecution",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceParallelSchedulerExecution$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_concurrency_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceParallelMigrationGuard",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceParallelMigrationGuard$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_concurrency_integration_test.go"
     }
   ]
 }

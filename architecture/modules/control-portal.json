@@ -287,6 +287,11 @@
         "id": "web/src/ui/primitives/tabs.tsx",
         "role": "transport",
         "visibility": "public"
+      },
+      {
+        "id": "web/src/control/OntologyTeamConcurrencyField.tsx",
+        "role": "transport",
+        "visibility": "private"
       }
     ]
   }

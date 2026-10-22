@@ -303,6 +303,7 @@ if (has("conflict_provider")) {
   helperServices.push(["conflict-provider", ["    command: [\"sh\", \"-c\", \"sleep infinity\"]"]]);
 }
 if (scenario === "google_adk_memory" || scenario === "session_ingest" || scenario === "python_client" || scenario === "full") serverEnvironment.set("SESSION_INGEST_ENABLED", "true");
+if (scenario === "google_adk_memory") serverEnvironment.set("RATE_LIMIT_PER_MINUTE", "1000");
 if (has("synchronous_write")) {
   for (const [key, value] of Object.entries({
     AI_API_URL: "http://synchronous-write-provider:8787/v1",
@@ -378,6 +379,7 @@ if (scenario === "full") {
     "      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana-admin-password",
     "      GF_AUTH_ANONYMOUS_ENABLED: \"false\"",
     "      GF_USERS_ALLOW_SIGN_UP: \"false\"",
+    "      GF_PLUGINS_PREINSTALL_DISABLED: \"true\"",
     "    volumes:",
     "      - grafana-provisioning:/etc/grafana/provisioning:ro",
     "      - grafana-dashboards:/opt/dense-mem/grafana/dashboards:ro",

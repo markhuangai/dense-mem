@@ -148,9 +148,17 @@ def verify_artifacts(receipt: dict, dist: Path, complete: bool = False) -> None:
         raise ValueError("release must contain exactly the selected wheel and sdist")
     deadline = time.monotonic() + PUBLICATION_WAIT_SECONDS
     hashes = {name: hashlib.sha256((dist / name).read_bytes()).hexdigest() for name in names}
+    missing: set[str] = set()
+    timeout_error = None
     while True:
         timeout = min(30, max(0.001, deadline - time.monotonic())) if complete else 30
-        data = fetch_json(f"{PYPI_URL}/{receipt['version']}/json", timeout=timeout)
+        try:
+            data = fetch_json(f"{PYPI_URL}/{receipt['version']}/json", timeout=timeout)
+        except TimeoutError as error:
+            if not complete or not missing or time.monotonic() < deadline:
+                raise
+            timeout_error = error
+            break
         files = data["urls"] if data is not None else []
         if data is not None and published_source(data) != receipt["source_sha"]:
             raise ValueError("existing Python version identifies a different source")
@@ -166,10 +174,11 @@ def verify_artifacts(receipt: dict, dist: Path, complete: bool = False) -> None:
             time.sleep(min(PUBLICATION_POLL_SECONDS, remaining))
             if time.monotonic() < deadline:
                 continue
-        raise ValueError(
-            f"Python publication is incomplete after {PUBLICATION_WAIT_SECONDS}s: "
-            f"version {receipt['version']} is missing {', '.join(sorted(missing))}"
-        )
+        break
+    raise ValueError(
+        f"Python publication is incomplete after {PUBLICATION_WAIT_SECONDS}s: "
+        f"version {receipt['version']} is missing {', '.join(sorted(missing))}"
+    ) from timeout_error
 
 
 def main() -> None:

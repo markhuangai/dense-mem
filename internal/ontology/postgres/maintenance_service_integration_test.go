@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -34,12 +35,17 @@ func maintenanceServiceFixture(t *testing.T, f *ontologyFixture, config *setting
 		audit = audits[0]
 	}
 	var counters []*atomic.Int32
+	var countersMu sync.Mutex
 	service := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: config, Audit: audit, DefaultModel: "fixture-model", ProviderTimeout: time.Minute, Organizer: func(model string, accounting assessment.AttemptAccounting) *organization.Service {
 		organizer, calls := organizationFixtureServiceWithAccounting(t, f, nil, edit, model, maintenanceFixtureLimits(), accounting)
+		countersMu.Lock()
 		counters = append(counters, calls)
+		countersMu.Unlock()
 		return organizer
 	}})
 	return service, func() int32 {
+		countersMu.Lock()
+		defer countersMu.Unlock()
 		var count int32
 		for _, counter := range counters {
 			count += counter.Load()

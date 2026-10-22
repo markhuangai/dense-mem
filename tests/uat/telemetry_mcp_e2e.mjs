@@ -465,7 +465,10 @@ async function validateGrafanaDashboardParity(credentialID) {
         assert(lastPoint, `ready series ${item.id} had no API sample`);
       }
       const from = Date.parse(snapshot.window.from).toString();
-      const to = Date.parse(lastPoint?.timestamp ?? snapshot.window.to).toString();
+      // Cards use live instant queries; the snapshot timestamp bounds series reads.
+      const to = presentation === "card"
+        ? Date.now().toString()
+        : Date.parse(lastPoint?.timestamp ?? snapshot.window.to).toString();
       const queryOptions = {
         from,
         to,

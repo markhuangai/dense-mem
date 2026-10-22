@@ -4,12 +4,14 @@ import { NativeSelect, NativeSelectOption } from "../ui/primitives/native-select
 import { Switch } from "../ui/primitives/switch";
 import { Textarea } from "../ui/primitives/textarea";
 import { Input } from "../ui/primitives/input";
-import { FormEvent, ReactNode, useCallback, useEffect, useState } from "react";
+import { FormEvent, Fragment, ReactNode, useCallback, useEffect, useState } from "react";
 import { Check, Clock, ListFilter, MessageSquare, Network, RefreshCw, Settings, X } from "lucide-react";
 import { ControlApi, GeneralConfig, GeneralConfigItem, OperationLogConfig, OperationLogConfigItem, RecallFeedbackConfig, RecallFeedbackConfigItem, SSOConfig, SSOConfigItem, TelemetryPricingConfig, TelemetryPricingConfigItem } from "../api";
 import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError } from "./utils";
 import { OntologyMaintenancePanel } from "./OntologyMaintenancePanel";
+import { OntologyTeamConcurrencyField } from "./OntologyTeamConcurrencyField";
+import type { OntologyMaintenanceStatus } from "../api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/primitives/tabs";
 import { useUnsavedChanges, useViewTransition } from "../ui/navigation";
 
@@ -22,6 +24,7 @@ const CONFIG_LABELS: Record<string, string> = {
   ONTOLOGY_MAINTENANCE_START_TIME_LOCAL: "Window start time",
   ONTOLOGY_MAINTENANCE_MODEL: "Maintenance model",
   ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "Concurrent assessments",
+  ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY: "Default concurrency per team",
   ONTOLOGY_MAINTENANCE_INPUT_TOKENS: "Input tokens per window",
   ONTOLOGY_MAINTENANCE_OUTPUT_TOKENS: "Output tokens per window",
 	SSO_PUBLIC_BASE_URL: "Public base URL",
@@ -48,6 +51,7 @@ const CONFIG_DESCRIPTIONS: Record<string, string> = {
   ONTOLOGY_MAINTENANCE_START_TIME_LOCAL: "Start time in the service timezone.",
   ONTOLOGY_MAINTENANCE_MODEL: "Leave blank to use the semantic assessor model.",
   ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "Assessments that can run at the same time.",
+  ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY: "Work slots per team (1–8), bounded by global capacity. Applies at the next window.",
   ONTOLOGY_MAINTENANCE_INPUT_TOKENS: "Input allowance for each window.",
   ONTOLOGY_MAINTENANCE_OUTPUT_TOKENS: "Output allowance for each window.",
   APP_TIMEZONE: "Timezone used to display service activity.",
@@ -61,6 +65,7 @@ const CONFIG_PLACEHOLDERS: Record<string, string> = {
   ONTOLOGY_MAINTENANCE_START_TIME_LOCAL: "03:00",
   ONTOLOGY_MAINTENANCE_MODEL: "Use the semantic assessor model",
   ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "1",
+  ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY: "1",
   ONTOLOGY_MAINTENANCE_INPUT_TOKENS: "250000",
   ONTOLOGY_MAINTENANCE_OUTPUT_TOKENS: "100000",
 	MCP_PUBLIC_BASE_URL: "https://memory.example.com",
@@ -137,9 +142,11 @@ type RuntimeConfigInput = {
 
 export function OntologyConfigPanel({ api }: { api: ControlApi }) {
   const load = useCallback(() => api.getOntologyMaintenanceConfig(), [api]);
+  const [status, setStatus] = useState<OntologyMaintenanceStatus | null>(null);
   return <><div className="page-intro"><h1>Ontology maintenance</h1><p>Organize shared knowledge and keep processing within its allowance.</p></div><div className="ontology-maintenance-layout"><div className="ontology-policy">
-    <RuntimeConfigPanel title="Maintenance policy" refreshLabel="Refresh ontology config" load={load} save={(input) => api.updateOntologyMaintenanceConfig(input)} detail={() => <p>Policy changes apply at the next window. Disabling stops new work immediately.</p>} />
-    </div><OntologyMaintenancePanel api={api} /></div>
+    <RuntimeConfigPanel title="Maintenance policy" refreshLabel="Refresh ontology config" load={load} save={(input) => api.updateOntologyMaintenanceConfig(input)} detail={() => <p>Policy changes apply at the next window. Disabling stops new work immediately.</p>}
+      renderItem={(item, value, onChange) => item.key === "ONTOLOGY_MAINTENANCE_TEAM_OVERRIDES_JSON" ? <OntologyTeamConcurrencyField api={api} value={value} onChange={onChange} status={status} /> : undefined} />
+    </div><OntologyMaintenancePanel api={api} onStatus={setStatus} /></div>
   </>;
 }
 
@@ -214,12 +221,14 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
   load,
   save,
   detail,
+  renderItem,
 }: {
   title: string;
   refreshLabel: string;
   load: () => Promise<T>;
   save: (input: RuntimeConfigInput) => Promise<T>;
   detail?: (config: T) => ReactNode;
+  renderItem?: (item: ConfigItem, value: string, onChange: (value: string) => void) => ReactNode;
 }) {
   const transition = useViewTransition();
   const [config, setConfig] = useState<T | null>(null);
@@ -295,7 +304,10 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
         <form className="edit-grid" onSubmit={saveConfig}>
           {[...groups].map(([group, items]) => <fieldset className="setting-group" key={group}>
             <legend>{group}</legend>
-            {items.map((item) => <ConfigField key={item.key} item={item} value={draft[item.key] ?? ""} onChange={(value) => setDraft((current) => ({ ...current, [item.key]: value }))} />)}
+            {items.map((item) => {
+              const onChange = (value: string) => setDraft((current) => ({ ...current, [item.key]: value }));
+              return <Fragment key={item.key}>{renderItem?.(item, draft[item.key] ?? "", onChange) ?? <ConfigField item={item} value={draft[item.key] ?? ""} onChange={onChange} />}</Fragment>;
+            })}
           </fieldset>)}
           <div className="button-row span">
             <Button variant="default" className="primary-button" type="submit" disabled={loading || !config}>
@@ -311,6 +323,7 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
 
 function configGroup(key: string): string {
   if (key.startsWith("ONTOLOGY_MAINTENANCE_")) {
+    if (key === "ONTOLOGY_MAINTENANCE_TEAM_OVERRIDES_JSON") return "Team overrides";
     if (key.endsWith("_TOKENS")) return "Allowance per window";
     return key.endsWith("_MODEL") || key.endsWith("_CONCURRENCY") ? "Processing" : "Schedule";
   }
@@ -414,7 +427,7 @@ function ConfigField({
   }
 
   const pricing = item.key.startsWith("TELEMETRY_COST_");
-  const ontologyNumber = ["ONTOLOGY_MAINTENANCE_CADENCE_HOURS", "ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY", "ONTOLOGY_MAINTENANCE_INPUT_TOKENS", "ONTOLOGY_MAINTENANCE_OUTPUT_TOKENS"].includes(item.key);
+  const ontologyNumber = ["ONTOLOGY_MAINTENANCE_CADENCE_HOURS", "ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY", "ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY", "ONTOLOGY_MAINTENANCE_INPUT_TOKENS", "ONTOLOGY_MAINTENANCE_OUTPUT_TOKENS"].includes(item.key);
   const numeric = pricing || item.key.endsWith("_SECONDS") || item.key === "DREAMING_MAX_OUTPUTS" || item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" || item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS";
   const time = item.key === "DREAMING_START_TIME_LOCAL" || item.key === "COMMUNITY_DETECTION_START_TIME_LOCAL";
   const min = item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 0 : numeric && !pricing ? 1 : undefined;

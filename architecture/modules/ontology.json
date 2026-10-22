@@ -37,6 +37,13 @@
       "kind": "goroutine",
       "ordinal": 1,
       "role": "worker"
+    },
+    {
+      "path": "internal/ontology/scheduler.go",
+      "function": "run",
+      "kind": "goroutine",
+      "ordinal": 2,
+      "role": "worker"
     }
   ]
 }

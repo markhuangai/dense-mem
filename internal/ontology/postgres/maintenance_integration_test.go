@@ -314,13 +314,15 @@ func TestOntologyMaintenanceExpiredLeaseAndNewInvalidation(t *testing.T) {
 	f := newOrganizationFixture(t)
 	source := maintenanceEntity(t, f, "Atlas")
 	config := maintenanceSettings(t, f)
+	_, err := config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyConcurrency: "2", domain.AppConfigOntologyTeamConcurrency: "2"}, "control", "", "")
+	require.NoError(t, err)
 	window := maintenanceWindow(t, f, config)
 	turn, claim := maintenanceClaim(t, f, window)
 	ctx := context.Background()
 	require.NoError(t, f.rls.WithSystemTx(ctx, f.admin, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE ontology_maintenance_batches SET lease_until=clock_timestamp()-interval '1 second' WHERE batch_id=?::uuid`, claim.ID).Error
 	}))
-	_, err := f.store.SeedDefinitions(ontology.WithMaintenanceClaim(ctx, *claim), f.team, ontology.SeedInput{OperationKey: "expired-seed", Limit: 20})
+	_, err = f.store.SeedDefinitions(ontology.WithMaintenanceClaim(ctx, *claim), f.team, ontology.SeedInput{OperationKey: "expired-seed", Limit: 20})
 	require.ErrorIs(t, err, ontology.ErrLeaseLost)
 	require.ErrorIs(t, f.store.ReserveMaintenanceAttempt(ctx, *claim, uuid.NewString(), 1, 100, 100, time.Now().UTC()), ontology.ErrLeaseLost)
 	require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
@@ -328,7 +330,11 @@ func TestOntologyMaintenanceExpiredLeaseAndNewInvalidation(t *testing.T) {
 	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE entity_records SET identity_context=identity_context||'{"revision":"changed"}'::jsonb,version=version+1 WHERE team_id=?::uuid AND entity_id=?::uuid`, f.team, source.ID).Error
 	}))
-	require.NoError(t, f.store.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize))
+	discovery, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now(), time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, discovery)
+	require.NoError(t, f.store.DiscoverMaintenance(ctx, *discovery, ontology.MaintenancePageSize))
+	require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *discovery))
 	require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, ontology.OrganizationResult{Current: true, Outcomes: []ontology.OrganizationOutcome{{Source: source, Status: "organized"}}}, "", time.Now().UTC()))
 	status, err := f.store.MaintenanceStatus(ctx, time.Now().UTC())
 	require.NoError(t, err)

@@ -49,6 +49,35 @@ test("ADK scenario enables private intake and dispatches its installed-wheel har
   assert.match(scenario, /google_adk_memory\) bash "\$\{ROOT_DIR\}\/packages\/python\/scripts\/e2e.sh" google_adk_memory ;;/);
 });
 
+test("ADK overlay reserves its request budget without changing neighboring scenarios", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-adk-overlay-"));
+  try {
+    const commandStart = stack.indexOf('    node - "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE"');
+    const marker = "<<'NODE'\n";
+    const start = stack.indexOf(marker, commandStart) + marker.length;
+    const end = stack.indexOf("\nNODE\n", start);
+    assert.ok(commandStart >= 0 && start > commandStart && end > start);
+    const generator = join(fixture, "overlay.cjs");
+    await writeFile(generator, stack.slice(start, end));
+    for (const name of ["google_adk_memory", "session_ingest"]) {
+      const destination = join(fixture, `${name}.yml`);
+      await run(process.execPath, [
+        generator, destination, "synchronous_write", "", "", "fixture-model", "1536",
+        name, "adk-overlay-test", "30",
+      ], { env: { DENSE_MEM_CI_HOSTED: "1" } });
+      const overlay = await readFile(destination, "utf8");
+      assert.match(overlay, /SESSION_INGEST_ENABLED: "true"/);
+      if (name === "google_adk_memory") {
+        assert.match(overlay, /RATE_LIMIT_PER_MINUTE: "1000"/);
+      } else {
+        assert.doesNotMatch(overlay, /RATE_LIMIT_PER_MINUTE/);
+      }
+    }
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
 async function run(command, args, options = {}) {
   const { env: overrides, ...commandOptions } = options;
   const env = { ...process.env, ...overrides };

@@ -488,6 +488,10 @@ func (s *Store) CommitOrganization(ctx context.Context, teamID string, receipt o
 				if err := ontology.ValidatePublication(input); err != nil {
 					return err
 				}
+				input.ExpectedRevision, err = catalogRevision(tx, fence)
+				if err != nil {
+					return err
+				}
 				publication, err := s.commitPublication(tx, fence, input, "automatic", "", receipt.InputHash, "", receipt.ID)
 				if err != nil {
 					return err

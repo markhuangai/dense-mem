@@ -131,28 +131,41 @@ func (s *MaintenanceService) Command(ctx context.Context, input domain.OntologyM
 	return result, err
 }
 
-func (s *MaintenanceService) RunTurn(ctx context.Context) (progress bool, runErr error) {
+type maintenanceWork struct {
+	claim contract.MaintenanceClaim
+	model string
+}
+
+func (s *MaintenanceService) RunTurn(ctx context.Context) (bool, error) {
+	work, progress, err := s.prepareTurn(ctx)
+	if err != nil || work == nil {
+		return progress, err
+	}
+	return true, s.executeBatch(ctx, *work)
+}
+
+func (s *MaintenanceService) prepareTurn(ctx context.Context) (work *maintenanceWork, progress bool, runErr error) {
 	policy, err := s.policy(ctx)
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	if !policy.Enabled {
-		return false, nil
+		return nil, false, nil
 	}
 	if s.deps.Organizer == nil || policy.Model == "" {
-		return false, &OrganizationError{Code: "configuration_invalid"}
+		return nil, false, &OrganizationError{Code: "configuration_invalid"}
 	}
 	window, err := s.deps.Repository.EnsureMaintenanceWindow(ctx, policy, s.deps.Now())
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	if window == nil {
-		return false, nil
+		return nil, false, nil
 	}
 	lease := 3*s.deps.ProviderTimeout + 15*time.Second
 	turn, err := s.deps.Repository.ClaimMaintenanceTurn(ctx, window.ID, s.deps.Now(), lease)
 	if err != nil || turn == nil {
-		return false, err
+		return nil, false, err
 	}
 	defer func() {
 		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -168,18 +181,37 @@ func (s *MaintenanceService) RunTurn(ctx context.Context) (progress bool, runErr
 			}
 			runErr = errors.Join(runErr, s.deps.Repository.RecordMaintenanceFailure(finishCtx, turn.RunID, code, s.deps.Now()))
 		}
-		runErr = errors.Join(runErr, s.deps.Repository.ReleaseMaintenanceTurn(finishCtx, *turn))
+		if work == nil {
+			runErr = errors.Join(runErr, s.deps.Repository.ReleaseMaintenanceTurn(finishCtx, *turn))
+		}
 	}()
 	turnCtx, cancel := context.WithTimeout(ctx, lease-5*time.Second)
 	defer cancel()
 	if err = s.deps.Repository.DiscoverMaintenance(turnCtx, *turn, contract.MaintenancePageSize); err != nil {
-		return true, err
+		return nil, true, err
+	}
+	page, err := s.deps.Repository.ListRecords(turnCtx, turn.TeamID, contract.EntityClass, "", 1)
+	if err != nil {
+		return nil, true, err
+	}
+	if len(page.Records) == 0 {
+		_, err = s.deps.Repository.SeedDefinitions(turnCtx, turn.TeamID, contract.SeedInput{OperationKey: "maintenance-seed:" + turn.LeaseToken, ExpectedRevision: page.Revision, Limit: 20})
+		if err != nil {
+			return nil, true, err
+		}
 	}
 	claim, err := s.deps.Repository.ClaimMaintenanceBatch(turnCtx, *turn, window.ID, s.deps.Now())
 	if err != nil || claim == nil {
-		return true, err
+		return nil, true, err
 	}
-	claimCtx := contract.WithMaintenanceClaim(turnCtx, *claim)
+	return &maintenanceWork{claim: *claim, model: window.Policy.Model}, true, nil
+}
+
+func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceWork) (runErr error) {
+	claim := work.claim
+	turnCtx, cancel := context.WithDeadline(ctx, claim.LeaseUntil.Add(-5*time.Second))
+	defer cancel()
+	claimCtx := contract.WithMaintenanceClaim(turnCtx, claim)
 	var result contract.OrganizationResult
 	defer func() {
 		failure := contract.MaintenanceFailureCode(runErr)
@@ -189,25 +221,21 @@ func (s *MaintenanceService) RunTurn(ctx context.Context) (progress bool, runErr
 		if runErr != nil && failure == "" {
 			failure = "organization_failed"
 		}
-		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(turnCtx), 5*time.Second)
+		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer finishCancel()
-		runErr = errors.Join(runErr, s.deps.Repository.CompleteMaintenanceBatch(finishCtx, *claim, result, failure, s.deps.Now()))
-	}()
-	page, err := s.deps.Repository.ListRecords(claimCtx, turn.TeamID, contract.EntityClass, "", 1)
-	if err != nil {
-		return true, err
-	}
-	if len(page.Records) == 0 {
-		_, err = s.deps.Repository.SeedDefinitions(claimCtx, turn.TeamID, contract.SeedInput{OperationKey: "maintenance-seed:" + turn.LeaseToken, ExpectedRevision: page.Revision, Limit: 20})
-		if err != nil {
-			return true, err
+		runErr = errors.Join(runErr, s.deps.Repository.CompleteMaintenanceBatch(finishCtx, claim, result, failure, s.deps.Now()))
+		if runErr != nil {
+			if failure == "" {
+				failure = "maintenance_failure"
+			}
+			runErr = errors.Join(runErr, s.deps.Repository.RecordMaintenanceFailure(finishCtx, claim.RunID, failure, s.deps.Now()))
 		}
-	}
-	accounting := &maintenanceAttemptAccounting{repository: s.deps.Repository, claim: *claim, now: s.deps.Now, admitted: map[int]bool{}}
-	organizer := s.deps.Organizer(window.Policy.Model, accounting)
+	}()
+	accounting := &maintenanceAttemptAccounting{repository: s.deps.Repository, claim: claim, now: s.deps.Now, admitted: map[int]bool{}}
+	organizer := s.deps.Organizer(work.model, accounting)
 	assessmentCtx := observability.WithAIOperation(claimCtx, observability.AIOperationOntologyOrganization, len(claim.Sources))
-	result, err = organizer.Organize(assessmentCtx, claim.TeamID, contract.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
-	return true, err
+	result, runErr = organizer.Organize(assessmentCtx, claim.TeamID, contract.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
+	return runErr
 }
 
 type maintenanceAttemptAccounting struct {
