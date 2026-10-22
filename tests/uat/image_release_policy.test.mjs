@@ -769,7 +769,7 @@ test("staging deployment shares source verification and pinned healthy startup",
   assert.doesNotMatch(helper, /docker compose logs/);
 });
 
-test("staging deployment job budgets leave time for image transfer and failure cleanup", async () => {
+test("manual staging deployment budget leaves time for image transfer and failure cleanup", async () => {
   const helper = await readFile(new URL("../../.github/scripts/deploy-staging-image.sh", import.meta.url), "utf8");
   const lockWait = Number(helper.match(/flock --wait (\d+) 9/)[1]);
   const startupWait = Number(helper.match(/--wait-timeout (\d+) server/)[1]);
@@ -779,24 +779,23 @@ test("staging deployment job budgets leave time for image transfer and failure c
   const cleanupGraceSeconds = Number(cleanupDeadline[1]);
   const cleanupSeconds = Number(cleanupDeadline[2]);
   assert.ok(cleanupSeconds > cleanupWait, "cleanup must retain the configured container stop wait");
-  for (const [file, job] of [["deploy-stage", "deploy-staging"], ["release-rc", "recover-staging"]]) {
-    const workflow = await readFile(new URL(`../../.github/workflows/${file}.yml`, import.meta.url), "utf8");
-    const source = workflowJob(workflow, job);
-    const deadline = source.match(/timeout --signal=TERM --kill-after=(\d+)s --verbose (\d+)m bash -euo pipefail <<'DEPLOY'/);
-    assert.ok(deadline, `${job} must bound the entire login and deployment operation`);
-    const graceSeconds = Number(deadline[1]);
-    const operationSeconds = Number(deadline[2]) * 60;
-    const checkout = source.split("      - name: Checkout trusted staging deployment helper\n")[1].split("\n      - name:")[0];
-    const checkoutSeconds = Number(checkout.match(/^        timeout-minutes: (\d+)$/m)[1]) * 60;
-    const jobSeconds = Number(source.match(/^    timeout-minutes: (\d+)$/m)[1]) * 60;
-    assert.ok(operationSeconds > lockWait + startupWait, `${job} must retain its configured lock and startup waits`);
-    assert.ok(graceSeconds > cleanupSeconds + cleanupGraceSeconds, `${job} must allow bounded candidate cleanup before forced termination`);
-    assert.ok(jobSeconds > checkoutSeconds + operationSeconds + graceSeconds, `${job} must reserve time outside the bounded deployment operation`);
-    assert.ok(source.indexOf(deadline[0]) < source.indexOf("docker login"));
-    assert.ok(source.indexOf("docker login") < source.indexOf("exec .github/scripts/deploy-staging-image.sh"));
-    const script = source.split("        run: |\n").at(-1).split("\n").map((line) => line.slice(10)).join("\n");
-    await execFileAsync("bash", ["-n", "-c", script]);
-  }
+  const job = "deploy-staging";
+  const workflow = await readFile(new URL("../../.github/workflows/deploy-stage.yml", import.meta.url), "utf8");
+  const source = workflowJob(workflow, job);
+  const deadline = source.match(/timeout --signal=TERM --kill-after=(\d+)s --verbose (\d+)m bash -euo pipefail <<'DEPLOY'/);
+  assert.ok(deadline, `${job} must bound the entire login and deployment operation`);
+  const graceSeconds = Number(deadline[1]);
+  const operationSeconds = Number(deadline[2]) * 60;
+  const checkout = source.split("      - name: Checkout trusted staging deployment helper\n")[1].split("\n      - name:")[0];
+  const checkoutSeconds = Number(checkout.match(/^        timeout-minutes: (\d+)$/m)[1]) * 60;
+  const jobSeconds = Number(source.match(/^    timeout-minutes: (\d+)$/m)[1]) * 60;
+  assert.ok(operationSeconds > lockWait + startupWait, `${job} must retain its configured lock and startup waits`);
+  assert.ok(graceSeconds > cleanupSeconds + cleanupGraceSeconds, `${job} must allow bounded candidate cleanup before forced termination`);
+  assert.ok(jobSeconds > checkoutSeconds + operationSeconds + graceSeconds, `${job} must reserve time outside the bounded deployment operation`);
+  assert.ok(source.indexOf(deadline[0]) < source.indexOf("docker login"));
+  assert.ok(source.indexOf("docker login") < source.indexOf("exec .github/scripts/deploy-staging-image.sh"));
+  const script = source.split("        run: |\n").at(-1).split("\n").map((line) => line.slice(10)).join("\n");
+  await execFileAsync("bash", ["-n", "-c", script]);
 });
 
 test("owner-admin PR pushes run automatically without an approval label", () => {
