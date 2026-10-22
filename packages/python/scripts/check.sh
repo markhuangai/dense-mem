@@ -139,7 +139,11 @@ pathlib.Path(sys.argv[1], extra + '-dependencies.txt').write_text(''.join(
     if dist.metadata['Name'].lower() != 'densemem'
 ))
 PY
-"$BUILD" -m pip_audit -r "$OUTPUT/$extra-dependencies.txt" --no-deps --disable-pip --strict --format json --output "$OUTPUT/$extra-audit.json"
+if [[ "$extra" == adk ]]; then
+  "$BUILD" "$PACKAGE_ROOT/scripts/audit.py" "$OUTPUT/$extra-dependencies.txt" "$OUTPUT/$extra-audit.json"
+else
+  "$BUILD" -m pip_audit -r "$OUTPUT/$extra-dependencies.txt" --no-deps --disable-pip --strict --format json --output "$OUTPUT/$extra-audit.json"
+fi
 "$BUILD" -m cyclonedx_py environment "$EXTRA_PYTHON" --of JSON -o "$OUTPUT/$extra-sbom.json"
 "$EXTRA_PYTHON" -m pip install 'pytest==9.1.1' 'pytest-asyncio==1.4.0'
 "$EXTRA_PYTHON" -m pytest -c "$PACKAGE_ROOT/pyproject.toml" "$WORK/tests" -p no:cacheprovider

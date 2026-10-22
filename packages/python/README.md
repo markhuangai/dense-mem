@@ -224,6 +224,16 @@ version matrix, and scripts/e2e.sh python_client for real server boundaries.
 The example scripts require DENSEMEM_ENDPOINT, DENSEMEM_TOKEN and a retained
 DENSEMEM_OPERATION_KEY. Keep the exact request unchanged when rerunning them.
 
+The isolated ADK dependency audit temporarily accepts
+[CVE-2026-114603](https://github.com/advisories/GHSA-xcq7-p3pf-p88h) only in
+`opentelemetry-api==1.43.0` with `google-adk==2.7.0`, until **2026-11-21 at
+00:00 UTC**. ADK's dependency cap excludes the patched OpenTelemetry 1.45.1.
+This accepts the advisory's malformed inbound `tracestate` header CPU denial
+of service risk; it does not patch the dependency. The scan still runs and
+retains the complete report. Other findings, skipped dependencies and scanner
+failures remain blocking. Enforcement resumes automatically at expiry; remove
+the exception sooner when a compatible ADK release supports the patched version.
+
 The server prerelease and stable-release workflows call publish-python to build
 and verify artifacts after their release gates pass, then upload through their own
 top-level publishing jobs. Manual recovery uploads directly from publish-python;
