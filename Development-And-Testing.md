@@ -256,3 +256,76 @@ before human merge. The maintainer approved wiki publication before code merge a
 closing #220 when PR #601 merges. Run google_adk_memory against the exact merged
 main commit as post-merge follow-up; no branch result proves that later commit.
 Package release remains separate.
+
+
+## LangChain Retriever Verification
+
+Verified on 2026-10-22 for [PR #608](https://github.com/markhuangai/dense-mem/pull/608),
+at [`62147d6f`](https://github.com/markhuangai/dense-mem/commit/62147d6fa4fc9da323c4f775250dc5f3d62efe7a).
+The final-head [PR checks](https://github.com/markhuangai/dense-mem/pull/608/checks)
+passed Repository CI, CodeQL analysis, CodeQL and Production image E2E.
+[Production validation run 39790754675, attempt 2](https://github.com/markhuangai/dense-mem/actions/runs/39790754675/attempts/2)
+finished successfully with all 31 registered scenarios and their cleanup steps.
+It carried forward 28 passing scenarios from attempt 1 and successfully reran the
+three scenarios whose original setup failed on Docker Hub HTTP 500 errors. The
+source revision did not change. The
+[LangChain scenario](https://github.com/markhuangai/dense-mem/actions/runs/39790754675/job/119888802471)
+passed in attempt 1. Its stdout boolean values were redacted by the existing
+harness; successful native test and cleanup steps provide the result, without
+reconstructing hidden values.
+
+The verified image is
+`ghcr.io/markhuangai/dense-mem:test-608@sha256:178420d271b704d3429072fb2d17f2648355761a7bf5698d2b3b341a12ccc818`.
+The controller published it in attempt 1; validation retries reused that immutable
+image. The complete local package/version matrix, repository checks and five
+focused production scenarios below also passed. Code merge and package release
+remain pending.
+
+langchain_retriever is an exclusive, 60-minute production scenario with OAuth and
+synchronous-write provider fixtures. It installs the built wheel[langchain] and
+langchain-core==1.5.4 in a fresh environment outside the checkout. Retrieval runs
+through the real framework, MCP/HTTP, PostgreSQL/pgvector and Redis. Only outbound
+provider transport is replaced by the fixture; authorization, validation, lifecycle
+and persistence remain real.
+
+Positive/adverse cases cover invoke/ainvoke, standard callbacks, exact order,
+content, public provenance, each invocation's recall event, identical private/shared
+text, A/B/C isolation, static and signed OAuth authentication, provider rotation,
+concurrent calls, bounded k/options, scope/auth errors, timeout/cancellation,
+credential redaction, empty-result degradation warnings, and unchanged canonical
+knowledge. Direct MCP responses supply the comparison; request-specific recall IDs
+are checked independently. Required failures remain errors rather than empty results.
+
+Run these commands from the application repository:
+
+~~~bash
+bash packages/python/scripts/check.sh
+bash packages/python/scripts/matrix.sh /tmp/dense-mem-221-python-matrix
+node --test tests/uat/e2e_scenario_registry.test.mjs tests/uat/e2e_host_controller.test.mjs
+./scripts/ci-check.sh
+scripts/e2e.sh langchain_retriever
+scripts/e2e.sh python_client
+scripts/e2e.sh space_aware_recall
+scripts/e2e.sh mcp_transport_cancellation
+scripts/e2e.sh mcp_oauth
+~~~
+
+Use a new matrix output directory. The package gate covers Python 3.11–3.14,
+MCP SDK minimum/latest, framework-free core, each isolated extra and combined-extra
+compatibility, real interface/Pydantic/callback tests, installed-wheel tests,
+reproducibility, dependency audits, SBOMs, and typed rejection of absent/unsupported
+LangChain versions. Generated outputs remain local and are cleaned by their owner.
+
+The maintainer approved an adapter-only deterministic 1k waiver before implementation
+on 2026-10-22. M3's merged PR #239 did not produce the proposed ranking receipt.
+Replacement gates are exact MCP-to-Document fidelity, private/shared duplicate
+preservation, real A/B/C isolation, the package/version matrix, five scenarios above,
+unchanged local CI and full final-head production-image E2E. This does not establish
+retrieval-quality equivalence or cover query/ranking changes.
+
+The independent plan audit was conformant before implementation tests, and
+current-head automation is clean with all four required checks above successful.
+The maintainer authorized this wiki publication after full validation and before
+code merge. PR #608 will close #221 when human-merged. Exact merged-main
+langchain_retriever remains a post-merge follow-up. Package release remains pending
+and uses the existing shared release gates.

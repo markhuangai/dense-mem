@@ -164,3 +164,30 @@ before a later failure. Error completed_results and failed_request preserve reco
 context. Supply session_id for event deltas; nonempty custom_metadata and direct
 add_memory are unsupported. See [Framework Integrations](Framework-Integrations)
 for terminal outcomes, provenance metadata, bounds, isolation and exact replay.
+
+
+## LangChain Retriever
+
+The LangChain retriever passed validation in
+[PR #608](https://github.com/markhuangai/dense-mem/pull/608), at
+[`62147d6f`](https://github.com/markhuangai/dense-mem/commit/62147d6fa4fc9da323c4f775250dc5f3d62efe7a).
+Code merge and package release remain pending. Install a wheel built from that
+verified revision with the [langchain] extra, pinned to LangChain Core 1.5.4:
+
+~~~bash
+python -m pip install '/path/to/densemem-VERSION-py3-none-any.whl[langchain]'
+~~~
+
+~~~python
+from densemem.langchain import DenseMemRetriever
+
+retriever = DenseMemRetriever(endpoint=endpoint, token=api_key, k=10)
+documents = retriever.invoke("Which database does this project use?")
+~~~
+
+Inside an event loop, use await retriever.ainvoke(query). Supply exactly one static
+token or async token_provider; authentication determines visibility. This retriever
+reads existing memory. Preserve Document.metadata["densemem"] for provenance and
+inspect DenseMemRecallWarning.result when recall is degraded, including an empty
+result. See [Framework Integrations](Framework-Integrations#langchain-core-154)
+for options, metadata, failures and sync/async behavior.
