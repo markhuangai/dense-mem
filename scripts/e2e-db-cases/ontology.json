@@ -720,6 +720,41 @@
       "run": "^TestOntologyMaintenanceParallelMigrationGuard$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/maintenance_concurrency_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceFinalizationCancellationAndDiscovery",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceFinalizationCancellationAndDiscovery$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_finalization_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceFinalizationReceiptsAndAccounting",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceFinalizationReceiptsAndAccounting$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_finalization_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceFinalizationRacesAndFences",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceFinalizationRacesAndFences$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_finalization_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceFinalizationAdmissionAndIsolation",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceFinalizationAdmissionAndIsolation$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_finalization_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceFinalizationRejectsMismatchedReceipt",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceFinalizationRejectsMismatchedReceipt$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_finalization_integration_test.go"
     }
   ]
 }

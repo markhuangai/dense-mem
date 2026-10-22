@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const userURL = required("DENSE_MEM_USER_URL").replace(/\/$/, "");
@@ -238,6 +238,7 @@ try {
   for (const run of history.runs) {
     if (run.status === "completed") assert.equal(run.failure_code || "", "", "completed runs must have no current failure reason");
   }
+  await finalizationRecovery(shared.api_key);
   console.log(JSON.stringify({ status: "ok", scenario: "ontology_organization", window_id: status.window.id, counts: status.counts, durable_command_replay: true, operator_isolation: true, grouped_recall: true, original_sources_retained: true, private_and_foreign_isolation: true, stale_group_fallback: true, recall_organization_provider_tokens: 0, bounded_ambiguity_run: ambiguousRun.id, retryable_failure_run: failedRun.id }));
 } catch (error) {
   failure = error;
@@ -319,4 +320,97 @@ async function terminalRun(id) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   assert.fail(`maintenance run ${id} did not finish`);
+}
+
+async function finalizationRecovery(key) {
+  await control("/ontology/pause", { operation_key: randomUUID() });
+  paused = true;
+  await pollFinalization(() => postgresQuery(`SELECT count(*) FROM ontology_maintenance_batches WHERE team_id=${sqlLiteral(teamID)}::uuid AND status='running'`) === "0", "drain before finalization fixture");
+  const evidenceID = await remember(`Atlas uses PostgreSQL for finalization recovery ${randomUUID()}.`, key);
+  const canonicalBefore = canonicalFingerprints();
+  const release = await finalizationBlocker();
+  try {
+    postgresQuery(`CREATE FUNCTION ontology_e2e_finalization_barrier() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.team_id=${sqlLiteral(teamID)}::uuid AND NEW.source_kind='evidence' AND NEW.source_id=${sqlLiteral(evidenceID)} AND NEW.assessment_id IS NOT NULL THEN PERFORM pg_advisory_xact_lock(603002); END IF; RETURN NEW; END $$;
+      CREATE TRIGGER ontology_e2e_finalization_barrier BEFORE UPDATE OF status ON ontology_maintenance_sources FOR EACH ROW EXECUTE FUNCTION ontology_e2e_finalization_barrier()`);
+    await control("/ontology/resume", { operation_key: randomUUID() });
+    paused = false;
+    let receipt;
+    await pollFinalization(() => {
+      const body = postgresQuery(`SELECT jsonb_build_object('id',batch.batch_id,'run_id',batch.run_id,'lease_until',batch.lease_until,
+        'backend',activity.pid,'query_started_at',activity.query_start)::text
+        FROM ontology_maintenance_batches AS batch JOIN ontology_assessments AS assessment
+        ON assessment.team_id=batch.team_id AND assessment.shared_space_id=batch.shared_space_id AND assessment.space_generation=batch.space_generation AND assessment.operation_key='maintenance:'||batch.batch_id::text
+        JOIN pg_stat_activity AS activity ON activity.datname=current_database() AND activity.wait_event='advisory' AND activity.query LIKE '%UPDATE ontology_maintenance_sources SET status=%'
+        WHERE batch.team_id=${sqlLiteral(teamID)}::uuid AND batch.status='running'
+        AND COALESCE(assessment.body->'result'->>'failure_code','')='' AND assessment.body->'result'->>'current'='true'
+        AND EXISTS(SELECT 1 FROM jsonb_array_elements(batch.sources) AS source WHERE source->>'id'=${sqlLiteral(evidenceID)}) LIMIT 1`);
+      if (body) receipt = JSON.parse(body);
+      return Boolean(receipt);
+    }, "durable receipt followed by blocked completion");
+    await pollFinalization(() => postgresQuery(`SELECT count(*) FROM pg_stat_activity WHERE pid=${Number(receipt.backend)} AND query_start=${sqlLiteral(receipt.query_started_at)}::timestamptz AND wait_event='advisory'`) === "0", "five-second finalization cancellation", 20);
+    const cancellationMS = Date.now() - Date.parse(receipt.query_started_at);
+    assert(cancellationMS >= 4000, "the adverse case must exercise the finalization deadline");
+    assert.equal(postgresQuery(`SELECT status FROM ontology_maintenance_batches WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`), "running");
+    const attempts = postgresQuery(`SELECT COALESCE(jsonb_agg(to_jsonb(attempt) ORDER BY assessment_id,attempt)::text,'[]') FROM ontology_maintenance_attempts AS attempt WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`);
+    const receiptBody = postgresQuery(`SELECT md5(body::text) FROM ontology_assessments WHERE operation_key=${sqlLiteral(`maintenance:${receipt.id}`)}`);
+    const started = Date.now();
+    await release();
+    await pollFinalization(() => postgresQuery(`SELECT status FROM ontology_maintenance_batches WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`) === "completed", "automatic receipt recovery");
+    assert(Date.now() < Date.parse(receipt.lease_until), "recovery must precede native lease expiry");
+    assert.equal(postgresQuery(`SELECT count(*) FROM ontology_assessments WHERE operation_key=${sqlLiteral(`maintenance:${receipt.id}`)}`), "1");
+    assert.equal(postgresQuery(`SELECT md5(body::text) FROM ontology_assessments WHERE operation_key=${sqlLiteral(`maintenance:${receipt.id}`)}`), receiptBody);
+    assert.equal(postgresQuery(`SELECT COALESCE(jsonb_agg(to_jsonb(attempt) ORDER BY assessment_id,attempt)::text,'[]') FROM ontology_maintenance_attempts AS attempt WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`), attempts, "recovery must not dispatch or alter provider attempts");
+    assert.equal(canonicalFingerprints(), canonicalBefore, "ontology recovery changed canonical Knowledge");
+    console.log(JSON.stringify({ scenario: "ontology_finalization_recovery", batch_id: receipt.id, cancellation_ms: cancellationMS, recovery_ms: Date.now() - started, recovered_before_expiry: true, receipt_and_attempts_preserved: true, canonical_preserved: true }));
+  } finally {
+    await release();
+    postgresQuery("DROP TRIGGER IF EXISTS ontology_e2e_finalization_barrier ON ontology_maintenance_sources; DROP FUNCTION IF EXISTS ontology_e2e_finalization_barrier()");
+  }
+}
+
+async function pollFinalization(check, label, seconds = 150) {
+  for (let index = 0; index < seconds; index++) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  assert.fail(`timed out waiting for ${label}`);
+}
+
+function canonicalFingerprints() {
+  const tables = ["evidence_fragments", "evidence_occurrences", "evidence_sources", "evidence_source_revisions", "entity_records", "entity_names", "value_records", "relationship_records", "relationship_evidence_supports", "relationship_support_decision_events", "evidence_lifecycle_events", "evidence_quarantines"];
+  return postgresQuery(tables.map((table) => `SELECT '${table}',md5(COALESCE(jsonb_agg(to_jsonb(record) ORDER BY to_jsonb(record)::text)::text,'[]')) FROM ${table} AS record WHERE team_id=${sqlLiteral(teamID)}::uuid`).join(";\n"));
+}
+
+async function finalizationBlocker() {
+  const child = spawn("docker", ["compose", "-p", required("DENSE_MEM_E2E_COMPOSE_PROJECT"), "-f", required("DENSE_MEM_E2E_COMPOSE_FILE"), "exec", "-T", "postgres", "sh", "-ec", 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At'], { cwd: fileURLToPath(new URL("../..", import.meta.url)), stdio: ["pipe", "pipe", "pipe"], timeout: 240000 });
+  let output = "";
+  let stderr = "";
+  child.stdout.on("data", (data) => { output += data; });
+  child.stderr.on("data", (data) => { stderr += data; });
+  let exitCode;
+  const closed = new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", (code) => { exitCode = code; resolve(); });
+  });
+  child.stdin.write("SELECT pg_advisory_lock(603002); SELECT 'densemem-finalization-locked';\n");
+  let released = false;
+  const release = async () => {
+    if (!released) {
+      released = true;
+      child.stdin.end("SELECT pg_advisory_unlock(603002);\n\\q\n");
+    }
+    await closed;
+    assert.equal(exitCode, 0, stderr);
+  };
+  try {
+    await pollFinalization(() => {
+      assert.equal(exitCode, undefined, stderr);
+      return output.includes("densemem-finalization-locked");
+    }, "finalization barrier", 10);
+    return release;
+  } catch (error) {
+    await release();
+    throw error;
+  }
 }

@@ -277,73 +277,97 @@ func collectMaintenanceRevisions(tx *gorm.DB, fence scope, claim *ontology.Maint
 }
 
 func (s *Store) CompleteMaintenanceBatch(ctx context.Context, claim ontology.MaintenanceClaim, result ontology.OrganizationResult, failure string, now time.Time) error {
-	return s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+	started, phase := time.Now(), "accounting_lock"
+	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
 		if _, err := maintenanceState(tx); err != nil {
 			return err
 		}
-		var status string
-		err := tx.Raw(`SELECT status FROM ontology_maintenance_batches WHERE batch_id=?::uuid AND lease_token=?::uuid FOR UPDATE`, claim.ID, claim.LeaseToken).Row().Scan(&status)
-		if err != nil {
+		if err := completeMaintenanceBatch(tx, claim, result, failure, now, &phase); err != nil {
 			return err
 		}
-		if status == "completed" {
-			return nil
-		}
-		if status != "running" || !now.Before(claim.LeaseUntil) {
-			return ontology.ErrLeaseLost
-		}
-		allowanceChanged := false
-		if failure == "budget_deferred" {
-			if err := tx.Raw(`SELECT additional_input>? OR additional_output>? FROM ontology_maintenance_windows WHERE window_id=?::uuid`, claim.AdditionalInput, claim.AdditionalOutput, claim.WindowID).Row().Scan(&allowanceChanged); err != nil {
-				return err
-			}
-		}
-		progress := false
-		outcomes := map[string]ontology.OrganizationOutcome{}
-		for _, outcome := range result.Outcomes {
-			outcomes[ontology.SourceKey(outcome.Source)] = outcome
-		}
-		for _, source := range claim.Sources {
-			outcome, exists := outcomes[ontology.SourceKey(source)]
-			if !exists {
-				outcome = ontology.OrganizationOutcome{Source: source, Status: "failed", Reason: failure}
-			}
-			state := ontology.MaintenanceOutcomeState(outcome, result, failure, allowanceChanged)
-			reason := outcome.Reason
-			if failure != "" {
-				reason = failure
-			}
-			var assessmentID any
-			if result.AssessmentID != "" {
-				assessmentID = result.AssessmentID
-			}
-			updated := tx.Exec(`UPDATE ontology_maintenance_sources SET status=?,reason=?,eligible=CASE WHEN ?='unavailable' THEN false ELSE eligible END,assessment_id=?::uuid,last_run_id=?::uuid,updated_at=?
-			 WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind=? AND source_id=? AND revision=?`, state, reason, state, assessmentID, claim.RunID, now, claim.TeamID, claim.SpaceID, claim.Generation, source.Kind, source.ID, claim.Revisions[ontology.SourceKey(source)])
-			if updated.Error != nil {
-				return updated.Error
-			}
-			progress = progress || (state == "organized" && updated.RowsAffected > 0)
-		}
-		if err := tx.Exec(`UPDATE ontology_maintenance_batches SET status='completed',failure_code=?,completed_at=? WHERE batch_id=?::uuid`, failure, now, claim.ID).Error; err != nil {
-			return err
-		}
-		var bounded bool
-		if err := tx.Raw(`UPDATE ontology_maintenance_runs SET completed_batches=completed_batches+1,failure_code=CASE WHEN ?<>'' THEN ? ELSE failure_code END,
-		 updated_at=? WHERE run_id=?::uuid RETURNING max_batches>0 AND completed_batches>=max_batches`, failure, failure, now, claim.RunID).Row().Scan(&bounded); err != nil {
-			return err
-		}
-		if bounded {
-			requiredFailure := failure
-			if requiredFailure == "" {
-				requiredFailure = result.FailureCode
-			}
-			if err := completeMaintenanceRun(tx, claim.RunID, "", false, requiredFailure, now); err != nil {
-				return err
-			}
-		}
-		if progress && failure == "" && result.FailureCode == "" && result.Current {
-			return tx.Exec(`UPDATE ontology_maintenance_state SET last_successful_progress=? WHERE singleton`, now).Error
-		}
+		phase = "commit"
 		return nil
 	})
+	return maintenanceFinalizationError(ctx, claim, phase, started, err)
+}
+
+func completeMaintenanceBatch(tx *gorm.DB, claim ontology.MaintenanceClaim, result ontology.OrganizationResult, failure string, now time.Time, phase *string) error {
+	*phase = "batch_fence"
+	var status string
+	var live bool
+	err := tx.Raw(`SELECT status,lease_until>? AND lease_until>clock_timestamp() FROM ontology_maintenance_batches
+	 WHERE batch_id=?::uuid AND run_id=?::uuid AND window_id=?::uuid AND team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND lease_token=?::uuid FOR UPDATE`, now, claim.ID, claim.RunID, claim.WindowID, claim.TeamID, claim.SpaceID, claim.Generation, claim.LeaseToken).Row().Scan(&status, &live)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ontology.ErrLeaseLost
+	}
+	if err != nil {
+		return err
+	}
+	if status == "completed" {
+		return nil
+	}
+	if status != "running" || !live || !now.Before(claim.LeaseUntil) {
+		return ontology.ErrLeaseLost
+	}
+	*phase = "allowance"
+	allowanceChanged := false
+	if failure == "budget_deferred" {
+		if err := tx.Raw(`SELECT additional_input>? OR additional_output>? FROM ontology_maintenance_windows WHERE window_id=?::uuid`, claim.AdditionalInput, claim.AdditionalOutput, claim.WindowID).Row().Scan(&allowanceChanged); err != nil {
+			return err
+		}
+	}
+	progress := false
+	outcomes := map[string]ontology.OrganizationOutcome{}
+	for _, outcome := range result.Outcomes {
+		outcomes[ontology.SourceKey(outcome.Source)] = outcome
+	}
+	*phase = "source_updates"
+	for _, source := range claim.Sources {
+		outcome, exists := outcomes[ontology.SourceKey(source)]
+		if !exists {
+			outcome = ontology.OrganizationOutcome{Source: source, Status: "failed", Reason: failure}
+		}
+		state := ontology.MaintenanceOutcomeState(outcome, result, failure, allowanceChanged)
+		reason := outcome.Reason
+		if failure != "" {
+			reason = failure
+		}
+		var assessmentID any
+		if result.AssessmentID != "" {
+			assessmentID = result.AssessmentID
+		}
+		updated := tx.Exec(`UPDATE ontology_maintenance_sources SET status=?,reason=?,eligible=CASE WHEN ?='unavailable' THEN false ELSE eligible END,assessment_id=?::uuid,last_run_id=?::uuid,updated_at=?
+		 WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind=? AND source_id=? AND revision=?`, state, reason, state, assessmentID, claim.RunID, now, claim.TeamID, claim.SpaceID, claim.Generation, source.Kind, source.ID, claim.Revisions[ontology.SourceKey(source)])
+		if updated.Error != nil {
+			return updated.Error
+		}
+		progress = progress || (state == "organized" && updated.RowsAffected > 0)
+	}
+	*phase = "batch_update"
+	updated := tx.Exec(`UPDATE ontology_maintenance_batches SET status='completed',failure_code=?,completed_at=? WHERE batch_id=?::uuid AND status='running' AND lease_until>clock_timestamp()`, failure, now, claim.ID)
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return ontology.ErrLeaseLost
+	}
+	*phase = "run_update"
+	var bounded bool
+	if err := tx.Raw(`UPDATE ontology_maintenance_runs SET completed_batches=completed_batches+1,failure_code=CASE WHEN ?<>'' THEN ? ELSE failure_code END,
+	 updated_at=? WHERE run_id=?::uuid RETURNING max_batches>0 AND completed_batches>=max_batches`, failure, failure, now, claim.RunID).Row().Scan(&bounded); err != nil {
+		return err
+	}
+	if bounded {
+		requiredFailure := failure
+		if requiredFailure == "" {
+			requiredFailure = result.FailureCode
+		}
+		if err := completeMaintenanceRun(tx, claim.RunID, "", false, requiredFailure, now); err != nil {
+			return err
+		}
+	}
+	if progress && failure == "" && result.FailureCode == "" && result.Current {
+		return tx.Exec(`UPDATE ontology_maintenance_state SET last_successful_progress=? WHERE singleton`, now).Error
+	}
+	return nil
 }

@@ -149,6 +149,9 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 	if _, err := uuid.Parse(windowID); err != nil || lease <= 0 {
 		return nil, ontology.ErrInvalid
 	}
+	if err := s.recoverMaintenanceBatches(ctx, now); err != nil {
+		return nil, err
+	}
 	var result *ontology.MaintenanceTurn
 	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
 		paused, err := maintenanceState(tx)
