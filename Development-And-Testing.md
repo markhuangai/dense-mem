@@ -252,6 +252,7 @@ Also run python_client, session_ingest, mcp_transport_cancellation and mcp_oauth
 
 Require conformant independent plan audit before implementation testing and
 current-head full Repository CI, CodeQL, CodeQL analysis and Production image E2E
-before human merge. Keep #220 open through live wiki publication and a passing
-google_adk_memory run against the exact merged main commit. No branch result proves
-that later commit; package release and live documentation publication are separate.
+before human merge. The maintainer approved wiki publication before code merge and
+closing #220 when PR #601 merges. Run google_adk_memory against the exact merged
+main commit as post-merge follow-up; no branch result proves that later commit.
+Package release remains separate.

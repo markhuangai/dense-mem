@@ -215,5 +215,6 @@ The extra is pinned to google-adk==2.7.0. Core and extra installed-wheel checks,
 Python 3.11–3.14 and MCP SDK minimum/latest matrices, and google_adk_memory E2E
 are release gates. Package publication and live wiki publication remain separate.
 
-Issue #220 stays open until wiki publication and google_adk_memory validation
-on the exact merged main commit. Branch-local results prove only their tested source.
+The maintainer approved wiki publication before PR #601 merges and closing #220
+on merge. Run google_adk_memory on the exact merged main commit as post-merge
+follow-up; branch-local results prove only their tested source.
