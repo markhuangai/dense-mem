@@ -3,6 +3,14 @@
   "runtime": "production",
   "scenarios": [
     {
+      "name": "langchain_retriever",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": ["oauth", "synchronous_write"],
+      "timeout_minutes": 60,
+      "playwright": false
+    },
+    {
       "name": "google_adk_memory",
       "isolation": "exclusive",
       "runtime": "production",

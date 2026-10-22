@@ -59,15 +59,19 @@ test("ADK overlay reserves its request budget without changing neighboring scena
     assert.ok(commandStart >= 0 && start > commandStart && end > start);
     const generator = join(fixture, "overlay.cjs");
     await writeFile(generator, stack.slice(start, end));
-    for (const name of ["google_adk_memory", "session_ingest"]) {
+    for (const name of ["google_adk_memory", "langchain_retriever", "session_ingest"]) {
       const destination = join(fixture, `${name}.yml`);
       await run(process.execPath, [
         generator, destination, "synchronous_write", "", "", "fixture-model", "1536",
         name, "adk-overlay-test", "30",
       ], { env: { DENSE_MEM_CI_HOSTED: "1" } });
       const overlay = await readFile(destination, "utf8");
-      assert.match(overlay, /SESSION_INGEST_ENABLED: "true"/);
-      if (name === "google_adk_memory") {
+      if (name === "langchain_retriever") {
+        assert.doesNotMatch(overlay, /SESSION_INGEST_ENABLED/);
+      } else {
+        assert.match(overlay, /SESSION_INGEST_ENABLED: "true"/);
+      }
+      if (name !== "session_ingest") {
         assert.match(overlay, /RATE_LIMIT_PER_MINUTE: "1000"/);
       } else {
         assert.doesNotMatch(overlay, /RATE_LIMIT_PER_MINUTE/);

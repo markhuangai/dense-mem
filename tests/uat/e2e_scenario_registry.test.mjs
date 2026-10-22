@@ -16,6 +16,19 @@ import {
 
 const registry = readRegistry();
 
+test("LangChain retrieval is included in the full production matrix with auth fixtures", async () => {
+  const scenario = classifyScenario(registry, "langchain_retriever");
+  assert.equal(scenario.audited, true);
+  assert.equal(scenario.runtime, "production");
+  assert.equal(scenario.isolation, "exclusive");
+  assert.deepEqual(scenario.helper_profiles, ["oauth", "synchronous_write"]);
+  assert.equal(scenario.timeout_minutes, 60);
+  assert.equal(scenario.playwright, false);
+  assert.ok(matrixFor(registry, "all").include.some(({ name }) => name === "langchain_retriever"));
+  const runner = await readFile(new URL("../../scripts/e2e-scenario.sh", import.meta.url), "utf8");
+  assert.match(runner, /langchain_retriever\) bash .*packages\/python\/scripts\/e2e\.sh" langchain_retriever/);
+});
+
 test("ADK memory is an exclusive production scenario with the real intake fixture", () => {
   const scenario = classifyScenario(registry, "google_adk_memory");
   assert.equal(scenario.audited, true);
@@ -188,7 +201,7 @@ test("production E2E runs the complete exact-source registry on hosted isolated 
     readFile(new URL("../../.github/workflows/pr-test-image.yml", import.meta.url), "utf8"),
     readFile(new URL("../../scripts/e2e-ci-bootstrap.sh", import.meta.url), "utf8"),
   ]);
-  assert.equal(matrixFor(registry, "all").include.length, 30);
+  assert.equal(matrixFor(registry, "all").include.length, 31);
   assertWorkflowOrchestration(workflow);
   const authorize = workflowJob(workflow, "authorize");
   const prechecks = workflowJob(workflow, "prechecks");

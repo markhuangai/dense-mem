@@ -334,6 +334,8 @@ async def test_deadline_and_cancellation_release_slots(wire_server):
         return "token"
 
     memory._provider = working
+    # Slot reuse should not depend on completing the MCP handshake within the failure deadline.
+    memory._timeout = 5.0
     await memory.add_session_to_memory(session([event()]))
 
 

@@ -42,7 +42,11 @@ def wire_server():
         state["called"].set()
         if state.get("delay"):
             await asyncio.sleep(state["delay"])
-        result = state["result"]
+        result = (
+            state["result_factory"](name, arguments)
+            if "result_factory" in state
+            else state["result"]
+        )
         if state.get("handler"):
             result = await state["handler"](name, arguments)
         return CallToolResult(

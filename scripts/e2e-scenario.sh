@@ -62,7 +62,7 @@ if [[ "$SCENARIO" == "conflict" ]]; then
   conflict_health_url="${DENSE_MEM_E2E_CONFLICT_PROVIDER_URL%/}"
   conflict_health_url="${conflict_health_url%/v1}/health"
   wait_for_url "conflict provider" "$conflict_health_url"
-elif [[ "$SCENARIO" == "google_adk_memory" || "$SCENARIO" == "session_ingest" || "$SCENARIO" == "python_client" || "$SCENARIO" == "mcp_transport_cancellation" || "$SCENARIO" == "synchronous_write" || "$SCENARIO" == "synchronous_write_primitives" || "$SCENARIO" == "synchronous_write_telemetry_disabled" ]]; then
+elif [[ "$SCENARIO" == "langchain_retriever" || "$SCENARIO" == "google_adk_memory" || "$SCENARIO" == "session_ingest" || "$SCENARIO" == "python_client" || "$SCENARIO" == "mcp_transport_cancellation" || "$SCENARIO" == "synchronous_write" || "$SCENARIO" == "synchronous_write_primitives" || "$SCENARIO" == "synchronous_write_telemetry_disabled" ]]; then
   wait_for_url "synchronous-write provider" "http://synchronous-write-provider:8787/health"
 fi
 
@@ -169,6 +169,7 @@ run_playwright() {
 }
 
 case "$SCENARIO" in
+  langchain_retriever) bash "${ROOT_DIR}/packages/python/scripts/e2e.sh" langchain_retriever ;;
   ontology_management) run_node_case tests/uat/ontology_management_e2e.mjs ;;
   google_adk_memory) bash "${ROOT_DIR}/packages/python/scripts/e2e.sh" google_adk_memory ;;
   python_client) bash "${ROOT_DIR}/packages/python/scripts/e2e.sh" ;;

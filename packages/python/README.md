@@ -9,7 +9,8 @@ python -m pip install /path/to/densemem-VERSION-py3-none-any.whl
 ~~~
 
 The optional adk extra provides the Google ADK 2.7.0 memory service.
-LangChain remains planned in #221. The core installs neither framework.
+The langchain extra provides a read-only LangChain Core 1.5.4 retriever.
+The core installs neither framework.
 
 ## Authentication and operations
 
@@ -250,3 +251,70 @@ reusable workflows as trusted publishers. This repository does not register
 publishers or change account settings. Release builds retain the
 installed-wheel/version matrix, reproducibility,
 vulnerability scan, SBOM and provenance gates.
+
+## LangChain Core 1.5.4
+
+Install a verified wheel with its optional extra:
+
+~~~bash
+python -m pip install '/path/to/densemem-VERSION-py3-none-any.whl[langchain]'
+~~~
+
+~~~python
+from densemem.langchain import DenseMemRetriever
+
+retriever = DenseMemRetriever(endpoint=endpoint, token=api_key, k=10)
+documents = retriever.invoke("Which database does this project use?")
+~~~
+
+Use native async retrieval inside an event loop:
+
+~~~python
+documents = await retriever.ainvoke("Which database does this project use?")
+~~~
+
+Pass exactly one static token or caller-owned async token_provider. Credential
+resolution happens once per invocation; the client owns no token refresh or
+credential cache. Authentication determines the team and allowed private/shared
+spaces. The default total timeout is 190 seconds. Sync invocation rejects a
+running event loop; use ainvoke there. Standard LangChain callbacks, tags,
+metadata and batch/abatch behavior remain available. The adapter adds no content
+or credential logging; caller-configured LangChain callbacks receive the normal
+queries and returned Documents.
+
+k defaults to 10 and accepts only integers from 1 through 50. recall_options
+accepts the existing public options: relationship_limit, community_limit,
+community_relationship_limit, valid_at, known_at, known_evidence_ids,
+known_relationship_ids and expand_from_entity_ids. Values pass to the server
+unchanged and are validated there. Query, limit, team and space overrides are
+rejected; invocation-time recall overrides are unsupported. Options are copied
+for each call. Server validation and authorization remain authoritative.
+
+Each returned evidence item becomes one Document in server order. Document.id
+is its evidence_id, and page_content is the exact server-bounded context without
+additional truncation. Document.metadata["densemem"] contains evidence_id,
+equivalent_evidence_ids, equivalents_truncated, space_kind, recall_id,
+related_relationships, related_communities, conflicts, search_states, degradations
+and suggested_actions. These relationship/community frontiers describe the whole
+query, rather than a new per-document support association. The current public
+response exposes no document scores, ranks or source URLs, so none are invented.
+Identical private and shared text remains separate Documents.
+
+Optional degradation returns the available Documents and emits
+DenseMemRecallWarning from densemem.langchain. Its message contains no recalled
+content; its result attribute retains the complete public response, including
+when the document list is empty. Capture this category with Python's warnings
+API when the application needs those details. Required server failures remain
+typed Dense-Mem errors, and malformed recall mapping raises DenseMemProtocolError
+without partial documents. The adapter performs no reranking, deduplication,
+semantic writes, trace calls or automatic retry. It provides no BaseStore, chat
+history, cache, checkpointer or session-ingestion API.
+
+The extra is pinned to langchain-core==1.5.4. An absent or incompatible dependency
+raises an actionable ImportError; the framework-free core remains usable.
+The runnable examples/langchain_retriever.py uses DENSEMEM_ENDPOINT and
+DENSEMEM_TOKEN. Package checks cover core, each isolated extra and combined-extra
+compatibility, installed artifacts, Python 3.11–3.14, the existing MCP SDK matrix,
+reproducibility, vulnerability scans and SBOMs. The registered production scenario
+is scripts/e2e.sh langchain_retriever. Publication uses the existing shared server
+release version and publishing gates.

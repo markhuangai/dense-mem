@@ -63,11 +63,17 @@ import densemem
 assert '/site-packages/' in densemem.__file__, densemem.__file__
 assert pathlib.Path(densemem.__file__).with_name('py.typed').is_file()
 metadata = md.metadata('densemem')
-assert metadata.get_all('Provides-Extra') == ['adk']
+assert set(metadata.get_all('Provides-Extra')) == {'adk', 'langchain'}
 for name in ('google-adk', 'langchain', 'langchain-core'):
     try: md.version(name)
     except md.PackageNotFoundError: continue
     raise AssertionError('core unexpectedly installed ' + name)
+try:
+    import densemem.langchain
+except ImportError as error:
+    assert 'densemem[langchain]' in str(error)
+else:
+    raise AssertionError('LangChain adapter imported without its extra')
 pathlib.Path(sys.argv[1], 'installed.json').write_text(json.dumps({
     'python': sys.version, 'densemem': md.version('densemem'), 'mcp': md.version('mcp'),
     'httpx': md.version('httpx'), 'import': densemem.__file__, 'framework_dependencies': False,
@@ -81,7 +87,17 @@ PY
 "$BUILD" -m pip_audit -r "$OUTPUT/runtime-dependencies.txt" --no-deps --disable-pip --strict --format json --output "$OUTPUT/audit.json"
 "$BUILD" -m cyclonedx_py environment "$INSTALLED" --of JSON -o "$OUTPUT/sbom.json"
 "$INSTALLED" -m pip install 'pytest==9.1.1' 'pytest-asyncio==1.4.0'
-"$BUILD" -m pip install "$(find "$OUTPUT/dist" -name '*.whl' -print -quit)[adk]"
+"$BUILD" -m pip install "$(find "$OUTPUT/dist" -name '*.whl' -print -quit)[adk,langchain]"
+"$BUILD" -m pip check
+"$BUILD" - "$OUTPUT" <<'PY'
+import importlib.metadata as md, json, pathlib, sys
+from densemem.adk import DenseMemMemoryService
+from densemem.langchain import DenseMemRetriever
+pathlib.Path(sys.argv[1], 'combined-installed.json').write_text(json.dumps({
+    'google-adk': md.version('google-adk'), 'langchain-core': md.version('langchain-core'),
+    'combined_extra_imports': True,
+}, indent=2) + '\n')
+PY
 cd "$PACKAGE_ROOT"
 "$BUILD" -m ruff check .
 "$BUILD" -m mypy
@@ -89,29 +105,54 @@ cp -a tests "$WORK/tests"
 cp -a scripts "$WORK/scripts"
 cd "$WORK"
 "$INSTALLED" -m pytest -c "$PACKAGE_ROOT/pyproject.toml" "$WORK/tests" -p no:cacheprovider
-"$PYTHON" -m venv "$WORK/adk"
-ADK="$WORK/adk/bin/python"
-"$ADK" -m pip install 'pip==26.2.1' 'setuptools==84.0.0'
-"$ADK" -m pip install "$(find "$OUTPUT/dist" -name '*.whl' -print -quit)[adk]"
-if [[ "$SDK" == minimum ]]; then "$ADK" -m pip install 'mcp==1.30.0'; fi
-"$ADK" -m pip check
-"$ADK" - "$OUTPUT" <<'PY'
+for extra in adk langchain; do
+"$PYTHON" -m venv "$WORK/$extra"
+EXTRA_PYTHON="$WORK/$extra/bin/python"
+"$EXTRA_PYTHON" -m pip install 'pip==26.2.1' 'setuptools==84.0.0'
+"$EXTRA_PYTHON" -m pip install "$(find "$OUTPUT/dist" -name '*.whl' -print -quit)[$extra]"
+if [[ "$SDK" == minimum ]]; then "$EXTRA_PYTHON" -m pip install 'mcp==1.30.0'; fi
+"$EXTRA_PYTHON" -m pip check
+"$EXTRA_PYTHON" - "$OUTPUT" "$extra" <<'PY'
 import importlib.metadata as md, json, pathlib, sys
-from densemem.adk import DenseMemMemoryService
-from google.adk.memory.base_memory_service import BaseMemoryService
-assert md.version('google-adk') == '2.7.0'
-assert issubclass(DenseMemMemoryService, BaseMemoryService)
-assert '/site-packages/' in __import__('densemem.adk').__file__
-pathlib.Path(sys.argv[1], 'adk-installed.json').write_text(json.dumps({
-    'python': sys.version, 'adk': md.version('google-adk'), 'mcp': md.version('mcp'),
+extra = sys.argv[2]
+if extra == 'adk':
+    from densemem.adk import DenseMemMemoryService
+    from google.adk.memory.base_memory_service import BaseMemoryService
+    assert md.version('google-adk') == '2.7.0'
+    assert issubclass(DenseMemMemoryService, BaseMemoryService)
+    framework = {'adk': md.version('google-adk')}
+else:
+    from densemem.langchain import DenseMemRetriever
+    from langchain_core.retrievers import BaseRetriever
+    assert md.version('langchain-core') == '1.5.4'
+    assert issubclass(DenseMemRetriever, BaseRetriever)
+    try: md.version('google-adk')
+    except md.PackageNotFoundError: pass
+    else: raise AssertionError('LangChain extra installed ADK')
+    framework = {'langchain-core': md.version('langchain-core')}
+assert '/site-packages/' in __import__('densemem').__file__
+pathlib.Path(sys.argv[1], extra + '-installed.json').write_text(json.dumps({
+    'python': sys.version, **framework, 'mcp': md.version('mcp'),
 }, indent=2) + '\n')
-pathlib.Path(sys.argv[1], 'adk-dependencies.txt').write_text(''.join(
+pathlib.Path(sys.argv[1], extra + '-dependencies.txt').write_text(''.join(
     f'{dist.metadata["Name"]}=={dist.version}\n' for dist in md.distributions()
     if dist.metadata['Name'].lower() != 'densemem'
 ))
 PY
-"$BUILD" -m pip_audit -r "$OUTPUT/adk-dependencies.txt" --no-deps --disable-pip --strict --format json --output "$OUTPUT/adk-audit.json"
-"$BUILD" -m cyclonedx_py environment "$ADK" --of JSON -o "$OUTPUT/adk-sbom.json"
-"$ADK" -m pip install 'pytest==9.1.1' 'pytest-asyncio==1.4.0'
-"$ADK" -m pytest -c "$PACKAGE_ROOT/pyproject.toml" "$WORK/tests" -p no:cacheprovider
+"$BUILD" -m pip_audit -r "$OUTPUT/$extra-dependencies.txt" --no-deps --disable-pip --strict --format json --output "$OUTPUT/$extra-audit.json"
+"$BUILD" -m cyclonedx_py environment "$EXTRA_PYTHON" --of JSON -o "$OUTPUT/$extra-sbom.json"
+"$EXTRA_PYTHON" -m pip install 'pytest==9.1.1' 'pytest-asyncio==1.4.0'
+"$EXTRA_PYTHON" -m pytest -c "$PACKAGE_ROOT/pyproject.toml" "$WORK/tests" -p no:cacheprovider
+if [[ "$extra" == langchain ]]; then
+  "$EXTRA_PYTHON" -m pip install --no-deps 'langchain-core==1.5.3'
+  "$EXTRA_PYTHON" - <<'PY'
+try:
+    import densemem.langchain
+except ImportError as error:
+    assert 'langchain-core==1.5.4' in str(error)
+else:
+    raise AssertionError('Unsupported LangChain version imported')
+PY
+fi
+done
 printf 'densemem package checks passed: SDK=%s\n' "$SDK"

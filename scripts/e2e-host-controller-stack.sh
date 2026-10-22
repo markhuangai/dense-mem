@@ -303,7 +303,7 @@ if (has("conflict_provider")) {
   helperServices.push(["conflict-provider", ["    command: [\"sh\", \"-c\", \"sleep infinity\"]"]]);
 }
 if (scenario === "google_adk_memory" || scenario === "session_ingest" || scenario === "python_client" || scenario === "full") serverEnvironment.set("SESSION_INGEST_ENABLED", "true");
-if (scenario === "google_adk_memory") serverEnvironment.set("RATE_LIMIT_PER_MINUTE", "1000");
+if (["google_adk_memory", "langchain_retriever"].includes(scenario)) serverEnvironment.set("RATE_LIMIT_PER_MINUTE", "1000");
 if (has("synchronous_write")) {
   for (const [key, value] of Object.entries({
     AI_API_URL: "http://synchronous-write-provider:8787/v1",

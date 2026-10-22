@@ -27,6 +27,7 @@ Issues = "https://github.com/markhuangai/dense-mem/issues"
 
 [project.optional-dependencies]
 adk = ["google-adk==2.7.0"]
+langchain = ["langchain-core==1.5.4"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/densemem"]

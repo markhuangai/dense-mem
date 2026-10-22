@@ -12,11 +12,12 @@ bash /workspace/packages/python/scripts/check.sh --output "$OUTPUT/artifacts"
 python3 -m venv "$OUTPUT/client"
 "$OUTPUT/client/bin/python" -m pip install 'pip==26.2.1'
 WHEEL="$(find "$OUTPUT/artifacts/dist" -name '*.whl' -print -quit)"
-if [[ "${1:-python_client}" == google_adk_memory ]]; then
-  "$OUTPUT/client/bin/python" -m pip install "${WHEEL}[adk]"
-else
-  "$OUTPUT/client/bin/python" -m pip install "$WHEEL"
-fi
+case "${1:-python_client}" in
+  google_adk_memory) "$OUTPUT/client/bin/python" -m pip install "${WHEEL}[adk]" ;;
+  langchain_retriever) "$OUTPUT/client/bin/python" -m pip install "${WHEEL}[langchain]" ;;
+  python_client) "$OUTPUT/client/bin/python" -m pip install "$WHEEL" ;;
+  *) printf 'Unknown Python E2E scenario\n' >&2; exit 2 ;;
+esac
 cp -a /workspace/packages/python/tests "$OUTPUT/tests"
 cp -a /workspace/packages/python/examples "$OUTPUT/examples"
 export DENSEMEM_E2E_EXAMPLES="$OUTPUT/examples"
@@ -26,6 +27,8 @@ if [[ "${1:-python_client}" == google_adk_memory ]]; then
   "$OUTPUT/client/bin/python" /workspace/tests/eval/scripts/check_adk_mapping.py "$OUTPUT/cohort.json" "$OUTPUT/mapping.json"
   export DENSEMEM_ADK_MAPPING_REPORT="$OUTPUT/mapping.json"
   "$OUTPUT/client/bin/python" "$OUTPUT/tests/e2e_adk.py"
+elif [[ "${1:-python_client}" == langchain_retriever ]]; then
+  "$OUTPUT/client/bin/python" "$OUTPUT/tests/e2e_langchain.py"
 else
   "$OUTPUT/client/bin/python" "$OUTPUT/tests/e2e.py"
 fi

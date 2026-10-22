@@ -62,6 +62,14 @@ def test_absent_and_partial_metadata_propagate_without_reupload(publication):
 def test_missing_metadata_exhaustion_is_visible(publication, monkeypatch):
     receipt, dist, state, _ = publication
     state["responses"] = [(404, {})]
+    clock = SimpleNamespace(now=0.0)
+
+    def advance(seconds):
+        clock.now += seconds
+
+    monkeypatch.setattr(release, "time", SimpleNamespace(
+        monotonic=lambda: clock.now, sleep=advance, time_ns=release.time.time_ns,
+    ))
     monkeypatch.setattr(release, "PUBLICATION_WAIT_SECONDS", 0.05)
     with pytest.raises(ValueError, match="incomplete after.*version 2.6.6rc10 is missing"):
         release.verify_artifacts(receipt, dist, complete=True)
