@@ -115,21 +115,23 @@ func (s *Store) organizationContext(tx *gorm.DB, fence scope, handles []ontology
 	if len(records) > ontology.MaxDependencyRecords {
 		return result, ontology.ErrContextBound
 	}
-	forced := []string{}
 	for _, record := range records {
 		view, err := s.currentView(tx, fence, record)
 		if err != nil {
 			return result, err
 		}
 		result.Records = append(result.Records, view)
-		if view.Current && record.Assignment != nil {
-			forced = append(forced, record.Assignment.DefinitionID)
-		}
-		if record.Override != nil && record.Override.DefinitionID != "" {
-			forced = append(forced, record.Override.DefinitionID)
+	}
+	forced := []string{}
+	unclassified := []ontology.SourceSnapshot{}
+	for _, source := range result.Sources {
+		if definition, fixed := ontology.OrganizationClassification(source, result.Records, nil); fixed {
+			forced = append(forced, definition)
+		} else {
+			unclassified = append(unclassified, source)
 		}
 	}
-	result.Candidates, err = s.organizationVocabulary(tx, fence, result.Sources, forced)
+	result.Candidates, err = s.organizationVocabulary(tx, fence, unclassified, forced)
 	if err != nil {
 		return result, err
 	}
@@ -159,6 +161,9 @@ type vocabularyCandidate struct {
 
 func (s *Store) organizationVocabulary(tx *gorm.DB, fence scope, sources []ontology.SourceSnapshot, forced []string) ([]ontology.RecordView, error) {
 	_, words := ontology.VocabularyQuery(sources)
+	if words == nil {
+		words = []string{}
+	}
 	query := strings.Join(words, " OR ")
 	result := []ontology.RecordView{}
 	after := vocabularyCandidate{}
@@ -497,27 +502,6 @@ func (s *Store) CommitOrganization(ctx context.Context, teamID string, receipt o
 					return err
 				}
 				receipt.Result.Publication = &publication
-				versions := map[string]int64{}
-				for _, dependency := range receipt.Dependencies {
-					versions[dependency.ID] = dependency.Version
-				}
-				for _, ref := range publication.Records {
-					versions[ref.ID] = ref.Version
-				}
-				receipt.Dependencies = nil
-				ids := []string{}
-				for id := range versions {
-					ids = append(ids, id)
-				}
-				catalog, err := loadHeads(tx, fence, ids, nil, nil)
-				if err != nil {
-					return err
-				}
-				for id, version := range versions {
-					if record := catalog[id]; !record.Retired {
-						receipt.Dependencies = append(receipt.Dependencies, ontology.RevisionRef{ID: id, Version: version})
-					}
-				}
 			}
 		}
 		if receipt.Result.FailureCode == "" {
@@ -526,6 +510,10 @@ func (s *Store) CommitOrganization(ctx context.Context, teamID string, receipt o
 				handles = append(handles, source.SourceHandle)
 			}
 			contextData, err := s.organizationContext(tx, fence, handles)
+			if err != nil {
+				return err
+			}
+			receipt.Dependencies, err = ontology.OrganizationDependencies(contextData)
 			if err != nil {
 				return err
 			}

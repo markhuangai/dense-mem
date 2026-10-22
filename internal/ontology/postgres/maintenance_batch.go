@@ -282,15 +282,30 @@ func (s *Store) CompleteMaintenanceBatch(ctx context.Context, claim ontology.Mai
 			return err
 		}
 		var status string
-		err := tx.Raw(`SELECT status FROM ontology_maintenance_batches WHERE batch_id=?::uuid AND lease_token=?::uuid FOR UPDATE`, claim.ID, claim.LeaseToken).Row().Scan(&status)
+		var live bool
+		err := tx.Raw(`SELECT status,lease_until>clock_timestamp() FROM ontology_maintenance_batches WHERE batch_id=?::uuid AND lease_token=?::uuid AND team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND run_id=?::uuid AND window_id=?::uuid FOR UPDATE`, claim.ID, claim.LeaseToken, claim.TeamID, claim.SpaceID, claim.Generation, claim.RunID, claim.WindowID).Row().Scan(&status, &live)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ontology.ErrLeaseLost
+		}
 		if err != nil {
 			return err
 		}
 		if status == "completed" {
 			return nil
 		}
-		if status != "running" || !now.Before(claim.LeaseUntil) {
+		if status != "running" || !live || !now.Before(claim.LeaseUntil) {
 			return ontology.ErrLeaseLost
+		}
+		receipt, revisions, err := s.currentMaintenanceCompletion(tx, claim, result, failure)
+		if err != nil {
+			return err
+		}
+		fingerprints := map[string]string{}
+		if receipt != nil {
+			result = receipt.Result
+			for _, source := range receipt.Sources {
+				fingerprints[ontology.SourceKey(source.SourceHandle)] = source.Fingerprint
+			}
 		}
 		allowanceChanged := false
 		if failure == "budget_deferred" {
@@ -304,7 +319,12 @@ func (s *Store) CompleteMaintenanceBatch(ctx context.Context, claim ontology.Mai
 			outcomes[ontology.SourceKey(outcome.Source)] = outcome
 		}
 		for _, source := range claim.Sources {
-			outcome, exists := outcomes[ontology.SourceKey(source)]
+			key := ontology.SourceKey(source)
+			revision, reuse := revisions[key]
+			if !reuse {
+				revision = claim.Revisions[key]
+			}
+			outcome, exists := outcomes[key]
 			if !exists {
 				outcome = ontology.OrganizationOutcome{Source: source, Status: "failed", Reason: failure}
 			}
@@ -318,7 +338,8 @@ func (s *Store) CompleteMaintenanceBatch(ctx context.Context, claim ontology.Mai
 				assessmentID = result.AssessmentID
 			}
 			updated := tx.Exec(`UPDATE ontology_maintenance_sources SET status=?,reason=?,eligible=CASE WHEN ?='unavailable' THEN false ELSE eligible END,assessment_id=?::uuid,last_run_id=?::uuid,updated_at=?
-			 WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind=? AND source_id=? AND revision=?`, state, reason, state, assessmentID, claim.RunID, now, claim.TeamID, claim.SpaceID, claim.Generation, source.Kind, source.ID, claim.Revisions[ontology.SourceKey(source)])
+			 WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind=? AND source_id=? AND revision=?
+			 AND (NOT ? OR (eligible AND status='pending' AND source_version=? AND fingerprint=?))`, state, reason, state, assessmentID, claim.RunID, now, claim.TeamID, claim.SpaceID, claim.Generation, source.Kind, source.ID, revision, reuse, source.Version, fingerprints[key])
 			if updated.Error != nil {
 				return updated.Error
 			}
@@ -346,4 +367,91 @@ func (s *Store) CompleteMaintenanceBatch(ctx context.Context, claim ontology.Mai
 		}
 		return nil
 	})
+}
+
+func (s *Store) currentMaintenanceCompletion(tx *gorm.DB, claim ontology.MaintenanceClaim, result ontology.OrganizationResult, failure string) (*ontology.OrganizationReceipt, map[string]int64, error) {
+	if failure != "" || result.FailureCode != "" || !result.Current || result.AssessmentID == "" {
+		return nil, nil, nil
+	}
+	type queuedSource struct {
+		handle              ontology.SourceHandle
+		revision            int64
+		fingerprint, status string
+		eligible            bool
+	}
+	keys := make([]string, 0, len(claim.Sources))
+	for _, source := range claim.Sources {
+		keys = append(keys, ontology.SourceKey(source))
+	}
+	rows, err := tx.Raw(`SELECT source_kind,source_id,source_version,revision,fingerprint,status,eligible FROM ontology_maintenance_sources
+	 WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind || ':' || source_id=ANY(?::text[])`, claim.TeamID, claim.SpaceID, claim.Generation, pq.Array(keys)).Rows()
+	if err != nil {
+		return nil, nil, err
+	}
+	var pending []queuedSource
+	for rows.Next() {
+		var source queuedSource
+		if err := rows.Scan(&source.handle.Kind, &source.handle.ID, &source.handle.Version, &source.revision, &source.fingerprint, &source.status, &source.eligible); err != nil {
+			rows.Close()
+			return nil, nil, err
+		}
+		if source.revision > claim.Revisions[ontology.SourceKey(source.handle)] && source.eligible && source.status == "pending" {
+			pending = append(pending, source)
+		}
+	}
+	err = rows.Err()
+	closeErr := rows.Close()
+	if err != nil {
+		return nil, nil, err
+	}
+	if closeErr != nil {
+		return nil, nil, closeErr
+	}
+	if len(pending) == 0 {
+		return nil, nil, nil
+	}
+	fence := scope{TeamID: claim.TeamID, SpaceID: claim.SpaceID, Generation: claim.Generation}
+	var active bool
+	if err := tx.Raw(`SELECT EXISTS(SELECT 1 FROM memory_spaces AS space JOIN teams AS team ON team.id=space.team_id
+	 WHERE team.id=?::uuid AND team.status='active' AND team.deleted_at IS NULL AND space.id=?::uuid
+	 AND space.kind='team_shared' AND space.lifecycle_state='active' AND space.generation=?)`, claim.TeamID, claim.SpaceID, claim.Generation).Row().Scan(&active); err != nil {
+		return nil, nil, err
+	}
+	if !active {
+		return nil, nil, nil
+	}
+	// Lock the catalog before any source updates, matching publication's lock order.
+	if err := lockOrganizationCatalog(tx, fence); err != nil {
+		return nil, nil, err
+	}
+	receipt, found, err := organizationByKey(tx, fence, "maintenance:"+claim.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !found || receipt.ID != result.AssessmentID || receipt.Result.FailureCode != "" || !receipt.Result.Current {
+		return nil, nil, nil
+	}
+	hash, err := ontology.OrganizationInputHash(ontology.OrganizationInput{Sources: claim.Sources}, receipt.ProviderIdentity)
+	if err != nil {
+		return nil, nil, err
+	}
+	if hash != receipt.InputHash {
+		return nil, nil, nil
+	}
+	current, err := s.organizationCurrent(tx, fence, receipt)
+	if err != nil || !current {
+		return nil, nil, err
+	}
+	if err := maintenancePublicationFence(ontology.WithMaintenanceClaim(tx.Statement.Context, claim), tx, fence); err != nil {
+		return nil, nil, err
+	}
+	revisions := map[string]int64{}
+	for _, source := range pending {
+		for _, dependency := range receipt.Sources {
+			if source.handle == dependency.SourceHandle && source.fingerprint == dependency.Fingerprint {
+				revisions[ontology.SourceKey(source.handle)] = source.revision
+			}
+		}
+	}
+	return &receipt, revisions, nil
 }
