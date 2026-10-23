@@ -99,7 +99,7 @@ func organizationFixtureServiceWithIdentity(t *testing.T, f *ontologyFixture, eq
 	return organizationFixtureServiceWithAccounting(t, f, equivalent, edit, model, limits, nil)
 }
 
-func organizationFixtureServiceWithAccounting(t *testing.T, f *ontologyFixture, equivalent func(assessment.Item, assessment.Item) bool, edit func(assessment.Request, *assessment.Response), model string, limits assessor.SemanticAssessmentLimits, accounting assessment.AttemptAccounting) (*organization.Service, *atomic.Int32) {
+func organizationFixtureServiceWithAccounting(t *testing.T, f *ontologyFixture, equivalent func(assessment.Item, assessment.Item) bool, edit func(assessment.Request, *assessment.Response), model string, limits assessor.SemanticAssessmentLimits, accounting assessment.AttemptAccounting, usage ...map[string]int) (*organization.Service, *atomic.Int32) {
 	t.Helper()
 	calls := &atomic.Int32{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +142,11 @@ func organizationFixtureServiceWithAccounting(t *testing.T, f *ontologyFixture, 
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": string(encoded)}}}}); err != nil {
+		body := map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": string(encoded)}}}}
+		if len(usage) > 0 {
+			body["usage"] = usage[0]
+		}
+		if err := json.NewEncoder(w).Encode(body); err != nil {
 			t.Error(err)
 		}
 	}))

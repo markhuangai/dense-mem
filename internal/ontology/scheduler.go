@@ -113,6 +113,17 @@ func (s *MaintenanceScheduler) run(ctx context.Context) {
 }
 
 func (s *MaintenanceScheduler) logTurnFailure(err error) {
+	var finalization *contract.MaintenanceFinalizationError
+	if errors.As(err, &finalization) {
+		if s.logger != nil {
+			s.logger.Error("ontology maintenance finalization failed",
+				slog.String("error_code", "maintenance_finalization_failed"),
+				slog.String("batch_id", finalization.BatchID), slog.String("run_id", finalization.RunID),
+				slog.String("phase", finalization.Phase), slog.String("failure_class", finalization.FailureClass()),
+				slog.String("sqlstate", finalization.SQLState()), slog.Int64("duration_ms", finalization.Duration.Milliseconds()))
+		}
+		return
+	}
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, contract.ErrMaintenanceDisabled) || errors.Is(err, contract.ErrMaintenancePaused) || errors.Is(err, contract.ErrBudgetDeferred) {
 		return
 	}

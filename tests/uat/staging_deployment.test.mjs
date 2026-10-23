@@ -33,25 +33,15 @@ function job(workflow, name) {
   return workflow.slice(start + 1).split(/\n(?=  [a-z][\w-]*:\n)/)[0];
 }
 
-test("automatic recovery remains reachable after publication failure and shares staging serialization", async () => {
+test("prerelease publication leaves staging startup manual and preserves rehearsal serialization", async () => {
   const [automatic, manual, rehearsal] = await Promise.all(["release-rc", "deploy-stage", "staging-migration-rehearsal"].map((name) => readFile(new URL(`../../.github/workflows/${name}.yml`, import.meta.url), "utf8")));
-  const recovery = job(automatic, "recover-staging");
-  assert.match(recovery, /- publish-image\n      - promote-preview-image/);
-  assert.doesNotMatch(recovery, /publish-demo-image|publish-python|continue-on-error/);
-  const condition = recovery.match(/if: >-\n([\s\S]*?)\n    permissions:/)[1].trim().slice(3, -2)
-    .replace(/needs\.([\w-]+)/g, 'needs["$1"]');
-  for (const publication of ["success", "failure", "skipped"]) {
-    const needs = { "classify-release": { result: "success", outputs: { should_release: "true" } }, "publish-image": { result: publication }, "promote-preview-image": { result: "skipped" } };
-    assert.equal(runInNewContext(condition, { needs, always: () => true, cancelled: () => false }), true, publication);
-    assert.equal(runInNewContext(condition, { needs, always: () => true, cancelled: () => true }), false);
-    needs["classify-release"].outputs.should_release = "false";
-    assert.equal(runInNewContext(condition, { needs, always: () => true, cancelled: () => false }), false);
-  }
+  assert.doesNotMatch(automatic, /deploy-staging-image\.sh/);
   for (const caller of [automatic, manual]) {
     assert.match(caller, /group: release-version-tags\n  cancel-in-progress: false\n  queue: max/);
-    assert.match(caller, /EXPECTED_REVISION: \$\{\{ needs\.staging-migration-rehearsal\.outputs\.revision \}\}/);
-    assert.match(caller, /deploy-staging-image\.sh \\\n            "\$\{HOME\}\/dense-mem-stage" "\$\{IMAGE_TAG\}" "\$\{EXPECTED_REVISION\}"/);
   }
+  const deployment = job(manual, "deploy-staging");
+  assert.match(deployment, /EXPECTED_REVISION: \$\{\{ needs\.staging-migration-rehearsal\.outputs\.revision \}\}/);
+  assert.match(deployment, /deploy-staging-image\.sh \\\n            "\$\{HOME\}\/dense-mem-stage" "\$\{IMAGE_TAG\}" "\$\{EXPECTED_REVISION\}"/);
   const queue = rehearsal.match(/group: \$\{\{ (.+) \}\}/)[1];
   const evaluateQueue = (workflow) => runInNewContext(queue, { github: { workflow, run_id: 42 }, format: (template, id) => template.replace("{0}", id) });
   assert.equal(evaluateQueue("Staging migration rehearsal"), "release-version-tags");
@@ -59,20 +49,6 @@ test("automatic recovery remains reachable after publication failure and shares 
   assert.equal(evaluateQueue("Deploy staging"), "staging-rehearsal-42");
   assert.match(rehearsal, /value: \$\{\{ jobs\.staging-migration-rehearsal\.outputs\.revision \}\}/);
   assert.ok(rehearsal.indexOf('echo "revision=${revision}"') > rehearsal.indexOf("-timeout=40m"));
-
-  const directory = await mkdtemp(join(tmpdir(), "dense-mem-staging-policy-"));
-  try {
-    const guard = recovery.split("        run: |\n")[1].split(/\n      - name:/)[0].split("\n").map((line) => line.slice(10)).join("\n");
-    for (const [result, tag, source] of [["success", "v1.0.0-rc.1", revision], ["failure", "v1.0.0-rc.1", revision], ["success", "", revision], ["success", "v1.0.0-rc.1", otherRevision]]) {
-      const env = { ...process.env, REHEARSAL_RESULT: result, IMAGE_TAG: tag, EXPECTED_REVISION: revision, SOURCE_REVISION: source, GITHUB_STEP_SUMMARY: join(directory, "summary") };
-      const command = execute("bash", ["-c", guard], { env });
-      if (result === "success" && tag && source === revision) await command;
-      else await assert.rejects(command, /Staging recovery requires a successful rehearsal/);
-    }
-    assert.match(await readFile(join(directory, "summary"), "utf8"), /dispatch Deploy staging from main with a compatible image tag/);
-  } finally {
-    await rm(directory, { recursive: true });
-  }
 });
 
 test("real Compose deploys only a verified pinned image and leaves failed candidates stopped", { timeout: 240000 }, async (t) => {
