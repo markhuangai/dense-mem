@@ -146,7 +146,7 @@ func organizationFixtureServiceWithAccounting(t *testing.T, f *ontologyFixture, 
 		if len(usage) > 0 {
 			body["usage"] = usage[0]
 		}
-		if err := json.NewEncoder(w).Encode(body); err != nil {
+		if err := json.NewEncoder(w).Encode(body); err != nil && r.Context().Err() == nil {
 			t.Error(err)
 		}
 	}))

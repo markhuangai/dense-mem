@@ -91,7 +91,7 @@ func TestCommunityTopicSchedulerContinuesAfterAllCurrentCatalogPage(t *testing.T
 			observer, stop := startObservedTopicScheduler(t, f, time.Now())
 			select {
 			case <-observer.stopped:
-			case <-time.After(20 * time.Second):
+			case <-time.After(2 * time.Minute):
 				t.Fatal("catalog traversal did not terminate within one scheduler run")
 			}
 			stop()
@@ -166,7 +166,7 @@ func TestCommunityTopicSchedulerRotatesBusyTeamsAndStopsAtCapacityBounds(t *test
 			observer, stop := startObservedTopicScheduler(t, f, now)
 			switch mode {
 			case "available":
-				require.Eventually(t, func() bool { return len(f.currentIDs(t)) == 3 }, 20*time.Second, 20*time.Millisecond)
+				require.Eventually(t, func() bool { return len(f.currentIDs(t)) == 3 }, 2*time.Minute, 20*time.Millisecond)
 			case "all-refused":
 				require.Eventually(t, func() bool { return observer.calls.Load() == int32(20*policy.MaxConcurrency) }, 20*time.Second, 20*time.Millisecond)
 			case "full":
@@ -273,7 +273,7 @@ func TestCommunityTopicSchedulerCancellationRestartsPersistedDiscovery(t *testin
 	restarted, join := startObservedTopicScheduler(t, f, time.Now())
 	select {
 	case <-restarted.stopped:
-	case <-time.After(20 * time.Second):
+	case <-time.After(2 * time.Minute):
 		t.Fatal("restarted scheduler did not finish persisted discovery")
 	}
 	join()

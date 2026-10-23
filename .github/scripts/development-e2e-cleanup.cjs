@@ -89,6 +89,16 @@ async function cleanupDevelopmentImages({ api, registry, repository, run = null,
       continue;
     }
     const action = { version_id: version.id, digest: version.digest, run_id: owner.runId, run_attempt: owner.runAttempt };
+    const inventory = (await api.versions(packageName)).map(normalizeVersion);
+    const listed = inventory.find((candidate) => candidate.id === version.id);
+    if (listed && (listed.digest !== version.digest || listed.tags.length !== 1 || listed.tags[0] !== owner.tag)) {
+      summary.retained.push({ version_id: version.id, reason: "development image identity changed before deletion" });
+      continue;
+    }
+    if (inventory.length === 1 && listed) {
+      summary.retained.push({ ...action, reason: "final package version retained" });
+      continue;
+    }
     if (dryRun) {
       summary.retained.push({ ...action, reason: "dry run" });
       continue;

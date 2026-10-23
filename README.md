@@ -730,9 +730,11 @@ before cleanup. Production validation starts scenarios after the rootless
 controller check while PostgreSQL shards continue independently, and its final
 gate requires every group to pass. The Actions
 summary records the exact SHA, digest, selections, and results. Inspect the
-matching **Clean development E2E images** run as well: it removes the owned
-image after completion, including failures and cancellations. An hourly sweep
-recovers missed cleanup and preserves active runs or unexpected image ownership.
+matching **Clean development E2E images** run as well: it removes eligible owned
+images after completion, including failures and cancellations. GitHub prevents
+deleting a package's final version, so cleanup retains that verified completed
+image and reports its version, digest, and run identity. An hourly sweep recovers
+missed cleanup and preserves active runs or unexpected image ownership.
 
 Start a fresh dispatch for retries. Each privileged job rechecks the acting
 accounts and rejects job reruns, which can reuse cached authorization or an

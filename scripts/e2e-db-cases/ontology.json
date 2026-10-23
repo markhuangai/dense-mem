@@ -755,6 +755,55 @@
       "run": "^TestOntologyMaintenanceFinalizationRejectsMismatchedReceipt$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/maintenance_finalization_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceParallelSchedulerAttemptBounds",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceParallelSchedulerAttemptBounds$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/scheduler_bounds_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceParallelSchedulerPublicationFences",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceParallelSchedulerPublicationFences$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/scheduler_fences_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceParallelSchedulerUnavailableCapacity",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceParallelSchedulerUnavailableCapacity$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/scheduler_fences_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceParallelSchedulerMixedTurns",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceParallelSchedulerMixedTurns$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/scheduler_interleaving_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceParallelSchedulerFillsAvailableSlots",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceParallelSchedulerFillsAvailableSlots$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/scheduler_interleaving_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceParallelSchedulerDrainControls",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceParallelSchedulerDrainControls$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/scheduler_interleaving_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceParallelSchedulerMeasurement",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceParallelSchedulerMeasurement$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/scheduler_measurement_integration_test.go"
     }
   ]
 }

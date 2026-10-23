@@ -138,6 +138,9 @@ test("development cleanup verifies real image ownership and preserves active or 
   let deletions = [];
   let loseDeleteResponse = false;
   let beforeRefresh = null;
+  let beforeInventory = null;
+  let inventoryReads = 0;
+  let deleteFailure = null;
   let runReads = 0;
   let restartRun = false;
   let nextVersion = 1;
@@ -171,13 +174,24 @@ test("development cleanup verifies real image ownership and preserves active or 
         if (incoming.method === "DELETE") {
           deletions.push(id);
           if (!found) { status = 404; body = {}; }
+          else if (deleteFailure !== null) { status = deleteFailure; body = { message: "fixture deletion failure" }; }
+          else if (versions.length === 1) {
+            status = 400;
+            body = { message: "You cannot delete the last version of a package. You must delete the package instead." };
+          }
           else {
             await request(`${base}/v2/${imageRepository}/manifests/${found.name}`, { method: "DELETE" });
             versions = versions.filter((version) => version.id !== id);
             if (loseDeleteResponse) { loseDeleteResponse = false; return incoming.socket.destroy(); }
             status = 204;
           }
-        } else if (Number.isNaN(id)) body = versions;
+        } else if (Number.isNaN(id)) {
+          inventoryReads += 1;
+          if (beforeInventory && inventoryReads > 1) {
+            const change = beforeInventory; beforeInventory = null; await change();
+          }
+          body = versions;
+        }
         else if (!found) { status = 404; body = {}; }
         else {
           if (beforeRefresh) { const change = beforeRefresh; beforeRefresh = null; await change(found); }
@@ -246,6 +260,7 @@ test("development cleanup verifies real image ownership and preserves active or 
     await t.test("lost DELETE response retries the same version and accepts its disappearance", async () => {
       versions = []; deletions = [];
       const owned = await addImage(46);
+      await addImage(146);
       loseDeleteResponse = true;
       const result = await cleanup(workflowRun(46));
       assert.deepEqual(result.already_deleted, [owned.version.id]);
@@ -282,8 +297,86 @@ test("development cleanup verifies real image ownership and preserves active or 
       const older = await addImage(49, 1);
       const newer = await addImage(49, 2);
       const result = await cleanup();
-      assert.deepEqual(result.deleted.map(({ version_id }) => version_id), [older.version.id, newer.version.id]);
+      assert.deepEqual(result.deleted.map(({ version_id }) => version_id), [older.version.id]);
+      assert.deepEqual(result.retained, [{ version_id: newer.version.id, digest: newer.version.name,
+        run_id: 49, run_attempt: 2, reason: "final package version retained" }]);
+      await assert.rejects(readManifest(base, imageRepository, older.version.name), /404/);
+      await readManifest(base, imageRepository, newer.version.name);
     });
+
+    await t.test("a verified final version is retained on repeated completion and sweep cleanup", async () => {
+      versions = []; deletions = [];
+      const owned = await addImage(72);
+      for (const event of [workflowRun(72), null, workflowRun(72)]) {
+        const result = await cleanup(event);
+        assert.deepEqual(result.deleted, []);
+        assert.deepEqual(result.retained, [{ version_id: owned.version.id, digest: owned.version.name,
+          run_id: 72, run_attempt: 1, reason: "final package version retained" }]);
+      }
+      assert.deepEqual(deletions, []);
+      await readManifest(base, imageRepository, owned.version.name);
+    });
+
+    await t.test("a recovery sweep deletes multiple versions down to one verified completed image", async () => {
+      versions = []; deletions = [];
+      const first = await addImage(73);
+      const second = await addImage(74);
+      const last = await addImage(75);
+      const result = await cleanup();
+      assert.deepEqual(result.deleted.map(({ version_id }) => version_id), [first.version.id, second.version.id]);
+      assert.deepEqual(result.retained, [{ version_id: last.version.id, digest: last.version.name,
+        run_id: 75, run_attempt: 1, reason: "final package version retained" }]);
+      assert.deepEqual(deletions, [first.version.id, second.version.id]);
+      for (const value of [first, second]) await assert.rejects(readManifest(base, imageRepository, value.version.name), /404/);
+      await readManifest(base, imageRepository, last.version.name);
+      assert.deepEqual((await cleanup()).deleted, []);
+    });
+
+    await t.test("inventory is refreshed before deleting a version that has become the last image", async () => {
+      versions = []; deletions = []; inventoryReads = 0;
+      const owned = await addImage(76);
+      const other = await addImage(77);
+      beforeInventory = async () => {
+        await request(`${base}/v2/${imageRepository}/manifests/${other.version.name}`, { method: "DELETE" });
+        versions = versions.filter(({ id }) => id !== other.version.id);
+      };
+      const result = await cleanup(workflowRun(76));
+      assert.equal(result.retained[0].version_id, owned.version.id);
+      assert.equal(result.retained[0].reason, "final package version retained");
+      assert.deepEqual(deletions, []);
+      await readManifest(base, imageRepository, owned.version.name);
+    });
+
+    await t.test("changed ownership in the final inventory prevents deletion", async () => {
+      versions = []; deletions = []; inventoryReads = 0;
+      const owned = await addImage(78);
+      await addImage(79);
+      beforeInventory = async () => {
+        await pushManifest(base, imageRepository, "keep-final-inventory", owned.manifest);
+        owned.version.metadata.container.tags.push("keep-final-inventory");
+      };
+      const result = await cleanup(workflowRun(78));
+      assert.match(result.retained[0].reason, /identity changed/);
+      assert.deepEqual(deletions, []);
+      await readManifest(base, imageRepository, "keep-final-inventory");
+    });
+
+    for (const status of [400, 403, 503]) {
+      await t.test(`unrelated deletion HTTP ${status} remains a required failure`, async () => {
+        versions = []; deletions = [];
+        const owned = await addImage(80);
+        const other = await addImage(81);
+        deleteFailure = status;
+        try {
+          await assert.rejects(cleanup(workflowRun(80)), (error) => error.status === status && error.attempts === (status === 503 ? 3 : 1));
+          assert.equal(deletions.length, status === 503 ? 3 : 1);
+          assert.ok(deletions.every((id) => id === owned.version.id));
+          for (const value of [owned, other]) await readManifest(base, imageRepository, value.version.name);
+        } finally {
+          deleteFailure = null;
+        }
+      });
+    }
 
     for (const lookup of ["run", "attempt"]) {
       for (const stage of ["initial verification", "pre-delete revalidation"]) {
@@ -382,7 +475,7 @@ test("development cleanup verifies real image ownership and preserves active or 
     await t.test("dry run retains a completed owned image", async () => {
       versions = []; deletions = [];
       const owned = await addImage(52);
-      assert.match((await cleanup(null, true)).retained[0].reason, /dry run/);
+      assert.equal((await cleanup(null, true)).retained[0].reason, "final package version retained");
       assert.deepEqual(deletions, []);
       await readManifest(base, imageRepository, owned.version.name);
     });
