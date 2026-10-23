@@ -36,7 +36,8 @@ try {
   const foreignID = await remember(texts[0], foreignCredential.api_key);
   const coordinationID = await remember("Atlas uses Redis for coordination.", shared.api_key);
   const coordinationAlternativeID = await remember("Atlas uses KeyDB for coordination.", shared.api_key);
-  await remember("Atlas uses SQLite for backup storage.", shared.api_key);
+  await remember("Atlas uses SQLite for backup storage.", shared.api_key, relationshipIDs);
+  await remember("Atlas uses SQLite for backup storage.", second.api_key, relationshipIDs);
   await expectStatus("/ontology/runs", { operation_key: randomUUID(), max_batches: 101 }, 422);
   await expectStatus("/ontology/runs", { operation_key: randomUUID(), team_id: "untrusted" }, 422);
   await expectStatus("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }, { key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "false" }] }, 422, "PATCH");
@@ -52,9 +53,13 @@ try {
   assert.equal(command.window_id, replay.window_id);
   await expectStatus("/ontology/runs", { operation_key: key, max_batches: 2 }, 409);
   let status;
+  let projectionCoverage;
   for (let index = 0; index < 150; index++) {
     status = (await control("/ontology/status")).data;
-    if (status.discovery_complete && status.counts.pending === 0 && status.counts.organized > initial.counts.organized) break;
+    if (status.discovery_complete && status.counts.pending === 0 && status.counts.organized > initial.counts.organized) {
+      projectionCoverage = (await control(`/teams/${teamID}/community/status`)).data.projection_coverage;
+      if (projectionCoverage?.coverage_complete && projectionCoverage.current_topics >= 2) break;
+    }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   assert.equal(status.discovery_complete, true);
@@ -62,6 +67,7 @@ try {
   assert.equal(status.counts.failed, 0);
   assert.equal(status.counts.budget_deferred, 0);
   assert(status.counts.organized > initial.counts.organized);
+  assert(projectionCoverage?.coverage_complete && projectionCoverage.current_topics >= 2, "alias discovery must exercise current topic projections");
   assert(status.window.charged_input_tokens > 0, "assessment attempts must debit the global window");
   const runs = (await control("/ontology/runs?limit=1")).data;
   assert.equal(runs.runs.length, 1);
@@ -96,11 +102,13 @@ try {
   }
   const discovered = await mcp("recall_memory", { ...args, query: "database platform" }, reader.api_key);
   assert(discovered.results.some((item) => sourceIDs.includes(item.evidence_id)), "published alias must discover its source evidence");
-  const relationshipDiscovery = await mcp("recall_memory", { ...args, query: "database platform", relationship_limit: 20 }, reader.api_key);
+  // One evidence slot leaves one uses group uncovered even with current projections.
+  const relationshipDiscovery = await mcp("recall_memory", { ...args, query: "database platform", limit: 1, relationship_limit: 20 }, reader.api_key);
   const displayedRelationshipIDs = relationshipDiscovery.related_relationships.flatMap((item) => [item.relationship_id, ...item.equivalent_relationship_ids]);
-  assert(relationshipIDs.some((id) => displayedRelationshipIDs.includes(id)), "published alias must discover existing Relationship handles");
+  assert(relationshipIDs.some((id) => displayedRelationshipIDs.includes(id)), `published alias must discover existing Relationship handles: ${JSON.stringify({ expected_relationship_ids: relationshipIDs, returned_relationship_ids: displayedRelationshipIDs.slice(0, 20), degradations: relationshipDiscovery.degradations?.map(({ frontier, code }) => ({ frontier, code })), maintenance_counts: status.counts })}`);
   const usesSlots = relationshipDiscovery.related_relationships.filter((item) => item.predicate === "uses" && relationshipIDs.includes(item.relationship_id));
   assert.equal(usesSlots.length, 1, "existing semantic grouping must retain one uses slot across owners");
+  assert.equal(usesSlots[0].equivalent_relationship_ids.length, 1, "the uncovered uses group must retain both owners' Relationship handles");
   for (const temporalField of ["valid_at", "known_at"]) {
     const temporal = await mcp("recall_memory", { ...args, [temporalField]: new Date().toISOString() }, reader.api_key);
     assert.equal(temporal.results.filter((item) => sourceIDs.includes(item.evidence_id)).length, 3);
