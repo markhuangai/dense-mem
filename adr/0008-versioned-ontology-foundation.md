@@ -8,6 +8,9 @@
 
 ADR 0010 supersedes the Dream client/generation requirements and the transitional
 community master switch and legacy fallback. Other decisions remain in force.
+ADR 0014 supersedes aggregate ontology token admission and spending reservations
+in the transition below. Per-request context limits, usage history, coordination,
+and semantic invariants remain in force; ADR 0014 bounds the legacy transition.
 
 ## Decision
 

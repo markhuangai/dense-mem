@@ -6,6 +6,10 @@
 - Refines: ADR 0001, ADR 0002, ADR 0003, ADR 0004, ADR 0008
 - Maintainer approval: issue #530 and the directly approved implementation plan
 
+ADR 0014 supersedes global token accounting as an ontology spending/admission
+gate. Usage reporting and historical accounting remain preserved; ADR 0014
+defines the transition for deployed budget behavior.
+
 ## Decision
 
 Contract `dense-mem.v2.7.0` removes client Dream tools, hypothesis recall,
@@ -18,7 +22,7 @@ terminal replay versions v2.6.8, v2.6.7, v2.6.6, v2.6.3, and v2.6.2.
 The existing operator-controlled ontology switch is the only activation control.
 Preserve every stored value and default missing values to false. Do not infer
 enablement from legacy settings. Enabling admits work on the existing minute
-tick under existing pause, cadence, concurrency, and global token accounting.
+tick under existing pause, cadence, concurrency, and per-attempt usage reporting.
 Disabling stops new admissions and drains dispatched work. All active teams'
 shared memory participates, regardless of retired per-team Dream settings.
 Private memory is excluded. No activation marker or separate cutover command

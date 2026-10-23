@@ -6,6 +6,10 @@
 - Refines: ADR 0003, ADR 0004, ADR 0008, ADR 0010, ADR 0012
 - Maintainer approval: issue #593 and its directly approved implementation plan
 
+ADR 0014 supersedes token reservations as a spending/admission requirement.
+Concurrency, fair rotation, source exclusion, publication fencing and historical
+accounting preservation remain in force under its bounded transition.
+
 ## Decision
 
 Operators configure a deployment per-team concurrency default of one and bounded
@@ -13,7 +17,7 @@ team overrides through the existing control portal and app-config API. Limits
 are 1–8, bounded by global capacity, and frozen with the next window's policy.
 Historical window policies remain immutable and missing values mean one.
 Managers cannot select execution policy. Pause and disable stop new admission
-and drain dispatched work without resetting token usage or reservations.
+and drain dispatched work while preserving attempt usage and accounting history.
 
 The existing team lease serializes bounded discovery and batch preparation.
 Live batch source identities, including full grouping closures, are excluded
@@ -37,7 +41,7 @@ No canonical Knowledge state is written by ontology maintenance.
 - Stale results could overwrite corrections; verify all assessed inputs under
   the catalog lock and retain record-version and override rejection.
 - Shared capacity could be exceeded; count preparation, batch and projection
-  leases together and retain atomic per-attempt token reservations.
+  leases together and enforce atomic admission within both capacity limits.
 
 ## Verification and Recovery
 

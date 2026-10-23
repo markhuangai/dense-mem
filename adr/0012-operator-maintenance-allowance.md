@@ -1,10 +1,15 @@
 # ADR 0012: Operator Maintenance Allowances
 
-- Status: Accepted
+- Status: Superseded by ADR 0014
 - Date: 2026-10-16
 - Supersedes: None
 - Refines: ADR 0003, ADR 0004, ADR 0008, ADR 0010
 - Maintainer approval: issue #240 and the explicit approval of Add allowance now
+
+ADR 0014 retires cumulative ontology budgets and allowance grants. The decision
+below records historical behavior and its bounded deployed transition, not a
+requirement to add or extend allowances. Immutable history and the recorded
+verification results remain preserved.
 
 ## Decision
 
