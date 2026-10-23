@@ -804,6 +804,48 @@
       "run": "^TestOntologyMaintenanceParallelSchedulerMeasurement$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/scheduler_measurement_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationBatchedSources",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyOrganizationBatchedSources$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/organization_batch_reads_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationBatchedQueryCounts",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyOrganizationBatchedQueryCounts$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/organization_batch_reads_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationBatchedDependencyBounds",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyOrganizationBatchedDependencyBounds$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/organization_batch_reads_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationBatchedVocabulary",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyOrganizationBatchedVocabulary$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/organization_batch_reads_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyOrganizationBatchedPublicationFences",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyOrganizationBatchedPublicationFences$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/organization_batch_reads_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceReadMeasurement",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceReadMeasurement$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/organization_read_measurement_integration_test.go"
     }
   ]
 }

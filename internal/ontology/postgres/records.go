@@ -226,6 +226,28 @@ func (s *Store) currentView(tx *gorm.DB, fence scope, record ontology.Record) (o
 	return views[0], nil
 }
 
+func (s *Store) organizationViews(tx *gorm.DB, fence scope, records []ontology.Record) ([]ontology.RecordView, error) {
+	var result []ontology.RecordView
+	for len(records) > 0 {
+		count := min(ontology.MaxOrganizationSources, len(records))
+		for {
+			views, err := s.currentViews(tx, fence, records[:count])
+			// Combined closures can exceed the bound while each record remains valid.
+			if errors.Is(err, ontology.ErrContextBound) && count > 1 {
+				count /= 2
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, views...)
+			records = records[count:]
+			break
+		}
+	}
+	return result, nil
+}
+
 func (s *Store) currentViews(tx *gorm.DB, fence scope, records []ontology.Record) ([]ontology.RecordView, error) {
 	if len(records) == 0 {
 		return []ontology.RecordView{}, nil

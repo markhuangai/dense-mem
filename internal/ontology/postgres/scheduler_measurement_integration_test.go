@@ -15,6 +15,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestOntologyMaintenanceParallelSchedulerMeasurement(t *testing.T) {
@@ -73,6 +74,9 @@ func TestOntologyMaintenanceParallelSchedulerMeasurement(t *testing.T) {
 				service.SetProjectionRunner(projections)
 			}
 			m.CanonicalBefore = schedulerCanonical(t, f)
+			counter := &organizationReadCounter{Interface: f.store.db.Logger}
+			f.store.db = f.store.db.Session(&gorm.Session{Logger: counter})
+			observer.MaintenanceRepository = organizationPreparationReads{MaintenanceRepository: f.store}
 			m.started = time.Now()
 			_, stop := startScheduler(t, service, nil, 1)
 			defer stop()
@@ -121,7 +125,11 @@ func TestOntologyMaintenanceParallelSchedulerMeasurement(t *testing.T) {
 				m.ProjectionCoverage, err = store.TopicProjectionCoverage(f.actor(1, "member"), f.team)
 				require.NoError(t, err)
 			}
-			encoded, err := json.Marshal(m)
+			encoded, err := json.Marshal(struct {
+				*schedulerMeasurement
+				SQLQueries         int64 `json:"sql_queries"`
+				PreparationQueries int64 `json:"preparation_sql_queries"`
+			}{m, counter.queries.Load(), counter.preparationQueries.Load()})
 			require.NoError(t, err)
 			t.Logf("scheduler_measurement %s", encoded)
 			if directory := os.Getenv("DENSE_MEM_SCHEDULER_REPORT_DIR"); directory != "" {

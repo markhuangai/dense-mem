@@ -1,0 +1,558 @@
+{
+  "schema_version": 1,
+  "issue": 604,
+  "fixture": "ontology-batched-reads-v1",
+  "baseline_sha": "b88ff3c8635c1311e1cb1d66aedc52fd749571e6",
+  "candidate_state": "audited uncommitted implementation; exact production source hashes below",
+  "candidate_production_sha256": {
+    "internal/ontology/postgres/organization.go": "e53f0448cae0716df154c672d33150f67d9c3ad9472ccce8bce45055a28af9da",
+    "internal/ontology/postgres/records.go": "6050e4b10559e68f78e13ab48b53a436732f4093b7adc7e3c439824ceab77cf6"
+  },
+  "measurement_harness_sha256": {
+    "internal/ontology/postgres/organization_read_measurement_integration_test.go": "af23da5230b3210782ad61f620f49a8c026e21b0c16bb54e634c990c48d0099c",
+    "internal/ontology/postgres/scheduler_measurement_integration_test.go": "41346102f7f7ee2c5ddab45d69ef5ef7ce283e8e3eef73d24d678741b9b12070"
+  },
+  "protocol": {
+    "postgres_image": "pgvector/pgvector:0.8.2-pg18-trixie",
+    "source_counts": [
+      1,
+      10,
+      20
+    ],
+    "catalog_sizes": [
+      20,
+      100
+    ],
+    "read_warmups": 2,
+    "read_samples": 20,
+    "scheduler_pairs": 3,
+    "scheduler_order": "baseline then candidate for each pair",
+    "provider": "deterministic local fixture",
+    "global_and_team_concurrency": 4,
+    "provider_delay_ms": 200,
+    "projection_delay_ms": 250,
+    "native_readiness_and_timeouts": "unchanged",
+    "read_semantics": "every measured context matches singleton source/view outputs and context hash in the same transaction",
+    "usage": "reported fixture tokens, not live provider billing"
+  },
+  "reads": [
+    {
+      "catalog_records": 20,
+      "source_handles": 1,
+      "phase": "sources",
+      "baseline": {
+        "sql_queries": 1,
+        "median_ms": 0.245,
+        "p95_ms": 0.284
+      },
+      "candidate": {
+        "sql_queries": 1,
+        "median_ms": 0.266,
+        "p95_ms": 0.296
+      }
+    },
+    {
+      "catalog_records": 20,
+      "source_handles": 1,
+      "phase": "context",
+      "baseline": {
+        "sql_queries": 204,
+        "median_ms": 207.702,
+        "p95_ms": 225.572
+      },
+      "candidate": {
+        "sql_queries": 14,
+        "median_ms": 34.431,
+        "p95_ms": 36.425
+      }
+    },
+    {
+      "catalog_records": 20,
+      "source_handles": 10,
+      "phase": "sources",
+      "baseline": {
+        "sql_queries": 10,
+        "median_ms": 5.522,
+        "p95_ms": 5.966
+      },
+      "candidate": {
+        "sql_queries": 4,
+        "median_ms": 3.856,
+        "p95_ms": 4.099
+      }
+    },
+    {
+      "catalog_records": 20,
+      "source_handles": 10,
+      "phase": "context",
+      "baseline": {
+        "sql_queries": 213,
+        "median_ms": 210.451,
+        "p95_ms": 230.937
+      },
+      "candidate": {
+        "sql_queries": 17,
+        "median_ms": 40.819,
+        "p95_ms": 44.161
+      }
+    },
+    {
+      "catalog_records": 20,
+      "source_handles": 20,
+      "phase": "sources",
+      "baseline": {
+        "sql_queries": 20,
+        "median_ms": 8.539,
+        "p95_ms": 9.197
+      },
+      "candidate": {
+        "sql_queries": 4,
+        "median_ms": 3.797,
+        "p95_ms": 3.95
+      }
+    },
+    {
+      "catalog_records": 20,
+      "source_handles": 20,
+      "phase": "context",
+      "baseline": {
+        "sql_queries": 223,
+        "median_ms": 209.292,
+        "p95_ms": 227.903
+      },
+      "candidate": {
+        "sql_queries": 17,
+        "median_ms": 39.288,
+        "p95_ms": 42.322
+      }
+    },
+    {
+      "catalog_records": 100,
+      "source_handles": 1,
+      "phase": "sources",
+      "baseline": {
+        "sql_queries": 1,
+        "median_ms": 0.236,
+        "p95_ms": 0.279
+      },
+      "candidate": {
+        "sql_queries": 1,
+        "median_ms": 0.237,
+        "p95_ms": 0.318
+      }
+    },
+    {
+      "catalog_records": 100,
+      "source_handles": 1,
+      "phase": "context",
+      "baseline": {
+        "sql_queries": 604,
+        "median_ms": 1289.566,
+        "p95_ms": 1536.776
+      },
+      "candidate": {
+        "sql_queries": 34,
+        "median_ms": 528.151,
+        "p95_ms": 561.52
+      }
+    },
+    {
+      "catalog_records": 100,
+      "source_handles": 10,
+      "phase": "sources",
+      "baseline": {
+        "sql_queries": 10,
+        "median_ms": 6.232,
+        "p95_ms": 7.48
+      },
+      "candidate": {
+        "sql_queries": 4,
+        "median_ms": 3.949,
+        "p95_ms": 4.755
+      }
+    },
+    {
+      "catalog_records": 100,
+      "source_handles": 10,
+      "phase": "context",
+      "baseline": {
+        "sql_queries": 613,
+        "median_ms": 698.703,
+        "p95_ms": 1372.158
+      },
+      "candidate": {
+        "sql_queries": 37,
+        "median_ms": 621.609,
+        "p95_ms": 976.992
+      }
+    },
+    {
+      "catalog_records": 100,
+      "source_handles": 20,
+      "phase": "sources",
+      "baseline": {
+        "sql_queries": 20,
+        "median_ms": 9.233,
+        "p95_ms": 9.69
+      },
+      "candidate": {
+        "sql_queries": 4,
+        "median_ms": 4.171,
+        "p95_ms": 4.475
+      }
+    },
+    {
+      "catalog_records": 100,
+      "source_handles": 20,
+      "phase": "context",
+      "baseline": {
+        "sql_queries": 623,
+        "median_ms": 677.091,
+        "p95_ms": 743.454
+      },
+      "candidate": {
+        "sql_queries": 37,
+        "median_ms": 78.414,
+        "p95_ms": 86.676
+      }
+    }
+  ],
+  "scheduler": [
+    {
+      "pair": 1,
+      "mode": "no-projection",
+      "baseline": {
+        "first_dispatch_ms": 601.012,
+        "completion_ms": 2703.22,
+        "provider_calls": 6,
+        "max_provider_overlap": 4,
+        "mixed_overlap": false,
+        "sql_queries": 7185,
+        "preparation_sql_queries": 1704,
+        "charged_input": 240,
+        "charged_output": 120,
+        "terminal_outcomes": {
+          "organized": 30,
+          "unavailable": 3
+        },
+        "preparation_lease": {
+          "samples": 42,
+          "median_ms": 14.228000000000002,
+          "p95_ms": 72.083
+        },
+        "canonical_preserved": true
+      },
+      "candidate": {
+        "first_dispatch_ms": 503.533,
+        "completion_ms": 1983.907,
+        "provider_calls": 6,
+        "max_provider_overlap": 4,
+        "mixed_overlap": false,
+        "sql_queries": 4615,
+        "preparation_sql_queries": 770,
+        "charged_input": 240,
+        "charged_output": 120,
+        "terminal_outcomes": {
+          "organized": 30,
+          "unavailable": 3
+        },
+        "preparation_lease": {
+          "samples": 28,
+          "median_ms": 15.751,
+          "p95_ms": 417.027
+        },
+        "canonical_preserved": true
+      }
+    },
+    {
+      "pair": 1,
+      "mode": "mixed",
+      "baseline": {
+        "first_dispatch_ms": 696.372,
+        "completion_ms": 4107.457,
+        "provider_calls": 6,
+        "max_provider_overlap": 3,
+        "mixed_overlap": true,
+        "sql_queries": 6925,
+        "preparation_sql_queries": 1542,
+        "charged_input": 240,
+        "charged_output": 120,
+        "terminal_outcomes": {
+          "organized": 30,
+          "unavailable": 3
+        },
+        "preparation_lease": {
+          "samples": 27,
+          "median_ms": 15.677,
+          "p95_ms": 550.697
+        },
+        "canonical_preserved": true,
+        "projection_coverage": {
+          "total_topics": 1,
+          "current_topics": 1,
+          "pending_topics": 0,
+          "stale_topics": 0,
+          "failed_topics": 0,
+          "coverage_complete": true
+        }
+      },
+      "candidate": {
+        "first_dispatch_ms": 567.024,
+        "completion_ms": 60424.171,
+        "provider_calls": 6,
+        "max_provider_overlap": 3,
+        "mixed_overlap": true,
+        "sql_queries": 40037,
+        "preparation_sql_queries": 797,
+        "charged_input": 240,
+        "charged_output": 120,
+        "terminal_outcomes": {
+          "organized": 30,
+          "unavailable": 3
+        },
+        "preparation_lease": {
+          "samples": 36,
+          "median_ms": 14.645499999999998,
+          "p95_ms": 427.233
+        },
+        "canonical_preserved": true,
+        "projection_coverage": {
+          "total_topics": 1,
+          "current_topics": 1,
+          "pending_topics": 0,
+          "stale_topics": 0,
+          "failed_topics": 0,
+          "coverage_complete": true
+        }
+      }
+    },
+    {
+      "pair": 2,
+      "mode": "no-projection",
+      "baseline": {
+        "first_dispatch_ms": 616.221,
+        "completion_ms": 2723.452,
+        "provider_calls": 6,
+        "max_provider_overlap": 4,
+        "mixed_overlap": false,
+        "sql_queries": 7073,
+        "preparation_sql_queries": 1688,
+        "charged_input": 240,
+        "charged_output": 120,
+        "terminal_outcomes": {
+          "organized": 30,
+          "unavailable": 3
+        },
+        "preparation_lease": {
+          "samples": 40,
+          "median_ms": 13.593,
+          "p95_ms": 82.983
+        },
+        "canonical_preserved": true
+      },
+      "candidate": {
+        "first_dispatch_ms": 487.208,
+        "completion_ms": 2063.268,
+        "provider_calls": 6,
+        "max_provider_overlap": 4,
+        "mixed_overlap": false,
+        "sql_queries": 4723,
+        "preparation_sql_queries": 778,
+        "charged_input": 240,
+        "charged_output": 120,
+        "terminal_outcomes": {
+          "organized": 30,
+          "unavailable": 3
+        },
+        "preparation_lease": {
+          "samples": 29,
+          "median_ms": 16.886,
+          "p95_ms": 406.173
+        },
+        "canonical_preserved": true
+      }
+    },
+    {
+      "pair": 2,
+      "mode": "mixed",
+      "baseline": {
+        "first_dispatch_ms": 693.43,
+        "completion_ms": 4127.587,
+        "provider_calls": 6,
+        "max_provider_overlap": 3,
+        "mixed_overlap": true,
+        "sql_queries": 6595,
+        "preparation_sql_queries": 1494,
+        "charged_input": 240,
+        "charged_output": 120,
+        "terminal_outcomes": {
+          "organized": 30,
+          "unavailable": 3
+        },
+        "preparation_lease": {
+          "samples": 21,
+          "median_ms": 34.728,
+          "p95_ms": 527.936
+        },
+        "canonical_preserved": true,
+        "projection_coverage": {
+          "total_topics": 1,
+          "current_topics": 1,
+          "pending_topics": 0,
+          "stale_topics": 0,
+          "failed_topics": 0,
+          "coverage_complete": true
+        }
+      },
+      "candidate": {
+        "first_dispatch_ms": 599.349,
+        "completion_ms": 3349.541,
+        "provider_calls": 6,
+        "max_provider_overlap": 3,
+        "mixed_overlap": true,
+        "sql_queries": 4507,
+        "preparation_sql_queries": 629,
+        "charged_input": 240,
+        "charged_output": 120,
+        "terminal_outcomes": {
+          "organized": 30,
+          "unavailable": 3
+        },
+        "preparation_lease": {
+          "samples": 16,
+          "median_ms": 19.0015,
+          "p95_ms": 682.435
+        },
+        "canonical_preserved": true,
+        "projection_coverage": {
+          "total_topics": 1,
+          "current_topics": 1,
+          "pending_topics": 0,
+          "stale_topics": 0,
+          "failed_topics": 0,
+          "coverage_complete": true
+        }
+      }
+    },
+    {
+      "pair": 3,
+      "mode": "no-projection",
+      "baseline": {
+        "first_dispatch_ms": 624.993,
+        "completion_ms": 1703.052,
+        "provider_calls": 6,
+        "max_provider_overlap": 4,
+        "mixed_overlap": false,
+        "sql_queries": 4946,
+        "preparation_sql_queries": 853,
+        "charged_input": 240,
+        "charged_output": 120,
+        "terminal_outcomes": {
+          "organized": 30,
+          "unavailable": 3
+        },
+        "preparation_lease": {
+          "samples": 33,
+          "median_ms": 15.771,
+          "p95_ms": 66.807
+        },
+        "canonical_preserved": true
+      },
+      "candidate": {
+        "first_dispatch_ms": 555.683,
+        "completion_ms": 2163.729,
+        "provider_calls": 6,
+        "max_provider_overlap": 4,
+        "mixed_overlap": false,
+        "sql_queries": 4693,
+        "preparation_sql_queries": 773,
+        "charged_input": 240,
+        "charged_output": 120,
+        "terminal_outcomes": {
+          "organized": 30,
+          "unavailable": 3
+        },
+        "preparation_lease": {
+          "samples": 27,
+          "median_ms": 18.023,
+          "p95_ms": 452.536
+        },
+        "canonical_preserved": true
+      }
+    },
+    {
+      "pair": 3,
+      "mode": "mixed",
+      "baseline": {
+        "first_dispatch_ms": 695.394,
+        "completion_ms": 3988.972,
+        "provider_calls": 6,
+        "max_provider_overlap": 3,
+        "mixed_overlap": true,
+        "sql_queries": 6629,
+        "preparation_sql_queries": 1510,
+        "charged_input": 240,
+        "charged_output": 120,
+        "terminal_outcomes": {
+          "organized": 30,
+          "unavailable": 3
+        },
+        "preparation_lease": {
+          "samples": 23,
+          "median_ms": 15.232,
+          "p95_ms": 533.037
+        },
+        "canonical_preserved": true,
+        "projection_coverage": {
+          "total_topics": 1,
+          "current_topics": 1,
+          "pending_topics": 0,
+          "stale_topics": 0,
+          "failed_topics": 0,
+          "coverage_complete": true
+        }
+      },
+      "candidate": {
+        "first_dispatch_ms": 577.085,
+        "completion_ms": 4528.379,
+        "provider_calls": 6,
+        "max_provider_overlap": 2,
+        "mixed_overlap": true,
+        "sql_queries": 5693,
+        "preparation_sql_queries": 854,
+        "charged_input": 240,
+        "charged_output": 120,
+        "terminal_outcomes": {
+          "organized": 30,
+          "unavailable": 3
+        },
+        "preparation_lease": {
+          "samples": 22,
+          "median_ms": 13.9895,
+          "p95_ms": 643.666
+        },
+        "canonical_preserved": true,
+        "projection_coverage": {
+          "total_topics": 1,
+          "current_topics": 1,
+          "pending_topics": 0,
+          "stale_topics": 0,
+          "failed_topics": 0,
+          "coverage_complete": true
+        }
+      }
+    }
+  ],
+  "assessment": {
+    "query_reduction_verified": true,
+    "canonical_preserved": true,
+    "source_views_and_context_hashes_match_singletons": true,
+    "scheduler_outcomes_and_usage_unchanged": true,
+    "separate_1k_comparison": "maintainer waived for #604; https://github.com/markhuangai/dense-mem/issues/604#issuecomment-6373953608",
+    "limitations": [
+      "Synthetic shared-host measurements do not establish production or full-corpus throughput.",
+      "One candidate mixed sample completed in 60.424 seconds; the other mixed samples completed in about 3-4 seconds. This delay remains disclosed; no overall scheduler speedup is claimed.",
+      "Whole-workload SQL counts include polling and repeated claims; compare the fixed read workload and preparation counts separately."
+    ]
+  }
+}
